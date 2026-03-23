@@ -1,0 +1,41 @@
+{
+  "name": "wsqlite",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/cjs/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.cjs",
+      "default": "./dist/esm/index.js"
+    }
+  },
+  "main": "./dist/cjs/index.cjs",
+  "types": "./dist/cjs/index.d.ts",
+  "unpkg": "./dist/umd/index.js",
+  "jsdelivr": "./dist/umd/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rslib build",
+    "check": "biome check --write",
+    "dev": "rslib build --watch",
+    "format": "biome format --write",
+    "test": "rstest",
+    "test:watch": "rstest --watch"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.6",
+    "@rslib/core": "^0.20.0",
+    "@rstest/adapter-rslib": "^0.2.1",
+    "@rstest/core": "^0.9.0",
+    "@types/node": "^24.12.0",
+    "typescript": "^5.9.3"
+  },
+  "private": true,
+  "dependencies": {
+    "@lalex/console": "2.0.0-rc.1",
+    "wa-sqlite": "github:rhashimoto/wa-sqlite#v1.0.9"
+  }
+}
