@@ -22,35 +22,38 @@ Reliable, low-memory SQLite access in the browser with correct concurrent read /
 - ✓ Worker lifecycle state machine (EMPTY → READY → RUNNING → DONE) — existing
 - ✓ Multiple VFS backends (memory, OPFS, IndexedDB, JSPI) — existing
 - ✓ Debug infrastructure (`createClientDebug`, `createWorkerDebugState`) — existing
+- ✓ Fix pragma bug — inverted condition in `allQueryPragmas` means pragmas are never applied — v1.0
+- ✓ Fix hardcoded logger levels — expose consumer-configurable verbosity instead of hardcoded `debug`/`info` — v1.0 (then removed entirely in post-phase cleanup)
+- ✓ `wa-sqlite.d.ts` ambient declarations — restore type safety, remove `@ts-expect-error` directives — v1.0
+- ✓ Replace placeholder test suite — remove `squared()` test, wire real API — v1.0
+- ✓ Unit tests for pure functions — `isWriteQuery`, `sqlParams`, `debugSQLQuery` (no browser required) — v1.0
+- ✓ Integration tests in real browser — Playwright-based tests for `createSQLiteClient`, worker pool, streaming, abort — v1.0
+- ✓ JSDoc comments on public API — `createSQLiteClient`, `SQLiteDB` methods, key types — v1.0
+- ✓ README for library consumers — install, configure, use, VFS selection guide — v1.0
+- ✓ `@lalex/console` optional — fully removed in post-phase cleanup; native `console` methods used directly — v1.0
 
 ### Active
 
-<!-- Goals for this milestone. All are hypotheses until shipped and validated. -->
+<!-- Goals for next milestone. -->
 
-- [x] Fix pragma bug — inverted condition in `allQueryPragmas` means pragmas are never applied (Validated in Phase 1: Bug Fixes & Type Safety)
-- [x] Fix hardcoded logger levels — expose consumer-configurable verbosity instead of hardcoded `debug`/`info` (Validated in Phase 1: Bug Fixes & Type Safety)
-- [x] `wa-sqlite.d.ts` ambient declarations — restore type safety, remove `@ts-expect-error` directives (Validated in Phase 1: Bug Fixes & Type Safety)
-- [x] Replace placeholder test suite — remove `squared()` test, wire real API (Validated in Phase 1: Bug Fixes & Type Safety)
-- [x] Unit tests for pure functions — `isWriteQuery`, `sqlParams`, `debugSQLQuery` (no browser required) (Validated in Phase 2: Unit Tests)
-- [x] Integration tests in real browser — Playwright-based tests for `createSQLiteClient`, worker pool, streaming, abort (Validated in Phase 3: Integration Tests Browser)
-- [x] JSDoc comments on public API — `createSQLiteClient`, `SQLiteDB` methods, key types (Validated in Phase 4: Documentation)
-- [x] README for library consumers — install, configure, use, VFS selection guide (Validated in Phase 4: Documentation)
-- [x] `@lalex/console` optional — fallback to native `console` methods when package absent (Validated in Phase 5: Optional Console)
+*(No active requirements — planning next milestone)*
 
 ### Out of Scope
 
-- Transaction API — implied by JSDoc comments but not in scope for this milestone; defer to v2
+- Transaction API — implied by JSDoc comments but not in scope; defer to v2
 - Node.js support — browser-only by design; no polyfill planned
 - `RESERVED` worker status (value 49) — defined but unused, no action needed
 - OAuth / security hardening of SQL params typing — low priority for a browser-local SQLite lib
+- `logLevel` option / verbose logging — removed in v1.0 post-phase cleanup; may revisit in a future milestone with a cleaner logging strategy
 
 ## Context
 
 - **wa-sqlite**: GitHub dependency (`rhashimoto/wa-sqlite#v1.0.9`), no npm publish, no TypeScript declarations. Three WASM builds: sync (`wa-sqlite.mjs`), async/OPFS (`wa-sqlite-async.mjs`), JSPI (`wa-sqlite-jspi.mjs`).
 - **SharedArrayBuffer** requires `Cross-Origin-Isolation` headers (`COOP`/`COEP`) in the browser. OPFS requires modern Chrome/Edge. JSPI is Chrome-only (experimental).
-- **Build**: Rslib (outputs ESM/CJS/UMD). **Test runner**: Rstest with `@rstest/adapter-rslib`.
-- **Known bugs** at project start: pragma condition inverted, logger levels hardcoded, test suite imports non-existent function.
-- **@lalex/console** is now an `optionalDependency` — `src/logger.ts` dynamically imports it and falls back to a native `console` shim if absent. **@lalex/promises** remains a hard dependency.
+- **Build**: Rslib — ESM-only output (`dist/esm/`). CJS and UMD removed (browser-only library). **Test runner**: Rstest with `@rstest/adapter-rslib`; single `rstest.config.ts` with `projects` array (unit + browser).
+- **@lalex/console**: fully removed — no logging infrastructure in the library. Workers are silent; consumers wire their own observability.
+- **Test suite**: 57 unit tests + 25 browser tests = 82 total, all passing.
+- **Tech debt from v1.0**: stale VALIDATION.md frontmatter (nyquist_compliant: false), 6 pending human verification items (browser test runner, IDE hover tooltips), client LL shim filtering asymmetry (now moot since logging removed).
 
 ## Constraints
 
@@ -63,10 +66,22 @@ Reliable, low-memory SQLite access in the browser with correct concurrent read /
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Stay with Rstest for unit tests | Already configured, consistent with build pipeline | Confirmed — Phase 1 |
-| Add Playwright for integration tests | Only way to test Web Workers + OPFS in a real browser | — Pending Phase 3 |
-| Fix bugs as part of this milestone | Bugs make tests unreliable; must fix before validating behavior | Done — Phase 1 |
-| Author `wa-sqlite.d.ts` manually | No upstream declarations; needed to remove `@ts-expect-error` | Done — Phase 1 |
+| Stay with Rstest for unit tests | Already configured, consistent with build pipeline | ✓ Confirmed — Phase 1 |
+| Add Playwright for integration tests | Only way to test Web Workers + OPFS in a real browser | ✓ Done — Phase 3 |
+| Fix bugs as part of this milestone | Bugs make tests unreliable; must fix before validating behavior | ✓ Done — Phase 1 |
+| Author `wa-sqlite.d.ts` manually | No upstream declarations; needed to remove `@ts-expect-error` | ✓ Done — Phase 1 |
+| Use wildcard (*) for @lalex/promises | Pre-release private package, treated as stable for this milestone | ✓ No issues |
+| logLevel field optional on open variant | Existing call sites remain valid until consumers opt in | ✓ Moot — logLevel removed |
+| TransactionDB narrowed to Pick<SQLiteDB> | Avoids compatibility errors when SQLiteDB is widened | ✓ Stable |
+| Opaque wa-sqlite handles typed as `any` | Minimally typed ambient declarations; sufficient for type safety goals | ✓ Done |
+| Only test lock() when FREE in Node | Atomics.wait hangs main thread if lock already held | ✓ Tests pass |
+| PRAGMA/ATTACH/DETACH route to write worker | Conservative routing; confirmed by D3 | ✓ Tested |
+| UUID-based DB name in createTestClient() | Prevents OPFS collisions in parallel browser test runs | ✓ Works |
+| Use db.read('SELECT 1') as worker-READY probe | No exposed .ready property needed | ✓ Clean API |
+| ESM-only build | Library is browser-only; CJS/UMD add complexity with no benefit | ✓ Done — post-v1.0 quick task |
+| Single rstest.config.ts with projects array | Eliminates config duplication between unit and browser | ✓ Done — post-v1.0 quick task |
+| Remove all logging infrastructure | @lalex/console optional was implemented then removed; workers are silent | ✓ Simpler codebase |
+| dev.browserLogs: false in rstest browser config | Suppresses rsbuild HMR client window.location.reload() noise from worker bundles | ✓ Clean test output |
 
 ## Evolution
 
@@ -86,4 +101,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-24 after Phase 5 completion*
+*Last updated: 2026-03-24 after v1.0 milestone*
