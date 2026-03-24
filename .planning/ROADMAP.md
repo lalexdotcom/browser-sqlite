@@ -29,11 +29,13 @@
 6. `src/wa-sqlite.d.ts` provides ambient types for the entire wa-sqlite surface used in `worker.ts` — zero `@ts-expect-error` directives remain
 7. No commented-out debug code or orphaned `console.log` lambdas remain in `client.ts` or `worker.ts`
 
-**Plans:**
-1. **Fix runtime bugs** — Fix inverted `allQueryPragmas` condition, add `@lalex/promises` to `package.json`, expose logger level as a consumer option via `CreateSQLiteClientOptions`
-2. **Fix API surface bugs** — Rename `CreateSQLLiteClientOptions` to `CreateSQLiteClientOptions` across all exports, remove or widen the `satisfies` cast on `createSQLiteClient`
-3. **Author wa-sqlite ambient declarations** — Write `src/wa-sqlite.d.ts` covering `SQLiteAPI`, VFS classes, and WASM factory functions; remove all `@ts-expect-error` directives from `worker.ts`
-4. **Code cleanup** — Remove all commented-out debug blocks and orphaned `console.log` lambdas from `client.ts` and `worker.ts`
+**Plans:** 4 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Foundation: add @lalex/promises to package.json and logLevel to ClientMessageData open type
+- [ ] 01-02-PLAN.md — Fix client.ts: rename CreateSQLiteClientOptions, widen SQLiteDB, apply logLevel, remove satisfies cast and commented debug blocks
+- [ ] 01-03-PLAN.md — Fix worker.ts: fix inverted allQueryPragmas condition, apply logLevel from open message, remove dead log lambda
+- [ ] 01-04-PLAN.md — Author src/wa-sqlite.d.ts ambient declarations and remove all @ts-expect-error directives from worker.ts
 
 ---
 
