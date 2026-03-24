@@ -27,13 +27,13 @@ Reliable, low-memory SQLite access in the browser with correct concurrent read /
 
 <!-- Goals for this milestone. All are hypotheses until shipped and validated. -->
 
-- [ ] Fix pragma bug — inverted condition in `allQueryPragmas` means pragmas are never applied
-- [ ] Fix hardcoded logger levels — expose consumer-configurable verbosity instead of hardcoded `debug`/`info`
-- [ ] Replace placeholder test suite — remove `squared()` test, wire real API
+- [x] Fix pragma bug — inverted condition in `allQueryPragmas` means pragmas are never applied (Validated in Phase 1: Bug Fixes & Type Safety)
+- [x] Fix hardcoded logger levels — expose consumer-configurable verbosity instead of hardcoded `debug`/`info` (Validated in Phase 1: Bug Fixes & Type Safety)
+- [x] `wa-sqlite.d.ts` ambient declarations — restore type safety, remove `@ts-expect-error` directives (Validated in Phase 1: Bug Fixes & Type Safety)
+- [x] Replace placeholder test suite — remove `squared()` test, wire real API (Validated in Phase 1: Bug Fixes & Type Safety)
 - [ ] Unit tests for pure functions — `isWriteQuery`, `sqlParams`, `debugSQLQuery` (no browser required)
 - [ ] Integration tests in real browser — Playwright-based tests for `createSQLiteClient`, worker pool, streaming, abort
 - [ ] JSDoc comments on public API — `createSQLiteClient`, `SQLiteDB` methods, key types
-- [ ] `wa-sqlite.d.ts` ambient declarations — restore type safety, remove `@ts-expect-error` directives
 - [ ] README for library consumers — install, configure, use, VFS selection guide
 
 ### Out of Scope
@@ -62,10 +62,10 @@ Reliable, low-memory SQLite access in the browser with correct concurrent read /
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Stay with Rstest for unit tests | Already configured, consistent with build pipeline | — Pending |
-| Add Playwright for integration tests | Only way to test Web Workers + OPFS in a real browser | — Pending |
-| Fix bugs as part of this milestone | Bugs make tests unreliable; must fix before validating behavior | — Pending |
-| Author `wa-sqlite.d.ts` manually | No upstream declarations; needed to remove `@ts-expect-error` | — Pending |
+| Stay with Rstest for unit tests | Already configured, consistent with build pipeline | Confirmed — Phase 1 |
+| Add Playwright for integration tests | Only way to test Web Workers + OPFS in a real browser | — Pending Phase 3 |
+| Fix bugs as part of this milestone | Bugs make tests unreliable; must fix before validating behavior | Done — Phase 1 |
+| Author `wa-sqlite.d.ts` manually | No upstream declarations; needed to remove `@ts-expect-error` | Done — Phase 1 |
 
 ## Evolution
 
