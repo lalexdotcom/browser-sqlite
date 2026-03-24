@@ -71,6 +71,21 @@ type OpenOptions = {
   pragmas?: Record<string, string>;
 };
 
+/**
+ * Called once per worker thread when the client sends the `open` message.
+ * Loads the wa-sqlite WASM module and VFS, acquires the orchestrator initialization
+ * lock to prevent parallel DB opens across the pool, opens the SQLite database,
+ * then transitions this worker to READY and replaces the top-level message handler
+ * with the query handler.
+ *
+ * State transition: NEW → INITIALIZING (lock acquired) → INITIALIZED → READY
+ *
+ * @param file - Database file name passed from `createSQLiteClient`.
+ * @param flags - SharedArrayBuffer from the orchestrator, used to construct
+ *   a worker-side `WorkerOrchestrator` view for status and lock operations.
+ * @param index - This worker's index in the pool (0-based).
+ * @param options - VFS selection and PRAGMA map.
+ */
 const open = (
   file: string,
   flags: SharedArrayBuffer,
@@ -139,6 +154,9 @@ const open = (
       LL.debug(`[Worker ${index + 1}] Releasing initLock after open`);
       orchestrator.unlock();
       LL.debug(`[Worker ${index + 1}] Database opened and ready`);
+      // Transition: INITIALIZING → READY
+      // Marks this worker as available for queries. The client's releaseWorker()
+      // observes READY status and dispatches queued requests to this worker.
       orchestrator.setStatus(index, WorkerStatuses.READY);
       self.postMessage({ type: 'ready', callId: 0 });
     });
@@ -169,6 +187,9 @@ const open = (
       const cols = sqlite.column_names(stmt) as string[];
 
       while (true) {
+        // Abort check: if client set status to ABORTING (via AbortSignal),
+        // stop processing rows and exit. The generator yields sqlite.changes()
+        // after the loop, then the handler posts 'done' to the client.
         if (orchestrator.getStatus(index) === WorkerStatuses.ABORTING) break;
 
         const result = await sqlite.step(stmt);
@@ -204,6 +225,9 @@ const open = (
     if (data.type === 'query') {
       const { callId, sql, params, options } = data;
       try {
+        // Transition: READY → RUNNING
+        // Signals to the client that this worker is busy. The client may set
+        // status to ABORTING via AbortSignal while the worker is RUNNING.
         orchestrator.setStatus(index, WorkerStatuses.RUNNING);
         LL.wth(`[Worker ${index + 1}] Executing query:`, sql);
         let affected = 0;
@@ -241,6 +265,9 @@ const open = (
             : { message: `Unknown error (${e})` }),
         });
       } finally {
+        // Transition: RUNNING | ABORTING → DONE
+        // Unconditional — ensures the worker status is always reset even on error or abort.
+        // The client's releaseWorker() observes DONE and routes the worker back to the pool.
         orchestrator.setStatus(index, WorkerStatuses.DONE);
       }
     }

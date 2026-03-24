@@ -37,7 +37,8 @@ export const WorkerStatuses = {
 
 export type WorkerStatus = (typeof WorkerStatuses)[keyof typeof WorkerStatuses];
 
-// Offset to skip fixed flags and access per-worker status array
+// SharedArrayBuffer layout: [INIT_LOCK, worker_0_status, worker_1_status, ...]
+// FLAGS_WORKER_STATUS_OFFSET is the index where per-worker status values start.
 const FLAGS_WORKER_STATUS_OFFSET = Math.max(...Object.values(FlagsIndexes)) + 1;
 
 /**
@@ -46,6 +47,32 @@ const FLAGS_WORKER_STATUS_OFFSET = Math.max(...Object.values(FlagsIndexes)) + 1;
  * Key features:
  * - Serializes worker initialization via an atomic lock to prevent database conflicts
  * - Tracks individual worker status using atomic operations for thread-safe state management
+ *
+ * @remarks
+ * **Worker lifecycle state machine (per slot):**
+ *
+ * ```
+ * EMPTY (-3)         — slot allocated; Worker object not yet created by client.ts
+ *    │
+ * NEW (-2)           — Worker thread started; 'open' message not yet sent
+ *    │
+ * INITIALIZING (-1)  — 'open' message sent; worker calling orchestrator.lock()
+ *    │                  to serialize VFS + SQLite DB initialization across the pool
+ * INITIALIZED (0)    — DB opened; orchestrator.unlock() called; about to post 'ready'
+ *    │
+ * READY (10)         — worker available for queries; pool is queryable from client.ts
+ *    │
+ * RUNNING (50)       — worker executing a query (set by worker.ts via Atomics)
+ *    │
+ * ABORTING (99)      — AbortSignal fired; worker.ts checks this flag in the step loop
+ *    │                  and exits early; transitions to DONE after the current step
+ * DONE (100)         — query finished (normal or aborted); client calls releaseWorker()
+ *                       which sets status back to READY via setStatus()
+ * ```
+ *
+ * Note: `RESERVED (49)` is defined but intentionally unused in v1.
+ * The `INITIALIZED (0)` state is transient — the worker moves to `READY` atomically
+ * inside the `finally` block of `open()` in `worker.ts`.
  */
 export class WorkerOrchestrator {
 	readonly sharedArrayBuffer: SharedArrayBuffer;
