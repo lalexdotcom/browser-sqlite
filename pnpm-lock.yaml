@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@lalex/console':
-        specifier: 2.0.0-rc.1
-        version: 2.0.0-rc.1
+        specifier: 2.0.0
+        version: 2.0.0
       '@lalex/promises':
         specifier: ^1.2.0
         version: 1.2.0
@@ -173,8 +173,8 @@ packages:
   '@emnapi/wasi-threads@1.2.0':
     resolution: {integrity: sha512-N10dEJNSsUx41Z6pZsXU8FjPjpBEplgH24sfkmITrBED1/U2Esum9F3lfLrMjKHHjmi557zQn7kR9R+XWXu5Rg==}
 
-  '@lalex/console@2.0.0-rc.1':
-    resolution: {integrity: sha512-DFVu2Wi6ljUvxN/yaBPvdUx2x0yd4fyaY7JJ2mEweHpsKzXWVyyLmYfVpJadRnDJA+X52TZAhnXztLzhDl634A==}
+  '@lalex/console@2.0.0':
+    resolution: {integrity: sha512-sCxgDVr819hQznwnnA4oSaHOo0l1jijEg08ZvH5AQyYrvHK4ZRwqasyfsN+x8ELLICzc0DsQORODHVmkM+Qqnw==}
 
   '@lalex/promises@1.2.0':
     resolution: {integrity: sha512-IzF6Z0ePmZScP1HR2oqY42mbq7SUGCshCYizRTaKCCvXmuP9uFWdymAHuRIydzkzDJaMwyXnzQylaeeFppTr5g==}
@@ -642,7 +642,7 @@ snapshots:
       tslib: 2.8.1
     optional: true
 
-  '@lalex/console@2.0.0-rc.1': {}
+  '@lalex/console@2.0.0': {}
 
   '@lalex/promises@1.2.0': {}
 
