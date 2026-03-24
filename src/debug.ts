@@ -1,4 +1,4 @@
-import type { CreateSQLLiteClientOptions } from './client';
+import type { CreateSQLiteClientOptions } from './client';
 import { type WorkerOrchestrator, WorkerStatuses } from './orchestrator';
 import type { SQLiteVFS } from './types';
 
@@ -125,7 +125,7 @@ const MAX_QUERY_HISTORY_LENGTH = 50;
 export const createClientDebug = (
 	file: string,
 	orchestrator: WorkerOrchestrator,
-	clientOptions: Required<Pick<CreateSQLLiteClientOptions, 'vfs' | 'pragmas' | 'name'>>,
+	clientOptions: Required<Pick<CreateSQLiteClientOptions, 'vfs' | 'pragmas' | 'name'>>,
 ) => {
 	const { vfs, pragmas, name } = clientOptions;
 	const queue = { write: 0, read: 0 };

@@ -6,7 +6,6 @@ import type { SQLiteVFS, WorkerMessageData } from './types';
 import { isWriteQuery } from './utils';
 
 const LL = Logger.scope('sqlite/client');
-LL.level = 'info';
 LL.date = true;
 
 /**
@@ -24,12 +23,12 @@ const DEFAULT_POOL_SIZE = 2;
 /**
  * Configuration options for creating a SQLite client.
  */
-export type CreateSQLLiteClientOptions = {
+export type CreateSQLiteClientOptions = {
 	name?: string;
 	poolSize?: number;
 	vfs?: SQLiteVFS;
 	pragmas?: Record<string, string>;
-	debug?: boolean;
+	logLevel?: 'debug' | 'info' | 'warn' | 'error';
 };
 
 /**
@@ -72,6 +71,21 @@ export type SQLiteDB = {
 		params?: any[],
 		options?: SQLiteQueryOptions<T>,
 	) => Promise<T | undefined>;
+	transaction: <T = void>(
+		callback: (db: any) => Promise<T>,
+		options?: { readOnly?: boolean; autoCommit?: boolean },
+	) => Promise<T>;
+	bulkWrite: <KEYS extends string>(
+		table: string,
+		keys: KEYS[],
+	) => { enqueue: (data: Record<KEYS, any>) => void; close: () => Promise<number> };
+	output: <SCHEMA extends Record<string, any>>(
+		table: string,
+		schema: SCHEMA,
+		options?: any,
+	) => { enqueue: (data: any) => void; close: () => Promise<number> };
+	close: () => void;
+	debug: unknown;
 };
 
 const DEFAULT_VFS = 'OPFSPermutedVFS';
@@ -83,12 +97,14 @@ const DEFAULT_VFS = 'OPFSPermutedVFS';
  * @param clientOptions - Configuration options
  * @returns SQLite database API with read/write/stream/transaction methods
  */
-export const createSQLiteClient = ((file: string, clientOptions?: CreateSQLLiteClientOptions) => {
+export const createSQLiteClient = ((file: string, clientOptions?: CreateSQLiteClientOptions) => {
 	const clientIndex = ++clientCount;
 
 	const clientPrefix = `${clientOptions?.name ?? 'SQLite'} ${clientIndex}`;
 
 	const poolSize = clientOptions?.poolSize ?? DEFAULT_POOL_SIZE;
+
+	LL.level = clientOptions?.logLevel ?? 'warn';
 
 	const pool: PoolWorker[] = [];
 
@@ -106,9 +122,7 @@ export const createSQLiteClient = ((file: string, clientOptions?: CreateSQLLiteC
 		createRequestDebugState,
 		createWorkerDebugState,
 		createQueryDebugState,
-	} = clientOptions?.debug
-		? createClientDebug(file, orchestrator, { vfs, pragmas: clientOptions?.pragmas ?? {}, name: clientPrefix })
-		: {};
+	} = {} as ReturnType<typeof createClientDebug>;
 
 	/**
 	 * Worker instance extended with pool-specific properties.
@@ -254,6 +268,7 @@ export const createSQLiteClient = ((file: string, clientOptions?: CreateSQLLiteC
 			index,
 			vfs,
 			pragmas: clientOptions?.pragmas,
+			logLevel: clientOptions?.logLevel,
 		});
 
 		return deferredInit.promise;
@@ -395,11 +410,9 @@ export const createSQLiteClient = ((file: string, clientOptions?: CreateSQLLiteC
 		options?: SQLiteQueryOptions<T>,
 	) => {
 		const worker = await getNextAvailableWorker(isWriteQuery(sql));
-		// LL.wth('Got', worker.index + 1, 'to read', debugSQLQuery(sql, params));
 		try {
 			return await readWorker(worker, sql, params, options);
 		} finally {
-			// LL.wth('Release', worker.index + 1, 'after read');
 			releaseWorker(worker);
 		}
 	};
@@ -430,13 +443,11 @@ export const createSQLiteClient = ((file: string, clientOptions?: CreateSQLLiteC
 		options?: SQLiteQueryOptions<T>,
 	) {
 		const worker = await getNextAvailableWorker(isWriteQuery(sql));
-		// LL.wth('Got', worker.index + 1, 'to stream', debugSQLQuery(sql, params));
 		try {
 			for await (const chunk of streamWorker<T>(worker, sql, params, options)) {
 				yield chunk;
 			}
 		} finally {
-			// LL.wth('Release', worker.index + 1, 'after stream');
 			releaseWorker(worker);
 		}
 	};
@@ -472,11 +483,9 @@ export const createSQLiteClient = ((file: string, clientOptions?: CreateSQLLiteC
 		options?: SQLiteQueryOptions<T>,
 	) => {
 		const worker = await getNextAvailableWorker(isWriteQuery(sql));
-		// LL.wth('Got', worker.index + 1, 'to write', debugSQLQuery(sql, params));
 		try {
 			return await writeWorker(worker, sql, params, options);
 		} finally {
-			// LL.wth('Release', worker.index + 1, 'after write');
 			releaseWorker(worker);
 		}
 	};
@@ -514,11 +523,9 @@ export const createSQLiteClient = ((file: string, clientOptions?: CreateSQLLiteC
 		options?: Omit<SQLiteQueryOptions<T>, 'chunkSize' | 'signal'>,
 	) => {
 		const worker = await getNextAvailableWorker(isWriteQuery(sql));
-		// LL.wth('Got', worker.index + 1, 'to one', debugSQLQuery(sql, params));
 		try {
 			return await oneWorker(worker, sql, params, options);
 		} finally {
-			// LL.wth('Release', worker.index + 1, 'after one');
 			releaseWorker(worker);
 		}
 	};
@@ -660,7 +667,7 @@ export const createSQLiteClient = ((file: string, clientOptions?: CreateSQLLiteC
 	};
 
 	// Transaction API type with commit/rollback methods
-	type TransactionDB = SQLiteDB & {
+	type TransactionDB = Pick<SQLiteDB, 'read' | 'write' | 'stream' | 'one'> & {
 		commit: () => Promise<void>;
 		rollback: () => Promise<void>;
 	};
@@ -744,7 +751,6 @@ export const createSQLiteClient = ((file: string, clientOptions?: CreateSQLLiteC
 	Promise.all(
 		Array.from({ length: poolSize }).map(() =>
 			createWorker().then((worker) => {
-				// releaseWorker(worker);
 				return worker;
 			}),
 		),
@@ -754,7 +760,6 @@ export const createSQLiteClient = ((file: string, clientOptions?: CreateSQLLiteC
 				releaseWorker(worker);
 			}
 			LL.success('SQLite worker pool initialized');
-			// for (const worker of pool) releaseWorker(worker);
 		})
 		.catch((e) => LL.error('Error initializing SQLite worker pool:', e));
 
@@ -772,4 +777,4 @@ export const createSQLiteClient = ((file: string, clientOptions?: CreateSQLLiteC
 		debug,
 	};
 	return api;
-}) satisfies (...args: any[]) => SQLiteDB;
+});
