@@ -30,7 +30,7 @@ Requirements for the initial quality milestone. Each maps to a roadmap phase.
 
 ### Integration Tests
 
-- [ ] **INT-01**: Configure Rstest browser mode with Playwright (Chromium) — add COOP/COEP headers to the test server
+- [x] **INT-01**: Configure Rstest browser mode with Playwright (Chromium) — add COOP/COEP headers to the test server
 - [ ] **INT-02**: Integration test — `createSQLiteClient` initializes and pool workers reach READY state
 - [ ] **INT-03**: Integration test — `db.read()` executes a SELECT and returns typed rows
 - [ ] **INT-04**: Integration test — `db.write()` executes INSERT/UPDATE/DELETE and returns affected row count
@@ -89,7 +89,7 @@ Deferred to a future milestone. Tracked but not in current roadmap.
 | TEST-03 | Phase 2 | Complete |
 | TEST-04 | Phase 2 | Complete |
 | TEST-05 | Phase 2 | Complete |
-| INT-01 | Phase 3 | Pending |
+| INT-01 | Phase 3 | Complete |
 | INT-02 | Phase 3 | Pending |
 | INT-03 | Phase 3 | Pending |
 | INT-04 | Phase 3 | Pending |
