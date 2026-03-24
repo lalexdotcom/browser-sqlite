@@ -9,7 +9,7 @@ Requirements for the initial quality milestone. Each maps to a roadmap phase.
 
 ### Bug Fixes
 
-- [ ] **BUG-01**: The `allQueryPragmas` condition is inverted — pragmas must be applied when the pragmas object is non-empty
+- [x] **BUG-01**: The `allQueryPragmas` condition is inverted — pragmas must be applied when the pragmas object is non-empty
 - [x] **BUG-02**: `CreateSQLLiteClientOptions` has a double-L typo — rename to `CreateSQLiteClientOptions` across the public API
 - [x] **BUG-03**: The `satisfies (...args: any[]) => SQLiteDB` constraint on `createSQLiteClient` hides methods from the documented return type — widen or remove the constraint
 - [x] **BUG-04**: `@lalex/promises` is used in `client.ts` but missing from `package.json` dependencies
@@ -77,7 +77,7 @@ Deferred to a future milestone. Tracked but not in current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BUG-01 | Phase 1 | Pending |
+| BUG-01 | Phase 1 | Complete |
 | BUG-02 | Phase 1 | Complete |
 | BUG-03 | Phase 1 | Complete |
 | BUG-04 | Phase 1 | Complete |

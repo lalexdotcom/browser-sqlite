@@ -34,7 +34,7 @@
 Plans:
 - [x] 01-01-PLAN.md — Foundation: add @lalex/promises to package.json and logLevel to ClientMessageData open type
 - [x] 01-02-PLAN.md — Fix client.ts: rename CreateSQLiteClientOptions, widen SQLiteDB, apply logLevel, remove satisfies cast and commented debug blocks
-- [ ] 01-03-PLAN.md — Fix worker.ts: fix inverted allQueryPragmas condition, apply logLevel from open message, remove dead log lambda
+- [x] 01-03-PLAN.md — Fix worker.ts: fix inverted allQueryPragmas condition, apply logLevel from open message, remove dead log lambda
 - [ ] 01-04-PLAN.md — Author src/wa-sqlite.d.ts ambient declarations and remove all @ts-expect-error directives from worker.ts
 
 ---
