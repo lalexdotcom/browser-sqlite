@@ -31,7 +31,7 @@ Reliable, low-memory SQLite access in the browser with correct concurrent read /
 - [x] Fix hardcoded logger levels — expose consumer-configurable verbosity instead of hardcoded `debug`/`info` (Validated in Phase 1: Bug Fixes & Type Safety)
 - [x] `wa-sqlite.d.ts` ambient declarations — restore type safety, remove `@ts-expect-error` directives (Validated in Phase 1: Bug Fixes & Type Safety)
 - [x] Replace placeholder test suite — remove `squared()` test, wire real API (Validated in Phase 1: Bug Fixes & Type Safety)
-- [ ] Unit tests for pure functions — `isWriteQuery`, `sqlParams`, `debugSQLQuery` (no browser required)
+- [x] Unit tests for pure functions — `isWriteQuery`, `sqlParams`, `debugSQLQuery` (no browser required) (Validated in Phase 2: Unit Tests)
 - [ ] Integration tests in real browser — Playwright-based tests for `createSQLiteClient`, worker pool, streaming, abort
 - [ ] JSDoc comments on public API — `createSQLiteClient`, `SQLiteDB` methods, key types
 - [ ] README for library consumers — install, configure, use, VFS selection guide
@@ -85,4 +85,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-24 after initialization*
+*Last updated: 2026-03-24 after Phase 2 completion*
