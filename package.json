@@ -1,6 +1,6 @@
 {
   "name": "wsqlite",
-  "version": "1.0.0",
+  "version": "1.0.0-rc.0",
   "type": "module",
   "exports": {
     ".": {
@@ -39,6 +39,9 @@
     "*.{js,ts,jsx,tsx,mjs,cjs}": [
       "biome check --write --no-errors-on-unmatched"
     ]
+  },
+  "simple-git-hooks": {
+    "pre-commit": "npx lint-staged && pnpm test && pnpm exec tsc --noEmit"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

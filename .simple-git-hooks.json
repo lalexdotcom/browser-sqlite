@@ -1,3 +1,0 @@
-{
-  "pre-commit": "npx lint-staged && pnpm test && pnpm exec tsc --noEmit"
-}

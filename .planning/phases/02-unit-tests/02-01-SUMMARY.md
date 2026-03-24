@@ -113,3 +113,12 @@ None - no external service configuration required.
 ---
 *Phase: 02-unit-tests*
 *Completed: 2026-03-24*
+
+## Self-Check: PASSED
+
+- FOUND: tests/unit/utils.test.ts
+- FOUND: src/utils.ts
+- FOUND: 02-01-SUMMARY.md
+- FOUND: commit c0c3472 (test RED phase)
+- FOUND: commit 70b6a9a (feat GREEN phase)
+- FOUND: final metadata commit c56f37e

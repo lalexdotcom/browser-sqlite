@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: v1.0 milestone complete
-stopped_at: Completed quick task 260324-rxw (supprimer window is not defined dans les tests browser)
+stopped_at: Completed quick task 260324-sj3 (Limiter biome à src et tests)
 last_updated: "2026-03-24T20:22:57.087Z"
 progress:
   total_phases: 5
@@ -133,6 +133,7 @@ None yet.
 | 260324-rh3 | Fusionner rstest configs avec le pattern projects (unit + browser) | 2026-03-24 | 5d57edc | [260324-rh3-utilise-le-pattern-project-de-rstest-pou](./quick/260324-rh3-utilise-le-pattern-project-de-rstest-pou/) |
 | 260324-rkh | Corriger type Function rstest.config, ESM-only rslib, aligner package.json | 2026-03-24 | aae4cc9 | [260324-rkh-corriger-erreur-de-type-dans-rslib-confi](./quick/260324-rkh-corriger-erreur-de-type-dans-rslib-confi/) |
 | 260324-rxw | Supprimer les traces 'window is not defined' dans les tests browser | 2026-03-24 | fa1a813 | [260324-rxw-supprimer-les-traces-window-is-not-defin](./quick/260324-rxw-supprimer-les-traces-window-is-not-defin/) |
+| 260324-sj3 | Limiter biome à src et tests | 2026-03-24 |  | [260324-sj3-limiter-biome-src-et-tests](./quick/260324-sj3-limiter-biome-src-et-tests/) |
 
 ## Session Continuity
 
