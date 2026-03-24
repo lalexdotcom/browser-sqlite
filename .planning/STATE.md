@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed quick task 260324-ekv (add tests to pre-commit hook)
-last_updated: "2026-03-24T10:35:00.000Z"
+stopped_at: Completed quick task 260324-epa (add typecheck and build to pre-commit hook)
+last_updated: "2026-03-24T10:42:00.000Z"
 last_activity: 2026-03-24 — Roadmap initialized
 progress:
   total_phases: 4
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-24)
 Phase: 1 of 4 (Bug Fixes & Type Safety)
 Plan: 0 of 4 in current phase
 Status: Ready to plan
-Last activity: 2026-03-24 - Completed quick task 260324-ekv: Rajoute l'appel des tests au precommit
+Last activity: 2026-03-24 - Completed quick task 260324-epa: Ajouter typecheck et build au pre-commit hook
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -80,9 +80,10 @@ None yet.
 |---|-------------|------|--------|-----------|
 | 260324-ebg | Ajoute un système de precommit qui formate et lint le code | 2026-03-24 | fadcccb | [260324-ebg-ajoute-un-syst-me-de-precommit-qui-forma](./quick/260324-ebg-ajoute-un-syst-me-de-precommit-qui-forma/) |
 | 260324-ekv | Rajoute l'appel des tests au precommit | 2026-03-24 | 7ff3bb4 | [260324-ekv-rajoute-l-appel-des-tests-au-precommit](./quick/260324-ekv-rajoute-l-appel-des-tests-au-precommit/) |
+| 260324-epa | Ajoute typecheck et build au pre-commit hook | 2026-03-24 | beb84a0 | [260324-epa-ajoute-galement-un-test-des-types-et-que](./quick/260324-epa-ajoute-galement-un-test-des-types-et-que/) |
 
 ## Session Continuity
 
-Last session: 2026-03-24T10:35:00.000Z
-Stopped at: Completed quick task 260324-ekv (add tests to pre-commit hook)
+Last session: 2026-03-24T10:42:00.000Z
+Stopped at: Completed quick task 260324-epa (add typecheck and build to pre-commit hook)
 Resume file: None
