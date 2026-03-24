@@ -132,9 +132,10 @@ None yet.
 | 260324-o2g | Enlève toute référence @lalex/console et logLevel | 2026-03-24 | f3cae4a | [260324-o2g-enleve-toute-r-f-rence-lalex-console-et-](./quick/260324-o2g-enleve-toute-r-f-rence-lalex-console-et-/) |
 | 260324-rh3 | Fusionner rstest configs avec le pattern projects (unit + browser) | 2026-03-24 | 5d57edc | [260324-rh3-utilise-le-pattern-project-de-rstest-pou](./quick/260324-rh3-utilise-le-pattern-project-de-rstest-pou/) |
 | 260324-rkh | Corriger type Function rstest.config, ESM-only rslib, aligner package.json | 2026-03-24 | aae4cc9 | [260324-rkh-corriger-erreur-de-type-dans-rslib-confi](./quick/260324-rkh-corriger-erreur-de-type-dans-rslib-confi/) |
+| 260324-rxw | Supprimer les traces 'window is not defined' dans les tests browser | 2026-03-24 | fa1a813 | [260324-rxw-supprimer-les-traces-window-is-not-defin](./quick/260324-rxw-supprimer-les-traces-window-is-not-defin/) |
 
 ## Session Continuity
 
-Last session: 2026-03-24T19:54:49Z
-Stopped at: Completed quick task 260324-rkh (corriger type Function, ESM-only build, aligner package.json)
+Last session: 2026-03-24T20:17:00Z
+Stopped at: Completed quick task 260324-rxw (supprimer window is not defined dans les tests browser)
 Resume file: None
