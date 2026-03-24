@@ -52,10 +52,12 @@ Plans:
 4. `debugSQLQuery` interpolation is tested including NULL, date, and embedded `?` in string literals
 5. `WorkerOrchestrator` lock/unlock, `setStatus`/`getStatus`, CAS transitions, and SAB sharing are covered without a browser
 
-**Plans:**
-1. **Replace placeholder test and set up test structure** — Delete `tests/index.test.ts`, create `tests/unit/` directory, configure `rstest.config.ts` to match `**/*.unit.test.ts`
-2. **Unit tests: pure functions** — Write `tests/unit/utils.test.ts` (`isWriteQuery`, `sqlParams`) and `tests/unit/debug.test.ts` (`debugSQLQuery`)
-3. **Unit tests: WorkerOrchestrator** — Write `tests/unit/orchestrator.test.ts` covering state machine transitions, CAS semantics, lock/unlock, and SAB sharing between two orchestrator instances
+**Plans:** 3 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Extend isWriteQuery regex (D3: add PRAGMA/ATTACH/DETACH) and write tests/unit/utils.test.ts (isWriteQuery, sqlParams)
+- [ ] 02-02-PLAN.md — Write tests/unit/debug.test.ts (debugSQLQuery interpolation, all value types)
+- [ ] 02-03-PLAN.md — Write tests/unit/orchestrator.test.ts (WorkerOrchestrator lock/unlock, setStatus/getStatus, CAS, SAB sharing)
 
 ---
 
@@ -97,6 +99,16 @@ Plans:
 1. **JSDoc: public API** — Add JSDoc to `createSQLiteClient`, `CreateSQLiteClientOptions` fields, and the `SQLiteDB` interface methods in `client.ts` and `types.ts`
 2. **Inline comments: internals** — Add inline comments to `WorkerOrchestrator` and the worker lifecycle state machine in `orchestrator.ts` and `worker.ts`
 3. **README.md** — Write consumer-facing `README.md`: COOP/COEP header setup first, then install, VFS guide (memory / IDB / OPFS / JSPI), usage examples, and limitations
+
+### Phase 5: Avant la reaction de la documentation, rendre le package @lalex/console optionnel: s'il n'est pas présent, on utilise les methodes de `console`
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 4
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 5 to break down)
 
 ---
 
