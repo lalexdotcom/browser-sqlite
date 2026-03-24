@@ -9,7 +9,7 @@ import { createSQLiteClient } from '../../src/client';
  * VFS : OPFSPermutedVFS par défaut (D-05) — ne pas passer d'option `vfs`
  */
 export async function createTestClient() {
-  const dbName = `wsqlite-test-${crypto.randomUUID()}`;
+  const dbName = `web-sqlite-test-${crypto.randomUUID()}`;
 
   afterEach(async () => {
     try {

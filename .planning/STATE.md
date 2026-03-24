@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: v1.0 milestone complete
-stopped_at: Completed quick task 260324-sme (Corriger les problèmes de lint et ajouter script lint)
+stopped_at: Completed quick task 260324-sya (Renommer package en web-sqlite)
 last_updated: "2026-03-24T20:22:57.087Z"
 progress:
   total_phases: 5
@@ -135,6 +135,7 @@ None yet.
 | 260324-rxw | Supprimer les traces 'window is not defined' dans les tests browser | 2026-03-24 | fa1a813 | [260324-rxw-supprimer-les-traces-window-is-not-defin](./quick/260324-rxw-supprimer-les-traces-window-is-not-defin/) |
 | 260324-sj3 | Limiter biome à src et tests | 2026-03-24 |  | [260324-sj3-limiter-biome-src-et-tests](./quick/260324-sj3-limiter-biome-src-et-tests/) |
 | 260324-sme | Corriger les problèmes de lint et ajouter script lint | 2026-03-24 |  | [260324-sme-corriger-les-probl-mes-de-lint-et-ajoute](./quick/260324-sme-corriger-les-probl-mes-de-lint-et-ajoute/) |
+| 260324-sya | Renommer package en web-sqlite, ajouter champs npm | 2026-03-24 |  | [260324-sya-renommer-package-en-web-sqlite-ajouter-c](./quick/260324-sya-renommer-package-en-web-sqlite-ajouter-c/) |
 
 ## Session Continuity
 

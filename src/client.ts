@@ -216,7 +216,7 @@ export type SQLiteDB = {
    * @remarks
    * **OPFS files are NOT deleted.** `close()` calls `worker.terminate()` on each
    * pool worker — it does not remove any OPFS database files. Files created by
-   * wsqlite persist in the origin's private file system across page loads.
+   * web-sqlite persist in the origin's private file system across page loads.
    * To delete OPFS files, use the `navigator.storage.getDirectory()` API directly.
    */
   close: () => void;
@@ -263,7 +263,7 @@ const DEFAULT_VFS = 'OPFSPermutedVFS';
  *
  * @example
  * ```typescript
- * import { createSQLiteClient } from 'wsqlite';
+ * import { createSQLiteClient } from 'web-sqlite';
  *
  * const db = createSQLiteClient('myapp.sqlite', {
  *   poolSize: 3,
@@ -330,7 +330,7 @@ export const createSQLiteClient = (
     const index =
       pool.push(
         new Worker(
-          /* webpackChunkName: "wsqlite" */ new URL(
+          /* webpackChunkName: "web-sqlite" */ new URL(
             './worker.ts',
             import.meta.url,
           ),

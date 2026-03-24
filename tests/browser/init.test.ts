@@ -26,7 +26,7 @@ describe('createSQLiteClient (INT-02)', () => {
     // createTestClient utilise le défaut poolSize: 2
     // Vérifier qu'avec un pool minimal le client fonctionne
     const { createSQLiteClient } = await import('../../src/client');
-    const dbName = `wsqlite-test-${crypto.randomUUID()}`;
+    const dbName = `web-sqlite-test-${crypto.randomUUID()}`;
 
     const cleanup = async () => {
       try {

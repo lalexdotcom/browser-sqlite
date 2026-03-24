@@ -1,6 +1,26 @@
 {
-	"name": "wsqlite",
+	"name": "web-sqlite",
 	"version": "1.0.0-rc.1",
+	"description": "Browser SQLite with concurrent read / serial write isolation, backed by Web Workers and wa-sqlite",
+	"author": "LAlex",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/lalexdotcom/web-sqlite.git"
+	},
+	"bugs": {
+		"url": "https://github.com/lalexdotcom/web-sqlite/issues"
+	},
+	"homepage": "https://github.com/lalexdotcom/web-sqlite#readme",
+	"keywords": [
+		"sqlite",
+		"browser",
+		"web-worker",
+		"opfs",
+		"wa-sqlite",
+		"wasm",
+		"shared-array-buffer"
+	],
 	"type": "module",
 	"exports": {
 		".": {
