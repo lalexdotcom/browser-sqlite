@@ -26,7 +26,7 @@ Requirements for the initial quality milestone. Each maps to a roadmap phase.
 - [ ] **TEST-02**: Unit tests for `isWriteQuery()` — covers standard DML, DDL, edge cases (PRAGMA, CTEs, WITH...INSERT, ATTACH)
 - [ ] **TEST-03**: Unit tests for `sqlParams()` — parameter deduplication logic, positional and named variants
 - [ ] **TEST-04**: Unit tests for `debugSQLQuery()` — parameter interpolation correctness
-- [ ] **TEST-05**: Unit tests for `WorkerOrchestrator` — lock/unlock, `setStatus`/`getStatus`, `compareExchangeStatus`, state transitions (testable in Node via native `SharedArrayBuffer`)
+- [x] **TEST-05**: Unit tests for `WorkerOrchestrator` — lock/unlock, `setStatus`/`getStatus`, `compareExchangeStatus`, state transitions (testable in Node via native `SharedArrayBuffer`)
 
 ### Integration Tests
 
@@ -88,7 +88,7 @@ Deferred to a future milestone. Tracked but not in current roadmap.
 | TEST-02 | Phase 2 | Pending |
 | TEST-03 | Phase 2 | Pending |
 | TEST-04 | Phase 2 | Pending |
-| TEST-05 | Phase 2 | Pending |
+| TEST-05 | Phase 2 | Complete |
 | INT-01 | Phase 3 | Pending |
 | INT-02 | Phase 3 | Pending |
 | INT-03 | Phase 3 | Pending |

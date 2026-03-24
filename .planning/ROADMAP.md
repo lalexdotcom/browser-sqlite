@@ -52,12 +52,12 @@ Plans:
 4. `debugSQLQuery` interpolation is tested including NULL, date, and embedded `?` in string literals
 5. `WorkerOrchestrator` lock/unlock, `setStatus`/`getStatus`, CAS transitions, and SAB sharing are covered without a browser
 
-**Plans:** 3 plans
+**Plans:** 1/3 plans executed
 
 Plans:
 - [ ] 02-01-PLAN.md — Extend isWriteQuery regex (D3: add PRAGMA/ATTACH/DETACH) and write tests/unit/utils.test.ts (isWriteQuery, sqlParams)
 - [ ] 02-02-PLAN.md — Write tests/unit/debug.test.ts (debugSQLQuery interpolation, all value types)
-- [ ] 02-03-PLAN.md — Write tests/unit/orchestrator.test.ts (WorkerOrchestrator lock/unlock, setStatus/getStatus, CAS, SAB sharing)
+- [x] 02-03-PLAN.md — Write tests/unit/orchestrator.test.ts (WorkerOrchestrator lock/unlock, setStatus/getStatus, CAS, SAB sharing)
 
 ---
 
@@ -117,6 +117,6 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Bug Fixes & Type Safety | 0/4 | Not started | - |
-| 2. Unit Tests | 0/3 | Not started | - |
+| 2. Unit Tests | 1/3 | In Progress|  |
 | 3. Integration Tests | 0/3 | Not started | - |
 | 4. Documentation | 0/3 | Not started | - |

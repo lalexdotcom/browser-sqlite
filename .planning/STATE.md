@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Ready to plan
-stopped_at: Completed quick task 260324-fkx (update @lalex/console to 2.0.0, rename webpackChunkName to wsqlite)
-last_updated: "2026-03-24T11:18:45.632Z"
+status: Ready to execute
+stopped_at: Completed 02-03-PLAN.md (WorkerOrchestrator unit tests)
+last_updated: "2026-03-24T11:57:27.940Z"
 progress:
-  total_phases: 4
+  total_phases: 5
   completed_phases: 1
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 7
+  completed_plans: 5
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-24)
 
 **Core value:** Reliable, low-memory SQLite access in the browser with correct concurrent read / serial write isolation.
-**Current focus:** Phase 01 — Bug Fixes & Type Safety
+**Current focus:** Phase 02 — unit-tests
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
+Phase: 02 (unit-tests) — EXECUTING
+Plan: 2 of 3
 
 ## Performance Metrics
 
@@ -50,6 +50,7 @@ Plan: Not started
 | Phase 01-bug-fixes-type-safety P02 | 3 | 2 tasks | 2 files |
 | Phase 01-bug-fixes-type-safety P03 | 1 | 1 tasks | 1 files |
 | Phase 01-bug-fixes-type-safety P04 | 2 | 2 tasks | 2 files |
+| Phase 02-unit-tests P03 | 1 | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -68,6 +69,12 @@ Recent decisions affecting current work:
 - [Phase 01-bug-fixes-type-safety]: debug boolean replaced by typed empty destructure preserving variable names; debug wiring deferred out of scope
 - [Phase 01-bug-fixes-type-safety]: LL.level defaults to 'warn' when logLevel omitted from open message — safe production default, consumer opts into verbosity
 - [Phase 01-bug-fixes-type-safety]: Opaque wa-sqlite handles typed as any, row values as unknown — minimally typed ambient declarations authored manually
+- [Phase 02-unit-tests]: Only test lock() when lock is FREE in Node (D2 constraint) — Atomics.wait would hang main thread if lock already held
+- [Phase 02-unit-tests]: setStatus unconditional exchange returns false when old === new — by design, documented as pitfall
+
+### Roadmap Evolution
+
+- Phase 5 added: Avant la reaction de la documentation, rendre le package @lalex/console optionnel: s'il n'est pas présent, on utilise les methodes de `console`
 
 ### Pending Todos
 
@@ -89,6 +96,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-24T11:18:45.625Z
-Stopped at: Completed quick task 260324-fkx (update @lalex/console to 2.0.0, rename webpackChunkName to wsqlite)
+Last session: 2026-03-24T11:57:27.937Z
+Stopped at: Completed 02-03-PLAN.md (WorkerOrchestrator unit tests)
 Resume file: None
