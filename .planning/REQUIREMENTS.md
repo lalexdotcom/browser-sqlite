@@ -31,11 +31,11 @@ Requirements for the initial quality milestone. Each maps to a roadmap phase.
 ### Integration Tests
 
 - [x] **INT-01**: Configure Rstest browser mode with Playwright (Chromium) — add COOP/COEP headers to the test server
-- [ ] **INT-02**: Integration test — `createSQLiteClient` initializes and pool workers reach READY state
-- [ ] **INT-03**: Integration test — `db.read()` executes a SELECT and returns typed rows
-- [ ] **INT-04**: Integration test — `db.write()` executes INSERT/UPDATE/DELETE and returns affected row count
-- [ ] **INT-05**: Integration test — `db.stream()` yields rows in chunks and respects chunk size option
-- [ ] **INT-06**: Integration test — `db.one()` returns a single row or `undefined` for no result
+- [x] **INT-02**: Integration test — `createSQLiteClient` initializes and pool workers reach READY state
+- [x] **INT-03**: Integration test — `db.read()` executes a SELECT and returns typed rows
+- [x] **INT-04**: Integration test — `db.write()` executes INSERT/UPDATE/DELETE and returns affected row count
+- [x] **INT-05**: Integration test — `db.stream()` yields rows in chunks and respects chunk size option
+- [x] **INT-06**: Integration test — `db.one()` returns a single row or `undefined` for no result
 - [ ] **INT-07**: Integration test — concurrent reads are served by different workers in parallel
 - [ ] **INT-08**: Integration test — write operations are serialized through the single writer worker
 - [ ] **INT-09**: Integration test — AbortSignal cancels an in-flight query
@@ -90,11 +90,11 @@ Deferred to a future milestone. Tracked but not in current roadmap.
 | TEST-04 | Phase 2 | Complete |
 | TEST-05 | Phase 2 | Complete |
 | INT-01 | Phase 3 | Complete |
-| INT-02 | Phase 3 | Pending |
-| INT-03 | Phase 3 | Pending |
-| INT-04 | Phase 3 | Pending |
-| INT-05 | Phase 3 | Pending |
-| INT-06 | Phase 3 | Pending |
+| INT-02 | Phase 3 | Complete |
+| INT-03 | Phase 3 | Complete |
+| INT-04 | Phase 3 | Complete |
+| INT-05 | Phase 3 | Complete |
+| INT-06 | Phase 3 | Complete |
 | INT-07 | Phase 3 | Pending |
 | INT-08 | Phase 3 | Pending |
 | INT-09 | Phase 3 | Pending |

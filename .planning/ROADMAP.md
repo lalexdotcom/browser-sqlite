@@ -75,11 +75,11 @@ Plans:
 5. An aborted query via `AbortSignal` does not deliver further results and the worker returns to READY
 6. A SQL error (syntax error, missing table) rejects the promise with a descriptive error message
 
-**Plans:** 3 plans
+**Plans:** 2/3 plans executed
 
 Plans:
 - [x] 03-01-PLAN.md — Infrastructure browser : installer @rstest/browser + playwright, créer rstest.browser.config.ts avec COOP/COEP, créer tests/browser/helpers.ts (INT-01)
-- [ ] 03-02-PLAN.md — Tests requêtes de base : init.test.ts et queries.test.ts (INT-02 à INT-06)
+- [x] 03-02-PLAN.md — Tests requêtes de base : init.test.ts et queries.test.ts (INT-02 à INT-06)
 - [ ] 03-03-PLAN.md — Tests concurrence et erreurs : concurrency.test.ts (INT-07 à INT-10)
 
 ---
@@ -120,5 +120,5 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Bug Fixes & Type Safety | 0/4 | Not started | - |
 | 2. Unit Tests | 1/3 | Complete    | 2026-03-24 |
-| 3. Integration Tests | 0/3 | Not started | - |
+| 3. Integration Tests | 2/3 | In Progress|  |
 | 4. Documentation | 0/3 | Not started | - |
