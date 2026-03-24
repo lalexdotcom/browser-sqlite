@@ -81,7 +81,6 @@ const db = createSQLiteClient('myapp.sqlite', {
     journal_mode: 'WAL',
     synchronous: 'NORMAL',
   },
-  logLevel: 'warn',               // log verbosity (default: 'warn')
 });
 ```
 
