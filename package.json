@@ -24,7 +24,7 @@
     "format": "biome format --write",
     "prepare": "simple-git-hooks",
     "test": "rstest",
-    "test:browser": "rstest --config rstest.browser.config.ts",
+    "test:browser": "rstest --project browser",
     "test:watch": "rstest --watch"
   },
   "devDependencies": {
