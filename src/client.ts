@@ -547,6 +547,7 @@ export const createSQLiteClient = (
     })) {
       result = chunk[0];
       abortController.abort();
+      break;
     }
     return result;
   };
