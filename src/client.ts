@@ -1,12 +1,9 @@
-import { Logger } from '@lalex/console';
+import { LL } from './logger';
 import { defer } from '@lalex/promises';
 import type { createClientDebug } from './debug';
 import { WorkerOrchestrator, WorkerStatuses } from './orchestrator';
 import type { SQLiteVFS, WorkerMessageData } from './types';
 import { isWriteQuery } from './utils';
-
-const LL = Logger.scope('sqlite/client');
-LL.date = true;
 
 /**
  * SQLite client for browser environments using a pool of Web Workers.
@@ -366,9 +363,13 @@ export const createSQLiteClient = (
 
     // Message handler routes responses by callId
     worker.onmessage = ({ data }: MessageEvent<WorkerMessageData>) => {
-      // Handle log messages from worker (fire-and-forget, no callId)
+      // Handle log messages forwarded from worker thread (D-03).
+      // Must be checked BEFORE destructuring callId — the log variant has no callId.
       if (data.type === 'log') {
-        (LL as unknown as Record<string, (...a: unknown[]) => void>)[data.level]?.(...data.args);
+        (LL as unknown as Record<string, ((...a: unknown[]) => void) | undefined>)[data.level]?.(
+          `[${data.scope}]`,
+          ...data.args,
+        );
         return;
       }
       const { callId, type } = data;
