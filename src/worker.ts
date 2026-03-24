@@ -1,7 +1,5 @@
 import { Logger } from '@lalex/console';
-// @ts-expect-error
 import * as SQLite from 'wa-sqlite/src/sqlite-api.js';
-// @ts-expect-error
 import { SQLITE_ROW } from 'wa-sqlite/src/sqlite-constants.js';
 import { WorkerOrchestrator, WorkerStatuses } from './orchestrator';
 import type { ClientMessageData, SQLiteVFS, WorkerMessageData } from './types';
@@ -12,37 +10,29 @@ const LL = Logger.scope('sqlite/worker');
 LL.date = true;
 
 const WA_SQLITE_MODULES = {
-	// @ts-expect-error
 	wa_sqlite: () => import(/* webpackChunkName: "wa-sqlite" */ 'wa-sqlite/dist/wa-sqlite.mjs'),
-	// @ts-expect-error
 	wa_sqlite_async: () => import(/* webpackChunkName: "wa-sqlite-async" */ 'wa-sqlite/dist/wa-sqlite-async.mjs'),
-	// @ts-expect-error
 	wa_sqlite_jspi: () => import(/* webpackChunkName: "wa-sqlite-jspi" */ 'wa-sqlite/dist/wa-sqlite-jspi.mjs'),
 };
 
 const VFSConfigs = {
 	OPFSPermutedVFS: {
-		// @ts-expect-error
 		fs: () => import(/* webpackChunkName: "OPFSPermutedVFS" */ 'wa-sqlite/src/examples/OPFSPermutedVFS.js'),
 		module: WA_SQLITE_MODULES.wa_sqlite_async,
 	},
 	OPFSAdaptiveVFS: {
-		// @ts-expect-error
 		fs: () => import(/* webpackChunkName: "OPFSAdaptiveVFS" */ 'wa-sqlite/src/examples/OPFSAdaptiveVFS.js'),
 		module: WA_SQLITE_MODULES.wa_sqlite_jspi,
 	},
 	OPFSCoopSyncVFS: {
-		// @ts-expect-error
 		fs: () => import(/* webpackChunkName: "OPFSCoopSyncVFS" */ 'wa-sqlite/src/examples/OPFSCoopSyncVFS.js'),
 		module: WA_SQLITE_MODULES.wa_sqlite,
 	},
 	AccessHandlePoolVFS: {
-		// @ts-expect-error
 		fs: () => import(/* webpackChunkName: "AccessHandlePoolVFS" */ 'wa-sqlite/src/examples/AccessHandlePoolVFS.js'),
 		module: WA_SQLITE_MODULES.wa_sqlite,
 	},
 	IDBBatchAtomicVFS: {
-		// @ts-expect-error
 		fs: () => import(/* webpackChunkName: "IDBBatchAtomicVFS" */ 'wa-sqlite/src/examples/IDBBatchAtomicVFS.js'),
 		module: WA_SQLITE_MODULES.wa_sqlite_async,
 	},
