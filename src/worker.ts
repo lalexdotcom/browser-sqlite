@@ -1,3 +1,14 @@
+/**
+ * SQLite Web Worker entry point.
+ *
+ * Each worker in the pool runs this module. It handles two message types:
+ * - `open` — loads the wa-sqlite WASM module, opens the database, and transitions to READY
+ * - `query` — executes a SQL statement and streams results back as chunks
+ *
+ * State transitions driven by this module:
+ *   NEW → INITIALIZING (lock acquired) → INITIALIZED → READY → RUNNING → DONE
+ *   RUNNING → ABORTING (set by client via AbortSignal) → DONE
+ */
 import { Logger } from '@lalex/console';
 import * as SQLite from 'wa-sqlite/src/sqlite-api.js';
 import { SQLITE_ROW } from 'wa-sqlite/src/sqlite-constants.js';
@@ -274,6 +285,9 @@ const open = (
   };
 };
 
+// Top-level message handler: processes only 'open' messages.
+// After open() completes, the query handler installed inside open() takes over
+// and this handler is no longer the active responder for incoming messages.
 self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
   const { data } = event;
   if (data.type === 'open') {
