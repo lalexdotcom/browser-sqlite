@@ -112,7 +112,7 @@ Plans:
 **Plans:** 4 plans
 
 Plans:
-- [ ] 05-00-PLAN.md — Wave 0: create tests/unit/logger.test.ts (failing stubs for shouldLog and console shim)
+- [x] 05-00-PLAN.md — Wave 0: create tests/unit/logger.test.ts (failing stubs for shouldLog and console shim)
 - [ ] 05-01-PLAN.md — Foundation: package.json optionalDeps, types.ts LogLevel + log variant, src/logger.ts new module
 - [ ] 05-02-PLAN.md — Worker refactor: remove @lalex/console from worker.ts, add log() postMessage helper
 - [ ] 05-03-PLAN.md — Client wiring: import LL from logger.ts, handle type:log in onmessage + human verify
