@@ -41,6 +41,7 @@ export type ClientMessageData =
 			index: number;
 			vfs?: SQLiteVFS;
 			pragmas?: Record<string, string>;
+			logLevel?: 'debug' | 'info' | 'warn' | 'error';
 	  }
 	| { type: 'query'; callId: number; sql: string; params: any[]; options?: SQLOptions };
 
