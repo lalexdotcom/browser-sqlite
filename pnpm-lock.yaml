@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      '@lalex/console':
-        specifier: 2.0.0
-        version: 2.0.0
       '@lalex/promises':
         specifier: ^1.2.0
         version: 1.2.0
@@ -191,9 +188,6 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
-
-  '@lalex/console@2.0.0':
-    resolution: {integrity: sha512-sCxgDVr819hQznwnnA4oSaHOo0l1jijEg08ZvH5AQyYrvHK4ZRwqasyfsN+x8ELLICzc0DsQORODHVmkM+Qqnw==}
 
   '@lalex/promises@1.2.0':
     resolution: {integrity: sha512-IzF6Z0ePmZScP1HR2oqY42mbq7SUGCshCYizRTaKCCvXmuP9uFWdymAHuRIydzkzDJaMwyXnzQylaeeFppTr5g==}
@@ -1309,8 +1303,6 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
-
-  '@lalex/console@2.0.0': {}
 
   '@lalex/promises@1.2.0': {}
 
