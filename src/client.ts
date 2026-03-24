@@ -366,6 +366,11 @@ export const createSQLiteClient = (
 
     // Message handler routes responses by callId
     worker.onmessage = ({ data }: MessageEvent<WorkerMessageData>) => {
+      // Handle log messages from worker (fire-and-forget, no callId)
+      if (data.type === 'log') {
+        (LL as unknown as Record<string, (...a: unknown[]) => void>)[data.level]?.(...data.args);
+        return;
+      }
       const { callId, type } = data;
       if (callId === 0 && type === 'ready') {
         worker.available = true;

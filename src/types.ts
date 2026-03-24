@@ -45,11 +45,25 @@ export type ClientMessageData =
 	  }
 	| { type: 'query'; callId: number; sql: string; params: any[]; options?: SQLOptions };
 
+export type LogLevel =
+	| 'emerg'
+	| 'alert'
+	| 'crit'
+	| 'error'
+	| 'warn'
+	| 'notice'
+	| 'success'
+	| 'info'
+	| 'verb'
+	| 'debug'
+	| 'wth';
+
 export type WorkerMessageData =
 	| { type: 'ready'; callId: number }
 	| { type: 'chunk'; callId: number; data: any[] }
 	| { type: 'done'; callId: number; affected: number }
-	| { type: 'error'; callId: number; message: string; cause?: unknown };
+	| { type: 'error'; callId: number; message: string; cause?: unknown }
+	| { type: 'log'; level: LogLevel; scope: string; args: unknown[] };
 
 export type SQLiteVFS =
 	| 'OPFSPermutedVFS'
