@@ -6,11 +6,28 @@ import { defineConfig } from '@rstest/core';
 // D-04: headers required for WorkerOrchestrator SharedArrayBuffer construction.
 const pluginCrossOriginIsolation = {
   name: 'rsbuild:cross-origin-isolation',
-  setup(api: { modifyRsbuildConfig: Function }) {
+  setup(api: {
+    modifyRsbuildConfig: (
+      fn: (
+        config: Record<string, unknown>,
+        utils: {
+          mergeRsbuildConfig: (
+            ...configs: Record<string, unknown>[]
+          ) => Record<string, unknown>;
+        },
+      ) => Record<string, unknown>,
+    ) => void;
+  }) {
     api.modifyRsbuildConfig(
       (
-        config: object,
-        { mergeRsbuildConfig }: { mergeRsbuildConfig: Function },
+        config: Record<string, unknown>,
+        {
+          mergeRsbuildConfig,
+        }: {
+          mergeRsbuildConfig: (
+            ...configs: Record<string, unknown>[]
+          ) => Record<string, unknown>;
+        },
       ) =>
         mergeRsbuildConfig(config, {
           server: {

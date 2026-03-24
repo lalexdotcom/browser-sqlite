@@ -10,22 +10,5 @@ export default defineConfig({
         distPath: './dist/esm',
       },
     },
-    {
-      format: 'cjs',
-      syntax: 'es2015',
-      dts: true,
-      output: {
-        distPath: './dist/cjs',
-      },
-    },
-    {
-      format: 'umd',
-      syntax: 'es2015',
-      dts: false,
-      umdModuleName: 'wsqlite',
-      output: {
-        distPath: './dist/umd',
-      },
-    },
   ],
 });

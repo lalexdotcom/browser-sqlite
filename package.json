@@ -4,16 +4,12 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/cjs/index.d.ts",
+      "types": "./dist/esm/index.d.ts",
       "import": "./dist/esm/index.js",
-      "require": "./dist/cjs/index.cjs",
       "default": "./dist/esm/index.js"
     }
   },
-  "main": "./dist/cjs/index.cjs",
-  "types": "./dist/cjs/index.d.ts",
-  "unpkg": "./dist/umd/index.js",
-  "jsdelivr": "./dist/umd/index.js",
+  "types": "./dist/esm/index.d.ts",
   "files": [
     "dist"
   ],
@@ -29,8 +25,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.6",
-    "@rsbuild/plugin-node-polyfill": "^1.4.4",
-    "@rslib/core": "^0.20.0",
+"@rslib/core": "^0.20.0",
     "@rstest/adapter-rslib": "^0.2.1",
     "@rstest/browser": "0.9.4",
     "@rstest/core": "^0.9.0",
