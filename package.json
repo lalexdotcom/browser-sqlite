@@ -54,8 +54,5 @@
   "dependencies": {
     "@lalex/promises": "^1.2.0",
     "wa-sqlite": "github:rhashimoto/wa-sqlite#v1.0.9"
-  },
-  "optionalDependencies": {
-    "@lalex/console": "2.0.0"
   }
 }

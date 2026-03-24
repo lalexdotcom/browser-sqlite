@@ -1,4 +1,3 @@
-import { LL } from './logger';
 import { defer } from '@lalex/promises';
 import type { createClientDebug } from './debug';
 import { WorkerOrchestrator, WorkerStatuses } from './orchestrator';
@@ -52,13 +51,6 @@ export type CreateSQLiteClientOptions = {
    * If omitted, no PRAGMAs are applied beyond SQLite defaults.
    */
   pragmas?: Record<string, string>;
-
-  /**
-   * Minimum log level for this client's internal logger.
-   * Controls the verbosity of messages emitted by the client and its workers.
-   * @defaultValue `'warn'`
-   */
-  logLevel?: 'debug' | 'info' | 'warn' | 'error';
 };
 
 /**
@@ -294,8 +286,6 @@ export const createSQLiteClient = (
   const clientPrefix = `${clientOptions?.name ?? 'SQLite'} ${clientIndex}`;
 
   const poolSize = clientOptions?.poolSize ?? DEFAULT_POOL_SIZE;
-  LL.level = clientOptions?.logLevel ?? 'warn';
-
   const pool: PoolWorker[] = [];
 
   // Orchestrator manages worker synchronization and status tracking
@@ -363,15 +353,6 @@ export const createSQLiteClient = (
 
     // Message handler routes responses by callId
     worker.onmessage = ({ data }: MessageEvent<WorkerMessageData>) => {
-      // Handle log messages forwarded from worker thread (D-03).
-      // Must be checked BEFORE destructuring callId — the log variant has no callId.
-      if (data.type === 'log') {
-        (LL as unknown as Record<string, ((...a: unknown[]) => void) | undefined>)[data.level]?.(
-          `[${data.scope}]`,
-          ...data.args,
-        );
-        return;
-      }
       const { callId, type } = data;
       if (callId === 0 && type === 'ready') {
         worker.available = true;
@@ -487,7 +468,6 @@ export const createSQLiteClient = (
       index,
       vfs,
       pragmas: clientOptions?.pragmas,
-      logLevel: clientOptions?.logLevel,
     });
 
     return deferredInit.promise;
@@ -534,9 +514,6 @@ export const createSQLiteClient = (
     const availableWorker = acquireWorker(write);
 
     if (availableWorker) {
-      LL.debug(
-        `Acquire ${write ? 'writer' : 'reader'} worker ${availableWorker.index + 1}`,
-      );
       availableWorker.available = false;
       return availableWorker;
     }
@@ -575,14 +552,12 @@ export const createSQLiteClient = (
    * Prioritizes writer requests, then reader requests.
    */
   const releaseWorker = (worker: PoolWorker) => {
-    LL.debug(`Releasing worker ${worker.index + 1}`);
     const requestState = debug?.workers[worker.index]?.currentRequest;
     if (requestState) requestState.releaseTime = Date.now();
 
     // Process pending writer requests first
     if (writerRequestQueue.length) {
       if (currentWriterIndex === worker.index || currentWriterIndex === -1) {
-        LL.verb('Give', worker.index + 1, 'to next writer request');
         if (debug) debug.queue.write--;
         writerRequestQueue.shift()?.(worker);
         return;
@@ -596,7 +571,6 @@ export const createSQLiteClient = (
         currentWriterIndex = -1;
       }
       if (debug) debug.queue.read--;
-      LL.verb('Give', worker.index + 1, 'to next reader request');
       readerRequestQueue.shift()?.(worker);
       return;
     }
@@ -1019,14 +993,11 @@ export const createSQLiteClient = (
         return worker;
       }),
     ),
-  )
-    .then((allWorkers: PoolWorker[]) => {
-      for (const worker of allWorkers) {
-        releaseWorker(worker);
-      }
-      LL.success('SQLite worker pool initialized');
-    })
-    .catch((e) => LL.error('Error initializing SQLite worker pool:', e));
+  ).then((allWorkers: PoolWorker[]) => {
+    for (const worker of allWorkers) {
+      releaseWorker(worker);
+    }
+  });
 
   // Return the public API
   const api = {
