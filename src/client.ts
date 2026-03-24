@@ -103,7 +103,6 @@ export const createSQLiteClient = ((file: string, clientOptions?: CreateSQLiteCl
 	const clientPrefix = `${clientOptions?.name ?? 'SQLite'} ${clientIndex}`;
 
 	const poolSize = clientOptions?.poolSize ?? DEFAULT_POOL_SIZE;
-
 	LL.level = clientOptions?.logLevel ?? 'warn';
 
 	const pool: PoolWorker[] = [];

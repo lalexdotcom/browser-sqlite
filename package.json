@@ -49,7 +49,7 @@
   "private": true,
   "dependencies": {
     "@lalex/console": "2.0.0-rc.1",
-    "@lalex/promises": "*",
+    "@lalex/promises": "^1.2.0",
     "wa-sqlite": "github:rhashimoto/wa-sqlite#v1.0.9"
   }
 }

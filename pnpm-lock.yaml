@@ -11,6 +11,9 @@ importers:
       '@lalex/console':
         specifier: 2.0.0-rc.1
         version: 2.0.0-rc.1
+      '@lalex/promises':
+        specifier: ^1.2.0
+        version: 1.2.0
       wa-sqlite:
         specifier: github:rhashimoto/wa-sqlite#v1.0.9
         version: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/a3b1324ed5a57928141b02eb3204421e1164ed53
@@ -172,6 +175,9 @@ packages:
 
   '@lalex/console@2.0.0-rc.1':
     resolution: {integrity: sha512-DFVu2Wi6ljUvxN/yaBPvdUx2x0yd4fyaY7JJ2mEweHpsKzXWVyyLmYfVpJadRnDJA+X52TZAhnXztLzhDl634A==}
+
+  '@lalex/promises@1.2.0':
+    resolution: {integrity: sha512-IzF6Z0ePmZScP1HR2oqY42mbq7SUGCshCYizRTaKCCvXmuP9uFWdymAHuRIydzkzDJaMwyXnzQylaeeFppTr5g==}
 
   '@napi-rs/wasm-runtime@1.0.7':
     resolution: {integrity: sha512-SeDnOO0Tk7Okiq6DbXmmBODgOAb9dp9gjlphokTUxmt8U3liIP1ZsozBahH69j/RJv+Rfs6IwUKHTgQYJ/HBAw==}
@@ -637,6 +643,8 @@ snapshots:
     optional: true
 
   '@lalex/console@2.0.0-rc.1': {}
+
+  '@lalex/promises@1.2.0': {}
 
   '@napi-rs/wasm-runtime@1.0.7':
     dependencies:
