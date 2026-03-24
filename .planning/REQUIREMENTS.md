@@ -12,8 +12,8 @@ Requirements for the initial quality milestone. Each maps to a roadmap phase.
 - [ ] **BUG-01**: The `allQueryPragmas` condition is inverted — pragmas must be applied when the pragmas object is non-empty
 - [ ] **BUG-02**: `CreateSQLLiteClientOptions` has a double-L typo — rename to `CreateSQLiteClientOptions` across the public API
 - [ ] **BUG-03**: The `satisfies (...args: any[]) => SQLiteDB` constraint on `createSQLiteClient` hides methods from the documented return type — widen or remove the constraint
-- [ ] **BUG-04**: `@lalex/promises` is used in `client.ts` but missing from `package.json` dependencies
-- [ ] **BUG-05**: Logger levels are hardcoded (`LL.level = 'debug'` in worker, `'info'` in client) — expose a consumer-configurable option
+- [x] **BUG-04**: `@lalex/promises` is used in `client.ts` but missing from `package.json` dependencies
+- [x] **BUG-05**: Logger levels are hardcoded (`LL.level = 'debug'` in worker, `'info'` in client) — expose a consumer-configurable option
 
 ### Type Safety
 
@@ -80,8 +80,8 @@ Deferred to a future milestone. Tracked but not in current roadmap.
 | BUG-01 | Phase 1 | Pending |
 | BUG-02 | Phase 1 | Pending |
 | BUG-03 | Phase 1 | Pending |
-| BUG-04 | Phase 1 | Pending |
-| BUG-05 | Phase 1 | Pending |
+| BUG-04 | Phase 1 | Complete |
+| BUG-05 | Phase 1 | Complete |
 | TYPE-01 | Phase 1 | Pending |
 | TYPE-02 | Phase 1 | Pending |
 | TEST-01 | Phase 2 | Pending |
