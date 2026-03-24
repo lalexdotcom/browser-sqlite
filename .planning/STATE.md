@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-24)
 Phase: 1 of 4 (Bug Fixes & Type Safety)
 Plan: 0 of 4 in current phase
 Status: Ready to plan
-Last activity: 2026-03-24 — Roadmap initialized
+Last activity: 2026-03-24 - Completed quick task 260324-ebg: Ajoute un système de precommit qui formate et lint le code
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -73,6 +73,12 @@ None yet.
 
 - `@lalex/promises` is missing from `package.json` — BUG-04 must be resolved before any code importing `client.ts` can be tested
 - COOP/COEP headers must be configured on the integration test server — without them `new SharedArrayBuffer()` throws a `SecurityError`
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260324-ebg | Ajoute un système de precommit qui formate et lint le code | 2026-03-24 | fadcccb | [260324-ebg-ajoute-un-syst-me-de-precommit-qui-forma](./quick/260324-ebg-ajoute-un-syst-me-de-precommit-qui-forma/) |
 
 ## Session Continuity
 
