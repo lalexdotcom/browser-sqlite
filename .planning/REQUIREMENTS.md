@@ -17,7 +17,7 @@ Requirements for the initial quality milestone. Each maps to a roadmap phase.
 
 ### Type Safety
 
-- [ ] **TYPE-01**: Author `src/wa-sqlite.d.ts` ambient declarations covering `SQLiteAPI`, VFS classes, and WASM factory functions — removes all `@ts-expect-error` directives in `worker.ts`
+- [x] **TYPE-01**: Author `src/wa-sqlite.d.ts` ambient declarations covering `SQLiteAPI`, VFS classes, and WASM factory functions — removes all `@ts-expect-error` directives in `worker.ts`
 - [x] **TYPE-02**: Clean up commented-out debug code and orphaned `console.log` lambdas in `client.ts` and `worker.ts`
 
 ### Unit Tests
@@ -82,7 +82,7 @@ Deferred to a future milestone. Tracked but not in current roadmap.
 | BUG-03 | Phase 1 | Complete |
 | BUG-04 | Phase 1 | Complete |
 | BUG-05 | Phase 1 | Complete |
-| TYPE-01 | Phase 1 | Pending |
+| TYPE-01 | Phase 1 | Complete |
 | TYPE-02 | Phase 1 | Complete |
 | TEST-01 | Phase 2 | Pending |
 | TEST-02 | Phase 2 | Pending |
