@@ -25,10 +25,44 @@ const DEFAULT_POOL_SIZE = 2;
  * Configuration options for creating a SQLite client.
  */
 export type CreateSQLLiteClientOptions = {
+	/**
+	 * Database file name within the OPFS origin private file system.
+	 * Each unique name maps to a distinct SQLite database file.
+	 * @defaultValue `"SQLite"` prefix + auto-incremented client index
+	 */
 	name?: string;
+
+	/**
+	 * Number of Web Workers spawned in the pool at initialization.
+	 * A larger pool allows more concurrent read operations but increases
+	 * memory consumption and OPFS file handle usage.
+	 * Must be `1` when using `AccessHandlePoolVFS` — any larger value throws at construction time.
+	 * @defaultValue `2`
+	 */
 	poolSize?: number;
+
+	/**
+	 * Virtual File System implementation used for SQLite storage.
+	 * Controls whether data is stored in OPFS, IndexedDB, or memory.
+	 * See the README VFS Selection guide for a comparison.
+	 * @defaultValue `'OPFSPermutedVFS'`
+	 */
 	vfs?: SQLiteVFS;
+
+	/**
+	 * SQLite PRAGMAs applied to each worker's database connection on open.
+	 * Keys are PRAGMA names, values are their string representations.
+	 * Example: `{ journal_mode: 'WAL', synchronous: 'NORMAL' }`.
+	 * If omitted, no PRAGMAs are applied beyond SQLite defaults.
+	 */
 	pragmas?: Record<string, string>;
+
+	/**
+	 * Enable internal debug diagnostics for this client instance.
+	 * When `true`, attaches a diagnostic state object to the returned `SQLiteDB.debug` field.
+	 * Not intended for production use.
+	 * @defaultValue `false`
+	 */
 	debug?: boolean;
 };
 
@@ -77,11 +111,50 @@ export type SQLiteDB = {
 const DEFAULT_VFS = 'OPFSPermutedVFS';
 
 /**
- * Creates a SQLite client with a pool of Web Workers.
+ * Creates a SQLite client backed by a pool of Web Workers, each running
+ * a wa-sqlite instance in a dedicated thread.
  *
- * @param file - Database file path
- * @param clientOptions - Configuration options
- * @returns SQLite database API with read/write/stream/transaction methods
+ * @remarks
+ * **Browser requirements (COOP/COEP):** This function constructs a
+ * `SharedArrayBuffer` for cross-thread worker synchronization. Browsers
+ * require the page to be served with the following HTTP headers:
+ * ```
+ * Cross-Origin-Opener-Policy: same-origin
+ * Cross-Origin-Embedder-Policy: require-corp
+ * ```
+ * Without these headers, `new SharedArrayBuffer()` throws a `SecurityError`
+ * and the pool will never initialize.
+ *
+ * **Worker pool side effect:** Calling this function immediately spawns
+ * `poolSize` Web Worker threads and begins asynchronous database
+ * initialization. Workers become queryable once they emit a `ready` message.
+ *
+ * @param file - SQLite database file name within the OPFS origin.
+ *   Each distinct name corresponds to a separate database file.
+ * @param clientOptions - Optional pool and VFS configuration.
+ *   See {@link CreateSQLLiteClientOptions} for field defaults.
+ * @returns A {@link SQLiteDB} object providing `read`, `write`, `stream`,
+ *   `one`, `transaction`, `bulkWrite`, `output`, and `close` methods.
+ *
+ * @throws {Error} When `vfs` is `'AccessHandlePoolVFS'` and `poolSize` is
+ *   greater than `1`. AccessHandlePoolVFS does not support concurrent access
+ *   handles — set `poolSize: 1` explicitly when using this VFS.
+ *
+ * @example
+ * ```typescript
+ * import { createSQLiteClient } from 'wsqlite';
+ *
+ * const db = createSQLiteClient('myapp.sqlite', {
+ *   poolSize: 3,
+ *   vfs: 'OPFSPermutedVFS',
+ *   pragmas: { journal_mode: 'WAL', synchronous: 'NORMAL' },
+ * });
+ *
+ * const users = await db.read<{ id: number; name: string }>(
+ *   'SELECT id, name FROM users WHERE active = ?',
+ *   [1],
+ * );
+ * ```
  */
 export const createSQLiteClient = ((file: string, clientOptions?: CreateSQLLiteClientOptions) => {
 	const clientIndex = ++clientCount;
