@@ -21,5 +21,5 @@ export const sqlParams = () => {
 };
 
 export const isWriteQuery = (sql: string) => {
-	return /(INSERT|REPLACE|UPDATE|DELETE|CREATE|DROP)\s/gim.test(sql);
+	return /(INSERT|REPLACE|UPDATE|DELETE|CREATE|DROP|PRAGMA|ATTACH|DETACH)\s/gim.test(sql);
 };
