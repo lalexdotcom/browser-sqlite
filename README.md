@@ -1,6 +1,6 @@
 # browser-sqlite
 
-A persistent SQLite database that lives in your browser — yes, for real. Powered by [wa-sqlite](https://github.com/rhashimoto/wa-sqlite) (WebAssembly) with a Web Worker pool for concurrent reads and serial writes.
+A persistent SQLite database that lives in your browser — yes, for real. Powered by [wa-sqlite](https://github.com/rhashimoto/wa-sqlite) (WebAssembly), built for (read) concurrency.
 
 ## Install
 
