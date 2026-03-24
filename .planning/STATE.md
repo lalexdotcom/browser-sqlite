@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Phase complete — ready for verification
-stopped_at: Completed 04-documentation-01-PLAN.md
-last_updated: "2026-03-24T14:29:29.579Z"
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-03-24T14:29:36.905Z"
 progress:
   total_phases: 5
   completed_phases: 4
@@ -92,6 +92,8 @@ Recent decisions affecting current work:
 - [Phase 04-documentation]: Advanced APIs (bulkWrite/output/transaction) listed briefly without deep examples in README (D-09)
 - [Phase 04-documentation]: SQLiteDB type extended with transaction, bulkWrite, output, close, debug for complete public API shape in JSDoc
 - [Phase 04-documentation]: CreateSQLLiteClientOptions existing typo (double-L) left as-is per D-04 surgical-only enrichment
+- [Phase 04-documentation]: State machine narrative placed in @remarks on WorkerOrchestrator — discoverable via IDE hover without reading worker.ts
+- [Phase 04-documentation]: Module-level JSDoc in worker.ts consolidates all state transitions; inline comments provide site-specific context
 
 ### Roadmap Evolution
 
@@ -117,6 +119,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-24T14:29:19.484Z
-Stopped at: Completed 04-documentation-01-PLAN.md
+Last session: 2026-03-24T14:29:36.902Z
+Stopped at: Completed 04-02-PLAN.md
 Resume file: None

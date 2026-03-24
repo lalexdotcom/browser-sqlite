@@ -46,7 +46,7 @@ Requirements for the initial quality milestone. Each maps to a roadmap phase.
 - [x] **DOC-01**: JSDoc on `createSQLiteClient` — parameters, side effects (worker pool spawn), browser requirements (COOP/COEP), `@throws`, `@example`
 - [x] **DOC-02**: JSDoc on `SQLiteDB` interface methods — `read`, `write`, `stream`, `one`, `close` — concurrency semantics, streaming memory implications, AbortSignal behavior
 - [x] **DOC-03**: JSDoc on `CreateSQLiteClientOptions` — each field, its default, what happens if omitted
-- [ ] **DOC-04**: Inline comments on `WorkerOrchestrator` and worker lifecycle state machine
+- [x] **DOC-04**: Inline comments on `WorkerOrchestrator` and worker lifecycle state machine
 - [x] **DOC-05**: `README.md` for library consumers — browser requirements (COOP/COEP) first, then install, VFS selection guide, usage examples, limitations
 
 ## v2 Requirements
@@ -102,7 +102,7 @@ Deferred to a future milestone. Tracked but not in current roadmap.
 | DOC-01 | Phase 4 | Complete |
 | DOC-02 | Phase 4 | Complete |
 | DOC-03 | Phase 4 | Complete |
-| DOC-04 | Phase 4 | Pending |
+| DOC-04 | Phase 4 | Complete |
 | DOC-05 | Phase 4 | Complete |
 
 **Coverage:**
