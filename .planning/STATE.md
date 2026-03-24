@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed quick task 260324-ebg (pre-commit hook)
-last_updated: "2026-03-24T10:21:49.270Z"
+stopped_at: Completed quick task 260324-ekv (add tests to pre-commit hook)
+last_updated: "2026-03-24T10:35:00.000Z"
 last_activity: 2026-03-24 — Roadmap initialized
 progress:
   total_phases: 4
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-24)
 Phase: 1 of 4 (Bug Fixes & Type Safety)
 Plan: 0 of 4 in current phase
 Status: Ready to plan
-Last activity: 2026-03-24 - Completed quick task 260324-ebg: Ajoute un système de precommit qui formate et lint le code
+Last activity: 2026-03-24 - Completed quick task 260324-ekv: Rajoute l'appel des tests au precommit
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -79,9 +79,10 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260324-ebg | Ajoute un système de precommit qui formate et lint le code | 2026-03-24 | fadcccb | [260324-ebg-ajoute-un-syst-me-de-precommit-qui-forma](./quick/260324-ebg-ajoute-un-syst-me-de-precommit-qui-forma/) |
+| 260324-ekv | Rajoute l'appel des tests au precommit | 2026-03-24 | 7ff3bb4 | [260324-ekv-rajoute-l-appel-des-tests-au-precommit](./quick/260324-ekv-rajoute-l-appel-des-tests-au-precommit/) |
 
 ## Session Continuity
 
-Last session: 2026-03-24T10:21:49.263Z
-Stopped at: Completed quick task 260324-ebg (pre-commit hook)
+Last session: 2026-03-24T10:35:00.000Z
+Stopped at: Completed quick task 260324-ekv (add tests to pre-commit hook)
 Resume file: None
