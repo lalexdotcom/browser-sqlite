@@ -35,6 +35,7 @@ Reliable, low-memory SQLite access in the browser with correct concurrent read /
 - [x] Integration tests in real browser — Playwright-based tests for `createSQLiteClient`, worker pool, streaming, abort (Validated in Phase 3: Integration Tests Browser)
 - [x] JSDoc comments on public API — `createSQLiteClient`, `SQLiteDB` methods, key types (Validated in Phase 4: Documentation)
 - [x] README for library consumers — install, configure, use, VFS selection guide (Validated in Phase 4: Documentation)
+- [x] `@lalex/console` optional — fallback to native `console` methods when package absent (Validated in Phase 5: Optional Console)
 
 ### Out of Scope
 
@@ -49,7 +50,7 @@ Reliable, low-memory SQLite access in the browser with correct concurrent read /
 - **SharedArrayBuffer** requires `Cross-Origin-Isolation` headers (`COOP`/`COEP`) in the browser. OPFS requires modern Chrome/Edge. JSPI is Chrome-only (experimental).
 - **Build**: Rslib (outputs ESM/CJS/UMD). **Test runner**: Rstest with `@rstest/adapter-rslib`.
 - **Known bugs** at project start: pragma condition inverted, logger levels hardcoded, test suite imports non-existent function.
-- **@lalex/console** and **@lalex/promises** are private/pre-release packages — treat as stable for this milestone.
+- **@lalex/console** is now an `optionalDependency` — `src/logger.ts` dynamically imports it and falls back to a native `console` shim if absent. **@lalex/promises** remains a hard dependency.
 
 ## Constraints
 
@@ -85,4 +86,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-24 after Phase 4 completion*
+*Last updated: 2026-03-24 after Phase 5 completion*
