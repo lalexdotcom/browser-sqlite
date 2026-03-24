@@ -36,6 +36,14 @@ const pluginCrossOriginIsolation = {
               'Cross-Origin-Embedder-Policy': 'require-corp',
             },
           },
+          dev: {
+            // Disable browser error forwarding to suppress "window is not
+            // defined" noise from rsbuild's HMR client running inside Web
+            // Worker bundles. The HMR client calls window.location.reload()
+            // without a typeof-window guard. Test failures are still reported
+            // through rstest's own reporting mechanism.
+            browserLogs: false,
+          },
         }),
     );
   },
