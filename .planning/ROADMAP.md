@@ -75,10 +75,12 @@ Plans:
 5. An aborted query via `AbortSignal` does not deliver further results and the worker returns to READY
 6. A SQL error (syntax error, missing table) rejects the promise with a descriptive error message
 
-**Plans:**
-1. **Browser test infrastructure** — Install Playwright (Chromium), create `rstest.browser.config.ts` with COOP/COEP header plugin, create `tests/browser/` directory with IDB/OPFS cleanup helpers
-2. **Core query tests** — Write browser tests for `createSQLiteClient` init, `db.read()`, `db.write()`, `db.stream()` chunking, and `db.one()` (INT-02 through INT-06)
-3. **Concurrency and error tests** — Write browser tests for parallel reads, serialized writes, `AbortSignal` cancellation, and SQL error handling (INT-07 through INT-10)
+**Plans:** 3 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Infrastructure browser : installer @rstest/browser + playwright, créer rstest.browser.config.ts avec COOP/COEP, créer tests/browser/helpers.ts (INT-01)
+- [ ] 03-02-PLAN.md — Tests requêtes de base : init.test.ts et queries.test.ts (INT-02 à INT-06)
+- [ ] 03-03-PLAN.md — Tests concurrence et erreurs : concurrency.test.ts (INT-07 à INT-10)
 
 ---
 
