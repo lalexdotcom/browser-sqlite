@@ -1,17 +1,17 @@
 {
-	"name": "web-sqlite",
+	"name": "browser-sqlite",
 	"version": "1.0.0-rc.1",
 	"description": "Browser SQLite with concurrent read / serial write isolation, backed by Web Workers and wa-sqlite",
 	"author": "LAlex",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/lalexdotcom/web-sqlite.git"
+		"url": "git+https://github.com/lalexdotcom/browser-sqlite.git"
 	},
 	"bugs": {
-		"url": "https://github.com/lalexdotcom/web-sqlite/issues"
+		"url": "https://github.com/lalexdotcom/browser-sqlite/issues"
 	},
-	"homepage": "https://github.com/lalexdotcom/web-sqlite#readme",
+	"homepage": "https://github.com/lalexdotcom/browser-sqlite#readme",
 	"keywords": [
 		"sqlite",
 		"browser",

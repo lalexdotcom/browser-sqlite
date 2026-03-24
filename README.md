@@ -1,12 +1,12 @@
-# web-sqlite
+# browser-sqlite
 
 Browser SQLite with concurrent read / serial write isolation, backed by Web Workers and [wa-sqlite](https://github.com/rhashimoto/wa-sqlite).
 
 ## Requirements
 
-> **These HTTP headers are mandatory.** Without them, `new SharedArrayBuffer()` throws a `SecurityError` and web-sqlite cannot initialize.
+> **These HTTP headers are mandatory.** Without them, `new SharedArrayBuffer()` throws a `SecurityError` and browser-sqlite cannot initialize.
 
-web-sqlite uses a `SharedArrayBuffer` to coordinate worker pool state. Browsers require [cross-origin isolation](https://developer.mozilla.org/en-US/docs/Web/API/crossOriginIsolated) to create `SharedArrayBuffer` instances. Your page must be served with:
+browser-sqlite uses a `SharedArrayBuffer` to coordinate worker pool state. Browsers require [cross-origin isolation](https://developer.mozilla.org/en-US/docs/Web/API/crossOriginIsolated) to create `SharedArrayBuffer` instances. Your page must be served with:
 
 ```http
 Cross-Origin-Opener-Policy: same-origin
@@ -44,16 +44,16 @@ server: {
 ## Install
 
 ```bash
-npm install web-sqlite
+npm install browser-sqlite
 # or
-pnpm add web-sqlite
+pnpm add browser-sqlite
 ```
 
-web-sqlite is a browser-only library. It requires a bundler that supports Web Workers with dynamic imports (Rsbuild, webpack 5, Vite 3+).
+browser-sqlite is a browser-only library. It requires a bundler that supports Web Workers with dynamic imports (Rsbuild, webpack 5, Vite 3+).
 
 ## VFS Selection
 
-web-sqlite delegates storage to a wa-sqlite Virtual File System (VFS). Choose based on browser support and storage requirements:
+browser-sqlite delegates storage to a wa-sqlite Virtual File System (VFS). Choose based on browser support and storage requirements:
 
 | VFS | Storage | Constraint | When to use |
 |-----|---------|------------|-------------|
@@ -72,7 +72,7 @@ For a detailed VFS comparison, see the [wa-sqlite VFS comparison](https://github
 ### Initialize
 
 ```typescript
-import { createSQLiteClient } from 'web-sqlite';
+import { createSQLiteClient } from 'browser-sqlite';
 
 const db = createSQLiteClient('myapp.sqlite', {
   poolSize: 2,                    // number of worker threads (default: 2)
@@ -156,7 +156,7 @@ Terminates all worker threads. Does **not** delete OPFS files — see Known Limi
 
 ## Known Limitations
 
-- **Browser-only.** web-sqlite uses Web Workers, OPFS, and `SharedArrayBuffer`. There is no Node.js support.
+- **Browser-only.** browser-sqlite uses Web Workers, OPFS, and `SharedArrayBuffer`. There is no Node.js support.
 - **OPFS files persist after `close()`.** `db.close()` terminates workers but does not delete database files from the Origin Private File System. Files persist across page loads. To delete OPFS files, use the [`navigator.storage.getDirectory()`](https://developer.mozilla.org/en-US/docs/Web/API/StorageManager/getDirectory) API directly.
 - **`AccessHandlePoolVFS` requires `poolSize: 1`.** Passing `poolSize > 1` with this VFS throws synchronously at client creation time.
 - **`SharedArrayBuffer` requires cross-origin isolation.** See the [Requirements](#requirements) section. Omitting COOP/COEP headers causes a `SecurityError` at runtime with no fallback.
