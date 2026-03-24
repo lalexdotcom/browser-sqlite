@@ -12,7 +12,12 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const readline = require('readline');
-const { output, error, safeReadFile, reapStaleTempFiles } = require('./core.cjs');
+const {
+  output,
+  error,
+  safeReadFile,
+  reapStaleTempFiles,
+} = require('./core.cjs');
 
 // ─── Session I/O Helpers ──────────────────────────────────────────────────────
 
@@ -50,7 +55,7 @@ function readSessionIndex(projectDirPath) {
     const raw = fs.readFileSync(indexPath, 'utf-8');
     const parsed = JSON.parse(raw);
     const entries = new Map();
-    for (const entry of (parsed.entries || [])) {
+    for (const entry of parsed.entries || []) {
       if (entry.sessionId) {
         entries.set(entry.sessionId, entry);
       }
@@ -80,12 +85,20 @@ function formatBytes(bytes) {
 
 function formatProjectTable(projects) {
   let out = '';
-  out += 'Project'.padEnd(35) + 'Sessions'.padEnd(10) + 'Size'.padEnd(10) + 'Last Active\n';
+  out +=
+    'Project'.padEnd(35) +
+    'Sessions'.padEnd(10) +
+    'Size'.padEnd(10) +
+    'Last Active\n';
   out += '-'.repeat(75) + '\n';
   for (const p of projects) {
     const name = p.name.length > 33 ? p.name.substring(0, 30) + '...' : p.name;
-    out += name.padEnd(35) + String(p.sessionCount).padEnd(10) +
-           p.totalSizeHuman.padEnd(10) + p.lastActive + '\n';
+    out +=
+      name.padEnd(35) +
+      String(p.sessionCount).padEnd(10) +
+      p.totalSizeHuman.padEnd(10) +
+      p.lastActive +
+      '\n';
   }
   return out;
 }
@@ -95,9 +108,16 @@ function formatSessionTable(sessions) {
   out += '  Session ID'.padEnd(42) + 'Size'.padEnd(10) + 'Modified\n';
   out += '  ' + '-'.repeat(70) + '\n';
   for (const s of sessions) {
-    const id = s.sessionId.length > 38 ? s.sessionId.substring(0, 35) + '...' : s.sessionId;
-    out += '  ' + id.padEnd(40) + formatBytes(s.size).padEnd(10) +
-           new Date(s.modified).toISOString().replace('T', ' ').substring(0, 19) + '\n';
+    const id =
+      s.sessionId.length > 38
+        ? s.sessionId.substring(0, 35) + '...'
+        : s.sessionId;
+    out +=
+      '  ' +
+      id.padEnd(40) +
+      formatBytes(s.size).padEnd(10) +
+      new Date(s.modified).toISOString().replace('T', ' ').substring(0, 19) +
+      '\n';
   }
   return out;
 }
@@ -160,14 +180,18 @@ async function cmdScanSessions(overridePath, options, raw) {
   const sessionsDir = getSessionsDir(overridePath);
   if (!sessionsDir) {
     const searchedPath = overridePath || '~/.claude/projects';
-    error(`No Claude Code sessions found at ${searchedPath}.${overridePath ? '' : ' Is Claude Code installed?'}`);
+    error(
+      `No Claude Code sessions found at ${searchedPath}.${overridePath ? '' : ' Is Claude Code installed?'}`,
+    );
   }
 
-  process.stderr.write('Reading your session history (read-only, nothing is modified or sent anywhere)...\n');
+  process.stderr.write(
+    'Reading your session history (read-only, nothing is modified or sent anywhere)...\n',
+  );
 
   let projectDirs;
   try {
-    projectDirs = fs.readdirSync(sessionsDir).filter(entry => {
+    projectDirs = fs.readdirSync(sessionsDir).filter((entry) => {
       const fullPath = path.join(sessionsDir, entry);
       try {
         return fs.statSync(fullPath).isDirectory();
@@ -190,7 +214,9 @@ async function cmdScanSessions(overridePath, options, raw) {
     const projectName = getProjectName(dirName, indexData);
 
     if (indexData.entries.size === 0 && !options.json) {
-      process.stderr.write(`Index not found for ${projectName}, scanning directory...\n`);
+      process.stderr.write(
+        `Index not found for ${projectName}, scanning directory...\n`,
+      );
     }
 
     const totalSize = sessions.reduce((sum, s) => sum + s.size, 0);
@@ -209,7 +235,7 @@ async function cmdScanSessions(overridePath, options, raw) {
     };
 
     if (options.verbose) {
-      project.sessions = sessions.map(s => {
+      project.sessions = sessions.map((s) => {
         const indexed = indexData.entries.get(s.sessionId);
         const session = {
           sessionId: s.sessionId,
@@ -219,7 +245,8 @@ async function cmdScanSessions(overridePath, options, raw) {
         };
         if (indexed) {
           if (indexed.summary) session.summary = indexed.summary;
-          if (indexed.messageCount !== undefined) session.messageCount = indexed.messageCount;
+          if (indexed.messageCount !== undefined)
+            session.messageCount = indexed.messageCount;
           if (indexed.created) session.created = indexed.created;
         }
         return session;
@@ -252,12 +279,14 @@ async function cmdExtractMessages(projectArg, options, raw, overridePath) {
   const sessionsDir = getSessionsDir(overridePath);
   if (!sessionsDir) {
     const searchedPath = overridePath || '~/.claude/projects';
-    error(`No Claude Code sessions found at ${searchedPath}.${overridePath ? '' : ' Is Claude Code installed?'}`);
+    error(
+      `No Claude Code sessions found at ${searchedPath}.${overridePath ? '' : ' Is Claude Code installed?'}`,
+    );
   }
 
   let projectDirs;
   try {
-    projectDirs = fs.readdirSync(sessionsDir).filter(entry => {
+    projectDirs = fs.readdirSync(sessionsDir).filter((entry) => {
       const fullPath = path.join(sessionsDir, entry);
       try {
         return fs.statSync(fullPath).isDirectory();
@@ -281,7 +310,9 @@ async function cmdExtractMessages(projectArg, options, raw, overridePath) {
 
   if (!matchedDir) {
     const lowerArg = projectArg.toLowerCase();
-    const matches = projectDirs.filter(d => d.toLowerCase().includes(lowerArg));
+    const matches = projectDirs.filter((d) =>
+      d.toLowerCase().includes(lowerArg),
+    );
     if (matches.length === 1) {
       matchedDir = matches[0];
     } else if (matches.length > 1) {
@@ -297,35 +328,43 @@ async function cmdExtractMessages(projectArg, options, raw, overridePath) {
         matchedDir = exactNameMatches[0].dirName;
         matchedName = exactNameMatches[0].name;
       } else {
-        const names = matches.map(d => {
+        const names = matches.map((d) => {
           const idx = readSessionIndex(path.join(sessionsDir, d));
           return `  - ${getProjectName(d, idx)} (${d})`;
         });
-        error(`Multiple projects match "${projectArg}":\n${names.join('\n')}\nBe more specific.`);
+        error(
+          `Multiple projects match "${projectArg}":\n${names.join('\n')}\nBe more specific.`,
+        );
       }
     }
   }
 
   if (!matchedDir) {
-    const available = projectDirs.map(d => {
+    const available = projectDirs.map((d) => {
       const idx = readSessionIndex(path.join(sessionsDir, d));
       return `  - ${getProjectName(d, idx)}`;
     });
-    error(`No project matching "${projectArg}". Available projects:\n${available.join('\n')}`);
+    error(
+      `No project matching "${projectArg}". Available projects:\n${available.join('\n')}`,
+    );
   }
 
   const projectPath = path.join(sessionsDir, matchedDir);
   const indexData = readSessionIndex(projectPath);
   const projectName = matchedName || getProjectName(matchedDir, indexData);
 
-  process.stderr.write('Reading your session history (read-only, nothing is modified or sent anywhere)...\n');
+  process.stderr.write(
+    'Reading your session history (read-only, nothing is modified or sent anywhere)...\n',
+  );
 
   let sessions = scanProjectDir(projectPath);
 
   if (options.sessionId) {
-    sessions = sessions.filter(s => s.sessionId === options.sessionId);
+    sessions = sessions.filter((s) => s.sessionId === options.sessionId);
     if (sessions.length === 0) {
-      error(`Session "${options.sessionId}" not found in project "${projectName}".`);
+      error(
+        `Session "${options.sessionId}" not found in project "${projectName}".`,
+      );
     }
   }
 
@@ -352,7 +391,11 @@ async function cmdExtractMessages(projectArg, options, raw, overridePath) {
 
     try {
       const remaining = batchLimit - messagesExtracted;
-      const msgs = await streamExtractMessages(session.filePath, isGenuineUserMessage, remaining);
+      const msgs = await streamExtractMessages(
+        session.filePath,
+        isGenuineUserMessage,
+        remaining,
+      );
       for (const msg of msgs) {
         fs.appendFileSync(outputPath, JSON.stringify(msg) + '\n');
         messagesExtracted++;
@@ -363,7 +406,9 @@ async function cmdExtractMessages(projectArg, options, raw, overridePath) {
       sessionsProcessed++;
     } catch (err) {
       sessionsSkipped++;
-      process.stderr.write(`\nWarning: Skipped session ${session.sessionId}: ${err.message}\n`);
+      process.stderr.write(
+        `\nWarning: Skipped session ${session.sessionId}: ${err.message}\n`,
+      );
     }
   }
 
@@ -393,17 +438,21 @@ async function cmdProfileSample(overridePath, options, raw) {
   const sessionsDir = getSessionsDir(overridePath);
   if (!sessionsDir) {
     const searchedPath = overridePath || '~/.claude/projects';
-    error(`No Claude Code sessions found at ${searchedPath}.${overridePath ? '' : ' Is Claude Code installed?'}`);
+    error(
+      `No Claude Code sessions found at ${searchedPath}.${overridePath ? '' : ' Is Claude Code installed?'}`,
+    );
   }
 
-  process.stderr.write('Reading your session history (read-only, nothing is modified or sent anywhere)...\n');
+  process.stderr.write(
+    'Reading your session history (read-only, nothing is modified or sent anywhere)...\n',
+  );
 
   const limit = options.limit || 150;
   const maxChars = options.maxChars || 500;
 
   let projectDirs;
   try {
-    projectDirs = fs.readdirSync(sessionsDir).filter(entry => {
+    projectDirs = fs.readdirSync(sessionsDir).filter((entry) => {
       const fullPath = path.join(sessionsDir, entry);
       try {
         return fs.statSync(fullPath).isDirectory();
@@ -427,7 +476,13 @@ async function cmdProfileSample(overridePath, options, raw) {
     const indexData = readSessionIndex(projectPath);
     const projectName = getProjectName(dirName, indexData);
     const lastActive = sessions[0].modified;
-    projectMeta.push({ dirName, projectPath, sessions, projectName, lastActive });
+    projectMeta.push({
+      dirName,
+      projectPath,
+      sessions,
+      projectName,
+      lastActive,
+    });
   }
 
   projectMeta.sort((a, b) => b.lastActive - a.lastActive);
@@ -437,7 +492,8 @@ async function cmdProfileSample(overridePath, options, raw) {
     error('No projects with sessions found.');
   }
 
-  const perProjectCap = options.maxPerProject || Math.max(5, Math.floor(limit / projectCount));
+  const perProjectCap =
+    options.maxPerProject || Math.max(5, Math.floor(limit / projectCount));
 
   const recencyThreshold = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const allMessages = [];
@@ -461,7 +517,11 @@ async function cmdProfileSample(overridePath, options, raw) {
       const remaining = Math.min(perSessionMax, limit - allMessages.length);
 
       try {
-        const msgs = await streamExtractMessages(session.filePath, isGenuineUserMessage, remaining);
+        const msgs = await streamExtractMessages(
+          session.filePath,
+          isGenuineUserMessage,
+          remaining,
+        );
         let sessionUsed = false;
 
         for (const msg of msgs) {
@@ -473,11 +533,14 @@ async function cmdProfileSample(overridePath, options, raw) {
             continue;
           }
 
-          const lines = content.split('\n').filter(l => l.trim().length > 0);
+          const lines = content.split('\n').filter((l) => l.trim().length > 0);
           if (lines.length > 3) {
             const logPattern = /^\[?(DEBUG|INFO|WARN|ERROR|LOG)\]?/i;
             const timestampPattern = /^\d{4}-\d{2}-\d{2}/;
-            const logLines = lines.filter(l => logPattern.test(l.trim()) || timestampPattern.test(l.trim()));
+            const logLines = lines.filter(
+              (l) =>
+                logPattern.test(l.trim()) || timestampPattern.test(l.trim()),
+            );
             if (logLines.length / lines.length > 0.8) {
               skippedContextDumps++;
               continue;

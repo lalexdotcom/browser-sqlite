@@ -56,7 +56,7 @@ export type CreateSQLiteClientOptions = {
 /**
  * Query execution options.
  */
-type SQLiteQueryOptions<T extends Record<string, unknown>> = {
+type SQLiteQueryOptions<_T extends Record<string, unknown>> = {
   id?: string;
   chunkSize?: number;
   signal?: AbortSignal;

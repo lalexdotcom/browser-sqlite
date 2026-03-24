@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@rstest/core';
+import { describe, expect, it } from '@rstest/core';
 import { createTestClient } from './helpers';
 
 /**
@@ -32,7 +32,9 @@ describe('createSQLiteClient (INT-02)', () => {
       try {
         const root = await navigator.storage.getDirectory();
         await root.removeEntry(dbName, { recursive: true });
-      } catch { /* ok */ }
+      } catch {
+        /* ok */
+      }
     };
 
     // afterEach n'est pas disponible ici directement — nettoyer manuellement
@@ -53,7 +55,9 @@ describe('createSQLiteClient (INT-02)', () => {
     await db.write('INSERT INTO init_test VALUES (1)');
     await db.write('INSERT INTO init_test VALUES (2)');
 
-    const rows = await db.read<{ id: number }>('SELECT id FROM init_test ORDER BY id');
+    const rows = await db.read<{ id: number }>(
+      'SELECT id FROM init_test ORDER BY id',
+    );
     expect(rows).toHaveLength(2);
     expect(rows[0].id).toBe(1);
     expect(rows[1].id).toBe(2);

@@ -5,7 +5,25 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const { loadConfig, resolveModelInternal, findPhaseInternal, getRoadmapPhaseInternal, pathExistsInternal, generateSlugInternal, getMilestoneInfo, getMilestonePhaseFilter, stripShippedMilestones, extractCurrentMilestone, normalizePhaseName, planningPaths, planningDir, planningRoot, toPosixPath, output, error } = require('./core.cjs');
+const {
+  loadConfig,
+  resolveModelInternal,
+  findPhaseInternal,
+  getRoadmapPhaseInternal,
+  pathExistsInternal,
+  generateSlugInternal,
+  getMilestoneInfo,
+  getMilestonePhaseFilter,
+  stripShippedMilestones,
+  extractCurrentMilestone,
+  normalizePhaseName,
+  planningPaths,
+  planningDir,
+  planningRoot,
+  toPosixPath,
+  output,
+  error,
+} = require('./core.cjs');
 
 function getLatestCompletedMilestone(cwd) {
   const milestonesPath = path.join(planningRoot(cwd), 'MILESTONES.md');
@@ -53,7 +71,12 @@ function cmdInitExecutePhase(cwd, phase, raw) {
       directory: null,
       phase_number: roadmapPhase.phase_number,
       phase_name: phaseName,
-      phase_slug: phaseName ? phaseName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') : null,
+      phase_slug: phaseName
+        ? phaseName
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+        : null,
       plans: [],
       summaries: [],
       incomplete_plans: [],
@@ -63,11 +86,19 @@ function cmdInitExecutePhase(cwd, phase, raw) {
       has_reviews: false,
     };
   }
-  const reqMatch = roadmapPhase?.section?.match(/^\*\*Requirements\*\*:[^\S\n]*([^\n]*)$/m);
+  const reqMatch = roadmapPhase?.section?.match(
+    /^\*\*Requirements\*\*:[^\S\n]*([^\n]*)$/m,
+  );
   const reqExtracted = reqMatch
-    ? reqMatch[1].replace(/[\[\]]/g, '').split(',').map(s => s.trim()).filter(Boolean).join(', ')
+    ? reqMatch[1]
+        .replace(/[\[\]]/g, '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join(', ')
     : null;
-  const phase_req_ids = (reqExtracted && reqExtracted !== 'TBD') ? reqExtracted : null;
+  const phase_req_ids =
+    reqExtracted && reqExtracted !== 'TBD' ? reqExtracted : null;
 
   const result = {
     // Models
@@ -100,15 +131,19 @@ function cmdInitExecutePhase(cwd, phase, raw) {
     incomplete_count: phaseInfo?.incomplete_plans?.length || 0,
 
     // Branch name (pre-computed)
-    branch_name: config.branching_strategy === 'phase' && phaseInfo
-      ? config.phase_branch_template
-          .replace('{phase}', phaseInfo.phase_number)
-          .replace('{slug}', phaseInfo.phase_slug || 'phase')
-      : config.branching_strategy === 'milestone'
-        ? config.milestone_branch_template
-            .replace('{milestone}', milestone.version)
-            .replace('{slug}', generateSlugInternal(milestone.name) || 'milestone')
-        : null,
+    branch_name:
+      config.branching_strategy === 'phase' && phaseInfo
+        ? config.phase_branch_template
+            .replace('{phase}', phaseInfo.phase_number)
+            .replace('{slug}', phaseInfo.phase_slug || 'phase')
+        : config.branching_strategy === 'milestone'
+          ? config.milestone_branch_template
+              .replace('{milestone}', milestone.version)
+              .replace(
+                '{slug}',
+                generateSlugInternal(milestone.name) || 'milestone',
+              )
+          : null,
 
     // Milestone info
     milestone_version: milestone.version,
@@ -120,9 +155,15 @@ function cmdInitExecutePhase(cwd, phase, raw) {
     roadmap_exists: fs.existsSync(path.join(planningDir(cwd), 'ROADMAP.md')),
     config_exists: fs.existsSync(path.join(planningDir(cwd), 'config.json')),
     // File paths
-    state_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'STATE.md'))),
-    roadmap_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'ROADMAP.md'))),
-    config_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'config.json'))),
+    state_path: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'STATE.md')),
+    ),
+    roadmap_path: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'ROADMAP.md')),
+    ),
+    config_path: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'config.json')),
+    ),
   };
 
   output(withProjectRoot(cwd, result), raw);
@@ -146,7 +187,12 @@ function cmdInitPlanPhase(cwd, phase, raw) {
       directory: null,
       phase_number: roadmapPhase.phase_number,
       phase_name: phaseName,
-      phase_slug: phaseName ? phaseName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') : null,
+      phase_slug: phaseName
+        ? phaseName
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+        : null,
       plans: [],
       summaries: [],
       incomplete_plans: [],
@@ -156,11 +202,19 @@ function cmdInitPlanPhase(cwd, phase, raw) {
       has_reviews: false,
     };
   }
-  const reqMatch = roadmapPhase?.section?.match(/^\*\*Requirements\*\*:[^\S\n]*([^\n]*)$/m);
+  const reqMatch = roadmapPhase?.section?.match(
+    /^\*\*Requirements\*\*:[^\S\n]*([^\n]*)$/m,
+  );
   const reqExtracted = reqMatch
-    ? reqMatch[1].replace(/[\[\]]/g, '').split(',').map(s => s.trim()).filter(Boolean).join(', ')
+    ? reqMatch[1]
+        .replace(/[\[\]]/g, '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join(', ')
     : null;
-  const phase_req_ids = (reqExtracted && reqExtracted !== 'TBD') ? reqExtracted : null;
+  const phase_req_ids =
+    reqExtracted && reqExtracted !== 'TBD' ? reqExtracted : null;
 
   const result = {
     // Models
@@ -181,7 +235,9 @@ function cmdInitPlanPhase(cwd, phase, raw) {
     phase_number: phaseInfo?.phase_number || null,
     phase_name: phaseInfo?.phase_name || null,
     phase_slug: phaseInfo?.phase_slug || null,
-    padded_phase: phaseInfo?.phase_number ? normalizePhaseName(phaseInfo.phase_number) : null,
+    padded_phase: phaseInfo?.phase_number
+      ? normalizePhaseName(phaseInfo.phase_number)
+      : null,
     phase_req_ids,
 
     // Existing artifacts
@@ -196,9 +252,15 @@ function cmdInitPlanPhase(cwd, phase, raw) {
     roadmap_exists: fs.existsSync(path.join(planningDir(cwd), 'ROADMAP.md')),
 
     // File paths
-    state_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'STATE.md'))),
-    roadmap_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'ROADMAP.md'))),
-    requirements_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'REQUIREMENTS.md'))),
+    state_path: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'STATE.md')),
+    ),
+    roadmap_path: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'ROADMAP.md')),
+    ),
+    requirements_path: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'REQUIREMENTS.md')),
+    ),
   };
 
   if (phaseInfo?.directory) {
@@ -206,27 +268,47 @@ function cmdInitPlanPhase(cwd, phase, raw) {
     const phaseDirFull = path.join(cwd, phaseInfo.directory);
     try {
       const files = fs.readdirSync(phaseDirFull);
-      const contextFile = files.find(f => f.endsWith('-CONTEXT.md') || f === 'CONTEXT.md');
+      const contextFile = files.find(
+        (f) => f.endsWith('-CONTEXT.md') || f === 'CONTEXT.md',
+      );
       if (contextFile) {
-        result.context_path = toPosixPath(path.join(phaseInfo.directory, contextFile));
+        result.context_path = toPosixPath(
+          path.join(phaseInfo.directory, contextFile),
+        );
       }
-      const researchFile = files.find(f => f.endsWith('-RESEARCH.md') || f === 'RESEARCH.md');
+      const researchFile = files.find(
+        (f) => f.endsWith('-RESEARCH.md') || f === 'RESEARCH.md',
+      );
       if (researchFile) {
-        result.research_path = toPosixPath(path.join(phaseInfo.directory, researchFile));
+        result.research_path = toPosixPath(
+          path.join(phaseInfo.directory, researchFile),
+        );
       }
-      const verificationFile = files.find(f => f.endsWith('-VERIFICATION.md') || f === 'VERIFICATION.md');
+      const verificationFile = files.find(
+        (f) => f.endsWith('-VERIFICATION.md') || f === 'VERIFICATION.md',
+      );
       if (verificationFile) {
-        result.verification_path = toPosixPath(path.join(phaseInfo.directory, verificationFile));
+        result.verification_path = toPosixPath(
+          path.join(phaseInfo.directory, verificationFile),
+        );
       }
-      const uatFile = files.find(f => f.endsWith('-UAT.md') || f === 'UAT.md');
+      const uatFile = files.find(
+        (f) => f.endsWith('-UAT.md') || f === 'UAT.md',
+      );
       if (uatFile) {
         result.uat_path = toPosixPath(path.join(phaseInfo.directory, uatFile));
       }
-      const reviewsFile = files.find(f => f.endsWith('-REVIEWS.md') || f === 'REVIEWS.md');
+      const reviewsFile = files.find(
+        (f) => f.endsWith('-REVIEWS.md') || f === 'REVIEWS.md',
+      );
       if (reviewsFile) {
-        result.reviews_path = toPosixPath(path.join(phaseInfo.directory, reviewsFile));
+        result.reviews_path = toPosixPath(
+          path.join(phaseInfo.directory, reviewsFile),
+        );
       }
-    } catch { /* intentionally empty */ }
+    } catch {
+      /* intentionally empty */
+    }
   }
 
   output(withProjectRoot(cwd, result), raw);
@@ -238,11 +320,15 @@ function cmdInitNewProject(cwd, raw) {
   // Detect Brave Search API key availability
   const homedir = require('os').homedir();
   const braveKeyFile = path.join(homedir, '.gsd', 'brave_api_key');
-  const hasBraveSearch = !!(process.env.BRAVE_API_KEY || fs.existsSync(braveKeyFile));
+  const hasBraveSearch = !!(
+    process.env.BRAVE_API_KEY || fs.existsSync(braveKeyFile)
+  );
 
   // Detect Firecrawl API key availability
   const firecrawlKeyFile = path.join(homedir, '.gsd', 'firecrawl_api_key');
-  const hasFirecrawl = !!(process.env.FIRECRAWL_API_KEY || fs.existsSync(firecrawlKeyFile));
+  const hasFirecrawl = !!(
+    process.env.FIRECRAWL_API_KEY || fs.existsSync(firecrawlKeyFile)
+  );
 
   // Detect Exa API key availability
   const exaKeyFile = path.join(homedir, '.gsd', 'exa_api_key');
@@ -252,14 +338,36 @@ function cmdInitNewProject(cwd, raw) {
   let hasCode = false;
   let hasPackageFile = false;
   try {
-    const codeExtensions = new Set(['.ts', '.js', '.py', '.go', '.rs', '.swift', '.java']);
-    const skipDirs = new Set(['node_modules', '.git', '.planning', '.claude', '__pycache__', 'target', 'dist', 'build']);
+    const codeExtensions = new Set([
+      '.ts',
+      '.js',
+      '.py',
+      '.go',
+      '.rs',
+      '.swift',
+      '.java',
+    ]);
+    const skipDirs = new Set([
+      'node_modules',
+      '.git',
+      '.planning',
+      '.claude',
+      '__pycache__',
+      'target',
+      'dist',
+      'build',
+    ]);
     function findCodeFiles(dir, depth) {
       if (depth > 3) return false;
       let entries;
-      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return false;
+      }
       for (const entry of entries) {
-        if (entry.isFile() && codeExtensions.has(path.extname(entry.name))) return true;
+        if (entry.isFile() && codeExtensions.has(path.extname(entry.name)))
+          return true;
         if (entry.isDirectory() && !skipDirs.has(entry.name)) {
           if (findCodeFiles(path.join(dir, entry.name), depth + 1)) return true;
         }
@@ -267,13 +375,16 @@ function cmdInitNewProject(cwd, raw) {
       return false;
     }
     hasCode = findCodeFiles(cwd, 0);
-  } catch { /* intentionally empty — best-effort detection */ }
+  } catch {
+    /* intentionally empty — best-effort detection */
+  }
 
-  hasPackageFile = pathExistsInternal(cwd, 'package.json') ||
-                   pathExistsInternal(cwd, 'requirements.txt') ||
-                   pathExistsInternal(cwd, 'Cargo.toml') ||
-                   pathExistsInternal(cwd, 'go.mod') ||
-                   pathExistsInternal(cwd, 'Package.swift');
+  hasPackageFile =
+    pathExistsInternal(cwd, 'package.json') ||
+    pathExistsInternal(cwd, 'requirements.txt') ||
+    pathExistsInternal(cwd, 'Cargo.toml') ||
+    pathExistsInternal(cwd, 'go.mod') ||
+    pathExistsInternal(cwd, 'Package.swift');
 
   const result = {
     // Models
@@ -293,7 +404,9 @@ function cmdInitNewProject(cwd, raw) {
     has_existing_code: hasCode,
     has_package_file: hasPackageFile,
     is_brownfield: hasCode || hasPackageFile,
-    needs_codebase_map: (hasCode || hasPackageFile) && !pathExistsInternal(cwd, '.planning/codebase'),
+    needs_codebase_map:
+      (hasCode || hasPackageFile) &&
+      !pathExistsInternal(cwd, '.planning/codebase'),
 
     // Git state
     has_git: pathExistsInternal(cwd, '.git'),
@@ -319,9 +432,9 @@ function cmdInitNewMilestone(cwd, raw) {
 
   try {
     if (fs.existsSync(phasesDir)) {
-      phaseDirCount = fs.readdirSync(phasesDir, { withFileTypes: true })
-        .filter(entry => entry.isDirectory())
-        .length;
+      phaseDirCount = fs
+        .readdirSync(phasesDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory()).length;
     }
   } catch {}
 
@@ -341,7 +454,18 @@ function cmdInitNewMilestone(cwd, raw) {
     latest_completed_milestone: latestCompleted?.version || null,
     latest_completed_milestone_name: latestCompleted?.name || null,
     phase_dir_count: phaseDirCount,
-    phase_archive_path: latestCompleted ? toPosixPath(path.relative(cwd, path.join(planningRoot(cwd), 'milestones', `${latestCompleted.version}-phases`))) : null,
+    phase_archive_path: latestCompleted
+      ? toPosixPath(
+          path.relative(
+            cwd,
+            path.join(
+              planningRoot(cwd),
+              'milestones',
+              `${latestCompleted.version}-phases`,
+            ),
+          ),
+        )
+      : null,
 
     // File existence
     project_exists: pathExistsInternal(cwd, '.planning/PROJECT.md'),
@@ -350,8 +474,12 @@ function cmdInitNewMilestone(cwd, raw) {
 
     // File paths
     project_path: '.planning/PROJECT.md',
-    roadmap_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'ROADMAP.md'))),
-    state_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'STATE.md'))),
+    roadmap_path: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'ROADMAP.md')),
+    ),
+    state_path: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'STATE.md')),
+    ),
   };
 
   output(withProjectRoot(cwd, result), raw);
@@ -360,7 +488,9 @@ function cmdInitNewMilestone(cwd, raw) {
 function cmdInitQuick(cwd, description, raw) {
   const config = loadConfig(cwd);
   const now = new Date();
-  const slug = description ? generateSlugInternal(description)?.substring(0, 40) : null;
+  const slug = description
+    ? generateSlugInternal(description)?.substring(0, 40)
+    : null;
 
   // Generate collision-resistant quick task ID: YYMMDD-xxx
   // xxx = 2-second precision blocks since midnight, encoded as 3-char Base36 (lowercase)
@@ -370,7 +500,8 @@ function cmdInitQuick(cwd, description, raw) {
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
   const dateStr = yy + mm + dd;
-  const secondsSinceMidnight = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+  const secondsSinceMidnight =
+    now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
   const timeBlocks = Math.floor(secondsSinceMidnight / 2);
   const timeEncoded = timeBlocks.toString(36).padStart(3, '0');
   const quickId = dateStr + '-' + timeEncoded;
@@ -409,7 +540,6 @@ function cmdInitQuick(cwd, description, raw) {
     // File existence
     roadmap_exists: fs.existsSync(path.join(planningDir(cwd), 'ROADMAP.md')),
     planning_exists: fs.existsSync(planningRoot(cwd)),
-
   };
 
   output(withProjectRoot(cwd, result), raw);
@@ -421,8 +551,15 @@ function cmdInitResume(cwd, raw) {
   // Check for interrupted agent
   let interruptedAgentId = null;
   try {
-    interruptedAgentId = fs.readFileSync(path.join(planningRoot(cwd), 'current-agent-id.txt'), 'utf-8').trim();
-  } catch { /* intentionally empty */ }
+    interruptedAgentId = fs
+      .readFileSync(
+        path.join(planningRoot(cwd), 'current-agent-id.txt'),
+        'utf-8',
+      )
+      .trim();
+  } catch {
+    /* intentionally empty */
+  }
 
   const result = {
     // File existence
@@ -432,8 +569,12 @@ function cmdInitResume(cwd, raw) {
     planning_exists: fs.existsSync(planningRoot(cwd)),
 
     // File paths
-    state_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'STATE.md'))),
-    roadmap_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'ROADMAP.md'))),
+    state_path: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'STATE.md')),
+    ),
+    roadmap_path: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'ROADMAP.md')),
+    ),
     project_path: '.planning/PROJECT.md',
 
     // Agent state
@@ -465,7 +606,12 @@ function cmdInitVerifyWork(cwd, phase, raw) {
         directory: null,
         phase_number: roadmapPhase.phase_number,
         phase_name: phaseName,
-        phase_slug: phaseName ? phaseName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') : null,
+        phase_slug: phaseName
+          ? phaseName
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-+|-+$/g, '')
+          : null,
         plans: [],
         summaries: [],
         incomplete_plans: [],
@@ -513,7 +659,12 @@ function cmdInitPhaseOp(cwd, phase, raw) {
         directory: null,
         phase_number: roadmapPhase.phase_number,
         phase_name: phaseName,
-        phase_slug: phaseName ? phaseName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') : null,
+        phase_slug: phaseName
+          ? phaseName
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-+|-+$/g, '')
+          : null,
         plans: [],
         summaries: [],
         incomplete_plans: [],
@@ -534,7 +685,12 @@ function cmdInitPhaseOp(cwd, phase, raw) {
         directory: null,
         phase_number: roadmapPhase.phase_number,
         phase_name: phaseName,
-        phase_slug: phaseName ? phaseName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') : null,
+        phase_slug: phaseName
+          ? phaseName
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-+|-+$/g, '')
+          : null,
         plans: [],
         summaries: [],
         incomplete_plans: [],
@@ -558,7 +714,9 @@ function cmdInitPhaseOp(cwd, phase, raw) {
     phase_number: phaseInfo?.phase_number || null,
     phase_name: phaseInfo?.phase_name || null,
     phase_slug: phaseInfo?.phase_slug || null,
-    padded_phase: phaseInfo?.phase_number ? normalizePhaseName(phaseInfo.phase_number) : null,
+    padded_phase: phaseInfo?.phase_number
+      ? normalizePhaseName(phaseInfo.phase_number)
+      : null,
 
     // Existing artifacts
     has_research: phaseInfo?.has_research || false,
@@ -573,36 +731,62 @@ function cmdInitPhaseOp(cwd, phase, raw) {
     planning_exists: fs.existsSync(planningDir(cwd)),
 
     // File paths
-    state_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'STATE.md'))),
-    roadmap_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'ROADMAP.md'))),
-    requirements_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'REQUIREMENTS.md'))),
+    state_path: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'STATE.md')),
+    ),
+    roadmap_path: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'ROADMAP.md')),
+    ),
+    requirements_path: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'REQUIREMENTS.md')),
+    ),
   };
 
   if (phaseInfo?.directory) {
     const phaseDirFull = path.join(cwd, phaseInfo.directory);
     try {
       const files = fs.readdirSync(phaseDirFull);
-      const contextFile = files.find(f => f.endsWith('-CONTEXT.md') || f === 'CONTEXT.md');
+      const contextFile = files.find(
+        (f) => f.endsWith('-CONTEXT.md') || f === 'CONTEXT.md',
+      );
       if (contextFile) {
-        result.context_path = toPosixPath(path.join(phaseInfo.directory, contextFile));
+        result.context_path = toPosixPath(
+          path.join(phaseInfo.directory, contextFile),
+        );
       }
-      const researchFile = files.find(f => f.endsWith('-RESEARCH.md') || f === 'RESEARCH.md');
+      const researchFile = files.find(
+        (f) => f.endsWith('-RESEARCH.md') || f === 'RESEARCH.md',
+      );
       if (researchFile) {
-        result.research_path = toPosixPath(path.join(phaseInfo.directory, researchFile));
+        result.research_path = toPosixPath(
+          path.join(phaseInfo.directory, researchFile),
+        );
       }
-      const verificationFile = files.find(f => f.endsWith('-VERIFICATION.md') || f === 'VERIFICATION.md');
+      const verificationFile = files.find(
+        (f) => f.endsWith('-VERIFICATION.md') || f === 'VERIFICATION.md',
+      );
       if (verificationFile) {
-        result.verification_path = toPosixPath(path.join(phaseInfo.directory, verificationFile));
+        result.verification_path = toPosixPath(
+          path.join(phaseInfo.directory, verificationFile),
+        );
       }
-      const uatFile = files.find(f => f.endsWith('-UAT.md') || f === 'UAT.md');
+      const uatFile = files.find(
+        (f) => f.endsWith('-UAT.md') || f === 'UAT.md',
+      );
       if (uatFile) {
         result.uat_path = toPosixPath(path.join(phaseInfo.directory, uatFile));
       }
-      const reviewsFile = files.find(f => f.endsWith('-REVIEWS.md') || f === 'REVIEWS.md');
+      const reviewsFile = files.find(
+        (f) => f.endsWith('-REVIEWS.md') || f === 'REVIEWS.md',
+      );
       if (reviewsFile) {
-        result.reviews_path = toPosixPath(path.join(phaseInfo.directory, reviewsFile));
+        result.reviews_path = toPosixPath(
+          path.join(phaseInfo.directory, reviewsFile),
+        );
       }
-    } catch { /* intentionally empty */ }
+    } catch {
+      /* intentionally empty */
+    }
   }
 
   output(withProjectRoot(cwd, result), raw);
@@ -618,7 +802,7 @@ function cmdInitTodos(cwd, area, raw) {
   const todos = [];
 
   try {
-    const files = fs.readdirSync(pendingDir).filter(f => f.endsWith('.md'));
+    const files = fs.readdirSync(pendingDir).filter((f) => f.endsWith('.md'));
     for (const file of files) {
       try {
         const content = fs.readFileSync(path.join(pendingDir, file), 'utf-8');
@@ -635,11 +819,20 @@ function cmdInitTodos(cwd, area, raw) {
           created: createdMatch ? createdMatch[1].trim() : 'unknown',
           title: titleMatch ? titleMatch[1].trim() : 'Untitled',
           area: todoArea,
-          path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'todos', 'pending', file))),
+          path: toPosixPath(
+            path.relative(
+              cwd,
+              path.join(planningDir(cwd), 'todos', 'pending', file),
+            ),
+          ),
         });
-      } catch { /* intentionally empty */ }
+      } catch {
+        /* intentionally empty */
+      }
     }
-  } catch { /* intentionally empty */ }
+  } catch {
+    /* intentionally empty */
+  }
 
   const result = {
     // Config
@@ -655,13 +848,19 @@ function cmdInitTodos(cwd, area, raw) {
     area_filter: area || null,
 
     // Paths
-    pending_dir: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'todos', 'pending'))),
-    completed_dir: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'todos', 'completed'))),
+    pending_dir: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'todos', 'pending')),
+    ),
+    completed_dir: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'todos', 'completed')),
+    ),
 
     // File existence
     planning_exists: fs.existsSync(planningDir(cwd)),
     todos_dir_exists: fs.existsSync(path.join(planningDir(cwd), 'todos')),
-    pending_dir_exists: fs.existsSync(path.join(planningDir(cwd), 'todos', 'pending')),
+    pending_dir_exists: fs.existsSync(
+      path.join(planningDir(cwd), 'todos', 'pending'),
+    ),
   };
 
   output(withProjectRoot(cwd, result), raw);
@@ -677,27 +876,36 @@ function cmdInitMilestoneOp(cwd, raw) {
   const phasesDir = path.join(planningDir(cwd), 'phases');
   try {
     const entries = fs.readdirSync(phasesDir, { withFileTypes: true });
-    const dirs = entries.filter(e => e.isDirectory()).map(e => e.name);
+    const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
     phaseCount = dirs.length;
 
     // Count phases with summaries (completed)
     for (const dir of dirs) {
       try {
         const phaseFiles = fs.readdirSync(path.join(phasesDir, dir));
-        const hasSummary = phaseFiles.some(f => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md');
+        const hasSummary = phaseFiles.some(
+          (f) => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md',
+        );
         if (hasSummary) completedPhases++;
-      } catch { /* intentionally empty */ }
+      } catch {
+        /* intentionally empty */
+      }
     }
-  } catch { /* intentionally empty */ }
+  } catch {
+    /* intentionally empty */
+  }
 
   // Check archive
   const archiveDir = path.join(planningRoot(cwd), 'archive');
   let archivedMilestones = [];
   try {
-    archivedMilestones = fs.readdirSync(archiveDir, { withFileTypes: true })
-      .filter(e => e.isDirectory())
-      .map(e => e.name);
-  } catch { /* intentionally empty */ }
+    archivedMilestones = fs
+      .readdirSync(archiveDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    /* intentionally empty */
+  }
 
   const result = {
     // Config
@@ -735,8 +943,10 @@ function cmdInitMapCodebase(cwd, raw) {
   const codebaseDir = path.join(planningRoot(cwd), 'codebase');
   let existingMaps = [];
   try {
-    existingMaps = fs.readdirSync(codebaseDir).filter(f => f.endsWith('.md'));
-  } catch { /* intentionally empty */ }
+    existingMaps = fs.readdirSync(codebaseDir).filter((f) => f.endsWith('.md'));
+  } catch {
+    /* intentionally empty */
+  }
 
   const result = {
     // Models
@@ -781,7 +991,8 @@ function cmdInitManager(cwd, raw) {
   const phasesDir = paths.phases;
   const isDirInMilestone = getMilestonePhaseFilter(cwd);
 
-  const phasePattern = /#{2,4}\s*Phase\s+(\d+[A-Z]?(?:\.\d+)*)\s*:\s*([^\n]+)/gi;
+  const phasePattern =
+    /#{2,4}\s*Phase\s+(\d+[A-Z]?(?:\.\d+)*)\s*:\s*([^\n]+)/gi;
   const phases = [];
   let match;
 
@@ -792,13 +1003,17 @@ function cmdInitManager(cwd, raw) {
     const sectionStart = match.index;
     const restOfContent = content.slice(sectionStart);
     const nextHeader = restOfContent.match(/\n#{2,4}\s+Phase\s+\d/i);
-    const sectionEnd = nextHeader ? sectionStart + nextHeader.index : content.length;
+    const sectionEnd = nextHeader
+      ? sectionStart + nextHeader.index
+      : content.length;
     const section = content.slice(sectionStart, sectionEnd);
 
     const goalMatch = section.match(/\*\*Goal(?::\*\*|\*\*:)\s*([^\n]+)/i);
     const goal = goalMatch ? goalMatch[1].trim() : null;
 
-    const dependsMatch = section.match(/\*\*Depends on(?::\*\*|\*\*:)\s*([^\n]+)/i);
+    const dependsMatch = section.match(
+      /\*\*Depends on(?::\*\*|\*\*:)\s*([^\n]+)/i,
+    );
     const depends_on = dependsMatch ? dependsMatch[1].trim() : null;
 
     const normalized = normalizePhaseName(phaseNum);
@@ -812,16 +1027,29 @@ function cmdInitManager(cwd, raw) {
 
     try {
       const entries = fs.readdirSync(phasesDir, { withFileTypes: true });
-      const dirs = entries.filter(e => e.isDirectory()).map(e => e.name).filter(isDirInMilestone);
-      const dirMatch = dirs.find(d => d.startsWith(normalized + '-') || d === normalized);
+      const dirs = entries
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name)
+        .filter(isDirInMilestone);
+      const dirMatch = dirs.find(
+        (d) => d.startsWith(normalized + '-') || d === normalized,
+      );
 
       if (dirMatch) {
         const fullDir = path.join(phasesDir, dirMatch);
         const phaseFiles = fs.readdirSync(fullDir);
-        planCount = phaseFiles.filter(f => f.endsWith('-PLAN.md') || f === 'PLAN.md').length;
-        summaryCount = phaseFiles.filter(f => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md').length;
-        hasContext = phaseFiles.some(f => f.endsWith('-CONTEXT.md') || f === 'CONTEXT.md');
-        hasResearch = phaseFiles.some(f => f.endsWith('-RESEARCH.md') || f === 'RESEARCH.md');
+        planCount = phaseFiles.filter(
+          (f) => f.endsWith('-PLAN.md') || f === 'PLAN.md',
+        ).length;
+        summaryCount = phaseFiles.filter(
+          (f) => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md',
+        ).length;
+        hasContext = phaseFiles.some(
+          (f) => f.endsWith('-CONTEXT.md') || f === 'CONTEXT.md',
+        );
+        hasResearch = phaseFiles.some(
+          (f) => f.endsWith('-RESEARCH.md') || f === 'RESEARCH.md',
+        );
 
         if (summaryCount >= planCount && planCount > 0) diskStatus = 'complete';
         else if (summaryCount > 0) diskStatus = 'partial';
@@ -837,17 +1065,24 @@ function cmdInitManager(cwd, raw) {
           try {
             const stat = fs.statSync(path.join(fullDir, f));
             if (stat.mtimeMs > newestMtime) newestMtime = stat.mtimeMs;
-          } catch { /* intentionally empty */ }
+          } catch {
+            /* intentionally empty */
+          }
         }
         if (newestMtime > 0) {
           lastActivity = new Date(newestMtime).toISOString();
-          isActive = (now - newestMtime) < 300000; // 5 minutes
+          isActive = now - newestMtime < 300000; // 5 minutes
         }
       }
-    } catch { /* intentionally empty */ }
+    } catch {
+      /* intentionally empty */
+    }
 
     // Check ROADMAP checkbox status
-    const checkboxPattern = new RegExp(`-\\s*\\[(x| )\\]\\s*.*Phase\\s+${phaseNum.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[:\\s]`, 'i');
+    const checkboxPattern = new RegExp(
+      `-\\s*\\[(x| )\\]\\s*.*Phase\\s+${phaseNum.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[:\\s]`,
+      'i',
+    );
     const checkboxMatch = content.match(checkboxPattern);
     const roadmapComplete = checkboxMatch ? checkboxMatch[1] === 'x' : false;
     if (roadmapComplete && diskStatus !== 'complete') {
@@ -881,29 +1116,35 @@ function cmdInitManager(cwd, raw) {
   }
 
   // Dependency satisfaction: check if all depends_on phases are complete
-  const completedNums = new Set(phases.filter(p => p.disk_status === 'complete').map(p => p.number));
+  const completedNums = new Set(
+    phases.filter((p) => p.disk_status === 'complete').map((p) => p.number),
+  );
   for (const phase of phases) {
     if (!phase.depends_on || /^none$/i.test(phase.depends_on.trim())) {
       phase.deps_satisfied = true;
     } else {
       // Parse "Phase 1, Phase 3" or "1, 3" formats
       const depNums = phase.depends_on.match(/\d+(?:\.\d+)*/g) || [];
-      phase.deps_satisfied = depNums.every(n => completedNums.has(n));
+      phase.deps_satisfied = depNums.every((n) => completedNums.has(n));
       phase.dep_phases = depNums;
     }
   }
 
   // Compact dependency display for dashboard
   for (const phase of phases) {
-    phase.deps_display = (phase.dep_phases && phase.dep_phases.length > 0)
-      ? phase.dep_phases.join(',')
-      : '—';
+    phase.deps_display =
+      phase.dep_phases && phase.dep_phases.length > 0
+        ? phase.dep_phases.join(',')
+        : '—';
   }
 
   // Sliding window: discuss is sequential — only the first undiscussed phase is available
   let foundNextToDiscuss = false;
   for (const phase of phases) {
-    if (!foundNextToDiscuss && (phase.disk_status === 'empty' || phase.disk_status === 'no_directory')) {
+    if (
+      !foundNextToDiscuss &&
+      (phase.disk_status === 'empty' || phase.disk_status === 'no_directory')
+    ) {
       phase.is_next_to_discuss = true;
       foundNextToDiscuss = true;
     } else {
@@ -918,7 +1159,9 @@ function cmdInitManager(cwd, raw) {
     if (fs.existsSync(waitingPath)) {
       waitingSignal = JSON.parse(fs.readFileSync(waitingPath, 'utf-8'));
     }
-  } catch { /* intentionally empty */ }
+  } catch {
+    /* intentionally empty */
+  }
 
   // Compute recommended actions (execute > plan > discuss)
   const recommendedActions = [];
@@ -933,7 +1176,10 @@ function cmdInitManager(cwd, raw) {
         reason: `${phase.plan_count} plans ready, dependencies met`,
         command: `/gsd-execute-phase ${phase.number}`,
       });
-    } else if (phase.disk_status === 'discussed' || phase.disk_status === 'researched') {
+    } else if (
+      phase.disk_status === 'discussed' ||
+      phase.disk_status === 'researched'
+    ) {
       recommendedActions.push({
         phase: phase.number,
         phase_name: phase.name,
@@ -941,7 +1187,10 @@ function cmdInitManager(cwd, raw) {
         reason: 'Context gathered, ready for planning',
         command: `/gsd-plan-phase ${phase.number}`,
       });
-    } else if ((phase.disk_status === 'empty' || phase.disk_status === 'no_directory') && phase.is_next_to_discuss) {
+    } else if (
+      (phase.disk_status === 'empty' || phase.disk_status === 'no_directory') &&
+      phase.is_next_to_discuss
+    ) {
       recommendedActions.push({
         phase: phase.number,
         phase_name: phase.name,
@@ -954,7 +1203,7 @@ function cmdInitManager(cwd, raw) {
 
   // Filter recommendations: no parallel execute/plan unless phases are independent
   // Two phases are "independent" if neither depends on the other (directly or transitively)
-  const phaseMap = new Map(phases.map(p => [p.number, p]));
+  const phaseMap = new Map(phases.map((p) => [p.number, p]));
 
   function reaches(from, to, visited = new Set()) {
     if (visited.has(from)) return false;
@@ -962,7 +1211,7 @@ function cmdInitManager(cwd, raw) {
     const p = phaseMap.get(from);
     if (!p || !p.dep_phases || p.dep_phases.length === 0) return false;
     if (p.dep_phases.includes(to)) return true;
-    return p.dep_phases.some(dep => reaches(dep, to, visited));
+    return p.dep_phases.some((dep) => reaches(dep, to, visited));
   }
 
   function hasDepRelationship(numA, numB) {
@@ -970,34 +1219,45 @@ function cmdInitManager(cwd, raw) {
   }
 
   // Detect phases with active work (file modified in last 5 min)
-  const activeExecuting = phases.filter(p =>
-    p.disk_status === 'partial' ||
-    (p.disk_status === 'planned' && p.is_active)
+  const activeExecuting = phases.filter(
+    (p) =>
+      p.disk_status === 'partial' ||
+      (p.disk_status === 'planned' && p.is_active),
   );
-  const activePlanning = phases.filter(p =>
-    p.is_active && (p.disk_status === 'discussed' || p.disk_status === 'researched')
+  const activePlanning = phases.filter(
+    (p) =>
+      p.is_active &&
+      (p.disk_status === 'discussed' || p.disk_status === 'researched'),
   );
 
-  const filteredActions = recommendedActions.filter(action => {
+  const filteredActions = recommendedActions.filter((action) => {
     if (action.action === 'execute' && activeExecuting.length > 0) {
       // Only allow if independent of ALL actively-executing phases
-      return activeExecuting.every(active => !hasDepRelationship(action.phase, active.number));
+      return activeExecuting.every(
+        (active) => !hasDepRelationship(action.phase, active.number),
+      );
     }
     if (action.action === 'plan' && activePlanning.length > 0) {
       // Only allow if independent of ALL actively-planning phases
-      return activePlanning.every(active => !hasDepRelationship(action.phase, active.number));
+      return activePlanning.every(
+        (active) => !hasDepRelationship(action.phase, active.number),
+      );
     }
     return true;
   });
 
-  const completedCount = phases.filter(p => p.disk_status === 'complete').length;
+  const completedCount = phases.filter(
+    (p) => p.disk_status === 'complete',
+  ).length;
   const result = {
     milestone_version: milestone.version,
     milestone_name: milestone.name,
     phases,
     phase_count: phases.length,
     completed_count: completedCount,
-    in_progress_count: phases.filter(p => ['partial', 'planned', 'discussed', 'researched'].includes(p.disk_status)).length,
+    in_progress_count: phases.filter((p) =>
+      ['partial', 'planned', 'discussed', 'researched'].includes(p.disk_status),
+    ).length,
     recommended_actions: filteredActions,
     waiting_signal: waitingSignal,
     all_complete: completedCount === phases.length && phases.length > 0,
@@ -1024,22 +1284,28 @@ function cmdInitProgress(cwd, raw) {
   const roadmapPhaseNames = new Map();
   try {
     const roadmapContent = extractCurrentMilestone(
-      fs.readFileSync(path.join(planningDir(cwd), 'ROADMAP.md'), 'utf-8'), cwd
+      fs.readFileSync(path.join(planningDir(cwd), 'ROADMAP.md'), 'utf-8'),
+      cwd,
     );
-    const headingPattern = /#{2,4}\s*Phase\s+(\d+[A-Z]?(?:\.\d+)*)\s*:\s*([^\n]+)/gi;
+    const headingPattern =
+      /#{2,4}\s*Phase\s+(\d+[A-Z]?(?:\.\d+)*)\s*:\s*([^\n]+)/gi;
     let hm;
     while ((hm = headingPattern.exec(roadmapContent)) !== null) {
       roadmapPhaseNums.add(hm[1]);
       roadmapPhaseNames.set(hm[1], hm[2].replace(/\(INSERTED\)/i, '').trim());
     }
-  } catch { /* intentionally empty */ }
+  } catch {
+    /* intentionally empty */
+  }
 
   const isDirInMilestone = getMilestonePhaseFilter(cwd);
   const seenPhaseNums = new Set();
 
   try {
     const entries = fs.readdirSync(phasesDir, { withFileTypes: true });
-    const dirs = entries.filter(e => e.isDirectory()).map(e => e.name)
+    const dirs = entries
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
       .filter(isDirInMilestone)
       .sort((a, b) => {
         const pa = a.match(/^(\d+[A-Z]?(?:\.\d+)*)/i);
@@ -1057,18 +1323,31 @@ function cmdInitProgress(cwd, raw) {
       const phasePath = path.join(phasesDir, dir);
       const phaseFiles = fs.readdirSync(phasePath);
 
-      const plans = phaseFiles.filter(f => f.endsWith('-PLAN.md') || f === 'PLAN.md');
-      const summaries = phaseFiles.filter(f => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md');
-      const hasResearch = phaseFiles.some(f => f.endsWith('-RESEARCH.md') || f === 'RESEARCH.md');
+      const plans = phaseFiles.filter(
+        (f) => f.endsWith('-PLAN.md') || f === 'PLAN.md',
+      );
+      const summaries = phaseFiles.filter(
+        (f) => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md',
+      );
+      const hasResearch = phaseFiles.some(
+        (f) => f.endsWith('-RESEARCH.md') || f === 'RESEARCH.md',
+      );
 
-      const status = summaries.length >= plans.length && plans.length > 0 ? 'complete' :
-                     plans.length > 0 ? 'in_progress' :
-                     hasResearch ? 'researched' : 'pending';
+      const status =
+        summaries.length >= plans.length && plans.length > 0
+          ? 'complete'
+          : plans.length > 0
+            ? 'in_progress'
+            : hasResearch
+              ? 'researched'
+              : 'pending';
 
       const phaseInfo = {
         number: phaseNumber,
         name: phaseName,
-        directory: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'phases', dir))),
+        directory: toPosixPath(
+          path.relative(cwd, path.join(planningDir(cwd), 'phases', dir)),
+        ),
         status,
         plan_count: plans.length,
         summary_count: summaries.length,
@@ -1078,14 +1357,19 @@ function cmdInitProgress(cwd, raw) {
       phases.push(phaseInfo);
 
       // Find current (first incomplete with plans) and next (first pending)
-      if (!currentPhase && (status === 'in_progress' || status === 'researched')) {
+      if (
+        !currentPhase &&
+        (status === 'in_progress' || status === 'researched')
+      ) {
         currentPhase = phaseInfo;
       }
       if (!nextPhase && status === 'pending') {
         nextPhase = phaseInfo;
       }
     }
-  } catch { /* intentionally empty */ }
+  } catch {
+    /* intentionally empty */
+  }
 
   // Add phases defined in ROADMAP but not yet scaffolded to disk
   for (const [num, name] of roadmapPhaseNames) {
@@ -1093,7 +1377,10 @@ function cmdInitProgress(cwd, raw) {
     if (!seenPhaseNums.has(stripped)) {
       const phaseInfo = {
         number: num,
-        name: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''),
+        name: name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, ''),
         directory: null,
         status: 'not_started',
         plan_count: 0,
@@ -1113,10 +1400,15 @@ function cmdInitProgress(cwd, raw) {
   // Check for paused work
   let pausedAt = null;
   try {
-    const state = fs.readFileSync(path.join(planningDir(cwd), 'STATE.md'), 'utf-8');
+    const state = fs.readFileSync(
+      path.join(planningDir(cwd), 'STATE.md'),
+      'utf-8',
+    );
     const pauseMatch = state.match(/\*\*Paused At:\*\*\s*(.+)/);
     if (pauseMatch) pausedAt = pauseMatch[1].trim();
-  } catch { /* intentionally empty */ }
+  } catch {
+    /* intentionally empty */
+  }
 
   const result = {
     // Models
@@ -1133,8 +1425,8 @@ function cmdInitProgress(cwd, raw) {
     // Phase overview
     phases,
     phase_count: phases.length,
-    completed_count: phases.filter(p => p.status === 'complete').length,
-    in_progress_count: phases.filter(p => p.status === 'in_progress').length,
+    completed_count: phases.filter((p) => p.status === 'complete').length,
+    in_progress_count: phases.filter((p) => p.status === 'in_progress').length,
 
     // Current state
     current_phase: currentPhase,
@@ -1147,10 +1439,16 @@ function cmdInitProgress(cwd, raw) {
     roadmap_exists: fs.existsSync(path.join(planningDir(cwd), 'ROADMAP.md')),
     state_exists: fs.existsSync(path.join(planningDir(cwd), 'STATE.md')),
     // File paths
-    state_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'STATE.md'))),
-    roadmap_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'ROADMAP.md'))),
+    state_path: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'STATE.md')),
+    ),
+    roadmap_path: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'ROADMAP.md')),
+    ),
     project_path: '.planning/PROJECT.md',
-    config_path: toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'config.json'))),
+    config_path: toPosixPath(
+      path.relative(cwd, path.join(planningDir(cwd), 'config.json')),
+    ),
   };
 
   output(withProjectRoot(cwd, result), raw);
@@ -1163,7 +1461,11 @@ function cmdInitProgress(cwd, raw) {
 function detectChildRepos(dir) {
   const repos = [];
   let entries;
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return repos; }
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return repos;
+  }
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     if (entry.name.startsWith('.')) continue;
@@ -1172,10 +1474,20 @@ function detectChildRepos(dir) {
     if (fs.existsSync(gitDir)) {
       let hasUncommitted = false;
       try {
-        const status = execSync('git status --porcelain', { cwd: fullPath, encoding: 'utf8', timeout: 5000 });
+        const status = execSync('git status --porcelain', {
+          cwd: fullPath,
+          encoding: 'utf8',
+          timeout: 5000,
+        });
         hasUncommitted = status.trim().length > 0;
-      } catch { /* best-effort */ }
-      repos.push({ name: entry.name, path: fullPath, has_uncommitted: hasUncommitted });
+      } catch {
+        /* best-effort */
+      }
+      repos.push({
+        name: entry.name,
+        path: fullPath,
+        has_uncommitted: hasUncommitted,
+      });
     }
   }
   return repos;
@@ -1191,9 +1503,15 @@ function cmdInitNewWorkspace(cwd, raw) {
   // Check if git worktree is available
   let worktreeAvailable = false;
   try {
-    execSync('git --version', { encoding: 'utf8', timeout: 5000, stdio: 'pipe' });
+    execSync('git --version', {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: 'pipe',
+    });
     worktreeAvailable = true;
-  } catch { /* no git at all */ }
+  } catch {
+    /* no git at all */
+  }
 
   const result = {
     default_workspace_base: defaultBase,
@@ -1214,7 +1532,11 @@ function cmdInitListWorkspaces(cwd, raw) {
   const workspaces = [];
   if (fs.existsSync(defaultBase)) {
     let entries;
-    try { entries = fs.readdirSync(defaultBase, { withFileTypes: true }); } catch { entries = []; }
+    try {
+      entries = fs.readdirSync(defaultBase, { withFileTypes: true });
+    } catch {
+      entries = [];
+    }
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const wsPath = path.join(defaultBase, entry.name);
@@ -1229,9 +1551,16 @@ function cmdInitListWorkspaces(cwd, raw) {
         const strategyMatch = manifest.match(/^Strategy:\s*(.+)$/m);
         if (strategyMatch) strategy = strategyMatch[1].trim();
         // Count table rows (lines starting with |, excluding header and separator)
-        const tableRows = manifest.split('\n').filter(l => l.match(/^\|\s*\w/) && !l.includes('Repo') && !l.includes('---'));
+        const tableRows = manifest
+          .split('\n')
+          .filter(
+            (l) =>
+              l.match(/^\|\s*\w/) && !l.includes('Repo') && !l.includes('---'),
+          );
         repoCount = tableRows.length;
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
       hasProject = fs.existsSync(path.join(wsPath, '.planning', 'PROJECT.md'));
 
       workspaces.push({
@@ -1280,12 +1609,21 @@ function cmdInitRemoveWorkspace(cwd, name, raw) {
       // Parse table rows for repo names and source paths
       const lines = manifest.split('\n');
       for (const line of lines) {
-        const match = line.match(/^\|\s*(\S+)\s*\|\s*(\S+)\s*\|\s*(\S+)\s*\|\s*(\S+)\s*\|$/);
+        const match = line.match(
+          /^\|\s*(\S+)\s*\|\s*(\S+)\s*\|\s*(\S+)\s*\|\s*(\S+)\s*\|$/,
+        );
         if (match && match[1] !== 'Repo' && !match[1].includes('---')) {
-          repos.push({ name: match[1], source: match[2], branch: match[3], strategy: match[4] });
+          repos.push({
+            name: match[1],
+            source: match[2],
+            branch: match[3],
+            strategy: match[4],
+          });
         }
       }
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 
   // Check for uncommitted changes in workspace repos
@@ -1294,11 +1632,18 @@ function cmdInitRemoveWorkspace(cwd, name, raw) {
     const repoPath = path.join(wsPath, repo.name);
     if (!fs.existsSync(repoPath)) continue;
     try {
-      const status = execSync('git status --porcelain', { cwd: repoPath, encoding: 'utf8', timeout: 5000, stdio: 'pipe' });
+      const status = execSync('git status --porcelain', {
+        cwd: repoPath,
+        encoding: 'utf8',
+        timeout: 5000,
+        stdio: 'pipe',
+      });
       if (status.trim().length > 0) {
         dirtyRepos.push(repo.name);
       }
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 
   const result = {

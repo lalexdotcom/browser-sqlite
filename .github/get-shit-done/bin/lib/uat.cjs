@@ -7,7 +7,13 @@
 
 const fs = require('fs');
 const path = require('path');
-const { output, error, getMilestonePhaseFilter, planningDir, toPosixPath } = require('./core.cjs');
+const {
+  output,
+  error,
+  getMilestonePhaseFilter,
+  planningDir,
+  toPosixPath,
+} = require('./core.cjs');
 const { extractFrontmatter } = require('./frontmatter.cjs');
 
 function cmdAuditUat(cwd, raw) {
@@ -20,9 +26,10 @@ function cmdAuditUat(cwd, raw) {
   const results = [];
 
   // Scan all phase directories
-  const dirs = fs.readdirSync(phasesDir, { withFileTypes: true })
-    .filter(e => e.isDirectory())
-    .map(e => e.name)
+  const dirs = fs
+    .readdirSync(phasesDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
     .filter(isDirInMilestone)
     .sort();
 
@@ -33,7 +40,9 @@ function cmdAuditUat(cwd, raw) {
     const files = fs.readdirSync(phaseDir);
 
     // Process UAT files
-    for (const file of files.filter(f => f.includes('-UAT') && f.endsWith('.md'))) {
+    for (const file of files.filter(
+      (f) => f.includes('-UAT') && f.endsWith('.md'),
+    )) {
       const content = fs.readFileSync(path.join(phaseDir, file), 'utf-8');
       const items = parseUatItems(content);
       if (items.length > 0) {
@@ -43,14 +52,16 @@ function cmdAuditUat(cwd, raw) {
           file,
           file_path: toPosixPath(path.relative(cwd, path.join(phaseDir, file))),
           type: 'uat',
-          status: (extractFrontmatter(content).status || 'unknown'),
+          status: extractFrontmatter(content).status || 'unknown',
           items,
         });
       }
     }
 
     // Process VERIFICATION files
-    for (const file of files.filter(f => f.includes('-VERIFICATION') && f.endsWith('.md'))) {
+    for (const file of files.filter(
+      (f) => f.includes('-VERIFICATION') && f.endsWith('.md'),
+    )) {
       const content = fs.readFileSync(path.join(phaseDir, file), 'utf-8');
       const status = extractFrontmatter(content).status || 'unknown';
       if (status === 'human_needed' || status === 'gaps_found') {
@@ -60,7 +71,9 @@ function cmdAuditUat(cwd, raw) {
             phase: phaseNum,
             phase_dir: dir,
             file,
-            file_path: toPosixPath(path.relative(cwd, path.join(phaseDir, file))),
+            file_path: toPosixPath(
+              path.relative(cwd, path.join(phaseDir, file)),
+            ),
             type: 'verification',
             status,
             items,
@@ -93,7 +106,8 @@ function cmdAuditUat(cwd, raw) {
 function parseUatItems(content) {
   const items = [];
   // Match test blocks: ### N. Name\nexpected: ...\nresult: ...\n
-  const testPattern = /###\s*(\d+)\.\s*([^\n]+)\nexpected:\s*([^\n]+)\nresult:\s*(\w+)(?:\n(?:reported|reason|blocked_by):\s*[^\n]*)?/g;
+  const testPattern =
+    /###\s*(\d+)\.\s*([^\n]+)\nexpected:\s*([^\n]+)\nresult:\s*(\w+)(?:\n(?:reported|reason|blocked_by):\s*[^\n]*)?/g;
   let match;
   while ((match = testPattern.exec(content)) !== null) {
     const [, num, name, expected, result] = match;
@@ -101,7 +115,8 @@ function parseUatItems(content) {
       // Extract optional fields — limit to current test block (up to next ### or EOF)
       const afterMatch = content.slice(match.index);
       const nextHeading = afterMatch.indexOf('\n###', 1);
-      const blockText = nextHeading > 0 ? afterMatch.slice(0, nextHeading) : afterMatch;
+      const blockText =
+        nextHeading > 0 ? afterMatch.slice(0, nextHeading) : afterMatch;
       const reasonMatch = blockText.match(/reason:\s*(.+)/);
       const blockedByMatch = blockText.match(/blocked_by:\s*(.+)/);
 
@@ -124,7 +139,9 @@ function parseVerificationItems(content, status) {
   const items = [];
   if (status === 'human_needed') {
     // Extract from human_verification section — look for numbered items or table rows
-    const hvSection = content.match(/##\s*Human Verification.*?\n([\s\S]*?)(?=\n##\s|\n---\s|$)/i);
+    const hvSection = content.match(
+      /##\s*Human Verification.*?\n([\s\S]*?)(?=\n##\s|\n---\s|$)/i,
+    );
     if (hvSection) {
       const lines = hvSection[1].split('\n');
       for (const line of lines) {
@@ -175,7 +192,8 @@ function categorizeItem(result, reason, blockedBy) {
   }
   if (result === 'skipped') {
     if (reason) {
-      if (/server|not running|not available/i.test(reason)) return 'server_blocked';
+      if (/server|not running|not available/i.test(reason))
+        return 'server_blocked';
       if (/simulator|physical|device/i.test(reason)) return 'device_needed';
       if (/build|release|preview/i.test(reason)) return 'build_needed';
     }

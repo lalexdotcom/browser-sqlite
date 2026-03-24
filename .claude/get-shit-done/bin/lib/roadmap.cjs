@@ -4,7 +4,17 @@
 
 const fs = require('fs');
 const path = require('path');
-const { escapeRegex, normalizePhaseName, planningPaths, output, error, findPhaseInternal, stripShippedMilestones, extractCurrentMilestone, replaceInCurrentMilestone } = require('./core.cjs');
+const {
+  escapeRegex,
+  normalizePhaseName,
+  planningPaths,
+  output,
+  error,
+  findPhaseInternal,
+  stripShippedMilestones,
+  extractCurrentMilestone,
+  replaceInCurrentMilestone,
+} = require('./core.cjs');
 
 function cmdRoadmapGetPhase(cwd, phaseNum, raw) {
   const roadmapPath = planningPaths(cwd).roadmap;
@@ -15,7 +25,10 @@ function cmdRoadmapGetPhase(cwd, phaseNum, raw) {
   }
 
   try {
-    const content = extractCurrentMilestone(fs.readFileSync(roadmapPath, 'utf-8'), cwd);
+    const content = extractCurrentMilestone(
+      fs.readFileSync(roadmapPath, 'utf-8'),
+      cwd,
+    );
 
     // Escape special regex chars in phase number, handle decimal
     const escapedPhase = escapeRegex(phaseNum);
@@ -23,7 +36,7 @@ function cmdRoadmapGetPhase(cwd, phaseNum, raw) {
     // Match "## Phase X:", "### Phase X:", or "#### Phase X:" with optional name
     const phasePattern = new RegExp(
       `#{2,4}\\s*Phase\\s+${escapedPhase}:\\s*([^\\n]+)`,
-      'i'
+      'i',
     );
     const headerMatch = content.match(phasePattern);
 
@@ -31,19 +44,23 @@ function cmdRoadmapGetPhase(cwd, phaseNum, raw) {
       // Fallback: check if phase exists in summary list but missing detail section
       const checklistPattern = new RegExp(
         `-\\s*\\[[ x]\\]\\s*\\*\\*Phase\\s+${escapedPhase}:\\s*([^*]+)\\*\\*`,
-        'i'
+        'i',
       );
       const checklistMatch = content.match(checklistPattern);
 
       if (checklistMatch) {
         // Phase exists in summary but missing detail section - malformed ROADMAP
-        output({
-          found: false,
-          phase_number: phaseNum,
-          phase_name: checklistMatch[1].trim(),
-          error: 'malformed_roadmap',
-          message: `Phase ${phaseNum} exists in summary list but missing "### Phase ${phaseNum}:" detail section. ROADMAP.md needs both formats.`
-        }, raw, '');
+        output(
+          {
+            found: false,
+            phase_number: phaseNum,
+            phase_name: checklistMatch[1].trim(),
+            error: 'malformed_roadmap',
+            message: `Phase ${phaseNum} exists in summary list but missing "### Phase ${phaseNum}:" detail section. ROADMAP.md needs both formats.`,
+          },
+          raw,
+          '',
+        );
         return;
       }
 
@@ -68,9 +85,15 @@ function cmdRoadmapGetPhase(cwd, phaseNum, raw) {
     const goal = goalMatch ? goalMatch[1].trim() : null;
 
     // Extract success criteria as structured array
-    const criteriaMatch = section.match(/\*\*Success Criteria\*\*[^\n]*:\s*\n((?:\s*\d+\.\s*[^\n]+\n?)+)/i);
+    const criteriaMatch = section.match(
+      /\*\*Success Criteria\*\*[^\n]*:\s*\n((?:\s*\d+\.\s*[^\n]+\n?)+)/i,
+    );
     const success_criteria = criteriaMatch
-      ? criteriaMatch[1].trim().split('\n').map(line => line.replace(/^\s*\d+\.\s*/, '').trim()).filter(Boolean)
+      ? criteriaMatch[1]
+          .trim()
+          .split('\n')
+          .map((line) => line.replace(/^\s*\d+\.\s*/, '').trim())
+          .filter(Boolean)
       : [];
 
     output(
@@ -83,7 +106,7 @@ function cmdRoadmapGetPhase(cwd, phaseNum, raw) {
         section,
       },
       raw,
-      section
+      section,
     );
   } catch (e) {
     error('Failed to read ROADMAP.md: ' + e.message);
@@ -94,7 +117,15 @@ function cmdRoadmapAnalyze(cwd, raw) {
   const roadmapPath = planningPaths(cwd).roadmap;
 
   if (!fs.existsSync(roadmapPath)) {
-    output({ error: 'ROADMAP.md not found', milestones: [], phases: [], current_phase: null }, raw);
+    output(
+      {
+        error: 'ROADMAP.md not found',
+        milestones: [],
+        phases: [],
+        current_phase: null,
+      },
+      raw,
+    );
     return;
   }
 
@@ -103,7 +134,8 @@ function cmdRoadmapAnalyze(cwd, raw) {
   const phasesDir = planningPaths(cwd).phases;
 
   // Extract all phase headings: ## Phase N: Name or ### Phase N: Name
-  const phasePattern = /#{2,4}\s*Phase\s+(\d+[A-Z]?(?:\.\d+)*)\s*:\s*([^\n]+)/gi;
+  const phasePattern =
+    /#{2,4}\s*Phase\s+(\d+[A-Z]?(?:\.\d+)*)\s*:\s*([^\n]+)/gi;
   const phases = [];
   let match;
 
@@ -115,13 +147,17 @@ function cmdRoadmapAnalyze(cwd, raw) {
     const sectionStart = match.index;
     const restOfContent = content.slice(sectionStart);
     const nextHeader = restOfContent.match(/\n#{2,4}\s+Phase\s+\d/i);
-    const sectionEnd = nextHeader ? sectionStart + nextHeader.index : content.length;
+    const sectionEnd = nextHeader
+      ? sectionStart + nextHeader.index
+      : content.length;
     const section = content.slice(sectionStart, sectionEnd);
 
     const goalMatch = section.match(/\*\*Goal(?::\*\*|\*\*:)\s*([^\n]+)/i);
     const goal = goalMatch ? goalMatch[1].trim() : null;
 
-    const dependsMatch = section.match(/\*\*Depends on(?::\*\*|\*\*:)\s*([^\n]+)/i);
+    const dependsMatch = section.match(
+      /\*\*Depends on(?::\*\*|\*\*:)\s*([^\n]+)/i,
+    );
     const depends_on = dependsMatch ? dependsMatch[1].trim() : null;
 
     // Check completion on disk
@@ -134,15 +170,25 @@ function cmdRoadmapAnalyze(cwd, raw) {
 
     try {
       const entries = fs.readdirSync(phasesDir, { withFileTypes: true });
-      const dirs = entries.filter(e => e.isDirectory()).map(e => e.name);
-      const dirMatch = dirs.find(d => d.startsWith(normalized + '-') || d === normalized);
+      const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+      const dirMatch = dirs.find(
+        (d) => d.startsWith(normalized + '-') || d === normalized,
+      );
 
       if (dirMatch) {
         const phaseFiles = fs.readdirSync(path.join(phasesDir, dirMatch));
-        planCount = phaseFiles.filter(f => f.endsWith('-PLAN.md') || f === 'PLAN.md').length;
-        summaryCount = phaseFiles.filter(f => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md').length;
-        hasContext = phaseFiles.some(f => f.endsWith('-CONTEXT.md') || f === 'CONTEXT.md');
-        hasResearch = phaseFiles.some(f => f.endsWith('-RESEARCH.md') || f === 'RESEARCH.md');
+        planCount = phaseFiles.filter(
+          (f) => f.endsWith('-PLAN.md') || f === 'PLAN.md',
+        ).length;
+        summaryCount = phaseFiles.filter(
+          (f) => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md',
+        ).length;
+        hasContext = phaseFiles.some(
+          (f) => f.endsWith('-CONTEXT.md') || f === 'CONTEXT.md',
+        );
+        hasResearch = phaseFiles.some(
+          (f) => f.endsWith('-RESEARCH.md') || f === 'RESEARCH.md',
+        );
 
         if (summaryCount >= planCount && planCount > 0) diskStatus = 'complete';
         else if (summaryCount > 0) diskStatus = 'partial';
@@ -151,10 +197,15 @@ function cmdRoadmapAnalyze(cwd, raw) {
         else if (hasContext) diskStatus = 'discussed';
         else diskStatus = 'empty';
       }
-    } catch { /* intentionally empty */ }
+    } catch {
+      /* intentionally empty */
+    }
 
     // Check ROADMAP checkbox status
-    const checkboxPattern = new RegExp(`-\\s*\\[(x| )\\]\\s*.*Phase\\s+${escapeRegex(phaseNum)}[:\\s]`, 'i');
+    const checkboxPattern = new RegExp(
+      `-\\s*\\[(x| )\\]\\s*.*Phase\\s+${escapeRegex(phaseNum)}[:\\s]`,
+      'i',
+    );
     const checkboxMatch = content.match(checkboxPattern);
     const roadmapComplete = checkboxMatch ? checkboxMatch[1] === 'x' : false;
 
@@ -191,13 +242,25 @@ function cmdRoadmapAnalyze(cwd, raw) {
   }
 
   // Find current and next phase
-  const currentPhase = phases.find(p => p.disk_status === 'planned' || p.disk_status === 'partial') || null;
-  const nextPhase = phases.find(p => p.disk_status === 'empty' || p.disk_status === 'no_directory' || p.disk_status === 'discussed' || p.disk_status === 'researched') || null;
+  const currentPhase =
+    phases.find(
+      (p) => p.disk_status === 'planned' || p.disk_status === 'partial',
+    ) || null;
+  const nextPhase =
+    phases.find(
+      (p) =>
+        p.disk_status === 'empty' ||
+        p.disk_status === 'no_directory' ||
+        p.disk_status === 'discussed' ||
+        p.disk_status === 'researched',
+    ) || null;
 
   // Aggregated stats
   const totalPlans = phases.reduce((sum, p) => sum + p.plan_count, 0);
   const totalSummaries = phases.reduce((sum, p) => sum + p.summary_count, 0);
-  const completedPhases = phases.filter(p => p.disk_status === 'complete').length;
+  const completedPhases = phases.filter(
+    (p) => p.disk_status === 'complete',
+  ).length;
 
   // Detect phases in summary list without detail sections (malformed ROADMAP)
   const checklistPattern = /-\s*\[[ x]\]\s*\*\*Phase\s+(\d+[A-Z]?(?:\.\d+)*)/gi;
@@ -206,8 +269,10 @@ function cmdRoadmapAnalyze(cwd, raw) {
   while ((checklistMatch = checklistPattern.exec(content)) !== null) {
     checklistPhases.add(checklistMatch[1]);
   }
-  const detailPhases = new Set(phases.map(p => p.number));
-  const missingDetails = [...checklistPhases].filter(p => !detailPhases.has(p));
+  const detailPhases = new Set(phases.map((p) => p.number));
+  const missingDetails = [...checklistPhases].filter(
+    (p) => !detailPhases.has(p),
+  );
 
   const result = {
     milestones,
@@ -216,7 +281,10 @@ function cmdRoadmapAnalyze(cwd, raw) {
     completed_phases: completedPhases,
     total_plans: totalPlans,
     total_summaries: totalSummaries,
-    progress_percent: totalPlans > 0 ? Math.min(100, Math.round((totalSummaries / totalPlans) * 100)) : 0,
+    progress_percent:
+      totalPlans > 0
+        ? Math.min(100, Math.round((totalSummaries / totalPlans) * 100))
+        : 0,
     current_phase: currentPhase ? currentPhase.number : null,
     next_phase: nextPhase ? nextPhase.number : null,
     missing_phase_details: missingDetails.length > 0 ? missingDetails : null,
@@ -241,16 +309,38 @@ function cmdRoadmapUpdatePlanProgress(cwd, phaseNum, raw) {
   const summaryCount = phaseInfo.summaries.length;
 
   if (planCount === 0) {
-    output({ updated: false, reason: 'No plans found', plan_count: 0, summary_count: 0 }, raw, 'no plans');
+    output(
+      {
+        updated: false,
+        reason: 'No plans found',
+        plan_count: 0,
+        summary_count: 0,
+      },
+      raw,
+      'no plans',
+    );
     return;
   }
 
   const isComplete = summaryCount >= planCount;
-  const status = isComplete ? 'Complete' : summaryCount > 0 ? 'In Progress' : 'Planned';
+  const status = isComplete
+    ? 'Complete'
+    : summaryCount > 0
+      ? 'In Progress'
+      : 'Planned';
   const today = new Date().toISOString().split('T')[0];
 
   if (!fs.existsSync(roadmapPath)) {
-    output({ updated: false, reason: 'ROADMAP.md not found', plan_count: planCount, summary_count: summaryCount }, raw, 'no roadmap');
+    output(
+      {
+        updated: false,
+        reason: 'ROADMAP.md not found',
+        plan_count: planCount,
+        summary_count: summaryCount,
+      },
+      raw,
+      'no roadmap',
+    );
     return;
   }
 
@@ -260,7 +350,7 @@ function cmdRoadmapUpdatePlanProgress(cwd, phaseNum, raw) {
   // Progress table row: update Plans/Status/Date columns (handles 4 or 5 column tables)
   const tableRowPattern = new RegExp(
     `^(\\|\\s*${phaseEscaped}\\.?\\s[^|]*(?:\\|[^\\n]*))$`,
-    'im'
+    'im',
   );
   const dateField = isComplete ? ` ${today} ` : '  ';
   roadmapContent = roadmapContent.replace(tableRowPattern, (fullRow) => {
@@ -282,44 +372,58 @@ function cmdRoadmapUpdatePlanProgress(cwd, phaseNum, raw) {
   // Update plan count in phase detail section
   const planCountPattern = new RegExp(
     `(#{2,4}\\s*Phase\\s+${phaseEscaped}[\\s\\S]*?\\*\\*Plans:\\*\\*\\s*)[^\\n]+`,
-    'i'
+    'i',
   );
   const planCountText = isComplete
     ? `${summaryCount}/${planCount} plans complete`
     : `${summaryCount}/${planCount} plans executed`;
-  roadmapContent = replaceInCurrentMilestone(roadmapContent, planCountPattern, `$1${planCountText}`);
+  roadmapContent = replaceInCurrentMilestone(
+    roadmapContent,
+    planCountPattern,
+    `$1${planCountText}`,
+  );
 
   // If complete: check checkbox
   if (isComplete) {
     const checkboxPattern = new RegExp(
       `(-\\s*\\[)[ ](\\]\\s*.*Phase\\s+${phaseEscaped}[:\\s][^\\n]*)`,
-      'i'
+      'i',
     );
-    roadmapContent = replaceInCurrentMilestone(roadmapContent, checkboxPattern, `$1x$2 (completed ${today})`);
+    roadmapContent = replaceInCurrentMilestone(
+      roadmapContent,
+      checkboxPattern,
+      `$1x$2 (completed ${today})`,
+    );
   }
 
   // Mark completed plan checkboxes (e.g. "- [ ] 50-01-PLAN.md" or "- [ ] 50-01:")
   for (const summaryFile of phaseInfo.summaries) {
-    const planId = summaryFile.replace('-SUMMARY.md', '').replace('SUMMARY.md', '');
+    const planId = summaryFile
+      .replace('-SUMMARY.md', '')
+      .replace('SUMMARY.md', '');
     if (!planId) continue;
     const planEscaped = escapeRegex(planId);
     const planCheckboxPattern = new RegExp(
       `(-\\s*\\[) (\\]\\s*${planEscaped})`,
-      'i'
+      'i',
     );
     roadmapContent = roadmapContent.replace(planCheckboxPattern, '$1x$2');
   }
 
   fs.writeFileSync(roadmapPath, roadmapContent, 'utf-8');
 
-  output({
-    updated: true,
-    phase: phaseNum,
-    plan_count: planCount,
-    summary_count: summaryCount,
-    status,
-    complete: isComplete,
-  }, raw, `${summaryCount}/${planCount} ${status}`);
+  output(
+    {
+      updated: true,
+      phase: phaseNum,
+      plan_count: planCount,
+      summary_count: summaryCount,
+      status,
+      complete: isComplete,
+    },
+    raw,
+    `${summaryCount}/${planCount} ${status}`,
+  );
 }
 
 module.exports = {

@@ -16,6 +16,7 @@
   "scripts": {
     "build": "rslib build",
     "check": "biome check --write",
+    "lint": "biome lint",
     "dev": "rslib build --watch",
     "format": "biome format --write",
     "prepare": "simple-git-hooks",
@@ -25,7 +26,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.6",
-"@rslib/core": "^0.20.0",
+    "@rslib/core": "^0.20.0",
     "@rstest/adapter-rslib": "^0.2.1",
     "@rstest/browser": "0.9.4",
     "@rstest/core": "^0.9.0",

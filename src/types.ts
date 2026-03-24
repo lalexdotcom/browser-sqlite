@@ -17,7 +17,7 @@ export type SQLiteClientCallData =
 export type SQLiteCLientCallParams<K extends SQLiteClientCallData['type']> =
   Omit<Extract<SQLiteClientCallData, { type: K }>, 'type'>;
 
-export type SQLiteWorkerMessageData<T = unknown> = {
+export type SQLiteWorkerMessageData<_T = unknown> = {
   callId: number;
   terminate?: boolean;
 } & (

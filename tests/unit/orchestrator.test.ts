@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@rstest/core';
+import { describe, expect, it } from '@rstest/core';
 import { WorkerOrchestrator, WorkerStatuses } from '../../src/orchestrator';
 
 describe('WorkerOrchestrator', () => {
@@ -57,7 +57,11 @@ describe('WorkerOrchestrator', () => {
   describe('setStatus — CAS (conditional with from)', () => {
     it('returns true and updates when from matches current status', () => {
       const orch = new WorkerOrchestrator(1);
-      const result = orch.setStatus(0, WorkerStatuses.NEW, WorkerStatuses.EMPTY);
+      const result = orch.setStatus(
+        0,
+        WorkerStatuses.NEW,
+        WorkerStatuses.EMPTY,
+      );
       expect(result).toBe(true);
       expect(orch.getStatus(0)).toBe(WorkerStatuses.NEW);
     });
@@ -65,15 +69,23 @@ describe('WorkerOrchestrator', () => {
     it('returns false and leaves status unchanged when from does not match', () => {
       const orch = new WorkerOrchestrator(1);
       // Current status is EMPTY, from=NEW — mismatch
-      const result = orch.setStatus(0, WorkerStatuses.READY, WorkerStatuses.NEW);
+      const result = orch.setStatus(
+        0,
+        WorkerStatuses.READY,
+        WorkerStatuses.NEW,
+      );
       expect(result).toBe(false);
       expect(orch.getStatus(0)).toBe(WorkerStatuses.EMPTY);
     });
 
     it('CAS chain: EMPTY → NEW → READY succeeds in sequence', () => {
       const orch = new WorkerOrchestrator(1);
-      expect(orch.setStatus(0, WorkerStatuses.NEW, WorkerStatuses.EMPTY)).toBe(true);
-      expect(orch.setStatus(0, WorkerStatuses.READY, WorkerStatuses.NEW)).toBe(true);
+      expect(orch.setStatus(0, WorkerStatuses.NEW, WorkerStatuses.EMPTY)).toBe(
+        true,
+      );
+      expect(orch.setStatus(0, WorkerStatuses.READY, WorkerStatuses.NEW)).toBe(
+        true,
+      );
       expect(orch.getStatus(0)).toBe(WorkerStatuses.READY);
     });
   });

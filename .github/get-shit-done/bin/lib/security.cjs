@@ -36,7 +36,11 @@ function validatePath(filePath, baseDir, opts = {}) {
   }
 
   if (!baseDir || typeof baseDir !== 'string') {
-    return { safe: false, resolved: '', error: 'Empty or invalid base directory' };
+    return {
+      safe: false,
+      resolved: '',
+      error: 'Empty or invalid base directory',
+    };
   }
 
   // Reject null bytes (can bypass path checks in some environments)
@@ -85,7 +89,10 @@ function validatePath(filePath, baseDir, opts = {}) {
 
   // The resolved path must start with the base directory
   // (or be exactly the base directory)
-  if (resolvedPath !== resolvedBase && !normalizedPath.startsWith(normalizedBase)) {
+  if (
+    resolvedPath !== resolvedBase &&
+    !normalizedPath.startsWith(normalizedBase)
+  ) {
     return {
       safe: false,
       resolved: resolvedPath,
@@ -128,7 +135,7 @@ const INJECTION_PATTERNS = [
 
   // Role/identity manipulation
   /you\s+are\s+now\s+(?:a|an|the)\s+/i,
-  /act\s+as\s+(?:a|an|the)\s+(?!plan|phase|wave)/i,  // allow "act as a plan"
+  /act\s+as\s+(?:a|an|the)\s+(?!plan|phase|wave)/i, // allow "act as a plan"
   /pretend\s+(?:you(?:'re| are)\s+|to\s+be\s+)/i,
   /from\s+now\s+on,?\s+you\s+(?:are|will|should|must)/i,
 
@@ -178,12 +185,16 @@ function scanForInjection(text, opts = {}) {
     // Check for suspicious Unicode that could hide instructions
     // (zero-width chars, RTL override, homoglyph attacks)
     if (/[\u200B-\u200F\u2028-\u202F\uFEFF\u00AD]/.test(text)) {
-      findings.push('Contains suspicious zero-width or invisible Unicode characters');
+      findings.push(
+        'Contains suspicious zero-width or invisible Unicode characters',
+      );
     }
 
     // Check for extremely long strings that could be prompt stuffing
     if (text.length > 50000) {
-      findings.push(`Suspicious text length: ${text.length} chars (potential prompt stuffing)`);
+      findings.push(
+        `Suspicious text length: ${text.length} chars (potential prompt stuffing)`,
+      );
     }
   }
 
@@ -206,13 +217,18 @@ function sanitizeForPrompt(text) {
   let sanitized = text;
 
   // Strip zero-width characters that could hide instructions
-  sanitized = sanitized.replace(/[\u200B-\u200F\u2028-\u202F\uFEFF\u00AD]/g, '');
+  sanitized = sanitized.replace(
+    /[\u200B-\u200F\u2028-\u202F\uFEFF\u00AD]/g,
+    '',
+  );
 
   // Neutralize XML/HTML tags that mimic system boundaries
   // Replace < > with full-width equivalents to prevent tag interpretation
   // Note: <instructions> is excluded — GSD uses it as legitimate prompt structure
-  sanitized = sanitized.replace(/<(\/?)(?:system|assistant|human)>/gi,
-    (_, slash) => `＜${slash || ''}system-text＞`);
+  sanitized = sanitized.replace(
+    /<(\/?)(?:system|assistant|human)>/gi,
+    (_, slash) => `＜${slash || ''}system-text＞`,
+  );
 
   // Neutralize [SYSTEM] / [INST] markers
   sanitized = sanitized.replace(/\[(SYSTEM|INST)\]/gi, '[$1-TEXT]');
@@ -246,7 +262,9 @@ function validateShellArg(value, label) {
 
   // Reject command substitution attempts
   if (/[$`]/.test(value) && /\$\(|`/.test(value)) {
-    throw new Error(`${label || 'Argument'}: contains potential command substitution`);
+    throw new Error(
+      `${label || 'Argument'}: contains potential command substitution`,
+    );
   }
 
   return value;
@@ -273,7 +291,10 @@ function safeJsonParse(text, opts = {}) {
   }
 
   if (text.length > maxLength) {
-    return { ok: false, error: `${label}: input exceeds ${maxLength} byte limit (got ${text.length})` };
+    return {
+      ok: false,
+      error: `${label}: input exceeds ${maxLength} byte limit (got ${text.length})`,
+    };
   }
 
   try {
@@ -307,7 +328,10 @@ function validatePhaseNumber(phase) {
   }
 
   // Custom project IDs: PROJ-42, AUTH-101 (uppercase alphanumeric with hyphens)
-  if (/^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+){1,4}$/i.test(trimmed) && trimmed.length <= 30) {
+  if (
+    /^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+){1,4}$/i.test(trimmed) &&
+    trimmed.length <= 30
+  ) {
     return { valid: true, normalized: trimmed };
   }
 

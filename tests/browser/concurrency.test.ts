@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@rstest/core';
+import { describe, expect, it } from '@rstest/core';
 import { createTestClient } from './helpers';
 
 /**
@@ -15,12 +15,18 @@ describe('lectures concurrentes (INT-07)', () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE concurrent_read (id INTEGER, val TEXT)');
-    await db.write("INSERT INTO concurrent_read VALUES (1, 'a'), (2, 'b'), (3, 'c')");
+    await db.write(
+      "INSERT INTO concurrent_read VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+    );
 
     // Lancer deux lectures simultanément — poolSize: 2 les distribue sur deux workers
     const [result1, result2] = await Promise.all([
-      db.read<{ id: number; val: string }>('SELECT * FROM concurrent_read WHERE id = 1'),
-      db.read<{ id: number; val: string }>('SELECT * FROM concurrent_read WHERE id = 2'),
+      db.read<{ id: number; val: string }>(
+        'SELECT * FROM concurrent_read WHERE id = 1',
+      ),
+      db.read<{ id: number; val: string }>(
+        'SELECT * FROM concurrent_read WHERE id = 2',
+      ),
     ]);
 
     expect(result1).toHaveLength(1);
@@ -75,7 +81,9 @@ describe('écritures sérialisées (INT-08)', () => {
     ]);
 
     // Les deux lignes doivent être présentes — pas de corruption
-    const rows = await db.read<{ id: number; val: string }>('SELECT * FROM serial_write ORDER BY id');
+    const rows = await db.read<{ id: number; val: string }>(
+      'SELECT * FROM serial_write ORDER BY id',
+    );
     expect(rows).toHaveLength(2);
     expect(rows[0].id).toBe(1);
     expect(rows[1].id).toBe(2);
@@ -93,7 +101,9 @@ describe('écritures sérialisées (INT-08)', () => {
     await db.write('INSERT INTO order_test VALUES (2)');
     await db.write('INSERT INTO order_test VALUES (3)');
 
-    const rows = await db.read<{ seq: number }>('SELECT seq FROM order_test ORDER BY seq');
+    const rows = await db.read<{ seq: number }>(
+      'SELECT seq FROM order_test ORDER BY seq',
+    );
     expect(rows).toHaveLength(3);
     expect(rows[0].seq).toBe(1);
     expect(rows[2].seq).toBe(3);
@@ -118,16 +128,22 @@ describe('AbortSignal (INT-09)', () => {
 
     // Créer une table avec 1000 lignes pour forcer plusieurs chunks
     await db.write('CREATE TABLE bigdata (n INTEGER)');
-    const values = Array.from({ length: 1000 }, (_, i) => `(${i + 1})`).join(',');
+    const values = Array.from({ length: 1000 }, (_, i) => `(${i + 1})`).join(
+      ',',
+    );
     await db.write(`INSERT INTO bigdata VALUES ${values}`);
 
     const controller = new AbortController();
     let chunkCount = 0;
 
-    const gen = db.stream<{ n: number }>('SELECT n FROM bigdata ORDER BY n', [], {
-      signal: controller.signal,
-      chunkSize: 50, // 1000 / 50 = 20 chunks potentiels
-    });
+    const gen = db.stream<{ n: number }>(
+      'SELECT n FROM bigdata ORDER BY n',
+      [],
+      {
+        signal: controller.signal,
+        chunkSize: 50, // 1000 / 50 = 20 chunks potentiels
+      },
+    );
 
     // Recevoir le premier chunk, puis aborter
     const first = await gen.next();
@@ -185,9 +201,7 @@ describe('erreurs SQL (INT-10)', () => {
   it('une syntaxe SQL invalide rejette avec un Error dont le message est non-vide', async () => {
     const db = await createTestClient();
 
-    await expect(
-      db.read('THIS IS NOT VALID SQL !!!'),
-    ).rejects.toThrow();
+    await expect(db.read('THIS IS NOT VALID SQL !!!')).rejects.toThrow();
 
     // Vérifier que l'erreur a un message descriptif
     try {
@@ -221,9 +235,7 @@ describe('erreurs SQL (INT-10)', () => {
     const db = await createTestClient();
 
     // Première requête : erreur
-    await expect(
-      db.read('SELECT * FROM table_inexistante'),
-    ).rejects.toThrow();
+    await expect(db.read('SELECT * FROM table_inexistante')).rejects.toThrow();
 
     // Deuxième requête : doit fonctionner normalement
     const rows = await db.read<{ val: number }>('SELECT 42 AS val');

@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@rstest/core';
+import { describe, expect, it } from '@rstest/core';
 import { createTestClient } from './helpers';
 
 /**
@@ -8,10 +8,14 @@ describe('db.read() (INT-03)', () => {
   it('retourne un tableau de lignes pour un SELECT simple', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)');
+    await db.write(
+      'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)',
+    );
     await db.write("INSERT INTO items VALUES (1, 'alpha'), (2, 'beta')");
 
-    const rows = await db.read<{ id: number; name: string }>('SELECT * FROM items ORDER BY id');
+    const rows = await db.read<{ id: number; name: string }>(
+      'SELECT * FROM items ORDER BY id',
+    );
 
     expect(rows).toHaveLength(2);
     expect(rows[0].id).toBe(1);
@@ -40,7 +44,10 @@ describe('db.read() (INT-03)', () => {
     await db.write('CREATE TABLE params_test (val INTEGER)');
     await db.write('INSERT INTO params_test VALUES (10), (20), (30)');
 
-    const rows = await db.read<{ val: number }>('SELECT val FROM params_test WHERE val > ?', [15]);
+    const rows = await db.read<{ val: number }>(
+      'SELECT val FROM params_test WHERE val > ?',
+      [15],
+    );
 
     expect(rows).toHaveLength(2);
     expect(rows[0].val).toBe(20);
@@ -57,8 +64,12 @@ describe('db.write() (INT-04)', () => {
   it('INSERT retourne affected > 0', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE write_test (id INTEGER PRIMARY KEY, val TEXT)');
-    const result = await db.write("INSERT INTO write_test VALUES (1, 'foo'), (2, 'bar')");
+    await db.write(
+      'CREATE TABLE write_test (id INTEGER PRIMARY KEY, val TEXT)',
+    );
+    const result = await db.write(
+      "INSERT INTO write_test VALUES (1, 'foo'), (2, 'bar')",
+    );
 
     expect(result.affected).toBe(2);
     expect(Array.isArray(result.result)).toBe(true);
@@ -70,8 +81,12 @@ describe('db.write() (INT-04)', () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE update_test (id INTEGER, status TEXT)');
-    await db.write("INSERT INTO update_test VALUES (1, 'old'), (2, 'old'), (3, 'new')");
-    const result = await db.write("UPDATE update_test SET status = 'updated' WHERE status = 'old'");
+    await db.write(
+      "INSERT INTO update_test VALUES (1, 'old'), (2, 'old'), (3, 'new')",
+    );
+    const result = await db.write(
+      "UPDATE update_test SET status = 'updated' WHERE status = 'old'",
+    );
 
     expect(result.affected).toBe(2);
 
@@ -88,7 +103,9 @@ describe('db.write() (INT-04)', () => {
     expect(result.affected).toBe(2);
 
     // Vérifier que les lignes restantes sont correctes
-    const remaining = await db.read<{ id: number }>('SELECT id FROM delete_test ORDER BY id');
+    const remaining = await db.read<{ id: number }>(
+      'SELECT id FROM delete_test ORDER BY id',
+    );
     expect(remaining).toHaveLength(2);
     expect(remaining[0].id).toBe(3);
 
@@ -111,8 +128,12 @@ describe('db.stream() (INT-05)', () => {
     const chunkSize = 10;
     const chunks: number[][] = [];
 
-    for await (const chunk of db.stream<{ n: number }>('SELECT n FROM stream_test ORDER BY n', [], { chunkSize })) {
-      chunks.push(chunk.map(r => r.n));
+    for await (const chunk of db.stream<{ n: number }>(
+      'SELECT n FROM stream_test ORDER BY n',
+      [],
+      { chunkSize },
+    )) {
+      chunks.push(chunk.map((r) => r.n));
       expect(chunk.length).toBeLessThanOrEqual(chunkSize);
     }
 
@@ -132,7 +153,11 @@ describe('db.stream() (INT-05)', () => {
     await db.write('INSERT INTO stream_one VALUES (42)');
 
     let chunkCount = 0;
-    for await (const chunk of db.stream<{ x: number }>('SELECT x FROM stream_one', [], { chunkSize: 100 })) {
+    for await (const chunk of db.stream<{ x: number }>(
+      'SELECT x FROM stream_one',
+      [],
+      { chunkSize: 100 },
+    )) {
       chunkCount++;
       expect(chunk[0].x).toBe(42);
     }
@@ -153,11 +178,13 @@ describe('db.one() (INT-06)', () => {
     await db.write('CREATE TABLE one_test (id INTEGER, label TEXT)');
     await db.write("INSERT INTO one_test VALUES (1, 'premier'), (2, 'second')");
 
-    const row = await db.one<{ id: number; label: string }>('SELECT * FROM one_test ORDER BY id LIMIT 1');
+    const row = await db.one<{ id: number; label: string }>(
+      'SELECT * FROM one_test ORDER BY id LIMIT 1',
+    );
 
     expect(row).toBeDefined();
-    expect(row!.id).toBe(1);
-    expect(row!.label).toBe('premier');
+    expect(row?.id).toBe(1);
+    expect(row?.label).toBe('premier');
 
     db.close();
   });
@@ -179,10 +206,12 @@ describe('db.one() (INT-06)', () => {
     await db.write('CREATE TABLE one_multi (val INTEGER)');
     await db.write('INSERT INTO one_multi VALUES (100), (200), (300)');
 
-    const row = await db.one<{ val: number }>('SELECT val FROM one_multi ORDER BY val');
+    const row = await db.one<{ val: number }>(
+      'SELECT val FROM one_multi ORDER BY val',
+    );
 
     expect(row).toBeDefined();
-    expect(row!.val).toBe(100);
+    expect(row?.val).toBe(100);
 
     db.close();
   });

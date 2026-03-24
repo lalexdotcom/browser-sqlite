@@ -12,18 +12,35 @@ const {
 } = require('./model-profiles.cjs');
 
 const VALID_CONFIG_KEYS = new Set([
-  'mode', 'granularity', 'parallelization', 'commit_docs', 'model_profile',
-  'search_gitignored', 'brave_search', 'firecrawl', 'exa_search',
-  'workflow.research', 'workflow.plan_check', 'workflow.verifier',
-  'workflow.nyquist_validation', 'workflow.ui_phase', 'workflow.ui_safety_gate',
-  'workflow.auto_advance', 'workflow.node_repair', 'workflow.node_repair_budget',
+  'mode',
+  'granularity',
+  'parallelization',
+  'commit_docs',
+  'model_profile',
+  'search_gitignored',
+  'brave_search',
+  'firecrawl',
+  'exa_search',
+  'workflow.research',
+  'workflow.plan_check',
+  'workflow.verifier',
+  'workflow.nyquist_validation',
+  'workflow.ui_phase',
+  'workflow.ui_safety_gate',
+  'workflow.auto_advance',
+  'workflow.node_repair',
+  'workflow.node_repair_budget',
   'workflow.text_mode',
   'workflow.research_before_questions',
   'workflow.discuss_mode',
   'workflow.skip_discuss',
   'workflow._auto_chain_active',
-  'git.branching_strategy', 'git.phase_branch_template', 'git.milestone_branch_template', 'git.quick_branch_template',
-  'planning.commit_docs', 'planning.search_gitignored',
+  'git.branching_strategy',
+  'git.phase_branch_template',
+  'git.milestone_branch_template',
+  'git.quick_branch_template',
+  'planning.commit_docs',
+  'planning.search_gitignored',
   'hooks.context_warnings',
 ]);
 
@@ -62,9 +79,13 @@ function buildNewProjectConfig(userChoices) {
 
   // Detect API key availability
   const braveKeyFile = path.join(homedir, '.gsd', 'brave_api_key');
-  const hasBraveSearch = !!(process.env.BRAVE_API_KEY || fs.existsSync(braveKeyFile));
+  const hasBraveSearch = !!(
+    process.env.BRAVE_API_KEY || fs.existsSync(braveKeyFile)
+  );
   const firecrawlKeyFile = path.join(homedir, '.gsd', 'firecrawl_api_key');
-  const hasFirecrawl = !!(process.env.FIRECRAWL_API_KEY || fs.existsSync(firecrawlKeyFile));
+  const hasFirecrawl = !!(
+    process.env.FIRECRAWL_API_KEY || fs.existsSync(firecrawlKeyFile)
+  );
   const exaKeyFile = path.join(homedir, '.gsd', 'exa_api_key');
   const hasExaSearch = !!(process.env.EXA_API_KEY || fs.existsSync(exaKeyFile));
 
@@ -76,12 +97,23 @@ function buildNewProjectConfig(userChoices) {
       userDefaults = JSON.parse(fs.readFileSync(globalDefaultsPath, 'utf-8'));
       // Migrate deprecated "depth" key to "granularity"
       if ('depth' in userDefaults && !('granularity' in userDefaults)) {
-        const depthToGranularity = { quick: 'coarse', standard: 'standard', comprehensive: 'fine' };
-        userDefaults.granularity = depthToGranularity[userDefaults.depth] || userDefaults.depth;
+        const depthToGranularity = {
+          quick: 'coarse',
+          standard: 'standard',
+          comprehensive: 'fine',
+        };
+        userDefaults.granularity =
+          depthToGranularity[userDefaults.depth] || userDefaults.depth;
         delete userDefaults.depth;
         try {
-          fs.writeFileSync(globalDefaultsPath, JSON.stringify(userDefaults, null, 2), 'utf-8');
-        } catch { /* intentionally empty */ }
+          fs.writeFileSync(
+            globalDefaultsPath,
+            JSON.stringify(userDefaults, null, 2),
+            'utf-8',
+          );
+        } catch {
+          /* intentionally empty */
+        }
       }
     }
   } catch {
@@ -299,7 +331,9 @@ function cmdConfigSet(cwd, keyPath, value, raw) {
   validateKnownConfigKeyPath(keyPath);
 
   if (!VALID_CONFIG_KEYS.has(keyPath)) {
-    error(`Unknown config key: "${keyPath}". Valid keys: ${[...VALID_CONFIG_KEYS].sort().join(', ')}`);
+    error(
+      `Unknown config key: "${keyPath}". Valid keys: ${[...VALID_CONFIG_KEYS].sort().join(', ')}`,
+    );
   }
 
   // Parse value (handle booleans and numbers)
@@ -335,7 +369,11 @@ function cmdConfigGet(cwd, keyPath, raw) {
   const keys = keyPath.split('.');
   let current = config;
   for (const key of keys) {
-    if (current === undefined || current === null || typeof current !== 'object') {
+    if (
+      current === undefined ||
+      current === null ||
+      typeof current !== 'object'
+    ) {
       error(`Key not found: ${keyPath}`);
     }
     current = current[key];
@@ -360,14 +398,21 @@ function cmdConfigSetModelProfile(cwd, profile, raw) {
 
   const normalizedProfile = profile.toLowerCase().trim();
   if (!VALID_PROFILES.includes(normalizedProfile)) {
-    error(`Invalid profile '${profile}'. Valid profiles: ${VALID_PROFILES.join(', ')}`);
+    error(
+      `Invalid profile '${profile}'. Valid profiles: ${VALID_PROFILES.join(', ')}`,
+    );
   }
 
   // Ensure config exists (create if needed)
   ensureConfigFile(cwd);
 
   // Set the model profile in the config
-  const { previousValue } = setConfigValue(cwd, 'model_profile', normalizedProfile, raw);
+  const { previousValue } = setConfigValue(
+    cwd,
+    'model_profile',
+    normalizedProfile,
+    raw,
+  );
   const previousProfile = previousValue || 'balanced';
 
   // Build result value / message and return
@@ -381,7 +426,7 @@ function cmdConfigSetModelProfile(cwd, profile, raw) {
   const rawValue = getCmdConfigSetModelProfileResultMessage(
     normalizedProfile,
     previousProfile,
-    agentToModelMap
+    agentToModelMap,
   );
   output(result, raw, rawValue);
 }
@@ -393,7 +438,7 @@ function cmdConfigSetModelProfile(cwd, profile, raw) {
 function getCmdConfigSetModelProfileResultMessage(
   normalizedProfile,
   previousProfile,
-  agentToModelMap
+  agentToModelMap,
 ) {
   const agentToModelTable = formatAgentToModelMapAsTable(agentToModelMap);
   const didChange = previousProfile !== normalizedProfile;

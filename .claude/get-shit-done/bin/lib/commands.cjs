@@ -4,7 +4,29 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const { safeReadFile, loadConfig, isGitIgnored, execGit, normalizePhaseName, comparePhaseNum, getArchivedPhaseDirs, generateSlugInternal, getMilestoneInfo, getMilestonePhaseFilter, resolveModelInternal, stripShippedMilestones, extractCurrentMilestone, planningDir, planningPaths, toPosixPath, output, error, findPhaseInternal, extractOneLinerFromBody, getRoadmapPhaseInternal } = require('./core.cjs');
+const {
+  safeReadFile,
+  loadConfig,
+  isGitIgnored,
+  execGit,
+  normalizePhaseName,
+  comparePhaseNum,
+  getArchivedPhaseDirs,
+  generateSlugInternal,
+  getMilestoneInfo,
+  getMilestonePhaseFilter,
+  resolveModelInternal,
+  stripShippedMilestones,
+  extractCurrentMilestone,
+  planningDir,
+  planningPaths,
+  toPosixPath,
+  output,
+  error,
+  findPhaseInternal,
+  extractOneLinerFromBody,
+  getRoadmapPhaseInternal,
+} = require('./core.cjs');
 const { extractFrontmatter } = require('./frontmatter.cjs');
 const { MODEL_PROFILES } = require('./model-profiles.cjs');
 
@@ -49,7 +71,7 @@ function cmdListTodos(cwd, area, raw) {
   const todos = [];
 
   try {
-    const files = fs.readdirSync(pendingDir).filter(f => f.endsWith('.md'));
+    const files = fs.readdirSync(pendingDir).filter((f) => f.endsWith('.md'));
 
     for (const file of files) {
       try {
@@ -71,9 +93,13 @@ function cmdListTodos(cwd, area, raw) {
           area: todoArea,
           path: toPosixPath(path.relative(cwd, path.join(pendingDir, file))),
         });
-      } catch { /* intentionally empty */ }
+      } catch {
+        /* intentionally empty */
+      }
     }
-  } catch { /* intentionally empty */ }
+  } catch {
+    /* intentionally empty */
+  }
 
   const result = { count, todos };
   output(result, raw, count.toString());
@@ -89,11 +115,17 @@ function cmdVerifyPathExists(cwd, targetPath, raw) {
     error('path contains null bytes');
   }
 
-  const fullPath = path.isAbsolute(targetPath) ? targetPath : path.join(cwd, targetPath);
+  const fullPath = path.isAbsolute(targetPath)
+    ? targetPath
+    : path.join(cwd, targetPath);
 
   try {
     const stats = fs.statSync(fullPath);
-    const type = stats.isDirectory() ? 'directory' : stats.isFile() ? 'file' : 'other';
+    const type = stats.isDirectory()
+      ? 'directory'
+      : stats.isFile()
+        ? 'file'
+        : 'other';
     const result = { exists: true, type };
     output(result, raw, 'true');
   } catch {
@@ -112,20 +144,31 @@ function cmdHistoryDigest(cwd, raw) {
   // Add archived phases first (oldest milestones first)
   const archived = getArchivedPhaseDirs(cwd);
   for (const a of archived) {
-    allPhaseDirs.push({ name: a.name, fullPath: a.fullPath, milestone: a.milestone });
+    allPhaseDirs.push({
+      name: a.name,
+      fullPath: a.fullPath,
+      milestone: a.milestone,
+    });
   }
 
   // Add current phases
   if (fs.existsSync(phasesDir)) {
     try {
-      const currentDirs = fs.readdirSync(phasesDir, { withFileTypes: true })
-        .filter(e => e.isDirectory())
-        .map(e => e.name)
+      const currentDirs = fs
+        .readdirSync(phasesDir, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name)
         .sort();
       for (const dir of currentDirs) {
-        allPhaseDirs.push({ name: dir, fullPath: path.join(phasesDir, dir), milestone: null });
+        allPhaseDirs.push({
+          name: dir,
+          fullPath: path.join(phasesDir, dir),
+          milestone: null,
+        });
       }
-    } catch { /* intentionally empty */ }
+    } catch {
+      /* intentionally empty */
+    }
   }
 
   if (allPhaseDirs.length === 0) {
@@ -136,7 +179,9 @@ function cmdHistoryDigest(cwd, raw) {
 
   try {
     for (const { name: dir, fullPath: dirPath } of allPhaseDirs) {
-      const summaries = fs.readdirSync(dirPath).filter(f => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md');
+      const summaries = fs
+        .readdirSync(dirPath)
+        .filter((f) => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md');
 
       for (const summary of summaries) {
         try {
@@ -156,33 +201,40 @@ function cmdHistoryDigest(cwd, raw) {
 
           // Merge provides
           if (fm['dependency-graph'] && fm['dependency-graph'].provides) {
-            fm['dependency-graph'].provides.forEach(p => digest.phases[phaseNum].provides.add(p));
+            fm['dependency-graph'].provides.forEach((p) =>
+              digest.phases[phaseNum].provides.add(p),
+            );
           } else if (fm.provides) {
-            fm.provides.forEach(p => digest.phases[phaseNum].provides.add(p));
+            fm.provides.forEach((p) => digest.phases[phaseNum].provides.add(p));
           }
 
           // Merge affects
           if (fm['dependency-graph'] && fm['dependency-graph'].affects) {
-            fm['dependency-graph'].affects.forEach(a => digest.phases[phaseNum].affects.add(a));
+            fm['dependency-graph'].affects.forEach((a) =>
+              digest.phases[phaseNum].affects.add(a),
+            );
           }
 
           // Merge patterns
           if (fm['patterns-established']) {
-            fm['patterns-established'].forEach(p => digest.phases[phaseNum].patterns.add(p));
+            fm['patterns-established'].forEach((p) =>
+              digest.phases[phaseNum].patterns.add(p),
+            );
           }
 
           // Merge decisions
           if (fm['key-decisions']) {
-            fm['key-decisions'].forEach(d => {
+            fm['key-decisions'].forEach((d) => {
               digest.decisions.push({ phase: phaseNum, decision: d });
             });
           }
 
           // Merge tech stack
           if (fm['tech-stack'] && fm['tech-stack'].added) {
-            fm['tech-stack'].added.forEach(t => digest.tech_stack.add(typeof t === 'string' ? t : t.name));
+            fm['tech-stack'].added.forEach((t) =>
+              digest.tech_stack.add(typeof t === 'string' ? t : t.name),
+            );
           }
-
         } catch (e) {
           // Skip malformed summaries
         }
@@ -190,7 +242,7 @@ function cmdHistoryDigest(cwd, raw) {
     }
 
     // Convert Sets to Arrays for JSON output
-    Object.keys(digest.phases).forEach(p => {
+    Object.keys(digest.phases).forEach((p) => {
       digest.phases[p].provides = [...digest.phases[p].provides];
       digest.phases[p].affects = [...digest.phases[p].affects];
       digest.phases[p].patterns = [...digest.phases[p].patterns];
@@ -235,14 +287,22 @@ function cmdCommit(cwd, message, files, raw, amend, noVerify) {
 
   // Check commit_docs config
   if (!config.commit_docs) {
-    const result = { committed: false, hash: null, reason: 'skipped_commit_docs_false' };
+    const result = {
+      committed: false,
+      hash: null,
+      reason: 'skipped_commit_docs_false',
+    };
     output(result, raw, 'skipped');
     return;
   }
 
   // Check if .planning is gitignored
   if (isGitIgnored(cwd, '.planning')) {
-    const result = { committed: false, hash: null, reason: 'skipped_gitignored' };
+    const result = {
+      committed: false,
+      hash: null,
+      reason: 'skipped_gitignored',
+    };
     output(result, raw, 'skipped');
     return;
   }
@@ -269,12 +329,18 @@ function cmdCommit(cwd, message, files, raw, amend, noVerify) {
       if (milestone && milestone.version) {
         branchName = config.milestone_branch_template
           .replace('{milestone}', milestone.version)
-          .replace('{slug}', generateSlugInternal(milestone.name) || 'milestone');
+          .replace(
+            '{slug}',
+            generateSlugInternal(milestone.name) || 'milestone',
+          );
       }
     }
     if (branchName) {
       const currentBranch = execGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
-      if (currentBranch.exitCode === 0 && currentBranch.stdout.trim() !== branchName) {
+      if (
+        currentBranch.exitCode === 0 &&
+        currentBranch.stdout.trim() !== branchName
+      ) {
         // Create branch if it doesn't exist, or switch to it if it does
         const create = execGit(cwd, ['checkout', '-b', branchName]);
         if (create.exitCode !== 0) {
@@ -297,16 +363,30 @@ function cmdCommit(cwd, message, files, raw, amend, noVerify) {
   }
 
   // Commit (--no-verify skips pre-commit hooks, used by parallel executor agents)
-  const commitArgs = amend ? ['commit', '--amend', '--no-edit'] : ['commit', '-m', message];
+  const commitArgs = amend
+    ? ['commit', '--amend', '--no-edit']
+    : ['commit', '-m', message];
   if (noVerify) commitArgs.push('--no-verify');
   const commitResult = execGit(cwd, commitArgs);
   if (commitResult.exitCode !== 0) {
-    if (commitResult.stdout.includes('nothing to commit') || commitResult.stderr.includes('nothing to commit')) {
-      const result = { committed: false, hash: null, reason: 'nothing_to_commit' };
+    if (
+      commitResult.stdout.includes('nothing to commit') ||
+      commitResult.stderr.includes('nothing to commit')
+    ) {
+      const result = {
+        committed: false,
+        hash: null,
+        reason: 'nothing_to_commit',
+      };
       output(result, raw, 'nothing');
       return;
     }
-    const result = { committed: false, hash: null, reason: 'nothing_to_commit', error: commitResult.stderr };
+    const result = {
+      committed: false,
+      hash: null,
+      reason: 'nothing_to_commit',
+      error: commitResult.stderr,
+    };
     output(result, raw, 'nothing');
     return;
   }
@@ -338,7 +418,7 @@ function cmdCommitToSubrepo(cwd, message, files, raw) {
   const grouped = {};
   const unmatched = [];
   for (const file of files) {
-    const match = subRepos.find(repo => file.startsWith(repo + '/'));
+    const match = subRepos.find((repo) => file.startsWith(repo + '/'));
     if (match) {
       if (!grouped[match]) grouped[match] = [];
       grouped[match].push(file);
@@ -348,7 +428,9 @@ function cmdCommitToSubrepo(cwd, message, files, raw) {
   }
 
   if (unmatched.length > 0) {
-    process.stderr.write(`Warning: ${unmatched.length} file(s) did not match any sub-repo prefix: ${unmatched.join(', ')}\n`);
+    process.stderr.write(
+      `Warning: ${unmatched.length} file(s) did not match any sub-repo prefix: ${unmatched.join(', ')}\n`,
+    );
   }
 
   const repos = {};
@@ -364,11 +446,25 @@ function cmdCommitToSubrepo(cwd, message, files, raw) {
     // Commit
     const commitResult = execGit(repoCwd, ['commit', '-m', message]);
     if (commitResult.exitCode !== 0) {
-      if (commitResult.stdout.includes('nothing to commit') || commitResult.stderr.includes('nothing to commit')) {
-        repos[repo] = { committed: false, hash: null, files: repoFiles, reason: 'nothing_to_commit' };
+      if (
+        commitResult.stdout.includes('nothing to commit') ||
+        commitResult.stderr.includes('nothing to commit')
+      ) {
+        repos[repo] = {
+          committed: false,
+          hash: null,
+          files: repoFiles,
+          reason: 'nothing_to_commit',
+        };
         continue;
       }
-      repos[repo] = { committed: false, hash: null, files: repoFiles, reason: 'error', error: commitResult.stderr };
+      repos[repo] = {
+        committed: false,
+        hash: null,
+        files: repoFiles,
+        reason: 'error',
+        error: commitResult.stderr,
+      };
       continue;
     }
 
@@ -379,11 +475,17 @@ function cmdCommitToSubrepo(cwd, message, files, raw) {
   }
 
   const result = {
-    committed: Object.values(repos).some(r => r.committed),
+    committed: Object.values(repos).some((r) => r.committed),
     repos,
     unmatched: unmatched.length > 0 ? unmatched : undefined,
   };
-  output(result, raw, Object.entries(repos).map(([r, v]) => `${r}:${v.hash || 'skip'}`).join(' '));
+  output(
+    result,
+    raw,
+    Object.entries(repos)
+      .map(([r, v]) => `${r}:${v.hash || 'skip'}`)
+      .join(' '),
+  );
 }
 
 function cmdSummaryExtract(cwd, summaryPath, fields, raw) {
@@ -404,7 +506,7 @@ function cmdSummaryExtract(cwd, summaryPath, fields, raw) {
   // Parse key-decisions into structured format
   const parseDecisions = (decisionsList) => {
     if (!decisionsList || !Array.isArray(decisionsList)) return [];
-    return decisionsList.map(d => {
+    return decisionsList.map((d) => {
       const colonIdx = d.indexOf(':');
       if (colonIdx > 0) {
         return {
@@ -461,7 +563,7 @@ async function cmdWebsearch(query, options, raw) {
     count: String(options.limit || 10),
     country: 'us',
     search_lang: 'en',
-    text_decorations: 'false'
+    text_decorations: 'false',
   });
 
   if (options.freshness) {
@@ -473,32 +575,40 @@ async function cmdWebsearch(query, options, raw) {
       `https://api.search.brave.com/res/v1/web/search?${params}`,
       {
         headers: {
-          'Accept': 'application/json',
-          'X-Subscription-Token': apiKey
-        }
-      }
+          Accept: 'application/json',
+          'X-Subscription-Token': apiKey,
+        },
+      },
     );
 
     if (!response.ok) {
-      output({ available: false, error: `API error: ${response.status}` }, raw, '');
+      output(
+        { available: false, error: `API error: ${response.status}` },
+        raw,
+        '',
+      );
       return;
     }
 
     const data = await response.json();
 
-    const results = (data.web?.results || []).map(r => ({
+    const results = (data.web?.results || []).map((r) => ({
       title: r.title,
       url: r.url,
       description: r.description,
-      age: r.age || null
+      age: r.age || null,
     }));
 
-    output({
-      available: true,
-      query,
-      count: results.length,
-      results
-    }, raw, results.map(r => `${r.title}\n${r.url}\n${r.description}`).join('\n\n'));
+    output(
+      {
+        available: true,
+        query,
+        count: results.length,
+        results,
+      },
+      raw,
+      results.map((r) => `${r.title}\n${r.url}\n${r.description}`).join('\n\n'),
+    );
   } catch (err) {
     output({ available: false, error: err.message }, raw, '');
   }
@@ -515,15 +625,22 @@ function cmdProgressRender(cwd, format, raw) {
 
   try {
     const entries = fs.readdirSync(phasesDir, { withFileTypes: true });
-    const dirs = entries.filter(e => e.isDirectory()).map(e => e.name).sort((a, b) => comparePhaseNum(a, b));
+    const dirs = entries
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort((a, b) => comparePhaseNum(a, b));
 
     for (const dir of dirs) {
       const dm = dir.match(/^(\d+(?:\.\d+)*)-?(.*)/);
       const phaseNum = dm ? dm[1] : dir;
       const phaseName = dm && dm[2] ? dm[2].replace(/-/g, ' ') : '';
       const phaseFiles = fs.readdirSync(path.join(phasesDir, dir));
-      const plans = phaseFiles.filter(f => f.endsWith('-PLAN.md') || f === 'PLAN.md').length;
-      const summaries = phaseFiles.filter(f => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md').length;
+      const plans = phaseFiles.filter(
+        (f) => f.endsWith('-PLAN.md') || f === 'PLAN.md',
+      ).length;
+      const summaries = phaseFiles.filter(
+        (f) => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md',
+      ).length;
 
       totalPlans += plans;
       totalSummaries += summaries;
@@ -534,11 +651,22 @@ function cmdProgressRender(cwd, format, raw) {
       else if (summaries > 0) status = 'In Progress';
       else status = 'Planned';
 
-      phases.push({ number: phaseNum, name: phaseName, plans, summaries, status });
+      phases.push({
+        number: phaseNum,
+        name: phaseName,
+        plans,
+        summaries,
+        status,
+      });
     }
-  } catch { /* intentionally empty */ }
+  } catch {
+    /* intentionally empty */
+  }
 
-  const percent = totalPlans > 0 ? Math.min(100, Math.round((totalSummaries / totalPlans) * 100)) : 0;
+  const percent =
+    totalPlans > 0
+      ? Math.min(100, Math.round((totalSummaries / totalPlans) * 100))
+      : 0;
 
   if (format === 'table') {
     // Render markdown table
@@ -558,17 +686,24 @@ function cmdProgressRender(cwd, format, raw) {
     const filled = Math.round((percent / 100) * barWidth);
     const bar = '\u2588'.repeat(filled) + '\u2591'.repeat(barWidth - filled);
     const text = `[${bar}] ${totalSummaries}/${totalPlans} plans (${percent}%)`;
-    output({ bar: text, percent, completed: totalSummaries, total: totalPlans }, raw, text);
+    output(
+      { bar: text, percent, completed: totalSummaries, total: totalPlans },
+      raw,
+      text,
+    );
   } else {
     // JSON format
-    output({
-      milestone_version: milestone.version,
-      milestone_name: milestone.name,
-      phases,
-      total_plans: totalPlans,
-      total_summaries: totalSummaries,
-      percent,
-    }, raw);
+    output(
+      {
+        milestone_version: milestone.version,
+        milestone_name: milestone.name,
+        phases,
+        total_plans: totalPlans,
+        total_summaries: totalSummaries,
+        percent,
+      },
+      raw,
+    );
   }
 }
 
@@ -578,27 +713,36 @@ function cmdProgressRender(cwd, format, raw) {
  * Used by discuss-phase to surface relevant todos before scope-setting.
  */
 function cmdTodoMatchPhase(cwd, phase, raw) {
-  if (!phase) { error('phase required for todo match-phase'); }
+  if (!phase) {
+    error('phase required for todo match-phase');
+  }
 
   const pendingDir = path.join(planningDir(cwd), 'todos', 'pending');
   const todos = [];
 
   // Load pending todos
   try {
-    const files = fs.readdirSync(pendingDir).filter(f => f.endsWith('.md'));
+    const files = fs.readdirSync(pendingDir).filter((f) => f.endsWith('.md'));
     for (const file of files) {
       try {
         const content = fs.readFileSync(path.join(pendingDir, file), 'utf-8');
         const titleMatch = content.match(/^title:\s*(.+)$/m);
         const areaMatch = content.match(/^area:\s*(.+)$/m);
         const filesMatch = content.match(/^files:\s*(.+)$/m);
-        const body = content.replace(/^(title|area|files|created|priority):.*$/gm, '').trim();
+        const body = content
+          .replace(/^(title|area|files|created|priority):.*$/gm, '')
+          .trim();
 
         todos.push({
           file,
           title: titleMatch ? titleMatch[1].trim() : 'Untitled',
           area: areaMatch ? areaMatch[1].trim() : 'general',
-          files: filesMatch ? filesMatch[1].trim().split(/[,\s]+/).filter(Boolean) : [],
+          files: filesMatch
+            ? filesMatch[1]
+                .trim()
+                .split(/[,\s]+/)
+                .filter(Boolean)
+            : [],
           body: body.slice(0, 200), // first 200 chars for context
         });
       } catch {}
@@ -612,17 +756,42 @@ function cmdTodoMatchPhase(cwd, phase, raw) {
 
   // Load phase goal/name from ROADMAP
   const phaseInfo = getRoadmapPhaseInternal(cwd, phase);
-  const phaseName = phaseInfo ? (phaseInfo.phase_name || '') : '';
-  const phaseGoal = phaseInfo ? (phaseInfo.goal || '') : '';
-  const phaseSection = phaseInfo ? (phaseInfo.section || '') : '';
+  const phaseName = phaseInfo ? phaseInfo.phase_name || '' : '';
+  const phaseGoal = phaseInfo ? phaseInfo.goal || '' : '';
+  const phaseSection = phaseInfo ? phaseInfo.section || '' : '';
 
   // Build keyword set from phase name + goal + section text
   const phaseText = `${phaseName} ${phaseGoal} ${phaseSection}`.toLowerCase();
-  const stopWords = new Set(['the', 'and', 'for', 'with', 'from', 'that', 'this', 'will', 'are', 'was', 'has', 'have', 'been', 'not', 'but', 'all', 'can', 'into', 'each', 'when', 'any', 'use', 'new']);
+  const stopWords = new Set([
+    'the',
+    'and',
+    'for',
+    'with',
+    'from',
+    'that',
+    'this',
+    'will',
+    'are',
+    'was',
+    'has',
+    'have',
+    'been',
+    'not',
+    'but',
+    'all',
+    'can',
+    'into',
+    'each',
+    'when',
+    'any',
+    'use',
+    'new',
+  ]);
   const phaseKeywords = new Set(
-    phaseText.split(/[\s\-_/.,;:()\[\]{}|]+/)
-      .map(w => w.replace(/[^a-z0-9]/g, ''))
-      .filter(w => w.length > 2 && !stopWords.has(w))
+    phaseText
+      .split(/[\s\-_/.,;:()\[\]{}|]+/)
+      .map((w) => w.replace(/[^a-z0-9]/g, ''))
+      .filter((w) => w.length > 2 && !stopWords.has(w)),
   );
 
   // Find phase directory to get expected file paths
@@ -631,13 +800,20 @@ function cmdTodoMatchPhase(cwd, phase, raw) {
   if (phaseInfoDisk && phaseInfoDisk.found) {
     try {
       const phaseDir = path.join(cwd, phaseInfoDisk.directory);
-      const planFiles = fs.readdirSync(phaseDir).filter(f => f.endsWith('-PLAN.md'));
+      const planFiles = fs
+        .readdirSync(phaseDir)
+        .filter((f) => f.endsWith('-PLAN.md'));
       for (const pf of planFiles) {
         try {
           const planContent = fs.readFileSync(path.join(phaseDir, pf), 'utf-8');
           const fmFiles = planContent.match(/files_modified:\s*\[([^\]]*)\]/);
           if (fmFiles) {
-            phasePlans.push(...fmFiles[1].split(',').map(s => s.trim().replace(/['"]/g, '')).filter(Boolean));
+            phasePlans.push(
+              ...fmFiles[1]
+                .split(',')
+                .map((s) => s.trim().replace(/['"]/g, ''))
+                .filter(Boolean),
+            );
           }
         } catch {}
       }
@@ -651,27 +827,33 @@ function cmdTodoMatchPhase(cwd, phase, raw) {
     const reasons = [];
 
     // Keyword match: todo title/body terms in phase text
-    const todoWords = `${todo.title} ${todo.body}`.toLowerCase()
+    const todoWords = `${todo.title} ${todo.body}`
+      .toLowerCase()
       .split(/[\s\-_/.,;:()\[\]{}|]+/)
-      .map(w => w.replace(/[^a-z0-9]/g, ''))
-      .filter(w => w.length > 2 && !stopWords.has(w));
+      .map((w) => w.replace(/[^a-z0-9]/g, ''))
+      .filter((w) => w.length > 2 && !stopWords.has(w));
 
-    const matchedKeywords = todoWords.filter(w => phaseKeywords.has(w));
+    const matchedKeywords = todoWords.filter((w) => phaseKeywords.has(w));
     if (matchedKeywords.length > 0) {
       score += Math.min(matchedKeywords.length * 0.2, 0.6);
-      reasons.push(`keywords: ${[...new Set(matchedKeywords)].slice(0, 5).join(', ')}`);
+      reasons.push(
+        `keywords: ${[...new Set(matchedKeywords)].slice(0, 5).join(', ')}`,
+      );
     }
 
     // Area match: todo area appears in phase text
-    if (todo.area !== 'general' && phaseText.includes(todo.area.toLowerCase())) {
+    if (
+      todo.area !== 'general' &&
+      phaseText.includes(todo.area.toLowerCase())
+    ) {
       score += 0.3;
       reasons.push(`area: ${todo.area}`);
     }
 
     // File match: todo files overlap with phase plan files
     if (todo.files.length > 0 && phasePlans.length > 0) {
-      const fileOverlap = todo.files.filter(f =>
-        phasePlans.some(pf => pf.includes(f) || f.includes(pf))
+      const fileOverlap = todo.files.filter((f) =>
+        phasePlans.some((pf) => pf.includes(f) || f.includes(pf)),
       );
       if (fileOverlap.length > 0) {
         score += 0.4;
@@ -764,15 +946,29 @@ function cmdScaffold(cwd, type, options, raw) {
       fs.mkdirSync(phasesParent, { recursive: true });
       const dirPath = path.join(phasesParent, dirName);
       fs.mkdirSync(dirPath, { recursive: true });
-      output({ created: true, directory: toPosixPath(path.relative(cwd, dirPath)), path: dirPath }, raw, dirPath);
+      output(
+        {
+          created: true,
+          directory: toPosixPath(path.relative(cwd, dirPath)),
+          path: dirPath,
+        },
+        raw,
+        dirPath,
+      );
       return;
     }
     default:
-      error(`Unknown scaffold type: ${type}. Available: context, uat, verification, phase-dir`);
+      error(
+        `Unknown scaffold type: ${type}. Available: context, uat, verification, phase-dir`,
+      );
   }
 
   if (fs.existsSync(filePath)) {
-    output({ created: false, reason: 'already_exists', path: filePath }, raw, 'exists');
+    output(
+      { created: false, reason: 'already_exists', path: filePath },
+      raw,
+      'exists',
+    );
     return;
   }
 
@@ -795,8 +991,12 @@ function cmdStats(cwd, format, raw) {
   let totalSummaries = 0;
 
   try {
-    const roadmapContent = extractCurrentMilestone(fs.readFileSync(roadmapPath, 'utf-8'), cwd);
-    const headingPattern = /#{2,4}\s*Phase\s+(\d+[A-Z]?(?:\.\d+)*)\s*:\s*([^\n]+)/gi;
+    const roadmapContent = extractCurrentMilestone(
+      fs.readFileSync(roadmapPath, 'utf-8'),
+      cwd,
+    );
+    const headingPattern =
+      /#{2,4}\s*Phase\s+(\d+[A-Z]?(?:\.\d+)*)\s*:\s*([^\n]+)/gi;
     let match;
     while ((match = headingPattern.exec(roadmapContent)) !== null) {
       phasesByNumber.set(match[1], {
@@ -807,13 +1007,15 @@ function cmdStats(cwd, format, raw) {
         status: 'Not Started',
       });
     }
-  } catch { /* intentionally empty */ }
+  } catch {
+    /* intentionally empty */
+  }
 
   try {
     const entries = fs.readdirSync(phasesDir, { withFileTypes: true });
     const dirs = entries
-      .filter(e => e.isDirectory())
-      .map(e => e.name)
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
       .filter(isDirInMilestone)
       .sort((a, b) => comparePhaseNum(a, b));
 
@@ -822,8 +1024,12 @@ function cmdStats(cwd, format, raw) {
       const phaseNum = dm ? dm[1] : dir;
       const phaseName = dm && dm[2] ? dm[2].replace(/-/g, ' ') : '';
       const phaseFiles = fs.readdirSync(path.join(phasesDir, dir));
-      const plans = phaseFiles.filter(f => f.endsWith('-PLAN.md') || f === 'PLAN.md').length;
-      const summaries = phaseFiles.filter(f => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md').length;
+      const plans = phaseFiles.filter(
+        (f) => f.endsWith('-PLAN.md') || f === 'PLAN.md',
+      ).length;
+      const summaries = phaseFiles.filter(
+        (f) => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md',
+      ).length;
 
       totalPlans += plans;
       totalSummaries += summaries;
@@ -843,12 +1049,22 @@ function cmdStats(cwd, format, raw) {
         status,
       });
     }
-  } catch { /* intentionally empty */ }
+  } catch {
+    /* intentionally empty */
+  }
 
-  const phases = [...phasesByNumber.values()].sort((a, b) => comparePhaseNum(a.number, b.number));
-  const completedPhases = phases.filter(p => p.status === 'Complete').length;
-  const planPercent = totalPlans > 0 ? Math.min(100, Math.round((totalSummaries / totalPlans) * 100)) : 0;
-  const percent = phases.length > 0 ? Math.min(100, Math.round((completedPhases / phases.length) * 100)) : 0;
+  const phases = [...phasesByNumber.values()].sort((a, b) =>
+    comparePhaseNum(a.number, b.number),
+  );
+  const completedPhases = phases.filter((p) => p.status === 'Complete').length;
+  const planPercent =
+    totalPlans > 0
+      ? Math.min(100, Math.round((totalSummaries / totalPlans) * 100))
+      : 0;
+  const percent =
+    phases.length > 0
+      ? Math.min(100, Math.round((completedPhases / phases.length) * 100))
+      : 0;
 
   // Requirements stats
   let requirementsTotal = 0;
@@ -859,22 +1075,28 @@ function cmdStats(cwd, format, raw) {
       const checked = reqContent.match(/^- \[x\] \*\*/gm);
       const unchecked = reqContent.match(/^- \[ \] \*\*/gm);
       requirementsComplete = checked ? checked.length : 0;
-      requirementsTotal = requirementsComplete + (unchecked ? unchecked.length : 0);
+      requirementsTotal =
+        requirementsComplete + (unchecked ? unchecked.length : 0);
     }
-  } catch { /* intentionally empty */ }
+  } catch {
+    /* intentionally empty */
+  }
 
   // Last activity from STATE.md
   let lastActivity = null;
   try {
     if (fs.existsSync(statePath)) {
       const stateContent = fs.readFileSync(statePath, 'utf-8');
-      const activityMatch = stateContent.match(/^last_activity:\s*(.+)$/im)
-        || stateContent.match(/\*\*Last Activity:\*\*\s*(.+)/i)
-        || stateContent.match(/^Last Activity:\s*(.+)$/im)
-        || stateContent.match(/^Last activity:\s*(.+)$/im);
+      const activityMatch =
+        stateContent.match(/^last_activity:\s*(.+)$/im) ||
+        stateContent.match(/\*\*Last Activity:\*\*\s*(.+)/i) ||
+        stateContent.match(/^Last Activity:\s*(.+)$/im) ||
+        stateContent.match(/^Last activity:\s*(.+)$/im);
       if (activityMatch) lastActivity = activityMatch[1].trim();
     }
-  } catch { /* intentionally empty */ }
+  } catch {
+    /* intentionally empty */
+  }
 
   // Git stats
   let gitCommits = 0;

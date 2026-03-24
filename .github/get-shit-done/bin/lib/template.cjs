@@ -4,7 +4,15 @@
 
 const fs = require('fs');
 const path = require('path');
-const { normalizePhaseName, findPhaseInternal, generateSlugInternal, normalizeMd, toPosixPath, output, error } = require('./core.cjs');
+const {
+  normalizePhaseName,
+  findPhaseInternal,
+  generateSlugInternal,
+  normalizeMd,
+  toPosixPath,
+  output,
+  error,
+} = require('./core.cjs');
 const { reconstructFrontmatter } = require('./frontmatter.cjs');
 
 function cmdTemplateSelect(cwd, planPath, raw) {
@@ -49,16 +57,31 @@ function cmdTemplateSelect(cwd, planPath, raw) {
     output(result, raw, template);
   } catch (e) {
     // Fallback to standard
-    output({ template: 'templates/summary-standard.md', type: 'standard', error: e.message }, raw, 'templates/summary-standard.md');
+    output(
+      {
+        template: 'templates/summary-standard.md',
+        type: 'standard',
+        error: e.message,
+      },
+      raw,
+      'templates/summary-standard.md',
+    );
   }
 }
 
 function cmdTemplateFill(cwd, templateType, options, raw) {
-  if (!templateType) { error('template type required: summary, plan, or verification'); }
-  if (!options.phase) { error('--phase required'); }
+  if (!templateType) {
+    error('template type required: summary, plan, or verification');
+  }
+  if (!options.phase) {
+    error('--phase required');
+  }
 
   const phaseInfo = findPhaseInternal(cwd, options.phase);
-  if (!phaseInfo || !phaseInfo.found) { output({ error: 'Phase not found', phase: options.phase }, raw); return; }
+  if (!phaseInfo || !phaseInfo.found) {
+    output({ error: 'Phase not found', phase: options.phase }, raw);
+    return;
+  }
 
   const padded = normalizePhaseName(options.phase);
   const today = new Date().toISOString().split('T')[0];
@@ -111,7 +134,7 @@ function cmdTemplateFill(cwd, templateType, options, raw) {
         '[Key decisions or "None - followed plan as specified"]',
         '',
         '## Next Phase Readiness',
-        '[What\'s ready for next phase]',
+        "[What's ready for next phase]",
       ].join('\n');
       fileName = `${padded}-${planNum}-SUMMARY.md`;
       break;
@@ -202,7 +225,9 @@ function cmdTemplateFill(cwd, templateType, options, raw) {
       break;
     }
     default:
-      error(`Unknown template type: ${templateType}. Available: summary, plan, verification`);
+      error(
+        `Unknown template type: ${templateType}. Available: summary, plan, verification`,
+      );
       return;
   }
 
@@ -210,13 +235,23 @@ function cmdTemplateFill(cwd, templateType, options, raw) {
   const outPath = path.join(cwd, phaseInfo.directory, fileName);
 
   if (fs.existsSync(outPath)) {
-    output({ error: 'File already exists', path: toPosixPath(path.relative(cwd, outPath)) }, raw);
+    output(
+      {
+        error: 'File already exists',
+        path: toPosixPath(path.relative(cwd, outPath)),
+      },
+      raw,
+    );
     return;
   }
 
   fs.writeFileSync(outPath, normalizeMd(fullContent), 'utf-8');
   const relPath = toPosixPath(path.relative(cwd, outPath));
-  output({ created: true, path: relPath, template: templateType }, raw, relPath);
+  output(
+    { created: true, path: relPath, template: templateType },
+    raw,
+    relPath,
+  );
 }
 
 module.exports = { cmdTemplateSelect, cmdTemplateFill };

@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@rstest/core';
+import { describe, expect, it } from '@rstest/core';
 import { debugSQLQuery } from '../../src/debug';
 
 describe('debugSQLQuery', () => {
@@ -34,17 +34,21 @@ describe('debugSQLQuery', () => {
     });
 
     it('interpolates Date as ISO string', () => {
-      expect(debugSQLQuery('SELECT ?001', [new Date('2024-01-15T00:00:00.000Z')])).toBe(
-        "SELECT '2024-01-15T00:00:00.000Z'",
-      );
+      expect(
+        debugSQLQuery('SELECT ?001', [new Date('2024-01-15T00:00:00.000Z')]),
+      ).toBe("SELECT '2024-01-15T00:00:00.000Z'");
     });
 
     it('interpolates Buffer as hex literal', () => {
-      expect(debugSQLQuery('SELECT ?001', [Buffer.from([0x41, 0x42])])).toBe("SELECT X'4142'");
+      expect(debugSQLQuery('SELECT ?001', [Buffer.from([0x41, 0x42])])).toBe(
+        "SELECT X'4142'",
+      );
     });
 
     it('interpolates Uint8Array as hex literal', () => {
-      expect(debugSQLQuery('SELECT ?001', [new Uint8Array([0x41, 0x42])])).toBe("SELECT X'4142'");
+      expect(debugSQLQuery('SELECT ?001', [new Uint8Array([0x41, 0x42])])).toBe(
+        "SELECT X'4142'",
+      );
     });
 
     it('reuses same index for repeated ?001', () => {
@@ -52,7 +56,9 @@ describe('debugSQLQuery', () => {
     });
 
     it('interpolates two distinct positional params', () => {
-      expect(debugSQLQuery('SELECT ?001, ?002', ['a', 'b'])).toBe("SELECT 'a', 'b'");
+      expect(debugSQLQuery('SELECT ?001, ?002', ['a', 'b'])).toBe(
+        "SELECT 'a', 'b'",
+      );
     });
   });
 
@@ -68,7 +74,9 @@ describe('debugSQLQuery', () => {
 
   describe('string escaping', () => {
     it("escapes embedded single quotes as ''", () => {
-      expect(debugSQLQuery('SELECT ?001', ["it's a test"])).toBe("SELECT 'it''s a test'");
+      expect(debugSQLQuery('SELECT ?001', ["it's a test"])).toBe(
+        "SELECT 'it''s a test'",
+      );
     });
   });
 

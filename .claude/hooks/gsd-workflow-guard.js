@@ -17,7 +17,7 @@ const path = require('path');
 let input = '';
 const stdinTimeout = setTimeout(() => process.exit(0), 3000);
 process.stdin.setEncoding('utf8');
-process.stdin.on('data', chunk => input += chunk);
+process.stdin.on('data', (chunk) => (input += chunk));
 process.stdin.on('end', () => {
   clearTimeout(stdinTimeout);
   try {
@@ -53,7 +53,7 @@ process.stdin.on('end', () => {
       /GEMINI\.md$/,
       /settings\.json$/,
     ];
-    if (allowedPatterns.some(p => p.test(filePath))) {
+    if (allowedPatterns.some((p) => p.test(filePath))) {
       process.exit(0);
     }
 
@@ -77,13 +77,14 @@ process.stdin.on('end', () => {
     // not in a subagent context. Inject advisory warning.
     const output = {
       hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        additionalContext: `⚠️ WORKFLOW ADVISORY: You're editing ${path.basename(filePath)} directly without a GSD command. ` +
+        hookEventName: 'PreToolUse',
+        additionalContext:
+          `⚠️ WORKFLOW ADVISORY: You're editing ${path.basename(filePath)} directly without a GSD command. ` +
           'This edit will not be tracked in STATE.md or produce a SUMMARY.md. ' +
           'Consider using /gsd:fast for trivial fixes or /gsd:quick for larger changes ' +
           'to maintain project state tracking. ' +
-          'If this is intentional (e.g., user explicitly asked for a direct edit), proceed normally.'
-      }
+          'If this is intentional (e.g., user explicitly asked for a direct edit), proceed normally.',
+      },
     };
 
     process.stdout.write(JSON.stringify(output));

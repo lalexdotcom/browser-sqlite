@@ -165,9 +165,12 @@ function parseNamedArgs(args, valueFlags = [], booleanFlags = []) {
   const result = {};
   for (const flag of valueFlags) {
     const idx = args.indexOf(`--${flag}`);
-    result[flag] = idx !== -1 && args[idx + 1] !== undefined && !args[idx + 1].startsWith('--')
-      ? args[idx + 1]
-      : null;
+    result[flag] =
+      idx !== -1 &&
+      args[idx + 1] !== undefined &&
+      !args[idx + 1].startsWith('--')
+        ? args[idx + 1]
+        : null;
   }
   for (const flag of booleanFlags) {
     result[flag] = args.includes(`--${flag}`);
@@ -198,7 +201,7 @@ async function main() {
 
   // Optional cwd override for sandboxed subagents running outside project root.
   let cwd = process.cwd();
-  const cwdEqArg = args.find(arg => arg.startsWith('--cwd='));
+  const cwdEqArg = args.find((arg) => arg.startsWith('--cwd='));
   const cwdIdx = args.indexOf('--cwd');
   if (cwdEqArg) {
     const value = cwdEqArg.slice('--cwd='.length).trim();
@@ -229,7 +232,7 @@ async function main() {
 
   // Optional workstream override for parallel milestone work.
   // Priority: --ws flag > GSD_WORKSTREAM env var > active-workstream file > null (flat mode)
-  const wsEqArg = args.find(arg => arg.startsWith('--ws='));
+  const wsEqArg = args.find((arg) => arg.startsWith('--ws='));
   const wsIdx = args.indexOf('--ws');
   let ws = null;
   if (wsEqArg) {
@@ -247,7 +250,9 @@ async function main() {
   }
   // Validate workstream name to prevent path traversal attacks.
   if (ws && !/^[a-zA-Z0-9_-]+$/.test(ws)) {
-    error('Invalid workstream name: must be alphanumeric, hyphens, and underscores only');
+    error(
+      'Invalid workstream name: must be alphanumeric, hyphens, and underscores only',
+    );
   }
   // Set env var so all modules (planningDir, planningPaths) auto-resolve workstream paths
   if (ws) {
@@ -265,22 +270,29 @@ async function main() {
   let pickField = null;
   if (pickIdx !== -1) {
     pickField = args[pickIdx + 1];
-    if (!pickField || pickField.startsWith('--')) error('Missing value for --pick');
+    if (!pickField || pickField.startsWith('--'))
+      error('Missing value for --pick');
     args.splice(pickIdx, 2);
   }
 
   const command = args[0];
 
   if (!command) {
-    error('Usage: gsd-tools <command> [args] [--raw] [--pick <field>] [--cwd <path>] [--ws <name>]\nCommands: state, resolve-model, find-phase, commit, verify-summary, verify, frontmatter, template, generate-slug, current-timestamp, list-todos, verify-path-exists, config-ensure-section, config-new-project, init, workstream');
+    error(
+      'Usage: gsd-tools <command> [args] [--raw] [--pick <field>] [--cwd <path>] [--ws <name>]\nCommands: state, resolve-model, find-phase, commit, verify-summary, verify, frontmatter, template, generate-slug, current-timestamp, list-todos, verify-path-exists, config-ensure-section, config-new-project, init, workstream',
+    );
   }
 
   // Multi-repo guard: resolve project root for commands that read/write .planning/.
   // Skip for pure-utility commands that don't touch .planning/ to avoid unnecessary
   // filesystem traversal on every invocation.
   const SKIP_ROOT_RESOLUTION = new Set([
-    'generate-slug', 'current-timestamp', 'verify-path-exists',
-    'verify-summary', 'template', 'frontmatter',
+    'generate-slug',
+    'current-timestamp',
+    'verify-path-exists',
+    'verify-summary',
+    'template',
+    'frontmatter',
   ]);
   if (!SKIP_ROOT_RESOLUTION.has(command)) {
     cwd = findProjectRoot(cwd);
@@ -291,7 +303,10 @@ async function main() {
     const origWriteSync = fs.writeSync;
     const chunks = [];
     fs.writeSync = function (fd, data, ...rest) {
-      if (fd === 1) { chunks.push(String(data)); return; }
+      if (fd === 1) {
+        chunks.push(String(data));
+        return;
+      }
       return origWriteSync.call(fs, fd, data, ...rest);
     };
     const cleanup = () => {
@@ -304,7 +319,8 @@ async function main() {
       try {
         const obj = JSON.parse(jsonStr);
         const value = extractField(obj, pickField);
-        const result = value === null || value === undefined ? '' : String(value);
+        const result =
+          value === null || value === undefined ? '' : String(value);
         origWriteSync.call(fs, 1, result);
       } catch {
         origWriteSync.call(fs, 1, captured);
@@ -369,26 +385,91 @@ async function runCommand(command, args, cwd, raw) {
       } else if (subcommand === 'advance-plan') {
         state.cmdStateAdvancePlan(cwd, raw);
       } else if (subcommand === 'record-metric') {
-        const { phase: p, plan, duration, tasks, files } = parseNamedArgs(args, ['phase', 'plan', 'duration', 'tasks', 'files']);
-        state.cmdStateRecordMetric(cwd, { phase: p, plan, duration, tasks, files }, raw);
+        const {
+          phase: p,
+          plan,
+          duration,
+          tasks,
+          files,
+        } = parseNamedArgs(args, [
+          'phase',
+          'plan',
+          'duration',
+          'tasks',
+          'files',
+        ]);
+        state.cmdStateRecordMetric(
+          cwd,
+          { phase: p, plan, duration, tasks, files },
+          raw,
+        );
       } else if (subcommand === 'update-progress') {
         state.cmdStateUpdateProgress(cwd, raw);
       } else if (subcommand === 'add-decision') {
-        const { phase: p, summary, 'summary-file': summary_file, rationale, 'rationale-file': rationale_file } = parseNamedArgs(args, ['phase', 'summary', 'summary-file', 'rationale', 'rationale-file']);
-        state.cmdStateAddDecision(cwd, { phase: p, summary, summary_file, rationale: rationale || '', rationale_file }, raw);
+        const {
+          phase: p,
+          summary,
+          'summary-file': summary_file,
+          rationale,
+          'rationale-file': rationale_file,
+        } = parseNamedArgs(args, [
+          'phase',
+          'summary',
+          'summary-file',
+          'rationale',
+          'rationale-file',
+        ]);
+        state.cmdStateAddDecision(
+          cwd,
+          {
+            phase: p,
+            summary,
+            summary_file,
+            rationale: rationale || '',
+            rationale_file,
+          },
+          raw,
+        );
       } else if (subcommand === 'add-blocker') {
-        const { text, 'text-file': text_file } = parseNamedArgs(args, ['text', 'text-file']);
+        const { text, 'text-file': text_file } = parseNamedArgs(args, [
+          'text',
+          'text-file',
+        ]);
         state.cmdStateAddBlocker(cwd, { text, text_file }, raw);
       } else if (subcommand === 'resolve-blocker') {
-        state.cmdStateResolveBlocker(cwd, parseNamedArgs(args, ['text']).text, raw);
+        state.cmdStateResolveBlocker(
+          cwd,
+          parseNamedArgs(args, ['text']).text,
+          raw,
+        );
       } else if (subcommand === 'record-session') {
-        const { 'stopped-at': stopped_at, 'resume-file': resume_file } = parseNamedArgs(args, ['stopped-at', 'resume-file']);
-        state.cmdStateRecordSession(cwd, { stopped_at, resume_file: resume_file || 'None' }, raw);
+        const { 'stopped-at': stopped_at, 'resume-file': resume_file } =
+          parseNamedArgs(args, ['stopped-at', 'resume-file']);
+        state.cmdStateRecordSession(
+          cwd,
+          { stopped_at, resume_file: resume_file || 'None' },
+          raw,
+        );
       } else if (subcommand === 'begin-phase') {
-        const { phase: p, name, plans } = parseNamedArgs(args, ['phase', 'name', 'plans']);
-        state.cmdStateBeginPhase(cwd, p, name, plans !== null ? parseInt(plans, 10) : null, raw);
+        const {
+          phase: p,
+          name,
+          plans,
+        } = parseNamedArgs(args, ['phase', 'name', 'plans']);
+        state.cmdStateBeginPhase(
+          cwd,
+          p,
+          name,
+          plans !== null ? parseInt(plans, 10) : null,
+          raw,
+        );
       } else if (subcommand === 'signal-waiting') {
-        const { type, question, options, phase: p } = parseNamedArgs(args, ['type', 'question', 'options', 'phase']);
+        const {
+          type,
+          question,
+          options,
+          phase: p,
+        } = parseNamedArgs(args, ['type', 'question', 'options', 'phase']);
         state.cmdSignalWaiting(cwd, type, question, options, p, raw);
       } else if (subcommand === 'signal-resume') {
         state.cmdSignalResume(cwd, raw);
@@ -416,9 +497,14 @@ async function runCommand(command, args, cwd, raw) {
       // then join them — handles both quoted ("multi word msg") and
       // unquoted (multi word msg) invocations from different shells
       const endIndex = filesIndex !== -1 ? filesIndex : args.length;
-      const messageArgs = args.slice(1, endIndex).filter(a => !a.startsWith('--'));
+      const messageArgs = args
+        .slice(1, endIndex)
+        .filter((a) => !a.startsWith('--'));
       const message = messageArgs.join(' ') || undefined;
-      const files = filesIndex !== -1 ? args.slice(filesIndex + 1).filter(a => !a.startsWith('--')) : [];
+      const files =
+        filesIndex !== -1
+          ? args.slice(filesIndex + 1).filter((a) => !a.startsWith('--'))
+          : [];
       commands.cmdCommit(cwd, message, files, raw, amend, noVerify);
       break;
     }
@@ -426,7 +512,10 @@ async function runCommand(command, args, cwd, raw) {
     case 'commit-to-subrepo': {
       const message = args[1];
       const filesIndex = args.indexOf('--files');
-      const files = filesIndex !== -1 ? args.slice(filesIndex + 1).filter(a => !a.startsWith('--')) : [];
+      const files =
+        filesIndex !== -1
+          ? args.slice(filesIndex + 1).filter((a) => !a.startsWith('--'))
+          : [];
       commands.cmdCommitToSubrepo(cwd, message, files, raw);
       break;
     }
@@ -434,7 +523,8 @@ async function runCommand(command, args, cwd, raw) {
     case 'verify-summary': {
       const summaryPath = args[1];
       const countIndex = args.indexOf('--check-count');
-      const checkCount = countIndex !== -1 ? parseInt(args[countIndex + 1], 10) : 2;
+      const checkCount =
+        countIndex !== -1 ? parseInt(args[countIndex + 1], 10) : 2;
       verify.cmdVerifySummary(cwd, summaryPath, checkCount, raw);
       break;
     }
@@ -445,7 +535,21 @@ async function runCommand(command, args, cwd, raw) {
         template.cmdTemplateSelect(cwd, args[2], raw);
       } else if (subcommand === 'fill') {
         const templateType = args[2];
-        const { phase, plan, name, type, wave, fields: fieldsRaw } = parseNamedArgs(args, ['phase', 'plan', 'name', 'type', 'wave', 'fields']);
+        const {
+          phase,
+          plan,
+          name,
+          type,
+          wave,
+          fields: fieldsRaw,
+        } = parseNamedArgs(args, [
+          'phase',
+          'plan',
+          'name',
+          'type',
+          'wave',
+          'fields',
+        ]);
         let fields = {};
         if (fieldsRaw) {
           const { safeJsonParse } = require('./lib/security.cjs');
@@ -453,11 +557,19 @@ async function runCommand(command, args, cwd, raw) {
           if (!result.ok) error(result.error);
           fields = result.value;
         }
-        template.cmdTemplateFill(cwd, templateType, {
-          phase, plan, name, fields,
-          type: type || 'execute',
-          wave: wave || '1',
-        }, raw);
+        template.cmdTemplateFill(
+          cwd,
+          templateType,
+          {
+            phase,
+            plan,
+            name,
+            fields,
+            type: type || 'execute',
+            wave: wave || '1',
+          },
+          raw,
+        );
       } else {
         error('Unknown template subcommand. Available: select, fill');
       }
@@ -468,16 +580,39 @@ async function runCommand(command, args, cwd, raw) {
       const subcommand = args[1];
       const file = args[2];
       if (subcommand === 'get') {
-        frontmatter.cmdFrontmatterGet(cwd, file, parseNamedArgs(args, ['field']).field, raw);
+        frontmatter.cmdFrontmatterGet(
+          cwd,
+          file,
+          parseNamedArgs(args, ['field']).field,
+          raw,
+        );
       } else if (subcommand === 'set') {
         const { field, value } = parseNamedArgs(args, ['field', 'value']);
-        frontmatter.cmdFrontmatterSet(cwd, file, field, value !== null ? value : undefined, raw);
+        frontmatter.cmdFrontmatterSet(
+          cwd,
+          file,
+          field,
+          value !== null ? value : undefined,
+          raw,
+        );
       } else if (subcommand === 'merge') {
-        frontmatter.cmdFrontmatterMerge(cwd, file, parseNamedArgs(args, ['data']).data, raw);
+        frontmatter.cmdFrontmatterMerge(
+          cwd,
+          file,
+          parseNamedArgs(args, ['data']).data,
+          raw,
+        );
       } else if (subcommand === 'validate') {
-        frontmatter.cmdFrontmatterValidate(cwd, file, parseNamedArgs(args, ['schema']).schema, raw);
+        frontmatter.cmdFrontmatterValidate(
+          cwd,
+          file,
+          parseNamedArgs(args, ['schema']).schema,
+          raw,
+        );
       } else {
-        error('Unknown frontmatter subcommand. Available: get, set, merge, validate');
+        error(
+          'Unknown frontmatter subcommand. Available: get, set, merge, validate',
+        );
       }
       break;
     }
@@ -497,7 +632,9 @@ async function runCommand(command, args, cwd, raw) {
       } else if (subcommand === 'key-links') {
         verify.cmdVerifyKeyLinks(cwd, args[2], raw);
       } else {
-        error('Unknown verify subcommand. Available: plan-structure, phase-completeness, references, commits, artifacts, key-links');
+        error(
+          'Unknown verify subcommand. Available: plan-structure, phase-completeness, references, commits, artifacts, key-links',
+        );
       }
       break;
     }
@@ -532,7 +669,7 @@ async function runCommand(command, args, cwd, raw) {
       break;
     }
 
-    case "config-set-model-profile": {
+    case 'config-set-model-profile': {
       config.cmdConfigSetModelProfile(cwd, args[1], raw);
       break;
     }
@@ -578,7 +715,9 @@ async function runCommand(command, args, cwd, raw) {
       } else if (subcommand === 'update-plan-progress') {
         roadmap.cmdRoadmapUpdatePlanProgress(cwd, args[2], raw);
       } else {
-        error('Unknown roadmap subcommand. Available: get-phase, analyze, update-plan-progress');
+        error(
+          'Unknown roadmap subcommand. Available: get-phase, analyze, update-plan-progress',
+        );
       }
       break;
     }
@@ -618,7 +757,9 @@ async function runCommand(command, args, cwd, raw) {
       } else if (subcommand === 'complete') {
         phase.cmdPhaseComplete(cwd, args[2], raw);
       } else {
-        error('Unknown phase subcommand. Available: next-decimal, add, insert, remove, complete');
+        error(
+          'Unknown phase subcommand. Available: next-decimal, add, insert, remove, complete',
+        );
       }
       break;
     }
@@ -628,7 +769,12 @@ async function runCommand(command, args, cwd, raw) {
       if (subcommand === 'complete') {
         const milestoneName = parseMultiwordArg(args, 'name');
         const archivePhases = args.includes('--archive-phases');
-        milestone.cmdMilestoneComplete(cwd, args[2], { name: milestoneName, archivePhases }, raw);
+        milestone.cmdMilestoneComplete(
+          cwd,
+          args[2],
+          { name: milestoneName, archivePhases },
+          raw,
+        );
       } else {
         error('Unknown milestone subcommand. Available: complete');
       }
@@ -740,7 +886,9 @@ async function runCommand(command, args, cwd, raw) {
           init.cmdInitRemoveWorkspace(cwd, args[2], raw);
           break;
         default:
-          error(`Unknown init workflow: ${workflow}\nAvailable: execute-phase, plan-phase, new-project, new-milestone, quick, resume, verify-work, phase-op, todos, milestone-op, map-codebase, progress, manager, new-workspace, list-workspaces, remove-workspace`);
+          error(
+            `Unknown init workflow: ${workflow}\nAvailable: execute-phase, plan-phase, new-project, new-milestone, quick, resume, verify-work, phase-op, todos, milestone-op, map-codebase, progress, manager, new-workspace, list-workspaces, remove-workspace`,
+          );
       }
       break;
     }
@@ -758,7 +906,8 @@ async function runCommand(command, args, cwd, raw) {
     case 'summary-extract': {
       const summaryPath = args[1];
       const fieldsIndex = args.indexOf('--fields');
-      const fields = fieldsIndex !== -1 ? args[fieldsIndex + 1].split(',') : null;
+      const fields =
+        fieldsIndex !== -1 ? args[fieldsIndex + 1].split(',') : null;
       commands.cmdSummaryExtract(cwd, summaryPath, fields, raw);
       break;
     }
@@ -767,10 +916,14 @@ async function runCommand(command, args, cwd, raw) {
       const query = args[1];
       const limitIdx = args.indexOf('--limit');
       const freshnessIdx = args.indexOf('--freshness');
-      await commands.cmdWebsearch(query, {
-        limit: limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : 10,
-        freshness: freshnessIdx !== -1 ? args[freshnessIdx + 1] : null,
-      }, raw);
+      await commands.cmdWebsearch(
+        query,
+        {
+          limit: limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : 10,
+          freshness: freshnessIdx !== -1 ? args[freshnessIdx + 1] : null,
+        },
+        raw,
+      );
       break;
     }
 
@@ -781,7 +934,11 @@ async function runCommand(command, args, cwd, raw) {
       const sessionsPath = pathIdx !== -1 ? args[pathIdx + 1] : null;
       const verboseFlag = args.includes('--verbose');
       const jsonFlag = args.includes('--json');
-      await profilePipeline.cmdScanSessions(sessionsPath, { verbose: verboseFlag, json: jsonFlag }, raw);
+      await profilePipeline.cmdScanSessions(
+        sessionsPath,
+        { verbose: verboseFlag, json: jsonFlag },
+        raw,
+      );
       break;
     }
 
@@ -794,9 +951,16 @@ async function runCommand(command, args, cwd, raw) {
       const sessionsPath = pathIdx !== -1 ? args[pathIdx + 1] : null;
       const projectArg = args[1];
       if (!projectArg || projectArg.startsWith('--')) {
-        error('Usage: gsd-tools extract-messages <project> [--session <id>] [--limit N] [--path <dir>]\nRun scan-sessions first to see available projects.');
+        error(
+          'Usage: gsd-tools extract-messages <project> [--session <id>] [--limit N] [--path <dir>]\nRun scan-sessions first to see available projects.',
+        );
       }
-      await profilePipeline.cmdExtractMessages(projectArg, { sessionId, limit }, raw, sessionsPath);
+      await profilePipeline.cmdExtractMessages(
+        projectArg,
+        { sessionId, limit },
+        raw,
+        sessionsPath,
+      );
       break;
     }
 
@@ -806,10 +970,16 @@ async function runCommand(command, args, cwd, raw) {
       const limitIdx = args.indexOf('--limit');
       const limit = limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : 150;
       const maxPerIdx = args.indexOf('--max-per-project');
-      const maxPerProject = maxPerIdx !== -1 ? parseInt(args[maxPerIdx + 1], 10) : null;
+      const maxPerProject =
+        maxPerIdx !== -1 ? parseInt(args[maxPerIdx + 1], 10) : null;
       const maxCharsIdx = args.indexOf('--max-chars');
-      const maxChars = maxCharsIdx !== -1 ? parseInt(args[maxCharsIdx + 1], 10) : 500;
-      await profilePipeline.cmdProfileSample(sessionsPath, { limit, maxPerProject, maxChars }, raw);
+      const maxChars =
+        maxCharsIdx !== -1 ? parseInt(args[maxCharsIdx + 1], 10) : 500;
+      await profilePipeline.cmdProfileSample(
+        sessionsPath,
+        { limit, maxPerProject, maxChars },
+        raw,
+      );
       break;
     }
 
@@ -821,7 +991,11 @@ async function runCommand(command, args, cwd, raw) {
       if (!inputPath) error('--input <analysis-json-path> is required');
       const outputIdx = args.indexOf('--output');
       const outputPath = outputIdx !== -1 ? args[outputIdx + 1] : null;
-      profileOutput.cmdWriteProfile(cwd, { input: inputPath, output: outputPath }, raw);
+      profileOutput.cmdWriteProfile(
+        cwd,
+        { input: inputPath, output: outputPath },
+        raw,
+      );
       break;
     }
 
@@ -839,7 +1013,11 @@ async function runCommand(command, args, cwd, raw) {
       const outputPath = outputIdx !== -1 ? args[outputIdx + 1] : null;
       const stackIdx = args.indexOf('--stack');
       const stack = stackIdx !== -1 ? args[stackIdx + 1] : null;
-      profileOutput.cmdGenerateDevPreferences(cwd, { analysis: analysisPath, output: outputPath, stack }, raw);
+      profileOutput.cmdGenerateDevPreferences(
+        cwd,
+        { analysis: analysisPath, output: outputPath, stack },
+        raw,
+      );
       break;
     }
 
@@ -849,7 +1027,11 @@ async function runCommand(command, args, cwd, raw) {
       const outputIdx = args.indexOf('--output');
       const outputPath = outputIdx !== -1 ? args[outputIdx + 1] : null;
       const globalFlag = args.includes('--global');
-      profileOutput.cmdGenerateClaudeProfile(cwd, { analysis: analysisPath, output: outputPath, global: globalFlag }, raw);
+      profileOutput.cmdGenerateClaudeProfile(
+        cwd,
+        { analysis: analysisPath, output: outputPath, global: globalFlag },
+        raw,
+      );
       break;
     }
 
@@ -858,7 +1040,11 @@ async function runCommand(command, args, cwd, raw) {
       const outputPath = outputIdx !== -1 ? args[outputIdx + 1] : null;
       const autoFlag = args.includes('--auto');
       const forceFlag = args.includes('--force');
-      profileOutput.cmdGenerateClaudeMd(cwd, { output: outputPath, auto: autoFlag, force: forceFlag }, raw);
+      profileOutput.cmdGenerateClaudeMd(
+        cwd,
+        { output: outputPath, auto: autoFlag, force: forceFlag },
+        raw,
+      );
       break;
     }
 
@@ -867,10 +1053,16 @@ async function runCommand(command, args, cwd, raw) {
       if (subcommand === 'create') {
         const migrateNameIdx = args.indexOf('--migrate-name');
         const noMigrate = args.includes('--no-migrate');
-        workstream.cmdWorkstreamCreate(cwd, args[2], {
-          migrate: !noMigrate,
-          migrateName: migrateNameIdx !== -1 ? args[migrateNameIdx + 1] : null,
-        }, raw);
+        workstream.cmdWorkstreamCreate(
+          cwd,
+          args[2],
+          {
+            migrate: !noMigrate,
+            migrateName:
+              migrateNameIdx !== -1 ? args[migrateNameIdx + 1] : null,
+          },
+          raw,
+        );
       } else if (subcommand === 'list') {
         workstream.cmdWorkstreamList(cwd, raw);
       } else if (subcommand === 'status') {
@@ -884,7 +1076,9 @@ async function runCommand(command, args, cwd, raw) {
       } else if (subcommand === 'progress') {
         workstream.cmdWorkstreamProgress(cwd, raw);
       } else {
-        error('Unknown workstream subcommand. Available: create, list, status, complete, set, get, progress');
+        error(
+          'Unknown workstream subcommand. Available: create, list, status, complete, set, get, progress',
+        );
       }
       break;
     }
