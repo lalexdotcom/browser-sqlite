@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready to plan
-stopped_at: Completed 01-04-PLAN.md (wa-sqlite ambient declarations, removed @ts-expect-error directives)
-last_updated: "2026-03-24T11:11:49.979Z"
+stopped_at: Completed quick task 260324-fkx (update @lalex/console to 2.0.0, rename webpackChunkName to wsqlite)
+last_updated: "2026-03-24T11:18:45.632Z"
 progress:
   total_phases: 4
   completed_phases: 1
@@ -85,9 +85,10 @@ None yet.
 | 260324-ebg | Ajoute un système de precommit qui formate et lint le code | 2026-03-24 | fadcccb | [260324-ebg-ajoute-un-syst-me-de-precommit-qui-forma](./quick/260324-ebg-ajoute-un-syst-me-de-precommit-qui-forma/) |
 | 260324-ekv | Rajoute l'appel des tests au precommit | 2026-03-24 | 7ff3bb4 | [260324-ekv-rajoute-l-appel-des-tests-au-precommit](./quick/260324-ekv-rajoute-l-appel-des-tests-au-precommit/) |
 | 260324-epa | Ajoute typecheck et build au pre-commit hook | 2026-03-24 | beb84a0 | [260324-epa-ajoute-galement-un-test-des-types-et-que](./quick/260324-epa-ajoute-galement-un-test-des-types-et-que/) |
+| 260324-fkx | Met à jour @lalex/console vers 2.0.0, renomme le chunk worker en wsqlite | 2026-03-24 | 6496947 | [260324-fkx-met-a-jour-le-package-lalex-console-vers](./quick/260324-fkx-met-a-jour-le-package-lalex-console-vers/) |
 
 ## Session Continuity
 
-Last session: 2026-03-24T10:57:29.930Z
-Stopped at: Completed 01-04-PLAN.md (wa-sqlite ambient declarations, removed @ts-expect-error directives)
+Last session: 2026-03-24T11:18:45.625Z
+Stopped at: Completed quick task 260324-fkx (update @lalex/console to 2.0.0, rename webpackChunkName to wsqlite)
 Resume file: None

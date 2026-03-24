@@ -4,4 +4,5 @@ import { defineConfig } from '@rstest/core';
 export default defineConfig({
   extends: withRslibConfig(),
   include: ['tests/**/*.test.ts', 'tests/**/*.spec.ts'],
+  passWithNoTests: true,
 });
