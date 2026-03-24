@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: v1.0 milestone complete
-stopped_at: Completed quick task 260324-t5l (Renommer package en browser-sqlite)
+stopped_at: Completed quick task 260324-tda (Réorganiser le README)
 last_updated: "2026-03-24T20:22:57.087Z"
 progress:
   total_phases: 5
@@ -137,6 +137,7 @@ None yet.
 | 260324-sme | Corriger les problèmes de lint et ajouter script lint | 2026-03-24 |  | [260324-sme-corriger-les-probl-mes-de-lint-et-ajoute](./quick/260324-sme-corriger-les-probl-mes-de-lint-et-ajoute/) |
 | 260324-sya | Renommer package en web-sqlite, ajouter champs npm | 2026-03-24 |  | [260324-sya-renommer-package-en-web-sqlite-ajouter-c](./quick/260324-sya-renommer-package-en-web-sqlite-ajouter-c/) |
 | 260324-t5l | Renommer package en browser-sqlite, mettre à jour repo | 2026-03-24 |  | [260324-t5l-renommer-package-en-browser-sqlite-mettr](./quick/260324-t5l-renommer-package-en-browser-sqlite-mettr/) |
+| 260324-tda | Réorganiser le README: intro, ordre des sections, limitations | 2026-03-24 |  | [260324-tda-r-organiser-le-readme-intro-ordre-des-se](./quick/260324-tda-r-organiser-le-readme-intro-ordre-des-se/) |
 
 ## Session Continuity
 

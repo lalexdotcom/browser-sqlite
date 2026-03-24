@@ -1,45 +1,6 @@
 # browser-sqlite
 
-Browser SQLite with concurrent read / serial write isolation, backed by Web Workers and [wa-sqlite](https://github.com/rhashimoto/wa-sqlite).
-
-## Requirements
-
-> **These HTTP headers are mandatory.** Without them, `new SharedArrayBuffer()` throws a `SecurityError` and browser-sqlite cannot initialize.
-
-browser-sqlite uses a `SharedArrayBuffer` to coordinate worker pool state. Browsers require [cross-origin isolation](https://developer.mozilla.org/en-US/docs/Web/API/crossOriginIsolated) to create `SharedArrayBuffer` instances. Your page must be served with:
-
-```http
-Cross-Origin-Opener-Policy: same-origin
-Cross-Origin-Embedder-Policy: require-corp
-```
-
-### Server configuration examples
-
-**Nginx**
-```nginx
-add_header Cross-Origin-Opener-Policy "same-origin";
-add_header Cross-Origin-Embedder-Policy "require-corp";
-```
-
-**Express**
-```javascript
-app.use((req, res, next) => {
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
-  next();
-});
-```
-
-**Rsbuild / Vite dev server**
-```typescript
-// rsbuild.config.ts or vite.config.ts
-server: {
-  headers: {
-    'Cross-Origin-Opener-Policy': 'same-origin',
-    'Cross-Origin-Embedder-Policy': 'require-corp',
-  },
-},
-```
+A persistent SQLite database that lives in your browser — yes, for real. Powered by [wa-sqlite](https://github.com/rhashimoto/wa-sqlite) (WebAssembly) with a Web Worker pool for concurrent reads and serial writes.
 
 ## Install
 
@@ -49,7 +10,7 @@ npm install browser-sqlite
 pnpm add browser-sqlite
 ```
 
-browser-sqlite is a browser-only library. It requires a bundler that supports Web Workers with dynamic imports (Rsbuild, webpack 5, Vite 3+).
+Requires a bundler that supports Web Workers with dynamic imports (Rsbuild, webpack 5, Vite 3+).
 
 ## VFS Selection
 
@@ -152,12 +113,49 @@ For batch inserts, schema-driven table replacement, or explicit transactions, se
 db.close();
 ```
 
-Terminates all worker threads. Does **not** delete OPFS files — see Known Limitations.
+Terminates all worker threads.
+
+## Requirements
+
+> **These HTTP headers are mandatory.** Without them, `new SharedArrayBuffer()` throws a `SecurityError` and browser-sqlite cannot initialize.
+
+browser-sqlite uses a `SharedArrayBuffer` to coordinate worker pool state. Browsers require [cross-origin isolation](https://developer.mozilla.org/en-US/docs/Web/API/crossOriginIsolated) to create `SharedArrayBuffer` instances. Your page must be served with:
+
+```http
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+### Server configuration examples
+
+**Nginx**
+```nginx
+add_header Cross-Origin-Opener-Policy "same-origin";
+add_header Cross-Origin-Embedder-Policy "require-corp";
+```
+
+**Express**
+```javascript
+app.use((req, res, next) => {
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+  next();
+});
+```
+
+**Rsbuild / Vite dev server**
+```typescript
+// rsbuild.config.ts or vite.config.ts
+server: {
+  headers: {
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Cross-Origin-Embedder-Policy': 'require-corp',
+  },
+},
+```
 
 ## Known Limitations
 
-- **Browser-only.** browser-sqlite uses Web Workers, OPFS, and `SharedArrayBuffer`. There is no Node.js support.
-- **OPFS files persist after `close()`.** `db.close()` terminates workers but does not delete database files from the Origin Private File System. Files persist across page loads. To delete OPFS files, use the [`navigator.storage.getDirectory()`](https://developer.mozilla.org/en-US/docs/Web/API/StorageManager/getDirectory) API directly.
 - **`AccessHandlePoolVFS` requires `poolSize: 1`.** Passing `poolSize > 1` with this VFS throws synchronously at client creation time.
 - **`SharedArrayBuffer` requires cross-origin isolation.** See the [Requirements](#requirements) section. Omitting COOP/COEP headers causes a `SecurityError` at runtime with no fallback.
 - **`OPFSAdaptiveVFS` requires Chromium 126+.** This VFS uses JavaScript Promise Integration (JSPI), which is not available in Firefox or Safari as of 2025.
