@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Phase complete — ready for verification
-stopped_at: Phase 4 context gathered
-last_updated: "2026-03-24T13:44:59.112Z"
+status: Ready to execute
+stopped_at: Completed 04-03-PLAN.md
+last_updated: "2026-03-24T14:27:39.550Z"
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 10
-  completed_plans: 10
+  total_plans: 13
+  completed_plans: 11
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-24)
 
 **Core value:** Reliable, low-memory SQLite access in the browser with correct concurrent read / serial write isolation.
-**Current focus:** Phase 03 — integration-tests-browser
+**Current focus:** Phase 04 — documentation
 
 ## Current Position
 
-Phase: 03 (integration-tests-browser) — EXECUTING
-Plan: 3 of 3
+Phase: 04 (documentation) — EXECUTING
+Plan: 2 of 3
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Plan: 3 of 3
 | Phase 03-integration-tests-browser P01 | 2min | 3 tasks | 3 files |
 | Phase 03-integration-tests-browser P02 | 1min | 2 tasks | 2 files |
 | Phase 03-integration-tests-browser P03 | 2min | 1 tasks | 1 files |
+| Phase 04-documentation P03 | 1min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -84,6 +85,9 @@ Recent decisions affecting current work:
 - [Phase 03-integration-tests-browser]: Manual OPFS cleanup for poolSize:1 test that bypasses createTestClient afterEach wrapper
 - [Phase 03-integration-tests-browser]: Use batch INSERT with Array.from for 1000 rows instead of generate_series (not available in wa-sqlite)
 - [Phase 03-integration-tests-browser]: D-09 lock() test is pragmatic: successful dual-worker READY state implies correct sequential lock/unlock
+- [Phase 04-documentation]: COOP/COEP requirements placed before Install section in README — developer must configure headers before wsqlite can work (D-06)
+- [Phase 04-documentation]: OPFSPermutedVFS called out as default in VFS table — reduces decision fatigue for most consumers (D-07)
+- [Phase 04-documentation]: Advanced APIs (bulkWrite/output/transaction) listed briefly without deep examples in README (D-09)
 
 ### Roadmap Evolution
 
@@ -109,6 +113,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-24T13:44:59.107Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-documentation/04-CONTEXT.md
+Last session: 2026-03-24T14:27:39.548Z
+Stopped at: Completed 04-03-PLAN.md
+Resume file: None

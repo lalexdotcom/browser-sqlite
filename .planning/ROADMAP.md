@@ -97,12 +97,12 @@ Plans:
 4. `WorkerOrchestrator` and the worker lifecycle state machine have inline comments sufficient for a new contributor to understand the coordination logic
 5. `README.md` leads with COOP/COEP requirements, then covers install, VFS selection, usage examples, and known limitations — sufficient for a consumer to integrate wsqlite from scratch
 
-**Plans:** 3 plans
+**Plans:** 1/3 plans executed
 
 Plans:
 - [ ] 04-01-PLAN.md — JSDoc public API: createSQLiteClient (@throws, COOP/COEP, @example), CreateSQLiteClientOptions (per-field defaults), SQLiteDB all 8 methods
 - [ ] 04-02-PLAN.md — Inline comments internals: WorkerOrchestrator state machine @remarks, worker.ts lifecycle and status transition comments
-- [ ] 04-03-PLAN.md — README.md: consumer-facing guide with COOP/COEP first, install, VFS table + upstream link, usage examples, known limitations
+- [x] 04-03-PLAN.md — README.md: consumer-facing guide with COOP/COEP first, install, VFS table + upstream link, usage examples, known limitations
 
 ### Phase 5: Avant la reaction de la documentation, rendre le package @lalex/console optionnel: s'il n'est pas présent, on utilise les methodes de `console`
 
@@ -123,4 +123,4 @@ Plans:
 | 1. Bug Fixes & Type Safety | 0/4 | Not started | - |
 | 2. Unit Tests | 1/3 | Complete    | 2026-03-24 |
 | 3. Integration Tests | 2/3 | In Progress|  |
-| 4. Documentation | 0/3 | Not started | - |
+| 4. Documentation | 1/3 | In Progress|  |

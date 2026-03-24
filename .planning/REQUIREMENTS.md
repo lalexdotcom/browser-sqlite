@@ -36,10 +36,10 @@ Requirements for the initial quality milestone. Each maps to a roadmap phase.
 - [x] **INT-04**: Integration test — `db.write()` executes INSERT/UPDATE/DELETE and returns affected row count
 - [x] **INT-05**: Integration test — `db.stream()` yields rows in chunks and respects chunk size option
 - [x] **INT-06**: Integration test — `db.one()` returns a single row or `undefined` for no result
-- [ ] **INT-07**: Integration test — concurrent reads are served by different workers in parallel
-- [ ] **INT-08**: Integration test — write operations are serialized through the single writer worker
-- [ ] **INT-09**: Integration test — AbortSignal cancels an in-flight query
-- [ ] **INT-10**: Integration test — error in SQL (syntax error, missing table) rejects the promise with a meaningful error
+- [x] **INT-07**: Integration test — concurrent reads are served by different workers in parallel
+- [x] **INT-08**: Integration test — write operations are serialized through the single writer worker
+- [x] **INT-09**: Integration test — AbortSignal cancels an in-flight query
+- [x] **INT-10**: Integration test — error in SQL (syntax error, missing table) rejects the promise with a meaningful error
 
 ### Documentation
 
@@ -47,7 +47,7 @@ Requirements for the initial quality milestone. Each maps to a roadmap phase.
 - [ ] **DOC-02**: JSDoc on `SQLiteDB` interface methods — `read`, `write`, `stream`, `one`, `close` — concurrency semantics, streaming memory implications, AbortSignal behavior
 - [ ] **DOC-03**: JSDoc on `CreateSQLiteClientOptions` — each field, its default, what happens if omitted
 - [ ] **DOC-04**: Inline comments on `WorkerOrchestrator` and worker lifecycle state machine
-- [ ] **DOC-05**: `README.md` for library consumers — browser requirements (COOP/COEP) first, then install, VFS selection guide, usage examples, limitations
+- [x] **DOC-05**: `README.md` for library consumers — browser requirements (COOP/COEP) first, then install, VFS selection guide, usage examples, limitations
 
 ## v2 Requirements
 
@@ -95,15 +95,15 @@ Deferred to a future milestone. Tracked but not in current roadmap.
 | INT-04 | Phase 3 | Complete |
 | INT-05 | Phase 3 | Complete |
 | INT-06 | Phase 3 | Complete |
-| INT-07 | Phase 3 | Pending |
-| INT-08 | Phase 3 | Pending |
-| INT-09 | Phase 3 | Pending |
-| INT-10 | Phase 3 | Pending |
+| INT-07 | Phase 3 | Complete |
+| INT-08 | Phase 3 | Complete |
+| INT-09 | Phase 3 | Complete |
+| INT-10 | Phase 3 | Complete |
 | DOC-01 | Phase 4 | Pending |
 | DOC-02 | Phase 4 | Pending |
 | DOC-03 | Phase 4 | Pending |
 | DOC-04 | Phase 4 | Pending |
-| DOC-05 | Phase 4 | Pending |
+| DOC-05 | Phase 4 | Complete |
 
 **Coverage:**
 - v1 requirements: 25 total
