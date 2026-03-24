@@ -9,16 +9,26 @@
  *   NEW → INITIALIZING (lock acquired) → INITIALIZED → READY → RUNNING → DONE
  *   RUNNING → ABORTING (set by client via AbortSignal) → DONE
  */
-import { Logger } from '@lalex/console';
+import { shouldLog } from './logger';
 import * as SQLite from 'wa-sqlite/src/sqlite-api.js';
 import { SQLITE_ROW } from 'wa-sqlite/src/sqlite-constants.js';
 import { WorkerOrchestrator, WorkerStatuses } from './orchestrator';
-import type { ClientMessageData, SQLiteVFS, WorkerMessageData } from './types';
+import type { ClientMessageData, LogLevel, SQLiteVFS, WorkerMessageData } from './types';
 
 type SQLOptions = { chunkSize?: number; signal?: AbortSignal };
 
-const LL = Logger.scope('sqlite/worker');
-LL.date = true;
+let currentLogLevel: LogLevel = 'warn';
+
+/**
+ * Posts a log message to the client thread if the message level passes
+ * the current threshold (worker-side filtering — D-05).
+ * The client's onmessage handler dispatches it through LL (real or shim).
+ */
+function log(level: LogLevel, scope: string, ...args: unknown[]): void {
+	if (shouldLog(level, currentLogLevel)) {
+		self.postMessage({ type: 'log', level, scope, args } satisfies WorkerMessageData);
+	}
+}
 
 const WA_SQLITE_MODULES = {
   wa_sqlite: () =>
@@ -103,9 +113,9 @@ const open = (
   index: number,
   options?: OpenOptions,
 ) => {
-  LL.debug(`[Worker ${index + 1}] open() called with file:`, file);
+  log('debug', `sqlite/worker ${index + 1}`, 'open() called with file:', file);
   if (openedDB) {
-    LL.error(`[Worker ${index + 1}] Error: DB already opened`);
+    log('error', `sqlite/worker ${index + 1}`, 'Error: DB already opened');
     throw new Error('DB already opened');
   }
 
@@ -121,13 +131,13 @@ const open = (
 
   const vfsConfig = VFSConfigs[vfs];
 
-  LL.debug(`[Worker ${index + 1}] Open ${file} using VFS:`, vfs);
+  log('debug', `sqlite/worker ${index + 1}`, 'Open', file, 'using VFS:', vfs);
 
   openedDB = vfsConfig
     .module()
     .then(({ default: factory }) => factory())
     .then((module) => {
-      LL.verb(`[Worker ${index + 1}] SQLite module loaded`);
+      log('verb', `sqlite/worker ${index + 1}`, 'SQLite module loaded');
       const sqlite = SQLite.Factory(module);
       return vfsConfig.fs().then((vfsModule) => ({
         sqlite,
@@ -136,20 +146,24 @@ const open = (
       }));
     })
     .then(({ sqlite, module, vfsModule }) => {
-      LL.verb(`[Worker ${index + 1}] VFS module loaded:`, vfs);
+      log('verb', `sqlite/worker ${index + 1}`, 'VFS module loaded:', vfs);
       return (
         vfsModule.create(vfs, module, { lockPolicy: 'shared' }) as Promise<any>
       ).then((vfsInstance: any) => {
-        LL.verb(`[Worker ${index + 1}] VFS instance created`);
+        log('verb', `sqlite/worker ${index + 1}`, 'VFS instance created');
         sqlite.vfs_register(vfsInstance, true);
 
-        LL.debug(`[Worker ${index + 1}] Acquiring initLock to open DB`);
+        log('debug', `sqlite/worker ${index + 1}`, 'Acquiring initLock to open DB');
         orchestrator.lock();
-        LL.debug(`[Worker ${index + 1}] initLock acquired, opening DB now`);
+        log('debug', `sqlite/worker ${index + 1}`, 'initLock acquired, opening DB now');
         const openTime = Date.now();
         return sqlite.open_v2(file).then((db: any) => {
-          LL.debug(
-            `[Worker ${index + 1}] Database ${file} opened in`,
+          log(
+            'debug',
+            `sqlite/worker ${index + 1}`,
+            'Database',
+            file,
+            'opened in',
             Date.now() - openTime,
             'ms',
           );
@@ -158,13 +172,13 @@ const open = (
       });
     })
     .catch((e) => {
-      LL.warn(`[Worker ${index + 1}] Error during open:`, e);
+      log('warn', `sqlite/worker ${index + 1}`, 'Error during open:', e);
       throw e;
     })
     .finally(() => {
-      LL.debug(`[Worker ${index + 1}] Releasing initLock after open`);
+      log('debug', `sqlite/worker ${index + 1}`, 'Releasing initLock after open');
       orchestrator.unlock();
-      LL.debug(`[Worker ${index + 1}] Database opened and ready`);
+      log('debug', `sqlite/worker ${index + 1}`, 'Database opened and ready');
       // Transition: INITIALIZING → READY
       // Marks this worker as available for queries. The client's releaseWorker()
       // observes READY status and dispatches queued requests to this worker.
@@ -228,8 +242,10 @@ const open = (
   };
 
   self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
-    LL.verb(
-      `[Worker ${index + 1}] Query handler - received message:`,
+    log(
+      'verb',
+      `sqlite/worker ${index + 1}`,
+      'Query handler - received message:',
       event.data.type,
     );
     const { data } = event;
@@ -240,21 +256,25 @@ const open = (
         // Signals to the client that this worker is busy. The client may set
         // status to ABORTING via AbortSignal while the worker is RUNNING.
         orchestrator.setStatus(index, WorkerStatuses.RUNNING);
-        LL.wth(`[Worker ${index + 1}] Executing query:`, sql);
+        log('wth', `sqlite/worker ${index + 1}`, 'Executing query:', sql);
         let affected = 0;
 
         for await (const chunk of query(sql, params, options)) {
           if (typeof chunk === 'number') {
-            LL.wth(
-              `[Worker ${index + 1}] Sending chunk for`,
+            log(
+              'wth',
+              `sqlite/worker ${index + 1}`,
+              'Sending chunk for',
               chunk,
               'affected rows',
             );
             affected = chunk;
             break;
           } else {
-            LL.wth(
-              `[Worker ${index + 1}] Sending chunk with`,
+            log(
+              'wth',
+              `sqlite/worker ${index + 1}`,
+              'Sending chunk with',
               chunk.length,
               'rows',
             );
@@ -262,10 +282,10 @@ const open = (
           }
         }
 
-        LL.verb(`[Worker ${index + 1}] Query completed, affected:`, affected);
+        log('verb', `sqlite/worker ${index + 1}`, 'Query completed, affected:', affected);
         reply({ type: 'done', callId, affected });
       } catch (e) {
-        LL.warn(`[Worker ${index + 1}] Query error:`, e);
+        log('warn', `sqlite/worker ${index + 1}`, 'Query error:', e);
         reply({
           type: 'error',
           callId,
@@ -292,7 +312,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
   const { data } = event;
   if (data.type === 'open') {
     const { file, flags, index, vfs, pragmas, logLevel } = data;
-    LL.level = logLevel ?? 'warn';
+    currentLogLevel = logLevel ?? 'warn';
     open(file, flags, index, { vfs, pragmas });
   }
 };
