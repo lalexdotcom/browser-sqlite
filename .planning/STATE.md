@@ -127,6 +127,7 @@ None yet.
 | 260324-ekv | Rajoute l'appel des tests au precommit | 2026-03-24 | 7ff3bb4 | [260324-ekv-rajoute-l-appel-des-tests-au-precommit](./quick/260324-ekv-rajoute-l-appel-des-tests-au-precommit/) |
 | 260324-epa | Ajoute typecheck et build au pre-commit hook | 2026-03-24 | beb84a0 | [260324-epa-ajoute-galement-un-test-des-types-et-que](./quick/260324-epa-ajoute-galement-un-test-des-types-et-que/) |
 | 260324-fkx | Met à jour @lalex/console vers 2.0.0, renomme le chunk worker en wsqlite | 2026-03-24 | 6496947 | [260324-fkx-met-a-jour-le-package-lalex-console-vers](./quick/260324-fkx-met-a-jour-le-package-lalex-console-vers/) |
+| 260324-o2g | Enleve toute référence à @lalex/console et au mode verbose. Supprime l'option logLevel | 2026-03-24 | 98aeaf0 | [260324-o2g-enleve-toute-r-f-rence-lalex-console-et-](./quick/260324-o2g-enleve-toute-r-f-rence-lalex-console-et-/) |
 | 260324-o2g | Enlève toute référence @lalex/console et logLevel | 2026-03-24 | f3cae4a | [260324-o2g-enleve-toute-r-f-rence-lalex-console-et-](./quick/260324-o2g-enleve-toute-r-f-rence-lalex-console-et-/) |
 
 ## Session Continuity
