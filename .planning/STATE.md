@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Phase complete — ready for verification
-stopped_at: Completed 03-02-PLAN.md
-last_updated: "2026-03-24T12:50:51.630Z"
+stopped_at: Completed 03-03-PLAN.md
+last_updated: "2026-03-24T12:51:01.000Z"
 progress:
   total_phases: 5
   completed_phases: 2
@@ -55,6 +55,7 @@ Plan: 3 of 3
 | Phase 02-unit-tests P01 | 2 | 1 tasks | 2 files |
 | Phase 03-integration-tests-browser P01 | 2min | 3 tasks | 3 files |
 | Phase 03-integration-tests-browser P02 | 1min | 2 tasks | 2 files |
+| Phase 03-integration-tests-browser P03 | 2min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -81,6 +82,8 @@ Recent decisions affecting current work:
 - [Phase 03-integration-tests-browser]: UUID-based DB name in createTestClient() prevents OPFS collisions in parallel browser test runs
 - [Phase 03-integration-tests-browser]: Use db.read('SELECT 1') as worker-READY probe — no exposed .ready property needed
 - [Phase 03-integration-tests-browser]: Manual OPFS cleanup for poolSize:1 test that bypasses createTestClient afterEach wrapper
+- [Phase 03-integration-tests-browser]: Use batch INSERT with Array.from for 1000 rows instead of generate_series (not available in wa-sqlite)
+- [Phase 03-integration-tests-browser]: D-09 lock() test is pragmatic: successful dual-worker READY state implies correct sequential lock/unlock
 
 ### Roadmap Evolution
 
@@ -106,6 +109,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-24T12:50:33.541Z
-Stopped at: Completed 03-02-PLAN.md
+Last session: 2026-03-24T12:51:00.998Z
+Stopped at: Completed 03-03-PLAN.md
 Resume file: None
