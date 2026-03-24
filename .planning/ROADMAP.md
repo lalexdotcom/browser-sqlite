@@ -106,13 +106,16 @@ Plans:
 
 ### Phase 5: Avant la reaction de la documentation, rendre le package @lalex/console optionnel: s'il n'est pas présent, on utilise les methodes de `console`
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Make `@lalex/console` an optional dependency — if not installed, wsqlite falls back to native `console` methods; no public API changes
+**Requirements**: D-01, D-02, D-03, D-04, D-05, D-06, D-07, D-08, D-09, D-10, D-11, D-12
 **Depends on:** Phase 4
-**Plans:** 0 plans
+**Plans:** 4 plans
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 5 to break down)
+- [ ] 05-00-PLAN.md — Wave 0: create tests/unit/logger.test.ts (failing stubs for shouldLog and console shim)
+- [ ] 05-01-PLAN.md — Foundation: package.json optionalDeps, types.ts LogLevel + log variant, src/logger.ts new module
+- [ ] 05-02-PLAN.md — Worker refactor: remove @lalex/console from worker.ts, add log() postMessage helper
+- [ ] 05-03-PLAN.md — Client wiring: import LL from logger.ts, handle type:log in onmessage + human verify
 
 ---
 
