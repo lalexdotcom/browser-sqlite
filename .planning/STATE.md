@@ -130,9 +130,10 @@ None yet.
 | 260324-o2g | Enleve toute référence à @lalex/console et au mode verbose. Supprime l'option logLevel | 2026-03-24 | 98aeaf0 | [260324-o2g-enleve-toute-r-f-rence-lalex-console-et-](./quick/260324-o2g-enleve-toute-r-f-rence-lalex-console-et-/) |
 | 260324-qze | Supprimer les erreurs window is not defined dans les tests browser | 2026-03-24 | 7616dfa | [260324-qze-comment-enlever-les-traces-error-window-](./quick/260324-qze-comment-enlever-les-traces-error-window-/) |
 | 260324-o2g | Enlève toute référence @lalex/console et logLevel | 2026-03-24 | f3cae4a | [260324-o2g-enleve-toute-r-f-rence-lalex-console-et-](./quick/260324-o2g-enleve-toute-r-f-rence-lalex-console-et-/) |
+| 260324-rh3 | Fusionner rstest configs avec le pattern projects (unit + browser) | 2026-03-24 | 5d57edc | [260324-rh3-utilise-le-pattern-project-de-rstest-pou](./quick/260324-rh3-utilise-le-pattern-project-de-rstest-pou/) |
 
 ## Session Continuity
 
-Last session: 2026-03-24T17:32:14Z
-Stopped at: Completed quick task 260324-o2g (re-executed on main — stale worktree output replaced)
+Last session: 2026-03-24T19:49:20Z
+Stopped at: Completed quick task 260324-rh3 (unified rstest config with projects pattern)
 Resume file: None
