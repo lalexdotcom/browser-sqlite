@@ -55,8 +55,8 @@ Plans:
 **Plans:** 1/3 plans executed
 
 Plans:
-- [ ] 02-01-PLAN.md — Extend isWriteQuery regex (D3: add PRAGMA/ATTACH/DETACH) and write tests/unit/utils.test.ts (isWriteQuery, sqlParams)
-- [ ] 02-02-PLAN.md — Write tests/unit/debug.test.ts (debugSQLQuery interpolation, all value types)
+- [x] 02-01-PLAN.md — Extend isWriteQuery regex (D3: add PRAGMA/ATTACH/DETACH) and write tests/unit/utils.test.ts (isWriteQuery, sqlParams)
+- [x] 02-02-PLAN.md — Write tests/unit/debug.test.ts (debugSQLQuery interpolation, all value types)
 - [x] 02-03-PLAN.md — Write tests/unit/orchestrator.test.ts (WorkerOrchestrator lock/unlock, setStatus/getStatus, CAS, SAB sharing)
 
 ---
