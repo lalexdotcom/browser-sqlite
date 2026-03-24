@@ -6,7 +6,7 @@
 ## Phases
 
 - [ ] **Phase 1: Bug Fixes & Type Safety** — Eliminate known bugs and restore full TypeScript type safety
-- [ ] **Phase 2: Unit Tests** — Cover all pure and Node-testable logic with fast, browser-free tests
+- [x] **Phase 2: Unit Tests** — Cover all pure and Node-testable logic with fast, browser-free tests (completed 2026-03-24)
 - [ ] **Phase 3: Integration Tests** — Validate the complete worker-pool pipeline in a real browser
 - [ ] **Phase 4: Documentation** — Document the public API and ship a consumer-facing README
 
@@ -52,7 +52,7 @@ Plans:
 4. `debugSQLQuery` interpolation is tested including NULL, date, and embedded `?` in string literals
 5. `WorkerOrchestrator` lock/unlock, `setStatus`/`getStatus`, CAS transitions, and SAB sharing are covered without a browser
 
-**Plans:** 1/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 - [x] 02-01-PLAN.md — Extend isWriteQuery regex (D3: add PRAGMA/ATTACH/DETACH) and write tests/unit/utils.test.ts (isWriteQuery, sqlParams)
@@ -117,6 +117,6 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Bug Fixes & Type Safety | 0/4 | Not started | - |
-| 2. Unit Tests | 1/3 | In Progress|  |
+| 2. Unit Tests | 1/3 | Complete    | 2026-03-24 |
 | 3. Integration Tests | 0/3 | Not started | - |
 | 4. Documentation | 0/3 | Not started | - |
