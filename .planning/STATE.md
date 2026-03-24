@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Ready to execute
-stopped_at: Completed 02-unit-tests-02-PLAN.md (debugSQLQuery unit tests)
-last_updated: "2026-03-24T11:58:18.131Z"
+status: Phase complete — ready for verification
+stopped_at: Completed 02-01-PLAN.md (isWriteQuery PRAGMA/ATTACH/DETACH extension + utils unit tests)
+last_updated: "2026-03-24T11:58:43.594Z"
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 7
-  completed_plans: 6
+  completed_plans: 7
 ---
 
 # Project State
@@ -52,6 +52,7 @@ Plan: 3 of 3
 | Phase 01-bug-fixes-type-safety P04 | 2 | 2 tasks | 2 files |
 | Phase 02-unit-tests P03 | 1 | 1 tasks | 1 files |
 | Phase 02-unit-tests P02 | 3 | 1 tasks | 2 files |
+| Phase 02-unit-tests P01 | 2 | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,7 @@ Recent decisions affecting current work:
 - [Phase 02-unit-tests]: Only test lock() when lock is FREE in Node (D2 constraint) — Atomics.wait would hang main thread if lock already held
 - [Phase 02-unit-tests]: setStatus unconditional exchange returns false when old === new — by design, documented as pitfall
 - [Phase 02-unit-tests]: Remove tests/index.test.ts placeholder: imports non-existent squared(), blocking pnpm test exit 0
+- [Phase 02-unit-tests]: D3 confirmed: PRAGMA, ATTACH, DETACH route to write worker (conservative routing)
 
 ### Roadmap Evolution
 
@@ -98,6 +100,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-24T11:58:18.129Z
-Stopped at: Completed 02-unit-tests-02-PLAN.md (debugSQLQuery unit tests)
+Last session: 2026-03-24T11:58:43.592Z
+Stopped at: Completed 02-01-PLAN.md (isWriteQuery PRAGMA/ATTACH/DETACH extension + utils unit tests)
 Resume file: None
