@@ -9,8 +9,7 @@ import type { ClientMessageData, SQLiteVFS, WorkerMessageData } from './types';
 type SQLOptions = { chunkSize?: number; signal?: AbortSignal };
 
 const LL = Logger.scope('sqlite/worker');
-LL.level = 'debug';
-LL.date = LL.level === 'debug';
+LL.date = true;
 
 const WA_SQLITE_MODULES = {
 	// @ts-expect-error
@@ -52,20 +51,12 @@ const VFSConfigs = {
 let orchestrator: WorkerOrchestrator;
 let openedDB: Promise<{ sqlite: any; db: any }> | undefined;
 
-// let log = (...args: Parameters<typeof console.log>) => {
-// 	LL.wth(...args);
-// };
-
 type OpenOptions = {
 	vfs?: SQLiteVFS;
 	pragmas?: Record<string, string>;
 };
 
 const open = (file: string, flags: SharedArrayBuffer, index: number, options?: OpenOptions) => {
-	// log = (...args: Parameters<typeof console.log>) => {
-	// 	LL.debug(`Worker ${index + 1}`, ...args);
-	// };
-
 	LL.debug(`[Worker ${index + 1}] open() called with file:`, file);
 	if (openedDB) {
 		LL.error(`[Worker ${index + 1}] Error: DB already opened`);
@@ -76,7 +67,7 @@ const open = (file: string, flags: SharedArrayBuffer, index: number, options?: O
 
 	const { vfs = 'OPFSCoopSyncVFS', pragmas = {} } = options ?? {};
 
-	const allQueryPragmas = Object.keys(pragmas).length
+	const allQueryPragmas = !Object.keys(pragmas).length
 		? ''
 		: Object.entries(pragmas)
 				.map(([key, val]) => `PRAGMA ${key}=${val};`)
@@ -209,7 +200,8 @@ const open = (file: string, flags: SharedArrayBuffer, index: number, options?: O
 self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
 	const { data } = event;
 	if (data.type === 'open') {
-		const { file, flags, index, vfs, pragmas } = data;
+		const { file, flags, index, vfs, pragmas, logLevel } = data;
+		LL.level = logLevel ?? 'warn';
 		open(file, flags, index, { vfs, pragmas });
 	}
 };
