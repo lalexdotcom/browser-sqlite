@@ -12,6 +12,30 @@ const LL = Logger.scope('sqlite/worker');
 LL.level = 'debug';
 LL.date = LL.level === 'debug';
 
+/**
+ * SQLite Web Worker entry point.
+ *
+ * This module runs inside each worker thread spawned by `createSQLiteClient`.
+ * It handles two message types from the client:
+ *
+ * - `open`  — initializes the wa-sqlite WASM module, registers the VFS, acquires
+ *              the initialization lock (`orchestrator.lock()`) to serialize DB
+ *              open across the pool, opens the database, then releases the lock
+ *              (`orchestrator.unlock()`) and posts `{ type: 'ready' }`.
+ *              After `open` completes, `self.onmessage` is replaced with the
+ *              query handler so subsequent messages are processed as queries.
+ *
+ * - `query` — executes a SQL statement via an async generator, streaming rows
+ *              back as `{ type: 'chunk' }` messages and finishing with
+ *              `{ type: 'done', affected }` or `{ type: 'error' }`.
+ *
+ * State transitions driven by this module:
+ *   INITIALIZING → (lock acquired) → INITIALIZED → READY  (inside open())
+ *   READY → RUNNING                                        (start of query handler)
+ *   RUNNING → ABORTING                                     (AbortSignal fires, set by client.ts)
+ *   RUNNING | ABORTING → DONE                              (query finally block)
+ */
+
 const WA_SQLITE_MODULES = {
 	// @ts-expect-error
 	wa_sqlite: () => import(/* webpackChunkName: "wa-sqlite" */ 'wa-sqlite/dist/wa-sqlite.mjs'),
@@ -61,6 +85,19 @@ type OpenOptions = {
 	pragmas?: Record<string, string>;
 };
 
+/**
+ * Called once per worker thread when the client sends the `open` message.
+ * Loads the wa-sqlite WASM module and VFS, acquires the orchestrator initialization
+ * lock to prevent parallel DB opens across the pool, opens the SQLite database,
+ * then transitions this worker to READY and replaces the top-level message handler
+ * with the query handler.
+ *
+ * @param file - Database file name passed from `createSQLiteClient`.
+ * @param flags - SharedArrayBuffer from the orchestrator, used to construct
+ *   a worker-side `WorkerOrchestrator` view for status and lock operations.
+ * @param index - This worker's index in the pool (0-based).
+ * @param options - VFS selection and PRAGMA map.
+ */
 const open = (file: string, flags: SharedArrayBuffer, index: number, options?: OpenOptions) => {
 	// log = (...args: Parameters<typeof console.log>) => {
 	// 	LL.debug(`Worker ${index + 1}`, ...args);
@@ -118,6 +155,9 @@ const open = (file: string, flags: SharedArrayBuffer, index: number, options?: O
 			LL.debug(`[Worker ${index + 1}] Releasing initLock after open`);
 			orchestrator.unlock();
 			LL.debug(`[Worker ${index + 1}] Database opened and ready`);
+			// Transition: INITIALIZING → READY
+			// Marks this worker as available for queries. The client's releaseWorker()
+			// observes READY status and dispatches queued requests to this worker.
 			orchestrator.setStatus(index, WorkerStatuses.READY);
 			self.postMessage({ type: 'ready', callId: 0 });
 		});
@@ -141,6 +181,9 @@ const open = (file: string, flags: SharedArrayBuffer, index: number, options?: O
 			const cols = sqlite.column_names(stmt) as string[];
 
 			while (true) {
+				// Abort check: if client set status to ABORTING (via AbortSignal),
+				// stop processing rows and exit the loop. The query generator yields
+				// the final sqlite.changes() value, then the handler posts 'done'.
 				if (orchestrator.getStatus(index) === WorkerStatuses.ABORTING) break;
 
 				const result = await sqlite.step(stmt);
@@ -171,6 +214,9 @@ const open = (file: string, flags: SharedArrayBuffer, index: number, options?: O
 		if (data.type === 'query') {
 			const { callId, sql, params, options } = data;
 			try {
+				// Transition: READY → RUNNING
+				// Signals to the client that this worker is busy. The client may set
+				// status to ABORTING via AbortSignal while the worker is RUNNING.
 				orchestrator.setStatus(index, WorkerStatuses.RUNNING);
 				LL.wth(`[Worker ${index + 1}] Executing query:`, sql);
 				let affected = 0;
@@ -200,12 +246,19 @@ const open = (file: string, flags: SharedArrayBuffer, index: number, options?: O
 						: { message: `Unknown error (${e})` }),
 				});
 			} finally {
+				// Transition: RUNNING | ABORTING → DONE
+				// Marks query as finished. The client's releaseWorker() will observe DONE
+				// (or READY if setStatus was already called) and either dispatch a queued
+				// request or set status back to READY.
 				orchestrator.setStatus(index, WorkerStatuses.DONE);
 			}
 		}
 	};
 };
 
+// Top-level message handler: processes only 'open' messages.
+// After open() is called, this handler is replaced by the query handler
+// defined inside open(), which processes subsequent 'query' messages.
 self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
 	const { data } = event;
 	if (data.type === 'open') {
