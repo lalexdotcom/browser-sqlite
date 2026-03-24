@@ -22,6 +22,7 @@
     "check": "biome check --write",
     "dev": "rslib build --watch",
     "format": "biome format --write",
+    "prepare": "simple-git-hooks",
     "test": "rstest",
     "test:watch": "rstest --watch"
   },
@@ -31,7 +32,19 @@
     "@rstest/adapter-rslib": "^0.2.1",
     "@rstest/core": "^0.9.0",
     "@types/node": "^24.12.0",
+    "lint-staged": "^16.4.0",
+    "simple-git-hooks": "^2.13.1",
     "typescript": "^5.9.3"
+  },
+  "lint-staged": {
+    "*.{js,ts,jsx,tsx,mjs,cjs}": [
+      "biome check --write --no-errors-on-unmatched"
+    ]
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "simple-git-hooks"
+    ]
   },
   "private": true,
   "dependencies": {
