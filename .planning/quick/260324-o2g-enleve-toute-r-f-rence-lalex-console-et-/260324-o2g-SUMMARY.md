@@ -2,119 +2,111 @@
 phase: quick
 plan: 260324-o2g
 subsystem: logging
-tags: [cleanup, logging, @lalex/console, worker, client]
+tags: [cleanup, logging, breaking-change]
 dependency_graph:
   requires: []
-  provides: [clean-source-no-logging]
-  affects: [src/worker.ts, src/client.ts, package.json]
+  provides: [silent-library]
+  affects: [src/client.ts, src/worker.ts, src/types.ts]
 tech_stack:
   added: []
-  patterns: [no-logging]
+  patterns: []
 key_files:
   created: []
   modified:
-    - package.json
-    - src/worker.ts
+    - src/types.ts
     - src/client.ts
+    - src/worker.ts
+    - package.json
+    - README.md
   deleted:
-    - tests/index.test.ts
+    - src/logger.ts
+    - tests/unit/logger.test.ts
 decisions:
-  - Removed @lalex/console from dependencies (not optionalDependencies) — the package.json in this worktree had it as a regular dependency
-  - Removed placeholder tests/index.test.ts which imported non-existent squared() function — this was blocking pnpm test
-  - README.md had no logLevel or @lalex/console references to remove
-  - types.ts had no LogLevel or logLevel fields to remove — already clean in this worktree
-  - src/logger.ts did not exist in this worktree — Logger was used directly via @lalex/console import
+  - "Tasks 1 and 2 committed together because pre-commit hook runs tsc — client.ts and worker.ts referenced logger symbols that no longer existed after Task 1 changes, causing tsc failure on isolated Task 1 commit. Combined into one atomic commit."
 metrics:
-  duration: "4min"
-  completed: "2026-03-24"
+  duration: ~3min
+  completed: 2026-03-24T17:32:01Z
   tasks_completed: 3
-  files_changed: 4
+  files_changed: 7
 ---
 
-# Quick Task 260324-o2g: Supprimer toute référence @lalex/console et logLevel
+# Quick Task 260324-o2g: Remove all @lalex/console and logLevel logging infrastructure
 
-**One-liner:** Remove all @lalex/console logging — Logger import, LL variable, and all LL.*() calls from worker.ts and client.ts, plus @lalex/console from package.json dependencies.
+**One-liner:** Deleted logger.ts, removed LogLevel type and logLevel option, removed all shouldLog/LL/log() call sites from worker.ts and client.ts, and stripped @lalex/console from package.json — library is now completely silent.
+
+## Tasks Completed
+
+| Task | Name | Commit | Files |
+|------|------|--------|-------|
+| 1+2 | Remove logger module, types, and clean worker/client | f3cae4a | src/logger.ts (del), tests/unit/logger.test.ts (del), src/types.ts, package.json, src/worker.ts, src/client.ts |
+| 3 | Remove logLevel from README, confirm tests green | 98aeaf0 | README.md |
 
 ## What Was Done
 
-Eliminated the entire logging layer from wsqlite. The `@lalex/console` package and all associated logging calls have been removed from the source code. Workers no longer emit log messages and the client no longer routes them.
+**src/logger.ts** — Deleted entirely. Contained `ScopedLogger` type, `makeConsoleShim()`, `shouldLog()`, and the `LL` module-level logger that attempted to load `@lalex/console` asynchronously.
 
-### Task 1: Clean package.json (commit 8f29445)
+**tests/unit/logger.test.ts** — Deleted entirely. Tested `shouldLog` and `makeConsoleShim` which no longer exist.
 
-- Removed `@lalex/console: "2.0.0-rc.1"` from `dependencies` in `package.json`
-- `types.ts` was already clean — no `LogLevel`, `logLevel`, or `type: 'log'` references
-- No `src/logger.ts` existed in this worktree (logging was done via direct `@lalex/console` import)
-- No `tests/unit/logger.test.ts` existed either
+**src/types.ts** — Three surgical removals:
+- `LogLevel` type union (11 variants) removed
+- `logLevel?:` field removed from the `open` variant of `ClientMessageData`
+- `| { type: 'log'; level: LogLevel; scope: string; args: unknown[] }` variant removed from `WorkerMessageData`
 
-### Task 2: Clean worker.ts and client.ts (commit d41869c)
+**src/worker.ts** — Complete removal of logging infrastructure:
+- `import { shouldLog } from './logger'` removed
+- `LogLevel` removed from types import
+- `let currentLogLevel: LogLevel = 'warn'` removed
+- `function log(...)` helper removed (posted type:'log' messages to client)
+- All ~15 `log(...)` call sites removed from `open()` and query handler
+- `logLevel` removed from open message destructure
+- `currentLogLevel = logLevel ?? 'warn'` removed from top-level onmessage handler
 
-**src/worker.ts:**
-- Removed `import { Logger } from '@lalex/console'`
-- Removed `const LL = Logger.scope('sqlite/worker')` and related setup lines
-- Removed ~15 `LL.debug/verb/warn/wth` calls from `open()`, the query handler, and the `.catch()/.finally()` chains
+**src/client.ts** — Complete removal of logging infrastructure:
+- `import { LL } from './logger'` removed
+- `logLevel?: 'debug' | 'info' | 'warn' | 'error'` field + JSDoc removed from `CreateSQLiteClientOptions`
+- `LL.level = clientOptions?.logLevel ?? 'warn'` removed
+- `if (data.type === 'log') { ... return; }` block removed from `worker.onmessage`
+- `logLevel: clientOptions?.logLevel` removed from open postMessage payload
+- `LL.debug(...)` call removed from `acquireNextWorker`
+- `LL.debug(...)`, `LL.verb(...)` x2 removed from `releaseWorker`
+- `LL.success(...)` and `.catch((e) => LL.error(...))` removed from pool initialization
 
-**src/client.ts:**
-- Removed `import { Logger } from '@lalex/console'`
-- Removed `const LL = Logger.scope('sqlite/client')` and related setup lines
-- Removed `LL.debug` call in `acquireNextWorker`
-- Removed `LL.debug` call in `releaseWorker`
-- Removed two `LL.verb` calls in `releaseWorker`
-- Removed `LL.success` call in pool initialization
-- Removed `LL.error` call in pool initialization catch handler
-- Cleaned all commented-out `LL.wth` calls from read/write/stream/one methods
+**package.json** — `"optionalDependencies"` block (`@lalex/console: "2.0.0"`) removed entirely.
 
-**tests/index.test.ts (deleted):**
-- This placeholder file imported a non-existent `squared()` function, blocking `pnpm test`
-- Pre-existing issue, removed as Rule 1 fix
-
-### Task 3: Validate README and tests (no file changes)
-
-- README.md had no logLevel or @lalex/console references — already clean
-- `pnpm test` passes with no failures
-
-## Verification
-
-```
-grep -rn "@lalex/console|logLevel|shouldLog|currentLogLevel|makeConsoleShim|ScopedLogger|from './logger'" src/ README.md package.json
-→ ALL CLEAN
-
-pnpm test → all tests passed
-```
+**README.md** — `logLevel: 'warn',` line removed from the Quick Start example.
 
 ## Deviations from Plan
 
 ### Auto-fixed Issues
 
-**1. [Rule 1 - Bug] Removed placeholder tests/index.test.ts**
-- **Found during:** Task 3 (running pnpm test)
-- **Issue:** `tests/index.test.ts` imported non-existent `squared()` from `src/index`, causing test failure
-- **Fix:** Deleted the placeholder test file
-- **Files modified:** `tests/index.test.ts` (deleted)
-- **Commit:** d41869c
+**1. [Rule 3 - Blocking] Tasks 1 and 2 combined into a single commit**
+- **Found during:** Task 1 commit attempt
+- **Issue:** The pre-commit hook runs `pnpm tsc --noEmit`. After deleting `src/logger.ts` and cleaning `src/types.ts`, `src/client.ts` and `src/worker.ts` still imported from `'./logger'` and referenced `LogLevel` — causing tsc to fail and the commit to be rejected.
+- **Fix:** Completed all source file cleanups (Tasks 1 and 2) before committing, then committed everything in one atomic commit. Task 3 (README) committed separately as planned.
+- **Files modified:** src/logger.ts, tests/unit/logger.test.ts, src/types.ts, package.json, src/worker.ts, src/client.ts
+- **Commit:** f3cae4a
 
-### Plan Adaptation Notes
+## Verification Results
 
-The worktree state differed from what the plan anticipated:
-- `src/logger.ts` did not exist — `@lalex/console` was imported directly in `worker.ts` and `client.ts`
-- `tests/unit/logger.test.ts` did not exist
-- `types.ts` had no `LogLevel` or `logLevel` fields
-- `package.json` had `@lalex/console` in `dependencies` (not `optionalDependencies`)
+```
+grep -rn "@lalex/console|logLevel|shouldLog|currentLogLevel|makeConsoleShim|ScopedLogger|from './logger'" src/ tests/ README.md package.json
+-> ALL CLEAN
 
-All changes were adapted accordingly and the end state matches the plan's `must_haves.truths` exactly.
+pnpm tsc --noEmit
+-> (no output — clean)
 
-## Commits
+pnpm test
+-> 57 tests pass, 3 files, 0 failures
+```
 
-| Task | Commit | Message |
-|------|--------|---------|
-| 1 | 8f29445 | chore(260324-o2g): remove @lalex/console from dependencies |
-| 2 | d41869c | feat(260324-o2g): remove all @lalex/console logging from worker.ts and client.ts |
+## Known Stubs
+
+None.
 
 ## Self-Check: PASSED
 
-- `src/logger.ts` — never existed in worktree (confirmed)
-- `tests/unit/logger.test.ts` — never existed in worktree (confirmed)
-- `@lalex/console` absent from `package.json` — confirmed
-- `worker.ts` clean of logging — confirmed
-- `client.ts` clean of logging — confirmed
-- `pnpm test` passes — confirmed
-- Commits 8f29445 and d41869c exist — confirmed
+- `src/logger.ts`: DELETED (confirmed)
+- `tests/unit/logger.test.ts`: DELETED (confirmed)
+- Commit f3cae4a: EXISTS (confirmed via git log)
+- Commit 98aeaf0: EXISTS (confirmed via git log)
+- No residual references: ALL CLEAN (confirmed via grep)
