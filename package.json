@@ -41,8 +41,9 @@
 		"format": "biome format --write",
 		"prepare": "simple-git-hooks",
 		"test": "rstest",
-		"test:browser": "rstest --project browser",
-		"test:watch": "rstest --watch"
+		"test:watch": "rstest --watch",
+		"test:unit": "rstest --project unit",
+		"test:browser": "rstest --project browser"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.4.6",
