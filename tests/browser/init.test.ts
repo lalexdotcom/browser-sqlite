@@ -2,18 +2,18 @@ import { describe, expect, it } from '@rstest/core';
 import { createTestClient } from './helpers';
 
 /**
- * INT-02 : createSQLiteClient initialise et les workers atteignent READY
+ * INT-02: createSQLiteClient initializes and workers reach READY
  *
- * Stratégie : createSQLiteClient est synchrone mais les workers s'initialisent
- * de façon asynchrone. La première requête (`db.read('SELECT 1')`) est mise en
- * queue jusqu'à ce qu'un worker soit READY — si ça échoue, le pool n'est pas initialisé.
- * Aucun changement au code source requis (pas de propriété `ready` exposée).
+ * Strategy: createSQLiteClient is synchronous but workers initialize
+ * asynchronously. The first query (`db.read('SELECT 1')`) is queued
+ * until a worker is READY — if it fails, the pool is not initialized.
+ * No source code changes required (no `ready` property exposed).
  */
 describe('createSQLiteClient (INT-02)', () => {
-  it('initialise le pool workers et répond à une requête simple', async () => {
+  it('initializes the worker pool and responds to a simple query', async () => {
     const db = await createTestClient();
 
-    // Si les workers ne sont pas READY, cette requête va rejeter ou timeout (30s)
+    // If workers are not READY, this query will reject or timeout (30s)
     const rows = await db.read<{ value: number }>('SELECT 1 AS value');
 
     expect(rows).toHaveLength(1);
@@ -22,9 +22,9 @@ describe('createSQLiteClient (INT-02)', () => {
     db.close();
   });
 
-  it('supporte poolSize: 1 (minimum)', async () => {
-    // createTestClient utilise le défaut poolSize: 2
-    // Vérifier qu'avec un pool minimal le client fonctionne
+  it('supports poolSize: 1 (minimum)', async () => {
+    // createTestClient uses the default poolSize: 2
+    // Verify that a minimal pool works
     const { createSQLiteClient } = await import('../../src/client');
     const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
 
@@ -37,7 +37,7 @@ describe('createSQLiteClient (INT-02)', () => {
       }
     };
 
-    // afterEach n'est pas disponible ici directement — nettoyer manuellement
+    // afterEach is not available here directly — clean up manually
     try {
       const db = createSQLiteClient(dbName, { poolSize: 1 });
       const rows = await db.read<{ n: number }>('SELECT 42 AS n');
@@ -48,7 +48,7 @@ describe('createSQLiteClient (INT-02)', () => {
     }
   });
 
-  it('retourne le même résultat sur plusieurs appels consécutifs', async () => {
+  it('returns the same result on multiple consecutive calls', async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE init_test (id INTEGER PRIMARY KEY)');

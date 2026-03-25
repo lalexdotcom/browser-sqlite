@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: v1.0 milestone complete
-stopped_at: Completed quick task 260324-tda (Réorganiser le README)
+stopped_at: Completed quick task 260325-am8 (Translate French to English in source files)
 last_updated: "2026-03-24T20:22:57.087Z"
 progress:
   total_phases: 5
@@ -138,6 +138,7 @@ None yet.
 | 260324-sya | Renommer package en web-sqlite, ajouter champs npm | 2026-03-24 |  | [260324-sya-renommer-package-en-web-sqlite-ajouter-c](./quick/260324-sya-renommer-package-en-web-sqlite-ajouter-c/) |
 | 260324-t5l | Renommer package en browser-sqlite, mettre à jour repo | 2026-03-24 |  | [260324-t5l-renommer-package-en-browser-sqlite-mettr](./quick/260324-t5l-renommer-package-en-browser-sqlite-mettr/) |
 | 260324-tda | Réorganiser le README: intro, ordre des sections, limitations | 2026-03-24 |  | [260324-tda-r-organiser-le-readme-intro-ordre-des-se](./quick/260324-tda-r-organiser-le-readme-intro-ordre-des-se/) |
+| 260325-am8 | Translate all French text to English in source files | 2026-03-25 |  | [260325-am8-translate-all-french-text-to-english-in-](./quick/260325-am8-translate-all-french-text-to-english-in-/) |
 
 ## Session Continuity
 

@@ -2,16 +2,15 @@ import { describe, expect, it } from '@rstest/core';
 import { createTestClient } from './helpers';
 
 /**
- * INT-07 : Des lectures concurrentes sont servies par des workers différents en parallèle
+ * INT-07: Concurrent reads are served by different workers in parallel
  *
- * Avec poolSize: 2 (défaut), deux db.read() lancés simultanément doivent se résoudre
- * sans attendre l'un l'autre. On vérifie que Promise.all se résout avec des résultats corrects.
- * La nature "parallèle" est vérifiée indirectement : si les lectures étaient sérialisées,
- * le temps total serait ~2x le temps d'une seule lecture — acceptable de ne pas mesurer le temps,
- * l'important est que les deux se résolvent correctement.
+ * With poolSize: 2 (default), two simultaneous db.read() calls should resolve
+ * without waiting for each other. We verify that Promise.all resolves with correct results.
+ * Parallelism is verified indirectly: if reads were serialized, total time would be ~2x
+ * a single read — acceptable not to measure time, the important thing is both resolve correctly.
  */
-describe('lectures concurrentes (INT-07)', () => {
-  it('deux db.read() concurrents retournent tous les deux les résultats corrects', async () => {
+describe('concurrent reads (INT-07)', () => {
+  it('two concurrent db.read() both return correct results', async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE concurrent_read (id INTEGER, val TEXT)');
@@ -19,7 +18,7 @@ describe('lectures concurrentes (INT-07)', () => {
       "INSERT INTO concurrent_read VALUES (1, 'a'), (2, 'b'), (3, 'c')",
     );
 
-    // Lancer deux lectures simultanément — poolSize: 2 les distribue sur deux workers
+    // Launch two reads simultaneously — poolSize: 2 dispatches them to two workers
     const [result1, result2] = await Promise.all([
       db.read<{ id: number; val: string }>(
         'SELECT * FROM concurrent_read WHERE id = 1',
@@ -40,13 +39,13 @@ describe('lectures concurrentes (INT-07)', () => {
     db.close();
   });
 
-  it('trois db.read() concurrents se résolvent tous (troisième en queue)', async () => {
+  it('three concurrent db.read() all resolve (third is queued)', async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE multi_read (n INTEGER)');
     await db.write('INSERT INTO multi_read VALUES (10), (20), (30)');
 
-    // poolSize: 2 → les deux premiers s'exécutent en parallèle, le troisième attend
+    // poolSize: 2 → first two run in parallel, third waits
     const [r1, r2, r3] = await Promise.all([
       db.read<{ n: number }>('SELECT n FROM multi_read WHERE n = 10'),
       db.read<{ n: number }>('SELECT n FROM multi_read WHERE n = 20'),
@@ -62,25 +61,25 @@ describe('lectures concurrentes (INT-07)', () => {
 });
 
 /**
- * INT-08 : Les écritures sont sérialisées à travers un unique writer worker
+ * INT-08: Writes are serialized through a single writer worker
  *
- * Mécanisme : currentWriterIndex désigne le writer dès la première write().
- * Toute write() suivante pendant que le writer est occupé est mise en writerRequestQueue.
- * Les écritures concurrentes s'exécutent donc dans l'ordre de la queue, pas en parallèle.
+ * Mechanism: currentWriterIndex designates the writer on the first write().
+ * Any subsequent write() while the writer is busy is placed in writerRequestQueue.
+ * Concurrent writes therefore execute in queue order, not in parallel.
  */
-describe('écritures sérialisées (INT-08)', () => {
-  it('deux db.write() concurrents produisent un résultat cohérent (pas de corruption)', async () => {
+describe('serialized writes (INT-08)', () => {
+  it('two concurrent db.write() produce a consistent result (no corruption)', async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE serial_write (id INTEGER, val TEXT)');
 
-    // Lancer deux écritures simultanément — doivent être sérialisées
+    // Launch two writes simultaneously — must be serialized
     await Promise.all([
       db.write("INSERT INTO serial_write VALUES (1, 'first')"),
       db.write("INSERT INTO serial_write VALUES (2, 'second')"),
     ]);
 
-    // Les deux lignes doivent être présentes — pas de corruption
+    // Both rows must be present — no corruption
     const rows = await db.read<{ id: number; val: string }>(
       'SELECT * FROM serial_write ORDER BY id',
     );
@@ -91,12 +90,12 @@ describe('écritures sérialisées (INT-08)', () => {
     db.close();
   });
 
-  it('les écritures séquentielles sont correctement ordonnées', async () => {
+  it('sequential writes are correctly ordered', async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE order_test (seq INTEGER)');
 
-    // Écriture séquentielle explicite — chaque write attend la précédente
+    // Explicit sequential writes — each write waits for the previous one
     await db.write('INSERT INTO order_test VALUES (1)');
     await db.write('INSERT INTO order_test VALUES (2)');
     await db.write('INSERT INTO order_test VALUES (3)');
@@ -113,20 +112,20 @@ describe('écritures sérialisées (INT-08)', () => {
 });
 
 /**
- * INT-09 : AbortSignal annule une requête en cours — aucun chunk supplémentaire
+ * INT-09: AbortSignal cancels an in-flight request — no additional chunks
  *
- * Mécanisme (src/client.ts l.251-258) :
+ * Mechanism (src/client.ts l.251-258):
  *   signal.abort() → signalAbortHandler() → orchestrator.setStatus(ABORTING)
- *   Worker vérifie ABORTING à chaque itération et sort → generator se termine (done: true)
+ *   Worker checks ABORTING at each iteration and exits → generator terminates (done: true)
  *
- * Note: generate_series n'est pas disponible dans wa-sqlite par défaut.
- * On utilise un INSERT batch JavaScript pour créer suffisamment de lignes.
+ * Note: generate_series is not available in wa-sqlite by default.
+ * We use a JavaScript batch INSERT to create enough rows.
  */
 describe('AbortSignal (INT-09)', () => {
-  it('annule un stream en cours et ne livre plus de chunks après abort', async () => {
+  it('cancels an in-flight stream and delivers no more chunks after abort', async () => {
     const db = await createTestClient();
 
-    // Créer une table avec 1000 lignes pour forcer plusieurs chunks
+    // Create a table with 1000 rows to force multiple chunks
     await db.write('CREATE TABLE bigdata (n INTEGER)');
     const values = Array.from({ length: 1000 }, (_, i) => `(${i + 1})`).join(
       ',',
@@ -141,38 +140,38 @@ describe('AbortSignal (INT-09)', () => {
       [],
       {
         signal: controller.signal,
-        chunkSize: 50, // 1000 / 50 = 20 chunks potentiels
+        chunkSize: 50, // 1000 / 50 = 20 potential chunks
       },
     );
 
-    // Recevoir le premier chunk, puis aborter
+    // Receive the first chunk, then abort
     const first = await gen.next();
     expect(first.done).toBe(false);
     chunkCount++;
     controller.abort();
 
-    // Drainer le generator — doit se terminer rapidement après abort
+    // Drain the generator — should terminate quickly after abort
     let safetyValve = 0;
     for await (const _chunk of gen) {
       chunkCount++;
       safetyValve++;
-      if (safetyValve > 5) break; // Sécurité si l'abort ne fonctionne pas
+      if (safetyValve > 5) break; // Safety net if abort doesn't work
     }
 
-    // On ne doit PAS avoir reçu tous les 20 chunks potentiels
+    // Should NOT have received all 20 potential chunks
     expect(chunkCount).toBeLessThan(20);
 
     db.close();
   });
 
-  it('un AbortSignal déjà aborté termine immédiatement', async () => {
+  it('an already-aborted AbortSignal terminates immediately', async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE pre_aborted (x INTEGER)');
     await db.write('INSERT INTO pre_aborted VALUES (1), (2), (3)');
 
     const controller = new AbortController();
-    controller.abort(); // Aborter AVANT de lancer le stream
+    controller.abort(); // Abort BEFORE launching the stream
 
     let chunkCount = 0;
     for await (const _chunk of db.stream('SELECT x FROM pre_aborted', [], {
@@ -182,9 +181,9 @@ describe('AbortSignal (INT-09)', () => {
       chunkCount++;
     }
 
-    // Le stream peut délivrer 0 ou quelques chunks selon le timing,
-    // mais certainement pas tous (3 lignes / chunkSize 1 = 3 chunks max)
-    // L'important : pas d'erreur non gérée
+    // The stream may deliver 0 or a few chunks depending on timing,
+    // but certainly not all (3 rows / chunkSize 1 = 3 chunks max)
+    // The important thing: no unhandled error
     expect(chunkCount).toBeLessThanOrEqual(3);
 
     db.close();
@@ -192,18 +191,18 @@ describe('AbortSignal (INT-09)', () => {
 });
 
 /**
- * INT-10 : Une erreur SQL rejette la Promise avec un Error descriptif
+ * INT-10: A SQL error rejects the Promise with a descriptive Error
  *
- * Mécanisme : le worker envoie { type: 'error', message, cause }
- * Le client crée new Error(data.message, { cause: data.cause }) et rejette la Promise
+ * Mechanism: the worker sends { type: 'error', message, cause }
+ * The client creates new Error(data.message, { cause: data.cause }) and rejects the Promise
  */
-describe('erreurs SQL (INT-10)', () => {
-  it('une syntaxe SQL invalide rejette avec un Error dont le message est non-vide', async () => {
+describe('SQL errors (INT-10)', () => {
+  it('invalid SQL syntax rejects with an Error with a non-empty message', async () => {
     const db = await createTestClient();
 
     await expect(db.read('THIS IS NOT VALID SQL !!!')).rejects.toThrow();
 
-    // Vérifier que l'erreur a un message descriptif
+    // Verify the error has a descriptive message
     try {
       await db.read('SELECT * FROM !!!invalid');
     } catch (err) {
@@ -214,16 +213,16 @@ describe('erreurs SQL (INT-10)', () => {
     db.close();
   });
 
-  it('une table absente rejette avec un Error mentionnant la table', async () => {
+  it('a missing table rejects with an Error mentioning the table', async () => {
     const db = await createTestClient();
 
     try {
-      await db.read('SELECT * FROM table_qui_nexiste_pas_du_tout');
-      // Si on arrive ici, le test échoue
+      await db.read('SELECT * FROM table_that_does_not_exist');
+      // If we get here, the test fails
       expect(true).toBe(false);
     } catch (err) {
       expect(err).toBeInstanceOf(Error);
-      // Le message SQLite mentionne généralement le nom de la table manquante
+      // SQLite message usually mentions the missing table name
       expect((err as Error).message).toBeTruthy();
       expect((err as Error).message.length).toBeGreaterThan(0);
     }
@@ -231,13 +230,13 @@ describe('erreurs SQL (INT-10)', () => {
     db.close();
   });
 
-  it('le client reste utilisable après une erreur SQL', async () => {
+  it('client remains usable after a SQL error', async () => {
     const db = await createTestClient();
 
-    // Première requête : erreur
-    await expect(db.read('SELECT * FROM table_inexistante')).rejects.toThrow();
+    // First query: error
+    await expect(db.read('SELECT * FROM nonexistent_table')).rejects.toThrow();
 
-    // Deuxième requête : doit fonctionner normalement
+    // Second query: should work normally
     const rows = await db.read<{ val: number }>('SELECT 42 AS val');
     expect(rows[0].val).toBe(42);
 
@@ -246,28 +245,28 @@ describe('erreurs SQL (INT-10)', () => {
 });
 
 /**
- * D-09 : Test du comportement de blocage de lock() en environnement browser
+ * D-09: Test lock() blocking behavior in browser environment
  *
- * Contexte : Phase 2 D2 a différé ce test à Phase 3.
- * Le lock() est appelé uniquement à l'intérieur des workers (dans open()).
- * Avec poolSize: 2, les deux workers appellent lock() pendant open() — le second
- * bloque sur Atomics.wait jusqu'à ce que le premier appelle unlock() après son open().
+ * Context: Phase 2 D2 deferred this test to Phase 3.
+ * lock() is called only inside workers (in open()).
+ * With poolSize: 2, both workers call lock() during open() — the second
+ * blocks on Atomics.wait until the first calls unlock() after its open().
  *
- * Test pragmatique : si les deux workers s'initialisent avec succès (READY),
- * le mécanisme lock/unlock fonctionne. Si lock() était cassé, les deux workers
- * ouvriraient la DB simultanément, risquant corruption ou erreur.
+ * Pragmatic test: if both workers initialize successfully (READY),
+ * the lock/unlock mechanism works. If lock() were broken, both workers
+ * would open the DB simultaneously, risking corruption or errors.
  */
 describe('lock() blocking behavior (D-09)', () => {
-  it('deux workers avec poolSize: 2 atteignent tous les deux READY (lock/unlock séquentiel)', async () => {
-    // createTestClient crée un client avec poolSize: 2 par défaut
+  it('both workers with poolSize: 2 reach READY (sequential lock/unlock)', async () => {
+    // createTestClient creates a client with poolSize: 2 by default
     const db = await createTestClient();
 
-    // Si les deux workers sont READY, le lock/unlock a fonctionné correctement
-    // (chacun a attendu son tour pour ouvrir la DB)
+    // If both workers are READY, lock/unlock worked correctly
+    // (each waited its turn to open the DB)
     const rows = await db.read<{ n: number }>('SELECT 2 AS n');
     expect(rows[0].n).toBe(2);
 
-    // Exécuter des opérations sur les deux workers pour confirmer les deux sont actifs
+    // Run operations on both workers to confirm both are active
     const [r1, r2] = await Promise.all([
       db.read<{ w: number }>('SELECT 1 AS w'),
       db.read<{ w: number }>('SELECT 2 AS w'),

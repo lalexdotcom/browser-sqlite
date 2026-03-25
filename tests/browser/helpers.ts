@@ -2,11 +2,11 @@ import { afterEach } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 
 /**
- * Crée un client SQLite avec un nom de base unique (UUID) et enregistre
- * un nettoyage OPFS automatique via afterEach.
+ * Creates a SQLite client with a unique database name (UUID) and registers
+ * automatic OPFS cleanup via afterEach.
  *
- * Décisions : D-06 (nom unique), D-07 (afterEach cleanup), D-08 (helper partagé)
- * VFS : OPFSPermutedVFS par défaut (D-05) — ne pas passer d'option `vfs`
+ * Decisions: D-06 (unique name), D-07 (afterEach cleanup), D-08 (shared helper)
+ * VFS: OPFSPermutedVFS by default (D-05) — do not pass a `vfs` option
  */
 export async function createTestClient() {
   const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
@@ -16,11 +16,11 @@ export async function createTestClient() {
       const root = await navigator.storage.getDirectory();
       await root.removeEntry(dbName, { recursive: true });
     } catch {
-      // L'entrée OPFS peut ne pas exister si le test a échoué avant la création de la DB
+      // OPFS entry may not exist if the test failed before DB creation
     }
   });
 
-  // createSQLiteClient est synchrone — workers s'initialisent en arrière-plan.
-  // La première requête queue jusqu'à ce qu'un worker soit READY.
+  // createSQLiteClient is synchronous — workers initialize in the background.
+  // The first query queues until a worker reaches READY.
   return createSQLiteClient(dbName);
 }

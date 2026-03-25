@@ -2,10 +2,10 @@ import { describe, expect, it } from '@rstest/core';
 import { createTestClient } from './helpers';
 
 /**
- * INT-03 : db.read() exécute un SELECT et retourne des lignes typées
+ * INT-03: db.read() executes a SELECT and returns typed rows
  */
 describe('db.read() (INT-03)', () => {
-  it('retourne un tableau de lignes pour un SELECT simple', async () => {
+  it('returns an array of rows for a simple SELECT', async () => {
     const db = await createTestClient();
 
     await db.write(
@@ -26,7 +26,7 @@ describe('db.read() (INT-03)', () => {
     db.close();
   });
 
-  it('retourne un tableau vide pour SELECT sans résultats', async () => {
+  it('returns an empty array for SELECT with no results', async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE empty_table (id INTEGER)');
@@ -38,7 +38,7 @@ describe('db.read() (INT-03)', () => {
     db.close();
   });
 
-  it('supporte les paramètres positionnels', async () => {
+  it('supports positional parameters', async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE params_test (val INTEGER)');
@@ -58,10 +58,10 @@ describe('db.read() (INT-03)', () => {
 });
 
 /**
- * INT-04 : db.write() exécute INSERT/UPDATE/DELETE et retourne { result, affected }
+ * INT-04: db.write() executes INSERT/UPDATE/DELETE and returns { result, affected }
  */
 describe('db.write() (INT-04)', () => {
-  it('INSERT retourne affected > 0', async () => {
+  it('INSERT returns affected > 0', async () => {
     const db = await createTestClient();
 
     await db.write(
@@ -77,7 +77,7 @@ describe('db.write() (INT-04)', () => {
     db.close();
   });
 
-  it('UPDATE retourne le nombre de lignes modifiées', async () => {
+  it('UPDATE returns the number of modified rows', async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE update_test (id INTEGER, status TEXT)');
@@ -93,7 +93,7 @@ describe('db.write() (INT-04)', () => {
     db.close();
   });
 
-  it('DELETE retourne le nombre de lignes supprimées', async () => {
+  it('DELETE returns the number of deleted rows', async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE delete_test (id INTEGER)');
@@ -102,7 +102,7 @@ describe('db.write() (INT-04)', () => {
 
     expect(result.affected).toBe(2);
 
-    // Vérifier que les lignes restantes sont correctes
+    // Verify remaining rows are correct
     const remaining = await db.read<{ id: number }>(
       'SELECT id FROM delete_test ORDER BY id',
     );
@@ -114,14 +114,14 @@ describe('db.write() (INT-04)', () => {
 });
 
 /**
- * INT-05 : db.stream() yield des lignes en chunks respectant chunkSize
+ * INT-05: db.stream() yields rows in chunks respecting chunkSize
  */
 describe('db.stream() (INT-05)', () => {
-  it('yield des chunks dont la taille ne dépasse pas chunkSize', async () => {
+  it('yields chunks whose size does not exceed chunkSize', async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE stream_test (n INTEGER)');
-    // Insérer 50 lignes via des INSERTs en batch
+    // Insert 50 rows via batch INSERT
     const values = Array.from({ length: 50 }, (_, i) => `(${i + 1})`).join(',');
     await db.write(`INSERT INTO stream_test VALUES ${values}`);
 
@@ -137,7 +137,7 @@ describe('db.stream() (INT-05)', () => {
       expect(chunk.length).toBeLessThanOrEqual(chunkSize);
     }
 
-    // Toutes les lignes doivent être présentes
+    // All rows must be present
     const allRows = chunks.flat();
     expect(allRows).toHaveLength(50);
     expect(allRows[0]).toBe(1);
@@ -146,7 +146,7 @@ describe('db.stream() (INT-05)', () => {
     db.close();
   });
 
-  it('yield au moins un chunk pour un résultat non vide', async () => {
+  it('yields at least one chunk for a non-empty result', async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE stream_one (x INTEGER)');
@@ -169,14 +169,14 @@ describe('db.stream() (INT-05)', () => {
 });
 
 /**
- * INT-06 : db.one() retourne une seule ligne ou undefined
+ * INT-06: db.one() returns a single row or undefined
  */
 describe('db.one() (INT-06)', () => {
-  it('retourne la première ligne quand un résultat existe', async () => {
+  it('returns the first row when a result exists', async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE one_test (id INTEGER, label TEXT)');
-    await db.write("INSERT INTO one_test VALUES (1, 'premier'), (2, 'second')");
+    await db.write("INSERT INTO one_test VALUES (1, 'first'), (2, 'second')");
 
     const row = await db.one<{ id: number; label: string }>(
       'SELECT * FROM one_test ORDER BY id LIMIT 1',
@@ -184,12 +184,12 @@ describe('db.one() (INT-06)', () => {
 
     expect(row).toBeDefined();
     expect(row?.id).toBe(1);
-    expect(row?.label).toBe('premier');
+    expect(row?.label).toBe('first');
 
     db.close();
   });
 
-  it('retourne undefined quand aucun résultat', async () => {
+  it('returns undefined when no result', async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE one_empty (id INTEGER)');
@@ -200,7 +200,7 @@ describe('db.one() (INT-06)', () => {
     db.close();
   });
 
-  it('ne retourne que la première ligne même si plusieurs existent', async () => {
+  it('returns only the first row even when multiple exist', async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE one_multi (val INTEGER)');
