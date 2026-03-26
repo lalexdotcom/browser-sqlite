@@ -2,6 +2,10 @@
 
 You are an expert in JavaScript, Rspack, Rsbuild, Rslib, and library development. You write maintainable, performant, and accessible code.
 
+## Language
+
+All content in this repository (code, comments, documentation, commits, pull requests, and all technical outputs) must be in **English**, regardless of the language used for your interactions with the agent. If you communicate in another language, the agent will respond understandably, but all delivered code and repository content will always be in English.
+
 ## Commands
 
 - `pnpm run build` - Build the library for production

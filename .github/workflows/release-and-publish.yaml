@@ -16,6 +16,5 @@ jobs:
 
       - uses: lalexdotcom/action-release-and-publish@v1
         with:
-          publish: true
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          npm-token: ${{ secrets.NPM_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
