@@ -1,6 +1,6 @@
 {
 	"name": "browser-sqlite",
-	"version": "1.0.0-rc.2",
+	"version": "1.0.0-rc.3",
 	"description": "Browser SQLite with concurrent read / serial write isolation, backed by Web Workers and wa-sqlite",
 	"author": "LAlex",
 	"license": "MIT",
