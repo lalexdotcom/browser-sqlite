@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>browser-sqlite consumer smoke test — no bundler</title>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      // No bundler, no import map: a path, resolved by the browser alone.
+      import { createSQLiteClient } from '/node_modules/browser-sqlite/dist/index.js';
+
+      async function run() {
+        if (!crossOriginIsolated) {
+          throw new Error(
+            'crossOriginIsolated is false — COOP/COEP headers are missing, SharedArrayBuffer is unavailable',
+          );
+        }
+
+        const db = createSQLiteClient(`consumer-smoke-${crypto.randomUUID()}`);
+
+        await db.write('CREATE TABLE smoke (id INTEGER PRIMARY KEY, label TEXT)');
+        await db.write(
+          "INSERT INTO smoke (id, label) VALUES (1, 'alpha'), (2, 'beta')",
+        );
+
+        const rows = await db.read(
+          'SELECT id, label FROM smoke ORDER BY id',
+        );
+
+        db.close();
+
+        if (rows.length !== 2 || rows[1].label !== 'beta') {
+          throw new Error(`unexpected rows: ${JSON.stringify(rows)}`);
+        }
+
+        return `read back ${rows.length} rows`;
+      }
+
+      const out = document.getElementById('out');
+
+      run().then(
+        (detail) => {
+          window.__SMOKE__ = { ok: true, detail };
+          out.textContent = `OK — ${detail}`;
+        },
+        (error) => {
+          const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+          window.__SMOKE__ = { ok: false, detail };
+          out.textContent = `FAILED — ${detail}`;
+        },
+      );
+    </script>
+  </body>
+</html>

@@ -27,6 +27,7 @@ import { chromium } from 'playwright';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEV_PORT = 5199;
 const PREVIEW_PORT = 5198;
+const NOBUNDLER_PORT = 5197;
 // 127.0.0.1, not `localhost`: Node resolves `localhost` to ::1 first while Vite
 // binds IPv4, so every request would hang.
 const HOST = '127.0.0.1';
@@ -117,7 +118,8 @@ async function waitForServer(url, timeoutMs = 60_000) {
 }
 
 function startServer(args, cwd) {
-  const child = spawn('npx', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+  const [cmd, ...rest] = args[0] === 'node' ? args : ['npx', ...args];
+  const child = spawn(cmd, rest, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
   const log = [];
   child.stdout.on('data', (d) => log.push(String(d)));
   child.stderr.on('data', (d) => log.push(String(d)));
@@ -220,6 +222,9 @@ try {
     const s = stage('scaffold and install the consumer app');
     try {
       cpSync(join(ROOT, 'tests', 'consumer'), appDir, { recursive: true });
+      cpSync(join(ROOT, 'tests', 'consumer-nobundler'), join(appDir, 'nobundler'), {
+        recursive: true,
+      });
       // npm, not pnpm, and outside the repo: nothing can resolve
       // `browser-sqlite` back to the local sources.
       run('npm', ['install', '--no-audit', '--no-fund'], appDir);
@@ -264,6 +269,18 @@ try {
       detail: 'skipped — vite build failed',
     });
   }
+
+  await checkMode(
+    'No bundler (static server)',
+    [
+      'node',
+      join(ROOT, 'scripts', 'static-server.mjs'),
+      appDir,
+      String(NOBUNDLER_PORT),
+    ],
+    `http://${HOST}:${NOBUNDLER_PORT}/nobundler/index.html`,
+    appDir,
+  );
 } catch {
   // A thrown stage already recorded its failure; fall through to the summary.
 } finally {
