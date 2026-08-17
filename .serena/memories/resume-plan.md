@@ -115,7 +115,7 @@ worker.query()                                  primitive
   └─ chunk()   AsyncGenerator<T[]>              chunkSize lives HERE
       ├─ stream()  AsyncGenerator<T>            flattens
       ├─ read()    Promise<T[]>                 drains
-      ├─ one()     Promise<T | undefined>       first row + internal abort
+      ├─ first()   Promise<T | undefined>       first row + internal abort (was one())
       └─ write()   Promise<{result, affected}>  drains + captures the number
 ```
 
@@ -133,6 +133,14 @@ worker.query()                                  primitive
   (writes rarely return rows; `RETURNING` can use `chunk()`). **Harmful on `one()`** —
   its only correct value is 1, and a caller passing 5000 would fetch 5000 rows for one.
   Revisit whether `read()` really needs it once D5 makes it measurable.
+- **`one()` is renamed `first()`** (user, 2026-08-17). More accurate as well as clearer:
+  the method returns the first row of a result set, not the only one, and it does not
+  assert or enforce that exactly one row matched. Land it with the rest of D4 in wave 1 —
+  the relayering already rewrites every one of these methods, so renaming costs nothing
+  extra there and would cost a second breaking change later. Loud CHANGELOG entry
+  alongside `stream()`'s yield change; both are covered by the standing "no consumer on
+  rc.3" assumption. Note the internal-abort trap described above stays attached to this
+  method under its new name.
 - **`chunk()` stays public.** It is the performance path (a row-wise generator costs a
   microtask per row) and the place where back-pressure will live.
 
