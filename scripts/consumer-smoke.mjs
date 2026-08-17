@@ -18,9 +18,9 @@
  * Set KEEP_TMP=1 to keep the scaffolded app for inspection.
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { cpSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
@@ -39,6 +39,44 @@ function errText(error) {
     [error.stdout, error.stderr].filter(Boolean).join('\n').trim() ||
     error.message
   );
+}
+
+/**
+ * A published ESM bundle must resolve without an import map. Anything that is
+ * not relative, root-absolute or a URL is unresolvable in a bare browser and
+ * pushes a dependency into the consumer's lockfile.
+ */
+function assertNoBareSpecifiers(distDir) {
+  const offenders = [];
+  const patterns = [
+    /\bfrom\s*["']([^"']+)["']/g,
+    /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
+    /\bimport\s+["']([^"']+)["']/g,
+  ];
+
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (entry.name.endsWith('.js')) {
+        const source = readFileSync(full, 'utf8');
+        for (const pattern of patterns) {
+          for (const [, specifier] of source.matchAll(pattern)) {
+            const isRelative = specifier.startsWith('.');
+            const isAbsolute = specifier.startsWith('/');
+            const isUrl = /^[a-z][a-z0-9+.-]*:/i.test(specifier);
+            if (!isRelative && !isAbsolute && !isUrl) {
+              offenders.push(`${relative(distDir, full)}: ${specifier}`);
+            }
+          }
+        }
+      }
+    }
+  };
+
+  walk(distDir);
+  return offenders;
 }
 
 function stage(name) {
@@ -150,6 +188,16 @@ try {
     } catch (error) {
       s.fail(errText(error));
       throw error;
+    }
+  }
+
+  {
+    const s = stage('no bare specifiers in dist/');
+    const offenders = assertNoBareSpecifiers(join(ROOT, 'dist'));
+    if (offenders.length === 0) {
+      s.pass('every specifier is relative, absolute or a URL');
+    } else {
+      s.fail(offenders.join('\n    '));
     }
   }
 
