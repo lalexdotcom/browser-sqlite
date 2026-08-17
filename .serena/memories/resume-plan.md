@@ -23,6 +23,14 @@ pulled to the front, ahead of every correctness wave. **Goal, stated verbatim: m
 current package — defects and all — consumable.** Not "make it good"; make it installable
 and runnable. Wave 1 slides behind it, unchanged.
 
+**Wave P is designed and the design is approved.** The spec is
+`docs/superpowers/specs/2026-08-17-wave-p-packaging-design.md` — read it rather than §2.1,
+which is now the earlier and less precise version of the same thing. Next action:
+turn it into an implementation plan (superpowers `writing-plans`), then execute it on a
+feature branch per §3. The spec's §8 lists four things to verify with a throwaway build
+*before* trusting its §4 — chiefly whether a per-entry `tools.rspack` really overrides
+rslib's `esm` preset.
+
 Wave 1, when we get to it: extract the pool + scheduler, make `releaseWorker` the single
 owner of `available`, relayer the query API on `chunk()` (§1.2), fix abort once. Two
 `it.fails` tests are already waiting for it: B1 in `tests/browser/transaction.test.ts`,
@@ -263,6 +271,13 @@ page", not "drop it in any page".
 - Agent framework is **superpowers**. The old `.planning/` directory was deleted on
   2026-08-17 — do not recreate it or trust anything quoting it.
 - These memories live in `.serena/memories/`, which is **not** gitignored — commit them.
+- **Phase workflow (user, 2026-08-17).** Each wave/phase is implemented **on its own
+  feature branch, by a subagent** — not on `main`, not inline in the main session. A phase
+  is closed only when all three hold: **CI green** (types, format, lint), **memories
+  updated**, **git clean**. Groundwork already validated by the user outside a phase
+  (dependency bumps, specs) lands on `main` directly.
+- **Unplanned working-tree changes are committed, not discarded — but only after the user
+  confirms.** Never resolve a dirty tree by reverting or stashing on your own initiative.
 - **Open questions stay in the backlog; each wave's own brainstorming raises them when it
   gets there** (user, 2026-08-17). Do not front-load a decision session for a wave that is
   not the next one. The open items are listed per wave in `mem:follow-ups` and in §1.
