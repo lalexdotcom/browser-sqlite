@@ -24,12 +24,14 @@
 	"type": "module",
 	"exports": {
 		".": {
-			"types": "./dist/esm/index.d.ts",
-			"import": "./dist/esm/index.js",
-			"default": "./dist/esm/index.js"
-		}
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		},
+		"./worker": "./dist/worker/worker.js",
+		"./dist/*": "./dist/*"
 	},
-	"types": "./dist/esm/index.d.ts",
+	"types": "./dist/index.d.ts",
 	"files": [
 		"dist"
 	],
