@@ -859,3 +859,94 @@ git commit -m "docs(memory): close wave P — B10 and B8 done"
 **Placeholders.** None: every code step carries the code, every run step carries the command and the expected output.
 
 **Type consistency.** `assertNoBareSpecifiers(distDir) → string[]` is defined in Task 1 and referenced by name in Tasks 4-5. `window.__SMOKE__` is `{ ok: boolean, detail: string }` in all three fixtures and in the existing `driveBrowser`. Port constants `DEV_PORT` 5199, `PREVIEW_PORT` 5198, `NOBUNDLER_PORT` 5197, `RSBUILD_PORT` 5196 do not collide. `dist/worker/worker.js` is spelled identically in Task 4's output, Task 5's `new URL`, and `package.json`'s `exports["./worker"]`.
+
+---
+
+## Amendments — wave P closed 2026-08-17
+
+The items below record where the implementation diverged from what this plan specified.
+Nothing above is altered. Task and step numbers refer to the text above.
+
+### A1 — Task 4 Step 1: worker entry uses `url: false`, not `url: true`
+
+**What the plan specified.** The worker entry sets `url: true`, `distPath.wasm:
+'wa-sqlite'`. rspack emits content-hashed wasm into `dist/worker/wa-sqlite/` and
+rewrites the Emscripten glue reference to a webpack runtime expression.
+
+**What shipped.** `url: false`. The `distPath.wasm` key is unused at this setting. The
+three `.wasm` are copied flat beside `worker.js` via rsbuild's `output.copy`; they are
+named `wa-sqlite.wasm`, `wa-sqlite-async.wasm`, and `wa-sqlite-jspi.wasm` (no content
+hash).
+
+**Why.** The webpack runtime expression (`__webpack_require__.p + "..."`, anchored by
+`__webpack_require__.b`) cannot be followed by Rollup (which Vite uses to re-bundle
+worker entries with `format=iife`) or by a consumer's rspack (which generates its own
+runtime). With `url: false` the Emscripten glue keeps a literal, portable
+`new URL("wa-sqlite.wasm", import.meta.url)` that every consumer can resolve. Cost: no
+content-hash cache-busting on wasm files. See spec amendment A1 for full detail.
+
+The corrected rslib.config.ts worker entry omits `url: true` and `distPath.wasm`; it
+adds an `output.copy` rule to place the three wasm beside `worker.js`.
+
+### A2 — Task 4 Step 3: corrected output tree
+
+The `dist/worker/wa-sqlite/` sub-directory does not exist. The correct tree is:
+
+```
+dist/
+  client.d.ts  debug.d.ts  index.d.ts  index.js
+  orchestrator.d.ts  types.d.ts  utils.d.ts
+  worker/
+    wa-sqlite-async.wasm
+    wa-sqlite-jspi.wasm
+    wa-sqlite.wasm
+    worker.js
+```
+
+Note: `dist/worker.d.ts` (an empty `export {}`) that the pre-flight scan flagged as a
+minor side effect was eliminated by the source move (amendment A4 below).
+
+The grep validation in Step 3 (`grep -o "__webpack_require__\.b = [^;]*"`) produces
+zero matches in the shipped artifact — confirmed correct at 0. The predicted value
+`__webpack_require__.b = new URL("./", import.meta.url)` applies only under `url: true`.
+
+### A3 — Task 4 Step 2: `exports["./dist/*"]` dropped
+
+This export was removed from `package.json`. Nothing resolves the worker through the
+exports map at runtime; a wide `*` surface is hard to narrow once published; and no
+consumer existed at the time of closure. See spec amendment A3.
+
+### A4 — Task 5 Step 1: worker source moved to `src/worker/worker.ts`
+
+The `new Worker(…)` call in `src/client.ts` references `./worker/worker.js` as
+specified. The source file producing it is `src/worker/worker.ts` (not `src/worker.ts`)
+so the source tree mirrors the output tree. This move was not anticipated by the plan.
+
+An intermediate implementation used a re-export shim (`src/worker/worker.ts`
+re-exporting `src/worker.ts`). It was rejected because it emitted a phantom
+`dist/worker.d.ts` and left `src/` and `dist/` layouts disagreeing.
+
+### A5 — Task 5 Step 4: NOTICE reproduces MIT text verbatim; copyright year is 2023
+
+The plan's NOTICE draft linked the MIT licence text rather than reproducing it, and
+named 2024 as the copyright year. What shipped: full verbatim MIT text (satisfying "shall
+be included in all copies"), copyright year **2023** (upstream wa-sqlite's correct year).
+An inline `/*!` banner was added to `worker.js` via `legalComments: 'inline'`. See spec
+amendment A6.
+
+### A6 — Task 7: permanently closed; chunk graph is a structural impossibility under Vite
+
+Task 7 was reverted and is not a deferred optimisation. Rollup refuses `format=iife`
+for a code-splitting build: "UMD and IIFE output formats are not supported for
+code-splitting builds." Vite always re-bundles worker entries through Rollup with that
+format. No tuning resolves this. The monolithic worker (117,405 bytes gzip) is the
+permanent shipped shape. Recorded as wontfix in `mem:follow-ups` (W-chunks).
+
+### A7 — Task 5 Step 6: Vite requires consumer configuration (verification point 4 answered)
+
+Step 6 instructed: "fix the artifact rather than the fixture" if Vite pre-bundling broke
+a mode. In practice the artifact is sound (`url: false` makes it portable), but Vite
+still needs two consumer-side fixes — one for dev (esbuild pre-bundling rewrites
+`import.meta.url`) and one for prod (Vite does not copy prebuilt wasm beside the emitted
+worker). Both are documented in the README's "Bundler Configuration" section. The smoke
+test fixtures carry both fixes. See spec amendment A2 for the full account.

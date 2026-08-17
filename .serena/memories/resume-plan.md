@@ -12,24 +12,16 @@ for the resulting versions and the TS 7 editor notes. Nothing is in flight.
 **Wave 0 is done and closed** (2026-08-17, see §4), safety net included: CI, typed tests,
 characterization suites, and a consumer smoke test covering the published tarball.
 
-**Read this before anything else: the library does not work as published — B10.** The
-packed tarball has no worker artifact, so a consuming Vite app fails to build (and hangs
-in dev). Everything else in the backlog is quality; this one is existence. It is scheduled
-for wave 4, but if the goal is "ship v1", it can legitimately be pulled forward at any
-time — `pnpm test:consumer` reproduces it in about a minute.
+**Wave P is done and closed** (2026-08-17, see §4). B10 and B8 are resolved. The
+package is consumable from four modes (Vite dev, Vite preview, rsbuild preview,
+no-bundler). 11/11 consumer smoke stages pass; `consumer-smoke` CI job is now blocking.
 
-**Next up: wave P** (§2) — packaging. Decided by the user on 2026-08-17: B10 + B8 are
-pulled to the front, ahead of every correctness wave. **Goal, stated verbatim: make the
-current package — defects and all — consumable.** Not "make it good"; make it installable
-and runnable. Wave 1 slides behind it, unchanged.
-
-**Wave P is designed and the design is approved.** The spec is
-`docs/superpowers/specs/2026-08-17-wave-p-packaging-design.md` — read it rather than §2.1,
-which is now the earlier and less precise version of the same thing. Next action:
-turn it into an implementation plan (superpowers `writing-plans`), then execute it on a
-feature branch per §3. The spec's §8 lists four things to verify with a throwaway build
-*before* trusting its §4 — chiefly whether a per-entry `tools.rspack` really overrides
-rslib's `esm` preset.
+**Next up: wave 1** — extract pool + scheduler, fix exclusivity (B1), relayer the query
+API on `chunk()` (D4, §1.2), fix abort once inside it (covers `stream()`'s early `break`
+and B9). Two `it.fails` tests are waiting for it: B1 in
+`tests/browser/transaction.test.ts`, B9 in `tests/browser/concurrency.test.ts`.
+Remember: an `it.fails` turning red means the bug is fixed — drop `.fails`, do not
+re-add it.
 
 Wave 1, when we get to it: extract the pool + scheduler, make `releaseWorker` the single
 owner of `available`, relayer the query API on `chunk()` (§1.2), fix abort once. Two
@@ -205,7 +197,7 @@ Wave **P** was inserted in front on 2026-08-17 rather than renumbering, so that 
 
 | Wave | Contents | Covers |
 |---|---|---|
-| P | **Packaging — make the package consumable, nothing more.** See §2.1. | B10, B8 |
+| P ✅ | **Packaging — make the package consumable, nothing more.** See §2.1. Closed 2026-08-17. | B10, B8 |
 | 0 ✅ | CI running the suite; put `tests/` in the tsc program; characterization tests for `transaction` / `bulkWrite` / `output`; fix the assertions that cannot fail | B7 |
 | 1 | Extract pool + scheduler into a pure module unit-testable in Node (parameterized over a minimal `{ available: boolean }` shape); make `releaseWorker` the single owner of `available`; **relayer the query API on `chunk()` per §1.2** and fix abort once inside it (covers `stream()`'s early `break` and B9) | B1, B9, W-arch, part of W-types |
 | 2 | `onerror` / `onmessageerror`, per-request timeouts, distinct `open-error` message, `close()` handshake that settles in-flight work and calls `sqlite.close()` | B2, B3 |
@@ -283,6 +275,34 @@ page", not "drop it in any page".
   not the next one. The open items are listed per wave in `mem:follow-ups` and in §1.
 
 ## 4. Changelog of this plan
+
+- **2026-08-17** — **Wave P closed.** B10 and B8 resolved. What shipped:
+  - Two rslib entries: `index` (rslib defaults, keeps `import.meta.url` literal) and
+    `worker` (`importDynamic: true`, `url: false`, `asyncChunks: false`, wa-sqlite
+    fully inlined). Source file moved: `src/worker.ts` → `src/worker/worker.ts`.
+  - Three `.wasm` copied flat beside `worker.js` via `output.copy` (no content hash).
+    `url: true` was the original design but was rejected: its webpack runtime anchor
+    (`__webpack_require__.b`) cannot be followed by Rollup or a consumer's rspack.
+  - `exports["./dist/*"]` dropped (surface too wide before any consumer exists).
+  - `@lalex/promises` removed; `Promise.withResolvers()` native. `dependencies: {}`.
+  - `NOTICE` added: full verbatim MIT text (year 2023) + inline `/*!` banner on
+    `worker.js`. The plan's draft linked the text instead of reproducing it and used
+    year 2024 — both corrected.
+  - Four consumer smoke modes green (11/11 stages); `consumer-smoke` CI now blocking.
+  - **Task 7 (chunked worker) permanently wontfix.** Rollup refuses `format=iife`
+    for a code-splitting build; Vite always re-bundles worker entries that way. The
+    monolithic worker (117,405 bytes gzip) is the permanent shape. Recorded as W-chunks
+    in `mem:follow-ups`.
+  - **Surprise (genuine limitation):** Vite requires consumer configuration — esbuild
+    pre-bundling rewrites `import.meta.url` in dev, and prod build does not copy wasm
+    beside the emitted worker. Documented in README, recorded as VIT-1 in
+    `mem:follow-ups`. rsbuild/no-bundler modes need nothing.
+  - **Flaky test found (pre-existing):** `AbortSignal INT-09` in
+    `tests/browser/concurrency.test.ts` timing-races intermittently. Recorded as FLK-1
+    in `mem:follow-ups`; can block commits and CI.
+  - Spec (`docs/superpowers/specs/2026-08-17-wave-p-packaging-design.md`) and plan
+    (`docs/superpowers/plans/2026-08-17-wave-p-packaging.md`) amended with an
+    "Amendments" section at the end of each. Both originals are unmodified above it.
 
 - **2026-08-17** — **wa-sqlite bumped v1.0.9 → v1.1.2** (commit `2bf1c59`), ahead of wave P
   and at the user's instruction, because wave P vendors these exact binaries into the
