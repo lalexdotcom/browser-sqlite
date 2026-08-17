@@ -28,6 +28,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEV_PORT = 5199;
 const PREVIEW_PORT = 5198;
 const NOBUNDLER_PORT = 5197;
+const RSBUILD_PORT = 5196;
 // 127.0.0.1, not `localhost`: Node resolves `localhost` to ::1 first while Vite
 // binds IPv4, so every request would hang.
 const HOST = '127.0.0.1';
@@ -180,6 +181,7 @@ async function checkMode(name, serverArgs, url, appDir) {
 
 const tmp = mkdtempSync(join(tmpdir(), 'browser-sqlite-smoke-'));
 const appDir = join(tmp, 'app');
+const rsbuildAppDir = join(tmp, 'app-rsbuild');
 
 try {
   {
@@ -281,6 +283,48 @@ try {
     `http://${HOST}:${NOBUNDLER_PORT}/nobundler/index.html`,
     appDir,
   );
+
+  {
+    const s = stage('scaffold and install the rsbuild consumer app');
+    try {
+      cpSync(join(ROOT, 'tests', 'consumer-rsbuild'), rsbuildAppDir, {
+        recursive: true,
+      });
+      run('npm', ['install', '--no-audit', '--no-fund'], rsbuildAppDir);
+      run('npm', ['install', '--no-audit', '--no-fund', tarball], rsbuildAppDir);
+      s.pass(rsbuildAppDir);
+    } catch (error) {
+      s.fail(errText(error));
+      throw error;
+    }
+  }
+
+  let rsbuildBuilt = false;
+  {
+    const s = stage('rsbuild build');
+    try {
+      run('npx', ['rsbuild', 'build'], rsbuildAppDir);
+      rsbuildBuilt = true;
+      s.pass('production bundle emitted');
+    } catch (error) {
+      s.fail(errText(error));
+    }
+  }
+
+  if (rsbuildBuilt) {
+    await checkMode(
+      'rsbuild preview (production bundle)',
+      ['rsbuild', 'preview', '--host', HOST, '--port', String(RSBUILD_PORT), '--strict-port'],
+      `http://${HOST}:${RSBUILD_PORT}/`,
+      rsbuildAppDir,
+    );
+  } else {
+    results.push({
+      name: 'rsbuild preview (production bundle)',
+      ok: false,
+      detail: 'skipped — rsbuild build failed',
+    });
+  }
 } catch {
   // A thrown stage already recorded its failure; fall through to the summary.
 } finally {

@@ -12,7 +12,7 @@
     "allowImportingTsExtensions": true
   },
   "include": ["src", "tests", "rslib.config.ts", "rstest.config.ts"],
-  // The consumer fixture is a standalone app: it resolves `browser-sqlite` and
-  // `vite` from its own install, not from this package's node_modules.
-  "exclude": ["tests/consumer"]
+  // Consumer fixtures are standalone apps: they resolve `browser-sqlite` and
+  // their bundler from their own install, not from this package's node_modules.
+  "exclude": ["tests/consumer", "tests/consumer-rsbuild"]
 }

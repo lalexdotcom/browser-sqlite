@@ -1,0 +1,13 @@
+{
+  "name": "browser-sqlite-consumer-smoke-rsbuild",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "rsbuild build",
+    "preview": "rsbuild preview"
+  },
+  "devDependencies": {
+    "@rsbuild/core": "^2.1.13"
+  }
+}
