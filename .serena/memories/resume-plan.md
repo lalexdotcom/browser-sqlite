@@ -18,9 +18,14 @@ in dev). Everything else in the backlog is quality; this one is existence. It is
 for wave 4, but if the goal is "ship v1", it can legitimately be pulled forward at any
 time — `pnpm test:consumer` reproduces it in about a minute.
 
-**Next up: wave 1** in §2 below — extract the pool + scheduler, make `releaseWorker` the
-single owner of `available`, relayer the query API on `chunk()` (§1.2), fix abort once.
-Two `it.fails` tests are already waiting for it: B1 in `tests/browser/transaction.test.ts`,
+**Next up: wave P** (§2) — packaging. Decided by the user on 2026-08-17: B10 + B8 are
+pulled to the front, ahead of every correctness wave. **Goal, stated verbatim: make the
+current package — defects and all — consumable.** Not "make it good"; make it installable
+and runnable. Wave 1 slides behind it, unchanged.
+
+Wave 1, when we get to it: extract the pool + scheduler, make `releaseWorker` the single
+owner of `available`, relayer the query API on `chunk()` (§1.2), fix abort once. Two
+`it.fails` tests are already waiting for it: B1 in `tests/browser/transaction.test.ts`,
 B9 in `tests/browser/concurrency.test.ts`. Remember the convention: an `it.fails` turning
 red means the bug is fixed.
 
@@ -37,9 +42,11 @@ red means the bug is fixed.
 
 Status: **D1 and D2 decided-with-recommendation; D3, D4, D5 decided** as of 2026-08-17.
 
-**Standing assumption (user, 2026-08-17): there is NO consumer on `1.0.0-rc.3`.** This is
-what makes D3's and D4's breaking changes cheap. If it ever turns out to be false, both
-decisions need a second look.
+**Standing assumption (user, 2026-08-17): there is NO consumer on `1.0.0-rc.3`, and none
+can appear before we choose to create one.** Nothing is published until every correction
+wave is done, and publishing only happens on a `v*.*.*` tag — merging to `main` ships
+nothing. D3's and D4's breaking changes are therefore free, and stay free for the whole
+sequence.
 
 ### 1.1 D3 — the decided design
 
@@ -185,8 +192,12 @@ through slow browser tests.
 The stack upgrade in §0 lands **before** wave 0 — no point writing the safety net on a
 toolchain we are about to replace.
 
+Wave **P** was inserted in front on 2026-08-17 rather than renumbering, so that every
+"wave 1 / wave 3" cross-reference already written into §1.1-§1.3 stays true.
+
 | Wave | Contents | Covers |
 |---|---|---|
+| P | **Packaging — make the package consumable, nothing more.** See §2.1. | B10, B8 |
 | 0 ✅ | CI running the suite; put `tests/` in the tsc program; characterization tests for `transaction` / `bulkWrite` / `output`; fix the assertions that cannot fail | B7 |
 | 1 | Extract pool + scheduler into a pure module unit-testable in Node (parameterized over a minimal `{ available: boolean }` shape); make `releaseWorker` the single owner of `available`; **relayer the query API on `chunk()` per §1.2** and fix abort once inside it (covers `stream()`'s early `break` and B9) | B1, B9, W-arch, part of W-types |
 | 2 | `onerror` / `onmessageerror`, per-request timeouts, distinct `open-error` message, `close()` handshake that settles in-flight work and calls `sqlite.close()` | B2, B3 |
@@ -196,6 +207,53 @@ toolchain we are about to replace.
 
 Correctness items not tied to a wave (`W-route`, `W-multitab`, `W-types`) fold into
 whichever wave touches the same code.
+
+### 2.1 Wave P — packaging
+
+**Goal (user, 2026-08-17): the package as it stands today, defects included, must be
+consumable — both through a bundler and without one.** Explicitly NOT in scope: B1, B2,
+B9, or any other correctness work. The library may still hang on a worker crash; it must
+simply install and run.
+
+**Two requirements, one fix.** Vendoring satisfies both consumption modes at once:
+
+- *With a bundler*: today `dist/esm/index.js` points `new Worker(new URL(…))` at a
+  `worker.ts` that is not in the tarball → hard build failure. Building `worker.ts` as a
+  second entry fixes that, but its bare specifiers (`wa-sqlite/src/sqlite-api.js`,
+  `wa-sqlite/dist/*.mjs`, `wa-sqlite/src/examples/*.js`) would then have to be resolved
+  by the *consumer's* bundler, which needs wa-sqlite installed — i.e. B8's `github:`
+  specifier, which breaks behind a registry proxy.
+- *Without a bundler*: the criterion is binary — **the published bundle must contain zero
+  bare specifiers**. A browser cannot resolve `@lalex/promises` or `wa-sqlite/…` without
+  an import map, and we will not base bundler-free support on a third-party CDN's `/+esm`
+  rewriting.
+
+So: bundle wa-sqlite's glue and the VFS files *into* `dist/esm/worker.js`, copy the
+`.wasm` files beside it, resolve them via `import.meta.url`. wa-sqlite becomes a
+devDependency and leaves consumer lockfiles entirely. **B8 and B10 are the same piece of
+work, not two.**
+
+Replacing `defer()` with native `Promise.withResolvers()` (already a cleanup item) drops
+`@lalex/promises` too — the package then has **zero runtime dependencies**, which is the
+end state to aim for.
+
+**Open for this wave's own brainstorming:**
+- *Weight.* Three WASM variants (`wa-sqlite`, `-async`, `-jspi`), ~1.2 MB each, and the
+  VFS is chosen at runtime so we cannot know which is needed. Ship all three (~3.7 MB
+  tarball), or make `-async`/`-jspi` opt-in via an `exports` subpath?
+- *WASM location.* Automatic resolution via `import.meta.url` is elegant but breaks if the
+  consumer re-hosts assets on a CDN at another path. Add a `wasmUrl` escape hatch?
+- *Licensing.* Vendoring means shipping wa-sqlite's code — MIT, SQLite itself public
+  domain. The notices travel with it.
+
+**Definition of done:** `pnpm test:consumer` green in both Vite modes, and its CI job
+flipped from `continue-on-error` to blocking. Consider adding a bundler-free mode to the
+smoke test (plain `<script type="module">`, no Vite) since that is now a supported use.
+
+**COOP/COEP is NOT solved by this wave.** Cross-origin isolation stays a hard requirement
+on the consuming page — that is D2 (drop the `SharedArrayBuffer`), still slotted at
+wave 4. "Consumable" after wave P means "installs and runs in a cross-origin-isolated
+page", not "drop it in any page".
 
 ## 3. Working conventions for this project
 
@@ -210,6 +268,16 @@ whichever wave touches the same code.
   not the next one. The open items are listed per wave in `mem:follow-ups` and in §1.
 
 ## 4. Changelog of this plan
+
+- **2026-08-17** — **B10 + B8 pulled to the front as wave P** (user decision). The stated
+  goal for the next phase is that the package as it stands, defects included, becomes
+  consumable — via a bundler and without one. Design and open questions in §2.1. Wave 4
+  keeps D2 / the SAB removal. ~~Watch item: publishing a consumable RC would create the very
+  consumers whose absence justified D3's and D4's breaking changes.~~ **Closed by the user
+  the same day: nothing is published until all the correction waves are done.** Publishing
+  is tag-driven (`release-and-publish.yaml` fires only on `v*.*.*`), so merging to `main`
+  never ships anything. Wave P makes the package *buildable and testable* as a consumer
+  would use it; it does not make it public.
 
 - **2026-08-17** — **Wave 0 gap closed: the safety net covered the sources, not the
   published package.** Added `scripts/consumer-smoke.mjs` + the `tests/consumer/` Vite
