@@ -120,11 +120,29 @@ async function waitForServer(url, timeoutMs = 60_000) {
 
 function startServer(args, cwd) {
   const [cmd, ...rest] = args[0] === 'node' ? args : ['npx', ...args];
-  const child = spawn(cmd, rest, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+  // `detached` puts the child in its own process group. Killing the direct
+  // child is not enough: `npx` and the rsbuild/vite CLIs fork the actual
+  // server, which survives, holds the port, and makes the NEXT run fail with
+  // "port is occupied" — a failure that looks like a packaging defect and is
+  // not one. `stopServer` signals the whole group instead.
+  const child = spawn(cmd, rest, {
+    cwd,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
+  });
   const log = [];
   child.stdout.on('data', (d) => log.push(String(d)));
   child.stderr.on('data', (d) => log.push(String(d)));
   return { child, log };
+}
+
+/** Signals the child's whole process group; falls back to the child alone. */
+function stopServer(child) {
+  try {
+    process.kill(-child.pid, 'SIGTERM');
+  } catch {
+    child.kill('SIGTERM');
+  }
 }
 
 /** Loads the fixture and returns what `window.__SMOKE__` ended up holding. */
@@ -175,7 +193,7 @@ async function checkMode(name, serverArgs, url, appDir) {
   } catch (error) {
     s.fail(`${error.message}\n    ${log.join('').trim()}`);
   } finally {
-    child.kill('SIGTERM');
+    stopServer(child);
   }
 }
 
