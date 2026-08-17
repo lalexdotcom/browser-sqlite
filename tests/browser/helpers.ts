@@ -1,5 +1,8 @@
 import { afterEach } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
+import {
+  type CreateSQLiteClientOptions,
+  createSQLiteClient,
+} from '../../src/client';
 
 /**
  * Creates a SQLite client with a unique database name (UUID) and registers
@@ -8,7 +11,9 @@ import { createSQLiteClient } from '../../src/client';
  * Decisions: D-06 (unique name), D-07 (afterEach cleanup), D-08 (shared helper)
  * VFS: OPFSPermutedVFS by default (D-05) — do not pass a `vfs` option
  */
-export async function createTestClient() {
+export async function createTestClient(
+  options?: Omit<CreateSQLiteClientOptions, 'name'>,
+) {
   const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
 
   afterEach(async () => {
@@ -22,5 +27,5 @@ export async function createTestClient() {
 
   // createSQLiteClient is synchronous — workers initialize in the background.
   // The first query queues until a worker reaches READY.
-  return createSQLiteClient(dbName);
+  return createSQLiteClient(dbName, options);
 }

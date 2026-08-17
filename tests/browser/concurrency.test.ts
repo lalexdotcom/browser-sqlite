@@ -150,12 +150,15 @@ describe('AbortSignal (INT-09)', () => {
     chunkCount++;
     controller.abort();
 
-    // Drain the generator — should terminate quickly after abort
+    // Drain the generator — should terminate quickly after abort.
+    // The safety valve is set ABOVE the assertion threshold on purpose: a
+    // broken abort must make the expectation below fail, not silently cap the
+    // count under it (the previous valve of 5 made `< 20` unfalsifiable).
     let safetyValve = 0;
     for await (const _chunk of gen) {
       chunkCount++;
       safetyValve++;
-      if (safetyValve > 5) break; // Safety net if abort doesn't work
+      if (safetyValve > 25) break; // Guard against a never-ending generator
     }
 
     // Should NOT have received all 20 potential chunks
@@ -164,11 +167,32 @@ describe('AbortSignal (INT-09)', () => {
     db.close();
   });
 
-  it('an already-aborted AbortSignal terminates immediately', async () => {
+  /**
+   * KNOWN BUG — found by strengthening this test. A signal already aborted
+   * before `stream()` is called is ignored entirely: the stream runs to
+   * completion and delivers every chunk. `signal.addEventListener('abort')`
+   * never fires for an already-aborted signal, and nothing checks
+   * `signal.aborted` up front.
+   *
+   * The previous fixture (3 rows, chunkSize 1) asserted `chunkCount <= 3`,
+   * which is arithmetically impossible to fail — that is why this went
+   * unnoticed. Belongs with the `stream()` abort work in wave 1.
+   *
+   * `it.fails` asserts the bug is still present; when it is fixed this test
+   * starts passing, which makes `it.fails` fail. That is the signal to drop
+   * `.fails`.
+   */
+  it.fails('an already-aborted AbortSignal terminates immediately', async () => {
     const db = await createTestClient();
 
+    // 100 rows at chunkSize 1 → 100 chunks if the abort is ignored.
+    // The previous fixture (3 rows, chunkSize 1) made the assertion
+    // `chunkCount <= 3` arithmetically impossible to fail.
     await db.write('CREATE TABLE pre_aborted (x INTEGER)');
-    await db.write('INSERT INTO pre_aborted VALUES (1), (2), (3)');
+    const values = Array.from({ length: 100 }, (_, i) => `(${i + 1})`).join(
+      ',',
+    );
+    await db.write(`INSERT INTO pre_aborted VALUES ${values}`);
 
     const controller = new AbortController();
     controller.abort(); // Abort BEFORE launching the stream
@@ -181,10 +205,8 @@ describe('AbortSignal (INT-09)', () => {
       chunkCount++;
     }
 
-    // The stream may deliver 0 or a few chunks depending on timing,
-    // but certainly not all (3 rows / chunkSize 1 = 3 chunks max)
-    // The important thing: no unhandled error
-    expect(chunkCount).toBeLessThanOrEqual(3);
+    // A signal already aborted at creation time must yield nothing at all.
+    expect(chunkCount).toBe(0);
 
     db.close();
   });

@@ -13,7 +13,7 @@ its implementation.
 ## Stack
 
 Versions below are post-upgrade (2026-08-17) and verified green: `tsc --noEmit`,
-`biome check`, `pnpm build`, 57 unit tests, 24 browser tests — all pass.
+`biome check`, `pnpm build`, 105 tests (57 unit + 48 browser) — all pass.
 
 - **TypeScript 7.0.2** (the native/Go compiler — `tsc` resolves a per-platform binary),
   ESM only, `type: module`. Build: **rslib 0.23.2** (`rslib.config.ts`) → `dist/esm`;
@@ -22,8 +22,11 @@ Versions below are post-upgrade (2026-08-17) and verified green: `tsc --noEmit`,
   and `noBannedTypes`). Run `pnpm check` after every modification.
 - Tests: **rstest 0.11.8** with two projects (`rstest.config.ts`):
   - `unit` — Node, pure logic → `tests/unit/{debug,orchestrator,utils}.test.ts`
-  - `browser` — real Chromium via Playwright → `tests/browser/{init,queries,concurrency}.test.ts`
-    plus `helpers.ts`. Needs COOP/COEP headers, injected by an inline rsbuild plugin.
+  - `browser` — real Chromium via Playwright →
+    `tests/browser/{init,queries,concurrency,transaction,bulk-write,output,vfs}.test.ts`
+    plus `helpers.ts` (`createTestClient(options?)` — unique OPFS name + afterEach cleanup).
+    Needs COOP/COEP headers, injected by an inline rsbuild plugin.
+    105 tests total as of wave 0.
 - Package manager: pnpm 10.31.0. Playwright pinned at 1.62.1 (Chromium 1234 in the
   container's `~/.cache/ms-playwright`, installed by `.devcontainer/post-create.sh`).
 
@@ -70,12 +73,14 @@ republished as free after the first one. Verified in source, not just reported.
 
 ## CI / hooks
 
-- Only workflow: `.github/workflows/release-and-publish.yaml`, triggered on `v*` tags,
-  build + publish only. **No CI runs the test suite.**
-- Sole gate is a local `pre-commit` hook (simple-git-hooks): `lint-staged` + `pnpm test`
-  (full Chromium suite) + `tsc --noEmit`. Heavy and bypassable with `--no-verify`.
-- `tsconfig.json` `include` is `["src", "rslib.config.ts", "rstest.config.ts"]` — so
-  `tests/` is **never type-checked**, only executed. Only `strict` is on.
+- `.github/workflows/ci.yaml` (added in wave 0) runs `biome ci` + `tsc --noEmit` +
+  `pnpm build` + `pnpm test` on push to `main` and on every PR; Chromium is cached by
+  `pnpm-lock.yaml` hash. `concurrency` cancels superseded runs.
+- `.github/workflows/release-and-publish.yaml`, triggered on `v*` tags, build + publish only.
+- Local `pre-commit` hook (simple-git-hooks): `lint-staged` + `pnpm test` (full Chromium
+  suite) + `tsc --noEmit`. Heavy and bypassable with `--no-verify` — CI is now the real gate.
+- `tsconfig.json` `include` is `["src", "tests", "rslib.config.ts", "rstest.config.ts"]` —
+  `tests/` is type-checked as of wave 0. Only `strict` is on.
 
 ## History / process notes
 

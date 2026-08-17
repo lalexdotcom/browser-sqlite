@@ -15,7 +15,8 @@ Line numbers are from the 2026-08-17 snapshot — re-locate symbols with Serena 
 | B2 | open | No `onerror`, no `onmessageerror`, no request timeout anywhere → a worker crash hangs the caller forever; if it was the writer, **every future write deadlocks**. Also `open()`'s unconditional `.finally()` posts `ready` even on a failed open (masks the multi-tab exclusive-lock failure), and the error reply posts `e.cause` uncloneable-unsafe. | `client.ts:326-474`, `worker.ts:141`, `:153`, `:236` |
 | B3 | open | `close()` only calls `worker.terminate()`: in-flight deferreds are never settled and both request queues are never drained → permanent hangs. Post-close queries queue onto a queue nothing drains. Also `sqlite.close(db)` is never called at all. | `client.ts:981-987` |
 | B5 | open | Data loss. `bulkWrite.flush()` chains batches on a shared `writePromise`; after one rejection every later `.then` is skipped but the rows were already spliced out — batches silently dropped. `output()` runs DROP / CREATE / insert / CREATE INDEX as separate un-transacted writes — a failure between DROP and CREATE loses the table. | `client.ts:780-791`, `:815-894` |
-| B7 | open | `transaction()`, `bulkWrite()`, `output()` have **zero** test coverage, as does the `AccessHandlePoolVFS` + `poolSize > 1` guard. No CI runs the suite. `tests/` is outside the tsc program. Several existing assertions cannot fail (e.g. `concurrency.test.ts:167` asserts `chunkCount <= 3` on a 3-row table). | `tests/`, `tsconfig.json`, `.github/workflows/` |
+| B7 | **done** | Wave 0, 2026-08-17. `.github/workflows/ci.yaml` runs biome + tsc + build + the full suite on push/PR; `tests/` added to the tsc `include`; characterization suites added for `transaction()` (`tests/browser/transaction.test.ts`), `bulkWrite()` (`bulk-write.test.ts`), `output()` (`output.test.ts`) and the `AccessHandlePoolVFS` + `poolSize` guard (`vfs.test.ts`); both unfalsifiable abort assertions in `concurrency.test.ts` fixed. 81 → **105 tests, all green**. | `tests/`, `tsconfig.json`, `.github/workflows/ci.yaml` |
+| B9 | open | **Found by wave 0.** An `AbortSignal` **already aborted** when `stream()` is called is ignored entirely — the stream runs to completion and delivers every chunk. `signal.addEventListener('abort')` never fires for an already-aborted signal and nothing checks `signal.aborted` up front. Masked until now by the unfalsifiable `chunkCount <= 3` assertion. Fix alongside the `stream()` abort work in wave 1. | `client.ts` `stream()`; test: `concurrency.test.ts` `it.fails('an already-aborted AbortSignal…')` |
 | B8 | open | `wa-sqlite` ships as a raw GitHub dependency → travels into every consumer lockfile, breaks registry-proxied installs, no provenance. Blocking **for publishing**, not for functioning. Fix: vendor prebuilt WASM+glue at build time. | `package.json` |
 
 ## Important — fix before calling the API stable
@@ -53,5 +54,16 @@ Line numbers are from the 2026-08-17 snapshot — re-locate symbols with Serena 
 - ~45 `any` in `src/`; `tsconfig` could enable `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`.
 - Missing `sideEffects: false` and `engines`; release action pinned to a mutable `@v1` tag while holding `NPM_TOKEN`; inline rsbuild plugin uses the reserved `rsbuild:` name prefix and an ad-hoc `api` type.
 - Leftovers visible to consumers: `status: 'HAHA'` (`debug.ts:158`), typo `'Cannot werite in read-only transaction'` (`client.ts:920`), `SQLiteQueryOptions.id` documented on 4 methods and never implemented, unused generic `SQLiteQueryOptions<_T>`, 4-level nested ternary (`client.ts:870`), `pool.find((w) => { if (w.available) return true; return false; })` (`client.ts:497`).
+
+## Characterization-test convention (from wave 0)
+
+Known bugs are pinned with `it.fails(...)` — the test asserts the *correct* behaviour
+and `.fails` asserts the bug is still there. **When the bug is fixed the test starts
+passing, which makes `it.fails` fail** — that red is the signal to drop `.fails`, not a
+regression. Currently pinned: B1 (`transaction.test.ts`), B9 (`concurrency.test.ts`).
+
+Behaviour that is wrong but not yet pinned is documented with a plain `it` plus a
+comment naming the issue ID — e.g. B5's silent batch drop in `bulk-write.test.ts`.
+Those tests will break when the bug is fixed; that is intended.
 
 Context: `mem:project-state`. Sequencing: `mem:resume-plan`.

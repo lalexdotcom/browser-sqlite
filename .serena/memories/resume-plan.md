@@ -9,7 +9,10 @@ what changed last.
 The stack upgrade of 2026-08-17 is **done and verified green** — see `mem:project-state`
 for the resulting versions and the TS 7 editor notes. Nothing is in flight.
 
-**Next up: wave 0** in §2 below.
+**Wave 0 is done** (2026-08-17, see §4). **Next up: wave 1** in §2 below — extract the
+pool + scheduler, make `releaseWorker` the single owner of `available`, real abort on
+`stream()`. Two `it.fails` tests are already waiting for it: B1 in
+`tests/browser/transaction.test.ts`, B9 in `tests/browser/concurrency.test.ts`.
 
 ## 1. Three decisions pending — nothing downstream is safe to start before them
 
@@ -33,7 +36,7 @@ toolchain we are about to replace.
 
 | Wave | Contents | Covers |
 |---|---|---|
-| 0 | CI running the suite; put `tests/` in the tsc program; characterization tests for `transaction` / `bulkWrite` / `output`; fix the assertions that cannot fail | B7 |
+| 0 ✅ | CI running the suite; put `tests/` in the tsc program; characterization tests for `transaction` / `bulkWrite` / `output`; fix the assertions that cannot fail | B7 |
 | 1 | Extract pool + scheduler into a pure module unit-testable in Node (parameterized over a minimal `{ available: boolean }` shape); make `releaseWorker` the single owner of `available`; real abort on `stream()` | B1, W-arch |
 | 2 | `onerror` / `onmessageerror`, per-request timeouts, distinct `open-error` message, `close()` handshake that settles in-flight work and calls `sqlite.close()` | B2, B3 |
 | 3 | `quoteIdent()` + pragma allowlist; `output()` wrapped in one transaction; `bulkWrite` surfaces per-batch failures; debug wired for real or deleted | B4, B5, B6 |
@@ -54,6 +57,14 @@ whichever wave touches the same code.
 
 ## 4. Changelog of this plan
 
+- **2026-08-17** — **Wave 0 completed** (B7 closed). Added `.github/workflows/ci.yaml`
+  (biome ci + tsc + build + full suite, on push to main and on every PR, Chromium cached);
+  added `tests` to the tsconfig `include` (it type-checked clean, no fallout);
+  `createTestClient()` now takes a `CreateSQLiteClientOptions` override. New suites:
+  `transaction.test.ts`, `bulk-write.test.ts`, `output.test.ts`, `vfs.test.ts`.
+  Fixed both unfalsifiable abort assertions in `concurrency.test.ts` — the second one
+  immediately exposed **B9** (already-aborted `AbortSignal` ignored, 100/100 chunks
+  delivered). 81 → 105 tests, all green; no source file was touched.
 - **2026-08-17** — Stack upgrade **completed and verified green**: TS 7.0.2, rslib 0.23.2,
   rstest 0.11.8, biome 2.5.8, playwright 1.62.1. Two devcontainer rebuilds (the second for
   the VS Code TS-7 extension swap). Only fallout was a one-line `biome.json` migration.
