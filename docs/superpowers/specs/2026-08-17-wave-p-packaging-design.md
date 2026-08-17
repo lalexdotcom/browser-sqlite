@@ -262,21 +262,37 @@ must each re-resolve.
 
 ## 8. Verification points
 
-These are unknowns that can invalidate §4, and must be settled at the start of
-implementation rather than discovered at the end:
+Points 1-3 were settled by a throwaway build probe on 2026-08-17, before the
+implementation plan was written. Their answers are recorded here and embedded, with
+comments, in the plan's build configuration.
 
-1. **Does a per-entry `tools.rspack` actually override rslib's `esm` preset, or does the
-   preset win?** All of §4.3 depends on it. If the preset wins, the fallback is to build
-   the worker with a standalone rsbuild config (`target: 'web-worker'`) and keep rslib
-   for `index.js` only.
-2. **Is `url: true` enough to emit the `.wasm` from the glue's
-   `new URL("wa-sqlite.wasm", import.meta.url)` while `importMeta` stays `false`?**
-   Fallback: copy the three `.wasm` explicitly and inject `Module.locateFile`.
-3. **Which `distPath` key governs those files?** They arrive as *URL assets* (the glue
-   does `new URL(…)` then `fetch`), not as imported WebAssembly modules, so the `assets`
-   key should govern them rather than the `wasm` key. Confirm on the first build.
+1. **Does a per-entry `tools.rspack` actually override rslib's `esm` preset?**
+   **Yes.** The overrides reach the resolved rspack config and take effect; the worker
+   entry produced a single 696 KB self-contained file with **zero residual bare
+   specifiers**. The standalone-rsbuild fallback is not needed.
+2. **Is `url: true` enough to emit the `.wasm` while `importMeta` stays `false`?**
+   **Yes.** All three variants are emitted and the glue's reference is rewritten to
+   `__webpack_require__.p + "wa-sqlite/<hash>.module.wasm"`, with
+   `__webpack_require__.b = new URL("./", import.meta.url)` — resolution relative to
+   `worker.js`'s own URL, which is what makes the bundler-free mode possible. The
+   `Module.locateFile` fallback is not needed.
+3. **Which `distPath` key governs those files?**
+   **`wasm`, not `assets`** — the opposite of what §4.3 first assumed. They are emitted
+   by the rule `test: /\.wasm$/, dependency: 'url', type: 'asset/resource'`, whose
+   generator filename is built from `distPath.wasm`. `output.assets` and
+   `output.webassemblyModuleFilename` both have no effect on them. The content hash in
+   `[contenthash:10].module.wasm` is fixed by that rule and survives rslib's
+   `filenameHash: false`; the names are internal to `worker.js`, so this is left alone.
 4. **Does the literal `new URL('./worker/worker.js', import.meta.url)` survive Vite's
-   dependency pre-bundling (`optimizeDeps`/esbuild)?** Smoke mode 1 decides.
+   dependency pre-bundling (`optimizeDeps`/esbuild)?** **Still open** — only a real
+   consumption run answers it. Smoke mode 1 decides.
+
+**Measured on the probe** (wa-sqlite v1.1.2): `worker.js` 696 KB raw / 115 KB gzip;
+`index.js` 20 KB raw / 4 KB gzip; the three `.wasm` 2.4 MB raw combined.
+
+**Process note:** rslib caches builds aggressively. After any change to
+`rslib.config.ts`, rebuild with `rm -rf dist node_modules/.cache && pnpm build` — a stale
+tree produced one wrong conclusion during this probe before the cache was cleared.
 
 ## 9. Sequencing
 
