@@ -83,6 +83,22 @@ that a library entry leaves `import.meta`, `import()`, `new Worker(new URL())`, 
 `new URL()` intact for the consumer's bundler. The `index` entry honours this; the
 `worker` entry overrides it.
 
+### Two traps that cost real time in wave P — do not step in them again
+
+- **Never put `/* webpackIgnore: true */` on the `new Worker(new URL(...))` call in
+  `client.ts`.** It looks like a way to tell a consumer's bundler "this is already built,
+  leave it alone". It is not: rslib strips it from `dist/index.js`, so it never reaches a
+  consumer at all — but **rstest's own rspack honours it**, so no worker chunk is emitted
+  at test time, the worker never loads, and the whole browser suite hangs forever with no
+  error. That is B2 observed from the inside. The same applies to `/* @vite-ignore */`,
+  which survives into `dist/` but only suppresses the `?worker_file` query, not the
+  `import.meta.url` rewrite it was added to fight. Both were tried, both were removed.
+  The real fix for consumer bundlers is `url: false`, below.
+- **rsbuild has no `preview` config key** — only `server`, and `server.headers` DOES apply
+  to `rsbuild preview`. Verified by probe (built app + `rsbuild preview` + curl returns
+  both COOP and COEP). Vite is the one that splits `server` and `preview`; do not copy
+  Vite's shape into an rsbuild config and do not "fix" a missing `preview.headers`.
+
 **Why the worker entry uses `url: false` (not `true`):**
 `url: true` causes rspack to emit wasm as content-hashed asset/resource files and rewrite
 `new URL("wa-sqlite.wasm", import.meta.url)` to the webpack runtime expression
