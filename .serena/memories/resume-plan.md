@@ -269,6 +269,20 @@ page", not "drop it in any page".
 
 ## 4. Changelog of this plan
 
+- **2026-08-17** — **wa-sqlite bumped v1.0.9 → v1.1.2** (commit `2bf1c59`), ahead of wave P
+  and at the user's instruction, because wave P vendors these exact binaries into the
+  tarball — vendoring an eleven-month-old build and bumping afterwards would mean redoing
+  the whole four-mode packaging validation. Verified green: `tsc --noEmit`, `biome check`,
+  `pnpm build`, **105/105 tests**, and both `it.fails` (B1, B9) still failing as expected —
+  the upstream `retry()` change did not silently mask either bug. Payload: SQLite
+  **3.50.1 → 3.53.0** in all three `.wasm`; `retry()` in `sqlite-api.js` bounded to 2
+  attempts instead of a potentially infinite `do/while`, with a new `Module.pendingOps`
+  whose errors surface as a return code; `OPFSCoopSyncVFS` (our default) wraps access-handle
+  creation in `try/catch/finally` so a failure no longer pins `isRequestInProgress` at
+  `true` forever; three WAL fixes from v1.1.1. No API break on anything `worker.ts` calls.
+  A sixth VFS appeared upstream (`OPFSWriteAheadVFS`) — opt-in, `VFSConfigs`'s
+  `satisfies Record<SQLiteVFS, …>` is unaffected. No source file was touched.
+
 - **2026-08-17** — **B10 + B8 pulled to the front as wave P** (user decision). The stated
   goal for the next phase is that the package as it stands, defects included, becomes
   consumable — via a bundler and without one. Design and open questions in §2.1. Wave 4

@@ -43,7 +43,12 @@ Gotcha: the setting is `js/ts.tsdk.path`, **not** the `typescript.native-preview
 the write-ups still document — trust VS Code's in-editor schema warning over the blog posts.
 The extension still carries "native-preview" branding post-GA (installed: 0.20260708.2).
 - Runtime deps: `@lalex/promises` (only for `defer()`), `wa-sqlite` pinned as a **raw
-  GitHub dependency** (`github:rhashimoto/wa-sqlite#v1.0.9`) — not on npm.
+  GitHub dependency** (`github:rhashimoto/wa-sqlite#v1.1.2`, commit `2bf1c59`, bumped
+  2026-08-17 from v1.0.9) — not on npm. **The `wa-sqlite` on npmjs is not the upstream
+  package**: `1.0.0`, published by `gabrieldevunstatic <tailinh@unstatic.co>`, no
+  `repository` field. Never point B8 at it. Note the v1.1.2 tag ships a `package.json`
+  still saying `"version": "1.1.1"` — upstream forgot the bump; verify by commit, not by
+  that field.
 
 ## Layout (src/, 1857 lines total)
 

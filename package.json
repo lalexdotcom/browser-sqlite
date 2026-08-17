@@ -74,7 +74,7 @@
 	"private": false,
 	"dependencies": {
 		"@lalex/promises": "^1.2.0",
-		"wa-sqlite": "github:rhashimoto/wa-sqlite#v1.0.9"
+		"wa-sqlite": "github:rhashimoto/wa-sqlite#v1.1.2"
 	},
 	"packageManager": "pnpm@10.31.0"
 }
