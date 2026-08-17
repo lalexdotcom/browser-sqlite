@@ -1,4 +1,3 @@
-import { defer } from '@lalex/promises';
 import type { createClientDebug } from './debug';
 import { WorkerOrchestrator, WorkerStatuses } from './orchestrator';
 import type { SQLiteVFS, WorkerMessageData } from './types';
@@ -324,18 +323,19 @@ export const createSQLiteClient = (
    * Sets up message routing via callId for query responses.
    */
   const createWorker = () => {
-    const deferredInit = defer<PoolWorker>();
+    const deferredInit = Promise.withResolvers<PoolWorker>();
 
     const workerName = `${clientPrefix} / Worker ${pool.length + 1}`;
     const index =
       pool.push(
         new Worker(
           /* webpackChunkName: "browser-sqlite" */ new URL(
-            './worker.ts',
+            './worker/worker.js',
             import.meta.url,
           ),
           {
             name: workerName,
+            type: 'module',
           },
         ) as PoolWorker,
       ) - 1;
@@ -349,7 +349,7 @@ export const createSQLiteClient = (
     let currentCallId = 0;
 
     // Deferred promise for streaming query results one chunk at a time
-    let deferredChunk: ReturnType<typeof defer<unknown[] | number>> | undefined;
+    let deferredChunk: PromiseWithResolvers<unknown[] | number> | undefined;
 
     // Message handler routes responses by callId
     worker.onmessage = ({ data }: MessageEvent<WorkerMessageData>) => {
@@ -366,7 +366,7 @@ export const createSQLiteClient = (
               state.currentRequest.currentQuery.firstRowTime ??= Date.now();
             }
             deferredChunk.resolve(data.data);
-            deferredChunk = defer<unknown[] | number>();
+            deferredChunk = Promise.withResolvers<unknown[] | number>();
             break;
           }
           case 'done': {
@@ -432,7 +432,7 @@ export const createSQLiteClient = (
         signal?.addEventListener('abort', signalAbortHandler);
 
         // Prepare for streaming chunks
-        deferredChunk = defer<unknown[] | number>();
+        deferredChunk = Promise.withResolvers<unknown[] | number>();
 
         // Send query to worker with options
         worker.postMessage({
@@ -519,7 +519,7 @@ export const createSQLiteClient = (
     }
 
     // Queue the request and wait for worker to become available
-    const { promise, resolve } = defer<PoolWorker>();
+    const { promise, resolve } = Promise.withResolvers<PoolWorker>();
     if (write) {
       if (debug) debug.queue.write++;
       writerRequestQueue.push((worker) => {

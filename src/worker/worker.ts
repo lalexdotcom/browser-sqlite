@@ -11,8 +11,8 @@
  */
 import * as SQLite from 'wa-sqlite/src/sqlite-api.js';
 import { SQLITE_ROW } from 'wa-sqlite/src/sqlite-constants.js';
-import { WorkerOrchestrator, WorkerStatuses } from './orchestrator';
-import type { ClientMessageData, SQLiteVFS, WorkerMessageData } from './types';
+import { WorkerOrchestrator, WorkerStatuses } from '../orchestrator';
+import type { ClientMessageData, SQLiteVFS, WorkerMessageData } from '../types';
 
 type SQLOptions = { chunkSize?: number; signal?: AbortSignal };
 

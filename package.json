@@ -28,12 +28,12 @@
 			"import": "./dist/index.js",
 			"default": "./dist/index.js"
 		},
-		"./worker": "./dist/worker/worker.js",
-		"./dist/*": "./dist/*"
+		"./worker": "./dist/worker/worker.js"
 	},
 	"types": "./dist/index.d.ts",
 	"files": [
-		"dist"
+		"dist",
+		"NOTICE"
 	],
 	"scripts": {
 		"build": "rslib build",
@@ -58,7 +58,8 @@
 		"lint-staged": "^16.4.0",
 		"playwright": "1.62.1",
 		"simple-git-hooks": "^2.13.1",
-		"typescript": "^7.0.2"
+		"typescript": "^7.0.2",
+		"wa-sqlite": "github:rhashimoto/wa-sqlite#v1.1.2"
 	},
 	"lint-staged": {
 		"*.{js,ts,jsx,tsx,mjs,cjs}": [
@@ -74,9 +75,5 @@
 		]
 	},
 	"private": false,
-	"dependencies": {
-		"@lalex/promises": "^1.2.0",
-		"wa-sqlite": "github:rhashimoto/wa-sqlite#v1.1.2"
-	},
 	"packageManager": "pnpm@10.31.0"
 }

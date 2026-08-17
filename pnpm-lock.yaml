@@ -7,13 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      '@lalex/promises':
-        specifier: ^1.2.0
-        version: 1.2.0
-      wa-sqlite:
-        specifier: github:rhashimoto/wa-sqlite#v1.1.2
-        version: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/2bf1c59d89eb6497535a4217bc62fec68a0bb994
     devDependencies:
       '@biomejs/biome':
         specifier: 2.5.8
@@ -45,6 +38,9 @@ importers:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
+      wa-sqlite:
+        specifier: github:rhashimoto/wa-sqlite#v1.1.2
+        version: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/2bf1c59d89eb6497535a4217bc62fec68a0bb994
 
 packages:
 
@@ -185,9 +181,6 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
-
-  '@lalex/promises@1.2.0':
-    resolution: {integrity: sha512-IzF6Z0ePmZScP1HR2oqY42mbq7SUGCshCYizRTaKCCvXmuP9uFWdymAHuRIydzkzDJaMwyXnzQylaeeFppTr5g==}
 
   '@napi-rs/wasm-runtime@1.1.6':
     resolution: {integrity: sha512-ZLv/JdUfkvOy9eCnnBaGfiO+XimbjebAeO+MRQqD/B+FR1tnRN0tpKSJHRbE8sFfS6aqsXZ67TQjfwfsxULVbg==}
@@ -936,8 +929,6 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
-
-  '@lalex/promises@1.2.0': {}
 
   '@napi-rs/wasm-runtime@1.1.6(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)':
     dependencies:
