@@ -49,16 +49,12 @@ jobs:
       - name: Test
         run: pnpm test
 
-  # Exercises the packed tarball in a real Vite app, which `verify` never does —
-  # it bundles src/ and so never touches dist/, the exports map, or third-party
-  # worker resolution.
-  #
-  # KNOWN FAILING until the wave 4 packaging work: dist/ ships
-  # `new Worker(new URL('./worker.ts', …))` with no worker artifact beside it.
-  # Non-blocking on purpose; flip `continue-on-error` off once wave 4 lands.
+  # Exercises the packed tarball across four consumption modes — Vite dev
+  # server, Vite build+preview, rsbuild build+preview, and no bundler at all
+  # — which `verify` never does because it bundles src/ and never touches
+  # dist/, the exports map, or third-party worker resolution.
   consumer-smoke:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
 
