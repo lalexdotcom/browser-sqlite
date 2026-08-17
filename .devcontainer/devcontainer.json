@@ -1,33 +1,62 @@
-// For format details, see https://aka.ms/devcontainer.json. For config options, see the
-// README at: https://github.com/devcontainers/templates/tree/main/src/typescript-node
 {
-  "name": "Node.js & TypeScript",
-  // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-  "image": "mcr.microsoft.com/devcontainers/typescript-node:4-24-bookworm",
-  "features": {
-    "ghcr.io/devcontainers/features/github-cli:1": {},
-    "ghcr.io/devcontainers-extra/features/pnpm:2": {}
-  },
-  "customizations": {
-    "vscode": {
-      "extensions": [
-        "github.vscode-github-actions"
-      ]
-    }
-  }
-
-  // Features to add to the dev container. More info: https://containers.dev/features.
-  // "features": {},
-
-  // Use 'forwardPorts' to make a list of ports inside the container available locally.
-  // "forwardPorts": [],
-
-  // Use 'postCreateCommand' to run commands after the container is created.
-  // "postCreateCommand": "yarn install",
-
-  // Configure tool-specific properties.
-  // "customizations": {},
-
-  // Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
-  // "remoteUser": "root"
+	"name": "Scaffold",
+	"image": "mcr.microsoft.com/devcontainers/typescript-node:4-24-trixie",
+	"features": {
+		"ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {},
+		"ghcr.io/devcontainers/features/docker-in-docker:3.0.0": {
+			"moby": false
+		},
+		"ghcr.io/devcontainers-extra/features/apt-get-packages:1": {},
+		"ghcr.io/devcontainers-extra/features/pnpm:2": {
+			"version": "latest"
+		},
+		"ghcr.io/devcontainers-extra/features/uv:1": {
+			"version": "latest"
+		}
+	},
+	"forwardPorts": [
+		8123
+	],
+	"mounts": [
+		"source=ai-tools-config-${devcontainerId},target=/ai-tools,type=volume",
+		"source=containerd-${devcontainerId},target=/var/lib/containerd,type=volume"
+	],
+	"containerEnv": {
+		"CLAUDE_CONFIG_DIR": "/ai-tools/.claude",
+		"MEMPALACE_PALACE_PATH": "/ai-tools/.mempalace",
+		"SERENA_HOME": "/ai-tools/.serena"
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"Anthropic.claude-code",
+				"mhutchie.git-graph",
+				"biomejs.biome",
+				"github.vscode-github-actions",
+				"bierner.github-markdown-preview",
+				"bierner.markdown-preview-github-styles",
+				"TypeScriptTeam.native-preview"
+			],
+			"settings": {
+				"js/ts.tsserver.experimental.enableProjectDiagnostics": true,
+				// TypeScript 7 ships no lib/tsserver.js — the language service is the native binary
+				// driven over LSP — so "Select TypeScript Version" cannot see the workspace version and
+				// TypeScriptTeam.native-preview is what talks to it. It stays deferred behind the
+				// built-in TS extension until useTsgo is set, and runs its own bundled tsgo unless tsdk
+				// points at the project's install. Set here rather than in .vscode/settings.json:
+				// executable paths are treated as sensitive and are reported to only take effect from
+				// user/machine settings, which is exactly what this block writes.
+				"js/ts.experimental.useTsgo": true,
+				"js/ts.tsdk.path": "node_modules/typescript/lib",
+				// Machine-scoped (the Claude Code extension declares both as `scope: machine`), so they
+				// cannot live in .vscode/settings.json. They belong here rather than in post-create.sh:
+				// VS Code writes these into ~/.vscode-server/data/Machine/settings.json BEFORE attaching,
+				// whereas postCreateCommand runs after the window is already attached — too late for the
+				// session that triggered the rebuild, which then starts without them.
+				"claudeCode.allowDangerouslySkipPermissions": true,
+				"claudeCode.initialPermissionMode": "bypassPermissions"
+			}
+		}
+	},
+	"postCreateCommand": ".devcontainer/post-create.sh"
 }
