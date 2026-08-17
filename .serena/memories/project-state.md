@@ -73,9 +73,21 @@ republished as free after the first one. Verified in source, not just reported.
 
 ## CI / hooks
 
-- `.github/workflows/ci.yaml` (added in wave 0) runs `biome ci` + `tsc --noEmit` +
-  `pnpm build` + `pnpm test` on push to `main` and on every PR; Chromium is cached by
-  `pnpm-lock.yaml` hash. `concurrency` cancels superseded runs.
+- `.github/workflows/ci.yaml` (added in wave 0) has two jobs, on push to `main` and on
+  every PR; Chromium is cached by `pnpm-lock.yaml` hash, `concurrency` cancels superseded
+  runs.
+  - `verify` — `biome ci` + `tsc --noEmit` + `pnpm build` + `pnpm test`. Blocking.
+  - `consumer-smoke` — `pnpm test:consumer`, i.e. `scripts/consumer-smoke.mjs`: builds,
+    `pnpm pack`s, scaffolds `tests/consumer/` (a Vite app) into a temp dir **outside** the
+    repo, `npm install`s the tarball there, and drives it with Playwright in both Vite dev
+    and `build` + `preview`. This is the only thing that exercises `dist/`, the `exports`
+    map and third-party worker resolution. **`continue-on-error: true` — known failing
+    until wave 4 (see B10).** Flip it off once B10 is fixed.
+- `tsconfig.build.json` (`include: ["src"]`, `rootDir: "src"`) drives declaration
+  generation via `source.tsconfigPath` in `rslib.config.ts`. Without it the root tsconfig
+  pushes the common source root to the repo root: declarations landed in `dist/esm/src/`
+  while `package.json` points at `dist/esm/index.d.ts` (so the published `types` field
+  pointed at a missing file), and `dist/esm/tests/` shipped inside the package.
 - `.github/workflows/release-and-publish.yaml`, triggered on `v*` tags, build + publish only.
 - Local `pre-commit` hook (simple-git-hooks): `lint-staged` + `pnpm test` (full Chromium
   suite) + `tsc --noEmit`. Heavy and bypassable with `--no-verify` — CI is now the real gate.

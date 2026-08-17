@@ -9,20 +9,171 @@ what changed last.
 The stack upgrade of 2026-08-17 is **done and verified green** — see `mem:project-state`
 for the resulting versions and the TS 7 editor notes. Nothing is in flight.
 
-**Wave 0 is done** (2026-08-17, see §4). **Next up: wave 1** in §2 below — extract the
-pool + scheduler, make `releaseWorker` the single owner of `available`, real abort on
-`stream()`. Two `it.fails` tests are already waiting for it: B1 in
-`tests/browser/transaction.test.ts`, B9 in `tests/browser/concurrency.test.ts`.
+**Wave 0 is done and closed** (2026-08-17, see §4), safety net included: CI, typed tests,
+characterization suites, and a consumer smoke test covering the published tarball.
 
-## 1. Three decisions pending — nothing downstream is safe to start before them
+**Read this before anything else: the library does not work as published — B10.** The
+packed tarball has no worker artifact, so a consuming Vite app fails to build (and hangs
+in dev). Everything else in the backlog is quality; this one is existence. It is scheduled
+for wave 4, but if the goal is "ship v1", it can legitimately be pulled forward at any
+time — `pnpm test:consumer` reproduces it in about a minute.
+
+**Next up: wave 1** in §2 below — extract the pool + scheduler, make `releaseWorker` the
+single owner of `available`, relayer the query API on `chunk()` (§1.2), fix abort once.
+Two `it.fails` tests are already waiting for it: B1 in `tests/browser/transaction.test.ts`,
+B9 in `tests/browser/concurrency.test.ts`. Remember the convention: an `it.fails` turning
+red means the bug is fixed.
+
+## 1. Decisions — D1 to D5, all settled
 
 | # | Decision | Recommendation | Consequence |
 |---|---|---|---|
 | D1 | Keep wa-sqlite, or move to `@sqlite.org/sqlite-wasm`? | **Keep wa-sqlite.** The official build's OPFS SAHPool VFS is single-connection, which removes the concurrent-read pool — i.e. the library's reason to exist. Fix the packaging complaint (B8) by vendoring the prebuilt WASM+glue at build time instead. | Reopening it means a rewrite, not a refactor. |
-| D2 | Drop the `SharedArrayBuffer` (→ `navigator.locks` + a `postMessage`-driven boolean)? | **Yes.** It removes the COOP/COEP requirement from every consuming app; the SAB only serves the init mutex and the `ABORTING` flag. Small blast radius for the leverage. | Touches `orchestrator.ts`, `worker.ts`, and the rstest browser plugin. |
-| D3 | Does `output()` leave the core for an optional module? | Undecided — the user's call. | Decides `1.0.0-rc.4` vs `2.0.0-rc.1`, since it is a breaking change on an API already in RC. |
+| D2 | Drop the `SharedArrayBuffer` (→ `navigator.locks` + a `postMessage`-driven boolean)? | **Yes** — and D3 now makes `navigator.locks` mandatory anyway (multi-tab `output()` cleanup), so the primitive must exist by wave 3. Removing the SAB itself can still wait for wave 4. | Touches `orchestrator.ts`, `worker.ts`, and the rstest browser plugin. |
+| D3 | What shape does `output()` take? | **Decided 2026-08-17: staging table + atomic rename, `navigator.locks`-guarded, multi-tab safe.** See §1.1. | Implementation lands in wave 3. Hard prerequisites: B1 (real exclusivity) and a `navigator.locks` primitive. |
 
-Status: **all three still open** as of 2026-08-17.
+| D4 | Should the query API be layered on an explicit `chunk()` primitive? | **Decided 2026-08-17: yes.** See §1.2. | Lands in wave 1, together with the abort fixes. Renaming `stream()` is a silently-shaped break — accepted, we are in RC. |
+| D5 | Wire the debug subsystem, or delete it? | **Decided 2026-08-17: wire it**, behind `debug?: string \| boolean`. See §1.3. | 221 dead lines become live. The unbounded `requests` array must be capped first or it leaks. |
+
+Status: **D1 and D2 decided-with-recommendation; D3, D4, D5 decided** as of 2026-08-17.
+
+**Standing assumption (user, 2026-08-17): there is NO consumer on `1.0.0-rc.3`.** This is
+what makes D3's and D4's breaking changes cheap. If it ever turns out to be false, both
+decisions need a second look.
+
+### 1.1 D3 — the decided design
+
+The question was reframed during the 2026-08-17 session. It was recorded as
+"does `output()` leave the core for an optional module?"; that framing came from
+calling `output()` an "ETL helper". The user's actual design intent is **MongoDB's
+`$out`** — a pipeline sink used to build staging tables. Under that intent the
+relocation question is minor organisation (variant B below), and the real question
+is whether `output()` delivers `$out`'s defining guarantee. Today it does not.
+
+**Why not one big transaction.** SQLite's DDL *is* transactional, so
+`BEGIN; DROP; CREATE; INSERT…; COMMIT;` would be atomic — but it holds the single
+writer worker for the entire reload (today `write()` releases the worker after every
+statement, so unrelated writes interleave between `bulkWrite` batches) and the WAL
+cannot checkpoint until COMMIT. Rejected on both counts.
+
+**The chosen shape** — `bulkWrite` is unchanged (un-transacted batches, worker
+released between each):
+
+1. Populate `__bsq_staging_<uuid>` in `main` (a normal table, **not** `TEMP` — a
+   `TEMP` table lives in the `temp` database and `ALTER TABLE … RENAME TO` cannot
+   move a table across databases).
+2. Final short transaction: `DROP TABLE IF EXISTS <target>;
+   ALTER TABLE <staging> RENAME TO <target>;` then **create the indexes inside that
+   same transaction, after the rename** (decision (a)). SQLite has no
+   `ALTER INDEX … RENAME`, so indexes built on the staging table would keep
+   `__bsq_staging_…` names forever; building them with final names before the swap
+   collides with the old table's indexes. The lock lasts the index build, which is
+   small next to the row inserts.
+
+**Cleanup, three stacked nets:**
+
+1. `try/finally` around the populate → `DROP TABLE IF EXISTS <staging>`. Covers
+   application-level failure, the common case.
+2. Sweep at the client's **first `output()`** (not at `open()` — the writer is only
+   designated lazily on the first write, and a sweep at open would race the *n*
+   workers): `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE
+   '__bsq_staging_%'`, drop everything not in flight. Recovers orphans from a closed
+   tab or a crashed session. **Guarded by `navigator.locks`** so it is safe when
+   several tabs run `output()` concurrently — this is a user requirement, not an
+   option.
+3. If the final transaction fails, the staging table survives and net 2 collects it.
+
+**Consequences:**
+- `temp: true` is incoherent under this design (un-renameable across databases, and
+  invisible to the other pool workers since `TEMP` is per-connection). It must either
+  require `poolSize: 1` or be dropped. Open.
+- Multi-tab `output()` is now a **supported** scenario. The rest of the client stays
+  uncoordinated across tabs — see `W-multitab` in `mem:follow-ups`.
+- Relocation (variant B: implementation moved to its own module, `db.output` kept as
+  a thin delegation) is now a free organisational choice, no longer a breaking change,
+  so it no longer gates the version number. Do it opportunistically in wave 3 for the
+  Node-testability win.
+
+### 1.2 D4 — the query API layered on `chunk()`
+
+The hierarchy already exists inside `client.ts`, unnamed and unexposed. The single
+primitive is `worker.query()` (an async generator yielding `T[] | number` — chunks,
+then the affected count); `readWorker` / `writeWorker` / `streamWorker` / `oneWorker`
+are thin derivations of it, and every public method is the same 6-line
+acquire → delegate → `finally releaseWorker` wrapper. Making the layering explicit is
+mostly deletion.
+
+```
+worker.query()                                  primitive
+  └─ chunk()   AsyncGenerator<T[]>              chunkSize lives HERE
+      ├─ stream()  AsyncGenerator<T>            flattens
+      ├─ read()    Promise<T[]>                 drains
+      ├─ one()     Promise<T | undefined>       first row + internal abort
+      └─ write()   Promise<{result, affected}>  drains + captures the number
+```
+
+- **`signal`: on every method**, and **added to `one()`**, which currently excludes it
+  (`Omit<SQLiteQueryOptions<T>, 'chunkSize' | 'signal'>`). Cancellation is call-site
+  semantics, not transport configuration — an earlier draft of this decision wrongly
+  lumped it with `chunkSize`. `one()` consolidates the caller's signal with its own via
+  `AbortSignal.any([caller, internal])`. **Implementation trap:** the two aborts do not
+  mean the same thing — the internal one means "got my row, stop" (resolve normally),
+  the caller's means "cancelled" (reject with `AbortError`). Test `caller.aborted`
+  afterwards; the combined signal alone does not say which fired. Verify
+  `AbortSignal.any`'s browser baseline — it is more recent than OPFS.
+- **`chunkSize`: on `chunk()` and `read()` only.** Real transport knob on `read()`
+  (1M rows at 500 = 2000 `postMessage`; at 50000 = 20). Meaningless on `write()`
+  (writes rarely return rows; `RETURNING` can use `chunk()`). **Harmful on `one()`** —
+  its only correct value is 1, and a caller passing 5000 would fetch 5000 rows for one.
+  Revisit whether `read()` really needs it once D5 makes it measurable.
+- **`chunk()` stays public.** It is the performance path (a row-wise generator costs a
+  microtask per row) and the place where back-pressure will live.
+
+**Why in wave 1, not a later API pass:** wave 1 already rewrites `stream()`'s abort
+(B1's early-`break` half, and B9). Both defects, plus the future back-pressure
+credit/ack scheme, collapse into the single `chunk()` primitive — fix once instead of
+four times. Doing the abort work in the old shape and then moving it is double work.
+
+**Cost, stated plainly:** `stream()` changing its yield from `T[]` to `T` is a
+*silent* break — an existing `for await (const chunk of db.stream(…))` keeps running
+and `chunk[0]` becomes `undefined` on a row object. TypeScript catches it for typed
+consumers, the runtime does not. Accepted because RC is exactly that window, and the
+double-loop wart is otherwise permanent. Requires a loud CHANGELOG entry. The
+zero-risk alternative (keep `stream()` = chunks, add `rows()`) was rejected: it keeps
+a `stream` that does not stream.
+
+### 1.3 D5 — the debug subsystem is wired, not deleted
+
+`debug.ts` is **not a logger** — there is no `console.*` in it (the only one in `src/`
+is a stray `console.error` at `client.ts:412`). It builds a live introspection tree
+exposed as `db.debug`: client config, both queue depths, and per worker a request
+history with `startTime` / `acquireTime` / `releaseTime` / `affectedRows` and a query
+history. `status` is a `Proxy` getter delegating to `orchestrator.getStatus(index)`, so
+it is never stale. This is exactly the instrumentation wave 5 needs; the design is
+sound, it was simply never plugged in — `client.ts:302-307` destructures
+`{} as ReturnType<typeof createClientDebug>`, so all four bindings are `undefined` and
+`createClientDebug` is an `import type` only.
+
+`debugSQLQuery(sql, params)` is a separate utility: renders copy-pasteable SQL with
+parameters substituted, quote-aware. **Display only, forever** — it concatenates user
+values into SQL.
+
+**Option shape (user's convention):** `debug?: string | boolean` on the client —
+`string` is the log prefix, `true` falls back to the existing `clientPrefix`
+(`"${name ?? 'SQLite'} ${clientIndex}"`, `client.ts:286`, already used to name workers
+as `"SQLite 1 / Worker 2"`). Note this reveals a missing brick: wiring `debug` revives
+*state collection*, it produces no console output. A real prefixed logger has to be
+added for the convention to mean anything. The per-query `debug?: string` label already
+present in `SQLiteQueryOptions` is the matching request tag.
+
+**Fix before wiring — in this order:**
+1. **Memory leak.** `MAX_QUERY_HISTORY_LENGTH` (50) caps only `currentRequest.queries`.
+   `worker.requests` is pushed to on every request and never trimmed — wiring as-is
+   grows memory with the client's total query count. Cap it too.
+2. ~~`Buffer.isBuffer` / `Buffer.from` at `debug.ts:76`~~ — **done 2026-08-17**, during
+   the wave 0 packaging fix.
+3. `status: 'HAHA'` (`debug.ts:158`) — unobservable behind the Proxy, but it ships.
+4. Off-by-one: `if (length > MAX) shift()` peaks at 51 before trimming to 50.
 
 ## 2. Order of work
 
@@ -37,10 +188,10 @@ toolchain we are about to replace.
 | Wave | Contents | Covers |
 |---|---|---|
 | 0 ✅ | CI running the suite; put `tests/` in the tsc program; characterization tests for `transaction` / `bulkWrite` / `output`; fix the assertions that cannot fail | B7 |
-| 1 | Extract pool + scheduler into a pure module unit-testable in Node (parameterized over a minimal `{ available: boolean }` shape); make `releaseWorker` the single owner of `available`; real abort on `stream()` | B1, W-arch |
+| 1 | Extract pool + scheduler into a pure module unit-testable in Node (parameterized over a minimal `{ available: boolean }` shape); make `releaseWorker` the single owner of `available`; **relayer the query API on `chunk()` per §1.2** and fix abort once inside it (covers `stream()`'s early `break` and B9) | B1, B9, W-arch, part of W-types |
 | 2 | `onerror` / `onmessageerror`, per-request timeouts, distinct `open-error` message, `close()` handshake that settles in-flight work and calls `sqlite.close()` | B2, B3 |
-| 3 | `quoteIdent()` + pragma allowlist; `output()` wrapped in one transaction; `bulkWrite` surfaces per-batch failures; debug wired for real or deleted | B4, B5, B6 |
-| 4 | Packaging: vendor wa-sqlite, ship a prebuilt worker entry; remove the SAB (pending D2) | B8, W-sab |
+| 3 | `quoteIdent()` + pragma allowlist; **debug wired per §1.3** (do it here, before wave 5, so the perf work is measurable); **`output()` rebuilt as staging + atomic rename per §1.1** (needs a `navigator.locks` primitive — pull it forward from wave 4); `bulkWrite` surfaces per-batch failures | B4, B5, B6 |
+| 4 | Packaging: **ship a real worker artifact and an `exports` entry for it — B10, the library is unusable as published**; vendor wa-sqlite (**not** a peer dependency: the problem is the `github:` specifier and wa-sqlite is not on npm at all, so a peer dep would just push the git URL into every consumer's `package.json`); remove the SAB (pending D2). Flip `consumer-smoke` to blocking in CI when done. | B10, B8, W-sab |
 | 5 | Performance, **with the debug instrumentation live** so the gains are measurable | perf section |
 
 Correctness items not tied to a wave (`W-route`, `W-multitab`, `W-types`) fold into
@@ -54,9 +205,41 @@ whichever wave touches the same code.
 - Agent framework is **superpowers**. The old `.planning/` directory was deleted on
   2026-08-17 — do not recreate it or trust anything quoting it.
 - These memories live in `.serena/memories/`, which is **not** gitignored — commit them.
+- **Open questions stay in the backlog; each wave's own brainstorming raises them when it
+  gets there** (user, 2026-08-17). Do not front-load a decision session for a wave that is
+  not the next one. The open items are listed per wave in `mem:follow-ups` and in §1.
 
 ## 4. Changelog of this plan
 
+- **2026-08-17** — **Wave 0 gap closed: the safety net covered the sources, not the
+  published package.** Added `scripts/consumer-smoke.mjs` + the `tests/consumer/` Vite
+  fixture + a non-blocking `consumer-smoke` CI job. It immediately reproduced **B10** —
+  the published tarball cannot be consumed at all (no worker artifact beside `index.js`);
+  `vite build` fails outright and `vite dev` hangs forever, which also demonstrates B2.
+  Two packaging bugs fixed along the way: the published `types` field pointed at a
+  missing `dist/esm/index.d.ts` (pre-existing), and wave 0's `tsconfig` change had started
+  shipping `dist/esm/tests/**` (my regression). Both fixed by `tsconfig.build.json`
+  scoped to `src` + `rootDir`, which in turn surfaced the `Buffer` bug in `debug.ts` as a
+  compile error — also fixed. 105 tests still green.
+- **2026-08-17** — **D4 and D5 decided** (see §1.2, §1.3). D4: the query API is relayered
+  on an explicit `chunk()` primitive — the hierarchy already exists internally, so it is
+  mostly deletion; `signal` on every method including `one()` (an earlier draft wrongly
+  proposed removing it — cancellation is call-site semantics, not transport config);
+  `chunkSize` narrowed to `chunk()` and `read()`. Pulled into wave 1 because it collapses
+  B9, `stream()`'s early-`break` abort and the future back-pressure scheme into one place.
+  D5: the debug subsystem is wired, not deleted, behind `debug?: string | boolean` with
+  `clientPrefix` as the `true` fallback; moved into wave 3 so wave 5's perf work is
+  measurable. Found while tracing `clientPrefix`: the instrumentation call sites already
+  exist, optional-chained into no-ops, so D5 is far smaller than "221 dead lines" implied.
+- **2026-08-17** — **D3 decided** (see §1.1). Reframed from "does `output()` leave the
+  core?" to "does it deliver MongoDB `$out`'s guarantee?" after the user stated the
+  design intent. Chosen: staging table + atomic rename, indexes built inside the final
+  transaction, three-net cleanup, `navigator.locks` so multi-tab `output()` is
+  supported. One big transaction was considered and rejected (monopolises the single
+  writer for the whole reload, WAL cannot checkpoint). Knock-ons: `navigator.locks`
+  moves from wave 4 to wave 3; `temp: true` becomes incoherent and is now an open
+  sub-question; relocation drops to a free organisational choice and no longer gates
+  the version number — the `rc.4` vs `2.0.0` framing recorded earlier is moot.
 - **2026-08-17** — **Wave 0 completed** (B7 closed). Added `.github/workflows/ci.yaml`
   (biome ci + tsc + build + full suite, on push to main and on every PR, Chromium cached);
   added `tests` to the tsconfig `include` (it type-checked clean, no fallout);

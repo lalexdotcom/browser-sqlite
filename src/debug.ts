@@ -73,8 +73,14 @@ export const debugSQLQuery = (sql: string, params?: any[]) => {
     if (value instanceof Date) {
       return `'${value.toISOString()}'`;
     }
-    if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
-      return `X'${Buffer.from(value).toString('hex')}'`;
+    // `Buffer` does not exist in a browser. A Node Buffer is a Uint8Array
+    // subclass, so this single branch still covers both.
+    if (value instanceof Uint8Array) {
+      let hex = '';
+      for (const byte of value) {
+        hex += byte.toString(16).padStart(2, '0');
+      }
+      return `X'${hex}'`;
     }
     return `'${JSON.stringify(value).replace(/'/g, "''")}'`;
   }

@@ -11,5 +11,8 @@
     "useDefineForClassFields": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["src", "tests", "rslib.config.ts", "rstest.config.ts"]
+  "include": ["src", "tests", "rslib.config.ts", "rstest.config.ts"],
+  // The consumer fixture is a standalone app: it resolves `browser-sqlite` and
+  // `vite` from its own install, not from this package's node_modules.
+  "exclude": ["tests/consumer"]
 }
