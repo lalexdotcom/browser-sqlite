@@ -278,6 +278,16 @@ page", not "drop it in any page".
   (dependency bumps, specs) lands on `main` directly.
 - **Unplanned working-tree changes are committed, not discarded — but only after the user
   confirms.** Never resolve a dirty tree by reverting or stashing on your own initiative.
+- **"On clôture la session" is a defined procedure (user, 2026-08-17), not a figure of
+  speech.** It means the work continues in a *different* session, so nothing may be left
+  live in this one. Three steps, in order:
+  1. **Merge the feature branch into `main`.** The phase's closure conditions must hold
+     first — CI green, memories updated, git clean.
+  2. **Write the Serena memories.** Anything the next session needs and cannot re-derive
+     from the code: decisions and their rationale, traps paid for, open items with their
+     evidence. Whatever lives only in a scratch ledger or in the conversation is lost.
+  3. **Commit whatever is still outstanding.** Obvious leftovers go in directly; for
+     anything that is not obvious, ask first.
 - **Open questions stay in the backlog; each wave's own brainstorming raises them when it
   gets there** (user, 2026-08-17). Do not front-load a decision session for a wave that is
   not the next one. The open items are listed per wave in `mem:follow-ups` and in §1.
