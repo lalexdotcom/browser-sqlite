@@ -21,7 +21,7 @@
 - Serena's symbolic tools are primary for code files (`get_symbols_overview`, `find_symbol`, `replace_symbol_body`, `replace_content`). Built-in Read/Edit are for `.md`, JSON, YAML and config only.
 - Run `pnpm check` (biome, autofix) after every modification.
 - Chat in French; code, comments, commit messages and docs in English.
-- **Build-cache gotcha:** rslib caches aggressively. After any change to `rslib.config.ts`, rebuild with `rm -rf dist node_modules/.cache && pnpm build`, otherwise you will inspect a stale tree and draw the wrong conclusion. This cost one wrong diagnosis during the design probe.
+- **Build cache:** handled by configuration, not by deleting directories. `rslib` forces rsbuild's `performance.buildCache` on, and its digest tracks the config's resolved *values* but not its *key structure* — so swapping which key holds a value (`distPath.assets` → `distPath.wasm`) silently reuses the old output. Task 4 adds `performance.buildCache.buildDependencies: [import.meta.filename]`, which hashes the config file itself and catches every kind of edit. **Plain `pnpm build` is then always correct**; never `rm -rf` anything. `rslib build` already cleans `dist/` before every build (`--clean`, on by default), so deleting it by hand is redundant too.
 - Work happens on branch `feat/wave-p-packaging`. The phase closes only when CI is green, memories are updated, and git is clean.
 
 ---
@@ -501,6 +501,13 @@ export default defineConfig({
   source: {
     tsconfigPath: './tsconfig.build.json',
   },
+  // rslib forces rsbuild's persistent build cache on. Its digest tracks the
+  // config's resolved values but not its key structure, so swapping which key
+  // holds a value (distPath.assets -> distPath.wasm) silently reuses the old
+  // output. Hashing this file catches every kind of edit; verified 2026-08-17.
+  performance: {
+    buildCache: { buildDependencies: [import.meta.filename] },
+  },
   lib: [
     // The client. rslib's esm preset disables `importMeta`, `importDynamic`,
     // `worker` and `url` parsing — which is exactly right here: we WANT
@@ -579,12 +586,14 @@ Replace the `exports` and `types` blocks:
 
 `files` stays `["dist"]`.
 
-- [ ] **Step 3: Build clean and assert the tree**
+- [ ] **Step 3: Build and assert the tree**
+
+`output.cleanDistPath` defaults to `'auto'`, so `dist/` is wiped before each build with no help needed. Watch one thing while doing this: the two entries write into the same tree (`dist/` and `dist/worker/`), so entry 0's clean covers entry 1's output directory. It held across every probe run, but if `dist/worker/` ever comes out empty or intermittently missing, the lever is `output: { cleanDistPath: { keep: 'worker' } }` on entry 0 — do not reach for `rm -rf`.
 
 Run:
 
 ```bash
-rm -rf dist node_modules/.cache && pnpm build && find dist -type f | sort
+pnpm build && find dist -type f | sort
 ```
 
 Expected, exactly (the three hashes will differ, the shape must not):
@@ -712,7 +721,7 @@ SQLite produced by wa-sqlite and are covered by the notices above.
 - [ ] **Step 5: Run the full verification**
 
 ```bash
-pnpm check && pnpm exec tsc --noEmit && rm -rf dist node_modules/.cache && pnpm build && pnpm test
+pnpm check && pnpm exec tsc --noEmit && pnpm build && pnpm test
 ```
 
 Expected: biome clean, tsc clean, build emits the Task 4 tree, **105/105 tests** with both `it.fails` still failing.
@@ -773,7 +782,7 @@ Phase 2 of the spec. Purely an optimisation attempt with a hard revert rule.
 - [ ] **Step 1: Measure the monolithic baseline**
 
 ```bash
-rm -rf dist node_modules/.cache && pnpm build
+pnpm build
 gzip -c dist/worker/worker.js | wc -c
 ```
 
@@ -784,7 +793,7 @@ Record the number. The design probe measured 696 KB raw / 115 KB gzip.
 In `rslib.config.ts`, change the worker entry's `asyncChunks: false` to `asyncChunks: true`, then:
 
 ```bash
-rm -rf dist node_modules/.cache && pnpm build && find dist -type f | sort
+pnpm build && find dist -type f | sort
 gzip -c dist/worker/worker.js | wc -c
 ```
 

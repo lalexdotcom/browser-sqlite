@@ -290,9 +290,19 @@ comments, in the plan's build configuration.
 **Measured on the probe** (wa-sqlite v1.1.2): `worker.js` 696 KB raw / 115 KB gzip;
 `index.js` 20 KB raw / 4 KB gzip; the three `.wasm` 2.4 MB raw combined.
 
-**Process note:** rslib caches builds aggressively. After any change to
-`rslib.config.ts`, rebuild with `rm -rf dist node_modules/.cache && pnpm build` — a stale
-tree produced one wrong conclusion during this probe before the cache was cleared.
+**Build cache — a configuration matter, not a `rm -rf` one.** rslib forces rsbuild's
+`performance.buildCache` on (`@rslib/core/dist/index.js:2836`), overriding rsbuild's own
+`false` default. Its digest tracks the config's resolved *values* but not its *key
+structure*: changing `distPath.wasm: 'a'` to `'b'` invalidates correctly, but swapping
+`distPath.assets` for `distPath.wasm` does **not** — the build silently reuses the old
+output. Reproduced deliberately, in both directions, on 2026-08-17; it cost one wrong
+conclusion during this probe before being characterised.
+
+The fix is a parameter: `performance.buildCache.buildDependencies: [import.meta.filename]`
+hashes the config file itself, which catches every kind of edit. Verified against the
+exact failing case. `output.cleanDistPath` already defaults to `'auto'`, so `dist/` is
+wiped before each build as well. **Plain `pnpm build` is therefore always correct**, and
+nothing in this wave needs a directory deleted by hand.
 
 ## 9. Sequencing
 
