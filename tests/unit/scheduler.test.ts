@@ -196,3 +196,64 @@ describe('scheduler — leases', () => {
     expect(idle).toEqual([0]);
   });
 });
+
+describe('scheduler — add() drains pre-queued acquires', () => {
+  /**
+   * Covers the path in add() where writerQueue/readerQueue already has entries
+   * when the worker is registered. The makeScheduler helper adds workers before
+   * any acquire(), so this path is invisible to the rest of the suite.
+   * A regression here would exactly replay how B1 survived: a correctness
+   * invariant exercised only by slow browser tests.
+   *
+   * Failure conditions are documented inline.
+   */
+
+  it('serves a queued read when the first worker is added', async () => {
+    // No makeScheduler — workers must arrive AFTER acquire() to exercise the drain.
+    const scheduler = createScheduler<TestWorker>();
+    const worker = { index: 0 };
+
+    let resolvedIndex: number | undefined;
+    void scheduler.acquire('read').then((l) => {
+      resolvedIndex = l.worker.index;
+    });
+
+    await flush();
+    // If add() does not drain the queue the acquire() Promise never resolves
+    // and resolvedIndex stays undefined.
+    expect(resolvedIndex).toBeUndefined();
+
+    scheduler.add(worker);
+    await flush();
+
+    // Fails if add() still only calls available.add() without draining
+    // readerQueue — the Promise would remain pending.
+    expect(resolvedIndex).toBe(0);
+  });
+
+  it('serves a queued write and designates the worker when it is added', async () => {
+    const scheduler = createScheduler<TestWorker>();
+    const worker = { index: 0 };
+
+    let firstWriteIndex: number | undefined;
+    const firstWrite = scheduler.acquire('write').then((l) => {
+      firstWriteIndex = l.worker.index;
+      l.release();
+    });
+
+    await flush();
+    expect(firstWriteIndex).toBeUndefined();
+
+    scheduler.add(worker);
+    await firstWrite;
+
+    // Fails if add() does not drain writerQueue — firstWrite would hang.
+    expect(firstWriteIndex).toBe(0);
+
+    // After that write released, a new write must still go to the designated
+    // worker (index 0). Fails if add() bypassed the designation logic in
+    // handOver (e.g. skipped the currentWriterIndex = worker.index assignment).
+    const secondWrite = await scheduler.acquire('write');
+    expect(secondWrite.worker.index).toBe(0);
+  });
+});
