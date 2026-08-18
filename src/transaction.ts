@@ -104,13 +104,13 @@ export const createTransaction =
       ) => firstWorker<T>(worker, checksql(sql), params, options),
 
       commit: async () => {
-        done = true;
         await exec(worker, 'COMMIT');
+        done = true;
       },
 
       rollback: async () => {
-        done = true;
         await exec(worker, 'ROLLBACK');
+        done = true;
       },
     };
 
@@ -127,7 +127,17 @@ export const createTransaction =
       }
       return result;
     } catch (e) {
-      await db.rollback();
+      // Only roll back if the transaction is still open. `done` is set after the
+      // statement succeeds, so a COMMIT that failed leaves it false and the
+      // transaction still active — that case must still roll back.
+      if (!done) {
+        try {
+          await db.rollback();
+        } catch {
+          // A failed rollback must not replace the caller's error, which is the
+          // one that explains what actually went wrong.
+        }
+      }
       throw e;
     } finally {
       lease.release();

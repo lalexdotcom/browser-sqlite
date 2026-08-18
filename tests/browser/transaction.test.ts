@@ -190,3 +190,81 @@ describe('transaction() worker exclusivity (B1)', () => {
     db.close();
   });
 });
+
+describe('transaction() error-path masking (rollback-fix)', () => {
+  it('propagates the callback error when tx.rollback() precedes a throw', async () => {
+    // Regression: before the fix, the unconditional db.rollback() in the catch
+    // block issued a second ROLLBACK with no active transaction, SQLite rejected
+    // it, and that error escaped instead of the caller's own error.
+    const db = await createTestClient();
+
+    await db.write('CREATE TABLE tx_rb_then_throw (id INTEGER)');
+    await db.write('INSERT INTO tx_rb_then_throw VALUES (1)');
+
+    await expect(
+      db.transaction(async (tx) => {
+        await tx.write('INSERT INTO tx_rb_then_throw VALUES (2)');
+        await tx.rollback();
+        throw new Error('real error after rollback');
+      }),
+    ).rejects.toThrow('real error after rollback');
+
+    // Row 2 was inserted before rollback — it must be absent.
+    const rows = await db.read<{ id: number }>(
+      'SELECT id FROM tx_rb_then_throw',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(1);
+
+    db.close();
+  });
+
+  it('propagates the callback error when tx.commit() precedes a throw', async () => {
+    // Regression: before the fix, the spurious second ROLLBACK ran after a
+    // successful commit, so the committed data was rolled back AND the caller
+    // received a "no transaction" error instead of the real one.
+    const db = await createTestClient();
+
+    await db.write('CREATE TABLE tx_commit_then_throw (id INTEGER)');
+
+    await expect(
+      db.transaction(async (tx) => {
+        await tx.write('INSERT INTO tx_commit_then_throw VALUES (42)');
+        await tx.commit();
+        throw new Error('real error after commit');
+      }),
+    ).rejects.toThrow('real error after commit');
+
+    // Row was committed before the throw — it must be present.
+    const rows = await db.read<{ id: number }>(
+      'SELECT id FROM tx_commit_then_throw',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(42);
+
+    db.close();
+  });
+
+  it('still rolls back and rethrows when the callback throws without terminating the transaction', async () => {
+    // Regression guard: the fix must not break the normal error path where no
+    // explicit commit/rollback was issued before the throw.
+    const db = await createTestClient();
+
+    await db.write('CREATE TABLE tx_plain_throw (id INTEGER)');
+    await db.write('INSERT INTO tx_plain_throw VALUES (1)');
+
+    await expect(
+      db.transaction(async (tx) => {
+        await tx.write('INSERT INTO tx_plain_throw VALUES (2)');
+        throw new Error('plain callback error');
+      }),
+    ).rejects.toThrow('plain callback error');
+
+    // Row 2 must have been rolled back.
+    const rows = await db.read<{ id: number }>('SELECT id FROM tx_plain_throw');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(1);
+
+    db.close();
+  });
+});
