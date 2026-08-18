@@ -21,17 +21,16 @@ export type OutputOptions<SCHEMA extends Schema> = {
   temp?: boolean;
 };
 
-// Structural mirrors of SQLiteDB['read'] / SQLiteDB['write'].
+// Structural mirror of SQLiteDB['write'].
 // Kept inline to avoid a circular import: client.ts imports createBulk, so
 // createBulk cannot import SQLiteDB from client.ts.
-type ReadFn = (sql: string, params?: any[], options?: any) => Promise<any[]>;
 type WriteFn = (
   sql: string,
   params?: any[],
   options?: any,
 ) => Promise<{ result: any[]; affected: number }>;
 
-export const createBulk = (deps: { read: ReadFn; write: WriteFn }) => {
+export const createBulk = (deps: { write: WriteFn }) => {
   const { write } = deps;
 
   /**

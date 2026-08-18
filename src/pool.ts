@@ -7,7 +7,6 @@ import type { SQLiteVFS, WorkerMessageData } from './types';
 export type PoolWorkerQueryOptions = {
   id?: string;
   chunkSize?: number;
-  signal?: AbortSignal;
   debug?: string;
 };
 

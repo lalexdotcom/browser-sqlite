@@ -11,7 +11,7 @@ import {
 } from './queries';
 import { createScheduler } from './scheduler';
 import { createTransaction, type TransactionDB } from './transaction';
-import type { SQLiteVFS } from './types';
+import type { SQLiteQueryOptions, SQLiteVFS } from './types';
 import { isWriteQuery } from './utils';
 
 /**
@@ -63,21 +63,6 @@ export type CreateSQLiteClientOptions = {
   pragmas?: Record<string, string>;
 };
 
-/**
- * Query execution options.
- */
-type SQLiteQueryOptions<_T extends Record<string, unknown>> = {
-  id?: string;
-  chunkSize?: number;
-  signal?: AbortSignal;
-  debug?: string;
-};
-
-type SQLiteStreamOptions<T extends Record<string, unknown>> =
-  SQLiteQueryOptions<T> & {
-    signal?: AbortSignal;
-  };
-
 let clientCount = 0;
 
 /**
@@ -110,14 +95,14 @@ export type SQLiteDB = {
    *
    * @param sql - SQL statement. Any statement recognized as a write by `isWriteQuery`.
    * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`chunkSize`, `signal`, `id`).
+   * @param options - Optional query options (`signal`, `id`).
    * @returns Promise resolving to `{ result: T[], affected: number }` where
    *   `affected` is the SQLite `changes()` count for the statement.
    */
   write: <T extends Record<string, unknown>>(
     sql: string,
     params?: any[],
-    options?: SQLiteQueryOptions<T>,
+    options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
   ) => Promise<{ result: T[]; affected: number }>;
 
   /**
@@ -144,52 +129,37 @@ export type SQLiteDB = {
 
   /**
    * Executes a query and yields individual result rows via an async generator.
-   * Flattens chunk boundaries — each iteration yields one row.
+   * Flattens chunk boundaries — each iteration yields one `T` row, not a chunk.
+   * Use `chunk()` when you need the rows grouped by chunk.
    *
    * @param sql - SQL query string.
    * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional options including `chunkSize` and `signal`.
+   * @param options - Optional query options (`signal`, `id`).
    * @returns AsyncGenerator yielding individual rows of type `T`.
    */
   stream: <T extends Record<string, unknown>>(
     sql: string,
     params?: any[],
-    options?: SQLiteStreamOptions<T>,
+    options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
   ) => AsyncGenerator<T>;
 
   /**
    * Executes a query and returns the first row, or `undefined` if no rows match.
-   * Internally uses `chunkSize: 1` and breaks after the first result chunk.
+   *
+   * Internally uses `chunkSize: 1` and asks the worker to stop after the first
+   * row. Because the worker runs in a separate thread it may race ahead between
+   * the break and the stop signal, so early termination is best-effort on small
+   * result sets. A hard bound will arrive with back-pressure in a future wave.
    *
    * @param sql - SQL query string.
    * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options including `signal`.
+   * @param options - Optional query options (`signal`, `id`).
    * @returns Promise resolving to the first row as `T`, or `undefined` if no rows.
    */
   first: <T extends Record<string, unknown>>(
     sql: string,
     params?: any[],
-    options?: { signal?: AbortSignal },
-  ) => Promise<T | undefined>;
-
-  /**
-   * Executes a query and returns the first row, or `undefined` if no rows match.
-   * Internally uses `chunkSize: 1` and breaks after the first result chunk.
-   *
-   * @remarks
-   * Intended for SELECT queries. Using `one()` with a write statement (INSERT, UPDATE)
-   * routes to the write worker and still executes the DML — use `write()` for mutations.
-   *
-   * @param sql - SQL query string.
-   * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`id`). `chunkSize` and `signal` are managed internally.
-   * @returns Promise resolving to the first row as `T`, or `undefined` if no rows.
-   * @deprecated Use `first()` instead. Will be removed in a future wave.
-   */
-  one: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: any[],
-    options?: SQLiteQueryOptions<T>,
+    options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
   ) => Promise<T | undefined>;
 
   /**
@@ -296,8 +266,8 @@ const DEFAULT_VFS = 'OPFSPermutedVFS';
  *   Each distinct name corresponds to a separate database file.
  * @param clientOptions - Optional pool and VFS configuration.
  *   See {@link CreateSQLiteClientOptions} for field defaults.
- * @returns A {@link SQLiteDB} object providing `read`, `write`, `stream`,
- *   `one`, `transaction`, `bulkWrite`, `output`, and `close` methods.
+ * @returns A {@link SQLiteDB} object providing `read`, `write`, `chunk`,
+ *   `stream`, `first`, `transaction`, `bulkWrite`, `output`, and `close` methods.
  *
  * @throws {Error} When `vfs` is `'AccessHandlePoolVFS'` and `poolSize` is
  *   greater than `1`. AccessHandlePoolVFS does not support concurrent access
@@ -442,21 +412,7 @@ export const createSQLiteClient = (
     }
   };
 
-  /**
-   * Alias for first() — kept for backwards compatibility with the existing suite.
-   * @deprecated Use first() instead. Will be removed in a future wave.
-   */
-  const one = async <
-    T extends Record<string, unknown> = Record<string, unknown>,
-  >(
-    sql: string,
-    params?: unknown[],
-    options?: { signal?: AbortSignal },
-  ) => {
-    return first<T>(sql, params, options);
-  };
-
-  const { bulkWrite, output } = createBulk({ read, write });
+  const { bulkWrite, output } = createBulk({ write });
 
   const transaction = createTransaction({ scheduler });
 
@@ -494,7 +450,6 @@ export const createSQLiteClient = (
     write,
     stream,
     first,
-    one,
     transaction,
     bulkWrite,
     output,

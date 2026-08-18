@@ -76,7 +76,7 @@ describe('output() schema modifiers', () => {
     out.enqueue({ id: 1, code: 'A' });
     await out.close();
 
-    const ddl = await db.one<{ sql: string }>(
+    const ddl = await db.first<{ sql: string }>(
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
       ['out_modifiers'],
     );
@@ -102,7 +102,7 @@ describe('output() schema modifiers', () => {
 
     expect(affected).toBe(1);
 
-    const row = await db.one<{ base: number; doubled: number }>(
+    const row = await db.first<{ base: number; doubled: number }>(
       'SELECT base, doubled FROM out_generated',
     );
     expect(row?.base).toBe(21);

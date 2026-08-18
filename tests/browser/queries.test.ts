@@ -169,16 +169,16 @@ describe('db.chunk() (INT-05)', () => {
 });
 
 /**
- * INT-06: db.one() returns a single row or undefined
+ * INT-06: db.first() returns a single row or undefined
  */
-describe('db.one() (INT-06)', () => {
+describe('db.first() (INT-06)', () => {
   it('returns the first row when a result exists', async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE one_test (id INTEGER, label TEXT)');
     await db.write("INSERT INTO one_test VALUES (1, 'first'), (2, 'second')");
 
-    const row = await db.one<{ id: number; label: string }>(
+    const row = await db.first<{ id: number; label: string }>(
       'SELECT * FROM one_test ORDER BY id LIMIT 1',
     );
 
@@ -193,7 +193,7 @@ describe('db.one() (INT-06)', () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE one_empty (id INTEGER)');
-    const row = await db.one('SELECT * FROM one_empty WHERE id = 999');
+    const row = await db.first('SELECT * FROM one_empty WHERE id = 999');
 
     expect(row).toBeUndefined();
 
@@ -206,7 +206,7 @@ describe('db.one() (INT-06)', () => {
     await db.write('CREATE TABLE one_multi (val INTEGER)');
     await db.write('INSERT INTO one_multi VALUES (100), (200), (300)');
 
-    const row = await db.one<{ val: number }>(
+    const row = await db.first<{ val: number }>(
       'SELECT val FROM one_multi ORDER BY val',
     );
 

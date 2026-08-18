@@ -68,3 +68,18 @@ export type SQLiteVFS =
   | 'OPFSCoopSyncVFS'
   | 'AccessHandlePoolVFS'
   | 'IDBBatchAtomicVFS';
+
+/**
+ * Options accepted by query methods.
+ *
+ * `chunkSize` controls the number of rows per chunk and is only meaningful for
+ * `read()` and `chunk()`. Other methods (`write`, `stream`, `first`) omit it
+ * from their signatures so callers cannot set a field that would be silently
+ * ignored.
+ */
+export type SQLiteQueryOptions<_T extends Record<string, unknown>> = {
+  id?: string;
+  chunkSize?: number;
+  signal?: AbortSignal;
+  debug?: string;
+};
