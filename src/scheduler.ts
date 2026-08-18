@@ -51,6 +51,11 @@ export const createScheduler = <W extends { index: number }>(
 
   const dead = new Set<number>();
   const leased = new Set<number>();
+  // Per-index generation counter. Bumped by remove() so that a release() from
+  // a lease created before the remove can detect it is stale and do nothing.
+  const generations = new Map<number, number>();
+  const gen = (index: number) => generations.get(index) ?? 0;
+
   let shutdownReason: Error | undefined;
   let shutdownDeferred: PromiseWithResolvers<void> | undefined;
 
@@ -97,16 +102,22 @@ export const createScheduler = <W extends { index: number }>(
 
   const makeLease = (worker: W): Lease<W> => {
     leased.add(worker.index);
+    const myGen = gen(worker.index);
     let released = false;
     return {
       worker,
       release: () => {
         if (released) return;
         released = true;
-        // A worker removed while leased is already accounted for; handing it
-        // back would put a corpse in the pool.
-        const stillOurs = leased.delete(worker.index);
-        if (stillOurs && !dead.has(worker.index)) handOver(worker);
+        if (gen(worker.index) !== myGen) {
+          // Stale lease: remove() was called after this lease was created,
+          // bumping the generation. Handing the worker back would corrupt the
+          // pool (it could be held by a new lease on the revived slot).
+          checkShutdown();
+          return;
+        }
+        leased.delete(worker.index);
+        handOver(worker);
         checkShutdown();
       },
     };
@@ -136,7 +147,7 @@ export const createScheduler = <W extends { index: number }>(
       workers[worker.index] = worker;
       // Serve any requests that arrived before this worker was ready, preserving
       // the same writer-first priority as handOver. Does NOT call onIdle — the
-      // worker is newly joining the pool, not returning from a lease.
+      // worker is newly joining the pool, not returning from a lease.\
       if (
         writerQueue.length &&
         (currentWriterIndex === worker.index || currentWriterIndex === -1)
@@ -158,6 +169,9 @@ export const createScheduler = <W extends { index: number }>(
       available.delete(index);
       leased.delete(index);
       workers[index] = undefined;
+      // Bump the generation so any outstanding lease on this index knows it is
+      // stale when its release() eventually fires.
+      generations.set(index, gen(index) + 1);
       if (currentWriterIndex === index) currentWriterIndex = -1;
       checkShutdown();
     },

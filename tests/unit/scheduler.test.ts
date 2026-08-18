@@ -147,8 +147,9 @@ describe('scheduler — writer designation', () => {
 });
 
 describe('scheduler — removal', () => {
-  // Falsifiable: delete `dead.add(index)` in remove() and this fails — the late
-  // release() hands a corpse back and the second acquire resolves.
+  // Falsifiable: delete the `generations.set(...)` line in remove() — the stale
+  // release() then sees a matching generation and calls handOver, handing the
+  // corpse to the queued acquire and making served true.
   it('does not hand back a removed worker when its lease is released late', async () => {
     const { scheduler } = makeScheduler(1);
     const lease = await scheduler.acquire('read');
@@ -179,6 +180,29 @@ describe('scheduler — removal', () => {
     scheduler.add({ index: 0 });
     const lease = await scheduler.acquire('read');
     expect(lease.worker.index).toBe(0);
+  });
+
+  // Falsifiable: delete the `generations.set(...)` line in remove() — the
+  // old lease then matches the revived generation and handOver fires while the
+  // new lease is still live, putting index 0 back in the pool prematurely.
+  it('a release from before remove() is a no-op after the slot is revived', async () => {
+    const { scheduler } = makeScheduler(1);
+    const leaseA = await scheduler.acquire('read');
+    scheduler.remove(0);
+    scheduler.add({ index: 0 });
+    const leaseB = await scheduler.acquire('read');
+    leaseA.release(); // stale — must be a no-op
+    await flush();
+    // index 0 must still be exclusively held by leaseB, not back in the pool.
+    let served = false;
+    void scheduler.acquire('read').then(() => {
+      served = true;
+    });
+    await flush();
+    expect(served).toBe(false);
+    leaseB.release();
+    await flush();
+    expect(served).toBe(true);
   });
 });
 
