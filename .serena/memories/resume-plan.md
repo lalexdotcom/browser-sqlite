@@ -137,10 +137,12 @@ worker.query()                                  primitive
   the method returns the first row of a result set, not the only one, and it does not
   assert or enforce that exactly one row matched. Land it with the rest of D4 in wave 1 —
   the relayering already rewrites every one of these methods, so renaming costs nothing
-  extra there and would cost a second breaking change later. Loud CHANGELOG entry
-  alongside `stream()`'s yield change; both are covered by the standing "no consumer on
-  rc.3" assumption. Note the internal-abort trap described above stays attached to this
-  method under its new name.
+  extra there and would cost a second breaking change later. ~~Loud CHANGELOG entry~~ —
+  **no CHANGELOG (user, 2026-08-18): at `1.0.0-rc.3` with no consumer, a migration note
+  addresses a reader who does not exist. The breaking changes are recorded here instead.**
+  ~~Note the internal-abort trap described above stays attached to this method under its
+  new name.~~ — **the trap is removed, not carried: `first()` `break`s instead of aborting
+  (wave 1 brainstorming, 2026-08-18). See §1.2's amendment below.**
 - **`chunk()` stays public.** It is the performance path (a row-wise generator costs a
   microtask per row) and the place where back-pressure will live.
 
@@ -153,9 +155,19 @@ four times. Doing the abort work in the old shape and then moving it is double w
 *silent* break — an existing `for await (const chunk of db.stream(…))` keeps running
 and `chunk[0]` becomes `undefined` on a row object. TypeScript catches it for typed
 consumers, the runtime does not. Accepted because RC is exactly that window, and the
-double-loop wart is otherwise permanent. Requires a loud CHANGELOG entry. The
-zero-risk alternative (keep `stream()` = chunks, add `rows()`) was rejected: it keeps
-a `stream` that does not stream.
+double-loop wart is otherwise permanent. ~~Requires a loud CHANGELOG entry.~~ **No
+CHANGELOG — see the `first()` bullet above.** The zero-risk alternative (keep `stream()` =
+chunks, add `rows()`) was rejected: it keeps a `stream` that does not stream.
+
+**Amendment, 2026-08-18 — the internal-abort trap is designed out.** This section
+prescribed `AbortSignal.any([caller, internal])` plus a post-hoc `caller.aborted` test to
+tell "got my row, stop" from "cancelled". Wave 1's brainstorming replaced the mechanism:
+**`first()` `break`s out of the loop instead of aborting.** A `break` triggers
+`gen.return()`, hence `chunk()`'s `finally`, hence the same worker-stop routine — by the
+normal path, without an exception. So: caller signal → error; early exit → normal
+completion. Two unambiguous mechanisms, no consolidation, and `AbortSignal.any` is no
+longer used anywhere — its browser-baseline question is void. Full design in
+`docs/superpowers/specs/2026-08-18-wave-1-pool-scheduler-design.md` §6.3.
 
 ### 1.3 D5 — the debug subsystem is wired, not deleted
 
