@@ -34,7 +34,7 @@ red means the bug is fixed.
 | # | Decision | Recommendation | Consequence |
 |---|---|---|---|
 | D1 | Keep wa-sqlite, or move to `@sqlite.org/sqlite-wasm`? | **Keep wa-sqlite.** The official build's OPFS SAHPool VFS is single-connection, which removes the concurrent-read pool — i.e. the library's reason to exist. Fix the packaging complaint (B8) by vendoring the prebuilt WASM+glue at build time instead. | Reopening it means a rewrite, not a refactor. |
-| D2 | Drop the `SharedArrayBuffer` (→ `navigator.locks` + a `postMessage`-driven boolean)? | **Yes** — and D3 now makes `navigator.locks` mandatory anyway (multi-tab `output()` cleanup), so the primitive must exist by wave 3. Removing the SAB itself can still wait for wave 4. | Touches `orchestrator.ts`, `worker.ts`, and the rstest browser plugin. |
+| D2 | Drop the `SharedArrayBuffer` (→ `navigator.locks` + a `postMessage`-driven boolean)? | **Yes** — and D3 now makes `navigator.locks` mandatory anyway (multi-tab `output()` cleanup), so the primitive must exist by wave 3. **But the two SAB usages do not have the same replacement date — see §1.5, corrected 2026-08-18.** | Touches `orchestrator.ts`, `worker.ts`, and the rstest browser plugin. Full removal is gated on back-pressure, not on wave 4 alone. |
 | D3 | What shape does `output()` take? | **Decided 2026-08-17: staging table + atomic rename, `navigator.locks`-guarded, multi-tab safe.** See §1.1. | Implementation lands in wave 3. Hard prerequisites: B1 (real exclusivity) and a `navigator.locks` primitive. |
 
 | D4 | Should the query API be layered on an explicit `chunk()` primitive? | **Decided 2026-08-17: yes.** See §1.2. | Lands in wave 1, together with the abort fixes. Renaming `stream()` is a silently-shaped break — accepted, we are in RC. |
@@ -229,6 +229,38 @@ up streaming compilation. Acceptable only as an opt-in subpath entry, never as t
 **Rejected: waiting for Vite.** The `import.meta.url` rewrite during esbuild pre-bundling
 is intended behaviour, not a bug in flight — do not plan around a fix.
 
+### 1.5 D2, corrected — the SAB's two usages have different replacement dates
+
+Found 2026-08-18 while reading `worker/worker.ts` for wave 1's brainstorming. D2 as
+originally written assumed `navigator.locks` + a `postMessage`-driven boolean replaced
+**both** SAB usages, so the whole SAB could go in wave 4. That is true of one usage only.
+
+| SAB usage | Replacement | Available from |
+|---|---|---|
+| Init mutex (`lock`/`unlock`, `Atomics.wait` worker-side) | `navigator.locks` | Wave 3 (D3 already brings the primitive in) |
+| Per-worker `ABORTING` status byte | a `postMessage`-driven boolean | **Only once back-pressure exists** |
+
+**Why the abort flag is different.** The worker's row loop
+(`worker/worker.ts:170-205`) is an unbroken chain of `await sqlite.step()`. It never
+returns to its event loop for the duration of a query, so **a `postMessage` sent during
+a query is never delivered**. Shared memory is the only channel that reaches a worker in
+that state — which is exactly why the SAB exists. The flag becomes replaceable only when
+the worker awaits a client message per chunk, i.e. the credit/ack scheme currently filed
+under wave 5 perf.
+
+**Consequence, to arbitrate when wave 4 gets there (not before):** either pull the
+credit/ack scheme forward into wave 4 so D2 completes in one go, or push the SAB removal
+to wave 5 and accept that COOP/COEP holds until then. Removing only the init mutex in
+wave 4 leaves a SAB behind and therefore banks **none** of D2's actual benefit.
+
+**Verified the same day: no VFS forces cross-origin isolation.** `grep -rE
+'SharedArrayBuffer|Atomics\.'` over the whole of `node_modules/wa-sqlite` (`src/` and
+`dist/`) returns nothing — not in the six VFS examples, not in the Emscripten glue, not
+in the shipped `.wasm`. The OPFS VFS rely on `FileSystemSyncAccessHandle`, which does not
+require isolation; `OPFSAdaptiveVFS` requires JSPI, an unrelated constraint. So the
+COOP/COEP requirement is **entirely self-imposed by our `orchestrator.ts`**, and D2 really
+does remove it. W-sab asserted this; it is now measured.
+
 ## 2. Order of work
 
 Each wave is independently shippable. The ordering rationale that matters: **the test
@@ -273,12 +305,29 @@ three (CI green, memories updated, git clean):
    in flight is tolerated). Leaving `< 20` on a now-deterministic mechanism recreates the
    unfalsifiable-assertion defect wave 0 was spent removing.
 
-**Open for this wave's brainstorming — settle it before writing code:** what does a
-*caller* abort mean on `chunk()` / `stream()`? Today it ends the generator silently
-(`done: true`). D4 §1.2 rules that on `first()` a caller abort **rejects with
-`AbortError`** while the internal abort resolves normally. Aligning `chunk()` on that rule
-changes `INT-09` from "the loop ends" to "the loop throws" — the test is rewritten either
-way, but not the same way. Decide first, then write.
+4. **The abort ack already exists — do not invent a protocol.** After breaking on
+   `ABORTING`, the worker still posts `done` (`worker/worker.ts:227`). The client simply
+   does not wait for it: `query()`'s `finally` republishes the worker while that `done` is
+   still in flight, which is the second half of B1 (a worker freed while still inside
+   `sqlite.step()`). The fix is to await the pending `done` / `error` before releasing.
+   **Caveat:** that wait hangs forever if the worker died — it depends on wave 2's
+   per-request timeout for robustness. Note the dependency; do not pull wave 2 forward.
+
+**Settled at wave 1's brainstorming, 2026-08-18** (was left open here):
+- **A caller abort rejects with `AbortError`** on `chunk()` / `stream()` / `read()` /
+  `write()`, matching `fetch` and the web streams. The decisive argument: today a caller
+  aborting on a timeout cannot tell "I received everything" from "I was cut off", and
+  processes a truncated result set as complete. `first()`'s *internal* abort stays
+  distinct and resolves normally — the D4 §1.2 trap, unchanged.
+- **Full W-arch split in this wave**, with `bulkWrite` and `output` together in `bulk.ts`
+  (user). This also resolves D3 §1.1's open relocation question: the target is `bulk.ts`.
+  Risk accepted and mitigated by commit sequencing — pure code movement first, semantic
+  changes after, so a move bug stays distinguishable from a logic bug.
+- **Exclusivity by opaque lease.** `PoolWorker.available` is deleted outright; availability
+  lives inside the scheduler. No module outside it can write the flag, so B1's `finally` is
+  not fixable-but-rewritable — it is inexpressible. `release()` is idempotent.
+- Module layout: `scheduler.ts` (pure, Node-testable) / `pool.ts` (transport) /
+  `queries.ts` / `transaction.ts` / `bulk.ts` / `client.ts` (assembly).
 
 ### 2.1 Wave P — packaging
 
