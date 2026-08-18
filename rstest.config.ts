@@ -57,6 +57,9 @@ export default defineConfig({
       include: ['tests/**/*.test.ts', 'tests/**/*.spec.ts'],
       exclude: ['tests/browser/**'],
       passWithNoTests: true,
+      // Explicit rather than inherited: these are pure Node tests with no I/O,
+      // so anything approaching this bound is a deadlock, not slowness.
+      testTimeout: 10000,
     },
     {
       name: 'browser',

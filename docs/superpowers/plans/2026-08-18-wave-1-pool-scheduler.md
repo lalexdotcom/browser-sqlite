@@ -15,7 +15,14 @@
 - **Language:** French in chat only. All code, comments, commit messages, docs: English.
 - **Serena first.** Symbolic tools (`find_symbol`, `replace_symbol_body`, `insert_after_symbol`, `rename`, `move`) are PRIMARY for `.ts` files. Built-in Read/Edit/Grep on code only when Serena fails or the file is unparseable. `client.ts` is a single 736-line factory closure the LSP cannot see inside — built-in tools are the accepted fallback **for that file only**.
 - **After every modification:** `pnpm check` (biome, writes fixes).
-- **Verification at every task:** `pnpm check && npx tsc --noEmit && pnpm test`. All three must pass before committing.
+- **Verification at every task, always wrapped in a hard timeout:**
+
+  ```bash
+  timeout -k 30 300 pnpm check && timeout -k 30 300 npx tsc --noEmit && timeout -k 30 600 pnpm test
+  ```
+
+  All three must pass before committing. **Never run an unbounded test command.** A per-test `testTimeout` only catches a slow test; it does not catch a suite that finishes and never exits because a Web Worker handle stayed open — which is the failure mode this wave actively risks (Task 4's drain loop waits for a `done` that a dead worker never sends). A `timeout` exit code 124 is a hard failure to report, not a result to wait out.
+- **Per-test bounds** are set in `rstest.config.ts`: 30 s in the `browser` project (worker boot plus OPFS), 10 s in `unit` (pure Node — anything near it is a deadlock, not slowness).
 - **Test count baseline:** 105 tests green at the start (57 unit + 48 browser).
 - **`it.fails` convention:** a pinned test asserts the *correct* behaviour; `.fails` asserts the bug is still present. When the bug is fixed the test starts passing, which makes `it.fails` **fail** — that red is the signal to drop `.fails`, not a regression. Never re-add it.
 - **No `CHANGELOG.md`.** `1.0.0-rc.3` has no consumer; breaking changes are recorded in `.serena/memories/`, not in a migration note.
