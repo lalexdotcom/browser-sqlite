@@ -1,3 +1,5 @@
+import { SQLiteError } from './errors';
+
 export const sqlParams = () => {
   const sqlParamsMap = new Map<any, number>();
   const sqlParams: any[] = [];
@@ -53,3 +55,20 @@ export const isReadQuery = (sql: string) =>
   /^\s*(SELECT|EXPLAIN|VALUES|WITH)\b/i.test(sql) && !WRITE_KEYWORDS.test(sql);
 
 export const isWriteQuery = (sql: string) => !isReadQuery(sql);
+
+/**
+ * Routing guard for the read-shaped methods (`read`, `chunk`, `stream`, `first`).
+ * Throws before a lease is taken, so a rejected statement costs no pool capacity.
+ *
+ * Note: `isReadQuery` classifies every PRAGMA as a write, so a read pragma has
+ * to go through `write()` until B4 lands its pragma allowlist.
+ */
+export const assertReadable = (sql: string, method: string): void => {
+  if (isReadQuery(sql)) return;
+  const keyword = sql.trim().split(/\s+/)[0]?.toUpperCase() ?? '';
+  throw new SQLiteError(
+    'NOT_A_READ_QUERY',
+    `${method}() only accepts statements that are provably reads; "${keyword}" must go through write(). ` +
+      `Note that every PRAGMA is currently classified as a write.`,
+  );
+};

@@ -14,7 +14,7 @@ import { createScheduler } from './scheduler';
 import { createSupervisor } from './supervisor';
 import { createTransaction, type TransactionDB } from './transaction';
 import type { SQLiteQueryOptions, SQLiteVFS } from './types';
-import { isReadQuery } from './utils';
+import { assertReadable } from './utils';
 
 /**
  * SQLite client for browser environments using a pool of Web Workers.
@@ -365,7 +365,8 @@ export const createSQLiteClient = (
     params?: unknown[],
     options?: SQLiteQueryOptions<T>,
   ) => {
-    const lease = await scheduler.acquire(isReadQuery(sql) ? 'read' : 'write');
+    assertReadable(sql, 'read');
+    const lease = await scheduler.acquire('read');
     try {
       return await readWorker<T>(lease.worker, sql, params, options);
     } finally {
@@ -390,7 +391,8 @@ export const createSQLiteClient = (
     params?: unknown[],
     options?: { chunkSize?: number; signal?: AbortSignal },
   ) {
-    const lease = await scheduler.acquire(isReadQuery(sql) ? 'read' : 'write');
+    assertReadable(sql, 'chunk');
+    const lease = await scheduler.acquire('read');
     try {
       yield* chunkWorker<T>(lease.worker, sql, params, options);
     } finally {
@@ -410,7 +412,8 @@ export const createSQLiteClient = (
   const stream = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
   >(sql: string, params?: unknown[], options?: SQLiteQueryOptions<T>) {
-    const lease = await scheduler.acquire(isReadQuery(sql) ? 'read' : 'write');
+    assertReadable(sql, 'stream');
+    const lease = await scheduler.acquire('read');
     try {
       yield* streamRows<T>(lease.worker, sql, params, options);
     } finally {
@@ -435,7 +438,7 @@ export const createSQLiteClient = (
     params?: unknown[],
     options?: SQLiteQueryOptions<T>,
   ) => {
-    const lease = await scheduler.acquire(isReadQuery(sql) ? 'read' : 'write');
+    const lease = await scheduler.acquire('write');
     try {
       return await writeWorker<T>(lease.worker, sql, params, options);
     } finally {
@@ -460,7 +463,8 @@ export const createSQLiteClient = (
     params?: unknown[],
     options?: { signal?: AbortSignal },
   ) => {
-    const lease = await scheduler.acquire(isReadQuery(sql) ? 'read' : 'write');
+    assertReadable(sql, 'first');
+    const lease = await scheduler.acquire('read');
     try {
       return await firstWorker<T>(lease.worker, sql, params, options);
     } finally {
