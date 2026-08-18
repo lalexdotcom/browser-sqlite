@@ -2,7 +2,7 @@
 
 Date: 2026-08-18
 Status: approved, not yet implemented
-Covers: B1, B9, FLK-1, W-arch, part of W-types, the abort listener leak
+Covers: B1, B9, FLK-1, W-arch, first half of W-route, part of W-types, the abort listener leak
 Context: `mem:project-state`, `mem:follow-ups`, `mem:resume-plan` §1.2, §1.5, §2.2
 
 ## 1. Goal
@@ -193,11 +193,10 @@ nothing; those are what `transaction.ts` calls. A worker-bound variant that rele
 lease it did not take is the bug this wave exists to eliminate, so the two forms stay
 visibly distinct in name.
 
-**Read/write routing is unchanged.** `acquire('read' | 'write')` is chosen by
-`isWriteQuery(sql)` at exactly the call sites that use it today. Its known defects
-(`VACUUM` / `ALTER` / manual `BEGIN` routed to the read pool, string literals
-misclassified) are `W-route` and stay open — the relayering must not silently change
-routing while it moves the code.
+**Read/write routing does not change during the relayering.** `acquire('read' | 'write')`
+is chosen by `isWriteQuery(sql)` at exactly the call sites that use it today. It is then
+fixed **deliberately, in its own commit at the end of the wave** — see §6.5. The two must
+not be mixed: a routing change buried in a code move is unattributable.
 
 ### 6.2 Abort, implemented once
 
@@ -259,6 +258,29 @@ died. That is B2, wave 2. Do not pull wave 2 forward; note the dependency.
 **Limitation to document:** a consumer who *abandons* a generator without `break` or
 `return` never triggers the `finally`, so the worker stays held until the query ends. This
 is inherent to JS generators.
+
+### 6.5 `W-route`, first half: routing must not bypass exclusivity
+
+`isWriteQuery()` (`utils.ts:24`) is a regex over raw SQL. It misses `VACUUM`, `ALTER`,
+`ANALYZE`, `REINDEX`, `SAVEPOINT` and a manual `BEGIN`, so **those statements route to the
+read pool**. A `VACUUM` can therefore run on an arbitrary worker while the designated
+writer holds an open transaction.
+
+This is not a separate defect from B1 — it is the same guarantee, breached one layer
+higher. Wave 1 cannot honestly claim "exclusivity is real" while leaving a service
+entrance open, so the fix belongs here, in **commit #6**, after the split is green.
+
+**The fix inverts the default: allowlist reads instead of blocklisting writes.** A
+statement routes to the writer unless it is provably a read (`SELECT`, `EXPLAIN`, `WITH …
+SELECT`, `PRAGMA` reads). Extending the existing blocklist keyword by keyword would leave
+the next unlisted statement — and every future SQLite keyword — silently misrouted. With
+an allowlist, a misclassification fails toward the writer: correct, merely slower. The
+regex's string-literal confusion is not fully solved by this (that needs tokenisation), but
+its failure direction becomes safe.
+
+**Not in this wave:** the second half of `W-route` — `write()` routing to the writer
+unconditionally, and `read()` *rejecting* a write query instead of silently running it.
+That is API strictness and error surface, which is wave 2's subject.
 
 ## 7. `transaction.ts` and `bulk.ts`
 
@@ -333,6 +355,7 @@ indistinguishable from a logic bug. The mitigation is commit order, not scope re
 | 3 | `queries.ts`: `chunk()` relayering + abort semantics | B9 red → `.fails` dropped; `INT-09` rewritten |
 | 4 | Renames only: `first()`, `stream()`'s yield, `signal` everywhere | — |
 | 5 | Transaction cleanups: signatures, `exec()`, typo, JSDoc | — |
+| 6 | `W-route` first half: routing allowlist (§6.5) | new routing tests; existing tests may shift — isolated here so any shift is attributable |
 
 `pnpm check`, `tsc --noEmit` and the full suite at every step. Feature branch, per the
 phase workflow in `mem:resume-plan` §3.
@@ -346,7 +369,9 @@ The exit criteria already recorded in `mem:resume-plan` §2.2, restated:
    Fixing B9 and the worker ack alone would leave the flake alive.
 3. `INT-09` asserts an exact value.
 4. The `done` ack is awaited before release.
-5. Plus the standing three: CI green, memories updated, git clean.
+5. **Exclusivity is not bypassable by routing** — `VACUUM`, `ALTER`, `ANALYZE`, `REINDEX`,
+   `SAVEPOINT` and a manual `BEGIN` reach the writer (§6.5), with tests naming each.
+6. Plus the standing three: CI green, memories updated, git clean.
 
 ## 11. Findings recorded for later waves
 

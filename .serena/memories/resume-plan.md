@@ -294,8 +294,8 @@ Wave **P** was inserted in front on 2026-08-17 rather than renumbering, so that 
 |---|---|---|
 | P ✅ | **Packaging — make the package consumable, nothing more.** See §2.1. Closed 2026-08-17. | B10, B8 |
 | 0 ✅ | CI running the suite; put `tests/` in the tsc program; characterization tests for `transaction` / `bulkWrite` / `output`; fix the assertions that cannot fail | B7 |
-| 1 | Extract pool + scheduler into a pure module unit-testable in Node (parameterized over a minimal `{ available: boolean }` shape); make `releaseWorker` the single owner of `available`; **relayer the query API on `chunk()` per §1.2** and fix abort once inside it (covers `stream()`'s early `break` and B9). **Exit criteria in §2.2 — FLK-1 is one of them.** | B1, B9, FLK-1, W-arch, part of W-types |
-| 2 | `onerror` / `onmessageerror`, per-request timeouts, distinct `open-error` message, `close()` handshake that settles in-flight work and calls `sqlite.close()` | B2, B3 |
+| 1 | Extract pool + scheduler into a pure module unit-testable in Node (parameterized over a minimal `{ available: boolean }` shape); make `releaseWorker` the single owner of `available`; **relayer the query API on `chunk()` per §1.2** and fix abort once inside it (covers `stream()`'s early `break` and B9). Plus **W-route's first half** (routing allowlist, commit #6) — routing that bypasses exclusivity is the same defect as B1, one layer up. **Exit criteria in §2.2 — FLK-1 is one of them.** | B1, B9, FLK-1, W-arch, W-route (half), part of W-types |
+| 2 | `onerror` / `onmessageerror`, per-request timeouts, distinct `open-error` message, `close()` handshake that settles in-flight work and calls `sqlite.close()`. Plus **W-route's second half**: `write()` routes to the writer unconditionally, `read()` rejects a write query instead of silently running it — API strictness, same subject as the error surface. The `onerror` message must name the worker URL it failed to load (see B2 in `mem:follow-ups`). | B2, B3, W-route (half) |
 | 3 | `quoteIdent()` + pragma allowlist; **debug wired per §1.3** (do it here, before wave 5, so the perf work is measurable); **`output()` rebuilt as staging + atomic rename per §1.1** (needs a `navigator.locks` primitive — pull it forward from wave 4); `bulkWrite` surfaces per-batch failures | B4, B5, B6 |
 | 4 | B10/B8 and the `consumer-smoke` gate moved to wave P and are **done**. What is left here: **BP-1 (back-pressure, credit/ack) — it is the prerequisite, do it first**; then remove the SAB entirely (D2, §1.5), which drops the COOP/COEP requirement; then **D6 (§1.4): the `browser-sqlite/vite` plugin subpath + the optional `wasmUrl` escape hatch**, which retires the fragile README snippet. | BP-1, W-sab, VIT-1 |
 | 5 | Performance, **with the debug instrumentation live** so the gains are measurable | perf section |
@@ -317,11 +317,15 @@ three (CI green, memories updated, git clean):
    consumer drains an already-full buffer and `chunkCount` reaches 20. Stopping the
    worker loop alone does **not** fix that; refusing to yield what is already queued does,
    deterministically. Fixing B9 and the worker ack without this leaves the flake alive.
-3. `INT-09`'s assertion is tightened to an exact value (`toBe(1)`, or `<= 2` if one chunk
+3. **Exclusivity is not bypassable by routing.** `VACUUM` / `ALTER` / `ANALYZE` /
+   `REINDEX` / `SAVEPOINT` / manual `BEGIN` reach the writer, each named by a test
+   (W-route half 1, spec §6.5). Fixing B1 while routing still sends those to the read pool
+   would close the front door and leave the service entrance open.
+4. `INT-09`'s assertion is tightened to an exact value (`toBe(1)`, or `<= 2` if one chunk
    in flight is tolerated). Leaving `< 20` on a now-deterministic mechanism recreates the
    unfalsifiable-assertion defect wave 0 was spent removing.
 
-4. **The abort ack already exists — do not invent a protocol.** After breaking on
+5. **The abort ack already exists — do not invent a protocol.** After breaking on
    `ABORTING`, the worker still posts `done` (`worker/worker.ts:227`). The client simply
    does not wait for it: `query()`'s `finally` republishes the worker while that `done` is
    still in flight, which is the second half of B1 (a worker freed while still inside
