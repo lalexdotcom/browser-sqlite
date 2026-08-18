@@ -140,6 +140,12 @@ export const createTransaction =
       }
       throw e;
     } finally {
-      lease.release();
+      // The lease returns when the worker confirms it is idle, not when the
+      // caller leaves: a worker still inside step() must not be re-lent, and
+      // the caller must not wait for it.
+      void lease.worker.quiesce().then(
+        () => lease.release(),
+        () => lease.release(),
+      );
     }
   };
