@@ -16,23 +16,33 @@ characterization suites, and a consumer smoke test covering the published tarbal
 package is consumable from four modes (Vite dev, Vite preview, rsbuild preview,
 no-bundler). 11/11 consumer smoke stages pass; `consumer-smoke` CI job is now blocking.
 
-**WAVE 1 IS IN FLIGHT, PAUSED 2026-08-18 after task 5 of 9** (user paused for usage quota, not a
-blocker). Branch **`wave-1-pool-scheduler`**, clean, 9 commits ahead of `main`, 119 tests green,
-**no `it.fails` left in the suite**. Do NOT merge — the phase closure conditions are not met until
-task 9. The execution ledger, which is the authoritative resume point, is at
-`.superpowers/sdd/2026-08-18-wave-1-pool-scheduler/progress.md` (git-ignored scratch — if it is
-gone, rebuild from `git log` and the plan). It records every ruling made during execution.
+**WAVE 1 IS COMPLETE ON ITS BRANCH, AWAITING MERGE (2026-08-18).** Branch
+**`wave-1-pool-scheduler`**, clean, 15 commits ahead of `main`, **148 tests green**, no `it.fails`
+anywhere. Final whole-branch review returned no Critical findings; its two Important findings were
+fixed and re-reviewed clean. **Not merged** — that decision is the user's.
 
-Already closed on the branch: **B1** (exclusivity by opaque lease; `PoolWorker.available` deleted
-outright), **B9**, **FLK-1** and the abort listener leak (all three at their shared root in
-`chunk()`), plus `scheduler.ts` / `pool.ts` / `queries.ts` / `transaction.ts` extracted. Remaining:
-task 6 `bulk.ts` (pure move), task 7 renames + options types, task 8 W-route allowlist, task 9
-closure. Two defects were found *during* execution and fixed: `scheduler.add` did not drain the
-wait queues (a query issued during pool init hung forever), and `releaseWorker` never claimed the
-writer designation when serving a queued writer with none set (a second writer could be
-designated).
+Closed by this wave: **B1**, **B9**, **FLK-1**, the abort listener leak, **W-arch**, **W-route
+half 1**, and part of **W-types**. See `mem:follow-ups` for the evidence on each.
 
-**Original wave 1 statement** — extract pool + scheduler, fix exclusivity (B1), relayer the query
+**Three defects were found during execution that the plan had not anticipated** — worth knowing,
+because each was invisible to the tests that existed at the time:
+1. `scheduler.add` did not drain the wait queues, so a query issued while the pool was still
+   initialising asynchronously waited forever.
+2. `releaseWorker` never claimed the writer designation when serving a queued writer with none
+   set, so a **second writer** could be designated — the same invariant as B1, one layer over.
+3. The routing allowlist was written wrong **twice** (once in the plan, once in the controller's
+   correction of it) before an adversarial review caught that it ignored everything after a `;`.
+
+**Standing lesson from this wave: assert falsifiability, not passage.** Seven tests written during
+wave 1 passed identically with and without the behaviour they claimed to pin. The habit that caught
+them: for each test, state which line, if deleted, makes it fail. Ask it of every test from now on.
+
+**Next up: wave 2** — B2 (`onerror` / `onmessageerror` / per-request timeouts, and an actionable
+worker-load error naming the URL), B3 (`close()` handshake), plus **W-route half 2** (`read()`
+rejects a write query instead of silently running it). Wave 1 left a live dependency on B2: the
+stop-and-drain loop in `pool.ts` waits for a reply a dead worker never sends.
+
+**Original wave 1 statement, for reference** — extract pool + scheduler, fix exclusivity (B1), relayer the query
 API on `chunk()` (D4, §1.2), fix abort once inside it (covers `stream()`'s early `break`
 and B9). Two `it.fails` tests are waiting for it: B1 in
 `tests/browser/transaction.test.ts`, B9 in `tests/browser/concurrency.test.ts`.
@@ -442,6 +452,27 @@ page", not "drop it in any page".
   not the next one. The open items are listed per wave in `mem:follow-ups` and in §1.
 
 ## 4. Changelog of this plan
+
+- **2026-08-18** — **Wave 1 implemented on `wave-1-pool-scheduler`, 15 commits, 148 tests green,
+  awaiting merge.** What shipped:
+  - `client.ts` split into `scheduler.ts` (pure, no `Worker`/DOM/orchestrator import, driven by 15
+    Node unit tests) / `pool.ts` (transport) / `queries.ts` / `transaction.ts` / `bulk.ts`, with
+    `client.ts` reduced to assembly.
+  - **B1 fixed by construction**: `PoolWorker.available` deleted outright, availability private to
+    the scheduler, handed out as idempotent leases. The offending `finally` cannot be written any
+    more. `transaction()` holds one lease for its whole lifetime.
+  - **Abort implemented once, in `chunk()`**: up-front `signal.aborted` check (B9); refusal to
+    yield anything already queued once the signal fires (FLK-1); listener removal in the `finally`
+    (the leak); and the in-flight `done` awaited before the lease returns (B1's second half).
+  - **`first()` breaks instead of aborting**, which designed out D4 §1.2's internal-abort trap
+    entirely — `AbortSignal.any` is not used anywhere and its browser-baseline question is void.
+  - `one()` → `first()`, `stream()` yields rows, `chunk()` public, `signal` on every method.
+  - **W-route half 1**: allowlist requiring an allowlisted opening keyword AND no write keyword
+    anywhere — the second clause matters because the worker executes `;`-separated statements.
+  - **FLK-1 verified dead by 10 consecutive full browser-suite runs**, not by one green run.
+  - Verification commands are now bounded (`timeout -k 30`), and the `unit` project has an explicit
+    `testTimeout`. A per-test bound does not catch a suite that finishes and never exits on an open
+    worker handle, which is what `pool.ts`'s drain loop risks until B2 lands.
 
 - **2026-08-18** — **D6 decided** (see §1.4). VIT-1 stays "not an artefact defect", but the
   boilerplate moves from the consumer to us: a `browser-sqlite/vite` plugin subpath in
