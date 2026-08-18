@@ -1,6 +1,6 @@
 # Project State — `browser-sqlite`
 
-Snapshot date: 2026-08-17. Update this file when the facts below change.
+Snapshot date: 2026-08-18 (post wave 1). Update this file when the facts below change.
 
 ## What it is
 
@@ -128,27 +128,53 @@ which hashes the config file itself. `pnpm build` is therefore always correct; n
 
 | File | Lines | Role |
 |---|---|---|
-| `client.ts` | 1016 | God module: worker lifecycle, pool scheduling, dispatch, transactions, bulk ETL. Exports `createSQLiteClient` (a ~736-line factory closure), `CreateSQLiteClientOptions`, `SQLiteDB`, `SQLiteQueryOptions`, `SQLiteStreamOptions`, `DEFAULT_POOL_SIZE`, `DEFAULT_VFS`. |
-| `worker/worker.ts` | 258 | Worker thread: VFS bootstrap, `open`, statement execution, chunked streaming. Holds `VFSConfigs` (the good extensibility pattern — `satisfies Record<SQLiteVFS, …>`). Moved from `src/worker.ts` in wave P so the source tree mirrors the output tree. |
+| `client.ts` | 461 | **Assembly only** (since wave 1): options, validation, wiring, the public `SQLiteDB` surface, `close()`. No longer a god module — it was 1016 lines and held everything below. |
+| `scheduler.ts` | 132 | **Pure** — availability (a private `Set`), both wait queues, writer designation, opaque leases. No `Worker`, no DOM, no orchestrator import, so Node tests drive it in milliseconds. **This purity is load-bearing: B1 survived for months because the scheduler was only reachable through slow browser tests.** |
+| `pool.ts` | 209 | Worker creation and transport: `postMessage` / `onmessage` routed by `callId`, the raw query generator, and the stop-and-drain that waits for the worker's in-flight `done` before a lease returns. |
+| `queries.ts` | 128 | `chunk()` — the single query primitive and **the only place `AbortSignal` is read** — plus `streamRows` / `readWorker` / `firstWorker` / `writeWorker`. |
+| `transaction.ts` | 145 | `transaction()` over a single lease held for its whole lifetime. |
+| `bulk.ts` | 170 | `bulkWrite()` + `output()`. Still carries B5 verbatim. Calls the **public** `write` (one lease per batch, worker released between batches) — a property D3 depends on; do not consolidate it into one held lease. |
+| `worker/worker.ts` | 258 | Worker thread: VFS bootstrap, `open`, statement execution, chunked streaming. Holds `VFSConfigs` (the good extensibility pattern — `satisfies Record<SQLiteVFS, …>`). |
 | `orchestrator.ts` | 183 | `WorkerOrchestrator`: `SharedArrayBuffer` + `Atomics` for the init mutex and per-worker status flags. `Atomics.wait` is called worker-side only. |
-| `debug.ts` | 221 | Instrumentation subsystem — **entirely dead code today** (see `mem:follow-ups` B6). |
-| `types.ts` | 70 | Wire protocol types; lines 1-38 are a stale duplicate that disagrees with the live one. |
-| `utils.ts` | 28 | `isWriteQuery()` regex + `sqlParams`/`addParam` (exported, tested, unused by the lib). |
+| `debug.ts` | 227 | Instrumentation subsystem — **still entirely dead code** (B6). |
+| `types.ts` | 85 | Wire protocol types plus the shared `SQLiteQueryOptions`. Lines 1-38 are still a stale duplicate that disagrees with the live one. |
+| `utils.ts` | 55 | `isReadQuery` / `isWriteQuery` (allowlist since wave 1) + `sqlParams`/`addParam` (exported, tested, unused by the lib). |
 | `wa-sqlite.d.ts` | 80 | Hand-written 7-method `SQLiteAPI` subset shadowing wa-sqlite's own shipped types; **missing `close`**. |
 | `index.ts` | 1 | `export * from './client'` |
 
-Public API surface: `read` / `write` / `one` / `stream` / `transaction` / `close`,
-plus `bulkWrite` and `output` (schema DSL + drop/recreate/populate — ETL misplaced in
-the client layer).
+Public API surface (since wave 1): `chunk` / `read` / `write` / `first` / `stream` /
+`transaction` / `close`, plus `bulkWrite` and `output`. `one()` was renamed `first()`,
+`stream()` yields rows rather than chunks, `chunk()` is the new chunk-wise path, and
+`signal` is accepted on every method.
 
-## Key invariant, and how it is currently violated
+## Key invariant — established in wave 1, do not weaken it
 
-The pool's exclusivity guarantee rests on `PoolWorker.available`. Today
-`client.ts:454` (the `finally` of `worker.query()`) is the **only** place that sets it
-back to `true`, and it fires per-statement — while `releaseWorker` (`client.ts:554`)
-never touches the flag at all, it just hands the worker to the next queued requester.
-Any owner that holds a worker across several statements (i.e. `transaction()`) sees it
-republished as free after the first one. Verified in source, not just reported.
+Exclusivity rests on availability being **unreachable from outside `scheduler.ts`**.
+`PoolWorker` carries no `available` field: it was deleted, not guarded. Workers are handed
+out as `Lease` objects whose `release()` is idempotent and is the only way back into the
+pool. `transaction()` holds one lease for its whole lifetime.
+
+This replaced the wave-0 state, where `client.ts`'s per-statement `finally` was the only
+writer of `available` and republished a borrowed worker after every statement — so a
+concurrent `read()` could execute *inside* an open transaction (B1).
+
+**Two things that look like tidying but would reopen B1:**
+- adding any availability flag to the worker object, however well-guarded;
+- making a worker-bound helper in `queries.ts` release a lease it did not acquire. The
+  public methods own their leases; the worker-bound variants own nothing. Keep the two
+  forms distinguishable by name.
+
+Routing is part of the same guarantee: `isReadQuery` (`utils.ts`) is an allowlist requiring
+an allowlisted opening keyword **and** no write keyword anywhere in the statement. The
+second clause is not decoration — the worker executes `;`-separated statements, so
+`SELECT 1; DROP TABLE t` opens as a read and is not one.
+
+### A TypeScript 7 trap paid for in wave 1
+
+`const x: (() => T) | undefined = undefined` narrows to `undefined`, and TS 7 then reports
+"Type 'never' has no call signatures" at `x?.()`. Writing `undefined as (() => T) | undefined`
+preserves the union. It cost real time in `pool.ts`'s debug hooks; expect it again wherever a
+placeholder `undefined` must keep a callable union type.
 
 ## CI / hooks
 
