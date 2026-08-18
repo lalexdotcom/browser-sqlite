@@ -186,6 +186,19 @@ The `T[] | number` union stays internal. It is what forces every current call si
 write `typeof chunk !== 'number'`; only `write()` needs the affected count, and it reads
 `rawQuery()` directly.
 
+**Who holds the lease.** Each of the five public methods keeps today's six-line shape —
+acquire, delegate, `finally release()` — and is the only lease owner. Each also has a
+*worker-bound* variant taking an already-leased worker, which acquires and releases
+nothing; those are what `transaction.ts` calls. A worker-bound variant that released a
+lease it did not take is the bug this wave exists to eliminate, so the two forms stay
+visibly distinct in name.
+
+**Read/write routing is unchanged.** `acquire('read' | 'write')` is chosen by
+`isWriteQuery(sql)` at exactly the call sites that use it today. Its known defects
+(`VACUUM` / `ALTER` / manual `BEGIN` routed to the read pool, string literals
+misclassified) are `W-route` and stay open — the relayering must not silently change
+routing while it moves the code.
+
 ### 6.2 Abort, implemented once
 
 Inside `chunk()`, in this order:
