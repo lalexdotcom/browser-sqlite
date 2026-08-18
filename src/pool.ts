@@ -1,0 +1,200 @@
+import { type WorkerOrchestrator, WorkerStatuses } from './orchestrator';
+import type { SQLiteVFS, WorkerMessageData } from './types';
+
+/**
+ * Query execution options forwarded to a pool worker.
+ */
+export type PoolWorkerQueryOptions = {
+  id?: string;
+  chunkSize?: number;
+  signal?: AbortSignal;
+  debug?: string;
+};
+
+/**
+ * A Worker extended with pool-specific properties.
+ *
+ * Note: no `available` field — availability lives in the Scheduler, not on
+ * the worker itself. This makes it impossible to republish a borrowed worker
+ * from outside the scheduler (the root cause of B1).
+ */
+export type PoolWorker = Worker & {
+  index: number;
+  query: <T extends Record<string, unknown> = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+    options?: PoolWorkerQueryOptions,
+  ) => AsyncGenerator<T[] | number>;
+};
+
+/**
+ * Creates a new pool worker and registers it in the pool array.
+ * Sets up message routing via callId for query responses.
+ *
+ * Moved verbatim from `createWorker` in client.ts, with three changes:
+ *  1. Closure variables become explicit `deps` parameters.
+ *  2. Both `available` assignments are deleted (availability lives in the Scheduler).
+ *  3. `worker.available = false/true` in the `query` generator are deleted.
+ */
+export const createPoolWorker = (deps: {
+  orchestrator: WorkerOrchestrator;
+  pool: PoolWorker[];
+  clientPrefix: string;
+  file: string;
+  vfs: SQLiteVFS;
+  pragmas?: Record<string, string>;
+}): Promise<PoolWorker> => {
+  const { orchestrator, pool, clientPrefix, file, vfs, pragmas } = deps;
+
+  const deferredInit = Promise.withResolvers<PoolWorker>();
+
+  const workerName = `${clientPrefix} / Worker ${pool.length + 1}`;
+  const index =
+    pool.push(
+      new Worker(
+        /* webpackChunkName: "browser-sqlite" */ new URL(
+          './worker/worker.js',
+          import.meta.url,
+        ),
+        {
+          name: workerName,
+          type: 'module',
+        },
+      ) as PoolWorker,
+    ) - 1;
+  const worker = Object.assign(pool[index], {
+    index,
+  });
+
+  // Debug hooks — wired up per-client in a future task; currently always undefined.
+  const createWorkerDebugState = undefined as
+    | ((i: number, name: string) => any)
+    | undefined;
+  const createQueryDebugState = undefined as
+    | ((i: number, sql: string, params?: unknown[]) => any)
+    | undefined;
+
+  const state = createWorkerDebugState?.(index, workerName);
+
+  let currentCallId = 0;
+
+  // Deferred promise for streaming query results one chunk at a time
+  let deferredChunk: PromiseWithResolvers<unknown[] | number> | undefined;
+
+  // Message handler routes responses by callId
+  worker.onmessage = ({ data }: MessageEvent<WorkerMessageData>) => {
+    const { callId, type } = data;
+    if (callId === 0 && type === 'ready') {
+      if (state) state.initializationTime = Date.now();
+      deferredInit.resolve(worker);
+    }
+    if (deferredChunk && callId === currentCallId) {
+      switch (type) {
+        case 'chunk': {
+          if (state?.currentRequest?.currentQuery) {
+            state.currentRequest.currentQuery.firstRowTime ??= Date.now();
+          }
+          deferredChunk.resolve(data.data);
+          deferredChunk = Promise.withResolvers<unknown[] | number>();
+          break;
+        }
+        case 'done': {
+          const affected = data.affected;
+          if (state?.currentRequest?.currentQuery) {
+            state.currentRequest.currentQuery.affectedRows = affected;
+            state.currentRequest.affectedRows += affected;
+            state.currentRequest.currentQuery.endTime = Date.now();
+          }
+          deferredChunk.resolve(affected);
+          deferredChunk = undefined;
+          break;
+        }
+        case 'error': {
+          const error = new Error(data.message, { cause: data.cause });
+          if (state?.currentRequest?.currentQuery) {
+            state.currentRequest.currentQuery.error = error;
+            state.currentRequest.currentQuery.endTime = Date.now();
+          }
+          deferredChunk.reject(error);
+          deferredChunk = undefined;
+          break;
+        }
+      }
+    }
+  };
+
+  /**
+   * Generator function that executes a query and streams results.
+   * Manages the deferredChunk protocol and abort signals.
+   */
+  const query = async function* <
+    T extends Record<string, unknown> = Record<string, unknown>,
+  >(
+    sql: string,
+    params?: unknown[],
+    options?: PoolWorkerQueryOptions,
+  ): AsyncGenerator<T[] | number> {
+    try {
+      if (deferredChunk) {
+        console.error(`Previous query not finished on worker ${index + 1}`);
+        throw new Error('Worker is already processing a query');
+      }
+
+      if (state?.currentRequest) {
+        const queryState = createQueryDebugState?.(index, sql, params);
+        state.currentRequest.currentQuery = queryState;
+      }
+
+      // Extract query options
+      const { chunkSize = 500, signal } = options ?? {};
+
+      // Set up abort handling
+      const signalAbortHandler = () => {
+        orchestrator.setStatus(
+          index,
+          WorkerStatuses.ABORTING,
+          WorkerStatuses.RUNNING,
+        );
+      };
+      signal?.addEventListener('abort', signalAbortHandler);
+
+      // Prepare for streaming chunks
+      deferredChunk = Promise.withResolvers<unknown[] | number>();
+
+      // Send query to worker with options
+      worker.postMessage({
+        type: 'query',
+        callId: ++currentCallId,
+        sql,
+        params,
+        options: { chunkSize },
+      });
+
+      // Stream chunks until query completes
+      while (deferredChunk) {
+        const chunk = await deferredChunk.promise;
+        yield chunk as T[] | number;
+      }
+      signal?.removeEventListener('abort', signalAbortHandler);
+    } finally {
+      // Clean up chunk state
+      deferredChunk = undefined;
+    }
+  };
+
+  // Attach query method to worker
+  Object.assign(worker, { query });
+
+  // Initialize worker with database file and configuration
+  worker.postMessage({
+    callId: 0,
+    type: 'open',
+    file,
+    flags: orchestrator.sharedArrayBuffer,
+    index,
+    vfs,
+    pragmas,
+  });
+
+  return deferredInit.promise;
+};

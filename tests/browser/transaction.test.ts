@@ -165,7 +165,7 @@ describe('transaction() worker exclusivity (B1)', () => {
    * `releaseWorker` the single owner of `available`, this test starts passing —
    * which makes `it.fails` fail. That is the signal to drop `.fails`.
    */
-  it.fails('does not leak the transaction worker to a concurrent read', async () => {
+  it('does not leak the transaction worker to a concurrent read', async () => {
     const db = await createTestClient({ poolSize: 1 });
 
     await db.write('CREATE TABLE tx_leak (id INTEGER)');

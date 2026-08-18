@@ -99,6 +99,22 @@ export const createScheduler = <W extends { index: number }>(
   return {
     add: (worker) => {
       workers[worker.index] = worker;
+      // Serve any requests that arrived before this worker was ready, preserving
+      // the same writer-first priority as handOver. Does NOT call onIdle — the
+      // worker is newly joining the pool, not returning from a lease.
+      if (
+        writerQueue.length &&
+        (currentWriterIndex === worker.index || currentWriterIndex === -1)
+      ) {
+        currentWriterIndex = worker.index;
+        writerQueue.shift()?.(worker);
+        return;
+      }
+      if (readerQueue.length) {
+        if (currentWriterIndex === worker.index) currentWriterIndex = -1;
+        readerQueue.shift()?.(worker);
+        return;
+      }
       available.add(worker.index);
     },
 

@@ -1,6 +1,8 @@
 import type { createClientDebug } from './debug';
 import { WorkerOrchestrator, WorkerStatuses } from './orchestrator';
-import type { SQLiteVFS, WorkerMessageData } from './types';
+import { createPoolWorker, type PoolWorker } from './pool';
+import { createScheduler } from './scheduler';
+import type { SQLiteVFS } from './types';
 import { isWriteQuery } from './utils';
 
 /**
@@ -298,284 +300,16 @@ export const createSQLiteClient = (
     );
   }
 
-  const {
-    state: debug,
-    createRequestDebugState,
-    createWorkerDebugState,
-    createQueryDebugState,
-  } = {} as ReturnType<typeof createClientDebug>;
+  const { state: debug } = {} as ReturnType<typeof createClientDebug>;
 
   /**
-   * Worker instance extended with pool-specific properties.
-   */
-  type PoolWorker = Worker & {
-    index: number;
-    available: boolean;
-    query: <T extends Record<string, unknown> = Record<string, unknown>>(
-      sql: string,
-      params?: unknown[],
-      options?: SQLiteQueryOptions<T>,
-    ) => AsyncGenerator<T[] | number>;
-  };
-
-  /**
-   * Creates a new worker and adds it to the pool.
+   * Creates a new pool worker and adds it to the pool.
    * Sets up message routing via callId for query responses.
    */
-  const createWorker = () => {
-    const deferredInit = Promise.withResolvers<PoolWorker>();
-
-    const workerName = `${clientPrefix} / Worker ${pool.length + 1}`;
-    const index =
-      pool.push(
-        new Worker(
-          /* webpackChunkName: "browser-sqlite" */ new URL(
-            './worker/worker.js',
-            import.meta.url,
-          ),
-          {
-            name: workerName,
-            type: 'module',
-          },
-        ) as PoolWorker,
-      ) - 1;
-    const worker = Object.assign(pool[index], {
-      index,
-      available: false,
-    } as PoolWorker);
-
-    const state = createWorkerDebugState?.(index, workerName);
-
-    let currentCallId = 0;
-
-    // Deferred promise for streaming query results one chunk at a time
-    let deferredChunk: PromiseWithResolvers<unknown[] | number> | undefined;
-
-    // Message handler routes responses by callId
-    worker.onmessage = ({ data }: MessageEvent<WorkerMessageData>) => {
-      const { callId, type } = data;
-      if (callId === 0 && type === 'ready') {
-        worker.available = true;
-        if (state) state.initializationTime = Date.now();
-        deferredInit.resolve(worker);
-      }
-      if (deferredChunk && callId === currentCallId) {
-        switch (type) {
-          case 'chunk': {
-            if (state?.currentRequest?.currentQuery) {
-              state.currentRequest.currentQuery.firstRowTime ??= Date.now();
-            }
-            deferredChunk.resolve(data.data);
-            deferredChunk = Promise.withResolvers<unknown[] | number>();
-            break;
-          }
-          case 'done': {
-            const affected = data.affected;
-            if (state?.currentRequest?.currentQuery) {
-              state.currentRequest.currentQuery.affectedRows = affected;
-              state.currentRequest.affectedRows += affected;
-              state.currentRequest.currentQuery.endTime = Date.now();
-            }
-            deferredChunk.resolve(affected);
-            deferredChunk = undefined;
-            break;
-          }
-          case 'error': {
-            const error = new Error(data.message, { cause: data.cause });
-            if (state?.currentRequest?.currentQuery) {
-              state.currentRequest.currentQuery.error = error;
-              state.currentRequest.currentQuery.endTime = Date.now();
-            }
-            deferredChunk.reject(error);
-            deferredChunk = undefined;
-            break;
-          }
-        }
-      }
-    };
-
-    /**
-     * Generator function that executes a query and streams results.
-     * Manages worker ready state and abort signals.
-     */
-    const query = async function* <
-      T extends Record<string, unknown> = Record<string, unknown>,
-    >(
-      sql: string,
-      params?: unknown[],
-      options?: SQLiteQueryOptions<T>,
-    ): AsyncGenerator<T[] | number> {
-      try {
-        // Mark worker as busy
-        worker.available = false;
-        if (deferredChunk) {
-          console.error(`Previous query not finished on worker ${index + 1}`);
-          throw new Error('Worker is already processing a query');
-        }
-
-        if (state?.currentRequest) {
-          const queryState = createQueryDebugState?.(index, sql, params);
-          state.currentRequest.currentQuery = queryState;
-        }
-
-        // Extract query options
-        const { chunkSize = 500, signal } = options ?? {};
-
-        // Set up abort handling
-        const signalAbortHandler = () => {
-          orchestrator.setStatus(
-            index,
-            WorkerStatuses.ABORTING,
-            WorkerStatuses.RUNNING,
-          );
-        };
-        signal?.addEventListener('abort', signalAbortHandler);
-
-        // Prepare for streaming chunks
-        deferredChunk = Promise.withResolvers<unknown[] | number>();
-
-        // Send query to worker with options
-        worker.postMessage({
-          type: 'query',
-          callId: ++currentCallId,
-          sql,
-          params,
-          options: { chunkSize },
-        });
-
-        // Stream chunks until query completes
-        while (deferredChunk) {
-          const chunk = await deferredChunk.promise;
-          yield chunk as T[] | number;
-        }
-        signal?.removeEventListener('abort', signalAbortHandler);
-      } finally {
-        // Always restore worker to ready state
-        deferredChunk = undefined;
-        worker.available = true;
-      }
-    };
-
-    // Attach query method to worker
-    Object.assign(worker, { query });
-
-    // Initialize worker with database file and configuration
-    worker.postMessage({
-      callId: 0,
-      type: 'open',
-      file,
-      flags: orchestrator.sharedArrayBuffer,
-      index,
-      vfs,
-      pragmas: clientOptions?.pragmas,
-    });
-
-    return deferredInit.promise;
-  };
-
-  // Queue for readers waiting for an available worker
-  const readerRequestQueue: Array<(worker: PoolWorker) => void> = [];
-  // Queue for writers waiting for exclusive access to the writer worker
-  const writerRequestQueue: Array<(worker: PoolWorker) => void> = [];
-  // Index of the worker designated for write operations (-1 if none)
-  let currentWriterIndex = -1;
-
-  /**
-   * Acquires an available worker from the pool.
-   * For write operations, uses a dedicated writer worker to prevent conflicts.
-   * For read operations, uses any available worker.
-   */
-  const acquireWorker = (write = false) => {
-    // If write operation and a writer is designated
-    if (write && currentWriterIndex > -1) {
-      const writer = pool[currentWriterIndex];
-      if (writer.available) return writer;
-      return;
-    }
-
-    // Find any available worker in the pool
-    const availableWorker = pool.find((w) => {
-      if (w.available) return true;
-      return false;
-    });
-
-    // If this is a write operation, designate this worker as the writer
-    if (availableWorker && write) {
-      currentWriterIndex = availableWorker.index;
-    }
-    return availableWorker;
-  };
-
-  /**
-   * Waits for a worker to become available.
-   * Adds request to appropriate queue (reader or writer) if no worker is ready.
-   */
-  const acquireNextWorker = async (write = false) => {
-    const availableWorker = acquireWorker(write);
-
-    if (availableWorker) {
-      availableWorker.available = false;
-      return availableWorker;
-    }
-
-    // Queue the request and wait for worker to become available
-    const { promise, resolve } = Promise.withResolvers<PoolWorker>();
-    if (write) {
-      if (debug) debug.queue.write++;
-      writerRequestQueue.push((worker) => {
-        worker.available = false;
-        resolve(worker);
-      });
-    } else {
-      if (debug) debug.queue.read++;
-      readerRequestQueue.push((worker) => {
-        worker.available = false;
-        resolve(worker);
-      });
-    }
-    return promise;
-  };
-
-  /**
-   * Public API to get next available worker.
-   * Returns the worker from the pool by index.
-   */
-  const getNextAvailableWorker = async (write = false) => {
-    const requestState = createRequestDebugState?.();
-    const availableWorker = await acquireNextWorker(write);
-    requestState?.assign(availableWorker.index);
-    return pool[availableWorker.index];
-  };
-
-  /**
-   * Releases a worker back to the pool and processes queued requests.
-   * Prioritizes writer requests, then reader requests.
-   */
-  const releaseWorker = (worker: PoolWorker) => {
-    const requestState = debug?.workers[worker.index]?.currentRequest;
-    if (requestState) requestState.releaseTime = Date.now();
-
-    // Process pending writer requests first
-    if (writerRequestQueue.length) {
-      if (currentWriterIndex === worker.index || currentWriterIndex === -1) {
-        if (debug) debug.queue.write--;
-        writerRequestQueue.shift()?.(worker);
-        return;
-      }
-    }
-
-    // Process pending reader requests
-    if (readerRequestQueue.length) {
-      // If this was the writer, clear the writer designation
-      if (currentWriterIndex === worker.index) {
-        currentWriterIndex = -1;
-      }
-      if (debug) debug.queue.read--;
-      readerRequestQueue.shift()?.(worker);
-      return;
-    }
-    orchestrator.setStatus(worker.index, WorkerStatuses.READY);
-  };
+  const scheduler = createScheduler<PoolWorker>({
+    onIdle: (worker) =>
+      orchestrator.setStatus(worker.index, WorkerStatuses.READY),
+  });
 
   /**
    * Helper to execute a read query and collect all results.
@@ -608,11 +342,11 @@ export const createSQLiteClient = (
     params?: unknown[],
     options?: SQLiteQueryOptions<T>,
   ) => {
-    const worker = await getNextAvailableWorker(isWriteQuery(sql));
+    const lease = await scheduler.acquire(isWriteQuery(sql) ? 'write' : 'read');
     try {
-      return await readWorker(worker, sql, params, options);
+      return await readWorker(lease.worker, sql, params, options);
     } finally {
-      releaseWorker(worker);
+      lease.release();
     }
   };
 
@@ -641,13 +375,18 @@ export const createSQLiteClient = (
   const stream = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
   >(sql: string, params?: unknown[], options?: SQLiteQueryOptions<T>) {
-    const worker = await getNextAvailableWorker(isWriteQuery(sql));
+    const lease = await scheduler.acquire(isWriteQuery(sql) ? 'write' : 'read');
     try {
-      for await (const chunk of streamWorker<T>(worker, sql, params, options)) {
+      for await (const chunk of streamWorker<T>(
+        lease.worker,
+        sql,
+        params,
+        options,
+      )) {
         yield chunk;
       }
     } finally {
-      releaseWorker(worker);
+      lease.release();
     }
   };
 
@@ -685,11 +424,11 @@ export const createSQLiteClient = (
     params?: unknown[],
     options?: SQLiteQueryOptions<T>,
   ) => {
-    const worker = await getNextAvailableWorker(isWriteQuery(sql));
+    const lease = await scheduler.acquire(isWriteQuery(sql) ? 'write' : 'read');
     try {
-      return await writeWorker(worker, sql, params, options);
+      return await writeWorker(lease.worker, sql, params, options);
     } finally {
-      releaseWorker(worker);
+      lease.release();
     }
   };
 
@@ -730,11 +469,11 @@ export const createSQLiteClient = (
     params?: unknown[],
     options?: Omit<SQLiteQueryOptions<T>, 'chunkSize' | 'signal'>,
   ) => {
-    const worker = await getNextAvailableWorker(isWriteQuery(sql));
+    const lease = await scheduler.acquire(isWriteQuery(sql) ? 'write' : 'read');
     try {
-      return await oneWorker(worker, sql, params, options);
+      return await oneWorker(lease.worker, sql, params, options);
     } finally {
-      releaseWorker(worker);
+      lease.release();
     }
   };
 
@@ -912,7 +651,8 @@ export const createSQLiteClient = (
     options?: { readOnly?: boolean; autoCommit?: boolean },
   ) => {
     const { readOnly = false, autoCommit = true } = options ?? {};
-    const worker = await getNextAvailableWorker(!readOnly);
+    const lease = await scheduler.acquire(readOnly ? 'read' : 'write');
+    const worker = lease.worker;
 
     // Validate that read-only transactions don't attempt writes
     const checksql = (sql: string) => {
@@ -971,7 +711,7 @@ export const createSQLiteClient = (
       throw e;
     } finally {
       // Always release worker back to pool
-      releaseWorker(worker);
+      lease.release();
     }
   };
 
@@ -989,14 +729,17 @@ export const createSQLiteClient = (
   // Initialize the worker pool with the requested number of workers
   Promise.all(
     Array.from({ length: poolSize }).map(() =>
-      createWorker().then((worker) => {
-        return worker;
+      createPoolWorker({
+        orchestrator,
+        pool,
+        clientPrefix,
+        file,
+        vfs,
+        pragmas: clientOptions?.pragmas,
       }),
     ),
-  ).then((allWorkers: PoolWorker[]) => {
-    for (const worker of allWorkers) {
-      releaseWorker(worker);
-    }
+  ).then((allWorkers) => {
+    for (const worker of allWorkers) scheduler.add(worker);
   });
 
   // Return the public API
