@@ -152,23 +152,46 @@ describe('scheduler — writer designation', () => {
     // Regression: the original releaseWorker handed the worker to a queued
     // writer without setting currentWriterIndex when it was -1, so the next
     // write acquisition could designate a SECOND writer.
+    //
+    // Both workers must be busy for the write to actually queue, and worker 1
+    // must be the one released — otherwise the buggy path (designation left at
+    // -1, lowest-index-first) and the correct path both pick worker 0 and the
+    // test proves nothing.
     const { scheduler } = makeScheduler(2);
-    const reader = await scheduler.acquire('read');
+    const readerA = await scheduler.acquire('read'); // worker 0
+    const readerB = await scheduler.acquire('read'); // worker 1
     const queued = scheduler.acquire('write');
-    reader.release();
+
+    readerB.release();
     const served = await queued;
+    expect(served.worker.index).toBe(1);
+
+    readerA.release();
+    served.release();
+
     const next = await scheduler.acquire('write');
-    expect(next.worker.index).toBe(served.worker.index);
+    // Correct: designation is 1, so the write goes back to worker 1.
+    // Buggy: designation is still -1, so lowest-index-first picks worker 0.
+    expect(next.worker.index).toBe(1);
   });
 
   it('clears the designation when the writer goes to a reader', async () => {
+    // A reader must genuinely queue, so every worker has to be busy first.
     const { scheduler } = makeScheduler(2);
-    const writer = await scheduler.acquire('write');
-    const queued = scheduler.acquire('read');
-    writer.release();
-    await queued;
-    const other = await scheduler.acquire('write');
-    expect(other.worker.index).not.toBe(writer.worker.index);
+    const writer = await scheduler.acquire('write'); // worker 0, designated
+    const reader = await scheduler.acquire('read'); // worker 1
+    const queuedReader = scheduler.acquire('read');
+
+    writer.release(); // hands worker 0 to the queued reader, clearing designation
+    const servedReader = await queuedReader;
+    expect(servedReader.worker.index).toBe(0);
+
+    // With the designation cleared, a queued write claims whichever worker frees
+    // up next — here worker 1, not the former writer.
+    const queuedWrite = scheduler.acquire('write');
+    reader.release();
+    const newWriter = await queuedWrite;
+    expect(newWriter.worker.index).toBe(1);
   });
 });
 
@@ -650,7 +673,7 @@ describe('AbortSignal (INT-09)', () => {
 });
 ```
 
-Also drop `.fails` from B9's pinned test in the same file — the new B9 test above supersedes it only if they assert the same thing; if the pinned test still exists separately, change `it.fails(` to `it(`.
+**Delete** the existing `it.fails('an already-aborted AbortSignal…')` test — the second new test above supersedes it and asserts strictly more (it also checks that nothing was delivered). After this task, `grep -rn "it.fails" tests/` must return nothing.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -802,7 +825,11 @@ export const writeWorker = async <
 
 - [ ] **Step 5: Expose `chunk` on the public surface**
 
-In `client.ts`, add the `chunk` method with the same acquire/delegate/release shape as `read`, and point `stream` at `streamRows`, `one` at `firstWorker`. Add `chunk` and `first` to the `SQLiteDB` type (the `one` → `first` rename itself is Task 6; for now `first` is an alias so the new tests run).
+**Delete `oneWorker`** — `firstWorker` replaces it; no call site may keep the old name.
+
+In `client.ts`, add the `chunk` method with the same acquire/delegate/release shape as `read` (it is a generator, so `try { yield* … } finally { lease.release() }`), and point `stream` at `streamRows`. Add `chunk` and `first` to the `SQLiteDB` type.
+
+`one` and `first` **both exist after this task** and both delegate to `firstWorker` — `first` because Task 4's tests call it, `one` because the rest of the suite still does. Task 7 deletes `one`. This overlap is deliberate and lasts exactly two tasks.
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
@@ -924,9 +951,9 @@ which is what makes this the control specimen for the split."
 - Modify: `src/client.ts`, `src/queries.ts`
 - Modify: `tests/browser/queries.test.ts`, `tests/browser/init.test.ts` and any other caller
 
-- [ ] **Step 1: Rename `one` to `first` on the public surface**
+- [ ] **Step 1: Delete `one` from the public surface**
 
-Use Serena's `rename` on the symbol so every reference moves with it. `first()` returns the first row of a result set; it never asserted that exactly one row matched, which is what `one` implied.
+Task 4 left `one` and `first` side by side, both delegating to `firstWorker`. Remove `one` from the `SQLiteDB` type, from `client.ts`, and from every caller in `tests/` — use Serena's `find_referencing_symbols` on `one` to enumerate them, then `rename` so no reference is missed. `first()` returns the first row of a result set; it never asserted that exactly one row matched, which is what `one` implied.
 
 - [ ] **Step 2: Make `stream()` yield rows, not chunks**
 
