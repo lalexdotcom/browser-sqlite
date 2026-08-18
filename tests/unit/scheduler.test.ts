@@ -10,6 +10,9 @@ const makeScheduler = (size = 2, onIdle?: (w: TestWorker) => void) => {
   return { scheduler, workers };
 };
 
+/** Drains the microtask queue regardless of how many hops a resolution takes. */
+const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
 describe('scheduler — acquisition', () => {
   it('hands out the lowest-index available worker', async () => {
     const { scheduler } = makeScheduler(3);
@@ -26,10 +29,10 @@ describe('scheduler — acquisition', () => {
     void scheduler.acquire('read').then((lease) => {
       secondIndex = lease.worker.index;
     });
-    await Promise.resolve();
+    await flush();
     expect(secondIndex).toBeUndefined();
     first.release();
-    await Promise.resolve();
+    await flush();
     expect(secondIndex).toBe(0);
   });
 
@@ -72,11 +75,28 @@ describe('scheduler — acquisition', () => {
 
 describe('scheduler — writer designation', () => {
   it('routes every write to the same worker once one is designated', async () => {
-    const { scheduler } = makeScheduler(3);
-    const a = await scheduler.acquire('write');
+    // With 2 workers, designate worker 0 as writer then release it.
+    // A reader immediately acquires worker 0 (lowest-index-first), leaving only
+    // worker 1 available. A subsequent write must queue (the designated writer is
+    // busy) rather than being handed worker 1.
+    const { scheduler } = makeScheduler(2);
+    const a = await scheduler.acquire('write'); // worker 0, designated
     a.release();
-    const b = await scheduler.acquire('write');
-    expect(b.worker.index).toBe(a.worker.index);
+    const reader = await scheduler.acquire('read'); // takes worker 0 (lowest-index)
+
+    let writeIndex: number | undefined;
+    const pending = scheduler.acquire('write').then((l) => {
+      writeIndex = l.worker.index;
+      l.release();
+    });
+    // Correct: write queues because designated worker 0 is busy.
+    // Broken (no designation): write grabs worker 1 immediately.
+    await flush();
+    expect(writeIndex).toBeUndefined();
+
+    reader.release(); // hands worker 0 to the queued write
+    await pending;
+    expect(writeIndex).toBe(0);
   });
 
   it('designates the writer when a queued writer is served', async () => {
@@ -135,27 +155,33 @@ describe('scheduler — leases', () => {
       intruder = l.worker.index;
     });
     for (let statement = 0; statement < 5; statement++) {
-      await Promise.resolve();
+      await flush();
       expect(intruder).toBeUndefined();
     }
     held.release();
-    await Promise.resolve();
+    await flush();
     expect(intruder).toBe(0);
   });
 
   it('ignores a second release', async () => {
+    // Both double-release calls happen while two waiters are queued. Without the
+    // idempotency guard the second handOver invocation would serve the second
+    // waiter immediately, giving two holders the same worker.
     const { scheduler } = makeScheduler(1);
     const lease = await scheduler.acquire('read');
-    lease.release();
-    lease.release();
-    const next = await scheduler.acquire('read');
-    expect(next.worker.index).toBe(0);
-    let extra: number | undefined;
-    void scheduler.acquire('read').then((l) => {
-      extra = l.worker.index;
+    let firstServed = false;
+    let secondServed = false;
+    void scheduler.acquire('read').then(() => {
+      firstServed = true;
     });
-    await Promise.resolve();
-    expect(extra).toBeUndefined();
+    void scheduler.acquire('read').then(() => {
+      secondServed = true;
+    });
+    lease.release();
+    lease.release(); // must be a no-op
+    await flush();
+    expect(firstServed).toBe(true); // the first waiter was served
+    expect(secondServed).toBe(false); // the second must not be — same worker cannot have two holders
   });
 
   it('calls onIdle only when no request is waiting', async () => {

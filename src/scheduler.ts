@@ -102,17 +102,15 @@ export const createScheduler = <W extends { index: number }>(
       available.add(worker.index);
     },
 
-    acquire: (kind): Promise<Lease<W>> => {
+    acquire: async (kind) => {
       const write = kind === 'write';
 
       const immediate = takeAvailable(write);
-      if (immediate) return Promise.resolve(makeLease(immediate));
+      if (immediate) return makeLease(immediate);
 
-      return new Promise<Lease<W>>((resolve) => {
-        (write ? writerQueue : readerQueue).push((worker) =>
-          resolve(makeLease(worker)),
-        );
-      });
+      const { promise, resolve } = Promise.withResolvers<W>();
+      (write ? writerQueue : readerQueue).push(resolve);
+      return makeLease(await promise);
     },
   };
 };
