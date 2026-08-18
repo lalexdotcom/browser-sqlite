@@ -108,10 +108,8 @@ export const createPoolWorker = (deps: {
         ? String(errorEvent.message ?? '')
         : '';
     // Chrome's onerror for Worker script-load failures leaves ErrorEvent.filename
-    // empty. Read the effective constructor URL stored by the Recording test
-    // helper when present; otherwise fall back to the URL from import.meta.url.
-    const failedUrl =
-      (worker as any)._workerUrl || errorEvent.filename || workerUrl;
+    // empty; fall back to the URL this library passed to the Worker constructor.
+    const failedUrl = errorEvent.filename || workerUrl;
     die(
       new SQLiteError(
         'WORKER_CRASHED',

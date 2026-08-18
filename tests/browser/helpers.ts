@@ -62,13 +62,6 @@ export function interceptWorkers(options?: { url?: string }): WorkerRecord[] {
         terminated: false,
       };
       records.push(record);
-      // Only expose the override URL: pool.ts uses it in load-failure error
-      // messages when Chrome leaves ErrorEvent.filename empty (Worker 404 case).
-      // For non-intercepted workers the browser populates filename correctly, so
-      // setting _workerUrl is unnecessary and can introduce a stale/wrong URL.
-      if (options?.url) {
-        Object.assign(this, { _workerUrl: String(options.url) });
-      }
       this.addEventListener('message', (event: MessageEvent) => {
         const type = String((event.data as { type?: string })?.type);
         record.received.push(type);

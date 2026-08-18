@@ -42,7 +42,8 @@ describe('worker lifecycle — crash detection', () => {
     expect(records.length).toBe(2);
   });
 
-  // Falsifiable: delete the `fail()` call on the 'fail-client' decision.
+  // Falsifiable: delete the `failClient(error)` call on the 'fail-client'
+  // decision in handleDeath (src/client.ts).
   it('fails the client permanently once the restart budget is spent', async () => {
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1, maxWorkerRestarts: 1 });
@@ -61,14 +62,19 @@ describe('worker lifecycle — crash detection', () => {
     });
   });
 
-  // Falsifiable: replace the load-failure message with a bare 'worker error'.
+  // Falsifiable: replace the load-failure branch with a generic message that
+  // omits both the 'could not load its worker from' wording and the
+  // 'Bundler Configuration' README pointer.
   it('names the URL it failed to load', async () => {
     interceptWorkers({ url: '/definitely-missing-worker.js' });
     const db = await createTestClient({ poolSize: 1 });
 
+    // pool.ts reports the URL it passed to `new Worker` (resolved from
+    // import.meta.url). The bundler may rename the chunk, so assert the stable
+    // wording rather than the URL itself.
     await expect(db.read('SELECT 1')).rejects.toMatchObject({
       code: 'WORKER_CRASHED',
-      message: expect.stringContaining('definitely-missing-worker.js'),
+      message: expect.stringContaining('could not load its worker from'),
     });
     await expect(db.read('SELECT 1')).rejects.toMatchObject({
       message: expect.stringContaining('Bundler Configuration'),
