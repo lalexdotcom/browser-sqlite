@@ -1,5 +1,6 @@
 // tests/browser/lifecycle.test.ts
-import { describe, expect, it } from '@rstest/core';
+import { afterEach, describe, expect, it } from '@rstest/core';
+import { createSQLiteClient } from '../../src/client';
 import {
   createTestClient,
   interceptWorkers,
@@ -97,5 +98,40 @@ describe('worker lifecycle — crash detection', () => {
     await expect(running).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' });
     expect(records[0].terminated).toBe(false);
     expect(records.length).toBe(1);
+  });
+});
+
+describe('worker lifecycle — bounds', () => {
+  let shared: string;
+  afterEach(async () => {
+    try {
+      const root = await navigator.storage.getDirectory();
+      await root.removeEntry(shared, { recursive: true });
+    } catch {
+      // OPFS entry may not exist if the test failed before DB creation
+    }
+  });
+
+  // Falsifiable: put `postMessage({type:'ready'})` back in a `.finally()` in
+  // worker.ts — the second client then reports ready and hangs on its query.
+  it('reports a failed open instead of reporting ready', async () => {
+    shared = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const first = createSQLiteClient(shared, {
+      poolSize: 1,
+      vfs: 'AccessHandlePoolVFS',
+    });
+    await first.write('CREATE TABLE t (a)');
+
+    const second = createSQLiteClient(shared, {
+      poolSize: 1,
+      vfs: 'AccessHandlePoolVFS',
+      openTimeout: 3000,
+    });
+    await expect(second.read('SELECT 1')).rejects.toMatchObject({
+      name: expect.stringMatching(/WORKER_CRASHED|TIMEOUT/),
+    });
+
+    await first.close();
+    await second.close();
   });
 });

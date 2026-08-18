@@ -1,6 +1,6 @@
 import { createBulk } from './bulk';
 import type { createClientDebug } from './debug';
-import type { SQLiteError } from './errors';
+import { SQLiteError } from './errors';
 import { WorkerOrchestrator, WorkerStatuses } from './orchestrator';
 import { createPoolWorker, type PoolWorker } from './pool';
 import {
@@ -72,6 +72,21 @@ export type CreateSQLiteClientOptions = {
    * @defaultValue `1`
    */
   maxWorkerRestarts?: number;
+
+  /**
+   * Milliseconds a worker has to post `ready` after its `open` message is sent.
+   * On expiry the slot is failed immediately — the most common cause is a
+   * database held under an exclusive lock by another tab or client.
+   * @defaultValue `30_000`
+   */
+  openTimeout?: number;
+
+  /**
+   * Milliseconds the drain loop (in the query generator's `finally`) may run
+   * before the worker is presumed dead and the crash path is invoked.
+   * @defaultValue `60_000`
+   */
+  drainTimeout?: number;
 };
 
 let clientCount = 0;
@@ -435,6 +450,9 @@ export const createSQLiteClient = (
     pool.length = 0;
   };
 
+  const openTimeout = clientOptions?.openTimeout ?? 30_000;
+  const drainTimeout = clientOptions?.drainTimeout ?? 60_000;
+
   const supervisor = createSupervisor({
     size: poolSize,
     maxWorkerRestarts: clientOptions?.maxWorkerRestarts,
@@ -449,6 +467,17 @@ export const createSQLiteClient = (
   };
 
   const spawn = (index: number) => {
+    const timer = setTimeout(() => {
+      handleDeath(
+        index,
+        new SQLiteError(
+          'TIMEOUT',
+          `Worker ${index + 1} did not become ready within ${openTimeout} ms. ` +
+            `The database may be held under an exclusive lock by another tab or another client.`,
+        ),
+      );
+    }, openTimeout);
+
     void createPoolWorker({
       index,
       orchestrator,
@@ -461,6 +490,7 @@ export const createSQLiteClient = (
       onServed: (served) => {
         supervisor.report(served, 'served');
       },
+      drainTimeout,
     })
       .then((worker) => {
         supervisor.report(index, 'ready');
@@ -468,7 +498,8 @@ export const createSQLiteClient = (
       })
       .catch(() => {
         // The rejection is the death already reported through onDeath.
-      });
+      })
+      .finally(() => clearTimeout(timer));
   };
 
   const handleDeath = (index: number, error: SQLiteError) => {

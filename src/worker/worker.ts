@@ -138,20 +138,45 @@ const open = (
         });
       });
     })
-    .catch((e) => {
-      throw e;
-    })
-    .finally(() => {
+    .then((opened) => {
       orchestrator.unlock();
-      // Transition: INITIALIZING → READY
-      // Marks this worker as available for queries. The client's releaseWorker()
-      // observes READY status and dispatches queued requests to this worker.
+      // Transition: INITIALIZING → READY. Only on success — the previous
+      // `.finally()` posted `ready` even for a database that never opened.
       orchestrator.setStatus(index, WorkerStatuses.READY);
       self.postMessage({ type: 'ready', callId: 0 });
+      return opened;
+    })
+    .catch((error: unknown) => {
+      orchestrator.unlock();
+      self.postMessage({
+        type: 'open-error',
+        callId: 0,
+        message:
+          error instanceof Error ? error.message : `Failed to open ${file}`,
+        cause: cloneable(error),
+      });
+      throw error;
     });
+
+  // Nothing awaits openedDB until a query arrives; keep a failed open from
+  // becoming an unhandled rejection in the worker.
+  openedDB.catch(() => {});
 
   const reply = (data: WorkerMessageData) => {
     self.postMessage(data);
+  };
+
+  /**
+   * A cause that cannot be structured-cloned makes `postMessage` itself throw —
+   * inside the catch block — so the client receives nothing and waits forever.
+   */
+  const cloneable = (value: unknown): unknown => {
+    try {
+      structuredClone(value);
+      return value;
+    } catch {
+      return String(value);
+    }
   };
 
   const query = async function* (
@@ -232,7 +257,7 @@ const open = (
           callId,
           ...(typeof e === 'object'
             ? e instanceof Error
-              ? { message: e.message, cause: e.cause }
+              ? { message: e.message, cause: cloneable(e.cause) }
               : { message: 'Unknown error', cause: e }
             : { message: `Unknown error (${e})` }),
         });

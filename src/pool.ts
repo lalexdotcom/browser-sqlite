@@ -46,6 +46,7 @@ export const createPoolWorker = (deps: {
   pragmas?: Record<string, string>;
   onDeath?: (index: number, error: SQLiteError) => void;
   onServed?: (index: number) => void;
+  drainTimeout: number;
 }): Promise<PoolWorker> => {
   const { index, orchestrator, pool, clientPrefix, file, vfs, pragmas } = deps;
 
@@ -139,6 +140,12 @@ export const createPoolWorker = (deps: {
       ready = true;
       if (state) state.initializationTime = Date.now();
       deferredInit.resolve(worker);
+    }
+    if (callId === 0 && data.type === 'open-error') {
+      die(
+        new SQLiteError('WORKER_CRASHED', data.message, { cause: data.cause }),
+      );
+      return;
     }
     if (deferredChunk && callId === currentCallId) {
       switch (type) {
@@ -236,15 +243,32 @@ export const createPoolWorker = (deps: {
           WorkerStatuses.ABORTING,
           WorkerStatuses.RUNNING,
         );
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const expiry = new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new SQLiteError(
+                  'WORKER_CRASHED',
+                  `Worker ${index + 1} did not answer the stop request within ${deps.drainTimeout} ms; presumed dead.`,
+                ),
+              ),
+            deps.drainTimeout,
+          );
+        });
         try {
-          // The message handler replaces deferredChunk on every 'chunk' and clears
-          // it on 'done' / 'error', so this drains to completion.
-          // NOTE: B2 — if the worker is dead this loop never settles. Per-request
-          // timeouts (wave 2) are needed to bound this.
-          while (deferredChunk) await deferredChunk.promise;
-        } catch {
-          // The worker reported an error while winding down. The caller is already
-          // unwinding; surfacing it here would mask their reason.
+          while (deferredChunk) {
+            await Promise.race([deferredChunk.promise, expiry]);
+          }
+        } catch (error) {
+          // A timeout is our own verdict and must be acted on. Any other error
+          // is the worker reporting a failure while winding down; the caller is
+          // already unwinding and surfacing it here would mask their reason.
+          if (error instanceof SQLiteError && error.code === 'WORKER_CRASHED') {
+            die(error);
+          }
+        } finally {
+          clearTimeout(timer);
         }
       }
       deferredChunk = undefined;
