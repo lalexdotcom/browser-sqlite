@@ -146,7 +146,7 @@ which hashes the config file itself. `pnpm build` is therefore always correct; n
 | `debug.ts` | 227 | Instrumentation subsystem — **still entirely dead code** (B6). |
 | `types.ts` | 93 | Wire protocol types plus the shared `SQLiteQueryOptions`. Lines 1-38 are still a stale duplicate that disagrees with the live one. |
 | `utils.ts` | 74 | `isReadQuery` / `isWriteQuery` (allowlist since wave 1) + `assertReadable(sql, method)` (new in wave 2, throws `NOT_A_READ_QUERY` before a lease is taken) + `sqlParams`/`addParam` (exported, tested, unused by the lib). |
-| `wa-sqlite.d.ts` | 81 | Hand-written 7-method `SQLiteAPI` subset shadowing wa-sqlite's own shipped types; **missing `close`**. |
+| `wa-sqlite.d.ts` | 81 | Hand-written 9-method `SQLiteAPI` subset shadowing wa-sqlite's own shipped types via a deep import; wave 2 added `close`. |
 | `index.ts` | 2 | `export * from './client'; export * from './errors'` — `SQLiteError` is now a public export. |
 
 Public API surface (since wave 1): `chunk` / `read` / `write` / `first` / `stream` /
