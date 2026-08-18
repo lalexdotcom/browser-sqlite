@@ -255,6 +255,19 @@ Mechanically: `release()` stays idempotent and the call site stays `client.ts`'s
 immediately. That promise must be caught — an abandoned drain that rejects must not become
 an unhandled rejection.
 
+### 5.6 What stays unbounded, knowingly
+
+A worker killed **silently** while a query is in flight is noticed only if the caller
+aborts. Nothing else is waiting on a timer at that moment, and that is a consequence of
+§5.3 rather than an oversight: no liveness signal exists during a `step()`, so the only
+alternatives were a wall-clock bound on the query itself (which kills legitimate long
+work) or nothing. A caller who wants a bound writes `AbortSignal.timeout(n)`; the abort
+then reaches the drain, the drain is bounded, and the slot is reclaimed and restarted.
+
+Recorded as a residual under B2 in `mem:follow-ups`. BP-1 (wave 4) removes it rather than
+mitigating it: a per-chunk ack is a heartbeat, so silence becomes detectable without
+guessing.
+
 ## 6. `close()`
 
 `close(): Promise<void>`, idempotent — a second call returns the same promise. The
@@ -295,7 +308,7 @@ not need two idioms), and `cause` carries the original error.
 |---|---|---|
 | `NOT_A_READ_QUERY` | a read-shaped method is handed a statement not provably a read | n/a |
 | `CLIENT_CLOSED` | any call after `close()`, and waiters queued at `close()` time | n/a |
-| `WORKER_CRASHED` | in-flight request on a dead worker; also the load failure, with the actionable message | no |
+| `WORKER_CRASHED` | in-flight request on a dead worker; also the load failure, with the actionable message, and a failed open (`open-error`) | no |
 | `TIMEOUT` | `openTimeout` expired with no worker ready; served thereafter to every call | no |
 | `PROTOCOL_ERROR` | `onmessageerror` | **yes** |
 
