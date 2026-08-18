@@ -116,7 +116,7 @@ describe('db.write() (INT-04)', () => {
 /**
  * INT-05: db.stream() yields rows in chunks respecting chunkSize
  */
-describe('db.stream() (INT-05)', () => {
+describe('db.chunk() (INT-05)', () => {
   it('yields chunks whose size does not exceed chunkSize', async () => {
     const db = await createTestClient();
 
@@ -128,7 +128,7 @@ describe('db.stream() (INT-05)', () => {
     const chunkSize = 10;
     const chunks: number[][] = [];
 
-    for await (const chunk of db.stream<{ n: number }>(
+    for await (const chunk of db.chunk<{ n: number }>(
       'SELECT n FROM stream_test ORDER BY n',
       [],
       { chunkSize },
@@ -153,7 +153,7 @@ describe('db.stream() (INT-05)', () => {
     await db.write('INSERT INTO stream_one VALUES (42)');
 
     let chunkCount = 0;
-    for await (const chunk of db.stream<{ x: number }>(
+    for await (const chunk of db.chunk<{ x: number }>(
       'SELECT x FROM stream_one',
       [],
       { chunkSize: 100 },

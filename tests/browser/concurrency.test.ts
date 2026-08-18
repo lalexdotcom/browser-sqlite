@@ -122,91 +122,115 @@ describe('serialized writes (INT-08)', () => {
  * We use a JavaScript batch INSERT to create enough rows.
  */
 describe('AbortSignal (INT-09)', () => {
-  it('cancels an in-flight stream and delivers no more chunks after abort', async () => {
-    const db = await createTestClient();
-
-    // Create a table with 1000 rows to force multiple chunks
+  const seed = async (db: Awaited<ReturnType<typeof createTestClient>>) => {
     await db.write('CREATE TABLE bigdata (n INTEGER)');
     const values = Array.from({ length: 1000 }, (_, i) => `(${i + 1})`).join(
       ',',
     );
     await db.write(`INSERT INTO bigdata VALUES ${values}`);
+  };
+
+  it('rejects with AbortError and delivers nothing after the abort', async () => {
+    const db = await createTestClient();
+    await seed(db);
 
     const controller = new AbortController();
     let chunkCount = 0;
 
-    const gen = db.stream<{ n: number }>(
+    const gen = db.chunk<{ n: number }>(
       'SELECT n FROM bigdata ORDER BY n',
       [],
       {
         signal: controller.signal,
-        chunkSize: 50, // 1000 / 50 = 20 potential chunks
+        chunkSize: 50,
       },
     );
 
-    // Receive the first chunk, then abort
     const first = await gen.next();
     expect(first.done).toBe(false);
     chunkCount++;
     controller.abort();
 
-    // Drain the generator — should terminate quickly after abort.
-    // The safety valve is set ABOVE the assertion threshold on purpose: a
-    // broken abort must make the expectation below fail, not silently cap the
-    // count under it (the previous valve of 5 made `< 20` unfalsifiable).
-    let safetyValve = 0;
-    for await (const _chunk of gen) {
-      chunkCount++;
-      safetyValve++;
-      if (safetyValve > 25) break; // Guard against a never-ending generator
-    }
-
-    // Should NOT have received all 20 potential chunks
-    expect(chunkCount).toBeLessThan(20);
+    // Deterministic: chunk() stops yielding on abort regardless of how many
+    // chunks the worker already pushed into the message queue. An inexact
+    // bound here would be unfalsifiable, which is the defect wave 0 removed.
+    await expect(gen.next()).rejects.toThrow(/abort/i);
+    expect(chunkCount).toBe(1);
 
     db.close();
   });
 
-  /**
-   * KNOWN BUG — found by strengthening this test. A signal already aborted
-   * before `stream()` is called is ignored entirely: the stream runs to
-   * completion and delivers every chunk. `signal.addEventListener('abort')`
-   * never fires for an already-aborted signal, and nothing checks
-   * `signal.aborted` up front.
-   *
-   * The previous fixture (3 rows, chunkSize 1) asserted `chunkCount <= 3`,
-   * which is arithmetically impossible to fail — that is why this went
-   * unnoticed. Belongs with the `stream()` abort work in wave 1.
-   *
-   * `it.fails` asserts the bug is still present; when it is fixed this test
-   * starts passing, which makes `it.fails` fail. That is the signal to drop
-   * `.fails`.
-   */
-  it.fails('an already-aborted AbortSignal terminates immediately', async () => {
+  it('rejects immediately when the signal is already aborted (B9)', async () => {
     const db = await createTestClient();
-
-    // 100 rows at chunkSize 1 → 100 chunks if the abort is ignored.
-    // The previous fixture (3 rows, chunkSize 1) made the assertion
-    // `chunkCount <= 3` arithmetically impossible to fail.
-    await db.write('CREATE TABLE pre_aborted (x INTEGER)');
-    const values = Array.from({ length: 100 }, (_, i) => `(${i + 1})`).join(
-      ',',
-    );
-    await db.write(`INSERT INTO pre_aborted VALUES ${values}`);
+    await seed(db);
 
     const controller = new AbortController();
-    controller.abort(); // Abort BEFORE launching the stream
+    controller.abort();
 
-    let chunkCount = 0;
-    for await (const _chunk of db.stream('SELECT x FROM pre_aborted', [], {
-      signal: controller.signal,
-      chunkSize: 1,
-    })) {
-      chunkCount++;
-    }
+    let delivered = 0;
+    await expect(async () => {
+      for await (const _rows of db.chunk('SELECT n FROM bigdata', [], {
+        signal: controller.signal,
+      })) {
+        delivered++;
+      }
+    }).rejects.toThrow(/abort/i);
+    expect(delivered).toBe(0);
 
-    // A signal already aborted at creation time must yield nothing at all.
-    expect(chunkCount).toBe(0);
+    db.close();
+  });
+
+  it('removes its abort listener when the query ends early', async () => {
+    const db = await createTestClient();
+    await seed(db);
+
+    const controller = new AbortController();
+    let added = 0;
+    let removed = 0;
+    const signal = new Proxy(controller.signal, {
+      get(target, prop, receiver) {
+        if (prop === 'addEventListener') {
+          return (...args: Parameters<AbortSignal['addEventListener']>) => {
+            added++;
+            return target.addEventListener(...args);
+          };
+        }
+        if (prop === 'removeEventListener') {
+          return (...args: Parameters<AbortSignal['removeEventListener']>) => {
+            removed++;
+            return target.removeEventListener(...args);
+          };
+        }
+        // Use target as receiver so AbortSignal getters (e.g. aborted) are
+        // called with the correct `this` — passing `receiver` (the proxy)
+        // causes "Illegal invocation" on platform-native getter functions.
+        const value = Reflect.get(target, prop, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+
+    await db.first('SELECT n FROM bigdata ORDER BY n', [], { signal });
+    expect(added).toBeGreaterThan(0);
+    expect(removed).toBe(added);
+
+    db.close();
+  });
+
+  it('leaves the worker immediately reusable after first()', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    await seed(db);
+
+    const row = await db.first<{ n: number }>(
+      'SELECT n FROM bigdata ORDER BY n',
+    );
+    expect(row?.n).toBe(1);
+
+    // With poolSize 1 this can only succeed if the aborted query was fully
+    // settled — i.e. the in-flight `done` was awaited before the lease returned.
+    const all = await db.read<{ n: number }>(
+      'SELECT n FROM bigdata ORDER BY n',
+    );
+    expect(all).toHaveLength(1000);
 
     db.close();
   });

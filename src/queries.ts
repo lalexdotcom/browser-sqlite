@@ -1,95 +1,111 @@
 import type { PoolWorker } from './pool';
 
-type SQLiteQueryOptions<_T extends Record<string, unknown>> = {
-  id?: string;
-  chunkSize?: number;
-  signal?: AbortSignal;
-  debug?: string;
+/**
+ * The single query primitive. Every other read path is a thin derivation, and
+ * abort is implemented here exactly once.
+ */
+export const chunk = async function* <
+  T extends Record<string, unknown> = Record<string, unknown>,
+>(
+  worker: PoolWorker,
+  sql: string,
+  params?: unknown[],
+  options?: { chunkSize?: number; signal?: AbortSignal },
+): AsyncGenerator<T[]> {
+  const { signal, chunkSize } = options ?? {};
+
+  // B9: addEventListener never fires for a signal that is already aborted, and
+  // nothing else checks. Without this the query runs to completion.
+  if (signal?.aborted) throw signal.reason;
+
+  let aborted = false;
+  const onAbort = () => {
+    aborted = true;
+  };
+  signal?.addEventListener('abort', onAbort);
+
+  try {
+    for await (const item of worker.query<T>(sql, params, { chunkSize })) {
+      // FLK-1: chunks already sitting in the message queue are NOT delivered.
+      // Stopping the worker is not enough — it races ahead of the abort flag.
+      if (aborted) break;
+      if (typeof item !== 'number') yield item;
+    }
+    if (aborted) throw signal?.reason;
+  } finally {
+    // In the finally, never after the loop: every early exit skipped it before,
+    // and first() exits early by construction.
+    signal?.removeEventListener('abort', onAbort);
+  }
 };
 
-/**
- * Helper to execute a read query and collect all results.
- */
+export const streamRows = async function* <
+  T extends Record<string, unknown> = Record<string, unknown>,
+>(
+  worker: PoolWorker,
+  sql: string,
+  params?: unknown[],
+  options?: { chunkSize?: number; signal?: AbortSignal },
+): AsyncGenerator<T> {
+  for await (const rows of chunk<T>(worker, sql, params, options)) {
+    for (const row of rows) yield row;
+  }
+};
+
 export const readWorker = async <
   T extends Record<string, unknown> = Record<string, unknown>,
 >(
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  options?: SQLiteQueryOptions<T>,
-) => {
+  options?: { chunkSize?: number; signal?: AbortSignal },
+): Promise<T[]> => {
   const result: T[] = [];
-  for await (const chunk of worker.query<T>(sql, params, options)) {
-    if (typeof chunk !== 'number') {
-      result.push(...chunk);
-    }
+  for await (const rows of chunk<T>(worker, sql, params, options)) {
+    result.push(...rows);
   }
   return result;
 };
 
 /**
- * Helper to execute a streaming query on a specific worker.
+ * First row, then stop. This BREAKS rather than aborting: a break triggers the
+ * generator's return path, which runs chunk()'s finally and the transport's
+ * stop-and-drain — the same worker-stop routine, reached without an exception.
+ * That is why there is no internal AbortController here and no need to tell an
+ * internal abort from the caller's.
  */
-export const streamWorker = async function* <
+export const firstWorker = async <
   T extends Record<string, unknown> = Record<string, unknown>,
 >(
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  options?: SQLiteQueryOptions<T>,
-) {
-  for await (const chunk of worker.query<T>(sql, params, options)) {
-    if (typeof chunk !== 'number') {
-      yield chunk;
-    }
+  options?: { signal?: AbortSignal },
+): Promise<T | undefined> => {
+  for await (const rows of chunk<T>(worker, sql, params, {
+    ...options,
+    chunkSize: 1,
+  })) {
+    return rows[0];
   }
+  return undefined;
 };
 
-/**
- * Helper to execute a write query and return both results and affected count.
- */
 export const writeWorker = async <
   T extends Record<string, unknown> = Record<string, unknown>,
 >(
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  options?: SQLiteQueryOptions<T>,
-) => {
+  _options?: { signal?: AbortSignal },
+): Promise<{ result: T[]; affected: number }> => {
   const result: T[] = [];
   let affected = 0;
-  for await (const chunk of worker.query<T>(sql, params, options)) {
-    if (typeof chunk !== 'number') {
-      result.push(...chunk);
-    } else {
-      affected = chunk;
-    }
+  // write() is the only caller that needs the affected count, which is why the
+  // T[] | number union stays private to this module.
+  for await (const item of worker.query<T>(sql, params, {})) {
+    if (typeof item === 'number') affected = item;
+    else result.push(...item);
   }
   return { result, affected };
-};
-
-/**
- * Helper to fetch a single row from a query result.
- * Aborts after receiving the first row to avoid unnecessary work.
- */
-export const oneWorker = async <
-  T extends Record<string, unknown> = Record<string, unknown>,
->(
-  worker: PoolWorker,
-  sql: string,
-  params?: unknown[],
-  options?: Omit<SQLiteQueryOptions<T>, 'chunkSize' | 'signal'>,
-) => {
-  let result: T | undefined;
-  const abortController = new AbortController();
-  for await (const chunk of streamWorker<T>(worker, sql, params, {
-    ...options,
-    signal: abortController.signal,
-    chunkSize: 1,
-  })) {
-    result = chunk[0];
-    abortController.abort();
-    break;
-  }
-  return result;
 };

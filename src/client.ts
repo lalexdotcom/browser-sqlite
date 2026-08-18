@@ -1,7 +1,13 @@
 import type { createClientDebug } from './debug';
 import { WorkerOrchestrator, WorkerStatuses } from './orchestrator';
 import { createPoolWorker, type PoolWorker } from './pool';
-import { oneWorker, readWorker, streamWorker, writeWorker } from './queries';
+import {
+  chunk as chunkWorker,
+  firstWorker,
+  readWorker,
+  streamRows,
+  writeWorker,
+} from './queries';
 import { createScheduler } from './scheduler';
 import type { SQLiteVFS } from './types';
 import { isWriteQuery } from './utils';
@@ -128,15 +134,45 @@ export type SQLiteDB = {
    *   `signal` (AbortSignal to cancel), and `id`.
    * @returns AsyncGenerator yielding `T[]` chunks of at most `chunkSize` rows.
    */
+  chunk: <T extends Record<string, unknown>>(
+    sql: string,
+    params?: any[],
+    options?: { chunkSize?: number; signal?: AbortSignal },
+  ) => AsyncGenerator<T[]>;
+
+  /**
+   * Executes a query and yields individual result rows via an async generator.
+   * Flattens chunk boundaries — each iteration yields one row.
+   *
+   * @param sql - SQL query string.
+   * @param params - Positional parameters bound to `?` placeholders.
+   * @param options - Optional options including `chunkSize` and `signal`.
+   * @returns AsyncGenerator yielding individual rows of type `T`.
+   */
   stream: <T extends Record<string, unknown>>(
     sql: string,
     params?: any[],
     options?: SQLiteStreamOptions<T>,
-  ) => AsyncGenerator<T[]>;
+  ) => AsyncGenerator<T>;
 
   /**
    * Executes a query and returns the first row, or `undefined` if no rows match.
-   * Internally uses `chunkSize: 1` and aborts after the first result chunk.
+   * Internally uses `chunkSize: 1` and breaks after the first result chunk.
+   *
+   * @param sql - SQL query string.
+   * @param params - Positional parameters bound to `?` placeholders.
+   * @param options - Optional query options including `signal`.
+   * @returns Promise resolving to the first row as `T`, or `undefined` if no rows.
+   */
+  first: <T extends Record<string, unknown>>(
+    sql: string,
+    params?: any[],
+    options?: { signal?: AbortSignal },
+  ) => Promise<T | undefined>;
+
+  /**
+   * Executes a query and returns the first row, or `undefined` if no rows match.
+   * Internally uses `chunkSize: 1` and breaks after the first result chunk.
    *
    * @remarks
    * Intended for SELECT queries. Using `one()` with a write statement (INSERT, UPDATE)
@@ -146,6 +182,7 @@ export type SQLiteDB = {
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional query options (`id`). `chunkSize` and `signal` are managed internally.
    * @returns Promise resolving to the first row as `T`, or `undefined` if no rows.
+   * @deprecated Use `first()` instead. Will be removed in a future wave.
    */
   one: <T extends Record<string, unknown>>(
     sql: string,
@@ -332,22 +369,33 @@ export const createSQLiteClient = (
   };
 
   /**
-   * Executes a query and streams results in chunks.
-   * Useful for large result sets to avoid memory overflow.
+   * Executes a query and yields result rows in chunks.
+   * The single abort-aware primitive — all other read paths derive from this.
+   */
+  const chunk = async function* <
+    T extends Record<string, unknown> = Record<string, unknown>,
+  >(
+    sql: string,
+    params?: unknown[],
+    options?: { chunkSize?: number; signal?: AbortSignal },
+  ) {
+    const lease = await scheduler.acquire(isWriteQuery(sql) ? 'write' : 'read');
+    try {
+      yield* chunkWorker<T>(lease.worker, sql, params, options);
+    } finally {
+      lease.release();
+    }
+  };
+
+  /**
+   * Executes a query and streams individual rows (flattened from chunks).
    */
   const stream = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
   >(sql: string, params?: unknown[], options?: SQLiteQueryOptions<T>) {
     const lease = await scheduler.acquire(isWriteQuery(sql) ? 'write' : 'read');
     try {
-      for await (const chunk of streamWorker<T>(
-        lease.worker,
-        sql,
-        params,
-        options,
-      )) {
-        yield chunk;
-      }
+      yield* streamRows<T>(lease.worker, sql, params, options);
     } finally {
       lease.release();
     }
@@ -374,21 +422,35 @@ export const createSQLiteClient = (
 
   /**
    * Executes a query and returns only the first row.
-   * Automatically aborts after receiving first result for efficiency.
+   * Breaks after the first chunk — no internal AbortController needed.
+   */
+  const first = async <
+    T extends Record<string, unknown> = Record<string, unknown>,
+  >(
+    sql: string,
+    params?: unknown[],
+    options?: { signal?: AbortSignal },
+  ) => {
+    const lease = await scheduler.acquire(isWriteQuery(sql) ? 'write' : 'read');
+    try {
+      return await firstWorker<T>(lease.worker, sql, params, options);
+    } finally {
+      lease.release();
+    }
+  };
+
+  /**
+   * Alias for first() — kept for backwards compatibility with the existing suite.
+   * @deprecated Use first() instead. Will be removed in a future wave.
    */
   const one = async <
     T extends Record<string, unknown> = Record<string, unknown>,
   >(
     sql: string,
     params?: unknown[],
-    options?: Omit<SQLiteQueryOptions<T>, 'chunkSize' | 'signal'>,
+    options?: { signal?: AbortSignal },
   ) => {
-    const lease = await scheduler.acquire(isWriteQuery(sql) ? 'write' : 'read');
-    try {
-      return await oneWorker<T>(lease.worker, sql, params, options);
-    } finally {
-      lease.release();
-    }
+    return first<T>(sql, params, options);
   };
 
   // Type definitions for schema-based operations
@@ -547,7 +609,10 @@ export const createSQLiteClient = (
   };
 
   // Transaction API type with commit/rollback methods
-  type TransactionDB = Pick<SQLiteDB, 'read' | 'write' | 'stream' | 'one'> & {
+  type TransactionDB = Pick<
+    SQLiteDB,
+    'read' | 'write' | 'stream' | 'one' | 'first'
+  > & {
     commit: () => Promise<void>;
     rollback: () => Promise<void>;
   };
@@ -590,18 +655,22 @@ export const createSQLiteClient = (
       stream: <T extends Record<string, unknown> = Record<string, unknown>>(
         sql: string,
         ...args: any[]
-      ) => streamWorker<T>(worker, checksql(sql), ...args),
+      ) => streamRows<T>(worker, checksql(sql), ...args),
+      first: <T extends Record<string, unknown> = Record<string, unknown>>(
+        sql: string,
+        ...args: any[]
+      ) => firstWorker<T>(worker, checksql(sql), ...args),
       one: <T extends Record<string, unknown> = Record<string, unknown>>(
         sql: string,
         ...args: any[]
-      ) => oneWorker<T>(worker, checksql(sql), ...args),
+      ) => firstWorker<T>(worker, checksql(sql), ...args),
       commit: async () => {
         done = true;
-        await oneWorker(worker, 'COMMIT');
+        await firstWorker(worker, 'COMMIT');
       },
       rollback: async () => {
         done = true;
-        await oneWorker(worker, 'ROLLBACK');
+        await firstWorker(worker, 'ROLLBACK');
       },
     };
 
@@ -658,9 +727,11 @@ export const createSQLiteClient = (
 
   // Return the public API
   const api = {
+    chunk,
     read,
     write,
     stream,
+    first,
     one,
     transaction,
     bulkWrite,

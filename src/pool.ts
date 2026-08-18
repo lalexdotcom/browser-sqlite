@@ -146,17 +146,7 @@ export const createPoolWorker = (deps: {
       }
 
       // Extract query options
-      const { chunkSize = 500, signal } = options ?? {};
-
-      // Set up abort handling
-      const signalAbortHandler = () => {
-        orchestrator.setStatus(
-          index,
-          WorkerStatuses.ABORTING,
-          WorkerStatuses.RUNNING,
-        );
-      };
-      signal?.addEventListener('abort', signalAbortHandler);
+      const { chunkSize = 500 } = options ?? {};
 
       // Prepare for streaming chunks
       deferredChunk = Promise.withResolvers<unknown[] | number>();
@@ -175,9 +165,29 @@ export const createPoolWorker = (deps: {
         const chunk = await deferredChunk.promise;
         yield chunk as T[] | number;
       }
-      signal?.removeEventListener('abort', signalAbortHandler);
     } finally {
-      // Clean up chunk state
+      // If the consumer left early (break / return / throw) the worker is still
+      // stepping rows. Tell it to stop, then wait for the reply it always sends,
+      // so the worker is genuinely idle before the lease goes back to the pool.
+      // Without this wait, the second half of B1 stands: a released worker still
+      // inside sqlite.step().
+      if (deferredChunk) {
+        orchestrator.setStatus(
+          index,
+          WorkerStatuses.ABORTING,
+          WorkerStatuses.RUNNING,
+        );
+        try {
+          // The message handler replaces deferredChunk on every 'chunk' and clears
+          // it on 'done' / 'error', so this drains to completion.
+          // NOTE: B2 — if the worker is dead this loop never settles. Per-request
+          // timeouts (wave 2) are needed to bound this.
+          while (deferredChunk) await deferredChunk.promise;
+        } catch {
+          // The worker reported an error while winding down. The caller is already
+          // unwinding; surfacing it here would mask their reason.
+        }
+      }
       deferredChunk = undefined;
     }
   };
