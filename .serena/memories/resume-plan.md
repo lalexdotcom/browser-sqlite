@@ -248,10 +248,14 @@ that state — which is exactly why the SAB exists. The flag becomes replaceable
 the worker awaits a client message per chunk, i.e. the credit/ack scheme currently filed
 under wave 5 perf.
 
-**Consequence, to arbitrate when wave 4 gets there (not before):** either pull the
-credit/ack scheme forward into wave 4 so D2 completes in one go, or push the SAB removal
-to wave 5 and accept that COOP/COEP holds until then. Removing only the init mutex in
-wave 4 leaves a SAB behind and therefore banks **none** of D2's actual benefit.
+**Arbitrated 2026-08-18 (user): the credit/ack scheme moves into wave 4**, as `BP-1` in
+`mem:follow-ups`, so D2 completes in one go. The alternative — removing only the init
+mutex in wave 4 — leaves a SAB behind for the abort flag and therefore banks **none** of
+D2's actual benefit. BP-1 was promoted out of wave 5's unnumbered perf list because it is
+not an optimisation: it gates D2, it is FLK-1's root cause, it is what gives `first()` a
+hard bound, and unbounded chunk pile-up already contradicts the README's stated memory
+guarantee. The rest of wave 5's perf work (statement cache, default PRAGMAs, shared WASM
+compilation) is independent and stays there.
 
 **Verified the same day: no VFS forces cross-origin isolation.** `grep -rE
 'SharedArrayBuffer|Atomics\.'` over the whole of `node_modules/wa-sqlite` (`src/` and
@@ -281,7 +285,7 @@ Wave **P** was inserted in front on 2026-08-17 rather than renumbering, so that 
 | 1 | Extract pool + scheduler into a pure module unit-testable in Node (parameterized over a minimal `{ available: boolean }` shape); make `releaseWorker` the single owner of `available`; **relayer the query API on `chunk()` per §1.2** and fix abort once inside it (covers `stream()`'s early `break` and B9). **Exit criteria in §2.2 — FLK-1 is one of them.** | B1, B9, FLK-1, W-arch, part of W-types |
 | 2 | `onerror` / `onmessageerror`, per-request timeouts, distinct `open-error` message, `close()` handshake that settles in-flight work and calls `sqlite.close()` | B2, B3 |
 | 3 | `quoteIdent()` + pragma allowlist; **debug wired per §1.3** (do it here, before wave 5, so the perf work is measurable); **`output()` rebuilt as staging + atomic rename per §1.1** (needs a `navigator.locks` primitive — pull it forward from wave 4); `bulkWrite` surfaces per-batch failures | B4, B5, B6 |
-| 4 | Packaging, round two — B10/B8 and the `consumer-smoke` gate moved to wave P and are **done**. What is left here: remove the SAB (D2), and **D6 (§1.4): the `browser-sqlite/vite` plugin subpath + the optional `wasmUrl` escape hatch**, which retires the fragile README snippet. | W-sab, VIT-1 |
+| 4 | B10/B8 and the `consumer-smoke` gate moved to wave P and are **done**. What is left here: **BP-1 (back-pressure, credit/ack) — it is the prerequisite, do it first**; then remove the SAB entirely (D2, §1.5), which drops the COOP/COEP requirement; then **D6 (§1.4): the `browser-sqlite/vite` plugin subpath + the optional `wasmUrl` escape hatch**, which retires the fragile README snippet. | BP-1, W-sab, VIT-1 |
 | 5 | Performance, **with the debug instrumentation live** so the gains are measurable | perf section |
 
 Correctness items not tied to a wave (`W-route`, `W-multitab`, `W-types`) fold into
