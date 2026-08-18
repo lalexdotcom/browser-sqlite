@@ -1,5 +1,6 @@
 import { createBulk } from './bulk';
 import type { createClientDebug } from './debug';
+import type { SQLiteError } from './errors';
 import { WorkerOrchestrator, WorkerStatuses } from './orchestrator';
 import { createPoolWorker, type PoolWorker } from './pool';
 import {
@@ -10,6 +11,7 @@ import {
   writeWorker,
 } from './queries';
 import { createScheduler } from './scheduler';
+import { createSupervisor } from './supervisor';
 import { createTransaction, type TransactionDB } from './transaction';
 import type { SQLiteQueryOptions, SQLiteVFS } from './types';
 import { isReadQuery } from './utils';
@@ -61,6 +63,15 @@ export type CreateSQLiteClientOptions = {
    * If omitted, no PRAGMAs are applied beyond SQLite defaults.
    */
   pragmas?: Record<string, string>;
+
+  /**
+   * How many times a worker slot may be restarted after it has died.
+   * A slot that never reached readiness is never restarted — an initial
+   * failure is deterministic, and restarting only delays the diagnostic.
+   * The counter resets once the replacement has actually served a request.
+   * @defaultValue `1`
+   */
+  maxWorkerRestarts?: number;
 };
 
 let clientCount = 0;
@@ -424,22 +435,53 @@ export const createSQLiteClient = (
     pool.length = 0;
   };
 
-  // Initialize the worker pool with the requested number of workers
-  Promise.all(
-    Array.from({ length: poolSize }, (_, index) =>
-      createPoolWorker({
-        index,
-        orchestrator,
-        pool,
-        clientPrefix,
-        file,
-        vfs,
-        pragmas: clientOptions?.pragmas,
-      }),
-    ),
-  ).then((allWorkers) => {
-    for (const worker of allWorkers) scheduler.add(worker);
+  const supervisor = createSupervisor({
+    size: poolSize,
+    maxWorkerRestarts: clientOptions?.maxWorkerRestarts,
   });
+
+  let fatal: SQLiteError | undefined;
+
+  const failClient = (error: SQLiteError) => {
+    fatal ??= error;
+    void scheduler.shutdown(fatal);
+    for (const dying of pool) dying?.terminate();
+  };
+
+  const spawn = (index: number) => {
+    void createPoolWorker({
+      index,
+      orchestrator,
+      pool,
+      clientPrefix,
+      file,
+      vfs,
+      pragmas: clientOptions?.pragmas,
+      onDeath: handleDeath,
+      onServed: (served) => {
+        supervisor.report(served, 'served');
+      },
+    })
+      .then((worker) => {
+        supervisor.report(index, 'ready');
+        scheduler.add(worker);
+      })
+      .catch(() => {
+        // The rejection is the death already reported through onDeath.
+      });
+  };
+
+  const handleDeath = (index: number, error: SQLiteError) => {
+    scheduler.remove(index);
+    pool[index]?.terminate();
+    pool[index] = undefined;
+    const decision = supervisor.report(index, 'died');
+    if (decision === 'restart') void spawn(index);
+    else if (decision === 'fail-client') failClient(error);
+  };
+
+  // Initialize the worker pool with the requested number of workers
+  for (let index = 0; index < poolSize; index += 1) spawn(index);
 
   // Return the public API
   const api = {

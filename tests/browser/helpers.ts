@@ -1,4 +1,4 @@
-import { afterEach } from '@rstest/core';
+import { afterEach, onTestFinished } from '@rstest/core';
 import {
   type CreateSQLiteClientOptions,
   createSQLiteClient,
@@ -29,3 +29,87 @@ export async function createTestClient(
   // The first query queues until a worker reaches READY.
   return createSQLiteClient(dbName, options);
 }
+
+export type WorkerRecord = {
+  worker: Worker;
+  posted: string[];
+  received: string[];
+  /** Ordered trace: 'post:<type>', 'recv:<type>', 'terminate'. */
+  log: string[];
+  terminated: boolean;
+};
+
+/**
+ * Records every Worker the client creates, and optionally redirects them to
+ * another URL so a load failure can be produced for real.
+ *
+ * Production code has no test seam by design: the tests reach the workers by
+ * replacing the constructor the client calls, not by asking the client to
+ * accept a factory.
+ */
+export function interceptWorkers(options?: { url?: string }): WorkerRecord[] {
+  const records: WorkerRecord[] = [];
+  const Original = globalThis.Worker;
+
+  class Recording extends Original {
+    constructor(url: string | URL, workerOptions?: WorkerOptions) {
+      super(options?.url ?? url, workerOptions);
+      const record: WorkerRecord = {
+        worker: this,
+        posted: [],
+        received: [],
+        log: [],
+        terminated: false,
+      };
+      records.push(record);
+      // Only expose the override URL: pool.ts uses it in load-failure error
+      // messages when Chrome leaves ErrorEvent.filename empty (Worker 404 case).
+      // For non-intercepted workers the browser populates filename correctly, so
+      // setting _workerUrl is unnecessary and can introduce a stale/wrong URL.
+      if (options?.url) {
+        Object.assign(this, { _workerUrl: String(options.url) });
+      }
+      this.addEventListener('message', (event: MessageEvent) => {
+        const type = String((event.data as { type?: string })?.type);
+        record.received.push(type);
+        record.log.push(`recv:${type}`);
+      });
+      const post = this.postMessage.bind(this);
+      this.postMessage = (message: unknown, ...rest: unknown[]) => {
+        const type = String((message as { type?: string })?.type);
+        record.posted.push(type);
+        record.log.push(`post:${type}`);
+        return (post as (m: unknown, ...r: unknown[]) => void)(
+          message,
+          ...rest,
+        );
+      };
+      const terminate = this.terminate.bind(this);
+      this.terminate = () => {
+        record.terminated = true;
+        record.log.push('terminate');
+        terminate();
+      };
+    }
+  }
+
+  globalThis.Worker = Recording as unknown as typeof Worker;
+  // onTestFinished is scoped to the current test (unlike afterEach which is
+  // suite-scoped when called inside a test body). This ensures the original
+  // Worker constructor is restored before the next test's interceptWorkers()
+  // call captures it, so Recording classes never accidentally extend each other.
+  onTestFinished(() => {
+    globalThis.Worker = Original;
+  });
+  return records;
+}
+
+export const sleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * A single very long `sqlite.step()` with no table to populate: SQLite must run
+ * the whole recursion before the first row of `count(*)` exists.
+ */
+export const longQuery = (iterations: number) =>
+  `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < ${iterations}) SELECT count(*) AS n FROM c`;

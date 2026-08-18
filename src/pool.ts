@@ -1,3 +1,4 @@
+import { SQLiteError } from './errors';
 import { type WorkerOrchestrator, WorkerStatuses } from './orchestrator';
 import type { SQLiteVFS, WorkerMessageData } from './types';
 
@@ -43,6 +44,8 @@ export const createPoolWorker = (deps: {
   file: string;
   vfs: SQLiteVFS;
   pragmas?: Record<string, string>;
+  onDeath?: (index: number, error: SQLiteError) => void;
+  onServed?: (index: number) => void;
 }): Promise<PoolWorker> => {
   const { index, orchestrator, pool, clientPrefix, file, vfs, pragmas } = deps;
 
@@ -76,10 +79,66 @@ export const createPoolWorker = (deps: {
   // Deferred promise for streaming query results one chunk at a time
   let deferredChunk: PromiseWithResolvers<unknown[] | number> | undefined;
 
+  let dead = false;
+  let ready = false;
+  const deathDeferred = Promise.withResolvers<never>();
+  // Nothing awaits this until a query runs; without a sink an early death is an
+  // unhandled rejection.
+  deathDeferred.promise.catch(() => {});
+
+  // Per-query channel for a message that never arrived (onmessageerror). The
+  // worker is alive, so the request rejects but the transport stays intact and
+  // the generator's finally still stops and drains it.
+  let lost: PromiseWithResolvers<never> | undefined;
+
+  const workerUrl = new URL('./worker/worker.js', import.meta.url).href;
+
+  const die = (error: SQLiteError) => {
+    if (dead) return;
+    dead = true;
+    deathDeferred.reject(error);
+    deferredInit.reject(error); // no-op once resolved
+    deps.onDeath?.(index, error);
+  };
+
+  worker.onerror = (event) => {
+    const errorEvent = event as ErrorEvent;
+    const detail =
+      typeof event === 'object' && event !== null && 'message' in event
+        ? String(errorEvent.message ?? '')
+        : '';
+    // Chrome's onerror for Worker script-load failures leaves ErrorEvent.filename
+    // empty. Read the effective constructor URL stored by the Recording test
+    // helper when present; otherwise fall back to the URL from import.meta.url.
+    const failedUrl =
+      (worker as any)._workerUrl || errorEvent.filename || workerUrl;
+    die(
+      new SQLiteError(
+        'WORKER_CRASHED',
+        ready
+          ? `Worker ${index + 1} failed: ${detail || 'uncaught error'}`
+          : `browser-sqlite could not load its worker from ${failedUrl}. ` +
+              `If that URL 404s, your bundler did not emit the worker beside your build output — ` +
+              `see the "Bundler Configuration" section of the browser-sqlite README. ${detail}`,
+        { cause: event },
+      ),
+    );
+  };
+
+  worker.addEventListener('messageerror', () => {
+    lost?.reject(
+      new SQLiteError(
+        'PROTOCOL_ERROR',
+        `Worker ${index + 1} sent a message that could not be deserialized; the request cannot be completed.`,
+      ),
+    );
+  });
+
   // Message handler routes responses by callId
   worker.onmessage = ({ data }: MessageEvent<WorkerMessageData>) => {
     const { callId, type } = data;
     if (callId === 0 && type === 'ready') {
+      ready = true;
       if (state) state.initializationTime = Date.now();
       deferredInit.resolve(worker);
     }
@@ -102,6 +161,7 @@ export const createPoolWorker = (deps: {
           }
           deferredChunk.resolve(affected);
           deferredChunk = undefined;
+          deps.onServed?.(index);
           break;
         }
         case 'error': {
@@ -145,6 +205,8 @@ export const createPoolWorker = (deps: {
 
       // Prepare for streaming chunks
       deferredChunk = Promise.withResolvers<unknown[] | number>();
+      lost = Promise.withResolvers<never>();
+      lost.promise.catch(() => {});
 
       // Send query to worker with options
       worker.postMessage({
@@ -157,7 +219,11 @@ export const createPoolWorker = (deps: {
 
       // Stream chunks until query completes
       while (deferredChunk) {
-        const chunk = await deferredChunk.promise;
+        const chunk = await Promise.race([
+          deferredChunk.promise,
+          lost.promise,
+          deathDeferred.promise,
+        ]);
         yield chunk as T[] | number;
       }
     } finally {
@@ -166,7 +232,7 @@ export const createPoolWorker = (deps: {
       // so the worker is genuinely idle before the lease goes back to the pool.
       // Without this wait, the second half of B1 stands: a released worker still
       // inside sqlite.step().
-      if (deferredChunk) {
+      if (deferredChunk && !dead) {
         orchestrator.setStatus(
           index,
           WorkerStatuses.ABORTING,
@@ -184,6 +250,7 @@ export const createPoolWorker = (deps: {
         }
       }
       deferredChunk = undefined;
+      lost = undefined;
     }
   };
 
