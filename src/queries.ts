@@ -1,6 +1,34 @@
 import type { PoolWorker } from './pool';
 
 /**
+ * Wires an AbortSignal into a promise that rejects the instant the signal
+ * fires, and returns a teardown that removes the listener. The rejection sink
+ * (`aborted?.catch`) suppresses the unhandled-rejection when the query ends
+ * normally and nobody is racing the promise any more.
+ *
+ * This is the only place in the module that reads an AbortSignal; both
+ * `chunk()` and `writeWorker()` delegate here.
+ */
+const makeAbortRace = (
+  signal: AbortSignal | undefined,
+): { aborted: Promise<never> | undefined; teardown: () => void } => {
+  if (!signal) return { aborted: undefined, teardown: () => {} };
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  // Nothing consumes this rejection when the query ends normally.
+  aborted.catch(() => {});
+  return {
+    aborted,
+    teardown: () => {
+      if (onAbort) signal.removeEventListener('abort', onAbort);
+    },
+  };
+};
+
+/**
  * The single query primitive. Every other read path is a thin derivation, and
  * abort is implemented here exactly once.
  */
@@ -17,16 +45,7 @@ export const chunk = async function* <
   // B9: addEventListener never fires for a signal that is already aborted.
   if (signal?.aborted) throw signal.reason;
 
-  let onAbort: (() => void) | undefined;
-  const aborted = signal
-    ? new Promise<never>((_, reject) => {
-        onAbort = () => reject(signal.reason);
-        signal.addEventListener('abort', onAbort, { once: true });
-      })
-    : undefined;
-  // Nothing consumes this rejection when the query ends normally.
-  aborted?.catch(() => {});
-
+  const { aborted, teardown } = makeAbortRace(signal);
   const iterator = worker.query<T>(sql, params, { chunkSize });
   try {
     while (true) {
@@ -41,7 +60,7 @@ export const chunk = async function* <
       if (typeof next.value !== 'number') yield next.value;
     }
   } finally {
-    if (onAbort) signal?.removeEventListener('abort', onAbort);
+    teardown();
     // Start the stop-and-drain, never await it. The caller must not wait for a
     // sort that may still have minutes to run; the lease returns through
     // quiesce() instead. interrupt() first, so the queued return() is not
@@ -113,19 +132,10 @@ export const writeWorker = async <
 ): Promise<{ result: T[]; affected: number }> => {
   const { signal } = options ?? {};
 
-  // Mirror chunk(): reject immediately if the signal is already aborted.
+  // B9: addEventListener never fires for a signal that is already aborted.
   if (signal?.aborted) throw signal.reason;
 
-  let onAbort: (() => void) | undefined;
-  const aborted = signal
-    ? new Promise<never>((_, reject) => {
-        onAbort = () => reject(signal.reason);
-        signal.addEventListener('abort', onAbort, { once: true });
-      })
-    : undefined;
-  // Nothing consumes this rejection when the query ends normally.
-  aborted?.catch(() => {});
-
+  const { aborted, teardown } = makeAbortRace(signal);
   const iterator = worker.query<T>(sql, params, {});
   const result: T[] = [];
   let affected = 0;
@@ -144,7 +154,7 @@ export const writeWorker = async <
       else result.push(...next.value);
     }
   } finally {
-    if (onAbort) signal?.removeEventListener('abort', onAbort);
+    teardown();
     // Start the stop-and-drain, never await it. Same pattern as chunk().
     worker.interrupt();
     void iterator.return(undefined).catch(() => {});
