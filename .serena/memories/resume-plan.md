@@ -16,7 +16,23 @@ characterization suites, and a consumer smoke test covering the published tarbal
 package is consumable from four modes (Vite dev, Vite preview, rsbuild preview,
 no-bundler). 11/11 consumer smoke stages pass; `consumer-smoke` CI job is now blocking.
 
-**Next up: wave 1** — extract pool + scheduler, fix exclusivity (B1), relayer the query
+**WAVE 1 IS IN FLIGHT, PAUSED 2026-08-18 after task 5 of 9** (user paused for usage quota, not a
+blocker). Branch **`wave-1-pool-scheduler`**, clean, 9 commits ahead of `main`, 119 tests green,
+**no `it.fails` left in the suite**. Do NOT merge — the phase closure conditions are not met until
+task 9. The execution ledger, which is the authoritative resume point, is at
+`.superpowers/sdd/2026-08-18-wave-1-pool-scheduler/progress.md` (git-ignored scratch — if it is
+gone, rebuild from `git log` and the plan). It records every ruling made during execution.
+
+Already closed on the branch: **B1** (exclusivity by opaque lease; `PoolWorker.available` deleted
+outright), **B9**, **FLK-1** and the abort listener leak (all three at their shared root in
+`chunk()`), plus `scheduler.ts` / `pool.ts` / `queries.ts` / `transaction.ts` extracted. Remaining:
+task 6 `bulk.ts` (pure move), task 7 renames + options types, task 8 W-route allowlist, task 9
+closure. Two defects were found *during* execution and fixed: `scheduler.add` did not drain the
+wait queues (a query issued during pool init hung forever), and `releaseWorker` never claimed the
+writer designation when serving a queued writer with none set (a second writer could be
+designated).
+
+**Original wave 1 statement** — extract pool + scheduler, fix exclusivity (B1), relayer the query
 API on `chunk()` (D4, §1.2), fix abort once inside it (covers `stream()`'s early `break`
 and B9). Two `it.fails` tests are waiting for it: B1 in
 `tests/browser/transaction.test.ts`, B9 in `tests/browser/concurrency.test.ts`.
