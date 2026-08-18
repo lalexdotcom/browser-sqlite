@@ -257,3 +257,64 @@ describe('scheduler — add() drains pre-queued acquires', () => {
     expect(secondWrite.worker.index).toBe(0);
   });
 });
+
+describe('scheduler — add() writer-designation with multiple queued writes', () => {
+  /**
+   * Regression: without `currentWriterIndex = worker.index` inside add(),
+   * adding a second worker while two writes are queued results in two concurrent
+   * writers.  The sequence:
+   *
+   *   add(worker 0) — serves write 1, but leaves currentWriterIndex at -1
+   *   add(worker 1) — sees currentWriterIndex === -1 → condition passes → serves
+   *                   write 2 on worker 1, creating a second simultaneous writer.
+   *
+   * With the fix, add(worker 0) sets currentWriterIndex = 0 first, so add(worker 1)
+   * sees currentWriterIndex === 0 ≠ 1 → condition fails → worker 1 goes to
+   * available, and write 2 must wait until worker 0 is released.
+   */
+  it('second queued write waits for the first lease when two workers are added', async () => {
+    const scheduler = createScheduler<TestWorker>();
+
+    let firstLease: { worker: TestWorker; release: () => void } | undefined;
+    let secondWriteIndex: number | undefined;
+
+    // Queue two writes before any worker exists.
+    const firstAcquire = scheduler.acquire('write').then((l) => {
+      firstLease = l;
+      // Deliberately keep the lease held to detect concurrent writers.
+    });
+
+    void scheduler.acquire('write').then((l) => {
+      secondWriteIndex = l.worker.index;
+      l.release();
+    });
+
+    await flush();
+    // Nothing served yet — no workers.
+    expect(firstLease).toBeUndefined();
+    expect(secondWriteIndex).toBeUndefined();
+
+    // Add both workers synchronously.
+    scheduler.add({ index: 0 });
+    scheduler.add({ index: 1 });
+
+    await flush();
+
+    // First write must be served (on worker 0, which add() designated).
+    expect(firstLease?.worker.index).toBe(0);
+
+    // Second write must NOT yet be served — it must wait for the first lease.
+    // Without the fix: add(worker 1) would serve it immediately on worker 1,
+    // and secondWriteIndex would be 1 here instead of undefined.
+    expect(secondWriteIndex).toBeUndefined();
+
+    // Releasing the first lease hands worker 0 to the queued second write.
+    firstLease!.release();
+    await flush();
+
+    // Second write must run on worker 0 (the designated writer), not worker 1.
+    expect(secondWriteIndex).toBe(0);
+
+    await firstAcquire; // settle the promise chain
+  });
+});

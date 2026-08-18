@@ -97,15 +97,32 @@ export const writeWorker = async <
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  _options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal },
 ): Promise<{ result: T[]; affected: number }> => {
+  const { signal } = options ?? {};
+
+  // Mirror chunk(): reject immediately if the signal is already aborted.
+  if (signal?.aborted) throw signal.reason;
+
+  let aborted = false;
+  const onAbort = () => {
+    aborted = true;
+  };
+  signal?.addEventListener('abort', onAbort);
+
   const result: T[] = [];
   let affected = 0;
-  // write() is the only caller that needs the affected count, which is why the
-  // T[] | number union stays private to this module.
-  for await (const item of worker.query<T>(sql, params, {})) {
-    if (typeof item === 'number') affected = item;
-    else result.push(...item);
+  try {
+    // write() is the only caller that needs the affected count, which is why the
+    // T[] | number union stays private to this module.
+    for await (const item of worker.query<T>(sql, params, {})) {
+      if (aborted) break;
+      if (typeof item === 'number') affected = item;
+      else result.push(...item);
+    }
+    if (aborted) throw signal?.reason;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
   }
   return { result, affected };
 };

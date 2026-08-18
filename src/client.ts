@@ -118,7 +118,7 @@ export type SQLiteDB = {
    * @param sql - SQL query string.
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional options including `chunkSize` (default `500`),
-   *   `signal` (AbortSignal to cancel), and `id`.
+   *   `signal` (AbortSignal to cancel).
    * @returns AsyncGenerator yielding `T[]` chunks of at most `chunkSize` rows.
    */
   chunk: <T extends Record<string, unknown>>(
