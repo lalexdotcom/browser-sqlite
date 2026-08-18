@@ -93,7 +93,7 @@ export type SQLiteDB = {
    * Write queries are serialized through a single dedicated writer worker.
    * Concurrent writes queue behind each other — only one write executes at a time.
    *
-   * @param sql - SQL statement. Any statement recognized as a write by `isWriteQuery`.
+   * @param sql - SQL statement. Any statement not classified as a read by `isReadQuery`.
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional query options (`signal`, `id`).
    * @returns Promise resolving to `{ result: T[], affected: number }` where

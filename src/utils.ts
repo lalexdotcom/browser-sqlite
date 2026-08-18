@@ -22,19 +22,34 @@ export const sqlParams = () => {
 };
 
 /**
+ * Every statement SQLite treats as a write, or that must be serialized through
+ * the single writer worker. Matched anywhere in the string, not just at the
+ * start: the worker executes `;`-separated statements, so a write hiding after
+ * a semicolon must still route to the writer.
+ */
+const WRITE_KEYWORDS =
+  /\b(INSERT|REPLACE|UPDATE|DELETE|CREATE|DROP|ALTER|VACUUM|ANALYZE|REINDEX|SAVEPOINT|RELEASE|BEGIN|COMMIT|ROLLBACK|ATTACH|DETACH|PRAGMA)\b/i;
+
+/**
  * Routing predicate: is this statement provably a read?
  *
- * Deliberately an allowlist. The previous blocklist missed VACUUM, ALTER,
- * ANALYZE, REINDEX, SAVEPOINT and a manual BEGIN, which therefore ran on the
- * read pool — a VACUUM could execute on an arbitrary worker while the writer
- * held an open transaction, bypassing exclusivity one layer above the pool.
+ * Two conditions, both required. The statement must OPEN with a read keyword,
+ * and it must contain no write keyword anywhere. The first condition alone is
+ * not enough — the worker executes `;`-separated statements, so `SELECT 1;
+ * DROP TABLE t` opens as a read and is not one. The second alone is not enough
+ * either — it would admit any unrecognised statement as a read.
  *
- * A misclassification now fails toward the writer: correct, merely slower.
- * A CTE is only a read when no write keyword appears anywhere in the statement,
- * because `WITH ... INSERT` is a write wearing a read's opening keyword.
+ * The previous blocklist missed VACUUM, ALTER, ANALYZE, REINDEX, SAVEPOINT and
+ * a manual BEGIN, so those ran on the read pool: a VACUUM could execute on an
+ * arbitrary worker while the writer held an open transaction, bypassing
+ * exclusivity one layer above the pool.
+ *
+ * Misclassification now fails toward the writer — correct, merely slower. A
+ * read whose text merely mentions a write keyword (`SELECT 'INSERT'`, or
+ * `EXPLAIN INSERT ...`, which never executes) is serialized needlessly. That
+ * is the accepted price of never routing a write to the read pool.
  */
 export const isReadQuery = (sql: string) =>
-  /^\s*(SELECT|EXPLAIN|VALUES)\b/i.test(sql) ||
-  (/^\s*WITH\b/i.test(sql) && !/\b(INSERT|UPDATE|DELETE|REPLACE)\b/i.test(sql));
+  /^\s*(SELECT|EXPLAIN|VALUES|WITH)\b/i.test(sql) && !WRITE_KEYWORDS.test(sql);
 
 export const isWriteQuery = (sql: string) => !isReadQuery(sql);
