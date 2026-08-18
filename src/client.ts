@@ -298,7 +298,7 @@ export const createSQLiteClient = (
   const clientPrefix = `${clientOptions?.name ?? 'SQLite'} ${clientIndex}`;
 
   const poolSize = clientOptions?.poolSize ?? DEFAULT_POOL_SIZE;
-  const pool: PoolWorker[] = [];
+  const pool: (PoolWorker | undefined)[] = [];
 
   // Orchestrator manages worker synchronization and status tracking
   const orchestrator = new WorkerOrchestrator(poolSize);
@@ -420,17 +420,15 @@ export const createSQLiteClient = (
    * Terminates all workers and cleans up the pool.
    */
   const close = () => {
-    let worker = pool.shift();
-    while (worker !== undefined) {
-      worker.terminate();
-      worker = pool.shift();
-    }
+    for (const worker of pool) worker?.terminate();
+    pool.length = 0;
   };
 
   // Initialize the worker pool with the requested number of workers
   Promise.all(
-    Array.from({ length: poolSize }).map(() =>
+    Array.from({ length: poolSize }, (_, index) =>
       createPoolWorker({
+        index,
         orchestrator,
         pool,
         clientPrefix,

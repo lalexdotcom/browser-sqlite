@@ -36,34 +36,30 @@ export type PoolWorker = Worker & {
  *  3. `worker.available = false/true` in the `query` generator are deleted.
  */
 export const createPoolWorker = (deps: {
+  index: number;
   orchestrator: WorkerOrchestrator;
-  pool: PoolWorker[];
+  pool: (PoolWorker | undefined)[];
   clientPrefix: string;
   file: string;
   vfs: SQLiteVFS;
   pragmas?: Record<string, string>;
 }): Promise<PoolWorker> => {
-  const { orchestrator, pool, clientPrefix, file, vfs, pragmas } = deps;
+  const { index, orchestrator, pool, clientPrefix, file, vfs, pragmas } = deps;
 
   const deferredInit = Promise.withResolvers<PoolWorker>();
 
-  const workerName = `${clientPrefix} / Worker ${pool.length + 1}`;
-  const index =
-    pool.push(
-      new Worker(
-        /* webpackChunkName: "browser-sqlite" */ new URL(
-          './worker/worker.js',
-          import.meta.url,
-        ),
-        {
-          name: workerName,
-          type: 'module',
-        },
-      ) as PoolWorker,
-    ) - 1;
-  const worker = Object.assign(pool[index], {
-    index,
-  });
+  const workerName = `${clientPrefix} / Worker ${index + 1}`;
+  const worker = Object.assign(
+    new Worker(
+      /* webpackChunkName: "browser-sqlite" */ new URL(
+        './worker/worker.js',
+        import.meta.url,
+      ),
+      { name: workerName, type: 'module' },
+    ) as PoolWorker,
+    { index },
+  );
+  pool[index] = worker;
 
   // Debug hooks — wired up per-client in a future task; currently always undefined.
   const createWorkerDebugState = undefined as
