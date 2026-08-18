@@ -470,6 +470,15 @@ page", not "drop it in any page".
   - **W-route half 1**: allowlist requiring an allowlisted opening keyword AND no write keyword
     anywhere — the second clause matters because the worker executes `;`-separated statements.
   - **FLK-1 verified dead by 10 consecutive full browser-suite runs**, not by one green run.
+  - **Transaction error masking fixed** (found by the final review, fixed on user instruction rather
+    than deferred to wave 2). `commit()`/`rollback()` set `done = true` *before* running their
+    statement, and the `catch` rolled back unconditionally — so a callback that terminated the
+    transaction itself and then threw got "cannot rollback - no transaction is active" instead of
+    its own error. `done` is now set *after* the statement succeeds and the catch is guarded by
+    `if (!done)`, which preserves the case that matters: a failed `COMMIT` leaves the transaction
+    active, so that path must still roll back. The reorder also closed a worse latent case — a
+    failed COMMIT whose error the callback swallowed used to leave the transaction **open** on a
+    worker that was then returned to the pool.
   - Verification commands are now bounded (`timeout -k 30`), and the `unit` project has an explicit
     `testTimeout`. A per-test bound does not catch a suite that finishes and never exits on an open
     worker handle, which is what `pool.ts`'s drain loop risks until B2 lands.
