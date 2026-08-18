@@ -37,10 +37,14 @@ because each was invisible to the tests that existed at the time:
 wave 1 passed identically with and without the behaviour they claimed to pin. The habit that caught
 them: for each test, state which line, if deleted, makes it fail. Ask it of every test from now on.
 
-**Next up: wave 2** — B2 (`onerror` / `onmessageerror` / per-request timeouts, and an actionable
-worker-load error naming the URL), B3 (`close()` handshake), plus **W-route half 2** (`read()`
-rejects a write query instead of silently running it). Wave 1 left a live dependency on B2: the
-stop-and-drain loop in `pool.ts` waits for a reply a dead worker never sends.
+**WAVE 2 IS COMPLETE ON ITS BRANCH, AWAITING MERGE (2026-08-18).** Branch
+**`wave-2-error-surface`**, **193 tests green**, no `it.fails` anywhere. Closed: **B2**, **B3**,
+**W-route half 2**. See `mem:follow-ups` and §4 for the evidence. **Not merged** — that decision
+is the user's.
+
+**Next up: wave 3** — B4 (`quoteIdent()` + pragma allowlist, which also gives read PRAGMAs back
+to `read()`), B5 (`output()` rebuilt as staging + atomic rename per §1.1), B6 (debug wired per
+§1.3). The `navigator.locks` primitive enters the codebase here (D3, §1.1).
 
 **Original wave 1 statement, for reference** — extract pool + scheduler, fix exclusivity (B1), relayer the query
 API on `chunk()` (D4, §1.2), fix abort once inside it (covers `stream()`'s early `break`
@@ -452,6 +456,52 @@ page", not "drop it in any page".
   not the next one. The open items are listed per wave in `mem:follow-ups` and in §1.
 
 ## 4. Changelog of this plan
+
+- **2026-08-18** — **Wave 2 implemented on `wave-2-error-surface`, awaiting merge. 193 tests green.**
+  What shipped:
+  - **B2 closed.** `onerror` rejects the in-flight query with `WORKER_CRASHED` and names the failed
+    URL (the actionable load-failure diagnostic that makes VIT-1 non-blocking). `messageerror` rejects
+    the in-flight query with `PROTOCOL_ERROR` while keeping the worker alive. `ready` is only posted on
+    success; failure posts `open-error` instead (the multi-tab exclusive-lock failure is now surfaced).
+    Every `cause` is structured-clone-probed before crossing the thread boundary.
+  - **B3 closed.** `close()` is now `() => Promise<void>`: `scheduler.shutdown(CLIENT_CLOSED)` rejects
+    queued work, the pool drains in-flight work (bounded by `drainTimeout`), each worker receives a
+    `close` message and calls `sqlite.close(db)` before posting `closed`, then is terminated. Post-close
+    queries receive `CLIENT_CLOSED` immediately. Second call returns the same promise.
+  - **W-route closed (half 2).** `write()` routes to the writer unconditionally; `read()`, `chunk()`,
+    `stream()`, and `first()` reject a non-read statement with `NOT_A_READ_QUERY` before any lease is
+    taken. Every PRAGMA currently routes to the writer — B4 (wave 3) gives read PRAGMAs back. A test
+    in `tests/browser/routing.test.ts` pins the current rejection and turns red when B4 lands.
+  - **`supervisor.ts` (new, 81 lines).** Pure per-slot restart policy, zero imports: never restarts a
+    slot that never reached `ready`; resets the counter on a served request (not on `ready`);
+    `maxWorkerRestarts` bounds it; eviction leaving no live slot fails the client permanently; `evicted`
+    flag makes eviction permanent against a late `ready`.
+  - **`errors.ts` (new, 25 lines).** `SQLiteError extends Error` with `code` and `name` mirroring each
+    other. Five codes: `NOT_A_READ_QUERY`, `CLIENT_CLOSED`, `WORKER_CRASHED`, `TIMEOUT`,
+    `PROTOCOL_ERROR`. Exported from `index.ts`.
+  - **New constructor options:** `maxWorkerRestarts` (default 1), `openTimeout` (default 30 000 ms),
+    `drainTimeout` (default 60 000 ms).
+  - **`pool.ts`** gained `interrupt()`, `quiesce()`, and `close()` on `PoolWorker`; bounded
+    stop-and-drain; `onerror` and `messageerror` handlers.
+  - **`scheduler.ts`** gained `remove(index)` and `shutdown(reason)`; a per-index generation counter
+    makes a stale lease's `release()` inert after the slot was removed and revived.
+  - **`queries.ts`** got `makeAbortRace`; the abort races the pending chunk instead of being tested
+    after it; the caller never awaits the drain.
+  - **`worker/worker.ts`**: `ready` only on success, `open-error` on failure, every `cause`
+    structured-clone-probed, `sqlite.close(db)` on `close` message, exhaustive message dispatch.
+  - **`utils.ts`**: `assertReadable(sql, method)` throws `NOT_A_READ_QUERY` before any lease is taken.
+  - **Tests:** 148 → 193. New unit files: `errors.test.ts`, `supervisor.test.ts`. New browser files:
+    `lifecycle.test.ts`, `close.test.ts`, `long-query.test.ts`, `routing.test.ts`.
+  - **Known residual (B2).** A worker killed silently while a query is in flight is noticed only if
+    the caller aborts. During a query the worker's row loop is an unbroken chain of `await sqlite.step()`
+    — no heartbeat can arrive and the SAB status byte does not move. A caller who wants a bound writes
+    `AbortSignal.timeout(n)`. BP-1 (wave 4) removes this residual: a per-chunk ack is a heartbeat.
+  - **Two tooling facts recorded for future waves.** (1) `it.each` does not exist in rstest 0.11.8 —
+    parameterised tests use a plain `for` loop calling `it()` directly. (2) rsbuild renames the emitted
+    worker chunk (`webpackChunkName: "browser-sqlite"`), so no test may assert a `worker/worker.js`
+    substring in an error message — assert the stable wording instead.
+  - **Next up: wave 3** — B4 (`quoteIdent()` + pragma allowlist), B5 (`output()` staging + rename),
+    B6 (debug wired).
 
 - **2026-08-18** — **Wave 1 implemented on `wave-1-pool-scheduler`, 15 commits, 148 tests green,
   awaiting merge.** What shipped:

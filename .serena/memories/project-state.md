@@ -1,6 +1,6 @@
 # Project State — `browser-sqlite`
 
-Snapshot date: 2026-08-18 (post wave 1). Update this file when the facts below change.
+Snapshot date: 2026-08-18 (post wave 2). Update this file when the facts below change.
 
 ## What it is
 
@@ -13,7 +13,7 @@ its implementation.
 ## Stack
 
 Versions below are post-upgrade (2026-08-17) and verified green: `tsc --noEmit`,
-`biome check`, `pnpm build`, 105 tests (57 unit + 48 browser) — all pass.
+`biome check`, `pnpm build`, 193 tests (unit + browser) — all pass as of wave 2.
 
 - **TypeScript 7.0.2** (the native/Go compiler — `tsc` resolves a per-platform binary),
   ESM only, `type: module`. Build: **rslib 0.23.2** (`rslib.config.ts`) → `dist/` (flat,
@@ -22,12 +22,17 @@ Versions below are post-upgrade (2026-08-17) and verified green: `tsc --noEmit`,
 - Lint/format: **biome** 2.5.8 (`biome.json`; note it locally disables `noExplicitAny`
   and `noBannedTypes`). Run `pnpm check` after every modification.
 - Tests: **rstest 0.11.8** with two projects (`rstest.config.ts`):
-  - `unit` — Node, pure logic → `tests/unit/{debug,orchestrator,utils}.test.ts`
+  - `unit` — Node, pure logic → `tests/unit/{debug,errors,orchestrator,routing,scheduler,supervisor,utils}.test.ts`
+    (`errors` and `supervisor` added in wave 2; `routing` and `scheduler` added in wave 1).
   - `browser` — real Chromium via Playwright →
-    `tests/browser/{init,queries,concurrency,transaction,bulk-write,output,vfs}.test.ts`
+    `tests/browser/{init,queries,concurrency,transaction,bulk-write,output,vfs,lifecycle,close,long-query,routing}.test.ts`
     plus `helpers.ts` (`createTestClient(options?)` — unique OPFS name + afterEach cleanup).
     Needs COOP/COEP headers, injected by an inline rsbuild plugin.
-    105 tests total as of wave 0.
+    193 tests total as of wave 2 (was 148 after wave 1, 105 after wave 0).
+    - Wave-2 additions: `tests/unit/{errors,supervisor}.test.ts` and
+      `tests/browser/{lifecycle,close,long-query,routing}.test.ts`.
+  - **rstest 0.11.8 has no `it.each`** — parameterized tests use a plain `for` loop over an
+    array, calling `it()` directly (see `tests/unit/routing.test.ts` for the pattern).
 - Package manager: pnpm 10.31.0. Playwright pinned at 1.62.1 (Chromium 1234 in the
   container's `~/.cache/ms-playwright`, installed by `.devcontainer/post-create.sh`).
 
@@ -128,24 +133,44 @@ which hashes the config file itself. `pnpm build` is therefore always correct; n
 
 | File | Lines | Role |
 |---|---|---|
-| `client.ts` | 461 | **Assembly only** (since wave 1): options, validation, wiring, the public `SQLiteDB` surface, `close()`. No longer a god module — it was 1016 lines and held everything below. |
-| `scheduler.ts` | 132 | **Pure** — availability (a private `Set`), both wait queues, writer designation, opaque leases. No `Worker`, no DOM, no orchestrator import, so Node tests drive it in milliseconds. **This purity is load-bearing: B1 survived for months because the scheduler was only reachable through slow browser tests.** |
-| `pool.ts` | 209 | Worker creation and transport: `postMessage` / `onmessage` routed by `callId`, the raw query generator, and the stop-and-drain that waits for the worker's in-flight `done` before a lease returns. |
-| `queries.ts` | 128 | `chunk()` — the single query primitive and **the only place `AbortSignal` is read** — plus `streamRows` / `readWorker` / `firstWorker` / `writeWorker`. |
-| `transaction.ts` | 145 | `transaction()` over a single lease held for its whole lifetime. |
+| `client.ts` | 628 | **Assembly only** (since wave 1): options, validation, wiring, the public `SQLiteDB` surface, `close()`. No longer a god module — it was 1016 lines and held everything below. Three new options in wave 2: `maxWorkerRestarts` (default 1), `openTimeout` (default 30 000 ms), `drainTimeout` (default 60 000 ms). `close()` is now `() => Promise<void>`. |
+| `errors.ts` | 25 | **New in wave 2.** `SQLiteError extends Error` with `code: SQLiteErrorCode` and `name` mirroring `code`. Five codes: `NOT_A_READ_QUERY` / `CLIENT_CLOSED` / `WORKER_CRASHED` / `TIMEOUT` / `PROTOCOL_ERROR`. Exported from `index.ts`. |
+| `supervisor.ts` | 81 | **New in wave 2.** Pure per-slot restart policy, zero imports. Slot that never reached `ready` is never restarted; restart counter resets on a request actually served (not on `ready`); `maxWorkerRestarts` bounds it; an eviction leaving no live slot fails the client; `evicted` flag makes eviction permanent against a late `ready`. |
+| `scheduler.ts` | 200 | **Pure** — availability (a private `Set`), both wait queues, writer designation, opaque leases. Gained `remove(index)` and `shutdown(reason)` in wave 2; a per-index generation counter makes a stale lease's `release()` inert after the slot was removed and revived. No `Worker`, no DOM, no orchestrator import — Node tests drive it in milliseconds. **This purity is load-bearing: B1 survived for months because the scheduler was only reachable through slow browser tests.** |
+| `pool.ts` | 362 | Worker creation and transport: `postMessage` / `onmessage` routed by `callId`, the raw query generator, and the stop-and-drain that waits for the worker's in-flight `done` before a lease returns. `PoolWorker` now carries `interrupt()`, `quiesce()`, and `close()`. Wave 2 adds `onerror` (dead worker and the actionable load-failure message), `messageerror` (worker survives, request rejects with `PROTOCOL_ERROR`), a bounded stop-and-drain, and the `close` handshake. |
+| `queries.ts` | 163 | `chunk()` — the single query primitive and **the only place `AbortSignal` is read** — plus `streamRows` / `readWorker` / `firstWorker` / `writeWorker`. Wave 2 adds `makeAbortRace` helper; the abort now races the pending chunk instead of being tested after it, and the caller never awaits the drain. |
+| `transaction.ts` | 151 | `transaction()` over a single lease held for its whole lifetime. |
 | `bulk.ts` | 170 | `bulkWrite()` + `output()`. Still carries B5 verbatim. Calls the **public** `write` (one lease per batch, worker released between batches) — a property D3 depends on; do not consolidate it into one held lease. |
-| `worker/worker.ts` | 258 | Worker thread: VFS bootstrap, `open`, statement execution, chunked streaming. Holds `VFSConfigs` (the good extensibility pattern — `satisfies Record<SQLiteVFS, …>`). |
+| `worker/worker.ts` | 326 | Worker thread: VFS bootstrap, `open`, statement execution, chunked streaming. Wave 2: `ready` only on success and `open-error` on failure; every `cause` structured-clone-probed; `sqlite.close(db)` on the `close` message; exhaustive message dispatch. Holds `VFSConfigs` (the good extensibility pattern — `satisfies Record<SQLiteVFS, …>`). |
 | `orchestrator.ts` | 183 | `WorkerOrchestrator`: `SharedArrayBuffer` + `Atomics` for the init mutex and per-worker status flags. `Atomics.wait` is called worker-side only. |
 | `debug.ts` | 227 | Instrumentation subsystem — **still entirely dead code** (B6). |
-| `types.ts` | 85 | Wire protocol types plus the shared `SQLiteQueryOptions`. Lines 1-38 are still a stale duplicate that disagrees with the live one. |
-| `utils.ts` | 55 | `isReadQuery` / `isWriteQuery` (allowlist since wave 1) + `sqlParams`/`addParam` (exported, tested, unused by the lib). |
-| `wa-sqlite.d.ts` | 80 | Hand-written 7-method `SQLiteAPI` subset shadowing wa-sqlite's own shipped types; **missing `close`**. |
-| `index.ts` | 1 | `export * from './client'` |
+| `types.ts` | 93 | Wire protocol types plus the shared `SQLiteQueryOptions`. Lines 1-38 are still a stale duplicate that disagrees with the live one. |
+| `utils.ts` | 74 | `isReadQuery` / `isWriteQuery` (allowlist since wave 1) + `assertReadable(sql, method)` (new in wave 2, throws `NOT_A_READ_QUERY` before a lease is taken) + `sqlParams`/`addParam` (exported, tested, unused by the lib). |
+| `wa-sqlite.d.ts` | 81 | Hand-written 7-method `SQLiteAPI` subset shadowing wa-sqlite's own shipped types; **missing `close`**. |
+| `index.ts` | 2 | `export * from './client'; export * from './errors'` — `SQLiteError` is now a public export. |
 
 Public API surface (since wave 1): `chunk` / `read` / `write` / `first` / `stream` /
 `transaction` / `close`, plus `bulkWrite` and `output`. `one()` was renamed `first()`,
 `stream()` yields rows rather than chunks, `chunk()` is the new chunk-wise path, and
 `signal` is accepted on every method.
+
+**Wave 2 additions to the public surface:** `SQLiteError` (exported from `index.ts`),
+`close()` changed from `() => void` to `() => Promise<void>` (async, awaitable).
+Three new constructor options: `maxWorkerRestarts` (default 1), `openTimeout` (default
+30 000 ms), `drainTimeout` (default 60 000 ms).
+
+**Wave 2 invariant — the lease returns on quiesce, not on the caller's exit.**
+After a read method's `try` block finishes, the `finally` calls `lease.worker.quiesce()`
+and only releases the lease once the worker confirms it is idle. The caller does not wait
+for this — it was already handed its result. This means the lease returns when the worker
+is done with `sqlite.step()`, not when the public method returns. The consequence: a
+worker still inside a `step()` call is never re-lent; the pool's exclusivity guarantee
+holds at the worker level, not just at the scheduler level.
+
+**rsbuild renames the emitted worker chunk** (`webpackChunkName: "browser-sqlite"`), so
+no test may assert a `worker/worker.js` substring in an error message. The lifecycle test
+for the load-failure error asserts the stable wording (`'could not load its worker from'`
+and `'Bundler Configuration'`) rather than the URL, for this reason.
 
 ## Key invariant — established in wave 1, do not weaken it
 

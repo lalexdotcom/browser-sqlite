@@ -141,7 +141,12 @@ export type SQLiteDB = {
    * exhausted or the caller uses `break`. Failing to exhaust the generator
    * starves the pool. Always use `for await...of` to completion or `break` to exit.
    *
-   * @param sql - SQL query string.
+   * **`NOT_A_READ_QUERY` timing.** Because `chunk()` is an async generator, its
+   * body does not run until the first `next()` call. Passing a write statement
+   * does not throw at the call site — the `SQLiteError` arrives on the first
+   * `await gen.next()` (or the first iteration of `for await...of`).
+   *
+   * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional options including `chunkSize` (default `500`),
    *   `signal` (AbortSignal to cancel).
@@ -158,7 +163,13 @@ export type SQLiteDB = {
    * Flattens chunk boundaries — each iteration yields one `T` row, not a chunk.
    * Use `chunk()` when you need the rows grouped by chunk.
    *
-   * @param sql - SQL query string.
+   * @remarks
+   * **`NOT_A_READ_QUERY` timing.** Because `stream()` is an async generator, its
+   * body does not run until the first `next()` call. Passing a write statement
+   * does not throw at the call site — the `SQLiteError` arrives on the first
+   * `await gen.next()` (or the first iteration of `for await...of`).
+   *
+   * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional query options (`signal`, `id`).
    * @returns AsyncGenerator yielding individual rows of type `T`.
@@ -197,6 +208,14 @@ export type SQLiteDB = {
    * On callback success: auto-commits if `autoCommit` is `true` (default).
    * On callback error: rolls back automatically.
    * The callback may call `db.commit()` or `db.rollback()` manually.
+   *
+   * @remarks
+   * **Worker crash mid-transaction.** If the worker dies while the callback is
+   * running, the transaction rejects with a `WORKER_CRASHED` error. The
+   * database engine inside the terminated worker handles its own rollback, but
+   * any OPFS file lock the worker held is not released until the browser
+   * reclaims the terminated worker's file handles — the timing of that
+   * reclamation is outside this library's control.
    *
    * @param callback - Async function receiving a `TransactionDB` instance.
    * @param options - `readOnly` (default `false`) prevents write statements;
