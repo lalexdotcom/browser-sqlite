@@ -249,15 +249,21 @@ export type SQLiteDB = {
   ) => { enqueue: (data: any) => void; close: () => Promise<number> };
 
   /**
-   * Terminates all workers in the pool.
+   * Drains in-flight work, rejects queued work, closes each database connection,
+   * then terminates all workers in the pool.
+   *
+   * The returned promise settles once every worker has posted `closed` and been
+   * terminated, or once `drainTimeout` milliseconds have elapsed (whichever
+   * comes first). Calling `close()` a second time returns the **same** promise
+   * object — the operation runs exactly once.
    *
    * @remarks
-   * **OPFS files are NOT deleted.** `close()` calls `worker.terminate()` on each
-   * pool worker — it does not remove any OPFS database files. Files created by
-   * browser-sqlite persist in the origin's private file system across page loads.
-   * To delete OPFS files, use the `navigator.storage.getDirectory()` API directly.
+   * **OPFS files are NOT deleted.** `close()` does not remove any OPFS database
+   * files. Files created by browser-sqlite persist in the origin's private file
+   * system across page loads. To delete OPFS files, use the
+   * `navigator.storage.getDirectory()` API directly.
    */
-  close: () => void;
+  close: () => Promise<void>;
 
   /**
    * Internal diagnostic handle. Not part of the stable public API.
@@ -472,12 +478,49 @@ export const createSQLiteClient = (
 
   const transaction = createTransaction({ scheduler });
 
+  /** Bounds any settlement that depends on a worker answering. */
+  const bounded = async (promise: Promise<unknown>, ms: number) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        promise,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, ms);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  let closing: Promise<void> | undefined;
+
   /**
-   * Terminates all workers and cleans up the pool.
+   * Drains in-flight work, rejects queued work, closes each database
+   * connection, then terminates all workers. Bounded by `drainTimeout`.
+   * A second call returns the same promise object — runs exactly once.
    */
-  const close = () => {
-    for (const worker of pool) worker?.terminate();
-    pool.length = 0;
+  const close = (): Promise<void> => {
+    if (closing) return closing;
+    closing = (async () => {
+      // Shutting the front door first: queued waiters reject at once and no new
+      // work can be acquired while the in-flight work drains.
+      const draining = scheduler.shutdown(
+        new SQLiteError('CLIENT_CLOSED', 'The SQLite client has been closed.'),
+      );
+      // A transaction's lease is held by user code, so this wait is bounded like
+      // the rest: a callback that never returns must not make close() hang.
+      await bounded(draining, drainTimeout);
+      await Promise.all(
+        pool.map(async (worker) => {
+          if (!worker) return;
+          await bounded(worker.close(), drainTimeout);
+          worker.terminate();
+        }),
+      );
+      pool.length = 0;
+    })();
+    return closing;
   };
 
   const openTimeout = clientOptions?.openTimeout ?? 30_000;

@@ -33,6 +33,8 @@ export type PoolWorker = Worker & {
   interrupt: () => void;
   /** Resolves when no query is in flight on this worker. */
   quiesce: () => Promise<void>;
+  /** Posts `close`, awaits the `closed` reply, then the caller must terminate. */
+  close: () => Promise<void>;
 };
 
 const STOP = Symbol('stop');
@@ -89,6 +91,9 @@ export const createPoolWorker = (deps: {
 
   // Deferred promise for streaming query results one chunk at a time
   let deferredChunk: PromiseWithResolvers<unknown[] | number> | undefined;
+
+  // Deferred promise resolved when the worker replies 'closed'.
+  let deferredClose: PromiseWithResolvers<void> | undefined;
 
   // Resolved while a query is in flight; `quiesce()` is how a lease learns the
   // worker is genuinely idle again.
@@ -151,28 +156,43 @@ export const createPoolWorker = (deps: {
   // Message handler routes responses by callId
   worker.onmessage = ({ data }: MessageEvent<WorkerMessageData>) => {
     const { callId, type } = data;
-    if (callId === 0 && type === 'ready') {
-      ready = true;
-      if (state) state.initializationTime = Date.now();
-      deferredInit.resolve(worker);
-    }
-    if (callId === 0 && data.type === 'open-error') {
-      die(
-        new SQLiteError('WORKER_CRASHED', data.message, { cause: data.cause }),
-      );
-      return;
-    }
-    if (deferredChunk && callId === currentCallId) {
-      switch (type) {
-        case 'chunk': {
+    switch (type) {
+      case 'ready': {
+        if (callId === 0) {
+          ready = true;
+          if (state) state.initializationTime = Date.now();
+          deferredInit.resolve(worker);
+        }
+        break;
+      }
+      case 'open-error': {
+        if (callId === 0) {
+          die(
+            new SQLiteError('WORKER_CRASHED', data.message, {
+              cause: data.cause,
+            }),
+          );
+        }
+        break;
+      }
+      case 'closed': {
+        if (callId === 0) {
+          deferredClose?.resolve();
+        }
+        break;
+      }
+      case 'chunk': {
+        if (deferredChunk && callId === currentCallId) {
           if (state?.currentRequest?.currentQuery) {
             state.currentRequest.currentQuery.firstRowTime ??= Date.now();
           }
           deferredChunk.resolve(data.data);
           deferredChunk = Promise.withResolvers<unknown[] | number>();
-          break;
         }
-        case 'done': {
+        break;
+      }
+      case 'done': {
+        if (deferredChunk && callId === currentCallId) {
           const affected = data.affected;
           if (state?.currentRequest?.currentQuery) {
             state.currentRequest.currentQuery.affectedRows = affected;
@@ -182,9 +202,11 @@ export const createPoolWorker = (deps: {
           deferredChunk.resolve(affected);
           deferredChunk = undefined;
           deps.onServed?.(index);
-          break;
         }
-        case 'error': {
+        break;
+      }
+      case 'error': {
+        if (deferredChunk && callId === currentCallId) {
           const error = new Error(data.message, { cause: data.cause });
           if (state?.currentRequest?.currentQuery) {
             state.currentRequest.currentQuery.error = error;
@@ -192,8 +214,14 @@ export const createPoolWorker = (deps: {
           }
           deferredChunk.reject(error);
           deferredChunk = undefined;
-          break;
         }
+        break;
+      }
+      default: {
+        const _unexpected: never = data;
+        throw new Error(
+          `Unhandled worker message: ${JSON.stringify(_unexpected)}`,
+        );
       }
     }
   };
@@ -310,6 +338,13 @@ export const createPoolWorker = (deps: {
       stopRequested?.resolve(STOP);
     },
     quiesce: () => idle?.promise ?? Promise.resolve(),
+    close: async () => {
+      if (!deferredClose) {
+        deferredClose = Promise.withResolvers<void>();
+        worker.postMessage({ type: 'close', callId: 0 });
+      }
+      await deferredClose.promise;
+    },
   });
 
   // Initialize worker with database file and configuration
