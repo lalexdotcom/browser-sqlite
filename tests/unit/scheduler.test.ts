@@ -146,6 +146,97 @@ describe('scheduler — writer designation', () => {
   });
 });
 
+describe('scheduler — removal', () => {
+  // Falsifiable: delete `dead.add(index)` in remove() and this fails — the late
+  // release() hands a corpse back and the second acquire resolves.
+  it('does not hand back a removed worker when its lease is released late', async () => {
+    const { scheduler } = makeScheduler(1);
+    const lease = await scheduler.acquire('read');
+    scheduler.remove(0);
+    let served = false;
+    void scheduler.acquire('read').then(() => {
+      served = true;
+    });
+    lease.release();
+    await flush();
+    expect(served).toBe(false);
+  });
+
+  // Falsifiable: delete the `currentWriterIndex = -1` line in remove().
+  it('frees the writer designation when the writer is removed', async () => {
+    const { scheduler } = makeScheduler(2);
+    const writer = await scheduler.acquire('write');
+    expect(writer.worker.index).toBe(0);
+    writer.release();
+    scheduler.remove(0);
+    const next = await scheduler.acquire('write');
+    expect(next.worker.index).toBe(1);
+  });
+
+  it('revives an index when a replacement is added', async () => {
+    const { scheduler } = makeScheduler(1);
+    scheduler.remove(0);
+    scheduler.add({ index: 0 });
+    const lease = await scheduler.acquire('read');
+    expect(lease.worker.index).toBe(0);
+  });
+});
+
+describe('scheduler — shutdown', () => {
+  // Falsifiable: delete the reject loop over the queues in shutdown().
+  it('rejects queued waiters with the given reason', async () => {
+    const { scheduler } = makeScheduler(1);
+    const held = await scheduler.acquire('read');
+    const queued = scheduler.acquire('read');
+    const reason = new Error('closing');
+    void scheduler.shutdown(reason);
+    await expect(queued).rejects.toBe(reason);
+    held.release();
+  });
+
+  // Falsifiable: delete the `if (shutdownReason) throw shutdownReason` guard in acquire().
+  it('rejects every later acquisition', async () => {
+    const { scheduler } = makeScheduler(1);
+    const reason = new Error('closing');
+    void scheduler.shutdown(reason);
+    await expect(scheduler.acquire('read')).rejects.toBe(reason);
+  });
+
+  // Falsifiable: resolve the shutdown promise immediately instead of waiting on
+  // `leased.size === 0` and this fails.
+  it('settles only when the last outstanding lease comes back', async () => {
+    const { scheduler } = makeScheduler(2);
+    const a = await scheduler.acquire('read');
+    const b = await scheduler.acquire('read');
+    let settled = false;
+    void scheduler.shutdown(new Error('closing')).then(() => {
+      settled = true;
+    });
+    await flush();
+    expect(settled).toBe(false);
+    a.release();
+    await flush();
+    expect(settled).toBe(false);
+    b.release();
+    await flush();
+    expect(settled).toBe(true);
+  });
+
+  // Falsifiable: drop the `leased.delete(index)` line from remove() — the
+  // shutdown promise then waits forever on a lease nobody can return.
+  it('does not wait on a lease whose worker was removed', async () => {
+    const { scheduler } = makeScheduler(1);
+    await scheduler.acquire('read');
+    let settled = false;
+    void scheduler.shutdown(new Error('closing')).then(() => {
+      settled = true;
+    });
+    scheduler.remove(0);
+    await flush();
+    expect(settled).toBe(true);
+  });
+});
+
 describe('scheduler — leases', () => {
   it('keeps a worker across many statements while others wait (B1)', async () => {
     const { scheduler } = makeScheduler(1);
