@@ -9,6 +9,7 @@ import {
   writeWorker,
 } from './queries';
 import { createScheduler } from './scheduler';
+import { createTransaction, type TransactionDB } from './transaction';
 import type { SQLiteVFS } from './types';
 import { isWriteQuery } from './utils';
 
@@ -192,7 +193,8 @@ export type SQLiteDB = {
 
   /**
    * Executes a callback within a SQLite transaction, providing a scoped
-   * `TransactionDB` with `read`, `write`, `stream`, and `one` methods.
+   * `TransactionDB` with `read`, `write`, `chunk`, `stream`, `first`,
+   * `commit`, and `rollback` methods.
    *
    * The worker is held exclusively for the transaction's duration.
    * On callback success: auto-commits if `autoCommit` is `true` (default).
@@ -205,7 +207,7 @@ export type SQLiteDB = {
    * @returns Promise resolving to the value returned by `callback`.
    */
   transaction: <T = void>(
-    callback: (db: any) => Promise<T>,
+    callback: (db: TransactionDB) => Promise<T>,
     options?: { readOnly?: boolean; autoCommit?: boolean },
   ) => Promise<T>;
 
@@ -608,95 +610,7 @@ export const createSQLiteClient = (
     };
   };
 
-  // Transaction API type with commit/rollback methods
-  type TransactionDB = Pick<
-    SQLiteDB,
-    'read' | 'write' | 'stream' | 'one' | 'first'
-  > & {
-    commit: () => Promise<void>;
-    rollback: () => Promise<void>;
-  };
-
-  /**
-   * Executes a callback within a database transaction.
-   * Provides commit/rollback methods and can auto-commit on success.
-   *
-   * @param callback - Function to execute within transaction, receives TransactionDB
-   * @param options - readOnly flag and autoCommit behavior
-   * @returns Result of callback function
-   */
-  const transaction = async <T = void>(
-    callback: (db: TransactionDB) => Promise<T>,
-    options?: { readOnly?: boolean; autoCommit?: boolean },
-  ) => {
-    const { readOnly = false, autoCommit = true } = options ?? {};
-    const lease = await scheduler.acquire(readOnly ? 'read' : 'write');
-    const worker = lease.worker;
-
-    // Validate that read-only transactions don't attempt writes
-    const checksql = (sql: string) => {
-      if (readOnly && isWriteQuery(sql))
-        throw new Error('Cannot werite in read-only transaction');
-      return sql;
-    };
-
-    let done = false;
-
-    // Create TransactionDB with scoped methods
-    const db: TransactionDB = {
-      read: <T extends Record<string, unknown> = Record<string, unknown>>(
-        sql: string,
-        ...args: any[]
-      ) => readWorker<T>(worker, checksql(sql), ...args),
-      write: <T extends Record<string, unknown> = Record<string, unknown>>(
-        sql: string,
-        ...args: any[]
-      ) => writeWorker<T>(worker, checksql(sql), ...args),
-      stream: <T extends Record<string, unknown> = Record<string, unknown>>(
-        sql: string,
-        ...args: any[]
-      ) => streamRows<T>(worker, checksql(sql), ...args),
-      first: <T extends Record<string, unknown> = Record<string, unknown>>(
-        sql: string,
-        ...args: any[]
-      ) => firstWorker<T>(worker, checksql(sql), ...args),
-      one: <T extends Record<string, unknown> = Record<string, unknown>>(
-        sql: string,
-        ...args: any[]
-      ) => firstWorker<T>(worker, checksql(sql), ...args),
-      commit: async () => {
-        done = true;
-        await firstWorker(worker, 'COMMIT');
-      },
-      rollback: async () => {
-        done = true;
-        await firstWorker(worker, 'ROLLBACK');
-      },
-    };
-
-    try {
-      // Start transaction
-      await db.read('BEGIN');
-      const result = await callback(db);
-
-      // Auto-commit if not manually committed/rolled back
-      if (!done) {
-        if (autoCommit) {
-          await db.commit();
-        } else {
-          await db.rollback();
-        }
-      }
-      return result;
-    } catch (e) {
-      // Rollback on error
-      await db.rollback();
-      throw e;
-    } finally {
-      // Always release worker back to pool
-      lease.release();
-    }
-  };
+  const transaction = createTransaction({ scheduler });
 
   /**
    * Terminates all workers and cleans up the pool.
