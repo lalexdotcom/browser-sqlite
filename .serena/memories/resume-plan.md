@@ -190,6 +190,45 @@ present in `SQLiteQueryOptions` is the matching request tag.
 3. `status: 'HAHA'` (`debug.ts:158`) — unobservable behind the Proxy, but it ships.
 4. Off-by-one: `if (length > MAX) shift()` peaks at 51 before trimming to 50.
 
+### 1.4 D6 — asset resolution: we own the Vite integration, and `wasmUrl` is the escape hatch
+
+Decided 2026-08-18, after asking what more could be done about VIT-1 given it is *not*
+an artefact defect. It is not a defect, but it is ~25 lines of boilerplate pushed onto
+every Vite consumer, and the version we published in the README is fragile. Four items,
+all approved:
+
+1. **Ship the plugin ourselves** — a `browser-sqlite/vite` export subpath returning a
+   Vite plugin that does both corrections itself: push `optimizeDeps.exclude`, and copy
+   `dist/worker/*` using the **resolved** `build.assetsDir` instead of a literal
+   `dist/assets`. Consumer config collapses to `plugins: [browserSqlite()]`.
+   **Zero-runtime-dependency is preserved**: a Vite plugin is a plain object, so `vite`
+   stays a devDependency (types only) — do not let it become a runtime or peer dep.
+   Coverage is free: smoke mode 2 already exercises this path, the fixture just switches
+   to the shipped plugin. **Wave 4** (with the rest of the packaging work).
+2. **The documented snippet is fragile and must die with item 1.** Two hard-coded
+   assumptions: `dist/assets` (wrong the moment a consumer sets `build.assetsDir`) and
+   `node_modules/browser-sqlite/dist/worker` (a flat node_modules — wrong in a pnpm
+   workspace or monorepo). Resolve the package via `import.meta.resolve`. If item 1 ever
+   slips, fix the snippet in place — it is wrong as written either way.
+3. **`wasmUrl`, optional** — an explicit base URL for the three `.wasm`. **When omitted,
+   behaviour is exactly today's** `new URL('wa-sqlite.wasm', import.meta.url)` resolution,
+   which works in most setups (user requirement, 2026-08-18): this is an escape hatch, not
+   a new default, and the default config must not change by a single byte. It covers the
+   wider "assets re-hosted on a CDN at another path" case, of which Vite is one instance.
+   It does **not** replace the copy step — the files still have to exist somewhere.
+   This closes the "WASM location" open question left by wave P (§2.1).
+4. **Turn the hang into a diagnostic** — see B2 in `mem:follow-ups`. Belongs to **wave 2**,
+   and is not Vite work: a `Worker` `onerror` that rejects with the attempted URL and a
+   README pointer. This is what downgrades a misconfigured consumer from "hangs forever"
+   to "reads an error".
+
+**Rejected: inlining the `.wasm` as base64** into `worker.js`. It would remove the
+external-asset problem for every bundler at once, but costs +33 % on 2.4 MB raw and gives
+up streaming compilation. Acceptable only as an opt-in subpath entry, never as the default.
+
+**Rejected: waiting for Vite.** The `import.meta.url` rewrite during esbuild pre-bundling
+is intended behaviour, not a bug in flight — do not plan around a fix.
+
 ## 2. Order of work
 
 Each wave is independently shippable. The ordering rationale that matters: **the test
@@ -207,14 +246,39 @@ Wave **P** was inserted in front on 2026-08-17 rather than renumbering, so that 
 |---|---|---|
 | P ✅ | **Packaging — make the package consumable, nothing more.** See §2.1. Closed 2026-08-17. | B10, B8 |
 | 0 ✅ | CI running the suite; put `tests/` in the tsc program; characterization tests for `transaction` / `bulkWrite` / `output`; fix the assertions that cannot fail | B7 |
-| 1 | Extract pool + scheduler into a pure module unit-testable in Node (parameterized over a minimal `{ available: boolean }` shape); make `releaseWorker` the single owner of `available`; **relayer the query API on `chunk()` per §1.2** and fix abort once inside it (covers `stream()`'s early `break` and B9) | B1, B9, W-arch, part of W-types |
+| 1 | Extract pool + scheduler into a pure module unit-testable in Node (parameterized over a minimal `{ available: boolean }` shape); make `releaseWorker` the single owner of `available`; **relayer the query API on `chunk()` per §1.2** and fix abort once inside it (covers `stream()`'s early `break` and B9). **Exit criteria in §2.2 — FLK-1 is one of them.** | B1, B9, FLK-1, W-arch, part of W-types |
 | 2 | `onerror` / `onmessageerror`, per-request timeouts, distinct `open-error` message, `close()` handshake that settles in-flight work and calls `sqlite.close()` | B2, B3 |
 | 3 | `quoteIdent()` + pragma allowlist; **debug wired per §1.3** (do it here, before wave 5, so the perf work is measurable); **`output()` rebuilt as staging + atomic rename per §1.1** (needs a `navigator.locks` primitive — pull it forward from wave 4); `bulkWrite` surfaces per-batch failures | B4, B5, B6 |
-| 4 | Packaging: **ship a real worker artifact and an `exports` entry for it — B10, the library is unusable as published**; vendor wa-sqlite (**not** a peer dependency: the problem is the `github:` specifier and wa-sqlite is not on npm at all, so a peer dep would just push the git URL into every consumer's `package.json`); remove the SAB (pending D2). Flip `consumer-smoke` to blocking in CI when done. | B10, B8, W-sab |
+| 4 | Packaging, round two — B10/B8 and the `consumer-smoke` gate moved to wave P and are **done**. What is left here: remove the SAB (D2), and **D6 (§1.4): the `browser-sqlite/vite` plugin subpath + the optional `wasmUrl` escape hatch**, which retires the fragile README snippet. | W-sab, VIT-1 |
 | 5 | Performance, **with the debug instrumentation live** so the gains are measurable | perf section |
 
 Correctness items not tied to a wave (`W-route`, `W-multitab`, `W-types`) fold into
 whichever wave touches the same code.
+
+### 2.2 Wave 1 — exit criteria
+
+Added 2026-08-18. The wave is not closed until all of these hold, on top of the standing
+three (CI green, memories updated, git clean):
+
+1. Both pinned `it.fails` (B1 in `transaction.test.ts`, B9 in `concurrency.test.ts`) have
+   turned red and had `.fails` removed.
+2. **FLK-1 is gone, and gone for the right reason.** The abort check must live **client
+   side**, in `chunk()`, evaluated before each yield — not only worker side. Rationale:
+   `INT-09` fails intermittently because the worker pushes all 20 chunks into the
+   `postMessage` queue before the `ABORTING` flag is read (no back-pressure), so the
+   consumer drains an already-full buffer and `chunkCount` reaches 20. Stopping the
+   worker loop alone does **not** fix that; refusing to yield what is already queued does,
+   deterministically. Fixing B9 and the worker ack without this leaves the flake alive.
+3. `INT-09`'s assertion is tightened to an exact value (`toBe(1)`, or `<= 2` if one chunk
+   in flight is tolerated). Leaving `< 20` on a now-deterministic mechanism recreates the
+   unfalsifiable-assertion defect wave 0 was spent removing.
+
+**Open for this wave's brainstorming — settle it before writing code:** what does a
+*caller* abort mean on `chunk()` / `stream()`? Today it ends the generator silently
+(`done: true`). D4 §1.2 rules that on `first()` a caller abort **rejects with
+`AbortError`** while the internal abort resolves normally. Aligning `chunk()` on that rule
+changes `INT-09` from "the loop ends" to "the loop throws" — the test is rewritten either
+way, but not the same way. Decide first, then write.
 
 ### 2.1 Wave P — packaging
 
@@ -293,6 +357,16 @@ page", not "drop it in any page".
   not the next one. The open items are listed per wave in `mem:follow-ups` and in §1.
 
 ## 4. Changelog of this plan
+
+- **2026-08-18** — **D6 decided** (see §1.4). VIT-1 stays "not an artefact defect", but the
+  boilerplate moves from the consumer to us: a `browser-sqlite/vite` plugin subpath in
+  wave 4 (`vite` stays a devDependency — the zero-runtime-dependency state from wave P is
+  not to be traded away), plus an **optional** `wasmUrl` whose absence keeps today's
+  `import.meta.url` resolution byte-for-byte (user requirement). The README snippet was
+  found fragile on two counts (hard-coded `dist/assets`, flat-node_modules path) and is
+  retired by the plugin. Wave 2's `onerror` work gains an explicit requirement: name the
+  attempted worker URL, so a misconfigured consumer reads an error instead of hanging.
+  Inlining wasm as base64 and waiting for a Vite fix were both considered and rejected.
 
 - **2026-08-17** — **Wave P closed.** B10 and B8 resolved. What shipped:
   - Two rslib entries: `index` (rslib defaults, keeps `import.meta.url` literal) and
