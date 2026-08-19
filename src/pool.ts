@@ -59,8 +59,15 @@ export const createPoolWorker = (deps: {
   onDeath?: (index: number, error: SQLiteError) => void;
   onServed?: (index: number) => void;
   drainTimeout: number;
+  createWorkerDebugState?: (index: number, name: string) => any;
+  createQueryDebugState?: (
+    index: number,
+    sql: string,
+    params?: unknown[],
+  ) => any;
 }): Promise<PoolWorker> => {
   const { index, orchestrator, pool, clientPrefix, file, vfs, pragmas } = deps;
+  const { createWorkerDebugState, createQueryDebugState } = deps;
 
   const deferredInit = Promise.withResolvers<PoolWorker>();
 
@@ -76,14 +83,6 @@ export const createPoolWorker = (deps: {
     { index },
   );
   pool[index] = worker;
-
-  // Debug hooks — wired up per-client in a future task; currently always undefined.
-  const createWorkerDebugState = undefined as
-    | ((i: number, name: string) => any)
-    | undefined;
-  const createQueryDebugState = undefined as
-    | ((i: number, sql: string, params?: unknown[]) => any)
-    | undefined;
 
   const state = createWorkerDebugState?.(index, workerName);
 

@@ -122,7 +122,7 @@ type WorkerDebugState = {
   readonly status: string;
 };
 
-type ClientDebugState = {
+export type ClientDebugState = {
   readonly file: string;
   readonly vfs: SQLiteVFS;
   readonly pragmas: Record<string, string>;

@@ -1,5 +1,5 @@
 import { createBulk } from './bulk';
-import type { createClientDebug } from './debug';
+import { type ClientDebugState, createClientDebug } from './debug';
 import { SQLiteError } from './errors';
 import { createLocks } from './locks';
 import { WorkerOrchestrator, WorkerStatuses } from './orchestrator';
@@ -88,6 +88,15 @@ export type CreateSQLiteClientOptions = {
    * @defaultValue `60_000`
    */
   drainTimeout?: number;
+
+  /**
+   * Turns on the introspection subsystem exposed as `db.debug`, and the
+   * lifecycle log. A string is used as the log prefix; `true` falls back to the
+   * client prefix (`"<name> <index>"`), which already names the workers.
+   *
+   * @defaultValue undefined — no collection, no output, `db.debug` undefined.
+   */
+  debug?: string | boolean;
 };
 
 let clientCount = 0;
@@ -290,7 +299,7 @@ export type SQLiteDB = {
    * Shape is subject to change without notice.
    * @internal
    */
-  debug: unknown;
+  debug?: ClientDebugState;
 };
 
 const DEFAULT_VFS = 'OPFSPermutedVFS';
@@ -366,8 +375,6 @@ export const createSQLiteClient = (
   // Fail at construction, not inside the first unrelated query.
   if (clientOptions?.pragmas) renderPragmas(clientOptions.pragmas);
 
-  const { state: debug } = {} as ReturnType<typeof createClientDebug>;
-
   /**
    * Creates a new pool worker and adds it to the pool.
    * Sets up message routing via callId for query responses.
@@ -376,6 +383,47 @@ export const createSQLiteClient = (
     onIdle: (worker) =>
       orchestrator.setStatus(worker.index, WorkerStatuses.READY),
   });
+
+  const debugOption = clientOptions?.debug;
+
+  const clientDebug = debugOption
+    ? createClientDebug(
+        file,
+        orchestrator,
+        {
+          vfs,
+          pragmas: clientOptions?.pragmas ?? {},
+          name: clientOptions?.name ?? 'SQLite',
+        },
+        () => scheduler.stats(),
+      )
+    : undefined;
+
+  const debug = clientDebug?.state;
+
+  /**
+   * The single owner of the request level of the debug tree.
+   *
+   * There are seven acquisition sites; instrumenting each is seven chances to
+   * miss one. This wrapper stamps `acquireTime` (through `assign`) and
+   * `releaseTime`, and is a pass-through when debug is off. Nothing outside it
+   * calls `scheduler.acquire`.
+   */
+  const acquireInstrumented = async (kind: 'read' | 'write') => {
+    if (!clientDebug) return scheduler.acquire(kind);
+
+    const request = clientDebug.createRequestDebugState();
+    const lease = await scheduler.acquire(kind);
+    request.assign(lease.worker.index);
+
+    return {
+      worker: lease.worker,
+      release: () => {
+        request.state.releaseTime = Date.now();
+        lease.release();
+      },
+    };
+  };
 
   /**
    * Executes a read query and returns all results.
@@ -400,7 +448,7 @@ export const createSQLiteClient = (
     options?: SQLiteQueryOptions<T>,
   ) => {
     assertReadable(sql, 'read');
-    const lease = await scheduler.acquire('read');
+    const lease = await acquireInstrumented('read');
     try {
       return await readWorker<T>(lease.worker, sql, params, options);
     } finally {
@@ -430,7 +478,7 @@ export const createSQLiteClient = (
     options?: { chunkSize?: number; signal?: AbortSignal },
   ) {
     assertReadable(sql, 'chunk');
-    const lease = await scheduler.acquire('read');
+    const lease = await acquireInstrumented('read');
     try {
       yield* chunkWorker<T>(lease.worker, sql, params, options);
     } finally {
@@ -455,7 +503,7 @@ export const createSQLiteClient = (
     T extends Record<string, unknown> = Record<string, unknown>,
   >(sql: string, params?: unknown[], options?: SQLiteQueryOptions<T>) {
     assertReadable(sql, 'stream');
-    const lease = await scheduler.acquire('read');
+    const lease = await acquireInstrumented('read');
     try {
       yield* streamRows<T>(lease.worker, sql, params, options);
     } finally {
@@ -480,7 +528,7 @@ export const createSQLiteClient = (
     params?: unknown[],
     options?: SQLiteQueryOptions<T>,
   ) => {
-    const lease = await scheduler.acquire('write');
+    const lease = await acquireInstrumented('write');
     try {
       return await writeWorker<T>(lease.worker, sql, params, options);
     } finally {
@@ -510,7 +558,7 @@ export const createSQLiteClient = (
     options?: { signal?: AbortSignal },
   ) => {
     assertReadable(sql, 'first');
-    const lease = await scheduler.acquire('read');
+    const lease = await acquireInstrumented('read');
     try {
       return await firstWorker<T>(lease.worker, sql, params, options);
     } finally {
@@ -524,7 +572,9 @@ export const createSQLiteClient = (
     }
   };
 
-  const transaction = createTransaction({ scheduler });
+  const transaction = createTransaction({
+    scheduler: { ...scheduler, acquire: acquireInstrumented },
+  });
 
   const { bulkWrite, output } = createBulk({
     write,
@@ -620,6 +670,8 @@ export const createSQLiteClient = (
         supervisor.report(served, 'served');
       },
       drainTimeout,
+      createWorkerDebugState: clientDebug?.createWorkerDebugState,
+      createQueryDebugState: clientDebug?.createQueryDebugState,
     })
       .then((worker) => {
         supervisor.report(index, 'ready');

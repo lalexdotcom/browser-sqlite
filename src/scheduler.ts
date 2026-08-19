@@ -30,6 +30,16 @@ export type Scheduler<W> = {
    * last outstanding lease has come back.
    */
   shutdown: (reason: Error) => Promise<void>;
+  /**
+   * Read-only counters for the debug subsystem. The scheduler stays pure: it
+   * exposes numbers and knows nothing about debug (spec §3.2).
+   */
+  stats: () => {
+    read: number;
+    write: number;
+    available: number;
+    leased: number;
+  };
 };
 
 /**
@@ -217,6 +227,13 @@ export const createScheduler = <W extends { index: number }>(
       checkShutdown();
       return shutdownDeferred.promise;
     },
+
+    stats: () => ({
+      read: readerQueue.length,
+      write: writerQueue.length,
+      available: available.size,
+      leased: leased.size,
+    }),
 
     acquire: async (kind) => {
       if (shutdownReason) throw shutdownReason;

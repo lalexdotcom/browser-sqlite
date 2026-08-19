@@ -558,3 +558,26 @@ describe('scheduler — writer-preferred reads (post-commit freshness)', () => {
     b.release();
   });
 });
+
+describe('scheduler — stats()', () => {
+  it('reports queue depths and lease counts', async () => {
+    const scheduler = createScheduler<{ index: number }>();
+    scheduler.add({ index: 0 });
+
+    expect(scheduler.stats()).toMatchObject({
+      available: 1,
+      leased: 0,
+      read: 0,
+      write: 0,
+    });
+
+    const lease = await scheduler.acquire('read');
+    expect(scheduler.stats()).toMatchObject({ available: 0, leased: 1 });
+
+    // Nothing free: this one queues.
+    void scheduler.acquire('read');
+    expect(scheduler.stats().read).toBe(1);
+
+    lease.release();
+  });
+});
