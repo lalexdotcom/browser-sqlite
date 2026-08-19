@@ -48,7 +48,14 @@ describe('createSQLiteClient (INT-02)', () => {
     }
   });
 
-  it('reports an invalid pragma as an open error, not as a query error', async () => {
+  it('rejects an invalid pragma name at construction, before any worker starts', async () => {
+    // This exercises the client-side fail-fast in createSQLiteClient (Task 3),
+    // not the worker's open path. SQLite does not throw for syntactically valid
+    // PRAGMA k=v statements — unknown names are silently ignored and out-of-range
+    // values are silently clamped — so the worker-side renderPragmas call cannot
+    // be provoked into throwing through the public API. The worker's .catch path
+    // is defence in depth: it protects a restarted slot whose client-side
+    // validation already passed.
     await expect(
       createTestClient({ pragmas: { 'bad name': 'WAL' } }),
     ).rejects.toThrow(/pragma/i);

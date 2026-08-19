@@ -138,6 +138,13 @@ const open = (
       // Applied once, here — the JSDoc and the README have always said "on
       // open", while the code prepended them to every query (B4). A failure
       // falls through to the .catch below, which unlocks and posts open-error.
+      //
+      // Defence in depth: renderPragmas throws for invalid names/values, which
+      // would reach the .catch and surface as an open-error. Through the public
+      // API this path is unreachable — the client calls renderPragmas
+      // synchronously at construction and rejects before spawning any worker.
+      // The worker validates again because it is also spawned on restart, where
+      // the client-side guard has already passed for the original configuration.
       for (const statement of renderPragmas(pragmas)) {
         for await (const stmt of sqlite.statements(db, statement)) {
           // Some pragmas return a row (PRAGMA journal_mode=WAL returns "wal");
