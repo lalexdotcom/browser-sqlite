@@ -438,11 +438,8 @@ export const createSQLiteClient = (
    * @remarks
    * **Read-your-own-writes is not guaranteed across workers.** Under the default
    * `OPFSPermutedVFS`, each pool worker holds its own in-memory page map updated
-   * via BroadcastChannel. The scheduler prefers the designated writer for reads,
-   * making the common sequential pattern (`await db.write(…); await db.read(…)`)
-   * reliable. However, if a concurrent write holds the designated writer at the
-   * moment this read is dispatched, the read falls back to another worker that
-   * may not yet have received the latest commit broadcast. For a hard guarantee,
+   * via BroadcastChannel. A read may land on a worker that has not yet received
+   * the latest commit broadcast, returning pre-commit data. For a hard guarantee,
    * issue the read inside the same `transaction()` as the write, or use
    * `poolSize: 1`.
    */

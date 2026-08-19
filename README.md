@@ -206,7 +206,7 @@ const rows = await db.read('SELECT * FROM large_table', [], {
 
 **Read methods reject write statements.** `read()`, `chunk()`, `stream()`, and `first()` reject any statement that is not a provably readable query, throwing `NOT_A_READ_QUERY`. A bare read pragma (`PRAGMA journal_mode`) is accepted; a pragma that assigns a value or takes an argument must go through `write()`.
 
-**Read-your-own-writes is not guaranteed across workers.** Under the default `OPFSPermutedVFS`, each pool worker holds its own in-memory page map that is updated when it receives a commit broadcast. The scheduler prefers the designated writer for reads immediately after a write, so the common sequential pattern (`await db.write(…); const rows = await db.read(…)`) is reliable. However, if a concurrent write claims the designated writer at the moment a read is dispatched, that read falls back to another worker which may not yet have received the latest commit broadcast, causing it to lag by one commit-propagation cycle. For a hard read-your-own-writes guarantee, issue the read inside the same `transaction()` as the write, or use `poolSize: 1`.
+**Read-your-own-writes is not guaranteed across workers.** Under the default `OPFSPermutedVFS`, each pool worker holds its own in-memory page map that is updated when it receives a commit broadcast. A read dispatched after a write may land on a different worker that has not yet received the broadcast, causing it to return pre-commit data. For a hard read-your-own-writes guarantee, issue the read inside the same `transaction()` as the write, or use `poolSize: 1`.
 
 ## Requirements
 

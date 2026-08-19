@@ -34,7 +34,11 @@ describe('output() create and populate', () => {
   });
 
   it('drops and replaces a pre-existing table with a different schema', async () => {
-    const db = await createTestClient();
+    // poolSize: 1 pins writes and the subsequent read to the same worker,
+    // guaranteeing read-your-own-writes. The scheduler no longer routes reads
+    // to the designated writer by preference; wave 4's propagation barrier is
+    // what will make the multi-worker case reliable.
+    const db = await createTestClient({ poolSize: 1 });
 
     await db.write('CREATE TABLE out_replace (old_col TEXT)');
     await db.write("INSERT INTO out_replace VALUES ('stale')");

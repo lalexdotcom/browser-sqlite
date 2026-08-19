@@ -101,7 +101,7 @@ export const createScheduler = <W extends { index: number }>(
     }
 
     if (readerQueue.length) {
-      if (currentWriterIndex === worker.index) currentWriterIndex = -1;
+      // Reads never alter the designation — rule 1.
       readerQueue.shift()?.resolve(worker);
       return;
     }
@@ -140,40 +140,8 @@ export const createScheduler = <W extends { index: number }>(
       return workers[currentWriterIndex];
     }
 
-    // Correctness over throughput: prefer the designated writer for reads when
-    // it is immediately available.
-    //
-    // Under OPFSPermutedVFS (the default) each worker maintains its own
-    // in-memory page map (mapPageToOffset). Commits propagate to other workers
-    // via BroadcastChannel + IndexedDB. The writer applied #acceptTx to its own
-    // map synchronously during the commit, so it always has an up-to-date view.
-    // A non-writer worker that picks up a read before the broadcast arrives will
-    // read from stale page offsets and return pre-commit data.
-    //
-    // The writer designation is intentionally NOT cleared here. Clearing it
-    // would allow a subsequent write to land on a different worker that still
-    // has a stale map — defeating the fix — and would break the invariant that
-    // all writes for a given designation serialize through one worker.
-    //
-    // Trade-off: with a pool size > 1, sustained write-then-read sequences pile
-    // reads on the designated writer rather than spreading them. This is the
-    // same direction the backlog already flags for the lowest-index-first policy
-    // ("reads pile on worker 0 which is usually also the writer"). Any future
-    // round-robin or prefer-non-writer scheduling change MUST either preserve
-    // this writer-preference for the first read after a commit, or replace it
-    // with a real propagation barrier that confirms the broadcast has been
-    // received and processed by the target worker before dispatching the read.
-    if (
-      !write &&
-      currentWriterIndex > -1 &&
-      available.has(currentWriterIndex)
-    ) {
-      const w = workers[currentWriterIndex]!;
-      available.delete(currentWriterIndex);
-      return w;
-    }
-
-    // Lowest-index-first, preserved from the original implementation.
+    // Lowest-index-first for both reads and new writes (reads never touch
+    // the designation; write designation is set below when a new one starts).
     const found = workers.find(
       (worker) => worker !== undefined && available.has(worker.index),
     );
@@ -190,7 +158,7 @@ export const createScheduler = <W extends { index: number }>(
       workers[worker.index] = worker;
       // Serve any requests that arrived before this worker was ready, preserving
       // the same writer-first priority as handOver. Does NOT call onIdle — the
-      // worker is newly joining the pool, not returning from a lease.\
+      // worker is newly joining the pool, not returning from a lease.
       if (
         writerQueue.length &&
         (currentWriterIndex === worker.index || currentWriterIndex === -1)
@@ -200,7 +168,7 @@ export const createScheduler = <W extends { index: number }>(
         return;
       }
       if (readerQueue.length) {
-        if (currentWriterIndex === worker.index) currentWriterIndex = -1;
+        // Reads never alter the designation — rule 1.
         readerQueue.shift()?.resolve(worker);
         return;
       }
