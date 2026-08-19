@@ -55,6 +55,25 @@ the BP-1 design brainstorming, with the measurement as input.
 
 Its first act was **BP-1's four-combination measurement**, and that is now complete.
 
+**Where the session stopped (2026-08-19).** Four commits on the branch; the source tree is
+identical to `main`'s, so nothing is half-applied. `dc96f57` / `bbf31b9` are the first probe and
+its removal, `fae6423` / `d82c673` the second probe and its removal, plus a memory commit. The
+DRAFT design is `docs/superpowers/specs/2026-08-19-wave-4-backpressure-design.md` — **read it
+first when resuming; it carries both measurement tables, the approved mechanism, and the notes
+already gathered for the sections that were never presented.**
+
+Brainstorming reached **section 1 of 4, approved**. Sections 2 (scope per method, `first()`, the
+`SharedArrayBuffer` removal), 3 (failure modes) and 4 (testing) are outstanding and listed in the
+DRAFT's §6. After them: spec self-review, user review of the spec, then `writing-plans`. Nothing
+may be implemented before that — the DRAFT says so at the top.
+
+**The design changed once under measurement, and the corrected form is what §3 of the DRAFT
+holds.** The first proposal — "the worker awaits one credit message per chunk, so the await is
+both the accounting and the yield, no counter needed" — deadlocks, and the probe found it by
+hanging. Credits sent ahead are dispatched during the query's start-up awaits, each resolving a
+signal nobody awaits; the worker then waits on a fresh signal that never comes. **Accounting and
+yielding are two roles: a counter for the first, an unconditional task turn for the second.**
+
 Wave 3's own documents, both committed and still accurate except where this file records a
 correction: design `docs/superpowers/specs/2026-08-19-wave-3-sql-safety-design.md`, implementation
 plan `docs/superpowers/plans/2026-08-19-wave-3-sql-safety.md` (13 tasks). **Read them with the

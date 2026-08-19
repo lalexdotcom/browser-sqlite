@@ -57,6 +57,24 @@ not exploit an existing yield — awaiting a client message per chunk is what cr
 why BP-1 gates D2 rather than merely accompanying it. The design must also price one round-trip per
 chunk: `chunkSize` and a credit window > 1 are design parameters, not details.
 
+**Second measurement, 2026-08-19 — does creating a task turn restore delivery? YES** (commit
+`fae6423`, reverted in `d82c673`). Run on the real row loop and the real VFS, 4000 chunks (200k
+rows, `chunkSize` 50), three passes: baseline without back-pressure 338 ms and the abort **never**
+delivered; with a `MessageChannel` task turn per chunk, 373-393 ms and the abort handled within
+**0-1 chunk** at every window size; with a counter only and credits batched 16 at a time, 340 ms
+and the abort handled **14 chunks late**. So: the task turn is load-bearing and its absence is
+detectable by a test; credits themselves are free (340 vs 338); the tick costs 9-14 µs per chunk,
+which at the default `chunkSize` of 500 is 20-30 ms over a 1M-row read; a window of 2 recovers the
+round-trip that lockstep pays and nothing is gained beyond 2.
+
+**The design that measurement corrected — do not re-propose the original.** "The worker awaits one
+credit *message* per chunk, so the await is both the accounting and the yield, no counter needed"
+**deadlocks**: credits sent ahead are dispatched during the query's start-up awaits, each resolving
+a signal nobody is waiting on, after which the worker awaits a fresh signal that never arrives. The
+probe found it by hanging. **Accounting and yielding are two separate roles** — a counter for the
+first, an unconditional task turn for the second. Full design and cost: the DRAFT spec
+`docs/superpowers/specs/2026-08-19-wave-4-backpressure-design.md`.
+
 **Unmeasured hypothesis, flagged as such:** the Asyncify unwind probably changes nothing here
 because `OPFSPermutedVFS` reads through synchronous `FileSystemSyncAccessHandle`, so the
 continuation is a microtask, and a microtask never lets a `message` event run; the genuinely

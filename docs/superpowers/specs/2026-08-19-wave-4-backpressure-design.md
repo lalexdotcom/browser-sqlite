@@ -1,0 +1,182 @@
+# Wave 4 — BP-1: back-pressure on `chunk()` / `stream()`
+
+**STATUS: DRAFT — brainstorming interrupted mid-flight on 2026-08-19.**
+
+Section 1 (the mechanism) is **approved by the user**. Sections 2 to 4 have not
+been presented yet. Do not implement from this document: it is a checkpoint, not
+a spec. The remaining sections are listed in §6 with the notes already gathered
+for them, so the conversation can resume without re-deriving anything.
+
+Branch: `feat/wave-4-backpressure`, from `main` at `c07c92f`.
+
+## 1. Why BP-1 exists, and what it gates
+
+The worker posts chunks as fast as it can produce them and nothing throttles it.
+That is not an optimisation defect — it blocks three separate things that were
+written down in three places without knowing they were linked:
+
+- **D2 / W-sab.** Awaiting a client credit per chunk is what returns the worker
+  to its event loop, and therefore the only thing that makes the `ABORTING` flag
+  replaceable by `postMessage`. Removing only the init mutex banks none of D2's
+  benefit, so the whole `SharedArrayBuffer` — and with it the COOP/COEP
+  requirement imposed on every consuming application — depends on this.
+- **`first()`'s hard bound.** Today the worker races ahead between the first row
+  and the client's abort-flag write. With credits it costs exactly one row.
+- **The memory guarantee the README already advertises.** Unbounded chunk
+  pile-up contradicts it. The guarantee is currently false.
+
+## 2. Two measurements, and what they settled
+
+Both were run on this branch and reverted; they live in git history only. Do not
+re-run them.
+
+### 2.1 Is a `postMessage` delivered to a worker mid-query? (commit `dc96f57`)
+
+`mem:resume-plan` §1.5 asserted it is not. That was reasoned, never observed,
+and doubtful for the default VFS, which runs wa-sqlite's Asyncify build and
+unwinds the WASM stack around asynchronous VFS calls.
+
+| VFS | load | channel OK | query | pings | handled in query | handled after |
+|---|---|---|---|---|---|---|
+| `OPFSPermutedVFS` (Asyncify) | CPU | yes | 5160 ms | 206 | **0** | 206 |
+| `OPFSPermutedVFS` (Asyncify) | I/O | yes | 1063 ms | 42 | **0** | 42 |
+| `OPFSCoopSyncVFS` (sync) | CPU | yes | 4116 ms | 164 | **0** | 164 |
+| `OPFSCoopSyncVFS` (sync) | I/O | yes | 1126 ms | 44 | **0** | 44 |
+
+Two controls make the zero mean anything, and the first attempt had neither: a
+ping sent while the worker is idle always comes back, so the channel works; and
+every ping sent during a query is handled immediately after it, so the messages
+queue rather than being lost.
+
+**§1.5 is confirmed.** No task turn happens on its own, on either build, under
+either load.
+
+### 2.2 Does creating a task turn restore delivery? (commit `fae6423`)
+
+Measured on the real row loop and the real VFS, 4000 chunks (200k rows,
+`chunkSize` 50), three passes each.
+
+| mode | median | abort latency |
+|---|---|---|
+| baseline, no back-pressure | 338 ms | **never delivered** |
+| tick + credit, window 1 | 393 ms | 0 chunks |
+| tick + credit, window 2 | 377 ms | 1 chunk |
+| tick + credit, window 4 | 373 ms | 0-1 chunks |
+| tick + credit, window 16 | 378 ms | 0-1 chunks |
+| counter only, batches of 16 | 340 ms | **14 chunks** |
+
+- **M1.** With a task turn per chunk, an abort posted mid-query is handled
+  before the next chunk.
+- **M2.** The counter-only control is handled as late as the batch size, so the
+  task turn is load-bearing and the implementation condition is falsifiable by a
+  test rather than asserted in a comment.
+- **M3.** Credits are free (340 vs 338 ms); the tick is the entire cost, 9-14 µs
+  per chunk. A window of 2 recovers the round-trip lockstep pays; beyond 2 there
+  is no gain.
+
+### 2.3 The design error these caught
+
+The first proposal was: *the worker awaits one credit message per chunk, so the
+await is both the accounting and the yield — no counter needed.* It deadlocks,
+and the probe found it by hanging. Credits sent ahead are dispatched during the
+query's start-up awaits, each resolving a signal nobody is waiting on; the
+worker then awaits a fresh signal that never comes.
+
+**Accounting and yielding are two roles.** The counter serves the first, an
+unconditional task turn the second. Neither substitutes for the other.
+
+## 3. The mechanism (section 1 — APPROVED)
+
+### 3.1 Worker side
+
+A `credits` counter, a signal deferred that every incoming credit message
+resolves and swaps, and a `tick()` built on a `MessageChannel` posting to
+itself. Before emitting each chunk:
+
+```
+await tick();                                   // unconditional task turn
+while (credits <= 0) await creditSignal.promise; // back-pressure
+credits -= 1;
+```
+
+`MessageChannel`, not `setTimeout`: nested `setTimeout` is clamped to 4 ms,
+which would cost seconds over a few hundred chunks.
+
+### 3.2 The initial window travels in the `query` message
+
+Not as separate credit messages. This removes the deadlock of §2.3 by
+construction — no credit can arrive before the worker is able to wait for one.
+Afterwards, one credit message per chunk.
+
+### 3.3 The client credits on consumption, not on arrival
+
+The credit is posted when the **consumer** has taken the chunk — after the
+`yield` in `pool.ts`'s query generator, not when the `chunk` message is
+received. Crediting on arrival would defeat the whole mechanism: the worker
+would run at full speed and the chunks would pile up in the message queue, which
+is precisely the guarantee being fixed.
+
+### 3.4 Window default: 2, internal constant
+
+Not a public option. The measurement shows 377 ms at 2 against 373 and 378 at 4
+and 16 — nothing to tune beyond 2, and an option with no use is surface to
+maintain. Window 1 costs 4 % more, which does not buy back the simplicity.
+
+### 3.5 Decided without asking, with the reasoning
+
+- **Back-pressure applies to every query path, `read()` included**, even though
+  `read()` accumulates everything anyway. The reason is not memory: D2 removes
+  the `SharedArrayBuffer`, so `read()`'s abort must travel by message, so
+  `read()` needs the tick like everything else.
+- **Abort granularity drops from "between two `step()` calls" to "between two
+  chunks".** Real, but invisible to the caller: since wave 1, `chunk()` races
+  the abort client-side and returns immediately. What is delayed is only the
+  worker ceasing work, bounded by one chunk.
+
+## 4. What this does NOT fix
+
+A query that spends its whole life inside a single `step()` — a large
+`ORDER BY`, a recursive CTE — produces no chunk, therefore no tick, therefore no
+deliverable abort. **BP-1 narrows B2's residual; it does not remove it.** After
+wave 4 the residual reads: *a worker that dies inside one long `step()` is
+noticed only if the caller aborts.* This matches what `mem:follow-ups` already
+predicted for BP-1 and must be carried into the README and B2's entry.
+
+## 5. Cost summary
+
+At the default `chunkSize` of 500, a 1M-row `read()` is 2000 chunks, so roughly
+20-30 ms of added tick cost over the whole query. The §2.2 run is deliberately
+pathological — 4000 chunks of 50 rows — to make a per-chunk cost visible at all.
+
+## 6. Open — not yet presented to the user
+
+**Section 2: scope per method, and the `SharedArrayBuffer`.**
+- `first()`: `chunkSize` 1 and window 1 gives the exact one-row bound the JSDoc
+  currently over-promises. Confirm it lands here rather than in a follow-up.
+- `write()`, `transaction()`, `bulkWrite()`/`output()`: uniform treatment
+  expected, to be walked through.
+- D2 proper: init mutex → `navigator.locks` (the primitive is already in the
+  codebase since wave 3, `locks.ts`); `ABORTING` flag → a `stop` message;
+  `orchestrator.ts` deleted or reduced; the COOP/COEP headers dropped from the
+  rstest browser plugin and from the README's requirements.
+
+**Section 3: failure modes.** Notes already gathered:
+- The stop flag must be tested **before** the credit wait, or a stopped worker
+  blocks forever waiting for a credit that the unwinding client will never send.
+  This is the interaction between the new wait and the wave-2 stop-and-drain.
+- A worker blocked on a credit is, for the first time, able to receive `close`
+  mid-query. That is an improvement over today, where a worker inside a query
+  cannot be closed — worth an explicit test.
+- Worker death while the client waits for a chunk is already covered by
+  `deathDeferred`; confirm the new wait does not bypass it.
+
+**Section 4: testing.** The falsifiability requirement is known in advance: a
+test must fail if the tick is removed. §2.2's counter-only control is the shape
+to reuse — assert that an abort posted mid-query is observed within one chunk,
+which is exactly what regresses to batch-size latency without the tick.
+
+**Not in this document, and still owed by wave 4:** the commit-propagation
+barrier (RYOW-1, the writer designation's stickiness, the two tests pinned to
+`poolSize: 1`) and D6 (the `browser-sqlite/vite` subpath). Both come after BP-1
+and D2; the barrier deserves its own brainstorming, and its options may depend
+on what BP-1 leaves behind.
