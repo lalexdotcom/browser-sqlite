@@ -8,7 +8,10 @@ export type SQLiteErrorCode =
   | 'CLIENT_CLOSED'
   | 'WORKER_CRASHED'
   | 'TIMEOUT'
-  | 'PROTOCOL_ERROR';
+  | 'PROTOCOL_ERROR'
+  | 'INVALID_IDENTIFIER'
+  | 'INVALID_PRAGMA'
+  | 'BULK_WRITE_FAILED';
 
 export class SQLiteError extends Error {
   readonly code: SQLiteErrorCode;

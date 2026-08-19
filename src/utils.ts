@@ -72,3 +72,66 @@ export const assertReadable = (sql: string, method: string): void => {
       `Note that every PRAGMA is currently classified as a write.`,
   );
 };
+
+/**
+ * Quotes an SQL identifier so it can never be read as anything but a name.
+ *
+ * The library interpolates table, column and index names into generated SQL —
+ * `bulkWrite`, `output` and their indexes. wa-sqlite's `statements()` executes
+ * `;`-separated statements, so an unquoted name is a stacked-query injection
+ * (B4). Quoting is what makes `t"; DROP TABLE users; --` one identifier.
+ *
+ * Note that quoting preserves case in `sqlite_master`; SQLite still resolves
+ * names case-insensitively.
+ */
+export const quoteIdent = (name: string): string => {
+  if (!name)
+    throw new SQLiteError('INVALID_IDENTIFIER', 'Identifier cannot be empty');
+  if (name.includes('\0'))
+    throw new SQLiteError(
+      'INVALID_IDENTIFIER',
+      `Identifier contains a NUL character: ${JSON.stringify(name)}`,
+    );
+  return `"${name.replace(/"/g, '""')}"`;
+};
+
+/** `INTEGER`, `TEXT`, `VARCHAR(255)`, `DECIMAL(10, 2)` — nothing else. */
+const COLUMN_TYPE = /^[A-Za-z][A-Za-z0-9 ]*(\([0-9, ]+\))?$/;
+
+/**
+ * A column type is not an identifier and cannot be quoted — it is an SQL
+ * fragment the caller writes. It is validated by shape instead: this is the
+ * narrowed, not closed, channel documented in the spec (§1.2).
+ */
+export const assertColumnType = (type: string, column: string): string => {
+  const trimmed = type.trim();
+  if (!COLUMN_TYPE.test(trimmed))
+    throw new SQLiteError(
+      'INVALID_IDENTIFIER',
+      `Column "${column}" declares an unsupported type ${JSON.stringify(type)}. ` +
+        `A type must be a word, optionally followed by numeric arguments, e.g. "INTEGER" or "VARCHAR(255)".`,
+    );
+  return trimmed;
+};
+
+/**
+ * A GENERATED ALWAYS AS expression is caller-authored SQL. It must at least be
+ * parenthesised and free of statement separators, so it cannot escape its slot.
+ */
+export const assertGeneratedExpression = (
+  expr: string,
+  column: string,
+): string => {
+  const trimmed = expr.trim();
+  if (
+    !trimmed.startsWith('(') ||
+    !trimmed.endsWith(')') ||
+    trimmed.includes(';')
+  )
+    throw new SQLiteError(
+      'INVALID_IDENTIFIER',
+      `Column "${column}" declares an invalid generated expression ${JSON.stringify(expr)}. ` +
+        `It must be parenthesised and contain no ";", e.g. "(base * 2)".`,
+    );
+  return trimmed;
+};
