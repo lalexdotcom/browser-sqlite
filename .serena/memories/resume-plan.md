@@ -16,10 +16,9 @@ characterization suites, and a consumer smoke test covering the published tarbal
 package is consumable from four modes (Vite dev, Vite preview, rsbuild preview,
 no-bundler). 11/11 consumer smoke stages pass; `consumer-smoke` CI job is now blocking.
 
-**WAVE 1 IS COMPLETE ON ITS BRANCH, AWAITING MERGE (2026-08-18).** Branch
-**`wave-1-pool-scheduler`**, clean, 15 commits ahead of `main`, **148 tests green**, no `it.fails`
-anywhere. Final whole-branch review returned no Critical findings; its two Important findings were
-fixed and re-reviewed clean. **Not merged** — that decision is the user's.
+**Wave 1 is done and closed** (merged into `main` on 2026-08-18, 15 commits). Final
+whole-branch review returned no Critical findings; its two Important findings were fixed and
+re-reviewed clean.
 
 Closed by this wave: **B1**, **B9**, **FLK-1**, the abort listener leak, **W-arch**, **W-route
 half 1**, and part of **W-types**. See `mem:follow-ups` for the evidence on each.
@@ -285,7 +284,18 @@ originally written assumed `navigator.locks` + a `postMessage`-driven boolean re
 **Why the abort flag is different.** The worker's row loop
 (`worker/worker.ts:170-205`) is an unbroken chain of `await sqlite.step()`. It never
 returns to its event loop for the duration of a query, so **a `postMessage` sent during
-a query is never delivered**. Shared memory is the only channel that reaches a worker in
+a query is never delivered**.
+
+> **UNMEASURED — probe this before wave 4 designs anything on it (2026-08-19, user
+> instruction).** The sentence above was reasoned, not observed, and it is certainly
+> true only of the **synchronous** builds (`OPFSCoopSyncVFS`, `AccessHandlePoolVFS`).
+> The default VFS `OPFSPermutedVFS` and `IDBBatchAtomicVFS` run on wa-sqlite's
+> **Asyncify** build, which unwinds the WASM stack around each asynchronous VFS call and
+> hands control back to the JS event loop while the I/O settles — so a message posted
+> mid-query is plausibly delivered between two page reads. If that is so, a liveness
+> probe exists today without BP-1, and this section's conclusion about the `ABORTING`
+> flag is wrong for the default VFS. The probe and its four combinations are specified
+> under BP-1 in `mem:follow-ups`. Do not build on §1.5 until it has been run. Shared memory is the only channel that reaches a worker in
 that state — which is exactly why the SAB exists. The flag becomes replaceable only when
 the worker awaits a client message per chunk, i.e. the credit/ack scheme currently filed
 under wave 5 perf.
@@ -327,7 +337,7 @@ Wave **P** was inserted in front on 2026-08-17 rather than renumbering, so that 
 | 1 | Extract pool + scheduler into a pure module unit-testable in Node (parameterized over a minimal `{ available: boolean }` shape); make `releaseWorker` the single owner of `available`; **relayer the query API on `chunk()` per §1.2** and fix abort once inside it (covers `stream()`'s early `break` and B9). Plus **W-route's first half** (routing allowlist, commit #6) — routing that bypasses exclusivity is the same defect as B1, one layer up. **Exit criteria in §2.2 — FLK-1 is one of them.** | B1, B9, FLK-1, W-arch, W-route (half), part of W-types |
 | 2 | `onerror` / `onmessageerror`, per-request timeouts, distinct `open-error` message, `close()` handshake that settles in-flight work and calls `sqlite.close()`. Plus **W-route's second half**: `write()` routes to the writer unconditionally, `read()` rejects a write query instead of silently running it — API strictness, same subject as the error surface. The `onerror` message must name the worker URL it failed to load (see B2 in `mem:follow-ups`). | B2, B3, W-route (half) |
 | 3 | `quoteIdent()` + pragma allowlist; **debug wired per §1.3** (do it here, before wave 5, so the perf work is measurable); **`output()` rebuilt as staging + atomic rename per §1.1** (needs a `navigator.locks` primitive — pull it forward from wave 4); `bulkWrite` surfaces per-batch failures | B4, B5, B6 |
-| 4 | B10/B8 and the `consumer-smoke` gate moved to wave P and are **done**. What is left here: **BP-1 (back-pressure, credit/ack) — it is the prerequisite, do it first**; then remove the SAB entirely (D2, §1.5), which drops the COOP/COEP requirement; then **D6 (§1.4): the `browser-sqlite/vite` plugin subpath + the optional `wasmUrl` escape hatch**, which retires the fragile README snippet. | BP-1, W-sab, VIT-1 |
+| 4 | B10/B8 and the `consumer-smoke` gate moved to wave P and are **done**. What is left here: **BP-1 (back-pressure, credit/ack) — it is the prerequisite, do it first, and it opens with a MEASUREMENT, not a design: run the four-combination probe specified in BP-1's entry in `mem:follow-ups` before writing a line. §1.5's claim that a `postMessage` cannot be delivered during a query was deduced, never observed, and is doubtful for the default Asyncify VFS**; then remove the SAB entirely (D2, §1.5), which drops the COOP/COEP requirement; then **D6 (§1.4): the `browser-sqlite/vite` plugin subpath + the optional `wasmUrl` escape hatch**, which retires the fragile README snippet. | BP-1, W-sab, VIT-1 |
 | 5 | Performance, **with the debug instrumentation live** so the gains are measurable | perf section |
 
 Correctness items not tied to a wave (`W-route`, `W-multitab`, `W-types`) fold into
