@@ -41,20 +41,23 @@ green**, no `it.fails` anywhere). Closed: **B2**, **B3**, **W-route half 2**. Se
 and §4 for the evidence. The merged result was verified green on `main`: `tsc --noEmit`, 193 tests,
 and the consumer smoke at 11/11.
 
-**Wave 3 is implemented on `wave-3-sql-safety` (21 commits, `8b7b421..d69f493`), verified green,
-and AWAITING MERGE — the user has not been asked yet.** B4, B5 and B6 are closed. Gate at
-`d69f493`: `pnpm check` clean, `tsc --noEmit` clean, **273 tests / 0 failures**, consumer smoke
-**11/11** across four bundler modes, and no `it.fails` anywhere. See §4 for what shipped and what
-it cost.
+**Wave 3 is done, closed and MERGED into `main`** (2026-08-19, 24 commits, merge commit
+`5eb5ace`). B4, B5 and B6 are closed. The merged result was verified **on `main`, not just on the
+branch**: `pnpm check` clean, `tsc --noEmit` clean, **272 tests / 0 failures**, consumer smoke
+**11/11** across four bundler modes, six consecutive full browser suites with no failure, and no
+`it.fails` anywhere. See §4 for what shipped and what it cost.
 
-**One thing the user must decide before or at merge: wave 3 changed scheduling policy.** Fixing a
-40 %-reproducible flake required making reads prefer the designated writer (RYOW-1 in
-`mem:follow-ups`). That is a real scope expansion out of a wave scoped to SQL safety, it was
-surfaced deliberately rather than buried, and the final whole-branch review agreed it should stay
-while being flagged as a policy change.
+**Nothing is in flight. The next session starts on wave 4.**
 
-**Next up after the merge: wave 4**, whose first act is **BP-1's four-combination measurement**,
-not a design. Note that wave 3 supplied part of that measurement for free — see §1.5's amendment.
+**Wave 4 has grown, and this is the single most important thing to carry forward.** It was
+BP-1 + removing the `SharedArrayBuffer`. It now also owns the **commit-propagation barrier**,
+because wave 3 established that one brick unblocks three separate things: RYOW-1 (reads may serve
+a pre-commit view), the writer designation being releasable at all (see rule 3 in
+`mem:project-state` — currently sticky by measured necessity), and the two browser tests pinned to
+`poolSize: 1` that should go back to the default pool size once it exists.
+
+Its first act is still **BP-1's four-combination measurement**, not a design. Wave 3 narrowed the
+hypothesis without answering it — §1.5's amendment says exactly what was measured and what was not.
 
 **Next up: wave 3** — B4 (`quoteIdent()` + pragma allowlist, which also gives read PRAGMAs back
 to `read()`), B5 (`output()` rebuilt as staging + atomic rename per §1.1), B6 (debug wired per
@@ -363,8 +366,8 @@ Wave **P** was inserted in front on 2026-08-17 rather than renumbering, so that 
 | 0 ✅ | CI running the suite; put `tests/` in the tsc program; characterization tests for `transaction` / `bulkWrite` / `output`; fix the assertions that cannot fail | B7 |
 | 1 | Extract pool + scheduler into a pure module unit-testable in Node (parameterized over a minimal `{ available: boolean }` shape); make `releaseWorker` the single owner of `available`; **relayer the query API on `chunk()` per §1.2** and fix abort once inside it (covers `stream()`'s early `break` and B9). Plus **W-route's first half** (routing allowlist, commit #6) — routing that bypasses exclusivity is the same defect as B1, one layer up. **Exit criteria in §2.2 — FLK-1 is one of them.** | B1, B9, FLK-1, W-arch, W-route (half), part of W-types |
 | 2 | `onerror` / `onmessageerror`, per-request timeouts, distinct `open-error` message, `close()` handshake that settles in-flight work and calls `sqlite.close()`. Plus **W-route's second half**: `write()` routes to the writer unconditionally, `read()` rejects a write query instead of silently running it — API strictness, same subject as the error surface. The `onerror` message must name the worker URL it failed to load (see B2 in `mem:follow-ups`). | B2, B3, W-route (half) |
-| 3 ✅ | **Done 2026-08-19, awaiting merge.** `quoteIdent()` + pragma allowlist; **debug wired per §1.3** (do it here, before wave 5, so the perf work is measurable); **`output()` rebuilt as staging + atomic rename per §1.1** (needs a `navigator.locks` primitive — pull it forward from wave 4); `bulkWrite` surfaces per-batch failures | B4, B5, B6 |
-| 4 | B10/B8 and the `consumer-smoke` gate moved to wave P and are **done**. What is left here: **BP-1 (back-pressure, credit/ack) — it is the prerequisite, do it first, and it opens with a MEASUREMENT, not a design: run the four-combination probe specified in BP-1's entry in `mem:follow-ups` before writing a line. §1.5's claim that a `postMessage` cannot be delivered during a query was deduced, never observed, and is doubtful for the default Asyncify VFS**; then remove the SAB entirely (D2, §1.5), which drops the COOP/COEP requirement; then **D6 (§1.4): the `browser-sqlite/vite` plugin subpath + the optional `wasmUrl` escape hatch**, which retires the fragile README snippet. | BP-1, W-sab, VIT-1 |
+| 3 ✅ | **Done and merged 2026-08-19 (`5eb5ace`).** `quoteIdent()` + pragma allowlist; **debug wired per §1.3** (do it here, before wave 5, so the perf work is measurable); **`output()` rebuilt as staging + atomic rename per §1.1** (needs a `navigator.locks` primitive — pull it forward from wave 4); `bulkWrite` surfaces per-batch failures | B4, B5, B6 |
+| 4 | **Now also owns the commit-propagation barrier (added 2026-08-19 by wave 3's findings): one brick that unblocks RYOW-1, the writer designation's stickiness, and two tests pinned to `poolSize: 1`.** B10/B8 and the `consumer-smoke` gate moved to wave P and are **done**. What is left here: **BP-1 (back-pressure, credit/ack) — it is the prerequisite, do it first, and it opens with a MEASUREMENT, not a design: run the four-combination probe specified in BP-1's entry in `mem:follow-ups` before writing a line. §1.5's claim that a `postMessage` cannot be delivered during a query was deduced, never observed, and is doubtful for the default Asyncify VFS**; then remove the SAB entirely (D2, §1.5), which drops the COOP/COEP requirement; then **D6 (§1.4): the `browser-sqlite/vite` plugin subpath + the optional `wasmUrl` escape hatch**, which retires the fragile README snippet. | BP-1, W-sab, VIT-1 |
 | 5 | Performance, **with the debug instrumentation live** so the gains are measurable | perf section |
 
 Correctness items not tied to a wave (`W-route`, `W-multitab`, `W-types`) fold into
@@ -463,6 +466,29 @@ on the consuming page — that is D2 (drop the `SharedArrayBuffer`), still slott
 wave 4. "Consumable" after wave P means "installs and runs in a cross-origin-isolated
 page", not "drop it in any page".
 
+## 2.3 Standing lessons, paid for once each — do not relearn them
+
+- **Wave 1: assert falsifiability, not passage.** For every test, name the line whose deletion
+  makes it fail. Wave 3 spent **seven fix rounds** on tests that passed with and without the
+  behaviour they claimed to pin — more than on any other cause — so this is not a solved habit.
+  What works in practice: make the implementer *delete the line, observe red, restore, observe
+  green*, and report both. A reasoned claim of falsifiability is worth nothing; four of wave 3's
+  reasoned claims were wrong.
+- **Wave 3: measure the test, not the argument.** A correct ordering analysis is not evidence that
+  a test is stable. A test restored on a sound argument turned out 7.5 % flaky, and the cause was
+  a property the test incidentally depended on, not the one it was written for.
+- **Wave 3: a reviewer's data-loss claim is a hypothesis until measured.** The final whole-branch
+  review asserted a double `output().close()` destroyed the target table. It did not — the
+  transaction rolled the DROP back. The neighbouring half of the same finding was real. Measure
+  before acting on either half.
+- **Wave 3: reviews examine what changed, not what stayed the same.** Two independent reviews
+  passed over a scheduler branch without noticing it contradicted its untouched sibling path. When
+  a change adds a rule to one of two symmetric paths, review the pair, not the diff.
+- **Wave 3: plan defects reach implementers as instructions.** Four defects in the wave-3 plan
+  (a corrupting re-escape, an assertion matching messages instead of codes, a test that could never
+  reach its own failure case, a probe defeated by Node 24 shipping `navigator.locks`) were caught
+  by implementers only because they were briefed to push back. Brief them to push back.
+
 ## 3. Working conventions for this project
 
 - Follow `AGENTS.md`: user leads, one step at a time, French in chat / English everywhere
@@ -494,8 +520,28 @@ page", not "drop it in any page".
 
 ## 4. Changelog of this plan
 
-- **2026-08-19** — **Wave 3 implemented on `wave-3-sql-safety`, 21 commits, 273 tests green,
-  awaiting merge.** B4, B5, B6 closed — evidence per item in `mem:follow-ups`. What is worth
+- **2026-08-19 (later)** — **Wave 3 merged into `main`** (`5eb5ace`), after the user reworked the
+  scheduling rules. What changed between the first "done" below and the merge:
+  - The **writer-preference for reads was removed** on user instruction. Their objection was the
+    shape, not just the scope: it entangled read scheduling with writer designation, and the two
+    acquisition paths disagreed (`handOver` cleared the designation when the writer served a queued
+    read, `takeAvailable` deliberately kept it — so the hazard `takeAvailable`'s comment described
+    was reachable through its sibling). **Neither review caught that asymmetry; the user did**,
+    from a plain reading of the rules. Worth remembering: the reviews examined the added branch,
+    never its symmetry with the untouched path.
+  - The user also asked that the designation be **released** once no write is outstanding or
+    queued, so the next write could take the first free worker. Built, measured, **reverted with
+    evidence** — see rule 3 in `mem:project-state`. Stickiness is now proven necessary rather than
+    inherited.
+  - A test this controller had **insisted on restoring** (against the implementer's judgement)
+    turned out to be **7.5 % flaky** (4 failures in 53 runs). Root cause measured, and it was not
+    the sweep: `no such table: target_a`, i.e. the RYOW hole, because the test read back what it
+    wrote across workers. Fixed by `poolSize: 1` on both clients — which keeps two connections and
+    two Web Locks, so the cross-client property is untouched. 20/20 after, and still red when the
+    sweep's staleness filter is defeated. **Lesson: a correct ordering analysis is not evidence
+    that a test is stable. Measure the test, not the argument.**
+
+- **2026-08-19** — **Wave 3 implemented on `wave-3-sql-safety`, 21 commits, 273 tests green.** B4, B5, B6 closed — evidence per item in `mem:follow-ups`. What is worth
   carrying forward beyond that:
   - **The default VFS is `OPFSPermutedVFS`, not `OPFSCoopSyncVFS`.** `mem:project-state` said
     otherwise, a dispatch repeated it, and an agent spent a full round debugging on the wrong
