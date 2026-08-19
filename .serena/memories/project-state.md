@@ -1,6 +1,17 @@
 # Project State — `browser-sqlite`
 
-Snapshot date: 2026-08-18 (post wave 2). Update this file when the facts below change.
+Snapshot date: 2026-08-19 (post wave 3). Update this file when the facts below change.
+
+## Read this first — a fact that cost a whole debugging round
+
+**The default VFS is `OPFSPermutedVFS`**, set as `DEFAULT_VFS` in `client.ts`. The
+`OPFSCoopSyncVFS` you will find in `worker/worker.ts` is only the worker's fallback when the
+client passes nothing — and the client always passes something. This matters far beyond
+trivia: `OPFSPermutedVFS` propagates commits to other connections **asynchronously**, over
+BroadcastChannel + IndexedDB, which is why a read on another worker can serve a stale view
+right after a write (see RYOW-1 in `mem:follow-ups`). An earlier version of this file said the
+default was `OPFSCoopSyncVFS`; a wave-3 dispatch repeated that and sent an agent down the
+wrong path for a full round.
 
 ## What it is
 
@@ -28,7 +39,10 @@ Versions below are post-upgrade (2026-08-17) and verified green: `tsc --noEmit`,
     `tests/browser/{init,queries,concurrency,transaction,bulk-write,output,vfs,lifecycle,close,long-query,routing}.test.ts`
     plus `helpers.ts` (`createTestClient(options?)` — unique OPFS name + afterEach cleanup).
     Needs COOP/COEP headers, injected by an inline rsbuild plugin.
-    193 tests total as of wave 2 (was 148 after wave 1, 105 after wave 0).
+    **273 tests total as of wave 3** (was 193 after wave 2, 148 after wave 1, 105 after wave 0).
+    Wave-3 additions: `tests/unit/{quoting,bulk,locks,logger}.test.ts` and
+    `tests/browser/debug.test.ts`, plus new cases in `routing`, `scheduler`, `debug`, `init`,
+    `output` and `bulk-write`.
     - Wave-2 additions: `tests/unit/{errors,supervisor}.test.ts` and
       `tests/browser/{lifecycle,close,long-query,routing}.test.ts`.
   - **rstest 0.11.8 has no `it.each`** — parameterized tests use a plain `for` loop over an
@@ -143,7 +157,9 @@ which hashes the config file itself. `pnpm build` is therefore always correct; n
 | `bulk.ts` | 170 | `bulkWrite()` + `output()`. Still carries B5 verbatim. Calls the **public** `write` (one lease per batch, worker released between batches) — a property D3 depends on; do not consolidate it into one held lease. |
 | `worker/worker.ts` | 326 | Worker thread: VFS bootstrap, `open`, statement execution, chunked streaming. Wave 2: `ready` only on success and `open-error` on failure; every `cause` structured-clone-probed; `sqlite.close(db)` on the `close` message; exhaustive message dispatch. Holds `VFSConfigs` (the good extensibility pattern — `satisfies Record<SQLiteVFS, …>`). |
 | `orchestrator.ts` | 183 | `WorkerOrchestrator`: `SharedArrayBuffer` + `Atomics` for the init mutex and per-worker status flags. `Atomics.wait` is called worker-side only. |
-| `debug.ts` | 227 | Instrumentation subsystem — **still entirely dead code** (B6). |
+| `debug.ts` | ~230 | Instrumentation subsystem — **live since wave 3** (B6 closed). `createClientDebug(file, orchestrator, clientOptions, stats)`; both history arrays bounded at 50; `queue` is getter-backed and reads through `scheduler.stats()`, so no counter can go stale. |
+| `logger.ts` | ~30 | **New in wave 3.** `createLogger(prefix, enabled, sink = console)` → prefixed `console.debug/warn/error`. **Lifecycle events only** — 10 call sites, never per query. Disabled, it returns three no-op closures allocated once. |
+| `locks.ts` | ~120 | **New in wave 3.** Web Locks wrapper + the pure sweep decision. Exports `createLocks`, the named `noOpLocks` constant (use this in tests — `createLocks(undefined)` falls back to the real API, and **Node 24 ships one**), `stagingTableName` / `stagingLockName` / `sweepLockName`, and the pure `staleStagingTables`. The staging lock is **not** mutual exclusion — nothing contends for its name. It is a liveness marker: held for as long as a staging table exists, so another tab's sweep can tell in-flight from orphan. A dead tab's locks are released by the browser, which is why no timestamp or grace period is needed. |
 | `types.ts` | 93 | Wire protocol types plus the shared `SQLiteQueryOptions`. Lines 1-38 are still a stale duplicate that disagrees with the live one. |
 | `utils.ts` | 74 | `isReadQuery` / `isWriteQuery` (allowlist since wave 1) + `assertReadable(sql, method)` (new in wave 2, throws `NOT_A_READ_QUERY` before a lease is taken) + `sqlParams`/`addParam` (exported, tested, unused by the lib). |
 | `wa-sqlite.d.ts` | 81 | Hand-written 9-method `SQLiteAPI` subset shadowing wa-sqlite's own shipped types via a deep import; wave 2 added `close`. |
@@ -171,6 +187,33 @@ holds at the worker level, not just at the scheduler level.
 no test may assert a `worker/worker.js` substring in an error message. The lifecycle test
 for the load-failure error asserts the stable wording (`'could not load its worker from'`
 and `'Bundler Configuration'`) rather than the URL, for this reason.
+
+## Wave 3 additions to the public surface (2026-08-19)
+
+- `BulkWriteError extends SQLiteError` (code `BULK_WRITE_FAILED`) with `rowsWritten` /
+  `rowsNotWritten`. Named that way, not `rowsNotAttempted` as the spec drafted: a multi-row
+  INSERT is statement-atomic, so the failing batch **was** attempted and wrote nothing —
+  "not attempted" would exclude exactly the rows a caller most needs counted.
+- Three new error codes: `INVALID_IDENTIFIER`, `INVALID_PRAGMA`, `BULK_WRITE_FAILED`.
+- `debug?: string | boolean` on the client; `db.debug` typed `ClientDebugState | undefined`.
+- **`output()` lost its `temp` option** (breaking, free at rc with no consumer). It was not
+  incoherent for the reason D3 §1.1 gave — staging in `temp` would rename fine within the same
+  database — but for another: a TEMP table lives on one connection and is invisible to the rest
+  of the pool.
+- **`output()` no longer creates its target eagerly.** The previous table stays intact and fully
+  populated until `close()` swaps. A concurrent reader mid-load now sees the OLD data rather than
+  a half-filled new table, and a target that did not exist appears only at `close()`.
+- `bulkWrite`/`output` are single-use: `enqueue()` and `close()` throw once closed.
+- Read PRAGMAs work through `read()` again; a PRAGMA that assigns or takes an argument is a write.
+
+## A scheduling invariant added in wave 3 — read RYOW-1 before touching it
+
+`scheduler.ts`'s `takeAvailable` prefers the **designated writer** for reads when it is
+immediately available. This is deliberate and it is a correctness measure, not an oversight:
+under `OPFSPermutedVFS` the writer is the only worker guaranteed to have applied the latest
+commit. It moves against the perf backlog's "prefer non-writer workers for reads" item, which
+was written without knowing about commit-propagation lag. Any future scheduling work must
+preserve this property or replace it with a real propagation barrier.
 
 ## Key invariant — established in wave 1, do not weaken it
 
