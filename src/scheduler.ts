@@ -130,6 +130,23 @@ export const createScheduler = <W extends { index: number }>(
       return workers[currentWriterIndex];
     }
 
+    // For reads, prefer the designated writer when it is immediately available.
+    // The writer's in-memory VFS state is guaranteed up-to-date (it applied its
+    // own last commit synchronously); a non-writer worker may not have received
+    // the commit broadcast yet and would read stale data. The writer designation
+    // is intentionally kept so that subsequent writes continue to serialize
+    // through the same worker — clearing it here would let a later write claim
+    // a different worker that still has a stale view.
+    if (
+      !write &&
+      currentWriterIndex > -1 &&
+      available.has(currentWriterIndex)
+    ) {
+      const w = workers[currentWriterIndex]!;
+      available.delete(currentWriterIndex);
+      return w;
+    }
+
     // Lowest-index-first, preserved from the original implementation.
     const found = workers.find(
       (worker) => worker !== undefined && available.has(worker.index),

@@ -1,4 +1,5 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it, onTestFinished } from '@rstest/core';
+import { createSQLiteClient } from '../../src/client';
 import { createTestClient } from './helpers';
 
 /**
@@ -165,24 +166,26 @@ describe('output() atomicity and sweep', () => {
   it('does not create the target until close()', async () => {
     const db = await createTestClient();
 
-    const out = db.output('late_target', { id: 'INTEGER' });
-    out.enqueue({ id: 1 });
+    try {
+      const out = db.output('late_target', { id: 'INTEGER' });
+      out.enqueue({ id: 1 });
 
-    // The staging table (__bsq_staging_<uuid>) may be created by now, but
-    // the final target must not exist until the atomic RENAME in close().
-    const existing = await db.read(
-      "SELECT name FROM sqlite_master WHERE name = 'late_target'",
-    );
-    expect(existing).toHaveLength(0);
+      // The staging table (__bsq_staging_<uuid>) may be created by now, but
+      // the final target must not exist until the atomic RENAME in close().
+      const existing = await db.read(
+        "SELECT name FROM sqlite_master WHERE name = 'late_target'",
+      );
+      expect(existing).toHaveLength(0);
 
-    await out.close();
+      await out.close();
 
-    const created = await db.read(
-      "SELECT name FROM sqlite_master WHERE name = 'late_target'",
-    );
-    expect(created).toHaveLength(1);
-
-    await db.close();
+      const created = await db.read(
+        "SELECT name FROM sqlite_master WHERE name = 'late_target'",
+      );
+      expect(created).toHaveLength(1);
+    } finally {
+      await db.close();
+    }
   });
 
   // Falsifiability pin: deleting `await tx.write('ALTER TABLE ... RENAME TO
@@ -190,27 +193,29 @@ describe('output() atomicity and sweep', () => {
   it('leaves the previous table intact and complete until close()', async () => {
     const db = await createTestClient();
 
-    const first = db.output('swap_target', { id: 'INTEGER' });
-    first.enqueue({ id: 1 });
-    first.enqueue({ id: 2 });
-    await first.close();
+    try {
+      const first = db.output('swap_target', { id: 'INTEGER' });
+      first.enqueue({ id: 1 });
+      first.enqueue({ id: 2 });
+      await first.close();
 
-    const second = db.output('swap_target', { id: 'INTEGER' });
-    second.enqueue({ id: 99 });
+      const second = db.output('swap_target', { id: 'INTEGER' });
+      second.enqueue({ id: 99 });
 
-    // Mid-load: the OLD rows are still there, whole — DROP happens only inside
-    // the atomic transaction in close(), not eagerly at output() call time.
-    const during = await db.read<{ id: number }>(
-      'SELECT id FROM swap_target ORDER BY id',
-    );
-    expect(during.map((r) => r.id)).toEqual([1, 2]);
+      // Mid-load: the OLD rows are still there, whole — DROP happens only inside
+      // the atomic transaction in close(), not eagerly at output() call time.
+      const during = await db.read<{ id: number }>(
+        'SELECT id FROM swap_target ORDER BY id',
+      );
+      expect(during.map((r) => r.id)).toEqual([1, 2]);
 
-    await second.close();
+      await second.close();
 
-    const after = await db.read<{ id: number }>('SELECT id FROM swap_target');
-    expect(after.map((r) => r.id)).toEqual([99]);
-
-    await db.close();
+      const after = await db.read<{ id: number }>('SELECT id FROM swap_target');
+      expect(after.map((r) => r.id)).toEqual([99]);
+    } finally {
+      await db.close();
+    }
   });
 
   // Falsifiability pin: deleting `await dropStaging()` from the first catch
@@ -218,31 +223,33 @@ describe('output() atomicity and sweep', () => {
   it('leaves the target untouched and no staging table behind when the load fails', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE keep_me (id INTEGER PRIMARY KEY)');
-    await db.write('INSERT INTO keep_me (id) VALUES (1), (2)');
+    try {
+      await db.write('CREATE TABLE keep_me (id INTEGER PRIMARY KEY)');
+      await db.write('INSERT INTO keep_me (id) VALUES (1), (2)');
 
-    const out = db.output('keep_me', { id: 'INTEGER PRIMARY KEY' as string });
-    out.enqueue({ id: 7 });
-    out.enqueue({ id: 7 }); // duplicate primary key → the batch fails
+      const out = db.output('keep_me', { id: 'INTEGER PRIMARY KEY' as string });
+      out.enqueue({ id: 7 });
+      out.enqueue({ id: 7 }); // duplicate primary key → the batch fails
 
-    await expect(out.close()).rejects.toMatchObject({
-      code: 'BULK_WRITE_FAILED',
-    });
+      await expect(out.close()).rejects.toMatchObject({
+        code: 'BULK_WRITE_FAILED',
+      });
 
-    // The original table must be untouched — the DROP only happens inside the
-    // atomic transaction which never ran because the load failed first.
-    const rows = await db.read<{ id: number }>(
-      'SELECT id FROM keep_me ORDER BY id',
-    );
-    expect(rows.map((r) => r.id)).toEqual([1, 2]);
+      // The original table must be untouched — the DROP only happens inside the
+      // atomic transaction which never ran because the load failed first.
+      const rows = await db.read<{ id: number }>(
+        'SELECT id FROM keep_me ORDER BY id',
+      );
+      expect(rows.map((r) => r.id)).toEqual([1, 2]);
 
-    // The failed staging table must be cleaned up by the error path.
-    const staging = await db.read(
-      "SELECT name FROM sqlite_master WHERE name LIKE '__bsq_staging_%'",
-    );
-    expect(staging).toHaveLength(0);
-
-    await db.close();
+      // The failed staging table must be cleaned up by the error path.
+      const staging = await db.read(
+        "SELECT name FROM sqlite_master WHERE name LIKE '__bsq_staging_%'",
+      );
+      expect(staging).toHaveLength(0);
+    } finally {
+      await db.close();
+    }
   });
 
   // Falsifiability pin: removing `swept ??= locks.withLock(sweepLockName ...)`
@@ -250,20 +257,89 @@ describe('output() atomicity and sweep', () => {
   it('collects an orphan staging table at the first output()', async () => {
     const db = await createTestClient();
 
-    // An orphan exactly as a crashed tab would leave: no lock is held for it.
-    await db.write('CREATE TABLE __bsq_staging_deadbeef (id INTEGER)');
+    try {
+      // An orphan exactly as a crashed tab would leave: no lock is held for it.
+      await db.write('CREATE TABLE __bsq_staging_deadbeef (id INTEGER)');
 
-    const out = db.output('sweep_target', { id: 'INTEGER' });
-    out.enqueue({ id: 1 });
-    await out.close();
+      const out = db.output('sweep_target', { id: 'INTEGER' });
+      out.enqueue({ id: 1 });
+      await out.close();
 
-    // Both the orphan and the output's own staging table must be gone: the
-    // orphan was swept, and the output's staging was renamed to sweep_target.
-    const staging = await db.read<{ name: string }>(
-      "SELECT name FROM sqlite_master WHERE name LIKE '__bsq_staging_%'",
+      // Both the orphan and the output's own staging table must be gone: the
+      // orphan was swept, and the output's staging was renamed to sweep_target.
+      const staging = await db.read<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE name LIKE '__bsq_staging_%'",
+      );
+      expect(staging).toHaveLength(0);
+    } finally {
+      await db.close();
+    }
+  });
+
+  // Falsifiability pin: removing the `staleStagingTables` filter in sweepOnce()
+  // (so every staging-like table is dropped) makes the sweep destroy A's live
+  // staging table → outA.close() fails with "no such table".
+  it('does not collect a staging table that is still in flight', async () => {
+    // Two clients share the same OPFS file so their sweeps interact.
+    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const dbA = createSQLiteClient(dbName);
+    const dbB = createSQLiteClient(dbName);
+
+    onTestFinished(async () => {
+      try {
+        await dbA.close();
+      } catch {
+        /* ignore */
+      }
+      try {
+        await dbB.close();
+      } catch {
+        /* ignore */
+      }
+      try {
+        const root = await navigator.storage.getDirectory();
+        await root.removeEntry(dbName, { recursive: true });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    // Start A's output — the staging lock is acquired inside output() before
+    // sweepOnce() runs, so A's lock is held from this point even before the
+    // staging table exists in sqlite_master.
+    const outA = dbA.output('target_a', { id: 'INTEGER' });
+    outA.enqueue({ id: 1 });
+
+    // Poll until A's staging table appears in sqlite_master. At that point A's
+    // staging lock has been held since the output() call above.
+    let stagingName: string | undefined;
+    for (let i = 0; i < 100 && !stagingName; i++) {
+      await new Promise<void>((r) => setTimeout(r, 20));
+      const rows = await dbA.read<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '__bsq_staging_%'",
+      );
+      if (rows.length) stagingName = rows[0].name;
+    }
+    expect(stagingName).toBeDefined();
+
+    // B does its own output — its sweep runs and must leave A's live staging
+    // table alone (A's staging lock is still held).
+    const outB = dbB.output('target_b', { id: 'INTEGER' });
+    outB.enqueue({ id: 2 });
+    await outB.close();
+
+    // A's staging table must still exist — B's sweep left it intact.
+    const stillThere = await dbA.read<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '__bsq_staging_%'",
     );
-    expect(staging).toHaveLength(0);
+    // B's staging was renamed to target_b; only A's staging should remain.
+    expect(stillThere.some((r) => r.name === stagingName)).toBe(true);
 
-    await db.close();
+    // A can still complete successfully with its staging table intact.
+    await outA.close();
+
+    const target = await dbA.read<{ id: number }>('SELECT id FROM target_a');
+    expect(target).toHaveLength(1);
+    expect(target[0].id).toBe(1);
   });
 });
