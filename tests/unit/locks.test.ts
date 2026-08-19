@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@rstest/core';
 import {
   createLocks,
+  noOpLocks,
   stagingLockName,
   staleStagingTables,
 } from '../../src/locks';
@@ -87,7 +88,7 @@ describe('createLocks', () => {
   });
 
   it('degrades to a no-op when the API is unavailable', async () => {
-    const locks = createLocks(undefined);
+    const locks = noOpLocks;
 
     expect(locks.available).toBe(false);
     expect(await locks.heldNames()).toEqual([]);
@@ -95,4 +96,17 @@ describe('createLocks', () => {
     expect(() => release()).not.toThrow();
     expect(await locks.withLock('x', async () => 'ran')).toBe('ran');
   });
+
+  it('rejects hold() when the lock manager rejects', async () => {
+    const manager = {
+      request: async () => {
+        throw new Error('AbortError');
+      },
+      query: async () => ({ held: [], pending: [] }),
+    } as any;
+    const locks = createLocks(manager);
+    await expect(locks.hold('bsq:staging:app.db:t')).rejects.toThrow(
+      'AbortError',
+    );
+  }, 1000);
 });

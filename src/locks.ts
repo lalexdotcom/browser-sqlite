@@ -56,38 +56,40 @@ export const staleStagingTables = (
   return tables.filter((table) => !held.has(stagingLockName(file, table)));
 };
 
-export const createLocks = (...args: [LockManager?]): Locks => {
-  // Distinguish createLocks() from createLocks(undefined): the former
-  // defaults to navigator.locks; the latter explicitly opts out.
-  const resolved: LockManager | undefined =
-    args.length === 0
-      ? (globalThis.navigator?.locks as LockManager | undefined)
-      : args[0];
-  if (!resolved)
-    return {
-      available: false,
-      hold: async () => () => {},
-      withLock: async (_name, fn) => fn(),
-      heldNames: async () => [],
-    };
+/** The no-op Locks value for environments where the Web Locks API is absent. */
+export const noOpLocks: Locks = {
+  available: false,
+  hold: async () => () => {},
+  withLock: async (_name, fn) => fn(),
+  heldNames: async () => [],
+};
+
+export const createLocks = (
+  manager: LockManager | undefined = globalThis.navigator?.locks as
+    | LockManager
+    | undefined,
+): Locks => {
+  if (!manager) return noOpLocks;
 
   return {
     available: true,
     hold: (name) =>
-      new Promise<() => void>((resolveReleaser) => {
+      new Promise<() => void>((resolveReleaser, rejectOuter) => {
         let release!: () => void;
         const held = new Promise<void>((resolveHeld) => {
           release = resolveHeld;
         });
-        void resolved.request(name, () => {
-          resolveReleaser(release);
-          return held;
-        });
+        manager
+          .request(name, () => {
+            resolveReleaser(release);
+            return held;
+          })
+          .catch(rejectOuter);
       }),
     withLock: <T>(name: string, fn: () => Promise<T>) =>
-      resolved.request(name, { mode: 'exclusive' }, () => fn()) as Promise<T>,
+      manager.request(name, { mode: 'exclusive' }, () => fn()) as Promise<T>,
     heldNames: async () => {
-      const snapshot = await resolved.query();
+      const snapshot = await manager.query();
       return (snapshot.held ?? [])
         .map((lock) => lock.name)
         .filter((name): name is string => typeof name === 'string');
