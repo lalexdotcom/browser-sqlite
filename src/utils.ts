@@ -51,8 +51,18 @@ const WRITE_KEYWORDS =
  * `EXPLAIN INSERT ...`, which never executes) is serialized needlessly. That
  * is the accepted price of never routing a write to the read pool.
  */
+/**
+ * A statement that is nothing but a single PRAGMA lookup: no assignment, no
+ * argument, nothing after it. Anchoring at `$` is what makes this safe for
+ * free — `PRAGMA journal_mode; DROP TABLE t` does not match, and neither does
+ * `PRAGMA journal_mode=WAL`, whose `=` breaks the match.
+ */
+const READ_PRAGMA = /^\s*PRAGMA\s+(\w+\.)?\w+\s*;?\s*$/i;
+
 export const isReadQuery = (sql: string) =>
-  /^\s*(SELECT|EXPLAIN|VALUES|WITH)\b/i.test(sql) && !WRITE_KEYWORDS.test(sql);
+  READ_PRAGMA.test(sql) ||
+  (/^\s*(SELECT|EXPLAIN|VALUES|WITH)\b/i.test(sql) &&
+    !WRITE_KEYWORDS.test(sql));
 
 export const isWriteQuery = (sql: string) => !isReadQuery(sql);
 
@@ -60,8 +70,9 @@ export const isWriteQuery = (sql: string) => !isReadQuery(sql);
  * Routing guard for the read-shaped methods (`read`, `chunk`, `stream`, `first`).
  * Throws before a lease is taken, so a rejected statement costs no pool capacity.
  *
- * Note: `isReadQuery` classifies every PRAGMA as a write, so a read pragma has
- * to go through `write()` until B4 lands its pragma allowlist.
+ * A bare read pragma (`PRAGMA journal_mode`) is accepted; a pragma that assigns
+ * (`PRAGMA journal_mode=WAL`), takes an argument, or is followed by anything
+ * else must go through `write()`.
  */
 export const assertReadable = (sql: string, method: string): void => {
   if (isReadQuery(sql)) return;
@@ -69,7 +80,7 @@ export const assertReadable = (sql: string, method: string): void => {
   throw new SQLiteError(
     'NOT_A_READ_QUERY',
     `${method}() only accepts statements that are provably reads; "${keyword}" must go through write(). ` +
-      `Note that every PRAGMA is currently classified as a write.`,
+      `Note that a PRAGMA that assigns a value or takes an argument is a write.`,
   );
 };
 

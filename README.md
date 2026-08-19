@@ -172,7 +172,7 @@ Errors raised by this library are instances of `SQLiteError`, exported from the 
 
 | Code | When it is thrown |
 |------|------------------|
-| `NOT_A_READ_QUERY` | `read()`, `chunk()`, `stream()`, or `first()` was called with a statement that is not a provably readable query. Every PRAGMA currently counts as a write — run PRAGMAs through `write()`. |
+| `NOT_A_READ_QUERY` | `read()`, `chunk()`, `stream()`, or `first()` was called with a statement that is not a provably readable query. A bare read pragma (`PRAGMA journal_mode`) is accepted; a pragma that assigns a value or takes an argument must go through `write()`. |
 | `CLIENT_CLOSED` | A query was queued after `close()` was called. |
 | `WORKER_CRASHED` | A pool worker died and the supervisor decided not to restart it. All queued and in-flight work on that slot is rejected. |
 | `TIMEOUT` | A worker did not post `ready` within `openTimeout` milliseconds. The most common cause is a database held under an exclusive lock by another tab or client. |
@@ -203,7 +203,7 @@ const rows = await db.read('SELECT * FROM large_table', [], {
 
 **`close()` is async.** Always `await db.close()` — the returned promise settles once every worker has closed its database connection and been terminated. Discarding the promise means the caller cannot tell when teardown is complete.
 
-**Read methods reject write statements.** `read()`, `chunk()`, `stream()`, and `first()` reject any statement that is not a provably readable query, throwing `NOT_A_READ_QUERY`. Every PRAGMA currently counts as a write — run PRAGMAs through `write()` until a future release adds a PRAGMA allowlist.
+**Read methods reject write statements.** `read()`, `chunk()`, `stream()`, and `first()` reject any statement that is not a provably readable query, throwing `NOT_A_READ_QUERY`. A bare read pragma (`PRAGMA journal_mode`) is accepted; a pragma that assigns a value or takes an argument must go through `write()`.
 
 ## Requirements
 

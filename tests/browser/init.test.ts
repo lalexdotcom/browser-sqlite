@@ -67,10 +67,7 @@ describe('createSQLiteClient (INT-02)', () => {
       poolSize: 1,
     });
 
-    // Task 5 will switch this to db.read(); PRAGMA is currently a write-only path.
-    const { result } = await db.write<{ cache_size: number }>(
-      'PRAGMA cache_size',
-    );
+    const result = await db.read<{ cache_size: number }>('PRAGMA cache_size');
     const [row] = result;
     expect(row?.cache_size).toBe(-4000);
 
