@@ -1,5 +1,6 @@
 import { createBulk } from './bulk';
 import type { createClientDebug } from './debug';
+import { SQLiteError } from './errors';
 import { WorkerOrchestrator, WorkerStatuses } from './orchestrator';
 import { createPoolWorker, type PoolWorker } from './pool';
 import {
@@ -10,9 +11,10 @@ import {
   writeWorker,
 } from './queries';
 import { createScheduler } from './scheduler';
+import { createSupervisor } from './supervisor';
 import { createTransaction, type TransactionDB } from './transaction';
 import type { SQLiteQueryOptions, SQLiteVFS } from './types';
-import { isReadQuery } from './utils';
+import { assertReadable } from './utils';
 
 /**
  * SQLite client for browser environments using a pool of Web Workers.
@@ -61,6 +63,30 @@ export type CreateSQLiteClientOptions = {
    * If omitted, no PRAGMAs are applied beyond SQLite defaults.
    */
   pragmas?: Record<string, string>;
+
+  /**
+   * How many times a worker slot may be restarted after it has died.
+   * A slot that never reached readiness is never restarted — an initial
+   * failure is deterministic, and restarting only delays the diagnostic.
+   * The counter resets once the replacement has actually served a request.
+   * @defaultValue `1`
+   */
+  maxWorkerRestarts?: number;
+
+  /**
+   * Milliseconds a worker has to post `ready` after its `open` message is sent.
+   * On expiry the slot is failed immediately — the most common cause is a
+   * database held under an exclusive lock by another tab or client.
+   * @defaultValue `30_000`
+   */
+  openTimeout?: number;
+
+  /**
+   * Milliseconds the drain loop (in the query generator's `finally`) may run
+   * before the worker is presumed dead and the crash path is invoked.
+   * @defaultValue `60_000`
+   */
+  drainTimeout?: number;
 };
 
 let clientCount = 0;
@@ -115,7 +141,12 @@ export type SQLiteDB = {
    * exhausted or the caller uses `break`. Failing to exhaust the generator
    * starves the pool. Always use `for await...of` to completion or `break` to exit.
    *
-   * @param sql - SQL query string.
+   * **`NOT_A_READ_QUERY` timing.** Because `chunk()` is an async generator, its
+   * body does not run until the first `next()` call. Passing a write statement
+   * does not throw at the call site — the `SQLiteError` arrives on the first
+   * `await gen.next()` (or the first iteration of `for await...of`).
+   *
+   * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional options including `chunkSize` (default `500`),
    *   `signal` (AbortSignal to cancel).
@@ -132,7 +163,13 @@ export type SQLiteDB = {
    * Flattens chunk boundaries — each iteration yields one `T` row, not a chunk.
    * Use `chunk()` when you need the rows grouped by chunk.
    *
-   * @param sql - SQL query string.
+   * @remarks
+   * **`NOT_A_READ_QUERY` timing.** Because `stream()` is an async generator, its
+   * body does not run until the first `next()` call. Passing a write statement
+   * does not throw at the call site — the `SQLiteError` arrives on the first
+   * `await gen.next()` (or the first iteration of `for await...of`).
+   *
+   * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional query options (`signal`, `id`).
    * @returns AsyncGenerator yielding individual rows of type `T`.
@@ -171,6 +208,14 @@ export type SQLiteDB = {
    * On callback success: auto-commits if `autoCommit` is `true` (default).
    * On callback error: rolls back automatically.
    * The callback may call `db.commit()` or `db.rollback()` manually.
+   *
+   * @remarks
+   * **Worker crash mid-transaction.** If the worker dies while the callback is
+   * running, the transaction rejects with a `WORKER_CRASHED` error. The
+   * database engine inside the terminated worker handles its own rollback, but
+   * any OPFS file lock the worker held is not released until the browser
+   * reclaims the terminated worker's file handles — the timing of that
+   * reclamation is outside this library's control.
    *
    * @param callback - Async function receiving a `TransactionDB` instance.
    * @param options - `readOnly` (default `false`) prevents write statements;
@@ -223,15 +268,21 @@ export type SQLiteDB = {
   ) => { enqueue: (data: any) => void; close: () => Promise<number> };
 
   /**
-   * Terminates all workers in the pool.
+   * Drains in-flight work, rejects queued work, closes each database connection,
+   * then terminates all workers in the pool.
+   *
+   * The returned promise settles once every worker has posted `closed` and been
+   * terminated, or once `drainTimeout` milliseconds have elapsed (whichever
+   * comes first). Calling `close()` a second time returns the **same** promise
+   * object — the operation runs exactly once.
    *
    * @remarks
-   * **OPFS files are NOT deleted.** `close()` calls `worker.terminate()` on each
-   * pool worker — it does not remove any OPFS database files. Files created by
-   * browser-sqlite persist in the origin's private file system across page loads.
-   * To delete OPFS files, use the `navigator.storage.getDirectory()` API directly.
+   * **OPFS files are NOT deleted.** `close()` does not remove any OPFS database
+   * files. Files created by browser-sqlite persist in the origin's private file
+   * system across page loads. To delete OPFS files, use the
+   * `navigator.storage.getDirectory()` API directly.
    */
-  close: () => void;
+  close: () => Promise<void>;
 
   /**
    * Internal diagnostic handle. Not part of the stable public API.
@@ -298,7 +349,7 @@ export const createSQLiteClient = (
   const clientPrefix = `${clientOptions?.name ?? 'SQLite'} ${clientIndex}`;
 
   const poolSize = clientOptions?.poolSize ?? DEFAULT_POOL_SIZE;
-  const pool: PoolWorker[] = [];
+  const pool: (PoolWorker | undefined)[] = [];
 
   // Orchestrator manages worker synchronization and status tracking
   const orchestrator = new WorkerOrchestrator(poolSize);
@@ -333,11 +384,18 @@ export const createSQLiteClient = (
     params?: unknown[],
     options?: SQLiteQueryOptions<T>,
   ) => {
-    const lease = await scheduler.acquire(isReadQuery(sql) ? 'read' : 'write');
+    assertReadable(sql, 'read');
+    const lease = await scheduler.acquire('read');
     try {
       return await readWorker<T>(lease.worker, sql, params, options);
     } finally {
-      lease.release();
+      // The lease returns when the worker confirms it is idle, not when the
+      // caller leaves: a worker still inside step() must not be re-lent, and
+      // the caller must not wait for it.
+      void lease.worker.quiesce().then(
+        () => lease.release(),
+        () => lease.release(),
+      );
     }
   };
 
@@ -352,11 +410,18 @@ export const createSQLiteClient = (
     params?: unknown[],
     options?: { chunkSize?: number; signal?: AbortSignal },
   ) {
-    const lease = await scheduler.acquire(isReadQuery(sql) ? 'read' : 'write');
+    assertReadable(sql, 'chunk');
+    const lease = await scheduler.acquire('read');
     try {
       yield* chunkWorker<T>(lease.worker, sql, params, options);
     } finally {
-      lease.release();
+      // The lease returns when the worker confirms it is idle, not when the
+      // caller leaves: a worker still inside step() must not be re-lent, and
+      // the caller must not wait for it.
+      void lease.worker.quiesce().then(
+        () => lease.release(),
+        () => lease.release(),
+      );
     }
   };
 
@@ -366,11 +431,18 @@ export const createSQLiteClient = (
   const stream = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
   >(sql: string, params?: unknown[], options?: SQLiteQueryOptions<T>) {
-    const lease = await scheduler.acquire(isReadQuery(sql) ? 'read' : 'write');
+    assertReadable(sql, 'stream');
+    const lease = await scheduler.acquire('read');
     try {
       yield* streamRows<T>(lease.worker, sql, params, options);
     } finally {
-      lease.release();
+      // The lease returns when the worker confirms it is idle, not when the
+      // caller leaves: a worker still inside step() must not be re-lent, and
+      // the caller must not wait for it.
+      void lease.worker.quiesce().then(
+        () => lease.release(),
+        () => lease.release(),
+      );
     }
   };
 
@@ -385,11 +457,17 @@ export const createSQLiteClient = (
     params?: unknown[],
     options?: SQLiteQueryOptions<T>,
   ) => {
-    const lease = await scheduler.acquire(isReadQuery(sql) ? 'read' : 'write');
+    const lease = await scheduler.acquire('write');
     try {
       return await writeWorker<T>(lease.worker, sql, params, options);
     } finally {
-      lease.release();
+      // The lease returns when the worker confirms it is idle, not when the
+      // caller leaves: a worker still inside step() must not be re-lent, and
+      // the caller must not wait for it.
+      void lease.worker.quiesce().then(
+        () => lease.release(),
+        () => lease.release(),
+      );
     }
   };
 
@@ -404,11 +482,18 @@ export const createSQLiteClient = (
     params?: unknown[],
     options?: { signal?: AbortSignal },
   ) => {
-    const lease = await scheduler.acquire(isReadQuery(sql) ? 'read' : 'write');
+    assertReadable(sql, 'first');
+    const lease = await scheduler.acquire('read');
     try {
       return await firstWorker<T>(lease.worker, sql, params, options);
     } finally {
-      lease.release();
+      // The lease returns when the worker confirms it is idle, not when the
+      // caller leaves: a worker still inside step() must not be re-lent, and
+      // the caller must not wait for it.
+      void lease.worker.quiesce().then(
+        () => lease.release(),
+        () => lease.release(),
+      );
     }
   };
 
@@ -416,32 +501,114 @@ export const createSQLiteClient = (
 
   const transaction = createTransaction({ scheduler });
 
-  /**
-   * Terminates all workers and cleans up the pool.
-   */
-  const close = () => {
-    let worker = pool.shift();
-    while (worker !== undefined) {
-      worker.terminate();
-      worker = pool.shift();
+  /** Bounds any settlement that depends on a worker answering. */
+  const bounded = async (promise: Promise<unknown>, ms: number) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        promise,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, ms);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
     }
   };
 
-  // Initialize the worker pool with the requested number of workers
-  Promise.all(
-    Array.from({ length: poolSize }).map(() =>
-      createPoolWorker({
-        orchestrator,
-        pool,
-        clientPrefix,
-        file,
-        vfs,
-        pragmas: clientOptions?.pragmas,
-      }),
-    ),
-  ).then((allWorkers) => {
-    for (const worker of allWorkers) scheduler.add(worker);
+  let closing: Promise<void> | undefined;
+
+  /**
+   * Drains in-flight work, rejects queued work, closes each database
+   * connection, then terminates all workers. Bounded by `drainTimeout`.
+   * A second call returns the same promise object — runs exactly once.
+   */
+  const close = (): Promise<void> => {
+    if (closing) return closing;
+    closing = (async () => {
+      // Shutting the front door first: queued waiters reject at once and no new
+      // work can be acquired while the in-flight work drains.
+      const draining = scheduler.shutdown(
+        new SQLiteError('CLIENT_CLOSED', 'The SQLite client has been closed.'),
+      );
+      // A transaction's lease is held by user code, so this wait is bounded like
+      // the rest: a callback that never returns must not make close() hang.
+      await bounded(draining, drainTimeout);
+      await Promise.all(
+        pool.map(async (worker) => {
+          if (!worker) return;
+          await bounded(worker.close(), drainTimeout);
+          worker.terminate();
+        }),
+      );
+      pool.length = 0;
+    })();
+    return closing;
+  };
+
+  const openTimeout = clientOptions?.openTimeout ?? 30_000;
+  const drainTimeout = clientOptions?.drainTimeout ?? 60_000;
+
+  const supervisor = createSupervisor({
+    size: poolSize,
+    maxWorkerRestarts: clientOptions?.maxWorkerRestarts,
   });
+
+  let fatal: SQLiteError | undefined;
+
+  const failClient = (error: SQLiteError) => {
+    fatal ??= error;
+    void scheduler.shutdown(fatal);
+    for (const dying of pool) dying?.terminate();
+  };
+
+  const spawn = (index: number) => {
+    const timer = setTimeout(() => {
+      handleDeath(
+        index,
+        new SQLiteError(
+          'TIMEOUT',
+          `Worker ${index + 1} did not become ready within ${openTimeout} ms. ` +
+            `The database may be held under an exclusive lock by another tab or another client.`,
+        ),
+      );
+    }, openTimeout);
+
+    void createPoolWorker({
+      index,
+      orchestrator,
+      pool,
+      clientPrefix,
+      file,
+      vfs,
+      pragmas: clientOptions?.pragmas,
+      onDeath: handleDeath,
+      onServed: (served) => {
+        supervisor.report(served, 'served');
+      },
+      drainTimeout,
+    })
+      .then((worker) => {
+        supervisor.report(index, 'ready');
+        scheduler.add(worker);
+      })
+      .catch(() => {
+        // The rejection is the death already reported through onDeath.
+      })
+      .finally(() => clearTimeout(timer));
+  };
+
+  const handleDeath = (index: number, error: SQLiteError) => {
+    scheduler.remove(index);
+    pool[index]?.terminate();
+    pool[index] = undefined;
+    const decision = supervisor.report(index, 'died');
+    if (decision === 'restart') void spawn(index);
+    else if (decision === 'fail-client') failClient(error);
+  };
+
+  // Initialize the worker pool with the requested number of workers
+  for (let index = 0; index < poolSize; index += 1) spawn(index);
 
   // Return the public API
   const api = {

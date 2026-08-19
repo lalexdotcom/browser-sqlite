@@ -19,6 +19,7 @@ interface SQLiteAPI {
   step(stmt: WASQLiteStmt): Promise<number>;
   row(stmt: WASQLiteStmt): unknown[];
   changes(db: WASQLiteDB): number;
+  close(db: WASQLiteDB): Promise<number>;
   vfs_register(vfs: unknown, makeDefault?: boolean): void;
 }
 

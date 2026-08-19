@@ -146,6 +146,121 @@ describe('scheduler — writer designation', () => {
   });
 });
 
+describe('scheduler — removal', () => {
+  // Falsifiable: delete the `generations.set(...)` line in remove() — the stale
+  // release() then sees a matching generation and calls handOver, handing the
+  // corpse to the queued acquire and making served true.
+  it('does not hand back a removed worker when its lease is released late', async () => {
+    const { scheduler } = makeScheduler(1);
+    const lease = await scheduler.acquire('read');
+    scheduler.remove(0);
+    let served = false;
+    void scheduler.acquire('read').then(() => {
+      served = true;
+    });
+    lease.release();
+    await flush();
+    expect(served).toBe(false);
+  });
+
+  // Falsifiable: delete the `currentWriterIndex = -1` line in remove().
+  it('frees the writer designation when the writer is removed', async () => {
+    const { scheduler } = makeScheduler(2);
+    const writer = await scheduler.acquire('write');
+    expect(writer.worker.index).toBe(0);
+    writer.release();
+    scheduler.remove(0);
+    const next = await scheduler.acquire('write');
+    expect(next.worker.index).toBe(1);
+  });
+
+  it('revives an index when a replacement is added', async () => {
+    const { scheduler } = makeScheduler(1);
+    scheduler.remove(0);
+    scheduler.add({ index: 0 });
+    const lease = await scheduler.acquire('read');
+    expect(lease.worker.index).toBe(0);
+  });
+
+  // Falsifiable: delete the `generations.set(...)` line in remove() — the
+  // old lease then matches the revived generation and handOver fires while the
+  // new lease is still live, putting index 0 back in the pool prematurely.
+  it('a release from before remove() is a no-op after the slot is revived', async () => {
+    const { scheduler } = makeScheduler(1);
+    const leaseA = await scheduler.acquire('read');
+    scheduler.remove(0);
+    scheduler.add({ index: 0 });
+    const leaseB = await scheduler.acquire('read');
+    leaseA.release(); // stale — must be a no-op
+    await flush();
+    // index 0 must still be exclusively held by leaseB, not back in the pool.
+    let served = false;
+    void scheduler.acquire('read').then(() => {
+      served = true;
+    });
+    await flush();
+    expect(served).toBe(false);
+    leaseB.release();
+    await flush();
+    expect(served).toBe(true);
+  });
+});
+
+describe('scheduler — shutdown', () => {
+  // Falsifiable: delete the reject loop over the queues in shutdown().
+  it('rejects queued waiters with the given reason', async () => {
+    const { scheduler } = makeScheduler(1);
+    const held = await scheduler.acquire('read');
+    const queued = scheduler.acquire('read');
+    const reason = new Error('closing');
+    void scheduler.shutdown(reason);
+    await expect(queued).rejects.toBe(reason);
+    held.release();
+  });
+
+  // Falsifiable: delete the `if (shutdownReason) throw shutdownReason` guard in acquire().
+  it('rejects every later acquisition', async () => {
+    const { scheduler } = makeScheduler(1);
+    const reason = new Error('closing');
+    void scheduler.shutdown(reason);
+    await expect(scheduler.acquire('read')).rejects.toBe(reason);
+  });
+
+  // Falsifiable: resolve the shutdown promise immediately instead of waiting on
+  // `leased.size === 0` and this fails.
+  it('settles only when the last outstanding lease comes back', async () => {
+    const { scheduler } = makeScheduler(2);
+    const a = await scheduler.acquire('read');
+    const b = await scheduler.acquire('read');
+    let settled = false;
+    void scheduler.shutdown(new Error('closing')).then(() => {
+      settled = true;
+    });
+    await flush();
+    expect(settled).toBe(false);
+    a.release();
+    await flush();
+    expect(settled).toBe(false);
+    b.release();
+    await flush();
+    expect(settled).toBe(true);
+  });
+
+  // Falsifiable: drop the `leased.delete(index)` line from remove() — the
+  // shutdown promise then waits forever on a lease nobody can return.
+  it('does not wait on a lease whose worker was removed', async () => {
+    const { scheduler } = makeScheduler(1);
+    await scheduler.acquire('read');
+    let settled = false;
+    void scheduler.shutdown(new Error('closing')).then(() => {
+      settled = true;
+    });
+    scheduler.remove(0);
+    await flush();
+    expect(settled).toBe(true);
+  });
+});
+
 describe('scheduler — leases', () => {
   it('keeps a worker across many statements while others wait (B1)', async () => {
     const { scheduler } = makeScheduler(1);

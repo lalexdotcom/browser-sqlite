@@ -1,6 +1,34 @@
 import type { PoolWorker } from './pool';
 
 /**
+ * Wires an AbortSignal into a promise that rejects the instant the signal
+ * fires, and returns a teardown that removes the listener. The rejection sink
+ * (`aborted?.catch`) suppresses the unhandled-rejection when the query ends
+ * normally and nobody is racing the promise any more.
+ *
+ * This is the only place in the module that reads an AbortSignal; both
+ * `chunk()` and `writeWorker()` delegate here.
+ */
+const makeAbortRace = (
+  signal: AbortSignal | undefined,
+): { aborted: Promise<never> | undefined; teardown: () => void } => {
+  if (!signal) return { aborted: undefined, teardown: () => {} };
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  // Nothing consumes this rejection when the query ends normally.
+  aborted.catch(() => {});
+  return {
+    aborted,
+    teardown: () => {
+      if (onAbort) signal.removeEventListener('abort', onAbort);
+    },
+  };
+};
+
+/**
  * The single query primitive. Every other read path is a thin derivation, and
  * abort is implemented here exactly once.
  */
@@ -14,28 +42,31 @@ export const chunk = async function* <
 ): AsyncGenerator<T[]> {
   const { signal, chunkSize } = options ?? {};
 
-  // B9: addEventListener never fires for a signal that is already aborted, and
-  // nothing else checks. Without this the query runs to completion.
+  // B9: addEventListener never fires for a signal that is already aborted.
   if (signal?.aborted) throw signal.reason;
 
-  let aborted = false;
-  const onAbort = () => {
-    aborted = true;
-  };
-  signal?.addEventListener('abort', onAbort);
-
+  const { aborted, teardown } = makeAbortRace(signal);
+  const iterator = worker.query<T>(sql, params, { chunkSize });
   try {
-    for await (const item of worker.query<T>(sql, params, { chunkSize })) {
-      // FLK-1: chunks already sitting in the message queue are NOT delivered.
-      // Stopping the worker is not enough — it races ahead of the abort flag.
-      if (aborted) break;
-      if (typeof item !== 'number') yield item;
+    while (true) {
+      // Racing the pending chunk, not testing a flag after it: an ORDER BY
+      // sorts entirely inside the first step(), so waiting for a chunk before
+      // noticing the abort makes AbortSignal.timeout(n) return minutes late.
+      const next = aborted
+        ? await Promise.race([iterator.next(), aborted])
+        : await iterator.next();
+      if (next.done) break;
+      // FLK-1: chunks already queued are not delivered once the signal fired.
+      if (typeof next.value !== 'number') yield next.value;
     }
-    if (aborted) throw signal?.reason;
   } finally {
-    // In the finally, never after the loop: every early exit skipped it before,
-    // and first() exits early by construction.
-    signal?.removeEventListener('abort', onAbort);
+    teardown();
+    // Start the stop-and-drain, never await it. The caller must not wait for a
+    // sort that may still have minutes to run; the lease returns through
+    // quiesce() instead. interrupt() first, so the queued return() is not
+    // parked behind a next() that will not settle.
+    worker.interrupt();
+    void iterator.return(undefined).catch(() => {});
   }
 };
 
@@ -101,28 +132,32 @@ export const writeWorker = async <
 ): Promise<{ result: T[]; affected: number }> => {
   const { signal } = options ?? {};
 
-  // Mirror chunk(): reject immediately if the signal is already aborted.
+  // B9: addEventListener never fires for a signal that is already aborted.
   if (signal?.aborted) throw signal.reason;
 
-  let aborted = false;
-  const onAbort = () => {
-    aborted = true;
-  };
-  signal?.addEventListener('abort', onAbort);
-
+  const { aborted, teardown } = makeAbortRace(signal);
+  const iterator = worker.query<T>(sql, params, {});
   const result: T[] = [];
   let affected = 0;
   try {
-    // write() is the only caller that needs the affected count, which is why the
-    // T[] | number union stays private to this module.
-    for await (const item of worker.query<T>(sql, params, {})) {
-      if (aborted) break;
-      if (typeof item === 'number') affected = item;
-      else result.push(...item);
+    while (true) {
+      // Racing the pending chunk, not testing a flag after it: an ORDER BY
+      // sorts entirely inside the first step(), so waiting for a chunk before
+      // noticing the abort makes AbortSignal.timeout(n) return minutes late.
+      const next = aborted
+        ? await Promise.race([iterator.next(), aborted])
+        : await iterator.next();
+      if (next.done) break;
+      // write() is the only caller that needs the affected count, which is why
+      // the T[] | number union stays private to this module.
+      if (typeof next.value === 'number') affected = next.value;
+      else result.push(...next.value);
     }
-    if (aborted) throw signal?.reason;
   } finally {
-    signal?.removeEventListener('abort', onAbort);
+    teardown();
+    // Start the stop-and-drain, never await it. Same pattern as chunk().
+    worker.interrupt();
+    void iterator.return(undefined).catch(() => {});
   }
   return { result, affected };
 };

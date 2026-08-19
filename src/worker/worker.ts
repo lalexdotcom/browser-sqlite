@@ -138,20 +138,45 @@ const open = (
         });
       });
     })
-    .catch((e) => {
-      throw e;
-    })
-    .finally(() => {
+    .then((opened) => {
       orchestrator.unlock();
-      // Transition: INITIALIZING → READY
-      // Marks this worker as available for queries. The client's releaseWorker()
-      // observes READY status and dispatches queued requests to this worker.
+      // Transition: INITIALIZING → READY. Only on success — the previous
+      // `.finally()` posted `ready` even for a database that never opened.
       orchestrator.setStatus(index, WorkerStatuses.READY);
       self.postMessage({ type: 'ready', callId: 0 });
+      return opened;
+    })
+    .catch((error: unknown) => {
+      orchestrator.unlock();
+      self.postMessage({
+        type: 'open-error',
+        callId: 0,
+        message:
+          error instanceof Error ? error.message : `Failed to open ${file}`,
+        cause: cloneable(error),
+      });
+      throw error;
     });
+
+  // Nothing awaits openedDB until a query arrives; keep a failed open from
+  // becoming an unhandled rejection in the worker.
+  openedDB.catch(() => {});
 
   const reply = (data: WorkerMessageData) => {
     self.postMessage(data);
+  };
+
+  /**
+   * A cause that cannot be structured-cloned makes `postMessage` itself throw —
+   * inside the catch block — so the client receives nothing and waits forever.
+   */
+  const cloneable = (value: unknown): unknown => {
+    try {
+      structuredClone(value);
+      return value;
+    } catch {
+      return String(value);
+    }
   };
 
   const query = async function* (
@@ -207,40 +232,64 @@ const open = (
 
   self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
     const { data } = event;
-    if (data.type === 'query') {
-      const { callId, sql, params, options } = data;
-      try {
-        // Transition: READY → RUNNING
-        // Signals to the client that this worker is busy. The client may set
-        // status to ABORTING via AbortSignal while the worker is RUNNING.
-        orchestrator.setStatus(index, WorkerStatuses.RUNNING);
-        let affected = 0;
+    switch (data.type) {
+      case 'query': {
+        const { callId, sql, params, options } = data;
+        try {
+          // Transition: READY → RUNNING
+          // Signals to the client that this worker is busy. The client may set
+          // status to ABORTING via AbortSignal while the worker is RUNNING.
+          orchestrator.setStatus(index, WorkerStatuses.RUNNING);
+          let affected = 0;
 
-        for await (const chunk of query(sql, params, options)) {
-          if (typeof chunk === 'number') {
-            affected = chunk;
-            break;
-          } else {
-            reply({ type: 'chunk', callId, data: chunk });
+          for await (const chunk of query(sql, params, options)) {
+            if (typeof chunk === 'number') {
+              affected = chunk;
+              break;
+            } else {
+              reply({ type: 'chunk', callId, data: chunk });
+            }
           }
-        }
 
-        reply({ type: 'done', callId, affected });
-      } catch (e) {
-        reply({
-          type: 'error',
-          callId,
-          ...(typeof e === 'object'
-            ? e instanceof Error
-              ? { message: e.message, cause: e.cause }
-              : { message: 'Unknown error', cause: e }
-            : { message: `Unknown error (${e})` }),
-        });
-      } finally {
-        // Transition: RUNNING | ABORTING → DONE
-        // Unconditional — ensures the worker status is always reset even on error or abort.
-        // The client's releaseWorker() observes DONE and routes the worker back to the pool.
-        orchestrator.setStatus(index, WorkerStatuses.DONE);
+          reply({ type: 'done', callId, affected });
+        } catch (e) {
+          reply({
+            type: 'error',
+            callId,
+            ...(typeof e === 'object'
+              ? e instanceof Error
+                ? { message: e.message, cause: cloneable(e.cause) }
+                : { message: 'Unknown error', cause: e }
+              : { message: `Unknown error (${e})` }),
+          });
+        } finally {
+          // Transition: RUNNING | ABORTING → DONE
+          // Unconditional — ensures the worker status is always reset even on error or abort.
+          // The client's releaseWorker() observes DONE and routes the worker back to the pool.
+          orchestrator.setStatus(index, WorkerStatuses.DONE);
+        }
+        break;
+      }
+      case 'close': {
+        try {
+          const { sqlite, db } = await openedDB!;
+          await sqlite.close(db);
+        } catch {
+          // A database that never opened has nothing to close; the client is
+          // shutting down either way and must still get its reply.
+        }
+        reply({ type: 'closed', callId: 0 });
+        break;
+      }
+      case 'open': {
+        // A second open is a protocol error; open() already guards against this.
+        throw new Error('DB already opened');
+      }
+      default: {
+        const _unexpected: never = data;
+        throw new Error(
+          `Unhandled worker message: ${JSON.stringify(_unexpected)}`,
+        );
       }
     }
   };
@@ -251,8 +300,27 @@ const open = (
 // and this handler is no longer the active responder for incoming messages.
 self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
   const { data } = event;
-  if (data.type === 'open') {
-    const { file, flags, index, vfs, pragmas } = data;
-    open(file, flags, index, { vfs, pragmas });
+  switch (data.type) {
+    case 'open': {
+      const { file, flags, index, vfs, pragmas } = data;
+      open(file, flags, index, { vfs, pragmas });
+      break;
+    }
+    case 'query': {
+      // queries arrive only after open() replaces self.onmessage; this case
+      // is unreachable at runtime but satisfies the exhaustive check.
+      break;
+    }
+    case 'close': {
+      // close arrived before open completed — no database to close; reply immediately.
+      self.postMessage({ type: 'closed', callId: 0 });
+      break;
+    }
+    default: {
+      const _unexpected: never = data;
+      throw new Error(
+        `Unhandled worker message: ${JSON.stringify(_unexpected)}`,
+      );
+    }
   }
 };

@@ -54,13 +54,21 @@ export type ClientMessageData =
       sql: string;
       params: any[];
       options?: SQLOptions;
-    };
+    }
+  | { type: 'close'; callId: number };
 
 export type WorkerMessageData =
   | { type: 'ready'; callId: number }
   | { type: 'chunk'; callId: number; data: any[] }
   | { type: 'done'; callId: number; affected: number }
-  | { type: 'error'; callId: number; message: string; cause?: unknown };
+  | { type: 'error'; callId: number; message: string; cause?: unknown }
+  | { type: 'closed'; callId: number }
+  | {
+      type: 'open-error';
+      callId: number;
+      message: string;
+      cause?: unknown;
+    };
 
 export type SQLiteVFS =
   | 'OPFSPermutedVFS'

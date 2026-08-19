@@ -118,28 +118,25 @@ Write queries are serialized through a dedicated writer worker — only one writ
 
 ```typescript
 // Worker is held for the full generator lifetime — always exhaust or break.
-for await (const chunk of db.stream<User>(
-  'SELECT * FROM large_table',
-  [],
-  { chunkSize: 100 },
-)) {
-  processChunk(chunk); // chunk is User[]
+for await (const row of db.stream<User>('SELECT * FROM large_table', [])) {
+  processRow(row); // row is User
 }
 ```
 
-`stream()` yields rows in chunks without buffering the full result set in memory.
+`stream()` yields individual rows without buffering the full result set in memory.
+Use `chunk()` to iterate in batches: `for await (const rows of db.chunk(...))`.
 
-### One (first row)
+### First (first row)
 
 ```typescript
-const user = await db.one<User>(
+const user = await db.first<User>(
   'SELECT * FROM users WHERE id = ?',
   [42],
 );
 // user: User | undefined
 ```
 
-`one()` automatically aborts after the first result row. Use it for lookups by primary key or unique field.
+`first()` returns the first result row, or `undefined` if no rows match. Use it for lookups by primary key or unique field.
 
 ### Advanced
 
@@ -148,13 +145,65 @@ For batch inserts, schema-driven table replacement, or explicit transactions, se
 - `db.output(table, schema, options)` — drops, recreates, and populates a table from a schema definition
 - `db.transaction(callback, options)` — wraps operations in a SQLite transaction with auto-commit and rollback
 
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `poolSize` | `number` | `2` | Number of Web Workers spawned in the pool. A larger pool allows more concurrent reads but uses more memory. Must be `1` with `AccessHandlePoolVFS`. |
+| `vfs` | `SQLiteVFS` | `'OPFSPermutedVFS'` | VFS implementation for storage. See the [VFS Selection](#vfs-selection) table. |
+| `pragmas` | `Record<string, string>` | `undefined` | SQLite PRAGMAs applied to each worker connection on open. |
+| `maxWorkerRestarts` | `number` | `1` | How many times a slot may be restarted after it dies. A slot that never reached readiness is never restarted — an initial failure is deterministic and restarting only delays the diagnostic. The counter resets once a replacement has actually served a request. |
+| `openTimeout` | `number` (ms) | `30_000` | How long a worker has to post `ready` after `open` is sent. On expiry the slot is failed — the most common cause is a database held under an exclusive lock by another tab. |
+| `drainTimeout` | `number` (ms) | `60_000` | How long the drain loop may run in the query generator's `finally` before the worker is presumed dead and the crash path is invoked. |
+
 ### Close
 
 ```typescript
-db.close();
+await db.close();
 ```
 
-Terminates all worker threads.
+Drains in-flight work, rejects queued work, closes each database connection, then terminates all workers. The returned promise settles once every worker has closed and been terminated, or once `drainTimeout` has elapsed. Calling `close()` a second time returns the same promise — the operation runs exactly once.
+
+**OPFS files are not deleted.** `close()` does not remove any OPFS database files. To delete them, use `navigator.storage.getDirectory()` directly.
+
+## Error handling
+
+Errors raised by this library are instances of `SQLiteError`, exported from the package entry point. Discriminate on `error.code` or `error.name` — they carry the same value, so `err.name` reads the way `'AbortError'` does on a DOM `AbortError`.
+
+| Code | When it is thrown |
+|------|------------------|
+| `NOT_A_READ_QUERY` | `read()`, `chunk()`, `stream()`, or `first()` was called with a statement that is not a provably readable query. Every PRAGMA currently counts as a write — run PRAGMAs through `write()`. |
+| `CLIENT_CLOSED` | A query was queued after `close()` was called. |
+| `WORKER_CRASHED` | A pool worker died and the supervisor decided not to restart it. All queued and in-flight work on that slot is rejected. |
+| `TIMEOUT` | A worker did not post `ready` within `openTimeout` milliseconds. The most common cause is a database held under an exclusive lock by another tab or client. |
+| `PROTOCOL_ERROR` | A message was received from a worker that could not be deserialized (`messageerror`). The worker survives; only the in-flight request is rejected. |
+
+```typescript
+import { SQLiteError } from 'browser-sqlite';
+
+try {
+  await db.write('...');
+} catch (err) {
+  if (err instanceof SQLiteError) {
+    switch (err.code) {
+      case 'WORKER_CRASHED': /* restart or notify */ break;
+      case 'CLIENT_CLOSED':  /* client was shut down */ break;
+    }
+  }
+}
+```
+
+**Request timeouts.** The library adds no per-request timeout. To bound a query, pass `AbortSignal.timeout(ms)`:
+
+```typescript
+const rows = await db.read('SELECT * FROM large_table', [], {
+  signal: AbortSignal.timeout(5_000),
+});
+```
+
+**`close()` is async.** Always `await db.close()` — the returned promise settles once every worker has closed its database connection and been terminated. Discarding the promise means the caller cannot tell when teardown is complete.
+
+**Read methods reject write statements.** `read()`, `chunk()`, `stream()`, and `first()` reject any statement that is not a provably readable query, throwing `NOT_A_READ_QUERY`. Every PRAGMA currently counts as a write — run PRAGMAs through `write()` until a future release adds a PRAGMA allowlist.
 
 ## Requirements
 
