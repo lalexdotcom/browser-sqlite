@@ -110,26 +110,6 @@ describe('output() schema modifiers', () => {
 
     db.close();
   });
-
-  it('creates a TEMPORARY table when temp is set', async () => {
-    // poolSize 1 — a TEMP table lives on a single connection, so reads must
-    // land on the same worker that created it.
-    const db = await createTestClient({ poolSize: 1 });
-
-    const out = db.output('out_temp', { id: 'INTEGER' }, { temp: true });
-    out.enqueue({ id: 1 });
-    await out.close();
-
-    const rows = await db.read<{ id: number }>('SELECT id FROM out_temp');
-    expect(rows).toHaveLength(1);
-
-    const persisted = await db.read(
-      "SELECT name FROM sqlite_master WHERE name = 'out_temp'",
-    );
-    expect(persisted).toHaveLength(0);
-
-    db.close();
-  });
 });
 
 describe('output() indexes', () => {

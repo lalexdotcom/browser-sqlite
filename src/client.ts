@@ -1,6 +1,7 @@
 import { createBulk } from './bulk';
 import type { createClientDebug } from './debug';
 import { SQLiteError } from './errors';
+import { createLocks } from './locks';
 import { WorkerOrchestrator, WorkerStatuses } from './orchestrator';
 import { createPoolWorker, type PoolWorker } from './pool';
 import {
@@ -257,7 +258,7 @@ export type SQLiteDB = {
    * @param table - Table name to drop and recreate.
    * @param schema - Column definition map. Values are SQL type strings or
    *   objects with `{ type, required?, unique?, generated? }`.
-   * @param options - `indexes` array and `temp` flag for TEMPORARY tables.
+   * @param options - `indexes` array for index creation after the swap.
    * @returns Object with `enqueue(data)` and `close()` following the same
    *   contract as {@link SQLiteDB.bulkWrite}.
    */
@@ -500,9 +501,15 @@ export const createSQLiteClient = (
     }
   };
 
-  const { bulkWrite, output } = createBulk({ write });
-
   const transaction = createTransaction({ scheduler });
+
+  const { bulkWrite, output } = createBulk({
+    write,
+    read,
+    transaction,
+    file,
+    locks: createLocks(),
+  });
 
   /** Bounds any settlement that depends on a worker answering. */
   const bounded = async (promise: Promise<unknown>, ms: number) => {
