@@ -442,11 +442,11 @@ describe('scheduler — writer-preferred reads (post-commit freshness)', () => {
    * takeAvailable() therefore routes the first read to the writer when it is
    * immediately available, preventing a non-writer worker from reading stale data.
    *
-   * Falsifiability: deleting the writer-preference branch from takeAvailable()
-   * makes "falls back to lowest-index when writer is leased" pass trivially but
-   * breaks "prefers the designated writer for reads when it is available" — that
-   * test expects the read to go to worker 1 (the writer) while worker 0 is also
-   * free, which cannot happen without the branch.
+   * Falsifiability note: every test that designates a HIGH-index worker as writer
+   * (e.g. index 2 in a 3-worker pool) distinguishes writer-preference from
+   * lowest-index-first, because the two policies disagree on which worker to
+   * hand the read. Tests where the writer happens to be the lowest-index worker
+   * cannot falsify the branch and are only kept as guards on unrelated paths.
    */
 
   it('prefers the designated writer for reads when it is available', async () => {
@@ -483,32 +483,67 @@ describe('scheduler — writer-preferred reads (post-commit freshness)', () => {
     read.release();
   });
 
-  it('falls back to lowest-index when the designated writer is leased', async () => {
-    const { scheduler } = makeScheduler(2);
-    const write = await scheduler.acquire('write'); // worker 0 designated
-    // writer (0) is now busy — a read must fall through to worker 1.
-    const read = await scheduler.acquire('read');
-    expect(read.worker.index).toBe(1);
-    read.release();
-    write.release();
+  it('falls back to lowest-index when the designated writer is leased out', async () => {
+    // Three workers; designate worker 2 (NOT the lowest index) as writer by
+    // queuing a write before any workers exist, then adding worker 2 first.
+    // This ensures writer-preference and lowest-index-first disagree:
+    //   — writer-preference would pick worker 2 (when available)
+    //   — lowest-index-first picks worker 0
+    // Step 1 (read while writer available) asserts worker 2, making the branch
+    // load-bearing. Step 2 (read while writer busy) asserts worker 0, verifying
+    // the fallback.
+    // Falsifiable: deleting the branch makes step 1 return worker 0.
+    const scheduler = createScheduler<TestWorker>();
+    const writePending = scheduler.acquire('write');
+    scheduler.add({ index: 2 }); // gets the queued write; becomes designated writer
+    const writeLease = await writePending;
+    expect(writeLease.worker.index).toBe(2);
+    scheduler.add({ index: 0 });
+    scheduler.add({ index: 1 });
+    writeLease.release();
+    await flush();
+
+    // All three workers available; writer = 2.
+    // Writer-preference sends the first read to worker 2.
+    const firstRead = await scheduler.acquire('read');
+    expect(firstRead.worker.index).toBe(2);
+
+    // Writer (2) is now busy. Next read must fall back to lowest-index (0).
+    const secondRead = await scheduler.acquire('read');
+    expect(secondRead.worker.index).toBe(0);
+
+    firstRead.release();
+    secondRead.release();
   });
 
   it('does not clear the writer designation when serving a read from the writer', async () => {
-    const { scheduler } = makeScheduler(2);
-    const write = await scheduler.acquire('write'); // worker 0 designated
-    write.release();
+    // Three workers; designate worker 2 (NOT the lowest index) as writer.
+    // The read goes to worker 2 via writer-preference (step 1 is falsifiable).
+    // After the read, the designation must survive — a subsequent write still
+    // goes to worker 2, not the lowest-index worker 0 (step 2 is also
+    // falsifiable: if the branch were to clear the designation, the write would
+    // fall to worker 0 instead).
+    const scheduler = createScheduler<TestWorker>();
+    const writePending = scheduler.acquire('write');
+    scheduler.add({ index: 2 }); // gets the queued write; becomes designated writer
+    const writeLease = await writePending;
+    expect(writeLease.worker.index).toBe(2);
+    scheduler.add({ index: 0 });
+    scheduler.add({ index: 1 });
+    writeLease.release();
     await flush();
 
-    // Read goes to writer (0).
+    // All three workers available; writer = 2.
+    // Falsifiable: delete the branch → read goes to worker 0.
     const read = await scheduler.acquire('read');
-    expect(read.worker.index).toBe(0);
+    expect(read.worker.index).toBe(2);
     read.release();
     await flush();
 
-    // A subsequent write must still go to the designated writer (0),
-    // not to some other worker — the designation must survive the read.
+    // Designation must survive the read. A subsequent write goes to worker 2.
+    // Falsifiable: if the branch clears the designation → write goes to worker 0.
     const nextWrite = await scheduler.acquire('write');
-    expect(nextWrite.worker.index).toBe(0);
+    expect(nextWrite.worker.index).toBe(2);
     nextWrite.release();
   });
 

@@ -380,6 +380,17 @@ export const createSQLiteClient = (
   /**
    * Executes a read query and returns all results.
    * Automatically acquires and releases a worker from the pool.
+   *
+   * @remarks
+   * **Read-your-own-writes is not guaranteed across workers.** Under the default
+   * `OPFSPermutedVFS`, each pool worker holds its own in-memory page map updated
+   * via BroadcastChannel. The scheduler prefers the designated writer for reads,
+   * making the common sequential pattern (`await db.write(…); await db.read(…)`)
+   * reliable. However, if a concurrent write holds the designated writer at the
+   * moment this read is dispatched, the read falls back to another worker that
+   * may not yet have received the latest commit broadcast. For a hard guarantee,
+   * issue the read inside the same `transaction()` as the write, or use
+   * `poolSize: 1`.
    */
   const read = async <
     T extends Record<string, unknown> = Record<string, unknown>,
@@ -406,6 +417,10 @@ export const createSQLiteClient = (
   /**
    * Executes a query and yields result rows in chunks.
    * The single abort-aware primitive — all other read paths derive from this.
+   *
+   * @remarks
+   * **Worker freshness caveat.** See the `read()` remarks — the same
+   * read-your-own-writes limitation applies here.
    */
   const chunk = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
@@ -431,6 +446,10 @@ export const createSQLiteClient = (
 
   /**
    * Executes a query and streams individual rows (flattened from chunks).
+   *
+   * @remarks
+   * **Worker freshness caveat.** See the `read()` remarks — the same
+   * read-your-own-writes limitation applies here.
    */
   const stream = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
@@ -478,6 +497,10 @@ export const createSQLiteClient = (
   /**
    * Executes a query and returns only the first row.
    * Breaks after the first chunk — no internal AbortController needed.
+   *
+   * @remarks
+   * **Worker freshness caveat.** See the `read()` remarks — the same
+   * read-your-own-writes limitation applies here.
    */
   const first = async <
     T extends Record<string, unknown> = Record<string, unknown>,
