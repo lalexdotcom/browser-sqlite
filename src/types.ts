@@ -55,11 +55,7 @@ export type ClientMessageData =
       params: any[];
       options?: SQLOptions;
     }
-  | { type: 'close'; callId: number }
-  // PROBE SCAFFOLDING (wave 4, BP-1) — remove or promote once the measurement
-  // is recorded. Answers: is a postMessage delivered to a worker while it is
-  // inside a query? See mem:follow-ups BP-1.
-  | { type: 'ping'; callId: number; postedAt: number };
+  | { type: 'close'; callId: number };
 
 export type WorkerMessageData =
   | { type: 'ready'; callId: number }
@@ -67,14 +63,6 @@ export type WorkerMessageData =
   | { type: 'done'; callId: number; affected: number }
   | { type: 'error'; callId: number; message: string; cause?: unknown }
   | { type: 'closed'; callId: number }
-  // PROBE SCAFFOLDING (wave 4, BP-1) — see ClientMessageData['ping'].
-  | {
-      type: 'pong';
-      callId: number;
-      postedAt: number;
-      handledAt: number;
-      inQuery: boolean;
-    }
   | {
       type: 'open-error';
       callId: number;
