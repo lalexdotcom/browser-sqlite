@@ -76,7 +76,7 @@ describe('assertGeneratedExpression', () => {
 
   it('rejects a statement separator', () => {
     expect(() =>
-      assertGeneratedExpression('(1); DROP TABLE users; --', 'doubled'),
+      assertGeneratedExpression('(1; DROP TABLE users)', 'doubled'),
     ).toThrow(SQLiteError);
   });
 });
