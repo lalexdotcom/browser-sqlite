@@ -140,12 +140,19 @@ describe('debug history bounds (D5)', () => {
     expect(debug.state.queue.write).toBe(9);
   });
 
-  it('reports a real worker status, not a placeholder', () => {
-    const debug = createClientDebug('f.db', stubOrchestrator, options, () => ({
+  it('reflects the live orchestrator status, not a construction-time snapshot', () => {
+    // Start with INITIALIZED (0), then change to READY (10) after construction.
+    // The Proxy getter re-reads getStatus on every access; without it the status
+    // would stay frozen at 'INITIALIZED' and the assertion below would fail.
+    let currentStatus = 0;
+    const liveOrchestrator = { getStatus: () => currentStatus } as any;
+    const debug = createClientDebug('f.db', liveOrchestrator, options, () => ({
       read: 0,
       write: 0,
     }));
     const state = debug.createWorkerDebugState(0, 'w0');
-    expect(state.status).not.toBe('HAHA');
+
+    currentStatus = 10; // READY
+    expect(state.status).toBe('READY');
   });
 });
