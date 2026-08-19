@@ -130,13 +130,29 @@ export const createScheduler = <W extends { index: number }>(
       return workers[currentWriterIndex];
     }
 
-    // For reads, prefer the designated writer when it is immediately available.
-    // The writer's in-memory VFS state is guaranteed up-to-date (it applied its
-    // own last commit synchronously); a non-writer worker may not have received
-    // the commit broadcast yet and would read stale data. The writer designation
-    // is intentionally kept so that subsequent writes continue to serialize
-    // through the same worker — clearing it here would let a later write claim
-    // a different worker that still has a stale view.
+    // Correctness over throughput: prefer the designated writer for reads when
+    // it is immediately available.
+    //
+    // Under OPFSPermutedVFS (the default) each worker maintains its own
+    // in-memory page map (mapPageToOffset). Commits propagate to other workers
+    // via BroadcastChannel + IndexedDB. The writer applied #acceptTx to its own
+    // map synchronously during the commit, so it always has an up-to-date view.
+    // A non-writer worker that picks up a read before the broadcast arrives will
+    // read from stale page offsets and return pre-commit data.
+    //
+    // The writer designation is intentionally NOT cleared here. Clearing it
+    // would allow a subsequent write to land on a different worker that still
+    // has a stale map — defeating the fix — and would break the invariant that
+    // all writes for a given designation serialize through one worker.
+    //
+    // Trade-off: with a pool size > 1, sustained write-then-read sequences pile
+    // reads on the designated writer rather than spreading them. This is the
+    // same direction the backlog already flags for the lowest-index-first policy
+    // ("reads pile on worker 0 which is usually also the writer"). Any future
+    // round-robin or prefer-non-writer scheduling change MUST either preserve
+    // this writer-preference for the first read after a commit, or replace it
+    // with a real propagation barrier that confirms the broadcast has been
+    // received and processed by the target worker before dispatching the read.
     if (
       !write &&
       currentWriterIndex > -1 &&

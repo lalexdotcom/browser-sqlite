@@ -433,3 +433,93 @@ describe('scheduler — add() writer-designation with multiple queued writes', (
     await firstAcquire; // settle the promise chain
   });
 });
+
+describe('scheduler — writer-preferred reads (post-commit freshness)', () => {
+  /**
+   * Under OPFSPermutedVFS (the default VFS) each worker maintains an in-memory
+   * page map updated via BroadcastChannel. The writer applied #acceptTx to its
+   * own map synchronously at commit time, so it always has an up-to-date view.
+   * takeAvailable() therefore routes the first read to the writer when it is
+   * immediately available, preventing a non-writer worker from reading stale data.
+   *
+   * Falsifiability: deleting the writer-preference branch from takeAvailable()
+   * makes "falls back to lowest-index when writer is leased" pass trivially but
+   * breaks "prefers the designated writer for reads when it is available" — that
+   * test expects the read to go to worker 1 (the writer) while worker 0 is also
+   * free, which cannot happen without the branch.
+   */
+
+  it('prefers the designated writer for reads when it is available', async () => {
+    // Designate worker 1 as writer (worker 0 must be busy so the write queues
+    // and is served from worker 1 when it joins, setting currentWriterIndex = 1).
+    const scheduler = createScheduler<TestWorker>();
+    const worker0 = { index: 0 };
+    const worker1 = { index: 1 };
+
+    // Queue a write before any worker exists.
+    let writeLease: { worker: TestWorker; release: () => void } | undefined;
+    void scheduler.acquire('write').then((l) => {
+      writeLease = l;
+    });
+
+    // Add worker 1 first — it gets the queued write and is designated.
+    scheduler.add(worker1);
+    await flush();
+    expect(writeLease?.worker.index).toBe(1);
+
+    // Add worker 0 — it goes to available (no queue left).
+    scheduler.add(worker0);
+
+    // Release the write lease so writer (1) is back in available.
+    writeLease!.release();
+    await flush();
+
+    // Both workers are available. A read should go to the designated writer (1),
+    // not to the lowest-index worker (0).
+    // Falsified by deleting the writer-preference branch: without it,
+    // lowest-index-first picks worker 0 and this assertion fails.
+    const read = await scheduler.acquire('read');
+    expect(read.worker.index).toBe(1);
+    read.release();
+  });
+
+  it('falls back to lowest-index when the designated writer is leased', async () => {
+    const { scheduler } = makeScheduler(2);
+    const write = await scheduler.acquire('write'); // worker 0 designated
+    // writer (0) is now busy — a read must fall through to worker 1.
+    const read = await scheduler.acquire('read');
+    expect(read.worker.index).toBe(1);
+    read.release();
+    write.release();
+  });
+
+  it('does not clear the writer designation when serving a read from the writer', async () => {
+    const { scheduler } = makeScheduler(2);
+    const write = await scheduler.acquire('write'); // worker 0 designated
+    write.release();
+    await flush();
+
+    // Read goes to writer (0).
+    const read = await scheduler.acquire('read');
+    expect(read.worker.index).toBe(0);
+    read.release();
+    await flush();
+
+    // A subsequent write must still go to the designated writer (0),
+    // not to some other worker — the designation must survive the read.
+    const nextWrite = await scheduler.acquire('write');
+    expect(nextWrite.worker.index).toBe(0);
+    nextWrite.release();
+  });
+
+  it('uses lowest-index-first when no writer is designated', async () => {
+    const { scheduler } = makeScheduler(3);
+    // No write has been issued — currentWriterIndex === -1.
+    const a = await scheduler.acquire('read');
+    const b = await scheduler.acquire('read');
+    expect(a.worker.index).toBe(0);
+    expect(b.worker.index).toBe(1);
+    a.release();
+    b.release();
+  });
+});
