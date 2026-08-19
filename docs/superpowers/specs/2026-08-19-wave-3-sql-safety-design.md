@@ -276,23 +276,64 @@ new table, and a target that did not exist appears only at `close()`.
 optional-chained into no-ops, so wiring is small. That is true of the worker and
 query levels and **false of the request level**.
 
-- `pool.ts:81-88` and `:247` hold two hooks frozen at `undefined` (the TS 7 trap:
-  `undefined as (() => T) | undefined` is required to keep the callable union).
-- **`createRequestDebugState` has no call site at all.** Per-request tracking —
-  `acquireTime`, `releaseTime`, `affectedRows` — was lost when leases replaced the
-  old acquire/release code. That level has to be recreated, not re-plugged.
+Exact inventory, from a diff against `6efc057` — the last pre-wave-1 state.
+
+**Survived, intact, in `pool.ts`** (these writes are correct; they simply write into
+`undefined` today):
+
+| Site | Field |
+|---|---|
+| `:88` | `createWorkerDebugState?.(index, workerName)` |
+| `:163` | `initializationTime` |
+| `:187` | `firstRowTime` |
+| `:198-199` | `affectedRows`, on both the query and the request |
+| `:200`, `:213` | `endTime` |
+| `:212` | `error` |
+| `:247-248` | `createQueryDebugState?.(index, sql, params)` |
+
+Both hooks are frozen at `undefined` (the TS 7 trap: `undefined as (() => T) | undefined`
+is required to keep the callable union).
+
+**Lost, to be recreated:**
+
+1. **The `createClientDebug(...)` call itself.** `client.ts:365` is a `{} as
+   ReturnType<…>` cast, so every write listed above is dead downstream. This is the
+   root of B6, not merely one of its symptoms.
+2. **`createRequestDebugState?.()`** at lease acquisition — no call site at all.
+   Without it `worker.currentRequest` is never set, so the surviving query-level
+   writes in `pool.ts` have nothing to write into even once the client state exists.
+3. **`requestState.releaseTime`** at lease release.
+4. **`debug.queue.read/write ++/--`** — replaced by the scheduler's `stats()`, §3.2.
 
 ### 3.2 Where the request level goes
 
-Leases are taken in `queries.ts` and `transaction.ts`, never in `scheduler.ts`, which
-must stay pure. So:
+Leases are taken at **seven** sites — six in `client.ts` (`:388`, `:414`, `:435`,
+`:460`, `:486`, and the matching `finally` releases at `:396-397`, `:422-423`,
+`:443-444`, `:468-469`, `:494-495`) and one in `transaction.ts:64` / `:147-148`. All
+seven share the same acquire → delegate → `finally release` shape.
 
-- request instrumentation sits at the acquisition points in the callers;
-- queue depths come from a new **read-only** `stats()` on the scheduler
-  (`{ read, write, available, leased }`), consumed by `debug.state.queue` through the
-  same `Proxy` getter already used for `status`, so the value is never stale.
+Instrumenting them one by one is seven chances to miss one. Instead, a single wrapper
+owns the request level:
 
-The scheduler learns nothing about debug; it exposes a counter.
+```
+acquireInstrumented(kind: 'read' | 'write'): Promise<Lease<PoolWorker>>
+```
+
+It creates the request state (`startTime`), awaits `scheduler.acquire(kind)`, calls
+`assign(lease.worker.index)` — which stamps `acquireTime` and links
+`worker.currentRequest` — and returns a lease whose `release()` stamps `releaseTime`
+before delegating. `release()` stays idempotent: a second call stamps nothing and
+hands nothing back. When debug is off the wrapper returns `scheduler.acquire(kind)`
+unchanged, so the instrumented path costs nothing.
+
+The seven call sites change one identifier each. No site can be forgotten silently:
+`scheduler.acquire` is no longer called directly outside the wrapper, and a test
+asserts that.
+
+`scheduler.ts` stays pure. Queue depths come from a new **read-only** `stats()`
+(`{ read, write, available, leased }`), consumed by `debug.state.queue` through the
+same `Proxy` getter already used for `status`, so the value is never stale. The
+scheduler learns nothing about debug; it exposes a counter.
 
 ### 3.3 The option
 
@@ -370,6 +411,13 @@ genuinely needs SQLite and OPFS.
 - an invalid pragma surfaces as an `open-error` at open, not as an error on the first
   query
 - `db.debug` is `undefined` without the option and populated with it
+- **the whole chain is live end to end**: after one `read()` with debug on,
+  `db.debug.workers[i].requests[0]` exists with `acquireTime` **and** `releaseTime`
+  set, and its `queries[0]` carries `firstRowTime`, `endTime` and `affectedRows`.
+  This is the test that proves §3.1's four lost pieces were actually restored — the
+  surviving `pool.ts` writes cannot be observed by any other means, and a wiring that
+  restores the client state but forgets the request level still leaves every query
+  field `undefined`.
 
 ### 4.4 Falsifiability — the wave 1 rule, maintained
 
