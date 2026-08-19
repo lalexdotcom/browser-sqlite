@@ -36,10 +36,12 @@ because each was invisible to the tests that existed at the time:
 wave 1 passed identically with and without the behaviour they claimed to pin. The habit that caught
 them: for each test, state which line, if deleted, makes it fail. Ask it of every test from now on.
 
-**WAVE 2 IS COMPLETE ON ITS BRANCH, AWAITING MERGE (2026-08-18).** Branch
-**`wave-2-error-surface`**, **193 tests green**, no `it.fails` anywhere. Closed: **B2**, **B3**,
-**W-route half 2**. See `mem:follow-ups` and §4 for the evidence. **Not merged** — that decision
-is the user's.
+**Wave 2 is done and closed** (merged into `main` on 2026-08-19, 17 commits, **193 tests
+green**, no `it.fails` anywhere). Closed: **B2**, **B3**, **W-route half 2**. See `mem:follow-ups`
+and §4 for the evidence. The merged result was verified green on `main`: `tsc --noEmit`, 193 tests,
+and the consumer smoke at 11/11.
+
+**Nothing is in flight. The next session starts on wave 3.**
 
 **Next up: wave 3** — B4 (`quoteIdent()` + pragma allowlist, which also gives read PRAGMAs back
 to `read()`), B5 (`output()` rebuilt as staging + atomic rename per §1.1), B6 (debug wired per
