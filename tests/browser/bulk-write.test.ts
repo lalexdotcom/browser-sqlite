@@ -106,17 +106,7 @@ describe('bulkWrite() batching', () => {
     db.close();
   });
 
-  /**
-   * KNOWN BUG — B5. Batches are chained on a single shared `writePromise`.
-   * Once a batch rejects, every later `.then` is skipped — but its rows were
-   * already spliced out of the buffer, so they are silently dropped: the caller
-   * sees one rejection and no indication that a valid batch never ran.
-   *
-   * This test documents that behaviour. When B5 is fixed (per-batch failures
-   * surfaced, remaining batches attempted or explicitly reported), it will need
-   * updating — that is the point.
-   */
-  it('drops later batches once an earlier batch fails', async () => {
+  it('stops at the first failed batch and reports it', async () => {
     const db = await createTestClient();
 
     await db.write(wideTableDDL('bulk_drop'));
@@ -128,19 +118,16 @@ describe('bulkWrite() batching', () => {
     for (let i = 0; i < WIDE_FLUSH_AT; i++) {
       bulk.enqueue(wideRow(1));
     }
-    // Second batch: perfectly valid rows.
+    // Second batch: perfectly valid rows, which must NOT be silently lost.
     for (let i = 0; i < 10; i++) {
       bulk.enqueue(wideRow(1000 + i));
     }
 
-    await expect(bulk.close()).rejects.toThrow();
+    const error = await bulk.close().catch((e) => e);
+    expect(error.code).toBe('BULK_WRITE_FAILED');
+    expect(error.rowsWritten).toBe(0);
+    expect(error.rowsNotWritten).toBe(WIDE_FLUSH_AT + 10);
 
-    const [{ n }] = await db.read<{ n: number }>(
-      'SELECT COUNT(*) AS n FROM bulk_drop',
-    );
-    // The 10 valid rows of the second batch were never written.
-    expect(n).toBe(0);
-
-    db.close();
+    await db.close();
   });
 });

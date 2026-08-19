@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
-import { debugSQLQuery } from '../../src/debug';
+import { createClientDebug, debugSQLQuery } from '../../src/debug';
 
 describe('debugSQLQuery', () => {
   describe('no-params fast path', () => {
@@ -88,5 +88,71 @@ describe('debugSQLQuery', () => {
     it('does not replace ? inside double-quoted identifier', () => {
       expect(debugSQLQuery('SELECT "?" FROM t', [])).toBe('SELECT "?" FROM t');
     });
+  });
+});
+
+describe('debug history bounds (D5)', () => {
+  const stubOrchestrator = { getStatus: () => 0 } as any;
+  const options = { vfs: 'OPFSCoopSyncVFS', pragmas: {}, name: 'test' } as any;
+
+  it('bounds the per-worker request history', () => {
+    const debug = createClientDebug('f.db', stubOrchestrator, options, () => ({
+      read: 0,
+      write: 0,
+    }));
+    debug.createWorkerDebugState(0, 'w0');
+
+    for (let i = 0; i < 200; i++) {
+      debug.createRequestDebugState().assign(0);
+    }
+
+    expect(debug.state.workers[0]!.requests.length).toBeLessThanOrEqual(50);
+  });
+
+  it('bounds the per-request query history at exactly the maximum', () => {
+    const debug = createClientDebug('f.db', stubOrchestrator, options, () => ({
+      read: 0,
+      write: 0,
+    }));
+    debug.createWorkerDebugState(0, 'w0');
+    debug.createRequestDebugState().assign(0);
+
+    for (let i = 0; i < 200; i++) {
+      debug.createQueryDebugState(0, `SELECT ${i}`);
+    }
+
+    // Off-by-one: the old `> MAX` let it peak at 51 before trimming to 50.
+    expect(debug.state.workers[0]!.currentRequest!.queries.length).toBe(50);
+  });
+
+  it('exposes queue depths from the scheduler, never a stale copy', () => {
+    let depth = { read: 1, write: 2 };
+    const debug = createClientDebug(
+      'f.db',
+      stubOrchestrator,
+      options,
+      () => depth,
+    );
+
+    expect(debug.state.queue.read).toBe(1);
+    depth = { read: 7, write: 9 };
+    expect(debug.state.queue.read).toBe(7);
+    expect(debug.state.queue.write).toBe(9);
+  });
+
+  it('reflects the live orchestrator status, not a construction-time snapshot', () => {
+    // Start with INITIALIZED (0), then change to READY (10) after construction.
+    // The Proxy getter re-reads getStatus on every access; without it the status
+    // would stay frozen at 'INITIALIZED' and the assertion below would fail.
+    let currentStatus = 0;
+    const liveOrchestrator = { getStatus: () => currentStatus } as any;
+    const debug = createClientDebug('f.db', liveOrchestrator, options, () => ({
+      read: 0,
+      write: 0,
+    }));
+    const state = debug.createWorkerDebugState(0, 'w0');
+
+    currentStatus = 10; // READY
+    expect(state.status).toBe('READY');
   });
 });

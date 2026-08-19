@@ -30,6 +30,16 @@ export type Scheduler<W> = {
    * last outstanding lease has come back.
    */
   shutdown: (reason: Error) => Promise<void>;
+  /**
+   * Read-only counters for the debug subsystem. The scheduler stays pure: it
+   * exposes numbers and knows nothing about debug (spec §3.2).
+   */
+  stats: () => {
+    read: number;
+    write: number;
+    available: number;
+    leased: number;
+  };
 };
 
 /**
@@ -91,7 +101,7 @@ export const createScheduler = <W extends { index: number }>(
     }
 
     if (readerQueue.length) {
-      if (currentWriterIndex === worker.index) currentWriterIndex = -1;
+      // Reads never alter the designation — rule 1.
       readerQueue.shift()?.resolve(worker);
       return;
     }
@@ -130,7 +140,8 @@ export const createScheduler = <W extends { index: number }>(
       return workers[currentWriterIndex];
     }
 
-    // Lowest-index-first, preserved from the original implementation.
+    // Lowest-index-first for both reads and new writes (reads never touch
+    // the designation; write designation is set below when a new one starts).
     const found = workers.find(
       (worker) => worker !== undefined && available.has(worker.index),
     );
@@ -147,7 +158,7 @@ export const createScheduler = <W extends { index: number }>(
       workers[worker.index] = worker;
       // Serve any requests that arrived before this worker was ready, preserving
       // the same writer-first priority as handOver. Does NOT call onIdle — the
-      // worker is newly joining the pool, not returning from a lease.\
+      // worker is newly joining the pool, not returning from a lease.
       if (
         writerQueue.length &&
         (currentWriterIndex === worker.index || currentWriterIndex === -1)
@@ -157,7 +168,7 @@ export const createScheduler = <W extends { index: number }>(
         return;
       }
       if (readerQueue.length) {
-        if (currentWriterIndex === worker.index) currentWriterIndex = -1;
+        // Reads never alter the designation — rule 1.
         readerQueue.shift()?.resolve(worker);
         return;
       }
@@ -184,6 +195,13 @@ export const createScheduler = <W extends { index: number }>(
       checkShutdown();
       return shutdownDeferred.promise;
     },
+
+    stats: () => ({
+      read: readerQueue.length,
+      write: writerQueue.length,
+      available: available.size,
+      leased: leased.size,
+    }),
 
     acquire: async (kind) => {
       if (shutdownReason) throw shutdownReason;

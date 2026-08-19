@@ -51,8 +51,18 @@ const WRITE_KEYWORDS =
  * `EXPLAIN INSERT ...`, which never executes) is serialized needlessly. That
  * is the accepted price of never routing a write to the read pool.
  */
+/**
+ * A statement that is nothing but a single PRAGMA lookup: no assignment, no
+ * argument, nothing after it. Anchoring at `$` is what makes this safe for
+ * free — `PRAGMA journal_mode; DROP TABLE t` does not match, and neither does
+ * `PRAGMA journal_mode=WAL`, whose `=` breaks the match.
+ */
+const READ_PRAGMA = /^\s*PRAGMA\s+(\w+\.)?\w+\s*;?\s*$/i;
+
 export const isReadQuery = (sql: string) =>
-  /^\s*(SELECT|EXPLAIN|VALUES|WITH)\b/i.test(sql) && !WRITE_KEYWORDS.test(sql);
+  READ_PRAGMA.test(sql) ||
+  (/^\s*(SELECT|EXPLAIN|VALUES|WITH)\b/i.test(sql) &&
+    !WRITE_KEYWORDS.test(sql));
 
 export const isWriteQuery = (sql: string) => !isReadQuery(sql);
 
@@ -60,8 +70,9 @@ export const isWriteQuery = (sql: string) => !isReadQuery(sql);
  * Routing guard for the read-shaped methods (`read`, `chunk`, `stream`, `first`).
  * Throws before a lease is taken, so a rejected statement costs no pool capacity.
  *
- * Note: `isReadQuery` classifies every PRAGMA as a write, so a read pragma has
- * to go through `write()` until B4 lands its pragma allowlist.
+ * A bare read pragma (`PRAGMA journal_mode`) is accepted; a pragma that assigns
+ * (`PRAGMA journal_mode=WAL`), takes an argument, or is followed by anything
+ * else must go through `write()`.
  */
 export const assertReadable = (sql: string, method: string): void => {
   if (isReadQuery(sql)) return;
@@ -69,6 +80,106 @@ export const assertReadable = (sql: string, method: string): void => {
   throw new SQLiteError(
     'NOT_A_READ_QUERY',
     `${method}() only accepts statements that are provably reads; "${keyword}" must go through write(). ` +
-      `Note that every PRAGMA is currently classified as a write.`,
+      `Note that a PRAGMA that assigns a value or takes an argument is a write.`,
   );
 };
+
+/**
+ * Quotes an SQL identifier so it can never be read as anything but a name.
+ *
+ * The library interpolates table, column and index names into generated SQL —
+ * `bulkWrite`, `output` and their indexes. wa-sqlite's `statements()` executes
+ * `;`-separated statements, so an unquoted name is a stacked-query injection
+ * (B4). Quoting is what makes `t"; DROP TABLE users; --` one identifier.
+ *
+ * Note that quoting preserves case in `sqlite_master`; SQLite still resolves
+ * names case-insensitively.
+ */
+export const quoteIdent = (name: string): string => {
+  if (!name)
+    throw new SQLiteError('INVALID_IDENTIFIER', 'Identifier cannot be empty');
+  if (name.includes('\0'))
+    throw new SQLiteError(
+      'INVALID_IDENTIFIER',
+      `Identifier contains a NUL character: ${JSON.stringify(name)}`,
+    );
+  return `"${name.replace(/"/g, '""')}"`;
+};
+
+/** `INTEGER`, `TEXT`, `VARCHAR(255)`, `DECIMAL(10, 2)` — nothing else. */
+const COLUMN_TYPE = /^[A-Za-z][A-Za-z0-9 ]*(\([0-9, ]+\))?$/;
+
+/**
+ * A column type is not an identifier and cannot be quoted — it is an SQL
+ * fragment the caller writes. It is validated by shape instead: this is the
+ * narrowed, not closed, channel documented in the spec (§1.2).
+ */
+export const assertColumnType = (type: string, column: string): string => {
+  const trimmed = type.trim();
+  if (!COLUMN_TYPE.test(trimmed))
+    throw new SQLiteError(
+      'INVALID_IDENTIFIER',
+      `Column "${column}" declares an unsupported type ${JSON.stringify(type)}. ` +
+        `A type must be a word, optionally followed by numeric arguments, e.g. "INTEGER" or "VARCHAR(255)".`,
+    );
+  return trimmed;
+};
+
+/**
+ * A GENERATED ALWAYS AS expression is caller-authored SQL. It must at least be
+ * parenthesised and free of statement separators, so it cannot escape its slot.
+ */
+export const assertGeneratedExpression = (
+  expr: string,
+  column: string,
+): string => {
+  const trimmed = expr.trim();
+  if (
+    !trimmed.startsWith('(') ||
+    !trimmed.endsWith(')') ||
+    trimmed.includes(';')
+  )
+    throw new SQLiteError(
+      'INVALID_IDENTIFIER',
+      `Column "${column}" declares an invalid generated expression ${JSON.stringify(expr)}. ` +
+        `It must be parenthesised and contain no ";", e.g. "(base * 2)".`,
+    );
+  return trimmed;
+};
+
+const PRAGMA_NAME = /^[A-Za-z_]\w*$/;
+const PRAGMA_INTEGER = /^-?\d+$/;
+const PRAGMA_LITERAL = /^'([^']|'')*'$/;
+
+/**
+ * Renders the client's `pragmas` option into executable statements, rejecting
+ * anything that is not provably a name and a scalar value (B4).
+ *
+ * Validation is syntactic rather than a closed list of the ~60 SQLite pragmas:
+ * a fixed list makes every legitimate pragma outside it unreachable and drifts
+ * with SQLite versions, for no additional protection — no ";", no parenthesis
+ * and no comment marker survives these three shapes either.
+ *
+ * Called twice: by the client at construction, so a bad configuration fails at
+ * `createSQLiteClient()` rather than inside an unrelated query, and by the
+ * worker at open, which is the only place the statements actually run.
+ */
+export const renderPragmas = (pragmas: Record<string, string>): string[] =>
+  Object.entries(pragmas).map(([key, value]) => {
+    if (!PRAGMA_NAME.test(key))
+      throw new SQLiteError(
+        'INVALID_PRAGMA',
+        `Invalid pragma name ${JSON.stringify(key)}: a pragma name must match ${PRAGMA_NAME}.`,
+      );
+    const raw = String(value).trim();
+    if (PRAGMA_INTEGER.test(raw) || PRAGMA_NAME.test(raw))
+      return `PRAGMA ${key}=${raw}`;
+    // PRAGMA_LITERAL already guarantees raw is a well-formed SQLite string
+    // literal (outer quotes present, internal single quotes doubled per '').
+    // Using raw directly is correct and simpler than re-escaping the content.
+    if (PRAGMA_LITERAL.test(raw)) return `PRAGMA ${key}=${raw}`;
+    throw new SQLiteError(
+      'INVALID_PRAGMA',
+      `Invalid value ${JSON.stringify(value)} for pragma "${key}": expected an integer, a bare word such as WAL, or a quoted literal.`,
+    );
+  });

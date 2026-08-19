@@ -41,7 +41,20 @@ green**, no `it.fails` anywhere). Closed: **B2**, **B3**, **W-route half 2**. Se
 and §4 for the evidence. The merged result was verified green on `main`: `tsc --noEmit`, 193 tests,
 and the consumer smoke at 11/11.
 
-**Nothing is in flight. The next session starts on wave 3.**
+**Wave 3 is implemented on `wave-3-sql-safety` (21 commits, `8b7b421..d69f493`), verified green,
+and AWAITING MERGE — the user has not been asked yet.** B4, B5 and B6 are closed. Gate at
+`d69f493`: `pnpm check` clean, `tsc --noEmit` clean, **273 tests / 0 failures**, consumer smoke
+**11/11** across four bundler modes, and no `it.fails` anywhere. See §4 for what shipped and what
+it cost.
+
+**One thing the user must decide before or at merge: wave 3 changed scheduling policy.** Fixing a
+40 %-reproducible flake required making reads prefer the designated writer (RYOW-1 in
+`mem:follow-ups`). That is a real scope expansion out of a wave scoped to SQL safety, it was
+surfaced deliberately rather than buried, and the final whole-branch review agreed it should stay
+while being flagged as a policy change.
+
+**Next up after the merge: wave 4**, whose first act is **BP-1's four-combination measurement**,
+not a design. Note that wave 3 supplied part of that measurement for free — see §1.5's amendment.
 
 **Next up: wave 3** — B4 (`quoteIdent()` + pragma allowlist, which also gives read PRAGMAs back
 to `read()`), B5 (`output()` rebuilt as staging + atomic rename per §1.1), B6 (debug wired per
@@ -302,6 +315,18 @@ that state — which is exactly why the SAB exists. The flag becomes replaceable
 the worker awaits a client message per chunk, i.e. the credit/ack scheme currently filed
 under wave 5 perf.
 
+**Amendment, 2026-08-19 — what wave 3 established, and what it did NOT.** Wave 3 confirmed by
+measurement that the default VFS is `OPFSPermutedVFS` (the Asyncify build) and that it propagates
+commits to other connections over BroadcastChannel + IndexedDB — a worker's message handlers demonstrably
+run and update its view between queries. That is real evidence about this VFS's messaging, and it is
+the first hard data behind §1.5's doubts.
+
+**It is not the BP-1 measurement, and must not be mistaken for it.** What was observed is delivery
+*between* queries; BP-1's question is whether a message posted *during* a query is delivered — i.e.
+whether the Asyncify unwind hands control back to the JS event loop mid-statement. The stale-read
+race said nothing about that, because the read that saw stale data was a separate, later query.
+Run the four-combination probe as specified below. Wave 3 narrows the prior; it does not answer it.
+
 **Arbitrated 2026-08-18 (user): the credit/ack scheme moves into wave 4**, as `BP-1` in
 `mem:follow-ups`, so D2 completes in one go. The alternative — removing only the init
 mutex in wave 4 — leaves a SAB behind for the abort flag and therefore banks **none** of
@@ -338,7 +363,7 @@ Wave **P** was inserted in front on 2026-08-17 rather than renumbering, so that 
 | 0 ✅ | CI running the suite; put `tests/` in the tsc program; characterization tests for `transaction` / `bulkWrite` / `output`; fix the assertions that cannot fail | B7 |
 | 1 | Extract pool + scheduler into a pure module unit-testable in Node (parameterized over a minimal `{ available: boolean }` shape); make `releaseWorker` the single owner of `available`; **relayer the query API on `chunk()` per §1.2** and fix abort once inside it (covers `stream()`'s early `break` and B9). Plus **W-route's first half** (routing allowlist, commit #6) — routing that bypasses exclusivity is the same defect as B1, one layer up. **Exit criteria in §2.2 — FLK-1 is one of them.** | B1, B9, FLK-1, W-arch, W-route (half), part of W-types |
 | 2 | `onerror` / `onmessageerror`, per-request timeouts, distinct `open-error` message, `close()` handshake that settles in-flight work and calls `sqlite.close()`. Plus **W-route's second half**: `write()` routes to the writer unconditionally, `read()` rejects a write query instead of silently running it — API strictness, same subject as the error surface. The `onerror` message must name the worker URL it failed to load (see B2 in `mem:follow-ups`). | B2, B3, W-route (half) |
-| 3 | `quoteIdent()` + pragma allowlist; **debug wired per §1.3** (do it here, before wave 5, so the perf work is measurable); **`output()` rebuilt as staging + atomic rename per §1.1** (needs a `navigator.locks` primitive — pull it forward from wave 4); `bulkWrite` surfaces per-batch failures | B4, B5, B6 |
+| 3 ✅ | **Done 2026-08-19, awaiting merge.** `quoteIdent()` + pragma allowlist; **debug wired per §1.3** (do it here, before wave 5, so the perf work is measurable); **`output()` rebuilt as staging + atomic rename per §1.1** (needs a `navigator.locks` primitive — pull it forward from wave 4); `bulkWrite` surfaces per-batch failures | B4, B5, B6 |
 | 4 | B10/B8 and the `consumer-smoke` gate moved to wave P and are **done**. What is left here: **BP-1 (back-pressure, credit/ack) — it is the prerequisite, do it first, and it opens with a MEASUREMENT, not a design: run the four-combination probe specified in BP-1's entry in `mem:follow-ups` before writing a line. §1.5's claim that a `postMessage` cannot be delivered during a query was deduced, never observed, and is doubtful for the default Asyncify VFS**; then remove the SAB entirely (D2, §1.5), which drops the COOP/COEP requirement; then **D6 (§1.4): the `browser-sqlite/vite` plugin subpath + the optional `wasmUrl` escape hatch**, which retires the fragile README snippet. | BP-1, W-sab, VIT-1 |
 | 5 | Performance, **with the debug instrumentation live** so the gains are measurable | perf section |
 
@@ -468,6 +493,39 @@ page", not "drop it in any page".
   not the next one. The open items are listed per wave in `mem:follow-ups` and in §1.
 
 ## 4. Changelog of this plan
+
+- **2026-08-19** — **Wave 3 implemented on `wave-3-sql-safety`, 21 commits, 273 tests green,
+  awaiting merge.** B4, B5, B6 closed — evidence per item in `mem:follow-ups`. What is worth
+  carrying forward beyond that:
+  - **The default VFS is `OPFSPermutedVFS`, not `OPFSCoopSyncVFS`.** `mem:project-state` said
+    otherwise, a dispatch repeated it, and an agent spent a full round debugging on the wrong
+    premise. Corrected at the top of that file.
+  - **A 40 %-reproducible flake was root-caused, not suppressed.** After `output().close()`
+    resolved, a `read()` could return the pre-swap schema: `OPFSPermutedVFS` propagates commits
+    asynchronously, and a read landing on a worker that had not yet received the broadcast served
+    a stale view. The first proposed fix — a `read('SELECT 1')` nudge — was rejected before review:
+    its own comment conceded it only touched the lowest-index worker, so it was calibrated to the
+    test's 2-worker pool rather than to the guarantee. The accepted fix makes reads prefer the
+    designated writer (RYOW-1). **This is a scheduling policy change inside an SQL-safety wave** and
+    is the one item needing the user's judgement.
+  - **`temp` was removed from `output()` for a different reason than D3 §1.1 gave.** Staging inside
+    `temp` would rename fine — both in the same database. The real defect is that a TEMP table lives
+    on one connection and is invisible to the rest of the pool.
+  - **A review claim was disproved by measurement.** The final whole-branch review said a double
+    `output().close()` destroys the target. It does not: the second `ALTER` fails and `transaction()`
+    rolls the `DROP` back, leaving the table and its rows intact. The underlying finding was still
+    half-right — `enqueue()` after a successful `close()` silently buffered rows nobody would flush —
+    and that is fixed with a `closed` flag. **Do not accept a data-loss claim on reasoning; measure it.**
+  - **The wave's dominant failure mode was unfalsifiable tests, again.** Seven of the fix rounds
+    were spent on tests that passed with and without the behaviour they claimed to pin — more than
+    on any other cause, and the same lesson wave 1 recorded. Four of those defects originated in the
+    plan document itself, not in the implementations. The habit that worked: require the implementer
+    to delete the target line, observe red, restore, observe green, and report both.
+  - **Four plan defects were caught by implementers before review**, which is the argument for
+    briefing them to push back: a literal re-escape that corrupted already-valid SQL literals, a
+    `toThrow(/CODE/)` that matches messages rather than codes, a batching test that could never reach
+    the failure it asserted, and a degradation test defeated by Node 24 shipping `navigator.locks`.
+
 
 - **2026-08-18** — **Wave 2 implemented on `wave-2-error-surface`, awaiting merge. 193 tests green.**
   What shipped:

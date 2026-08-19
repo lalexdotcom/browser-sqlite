@@ -73,15 +73,20 @@ describe('routing — strictness', () => {
     expect(result[0]?.n).toBe(1);
   });
 
-  // Documented regression, not an accident. B4 (wave 3) must give read pragmas
-  // back to read(); when it does, this test turns red — that is the signal.
-  it('rejects a read pragma on read(), which write() still accepts', async () => {
-    const db = await createTestClient({ poolSize: 1 });
-    await db.write('CREATE TABLE t (a)');
-    await expect(db.read('PRAGMA table_info(t)')).rejects.toMatchObject({
+  // Falsifiable: remove READ_PRAGMA from isReadQuery in src/utils.ts and both
+  // of these cases break.
+  it('accepts a bare read pragma through read()', async () => {
+    const db = await createTestClient();
+    const rows = await db.read<{ journal_mode: string }>('PRAGMA journal_mode');
+    expect(rows[0]?.journal_mode).toBeDefined();
+    await db.close();
+  });
+
+  it('still rejects a pragma that assigns', async () => {
+    const db = await createTestClient();
+    await expect(db.read('PRAGMA journal_mode=WAL')).rejects.toMatchObject({
       code: 'NOT_A_READ_QUERY',
     });
-    const { result } = await db.write('PRAGMA table_info(t)');
-    expect(result.length).toBe(1);
+    await db.close();
   });
 });

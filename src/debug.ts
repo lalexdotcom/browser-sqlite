@@ -122,19 +122,20 @@ type WorkerDebugState = {
   readonly status: string;
 };
 
-type ClientDebugState = {
+export type ClientDebugState = {
   readonly file: string;
   readonly vfs: SQLiteVFS;
   readonly pragmas: Record<string, string>;
   readonly name: string;
   readonly queue: {
-    write: number;
-    read: number;
+    readonly read: number;
+    readonly write: number;
   };
   workers: WorkerDebugState[];
 };
 
 const MAX_QUERY_HISTORY_LENGTH = 50;
+const MAX_REQUEST_HISTORY_LENGTH = 50;
 
 export const createClientDebug = (
   file: string,
@@ -142,9 +143,20 @@ export const createClientDebug = (
   clientOptions: Required<
     Pick<CreateSQLiteClientOptions, 'vfs' | 'pragmas' | 'name'>
   >,
+  stats: () => { read: number; write: number },
 ) => {
   const { vfs, pragmas, name } = clientOptions;
-  const queue = { write: 0, read: 0 };
+
+  // Read through to the scheduler: the old counters were incremented by hand at
+  // every acquire/release site and went stale the moment one was missed.
+  const queue = {
+    get read() {
+      return stats().read;
+    },
+    get write() {
+      return stats().write;
+    },
+  };
 
   const clientState: ClientDebugState = {
     file,
@@ -161,7 +173,7 @@ export const createClientDebug = (
         index,
         name,
         requests: [],
-        status: 'HAHA',
+        status: statusToLabel(orchestrator.getStatus(index)),
         creationTime: Date.now(),
       },
       {
@@ -189,6 +201,10 @@ export const createClientDebug = (
         const worker = clientState.workers[index];
         if (worker) {
           state.acquireTime = Date.now();
+          // Bounded: this array is pushed to on EVERY request and used to grow
+          // with the client's total query count (D5 §1.3, the blocking fix).
+          if (worker.requests.length >= MAX_REQUEST_HISTORY_LENGTH)
+            worker.requests.shift();
           worker.requests.push(state);
           worker.currentRequest = state;
         }
@@ -209,7 +225,7 @@ export const createClientDebug = (
     };
     const worker = clientState.workers[workerIndex];
     if (worker?.currentRequest) {
-      if (worker.currentRequest.queries.length > MAX_QUERY_HISTORY_LENGTH) {
+      if (worker.currentRequest.queries.length >= MAX_QUERY_HISTORY_LENGTH) {
         worker.currentRequest.queries.shift();
       }
       worker.currentRequest.queries.push(state);

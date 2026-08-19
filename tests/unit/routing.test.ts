@@ -13,7 +13,8 @@ describe('routing (W-route)', () => {
     // Standard writes
     'INSERT INTO t VALUES (1)',
     'CREATE TABLE t (a INTEGER)',
-    // PRAGMA: safe direction — routed to writer even for read-only variants
+    // PRAGMA with parenthesised argument: READ_PRAGMA admits no '(' so it stays
+    // a write — falsifiable by adding \(.*\) to the regex.
     'PRAGMA table_info(foo)',
     // Unknown statement: allowlist fails safe toward writer
     'FROBNICATE t',
@@ -50,6 +51,31 @@ describe('routing (W-route)', () => {
   for (const sql of reads) {
     it(`routes to a reader: ${sql}`, () => {
       expect(isReadQuery(sql)).toBe(true);
+    });
+  }
+
+  const readPragmas = [
+    'PRAGMA journal_mode',
+    'pragma  user_version ',
+    'PRAGMA main.page_count',
+    'PRAGMA journal_mode;',
+  ];
+  for (const sql of readPragmas) {
+    it(`routes to the read pool: ${sql}`, () => {
+      expect(isReadQuery(sql)).toBe(true);
+    });
+  }
+
+  const writePragmas = [
+    'PRAGMA journal_mode=WAL',
+    'PRAGMA journal_mode = WAL',
+    'PRAGMA journal_mode; DROP TABLE t',
+    'PRAGMA table_info(foo); DROP TABLE t',
+    'PRAGMA optimize; VACUUM',
+  ];
+  for (const sql of writePragmas) {
+    it(`routes to the writer: ${sql}`, () => {
+      expect(isReadQuery(sql)).toBe(false);
     });
   }
 });
