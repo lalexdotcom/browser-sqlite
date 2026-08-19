@@ -49,6 +49,15 @@ branch**: `pnpm check` clean, `tsc --noEmit` clean, **272 tests / 0 failures**, 
 
 **Nothing is in flight. The next session starts on wave 4.**
 
+Wave 3's own documents, both committed and still accurate except where this file records a
+correction: design `docs/superpowers/specs/2026-08-19-wave-3-sql-safety-design.md`, implementation
+plan `docs/superpowers/plans/2026-08-19-wave-3-sql-safety.md` (13 tasks). **Read them with the
+caveats in §4's merge entry**: the spec's §2.5 names a counter `rowsNotAttempted` that shipped as
+`rowsNotWritten`, its §2.4 gives the wrong reason for dropping `temp`, its §3.1 understates how
+much of the debug request level had to be rebuilt, and neither document knows about the scheduling
+rules, which were settled after both were written. The plan also contains four defects that were
+caught during execution — they are listed in §4 so nobody re-implements them from the plan text.
+
 **Wave 4 has grown, and this is the single most important thing to carry forward.** It was
 BP-1 + removing the `SharedArrayBuffer`. It now also owns the **commit-propagation barrier**,
 because wave 3 established that one brick unblocks three separate things: RYOW-1 (reads may serve
