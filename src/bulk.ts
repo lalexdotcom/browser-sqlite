@@ -1,3 +1,4 @@
+import { BulkWriteError } from './errors';
 import {
   assertColumnType,
   assertGeneratedExpression,
@@ -36,8 +37,8 @@ type WriteFn = (
   options?: any,
 ) => Promise<{ result: any[]; affected: number }>;
 
-export const createBulk = (deps: { write: WriteFn }) => {
-  const { write } = deps;
+export const createBulk = (deps: { write: WriteFn; maxVariables?: number }) => {
+  const { write, maxVariables = 32766 } = deps;
 
   /**
    * Creates a bulk write utility for efficiently inserting many rows.
@@ -47,37 +48,66 @@ export const createBulk = (deps: { write: WriteFn }) => {
    * @param keys - Column names for the insert
    * @returns Object with enqueue() to add rows and close() to flush remaining
    */
-  const bulkWrite = <KEYS extends string>(table: string, keys: KEYS[]) => {
-    const SQLITE_MAX_VARS = 32766;
-    const maxBufferSize = Math.floor(SQLITE_MAX_VARS / keys.length);
+  const bulkWrite = <KEYS extends string>(
+    table: string,
+    keys: KEYS[],
+    /** Internal: awaited before the first batch. `output()` passes its staging DDL. */
+    before?: Promise<unknown>,
+  ) => {
+    const maxBufferSize = Math.floor(maxVariables / keys.length);
 
     const buffer: { [K in KEYS]: any }[] = [];
 
     let writePromise = Promise.resolve<number>(0);
+    let failure: unknown;
+    let rowsWritten = 0;
+    let rowsNotWritten = 0;
 
-    // Flush buffer to database
+    const fail = (): BulkWriteError =>
+      new BulkWriteError(
+        `bulkWrite into "${table}" failed after ${rowsWritten} row(s); ${rowsNotWritten} row(s) were not written.`,
+        { rowsWritten, rowsNotWritten },
+        { cause: failure },
+      );
+
     const flush = () => {
       const toInsert = [...buffer];
       buffer.length = 0;
-      writePromise = writePromise.then((currentAffected) => {
-        return write(
-          `INSERT INTO ${quoteIdent(table)} (${keys.map(quoteIdent).join(',')}) VALUES ${toInsert.map(() => `(${keys.map(() => '?')})`)}`,
-          toInsert.flatMap((data) => keys.map((k) => data[k])),
-        ).then(({ affected: chunkAffected }) => {
-          return currentAffected + chunkAffected;
-        });
+      // The chain never rejects: a rejection here is what used to skip every
+      // later `.then()` and drop already-spliced rows without a word (B5).
+      writePromise = writePromise.then(async (currentAffected) => {
+        if (failure) {
+          rowsNotWritten += toInsert.length;
+          return currentAffected;
+        }
+        try {
+          if (before) await before;
+          const { affected } = await write(
+            `INSERT INTO ${quoteIdent(table)} (${keys.map(quoteIdent).join(',')}) VALUES ${toInsert.map(() => `(${keys.map(() => '?')})`)}`,
+            toInsert.flatMap((data) => keys.map((k) => data[k])),
+          );
+          rowsWritten += toInsert.length;
+          return currentAffected + affected;
+        } catch (error) {
+          failure = error;
+          // A multi-row INSERT is statement-atomic: nothing of this batch landed.
+          rowsNotWritten += toInsert.length;
+          return currentAffected;
+        }
       });
     };
+
     return {
-      // Add a row to the buffer, flushing if buffer is full
       enqueue: (data: { [K in KEYS]: any }) => {
+        if (failure) throw fail();
         buffer.push(data);
         if (buffer.length >= maxBufferSize) flush();
       },
-      // Flush any remaining rows and return total affected count
-      close: () => {
+      close: async () => {
         if (buffer.length) flush();
-        return writePromise;
+        const affected = await writePromise;
+        if (failure) throw fail();
+        return affected;
       },
     };
   };
