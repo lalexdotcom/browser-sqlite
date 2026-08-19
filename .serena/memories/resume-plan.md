@@ -47,7 +47,13 @@ branch**: `pnpm check` clean, `tsc --noEmit` clean, **272 tests / 0 failures**, 
 **11/11** across four bundler modes, six consecutive full browser suites with no failure, and no
 `it.fails` anywhere. See §4 for what shipped and what it cost.
 
-**Nothing is in flight. The next session starts on wave 4.**
+**Wave 4 is IN FLIGHT** on branch `feat/wave-4-backpressure` (2026-08-19), branched from `main`
+at `c07c92f`. Two commits so far, and the tree is back to `main`'s content: `dc96f57` ran BP-1's
+four-combination probe, `bbf31b9` removed it and its `ping`/`pong` scaffolding once the result was
+recorded. **BP-1's opening measurement is done** — see §1.5 and BP-1 in `mem:follow-ups`. Next:
+the BP-1 design brainstorming, with the measurement as input.
+
+Its first act was **BP-1's four-combination measurement**, and that is now complete.
 
 Wave 3's own documents, both committed and still accurate except where this file records a
 correction: design `docs/superpowers/specs/2026-08-19-wave-3-sql-safety-design.md`, implementation
@@ -313,16 +319,16 @@ originally written assumed `navigator.locks` + a `postMessage`-driven boolean re
 returns to its event loop for the duration of a query, so **a `postMessage` sent during
 a query is never delivered**.
 
-> **UNMEASURED — probe this before wave 4 designs anything on it (2026-08-19, user
-> instruction).** The sentence above was reasoned, not observed, and it is certainly
-> true only of the **synchronous** builds (`OPFSCoopSyncVFS`, `AccessHandlePoolVFS`).
-> The default VFS `OPFSPermutedVFS` and `IDBBatchAtomicVFS` run on wa-sqlite's
-> **Asyncify** build, which unwinds the WASM stack around each asynchronous VFS call and
-> hands control back to the JS event loop while the I/O settles — so a message posted
-> mid-query is plausibly delivered between two page reads. If that is so, a liveness
-> probe exists today without BP-1, and this section's conclusion about the `ABORTING`
-> flag is wrong for the default VFS. The probe and its four combinations are specified
-> under BP-1 in `mem:follow-ups`. Do not build on §1.5 until it has been run. Shared memory is the only channel that reaches a worker in
+> **MEASURED 2026-08-19 — the sentence above is CONFIRMED, and this is now a settled result.**
+> It had been reasoned, never observed, and was doubtful for the **default** VFS
+> `OPFSPermutedVFS`, which runs wa-sqlite's **Asyncify** build and unwinds the WASM stack around
+> each asynchronous VFS call. The four-combination probe was run and found **zero** messages
+> handled during a query — on the Asyncify build as well as the synchronous one, and on an
+> I/O-bound query as well as a CPU-bound one. Every ping was handled immediately *after* the
+> query, so they queue rather than being lost, and a positive control confirms the channel works
+> when the worker is idle. Full table, method and consequences: BP-1 in `mem:follow-ups`. The
+> probe lives in git history only (`dc96f57`, reverted in `bbf31b9`) — do not re-run it.
+> **This section can now be built on.** Shared memory is the only channel that reaches a worker in
 that state — which is exactly why the SAB exists. The flag becomes replaceable only when
 the worker awaits a client message per chunk, i.e. the credit/ack scheme currently filed
 under wave 5 perf.
@@ -338,6 +344,10 @@ the first hard data behind §1.5's doubts.
 whether the Asyncify unwind hands control back to the JS event loop mid-statement. The stale-read
 race said nothing about that, because the read that saw stale data was a separate, later query.
 Run the four-combination probe as specified below. Wave 3 narrows the prior; it does not answer it.
+
+**Answered 2026-08-19 by the probe:** a message posted *during* a query is **not** delivered, on
+either build. Wave 3's prior pointed the wrong way; the deduction it doubted was right. See the
+blockquote above and BP-1 in `mem:follow-ups`.
 
 **Arbitrated 2026-08-18 (user): the credit/ack scheme moves into wave 4**, as `BP-1` in
 `mem:follow-ups`, so D2 completes in one go. The alternative — removing only the init
