@@ -74,32 +74,6 @@ const VFSConfigs = {
 let orchestrator: WorkerOrchestrator;
 let openedDB: Promise<{ sqlite: any; db: any }> | undefined;
 
-// PROBE SCAFFOLDING (wave 4, BP-1) — see types.ts SQLOptions['probe'].
-// `probeCreditSignal` is swapped and resolved by every incoming credit message,
-// so awaiting the CURRENT promise means "await the arrival of the next credit".
-// That await is the whole point: it costs one task turn, which is what lets any
-// other queued message (an abort) be delivered mid-query.
-let probeCreditSignal = Promise.withResolvers<void>();
-let probeCredits = 0;
-let probeChunksSent = 0;
-let probeAbortSeenAtChunk: number | undefined;
-
-// PROBE SCAFFOLDING (wave 4, BP-1) — an unconditional task turn.
-// MessageChannel, not setTimeout: nested setTimeout is clamped to 4 ms, which
-// would cost seconds over a few hundred chunks. Measured here because the first
-// probe proved no task turn happens on its own, and a message event is a task —
-// so this is what makes a queued abort reachable mid-query.
-const probeTickChannel = new MessageChannel();
-const probeTickWaiters: (() => void)[] = [];
-probeTickChannel.port1.onmessage = () => {
-  probeTickWaiters.shift()?.();
-};
-const probeTick = () =>
-  new Promise<void>((resolve) => {
-    probeTickWaiters.push(resolve);
-    probeTickChannel.port2.postMessage(0);
-  });
-
 type OpenOptions = {
   vfs?: SQLiteVFS;
   pragmas?: Record<string, string>;
@@ -218,27 +192,6 @@ const open = (
     }
   };
 
-  /**
-   * PROBE SCAFFOLDING (wave 4, BP-1). The two candidate shapes, side by side.
-   *
-   * 'await'   — wait for the next credit MESSAGE, every chunk, unconditionally.
-   *             Costs exactly one task turn per chunk even when credits are
-   *             already queued, so a mid-query abort is delivered within one
-   *             chunk. This is the design under test.
-   * 'counter' — consume a counter fed by batched credit messages, and only
-   *             wait when it hits zero. The worker then runs a whole batch with
-   *             no task turn at all, which is the failure this probe must show.
-   */
-  const takeProbeCredit = async (mode: 'await' | 'counter') => {
-    // 'await' mode is the corrected design: a task turn EVERY chunk, then the
-    // counter for accounting. The two roles are separate — the counter cannot
-    // provide the turn, and the turn cannot track credits that arrived early.
-    // 'counter' mode is the same thing without the turn: the negative control.
-    if (mode === 'await') await probeTick();
-    while (probeCredits <= 0) await probeCreditSignal.promise;
-    probeCredits -= 1;
-  };
-
   const query = async function* (
     sql: string,
     params: unknown[],
@@ -299,36 +252,16 @@ const open = (
           orchestrator.setStatus(index, WorkerStatuses.RUNNING);
           let affected = 0;
 
-          // PROBE SCAFFOLDING (wave 4, BP-1)
-          const probeMode = options?.probe?.mode ?? 'none';
-          probeChunksSent = 0;
-          probeAbortSeenAtChunk = undefined;
-          probeCredits = 0;
-
           for await (const chunk of query(sql, params, options)) {
             if (typeof chunk === 'number') {
               affected = chunk;
               break;
             } else {
-              // PROBE SCAFFOLDING (wave 4, BP-1) — a chunk may only be sent
-              // against a credit. Awaiting here also suspends the generator,
-              // so the worker stops producing rows too.
-              if (probeMode !== 'none') await takeProbeCredit(probeMode);
               reply({ type: 'chunk', callId, data: chunk });
-              probeChunksSent += 1;
             }
           }
 
-          reply({
-            type: 'done',
-            callId,
-            affected,
-            // PROBE SCAFFOLDING (wave 4, BP-1)
-            probe: {
-              chunksSent: probeChunksSent,
-              abortSeenAtChunk: probeAbortSeenAtChunk,
-            },
-          } as WorkerMessageData);
+          reply({ type: 'done', callId, affected });
         } catch (e) {
           reply({
             type: 'error',
@@ -345,21 +278,6 @@ const open = (
           // The client's releaseWorker() observes DONE and routes the worker back to the pool.
           orchestrator.setStatus(index, WorkerStatuses.DONE);
         }
-        break;
-      }
-      // PROBE SCAFFOLDING (wave 4, BP-1)
-      case 'credit': {
-        probeCredits += data.n;
-        const signal = probeCreditSignal;
-        probeCreditSignal = Promise.withResolvers<void>();
-        signal.resolve();
-        break;
-      }
-      // PROBE SCAFFOLDING (wave 4, BP-1) — stands in for an abort delivered by
-      // postMessage. Records how many chunks had been sent when it was HANDLED,
-      // which is the latency the design has to bound.
-      case 'probe-abort': {
-        probeAbortSeenAtChunk ??= probeChunksSent;
         break;
       }
       case 'close': {
@@ -406,11 +324,6 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
     case 'close': {
       // close arrived before open completed — no database to close; reply immediately.
       self.postMessage({ type: 'closed', callId: 0 });
-      break;
-    }
-    // PROBE SCAFFOLDING (wave 4, BP-1) — no query can be running before open.
-    case 'credit':
-    case 'probe-abort': {
       break;
     }
     default: {

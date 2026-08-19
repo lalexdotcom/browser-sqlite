@@ -37,13 +37,7 @@ export const SharedArrayTypes = {
   OBJECT: 2,
 };
 
-type SQLOptions = {
-  chunkSize?: number;
-  // PROBE SCAFFOLDING (wave 4, BP-1) — validates the credit/ack design before
-  // it is written. 'await' takes one credit message per chunk; 'counter' reads
-  // a batched counter instead, which is the mistake the design must forbid.
-  probe?: { mode: 'none' | 'await' | 'counter' };
-};
+type SQLOptions = { chunkSize?: number };
 
 export type ClientMessageData =
   | {
@@ -61,12 +55,7 @@ export type ClientMessageData =
       params: any[];
       options?: SQLOptions;
     }
-  | { type: 'close'; callId: number }
-  // PROBE SCAFFOLDING (wave 4, BP-1) — `n` is how many credits this one
-  // message carries. n === 1 is the design under test; n > 1 is the batching
-  // that the counter variant exploits.
-  | { type: 'credit'; n: number }
-  | { type: 'probe-abort'; postedAt: number };
+  | { type: 'close'; callId: number };
 
 export type WorkerMessageData =
   | { type: 'ready'; callId: number }
