@@ -13,6 +13,7 @@ import * as SQLite from 'wa-sqlite/src/sqlite-api.js';
 import { SQLITE_ROW } from 'wa-sqlite/src/sqlite-constants.js';
 import { WorkerOrchestrator, WorkerStatuses } from '../orchestrator';
 import type { ClientMessageData, SQLiteVFS, WorkerMessageData } from '../types';
+import { renderPragmas } from '../utils';
 
 type SQLOptions = { chunkSize?: number; signal?: AbortSignal };
 
@@ -107,12 +108,6 @@ const open = (
 
   const { vfs = 'OPFSCoopSyncVFS', pragmas = {} } = options ?? {};
 
-  const allQueryPragmas = !Object.keys(pragmas).length
-    ? ''
-    : Object.entries(pragmas)
-        .map(([key, val]) => `PRAGMA ${key}=${val};`)
-        .join('');
-
   const vfsConfig = VFSConfigs[vfs];
 
   openedDB = vfsConfig
@@ -138,7 +133,18 @@ const open = (
         });
       });
     })
-    .then((opened) => {
+    .then(async (opened) => {
+      const { sqlite, db } = opened;
+      // Applied once, here — the JSDoc and the README have always said "on
+      // open", while the code prepended them to every query (B4). A failure
+      // falls through to the .catch below, which unlocks and posts open-error.
+      for (const statement of renderPragmas(pragmas)) {
+        for await (const stmt of sqlite.statements(db, statement)) {
+          // Some pragmas return a row (PRAGMA journal_mode=WAL returns "wal");
+          // stepping to completion is what actually applies them.
+          while ((await sqlite.step(stmt)) === SQLITE_ROW) {}
+        }
+      }
       orchestrator.unlock();
       // Transition: INITIALIZING → READY. Only on success — the previous
       // `.finally()` posted `ready` even for a database that never opened.
@@ -191,10 +197,7 @@ const open = (
 
     const buffer = [];
 
-    for await (const stmt of sqlite.statements(
-      db,
-      `${allQueryPragmas}${sql}`,
-    )) {
+    for await (const stmt of sqlite.statements(db, sql)) {
       if (params?.length) {
         sqlite.bind_collection(stmt, params);
       }

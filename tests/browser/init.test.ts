@@ -48,6 +48,28 @@ describe('createSQLiteClient (INT-02)', () => {
     }
   });
 
+  it('reports an invalid pragma as an open error, not as a query error', async () => {
+    await expect(
+      createTestClient({ pragmas: { 'bad name': 'WAL' } }),
+    ).rejects.toThrow(/pragma/i);
+  });
+
+  it('applies configured pragmas once, at open', async () => {
+    const db = await createTestClient({
+      pragmas: { cache_size: '-4000' },
+      poolSize: 1,
+    });
+
+    // Task 5 will switch this to db.read(); PRAGMA is currently a write-only path.
+    const { result } = await db.write<{ cache_size: number }>(
+      'PRAGMA cache_size',
+    );
+    const [row] = result;
+    expect(row?.cache_size).toBe(-4000);
+
+    await db.close();
+  });
+
   it('returns the same result on multiple consecutive calls', async () => {
     const db = await createTestClient();
 
