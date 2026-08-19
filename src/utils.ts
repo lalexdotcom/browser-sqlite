@@ -135,3 +135,40 @@ export const assertGeneratedExpression = (
     );
   return trimmed;
 };
+
+const PRAGMA_NAME = /^[A-Za-z_]\w*$/;
+const PRAGMA_INTEGER = /^-?\d+$/;
+const PRAGMA_LITERAL = /^'([^']|'')*'$/;
+
+/**
+ * Renders the client's `pragmas` option into executable statements, rejecting
+ * anything that is not provably a name and a scalar value (B4).
+ *
+ * Validation is syntactic rather than a closed list of the ~60 SQLite pragmas:
+ * a fixed list makes every legitimate pragma outside it unreachable and drifts
+ * with SQLite versions, for no additional protection — no ";", no parenthesis
+ * and no comment marker survives these three shapes either.
+ *
+ * Called twice: by the client at construction, so a bad configuration fails at
+ * `createSQLiteClient()` rather than inside an unrelated query, and by the
+ * worker at open, which is the only place the statements actually run.
+ */
+export const renderPragmas = (pragmas: Record<string, string>): string[] =>
+  Object.entries(pragmas).map(([key, value]) => {
+    if (!PRAGMA_NAME.test(key))
+      throw new SQLiteError(
+        'INVALID_PRAGMA',
+        `Invalid pragma name ${JSON.stringify(key)}: a pragma name must match ${PRAGMA_NAME}.`,
+      );
+    const raw = String(value).trim();
+    if (PRAGMA_INTEGER.test(raw) || PRAGMA_NAME.test(raw))
+      return `PRAGMA ${key}=${raw}`;
+    // PRAGMA_LITERAL already guarantees raw is a well-formed SQLite string
+    // literal (outer quotes present, internal single quotes doubled per '').
+    // Using raw directly is correct and simpler than re-escaping the content.
+    if (PRAGMA_LITERAL.test(raw)) return `PRAGMA ${key}=${raw}`;
+    throw new SQLiteError(
+      'INVALID_PRAGMA',
+      `Invalid value ${JSON.stringify(value)} for pragma "${key}": expected an integer, a bare word such as WAL, or a quoted literal.`,
+    );
+  });

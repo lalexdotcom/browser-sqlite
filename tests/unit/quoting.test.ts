@@ -4,6 +4,7 @@ import {
   assertColumnType,
   assertGeneratedExpression,
   quoteIdent,
+  renderPragmas,
 } from '../../src/utils';
 
 describe('quoteIdent', () => {
@@ -79,4 +80,48 @@ describe('assertGeneratedExpression', () => {
       assertGeneratedExpression('(1; DROP TABLE users)', 'doubled'),
     ).toThrow(SQLiteError);
   });
+});
+
+describe('renderPragmas', () => {
+  it('renders an integer value as-is', () => {
+    expect(renderPragmas({ busy_timeout: '5000' })).toEqual([
+      'PRAGMA busy_timeout=5000',
+    ]);
+  });
+
+  it('renders a bare word as-is', () => {
+    expect(renderPragmas({ journal_mode: 'WAL' })).toEqual([
+      'PRAGMA journal_mode=WAL',
+    ]);
+  });
+
+  it('re-escapes a quoted string literal', () => {
+    expect(renderPragmas({ some_key: "'it''s fine'" })).toEqual([
+      "PRAGMA some_key='it''s fine'",
+    ]);
+  });
+
+  it('renders one statement per entry', () => {
+    expect(
+      renderPragmas({ journal_mode: 'WAL', synchronous: 'NORMAL' }),
+    ).toEqual(['PRAGMA journal_mode=WAL', 'PRAGMA synchronous=NORMAL']);
+  });
+
+  const badKeys = ['journal mode', 'journal_mode; DROP TABLE t', '1_mode', ''];
+  for (const key of badKeys) {
+    it(`rejects the key ${JSON.stringify(key)}`, () => {
+      expect(() => renderPragmas({ [key]: 'WAL' })).toThrow(
+        /INVALID_PRAGMA|pragma/i,
+      );
+    });
+  }
+
+  const badValues = ['WAL; DROP TABLE t', 'WAL OFF', '(1)'];
+  for (const value of badValues) {
+    it(`rejects the value ${JSON.stringify(value)}`, () => {
+      expect(() => renderPragmas({ journal_mode: value })).toThrow(
+        /journal_mode/,
+      );
+    });
+  }
 });

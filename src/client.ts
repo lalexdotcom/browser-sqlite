@@ -14,7 +14,7 @@ import { createScheduler } from './scheduler';
 import { createSupervisor } from './supervisor';
 import { createTransaction, type TransactionDB } from './transaction';
 import type { SQLiteQueryOptions, SQLiteVFS } from './types';
-import { assertReadable } from './utils';
+import { assertReadable, renderPragmas } from './utils';
 
 /**
  * SQLite client for browser environments using a pool of Web Workers.
@@ -361,6 +361,9 @@ export const createSQLiteClient = (
       'AccessHandlePoolVFS does not support pool sizes greater than 1',
     );
   }
+
+  // Fail at construction, not inside the first unrelated query.
+  if (clientOptions?.pragmas) renderPragmas(clientOptions.pragmas);
 
   const { state: debug } = {} as ReturnType<typeof createClientDebug>;
 
