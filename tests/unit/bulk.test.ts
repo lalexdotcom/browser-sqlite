@@ -151,6 +151,37 @@ describe('bulkWrite failure (B5)', () => {
     expect(error.rowsNotWritten).toBe(3);
     expect(sql).toHaveLength(2); // the third batch was never sent
   });
+
+  // Falsifiability pin: deleting `closed = true` from bulkWrite's close() lets
+  // a second enqueue() succeed silently, producing a second INSERT statement →
+  // sql.toHaveLength(1) turns red.
+  it('throws from enqueue() after a successful close()', async () => {
+    const { sql, deps } = recorder();
+    const { bulkWrite } = createBulk(deps);
+
+    const bulk = bulkWrite('t', ['a']);
+    bulk.enqueue({ a: 1 });
+    await bulk.close(); // succeeds — closed flag is now set
+
+    expect(() => bulk.enqueue({ a: 2 })).toThrow(BulkWriteError);
+    expect(() => bulk.enqueue({ a: 2 })).toThrow(/closed/i);
+    // No extra INSERT was sent: the enqueue threw before buffering.
+    expect(sql).toHaveLength(1);
+  });
+
+  // Falsifiability pin: deleting the `if (closed) throw` guard in close() lets
+  // the second close() return 0 silently → rejects.toThrow() turns red.
+  it('throws from close() after a successful close()', async () => {
+    const { deps } = recorder();
+    const { bulkWrite } = createBulk(deps);
+
+    const bulk = bulkWrite('t', ['a']);
+    bulk.enqueue({ a: 1 });
+    await bulk.close(); // succeeds — closed flag is now set
+
+    await expect(bulk.close()).rejects.toThrow(BulkWriteError);
+    await expect(bulk.close()).rejects.toThrow(/closed/i);
+  });
 });
 
 /** Records statements from both plain writes and the swap transaction. */

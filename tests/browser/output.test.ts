@@ -276,6 +276,36 @@ describe('output() atomicity and sweep', () => {
     }
   });
 
+  // Falsifiability pin: deleting the `if (closed) throw` guard in bulkWrite's
+  // close() lets the second call re-enter the transaction; the error it then
+  // throws does NOT contain "closed" → the message assertion turns red.
+  // The rows assertion pins the transaction's rollback: without it the DROP is
+  // not undone and the table is gone (createTransaction.ts rollback block).
+  it('second close() throws with a "closed" message and leaves the target untouched', async () => {
+    const db = await createTestClient();
+
+    try {
+      const out = db.output('double_close_target', { id: 'INTEGER' });
+      out.enqueue({ id: 1 });
+      out.enqueue({ id: 2 });
+      await out.close(); // first close: succeeds
+
+      // Second close() must throw. After the closed-flag fix it throws before
+      // the transaction is entered, so the error message says "closed".
+      const error = await out.close().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/closed/i);
+
+      // The target table must survive with its rows intact.
+      const rows = await db.read<{ id: number }>(
+        'SELECT id FROM double_close_target ORDER BY id',
+      );
+      expect(rows.map((r) => r.id)).toEqual([1, 2]);
+    } finally {
+      await db.close();
+    }
+  });
+
   // Falsifiability pin: removing the `staleStagingTables` filter in sweepOnce()
   // (so every staging-like table is dropped) makes the sweep destroy A's live
   // staging table → outA.close() fails with "no such table".

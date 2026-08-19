@@ -91,6 +91,7 @@ export const createBulk = (deps: {
 
     let writePromise = Promise.resolve<number>(0);
     let failure: unknown;
+    let closed = false;
     let rowsWritten = 0;
     let rowsNotWritten = 0;
 
@@ -128,16 +129,25 @@ export const createBulk = (deps: {
       });
     };
 
+    const failClosed = (): BulkWriteError =>
+      new BulkWriteError(`Bulk writer for "${table}" is closed.`, {
+        rowsWritten,
+        rowsNotWritten,
+      });
+
     return {
       enqueue: (data: { [K in KEYS]: any }) => {
+        if (closed) throw failClosed();
         if (failure) throw fail();
         buffer.push(data);
         if (buffer.length >= maxBufferSize) flush();
       },
       close: async () => {
+        if (closed) throw failClosed();
         if (buffer.length) flush();
         const affected = await writePromise;
         if (failure) throw fail();
+        closed = true;
         return affected;
       },
     };
@@ -155,8 +165,13 @@ export const createBulk = (deps: {
     // sweep in that state would drop another tab's live staging table — worse
     // than not sweeping. The sweep is opportunistic; skipping it is correct.
     if (!locks.available) {
-      logger.warn('navigator.locks is unavailable; skipping the staging sweep');
-      return Promise.resolve();
+      if (swept === undefined) {
+        swept = Promise.resolve();
+        logger.warn(
+          'navigator.locks is unavailable; skipping the staging sweep',
+        );
+      }
+      return swept;
     }
 
     swept ??= locks
