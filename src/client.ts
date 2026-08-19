@@ -2,6 +2,7 @@ import { createBulk } from './bulk';
 import { type ClientDebugState, createClientDebug } from './debug';
 import { SQLiteError } from './errors';
 import { createLocks } from './locks';
+import { createLogger } from './logger';
 import { WorkerOrchestrator, WorkerStatuses } from './orchestrator';
 import { createPoolWorker, type PoolWorker } from './pool';
 import {
@@ -386,6 +387,11 @@ export const createSQLiteClient = (
 
   const debugOption = clientOptions?.debug;
 
+  const debugPrefix =
+    typeof debugOption === 'string' ? debugOption : clientPrefix;
+
+  const logger = createLogger(debugPrefix, !!debugOption);
+
   const clientDebug = debugOption
     ? createClientDebug(
         file,
@@ -582,6 +588,7 @@ export const createSQLiteClient = (
     transaction,
     file,
     locks: createLocks(),
+    logger,
   });
 
   /** Bounds any settlement that depends on a worker answering. */
@@ -609,6 +616,7 @@ export const createSQLiteClient = (
   const close = (): Promise<void> => {
     if (closing) return closing;
     closing = (async () => {
+      logger.info('client closing');
       // Shutting the front door first: queued waiters reject at once and no new
       // work can be acquired while the in-flight work drains.
       const draining = scheduler.shutdown(
@@ -672,6 +680,7 @@ export const createSQLiteClient = (
       drainTimeout,
       createWorkerDebugState: clientDebug?.createWorkerDebugState,
       createQueryDebugState: clientDebug?.createQueryDebugState,
+      logger,
     })
       .then((worker) => {
         supervisor.report(index, 'ready');
@@ -688,8 +697,13 @@ export const createSQLiteClient = (
     pool[index]?.terminate();
     pool[index] = undefined;
     const decision = supervisor.report(index, 'died');
-    if (decision === 'restart') void spawn(index);
-    else if (decision === 'fail-client') failClient(error);
+    if (decision === 'restart') {
+      logger.warn(`restarting worker ${index + 1}`);
+      void spawn(index);
+    } else if (decision === 'fail-client') {
+      logger.error(`worker ${index + 1} evicted`);
+      failClient(error);
+    }
   };
 
   // Initialize the worker pool with the requested number of workers

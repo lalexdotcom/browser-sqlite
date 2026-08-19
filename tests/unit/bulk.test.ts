@@ -2,6 +2,9 @@ import { describe, expect, it } from '@rstest/core';
 import { createBulk } from '../../src/bulk';
 import { BulkWriteError } from '../../src/errors';
 import { noOpLocks } from '../../src/locks';
+import { createLogger } from '../../src/logger';
+
+const noopLogger = createLogger('test', false);
 
 /** Records every statement the unit under test emits. */
 const recorder = () => {
@@ -21,7 +24,14 @@ const recorder = () => {
     });
   return {
     sql,
-    deps: { write, read, transaction, file: 'app.db', locks: noOpLocks },
+    deps: {
+      write,
+      read,
+      transaction,
+      file: 'app.db',
+      locks: noOpLocks,
+      logger: noopLogger,
+    },
   };
 };
 
@@ -76,7 +86,14 @@ const failingRecorder = (failAt: number) => {
     });
   return {
     sql,
-    deps: { write, read, transaction, file: 'app.db', locks: noOpLocks },
+    deps: {
+      write,
+      read,
+      transaction,
+      file: 'app.db',
+      locks: noOpLocks,
+      logger: noopLogger,
+    },
   };
 };
 
@@ -167,6 +184,7 @@ const outputRecorder = () => {
       transaction,
       file: 'app.db',
       locks: noOpLocks,
+      logger: noopLogger,
     },
   };
 };
@@ -240,6 +258,7 @@ describe('output() staging and swap (B5)', () => {
       },
       file: 'app.db',
       locks: noOpLocks,
+      logger: noopLogger,
     };
     const { output } = createBulk(deps as any);
 

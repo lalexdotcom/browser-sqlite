@@ -6,6 +6,7 @@ import {
   staleStagingTables,
   sweepLockName,
 } from './locks';
+import type { Logger } from './logger';
 import {
   assertColumnType,
   assertGeneratedExpression,
@@ -65,8 +66,10 @@ export const createBulk = (deps: {
   file: string;
   locks: Locks;
   maxVariables?: number;
+  logger: Logger;
 }) => {
   const { write, read, transaction, file, locks, maxVariables = 32766 } = deps;
+  const { logger } = deps;
 
   /**
    * Creates a bulk write utility for efficiently inserting many rows.
@@ -151,7 +154,10 @@ export const createBulk = (deps: {
     // in-flight staging table from an orphan, and `heldNames()` returns []. A
     // sweep in that state would drop another tab's live staging table — worse
     // than not sweeping. The sweep is opportunistic; skipping it is correct.
-    if (!locks.available) return Promise.resolve();
+    if (!locks.available) {
+      logger.warn('navigator.locks is unavailable; skipping the staging sweep');
+      return Promise.resolve();
+    }
 
     swept ??= locks
       .withLock(sweepLockName(file), async () => {

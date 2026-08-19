@@ -1,4 +1,5 @@
 import { SQLiteError } from './errors';
+import type { Logger } from './logger';
 import { type WorkerOrchestrator, WorkerStatuses } from './orchestrator';
 import type { SQLiteVFS, WorkerMessageData } from './types';
 
@@ -65,9 +66,10 @@ export const createPoolWorker = (deps: {
     sql: string,
     params?: unknown[],
   ) => any;
+  logger: Logger;
 }): Promise<PoolWorker> => {
   const { index, orchestrator, pool, clientPrefix, file, vfs, pragmas } = deps;
-  const { createWorkerDebugState, createQueryDebugState } = deps;
+  const { createWorkerDebugState, createQueryDebugState, logger } = deps;
 
   const deferredInit = Promise.withResolvers<PoolWorker>();
 
@@ -83,6 +85,7 @@ export const createPoolWorker = (deps: {
     { index },
   );
   pool[index] = worker;
+  logger.info(`worker ${index + 1} created`);
 
   const state = createWorkerDebugState?.(index, workerName);
 
@@ -130,6 +133,7 @@ export const createPoolWorker = (deps: {
     // Chrome's onerror for Worker script-load failures leaves ErrorEvent.filename
     // empty; fall back to the URL this library passed to the Worker constructor.
     const failedUrl = errorEvent.filename || workerUrl;
+    logger.error(`worker ${index + 1} crashed: ${detail}`);
     die(
       new SQLiteError(
         'WORKER_CRASHED',
@@ -144,6 +148,7 @@ export const createPoolWorker = (deps: {
   };
 
   worker.addEventListener('messageerror', () => {
+    logger.error(`worker ${index + 1} sent an undeserializable message`);
     lost?.reject(
       new SQLiteError(
         'PROTOCOL_ERROR',
@@ -160,12 +165,14 @@ export const createPoolWorker = (deps: {
         if (callId === 0) {
           ready = true;
           if (state) state.initializationTime = Date.now();
+          logger.info(`worker ${index + 1} ready`);
           deferredInit.resolve(worker);
         }
         break;
       }
       case 'open-error': {
         if (callId === 0) {
+          logger.error(`worker ${index + 1} failed to open: ${data.message}`);
           die(
             new SQLiteError('WORKER_CRASHED', data.message, {
               cause: data.cause,
@@ -176,6 +183,7 @@ export const createPoolWorker = (deps: {
       }
       case 'closed': {
         if (callId === 0) {
+          logger.info(`worker ${index + 1} closed`);
           deferredClose?.resolve();
         }
         break;
