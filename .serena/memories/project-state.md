@@ -206,14 +206,26 @@ and `'Bundler Configuration'`) rather than the URL, for this reason.
 - `bulkWrite`/`output` are single-use: `enqueue()` and `close()` throw once closed.
 - Read PRAGMAs work through `read()` again; a PRAGMA that assigns or takes an argument is a write.
 
-## A scheduling invariant added in wave 3 — read RYOW-1 before touching it
+## Scheduling rules as of wave 3 — settled with the user, and one is measured
 
-`scheduler.ts`'s `takeAvailable` prefers the **designated writer** for reads when it is
-immediately available. This is deliberate and it is a correctness measure, not an oversight:
-under `OPFSPermutedVFS` the writer is the only worker guaranteed to have applied the latest
-commit. It moves against the perf backlog's "prefer non-writer workers for reads" item, which
-was written without knowing about commit-propagation lag. Any future scheduling work must
-preserve this property or replace it with a real propagation barrier.
+Three rules, and the third is the one nobody may relax casually:
+
+1. **A read never touches the writer designation** — it does not take the writer by preference,
+   and it does not clear the designation when the writer happens to serve it. Both acquisition
+   paths behave identically. (`handOver` used to clear it while `takeAvailable` preferred the
+   writer and kept it — the two disagreed, and the user called that out.)
+2. **No preference of any kind when choosing a worker for a read.** Lowest-index-first.
+3. **The writer designation is sticky, and this is now evidence-backed.** The user asked for it to
+   be released once no write is outstanding or queued, so a following write could take the first
+   free worker. That was built, measured and reverted: consecutive writes on different workers
+   fail with `no such table`, because `sqlite3_prepare_v2` reads the schema through the worker's
+   stale page map *before* `SQLITE_LOCK_RESERVED` is requested. `OPFSPermutedVFS` does detect
+   staleness at that lock and signals `SQLITE_BUSY`, which wa-sqlite retries — but a failed
+   prepare returns `SQLITE_ERROR`, which it does not. **Relaxing stickiness requires a real
+   commit-propagation barrier first (wave 4, BP-1).**
+
+Consequence: read-your-own-writes across workers is not guaranteed, and nothing in the scheduler
+pretends otherwise. See RYOW-1 in `mem:follow-ups`.
 
 ## Key invariant — established in wave 1, do not weaken it
 
