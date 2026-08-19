@@ -1,3 +1,9 @@
+import {
+  assertColumnType,
+  assertGeneratedExpression,
+  quoteIdent,
+} from './utils';
+
 // Schema and related types for schema-driven bulk write operations.
 
 export type Schema = Record<
@@ -55,7 +61,7 @@ export const createBulk = (deps: { write: WriteFn }) => {
       buffer.length = 0;
       writePromise = writePromise.then((currentAffected) => {
         return write(
-          `INSERT INTO ${table} (${keys.join(',')}) VALUES ${toInsert.map(() => `(${keys.map(() => '?')})`)}`,
+          `INSERT INTO ${quoteIdent(table)} (${keys.map(quoteIdent).join(',')}) VALUES ${toInsert.map(() => `(${keys.map(() => '?')})`)}`,
           toInsert.flatMap((data) => keys.map((k) => data[k])),
         ).then(({ affected: chunkAffected }) => {
           return currentAffected + chunkAffected;
@@ -99,22 +105,25 @@ export const createBulk = (deps: { write: WriteFn }) => {
 
     // Normalize schema entries to internal format
     const normalizedSchema = Object.entries(schema).map(([k, v]) => {
-      const type = typeof v === 'string' ? v : v.type;
+      const type = assertColumnType(typeof v === 'string' ? v : v.type, k);
       const unique = typeof v === 'object' && !!v.unique;
       const notnull = typeof v === 'object' && !!v.required;
-      const generated = typeof v === 'object' ? v.generated : undefined;
+      const generated =
+        typeof v === 'object' && v.generated
+          ? assertGeneratedExpression(v.generated, k)
+          : undefined;
       return { name: k, type, unique, notnull, generated };
     });
 
     // Drop and recreate table with schema
     const createTablePromise = write(`
-			DROP TABLE IF EXISTS ${table}
+			DROP TABLE IF EXISTS ${quoteIdent(table)}
 		`).then(async () => {
       await write(`
-				CREATE ${options?.temp ? 'TEMPORARY' : ''} TABLE ${table}(
+				CREATE ${options?.temp ? 'TEMPORARY' : ''} TABLE ${quoteIdent(table)}(
 					${normalizedSchema
             .map(({ name, type, unique, notnull, generated }) => {
-              return `${name} ${type} ${unique ? 'UNIQUE' : ''} ${notnull ? 'NOT NULL' : ''} ${generated ? `GENERATED ALWAYS AS ${generated}` : ''}`;
+              return `${quoteIdent(name)} ${type} ${unique ? 'UNIQUE' : ''} ${notnull ? 'NOT NULL' : ''} ${generated ? `GENERATED ALWAYS AS ${generated}` : ''}`;
             })
             .join(',')}
 				)
@@ -156,7 +165,7 @@ export const createBulk = (deps: { write: WriteFn }) => {
                   !!index.unique;
                 if (!columns) continue;
                 await write(
-                  `CREATE ${unique ? 'UNIQUE' : ''} INDEX IF NOT EXISTS ${table}_${columns.join('_')}_${unique ? 'U' : 'IDX'} ON ${table}(${columns.join(',')})`,
+                  `CREATE ${unique ? 'UNIQUE' : ''} INDEX IF NOT EXISTS ${quoteIdent(`${table}_${columns.join('_')}_${unique ? 'U' : 'IDX'}`)} ON ${quoteIdent(table)}(${columns.map(String).map(quoteIdent).join(',')})`,
                 );
               }
             }
