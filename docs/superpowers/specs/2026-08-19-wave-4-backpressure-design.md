@@ -1,10 +1,11 @@
 # Wave 4 — BP-1: back-pressure on `chunk()` / `stream()`
 
-**STATUS: DRAFT — brainstorming interrupted mid-flight on 2026-08-19.**
+**STATUS: DRAFT — brainstorming in progress. Last updated 2026-08-20.**
 
-Section 1 (the mechanism) is **approved by the user**. Sections 2 to 4 have not
+Sections 1 (the mechanism) and 2 (scope and the `SharedArrayBuffer`) are
+**approved by the user**. Sections 3 (failure modes) and 4 (testing) have not
 been presented yet. Do not implement from this document: it is a checkpoint, not
-a spec. The remaining sections are listed in §6 with the notes already gathered
+a spec. The remaining sections are listed in §7 with the notes already gathered
 for them, so the conversation can resume without re-deriving anything.
 
 Branch: `feat/wave-4-backpressure`, from `main` at `c07c92f`.
@@ -137,11 +138,82 @@ maintain. Window 1 costs 4 % more, which does not buy back the simplicity.
   the `SharedArrayBuffer`, so `read()`'s abort must travel by message, so
   `read()` needs the tick like everything else.
 - **Abort granularity drops from "between two `step()` calls" to "between two
-  chunks".** Real, but invisible to the caller: since wave 1, `chunk()` races
-  the abort client-side and returns immediately. What is delayed is only the
-  worker ceasing work, bounded by one chunk.
+  ticks".** Real, but invisible to the caller: since wave 1, `chunk()` races the
+  abort client-side and returns immediately. What is delayed is only the worker
+  ceasing work. See §3.6 for what bounds a tick.
 
-## 4. What this does NOT fix
+### 3.6 The tick fires on a row counter too, not only per chunk
+
+Amendment made on 2026-08-20, while taking the inventory for §4. It corrects a
+claim in the approved §3: "bounded by one chunk" holds only if chunks are
+actually produced.
+
+`SELECT * FROM huge WHERE never_true` steps millions of rows without ever
+filling a buffer. No chunk, therefore no tick, therefore the `stop` message is
+never delivered: the worker runs to the end and the drain expires on
+`drainTimeout`, so a perfectly healthy worker is presumed dead and restarted.
+**Today that query aborts cleanly**, because the `ABORTING` flag is re-read on
+every row. That would be a plain regression, not a known residual.
+
+So the tick also fires on a **row counter** — at least one tick every N rows
+stepped, N on the order of 1000. Cost: a 1M-row filtering scan is 1000 ticks,
+9-14 µs each, so 9-14 ms. This reinforces §2.3's lesson: the tick serves
+liveness, the credit serves memory, and the two counters have no reason to be
+coupled.
+
+## 4. Scope, and removing the `SharedArrayBuffer` (section 2 — APPROVED)
+
+### 4.1 Per method
+
+Everything funnels through `chunk()` and then `pool.ts`'s query generator, so
+back-pressure is implemented once and every method inherits it. Two cases are
+worth naming:
+
+- `write()` returns rows only with `RETURNING`, so it almost never spends a
+  credit. Cost nil.
+- **`first()` must pass a window of 1, not 2.** `firstWorker` already sets
+  `chunkSize: 1` and returns after the first row, but with a window of 2 the
+  worker would produce two rows before blocking. The window is therefore a
+  per-query parameter — default 2, forced to 1 by `first()` — and that is what
+  delivers the exact one-row bound its JSDoc promises today without holding.
+
+### 4.2 The 14 call sites, and what each becomes
+
+| Site | Today | After |
+|---|---|---|
+| `debug.ts:176,182` | reads worker status from the SAB | a pool-local field; the pool already knows better than the SAB does (it posts the query, receives `done`, calls `interrupt`). Removes the Proxy trick. |
+| `pool.ts:295` | `setStatus(ABORTING)` | a `stop` message |
+| `pool.ts:362` | passes the SAB in `open` | gone |
+| `client.ts:385` | `onIdle` → `setStatus(READY)` | gone |
+| `worker.ts:130,155,163` | `lock`/`unlock` init mutex | `navigator.locks` (the primitive has been in `locks.ts` since wave 3) |
+| `worker.ts:158,252,279` | `setStatus(READY/RUNNING/DONE)` | gone — the `ready` message already carries it |
+| `worker.ts:217,220` | two `ABORTING` reads in the row loop | a local boolean set by the `stop` message |
+
+**`orchestrator.ts` is then deleted outright, 183 lines.** It is the largest
+single simplification of the wave.
+
+### 4.3 What leaves beyond `src/`, and the acceptance test
+
+The COOP/COEP plugin in `rstest.config.ts` — whose own comment reads "required
+for WorkerOrchestrator SharedArrayBuffer construction" — the matching README
+section, and the headers served by `scripts/static-server.mjs` and the two
+consumer apps.
+
+**Removing those headers and watching all 11 consumer-smoke stages still pass is
+the acceptance test for D2**: it demonstrates, rather than asserts, that the
+library no longer imposes cross-origin isolation on consuming applications.
+
+Two traps not to reopen: the "Coop" in `OPFSCoopSyncVFS` means *cooperative*,
+not the COOP header; and no VFS requires isolation — upstream's own comparison
+table has a "No COOP/COEP requirements" row, ticked for every one of them.
+
+### 4.4 Sequencing inside the branch
+
+BP-1 does not need the SAB gone; D2 needs BP-1. Implement and verify BP-1
+first, then D2, as two commit groups. The two mechanisms coexisting in between
+is intended — it keeps a bisect meaningful.
+
+## 5. What this does NOT fix
 
 A query that spends its whole life inside a single `step()` — a large
 `ORDER BY`, a recursive CTE — produces no chunk, therefore no tick, therefore no
@@ -150,23 +222,13 @@ wave 4 the residual reads: *a worker that dies inside one long `step()` is
 noticed only if the caller aborts.* This matches what `mem:follow-ups` already
 predicted for BP-1 and must be carried into the README and B2's entry.
 
-## 5. Cost summary
+## 6. Cost summary
 
 At the default `chunkSize` of 500, a 1M-row `read()` is 2000 chunks, so roughly
 20-30 ms of added tick cost over the whole query. The §2.2 run is deliberately
 pathological — 4000 chunks of 50 rows — to make a per-chunk cost visible at all.
 
-## 6. Open — not yet presented to the user
-
-**Section 2: scope per method, and the `SharedArrayBuffer`.**
-- `first()`: `chunkSize` 1 and window 1 gives the exact one-row bound the JSDoc
-  currently over-promises. Confirm it lands here rather than in a follow-up.
-- `write()`, `transaction()`, `bulkWrite()`/`output()`: uniform treatment
-  expected, to be walked through.
-- D2 proper: init mutex → `navigator.locks` (the primitive is already in the
-  codebase since wave 3, `locks.ts`); `ABORTING` flag → a `stop` message;
-  `orchestrator.ts` deleted or reduced; the COOP/COEP headers dropped from the
-  rstest browser plugin and from the README's requirements.
+## 7. Open — not yet presented to the user
 
 **Section 3: failure modes.** Notes already gathered:
 - The stop flag must be tested **before** the credit wait, or a stopped worker
