@@ -9,7 +9,8 @@ import {
  * automatic OPFS cleanup via afterEach.
  *
  * Decisions: D-06 (unique name), D-07 (afterEach cleanup), D-08 (shared helper)
- * VFS: OPFSPermutedVFS by default (D-05) — do not pass a `vfs` option
+ * VFS: OPFSAdaptiveVFS on the Asyncify build by default — do not pass `vfs`
+ * or `build` unless the test is about VFS selection itself.
  */
 export async function createTestClient(
   options?: Omit<CreateSQLiteClientOptions, 'name'>,

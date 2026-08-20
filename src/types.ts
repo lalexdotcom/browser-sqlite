@@ -29,6 +29,7 @@ export type ClientMessageData =
       type: 'open';
       file: string;
       vfs?: SQLiteVFS;
+      build?: SQLiteBuild;
       pragmas?: Record<string, string>;
     }
   | {
@@ -55,12 +56,35 @@ export type WorkerMessageData =
       cause?: unknown;
     };
 
-export type SQLiteVFS =
-  | 'OPFSPermutedVFS'
-  | 'OPFSAdaptiveVFS'
-  | 'OPFSCoopSyncVFS'
-  | 'AccessHandlePoolVFS'
-  | 'IDBBatchAtomicVFS';
+/** Which wa-sqlite WebAssembly build a worker loads. */
+export type SQLiteBuild = 'sync' | 'async' | 'jspi';
+
+/**
+ * The single source of truth for VFS selection: which builds each VFS can run
+ * on, most preferred first. `SQLiteVFS` is derived from its keys, and
+ * `worker/worker.ts` must supply a loader for every key — so a VFS cannot be
+ * added in one place and forgotten in the other.
+ *
+ * Order is a decision per VFS, not a rule. `sync` is both the fastest and the
+ * most portable build, so it leads wherever it is supported; `OPFSAdaptiveVFS`
+ * cannot use it and leads with `async` because `jspi` is Chromium-only.
+ *
+ * Source: wa-sqlite's own VFS comparison table on master, cross-checked against
+ * this repository's pinned v1.1.2 by running each declared combination.
+ */
+export const VFS_BUILDS = {
+  OPFSAdaptiveVFS: ['async', 'jspi'],
+  OPFSWriteAheadVFS: ['sync', 'async', 'jspi'],
+  OPFSCoopSyncVFS: ['sync', 'async', 'jspi'],
+  AccessHandlePoolVFS: ['sync', 'async', 'jspi'],
+  IDBBatchAtomicVFS: ['async', 'jspi'],
+} as const satisfies Record<string, readonly [SQLiteBuild, ...SQLiteBuild[]]>;
+
+export type SQLiteVFS = keyof typeof VFS_BUILDS;
+
+/** The build used when the caller does not name one. */
+export const defaultBuildFor = (vfs: SQLiteVFS): SQLiteBuild =>
+  VFS_BUILDS[vfs][0];
 
 /**
  * Options accepted by query methods.
