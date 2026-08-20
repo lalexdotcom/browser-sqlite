@@ -309,15 +309,10 @@ const DEFAULT_VFS = 'OPFSPermutedVFS';
  * a wa-sqlite instance in a dedicated thread.
  *
  * @remarks
- * **Browser requirements (COOP/COEP):** This client uses OPFS through Web
- * Workers. Browsers require the page to be served with the following HTTP
- * headers:
- * ```
- * Cross-Origin-Opener-Policy: same-origin
- * Cross-Origin-Embedder-Policy: require-corp
- * ```
- * Without these headers, OPFS access is unavailable and the pool will never
- * initialize.
+ * **Browser requirements:** This client uses OPFS through Web Workers; no
+ * special HTTP headers are required and cross-origin isolation is not needed.
+ * `OPFSAdaptiveVFS` additionally requires JSPI, a Chromium-only browser
+ * feature, which is an unrelated constraint.
  *
  * **Worker pool side effect:** Calling this function immediately spawns
  * `poolSize` Web Worker threads and begins asynchronous database

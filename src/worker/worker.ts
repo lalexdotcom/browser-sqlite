@@ -5,9 +5,11 @@
  * - `open` — loads the wa-sqlite WASM module, opens the database, and transitions to READY
  * - `query` — executes a SQL statement and streams results back as chunks
  *
- * State transitions driven by this module:
- *   NEW → INITIALIZING (lock acquired) → INITIALIZED → READY → RUNNING → DONE
- *   RUNNING → ABORTING (set by client via AbortSignal) → DONE
+ * Lifecycle labels (`NEW`, `READY`, `RUNNING`, `ABORTING`, `CLOSED`, `DEAD`) are
+ * maintained by `src/pool.ts`, not by this module. From this worker's perspective:
+ * the database open is serialised by `navigator.locks` (`initLockName(file)`);
+ * readiness is reported via the `ready` message; an abort arrives as a `stop`
+ * message and is observed through the credit gate's stopped flag.
  */
 import * as SQLite from 'wa-sqlite/src/sqlite-api.js';
 import { SQLITE_ROW } from 'wa-sqlite/src/sqlite-constants.js';
@@ -97,7 +99,9 @@ type OpenOptions = {
  * transitions this worker to READY and replaces the top-level message handler
  * with the query handler.
  *
- * State transition: NEW → INITIALIZING (lock acquired) → INITIALIZED → READY
+ * Database open is serialised by a `navigator.locks` lock on `initLockName(file)`.
+ * On success, posts a `ready` message; `src/pool.ts` then transitions the worker
+ * label from `NEW` to `READY`.
  *
  * @param file - Database file name passed from `createSQLiteClient`.
  * @param options - VFS selection and PRAGMA map.
@@ -227,7 +231,8 @@ const open = (file: string, options?: OpenOptions) => {
       case 'query': {
         const { callId, sql, params, options } = data;
         try {
-          // Transition: READY → RUNNING
+          // Reset the credit gate for this call. pool.ts sets the worker's
+          // status to RUNNING after posting the query.
           gate.reset(callId, options?.credits ?? DEFAULT_CREDIT_WINDOW);
           queryRunning = Promise.withResolvers<void>();
           let affected = 0;

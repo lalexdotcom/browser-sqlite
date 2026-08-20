@@ -114,9 +114,9 @@ describe('serialized writes (INT-08)', () => {
 /**
  * INT-09: AbortSignal cancels an in-flight request — no additional chunks
  *
- * Mechanism (src/client.ts l.251-258):
- *   signal.abort() → signalAbortHandler() → orchestrator.setStatus(ABORTING)
- *   Worker checks ABORTING at each iteration and exits → generator terminates (done: true)
+ * Mechanism:
+ *   signal.abort() → src/pool.ts posts a `stop` message → worker's gate.stop()
+ *   → gate.isStopped() breaks the row loop → worker replies `done`
  *
  * Note: generate_series is not available in wa-sqlite by default.
  * We use a JavaScript batch INSERT to create enough rows.

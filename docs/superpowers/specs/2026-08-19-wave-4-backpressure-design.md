@@ -154,28 +154,39 @@ maintain. Window 1 costs 4 % more, which does not buy back the simplicity.
 - **Abort granularity drops from "between two `step()` calls" to "between two
   ticks".** Real, but invisible to the caller: since wave 1, `chunk()` races the
   abort client-side and returns immediately. What is delayed is only the worker
-  ceasing work. See §3.6 for what bounds a tick.
+  ceasing work. Abort latency is bounded by one **chunk** (the per-chunk tick).
 
 ### 3.6 The tick fires on a row counter too, not only per chunk
 
-Amendment made on 2026-08-20, while taking the inventory for §4. It corrects a
+~~Amendment made on 2026-08-20, while taking the inventory for §4. It corrects a
 claim in the approved §3: "bounded by one chunk" holds only if chunks are
-actually produced.
+actually produced.~~
 
-`SELECT * FROM huge WHERE never_true` steps millions of rows without ever
+~~`SELECT * FROM huge WHERE never_true` steps millions of rows without ever
 filling a buffer. No chunk, therefore no tick, therefore the `stop` message is
 never delivered: the worker runs to the end and the drain expires on
 `drainTimeout`, so a perfectly healthy worker is presumed dead and restarted.
 **Today that query aborts cleanly**, because the `ABORTING` flag is re-read on
-every row. That would be a plain regression, not a known residual.
+every row. That would be a plain regression, not a known residual.~~
 
-So the tick also fires on a **row counter**: at least one tick every **1000
+~~So the tick also fires on a **row counter**: at least one tick every **1000
 rows stepped**. That constant is derived from §2.2's per-tick cost, not measured
 on its own — a 1M-row filtering scan becomes 1000 ticks at 9-14 µs, so 9-14 ms,
 which is negligible against such a scan. The implementation plan may revisit the
 value; it must not revisit the existence of the row-counter tick. This reinforces §2.3's lesson: the tick serves
 liveness, the credit serves memory, and the two counters have no reason to be
-coupled.
+coupled.~~
+
+**Corrected 2026-08-20:** The row-counter tick was implemented and then removed.
+`gate.countRow()` was only called in the `SQLITE_ROW` branch, so it counted
+**returned** rows, not stepped ones; a filtering scan returns none, so it never
+fired. `ROWS_PER_TICK` (1000) also exceeds the default `chunkSize` (500), so
+it could never have fired before the per-chunk tick regardless. The regression
+it was invented to prevent does not exist: a filtering scan is a single long
+`sqlite3_step`, meaning the old shared-memory `ABORTING` flag — read before and
+after each step — could not interrupt it either. That is B2's documented
+residual, already covered by §7. Abort latency remains bounded by one chunk, as
+§3.5 now states.
 
 ## 4. Scope, and removing the `SharedArrayBuffer`
 
@@ -325,7 +336,7 @@ passed identically with and without the behaviour they claimed to pin.
 | A filtering scan stays interruptible: it stops promptly **and** `records.length === 1` | the row-counter tick is removed — the drain expires, the worker is presumed dead and replaced, so `records.length` becomes 2. This is what guards §3.6 |
 | `first()` does not kill its worker: ten calls, then `records.length === 1` | `stop` does not wake the credit wait (§5.1) |
 | A slow consumer does not make chunks pile up: consume one, sleep, assert the worker sent at most `window` more, counted through `interceptWorkers` | credits are granted on arrival instead of on consumption — this pins §3.3, the easiest thing to break unnoticed |
-| `close()` during a query completes cleanly, with no drain expiry and no database closed under a live statement | §5.3 is not implemented |
+| `close()` during a query is bounded: the in-flight caller is rejected (not handed a truncated result), and no database is closed under a live statement | §5.3 is not implemented — **corrected 2026-08-20:** the original "with no drain expiry" wording was wrong; with a slow consumer the drain legitimately runs to `drainTimeout`, which is wave 2's documented contract; the property to pin is that `close()` is bounded and callers are rejected, not truncated |
 
 ### 6.3 What is deliberately not tested
 
