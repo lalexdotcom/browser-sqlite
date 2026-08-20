@@ -3,7 +3,6 @@ import { type ClientDebugState, createClientDebug } from './debug';
 import { SQLiteError } from './errors';
 import { createLocks } from './locks';
 import { createLogger } from './logger';
-import { WorkerOrchestrator } from './orchestrator';
 import { createPoolWorker, type PoolWorker } from './pool';
 import {
   chunk as chunkWorker,
@@ -310,15 +309,15 @@ const DEFAULT_VFS = 'OPFSPermutedVFS';
  * a wa-sqlite instance in a dedicated thread.
  *
  * @remarks
- * **Browser requirements (COOP/COEP):** This function constructs a
- * `SharedArrayBuffer` for cross-thread worker synchronization. Browsers
- * require the page to be served with the following HTTP headers:
+ * **Browser requirements (COOP/COEP):** This client uses OPFS through Web
+ * Workers. Browsers require the page to be served with the following HTTP
+ * headers:
  * ```
  * Cross-Origin-Opener-Policy: same-origin
  * Cross-Origin-Embedder-Policy: require-corp
  * ```
- * Without these headers, `new SharedArrayBuffer()` throws a `SecurityError`
- * and the pool will never initialize.
+ * Without these headers, OPFS access is unavailable and the pool will never
+ * initialize.
  *
  * **Worker pool side effect:** Calling this function immediately spawns
  * `poolSize` Web Worker threads and begins asynchronous database
@@ -361,9 +360,6 @@ export const createSQLiteClient = (
 
   const poolSize = clientOptions?.poolSize ?? DEFAULT_POOL_SIZE;
   const pool: (PoolWorker | undefined)[] = [];
-
-  // Orchestrator manages worker synchronization and status tracking
-  const orchestrator = new WorkerOrchestrator(poolSize);
 
   const vfs = clientOptions?.vfs ?? DEFAULT_VFS;
 
@@ -661,7 +657,6 @@ export const createSQLiteClient = (
 
     void createPoolWorker({
       index,
-      orchestrator,
       pool,
       clientPrefix,
       file,

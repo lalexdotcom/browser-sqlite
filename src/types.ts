@@ -1,22 +1,3 @@
-export type SQLiteClientCallData =
-  | {
-      type: 'open';
-      file: string;
-      workerIndex: number;
-      url?: string;
-      flag: SharedArrayBuffer;
-    }
-  | {
-      type: 'sql';
-      sql: string;
-      params?: any[];
-      options?: { debug?: boolean; chunkSize?: number };
-    }
-  | { type: 'abort' };
-
-export type SQLiteCLientCallParams<K extends SQLiteClientCallData['type']> =
-  Omit<Extract<SQLiteClientCallData, { type: K }>, 'type'>;
-
 export type SQLiteWorkerMessageData<_T = unknown> = {
   callId: number;
   terminate?: boolean;
@@ -47,8 +28,6 @@ export type ClientMessageData =
   | {
       type: 'open';
       file: string;
-      flags: SharedArrayBuffer;
-      index: number;
       vfs?: SQLiteVFS;
       pragmas?: Record<string, string>;
     }

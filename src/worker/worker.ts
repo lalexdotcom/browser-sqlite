@@ -17,7 +17,6 @@ import {
   DEFAULT_CREDIT_WINDOW,
 } from '../credits';
 import { createLocks, initLockName } from '../locks';
-import { WorkerOrchestrator, WorkerStatuses } from '../orchestrator';
 import type { ClientMessageData, SQLiteVFS, WorkerMessageData } from '../types';
 import { renderPragmas } from '../utils';
 
@@ -77,7 +76,6 @@ const VFSConfigs = {
   { name?: string; fs: () => Promise<any>; module: () => Promise<any> }
 >;
 
-let orchestrator: WorkerOrchestrator;
 let openedDB: Promise<{ sqlite: any; db: any }> | undefined;
 const gate = createCreditGate(createMessageChannelTick());
 const locks = createLocks();
@@ -94,30 +92,20 @@ type OpenOptions = {
 
 /**
  * Called once per worker thread when the client sends the `open` message.
- * Loads the wa-sqlite WASM module and VFS, acquires the orchestrator initialization
- * lock to prevent parallel DB opens across the pool, opens the SQLite database,
- * then transitions this worker to READY and replaces the top-level message handler
+ * Loads the wa-sqlite WASM module and VFS, acquires the initialization lock to
+ * prevent parallel DB opens across the pool, opens the SQLite database, then
+ * transitions this worker to READY and replaces the top-level message handler
  * with the query handler.
  *
  * State transition: NEW → INITIALIZING (lock acquired) → INITIALIZED → READY
  *
  * @param file - Database file name passed from `createSQLiteClient`.
- * @param flags - SharedArrayBuffer from the orchestrator, used to construct
- *   a worker-side `WorkerOrchestrator` view for status and lock operations.
- * @param index - This worker's index in the pool (0-based).
  * @param options - VFS selection and PRAGMA map.
  */
-const open = (
-  file: string,
-  flags: SharedArrayBuffer,
-  index: number,
-  options?: OpenOptions,
-) => {
+const open = (file: string, options?: OpenOptions) => {
   if (openedDB) {
     throw new Error('DB already opened');
   }
-
-  orchestrator = new WorkerOrchestrator(flags);
 
   const { vfs = 'OPFSCoopSyncVFS', pragmas = {} } = options ?? {};
 
@@ -207,13 +195,10 @@ const open = (
       const cols = sqlite.column_names(stmt) as string[];
 
       while (true) {
-        // Abort check: if client set status to ABORTING (via AbortSignal),
-        // stop processing rows and exit. The generator yields sqlite.changes()
-        // after the loop, then the handler posts 'done' to the client.
-        if (orchestrator.getStatus(index) === WorkerStatuses.ABORTING) break;
+        if (gate.isStopped()) break;
 
         const result = await sqlite.step(stmt);
-        if (orchestrator.getStatus(index) === WorkerStatuses.ABORTING) break;
+        if (gate.isStopped()) break;
 
         if (result === SQLITE_ROW) {
           const row = sqlite.row(stmt);
@@ -221,10 +206,6 @@ const open = (
             cols.map((key, i) => [key, row[i]]),
           );
           buffer.push(rowObject);
-          // Spec §3.6: a filtering scan produces no chunk for millions of
-          // rows. Without this the worker never returns to its event loop and
-          // a stop cannot reach it.
-          if (gate.countRow()) await gate.tick();
 
           if (buffer.length >= chunkSize) {
             yield buffer.splice(0, chunkSize);
@@ -332,8 +313,8 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
   const { data } = event;
   switch (data.type) {
     case 'open': {
-      const { file, flags, index, vfs, pragmas } = data;
-      open(file, flags, index, { vfs, pragmas });
+      const { file, vfs, pragmas } = data;
+      open(file, { vfs, pragmas });
       break;
     }
     case 'query': {

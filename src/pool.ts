@@ -1,7 +1,6 @@
 import { DEFAULT_CREDIT_WINDOW } from './credits';
 import { SQLiteError } from './errors';
 import type { Logger } from './logger';
-import { type WorkerOrchestrator, WorkerStatuses } from './orchestrator';
 import type { SQLiteVFS, WorkerMessageData } from './types';
 
 /**
@@ -55,7 +54,6 @@ const STOP = Symbol('stop');
  */
 export const createPoolWorker = (deps: {
   index: number;
-  orchestrator: WorkerOrchestrator;
   pool: (PoolWorker | undefined)[];
   clientPrefix: string;
   file: string;
@@ -72,7 +70,7 @@ export const createPoolWorker = (deps: {
   ) => any;
   logger: Logger;
 }): Promise<PoolWorker> => {
-  const { index, orchestrator, pool, clientPrefix, file, vfs, pragmas } = deps;
+  const { index, pool, clientPrefix, file, vfs, pragmas } = deps;
   const { createWorkerDebugState, createQueryDebugState, logger } = deps;
 
   const deferredInit = Promise.withResolvers<PoolWorker>();
@@ -319,11 +317,6 @@ export const createPoolWorker = (deps: {
       // Without this wait, the second half of B1 stands: a released worker still
       // inside sqlite.step().
       if (deferredChunk && !dead) {
-        orchestrator.setStatus(
-          index,
-          WorkerStatuses.ABORTING,
-          WorkerStatuses.RUNNING,
-        );
         worker.status = 'ABORTING';
         // Spec §5.1: the worker may be parked waiting for a credit that this
         // unwinding client will never send. The flag above cannot reach it
@@ -392,8 +385,6 @@ export const createPoolWorker = (deps: {
     callId: 0,
     type: 'open',
     file,
-    flags: orchestrator.sharedArrayBuffer,
-    index,
     vfs,
     pragmas,
   });

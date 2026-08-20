@@ -104,20 +104,4 @@ describe('createCreditGate', () => {
     await gate.take(1);
     expect(counter.calls()).toBe(3);
   });
-
-  it('signals a row tick every rowsPerTick rows and not before', () => {
-    const gate = createCreditGate(countingTick().tick, 3);
-    expect(gate.countRow()).toBe(false);
-    expect(gate.countRow()).toBe(false);
-    expect(gate.countRow()).toBe(true);
-    expect(gate.countRow()).toBe(false);
-  });
-
-  it('restarts the row count on reset', () => {
-    const gate = createCreditGate(countingTick().tick, 3);
-    gate.countRow();
-    gate.countRow();
-    gate.reset(1, 1);
-    expect(gate.countRow()).toBe(false);
-  });
 });

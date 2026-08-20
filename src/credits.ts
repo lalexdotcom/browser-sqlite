@@ -2,11 +2,6 @@
  * The credit gate: back-pressure for chunk production, and the task turn that
  * makes a worker reachable by `postMessage` while it is inside a query.
  *
- * Two counters, deliberately independent (spec §2.3, §3.6):
- *  - credits bound how far ahead of the consumer the worker may run;
- *  - the row counter forces a task turn even when no chunk is produced, which
- *    is what keeps a filtering scan interruptible.
- *
  * Pure and Node-testable on purpose. B1 survived for months because the
  * scheduler was reachable only through slow browser tests; this module has the
  * same profile — subtle state transitions otherwise buried behind a worker, a
@@ -16,13 +11,11 @@
 /** One turn of the task queue. Injected so Node tests can drive it. */
 export type Tick = () => Promise<void>;
 
-export const ROWS_PER_TICK = 1000;
-
 /** Chunks a worker may send before waiting for a credit. Spec §3.4. */
 export const DEFAULT_CREDIT_WINDOW = 2;
 
 export type CreditGate = {
-  /** Begin a query: `window` credits, not stopped, both counters cleared. */
+  /** Begin a query: `window` credits, not stopped, credit counter cleared. */
   reset: (callId: number, window: number) => void;
   /** Add credits for `callId`. A stale `callId` is ignored (§5.4). */
   grant: (callId: number, n: number) => void;
@@ -30,8 +23,6 @@ export type CreditGate = {
   stop: () => void;
   /** Spend one credit. Always costs one task turn first. */
   take: (callId: number) => Promise<'go' | 'stopped'>;
-  /** Count a stepped row; true when a task turn is due. */
-  countRow: () => boolean;
   isStopped: () => boolean;
   tick: Tick;
 };
@@ -53,14 +44,10 @@ export const createMessageChannelTick = (): Tick => {
     });
 };
 
-export const createCreditGate = (
-  tick: Tick,
-  rowsPerTick: number = ROWS_PER_TICK,
-): CreditGate => {
+export const createCreditGate = (tick: Tick): CreditGate => {
   let credits = 0;
   let currentCallId = -1;
   let stopped = false;
-  let rows = 0;
   let signal = Promise.withResolvers<void>();
 
   /** Settle whoever is waiting, and arm a fresh signal for the next wait. */
@@ -75,7 +62,6 @@ export const createCreditGate = (
       currentCallId = callId;
       credits = window;
       stopped = false;
-      rows = 0;
     },
 
     grant: (callId, n) => {
@@ -100,15 +86,6 @@ export const createCreditGate = (
       if (stopped) return 'stopped';
       credits -= 1;
       return 'go';
-    },
-
-    countRow: () => {
-      rows += 1;
-      if (rows >= rowsPerTick) {
-        rows = 0;
-        return true;
-      }
-      return false;
     },
 
     isStopped: () => stopped,
