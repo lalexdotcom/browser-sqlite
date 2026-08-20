@@ -37,7 +37,11 @@ export const SharedArrayTypes = {
   OBJECT: 2,
 };
 
-type SQLOptions = { chunkSize?: number };
+type SQLOptions = {
+  chunkSize?: number;
+  /** Chunks the worker may send before waiting for a credit. Spec §3.2. */
+  credits?: number;
+};
 
 export type ClientMessageData =
   | {
@@ -55,7 +59,9 @@ export type ClientMessageData =
       params: any[];
       options?: SQLOptions;
     }
-  | { type: 'close'; callId: number };
+  | { type: 'close'; callId: number }
+  | { type: 'credit'; callId: number; n: number }
+  | { type: 'stop'; callId: number };
 
 export type WorkerMessageData =
   | { type: 'ready'; callId: number }

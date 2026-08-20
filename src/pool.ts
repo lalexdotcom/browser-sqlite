@@ -1,3 +1,4 @@
+import { DEFAULT_CREDIT_WINDOW } from './credits';
 import { SQLiteError } from './errors';
 import type { Logger } from './logger';
 import { type WorkerOrchestrator, WorkerStatuses } from './orchestrator';
@@ -9,6 +10,7 @@ import type { SQLiteVFS, WorkerMessageData } from './types';
 export type PoolWorkerQueryOptions = {
   id?: string;
   chunkSize?: number;
+  credits?: number;
   debug?: string;
 };
 
@@ -256,7 +258,8 @@ export const createPoolWorker = (deps: {
       }
 
       // Extract query options
-      const { chunkSize = 500 } = options ?? {};
+      const { chunkSize = 500, credits = DEFAULT_CREDIT_WINDOW } =
+        options ?? {};
 
       // Prepare for streaming chunks
       deferredChunk = Promise.withResolvers<unknown[] | number>();
@@ -271,7 +274,7 @@ export const createPoolWorker = (deps: {
         callId: ++currentCallId,
         sql,
         params,
-        options: { chunkSize },
+        options: { chunkSize, credits },
       });
 
       // Stream chunks until query completes
@@ -284,6 +287,13 @@ export const createPoolWorker = (deps: {
         ]);
         if (chunk === STOP) break;
         yield chunk as T[] | number;
+        // Spec §3.3: the credit is issued once the CONSUMER has taken the
+        // chunk. Crediting on arrival would let the worker run at full speed
+        // and pile the chunks up in the message queue, which is the guarantee
+        // this whole mechanism exists to make true.
+        if (typeof chunk !== 'number') {
+          worker.postMessage({ type: 'credit', callId: currentCallId, n: 1 });
+        }
       }
     } finally {
       // If the consumer left early (break / return / throw) the worker is still
@@ -297,6 +307,10 @@ export const createPoolWorker = (deps: {
           WorkerStatuses.ABORTING,
           WorkerStatuses.RUNNING,
         );
+        // Spec §5.1: the worker may be parked waiting for a credit that this
+        // unwinding client will never send. The flag above cannot reach it
+        // there — only a message can.
+        worker.postMessage({ type: 'stop', callId: currentCallId });
         let timer: ReturnType<typeof setTimeout> | undefined;
         const expiry = new Promise<never>((_, reject) => {
           timer = setTimeout(

@@ -11,6 +11,11 @@
  */
 import * as SQLite from 'wa-sqlite/src/sqlite-api.js';
 import { SQLITE_ROW } from 'wa-sqlite/src/sqlite-constants.js';
+import {
+  createCreditGate,
+  createMessageChannelTick,
+  DEFAULT_CREDIT_WINDOW,
+} from '../credits';
 import { WorkerOrchestrator, WorkerStatuses } from '../orchestrator';
 import type { ClientMessageData, SQLiteVFS, WorkerMessageData } from '../types';
 import { renderPragmas } from '../utils';
@@ -73,6 +78,7 @@ const VFSConfigs = {
 
 let orchestrator: WorkerOrchestrator;
 let openedDB: Promise<{ sqlite: any; db: any }> | undefined;
+const gate = createCreditGate(createMessageChannelTick());
 
 type OpenOptions = {
   vfs?: SQLiteVFS;
@@ -225,6 +231,10 @@ const open = (
             cols.map((key, i) => [key, row[i]]),
           );
           buffer.push(rowObject);
+          // Spec §3.6: a filtering scan produces no chunk for millions of
+          // rows. Without this the worker never returns to its event loop and
+          // a stop cannot reach it.
+          if (gate.countRow()) await gate.tick();
 
           if (buffer.length >= chunkSize) {
             yield buffer.splice(0, chunkSize);
@@ -250,15 +260,16 @@ const open = (
           // Signals to the client that this worker is busy. The client may set
           // status to ABORTING via AbortSignal while the worker is RUNNING.
           orchestrator.setStatus(index, WorkerStatuses.RUNNING);
+          gate.reset(callId, options?.credits ?? DEFAULT_CREDIT_WINDOW);
           let affected = 0;
 
           for await (const chunk of query(sql, params, options)) {
             if (typeof chunk === 'number') {
               affected = chunk;
               break;
-            } else {
-              reply({ type: 'chunk', callId, data: chunk });
             }
+            if ((await gate.take(callId)) === 'stopped') break;
+            reply({ type: 'chunk', callId, data: chunk });
           }
 
           reply({ type: 'done', callId, affected });
@@ -295,6 +306,14 @@ const open = (
         // A second open is a protocol error; open() already guards against this.
         throw new Error('DB already opened');
       }
+      case 'credit': {
+        gate.grant(data.callId, data.n);
+        break;
+      }
+      case 'stop': {
+        gate.stop();
+        break;
+      }
       default: {
         const _unexpected: never = data;
         throw new Error(
@@ -324,6 +343,11 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
     case 'close': {
       // close arrived before open completed — no database to close; reply immediately.
       self.postMessage({ type: 'closed', callId: 0 });
+      break;
+    }
+    // No query can be running before open.
+    case 'credit':
+    case 'stop': {
       break;
     }
     default: {
