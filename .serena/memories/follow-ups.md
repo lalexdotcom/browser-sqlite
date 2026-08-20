@@ -92,7 +92,7 @@ asynchronous work (IndexedDB, BroadcastChannel) would sit at transaction boundar
 measuring unless a design option turns out to depend on it — it explains *why*, and the *what* is
 already settled. | `worker/worker.ts`, `queries.ts` (post-wave-1) |
 | W-route | **done** | **Wave 1 (half 1) + wave 2 (half 2).** Half 1: `isReadQuery` is now an allowlist requiring BOTH an allowlisted opening keyword AND no write keyword anywhere — the second clause matters because the worker executes `;`-separated statements. An adversarial review ran 47 cases with no dangerous-direction misclassification. Accepted cost: `SELECT 'INSERT'` and `EXPLAIN INSERT …` serialize through the writer — correct, merely slower. Half 2: `write()` routes to the writer unconditionally; `read()`, `chunk()`, `stream()`, and `first()` reject a non-read statement with `NOT_A_READ_QUERY` before any lease is taken. Every PRAGMA is currently classified as a write and must go through `write()` — this is documented in `assertReadable`'s JSDoc and in the README, and it pins a test in `tests/browser/routing.test.ts` that will turn red when B4 lands its pragma allowlist. String-literal misclassification is not fully solved (needs tokenisation), but the failure direction is safe toward the writer. | `utils.ts`, `client.ts` |
-| RYOW-1 | open — **narrowed, not closed, 2026-08-20** | **The default VFS changed to `OPFSAdaptiveVFS` on Asyncify and the bulk of the staleness went with it, but the case that matters to `output()` did not.** Measured across connections at `poolSize` 4: `OPFSPermutedVFS` 85 stale reads in 360; `OPFSAdaptiveVFS` **0 in 360**, and 0/80 on each of four separate axes — data INSERT, table CREATE, table DROP, and a table REPLACED under the same name with a different shape (the `DROP` + `ALTER … RENAME` inside one transaction that `output()` performs). `IDBBatchAtomicVFS` likewise 0. **And yet unpinning `output()`'s two `poolSize: 1` tests fails 6 runs in 10**, on `drops and replaces a pre-existing table with a different schema`, with `expected undefined to be 42`: the reader gets one row — the OLD table's — so its schema still describes the pre-swap shape. **The isolated reproduction of that DDL sequence shows zero staleness, so the trigger lives somewhere in `output()`'s real path that the reproduction does not capture** — candidates not yet eliminated: the indexes created inside the same transaction, the `navigator.locks`-guarded sweep on first call, and `bulkWrite`'s one-lease-per-batch. **The two tests therefore stay pinned to `poolSize: 1`, and wave 4 still owes the barrier.** Finding that trigger is where the barrier's brainstorming starts — it is a narrower question than it was, which is worth something. **Two follow-up measurements, 2026-08-20.**
+| RYOW-1 | open — **root cause found 2026-08-20, see (4) below; the barrier is the next thing built** | **The default VFS changed to `OPFSAdaptiveVFS` on Asyncify and the bulk of the staleness went with it, but the case that matters to `output()` did not.** Measured across connections at `poolSize` 4: `OPFSPermutedVFS` 85 stale reads in 360; `OPFSAdaptiveVFS` **0 in 360**, and 0/80 on each of four separate axes — data INSERT, table CREATE, table DROP, and a table REPLACED under the same name with a different shape (the `DROP` + `ALTER … RENAME` inside one transaction that `output()` performs). `IDBBatchAtomicVFS` likewise 0. **And yet unpinning `output()`'s two `poolSize: 1` tests fails 6 runs in 10**, on `drops and replaces a pre-existing table with a different schema`, with `expected undefined to be 42`: the reader gets one row — the OLD table's — so its schema still describes the pre-swap shape. ~~The isolated reproduction of that DDL sequence shows zero staleness, so the trigger lives somewhere in `output()`'s real path that the reproduction does not capture — candidates not yet eliminated: the indexes created inside the same transaction, the `navigator.locks`-guarded sweep on first call, and `bulkWrite`'s one-lease-per-batch.~~ **Answered by (4) below: the sweep, and not for the reason listed here — it is its READ that primes the reader, not its writes.** **The two tests therefore stay pinned to `poolSize: 1`, and wave 4 still owes the barrier.** Finding that trigger is where the barrier's brainstorming starts — it is a narrower question than it was, which is worth something. **Two follow-up measurements, 2026-08-20.**
 
 **(1) The stale read is NOT our bug — the fork is settled.** After `out.close()` resolves, the WRITER connection sees the new table **15/15**, so the swap transaction is genuinely committed and the ordering in our code is right; a barrier is not answering a mis-posed question. What happens is that typically **one connection out of four** is transiently behind — 8 of 15 iterations had exactly 3 of 4 reads correct — and it catches up **within one event-loop turn** (converged at a `sleep(0)` retry in all 15). That is why a single read after `close()` fails ~60% of runs: it lands on the lagging connection. **This shrinks the barrier's job enormously**: not synchronising an asynchronous BroadcastChannel+IndexedDB channel as Permuted required, but stopping a read being served by a connection that has not yet observed a commit one turn old. Lead not yet verified: `PRAGMA data_version`, which SQLite provides precisely so a connection can detect that another has modified the database.
 
@@ -100,7 +100,96 @@ already settled. | `worker/worker.ts`, `queries.ts` (post-wave-1) |
 
 **(3) What stickiness actually costs — found by reasoning, 2026-08-20, and it is worse than "a modest gain".** The designation is cleared in exactly one place, `remove(index)` — worker death or eviction. It is never released when writes finish. So a write goes to that worker and **queues behind it even when every other worker is idle**: `takeAvailable` enters the writer branch, finds it unavailable, and returns `undefined` without ever looking at the others. Now combine that with the read rule: reads take the **lowest available index**, and the first write designates the **lowest available index** too — so on an idle pool the designated writer is typically worker 0, **the very worker every read prefers**. The worker most likely to be busy serving a read is the one all writes depend on. **A single long read on worker 0 freezes every write in the client**, whole pool idle or not. That is head-of-line blocking we impose on ourselves, and it is the same cause as the perf note about reads piling onto worker 0, seen from the other side. Stickiness only ever protected `prepare` from a stale page map; it protects nothing else, and that protection is what the VFS change made unnecessary.
 
-**Sequencing decided 2026-08-20: relax it AFTER the barrier, not before.** Reasons, in order: the barrier changes the staleness surface and `output()` still fails 60% unexplained, so doing both at once makes the next debugging harder; `COOP-1` shows a VFS can pass a gentle workload and lock up once DDL meets concurrent readers, and spreading writes increases exactly that contention; and the stickiness measurement used 45 **sequential** writes with no concurrent readers, which is narrower than the change it would license. **When it is done, the test must fail if stickiness is restored** — a load that mixes spread writes with concurrent reads, not sequential chains. | **Read-your-own-writes is not guaranteed across workers — found the hard way in wave 3, 2026-08-19.** The default VFS is `OPFSPermutedVFS` (`client.ts`'s `DEFAULT_VFS` — note the worker's own fallback is `OPFSCoopSyncVFS`, which is what made this easy to get wrong), and it propagates commits to other connections asynchronously over BroadcastChannel + IndexedDB. A read dispatched to a worker that has not yet received the broadcast serves a stale view. This surfaced as a 40 %-reproducible test failure: after `output().close()` resolved, a `read()` returned the pre-swap schema. **No mitigation ships — this was reworked on user instruction, 2026-08-19.** A first attempt made `takeAvailable` prefer the designated writer for reads. The user rejected that shape: it entangled read scheduling with writer designation, and it was inconsistent with `handOver`, which cleared the designation when the writer served a queued read. **The rules now are: a read never takes the designation by preference and never clears it, both acquisition paths behave identically, and no preference of any kind applies to reads.** So RYOW is simply not guaranteed across workers, full stop, until wave 4 supplies a real propagation barrier.
+**(4) THE TRIGGER IS FOUND — 2026-08-20, later session. It is priming, not lag, and it is not the VFS.**
+Reproduced on the real test, unpinned, at the default `poolSize` (which is **2**, not 4 —
+`DEFAULT_POOL_SIZE` in `client.ts`): 3 failures in 10. Instrumented with `debug: true`, attributing
+every SQL statement to its worker and sorting by `startTime`. The correlation is total:
+
+- everything on `w0` (writer = `w0`) → correct;
+- writes on `w1`, final read on `w0` → stale, every time.
+
+**The stale row is `{"old_col": 42}` — the NEW data under the OLD column name.** Not the old table's
+row. So the reader holds a **stale page 1** (schema / change counter) while reading data pages fresh
+from the file: an **incoherent** snapshot, not a coherent lagging one. This entry's earlier
+description ("the reader gets one row — the OLD table's") was wrong about this.
+
+**Trigger: any earlier read on the connection that later serves the read.** `output()` guarantees one
+— the sweep's `SELECT name FROM sqlite_master …`, dispatched to the lowest available index, i.e.
+exactly the connection reads prefer — while the writer designation lands elsewhere whenever worker 0
+loses the ready race. Verified both directions on the real path:
+
+- **necessary** — sweep short-circuited in `bulk.ts`: 8 runs, 4 of them in the failing configuration,
+  **0 stale**;
+- **sufficient** — sweep still disabled, one bare `db.read()` added before `output()`: 8 runs, 3 in the
+  failing configuration, **3 stale**, same signature.
+
+In the failing configuration: **primed 5/5 stale, unprimed 4/4 correct.** Nothing to do with indexes,
+`bulkWrite`'s one-lease-per-batch, or the `navigator.locks` hold — the three candidates this entry
+listed are all cleared.
+
+**Determinism tool, worth rebuilding rather than reinventing.** A temp probe in `scheduler.ts`
+forbidding the writer designation on index 0 (three sites: `handOver`, `takeAvailable`, and `add`'s
+own writer-first branch) makes writer = `w1` always at `poolSize` 2, so the failing configuration is
+deterministic: control **8/8 stale**, no race. **The test that pins the barrier needs exactly this**,
+otherwise it only fails ~30 % of the time.
+
+**Barrier candidates, each executed on the reading connection immediately before the read (in
+`readWorker`), forced configuration:**
+
+| Prelude | Result |
+|---|---|
+| *(none — control)* | 8/8 stale |
+| `PRAGMA data_version` | 8/8 stale — **this entry's recorded lead is DEAD** |
+| `PRAGMA schema_version` | 8/8 stale |
+| `BEGIN; COMMIT` | inconclusive — errors `cannot start a transaction within a transaction` |
+| one event-loop turn (`setTimeout 0`) | 8/8 stale |
+| 150 ms wait | 6/6 stale |
+| `SELECT 1` | 6/6 stale |
+| **`SELECT * FROM out_replace`** (the target table) | **6/6 correct** |
+| **`SELECT count(*) FROM sqlite_master`** | **6/6 correct** |
+
+**~~It catches up within one event-loop turn~~ — measurement (1) above is wrong on this point.** A
+primed connection is not behind, it is **stuck**: neither a turn nor 150 ms changes anything. What
+had looked like convergence at a `sleep(0)` retry was the **second read**, not elapsed time.
+
+**Mechanism, and the shape it gives the barrier.** The connection only learns of the change by
+actually reading pages, never at `prepare` — and the statement that triggers the refresh **still
+returns the stale result**; the next one is correct. So the barrier must be a **separate statement
+that opens a real read transaction on the file**. `SELECT 1` does not qualify (touches no page);
+neither PRAGMA does. A generic `SELECT count(*) FROM sqlite_master` suffices — **the barrier does not
+need to know the query's tables.** Cost: one extra worker round-trip on the reads that need it.
+
+**VFS matrix — 40 runs, 40 stale, forced configuration, 4 runs per combination:**
+
+| VFS | `sync` | `async` | `jspi` |
+|---|---|---|---|
+| `OPFSAdaptiveVFS` | — | 4/4 stale *(control)* | 4/4 stale |
+| `OPFSWriteAheadVFS` | 4/4 stale | 4/4 stale | 4/4 stale |
+| `OPFSCoopSyncVFS` | 4/4 stale | 4/4 stale | 4/4 stale |
+| `IDBBatchAtomicVFS` | — | 4/4 stale | 4/4 stale |
+| `AccessHandlePoolVFS` | *not testable — the client rejects `poolSize > 1`* |
+
+Consequences, in order of what they save: **it is not an `OPFSAdaptiveVFS` defect, so the default-VFS
+choice is not reopened** and `feat/vfs-default` stands on its own merits; **it is not the Asyncify
+bridge**, since `jspi` behaves identically and `OPFSWriteAheadVFS` on `sync` too; and **the WAL lead
+recorded in `mem:resume-plan` is dead**, measured 12/12 across its three builds. The common factor is
+wa-sqlite itself (one WASM build, advisory locks between workers) — a native SQLite across two
+processes should not produce this. Going one level deeper would change who we report it to, not what
+we build. **The barrier is therefore permanent architecture, not a stopgap awaiting a better VFS.**
+Note also: **CoopSync did not hit `COOP-1` on this workload** (`poolSize` 2, one `output()`); that
+does not clear `COOP-1`, it does not test it.
+
+**Design space for the barrier, for the brainstorming that comes next:** (a) prelude on every read —
+simple, correct, one round-trip on the ~99 % of reads that follow no write; **(b) prelude conditional
+on a commit epoch** — the client counts commits, each worker carries the epoch it last executed or
+observed, only a worker behind gets the prelude — **recommended, the client already holds the
+information**; (c) eager refresh broadcast at commit time — an optimisation of (b), still needs (b)'s
+epoch for the read that arrives before the ping lands; (d) route reads to the designated writer —
+wave 3's rejected option, zero round-trip, but it re-entangles read scheduling with the designation
+and worsens the head-of-line blocking of (3) above.
+
+
+**Sequencing decided 2026-08-20: relax it AFTER the barrier, not before.** Reasons, in order: the barrier changes the staleness surface, so doing both at once makes the next debugging harder (~~`output()` still fails 60% unexplained~~ — explained by (4) above, 2026-08-20); `COOP-1` shows a VFS can pass a gentle workload and lock up once DDL meets concurrent readers, and spreading writes increases exactly that contention; and the stickiness measurement used 45 **sequential** writes with no concurrent readers, which is narrower than the change it would license. **When it is done, the test must fail if stickiness is restored** — a load that mixes spread writes with concurrent reads, not sequential chains. | **Read-your-own-writes is not guaranteed across workers — found the hard way in wave 3, 2026-08-19.** The default VFS is `OPFSPermutedVFS` (`client.ts`'s `DEFAULT_VFS` — note the worker's own fallback is `OPFSCoopSyncVFS`, which is what made this easy to get wrong), and it propagates commits to other connections asynchronously over BroadcastChannel + IndexedDB. A read dispatched to a worker that has not yet received the broadcast serves a stale view. This surfaced as a 40 %-reproducible test failure: after `output().close()` resolved, a `read()` returned the pre-swap schema. **No mitigation ships — this was reworked on user instruction, 2026-08-19.** A first attempt made `takeAvailable` prefer the designated writer for reads. The user rejected that shape: it entangled read scheduling with writer designation, and it was inconsistent with `handOver`, which cleared the designation when the writer served a queued read. **The rules now are: a read never takes the designation by preference and never clears it, both acquisition paths behave identically, and no preference of any kind applies to reads.** So RYOW is simply not guaranteed across workers, full stop, until wave 4 supplies a real propagation barrier.
 
 **Measured while doing this, and it is now a hard constraint: the writer designation MUST stay sticky.** The user also asked that the designation be released once no write is outstanding or queued, so the next write could take the first free worker. That was implemented, measured, and **reverted with evidence**: when consecutive writes land on different workers, the second fails with `no such table` because the creating worker's commit broadcast has not arrived. `OPFSPermutedVFS` does check staleness — but at `SQLITE_LOCK_RESERVED`, and it signals `SQLITE_BUSY`, which is retried. `sqlite3_prepare_v2` reads the schema through the stale page map *before* that lock is ever requested, so it returns `SQLITE_ERROR`, which is not retried. Stickiness is therefore a correctness requirement backed by measurement, not a legacy habit. Any future wave that wants to relax it must first supply the propagation barrier. ~~This narrows the window, it does not close it~~ — if a concurrent write claims the writer as a read is dispatched, that read still falls back to a possibly-stale worker. Documented in the README and on the JSDoc of `read`/`chunk`/`stream`/`first`; the workarounds are reading inside the same `transaction()`, or `poolSize: 1`.
 
@@ -113,7 +202,7 @@ already settled. | `worker/worker.ts`, `queries.ts` (post-wave-1) |
 | VIT-1 | open | **Vite requires consumer configuration** — two independent reasons: (1) Vite's esbuild pre-bundling (`optimizeDeps`) rewrites `import.meta.url` in `node_modules` during dev, breaking the worker URL; fix: `optimizeDeps: { exclude: ['browser-sqlite'] }` in the consumer's `vite.config`. (2) Vite's prod build does not copy `node_modules` wasm beside the emitted worker output; fix: a ~10-line Vite plugin that copies `dist/worker/*` beside the emitted worker. rsbuild and no-bundler modes need nothing. Not a bug in the artifact — a Vite-specific gap documented in the README's "Bundler Configuration" section. Recorded here so it is not re-litigated as an artifact defect. **Fix decided 2026-08-18 (D6, `mem:resume-plan` §1.4): we ship the plugin ourselves as a `browser-sqlite/vite` subpath, wave 4.** Two known fragilities in the currently documented snippet, both fixed by owning the code: `dist/assets` is hard-coded (breaks as soon as the consumer changes `build.assetsDir`) and `node_modules/browser-sqlite/…` assumes a flat node_modules (breaks in a pnpm workspace / monorepo). | README, `tests/consumer/vite.config.ts` |
 
 | COOP-1 | open | **`OPFSCoopSyncVFS` fails with `database is locked` under a pool of 4, in ~100 ms, reproducibly (3 runs).** The workload that triggers it: interleaved DDL (`CREATE`/`DROP`) while four connections read concurrently. Note it does NOT fail on a gentler workload — it passed the VFS matrix at `poolSize` 4 (init, INSERTs, concurrent reads, 0/40 stale) and all three of its declared builds passed the combination check. So the trigger is DDL under concurrent readers, not the pool itself. This matters because CoopSync is the "works everywhere" fallback the README is meant to recommend for non-Chromium browsers — **it cannot be recommended for a multi-worker pool until this is understood.** Upstream's own note is consistent: its contention handling returns an error and retries, which it calls "not very efficient". Found 2026-08-20 while measuring the VFS candidates. | `README`, VFS selection |
-| VFS-COV | open | **Two of the five advertised VFS have no test at all.** `SQLiteVFS` (public, in `types.ts`) declares `OPFSPermutedVFS`, `OPFSAdaptiveVFS`, `OPFSCoopSyncVFS`, `AccessHandlePoolVFS`, `IDBBatchAtomicVFS`, and `VFSConfigs` in `worker/worker.ts` wires all five. The suite exercises three: `OPFSPermutedVFS` implicitly everywhere (it is the default), `AccessHandlePoolVFS` in five places, `OPFSCoopSyncVFS` in one. **`OPFSAdaptiveVFS` and `IDBBatchAtomicVFS` are advertised as supported and have never been executed by a test.** Found 2026-08-20 while scoping the JSPI probe. `OPFSAdaptiveVFS` is cheap to cover — the probe proved it opens and queries in the pinned Chromium. Not wave 4's business; do not fold it in. | `types.ts`, `worker/worker.ts`, `tests/browser/vfs.test.ts` |
+| VFS-COV | open | **Two of the five advertised VFS have no test at all.** `SQLiteVFS` (public, in `types.ts`) declares `OPFSPermutedVFS`, `OPFSAdaptiveVFS`, `OPFSCoopSyncVFS`, `AccessHandlePoolVFS`, `IDBBatchAtomicVFS`, and `VFSConfigs` in `worker/worker.ts` wires all five. The suite exercises three: `OPFSPermutedVFS` implicitly everywhere (it is the default), `AccessHandlePoolVFS` in five places, `OPFSCoopSyncVFS` in one. ~~**`OPFSAdaptiveVFS` and `IDBBatchAtomicVFS` are advertised as supported and have never been executed by a test.**~~ **Updated 2026-08-20 with `feat/vfs-default`: `OPFSAdaptiveVFS` is now the default, so the whole suite exercises it, and `vfs.test.ts` covers the `build` guard on it explicitly. The untested pair is now `OPFSWriteAheadVFS` — newly public on this branch, zero tests — and `IDBBatchAtomicVFS`. Still two, different set.** Found 2026-08-20 while scoping the JSPI probe. `OPFSAdaptiveVFS` is cheap to cover — the probe proved it opens and queries in the pinned Chromium. Not wave 4's business; do not fold it in. | `types.ts`, `worker/worker.ts`, `tests/browser/vfs.test.ts` |
 | RWU-1 | open | **The default VFS requires a proposed, Chromium-only OPFS feature, with no detection and no fallback.** `OPFSPermutedVFS.js:88` calls `createSyncAccessHandle({ mode: 'readwrite-unsafe' })` unconditionally; `OPFSWriteAheadVFS` needs it too, and upstream's own doc dates it "only on Chromium browsers as of June 2024". **The failure mode is silent, not loud:** WebIDL ignores unknown dictionary members, so on a browser without the mode the call succeeds in the default exclusive mode — the first connection opens, the second cannot take the handle, and the pool breaks with no error naming the cause. Reasoned from the WebIDL rule, **not observed: we only ever test Chromium**, in CI and in the consumer smoke test. Found 2026-08-20. Decide whether to detect-and-degrade (fall back to `poolSize: 1`), to document Chromium-only, or to change default VFS. | `client.ts` (`DEFAULT_VFS`), README |
 
 ## Performance — after correctness, with debug instrumentation live

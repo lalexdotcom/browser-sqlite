@@ -60,10 +60,10 @@ carry in-place corrections dated 2026-08-20 — execution proved both wrong), im
 
 **What wave 4 still owes: the commit-propagation barrier and D6.** Neither is designed. The barrier
 deserves its own brainstorming and unblocks RYOW-1, the writer designation's stickiness, and the two
-browser tests pinned to `poolSize: 1`. A lead recorded 2026-08-20 and not yet examined: `OPFSWriteAheadVFS`
+browser tests pinned to `poolSize: 1`. ~~A lead recorded 2026-08-20 and not yet examined: `OPFSWriteAheadVFS`
 implements write-ahead logging inside the VFS, and a synchronous WAL-based VFS may have quite different
-cross-connection visibility from `OPFSPermutedVFS`, whose asynchronous commit propagation causes RYOW-1.
-Hypothesis to measure, not a finding.
+cross-connection visibility from `OPFSPermutedVFS`.~~ **Measured and DEAD, 2026-08-20: `OPFSWriteAheadVFS`
+is stale 12/12 across its three builds, exactly like every other VFS. See `mem:follow-ups` RYOW-1 (4).**
 
 **Six defects the execution caught that the plan had not anticipated, all of one family — things that
 could not fail, or that failed silently:**
@@ -139,45 +139,51 @@ owner of `available`, relayer the query API on `chunk()` (§1.2), fix abort once
 B9 in `tests/browser/concurrency.test.ts`. Remember the convention: an `it.fails` turning
 red means the bug is fixed.
 
-## 0.1 HOW TO RESUME — written 2026-08-20, read this first
+## 0.1 HOW TO RESUME — rewritten 2026-08-20 (end of the RYOW investigation session), read this first
 
-**Repository state.** `main` carries wave 4's first half (BP-1 + D2), merged at `5292b70`,
-verified on `main`, **not pushed to origin** (local `main` is ~95 commits ahead). A branch
-`feat/vfs-default` holds 5 commits, tree clean, 272 tests green — **not reviewed by anyone and
-not merged.** It switches the default VFS and adds a public option, so it needs a review before
-merging; every wave-4 task got one, this branch got none.
+**Repository state.** `feat/vfs-default` was reviewed as a whole branch and merged into `main`; the
+work of wave 4's first half and the VFS change are both on `main`. `main` is still **not pushed to
+origin** (~100 commits ahead). Tree clean, 272 tests green.
 
-**What `feat/vfs-default` does.** `OPFSPermutedVFS` is deleted — deprecated upstream
-(rhashimoto/wa-sqlite#317) and measured at 85 stale cross-connection reads in 360. The default is
-now `OPFSAdaptiveVFS` on the Asyncify build (0 in 360), which is what the author recommended for
-this exact shape in #302. A `build` option (`'sync' | 'async' | 'jspi'`) is validated at
-construction. The anti-drift design is **one table**: `VFS_BUILDS` in `types.ts` says which builds
-each VFS accepts, `SQLiteVFS` derives from its keys, and the worker takes the already-validated
-build from the `open` message. All 13 declared combinations were run against the pinned v1.1.2.
+**What this session settled — read `mem:follow-ups` under RYOW-1, block (4), before anything else.**
+In one line: the stale read after `output()` is caused by **any earlier read on the connection that
+later serves the read**, `output()` guarantees one through its sweep, and **every VFS behaves the
+same** (40 runs, 40 stale, 4 VFS × their builds). The barrier is therefore permanent architecture,
+its shape is known — a separate statement that opens a real read transaction, `SELECT count(*) FROM
+sqlite_master` suffices — and the open question is only **when to pose it**. Two leads recorded in
+these memories are now **dead, measured**: `PRAGMA data_version` and `OPFSWriteAheadVFS`.
 
-**Do these in this order.** The reasoning for the order is in `mem:follow-ups` under RYOW-1,
-COOP-1 and the stickiness entry:
+**Do these in this order.**
 
-1. **Find `output()`'s stale-read trigger.** The fork is already settled — it is NOT our bug: the
-   writer sees the swapped table 15/15, so the commit is real. One connection in four lags by one
-   event-loop turn, which is why a single read after `close()` fails ~60% of runs at `poolSize` 4.
-   Candidates not yet eliminated: the indexes built inside the swap transaction, the
-   `navigator.locks`-guarded sweep on first `output()`, and `bulkWrite`'s one-lease-per-batch.
-2. **Brainstorm the barrier** with that answer. Its job is far smaller than when wave 4 named it:
-   stop a read being served by a connection one turn behind. Unverified lead: `PRAGMA
-   data_version`, which SQLite provides exactly so a connection can tell that another has written.
-   The rejected alternative — routing reads to the designated writer — is cheap and correct but
-   was turned down in wave 3 on design grounds; it would come back onto the table here.
-3. **Then relax the writer stickiness**, with a test that fails if it is restored.
-4. **`COOP-1`** — it blocks the "works everywhere" half of the README.
-5. **Review and merge `feat/vfs-default`.**
-6. **The README's per-VFS trade-off section**, last, because 1-4 change what it says.
+1. **Brainstorm the barrier**, on a new feature branch (wave 4's second half). The design space is in
+   RYOW-1 block (4); option **(b), a prelude conditional on a commit epoch, is the recommendation to
+   argue for or against** — not a decision. Then spec → self-review → user review → `writing-plans`.
+   Nothing gets implemented before that.
+2. **Rebuild the scheduler determinism probe as a real test seam** while implementing. Forcing the
+   writer designation off index 0 is what turns a ~30 %-flaky failure into a deterministic one; the
+   test that pins the barrier is worth nothing without it. Verify its falsifiability by hand —
+   delete the barrier, watch it go red.
+3. **Then relax the writer stickiness**, with a test that fails if it is restored — a load mixing
+   spread writes with concurrent reads, not sequential chains.
+4. **`COOP-1`** — it blocks the "works everywhere" half of the README. Note that this session did
+   *not* clear it: CoopSync passed the RYOW matrix, but on a workload far gentler than COOP-1's.
+5. **The README's per-VFS trade-off section and the RYOW wording**, last, because 1-4 change what
+   they say. `output()`'s two tests go back to the default pool size when the barrier lands.
 
-**The lesson this session paid for twice, and the reason to distrust a clean probe.** An isolated
-reproduction of `output()`'s DDL sequence showed **0/80 stale** while the real path failed **6 runs
-in 10**. The narrow measurement was about to license a broad conclusion — that RYOW-1 was dissolved
-and the barrier could be dropped. What caught it was running the **real test**, unpinned, not a
-better probe. Before concluding anything from a probe here, unpin something real and let it fail.
+**D6 is still owed** and still undesigned — see §1.4.
+
+**Two lessons this session paid for.**
+
+**Attribute before hypothesising.** Three candidate causes had been carried in the memory for a day
+(indexes, the locks hold, `bulkWrite`'s leases); all three were wrong, and the answer fell out in one
+run of stamping each SQL statement with the worker that served it. The instrumentation existed
+already — `debug: true` — and nobody had pointed it at the question.
+
+**A lead left alive in a memory costs the next session.** `PRAGMA data_version` and the WAL VFS were
+both recorded as "not yet verified" and both read, a day later, as promising. Measuring them took
+minutes; believing them would have shaped a design. When a lead dies, strike it in the memory where
+it was written — do not merely omit it.
+
 
 ## 1. Decisions — D1 to D5, all settled
 
@@ -626,6 +632,18 @@ page", not "drop it in any page".
   not the next one. The open items are listed per wave in `mem:follow-ups` and in §1.
 
 ## 4. Changelog of this plan
+
+- **2026-08-20** — **RYOW-1's root cause found, and the barrier's shape with it.** The stale read
+  after `output()` is caused by **priming**: any earlier read on the connection that later serves
+  the read leaves it holding a stale page 1, so it returns fresh data under the old schema — an
+  incoherent snapshot, not a lagging one. `output()` guarantees such a read through its sweep.
+  Verified necessary (sweep off → 0 stale) and sufficient (one bare `read()` → stale). **Not a lag**:
+  neither an event-loop turn nor 150 ms cures it; what looked like convergence was the second read.
+  **Not the VFS**: 40 runs, 40 stale, across `OPFSAdaptiveVFS` / `OPFSWriteAheadVFS` /
+  `OPFSCoopSyncVFS` / `IDBBatchAtomicVFS` on every declared build — so the default-VFS choice is not
+  reopened and the barrier is permanent architecture. Two recorded leads died under measurement:
+  `PRAGMA data_version` and the WAL VFS. Evidence and the design space: `mem:follow-ups`, RYOW-1
+  block (4). No source file was changed — every probe was reverted.
 
 - **2026-08-19 (later)** — **Wave 3 merged into `main`** (`5eb5ace`), after the user reworked the
   scheduling rules. What changed between the first "done" below and the merge:
