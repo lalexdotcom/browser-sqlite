@@ -364,11 +364,26 @@ wave 4 the residual reads: *a worker that dies inside one long `step()` is
 noticed only if the caller aborts.* This matches what `mem:follow-ups` already
 predicted for BP-1 and must be carried into the README and B2's entry.
 
-## 8. Cost summary
+## 8. Cost summary — measured on the shipped implementation
 
-At the default `chunkSize` of 500, a 1M-row `read()` is 2000 chunks, so roughly
-20-30 ms of added tick cost over the whole query. The §2.2 run is deliberately
-pathological — 4000 chunks of 50 rows — to make a per-chunk cost visible at all.
+**Measured 2026-08-20 on the merged result**, not on the prototype. Method: a
+200k-row `read()`, three passes, same query and same VFS, run once on the merged
+code and once with `src/` and `rstest.config.ts` restored to `c07c92f` — the
+commit before the wave. Medians:
+
+| configuration | before | after | delta | per chunk |
+|---|---|---|---|---|
+| default `chunkSize` 500 — 400 chunks | 113 ms | 116 ms | +3 ms | 7.5 µs |
+| `chunkSize` 50 — 4000 chunks | 121 ms | 170 ms | +49 ms | 12.2 µs |
+
+**At default settings a consumer pays nothing measurable** — 3 ms on 113 ms,
+inside the run-to-run spread. The adversarial configuration reproduces the
+probe's shape and yields **12.2 µs per chunk**, squarely inside the 9-14 µs the
+prototype measured in §2.2. The prototype's figure therefore holds for the
+shipped code, which is what this section previously assumed without checking.
+
+The benchmark was throwaway and is not kept, for the reasons recorded in
+`bbf31b9` and `d82c673`.
 
 ## 9. Still owed by wave 4, and not covered here
 
