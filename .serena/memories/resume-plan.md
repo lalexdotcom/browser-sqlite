@@ -139,6 +139,46 @@ owner of `available`, relayer the query API on `chunk()` (§1.2), fix abort once
 B9 in `tests/browser/concurrency.test.ts`. Remember the convention: an `it.fails` turning
 red means the bug is fixed.
 
+## 0.1 HOW TO RESUME — written 2026-08-20, read this first
+
+**Repository state.** `main` carries wave 4's first half (BP-1 + D2), merged at `5292b70`,
+verified on `main`, **not pushed to origin** (local `main` is ~95 commits ahead). A branch
+`feat/vfs-default` holds 5 commits, tree clean, 272 tests green — **not reviewed by anyone and
+not merged.** It switches the default VFS and adds a public option, so it needs a review before
+merging; every wave-4 task got one, this branch got none.
+
+**What `feat/vfs-default` does.** `OPFSPermutedVFS` is deleted — deprecated upstream
+(rhashimoto/wa-sqlite#317) and measured at 85 stale cross-connection reads in 360. The default is
+now `OPFSAdaptiveVFS` on the Asyncify build (0 in 360), which is what the author recommended for
+this exact shape in #302. A `build` option (`'sync' | 'async' | 'jspi'`) is validated at
+construction. The anti-drift design is **one table**: `VFS_BUILDS` in `types.ts` says which builds
+each VFS accepts, `SQLiteVFS` derives from its keys, and the worker takes the already-validated
+build from the `open` message. All 13 declared combinations were run against the pinned v1.1.2.
+
+**Do these in this order.** The reasoning for the order is in `mem:follow-ups` under RYOW-1,
+COOP-1 and the stickiness entry:
+
+1. **Find `output()`'s stale-read trigger.** The fork is already settled — it is NOT our bug: the
+   writer sees the swapped table 15/15, so the commit is real. One connection in four lags by one
+   event-loop turn, which is why a single read after `close()` fails ~60% of runs at `poolSize` 4.
+   Candidates not yet eliminated: the indexes built inside the swap transaction, the
+   `navigator.locks`-guarded sweep on first `output()`, and `bulkWrite`'s one-lease-per-batch.
+2. **Brainstorm the barrier** with that answer. Its job is far smaller than when wave 4 named it:
+   stop a read being served by a connection one turn behind. Unverified lead: `PRAGMA
+   data_version`, which SQLite provides exactly so a connection can tell that another has written.
+   The rejected alternative — routing reads to the designated writer — is cheap and correct but
+   was turned down in wave 3 on design grounds; it would come back onto the table here.
+3. **Then relax the writer stickiness**, with a test that fails if it is restored.
+4. **`COOP-1`** — it blocks the "works everywhere" half of the README.
+5. **Review and merge `feat/vfs-default`.**
+6. **The README's per-VFS trade-off section**, last, because 1-4 change what it says.
+
+**The lesson this session paid for twice, and the reason to distrust a clean probe.** An isolated
+reproduction of `output()`'s DDL sequence showed **0/80 stale** while the real path failed **6 runs
+in 10**. The narrow measurement was about to license a broad conclusion — that RYOW-1 was dissolved
+and the barrier could be dropped. What caught it was running the **real test**, unpinned, not a
+better probe. Before concluding anything from a probe here, unpin something real and let it fail.
+
 ## 1. Decisions — D1 to D5, all settled
 
 | # | Decision | Recommendation | Consequence |
