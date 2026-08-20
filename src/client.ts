@@ -619,6 +619,17 @@ export const createSQLiteClient = (
       const draining = scheduler.shutdown(
         new SQLiteError('CLIENT_CLOSED', 'The SQLite client has been closed.'),
       );
+      // Stop the gate on every worker now: a streaming query parked on a
+      // credit will notice 'stopped' on its next gate.take() tick and unwind,
+      // releasing its lease before drainTimeout fires.  A write never calls
+      // gate.take(), so this is a no-op for writes; gate.reset() at the start
+      // of the next 'query' handler clears the flag anyway.  We send 'stop'
+      // rather than 'close' so the DB is NOT touched here — 'close' could race
+      // with an in-flight 'query' message and call sqlite.close() on a live
+      // statement (SQLITE_MISUSE).
+      for (const w of pool) {
+        if (w) w.postMessage({ type: 'stop', callId: 0 });
+      }
       // A transaction's lease is held by user code, so this wait is bounded like
       // the rest: a callback that never returns must not make close() hang.
       await bounded(draining, drainTimeout);

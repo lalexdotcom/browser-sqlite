@@ -120,3 +120,37 @@ describe('first()', () => {
     expect(records.length).toBe(1);
   });
 });
+
+describe('close() during a query', () => {
+  // Falsifiable: revert the close handler to closing immediately and the
+  // worker replies `closed` while its loop still runs, so the read below
+  // resolves with rows after close() promised the connection was shut.
+  // Pins spec §5.3.
+  it('stops the query first, then closes', async () => {
+    const db = await createTestClient({ poolSize: 1, drainTimeout: 2000 });
+    await seed(db);
+
+    const streaming = (async () => {
+      const collected: number[] = [];
+      for await (const rows of db.chunk<{ id: number }>(
+        'SELECT id FROM t',
+        [],
+        { chunkSize: 1 },
+      )) {
+        collected.push(rows[0]?.id ?? -1);
+        await sleep(5);
+      }
+      return collected;
+    })().catch(() => 'rejected' as const);
+
+    await sleep(100);
+    const started = performance.now();
+    await db.close();
+    // Bounded by drainTimeout; if the stop never reached the worker this
+    // would sit on the timeout instead.
+    expect(performance.now() - started).toBeLessThan(2000);
+
+    await streaming;
+    await expect(db.read('SELECT 1 AS n')).rejects.toThrow();
+  });
+});

@@ -80,6 +80,10 @@ let orchestrator: WorkerOrchestrator;
 let openedDB: Promise<{ sqlite: any; db: any }> | undefined;
 const gate = createCreditGate(createMessageChannelTick());
 
+/** Resolved while no query is running; `close` waits on it before closing. */
+let queryRunning: PromiseWithResolvers<void> | undefined;
+const idleUntilQueryEnds = () => queryRunning?.promise ?? Promise.resolve();
+
 type OpenOptions = {
   vfs?: SQLiteVFS;
   pragmas?: Record<string, string>;
@@ -261,6 +265,7 @@ const open = (
           // status to ABORTING via AbortSignal while the worker is RUNNING.
           orchestrator.setStatus(index, WorkerStatuses.RUNNING);
           gate.reset(callId, options?.credits ?? DEFAULT_CREDIT_WINDOW);
+          queryRunning = Promise.withResolvers<void>();
           let affected = 0;
 
           for await (const chunk of query(sql, params, options)) {
@@ -288,10 +293,18 @@ const open = (
           // Unconditional — ensures the worker status is always reset even on error or abort.
           // The client's releaseWorker() observes DONE and routes the worker back to the pool.
           orchestrator.setStatus(index, WorkerStatuses.DONE);
+          queryRunning?.resolve();
+          queryRunning = undefined;
         }
         break;
       }
       case 'close': {
+        // Spec §5.3: with the tick, `close` is deliverable mid-query for the
+        // first time. Closing a database under a live statement returns
+        // SQLITE_BUSY, which the catch below would swallow while the row loop
+        // kept running. Stop first, let the query unwind, then close.
+        gate.stop();
+        await idleUntilQueryEnds();
         try {
           const { sqlite, db } = await openedDB!;
           await sqlite.close(db);
