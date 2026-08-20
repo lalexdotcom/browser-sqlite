@@ -52,6 +52,24 @@ const VFSConfigs = {
       ),
     module: WA_SQLITE_MODULES.wa_sqlite_jspi,
   },
+  OPFSWriteAheadVFS: {
+    fs: () =>
+      import(
+        /* webpackChunkName: "OPFSWriteAheadVFS" */ 'wa-sqlite/src/examples/OPFSWriteAheadVFS.js'
+      ),
+    module: WA_SQLITE_MODULES.wa_sqlite,
+  },
+  // MEASUREMENT SCAFFOLDING — OPFSAdaptiveVFS on the Asyncify build rather than
+  // JSPI, to separate the VFS's portability from our own build wiring.
+  OPFSAdaptiveAsyncVFS: {
+    fs: () =>
+      import(
+        /* webpackChunkName: "OPFSAdaptiveVFS" */ 'wa-sqlite/src/examples/OPFSAdaptiveVFS.js'
+      ),
+    module: WA_SQLITE_MODULES.wa_sqlite_async,
+    // The module exports OPFSAdaptiveVFS; only our wiring name differs.
+    className: 'OPFSAdaptiveVFS',
+  },
   OPFSCoopSyncVFS: {
     fs: () =>
       import(
@@ -75,7 +93,12 @@ const VFSConfigs = {
   },
 } as const satisfies Record<
   SQLiteVFS,
-  { name?: string; fs: () => Promise<any>; module: () => Promise<any> }
+  {
+    name?: string;
+    className?: string;
+    fs: () => Promise<any>;
+    module: () => Promise<any>;
+  }
 >;
 
 let openedDB: Promise<{ sqlite: any; db: any }> | undefined;
@@ -123,7 +146,9 @@ const open = (file: string, options?: OpenOptions) => {
       return vfsConfig.fs().then((vfsModule) => ({
         sqlite,
         module,
-        vfsModule: (vfsModule as unknown as Record<string, VFSClass>)[vfs],
+        vfsModule: (vfsModule as unknown as Record<string, VFSClass>)[
+          (vfsConfig as { className?: string }).className ?? vfs
+        ],
       }));
     })
     .then(({ sqlite, module, vfsModule }) => {

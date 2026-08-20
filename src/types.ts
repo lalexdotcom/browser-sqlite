@@ -57,7 +57,10 @@ export type WorkerMessageData =
 
 export type SQLiteVFS =
   | 'OPFSPermutedVFS'
+  | 'OPFSWriteAheadVFS'
   | 'OPFSAdaptiveVFS'
+  // MEASUREMENT SCAFFOLDING — Adaptive on the Asyncify build.
+  | 'OPFSAdaptiveAsyncVFS'
   | 'OPFSCoopSyncVFS'
   | 'AccessHandlePoolVFS'
   | 'IDBBatchAtomicVFS';

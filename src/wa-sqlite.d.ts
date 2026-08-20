@@ -68,6 +68,10 @@ declare module 'wa-sqlite/src/examples/OPFSAdaptiveVFS.js' {
   export const OPFSAdaptiveVFS: VFSClass;
 }
 
+declare module 'wa-sqlite/src/examples/OPFSWriteAheadVFS.js' {
+  export const OPFSWriteAheadVFS: VFSClass;
+}
+
 declare module 'wa-sqlite/src/examples/OPFSCoopSyncVFS.js' {
   export const OPFSCoopSyncVFS: VFSClass;
 }
