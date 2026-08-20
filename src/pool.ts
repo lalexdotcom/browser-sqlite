@@ -1,7 +1,7 @@
 import { DEFAULT_CREDIT_WINDOW } from './credits';
 import { SQLiteError } from './errors';
 import type { Logger } from './logger';
-import type { SQLiteVFS, WorkerMessageData } from './types';
+import type { SQLiteBuild, SQLiteVFS, WorkerMessageData } from './types';
 
 /**
  * Query execution options forwarded to a pool worker.
@@ -58,6 +58,7 @@ export const createPoolWorker = (deps: {
   clientPrefix: string;
   file: string;
   vfs: SQLiteVFS;
+  build: SQLiteBuild;
   pragmas?: Record<string, string>;
   onDeath?: (index: number, error: SQLiteError) => void;
   onServed?: (index: number) => void;
@@ -70,7 +71,7 @@ export const createPoolWorker = (deps: {
   ) => any;
   logger: Logger;
 }): Promise<PoolWorker> => {
-  const { index, pool, clientPrefix, file, vfs, pragmas } = deps;
+  const { index, pool, clientPrefix, file, vfs, build, pragmas } = deps;
   const { createWorkerDebugState, createQueryDebugState, logger } = deps;
 
   const deferredInit = Promise.withResolvers<PoolWorker>();
@@ -386,6 +387,7 @@ export const createPoolWorker = (deps: {
     type: 'open',
     file,
     vfs,
+    build,
     pragmas,
   });
 

@@ -19,87 +19,67 @@ import {
   DEFAULT_CREDIT_WINDOW,
 } from '../credits';
 import { createLocks, initLockName } from '../locks';
-import type { ClientMessageData, SQLiteVFS, WorkerMessageData } from '../types';
+import {
+  type ClientMessageData,
+  defaultBuildFor,
+  type SQLiteBuild,
+  type SQLiteVFS,
+  type WorkerMessageData,
+} from '../types';
 import { renderPragmas } from '../utils';
 
 type SQLOptions = { chunkSize?: number; signal?: AbortSignal };
 
-const WA_SQLITE_MODULES = {
-  wa_sqlite: () =>
+const WA_SQLITE_BUILDS = {
+  sync: () =>
     import(/* webpackChunkName: "wa-sqlite" */ 'wa-sqlite/dist/wa-sqlite.mjs'),
-  wa_sqlite_async: () =>
+  async: () =>
     import(
       /* webpackChunkName: "wa-sqlite-async" */ 'wa-sqlite/dist/wa-sqlite-async.mjs'
     ),
-  wa_sqlite_jspi: () =>
+  jspi: () =>
     import(
       /* webpackChunkName: "wa-sqlite-jspi" */ 'wa-sqlite/dist/wa-sqlite-jspi.mjs'
     ),
-};
+} as const satisfies Record<SQLiteBuild, () => Promise<any>>;
 
+/**
+ * VFS loaders only. Which build each VFS may run on lives in `VFS_BUILDS`
+ * (`src/types.ts`) and nowhere else — the client validates against it and sends
+ * the chosen build in the `open` message, so there is no second copy to drift.
+ */
 const VFSConfigs = {
-  OPFSPermutedVFS: {
-    fs: () =>
-      import(
-        /* webpackChunkName: "OPFSPermutedVFS" */ 'wa-sqlite/src/examples/OPFSPermutedVFS.js'
-      ),
-    module: WA_SQLITE_MODULES.wa_sqlite_async,
-  },
   OPFSAdaptiveVFS: {
     fs: () =>
       import(
         /* webpackChunkName: "OPFSAdaptiveVFS" */ 'wa-sqlite/src/examples/OPFSAdaptiveVFS.js'
       ),
-    module: WA_SQLITE_MODULES.wa_sqlite_jspi,
   },
   OPFSWriteAheadVFS: {
     fs: () =>
       import(
         /* webpackChunkName: "OPFSWriteAheadVFS" */ 'wa-sqlite/src/examples/OPFSWriteAheadVFS.js'
       ),
-    module: WA_SQLITE_MODULES.wa_sqlite,
-  },
-  // MEASUREMENT SCAFFOLDING — OPFSAdaptiveVFS on the Asyncify build rather than
-  // JSPI, to separate the VFS's portability from our own build wiring.
-  OPFSAdaptiveAsyncVFS: {
-    fs: () =>
-      import(
-        /* webpackChunkName: "OPFSAdaptiveVFS" */ 'wa-sqlite/src/examples/OPFSAdaptiveVFS.js'
-      ),
-    module: WA_SQLITE_MODULES.wa_sqlite_async,
-    // The module exports OPFSAdaptiveVFS; only our wiring name differs.
-    className: 'OPFSAdaptiveVFS',
   },
   OPFSCoopSyncVFS: {
     fs: () =>
       import(
         /* webpackChunkName: "OPFSCoopSyncVFS" */ 'wa-sqlite/src/examples/OPFSCoopSyncVFS.js'
       ),
-    module: WA_SQLITE_MODULES.wa_sqlite,
   },
   AccessHandlePoolVFS: {
     fs: () =>
       import(
         /* webpackChunkName: "AccessHandlePoolVFS" */ 'wa-sqlite/src/examples/AccessHandlePoolVFS.js'
       ),
-    module: WA_SQLITE_MODULES.wa_sqlite,
   },
   IDBBatchAtomicVFS: {
     fs: () =>
       import(
         /* webpackChunkName: "IDBBatchAtomicVFS" */ 'wa-sqlite/src/examples/IDBBatchAtomicVFS.js'
       ),
-    module: WA_SQLITE_MODULES.wa_sqlite_async,
   },
-} as const satisfies Record<
-  SQLiteVFS,
-  {
-    name?: string;
-    className?: string;
-    fs: () => Promise<any>;
-    module: () => Promise<any>;
-  }
->;
+} as const satisfies Record<SQLiteVFS, { fs: () => Promise<any> }>;
 
 let openedDB: Promise<{ sqlite: any; db: any }> | undefined;
 const gate = createCreditGate(createMessageChannelTick());
@@ -112,6 +92,7 @@ let closing = false;
 
 type OpenOptions = {
   vfs?: SQLiteVFS;
+  build?: SQLiteBuild;
   pragmas?: Record<string, string>;
 };
 
@@ -134,21 +115,19 @@ const open = (file: string, options?: OpenOptions) => {
     throw new Error('DB already opened');
   }
 
-  const { vfs = 'OPFSCoopSyncVFS', pragmas = {} } = options ?? {};
+  const { vfs = 'OPFSAdaptiveVFS', pragmas = {} } = options ?? {};
+  const build = options?.build ?? defaultBuildFor(vfs);
 
   const vfsConfig = VFSConfigs[vfs];
 
-  openedDB = vfsConfig
-    .module()
+  openedDB = WA_SQLITE_BUILDS[build]()
     .then(({ default: factory }) => factory())
     .then((module) => {
       const sqlite = SQLite.Factory(module);
       return vfsConfig.fs().then((vfsModule) => ({
         sqlite,
         module,
-        vfsModule: (vfsModule as unknown as Record<string, VFSClass>)[
-          (vfsConfig as { className?: string }).className ?? vfs
-        ],
+        vfsModule: (vfsModule as unknown as Record<string, VFSClass>)[vfs],
       }));
     })
     .then(({ sqlite, module, vfsModule }) => {
@@ -343,8 +322,8 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
   const { data } = event;
   switch (data.type) {
     case 'open': {
-      const { file, vfs, pragmas } = data;
-      open(file, { vfs, pragmas });
+      const { file, vfs, build, pragmas } = data;
+      open(file, { vfs, build, pragmas });
       break;
     }
     case 'query': {

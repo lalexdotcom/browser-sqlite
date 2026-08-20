@@ -1,142 +1,118 @@
 import { describe, expect, it } from '@rstest/core';
-import type { SQLiteVFS } from '../../src/types';
+import { type SQLiteBuild, type SQLiteVFS, VFS_BUILDS } from '../../src/types';
 import { createTestClient } from './helpers';
 
 /**
- * THROWAWAY MEASUREMENT — choosing a default VFS.
+ * THROWAWAY VERIFICATION — every VFS × build combination `VFS_BUILDS` declares.
  *
- * `OPFSPermutedVFS`, our current default, is deprecated upstream
- * (rhashimoto/wa-sqlite#317: "removed from testing and will not be updated"),
- * superseded by `OPFSWriteAheadVFS`. In #302 the author recommended
- * `OPFSAdaptiveVFS` with `lockPolicy: 'shared'` for exactly our shape — a pool
- * of workers reading concurrently.
+ * The capability table was taken from wa-sqlite's comparison table on master,
+ * while this repository is pinned to v1.1.2. Declaring a combination that does
+ * not actually run would surface as an opaque `open-error` from a worker that
+ * could not instantiate its module, which is exactly the failure mode wave 2
+ * spent effort removing. So each declared pair is run.
  *
- * Three axes, in the order that decides:
- *
- *  1. CROSS-CONNECTION VISIBILITY. This is the one that matters most, because
- *     RYOW-1, the writer designation's stickiness, the two tests pinned to
- *     poolSize 1, and the commit-propagation barrier wave 4 still owes ALL
- *     exist because OPFSPermutedVFS propagates commits asynchronously over
- *     BroadcastChannel + IndexedDB. A VFS with no staleness dissolves four
- *     backlog items at once.
- *  2. POOL START-UP. #302 reports ~150 MB and ~10 s per worker for Permuted.
- *  3. CONCURRENT READ THROUGHPUT — the stated priority for the primary user.
- *
- * Every number here is Chromium-only: it is the only browser the suite runs.
+ * Staleness is measured where it means something: a read that sees an older row
+ * count than a write which had already RESOLVED. At `poolSize` 1 there is only
+ * one connection, so it is reported as n/a rather than as a zero that flatters.
  */
 
-const POOL = 4;
-const ROWS = 20_000;
-const RYOW_ITERATIONS = 30;
-const PARALLEL_READS = 8;
+const ITERATIONS = 10;
 
 type Row = { n: number };
 
-type Result = {
+type Cell = {
   vfs: string;
+  build: string;
+  pool: number;
+  ok: boolean;
   initMs: number;
-  seedMs: number;
-  /** Reads that saw a count older than the write that had already resolved. */
-  staleReads: number;
+  staleReads: number | null;
   readSamples: number;
-  concurrentReadMs: number;
   failure?: string;
 };
 
-const results: Result[] = [];
+const cells: Cell[] = [];
 
-const measure = async (vfs: SQLiteVFS): Promise<Result> => {
-  const base: Result = {
+const verify = async (vfs: SQLiteVFS, build: SQLiteBuild): Promise<Cell> => {
+  // AccessHandlePoolVFS cannot share access handles across connections and the
+  // client refuses a larger pool at construction.
+  const pool = vfs === 'AccessHandlePoolVFS' ? 1 : 4;
+  const cell: Cell = {
     vfs,
+    build,
+    pool,
+    ok: false,
     initMs: -1,
-    seedMs: -1,
-    staleReads: -1,
+    staleReads: null,
     readSamples: 0,
-    concurrentReadMs: -1,
   };
 
-  // 1. Pool start-up: every worker must be ready, not just the first.
-  const startedInit = performance.now();
-  const db = await createTestClient({ poolSize: POOL, vfs });
+  const started = performance.now();
+  const db = await createTestClient({ poolSize: pool, vfs, build });
   await Promise.all(
-    Array.from({ length: POOL }, () => db.read<Row>('SELECT 1 AS n')),
+    Array.from({ length: pool }, () => db.read<Row>('SELECT 1 AS n')),
   );
-  base.initMs = Math.round(performance.now() - startedInit);
+  cell.initMs = Math.round(performance.now() - started);
 
-  // 2. Cross-connection visibility. After a write RESOLVES, fan out one read
-  // per worker: any that reports fewer rows than were committed saw a stale
-  // view of the database.
   await db.write('CREATE TABLE t (id INTEGER PRIMARY KEY)');
-  let stale = 0;
-  let samples = 0;
-  for (let i = 1; i <= RYOW_ITERATIONS; i += 1) {
-    await db.write('INSERT INTO t(id) VALUES (?)', [i]);
-    const counts = await Promise.all(
-      Array.from({ length: POOL }, () =>
-        db.read<Row>('SELECT count(*) AS n FROM t'),
-      ),
-    );
-    for (const rows of counts) {
-      samples += 1;
-      if ((rows[0]?.n ?? -1) < i) stale += 1;
+  if (pool > 1) {
+    let stale = 0;
+    let samples = 0;
+    for (let i = 1; i <= ITERATIONS; i += 1) {
+      await db.write('INSERT INTO t(id) VALUES (?)', [i]);
+      const counts = await Promise.all(
+        Array.from({ length: pool }, () =>
+          db.read<Row>('SELECT count(*) AS n FROM t'),
+        ),
+      );
+      for (const rows of counts) {
+        samples += 1;
+        if ((rows[0]?.n ?? -1) < i) stale += 1;
+      }
     }
+    cell.staleReads = stale;
+    cell.readSamples = samples;
+  } else {
+    await db.write('INSERT INTO t(id) VALUES (1)');
+    const rows = await db.read<Row>('SELECT count(*) AS n FROM t');
+    expect(rows[0]?.n).toBe(1);
   }
-  base.staleReads = stale;
-  base.readSamples = samples;
-
-  // 3. Concurrent reads over a table big enough to cost something.
-  const startedSeed = performance.now();
-  await db.write(
-    `INSERT INTO t(id) SELECT x + ${RYOW_ITERATIONS} FROM (
-       WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < ${ROWS})
-       SELECT x FROM c)`,
-  );
-  base.seedMs = Math.round(performance.now() - startedSeed);
-
-  const startedReads = performance.now();
-  await Promise.all(
-    Array.from({ length: PARALLEL_READS }, () =>
-      db.read<Row>('SELECT count(*) AS n FROM t WHERE id % 7 = 0'),
-    ),
-  );
-  base.concurrentReadMs = Math.round(performance.now() - startedReads);
 
   await db.close();
-  return base;
+  cell.ok = true;
+  return cell;
 };
 
-describe('VFS matrix', () => {
-  const candidates: SQLiteVFS[] = [
-    'OPFSPermutedVFS',
-    'OPFSWriteAheadVFS',
-    'OPFSAdaptiveVFS',
-    'OPFSAdaptiveAsyncVFS',
-    'OPFSCoopSyncVFS',
-    'IDBBatchAtomicVFS',
-  ];
+describe('declared VFS × build combinations', () => {
+  const pairs: [SQLiteVFS, SQLiteBuild][] = Object.entries(VFS_BUILDS).flatMap(
+    ([vfs, builds]) =>
+      (builds as readonly SQLiteBuild[]).map(
+        (build) => [vfs as SQLiteVFS, build] as [SQLiteVFS, SQLiteBuild],
+      ),
+  );
 
-  for (const vfs of candidates) {
-    it(`measures ${vfs}`, async () => {
+  for (const [vfs, build] of pairs) {
+    it(`${vfs} on ${build}`, async () => {
       try {
-        results.push(await measure(vfs));
+        cells.push(await verify(vfs, build));
       } catch (error) {
-        // A VFS that cannot serve a pool of 4 is a result, not a crash.
-        results.push({
+        cells.push({
           vfs,
+          build,
+          pool: -1,
+          ok: false,
           initMs: -1,
-          seedMs: -1,
-          staleReads: -1,
+          staleReads: null,
           readSamples: 0,
-          concurrentReadMs: -1,
           failure: error instanceof Error ? error.message : String(error),
         });
       }
-      expect(results.length).toBeGreaterThan(0);
+      expect(cells.length).toBeGreaterThan(0);
     }, 300_000);
   }
 
   // Deliberately red: browser console output is not forwarded to the terminal.
   it('reports', () => {
-    throw new Error(`VFS-MATRIX ${JSON.stringify(results)}`);
+    throw new Error(`VFS-BUILD-MATRIX ${JSON.stringify(cells)}`);
   });
 });

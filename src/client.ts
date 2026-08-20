@@ -14,7 +14,13 @@ import {
 import { createScheduler } from './scheduler';
 import { createSupervisor } from './supervisor';
 import { createTransaction, type TransactionDB } from './transaction';
-import type { SQLiteQueryOptions, SQLiteVFS } from './types';
+import {
+  defaultBuildFor,
+  type SQLiteBuild,
+  type SQLiteQueryOptions,
+  type SQLiteVFS,
+  VFS_BUILDS,
+} from './types';
 import { assertReadable, renderPragmas } from './utils';
 
 /**
@@ -56,6 +62,14 @@ export type CreateSQLiteClientOptions = {
    * @defaultValue `'OPFSPermutedVFS'`
    */
   vfs?: SQLiteVFS;
+  /**
+   * Which wa-sqlite WebAssembly build to load. Defaults to the first entry of
+   * `VFS_BUILDS[vfs]` — `sync` where the VFS supports it, since it is both the
+   * fastest and the most portable, otherwise `async`. `jspi` is Chromium-only.
+   *
+   * @throws at construction when the build is not one the chosen VFS supports.
+   */
+  build?: SQLiteBuild;
 
   /**
    * SQLite PRAGMAs applied to each worker's database connection on open.
@@ -302,7 +316,7 @@ export type SQLiteDB = {
   debug?: ClientDebugState;
 };
 
-const DEFAULT_VFS = 'OPFSPermutedVFS';
+const DEFAULT_VFS = 'OPFSAdaptiveVFS';
 
 /**
  * Creates a SQLite client backed by a pool of Web Workers, each running
@@ -357,6 +371,17 @@ export const createSQLiteClient = (
   const pool: (PoolWorker | undefined)[] = [];
 
   const vfs = clientOptions?.vfs ?? DEFAULT_VFS;
+  const build = clientOptions?.build ?? defaultBuildFor(vfs);
+
+  // Synchronous, like the AccessHandlePoolVFS guard below: an unsupported
+  // combination must fail here and name itself, not surface later as an opaque
+  // open-error from a worker that could not instantiate its module.
+  if (!(VFS_BUILDS[vfs] as readonly SQLiteBuild[]).includes(build)) {
+    throw new SQLiteError(
+      'INVALID_IDENTIFIER',
+      `${vfs} cannot run on the '${build}' build. Supported: ${VFS_BUILDS[vfs].join(', ')}.`,
+    );
+  }
 
   if (vfs === 'AccessHandlePoolVFS' && poolSize > 1) {
     throw new Error(
@@ -656,6 +681,7 @@ export const createSQLiteClient = (
       clientPrefix,
       file,
       vfs,
+      build,
       pragmas: clientOptions?.pragmas,
       onDeath: handleDeath,
       onServed: (served) => {
