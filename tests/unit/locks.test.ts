@@ -1,9 +1,11 @@
 import { describe, expect, it } from '@rstest/core';
 import {
   createLocks,
+  initLockName,
   noOpLocks,
   stagingLockName,
   staleStagingTables,
+  sweepLockName,
 } from '../../src/locks';
 
 describe('staleStagingTables', () => {
@@ -109,4 +111,15 @@ describe('createLocks', () => {
       'AbortError',
     );
   }, 1000);
+});
+
+describe('initLockName', () => {
+  it('is distinct per database file', () => {
+    expect(initLockName('a.db')).not.toBe(initLockName('b.db'));
+  });
+
+  it('does not collide with the sweep or staging namespaces', () => {
+    expect(initLockName('a.db')).not.toBe(sweepLockName('a.db'));
+    expect(initLockName('a.db').startsWith('bsq:init:')).toBe(true);
+  });
 });

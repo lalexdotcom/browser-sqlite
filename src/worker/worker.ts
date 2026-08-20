@@ -16,6 +16,7 @@ import {
   createMessageChannelTick,
   DEFAULT_CREDIT_WINDOW,
 } from '../credits';
+import { createLocks, initLockName } from '../locks';
 import { WorkerOrchestrator, WorkerStatuses } from '../orchestrator';
 import type { ClientMessageData, SQLiteVFS, WorkerMessageData } from '../types';
 import { renderPragmas } from '../utils';
@@ -79,6 +80,7 @@ const VFSConfigs = {
 let orchestrator: WorkerOrchestrator;
 let openedDB: Promise<{ sqlite: any; db: any }> | undefined;
 const gate = createCreditGate(createMessageChannelTick());
+const locks = createLocks();
 
 /** Resolved while no query is running; `close` waits on it before closing. */
 let queryRunning: PromiseWithResolvers<void> | undefined;
@@ -137,41 +139,25 @@ const open = (
         vfsModule.create(vfs, module, { lockPolicy: 'shared' }) as Promise<any>
       ).then((vfsInstance: any) => {
         sqlite.vfs_register(vfsInstance, true);
-
-        orchestrator.lock();
-        return sqlite.open_v2(file).then((db: any) => {
+        // One lock for open + pragmas. withLock releases on throw too, which
+        // is what the explicit unlock() in the old .catch existed to do.
+        return locks.withLock(initLockName(file), async () => {
+          const db = await sqlite.open_v2(file);
+          for (const statement of renderPragmas(pragmas)) {
+            for await (const stmt of sqlite.statements(db, statement)) {
+              while ((await sqlite.step(stmt)) === SQLITE_ROW) {}
+            }
+          }
           return { sqlite, db };
         });
       });
     })
-    .then(async (opened) => {
-      const { sqlite, db } = opened;
-      // Applied once, here — the JSDoc and the README have always said "on
-      // open", while the code prepended them to every query (B4). A failure
-      // falls through to the .catch below, which unlocks and posts open-error.
-      //
-      // Defence in depth: renderPragmas throws for invalid names/values, which
-      // would reach the .catch and surface as an open-error. Through the public
-      // API this path is unreachable — the client calls renderPragmas
-      // synchronously at construction and rejects before spawning any worker.
-      // The worker validates again because it is also spawned on restart, where
-      // the client-side guard has already passed for the original configuration.
-      for (const statement of renderPragmas(pragmas)) {
-        for await (const stmt of sqlite.statements(db, statement)) {
-          // Some pragmas return a row (PRAGMA journal_mode=WAL returns "wal");
-          // stepping to completion is what actually applies them.
-          while ((await sqlite.step(stmt)) === SQLITE_ROW) {}
-        }
-      }
-      orchestrator.unlock();
-      // Transition: INITIALIZING → READY. Only on success — the previous
-      // `.finally()` posted `ready` even for a database that never opened.
+    .then((opened) => {
       orchestrator.setStatus(index, WorkerStatuses.READY);
       self.postMessage({ type: 'ready', callId: 0 });
       return opened;
     })
     .catch((error: unknown) => {
-      orchestrator.unlock();
       self.postMessage({
         type: 'open-error',
         callId: 0,

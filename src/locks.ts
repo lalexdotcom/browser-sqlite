@@ -43,6 +43,9 @@ export const stagingLockName = (file: string, table: string) =>
 
 export const sweepLockName = (file: string) => `bsq:sweep:${file}`;
 
+/** Serializes database opening across the pool — replaces the SAB init mutex. */
+export const initLockName = (file: string) => `bsq:init:${file}`;
+
 /**
  * Which staging tables no live `output()` is using — pure, so it is driven by
  * Node tests rather than by two browser tabs.
