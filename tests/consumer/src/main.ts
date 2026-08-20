@@ -9,12 +9,6 @@ declare global {
 }
 
 async function run(): Promise<string> {
-  if (!crossOriginIsolated) {
-    throw new Error(
-      'crossOriginIsolated is false — COOP/COEP headers are missing, SharedArrayBuffer is unavailable',
-    );
-  }
-
   const db = createSQLiteClient(`consumer-smoke-${crypto.randomUUID()}`);
 
   await db.write('CREATE TABLE smoke (id INTEGER PRIMARY KEY, label TEXT)');

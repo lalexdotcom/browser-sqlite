@@ -1,7 +1,7 @@
 /**
  * Pure restart policy for worker slots.
  *
- * Deliberately free of `Worker`, DOM and orchestrator imports so Node tests can
+ * Deliberately free of `Worker` and DOM imports so Node tests can
  * drive it in milliseconds — the same reason `scheduler.ts` is pure. B1 lived
  * for months because the only way to reach the pool's decisions was a browser.
  *

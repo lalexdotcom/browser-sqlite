@@ -47,7 +47,59 @@ branch**: `pnpm check` clean, `tsc --noEmit` clean, **272 tests / 0 failures**, 
 **11/11** across four bundler modes, six consecutive full browser suites with no failure, and no
 `it.fails` anywhere. See §4 for what shipped and what it cost.
 
-**Nothing is in flight. The next session starts on wave 4.**
+**Wave 4's first half is DONE on branch `feat/wave-4-backpressure`, not yet merged** (2026-08-20, branched
+from `main` at `c07c92f`, head `3c65624`, 24 commits). **BP-1 and D2 are closed** — see their entries in
+`mem:follow-ups`. 272 tests green, consumer smoke 11/11 with no COOP/COEP header served anywhere. The
+final whole-branch review returned no Critical or Important findings after one documentation fix wave.
+
+Its documents: design `docs/superpowers/specs/2026-08-19-wave-4-backpressure-design.md` (§3.6 and §6.2
+carry in-place corrections dated 2026-08-20 — execution proved both wrong), implementation plan
+`docs/superpowers/plans/2026-08-20-wave-4-backpressure.md` (8 tasks).
+
+**What wave 4 still owes: the commit-propagation barrier and D6.** Neither is designed. The barrier
+deserves its own brainstorming and unblocks RYOW-1, the writer designation's stickiness, and the two
+browser tests pinned to `poolSize: 1`. A lead recorded 2026-08-20 and not yet examined: `OPFSWriteAheadVFS`
+implements write-ahead logging inside the VFS, and a synchronous WAL-based VFS may have quite different
+cross-connection visibility from `OPFSPermutedVFS`, whose asynchronous commit propagation causes RYOW-1.
+Hypothesis to measure, not a finding.
+
+**Six defects the execution caught that the plan had not anticipated, all of one family — things that
+could not fail, or that failed silently:**
+1. Three tests asserted properties they could not detect. The gate's `stop()`-wakes-a-wait test passed
+   with `wake()` deleted; `first()`'s look-ahead test was racy in its pre-fix state; the filtering-scan
+   test passed for a reason unrelated to what it claimed.
+2. A silent truncation with **three** legs — `close()` broadcasting `stop`, the worker replying a plain
+   `done` after a stop it did not initiate, and `pool.ts` clearing `deferredChunk` on `error` so a
+   consumer suspended at `yield` resumed into a loop that had already exited.
+3. **Spec §3.6 was simply wrong**, and only implementation revealed it: the row-counter tick counted
+   *returned* rows, never fired for the filtering scan it was written for, and could not fire before the
+   per-chunk tick at default settings. The regression it targeted does not exist — a filtering scan is a
+   single long `sqlite3_step`, so the old shared-memory flag could not interrupt it either.
+
+**Standing lesson, paid for a second time: a claim of falsifiability that nobody executed is worth
+nothing.** Every load-bearing test in this wave had its falsifiability verified by hand — delete the
+line, watch it go red, restore it — and that practice is what caught §3.6.
+
+Its first act was **BP-1's four-combination measurement**, and that is now complete.
+
+**Where the session stopped (2026-08-19).** Four commits on the branch; the source tree is
+identical to `main`'s, so nothing is half-applied. `dc96f57` / `bbf31b9` are the first probe and
+its removal, `fae6423` / `d82c673` the second probe and its removal, plus a memory commit. The
+DRAFT design is `docs/superpowers/specs/2026-08-19-wave-4-backpressure-design.md` — **read it
+first when resuming; it carries both measurement tables, the approved mechanism, and the notes
+already gathered for the sections that were never presented.**
+
+Brainstorming reached **section 1 of 4, approved**. Sections 2 (scope per method, `first()`, the
+`SharedArrayBuffer` removal), 3 (failure modes) and 4 (testing) are outstanding and listed in the
+DRAFT's §6. After them: spec self-review, user review of the spec, then `writing-plans`. Nothing
+may be implemented before that — the DRAFT says so at the top.
+
+**The design changed once under measurement, and the corrected form is what §3 of the DRAFT
+holds.** The first proposal — "the worker awaits one credit message per chunk, so the await is
+both the accounting and the yield, no counter needed" — deadlocks, and the probe found it by
+hanging. Credits sent ahead are dispatched during the query's start-up awaits, each resolving a
+signal nobody awaits; the worker then waits on a fresh signal that never comes. **Accounting and
+yielding are two roles: a counter for the first, an unconditional task turn for the second.**
 
 Wave 3's own documents, both committed and still accurate except where this file records a
 correction: design `docs/superpowers/specs/2026-08-19-wave-3-sql-safety-design.md`, implementation
@@ -313,16 +365,16 @@ originally written assumed `navigator.locks` + a `postMessage`-driven boolean re
 returns to its event loop for the duration of a query, so **a `postMessage` sent during
 a query is never delivered**.
 
-> **UNMEASURED — probe this before wave 4 designs anything on it (2026-08-19, user
-> instruction).** The sentence above was reasoned, not observed, and it is certainly
-> true only of the **synchronous** builds (`OPFSCoopSyncVFS`, `AccessHandlePoolVFS`).
-> The default VFS `OPFSPermutedVFS` and `IDBBatchAtomicVFS` run on wa-sqlite's
-> **Asyncify** build, which unwinds the WASM stack around each asynchronous VFS call and
-> hands control back to the JS event loop while the I/O settles — so a message posted
-> mid-query is plausibly delivered between two page reads. If that is so, a liveness
-> probe exists today without BP-1, and this section's conclusion about the `ABORTING`
-> flag is wrong for the default VFS. The probe and its four combinations are specified
-> under BP-1 in `mem:follow-ups`. Do not build on §1.5 until it has been run. Shared memory is the only channel that reaches a worker in
+> **MEASURED 2026-08-19 — the sentence above is CONFIRMED, and this is now a settled result.**
+> It had been reasoned, never observed, and was doubtful for the **default** VFS
+> `OPFSPermutedVFS`, which runs wa-sqlite's **Asyncify** build and unwinds the WASM stack around
+> each asynchronous VFS call. The four-combination probe was run and found **zero** messages
+> handled during a query — on the Asyncify build as well as the synchronous one, and on an
+> I/O-bound query as well as a CPU-bound one. Every ping was handled immediately *after* the
+> query, so they queue rather than being lost, and a positive control confirms the channel works
+> when the worker is idle. Full table, method and consequences: BP-1 in `mem:follow-ups`. The
+> probe lives in git history only (`dc96f57`, reverted in `bbf31b9`) — do not re-run it.
+> **This section can now be built on.** Shared memory is the only channel that reaches a worker in
 that state — which is exactly why the SAB exists. The flag becomes replaceable only when
 the worker awaits a client message per chunk, i.e. the credit/ack scheme currently filed
 under wave 5 perf.
@@ -338,6 +390,10 @@ the first hard data behind §1.5's doubts.
 whether the Asyncify unwind hands control back to the JS event loop mid-statement. The stale-read
 race said nothing about that, because the read that saw stale data was a separate, later query.
 Run the four-combination probe as specified below. Wave 3 narrows the prior; it does not answer it.
+
+**Answered 2026-08-19 by the probe:** a message posted *during* a query is **not** delivered, on
+either build. Wave 3's prior pointed the wrong way; the deduction it doubted was right. See the
+blockquote above and BP-1 in `mem:follow-ups`.
 
 **Arbitrated 2026-08-18 (user): the credit/ack scheme moves into wave 4**, as `BP-1` in
 `mem:follow-ups`, so D2 completes in one go. The alternative — removing only the init

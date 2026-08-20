@@ -1,7 +1,7 @@
 /**
  * Pure worker scheduling: availability, wait queues, writer designation.
  *
- * This module is deliberately free of `Worker`, DOM and orchestrator imports so
+ * This module is deliberately free of `Worker` and DOM imports so
  * it can be exercised by fast Node tests. B1 survived for months because the
  * scheduler was only reachable through slow browser tests.
  */
@@ -46,8 +46,8 @@ export type Scheduler<W> = {
  * Creates a scheduler over workers identified by a numeric `index`.
  *
  * @param opts.onIdle - Called when a released worker returns to the available
- *   set with nothing queued behind it. The client wires the orchestrator's
- *   `READY` status here; the scheduler itself knows nothing about shared memory.
+ *   set with nothing queued behind it. The scheduler itself knows nothing about
+ *   worker state.
  */
 export const createScheduler = <W extends { index: number }>(
   opts: { onIdle?: (worker: W) => void } = {},

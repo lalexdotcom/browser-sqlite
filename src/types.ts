@@ -1,22 +1,3 @@
-export type SQLiteClientCallData =
-  | {
-      type: 'open';
-      file: string;
-      workerIndex: number;
-      url?: string;
-      flag: SharedArrayBuffer;
-    }
-  | {
-      type: 'sql';
-      sql: string;
-      params?: any[];
-      options?: { debug?: boolean; chunkSize?: number };
-    }
-  | { type: 'abort' };
-
-export type SQLiteCLientCallParams<K extends SQLiteClientCallData['type']> =
-  Omit<Extract<SQLiteClientCallData, { type: K }>, 'type'>;
-
 export type SQLiteWorkerMessageData<_T = unknown> = {
   callId: number;
   terminate?: boolean;
@@ -37,14 +18,16 @@ export const SharedArrayTypes = {
   OBJECT: 2,
 };
 
-type SQLOptions = { chunkSize?: number };
+type SQLOptions = {
+  chunkSize?: number;
+  /** Chunks the worker may send before waiting for a credit. Spec §3.2. */
+  credits?: number;
+};
 
 export type ClientMessageData =
   | {
       type: 'open';
       file: string;
-      flags: SharedArrayBuffer;
-      index: number;
       vfs?: SQLiteVFS;
       pragmas?: Record<string, string>;
     }
@@ -55,7 +38,9 @@ export type ClientMessageData =
       params: any[];
       options?: SQLOptions;
     }
-  | { type: 'close'; callId: number };
+  | { type: 'close'; callId: number }
+  | { type: 'credit'; callId: number; n: number }
+  | { type: 'stop'; callId: number };
 
 export type WorkerMessageData =
   | { type: 'ready'; callId: number }

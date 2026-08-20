@@ -38,15 +38,15 @@ export const chunk = async function* <
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  options?: { chunkSize?: number; signal?: AbortSignal },
+  options?: { chunkSize?: number; signal?: AbortSignal; credits?: number },
 ): AsyncGenerator<T[]> {
-  const { signal, chunkSize } = options ?? {};
+  const { signal, chunkSize, credits } = options ?? {};
 
   // B9: addEventListener never fires for a signal that is already aborted.
   if (signal?.aborted) throw signal.reason;
 
   const { aborted, teardown } = makeAbortRace(signal);
-  const iterator = worker.query<T>(sql, params, { chunkSize });
+  const iterator = worker.query<T>(sql, params, { chunkSize, credits });
   try {
     while (true) {
       // Racing the pending chunk, not testing a flag after it: an ORDER BY
@@ -116,6 +116,10 @@ export const firstWorker = async <
   for await (const rows of chunk<T>(worker, sql, params, {
     ...options,
     chunkSize: 1,
+    // Spec §4.1: with the default window of 2 the worker would produce a
+    // second row before parking. One credit is the exact one-row bound the
+    // JSDoc has always promised.
+    credits: 1,
   })) {
     return rows[0];
   }

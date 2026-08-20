@@ -5,13 +5,20 @@
  * - `open` — loads the wa-sqlite WASM module, opens the database, and transitions to READY
  * - `query` — executes a SQL statement and streams results back as chunks
  *
- * State transitions driven by this module:
- *   NEW → INITIALIZING (lock acquired) → INITIALIZED → READY → RUNNING → DONE
- *   RUNNING → ABORTING (set by client via AbortSignal) → DONE
+ * Lifecycle labels (`NEW`, `READY`, `RUNNING`, `ABORTING`, `CLOSED`, `DEAD`) are
+ * maintained by `src/pool.ts`, not by this module. From this worker's perspective:
+ * the database open is serialised by `navigator.locks` (`initLockName(file)`);
+ * readiness is reported via the `ready` message; an abort arrives as a `stop`
+ * message and is observed through the credit gate's stopped flag.
  */
 import * as SQLite from 'wa-sqlite/src/sqlite-api.js';
 import { SQLITE_ROW } from 'wa-sqlite/src/sqlite-constants.js';
-import { WorkerOrchestrator, WorkerStatuses } from '../orchestrator';
+import {
+  createCreditGate,
+  createMessageChannelTick,
+  DEFAULT_CREDIT_WINDOW,
+} from '../credits';
+import { createLocks, initLockName } from '../locks';
 import type { ClientMessageData, SQLiteVFS, WorkerMessageData } from '../types';
 import { renderPragmas } from '../utils';
 
@@ -71,8 +78,14 @@ const VFSConfigs = {
   { name?: string; fs: () => Promise<any>; module: () => Promise<any> }
 >;
 
-let orchestrator: WorkerOrchestrator;
 let openedDB: Promise<{ sqlite: any; db: any }> | undefined;
+const gate = createCreditGate(createMessageChannelTick());
+const locks = createLocks();
+
+/** Resolved while no query is running; `close` waits on it before closing. */
+let queryRunning: PromiseWithResolvers<void> | undefined;
+const idleUntilQueryEnds = () => queryRunning?.promise ?? Promise.resolve();
+let closing = false;
 
 type OpenOptions = {
   vfs?: SQLiteVFS;
@@ -81,30 +94,22 @@ type OpenOptions = {
 
 /**
  * Called once per worker thread when the client sends the `open` message.
- * Loads the wa-sqlite WASM module and VFS, acquires the orchestrator initialization
- * lock to prevent parallel DB opens across the pool, opens the SQLite database,
- * then transitions this worker to READY and replaces the top-level message handler
+ * Loads the wa-sqlite WASM module and VFS, acquires the initialization lock to
+ * prevent parallel DB opens across the pool, opens the SQLite database, then
+ * transitions this worker to READY and replaces the top-level message handler
  * with the query handler.
  *
- * State transition: NEW → INITIALIZING (lock acquired) → INITIALIZED → READY
+ * Database open is serialised by a `navigator.locks` lock on `initLockName(file)`.
+ * On success, posts a `ready` message; `src/pool.ts` then transitions the worker
+ * label from `NEW` to `READY`.
  *
  * @param file - Database file name passed from `createSQLiteClient`.
- * @param flags - SharedArrayBuffer from the orchestrator, used to construct
- *   a worker-side `WorkerOrchestrator` view for status and lock operations.
- * @param index - This worker's index in the pool (0-based).
  * @param options - VFS selection and PRAGMA map.
  */
-const open = (
-  file: string,
-  flags: SharedArrayBuffer,
-  index: number,
-  options?: OpenOptions,
-) => {
+const open = (file: string, options?: OpenOptions) => {
   if (openedDB) {
     throw new Error('DB already opened');
   }
-
-  orchestrator = new WorkerOrchestrator(flags);
 
   const { vfs = 'OPFSCoopSyncVFS', pragmas = {} } = options ?? {};
 
@@ -126,41 +131,24 @@ const open = (
         vfsModule.create(vfs, module, { lockPolicy: 'shared' }) as Promise<any>
       ).then((vfsInstance: any) => {
         sqlite.vfs_register(vfsInstance, true);
-
-        orchestrator.lock();
-        return sqlite.open_v2(file).then((db: any) => {
+        // One lock for open + pragmas. withLock releases on throw too, which
+        // is what the explicit unlock() in the old .catch existed to do.
+        return locks.withLock(initLockName(file), async () => {
+          const db = await sqlite.open_v2(file);
+          for (const statement of renderPragmas(pragmas)) {
+            for await (const stmt of sqlite.statements(db, statement)) {
+              while ((await sqlite.step(stmt)) === SQLITE_ROW) {}
+            }
+          }
           return { sqlite, db };
         });
       });
     })
-    .then(async (opened) => {
-      const { sqlite, db } = opened;
-      // Applied once, here — the JSDoc and the README have always said "on
-      // open", while the code prepended them to every query (B4). A failure
-      // falls through to the .catch below, which unlocks and posts open-error.
-      //
-      // Defence in depth: renderPragmas throws for invalid names/values, which
-      // would reach the .catch and surface as an open-error. Through the public
-      // API this path is unreachable — the client calls renderPragmas
-      // synchronously at construction and rejects before spawning any worker.
-      // The worker validates again because it is also spawned on restart, where
-      // the client-side guard has already passed for the original configuration.
-      for (const statement of renderPragmas(pragmas)) {
-        for await (const stmt of sqlite.statements(db, statement)) {
-          // Some pragmas return a row (PRAGMA journal_mode=WAL returns "wal");
-          // stepping to completion is what actually applies them.
-          while ((await sqlite.step(stmt)) === SQLITE_ROW) {}
-        }
-      }
-      orchestrator.unlock();
-      // Transition: INITIALIZING → READY. Only on success — the previous
-      // `.finally()` posted `ready` even for a database that never opened.
-      orchestrator.setStatus(index, WorkerStatuses.READY);
+    .then((opened) => {
       self.postMessage({ type: 'ready', callId: 0 });
       return opened;
     })
     .catch((error: unknown) => {
-      orchestrator.unlock();
       self.postMessage({
         type: 'open-error',
         callId: 0,
@@ -211,13 +199,10 @@ const open = (
       const cols = sqlite.column_names(stmt) as string[];
 
       while (true) {
-        // Abort check: if client set status to ABORTING (via AbortSignal),
-        // stop processing rows and exit. The generator yields sqlite.changes()
-        // after the loop, then the handler posts 'done' to the client.
-        if (orchestrator.getStatus(index) === WorkerStatuses.ABORTING) break;
+        if (gate.isStopped()) break;
 
         const result = await sqlite.step(stmt);
-        if (orchestrator.getStatus(index) === WorkerStatuses.ABORTING) break;
+        if (gate.isStopped()) break;
 
         if (result === SQLITE_ROW) {
           const row = sqlite.row(stmt);
@@ -246,22 +231,30 @@ const open = (
       case 'query': {
         const { callId, sql, params, options } = data;
         try {
-          // Transition: READY → RUNNING
-          // Signals to the client that this worker is busy. The client may set
-          // status to ABORTING via AbortSignal while the worker is RUNNING.
-          orchestrator.setStatus(index, WorkerStatuses.RUNNING);
+          // Reset the credit gate for this call. pool.ts sets the worker's
+          // status to RUNNING after posting the query.
+          gate.reset(callId, options?.credits ?? DEFAULT_CREDIT_WINDOW);
+          queryRunning = Promise.withResolvers<void>();
           let affected = 0;
 
           for await (const chunk of query(sql, params, options)) {
             if (typeof chunk === 'number') {
               affected = chunk;
               break;
-            } else {
-              reply({ type: 'chunk', callId, data: chunk });
             }
+            if ((await gate.take(callId)) === 'stopped') break;
+            reply({ type: 'chunk', callId, data: chunk });
           }
 
-          reply({ type: 'done', callId, affected });
+          if (closing) {
+            reply({
+              type: 'error',
+              callId,
+              message: 'The SQLite client has been closed.',
+            });
+          } else {
+            reply({ type: 'done', callId, affected });
+          }
         } catch (e) {
           reply({
             type: 'error',
@@ -273,14 +266,19 @@ const open = (
               : { message: `Unknown error (${e})` }),
           });
         } finally {
-          // Transition: RUNNING | ABORTING → DONE
-          // Unconditional — ensures the worker status is always reset even on error or abort.
-          // The client's releaseWorker() observes DONE and routes the worker back to the pool.
-          orchestrator.setStatus(index, WorkerStatuses.DONE);
+          queryRunning?.resolve();
+          queryRunning = undefined;
         }
         break;
       }
       case 'close': {
+        // Spec §5.3: with the tick, `close` is deliverable mid-query for the
+        // first time. Closing a database under a live statement returns
+        // SQLITE_BUSY, which the catch below would swallow while the row loop
+        // kept running. Stop first, let the query unwind, then close.
+        closing = true;
+        gate.stop();
+        await idleUntilQueryEnds();
         try {
           const { sqlite, db } = await openedDB!;
           await sqlite.close(db);
@@ -294,6 +292,14 @@ const open = (
       case 'open': {
         // A second open is a protocol error; open() already guards against this.
         throw new Error('DB already opened');
+      }
+      case 'credit': {
+        gate.grant(data.callId, data.n);
+        break;
+      }
+      case 'stop': {
+        gate.stop();
+        break;
       }
       default: {
         const _unexpected: never = data;
@@ -312,8 +318,8 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
   const { data } = event;
   switch (data.type) {
     case 'open': {
-      const { file, flags, index, vfs, pragmas } = data;
-      open(file, flags, index, { vfs, pragmas });
+      const { file, vfs, pragmas } = data;
+      open(file, { vfs, pragmas });
       break;
     }
     case 'query': {
@@ -324,6 +330,11 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
     case 'close': {
       // close arrived before open completed — no database to close; reply immediately.
       self.postMessage({ type: 'closed', callId: 0 });
+      break;
+    }
+    // No query can be running before open.
+    case 'credit':
+    case 'stop': {
       break;
     }
     default: {

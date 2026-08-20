@@ -1,18 +1,7 @@
 import { cp } from 'node:fs/promises';
 import { defineConfig } from 'vite';
 
-// browser-sqlite needs SharedArrayBuffer, which requires cross-origin
-// isolation. A consuming app must serve these headers; the fixture does the
-// same so the smoke test fails on packaging problems, not on a missing header.
-const crossOriginIsolation = {
-  'Cross-Origin-Opener-Policy': 'same-origin',
-  'Cross-Origin-Embedder-Policy': 'require-corp',
-};
-
 export default defineConfig({
-  server: { headers: crossOriginIsolation },
-  preview: { headers: crossOriginIsolation },
-
   // Vite pre-bundles dependencies with esbuild in dev, which rewrites
   // `import.meta.url` to the pre-bundled copy under node_modules/.vite/deps/.
   // browser-sqlite locates its worker relative to its own module URL, so the

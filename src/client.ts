@@ -3,7 +3,6 @@ import { type ClientDebugState, createClientDebug } from './debug';
 import { SQLiteError } from './errors';
 import { createLocks } from './locks';
 import { createLogger } from './logger';
-import { WorkerOrchestrator, WorkerStatuses } from './orchestrator';
 import { createPoolWorker, type PoolWorker } from './pool';
 import {
   chunk as chunkWorker,
@@ -310,15 +309,10 @@ const DEFAULT_VFS = 'OPFSPermutedVFS';
  * a wa-sqlite instance in a dedicated thread.
  *
  * @remarks
- * **Browser requirements (COOP/COEP):** This function constructs a
- * `SharedArrayBuffer` for cross-thread worker synchronization. Browsers
- * require the page to be served with the following HTTP headers:
- * ```
- * Cross-Origin-Opener-Policy: same-origin
- * Cross-Origin-Embedder-Policy: require-corp
- * ```
- * Without these headers, `new SharedArrayBuffer()` throws a `SecurityError`
- * and the pool will never initialize.
+ * **Browser requirements:** This client uses OPFS through Web Workers; no
+ * special HTTP headers are required and cross-origin isolation is not needed.
+ * `OPFSAdaptiveVFS` additionally requires JSPI, a Chromium-only browser
+ * feature, which is an unrelated constraint.
  *
  * **Worker pool side effect:** Calling this function immediately spawns
  * `poolSize` Web Worker threads and begins asynchronous database
@@ -362,9 +356,6 @@ export const createSQLiteClient = (
   const poolSize = clientOptions?.poolSize ?? DEFAULT_POOL_SIZE;
   const pool: (PoolWorker | undefined)[] = [];
 
-  // Orchestrator manages worker synchronization and status tracking
-  const orchestrator = new WorkerOrchestrator(poolSize);
-
   const vfs = clientOptions?.vfs ?? DEFAULT_VFS;
 
   if (vfs === 'AccessHandlePoolVFS' && poolSize > 1) {
@@ -380,10 +371,7 @@ export const createSQLiteClient = (
    * Creates a new pool worker and adds it to the pool.
    * Sets up message routing via callId for query responses.
    */
-  const scheduler = createScheduler<PoolWorker>({
-    onIdle: (worker) =>
-      orchestrator.setStatus(worker.index, WorkerStatuses.READY),
-  });
+  const scheduler = createScheduler<PoolWorker>();
 
   const debugOption = clientOptions?.debug;
 
@@ -395,7 +383,7 @@ export const createSQLiteClient = (
   const clientDebug = debugOption
     ? createClientDebug(
         file,
-        orchestrator,
+        pool,
         {
           vfs,
           pragmas: clientOptions?.pragmas ?? {},
@@ -664,7 +652,6 @@ export const createSQLiteClient = (
 
     void createPoolWorker({
       index,
-      orchestrator,
       pool,
       clientPrefix,
       file,

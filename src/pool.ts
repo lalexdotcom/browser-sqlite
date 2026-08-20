@@ -1,6 +1,6 @@
+import { DEFAULT_CREDIT_WINDOW } from './credits';
 import { SQLiteError } from './errors';
 import type { Logger } from './logger';
-import { type WorkerOrchestrator, WorkerStatuses } from './orchestrator';
 import type { SQLiteVFS, WorkerMessageData } from './types';
 
 /**
@@ -9,6 +9,7 @@ import type { SQLiteVFS, WorkerMessageData } from './types';
 export type PoolWorkerQueryOptions = {
   id?: string;
   chunkSize?: number;
+  credits?: number;
   debug?: string;
 };
 
@@ -21,6 +22,8 @@ export type PoolWorkerQueryOptions = {
  */
 export type PoolWorker = Worker & {
   index: number;
+  /** Lifecycle label for the debug surface. Replaces the SAB status byte. */
+  status: string;
   query: <T extends Record<string, unknown> = Record<string, unknown>>(
     sql: string,
     params?: unknown[],
@@ -51,7 +54,6 @@ const STOP = Symbol('stop');
  */
 export const createPoolWorker = (deps: {
   index: number;
-  orchestrator: WorkerOrchestrator;
   pool: (PoolWorker | undefined)[];
   clientPrefix: string;
   file: string;
@@ -68,7 +70,7 @@ export const createPoolWorker = (deps: {
   ) => any;
   logger: Logger;
 }): Promise<PoolWorker> => {
-  const { index, orchestrator, pool, clientPrefix, file, vfs, pragmas } = deps;
+  const { index, pool, clientPrefix, file, vfs, pragmas } = deps;
   const { createWorkerDebugState, createQueryDebugState, logger } = deps;
 
   const deferredInit = Promise.withResolvers<PoolWorker>();
@@ -82,7 +84,7 @@ export const createPoolWorker = (deps: {
       ),
       { name: workerName, type: 'module' },
     ) as PoolWorker,
-    { index },
+    { index, status: 'NEW' },
   );
   pool[index] = worker;
   logger.info(`worker ${index + 1} created`);
@@ -119,6 +121,7 @@ export const createPoolWorker = (deps: {
   const die = (error: SQLiteError) => {
     if (dead) return;
     dead = true;
+    worker.status = 'DEAD';
     deathDeferred.reject(error);
     deferredInit.reject(error); // no-op once resolved
     deps.onDeath?.(index, error);
@@ -164,6 +167,7 @@ export const createPoolWorker = (deps: {
       case 'ready': {
         if (callId === 0) {
           ready = true;
+          worker.status = 'READY';
           if (state) state.initializationTime = Date.now();
           logger.info(`worker ${index + 1} ready`);
           deferredInit.resolve(worker);
@@ -184,6 +188,7 @@ export const createPoolWorker = (deps: {
       case 'closed': {
         if (callId === 0) {
           logger.info(`worker ${index + 1} closed`);
+          worker.status = 'CLOSED';
           deferredClose?.resolve();
         }
         break;
@@ -220,7 +225,18 @@ export const createPoolWorker = (deps: {
             state.currentRequest.currentQuery.endTime = Date.now();
           }
           deferredChunk.reject(error);
-          deferredChunk = undefined;
+          // Do NOT null deferredChunk here. If the generator is suspended at
+          // `yield` when the error arrives, nulling it would cause the while
+          // loop to exit normally (silent truncation). Leaving the rejected
+          // promise in place ensures the generator throws on its next
+          // `await Promise.race([deferredChunk.promise, ...])` call, which
+          // propagates the error to the consumer. The generator's `finally`
+          // clears deferredChunk unconditionally.
+          // Attach a no-op handler to suppress unhandled-rejection warnings:
+          // the consumer may be suspended (e.g. in sleep()) when the error
+          // arrives, and `await Promise.race` only attaches its handler on
+          // the next generator resume, which may be a macrotask away.
+          deferredChunk.promise.catch(() => {});
         }
         break;
       }
@@ -256,7 +272,8 @@ export const createPoolWorker = (deps: {
       }
 
       // Extract query options
-      const { chunkSize = 500 } = options ?? {};
+      const { chunkSize = 500, credits = DEFAULT_CREDIT_WINDOW } =
+        options ?? {};
 
       // Prepare for streaming chunks
       deferredChunk = Promise.withResolvers<unknown[] | number>();
@@ -271,8 +288,9 @@ export const createPoolWorker = (deps: {
         callId: ++currentCallId,
         sql,
         params,
-        options: { chunkSize },
+        options: { chunkSize, credits },
       });
+      worker.status = 'RUNNING';
 
       // Stream chunks until query completes
       while (deferredChunk) {
@@ -284,6 +302,13 @@ export const createPoolWorker = (deps: {
         ]);
         if (chunk === STOP) break;
         yield chunk as T[] | number;
+        // Spec §3.3: the credit is issued once the CONSUMER has taken the
+        // chunk. Crediting on arrival would let the worker run at full speed
+        // and pile the chunks up in the message queue, which is the guarantee
+        // this whole mechanism exists to make true.
+        if (typeof chunk !== 'number') {
+          worker.postMessage({ type: 'credit', callId: currentCallId, n: 1 });
+        }
       }
     } finally {
       // If the consumer left early (break / return / throw) the worker is still
@@ -292,11 +317,11 @@ export const createPoolWorker = (deps: {
       // Without this wait, the second half of B1 stands: a released worker still
       // inside sqlite.step().
       if (deferredChunk && !dead) {
-        orchestrator.setStatus(
-          index,
-          WorkerStatuses.ABORTING,
-          WorkerStatuses.RUNNING,
-        );
+        worker.status = 'ABORTING';
+        // Spec §5.1: the worker may be parked waiting for a credit that this
+        // unwinding client will never send. The flag above cannot reach it
+        // there — only a message can.
+        worker.postMessage({ type: 'stop', callId: currentCallId });
         let timer: ReturnType<typeof setTimeout> | undefined;
         const expiry = new Promise<never>((_, reject) => {
           timer = setTimeout(
@@ -328,6 +353,7 @@ export const createPoolWorker = (deps: {
       deferredChunk = undefined;
       lost = undefined;
       stopRequested = undefined;
+      worker.status = dead ? 'DEAD' : 'READY';
       idle?.resolve();
       idle = undefined;
     }
@@ -359,8 +385,6 @@ export const createPoolWorker = (deps: {
     callId: 0,
     type: 'open',
     file,
-    flags: orchestrator.sharedArrayBuffer,
-    index,
     vfs,
     pragmas,
   });

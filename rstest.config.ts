@@ -1,11 +1,12 @@
 import { withRslibConfig } from '@rstest/adapter-rslib';
 import { defineConfig } from '@rstest/core';
 
-// Injects COOP/COEP headers into the rstest browser dev server so that
-// SharedArrayBuffer is available (cross-origin isolation requirement).
-// D-04: headers required for WorkerOrchestrator SharedArrayBuffer construction.
-const pluginCrossOriginIsolation = {
-  name: 'rsbuild:cross-origin-isolation',
+// Suppresses "window is not defined" noise from rsbuild's HMR client running
+// inside Web Worker bundles. The HMR client calls window.location.reload()
+// without a typeof-window guard. Test failures are still reported through
+// rstest's own reporting mechanism.
+const pluginSilenceWorkerHmrLogs = {
+  name: 'rsbuild:silence-worker-hmr-logs',
   setup(api: {
     modifyRsbuildConfig: (
       fn: (
@@ -30,12 +31,6 @@ const pluginCrossOriginIsolation = {
         },
       ) =>
         mergeRsbuildConfig(config, {
-          server: {
-            headers: {
-              'Cross-Origin-Opener-Policy': 'same-origin',
-              'Cross-Origin-Embedder-Policy': 'require-corp',
-            },
-          },
           dev: {
             // Disable browser error forwarding to suppress "window is not
             // defined" noise from rsbuild's HMR client running inside Web
@@ -69,7 +64,7 @@ export default defineConfig({
         browser: 'chromium',
         headless: true,
       },
-      plugins: [pluginCrossOriginIsolation],
+      plugins: [pluginSilenceWorkerHmrLogs],
       include: ['tests/browser/**/*.test.ts'],
       exclude: ['**/worktrees/**'],
       testTimeout: 30000,
