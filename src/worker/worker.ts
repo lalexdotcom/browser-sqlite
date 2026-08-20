@@ -153,7 +153,6 @@ const open = (
       });
     })
     .then((opened) => {
-      orchestrator.setStatus(index, WorkerStatuses.READY);
       self.postMessage({ type: 'ready', callId: 0 });
       return opened;
     })
@@ -248,9 +247,6 @@ const open = (
         const { callId, sql, params, options } = data;
         try {
           // Transition: READY → RUNNING
-          // Signals to the client that this worker is busy. The client may set
-          // status to ABORTING via AbortSignal while the worker is RUNNING.
-          orchestrator.setStatus(index, WorkerStatuses.RUNNING);
           gate.reset(callId, options?.credits ?? DEFAULT_CREDIT_WINDOW);
           queryRunning = Promise.withResolvers<void>();
           let affected = 0;
@@ -284,10 +280,6 @@ const open = (
               : { message: `Unknown error (${e})` }),
           });
         } finally {
-          // Transition: RUNNING | ABORTING → DONE
-          // Unconditional — ensures the worker status is always reset even on error or abort.
-          // The client's releaseWorker() observes DONE and routes the worker back to the pool.
-          orchestrator.setStatus(index, WorkerStatuses.DONE);
           queryRunning?.resolve();
           queryRunning = undefined;
         }

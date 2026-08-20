@@ -23,6 +23,8 @@ export type PoolWorkerQueryOptions = {
  */
 export type PoolWorker = Worker & {
   index: number;
+  /** Lifecycle label for the debug surface. Replaces the SAB status byte. */
+  status: string;
   query: <T extends Record<string, unknown> = Record<string, unknown>>(
     sql: string,
     params?: unknown[],
@@ -84,7 +86,7 @@ export const createPoolWorker = (deps: {
       ),
       { name: workerName, type: 'module' },
     ) as PoolWorker,
-    { index },
+    { index, status: 'NEW' },
   );
   pool[index] = worker;
   logger.info(`worker ${index + 1} created`);
@@ -121,6 +123,7 @@ export const createPoolWorker = (deps: {
   const die = (error: SQLiteError) => {
     if (dead) return;
     dead = true;
+    worker.status = 'DEAD';
     deathDeferred.reject(error);
     deferredInit.reject(error); // no-op once resolved
     deps.onDeath?.(index, error);
@@ -166,6 +169,7 @@ export const createPoolWorker = (deps: {
       case 'ready': {
         if (callId === 0) {
           ready = true;
+          worker.status = 'READY';
           if (state) state.initializationTime = Date.now();
           logger.info(`worker ${index + 1} ready`);
           deferredInit.resolve(worker);
@@ -186,6 +190,7 @@ export const createPoolWorker = (deps: {
       case 'closed': {
         if (callId === 0) {
           logger.info(`worker ${index + 1} closed`);
+          worker.status = 'CLOSED';
           deferredClose?.resolve();
         }
         break;
@@ -287,6 +292,7 @@ export const createPoolWorker = (deps: {
         params,
         options: { chunkSize, credits },
       });
+      worker.status = 'RUNNING';
 
       // Stream chunks until query completes
       while (deferredChunk) {
@@ -318,6 +324,7 @@ export const createPoolWorker = (deps: {
           WorkerStatuses.ABORTING,
           WorkerStatuses.RUNNING,
         );
+        worker.status = 'ABORTING';
         // Spec §5.1: the worker may be parked waiting for a credit that this
         // unwinding client will never send. The flag above cannot reach it
         // there — only a message can.
@@ -353,6 +360,7 @@ export const createPoolWorker = (deps: {
       deferredChunk = undefined;
       lost = undefined;
       stopRequested = undefined;
+      worker.status = dead ? 'DEAD' : 'READY';
       idle?.resolve();
       idle = undefined;
     }

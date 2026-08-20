@@ -92,11 +92,10 @@ describe('debugSQLQuery', () => {
 });
 
 describe('debug history bounds (D5)', () => {
-  const stubOrchestrator = { getStatus: () => 0 } as any;
   const options = { vfs: 'OPFSCoopSyncVFS', pragmas: {}, name: 'test' } as any;
 
   it('bounds the per-worker request history', () => {
-    const debug = createClientDebug('f.db', stubOrchestrator, options, () => ({
+    const debug = createClientDebug('f.db', [], options, () => ({
       read: 0,
       write: 0,
     }));
@@ -110,7 +109,7 @@ describe('debug history bounds (D5)', () => {
   });
 
   it('bounds the per-request query history at exactly the maximum', () => {
-    const debug = createClientDebug('f.db', stubOrchestrator, options, () => ({
+    const debug = createClientDebug('f.db', [], options, () => ({
       read: 0,
       write: 0,
     }));
@@ -127,12 +126,7 @@ describe('debug history bounds (D5)', () => {
 
   it('exposes queue depths from the scheduler, never a stale copy', () => {
     let depth = { read: 1, write: 2 };
-    const debug = createClientDebug(
-      'f.db',
-      stubOrchestrator,
-      options,
-      () => depth,
-    );
+    const debug = createClientDebug('f.db', [], options, () => depth);
 
     expect(debug.state.queue.read).toBe(1);
     depth = { read: 7, write: 9 };
@@ -140,19 +134,18 @@ describe('debug history bounds (D5)', () => {
     expect(debug.state.queue.write).toBe(9);
   });
 
-  it('reflects the live orchestrator status, not a construction-time snapshot', () => {
-    // Start with INITIALIZED (0), then change to READY (10) after construction.
-    // The Proxy getter re-reads getStatus on every access; without it the status
-    // would stay frozen at 'INITIALIZED' and the assertion below would fail.
-    let currentStatus = 0;
-    const liveOrchestrator = { getStatus: () => currentStatus } as any;
-    const debug = createClientDebug('f.db', liveOrchestrator, options, () => ({
+  it('reflects the live pool status, not a construction-time snapshot', () => {
+    // The Proxy getter re-reads pool[index]?.status on every access; without it
+    // the status would stay frozen at 'NEW' and the assertion below would fail.
+    const fakeWorker = { status: 'NEW' } as any;
+    const pool: any[] = [fakeWorker];
+    const debug = createClientDebug('f.db', pool, options, () => ({
       read: 0,
       write: 0,
     }));
     const state = debug.createWorkerDebugState(0, 'w0');
 
-    currentStatus = 10; // READY
+    fakeWorker.status = 'READY';
     expect(state.status).toBe('READY');
   });
 });

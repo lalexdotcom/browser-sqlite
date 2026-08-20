@@ -1,5 +1,5 @@
 import type { CreateSQLiteClientOptions } from './client';
-import { type WorkerOrchestrator, WorkerStatuses } from './orchestrator';
+import type { PoolWorker } from './pool';
 import type { SQLiteVFS } from './types';
 
 export const debugSQLQuery = (sql: string, params?: any[]) => {
@@ -86,13 +86,6 @@ export const debugSQLQuery = (sql: string, params?: any[]) => {
   }
 };
 
-export const statusToLabel = (status: number) => {
-  return (
-    Object.entries(WorkerStatuses).find(([, v]) => v === status)?.[0] ??
-    '<unknown>'
-  );
-};
-
 type QueryDebugState = {
   sql: string;
   params?: any[];
@@ -139,7 +132,7 @@ const MAX_REQUEST_HISTORY_LENGTH = 50;
 
 export const createClientDebug = (
   file: string,
-  orchestrator: WorkerOrchestrator,
+  pool: (PoolWorker | undefined)[],
   clientOptions: Required<
     Pick<CreateSQLiteClientOptions, 'vfs' | 'pragmas' | 'name'>
   >,
@@ -173,13 +166,13 @@ export const createClientDebug = (
         index,
         name,
         requests: [],
-        status: statusToLabel(orchestrator.getStatus(index)),
+        status: pool[index]?.status ?? 'EMPTY',
         creationTime: Date.now(),
       },
       {
         get: (target, prop) => {
           if (prop === 'status') {
-            return statusToLabel(orchestrator.getStatus(index));
+            return pool[index]?.status ?? 'EMPTY';
           }
           return target[prop as keyof typeof target];
         },

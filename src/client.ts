@@ -3,7 +3,7 @@ import { type ClientDebugState, createClientDebug } from './debug';
 import { SQLiteError } from './errors';
 import { createLocks } from './locks';
 import { createLogger } from './logger';
-import { WorkerOrchestrator, WorkerStatuses } from './orchestrator';
+import { WorkerOrchestrator } from './orchestrator';
 import { createPoolWorker, type PoolWorker } from './pool';
 import {
   chunk as chunkWorker,
@@ -380,10 +380,7 @@ export const createSQLiteClient = (
    * Creates a new pool worker and adds it to the pool.
    * Sets up message routing via callId for query responses.
    */
-  const scheduler = createScheduler<PoolWorker>({
-    onIdle: (worker) =>
-      orchestrator.setStatus(worker.index, WorkerStatuses.READY),
-  });
+  const scheduler = createScheduler<PoolWorker>();
 
   const debugOption = clientOptions?.debug;
 
@@ -395,7 +392,7 @@ export const createSQLiteClient = (
   const clientDebug = debugOption
     ? createClientDebug(
         file,
-        orchestrator,
+        pool,
         {
           vfs,
           pragmas: clientOptions?.pragmas ?? {},
