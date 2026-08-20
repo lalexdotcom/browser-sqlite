@@ -222,7 +222,18 @@ export const createPoolWorker = (deps: {
             state.currentRequest.currentQuery.endTime = Date.now();
           }
           deferredChunk.reject(error);
-          deferredChunk = undefined;
+          // Do NOT null deferredChunk here. If the generator is suspended at
+          // `yield` when the error arrives, nulling it would cause the while
+          // loop to exit normally (silent truncation). Leaving the rejected
+          // promise in place ensures the generator throws on its next
+          // `await Promise.race([deferredChunk.promise, ...])` call, which
+          // propagates the error to the consumer. The generator's `finally`
+          // clears deferredChunk unconditionally.
+          // Attach a no-op handler to suppress unhandled-rejection warnings:
+          // the consumer may be suspended (e.g. in sleep()) when the error
+          // arrives, and `await Promise.race` only attaches its handler on
+          // the next generator resume, which may be a macrotask away.
+          deferredChunk.promise.catch(() => {});
         }
         break;
       }

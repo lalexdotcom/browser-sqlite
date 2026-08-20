@@ -83,6 +83,7 @@ const gate = createCreditGate(createMessageChannelTick());
 /** Resolved while no query is running; `close` waits on it before closing. */
 let queryRunning: PromiseWithResolvers<void> | undefined;
 const idleUntilQueryEnds = () => queryRunning?.promise ?? Promise.resolve();
+let closing = false;
 
 type OpenOptions = {
   vfs?: SQLiteVFS;
@@ -277,7 +278,15 @@ const open = (
             reply({ type: 'chunk', callId, data: chunk });
           }
 
-          reply({ type: 'done', callId, affected });
+          if (closing) {
+            reply({
+              type: 'error',
+              callId,
+              message: 'The SQLite client has been closed.',
+            });
+          } else {
+            reply({ type: 'done', callId, affected });
+          }
         } catch (e) {
           reply({
             type: 'error',
@@ -303,6 +312,7 @@ const open = (
         // first time. Closing a database under a live statement returns
         // SQLITE_BUSY, which the catch below would swallow while the row loop
         // kept running. Stop first, let the query unwind, then close.
+        closing = true;
         gate.stop();
         await idleUntilQueryEnds();
         try {
