@@ -73,9 +73,6 @@ const VFSConfigs = {
 
 let orchestrator: WorkerOrchestrator;
 let openedDB: Promise<{ sqlite: any; db: any }> | undefined;
-// PROBE SCAFFOLDING (wave 4, BP-1) — true while the query handler is running,
-// so a `pong` can report whether it was handled mid-query.
-let probeInQuery = false;
 
 type OpenOptions = {
   vfs?: SQLiteVFS;
@@ -246,23 +243,9 @@ const open = (
   self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
     const { data } = event;
     switch (data.type) {
-      // PROBE SCAFFOLDING (wave 4, BP-1) — remove or promote after the
-      // measurement. Replies immediately, reporting whether a query was in
-      // flight when the handler actually ran.
-      case 'ping': {
-        reply({
-          type: 'pong',
-          callId: data.callId,
-          postedAt: data.postedAt,
-          handledAt: performance.now(),
-          inQuery: probeInQuery,
-        });
-        break;
-      }
       case 'query': {
         const { callId, sql, params, options } = data;
         try {
-          probeInQuery = true; // PROBE SCAFFOLDING (wave 4, BP-1)
           // Transition: READY → RUNNING
           // Signals to the client that this worker is busy. The client may set
           // status to ABORTING via AbortSignal while the worker is RUNNING.
@@ -294,7 +277,6 @@ const open = (
           // Unconditional — ensures the worker status is always reset even on error or abort.
           // The client's releaseWorker() observes DONE and routes the worker back to the pool.
           orchestrator.setStatus(index, WorkerStatuses.DONE);
-          probeInQuery = false; // PROBE SCAFFOLDING (wave 4, BP-1)
         }
         break;
       }
@@ -342,17 +324,6 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
     case 'close': {
       // close arrived before open completed — no database to close; reply immediately.
       self.postMessage({ type: 'closed', callId: 0 });
-      break;
-    }
-    // PROBE SCAFFOLDING (wave 4, BP-1) — a ping before open is never in a query.
-    case 'ping': {
-      self.postMessage({
-        type: 'pong',
-        callId: data.callId,
-        postedAt: data.postedAt,
-        handledAt: performance.now(),
-        inQuery: false,
-      });
       break;
     }
     default: {
