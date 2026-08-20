@@ -47,11 +47,38 @@ branch**: `pnpm check` clean, `tsc --noEmit` clean, **272 tests / 0 failures**, 
 **11/11** across four bundler modes, six consecutive full browser suites with no failure, and no
 `it.fails` anywhere. See §4 for what shipped and what it cost.
 
-**Wave 4 is IN FLIGHT** on branch `feat/wave-4-backpressure` (2026-08-19), branched from `main`
-at `c07c92f`. Two commits so far, and the tree is back to `main`'s content: `dc96f57` ran BP-1's
-four-combination probe, `bbf31b9` removed it and its `ping`/`pong` scaffolding once the result was
-recorded. **BP-1's opening measurement is done** — see §1.5 and BP-1 in `mem:follow-ups`. Next:
-the BP-1 design brainstorming, with the measurement as input.
+**Wave 4's first half is DONE on branch `feat/wave-4-backpressure`, not yet merged** (2026-08-20, branched
+from `main` at `c07c92f`, head `3c65624`, 24 commits). **BP-1 and D2 are closed** — see their entries in
+`mem:follow-ups`. 272 tests green, consumer smoke 11/11 with no COOP/COEP header served anywhere. The
+final whole-branch review returned no Critical or Important findings after one documentation fix wave.
+
+Its documents: design `docs/superpowers/specs/2026-08-19-wave-4-backpressure-design.md` (§3.6 and §6.2
+carry in-place corrections dated 2026-08-20 — execution proved both wrong), implementation plan
+`docs/superpowers/plans/2026-08-20-wave-4-backpressure.md` (8 tasks).
+
+**What wave 4 still owes: the commit-propagation barrier and D6.** Neither is designed. The barrier
+deserves its own brainstorming and unblocks RYOW-1, the writer designation's stickiness, and the two
+browser tests pinned to `poolSize: 1`. A lead recorded 2026-08-20 and not yet examined: `OPFSWriteAheadVFS`
+implements write-ahead logging inside the VFS, and a synchronous WAL-based VFS may have quite different
+cross-connection visibility from `OPFSPermutedVFS`, whose asynchronous commit propagation causes RYOW-1.
+Hypothesis to measure, not a finding.
+
+**Six defects the execution caught that the plan had not anticipated, all of one family — things that
+could not fail, or that failed silently:**
+1. Three tests asserted properties they could not detect. The gate's `stop()`-wakes-a-wait test passed
+   with `wake()` deleted; `first()`'s look-ahead test was racy in its pre-fix state; the filtering-scan
+   test passed for a reason unrelated to what it claimed.
+2. A silent truncation with **three** legs — `close()` broadcasting `stop`, the worker replying a plain
+   `done` after a stop it did not initiate, and `pool.ts` clearing `deferredChunk` on `error` so a
+   consumer suspended at `yield` resumed into a loop that had already exited.
+3. **Spec §3.6 was simply wrong**, and only implementation revealed it: the row-counter tick counted
+   *returned* rows, never fired for the filtering scan it was written for, and could not fire before the
+   per-chunk tick at default settings. The regression it targeted does not exist — a filtering scan is a
+   single long `sqlite3_step`, so the old shared-memory flag could not interrupt it either.
+
+**Standing lesson, paid for a second time: a claim of falsifiability that nobody executed is worth
+nothing.** Every load-bearing test in this wave had its falsifiability verified by hand — delete the
+line, watch it go red, restore it — and that practice is what caught §3.6.
 
 Its first act was **BP-1's four-combination measurement**, and that is now complete.
 
