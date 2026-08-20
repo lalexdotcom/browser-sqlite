@@ -42,14 +42,22 @@ unwinds the WASM stack around asynchronous VFS calls.
 | `OPFSPermutedVFS` (Asyncify) | I/O | yes | 1063 ms | 42 | **0** | 42 |
 | `OPFSCoopSyncVFS` (sync) | CPU | yes | 4116 ms | 164 | **0** | 164 |
 | `OPFSCoopSyncVFS` (sync) | I/O | yes | 1126 ms | 44 | **0** | 44 |
+| `OPFSAdaptiveVFS` (JSPI) | CPU | yes | 4122 ms | 165 | **0** | 164 |
+| `OPFSAdaptiveVFS` (JSPI) | I/O | yes | 1291 ms | 52 | **0** | 51 |
 
 Two controls make the zero mean anything, and the first attempt had neither: a
 ping sent while the worker is idle always comes back, so the channel works; and
 every ping sent during a query is handled immediately after it, so the messages
 queue rather than being lost.
 
-**§1.5 is confirmed.** No task turn happens on its own, on either build, under
-either load.
+The JSPI rows were added on 2026-08-20 (commit `df73833`, reverted in `fd03788`).
+They close the last gap: the claim had been verified on two of wa-sqlite's three
+WASM builds, and JSPI is not a variant of Asyncify — it suspends by integrating
+with real promises rather than unwinding to a JS trampoline, so it was the one
+that could plausibly yield on its own. It does not.
+
+**§1.5 is confirmed.** No task turn happens on its own, on any of the three
+builds, under either load.
 
 ### 2.2 Does creating a task turn restore delivery? (commit `fae6423`)
 

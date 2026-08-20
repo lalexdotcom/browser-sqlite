@@ -48,7 +48,7 @@ queue. The first run reported zero late pongs through a defect in the measuremen
 taken before the queued messages could run), which would have proved nothing. Without both
 controls, "0 pongs" is indistinguishable from a broken probe.
 
-**Third build closed 2026-08-20** (commit `df73833`, reverted in `9e0d5e5`). The result above had
+**Third build closed 2026-08-20** (commit `df73833`, reverted in `fd03788`). The result above had
 been verified on two of wa-sqlite's three WASM builds. **JSPI** — reached only through
 `OPFSAdaptiveVFS` — was never measured, and it is not a variant of Asyncify: it suspends by
 integrating with real promises rather than unwinding to a JS trampoline, so it was the one that
