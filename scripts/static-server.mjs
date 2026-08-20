@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Minimal static file server with cross-origin isolation headers, for the
- * bundler-free consumer mode. No dependency, no transform, no resolution:
+ * Minimal static file server for the bundler-free consumer mode. No
+ * dependency, no transform, no resolution:
  * whatever the tarball shipped is what the browser gets.
  *
  * Usage: node scripts/static-server.mjs <rootDir> <port>
@@ -25,9 +25,6 @@ const TYPES = {
 };
 
 createServer((req, res) => {
-  // Cross-origin isolation, exactly as a real consuming app must serve it.
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
 
   const urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
   const relative = normalize(urlPath === '/' ? '/index.html' : urlPath).replace(

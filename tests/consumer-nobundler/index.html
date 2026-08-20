@@ -11,12 +11,6 @@
       import { createSQLiteClient } from '/node_modules/browser-sqlite/dist/index.js';
 
       async function run() {
-        if (!crossOriginIsolated) {
-          throw new Error(
-            'crossOriginIsolated is false — COOP/COEP headers are missing, SharedArrayBuffer is unavailable',
-          );
-        }
-
         const db = createSQLiteClient(`consumer-smoke-${crypto.randomUUID()}`);
 
         await db.write('CREATE TABLE smoke (id INTEGER PRIMARY KEY, label TEXT)');

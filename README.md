@@ -14,7 +14,7 @@ Requires a bundler that supports Web Workers with dynamic imports (Rsbuild, webp
 
 ## Bundler Configuration
 
-**webpack, rspack, and rsbuild** require no bundler-specific configuration. Add the [cross-origin isolation headers](#requirements) to your dev server and you are done.
+**webpack, rspack, and rsbuild** require no bundler-specific configuration.
 
 **Vite** needs two adjustments because of how it handles dependency pre-bundling and production assets.
 
@@ -51,7 +51,7 @@ export default defineConfig({
 });
 ```
 
-`dist/worker/` is an asset directory — the worker script and its three `.wasm` siblings must travel with the built app. For the required COOP/COEP headers, see [Requirements](#requirements).
+`dist/worker/` is an asset directory — the worker script and its three `.wasm` siblings must travel with the built app.
 
 ## VFS Selection
 
@@ -210,45 +210,11 @@ const rows = await db.read('SELECT * FROM large_table', [], {
 
 ## Requirements
 
-> **These HTTP headers are mandatory.** Without them, `new SharedArrayBuffer()` throws a `SecurityError` and browser-sqlite cannot initialize.
+browser-sqlite requires no special HTTP headers. OPFS access handles work in a plain worker context; cross-origin isolation is not needed. `OPFSAdaptiveVFS` still requires JSPI (Chromium 126+) — that is an unrelated browser constraint, not a header requirement.
 
-browser-sqlite uses a `SharedArrayBuffer` to coordinate worker pool state. Browsers require [cross-origin isolation](https://developer.mozilla.org/en-US/docs/Web/API/crossOriginIsolated) to create `SharedArrayBuffer` instances. Your page must be served with:
-
-```http
-Cross-Origin-Opener-Policy: same-origin
-Cross-Origin-Embedder-Policy: require-corp
-```
-
-### Server configuration examples
-
-**Nginx**
-```nginx
-add_header Cross-Origin-Opener-Policy "same-origin";
-add_header Cross-Origin-Embedder-Policy "require-corp";
-```
-
-**Express**
-```javascript
-app.use((req, res, next) => {
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
-  next();
-});
-```
-
-**Rsbuild / Vite dev server**
-```typescript
-// rsbuild.config.ts or vite.config.ts
-server: {
-  headers: {
-    'Cross-Origin-Opener-Policy': 'same-origin',
-    'Cross-Origin-Embedder-Policy': 'require-corp',
-  },
-},
-```
+Note: the "Coop" in `OPFSCoopSyncVFS` stands for *cooperative*, not the `Cross-Origin-Opener-Policy` header.
 
 ## Known Limitations
 
 - **`AccessHandlePoolVFS` requires `poolSize: 1`.** Passing `poolSize > 1` with this VFS throws synchronously at client creation time.
-- **`SharedArrayBuffer` requires cross-origin isolation.** See the [Requirements](#requirements) section. Omitting COOP/COEP headers causes a `SecurityError` at runtime with no fallback.
 - **`OPFSAdaptiveVFS` requires Chromium 126+.** This VFS uses JavaScript Promise Integration (JSPI), which is not available in Firefox or Safari as of 2025.
