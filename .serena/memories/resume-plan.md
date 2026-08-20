@@ -141,9 +141,11 @@ red means the bug is fixed.
 
 ## 0.1 HOW TO RESUME — rewritten 2026-08-20 (end of the RYOW investigation session), read this first
 
-**Repository state.** `feat/vfs-default` was reviewed as a whole branch and merged into `main`; the
-work of wave 4's first half and the VFS change are both on `main`. `main` is still **not pushed to
-origin** (~100 commits ahead). Tree clean, 272 tests green.
+**Repository state.** `feat/vfs-default` was reviewed as a whole branch, its findings fixed
+(`db37503`), and merged into `main` at **`be314db`**. Verified **on `main`, not just on the branch**:
+`pnpm check` clean, `tsc --noEmit` clean, **275 tests / 0 failures**, consumer smoke **11/11** across
+four bundler modes. The branch ref still exists locally and is fully merged — delete it whenever.
+`main` is still **not pushed to origin** (120 commits ahead). Tree clean.
 
 **What this session settled — read `mem:follow-ups` under RYOW-1, block (4), before anything else.**
 In one line: the stale read after `output()` is caused by **any earlier read on the connection that
