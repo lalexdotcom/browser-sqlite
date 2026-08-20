@@ -1,12 +1,14 @@
 # Wave 4 — BP-1: back-pressure on `chunk()` / `stream()`
 
-**STATUS: DRAFT — brainstorming in progress. Last updated 2026-08-20.**
+**STATUS: complete, awaiting user review. 2026-08-20.**
 
-Sections 1 (the mechanism) and 2 (scope and the `SharedArrayBuffer`) are
-**approved by the user**. Sections 3 (failure modes) and 4 (testing) have not
-been presented yet. Do not implement from this document: it is a checkpoint, not
-a spec. The remaining sections are listed in §7 with the notes already gathered
-for them, so the conversation can resume without re-deriving anything.
+All four brainstorming sections are approved: the mechanism (§3), scope and the
+`SharedArrayBuffer` removal (§4), failure modes (§5), and testing (§6). The next
+step after review is the implementation plan, via the writing-plans skill.
+
+Scope note: this document covers **BP-1 and D2 only**. Wave 4 also owes the
+commit-propagation barrier and D6; both come after, and the barrier deserves its
+own brainstorming — see §9.
 
 Branch: `feat/wave-4-backpressure`, from `main` at `c07c92f`.
 
@@ -94,7 +96,7 @@ worker then awaits a fresh signal that never comes.
 **Accounting and yielding are two roles.** The counter serves the first, an
 unconditional task turn the second. Neither substitutes for the other.
 
-## 3. The mechanism (section 1 — APPROVED)
+## 3. The mechanism
 
 ### 3.1 Worker side
 
@@ -103,10 +105,17 @@ resolves and swaps, and a `tick()` built on a `MessageChannel` posting to
 itself. Before emitting each chunk:
 
 ```
-await tick();                                   // unconditional task turn
-while (credits <= 0) await creditSignal.promise; // back-pressure
+await tick();                          // unconditional task turn
+while (credits <= 0 && !stopped) {     // back-pressure
+  await creditSignal.promise;
+}
+if (stopped) return;                   // §5.1 — stop also wakes this wait
 credits -= 1;
 ```
+
+The `&& !stopped` and the `return` are not defensive extras: without them a
+stopped worker waits forever for a credit the unwinding client will never send,
+and `first()` kills its worker on every call. See §5.1.
 
 `MessageChannel`, not `setTimeout`: nested `setTimeout` is clamped to 4 ms,
 which would cost seconds over a few hundred chunks.
@@ -116,6 +125,11 @@ which would cost seconds over a few hundred chunks.
 Not as separate credit messages. This removes the deadlock of §2.3 by
 construction — no credit can arrive before the worker is able to wait for one.
 Afterwards, one credit message per chunk.
+
+**Every credit carries the `callId` of the query it belongs to**, and the worker
+ignores any credit whose `callId` is not the current one. The counter is also
+reset at the start of each query. Both are needed, for different leaks — see
+§5.4.
 
 ### 3.3 The client credits on consumption, not on arrival
 
@@ -155,13 +169,15 @@ never delivered: the worker runs to the end and the drain expires on
 **Today that query aborts cleanly**, because the `ABORTING` flag is re-read on
 every row. That would be a plain regression, not a known residual.
 
-So the tick also fires on a **row counter** — at least one tick every N rows
-stepped, N on the order of 1000. Cost: a 1M-row filtering scan is 1000 ticks,
-9-14 µs each, so 9-14 ms. This reinforces §2.3's lesson: the tick serves
+So the tick also fires on a **row counter**: at least one tick every **1000
+rows stepped**. That constant is derived from §2.2's per-tick cost, not measured
+on its own — a 1M-row filtering scan becomes 1000 ticks at 9-14 µs, so 9-14 ms,
+which is negligible against such a scan. The implementation plan may revisit the
+value; it must not revisit the existence of the row-counter tick. This reinforces §2.3's lesson: the tick serves
 liveness, the credit serves memory, and the two counters have no reason to be
 coupled.
 
-## 4. Scope, and removing the `SharedArrayBuffer` (section 2 — APPROVED)
+## 4. Scope, and removing the `SharedArrayBuffer`
 
 ### 4.1 Per method
 
@@ -213,7 +229,122 @@ BP-1 does not need the SAB gone; D2 needs BP-1. Implement and verify BP-1
 first, then D2, as two commit groups. The two mechanisms coexisting in between
 is intended — it keeps a bisect meaningful.
 
-## 5. What this does NOT fix
+## 5. Failure modes
+
+### 5.1 A stop while the worker is blocked on a credit — the critical one
+
+When a consumer leaves a `stream()` early, `chunk()`'s `finally` calls
+`interrupt()` and `iterator.return()`, and `pool.ts`'s generator `finally` waits
+for the worker's `done`, bounded by `drainTimeout`. But the worker is parked in
+`while (credits <= 0)`, and the client has just stopped consuming, so **the
+credit will never come**. The drain expires, and a perfectly healthy worker is
+declared dead and restarted.
+
+Testing the stop flag *before* the wait is not enough: the stop must also
+**interrupt a wait already in progress**. The `stop` handler therefore resolves
+the credit signal, the condition becomes `while (credits <= 0 && !stopped)`, and
+the row loop exits when `stopped`.
+
+This path runs on **every single `first()` call** — one row, window 1, then the
+worker blocks on a credit nobody will send. Getting it wrong cannot go
+unnoticed, which is why §6 pins it directly.
+
+### 5.2 Worker death while the client waits for a chunk
+
+Unchanged. The client-side race already includes `deathDeferred`, and the new
+wait is worker-side, so it does not touch that race. To be confirmed by a test,
+not modified.
+
+### 5.3 `close()` during a query — a new capability, therefore a new risk
+
+Today a worker inside its row loop never receives `close`; the client drains
+first, then closes, bounded by `bounded(worker.close(), drainTimeout)` in
+`client.ts`. With the tick, `close` becomes deliverable **mid-query** — and the
+current handler calls `sqlite.close(db)` immediately. Closing a database with a
+live statement returns `SQLITE_BUSY`, which the existing `catch` swallows, and
+the worker replies `closed` while its loop is still running.
+
+The `close` handler must therefore stop rather than close: set the stop flag,
+let the query unwind, then close and reply. Same mechanism as §5.1, reused.
+
+### 5.4 Credit accounting across successive queries on one worker
+
+`transaction()` holds its lease across several queries. A credit issued for an
+abandoned query can arrive after the next one has started and hand it a free
+chunk, silently breaking the memory bound.
+
+Two mitigations, both required, for two different leaks: **credits carry the
+`callId`** and the worker ignores stale ones (this handles late arrivals), and
+**the counter is reset at query start** (this handles credits that were granted
+and never spent).
+
+### 5.5 Worker restart
+
+A restarted worker is a fresh `Worker`, so its module state starts clean —
+nothing to do worker-side. The **client-side** bookkeeping is per slot and must
+be reset with the slot, or the replacement inherits a window that has already
+been spent. Handled together with the wave-2 supervisor.
+
+### 5.6 The transverse consequence
+
+Once §5.1 is fixed, "blocked on a credit" can never cause a drain expiry. That
+is a falsifiable property, and §6 pins it.
+
+## 6. Testing
+
+### 6.1 The split: a pure module for the logic, the browser for the property
+
+The credit accounting is extracted into a **pure** module, `credits.ts`:
+`createCreditGate({ window, tick })` exposing `take()`, `grant(n, callId)`,
+`stop()` and `reset(callId)`, with the tick **injected** (default:
+`MessageChannel`).
+
+The justification comes straight from this project's history. B1 survived for
+months because the scheduler was reachable only through slow browser tests, and
+wave 1 fixed that by making `scheduler.ts` pure and drivable from Node in
+milliseconds. The credit logic has exactly the same profile: subtle state
+transitions (§5.1, §5.4, §5.5) in a file otherwise reachable only through a
+worker, a VFS and a real database.
+
+The cost is explicit: an injected tick does not prove the real tick yields. The
+logic is therefore tested in Node, the property in the browser — the same
+division as `scheduler.ts` / `pool.ts`.
+
+**Node, against the pure module:** ordering; `stop()` **waking** a wait in
+progress rather than merely being tested before it; a credit with the wrong
+`callId` ignored; the reset between queries; the window respected.
+
+### 6.2 Browser — five properties, each with the line that makes it red
+
+Stating that line is the discipline adopted after wave 1, where seven tests
+passed identically with and without the behaviour they claimed to pin.
+
+| Property | Red when |
+|---|---|
+| An abort posted mid-query is seen within one chunk | the tick is removed — latency falls back to batch size, exactly like the measurement's negative control |
+| A filtering scan stays interruptible: it stops promptly **and** `records.length === 1` | the row-counter tick is removed — the drain expires, the worker is presumed dead and replaced, so `records.length` becomes 2. This is what guards §3.6 |
+| `first()` does not kill its worker: ten calls, then `records.length === 1` | `stop` does not wake the credit wait (§5.1) |
+| A slow consumer does not make chunks pile up: consume one, sleep, assert the worker sent at most `window` more, counted through `interceptWorkers` | credits are granted on arrival instead of on consumption — this pins §3.3, the easiest thing to break unnoticed |
+| `close()` during a query completes cleanly, with no drain expiry and no database closed under a live statement | §5.3 is not implemented |
+
+### 6.3 What is deliberately not tested
+
+**Throughput.** No performance assertion. The numbers are in §2.2, measured
+three times; a timing assertion in CI would be flaky, and this project already
+spent a whole wave removing unfalsifiable assertions. The one useful temporal
+guard already exists — `long-query.test.ts`'s 3000 ms bounds, which the tick's
+overhead does not threaten.
+
+**The probes.** Neither probe is kept as a test. That was decided twice, for
+reasons recorded in `bbf31b9` and `d82c673`.
+
+### 6.4 D2's acceptance
+
+As stated in §4.3: remove the COOP/COEP headers from `scripts/static-server.mjs`
+and the two consumer apps, and watch all 11 consumer-smoke stages pass. A
+demonstration, not an assertion.
+
+## 7. What this does NOT fix
 
 A query that spends its whole life inside a single `step()` — a large
 `ORDER BY`, a recursive CTE — produces no chunk, therefore no tick, therefore no
@@ -222,31 +353,27 @@ wave 4 the residual reads: *a worker that dies inside one long `step()` is
 noticed only if the caller aborts.* This matches what `mem:follow-ups` already
 predicted for BP-1 and must be carried into the README and B2's entry.
 
-## 6. Cost summary
+## 8. Cost summary
 
 At the default `chunkSize` of 500, a 1M-row `read()` is 2000 chunks, so roughly
 20-30 ms of added tick cost over the whole query. The §2.2 run is deliberately
 pathological — 4000 chunks of 50 rows — to make a per-chunk cost visible at all.
 
-## 7. Open — not yet presented to the user
+## 9. Still owed by wave 4, and not covered here
 
-**Section 3: failure modes.** Notes already gathered:
-- The stop flag must be tested **before** the credit wait, or a stopped worker
-  blocks forever waiting for a credit that the unwinding client will never send.
-  This is the interaction between the new wait and the wave-2 stop-and-drain.
-- A worker blocked on a credit is, for the first time, able to receive `close`
-  mid-query. That is an improvement over today, where a worker inside a query
-  cannot be closed — worth an explicit test.
-- Worker death while the client waits for a chunk is already covered by
-  `deathDeferred`; confirm the new wait does not bypass it.
+Two items remain outside this document's scope: the **commit-propagation
+barrier** (RYOW-1, the writer designation's stickiness, and the two browser
+tests pinned to `poolSize: 1` that should go back to the default pool size once
+it exists) and **D6**, the `browser-sqlite/vite` subpath with its `wasmUrl`
+escape hatch.
 
-**Section 4: testing.** The falsifiability requirement is known in advance: a
-test must fail if the tick is removed. §2.2's counter-only control is the shape
-to reuse — assert that an abort posted mid-query is observed within one chunk,
-which is exactly what regresses to batch-size latency without the tick.
+Both come after BP-1 and D2. The barrier deserves its own brainstorming, and its
+options may depend on what BP-1 leaves behind — in particular on whether the
+credit channel gives the client a usable per-worker acknowledgement point.
 
-**Not in this document, and still owed by wave 4:** the commit-propagation
-barrier (RYOW-1, the writer designation's stickiness, the two tests pinned to
-`poolSize: 1`) and D6 (the `browser-sqlite/vite` subpath). Both come after BP-1
-and D2; the barrier deserves its own brainstorming, and its options may depend
-on what BP-1 leaves behind.
+One lead recorded on 2026-08-20 and not yet examined: `OPFSWriteAheadVFS`
+implements write-ahead logging entirely inside the VFS, and a synchronous
+WAL-based VFS may have quite different cross-connection visibility semantics
+from `OPFSPermutedVFS`, whose asynchronous commit propagation is the cause of
+RYOW-1. That is a hypothesis to measure during the barrier's brainstorming, not
+a finding.
