@@ -52,6 +52,7 @@ describe('createCreditGate', () => {
     const gate = createCreditGate(countingTick().tick);
     gate.reset(1, 0);
     const pending = gate.take(1);
+    await Promise.resolve(); // drain tick() so take(1) is genuinely parked on signal
     gate.stop();
     expect(await pending).toBe('stopped');
   });
