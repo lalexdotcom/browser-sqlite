@@ -16,3 +16,5 @@ doc_build/
 
 # PNPM
 .pnpm-store
+# Subagent-driven-development scratch: ledgers, briefs, reports, review packages.
+.superpowers/
