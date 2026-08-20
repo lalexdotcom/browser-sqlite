@@ -224,6 +224,11 @@ export const createPoolWorker = (deps: {
         }
         break;
       }
+      // PROBE SCAFFOLDING (wave 4, BP-1) — the probe test reads `pong` off the
+      // worker directly via addEventListener; the pool only has to not throw.
+      case 'pong': {
+        break;
+      }
       default: {
         const _unexpected: never = data;
         throw new Error(
