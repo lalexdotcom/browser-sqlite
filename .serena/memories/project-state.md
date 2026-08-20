@@ -143,6 +143,29 @@ digest tracks the config's resolved *values* but not its *key structure*: changi
 which hashes the config file itself. `pnpm build` is therefore always correct; no manual
 `dist/` deletion is needed.
 
+## Wave 4's first half, merged 2026-08-20 (`5292b70`) — what changed structurally
+
+- **`src/orchestrator.ts` is gone**, 183 lines, and with it every `SharedArrayBuffer` in the
+  library. `grep -rE 'orchestrator|SharedArrayBuffer|WorkerStatuses'` over `src/` returns nothing.
+  **browser-sqlite no longer requires cross-origin isolation** — no COOP/COEP headers, anywhere,
+  demonstrated by the consumer smoke at 11/11 across four bundler modes with none served.
+  The init mutex is now `navigator.locks` (`initLockName(file)` in `locks.ts`), the per-worker
+  status is a plain `status` field on `PoolWorker` maintained by `pool.ts`, and the abort is a
+  `stop` message.
+- **`src/credits.ts` is new** — the pure credit gate, Node-tested like `scheduler.ts` and for the
+  same reason. `createCreditGate(tick)` → `{ reset, grant, stop, take, isStopped, tick }`, plus
+  `createMessageChannelTick` and `DEFAULT_CREDIT_WINDOW = 2`.
+- **The load-bearing rule, easy to break and hard to see:** `take()` awaits the tick
+  **unconditionally**, before checking credits. Skipping it when credits are available is the
+  obvious optimisation and it destroys the property the module exists for — a worker inside a query
+  otherwise never returns to its event loop, so no `postMessage` reaches it. A unit test counts
+  ticks per take and goes red if anyone tries.
+- `MessageChannel`, never `setTimeout`, for the tick: nested `setTimeout` is clamped to 4 ms.
+- Credits are granted **on consumption** (after the `yield` in `pool.ts`'s generator), never on
+  arrival. Crediting on arrival silently defeats back-pressure.
+- Measured cost on the shipped code: nothing measurable at the default `chunkSize`; 12.2 µs per
+  chunk in an adversarial 4000-chunk configuration.
+
 ## Layout (src/)
 
 | File | Lines | Role |

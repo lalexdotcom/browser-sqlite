@@ -47,8 +47,10 @@ branch**: `pnpm check` clean, `tsc --noEmit` clean, **272 tests / 0 failures**, 
 **11/11** across four bundler modes, six consecutive full browser suites with no failure, and no
 `it.fails` anywhere. See §4 for what shipped and what it cost.
 
-**Wave 4's first half is DONE on branch `feat/wave-4-backpressure`, not yet merged** (2026-08-20, branched
-from `main` at `c07c92f`, head `3c65624`, 24 commits). **BP-1 and D2 are closed** — see their entries in
+**Wave 4's first half is DONE, CLOSED and MERGED into `main`** (2026-08-20, merge commit `5292b70`,
+26 commits, branch deleted). The merged result was verified **on `main`, not just on the branch**:
+`pnpm check` clean, `tsc --noEmit` clean, **272 tests / 0 failures**, consumer smoke **11/11** across
+four bundler modes with no COOP/COEP header served anywhere. **BP-1 and D2 are closed** — see their entries in
 `mem:follow-ups`. 272 tests green, consumer smoke 11/11 with no COOP/COEP header served anywhere. The
 final whole-branch review returned no Critical or Important findings after one documentation fix wave.
 
