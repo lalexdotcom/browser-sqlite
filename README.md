@@ -57,15 +57,19 @@ export default defineConfig({
 
 browser-sqlite delegates storage to a wa-sqlite Virtual File System (VFS). Choose based on browser support and storage requirements:
 
-| VFS | Storage | Constraint | When to use |
-|-----|---------|------------|-------------|
-| `OPFSPermutedVFS` **(default)** | OPFS | None — supports `poolSize >= 1` | General purpose. Best choice for most applications. |
-| `OPFSAdaptiveVFS` | OPFS | Requires JSPI (Chromium 126+) | When JSPI is available and adaptive sync strategy is desired. |
-| `OPFSCoopSyncVFS` | OPFS | None — cooperative sync, no JSPI required | Broader browser compatibility fallback when JSPI is unavailable. |
-| `AccessHandlePoolVFS` | OPFS | **`poolSize` must be `1`** — throws otherwise | Single-connection scenarios requiring access handle pool semantics. |
-| `IDBBatchAtomicVFS` | IndexedDB | None | Fallback when OPFS is unavailable (older browsers, some mobile environments). |
+| VFS | Storage | Builds | Constraint | When to use |
+|-----|---------|--------|------------|-------------|
+| `OPFSAdaptiveVFS` **(default)** | OPFS | `async`, `jspi` | None — adapts to the platform, supports `poolSize >= 1` | General purpose. Best choice for most applications. |
+| `OPFSWriteAheadVFS` | OPFS | `sync`, `async`, `jspi` | **Chromium-only, and it fails silently elsewhere** — requires `readwrite-unsafe` access handles with no fallback | Write-ahead logging implemented inside the VFS. Not covered by this library's test suite. |
+| `OPFSCoopSyncVFS` | OPFS | `sync`, `async`, `jspi` | None — cooperative sync | Broader browser compatibility fallback. See Known Limitations before using it with `poolSize > 1`. |
+| `AccessHandlePoolVFS` | OPFS | `sync`, `async`, `jspi` | **`poolSize` must be `1`** — throws otherwise | Single-connection scenarios requiring access handle pool semantics. |
+| `IDBBatchAtomicVFS` | IndexedDB | `async`, `jspi` | None | Fallback when OPFS is unavailable (older browsers, some mobile environments). |
 
-When `vfs` is omitted, `OPFSPermutedVFS` is used.
+When `vfs` is omitted, `OPFSAdaptiveVFS` is used.
+
+### Builds
+
+Each VFS runs on one or more wa-sqlite WebAssembly builds: `sync`, `async` (Asyncify), or `jspi` (JavaScript Promise Integration, Chromium-only). The `build` option selects one. Omitted, the first build the VFS declares is used — `async` for the default VFS. A pair the VFS does not support throws a `SQLiteError` with code `INVALID_OPTION` at construction, naming the builds it does support. The pairing is declared in one place, `VFS_BUILDS`, which is also what the `SQLiteVFS` type is derived from.
 
 For a detailed VFS comparison, see the [wa-sqlite VFS comparison](https://github.com/rhashimoto/wa-sqlite/tree/master/src/examples#vfs-comparison).
 
@@ -78,7 +82,8 @@ import { createSQLiteClient } from 'browser-sqlite';
 
 const db = createSQLiteClient('myapp.sqlite', {
   poolSize: 2,                    // number of worker threads (default: 2)
-  vfs: 'OPFSPermutedVFS',         // VFS selection (default: 'OPFSPermutedVFS')
+  vfs: 'OPFSAdaptiveVFS',         // VFS selection (default: 'OPFSAdaptiveVFS')
+  build: 'async',                 // wa-sqlite build (default: the VFS's first)
   pragmas: {                      // SQLite PRAGMAs applied on open
     journal_mode: 'WAL',
     synchronous: 'NORMAL',
@@ -150,7 +155,8 @@ For batch inserts, schema-driven table replacement, or explicit transactions, se
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `poolSize` | `number` | `2` | Number of Web Workers spawned in the pool. A larger pool allows more concurrent reads but uses more memory. Must be `1` with `AccessHandlePoolVFS`. |
-| `vfs` | `SQLiteVFS` | `'OPFSPermutedVFS'` | VFS implementation for storage. See the [VFS Selection](#vfs-selection) table. |
+| `vfs` | `SQLiteVFS` | `'OPFSAdaptiveVFS'` | VFS implementation for storage. See the [VFS Selection](#vfs-selection) table. |
+| `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite WebAssembly build to load: `'sync'`, `'async'`, or `'jspi'`. Throws `INVALID_OPTION` at construction if the VFS does not support it. See [Builds](#builds). |
 | `pragmas` | `Record<string, string>` | `undefined` | SQLite PRAGMAs applied to each worker connection on open. |
 | `maxWorkerRestarts` | `number` | `1` | How many times a slot may be restarted after it dies. A slot that never reached readiness is never restarted — an initial failure is deterministic and restarting only delays the diagnostic. The counter resets once a replacement has actually served a request. |
 | `openTimeout` | `number` (ms) | `30_000` | How long a worker has to post `ready` after `open` is sent. On expiry the slot is failed — the most common cause is a database held under an exclusive lock by another tab. |
@@ -206,15 +212,17 @@ const rows = await db.read('SELECT * FROM large_table', [], {
 
 **Read methods reject write statements.** `read()`, `chunk()`, `stream()`, and `first()` reject any statement that is not a provably readable query, throwing `NOT_A_READ_QUERY`. A bare read pragma (`PRAGMA journal_mode`) is accepted; a pragma that assigns a value or takes an argument must go through `write()`.
 
-**Read-your-own-writes is not guaranteed across workers.** Under the default `OPFSPermutedVFS`, each pool worker holds its own in-memory page map that is updated when it receives a commit broadcast. A read dispatched after a write may land on a different worker that has not yet received the broadcast, causing it to return pre-commit data. For a hard read-your-own-writes guarantee, issue the read inside the same `transaction()` as the write, or use `poolSize: 1`.
+**Read-your-own-writes is not guaranteed across workers.** A pool worker that has already served a read holds a cached view of the database header, and it does not refresh that view when another worker commits — so a read dispatched to it after a write can return the pre-commit schema. This is a property of running several connections over one file, not of the VFS you pick: it is measured on every VFS this library ships, on every build. For a hard read-your-own-writes guarantee, issue the read inside the same `transaction()` as the write, or use `poolSize: 1`.
 
 ## Requirements
 
-browser-sqlite requires no special HTTP headers. OPFS access handles work in a plain worker context; cross-origin isolation is not needed. `OPFSAdaptiveVFS` still requires JSPI (Chromium 126+) — that is an unrelated browser constraint, not a header requirement.
+browser-sqlite requires no special HTTP headers. OPFS access handles work in a plain worker context; cross-origin isolation is not needed. The default build needs no browser opt-in; only `build: 'jspi'` does, and JSPI is Chromium 126+ — that is an unrelated browser constraint, not a header requirement.
 
 Note: the "Coop" in `OPFSCoopSyncVFS` stands for *cooperative*, not the `Cross-Origin-Opener-Policy` header.
 
 ## Known Limitations
 
 - **`AccessHandlePoolVFS` requires `poolSize: 1`.** Passing `poolSize > 1` with this VFS throws synchronously at client creation time.
-- **`OPFSAdaptiveVFS` requires Chromium 126+.** This VFS uses JavaScript Promise Integration (JSPI), which is not available in Firefox or Safari as of 2025.
+- **`build: 'jspi'` requires Chromium 126+.** JavaScript Promise Integration is not available in Firefox or Safari as of 2025. It is opt-in; the default build does not use it.
+- **`OPFSWriteAheadVFS` is Chromium-only and degrades silently elsewhere.** It opens access handles with `mode: 'readwrite-unsafe'`, a proposed feature no other engine implements, and unknown dictionary members are ignored rather than rejected — so on another browser the first connection opens, the second cannot take the handle, and the pool breaks with no error naming the cause.
+- **Read-your-own-writes is not guaranteed across workers.** See the caveat under [Error handling](#error-handling); use `transaction()` or `poolSize: 1` when you need it.

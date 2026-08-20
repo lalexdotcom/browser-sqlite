@@ -60,10 +60,6 @@ interface VFSClass {
   ): Promise<unknown>;
 }
 
-declare module 'wa-sqlite/src/examples/OPFSPermutedVFS.js' {
-  export const OPFSPermutedVFS: VFSClass;
-}
-
 declare module 'wa-sqlite/src/examples/OPFSAdaptiveVFS.js' {
   export const OPFSAdaptiveVFS: VFSClass;
 }

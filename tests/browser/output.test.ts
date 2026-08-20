@@ -316,10 +316,10 @@ describe('output() atomicity and sweep', () => {
   it('does not collect a staging table that is still in flight', async () => {
     // Two clients share the same OPFS file so their sweeps interact.
     const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
-    // poolSize: 1 removes an unrelated variable: cross-worker propagation lag
-    // (OPFSPermutedVFS read-your-own-writes is not guaranteed across workers;
-    // see the RYOW caveat on read/chunk/stream/first). With a single connection
-    // per client every read sees the same page map as the preceding write.
+    // poolSize: 1 removes an unrelated variable: cross-worker staleness
+    // (read-your-own-writes is not guaranteed across workers on any VFS; see
+    // the RYOW caveat on read/chunk/stream/first). With a single connection
+    // per client every read sees the same page cache as the preceding write.
     // This does NOT weaken the cross-client sweep property being tested: dbA
     // and dbB are still two separate connections holding two separate Web Locks
     // over the same OPFS file, so the sweep interaction is exercised exactly

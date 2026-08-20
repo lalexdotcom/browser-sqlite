@@ -10,6 +10,7 @@ export type SQLiteErrorCode =
   | 'TIMEOUT'
   | 'PROTOCOL_ERROR'
   | 'INVALID_IDENTIFIER'
+  | 'INVALID_OPTION'
   | 'INVALID_PRAGMA'
   | 'BULK_WRITE_FAILED';
 

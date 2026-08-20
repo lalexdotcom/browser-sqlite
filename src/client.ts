@@ -59,7 +59,7 @@ export type CreateSQLiteClientOptions = {
    * Virtual File System implementation used for SQLite storage.
    * Controls whether data is stored in OPFS, IndexedDB, or memory.
    * See the README VFS Selection guide for a comparison.
-   * @defaultValue `'OPFSPermutedVFS'`
+   * @defaultValue `'OPFSAdaptiveVFS'`
    */
   vfs?: SQLiteVFS;
   /**
@@ -325,8 +325,8 @@ const DEFAULT_VFS = 'OPFSAdaptiveVFS';
  * @remarks
  * **Browser requirements:** This client uses OPFS through Web Workers; no
  * special HTTP headers are required and cross-origin isolation is not needed.
- * `OPFSAdaptiveVFS` additionally requires JSPI, a Chromium-only browser
- * feature, which is an unrelated constraint.
+ * The default `build` needs no browser opt-in; only `build: 'jspi'` does, and
+ * JSPI is Chromium-only — an unrelated constraint, not a header requirement.
  *
  * **Worker pool side effect:** Calling this function immediately spawns
  * `poolSize` Web Worker threads and begins asynchronous database
@@ -339,6 +339,9 @@ const DEFAULT_VFS = 'OPFSAdaptiveVFS';
  * @returns A {@link SQLiteDB} object providing `read`, `write`, `chunk`,
  *   `stream`, `first`, `transaction`, `bulkWrite`, `output`, and `close` methods.
  *
+ * @throws {SQLiteError} With code `INVALID_OPTION` when `build` is not one of
+ *   the builds the chosen `vfs` supports. The message names the supported
+ *   builds; the pairing is declared once, in `VFS_BUILDS`.
  * @throws {Error} When `vfs` is `'AccessHandlePoolVFS'` and `poolSize` is
  *   greater than `1`. AccessHandlePoolVFS does not support concurrent access
  *   handles — set `poolSize: 1` explicitly when using this VFS.
@@ -349,7 +352,7 @@ const DEFAULT_VFS = 'OPFSAdaptiveVFS';
  *
  * const db = createSQLiteClient('myapp.sqlite', {
  *   poolSize: 3,
- *   vfs: 'OPFSPermutedVFS',
+ *   vfs: 'OPFSAdaptiveVFS',
  *   pragmas: { journal_mode: 'WAL', synchronous: 'NORMAL' },
  * });
  *
@@ -378,7 +381,7 @@ export const createSQLiteClient = (
   // open-error from a worker that could not instantiate its module.
   if (!(VFS_BUILDS[vfs] as readonly SQLiteBuild[]).includes(build)) {
     throw new SQLiteError(
-      'INVALID_IDENTIFIER',
+      'INVALID_OPTION',
       `${vfs} cannot run on the '${build}' build. Supported: ${VFS_BUILDS[vfs].join(', ')}.`,
     );
   }
@@ -449,12 +452,13 @@ export const createSQLiteClient = (
    * Automatically acquires and releases a worker from the pool.
    *
    * @remarks
-   * **Read-your-own-writes is not guaranteed across workers.** Under the default
-   * `OPFSPermutedVFS`, each pool worker holds its own in-memory page map updated
-   * via BroadcastChannel. A read may land on a worker that has not yet received
-   * the latest commit broadcast, returning pre-commit data. For a hard guarantee,
-   * issue the read inside the same `transaction()` as the write, or use
-   * `poolSize: 1`.
+   * **Read-your-own-writes is not guaranteed across workers.** A worker that has
+   * already served a read holds a cached view of the database header, and it does
+   * not refresh that view when another worker commits — so a read dispatched to it
+   * can return the pre-commit schema. Measured on every VFS this library ships, on
+   * every build: it is a property of the multi-connection setup, not of the VFS you
+   * choose. For a hard guarantee, issue the read inside the same `transaction()` as
+   * the write, or use `poolSize: 1`.
    */
   const read = async <
     T extends Record<string, unknown> = Record<string, unknown>,
