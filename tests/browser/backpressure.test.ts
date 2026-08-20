@@ -99,3 +99,24 @@ describe('back-pressure', () => {
     expect(rows[4999]?.id).toBe(5000);
   });
 });
+
+describe('first()', () => {
+  // Falsifiable two ways. Drop `credits: 1` and the worker produces a second
+  // row nobody asked for, so chunksPosted becomes 2. Break the stop-wakes-the
+  // -wait path and each call parks its worker until drainTimeout, so it is
+  // replaced and records.length grows. Pins spec §4.1 and §5.1.
+  it('costs exactly one row, and never restarts its worker', async () => {
+    const records = interceptWorkers();
+    const db = await createTestClient({ poolSize: 1, drainTimeout: 1000 });
+    await seed(db);
+
+    for (let call = 0; call < 10; call += 1) {
+      const row = await db.first<{ id: number }>('SELECT id FROM t');
+      expect(row?.id).toBe(1);
+    }
+
+    expect(chunksPosted(records[0])).toBe(10);
+    await sleep(1500);
+    expect(records.length).toBe(1);
+  });
+});
