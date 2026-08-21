@@ -105,3 +105,37 @@ describe('supervisor — late ready after eviction', () => {
     expect(supervisor.report(1, 'died')).toBe('fail-client'); // only live slot dies
   });
 });
+
+describe('supervisor — the replacement dies before it is ready', () => {
+  // Falsifiable: delete the `event === 'spawned'` branch. The slot stays
+  // marked dead from the first death, the replacement's death is taken for a
+  // duplicate signal, and the decision is undefined — on which the client acts
+  // not at all: no restart, no shutdown, and every queued request waits for a
+  // worker that will never come.
+  it('fails the client instead of returning no decision', () => {
+    const supervisor = createSupervisor({ size: 1, maxWorkerRestarts: 1 });
+    supervisor.report(0, 'ready');
+    expect(supervisor.report(0, 'died')).toBe('restart');
+    supervisor.report(0, 'spawned'); // the client relaunches the slot
+    expect(supervisor.report(0, 'died')).toBe('fail-client');
+  });
+
+  // The guard this must not trade away: within one spawn, onerror and a drain
+  // timeout are an ordinary double report and must stay ignored.
+  it('still ignores a second death report within the same spawn', () => {
+    const supervisor = createSupervisor({ size: 2 });
+    supervisor.report(0, 'ready');
+    expect(supervisor.report(0, 'died')).toBe('restart');
+    expect(supervisor.report(0, 'died')).toBeUndefined();
+  });
+
+  // Falsifiable: drop the `slot.evicted` check from the 'spawned' branch — an
+  // evicted slot is revived, liveCount inflates, and the last live slot's
+  // death returns 'evict' instead of 'fail-client'.
+  it('does not revive an evicted slot', () => {
+    const supervisor = createSupervisor({ size: 2 });
+    expect(supervisor.report(0, 'died')).toBe('evict'); // never ready → evict
+    supervisor.report(0, 'spawned');
+    expect(supervisor.report(1, 'died')).toBe('fail-client');
+  });
+});

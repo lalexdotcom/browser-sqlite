@@ -12,7 +12,7 @@ export type SupervisorDecision = 'restart' | 'evict' | 'fail-client';
 export type Supervisor = {
   report: (
     index: number,
-    event: 'ready' | 'served' | 'died',
+    event: 'spawned' | 'ready' | 'served' | 'died',
   ) => SupervisorDecision | undefined;
 };
 
@@ -42,6 +42,19 @@ export const createSupervisor = (options: {
     report: (index, event) => {
       const slot = slots[index];
       if (!slot) return undefined;
+
+      if (event === 'spawned') {
+        // A slot is alive from the moment a worker is created for it — which is
+        // what the constructor's `alive: true` already encodes for the first
+        // spawn. Without this event a restarted slot never re-enters that
+        // state, so the replacement's death reads as a duplicate signal for the
+        // worker that died before it: the guard below returns no decision, the
+        // client neither restarts nor fails, and every queued request waits on
+        // a pool that will never have a worker again.
+        if (slot.evicted) return undefined;
+        slot.alive = true;
+        return undefined;
+      }
 
       if (event === 'ready') {
         // An evicted slot cannot be revived: the eviction was permanent and a
