@@ -63,7 +63,7 @@ describe('writer spread', () => {
 
     expect(workersServing(db, WRITE_SQL).size).toBe(2);
 
-    db.close();
+    await db.close();
   });
 
   // NOT a stickiness detector — it passes either way, and says so on purpose.
@@ -94,6 +94,6 @@ describe('writer spread', () => {
     expect(rows[0]?.n).toBe(12);
     expect(rows[0]?.tagged).toBe(12);
 
-    db.close();
+    await db.close();
   });
 });

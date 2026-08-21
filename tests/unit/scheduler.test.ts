@@ -425,33 +425,7 @@ describe('scheduler — add() writer-designation with multiple queued writes', (
   });
 });
 
-describe('scheduler — read neutrality and designation stickiness', () => {
-  it('a read does not take the writer by preference — lowest-index-first always', async () => {
-    // Designate worker 1 (NOT the lowest index) as writer. Writer finishes with
-    // no writes queued, designation stays sticky. All workers available.
-    // A read must go to worker 0 (lowest-index-first), not worker 1.
-    // Falsified by adding a writer-preference branch to takeAvailable: that
-    // branch checks currentWriterIndex and returns worker 1 instead.
-    //
-    // A third worker is added to make the worker-1-vs-0 choice unambiguous when
-    // the policy would otherwise agree on the same worker by coincidence.
-    const scheduler = createScheduler<TestWorker>();
-    const writePending = scheduler.acquire('write');
-    scheduler.add({ index: 1 }); // gets queued write; designated writer (1)
-    const writeLease = await writePending;
-    expect(writeLease.worker.index).toBe(1);
-    scheduler.add({ index: 0 }); // goes to available
-    scheduler.add({ index: 2 }); // goes to available
-
-    writeLease.release(); // designation stays sticky — no writes queued but no clear
-    await flush();
-
-    // All workers available. Reads go lowest-index-first, not to designated writer.
-    const first = await scheduler.acquire('read');
-    expect(first.worker.index).toBe(0);
-    first.release();
-  });
-
+describe('scheduler — read neutrality', () => {
   it('releasing a read lease does not alter the writer designation', async () => {
     // Designate worker 1 as writer (write in flight). Worker 0 serves a read
     // concurrently. When the read on worker 0 finishes, the designation must
@@ -512,13 +486,15 @@ describe('scheduler — read neutrality and designation stickiness', () => {
     expect(secondStarted).toBe(true);
   });
 
-  it('the designation stays sticky when the writer serves a queued read via handOver', async () => {
-    // Both workers busy: worker 1 writes (designated), worker 0 reads.
-    // A third read is queued. When the write finishes first, handOver routes
-    // the queued read to the designated writer (1). The designation must survive
-    // intact — a subsequent write still goes to worker 1, not worker 0.
-    // Falsified by adding `currentWriterIndex = -1` in handOver's reader branch:
-    // the subsequent write lands on worker 0 (lowest index) instead of worker 1.
+  it('releases the designation when the writer hands over to a queued read', async () => {
+    // The reader exit of handOver is a separate path from the idle exit, and it
+    // must release the designation too. Both workers busy: worker 1 writes
+    // (designated), worker 0 reads, a third read is queued. The write finishes
+    // and its worker goes straight to the queued read, never passing through
+    // `available` — so this exit is the one under test.
+    // Falsifiable: move the `currentWriterIndex = -1` line in handOver() below
+    // the readerQueue branch. This exit then keeps the designation on the busy
+    // worker 1 and the closing write stays queued — newWriteIndex is undefined.
     const scheduler = createScheduler<TestWorker>();
     const writePending = scheduler.acquire('write');
     scheduler.add({ index: 1 }); // gets queued write; designated writer (1)
@@ -533,19 +509,23 @@ describe('scheduler — read neutrality and designation stickiness', () => {
     // Queue a read. Both workers busy, so it waits.
     const queuedRead = scheduler.acquire('read');
 
-    // Write finishes on worker 1; handOver routes the queued read to worker 1.
+    // Write finishes on worker 1; handOver routes the queued read to worker 1,
+    // which therefore stays busy for the rest of the test.
     writeLease.release();
     const servedRead = await queuedRead;
     expect(servedRead.worker.index).toBe(1);
 
-    servedRead.release();
-    reader0.release();
+    reader0.release(); // worker 0 is the only free worker
     await flush();
 
-    // Designation must survive. A subsequent write goes to worker 1, not 0.
-    const nextWrite = await scheduler.acquire('write');
-    expect(nextWrite.worker.index).toBe(1);
-    nextWrite.release();
+    let newWriteIndex: number | undefined;
+    void scheduler.acquire('write').then((lease) => {
+      newWriteIndex = lease.worker.index;
+    });
+    await flush();
+
+    expect(newWriteIndex).toBe(0);
+    servedRead.release();
   });
 });
 describe('scheduler — stats()', () => {
@@ -640,5 +620,34 @@ describe('scheduler — writer policy', () => {
     const { scheduler } = makeScheduler(2);
     const lease = await scheduler.acquire('write');
     expect(lease.worker.index).toBe(0);
+  });
+});
+
+describe('scheduler — writer designation release', () => {
+  it('releases the designation when the writer is released with no write queued', async () => {
+    // Falsifiable: delete the `if (currentWriterIndex === worker.index)
+    // currentWriterIndex = -1;` line in handOver() and the second write queues
+    // behind worker 0 forever — newWriteIndex stays undefined.
+    const { scheduler } = makeScheduler(2);
+
+    const write = await scheduler.acquire('write');
+    expect(write.worker.index).toBe(0);
+    write.release(); // nothing queued behind it: the designation must not survive
+    await flush();
+
+    // A read now occupies worker 0 — the worker the stale designation pinned.
+    const read = await scheduler.acquire('read');
+    expect(read.worker.index).toBe(0);
+
+    let newWriteIndex: number | undefined;
+    void scheduler.acquire('write').then((lease) => {
+      newWriteIndex = lease.worker.index;
+    });
+    await flush();
+
+    // Sticky: queues for the busy worker 0 and stays undefined.
+    // Released: takes the first free worker.
+    expect(newWriteIndex).toBe(1);
+    read.release();
   });
 });
