@@ -34,11 +34,8 @@ describe('output() create and populate', () => {
   });
 
   it('drops and replaces a pre-existing table with a different schema', async () => {
-    // poolSize: 1 pins writes and the subsequent read to the same worker,
-    // guaranteeing read-your-own-writes. The scheduler no longer routes reads
-    // to the designated writer by preference; wave 4's propagation barrier is
-    // what will make the multi-worker case reliable.
-    const db = await createTestClient({ poolSize: 1 });
+    // The barrier now supplies the RYOW guarantee; that property is pinned in tests/browser/barrier.test.ts.
+    const db = await createTestClient();
 
     await db.write('CREATE TABLE out_replace (old_col TEXT)');
     await db.write("INSERT INTO out_replace VALUES ('stale')");
@@ -316,16 +313,9 @@ describe('output() atomicity and sweep', () => {
   it('does not collect a staging table that is still in flight', async () => {
     // Two clients share the same OPFS file so their sweeps interact.
     const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
-    // poolSize: 1 removes an unrelated variable: cross-worker staleness
-    // (read-your-own-writes is not guaranteed across workers on any VFS; see
-    // the RYOW caveat on read/chunk/stream/first). With a single connection
-    // per client every read sees the same page cache as the preceding write.
-    // This does NOT weaken the cross-client sweep property being tested: dbA
-    // and dbB are still two separate connections holding two separate Web Locks
-    // over the same OPFS file, so the sweep interaction is exercised exactly
-    // as before.
-    const dbA = createSQLiteClient(dbName, { poolSize: 1 });
-    const dbB = createSQLiteClient(dbName, { poolSize: 1 });
+    // The barrier now supplies the RYOW guarantee; that property is pinned in tests/browser/barrier.test.ts.
+    const dbA = createSQLiteClient(dbName);
+    const dbB = createSQLiteClient(dbName);
 
     onTestFinished(async () => {
       try {
