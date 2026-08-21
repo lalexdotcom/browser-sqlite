@@ -21,7 +21,7 @@ import {
   type SQLiteVFS,
   VFS_BUILDS,
 } from './types';
-import { assertReadable, renderPragmas } from './utils';
+import { assertReadable, normalizeDatabaseFile, renderPragmas } from './utils';
 
 /**
  * SQLite client for browser environments using a pool of Web Workers.
@@ -366,6 +366,10 @@ export const createSQLiteClient = (
   file: string,
   clientOptions?: CreateSQLiteClientOptions,
 ) => {
+  // One definition of database identity for the workers, the VFS, the epoch
+  // registry, every lock name and the returned `db.file`.
+  const dbFile = normalizeDatabaseFile(file);
+
   const clientIndex = ++clientCount;
 
   const clientPrefix = `${clientOptions?.name ?? 'SQLite'} ${clientIndex}`;
@@ -410,7 +414,7 @@ export const createSQLiteClient = (
 
   const clientDebug = debugOption
     ? createClientDebug(
-        file,
+        dbFile,
         pool,
         {
           vfs,
@@ -600,7 +604,7 @@ export const createSQLiteClient = (
     write,
     read,
     transaction,
-    file,
+    file: dbFile,
     locks: createLocks(),
     logger,
   });
@@ -683,6 +687,11 @@ export const createSQLiteClient = (
       index,
       pool,
       clientPrefix,
+      // Pass the original (un-normalized) name: sqlite3_open_v2 checks
+      // nPathname + 8 > mxPathname (64) before calling xOpen, and the VFS
+      // already normalizes via new URL(zName, 'file://') — so the OPFS path
+      // is identical either way. The normalized dbFile is the identity key for
+      // client-side registries and lock names; the worker resolves its own key.
       file,
       vfs,
       build,

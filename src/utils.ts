@@ -183,3 +183,18 @@ export const renderPragmas = (pragmas: Record<string, string>): string[] =>
       `Invalid value ${JSON.stringify(value)} for pragma "${key}": expected an integer, a bare word such as WAL, or a quoted literal.`,
     );
   });
+
+/**
+ * The single definition of database identity.
+ *
+ * OPFS itself never sees this string: `getFileHandle` takes a *name*, not a
+ * path, so each VFS resolves the path itself. Four of the five shipped VFS do
+ * it with `new URL(zName, 'file://')` and `AccessHandlePoolVFS` with the same
+ * parse against `'file://localhost/'` — identical `pathname`. Normalizing here
+ * makes one string reach the workers, the VFS, the epoch registry and every
+ * lock name, so two clients cannot disagree about what "the same database" is.
+ *
+ * Idempotent: the VFS re-parse of an already-normalized name is a no-op.
+ */
+export const normalizeDatabaseFile = (file: string): string =>
+  new URL(file, 'file://').pathname;

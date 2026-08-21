@@ -1,5 +1,9 @@
 import { describe, expect, it } from '@rstest/core';
-import { isWriteQuery, sqlParams } from '../../src/utils';
+import {
+  isWriteQuery,
+  normalizeDatabaseFile,
+  sqlParams,
+} from '../../src/utils';
 
 describe('isWriteQuery', () => {
   describe('DML write operations', () => {
@@ -121,5 +125,35 @@ describe('sqlParams', () => {
     p1.addParam('shared');
     expect(p2.addParam('shared')).toBe('?001');
     expect(p2.params.length).toBe(1);
+  });
+});
+
+describe('normalizeDatabaseFile', () => {
+  // Falsifiable: return `file` unchanged from normalizeDatabaseFile and the
+  // first three cases go red — which is exactly the epoch registry splitting
+  // one database into several keys.
+  it('collapses spellings that address the same OPFS file', () => {
+    expect(normalizeDatabaseFile('data/file')).toBe('/data/file');
+    expect(normalizeDatabaseFile('./data/file')).toBe('/data/file');
+    expect(normalizeDatabaseFile('/data/file')).toBe('/data/file');
+    expect(normalizeDatabaseFile('data\\file')).toBe('/data/file');
+    expect(normalizeDatabaseFile('data/../file')).toBe('/file');
+  });
+
+  it('percent-encodes exactly as the VFS do', () => {
+    expect(normalizeDatabaseFile('café')).toBe('/caf%C3%A9');
+    expect(normalizeDatabaseFile('caf%C3%A9')).toBe('/caf%C3%A9');
+  });
+
+  it('keeps genuinely distinct names distinct', () => {
+    expect(normalizeDatabaseFile('data//file')).toBe('/data//file');
+    expect(normalizeDatabaseFile('SQLite')).not.toBe(
+      normalizeDatabaseFile('sqlite'),
+    );
+  });
+
+  it('is idempotent, so re-normalizing in the VFS changes nothing', () => {
+    const once = normalizeDatabaseFile('./data/file');
+    expect(normalizeDatabaseFile(once)).toBe(once);
   });
 });
