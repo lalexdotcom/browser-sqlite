@@ -188,6 +188,31 @@ epoch for the read that arrives before the ping lands; (d) route reads to the de
 wave 3's rejected option, zero round-trip, but it re-entangles read scheduling with the designation
 and worsens the head-of-line blocking of (3) above.
 
+**Barrier BRAINSTORMED AND SPEC'D 2026-08-21** — `docs/superpowers/specs/2026-08-21-ryow-barrier-design.md`,
+branch `feat/ryow-barrier` off `main` at `f427018`. Option **(b)** chosen, scope set to **same-tab**
+RYOW (two clients in one tab must see each other; cross-tab is out). Read the spec rather than this
+entry for the design; four things it settled that the list above does not know: the bump **cannot**
+ride on `lease.release()` (release is async, so `write()` resolves first, and a read chained after it
+would still see the old epoch); new workers start at `seen = -1`, because a commit can land between a
+worker opening the file and entering the pool — the nominal startup ordering at `poolSize: 2`, not a
+rare race; `file` is normalized once at the client entry with `new URL(file,'file://').pathname`,
+which is what 4 of the 5 VFS already do internally (and which fixes `initLockName`'s raw-string key
+and `OPFSWriteAheadVFS` throwing on `'./name'`); and a failed fallback `ROLLBACK` in `transaction.ts`
+leaves an open transaction on a pooled connection, where the prelude would succeed and refresh
+nothing — the worker is evicted instead.
+
+**Cross-tab lead, NOT VERIFIED — Web Locks as a registry, not as mutual exclusion.** Preferred over
+`BroadcastChannel`, which loses the race on a message still in flight. Shape: a tab holds
+`bsq:epoch:<file>:<n>`, takes `n+1` and releases `n` at commit, and other tabs read the epoch as the
+max of the held names via `navigator.locks.query()` — the same "lock as liveness marker" pattern
+`stagingLockName` already uses. It is *state*, not *delivery*, so there is no in-flight window.
+**The measurement that settles it:** the cost of `navigator.locks.query()` per acquisition, against
+the one worker round-trip it is meant to avoid — `query()` returns every lock held in the origin and
+is specified as a diagnostic snapshot. If it is not clearly cheaper, the exact cross-tab answer is
+the unconditional prelude (option (a)), probably as an opt-in, not this. **Do not treat this as
+promising until that number exists** — that is exactly how `PRAGMA data_version` and the WAL VFS cost
+a session each.
+
 
 **Sequencing decided 2026-08-20: relax it AFTER the barrier, not before.** Reasons, in order: the barrier changes the staleness surface, so doing both at once makes the next debugging harder (~~`output()` still fails 60% unexplained~~ — explained by (4) above, 2026-08-20); `COOP-1` shows a VFS can pass a gentle workload and lock up once DDL meets concurrent readers, and spreading writes increases exactly that contention; and the stickiness measurement used 45 **sequential** writes with no concurrent readers, which is narrower than the change it would license. **When it is done, the test must fail if stickiness is restored** — a load that mixes spread writes with concurrent reads, not sequential chains. | **Read-your-own-writes is not guaranteed across workers — found the hard way in wave 3, 2026-08-19.** The default VFS is `OPFSPermutedVFS` (`client.ts`'s `DEFAULT_VFS` — note the worker's own fallback is `OPFSCoopSyncVFS`, which is what made this easy to get wrong), and it propagates commits to other connections asynchronously over BroadcastChannel + IndexedDB. A read dispatched to a worker that has not yet received the broadcast serves a stale view. This surfaced as a 40 %-reproducible test failure: after `output().close()` resolved, a `read()` returned the pre-swap schema. **No mitigation ships — this was reworked on user instruction, 2026-08-19.** A first attempt made `takeAvailable` prefer the designated writer for reads. The user rejected that shape: it entangled read scheduling with writer designation, and it was inconsistent with `handOver`, which cleared the designation when the writer served a queued read. **The rules now are: a read never takes the designation by preference and never clears it, both acquisition paths behave identically, and no preference of any kind applies to reads.** So RYOW is simply not guaranteed across workers, full stop, until wave 4 supplies a real propagation barrier.
 
