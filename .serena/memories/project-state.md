@@ -172,7 +172,7 @@ which hashes the config file itself. `pnpm build` is therefore always correct; n
 |---|---|---|
 | `client.ts` | 628 | **Assembly only** (since wave 1): options, validation, wiring, the public `SQLiteDB` surface, `close()`. No longer a god module — it was 1016 lines and held everything below. Three new options in wave 2: `maxWorkerRestarts` (default 1), `openTimeout` (default 30 000 ms), `drainTimeout` (default 60 000 ms). `close()` is now `() => Promise<void>`. |
 | `errors.ts` | 25 | **New in wave 2.** `SQLiteError extends Error` with `code: SQLiteErrorCode` and `name` mirroring `code`. Five codes: `NOT_A_READ_QUERY` / `CLIENT_CLOSED` / `WORKER_CRASHED` / `TIMEOUT` / `PROTOCOL_ERROR`. Exported from `index.ts`. |
-| `supervisor.ts` | 81 | **New in wave 2.** Pure per-slot restart policy, zero imports. Slot that never reached `ready` is never restarted; restart counter resets on a request actually served (not on `ready`); `maxWorkerRestarts` bounds it; an eviction leaving no live slot fails the client; `evicted` flag makes eviction permanent against a late `ready`. |
+| `supervisor.ts` | 94 | **New in wave 2.** Pure per-slot restart policy, zero imports. Slot that never reached `ready` is never restarted; restart counter resets on a request actually served (not on `ready`); `maxWorkerRestarts` bounds it; an eviction leaving no live slot fails the client; `evicted` flag makes eviction permanent against a late `ready`. **`spawned` event added 2026-08-21 (`07b075a`) — a slot holds a worker from creation, not from `ready`.** Without it a replacement that died before booting read as a duplicate death signal, `report()` returned no decision, and the client hung forever with an empty pool. See the entry in `mem:follow-ups`. |
 | `scheduler.ts` | 200 | **Pure** — availability (a private `Set`), both wait queues, writer designation, opaque leases. Gained `remove(index)` and `shutdown(reason)` in wave 2; a per-index generation counter makes a stale lease's `release()` inert after the slot was removed and revived. No `Worker`, no DOM, no orchestrator import — Node tests drive it in milliseconds. **This purity is load-bearing: B1 survived for months because the scheduler was only reachable through slow browser tests.** |
 | `pool.ts` | 362 | Worker creation and transport: `postMessage` / `onmessage` routed by `callId`, the raw query generator, and the stop-and-drain that waits for the worker's in-flight `done` before a lease returns. `PoolWorker` now carries `interrupt()`, `quiesce()`, and `close()`. Wave 2 adds `onerror` (dead worker and the actionable load-failure message), `messageerror` (worker survives, request rejects with `PROTOCOL_ERROR`), a bounded stop-and-drain, and the `close` handshake. |
 | `queries.ts` | 163 | `chunk()` — the single query primitive and **the only place `AbortSignal` is read** — plus `streamRows` / `readWorker` / `firstWorker` / `writeWorker`. Wave 2 adds `makeAbortRace` helper; the abort now races the pending chunk instead of being tested after it, and the caller never awaits the drain. |
@@ -229,26 +229,35 @@ and `'Bundler Configuration'`) rather than the URL, for this reason.
 - `bulkWrite`/`output` are single-use: `enqueue()` and `close()` throw once closed.
 - Read PRAGMAs work through `read()` again; a PRAGMA that assigns or takes an argument is a write.
 
-## Scheduling rules as of wave 3 — settled with the user, and one is measured
-
-Three rules, and the third is the one nobody may relax casually:
+## Scheduling rules — rules 1 and 2 as of wave 3, rule 3 rewritten 2026-08-21
 
 1. **A read never touches the writer designation** — it does not take the writer by preference,
    and it does not clear the designation when the writer happens to serve it. Both acquisition
    paths behave identically. (`handOver` used to clear it while `takeAvailable` preferred the
    writer and kept it — the two disagreed, and the user called that out.)
 2. **No preference of any kind when choosing a worker for a read.** Lowest-index-first.
-3. **The writer designation is sticky, and this is now evidence-backed.** The user asked for it to
-   be released once no write is outstanding or queued, so a following write could take the first
-   free worker. That was built, measured and reverted: consecutive writes on different workers
-   fail with `no such table`, because `sqlite3_prepare_v2` reads the schema through the worker's
-   stale page map *before* `SQLITE_LOCK_RESERVED` is requested. `OPFSPermutedVFS` does detect
-   staleness at that lock and signals `SQLITE_BUSY`, which wa-sqlite retries — but a failed
-   prepare returns `SQLITE_ERROR`, which it does not. **Relaxing stickiness requires a real
-   commit-propagation barrier first (wave 4, BP-1).**
+3. **The writer designation is released as soon as no write is queued behind it** (commit
+   `e2f454b`, 2026-08-21). `handOver` clears it, below the `serveWriterFirst` call: reaching that
+   line proves the writer queue is empty, and since a worker holds one lease at a time no write is
+   in flight either. **Consequence worth carrying: `designated` and `leased` now coincide** — the
+   designation cannot outlive the lease, so a read can never meet an available designated worker.
+   Rule 1 therefore has no observable failure mode left; the test that pinned it was deleted rather
+   than kept green for the wrong reason.
 
-Consequence: read-your-own-writes across workers is not guaranteed, and nothing in the scheduler
-pretends otherwise. See RYOW-1 in `mem:follow-ups`.
+   ~~Sticky, and evidence-backed: consecutive writes on different workers fail with `no such
+   table`, because `sqlite3_prepare_v2` reads the schema through the stale page map before
+   `SQLITE_LOCK_RESERVED` is requested.~~ **That evidence is not wrong, it is answered.**
+   `applyBarrier` covers `kind: 'write'`, so a newly designated writer absorbs the previous commit
+   before it prepares anything. The old reasoning stays here because anyone tempted to remove the
+   barrier must know it is what holds this rule up.
+
+   What it bought, measured (poolSize 2, a long read holding worker 0): five writes in **30-32 ms**
+   spread onto worker 1, against **934-1052 ms** pinned behind the read. What it did not buy: on
+   alternating, mixed and read-heavy loads it is neutral on preludes *and* on wall clock. This is a
+   fix for the pathological case, not a throughput win — do not claim otherwise.
+
+Consequence: read-your-own-writes is guaranteed within the tab (the barrier), not across tabs.
+See RYOW-1 in `mem:follow-ups`.
 
 ## Key invariant — established in wave 1, do not weaken it
 

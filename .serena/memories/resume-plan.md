@@ -58,7 +58,10 @@ Its documents: design `docs/superpowers/specs/2026-08-19-wave-4-backpressure-des
 carry in-place corrections dated 2026-08-20 — execution proved both wrong), implementation plan
 `docs/superpowers/plans/2026-08-20-wave-4-backpressure.md` (8 tasks).
 
-**What wave 4 still owes: the commit-propagation barrier and D6.** Neither is designed. The barrier
+**~~What wave 4 still owes: the commit-propagation barrier and D6.~~ The barrier shipped and merged
+(`36c664e`); the stickiness it unblocked was relaxed on 2026-08-21 (`feat/writer-stickiness`) and
+the two `poolSize: 1` pins are gone. What wave 4 still owes is D6 alone.** Historic text follows.
+The barrier
 deserves its own brainstorming and unblocks RYOW-1, the writer designation's stickiness, and the two
 browser tests pinned to `poolSize: 1`. ~~A lead recorded 2026-08-20 and not yet examined: `OPFSWriteAheadVFS`
 implements write-ahead logging inside the VFS, and a synchronous WAL-based VFS may have quite different
@@ -139,13 +142,19 @@ owner of `available`, relayer the query API on `chunk()` (§1.2), fix abort once
 B9 in `tests/browser/concurrency.test.ts`. Remember the convention: an `it.fails` turning
 red means the bug is fixed.
 
-## 0.1 HOW TO RESUME — rewritten 2026-08-21 (end of the barrier implementation session), read this first
+## 0.1 HOW TO RESUME — rewritten 2026-08-21 (end of the writer-stickiness session), read this first
 
-**Repository state.** The commit-propagation barrier is **built and reviewed** on branch
-`feat/ryow-barrier`, 25 commits off `main` at `f427018`. At the end of that session the branch was
-green — `pnpm check` clean, `tsc --noEmit` clean, **302 tests / 0 failures** — and the integration
-decision (merge locally / PR / leave) was still with the user, so **check `git log main` before
-assuming where the work lives**. `main` is still not pushed to origin.
+**Repository state.** The commit-propagation barrier is **merged into `main`** (`36c664e`); its
+branch is gone. The writer-stickiness work sits on **`feat/writer-stickiness`**, two commits off
+`main` at `71c609c`, green — `pnpm check` clean, `tsc --noEmit` clean, **308 tests / 0 failures**,
+and 14 consecutive full-suite runs with no failure. **The integration decision is still the
+user's**, so check `git log main` before assuming where the work lives. `main` is still not pushed
+to origin.
+
+Barrier spec: `docs/superpowers/specs/2026-08-21-ryow-barrier-design.md` — accurate except §2.2's
+claim about the alternating-load worst case, which measurement contradicted (see step 1 below).
+The stickiness work has **no spec and no plan document by design**: it was classified as a bounded
+change, designed in chat, and approved there.
 
 Spec: `docs/superpowers/specs/2026-08-21-ryow-barrier-design.md`. Plan:
 `docs/superpowers/plans/2026-08-21-ryow-barrier.md`. Read the spec before touching any of this; it
@@ -174,17 +183,25 @@ so the file never grows and nothing auto-heals the connection. See spec §1.1.
 
 **Do these in this order.**
 
-1. **Relax the writer stickiness.** This was blocked on the barrier; the barrier is in. The test seam
-   the old step 2 asked for also exists now — `__unsafeTestWriterPolicy`, an unsupported runtime
-   option read once at the client entry, typed by `InternalSQLiteClientOptions` in `scheduler.ts`
-   and deliberately absent from `dist/index.d.ts`. **The test must fail if stickiness is restored**:
-   a load mixing spread writes with concurrent reads, not sequential chains. Note what stickiness
-   costs today — §1.5's head-of-line blocking — and that relaxing it is what fixes the barrier's
-   known worst case (alternating `write / read`, where the conditional barrier degenerates to the
-   cost of an unconditional one).
+1. ~~**Relax the writer stickiness.**~~ **DONE 2026-08-21 on `feat/writer-stickiness`, two commits,
+   308 tests green, 14 consecutive full-suite runs clean.** `e2f454b` releases the designation in
+   `handOver`; `07b075a` fixes SUP-1, a pre-existing client-hangs-forever bug found while measuring
+   it (see `mem:follow-ups`). Measured gain: five writes in 30-32 ms against 934-1052 ms when a long
+   read holds worker 0; **neutral on every ordinary load**, so it buys the pathological case only.
+   One plan claim did NOT survive measurement: relaxing stickiness does **not** fix the barrier's
+   alternating-load worst case — on an idle pool the write and the following read take the same
+   lowest free worker, so there was nothing there to fix. Spec §2.2 says otherwise; it is wrong.
+   **The branch is not merged** — the integration decision is the user's.
 2. **`COOP-1`** — it blocks the "works everywhere" half of the README, and it is untouched.
-3. **The README's per-VFS trade-off section**, last, because 1 and 2 change what it says. The RYOW
-   wording is already rewritten and correct.
+   **This is the next step.**
+3. **The README's per-VFS trade-off section**, last, because 2 changes what it says. The RYOW
+   wording is already rewritten and correct. Step 1 turned out to change nothing here: stickiness
+   was never documented publicly (`grep -i sticky README.md src/` is empty).
+
+**Also open, and the user's own idea, worth a measurement not a deduction:** reads preferring the
+last writer over the lowest index, as a pure freshness hint. Filed in `mem:follow-ups` under
+Performance with the baseline census it has to beat, and with the two reasons it may turn out to be
+worth nothing.
 
 **D6 is still owed** and still undesigned — see §1.4.
 
@@ -625,6 +642,23 @@ page", not "drop it in any page".
 - **Wave 3: reviews examine what changed, not what stayed the same.** Two independent reviews
   passed over a scheduler branch without noticing it contradicted its untouched sibling path. When
   a change adds a rule to one of two symmetric paths, review the pair, not the diff.
+- **Stickiness session (2026-08-21): a control that differs by two things controls nothing.** The
+  first attribution compared `main` against the branch — which differed by a source change *and* by
+  a newly added test file. Four combinations were needed to exonerate the source change, and the
+  real bug (SUP-1) turned out to be reachable on `main` all along. Name each arm's single variable
+  before running it.
+- **Stickiness session: instrument the product, not the test.** Every probe placed in the hanging
+  test made the bug disappear — bounding the call, enabling debug, shortening a sleep. A trace array
+  on `globalThis` written from `client.ts`/`pool.ts` caught it in five runs. Corollary worth
+  knowing: a timed-out test still runs its `afterEach`, and since `browserLogs: false` swallows
+  `console.log`, an `afterEach` that **throws** the trace is how you get evidence out of a test that
+  never finishes.
+- **Stickiness session: a falsifiability claim can be disproved, and then you delete the test.** The
+  comment claiming "move this line above the call and a second writer appears" was checked by moving
+  it: everything stayed green, because the next call reclaims the designation immediately. The test
+  asserting it was removed and the comment rewritten to what the experiment actually showed. This is
+  the third time this file records that an unexecuted claim is worth nothing — but the new half is
+  that executing it sometimes *refutes* you, and the honest response is deletion, not rewording.
 - **Wave 3: plan defects reach implementers as instructions.** Four defects in the wave-3 plan
   (a corrupting re-escape, an assertion matching messages instead of codes, a test that could never
   reach its own failure case, a probe defeated by Node 24 shipping `navigator.locks`) were caught
@@ -661,6 +695,15 @@ page", not "drop it in any page".
 
 ## 4. Changelog of this plan
 
+- **2026-08-21 (later session)** — **Step 1 done: the writer designation is released once nothing
+  is queued** (`feat/writer-stickiness`, `e2f454b`). Classified as a bounded change — designed in
+  chat, no spec, no plan document. Measured 30-32 ms against 934-1052 ms in the head-of-line case,
+  neutral everywhere else. Two things the session settled beyond the change itself. **Spec §2.2 is
+  wrong**: relaxing stickiness does not mitigate the barrier's alternating-load worst case, because
+  on an idle pool the write and the next read take the same lowest free worker. And **SUP-1**
+  (`07b075a`), a pre-existing bug where a replacement worker dying before `ready` left the client
+  alive, empty and silent forever — found by chasing a 1-in-8 full-suite hang, fixed with a
+  `spawned` event, pinned deterministically. Next: `COOP-1`.
 - **2026-08-20** — **RYOW-1's root cause found, and the barrier's shape with it.** The stale read
   after `output()` is caused by **priming**: any earlier read on the connection that later serves
   the read leaves it holding a stale page 1, so it returns fresh data under the old schema — an
