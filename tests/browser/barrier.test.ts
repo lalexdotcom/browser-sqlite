@@ -1,4 +1,5 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it, onTestFinished } from '@rstest/core';
+import { createSQLiteClient } from '../../src/client';
 import { BARRIER_SQL } from '../../src/epochs';
 import { createTestClient } from './helpers';
 
@@ -73,5 +74,87 @@ describe('commit-propagation barrier', () => {
     const before = countBarrierStatements(db);
     await db.read('SELECT * FROM t'); // w0 is current — must pay nothing
     expect(countBarrierStatements(db)).toBe(before);
+  });
+});
+
+describe('barrier — two clients in one tab', () => {
+  // Falsifiable: replace the globalThis symbol registry in src/epochs.ts with
+  // a per-client counter and this goes red.
+  //
+  // NOTE: the test uses DDL (column rename) — not a pure INSERT — because
+  // SQLite refreshes data pages at the start of every read transaction (change
+  // counter check) but caches the schema from page 1 across queries. Without
+  // the barrier a primed worker's schema cache goes stale after a remote DDL
+  // commit; a pure INSERT leaves the schema unchanged so no barrier is needed
+  // to see it, making such a test vacuous.
+  it("client B observes client A's schema change", async () => {
+    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const a = createSQLiteClient(dbName, forced);
+    const b = createSQLiteClient(dbName, forced);
+    onTestFinished(async () => {
+      try {
+        await a.close();
+      } catch {
+        /* ignore */
+      }
+      try {
+        await b.close();
+      } catch {
+        /* ignore */
+      }
+      try {
+        const root = await navigator.storage.getDirectory();
+        await root.removeEntry(dbName, { recursive: true });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    await a.write('CREATE TABLE t (old_col)');
+    await a.write('INSERT INTO t (old_col) VALUES (42)');
+    await b.read('SELECT * FROM t'); // primes B's reading worker with old schema
+    await a.write('ALTER TABLE t RENAME COLUMN old_col TO new_col');
+
+    const rows = await b.read<{ new_col: number }>('SELECT * FROM t');
+    expect(rows[0]?.new_col).toBe(42);
+  });
+
+  // Falsifiable: delete the normalizeDatabaseFile call at the entry of
+  // createSQLiteClient and this goes red — the two clients key two counters
+  // so B's barrier never fires and B reads the stale schema.
+  it('treats two spellings of one file as one database', async () => {
+    // Shorter prefix: './bsq-test-<uuid>' = 47 chars, safely under the
+    // 56-char wa-sqlite path limit (FacadeVFS.jFullPathname copies raw name;
+    // SQLite checks nPathname + 8 > mxPathname = 64 before calling xOpen).
+    // './browser-sqlite-test-<uuid>' = 58 chars would crash the worker.
+    const dbName = `bsq-test-${crypto.randomUUID()}`;
+    const a = createSQLiteClient(dbName, forced);
+    const b = createSQLiteClient(`./${dbName}`, forced);
+    onTestFinished(async () => {
+      try {
+        await a.close();
+      } catch {
+        /* ignore */
+      }
+      try {
+        await b.close();
+      } catch {
+        /* ignore */
+      }
+      try {
+        const root = await navigator.storage.getDirectory();
+        await root.removeEntry(dbName, { recursive: true });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    await a.write('CREATE TABLE t (old_col)');
+    await a.write('INSERT INTO t (old_col) VALUES (42)');
+    await b.read('SELECT * FROM t'); // primes B's reading worker with old schema
+    await a.write('ALTER TABLE t RENAME COLUMN old_col TO new_col');
+
+    const rows = await b.read<{ new_col: number }>('SELECT * FROM t');
+    expect(rows[0]?.new_col).toBe(42);
   });
 });
