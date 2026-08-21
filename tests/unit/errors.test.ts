@@ -20,3 +20,20 @@ describe('SQLiteError', () => {
     expect(new SQLiteError('TIMEOUT', 'late')).toBeInstanceOf(Error);
   });
 });
+
+describe('SQLiteError — SQLite result codes', () => {
+  it('carries the numeric code alongside the discriminant', () => {
+    const error = new SQLiteError('BUSY', 'database is locked', {
+      sqliteCode: 5,
+    });
+    expect(error.code).toBe('BUSY');
+    expect(error.name).toBe('BUSY');
+    expect(error.sqliteCode).toBe(5);
+  });
+
+  it('leaves sqliteCode undefined for errors this library raises itself', () => {
+    expect(
+      new SQLiteError('CLIENT_CLOSED', 'closed').sqliteCode,
+    ).toBeUndefined();
+  });
+});

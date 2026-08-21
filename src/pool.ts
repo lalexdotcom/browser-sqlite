@@ -59,6 +59,26 @@ export type PoolWorker = Worker & {
 
 const STOP = Symbol('stop');
 
+/** SQLITE_BUSY and SQLITE_LOCKED — the two ways a lock conflict reports. */
+const BUSY_CODES = new Set([5, 6]);
+
+/**
+ * Mints a typed error only for lock conflicts. Every other SQLite failure
+ * keeps today's shape — a plain Error carrying SQLite's message — so no
+ * existing consumer's error handling changes.
+ */
+const workerError = (data: {
+  message: string;
+  cause?: unknown;
+  sqliteCode?: number;
+}) =>
+  data.sqliteCode !== undefined && BUSY_CODES.has(data.sqliteCode)
+    ? new SQLiteError('BUSY', data.message, {
+        cause: data.cause,
+        sqliteCode: data.sqliteCode,
+      })
+    : new Error(data.message, { cause: data.cause });
+
 /**
  * Creates a new pool worker and registers it in the pool array.
  * Sets up message routing via callId for query responses.
@@ -241,7 +261,7 @@ export const createPoolWorker = (deps: {
       }
       case 'error': {
         if (deferredChunk && callId === currentCallId) {
-          const error = new Error(data.message, { cause: data.cause });
+          const error = workerError(data);
           if (state?.currentRequest?.currentQuery) {
             state.currentRequest.currentQuery.error = error;
             state.currentRequest.currentQuery.endTime = Date.now();

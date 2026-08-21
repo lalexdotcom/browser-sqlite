@@ -279,6 +279,12 @@ const open = (file: string, options?: OpenOptions) => {
                 ? { message: e.message, cause: cloneable(e.cause) }
                 : { message: 'Unknown error', cause: e }
               : { message: `Unknown error (${e})` }),
+            // wa-sqlite raises SQLiteError(message, code) with SQLite's numeric
+            // result code. Without this the code dies at the postMessage
+            // boundary and the client can only string-match the message.
+            ...(typeof (e as { code?: unknown })?.code === 'number'
+              ? { sqliteCode: (e as { code: number }).code }
+              : {}),
           });
         } finally {
           queryRunning?.resolve();
