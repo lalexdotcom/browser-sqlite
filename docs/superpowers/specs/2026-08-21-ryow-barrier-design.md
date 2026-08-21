@@ -595,4 +595,7 @@ same load. The conditional design is thus ~50× cheaper on a read-dominated
 workload, which justifies the guard (`if (worker.seen >= target) return;`) over
 the simpler always-fire alternative.
 
-Evidence log: `.superpowers/sdd/2026-08-21-ryow-barrier/task-10-runs.log`
+The raw per-run output lived in session scratch
+(`.superpowers/sdd/`, git-ignored) and is gone with it; the table above is the
+record. Re-running the A/B costs twelve browser-suite runs and the protocol is
+written out in full here, so it is reproducible without the log.
