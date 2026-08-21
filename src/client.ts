@@ -682,6 +682,9 @@ export const createSQLiteClient = (
   const transaction = createTransaction({
     scheduler: { ...scheduler, acquire: acquireInstrumented },
     afterWrite,
+    // Wrapped, not passed by reference: handleDeath is declared further down
+    // and would be in its temporal dead zone here.
+    onPoisoned: (index, error) => handleDeath(index, error),
   });
 
   const { bulkWrite, output } = createBulk({
