@@ -11,7 +11,11 @@ import {
   streamRows,
   writeWorker,
 } from './queries';
-import { createScheduler } from './scheduler';
+import {
+  createScheduler,
+  type InternalSQLiteClientOptions,
+  type WriterPolicy,
+} from './scheduler';
 import { createSupervisor } from './supervisor';
 import { createTransaction, type TransactionDB } from './transaction';
 import {
@@ -399,11 +403,22 @@ export const createSQLiteClient = (
   // Fail at construction, not inside the first unrelated query.
   if (clientOptions?.pragmas) renderPragmas(clientOptions.pragmas);
 
+  // TEST-ONLY, UNSUPPORTED. Read once here, validated, and converted to a
+  // typed internal value so no `any` travels further. Absent from the public
+  // options type on purpose — see InternalSQLiteClientOptions in scheduler.ts.
+  const testWriterPolicy = (
+    clientOptions as InternalSQLiteClientOptions | undefined
+  )?.__unsafeTestWriterPolicy;
+  const writerPolicy: WriterPolicy | undefined =
+    typeof testWriterPolicy === 'function' ? testWriterPolicy : undefined;
+
   /**
    * Creates a new pool worker and adds it to the pool.
    * Sets up message routing via callId for query responses.
    */
-  const scheduler = createScheduler<PoolWorker>();
+  const scheduler = createScheduler<PoolWorker>(
+    writerPolicy ? { canDesignateWriter: writerPolicy } : {},
+  );
 
   const debugOption = clientOptions?.debug;
 

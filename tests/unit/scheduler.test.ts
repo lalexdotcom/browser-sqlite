@@ -570,3 +570,75 @@ describe('scheduler — stats()', () => {
     lease.release();
   });
 });
+
+describe('scheduler — writer policy', () => {
+  const makeBiased = (size = 2) => {
+    const scheduler = createScheduler<TestWorker>({
+      canDesignateWriter: (index) => index !== 0,
+    });
+    const workers = Array.from({ length: size }, (_, index) => ({ index }));
+    for (const worker of workers) scheduler.add(worker);
+    return { scheduler, workers };
+  };
+
+  it('designates the lowest index the policy accepts', async () => {
+    const { scheduler } = makeBiased(3);
+    const lease = await scheduler.acquire('write');
+    expect(lease.worker.index).toBe(1);
+  });
+
+  it('leaves reads untouched by the policy', async () => {
+    const { scheduler } = makeBiased(2);
+    const lease = await scheduler.acquire('read');
+    expect(lease.worker.index).toBe(0);
+  });
+
+  it('does not designate a refused worker that joins with a write queued', async () => {
+    const scheduler = createScheduler<TestWorker>({
+      canDesignateWriter: (index) => index !== 0,
+    });
+    const pending = scheduler.acquire('write');
+    scheduler.add({ index: 0 });
+    await flush();
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await flush();
+    expect(settled).toBe(false);
+
+    scheduler.add({ index: 1 });
+    const lease = await pending;
+    expect(lease.worker.index).toBe(1);
+  });
+
+  it('does not designate a refused worker that is handed back', async () => {
+    const { scheduler } = makeBiased(2);
+    // Lease both workers so nothing is free.
+    const r0 = await scheduler.acquire('read'); // takes w0
+    const r1 = await scheduler.acquire('read'); // takes w1
+
+    // Queue a write — nothing is free, so it stays pending.
+    const pending = scheduler.acquire('write');
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+
+    // Return w0 — policy refuses it as a writer, so the queued write must stay pending.
+    r0.release();
+    await flush();
+    expect(settled).toBe(false);
+
+    // Return w1 — policy accepts it, so the queued write is served by w1.
+    r1.release();
+    const lease = await pending;
+    expect(lease.worker.index).toBe(1);
+  });
+
+  it('accepts every index by default — production behaviour is unchanged', async () => {
+    const { scheduler } = makeScheduler(2);
+    const lease = await scheduler.acquire('write');
+    expect(lease.worker.index).toBe(0);
+  });
+});
