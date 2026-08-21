@@ -550,16 +550,32 @@ conclusion is what changes.
 **Untouched:** the README's per-VFS trade-off section, which is sequenced after
 the stickiness work that will change what it says.
 
-### 10.1 Two measurements owed at implementation time
+### 10.1 A/B measurement — prelude statement (2026-08-21)
 
-**The prelude statement.** `SELECT count(*) FROM sqlite_master` against
-`SELECT rowid FROM sqlite_master LIMIT 1`, six runs each in the forced
-configuration; the cheaper one is adopted **only if it is 6/6**. `sqlite_master`
-has its b-tree root on page 1, so the `LIMIT 1` form touches exactly the page
-that must be re-read and nothing else — but the dominant cost of a prelude is the
-`postMessage` round-trip, not the SQL, so the difference may well be noise.
-Carried as a criterion, not as an intention: the current constant is the only
-measured form.
+**Protocol.** Six runs each of `pnpm test:browser` (101 tests, Chromium, forced
+configuration). A form passes only if all 101 tests pass (0 failures) in all 6
+runs. The incumbent `count(*)` has a prior 6/6 measurement; the candidate
+`LIMIT 1` has none — the asymmetry is the whole reason for the 6/6 rule.
 
-**The saving.** A count of preludes under a read-dominated load, to put a number
-on what the conditional barrier saves against an unconditional one.
+| Run | Form A `count(*)` | Form B `LIMIT 1` | Form B failures |
+|-----|-------------------|------------------|-----------------|
+| 1   | pass — 8 712 ms   | FAIL — 7 813 ms  | backpressure.test.ts |
+| 2   | pass — 8 038 ms   | FAIL — 7 927 ms  | backpressure.test.ts |
+| 3   | pass — 9 088 ms   | FAIL — 7 851 ms  | backpressure.test.ts, debug.test.ts |
+| 4   | pass — 8 252 ms   | FAIL — 7 828 ms  | backpressure.test.ts, debug.test.ts |
+| 5   | pass — 8 261 ms   | FAIL — 8 155 ms  | backpressure.test.ts, debug.test.ts |
+| 6   | pass — 9 259 ms   | FAIL — 8 633 ms  | backpressure.test.ts |
+
+**Result.** Form A: 6/6. Form B: 0/6. The candidate is rejected; `count(*)` is
+retained. The backpressure failure (`expected 10 to be 11`) appeared every run
+of Form B: `LIMIT 1` on an empty schema returns 0 rows (vs. 1 for `count(*)`),
+which alters the debug step count that the backpressure test pins.
+
+**The saving.** Measured with `countBarrierStatements` (`debug: true`, `poolSize:
+2`, forced configuration, 1 write + 50 reads): the conditional barrier fired **1**
+time. An unconditional barrier would fire once per query — **51** times for the
+same load. The conditional design is thus ~50× cheaper on a read-dominated
+workload, which justifies the guard (`if (worker.seen >= target) return;`) over
+the simpler always-fire alternative.
+
+Evidence log: `.superpowers/sdd/2026-08-21-ryow-barrier/task-10-runs.log`
