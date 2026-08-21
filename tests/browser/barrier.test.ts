@@ -62,9 +62,9 @@ describe('commit-propagation barrier', () => {
   });
 
   // Falsifiable: remove the `if (worker.seen >= target) return;` guard in
-  // applyBarrier() — the barrier still works, every other test stays green, and
-  // only this one goes red. That guard is the entire difference between a
-  // conditional barrier and a round-trip on every single query.
+  // applyBarrier() — this is the test that explicitly pins conditionality.
+  // The backpressure tests also go red as collateral (the extra barrier query
+  // pushes their step-count limits), but only this one names the requirement.
   it('does not repeat the barrier on a worker that is already current', async () => {
     const db = await createTestClient({ ...forced, debug: true });
 
