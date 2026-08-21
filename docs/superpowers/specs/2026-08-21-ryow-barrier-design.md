@@ -286,14 +286,19 @@ prelude on every single query.
 target = epochs.current()      // §4.1
 ...
 next = epochs.bump()           // §4.2
-if (next === target + 1) worker.seen = next
+if (seen === target && next === target + 1) worker.seen = next
 ```
 
-The condition is what makes the rule safe under concurrent clients: if another
-client committed during our lease, `next` skipped, our connection did not observe
-that commit, and it stays marked behind. Without the condition we would mark
-current a connection that is not — the only class of bug this design must make
-impossible.
+Two conditions guard the advance. `next === target + 1` is what keeps the rule
+safe under concurrent clients: if another client committed during our lease,
+`next` skipped, our connection did not observe that commit, and it stays marked
+behind. `seen === target` is defensive — `applyBarrier` (§task 4) sets
+`worker.seen = target` before any write can proceed, so the two are equal at
+every real call site — but it is what makes the function correct in isolation
+and unit-testable as a pure rule: a worker that was already behind must not be
+marked current regardless of what it just committed. Without either condition we
+would mark current a connection that is not — the only class of bug this design
+must make impossible.
 
 This rule is extracted as a pure function and unit-tested in Node (§6.1).
 
@@ -394,10 +399,10 @@ before loading the module and assert it adopts that registry instead of creating
 one. Without this test, the property that survives a duplicated module copy is
 invisible until it breaks in a consumer's build.
 
-**The `seen` advance rule** (§4.3), as a pure function: `next === target + 1`
-advances; `next > target + 1` does not. Two assertions, no browser — and the only
-place in this design where an error yields wrong data rather than an extra
-prelude.
+**The `seen` advance rule** (§4.3), as a pure function: `seen === target &&
+next === target + 1` advances; either condition false does not. Two assertions,
+no browser — and the only place in this design where an error yields wrong data
+rather than an extra prelude.
 
 ### 6.2 Browser — the test that pins the barrier
 

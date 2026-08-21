@@ -70,11 +70,17 @@ export const epochsFor = (file: string): Epochs => {
  * Where a worker's `seen` lands after the write it just served.
  *
  * `target` is the epoch captured when its lease was granted; `next` is the
- * epoch its own commit produced. Advancing only when `next === target + 1` is
- * what keeps this safe under concurrent clients: if another client committed
- * during our lease, `next` skipped, this connection never observed that
- * commit, and it must stay marked behind. Marking a connection current when it
- * is not is the only class of bug this design must make impossible.
+ * epoch its own commit produced. Advancing requires both conditions:
+ *
+ * - `seen === target`: the worker was actually observing from `target` when its
+ *   lease was granted. If the worker was already behind (`seen < target`), it
+ *   must not be marked current regardless of what it just committed.
+ * - `next === target + 1`: the commit is the immediate successor of `target`.
+ *   If another client committed during our lease, `next` skipped; our
+ *   connection never observed that commit and must stay marked behind.
+ *
+ * Marking a connection current when it is not is the only class of bug this
+ * design must make impossible.
  */
 export const advanceSeen = (
   seen: number,
