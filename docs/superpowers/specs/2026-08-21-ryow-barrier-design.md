@@ -1,12 +1,19 @@
 # Wave 4 — RYOW-1: the commit-propagation barrier
 
-**STATUS: complete, awaiting user review. 2026-08-21.**
+**STATUS: implemented and reviewed. 2026-08-21.**
 
-All six brainstorming sections are approved, plus two amendments raised during
-review (§7, §8). The next step after review is the implementation plan, via the
-writing-plans skill.
+All six sections plus the two amendments (§7, §8) were built across the eleven
+tasks of `docs/superpowers/plans/2026-08-21-ryow-barrier.md`, each task reviewed
+on its own diff, then the whole branch reviewed once more. A twelfth change was
+added afterwards, outside the plan: the canonical database name became
+*relative*, which retired the two-name split §3.2 used to describe.
 
-Branch: `feat/ryow-barrier`, to be cut from `main` at `f427018`.
+Branch: `feat/ryow-barrier`, 25 commits off `main` at `f427018`, green at 302
+tests. The acceptance criterion is §6.5: `output()`'s two previously pinned
+tests run at the default pool size, 20/20.
+
+§1.1 and §10.1 carry measurements made *during* implementation, not during
+design — read them before reopening anything they touch.
 
 Scope note: this document covers **RYOW-1 only** — making a read observe a
 commit that a *different* worker performed. It does not cover cross-tab
