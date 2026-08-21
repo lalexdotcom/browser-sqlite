@@ -190,9 +190,15 @@ export const renderPragmas = (pragmas: Record<string, string>): string[] =>
  * OPFS itself never sees this string: `getFileHandle` takes a *name*, not a
  * path, so each VFS resolves the path itself. Four of the five shipped VFS do
  * it with `new URL(zName, 'file://')` and `AccessHandlePoolVFS` with the same
- * parse against `'file://localhost/'` — identical `pathname`. Normalizing here
- * makes one string reach the workers, the VFS, the epoch registry and every
- * lock name, so two clients cannot disagree about what "the same database" is.
+ * parse against `'file://localhost/'` — identical `pathname`. This is the identity key for client-side registries and every lock name,
+ * including `initLockName` inside the worker. The string handed to
+ * `sqlite3_open_v2` stays exactly as the caller wrote it: SQLite core checks
+ * `nPathname + 8 > mxPathname` (64, `node_modules/wa-sqlite/src/VFS.js:10`)
+ * on that string before calling `xOpen`, so adding a leading `/` to a 56-char
+ * name causes `SQLITE_CANTOPEN_FULLPATH` — measured: it broke all 96 browser
+ * tests. The VFS re-parses internally (`new URL(zName, 'file://')` for four
+ * of five; `AccessHandlePoolVFS` uses `'file://localhost/'`), so the OPFS
+ * file opened is identical whether the caller passes `'data'` or `'/data'`.
  *
  * Idempotent: the VFS re-parse of an already-normalized name is a no-op.
  */

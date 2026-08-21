@@ -154,8 +154,12 @@ This is not an invention — it is what four of the five shipped VFS already do
 internally (`OPFSAdaptiveVFS`, `OPFSCoopSyncVFS`, `OPFSPermutedVFS`,
 `IDBBatchAtomicVFS` via `new URL(zName, 'file://')`; `AccessHandlePoolVFS` via
 `#getPath` with base `'file://localhost/'`, same `pathname`). Doing it at the
-entry makes one string flow to workers, VFS, the registry, `initLockName`,
-`stagingLockName`, `sweepLockName`, and the returned `db.file`.
+entry makes the normalized name the identity key for the epoch registry and every
+lock name (`initLockName` inside the worker, `stagingLockName`, `sweepLockName`
+on the client). The string handed to `sqlite3_open_v2` stays as the caller wrote
+it: SQLite core checks `nPathname + 8 > mxPathname` (64,
+`node_modules/wa-sqlite/src/VFS.js:10`) before `xOpen` — measured at task 1:
+passing the normalized name broke all 96 browser tests on 56-char names.
 
 | Input | Normalized |
 |---|---|
@@ -165,12 +169,17 @@ entry makes one string flow to workers, VFS, the registry, `initLockName`,
 | `data//file` | `/data//file` — *not* collapsed |
 | `SQLite` vs `sqlite` | distinct — case is significant |
 
-It is idempotent for all five VFS, and it fixes two live defects on the way:
-`OPFSWriteAheadVFS` splits the raw name on `/` and keeps `.` as a segment, so
-`'./data'` currently calls `getDirectoryHandle('.')` — a name the OPFS spec
-forbids — and throws; and `initLockName(file)` currently keys on the raw string,
-so two clients spelling the same file differently take different init locks and
-fail to serialize their opens.
+It is idempotent for all five VFS, and it fixes one live defect on the way:
+`initLockName(file)` previously keyed on the raw string, so two clients spelling
+the same file differently took different init locks and failed to serialize their
+opens. This is now fixed worker-side: `initLockName(normalizeDatabaseFile(file))`
+in `src/worker/worker.ts`.
+
+The `OPFSWriteAheadVFS` `'./data'` defect (splits on `/`, keeps `.` as a segment,
+calls `getDirectoryHandle('.')`, throws) is **not** fixed here: `sqlite3_open_v2`
+receives the raw name, and `OPFSWriteAheadVFS` sees it. Fixing it requires
+normalizing inside the worker before the open call, which the `mxPathname` budget
+(64) does not allow without raising that limit.
 
 **One behavioural caveat, and it is the only one.** A non-ASCII name on
 `OPFSWriteAheadVFS` currently creates a file literally named `café`, where
@@ -180,10 +189,9 @@ invisible. `OPFSWriteAheadVFS` was made public on the previous branch and has no
 tests at all (VFS-COV), so exposure is negligible — but it is real and must
 appear in the changelog.
 
-Two minor visible effects: `db.file` returns `/data` instead of `data`, and lock
-names change shape, so during a hot upgrade an old tab and a new tab would not
-serialize with each other. Locks hold no persistent state; the effect dies with
-the reload.
+One minor visible effect: lock names change shape, so during a hot upgrade an old
+tab and a new tab would not serialize with each other. Locks hold no persistent
+state; the effect dies with the reload.
 
 ### 3.3 Where the registry lives
 

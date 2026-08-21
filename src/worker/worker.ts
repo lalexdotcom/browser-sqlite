@@ -7,7 +7,7 @@
  *
  * Lifecycle labels (`NEW`, `READY`, `RUNNING`, `ABORTING`, `CLOSED`, `DEAD`) are
  * maintained by `src/pool.ts`, not by this module. From this worker's perspective:
- * the database open is serialised by `navigator.locks` (`initLockName(file)`);
+ * the database open is serialised by `navigator.locks` (`initLockName(normalizeDatabaseFile(file))`);
  * readiness is reported via the `ready` message; an abort arrives as a `stop`
  * message and is observed through the credit gate's stopped flag.
  */
@@ -26,7 +26,7 @@ import {
   type SQLiteVFS,
   type WorkerMessageData,
 } from '../types';
-import { renderPragmas } from '../utils';
+import { normalizeDatabaseFile, renderPragmas } from '../utils';
 
 type SQLOptions = { chunkSize?: number; signal?: AbortSignal };
 
@@ -103,7 +103,7 @@ type OpenOptions = {
  * transitions this worker to READY and replaces the top-level message handler
  * with the query handler.
  *
- * Database open is serialised by a `navigator.locks` lock on `initLockName(file)`.
+ * Database open is serialised by a `navigator.locks` lock on `initLockName(normalizeDatabaseFile(file))`.
  * On success, posts a `ready` message; `src/pool.ts` then transitions the worker
  * label from `NEW` to `READY`.
  *
@@ -137,15 +137,26 @@ const open = (file: string, options?: OpenOptions) => {
         sqlite.vfs_register(vfsInstance, true);
         // One lock for open + pragmas. withLock releases on throw too, which
         // is what the explicit unlock() in the old .catch existed to do.
-        return locks.withLock(initLockName(file), async () => {
-          const db = await sqlite.open_v2(file);
-          for (const statement of renderPragmas(pragmas)) {
-            for await (const stmt of sqlite.statements(db, statement)) {
-              while ((await sqlite.step(stmt)) === SQLITE_ROW) {}
+        //
+        // The lock name is normalized so two clients spelling the same file
+        // differently (e.g. 'data' vs './data') always compete on the same
+        // lock. The open call keeps the original `file` string: sqlite3_open_v2
+        // checks nPathname + 8 > mxPathname (64, wa-sqlite/src/VFS.js:10)
+        // before xOpen; the leading '/' from normalization pushes 56-char test
+        // names over the budget. The VFS normalizes internally, so the same
+        // OPFS file is opened regardless.
+        return locks.withLock(
+          initLockName(normalizeDatabaseFile(file)),
+          async () => {
+            const db = await sqlite.open_v2(file);
+            for (const statement of renderPragmas(pragmas)) {
+              for await (const stmt of sqlite.statements(db, statement)) {
+                while ((await sqlite.step(stmt)) === SQLITE_ROW) {}
+              }
             }
-          }
-          return { sqlite, db };
-        });
+            return { sqlite, db };
+          },
+        );
       });
     })
     .then((opened) => {
