@@ -108,6 +108,17 @@ export const createScheduler = <W extends { index: number }>(
   }> = [];
 
   // Index of the worker designated for writes, or -1 when none is designated.
+  //
+  // The designation exists to serialize writes onto one connection, and it
+  // lasts no longer than that: handOver releases it as soon as no write is
+  // queued behind it, so `designated` and `leased` coincide. It was sticky for
+  // the life of the worker until wave 4's barrier shipped — a write landing on
+  // a worker that had not absorbed the previous commit failed at `prepare` with
+  // `no such table`. `applyBarrier` covers `kind: 'write'`, so a newly
+  // designated writer catches up before it prepares anything.
+  //
+  // Measured 2026-08-21: with a long read holding worker 0, five writes took
+  // 30 ms spread over worker 1 against 934-1052 ms pinned behind the read.
   let currentWriterIndex = -1;
 
   const canDesignate = opts.canDesignateWriter ?? (() => true);
@@ -136,6 +147,18 @@ export const createScheduler = <W extends { index: number }>(
 
   const handOver = (worker: W) => {
     if (serveWriterFirst(worker)) return;
+
+    // Release the designation. Reaching this line proves no write is queued:
+    // serveWriterFirst's only negative exit that leaves the designation on this
+    // worker is an empty writerQueue. It sits ABOVE the reader branch because
+    // that branch returns — the release has to happen on every exit, not only
+    // the idle one.
+    //
+    // Measured, so nobody "fixes" it: moving this above serveWriterFirst is
+    // behaviourally equivalent in production, since the call reclaims the
+    // designation on the same worker at once. The two differ only under a
+    // canDesignateWriter that refuses this index — tests only.
+    if (currentWriterIndex === worker.index) currentWriterIndex = -1;
 
     if (readerQueue.length) {
       // Reads never alter the designation — rule 1.

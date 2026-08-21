@@ -756,6 +756,12 @@ export const createSQLiteClient = (
   };
 
   const spawn = (index: number) => {
+    // The slot holds a worker again from here — not from `ready`. Without this,
+    // a restarted slot stays marked dead and the replacement's own death is
+    // taken for a duplicate signal about the worker it replaced: no decision
+    // comes back, nothing restarts, nothing fails, and the pool is empty and
+    // silent for the rest of the client's life.
+    supervisor.report(index, 'spawned');
     const timer = setTimeout(() => {
       handleDeath(
         index,

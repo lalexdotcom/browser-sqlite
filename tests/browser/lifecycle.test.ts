@@ -1,5 +1,5 @@
 // tests/browser/lifecycle.test.ts
-import { afterEach, describe, expect, it } from '@rstest/core';
+import { afterEach, describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import {
   createTestClient,
@@ -61,6 +61,58 @@ describe('worker lifecycle — crash detection', () => {
     await expect(db.read('SELECT 1')).rejects.toMatchObject({
       code: 'WORKER_CRASHED',
     });
+  });
+
+  /**
+   * Redirects every Worker from the `from`-th one on to a URL that does not
+   * exist, so a REPLACEMENT can be made to fail deterministically while the
+   * original boots normally. helpers' interceptWorkers redirects all of them.
+   */
+  const failWorkersFrom = (from: number) => {
+    const created: Worker[] = [];
+    const Original = globalThis.Worker;
+    class Failing extends Original {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(
+          created.length >= from ? '/definitely-missing-worker.js' : url,
+          options,
+        );
+        created.push(this);
+      }
+    }
+    globalThis.Worker = Failing as unknown as typeof Worker;
+    onTestFinished(() => {
+      globalThis.Worker = Original;
+    });
+    return created;
+  };
+
+  // Falsifiable: delete the `supervisor.report(index, 'spawned')` call in
+  // spawn() (src/client.ts). The slot stays marked dead from the first death,
+  // the replacement's death reads as a duplicate signal, report() returns no
+  // decision, and the client neither restarts nor fails — this read then waits
+  // for a worker that will never exist and the test dies on its timeout.
+  it('fails the client when the replacement never boots', async () => {
+    const created = failWorkersFrom(1);
+    const db = await createTestClient({ poolSize: 1, maxWorkerRestarts: 1 });
+    await db.write('CREATE TABLE t (a)');
+    expect(created.length).toBe(1);
+
+    const running = db.read(longQuery(20_000_000));
+    await sleep(100);
+    created[0].dispatchEvent(new ErrorEvent('error'));
+    await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+
+    // The slot restarts into a worker that cannot load. The client must reach a
+    // verdict rather than leave the pool empty and silent.
+    const outcome = await Promise.race([
+      db.read('SELECT 1').then(
+        () => 'resolved',
+        (error: { code?: string }) => `rejected:${error.code}`,
+      ),
+      new Promise((resolve) => setTimeout(() => resolve('HUNG'), 10_000)),
+    ]);
+    expect(outcome).toBe('rejected:WORKER_CRASHED');
   });
 
   // Falsifiable: replace the load-failure branch with a generic message that
