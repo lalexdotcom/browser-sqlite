@@ -11,6 +11,12 @@ export type PoolWorkerQueryOptions = {
   chunkSize?: number;
   credits?: number;
   debug?: string;
+  /**
+   * When true, the query's completion does not call `deps.onServed`. Set for
+   * the commit-propagation barrier: it is a synthetic probe, not user work, and
+   * must not reset the supervisor's restart counter.
+   */
+  noServed?: boolean;
 };
 
 /**
@@ -24,6 +30,16 @@ export type PoolWorker = Worker & {
   index: number;
   /** Lifecycle label for the debug surface. Replaces the SAB status byte. */
   status: string;
+  /**
+   * The commit epoch this connection has absorbed. Starts at -1: a worker
+   * opens the file — and reads page 1 — BEFORE it enters the pool, and a
+   * commit can land in between. At poolSize 2 that is the nominal startup
+   * ordering, not a rare race, so a new worker is always treated as behind and
+   * pays exactly one barrier statement in its lifetime.
+   */
+  seen: number;
+  /** The epoch captured when the current lease was granted. */
+  epochTarget: number;
   query: <T extends Record<string, unknown> = Record<string, unknown>>(
     sql: string,
     params?: unknown[],
@@ -85,7 +101,7 @@ export const createPoolWorker = (deps: {
       ),
       { name: workerName, type: 'module' },
     ) as PoolWorker,
-    { index, status: 'NEW' },
+    { index, status: 'NEW', seen: -1, epochTarget: 0 },
   );
   pool[index] = worker;
   logger.info(`worker ${index + 1} created`);
@@ -96,6 +112,10 @@ export const createPoolWorker = (deps: {
 
   // Deferred promise for streaming query results one chunk at a time
   let deferredChunk: PromiseWithResolvers<unknown[] | number> | undefined;
+  // Set by the query generator when options.noServed is true; cleared in
+  // case 'done' after (possibly) suppressing onServed, and in the generator's
+  // finally so a query that fails before 'done' does not leave it set.
+  let suppressServed = false;
 
   // Deferred promise resolved when the worker replies 'closed'.
   let deferredClose: PromiseWithResolvers<void> | undefined;
@@ -214,7 +234,8 @@ export const createPoolWorker = (deps: {
           }
           deferredChunk.resolve(affected);
           deferredChunk = undefined;
-          deps.onServed?.(index);
+          if (!suppressServed) deps.onServed?.(index);
+          suppressServed = false;
         }
         break;
       }
@@ -273,8 +294,12 @@ export const createPoolWorker = (deps: {
       }
 
       // Extract query options
-      const { chunkSize = 500, credits = DEFAULT_CREDIT_WINDOW } =
-        options ?? {};
+      const {
+        chunkSize = 500,
+        credits = DEFAULT_CREDIT_WINDOW,
+        noServed = false,
+      } = options ?? {};
+      suppressServed = noServed;
 
       // Prepare for streaming chunks
       deferredChunk = Promise.withResolvers<unknown[] | number>();
@@ -354,6 +379,9 @@ export const createPoolWorker = (deps: {
       deferredChunk = undefined;
       lost = undefined;
       stopRequested = undefined;
+      // Reset in case the query failed before 'done' arrived — prevents
+      // leaking noServed=true into the next query on this worker.
+      suppressServed = false;
       worker.status = dead ? 'DEAD' : 'READY';
       idle?.resolve();
       idle = undefined;

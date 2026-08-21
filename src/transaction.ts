@@ -55,7 +55,10 @@ const exec = async (worker: PoolWorker, sql: string): Promise<void> => {
  * occur during the callback.
  */
 export const createTransaction =
-  (deps: { scheduler: Scheduler<PoolWorker> }) =>
+  (deps: {
+    scheduler: Scheduler<PoolWorker>;
+    afterWrite: (worker: PoolWorker) => void;
+  }) =>
   async <T = void>(
     callback: (db: TransactionDB) => Promise<T>,
     options?: { readOnly?: boolean; autoCommit?: boolean },
@@ -140,6 +143,10 @@ export const createTransaction =
       }
       throw e;
     } finally {
+      // Same reasoning as write(): before the void, because release is
+      // asynchronous. A read-only transaction commits nothing and must not
+      // bump.
+      if (!readOnly) deps.afterWrite(worker);
       // The lease returns when the worker confirms it is idle, not when the
       // caller leaves: a worker still inside step() must not be re-lent, and
       // the caller must not wait for it.

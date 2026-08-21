@@ -1,8 +1,6 @@
 import { afterEach, onTestFinished } from '@rstest/core';
-import {
-  type CreateSQLiteClientOptions,
-  createSQLiteClient,
-} from '../../src/client';
+import { createSQLiteClient } from '../../src/client';
+import type { InternalSQLiteClientOptions } from '../../src/scheduler';
 
 /**
  * Creates a SQLite client with a unique database name (UUID) and registers
@@ -13,7 +11,7 @@ import {
  * or `build` unless the test is about VFS selection itself.
  */
 export async function createTestClient(
-  options?: Omit<CreateSQLiteClientOptions, 'name'>,
+  options?: Omit<InternalSQLiteClientOptions, 'name'>,
 ) {
   const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
 

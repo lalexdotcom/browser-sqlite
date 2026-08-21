@@ -1,5 +1,6 @@
 import { createBulk } from './bulk';
 import { type ClientDebugState, createClientDebug } from './debug';
+import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
 import { SQLiteError } from './errors';
 import { createLocks } from './locks';
 import { createLogger } from './logger';
@@ -442,18 +443,51 @@ export const createSQLiteClient = (
 
   const debug = clientDebug?.state;
 
-  /**
-   * The single owner of the request level of the debug tree.
-   *
-   * There are seven acquisition sites; instrumenting each is seven chances to
-   * miss one. This wrapper stamps `acquireTime` (through `assign`) and
-   * `releaseTime`, and is a pass-through when debug is off. Nothing outside it
-   * calls `scheduler.acquire`.
-   */
-  const acquireInstrumented = async (kind: 'read' | 'write') => {
-    if (!clientDebug) return scheduler.acquire(kind);
+  const epochs = epochsFor(dbFile);
 
-    const request = clientDebug.createRequestDebugState();
+  /**
+   * The barrier. Runs on a leased worker, so nothing can interleave a
+   * statement between it and the query the lease was taken for — the lease
+   * supplies the atomicity of the pair for free.
+   *
+   * `target` is captured BEFORE the statement: if another client commits while
+   * it is in flight, this connection did not observe that commit and must not
+   * be credited with it.
+   */
+  const applyBarrier = async (worker: PoolWorker) => {
+    const target = epochs.current();
+    worker.epochTarget = target;
+    if (worker.seen >= target) return;
+    // Drained, not just dispatched: it is the opening AND closing of the read
+    // transaction that refreshes page 1. noServed: true prevents the barrier
+    // from resetting the supervisor's restart counter — it is a synthetic probe,
+    // not user work.
+    const barrierIter = worker.query(BARRIER_SQL, undefined, {
+      noServed: true,
+    });
+    while (!(await barrierIter.next()).done) {
+      /* discard rows */
+    }
+    // Only on success — a failed barrier leaves the worker marked behind so
+    // the next attempt re-posts it.
+    worker.seen = target;
+  };
+
+  /** Records a commit. Called after the write, before its promise resolves. */
+  const afterWrite = (worker: PoolWorker) => {
+    worker.seen = advanceSeen(worker.seen, worker.epochTarget, epochs.bump());
+  };
+
+  /**
+   * Debug-stamps the acquisition with request timing. Extracted from
+   * acquireInstrumented so the barrier wrapper can cover both paths uniformly.
+   */
+  const acquireWithDebug = async (kind: 'read' | 'write') => {
+    // Called only when clientDebug is set — cast to NonNullable to avoid the
+    // forbidden non-null assertion operator while preserving the correct type.
+    const request = (
+      clientDebug as NonNullable<typeof clientDebug>
+    ).createRequestDebugState();
     const lease = await scheduler.acquire(kind);
     request.assign(lease.worker.index);
 
@@ -464,6 +498,34 @@ export const createSQLiteClient = (
         lease.release();
       },
     };
+  };
+
+  /**
+   * The single owner of the request level of the debug tree.
+   *
+   * There are seven acquisition sites; instrumenting each is seven chances to
+   * miss one. This wrapper stamps `acquireTime` (through `assign`) and
+   * `releaseTime`, and is a pass-through when debug is off. Nothing outside it
+   * calls `scheduler.acquire`. The barrier runs on the acquired lease before
+   * the caller sees it — the lease atomically covers the barrier statement and
+   * the real query together.
+   */
+  const acquireInstrumented = async (kind: 'read' | 'write') => {
+    const lease = clientDebug
+      ? await acquireWithDebug(kind)
+      : await scheduler.acquire(kind);
+    try {
+      await applyBarrier(lease.worker);
+    } catch (error) {
+      // The caller never received the lease, so its try/finally cannot return
+      // the worker. Release on the same path a normal caller would.
+      void lease.worker.quiesce().then(
+        () => lease.release(),
+        () => lease.release(),
+      );
+      throw error;
+    }
+    return lease;
   };
 
   /**
@@ -571,6 +633,12 @@ export const createSQLiteClient = (
     try {
       return await writeWorker<T>(lease.worker, sql, params, options);
     } finally {
+      // Before the void: release is asynchronous, so write() resolves first. A
+      // read chained on this promise would otherwise acquire before the
+      // increment, observe the old epoch, and skip the barrier — the exact bug
+      // being fixed. In `finally`, so a failed write bumps too: that costs a
+      // barrier statement, never a wrong read.
+      afterWrite(lease.worker);
       // The lease returns when the worker confirms it is idle, not when the
       // caller leaves: a worker still inside step() must not be re-lent, and
       // the caller must not wait for it.
@@ -613,6 +681,7 @@ export const createSQLiteClient = (
 
   const transaction = createTransaction({
     scheduler: { ...scheduler, acquire: acquireInstrumented },
+    afterWrite,
   });
 
   const { bulkWrite, output } = createBulk({
