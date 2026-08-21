@@ -567,9 +567,26 @@ runs. The incumbent `count(*)` has a prior 6/6 measurement; the candidate
 | 6   | pass — 9 259 ms   | FAIL — 8 633 ms  | backpressure.test.ts |
 
 **Result.** Form A: 6/6. Form B: 0/6. The candidate is rejected; `count(*)` is
-retained. The backpressure failure (`expected 10 to be 11`) appeared every run
-of Form B: `LIMIT 1` on an empty schema returns 0 rows (vs. 1 for `count(*)`),
-which alters the debug step count that the backpressure test pins.
+retained.
+
+The `barrier.test.ts` tests passed in all six Form B runs — the page-1 refresh
+property itself is intact. The candidate was rejected because it disturbs an
+unrelated pinned count, under a task scope that permitted changing nothing but
+the constant. The door is not closed: a future session that also updates
+`backpressure.test.ts` to reflect the new row count could legitimately re-open
+this question.
+
+*Backpressure failure (6/6 runs).* `first() > costs exactly one row, and never
+restarts its worker` — `expected 10 to be 11`. The `LIMIT 1` form returns 0 rows
+on an empty schema (vs. 1 row for `count(*)`), which alters the row count the
+backpressure test pins.
+
+*Debug failure (3/6 runs, runs 3–5).* `debug subsystem (B6) > populates the
+whole chain after one read` — `TypeError: actual value must be number or bigint,
+received "undefined"`. This failure is unexplained and intermittent (3/6); the
+error signature differs from the backpressure failure and its connection to the
+candidate SQL change was not established. It is recorded as observed, not
+attributed.
 
 **The saving.** Measured with `countBarrierStatements` (`debug: true`, `poolSize:
 2`, forced configuration, 1 write + 50 reads): the conditional barrier fired **1**
