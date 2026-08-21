@@ -56,42 +56,6 @@ read, forced configuration.**
 | `SELECT * FROM out_replace` (the target table) | 6/6 correct |
 | **`SELECT count(*) FROM sqlite_master`** | **6/6 correct** |
 
-**Staleness domain, measured 2026-08-21.** The bug manifests only for **DDL
-without material growth of the file**. Measured in the forced configuration
-(`poolSize: 2`, writer pinned to index 1) with the barrier disabled:
-
-| Write after priming | File pages (primed → after write) | `schemaStale` | Runs |
-|---|---|---|---|
-| Bulk INSERT with 1 001-byte padding | 3 → 253 | **false** (fresh) | 3/3 |
-| Tiny INSERT, 3 short rows | 3 → 2 | **true** (stale) | 3/3 |
-| Tiny INSERT, six structural variants | 2 (stable) | **true** (stale) | 18/18 |
-
-The differential is the growth and nothing else. Priming is confirmed to work; removing
-the growth exposes it cleanly.
-
-**Inferred mechanism — not observed in the pager.** The coherent explanation
-is that SQLite compares the physical file size against the in-header database size when
-opening a read transaction and, on a mismatch, re-reads page 1 — refreshing the header
-fields even though the change-counter path (which this bug defeats) is not involved. This
-explains every observed data point. It was not verified by instrumenting the pager; it is
-stated here as an inferred explanation, not as a measured fact. The project has twice paid
-for treating an unverified explanation as a fact — see §10.1.
-
-**What this explains about `output()`.** The trigger is reliable because `output()`'s
-`DROP` + `CREATE` + rename sequence operates on a small staging table: the file does not
-grow materially. The inferred size-comparison check therefore does not fire and nothing
-auto-heals the primed connection. A large data write before the DDL would change this
-picture, but in the actual `output()` path the file is small and the bug is fully
-reproducible.
-
-**A rejected optimisation — do not skip the barrier after large writes.** The
-measurement suggests that file growth auto-refreshes the connection. Someone may reason
-from this that the barrier can be omitted after a write that grows the file substantially.
-That reasoning rests on the inferred mechanism, not on the measurement, and the measurement
-covers only one growth ratio (85×) at one page size (4 KB). It is recorded here as a
-rejected-until-measured idea: the barrier stays unconditional until a dedicated probe
-confirms the size threshold and the VFS behaviour at that threshold.
-
 Three consequences fix the shape of the barrier:
 
 1. A primed connection is not behind, it is **stuck**. Neither an event-loop
