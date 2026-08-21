@@ -144,12 +144,14 @@ red means the bug is fixed.
 
 ## 0.1 HOW TO RESUME — rewritten 2026-08-21 (end of the writer-stickiness session), read this first
 
-**Repository state.** The commit-propagation barrier is **merged into `main`** (`36c664e`); its
-branch is gone. The writer-stickiness work sits on **`feat/writer-stickiness`**, two commits off
-`main` at `71c609c`, green — `pnpm check` clean, `tsc --noEmit` clean, **308 tests / 0 failures**,
-and 14 consecutive full-suite runs with no failure. **The integration decision is still the
-user's**, so check `git log main` before assuming where the work lives. `main` is still not pushed
-to origin.
+**Repository state.** Nothing is in flight. The commit-propagation barrier (`36c664e`) and the
+writer-stickiness work (`4f215f8`) are both **merged into `main`**, both branches deleted. The
+session was closed on 2026-08-21 with the merged result verified **on `main`, not just on the
+branch**: `pnpm check` clean, `tsc --noEmit` clean, **308 tests / 0 failures** three runs running,
+and consumer smoke **11/11** across the four bundler modes. `main` is still not pushed to origin.
+
+Three stale branches remain and none of them is live work: `feat/vfs-default`,
+`wave-1-pool-scheduler`, `wave-3-sql-safety`.
 
 Barrier spec: `docs/superpowers/specs/2026-08-21-ryow-barrier-design.md` — accurate except §2.2's
 claim about the alternating-load worst case, which measurement contradicted (see step 1 below).
@@ -183,15 +185,14 @@ so the file never grows and nothing auto-heals the connection. See spec §1.1.
 
 **Do these in this order.**
 
-1. ~~**Relax the writer stickiness.**~~ **DONE 2026-08-21 on `feat/writer-stickiness`, two commits,
-   308 tests green, 14 consecutive full-suite runs clean.** `e2f454b` releases the designation in
+1. ~~**Relax the writer stickiness.**~~ **DONE and MERGED 2026-08-21 (merge commit `4f215f8`),
+   308 tests green, 14 consecutive full-suite runs clean on the branch and 3 more on `main`.** `e2f454b` releases the designation in
    `handOver`; `07b075a` fixes SUP-1, a pre-existing client-hangs-forever bug found while measuring
    it (see `mem:follow-ups`). Measured gain: five writes in 30-32 ms against 934-1052 ms when a long
    read holds worker 0; **neutral on every ordinary load**, so it buys the pathological case only.
    One plan claim did NOT survive measurement: relaxing stickiness does **not** fix the barrier's
    alternating-load worst case — on an idle pool the write and the following read take the same
    lowest free worker, so there was nothing there to fix. Spec §2.2 says otherwise; it is wrong.
-   **The branch is not merged** — the integration decision is the user's.
 2. **`COOP-1`** — it blocks the "works everywhere" half of the README, and it is untouched.
    **This is the next step.**
 3. **The README's per-VFS trade-off section**, last, because 2 changes what it says. The RYOW
@@ -695,8 +696,8 @@ page", not "drop it in any page".
 
 ## 4. Changelog of this plan
 
-- **2026-08-21 (later session)** — **Step 1 done: the writer designation is released once nothing
-  is queued** (`feat/writer-stickiness`, `e2f454b`). Classified as a bounded change — designed in
+- **2026-08-21 (later session)** — **Step 1 done and merged: the writer designation is released
+  once nothing is queued** (`e2f454b`, merge `4f215f8`). Classified as a bounded change — designed in
   chat, no spec, no plan document. Measured 30-32 ms against 934-1052 ms in the head-of-line case,
   neutral everywhere else. Two things the session settled beyond the change itself. **Spec §2.2 is
   wrong**: relaxing stickiness does not mitigate the barrier's alternating-load worst case, because
