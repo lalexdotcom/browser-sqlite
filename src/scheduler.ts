@@ -6,11 +6,16 @@
  * scheduler was only reachable through slow browser tests.
  */
 
+import type { CreateSQLiteClientOptions } from './client';
+
 /**
  * A borrowed worker. `release()` is the only way back into the pool and is
  * idempotent — a second call is a no-op, not an error.
  */
-import type { CreateSQLiteClientOptions } from './client';
+export type Lease<W> = {
+  readonly worker: W;
+  release: () => void;
+};
 
 /**
  * Decides whether a worker index may hold the write designation. The default
@@ -34,11 +39,6 @@ export type WriterPolicy = (index: number) => boolean;
  */
 export type InternalSQLiteClientOptions = CreateSQLiteClientOptions & {
   __unsafeTestWriterPolicy?: WriterPolicy;
-};
-
-export type Lease<W> = {
-  readonly worker: W;
-  release: () => void;
 };
 
 export type Scheduler<W> = {

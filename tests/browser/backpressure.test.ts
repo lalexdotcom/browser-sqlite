@@ -115,8 +115,8 @@ describe('first()', () => {
       expect(row?.id).toBe(1);
     }
 
-    // 1 chunk from the commit-propagation barrier (fires once per connection
-    // lifetime on the first write, to prime the reader) + 10 from first() calls.
+    // 1 chunk from the commit-propagation barrier (fires on the first acquisition
+    // whose worker is behind the epoch) + 10 from first() calls.
     expect(chunksPosted(records[0])).toBe(11);
     await sleep(1500);
     expect(records.length).toBe(1);

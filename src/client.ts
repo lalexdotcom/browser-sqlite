@@ -372,7 +372,7 @@ export const createSQLiteClient = (
   clientOptions?: CreateSQLiteClientOptions,
 ) => {
   // One definition of database identity for the workers, the VFS, the epoch
-  // registry, every lock name and the returned `db.file`.
+  // registry, every lock name and the returned `db.debug.file`.
   const dbFile = normalizeDatabaseFile(file);
 
   const clientIndex = ++clientCount;

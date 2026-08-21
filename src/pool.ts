@@ -15,6 +15,9 @@ export type PoolWorkerQueryOptions = {
    * When true, the query's completion does not call `deps.onServed`. Set for
    * the commit-propagation barrier: it is a synthetic probe, not user work, and
    * must not reset the supervisor's restart counter.
+   * `createQueryDebugState` is intentionally NOT suppressed: barrier statements
+   * still appear in the debug request tree, and a browser test counts them there
+   * to prove the barrier stays conditional.
    */
   noServed?: boolean;
 };
