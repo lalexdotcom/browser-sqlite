@@ -6,6 +6,8 @@
  * scheduler was only reachable through slow browser tests.
  */
 
+import type { CreateSQLiteClientOptions } from './client';
+
 /**
  * A borrowed worker. `release()` is the only way back into the pool and is
  * idempotent — a second call is a no-op, not an error.
@@ -13,6 +15,30 @@
 export type Lease<W> = {
   readonly worker: W;
   release: () => void;
+};
+
+/**
+ * Decides whether a worker index may hold the write designation. The default
+ * accepts every index, so production behaviour is exactly what it was.
+ */
+export type WriterPolicy = (index: number) => boolean;
+
+/**
+ * TEST-ONLY, UNSUPPORTED, removable without notice.
+ *
+ * The barrier's browser test needs the failing configuration — writer not on
+ * the worker that serves the read — to be deterministic; at startup chance it
+ * occurs ~3 runs in 10. This type is declared here, and NOT in `client.ts`,
+ * because `src/index.ts` re-exports only `./client` and `./errors`: keeping it
+ * out of that path keeps it out of the published `.d.ts` and out of every
+ * consumer's autocompletion. `CreateSQLiteClientOptions` is pulled in with
+ * `import type`, which is erased at build time and creates no runtime cycle.
+ *
+ * A predicate that refuses every index leaves writes queued forever — use it
+ * with `poolSize >= 2`.
+ */
+export type InternalSQLiteClientOptions = CreateSQLiteClientOptions & {
+  __unsafeTestWriterPolicy?: WriterPolicy;
 };
 
 export type Scheduler<W> = {
@@ -50,7 +76,10 @@ export type Scheduler<W> = {
  *   worker state.
  */
 export const createScheduler = <W extends { index: number }>(
-  opts: { onIdle?: (worker: W) => void } = {},
+  opts: {
+    onIdle?: (worker: W) => void;
+    canDesignateWriter?: WriterPolicy;
+  } = {},
 ): Scheduler<W> => {
   const workers: (W | undefined)[] = [];
 
@@ -81,24 +110,32 @@ export const createScheduler = <W extends { index: number }>(
   // Index of the worker designated for writes, or -1 when none is designated.
   let currentWriterIndex = -1;
 
+  const canDesignate = opts.canDesignateWriter ?? (() => true);
+
+  /**
+   * Serves the writer queue from `worker` when it may hold the designation.
+   * Extracted because `handOver` and `add` carried this branch twice, and a
+   * predicate that lives in only one of the two copies is a silent hole.
+   */
+  const serveWriterFirst = (worker: W): boolean => {
+    if (!writerQueue.length) return false;
+    if (currentWriterIndex !== worker.index && currentWriterIndex !== -1)
+      return false;
+    // An already-designated writer is not re-judged; only a NEW designation is.
+    if (currentWriterIndex === -1 && !canDesignate(worker.index)) return false;
+    // Claim the designation before serving: without this, a later write
+    // acquisition could designate a second writer while this one still runs.
+    currentWriterIndex = worker.index;
+    writerQueue.shift()?.resolve(worker);
+    return true;
+  };
+
   const checkShutdown = () => {
     if (shutdownDeferred && leased.size === 0) shutdownDeferred.resolve();
   };
 
   const handOver = (worker: W) => {
-    // Writers first, but only onto the designated writer (or when no writer is
-    // designated yet).
-    if (
-      writerQueue.length &&
-      (currentWriterIndex === worker.index || currentWriterIndex === -1)
-    ) {
-      // Claim the designation before serving. The original code omitted this,
-      // so a later write acquisition could designate a second writer while this
-      // one was still running.
-      currentWriterIndex = worker.index;
-      writerQueue.shift()?.resolve(worker);
-      return;
-    }
+    if (serveWriterFirst(worker)) return;
 
     if (readerQueue.length) {
       // Reads never alter the designation — rule 1.
@@ -143,7 +180,10 @@ export const createScheduler = <W extends { index: number }>(
     // Lowest-index-first for both reads and new writes (reads never touch
     // the designation; write designation is set below when a new one starts).
     const found = workers.find(
-      (worker) => worker !== undefined && available.has(worker.index),
+      (worker) =>
+        worker !== undefined &&
+        available.has(worker.index) &&
+        (!write || canDesignate(worker.index)),
     );
     if (!found) return undefined;
 
@@ -159,14 +199,7 @@ export const createScheduler = <W extends { index: number }>(
       // Serve any requests that arrived before this worker was ready, preserving
       // the same writer-first priority as handOver. Does NOT call onIdle — the
       // worker is newly joining the pool, not returning from a lease.
-      if (
-        writerQueue.length &&
-        (currentWriterIndex === worker.index || currentWriterIndex === -1)
-      ) {
-        currentWriterIndex = worker.index;
-        writerQueue.shift()?.resolve(worker);
-        return;
-      }
+      if (serveWriterFirst(worker)) return;
       if (readerQueue.length) {
         // Reads never alter the designation — rule 1.
         readerQueue.shift()?.resolve(worker);

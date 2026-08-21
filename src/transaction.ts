@@ -1,3 +1,4 @@
+import { SQLiteError } from './errors';
 import type { PoolWorker } from './pool';
 import {
   chunk as chunkWorker,
@@ -55,7 +56,17 @@ const exec = async (worker: PoolWorker, sql: string): Promise<void> => {
  * occur during the callback.
  */
 export const createTransaction =
-  (deps: { scheduler: Scheduler<PoolWorker> }) =>
+  (deps: {
+    scheduler: Scheduler<PoolWorker>;
+    afterWrite: (worker: PoolWorker) => void;
+    /**
+     * Called when a connection may still hold an open transaction. The worker
+     * is evicted rather than repaired: a "dirty worker" state is one more
+     * state the barrier would have to reason about, while a respawned
+     * connection is transaction-free by construction.
+     */
+    onPoisoned: (index: number, error: SQLiteError) => void;
+  }) =>
   async <T = void>(
     callback: (db: TransactionDB) => Promise<T>,
     options?: { readOnly?: boolean; autoCommit?: boolean },
@@ -135,11 +146,26 @@ export const createTransaction =
           await db.rollback();
         } catch {
           // A failed rollback must not replace the caller's error, which is the
-          // one that explains what actually went wrong.
+          // one that explains what actually went wrong. But the connection may
+          // now hold an open transaction, and a read inside one reads that
+          // transaction's snapshot — the barrier would refresh nothing and
+          // report success. Evict instead of hoping.
+          deps.onPoisoned(
+            worker.index,
+            new SQLiteError(
+              'WORKER_CRASHED',
+              `Worker ${worker.index + 1} may hold an open transaction after a failed rollback.`,
+              { cause: e },
+            ),
+          );
         }
       }
       throw e;
     } finally {
+      // Same reasoning as write(): before the void, because release is
+      // asynchronous. A read-only transaction commits nothing and must not
+      // bump.
+      if (!readOnly) deps.afterWrite(worker);
       // The lease returns when the worker confirms it is idle, not when the
       // caller leaves: a worker still inside step() must not be re-lent, and
       // the caller must not wait for it.

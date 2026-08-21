@@ -183,3 +183,23 @@ export const renderPragmas = (pragmas: Record<string, string>): string[] =>
       `Invalid value ${JSON.stringify(value)} for pragma "${key}": expected an integer, a bare word such as WAL, or a quoted literal.`,
     );
   });
+
+/**
+ * The single definition of database identity — one string used everywhere:
+ * the worker open call, the VFS, the epoch registry and every lock name.
+ *
+ * The form is **relative** (no leading `/`). `URL.pathname` is absolute by
+ * construction, so stripping the slash is necessary: SQLite core checks
+ * `nPathname + 8 > mxPathname` (64, `node_modules/wa-sqlite/src/VFS.js:10`)
+ * before `xOpen`, and a leading `/` costs a character the budget cannot spare —
+ * measured at task 1: it broke all 96 browser tests on 56-char names. The
+ * strip gives that character back, so a 56-char name that the caller wrote
+ * still fits after normalization. The VFS re-parse (`new URL(zName, 'file://')`
+ * for four of five; `AccessHandlePoolVFS` via `'file://localhost/'`) produces
+ * identical `pathname` whether the open call receives `'data'` or `'/data'`,
+ * so the opened OPFS file is the same regardless.
+ *
+ * Idempotent: the VFS re-parse of an already-normalized name is a no-op.
+ */
+export const normalizeDatabaseFile = (file: string): string =>
+  new URL(file, 'file://').pathname.replace(/^\//, '');

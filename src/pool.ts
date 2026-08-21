@@ -11,6 +11,15 @@ export type PoolWorkerQueryOptions = {
   chunkSize?: number;
   credits?: number;
   debug?: string;
+  /**
+   * When true, the query's completion does not call `deps.onServed`. Set for
+   * the commit-propagation barrier: it is a synthetic probe, not user work, and
+   * must not reset the supervisor's restart counter.
+   * `createQueryDebugState` is intentionally NOT suppressed: barrier statements
+   * still appear in the debug request tree, and a browser test counts them there
+   * to prove the barrier stays conditional.
+   */
+  noServed?: boolean;
 };
 
 /**
@@ -24,6 +33,16 @@ export type PoolWorker = Worker & {
   index: number;
   /** Lifecycle label for the debug surface. Replaces the SAB status byte. */
   status: string;
+  /**
+   * The commit epoch this connection has absorbed. Starts at -1: a worker
+   * opens the file — and reads page 1 — BEFORE it enters the pool, and a
+   * commit can land in between. At poolSize 2 that is the nominal startup
+   * ordering, not a rare race, so a new worker is always treated as behind and
+   * pays exactly one barrier statement in its lifetime.
+   */
+  seen: number;
+  /** The epoch captured when the current lease was granted. */
+  epochTarget: number;
   query: <T extends Record<string, unknown> = Record<string, unknown>>(
     sql: string,
     params?: unknown[],
@@ -42,6 +61,37 @@ export type PoolWorker = Worker & {
 };
 
 const STOP = Symbol('stop');
+
+/** SQLITE_BUSY and SQLITE_LOCKED — the two ways a lock conflict reports. */
+const BUSY_CODES = new Set([5, 6]);
+
+/**
+ * Returns a SQLiteError('BUSY', …) when data carries a lock-conflict result
+ * code (5 or 6), else undefined. Shared by both the query-error and
+ * open-error paths so the BUSY_CODES decision lives in exactly one place.
+ */
+const busyFromCode = (data: {
+  message: string;
+  cause?: unknown;
+  sqliteCode?: number;
+}): SQLiteError | undefined =>
+  data.sqliteCode !== undefined && BUSY_CODES.has(data.sqliteCode)
+    ? new SQLiteError('BUSY', data.message, {
+        cause: data.cause,
+        sqliteCode: data.sqliteCode,
+      })
+    : undefined;
+
+/**
+ * Mints a typed error only for lock conflicts. Every other SQLite failure
+ * keeps today's shape — a plain Error carrying SQLite's message — so no
+ * existing consumer's error handling changes.
+ */
+const workerError = (data: {
+  message: string;
+  cause?: unknown;
+  sqliteCode?: number;
+}) => busyFromCode(data) ?? new Error(data.message, { cause: data.cause });
 
 /**
  * Creates a new pool worker and registers it in the pool array.
@@ -85,7 +135,7 @@ export const createPoolWorker = (deps: {
       ),
       { name: workerName, type: 'module' },
     ) as PoolWorker,
-    { index, status: 'NEW' },
+    { index, status: 'NEW', seen: -1, epochTarget: 0 },
   );
   pool[index] = worker;
   logger.info(`worker ${index + 1} created`);
@@ -96,6 +146,10 @@ export const createPoolWorker = (deps: {
 
   // Deferred promise for streaming query results one chunk at a time
   let deferredChunk: PromiseWithResolvers<unknown[] | number> | undefined;
+  // Set by the query generator when options.noServed is true; cleared in
+  // case 'done' after (possibly) suppressing onServed, and in the generator's
+  // finally so a query that fails before 'done' does not leave it set.
+  let suppressServed = false;
 
   // Deferred promise resolved when the worker replies 'closed'.
   let deferredClose: PromiseWithResolvers<void> | undefined;
@@ -179,9 +233,10 @@ export const createPoolWorker = (deps: {
         if (callId === 0) {
           logger.error(`worker ${index + 1} failed to open: ${data.message}`);
           die(
-            new SQLiteError('WORKER_CRASHED', data.message, {
-              cause: data.cause,
-            }),
+            busyFromCode(data) ??
+              new SQLiteError('WORKER_CRASHED', data.message, {
+                cause: data.cause,
+              }),
           );
         }
         break;
@@ -214,13 +269,14 @@ export const createPoolWorker = (deps: {
           }
           deferredChunk.resolve(affected);
           deferredChunk = undefined;
-          deps.onServed?.(index);
+          if (!suppressServed) deps.onServed?.(index);
+          suppressServed = false;
         }
         break;
       }
       case 'error': {
         if (deferredChunk && callId === currentCallId) {
-          const error = new Error(data.message, { cause: data.cause });
+          const error = workerError(data);
           if (state?.currentRequest?.currentQuery) {
             state.currentRequest.currentQuery.error = error;
             state.currentRequest.currentQuery.endTime = Date.now();
@@ -273,8 +329,12 @@ export const createPoolWorker = (deps: {
       }
 
       // Extract query options
-      const { chunkSize = 500, credits = DEFAULT_CREDIT_WINDOW } =
-        options ?? {};
+      const {
+        chunkSize = 500,
+        credits = DEFAULT_CREDIT_WINDOW,
+        noServed = false,
+      } = options ?? {};
+      suppressServed = noServed;
 
       // Prepare for streaming chunks
       deferredChunk = Promise.withResolvers<unknown[] | number>();
@@ -354,6 +414,9 @@ export const createPoolWorker = (deps: {
       deferredChunk = undefined;
       lost = undefined;
       stopRequested = undefined;
+      // Reset in case the query failed before 'done' arrived — prevents
+      // leaking noServed=true into the next query on this worker.
+      suppressServed = false;
       worker.status = dead ? 'DEAD' : 'READY';
       idle?.resolve();
       idle = undefined;

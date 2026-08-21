@@ -92,7 +92,7 @@ asynchronous work (IndexedDB, BroadcastChannel) would sit at transaction boundar
 measuring unless a design option turns out to depend on it — it explains *why*, and the *what* is
 already settled. | `worker/worker.ts`, `queries.ts` (post-wave-1) |
 | W-route | **done** | **Wave 1 (half 1) + wave 2 (half 2).** Half 1: `isReadQuery` is now an allowlist requiring BOTH an allowlisted opening keyword AND no write keyword anywhere — the second clause matters because the worker executes `;`-separated statements. An adversarial review ran 47 cases with no dangerous-direction misclassification. Accepted cost: `SELECT 'INSERT'` and `EXPLAIN INSERT …` serialize through the writer — correct, merely slower. Half 2: `write()` routes to the writer unconditionally; `read()`, `chunk()`, `stream()`, and `first()` reject a non-read statement with `NOT_A_READ_QUERY` before any lease is taken. Every PRAGMA is currently classified as a write and must go through `write()` — this is documented in `assertReadable`'s JSDoc and in the README, and it pins a test in `tests/browser/routing.test.ts` that will turn red when B4 lands its pragma allowlist. String-literal misclassification is not fully solved (needs tokenisation), but the failure direction is safe toward the writer. | `utils.ts`, `client.ts` |
-| RYOW-1 | open — **root cause found 2026-08-20, see (4) below; the barrier is the next thing built** | **The default VFS changed to `OPFSAdaptiveVFS` on Asyncify and the bulk of the staleness went with it, but the case that matters to `output()` did not.** Measured across connections at `poolSize` 4: `OPFSPermutedVFS` 85 stale reads in 360; `OPFSAdaptiveVFS` **0 in 360**, and 0/80 on each of four separate axes — data INSERT, table CREATE, table DROP, and a table REPLACED under the same name with a different shape (the `DROP` + `ALTER … RENAME` inside one transaction that `output()` performs). `IDBBatchAtomicVFS` likewise 0. **And yet unpinning `output()`'s two `poolSize: 1` tests fails 6 runs in 10**, on `drops and replaces a pre-existing table with a different schema`, with `expected undefined to be 42`: the reader gets one row — the OLD table's — so its schema still describes the pre-swap shape. ~~The isolated reproduction of that DDL sequence shows zero staleness, so the trigger lives somewhere in `output()`'s real path that the reproduction does not capture — candidates not yet eliminated: the indexes created inside the same transaction, the `navigator.locks`-guarded sweep on first call, and `bulkWrite`'s one-lease-per-batch.~~ **Answered by (4) below: the sweep, and not for the reason listed here — it is its READ that primes the reader, not its writes.** **The two tests therefore stay pinned to `poolSize: 1`, and wave 4 still owes the barrier.** Finding that trigger is where the barrier's brainstorming starts — it is a narrower question than it was, which is worth something. **Two follow-up measurements, 2026-08-20.**
+| RYOW-1 | **DONE — barrier built and reviewed 2026-08-21 on `feat/ryow-barrier`; see the block at the end of this entry. Everything before it is history, kept for the measurements.** | **The default VFS changed to `OPFSAdaptiveVFS` on Asyncify and the bulk of the staleness went with it, but the case that matters to `output()` did not.** Measured across connections at `poolSize` 4: `OPFSPermutedVFS` 85 stale reads in 360; `OPFSAdaptiveVFS` **0 in 360**, and 0/80 on each of four separate axes — data INSERT, table CREATE, table DROP, and a table REPLACED under the same name with a different shape (the `DROP` + `ALTER … RENAME` inside one transaction that `output()` performs). `IDBBatchAtomicVFS` likewise 0. **And yet unpinning `output()`'s two `poolSize: 1` tests fails 6 runs in 10**, on `drops and replaces a pre-existing table with a different schema`, with `expected undefined to be 42`: the reader gets one row — the OLD table's — so its schema still describes the pre-swap shape. ~~The isolated reproduction of that DDL sequence shows zero staleness, so the trigger lives somewhere in `output()`'s real path that the reproduction does not capture — candidates not yet eliminated: the indexes created inside the same transaction, the `navigator.locks`-guarded sweep on first call, and `bulkWrite`'s one-lease-per-batch.~~ **Answered by (4) below: the sweep, and not for the reason listed here — it is its READ that primes the reader, not its writes.** **The two tests therefore stay pinned to `poolSize: 1`, and wave 4 still owes the barrier.** Finding that trigger is where the barrier's brainstorming starts — it is a narrower question than it was, which is worth something. **Two follow-up measurements, 2026-08-20.**
 
 **(1) The stale read is NOT our bug — the fork is settled.** After `out.close()` resolves, the WRITER connection sees the new table **15/15**, so the swap transaction is genuinely committed and the ordering in our code is right; a barrier is not answering a mis-posed question. What happens is that typically **one connection out of four** is transiently behind — 8 of 15 iterations had exactly 3 of 4 reads correct — and it catches up **within one event-loop turn** (converged at a `sleep(0)` retry in all 15). That is why a single read after `close()` fails ~60% of runs: it lands on the lagging connection. **This shrinks the barrier's job enormously**: not synchronising an asynchronous BroadcastChannel+IndexedDB channel as Permuted required, but stopping a read being served by a connection that has not yet observed a commit one turn old. Lead not yet verified: `PRAGMA data_version`, which SQLite provides precisely so a connection can detect that another has modified the database.
 
@@ -187,6 +187,61 @@ information**; (c) eager refresh broadcast at commit time — an optimisation of
 epoch for the read that arrives before the ping lands; (d) route reads to the designated writer —
 wave 3's rejected option, zero round-trip, but it re-entangles read scheduling with the designation
 and worsens the head-of-line blocking of (3) above.
+
+**Barrier BUILT, REVIEWED AND MEASURED 2026-08-21** — `docs/superpowers/specs/2026-08-21-ryow-barrier-design.md`,
+branch `feat/ryow-barrier` off `main` at `f427018`. Option **(b)** chosen, scope set to **same-tab**
+RYOW (two clients in one tab must see each other; cross-tab is out). Read the spec rather than this
+entry for the design; four things it settled that the list above does not know: the bump **cannot**
+ride on `lease.release()` (release is async, so `write()` resolves first, and a read chained after it
+would still see the old epoch); new workers start at `seen = -1`, because a commit can land between a
+worker opening the file and entering the pool — the nominal startup ordering at `poolSize: 2`, not a
+rare race; `file` is normalized once at the client entry with `new URL(file,'file://').pathname`,
+which is what 4 of the 5 VFS already do internally (and which fixes `initLockName`'s raw-string key
+and `OPFSWriteAheadVFS` throwing on `'./name'`); and a failed fallback `ROLLBACK` in `transaction.ts`
+leaves an open transaction on a pooled connection, where the prelude would succeed and refresh
+nothing — the worker is evicted instead.
+
+**Cross-tab lead, NOT VERIFIED — Web Locks as a registry, not as mutual exclusion.** Preferred over
+`BroadcastChannel`, which loses the race on a message still in flight. Shape: a tab holds
+`bsq:epoch:<file>:<n>`, takes `n+1` and releases `n` at commit, and other tabs read the epoch as the
+max of the held names via `navigator.locks.query()` — the same "lock as liveness marker" pattern
+`stagingLockName` already uses. It is *state*, not *delivery*, so there is no in-flight window.
+**The measurement that settles it:** the cost of `navigator.locks.query()` per acquisition, against
+the one worker round-trip it is meant to avoid — `query()` returns every lock held in the origin and
+is specified as a diagnostic snapshot. If it is not clearly cheaper, the exact cross-tab answer is
+the unconditional prelude (option (a)), probably as an opt-in, not this. **Do not treat this as
+promising until that number exists** — that is exactly how `PRAGMA data_version` and the WAL VFS cost
+a session each.
+
+**What actually shipped, 2026-08-21 — read the spec, not this entry, for the design.**
+`docs/superpowers/specs/2026-08-21-ryow-barrier-design.md`, 25 commits on `feat/ryow-barrier`, green
+at 302 tests. Epoch counter per database in `globalThis[Symbol.for('browser-sqlite.epochs.v1')]`, one
+choke point (`applyBarrier` in `acquireInstrumented`) covering reads, writes, transactions and bulk,
+`seen = -1` on every new worker, and the bump posted synchronously in the write path's `finally`
+because lease release is asynchronous and `write()` resolves first. **Acceptance: `output()`'s two
+`poolSize: 1` pins are gone and those tests run at the default pool size, 20/20 green** — they
+predate the barrier and were not written for it, which is what makes them the evidence worth
+trusting. Also shipped: `SQLiteError` code `BUSY` on the query *and* open paths; eviction of a worker
+whose fallback `ROLLBACK` failed (an open transaction would have made the barrier refresh nothing and
+report success); one normalized database name everywhere in **relative** form, which also fixed
+`OPFSWriteAheadVFS` throwing on `'./name'`.
+
+**The domain of the bug is narrower than this entry ever said — measured 2026-08-21.** It needs
+**DDL without material growth of the file**. Barrier disabled, forced configuration: a write growing
+the file 3 → 253 pages left the primed connection **fresh** 3/3; a tiny write leaving it at 2 pages
+left it **stale** 3/3, and 3/3 on each of six structural variants — eighteen runs, all stale. The
+growth is the only difference. **Mechanism inferred, not observed**: a file-size mismatch check that
+re-reads page 1 through a path the change-counter bug does not defeat. It explains why `output()` was
+always the reliable trigger — small staging table, no growth, nothing auto-heals. Spec §1.1.
+**Do not turn this into "skip the barrier after a large write"**: that rests on the inference, and one
+growth ratio at one page size. Rejected until the threshold is measured.
+
+**Three small things the whole-branch review triaged as non-blocking, worth keeping so they are not
+rediscovered:** `tests/unit/epochs.test.ts` replaces `globalThis[Symbol.for('browser-sqlite.epochs.v1')]`
+with no teardown (latent ordering dependency); the barrier statement still lands in the debug request
+tree — `noServed` suppresses the served callback but not `currentQuery`, and that is deliberate
+because a browser test counts it there; and `workerError` in `pool.ts` has no unit test, with the
+open-path BUSY mapping verified by inspection only.
 
 
 **Sequencing decided 2026-08-20: relax it AFTER the barrier, not before.** Reasons, in order: the barrier changes the staleness surface, so doing both at once makes the next debugging harder (~~`output()` still fails 60% unexplained~~ — explained by (4) above, 2026-08-20); `COOP-1` shows a VFS can pass a gentle workload and lock up once DDL meets concurrent readers, and spreading writes increases exactly that contention; and the stickiness measurement used 45 **sequential** writes with no concurrent readers, which is narrower than the change it would license. **When it is done, the test must fail if stickiness is restored** — a load that mixes spread writes with concurrent reads, not sequential chains. | **Read-your-own-writes is not guaranteed across workers — found the hard way in wave 3, 2026-08-19.** The default VFS is `OPFSPermutedVFS` (`client.ts`'s `DEFAULT_VFS` — note the worker's own fallback is `OPFSCoopSyncVFS`, which is what made this easy to get wrong), and it propagates commits to other connections asynchronously over BroadcastChannel + IndexedDB. A read dispatched to a worker that has not yet received the broadcast serves a stale view. This surfaced as a 40 %-reproducible test failure: after `output().close()` resolved, a `read()` returned the pre-swap schema. **No mitigation ships — this was reworked on user instruction, 2026-08-19.** A first attempt made `takeAvailable` prefer the designated writer for reads. The user rejected that shape: it entangled read scheduling with writer designation, and it was inconsistent with `handOver`, which cleared the designation when the writer served a queued read. **The rules now are: a read never takes the designation by preference and never clears it, both acquisition paths behave identically, and no preference of any kind applies to reads.** So RYOW is simply not guaranteed across workers, full stop, until wave 4 supplies a real propagation barrier.

@@ -139,52 +139,78 @@ owner of `available`, relayer the query API on `chunk()` (§1.2), fix abort once
 B9 in `tests/browser/concurrency.test.ts`. Remember the convention: an `it.fails` turning
 red means the bug is fixed.
 
-## 0.1 HOW TO RESUME — rewritten 2026-08-20 (end of the RYOW investigation session), read this first
+## 0.1 HOW TO RESUME — rewritten 2026-08-21 (end of the barrier implementation session), read this first
 
-**Repository state.** `feat/vfs-default` was reviewed as a whole branch, its findings fixed
-(`db37503`), and merged into `main` at **`be314db`**. Verified **on `main`, not just on the branch**:
-`pnpm check` clean, `tsc --noEmit` clean, **275 tests / 0 failures**, consumer smoke **11/11** across
-four bundler modes. The branch ref still exists locally and is fully merged — delete it whenever.
-`main` is still **not pushed to origin** (120 commits ahead). Tree clean.
+**Repository state.** The commit-propagation barrier is **built and reviewed** on branch
+`feat/ryow-barrier`, 25 commits off `main` at `f427018`. At the end of that session the branch was
+green — `pnpm check` clean, `tsc --noEmit` clean, **302 tests / 0 failures** — and the integration
+decision (merge locally / PR / leave) was still with the user, so **check `git log main` before
+assuming where the work lives**. `main` is still not pushed to origin.
 
-**What this session settled — read `mem:follow-ups` under RYOW-1, block (4), before anything else.**
-In one line: the stale read after `output()` is caused by **any earlier read on the connection that
-later serves the read**, `output()` guarantees one through its sweep, and **every VFS behaves the
-same** (40 runs, 40 stale, 4 VFS × their builds). The barrier is therefore permanent architecture,
-its shape is known — a separate statement that opens a real read transaction, `SELECT count(*) FROM
-sqlite_master` suffices — and the open question is only **when to pose it**. Two leads recorded in
-these memories are now **dead, measured**: `PRAGMA data_version` and `OPFSWriteAheadVFS`.
+Spec: `docs/superpowers/specs/2026-08-21-ryow-barrier-design.md`. Plan:
+`docs/superpowers/plans/2026-08-21-ryow-barrier.md`. Read the spec before touching any of this; it
+carries every measurement and every rejected alternative, so nothing below needs re-deriving.
+
+**What shipped.** A per-database commit epoch in the realm-wide symbol registry
+(`Symbol.for('browser-sqlite.epochs.v1')`), so every client in a tab shares it; each worker carries
+the epoch it absorbed; before a leased worker serves anything, if it is behind, one discarded
+`SELECT count(*) FROM sqlite_master` opens a real read transaction. One choke point —
+`applyBarrier` inside `acquireInstrumented` — covers reads, writes, transactions and bulk. Plus:
+`SQLiteError` code `BUSY` for lock conflicts on both the query and open paths; eviction of a worker
+left holding an open transaction after a failed fallback `ROLLBACK`; and one normalized database
+name everywhere, in **relative** form.
+
+**The acceptance evidence, and it is the part worth trusting.** `output()`'s two tests that were
+pinned to `poolSize: 1` run at the default pool size again, **20/20 green**. They predate the
+barrier, were not written for it, and one of them failed ~7.5 % before it was pinned.
+
+**New finding, 2026-08-21 — the staleness domain is narrower than believed.** The bug needs **DDL
+without material growth of the file**. Barrier disabled, forced configuration: a write that grew the
+file 3 → 253 pages left the primed connection **fresh** 3/3; a tiny write leaving it at 2 pages left
+it **stale** 3/3, and 3/3 on each of six structural variants — eighteen runs, all stale. The
+differential is the growth alone. **Mechanism inferred, not observed** (a file-size mismatch check
+re-reading page 1). It explains why `output()` is the reliable trigger: its staging table is small,
+so the file never grows and nothing auto-heals the connection. See spec §1.1.
 
 **Do these in this order.**
 
-1. **Brainstorm the barrier**, on a new feature branch (wave 4's second half). The design space is in
-   RYOW-1 block (4); option **(b), a prelude conditional on a commit epoch, is the recommendation to
-   argue for or against** — not a decision. Then spec → self-review → user review → `writing-plans`.
-   Nothing gets implemented before that.
-2. **Rebuild the scheduler determinism probe as a real test seam** while implementing. Forcing the
-   writer designation off index 0 is what turns a ~30 %-flaky failure into a deterministic one; the
-   test that pins the barrier is worth nothing without it. Verify its falsifiability by hand —
-   delete the barrier, watch it go red.
-3. **Then relax the writer stickiness**, with a test that fails if it is restored — a load mixing
-   spread writes with concurrent reads, not sequential chains.
-4. **`COOP-1`** — it blocks the "works everywhere" half of the README. Note that this session did
-   *not* clear it: CoopSync passed the RYOW matrix, but on a workload far gentler than COOP-1's.
-5. **The README's per-VFS trade-off section and the RYOW wording**, last, because 1-4 change what
-   they say. `output()`'s two tests go back to the default pool size when the barrier lands.
+1. **Relax the writer stickiness.** This was blocked on the barrier; the barrier is in. The test seam
+   the old step 2 asked for also exists now — `__unsafeTestWriterPolicy`, an unsupported runtime
+   option read once at the client entry, typed by `InternalSQLiteClientOptions` in `scheduler.ts`
+   and deliberately absent from `dist/index.d.ts`. **The test must fail if stickiness is restored**:
+   a load mixing spread writes with concurrent reads, not sequential chains. Note what stickiness
+   costs today — §1.5's head-of-line blocking — and that relaxing it is what fixes the barrier's
+   known worst case (alternating `write / read`, where the conditional barrier degenerates to the
+   cost of an unconditional one).
+2. **`COOP-1`** — it blocks the "works everywhere" half of the README, and it is untouched.
+3. **The README's per-VFS trade-off section**, last, because 1 and 2 change what it says. The RYOW
+   wording is already rewritten and correct.
 
 **D6 is still owed** and still undesigned — see §1.4.
 
-**Two lessons this session paid for.**
+**Dead leads — struck, do not revive without new measurement.** `PRAGMA data_version` (8/8 stale).
+`OPFSWriteAheadVFS` (12/12 stale across three builds). `SELECT rowid FROM sqlite_master LIMIT 1` as a
+cheaper prelude (0/6 — but note the barrier tests passed under it; it failed an unrelated pinned row
+count in `backpressure.test.ts`, so the door is not closed, see spec §10.1). "Growth heals the
+connection, so skip the barrier after a large write" — rests on the inferred mechanism, not on the
+measurement; rejected until the threshold is measured.
 
-**Attribute before hypothesising.** Three candidate causes had been carried in the memory for a day
-(indexes, the locks hold, `bulkWrite`'s leases); all three were wrong, and the answer fell out in one
-run of stamping each SQL statement with the worker that served it. The instrumentation existed
-already — `debug: true` — and nobody had pointed it at the question.
+**Three lessons this session paid for.**
 
-**A lead left alive in a memory costs the next session.** `PRAGMA data_version` and the WAL VFS were
-both recorded as "not yet verified" and both read, a day later, as promising. Measuring them took
-minutes; believing them would have shaped a design. When a lead dies, strike it in the memory where
-it was written — do not merely omit it.
+**A control that cannot fail proves nothing.** The first probe of the page-1 question compared
+barrier-on against barrier-off and got identical numbers, which was consistent both with "the
+staleness is harmless here" and with "the harness never primed". Two extra rounds were needed to
+separate them. Before trusting any zero, ask what result would have looked different.
+
+**Scan each task against itself, not only against its neighbours.** The pre-flight conflict scan
+looked for contradictions *between* tasks and found none. Two tasks contradicted *themselves* — a
+formula against its own test case, and a pair of tests that could not fail — and only implementation
+caught them.
+
+**Here, comments drift faster than code.** Most findings the review loop retained were comments that
+lied: a `// Falsifiable:` naming a line that did not exist, another asserting a result the
+measurement contradicted, a JSDoc describing the plan's buggy formula rather than the code beneath
+it. In a codebase where comments carry measurements, that is a defect class, not a tidiness one.
 
 
 ## 1. Decisions — D1 to D5, all settled

@@ -107,7 +107,7 @@ type OpenOptions = {
  * On success, posts a `ready` message; `src/pool.ts` then transitions the worker
  * label from `NEW` to `READY`.
  *
- * @param file - Database file name passed from `createSQLiteClient`.
+ * @param file - Normalized database file name passed from `createSQLiteClient`.
  * @param options - VFS selection and PRAGMA map.
  */
 const open = (file: string, options?: OpenOptions) => {
@@ -137,6 +137,15 @@ const open = (file: string, options?: OpenOptions) => {
         sqlite.vfs_register(vfsInstance, true);
         // One lock for open + pragmas. withLock releases on throw too, which
         // is what the explicit unlock() in the old .catch existed to do.
+        //
+        // `file` arrives already normalized from `createSQLiteClient`, so
+        // two clients spelling the same database differently (e.g. 'data' vs
+        // './data') always compete on the same lock and open the same file.
+        // The relative form is intentional: sqlite3_open_v2 checks
+        // nPathname + 8 > mxPathname (64, wa-sqlite/src/VFS.js:10) before
+        // xOpen, so an absolute name costs a character the budget cannot spare
+        // (measured: broke all 96 browser tests on 56-char names). The VFS
+        // normalizes internally, so 'data' and '/data' open the same OPFS file.
         return locks.withLock(initLockName(file), async () => {
           const db = await sqlite.open_v2(file);
           for (const statement of renderPragmas(pragmas)) {
@@ -159,6 +168,12 @@ const open = (file: string, options?: OpenOptions) => {
         message:
           error instanceof Error ? error.message : `Failed to open ${file}`,
         cause: cloneable(error),
+        // wa-sqlite raises SQLiteError(message, code) with SQLite's numeric
+        // result code. Carry it across the postMessage boundary so pool.ts
+        // can mint SQLiteError('BUSY') rather than SQLiteError('WORKER_CRASHED').
+        ...(typeof (error as { code?: unknown })?.code === 'number'
+          ? { sqliteCode: (error as { code: number }).code }
+          : {}),
       });
       throw error;
     });
@@ -268,6 +283,12 @@ const open = (file: string, options?: OpenOptions) => {
                 ? { message: e.message, cause: cloneable(e.cause) }
                 : { message: 'Unknown error', cause: e }
               : { message: `Unknown error (${e})` }),
+            // wa-sqlite raises SQLiteError(message, code) with SQLite's numeric
+            // result code. Without this the code dies at the postMessage
+            // boundary and the client can only string-match the message.
+            ...(typeof (e as { code?: unknown })?.code === 'number'
+              ? { sqliteCode: (e as { code: number }).code }
+              : {}),
           });
         } finally {
           queryRunning?.resolve();

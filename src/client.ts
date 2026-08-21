@@ -1,5 +1,6 @@
 import { createBulk } from './bulk';
 import { type ClientDebugState, createClientDebug } from './debug';
+import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
 import { SQLiteError } from './errors';
 import { createLocks } from './locks';
 import { createLogger } from './logger';
@@ -11,7 +12,11 @@ import {
   streamRows,
   writeWorker,
 } from './queries';
-import { createScheduler } from './scheduler';
+import {
+  createScheduler,
+  type InternalSQLiteClientOptions,
+  type WriterPolicy,
+} from './scheduler';
 import { createSupervisor } from './supervisor';
 import { createTransaction, type TransactionDB } from './transaction';
 import {
@@ -21,7 +26,7 @@ import {
   type SQLiteVFS,
   VFS_BUILDS,
 } from './types';
-import { assertReadable, renderPragmas } from './utils';
+import { assertReadable, normalizeDatabaseFile, renderPragmas } from './utils';
 
 /**
  * SQLite client for browser environments using a pool of Web Workers.
@@ -366,6 +371,10 @@ export const createSQLiteClient = (
   file: string,
   clientOptions?: CreateSQLiteClientOptions,
 ) => {
+  // One definition of database identity for the workers, the VFS, the epoch
+  // registry, every lock name and the returned `db.debug.file`.
+  const dbFile = normalizeDatabaseFile(file);
+
   const clientIndex = ++clientCount;
 
   const clientPrefix = `${clientOptions?.name ?? 'SQLite'} ${clientIndex}`;
@@ -395,11 +404,22 @@ export const createSQLiteClient = (
   // Fail at construction, not inside the first unrelated query.
   if (clientOptions?.pragmas) renderPragmas(clientOptions.pragmas);
 
+  // TEST-ONLY, UNSUPPORTED. Read once here, validated, and converted to a
+  // typed internal value so no `any` travels further. Absent from the public
+  // options type on purpose — see InternalSQLiteClientOptions in scheduler.ts.
+  const testWriterPolicy = (
+    clientOptions as InternalSQLiteClientOptions | undefined
+  )?.__unsafeTestWriterPolicy;
+  const writerPolicy: WriterPolicy | undefined =
+    typeof testWriterPolicy === 'function' ? testWriterPolicy : undefined;
+
   /**
    * Creates a new pool worker and adds it to the pool.
    * Sets up message routing via callId for query responses.
    */
-  const scheduler = createScheduler<PoolWorker>();
+  const scheduler = createScheduler<PoolWorker>(
+    writerPolicy ? { canDesignateWriter: writerPolicy } : {},
+  );
 
   const debugOption = clientOptions?.debug;
 
@@ -410,7 +430,7 @@ export const createSQLiteClient = (
 
   const clientDebug = debugOption
     ? createClientDebug(
-        file,
+        dbFile,
         pool,
         {
           vfs,
@@ -423,18 +443,51 @@ export const createSQLiteClient = (
 
   const debug = clientDebug?.state;
 
-  /**
-   * The single owner of the request level of the debug tree.
-   *
-   * There are seven acquisition sites; instrumenting each is seven chances to
-   * miss one. This wrapper stamps `acquireTime` (through `assign`) and
-   * `releaseTime`, and is a pass-through when debug is off. Nothing outside it
-   * calls `scheduler.acquire`.
-   */
-  const acquireInstrumented = async (kind: 'read' | 'write') => {
-    if (!clientDebug) return scheduler.acquire(kind);
+  const epochs = epochsFor(dbFile);
 
-    const request = clientDebug.createRequestDebugState();
+  /**
+   * The barrier. Runs on a leased worker, so nothing can interleave a
+   * statement between it and the query the lease was taken for — the lease
+   * supplies the atomicity of the pair for free.
+   *
+   * `target` is captured BEFORE the statement: if another client commits while
+   * it is in flight, this connection did not observe that commit and must not
+   * be credited with it.
+   */
+  const applyBarrier = async (worker: PoolWorker) => {
+    const target = epochs.current();
+    worker.epochTarget = target;
+    if (worker.seen >= target) return;
+    // Drained, not just dispatched: it is the opening AND closing of the read
+    // transaction that refreshes page 1. noServed: true prevents the barrier
+    // from resetting the supervisor's restart counter — it is a synthetic probe,
+    // not user work.
+    const barrierIter = worker.query(BARRIER_SQL, undefined, {
+      noServed: true,
+    });
+    while (!(await barrierIter.next()).done) {
+      /* discard rows */
+    }
+    // Only on success — a failed barrier leaves the worker marked behind so
+    // the next attempt re-posts it.
+    worker.seen = target;
+  };
+
+  /** Records a commit. Called after the write, before its promise resolves. */
+  const afterWrite = (worker: PoolWorker) => {
+    worker.seen = advanceSeen(worker.seen, worker.epochTarget, epochs.bump());
+  };
+
+  /**
+   * Debug-stamps the acquisition with request timing. Extracted from
+   * acquireInstrumented so the barrier wrapper can cover both paths uniformly.
+   */
+  const acquireWithDebug = async (kind: 'read' | 'write') => {
+    // Called only when clientDebug is set — cast to NonNullable to avoid the
+    // forbidden non-null assertion operator while preserving the correct type.
+    const request = (
+      clientDebug as NonNullable<typeof clientDebug>
+    ).createRequestDebugState();
     const lease = await scheduler.acquire(kind);
     request.assign(lease.worker.index);
 
@@ -448,17 +501,42 @@ export const createSQLiteClient = (
   };
 
   /**
+   * The single owner of the request level of the debug tree.
+   *
+   * There are seven acquisition sites; instrumenting each is seven chances to
+   * miss one. This wrapper stamps `acquireTime` (through `assign`) and
+   * `releaseTime`, and is a pass-through when debug is off. Nothing outside it
+   * calls `scheduler.acquire`. The barrier runs on the acquired lease before
+   * the caller sees it — the lease atomically covers the barrier statement and
+   * the real query together.
+   */
+  const acquireInstrumented = async (kind: 'read' | 'write') => {
+    const lease = clientDebug
+      ? await acquireWithDebug(kind)
+      : await scheduler.acquire(kind);
+    try {
+      await applyBarrier(lease.worker);
+    } catch (error) {
+      // The caller never received the lease, so its try/finally cannot return
+      // the worker. Release on the same path a normal caller would.
+      void lease.worker.quiesce().then(
+        () => lease.release(),
+        () => lease.release(),
+      );
+      throw error;
+    }
+    return lease;
+  };
+
+  /**
    * Executes a read query and returns all results.
    * Automatically acquires and releases a worker from the pool.
    *
    * @remarks
-   * **Read-your-own-writes is not guaranteed across workers.** A worker that has
-   * already served a read holds a cached view of the database header, and it does
-   * not refresh that view when another worker commits — so a read dispatched to it
-   * can return the pre-commit schema. Measured on every VFS this library ships, on
-   * every build: it is a property of the multi-connection setup, not of the VFS you
-   * choose. For a hard guarantee, issue the read inside the same `transaction()` as
-   * the write, or use `poolSize: 1`.
+   * **Read-your-own-writes is guaranteed within the tab.** Any read issued after a
+   * write resolves — from that client or from any other client in the same tab on
+   * the same database — observes it, regardless of pool size. It is not guaranteed
+   * across tabs.
    */
   const read = async <
     T extends Record<string, unknown> = Record<string, unknown>,
@@ -487,8 +565,8 @@ export const createSQLiteClient = (
    * The single abort-aware primitive — all other read paths derive from this.
    *
    * @remarks
-   * **Worker freshness caveat.** See the `read()` remarks — the same
-   * read-your-own-writes limitation applies here.
+   * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
+   * guaranteed within the tab, not across tabs.
    */
   const chunk = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
@@ -516,8 +594,8 @@ export const createSQLiteClient = (
    * Executes a query and streams individual rows (flattened from chunks).
    *
    * @remarks
-   * **Worker freshness caveat.** See the `read()` remarks — the same
-   * read-your-own-writes limitation applies here.
+   * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
+   * guaranteed within the tab, not across tabs.
    */
   const stream = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
@@ -552,6 +630,12 @@ export const createSQLiteClient = (
     try {
       return await writeWorker<T>(lease.worker, sql, params, options);
     } finally {
+      // Before the void: release is asynchronous, so write() resolves first. A
+      // read chained on this promise would otherwise acquire before the
+      // increment, observe the old epoch, and skip the barrier — the exact bug
+      // being fixed. In `finally`, so a failed write bumps too: that costs a
+      // barrier statement, never a wrong read.
+      afterWrite(lease.worker);
       // The lease returns when the worker confirms it is idle, not when the
       // caller leaves: a worker still inside step() must not be re-lent, and
       // the caller must not wait for it.
@@ -567,8 +651,8 @@ export const createSQLiteClient = (
    * Breaks after the first chunk — no internal AbortController needed.
    *
    * @remarks
-   * **Worker freshness caveat.** See the `read()` remarks — the same
-   * read-your-own-writes limitation applies here.
+   * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
+   * guaranteed within the tab, not across tabs.
    */
   const first = async <
     T extends Record<string, unknown> = Record<string, unknown>,
@@ -594,13 +678,17 @@ export const createSQLiteClient = (
 
   const transaction = createTransaction({
     scheduler: { ...scheduler, acquire: acquireInstrumented },
+    afterWrite,
+    // Wrapped, not passed by reference: handleDeath is declared further down
+    // and would be in its temporal dead zone here.
+    onPoisoned: (index, error) => handleDeath(index, error),
   });
 
   const { bulkWrite, output } = createBulk({
     write,
     read,
     transaction,
-    file,
+    file: dbFile,
     locks: createLocks(),
     logger,
   });
@@ -683,7 +771,7 @@ export const createSQLiteClient = (
       index,
       pool,
       clientPrefix,
-      file,
+      file: dbFile,
       vfs,
       build,
       pragmas: clientOptions?.pragmas,

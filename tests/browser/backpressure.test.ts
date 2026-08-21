@@ -115,7 +115,9 @@ describe('first()', () => {
       expect(row?.id).toBe(1);
     }
 
-    expect(chunksPosted(records[0])).toBe(10);
+    // 1 chunk from the commit-propagation barrier (fires on the first acquisition
+    // whose worker is behind the epoch) + 10 from first() calls.
+    expect(chunksPosted(records[0])).toBe(11);
     await sleep(1500);
     expect(records.length).toBe(1);
   });

@@ -12,19 +12,27 @@ export type SQLiteErrorCode =
   | 'INVALID_IDENTIFIER'
   | 'INVALID_OPTION'
   | 'INVALID_PRAGMA'
-  | 'BULK_WRITE_FAILED';
+  | 'BULK_WRITE_FAILED'
+  | 'BUSY';
 
 export class SQLiteError extends Error {
   readonly code: SQLiteErrorCode;
+  /**
+   * SQLite's own numeric result code, present only when the failure came from
+   * SQLite rather than from this library. `BUSY` covers both SQLITE_BUSY (5)
+   * and SQLITE_LOCKED (6); this is how a caller tells them apart.
+   */
+  readonly sqliteCode?: number;
 
   constructor(
     code: SQLiteErrorCode,
     message: string,
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; sqliteCode?: number },
   ) {
     super(message, options);
     this.code = code;
     this.name = code;
+    if (options?.sqliteCode !== undefined) this.sqliteCode = options.sqliteCode;
   }
 }
 
