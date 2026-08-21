@@ -170,6 +170,12 @@ const open = (file: string, options?: OpenOptions) => {
         message:
           error instanceof Error ? error.message : `Failed to open ${file}`,
         cause: cloneable(error),
+        // wa-sqlite raises SQLiteError(message, code) with SQLite's numeric
+        // result code. Carry it across the postMessage boundary so pool.ts
+        // can mint SQLiteError('BUSY') rather than SQLiteError('WORKER_CRASHED').
+        ...(typeof (error as { code?: unknown })?.code === 'number'
+          ? { sqliteCode: (error as { code: number }).code }
+          : {}),
       });
       throw error;
     });

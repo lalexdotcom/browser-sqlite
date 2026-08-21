@@ -61,6 +61,8 @@ export type WorkerMessageData =
       callId: number;
       message: string;
       cause?: unknown;
+      /** SQLite's numeric result code, when the failure came from SQLite. */
+      sqliteCode?: number;
     };
 
 /** Which wa-sqlite WebAssembly build a worker loads. */

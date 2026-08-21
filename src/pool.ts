@@ -63,6 +63,23 @@ const STOP = Symbol('stop');
 const BUSY_CODES = new Set([5, 6]);
 
 /**
+ * Returns a SQLiteError('BUSY', …) when data carries a lock-conflict result
+ * code (5 or 6), else undefined. Shared by both the query-error and
+ * open-error paths so the BUSY_CODES decision lives in exactly one place.
+ */
+const busyFromCode = (data: {
+  message: string;
+  cause?: unknown;
+  sqliteCode?: number;
+}): SQLiteError | undefined =>
+  data.sqliteCode !== undefined && BUSY_CODES.has(data.sqliteCode)
+    ? new SQLiteError('BUSY', data.message, {
+        cause: data.cause,
+        sqliteCode: data.sqliteCode,
+      })
+    : undefined;
+
+/**
  * Mints a typed error only for lock conflicts. Every other SQLite failure
  * keeps today's shape — a plain Error carrying SQLite's message — so no
  * existing consumer's error handling changes.
@@ -71,13 +88,7 @@ const workerError = (data: {
   message: string;
   cause?: unknown;
   sqliteCode?: number;
-}) =>
-  data.sqliteCode !== undefined && BUSY_CODES.has(data.sqliteCode)
-    ? new SQLiteError('BUSY', data.message, {
-        cause: data.cause,
-        sqliteCode: data.sqliteCode,
-      })
-    : new Error(data.message, { cause: data.cause });
+}) => busyFromCode(data) ?? new Error(data.message, { cause: data.cause });
 
 /**
  * Creates a new pool worker and registers it in the pool array.
@@ -219,9 +230,10 @@ export const createPoolWorker = (deps: {
         if (callId === 0) {
           logger.error(`worker ${index + 1} failed to open: ${data.message}`);
           die(
-            new SQLiteError('WORKER_CRASHED', data.message, {
-              cause: data.cause,
-            }),
+            busyFromCode(data) ??
+              new SQLiteError('WORKER_CRASHED', data.message, {
+                cause: data.cause,
+              }),
           );
         }
         break;
