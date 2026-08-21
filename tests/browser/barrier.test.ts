@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
+import { BARRIER_SQL } from '../../src/epochs';
 import { createTestClient } from './helpers';
 
 /**
@@ -12,8 +13,16 @@ const forced = {
   __unsafeTestWriterPolicy: (i: number) => i !== 0,
 };
 
+const countBarrierStatements = (
+  db: Awaited<ReturnType<typeof createTestClient>>,
+): number =>
+  (db.debug?.workers ?? [])
+    .flatMap((worker) => worker.requests)
+    .flatMap((request) => request.queries)
+    .filter((query) => query.sql === BARRIER_SQL).length;
+
 describe('commit-propagation barrier', () => {
-  // Falsifiable: delete the `if (worker.seen < target)` block in
+  // Falsifiable: delete the `worker.query(BARRIER_SQL, ...)` call in
   // applyBarrier() in src/client.ts and this goes red every run.
   it('sees a schema swap committed by another worker', async () => {
     const db = await createTestClient(forced);
@@ -33,6 +42,8 @@ describe('commit-propagation barrier', () => {
     expect(rows[0]?.new_col).toBe(42);
   });
 
+  // Falsifiable: delete the `worker.query(BARRIER_SQL, ...)` call in
+  // applyBarrier() in src/client.ts and this goes red every run.
   it('sees a table dropped and replaced with a different shape', async () => {
     const db = await createTestClient(forced);
 
@@ -48,5 +59,19 @@ describe('commit-propagation barrier', () => {
 
     const rows = await db.read<{ new_col: number }>('SELECT * FROM t');
     expect(rows[0]?.new_col).toBe(42);
+  });
+
+  // Falsifiable: remove the `if (worker.seen >= target) return;` guard in
+  // applyBarrier() — the barrier still works, every other test stays green, and
+  // only this one goes red. That guard is the entire difference between a
+  // conditional barrier and a round-trip on every single query.
+  it('does not repeat the barrier on a worker that is already current', async () => {
+    const db = await createTestClient({ ...forced, debug: true });
+
+    await db.write('CREATE TABLE t (a)');
+    await db.read('SELECT * FROM t'); // w0 pays its barrier here
+    const before = countBarrierStatements(db);
+    await db.read('SELECT * FROM t'); // w0 is current — must pay nothing
+    expect(countBarrierStatements(db)).toBe(before);
   });
 });
