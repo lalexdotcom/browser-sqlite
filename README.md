@@ -184,6 +184,7 @@ Errors raised by this library are instances of `SQLiteError`, exported from the 
 | `WORKER_CRASHED` | A pool worker died and the supervisor decided not to restart it. All queued and in-flight work on that slot is rejected. |
 | `TIMEOUT` | A worker did not post `ready` within `openTimeout` milliseconds. The most common cause is a database held under an exclusive lock by another tab or client. |
 | `PROTOCOL_ERROR` | A message was received from a worker that could not be deserialized (`messageerror`). The worker survives; only the in-flight request is rejected. |
+| `BUSY` | SQLite reported a lock conflict (`SQLITE_BUSY` or `SQLITE_LOCKED`); the numeric SQLite code is on `sqliteCode`. The operation is not retried. |
 
 ```typescript
 import { SQLiteError } from 'browser-sqlite';
@@ -212,7 +213,24 @@ const rows = await db.read('SELECT * FROM large_table', [], {
 
 **Read methods reject write statements.** `read()`, `chunk()`, `stream()`, and `first()` reject any statement that is not a provably readable query, throwing `NOT_A_READ_QUERY`. A bare read pragma (`PRAGMA journal_mode`) is accepted; a pragma that assigns a value or takes an argument must go through `write()`.
 
-**Read-your-own-writes is not guaranteed across workers.** A pool worker that has already served a read holds a cached view of the database header, and it does not refresh that view when another worker commits — so a read dispatched to it after a write can return the pre-commit schema. This is a property of running several connections over one file, not of the VFS you pick: it is measured on every VFS this library ships, on every build. For a hard read-your-own-writes guarantee, issue the read inside the same `transaction()` as the write, or use `poolSize: 1`.
+**Read-your-own-writes is guaranteed within a tab.** Once a write has resolved,
+any read issued afterwards — from that client or from any other client in the
+same tab on the same database — observes it, whatever the pool size. A worker
+that has not yet observed the latest commit runs one discarded statement that
+opens a real read transaction before it serves the query; that costs one extra
+worker round-trip on each worker's first statement after a write, and nothing
+under read-only load. `poolSize: 1` and reading inside the same `transaction()`
+remain valid, they are no longer required.
+
+**It is not guaranteed across tabs.** A write in one tab may not be visible to a
+read in another. No bound is claimed on how long that lasts.
+
+**Nothing serializes writes between clients.** Two clients writing to one
+database concurrently can fail on a lock; the failure surfaces as
+`SQLiteError` with code `BUSY` and `sqliteCode` 5 or 6, and it is **not**
+retried — no `busy_timeout` is applied. This was true before the guarantee
+above existed; it matters now because the guarantee makes several clients on
+one database a reasonable thing to do.
 
 ## Requirements
 
@@ -225,4 +243,5 @@ Note: the "Coop" in `OPFSCoopSyncVFS` stands for *cooperative*, not the `Cross-O
 - **`AccessHandlePoolVFS` requires `poolSize: 1`.** Passing `poolSize > 1` with this VFS throws synchronously at client creation time.
 - **`build: 'jspi'` requires Chromium 126+.** JavaScript Promise Integration is not available in Firefox or Safari as of 2025. It is opt-in; the default build does not use it.
 - **`OPFSWriteAheadVFS` is Chromium-only and degrades silently elsewhere.** It opens access handles with `mode: 'readwrite-unsafe'`, a proposed feature no other engine implements, and unknown dictionary members are ignored rather than rejected — so on another browser the first connection opens, the second cannot take the handle, and the pool breaks with no error naming the cause.
-- **Read-your-own-writes is not guaranteed across workers.** See the caveat under [Error handling](#error-handling); use `transaction()` or `poolSize: 1` when you need it.
+- **Read-your-own-writes is guaranteed within a tab, not across tabs.** See the
+  caveat under [Error handling](#error-handling).

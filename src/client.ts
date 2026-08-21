@@ -533,13 +533,10 @@ export const createSQLiteClient = (
    * Automatically acquires and releases a worker from the pool.
    *
    * @remarks
-   * **Read-your-own-writes is not guaranteed across workers.** A worker that has
-   * already served a read holds a cached view of the database header, and it does
-   * not refresh that view when another worker commits — so a read dispatched to it
-   * can return the pre-commit schema. Measured on every VFS this library ships, on
-   * every build: it is a property of the multi-connection setup, not of the VFS you
-   * choose. For a hard guarantee, issue the read inside the same `transaction()` as
-   * the write, or use `poolSize: 1`.
+   * **Read-your-own-writes is guaranteed within the tab.** Any read issued after a
+   * write resolves — from that client or from any other client in the same tab on
+   * the same database — observes it, regardless of pool size. It is not guaranteed
+   * across tabs.
    */
   const read = async <
     T extends Record<string, unknown> = Record<string, unknown>,
@@ -568,8 +565,8 @@ export const createSQLiteClient = (
    * The single abort-aware primitive — all other read paths derive from this.
    *
    * @remarks
-   * **Worker freshness caveat.** See the `read()` remarks — the same
-   * read-your-own-writes limitation applies here.
+   * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
+   * guaranteed within the tab, not across tabs.
    */
   const chunk = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
@@ -597,8 +594,8 @@ export const createSQLiteClient = (
    * Executes a query and streams individual rows (flattened from chunks).
    *
    * @remarks
-   * **Worker freshness caveat.** See the `read()` remarks — the same
-   * read-your-own-writes limitation applies here.
+   * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
+   * guaranteed within the tab, not across tabs.
    */
   const stream = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
@@ -654,8 +651,8 @@ export const createSQLiteClient = (
    * Breaks after the first chunk — no internal AbortController needed.
    *
    * @remarks
-   * **Worker freshness caveat.** See the `read()` remarks — the same
-   * read-your-own-writes limitation applies here.
+   * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
+   * guaranteed within the tab, not across tabs.
    */
   const first = async <
     T extends Record<string, unknown> = Record<string, unknown>,
