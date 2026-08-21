@@ -133,20 +133,20 @@ describe('normalizeDatabaseFile', () => {
   // first three cases go red — which is exactly the epoch registry splitting
   // one database into several keys.
   it('collapses spellings that address the same OPFS file', () => {
-    expect(normalizeDatabaseFile('data/file')).toBe('/data/file');
-    expect(normalizeDatabaseFile('./data/file')).toBe('/data/file');
-    expect(normalizeDatabaseFile('/data/file')).toBe('/data/file');
-    expect(normalizeDatabaseFile('data\\file')).toBe('/data/file');
-    expect(normalizeDatabaseFile('data/../file')).toBe('/file');
+    expect(normalizeDatabaseFile('data/file')).toBe('data/file');
+    expect(normalizeDatabaseFile('./data/file')).toBe('data/file');
+    expect(normalizeDatabaseFile('/data/file')).toBe('data/file');
+    expect(normalizeDatabaseFile('data\\file')).toBe('data/file');
+    expect(normalizeDatabaseFile('data/../file')).toBe('file');
   });
 
   it('percent-encodes exactly as the VFS do', () => {
-    expect(normalizeDatabaseFile('café')).toBe('/caf%C3%A9');
-    expect(normalizeDatabaseFile('caf%C3%A9')).toBe('/caf%C3%A9');
+    expect(normalizeDatabaseFile('café')).toBe('caf%C3%A9');
+    expect(normalizeDatabaseFile('caf%C3%A9')).toBe('caf%C3%A9');
   });
 
   it('keeps genuinely distinct names distinct', () => {
-    expect(normalizeDatabaseFile('data//file')).toBe('/data//file');
+    expect(normalizeDatabaseFile('data//file')).toBe('data//file');
     expect(normalizeDatabaseFile('SQLite')).not.toBe(
       normalizeDatabaseFile('sqlite'),
     );

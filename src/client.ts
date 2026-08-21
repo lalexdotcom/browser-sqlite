@@ -771,17 +771,7 @@ export const createSQLiteClient = (
       index,
       pool,
       clientPrefix,
-      // Pass the original (un-normalized) name: sqlite3_open_v2 checks
-      // nPathname + 8 > mxPathname (64, wa-sqlite/src/VFS.js:10) before xOpen,
-      // so normalization's leading '/' breaks 56-char names (measured: all 96
-      // browser tests failed). Four of the five VFS normalize via
-      // new URL(zName, 'file://') internally — 'data' and '/data' open the same
-      // OPFS file. OPFSWriteAheadVFS splits on '/' itself: 'data' vs '/data'
-      // still lands on the same file (empty segments dropped), but './data'
-      // would throw there — that defect is not fixed at this call site.
-      // The normalized dbFile is the identity key for client-side registries
-      // and lock names; the worker normalizes independently for its lock name.
-      file,
+      file: dbFile,
       vfs,
       build,
       pragmas: clientOptions?.pragmas,

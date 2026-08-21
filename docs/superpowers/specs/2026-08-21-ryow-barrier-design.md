@@ -144,50 +144,51 @@ splitting them would lose the guarantee. `'data'` in OPFS and `'data'` in
 IndexedDB are genuinely distinct, and merging them costs only preludes. Error
 direction decides it.
 
-**The name is normalized once, at the entry of `createSQLiteClient`:**
+**The name is normalized once, at the entry of `createSQLiteClient`, and that
+one string is used everywhere** — the open call in the worker, the VFS, the epoch
+registry, and every lock name:
 
 ```
-file = new URL(file, 'file://').pathname
+file = new URL(file, 'file://').pathname.replace(/^\//, '')
 ```
 
 This is not an invention — it is what four of the five shipped VFS already do
-internally (`OPFSAdaptiveVFS`, `OPFSCoopSyncVFS`, `OPFSPermutedVFS`,
-`IDBBatchAtomicVFS` via `new URL(zName, 'file://')`; `AccessHandlePoolVFS` via
-`#getPath` with base `'file://localhost/'`, same `pathname`). Doing it at the
-entry makes the normalized name the identity key for the epoch registry and every
-lock name (`initLockName` inside the worker, `stagingLockName`, `sweepLockName`
-on the client). The string handed to `sqlite3_open_v2` stays as the caller wrote
-it: SQLite core checks `nPathname + 8 > mxPathname` (64,
+internally (`OPFSAdaptiveVFS`, `OPFSCoopSyncVFS`, `IDBBatchAtomicVFS` via
+`new URL(zName, 'file://')`; `AccessHandlePoolVFS` via `#getPath` with base
+`'file://localhost/'`, same `pathname`). The **relative** form (no leading `/`)
+is intentional: SQLite core checks `nPathname + 8 > mxPathname` (64,
 `node_modules/wa-sqlite/src/VFS.js:10`) before `xOpen` — measured at task 1:
-passing the normalized name broke all 96 browser tests on 56-char names.
+passing an absolute name broke all 96 browser tests on 56-char names. Stripping
+the leading slash fuses the same spellings at the caller's own length, recovering
+the full 56-character budget for the open call.
 
 | Input | Normalized |
 |---|---|
-| `data/file`, `./data/file`, `/data/file`, `data\file` | `/data/file` |
-| `data/../file` | `/file` |
-| `café`, `caf%C3%A9` | `/caf%C3%A9` |
-| `data//file` | `/data//file` — *not* collapsed |
+| `data/file`, `./data/file`, `/data/file`, `data\file` | `data/file` |
+| `data/../file` | `file` |
+| `café`, `caf%C3%A9` | `caf%C3%A9` |
+| `data//file` | `data//file` — *not* collapsed |
 | `SQLite` vs `sqlite` | distinct — case is significant |
 
-It is idempotent for all five VFS, and it fixes one live defect on the way:
-`initLockName(file)` previously keyed on the raw string, so two clients spelling
-the same file differently took different init locks and failed to serialize their
-opens. This is now fixed worker-side: `initLockName(normalizeDatabaseFile(file))`
-in `src/worker/worker.ts`.
+It is idempotent for all five VFS, and it fixes two live defects on the way:
 
-The `OPFSWriteAheadVFS` `'./data'` defect (splits on `/`, keeps `.` as a segment,
-calls `getDirectoryHandle('.')`, throws) is **not** fixed here: `sqlite3_open_v2`
-receives the raw name, and `OPFSWriteAheadVFS` sees it. Fixing it requires
-normalizing inside the worker before the open call, which the `mxPathname` budget
-(64) does not allow without raising that limit.
+1. `initLockName(file)` previously keyed on the raw string, so two clients
+   spelling the same file differently took different init locks and failed to
+   serialize their opens. The worker now receives the already-normalized name
+   and uses it directly: `initLockName(file)`.
+
+2. `OPFSWriteAheadVFS` splits the filename on `/` and passes each segment to
+   `getDirectoryHandle`. A raw `'./data'` produces `['.', 'data']`, and
+   `getDirectoryHandle('.')` is forbidden by the OPFS spec — it throws. With
+   the name normalized before it reaches the worker, the worker never sees `.`
+   as a segment.
 
 **One behavioural caveat, and it is the only one.** A non-ASCII name on
 `OPFSWriteAheadVFS` currently creates a file literally named `café`, where
 normalization names it `caf%C3%A9` — as the other four VFS already do. An
 existing database opened with *that* VFS under *that* kind of name would become
 invisible. `OPFSWriteAheadVFS` was made public on the previous branch and has no
-tests at all (VFS-COV), so exposure is negligible — but it is real and must
-appear in the changelog.
+tests at all (VFS-COV), so exposure is negligible — but it is real.
 
 One minor visible effect: lock names change shape, so during a hot upgrade an old
 tab and a new tab would not serialize with each other. Locks hold no persistent
