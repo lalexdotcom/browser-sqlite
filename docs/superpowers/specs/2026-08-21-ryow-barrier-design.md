@@ -56,6 +56,42 @@ read, forced configuration.**
 | `SELECT * FROM out_replace` (the target table) | 6/6 correct |
 | **`SELECT count(*) FROM sqlite_master`** | **6/6 correct** |
 
+**Staleness domain, measured 2026-08-21.** The bug manifests only for **DDL
+without material growth of the file**. Measured in the forced configuration
+(`poolSize: 2`, writer pinned to index 1) with the barrier disabled:
+
+| Write after priming | File pages (primed → after write) | `schemaStale` | Runs |
+|---|---|---|---|
+| Bulk INSERT with 1 001-byte padding | 3 → 253 | **false** (fresh) | 3/3 |
+| Tiny INSERT, 3 short rows | 3 → 2 | **true** (stale) | 3/3 |
+| Tiny INSERT, six structural variants | 2 (stable) | **true** (stale) | 18/18 |
+
+The differential is the growth and nothing else. Priming is confirmed to work; removing
+the growth exposes it cleanly.
+
+**Inferred mechanism — not observed in the pager.** The coherent explanation
+is that SQLite compares the physical file size against the in-header database size when
+opening a read transaction and, on a mismatch, re-reads page 1 — refreshing the header
+fields even though the change-counter path (which this bug defeats) is not involved. This
+explains every observed data point. It was not verified by instrumenting the pager; it is
+stated here as an inferred explanation, not as a measured fact. The project has twice paid
+for treating an unverified explanation as a fact — see §10.1.
+
+**What this explains about `output()`.** The trigger is reliable because `output()`'s
+`DROP` + `CREATE` + rename sequence operates on a small staging table: the file does not
+grow materially. The inferred size-comparison check therefore does not fire and nothing
+auto-heals the primed connection. A large data write before the DDL would change this
+picture, but in the actual `output()` path the file is small and the bug is fully
+reproducible.
+
+**A rejected optimisation — do not skip the barrier after large writes.** The
+measurement suggests that file growth auto-refreshes the connection. Someone may reason
+from this that the barrier can be omitted after a write that grows the file substantially.
+That reasoning rests on the inferred mechanism, not on the measurement, and the measurement
+covers only one growth ratio (85×) at one page size (4 KB). It is recorded here as a
+rejected-until-measured idea: the barrier stays unconditional until a dedicated probe
+confirms the size threshold and the VFS behaviour at that threshold.
+
 Three consequences fix the shape of the barrier:
 
 1. A primed connection is not behind, it is **stuck**. Neither an event-loop
@@ -66,6 +102,45 @@ Three consequences fix the shape of the barrier:
 3. `SELECT 1` touches no page and does not qualify; a generic read of
    `sqlite_master` does. **The barrier does not need to know the query's
    tables** — which is what keeps it out of SQL parsing.
+
+### 1.1 The domain is narrower than it looks: DDL *without* file growth
+
+Measured 2026-08-21, forced configuration, barrier disabled, staleness read off
+the column key present in the returned row:
+
+| Write performed between priming and the read | File | Primed connection |
+|---|---|---|
+| bulk INSERT, then `ALTER TABLE … RENAME COLUMN` | 3 → **253** pages | **fresh**, 3/3 |
+| three-row INSERT, then the same rename | stays at **2** pages | **stale**, 3/3, and 3/3 on each of six structural variants — eighteen runs, all stale |
+
+The only difference between the two rows is whether the file grew. Eighteen stale
+runs establish that the harness primes; the growth is what removes the staleness.
+
+**The mechanism is inferred, not observed.** The coherent explanation is that
+SQLite compares the physical file size against the in-header database size when
+opening a read transaction and re-reads page 1 on a mismatch — refreshing the
+header through a path this bug does not defeat, unlike the change-counter path it
+does. That was not observed in the pager. It is the explanation that fits the
+differential. This project has twice paid for treating an unverified explanation
+as a fact (`PRAGMA data_version`, the WAL VFS); this is recorded at the strength
+the evidence carries and no higher.
+
+Two things follow. **It answers a question this document previously left open:**
+page 1 carries the in-header database size and the freelist as well as the
+schema, so "only the schema was stale" was a claim about a narrow sample. The
+differential closes it — a stale in-header size and a grown file are mutually
+exclusive states, so a primed reader cannot serve a truncated view of a file that
+grew. The sentence above about data pages being read fresh stands.
+
+**And it explains why `output()` is the trigger.** Its `DROP` + `CREATE` +
+rename operate on a small staging table, so the file does not grow and nothing
+heals the connection.
+
+**Rejected until measured.** "Growth heals the connection, so the barrier can be
+skipped after a large write" rests on the inferred mechanism rather than on the
+measurement, and the measurement covers exactly one growth ratio at one page
+size. It is not a supported optimisation. Reopening it means measuring the
+threshold, not reasoning from this table.
 
 ## 2. The model
 
