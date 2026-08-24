@@ -1201,7 +1201,16 @@
           ]),
         ),
         conformance: RESULTS.conformance,
-        measurements: RESULTS.measurements,
+        // Strip internal __-prefixed keys (e.g. __iterations) — those live in
+        // longQueryIterations above and do not belong beside row ids.
+        measurements: Object.fromEntries(
+          Object.entries(RESULTS.measurements).map(([pairId, rows]) => [
+            pairId,
+            Object.fromEntries(
+              Object.entries(rows).filter(([key]) => !key.startsWith('__')),
+            ),
+          ]),
+        ),
       });
 
       const pad = (n) => String(n).padStart(2, '0');

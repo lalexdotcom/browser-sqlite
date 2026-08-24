@@ -11,8 +11,10 @@
  *   pnpm bench:build
  *   node scripts/bench-check.mjs [chromium|firefox] [--all]
  */
+import { readFileSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import playwright from 'playwright';
 
@@ -35,7 +37,8 @@ const fail = (message) => {
 
 try {
   const browser = await playwright[engine].launch();
-  const page = await browser.newPage();
+  const context = await browser.newContext({ acceptDownloads: true });
+  const page = await context.newPage();
 
   const problems = [];
   page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
@@ -98,8 +101,42 @@ try {
   const enabled = await page.$eval('#download', (b) => !b.disabled);
   if (!enabled) fail('download button never enabled');
 
-  const keys = await page.evaluate(() => Object.keys(window.__BENCH__.results));
-  if (!keys.includes('conformance')) fail('export shape wrong');
+  // Capture the download headlessly — no display needed.
+  const downloadPromise = page.waitForEvent('download');
+  await page.click('#download');
+  const download = await downloadPromise;
+
+  const filename = download.suggestedFilename();
+  process.stdout.write(`download filename: ${filename}\n`);
+  if (!/^browser-sqlite-\w[\w.-]*-[\w.-]+-[\w.-]+-\d{8}-\d{4}\.json$/.test(filename)) {
+    fail(`download filename has wrong shape: ${filename}`);
+  }
+
+  const savePath = join(tmpdir(), filename);
+  await download.saveAs(savePath);
+  let payload;
+  try {
+    payload = JSON.parse(readFileSync(savePath, 'utf8'));
+  } finally {
+    try { unlinkSync(savePath); } catch {}
+  }
+
+  const EXPECTED_KEYS = [
+    'generatedAt', 'lib', 'agent', 'features', 'clockMs',
+    'longQueryIterations', 'conformance', 'measurements',
+  ];
+  for (const k of EXPECTED_KEYS) {
+    if (!(k in payload)) fail(`export missing key: ${k}`);
+  }
+  if (payload.lib === 'unknown') fail('export lib is "unknown"');
+
+  for (const [pairId, rows] of Object.entries(payload.measurements)) {
+    const internal = Object.keys(rows).filter((k) => k.startsWith('__'));
+    if (internal.length > 0) {
+      fail(`measurements[${pairId}] has internal keys: ${internal.join(', ')}`);
+    }
+  }
+  process.stdout.write(`export OK — keys: ${Object.keys(payload).join(', ')}\n`);
 
   process.stdout.write(
     `${columns} columns, results:\n` +
