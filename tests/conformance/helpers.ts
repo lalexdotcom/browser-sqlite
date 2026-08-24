@@ -44,3 +44,15 @@ export const conformanceClient = (
 
   return { file, db: createSQLiteClient(file, { vfs, build, poolSize }) };
 };
+
+/**
+ * A second client on an existing database file, for the close-and-reopen
+ * invariant. It deliberately registers no cleanup: the first client already
+ * did, on the same name.
+ */
+export const createReopened = (file: string, vfs: SQLiteVFS) =>
+  createSQLiteClient(file, {
+    vfs,
+    build: defaultBuildFor(vfs),
+    poolSize: poolFor(vfs),
+  });
