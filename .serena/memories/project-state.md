@@ -64,6 +64,29 @@ Test tooling: **Chromium and Firefox** are installed by `.devcontainer/post-crea
 CI jobs, under a cache key that names them. `rstest.config.ts` still runs **Chromium alone** — the
 matrix is possible, not yet enabled. rstest accepts no provider but `playwright`.
 
+## Why this project exists — user, 2026-08-24. It arbitrates VFS choice.
+
+**The founding purpose is to bound memory: the user started it to stop loading large data
+structures into RAM**, and assumes other consumers arrive for the same reason. This is not
+derivable from any line of code and it decides questions the code cannot.
+
+Immediate consequence: **`IDBMirrorVFS` keeps the whole database in memory in every worker
+(× `poolSize`)**, which runs directly against that purpose. It is the fastest candidate and it
+escapes HANDLE-1, but it must be an explicit opt-in for small databases, never the default —
+recommending it broadly would betray exactly the users who came for the footprint.
+
+Memory model per VFS, which the README must carry as a column and today does not:
+
+| VFS | memory model |
+|---|---|
+| OPFS VFS (`Adaptive`, `CoopSync`, `AnyContext`, `AccessHandlePool`) | page cache only (`PRAGMA cache_size`) — bounded and tunable |
+| `IDBBatchAtomicVFS` | page cache, with a floor: upstream notes "the cache size must be set large enough to hold the journal" |
+| `IDBMirrorVFS` | **whole database in RAM**, not bounded by configuration |
+| `MemoryVFS` / `MemoryAsyncVFS` | whole database in RAM, volatile, single connection |
+
+Cross-cutting and also undocumented: **`poolSize` multiplies the footprint** whatever the VFS,
+since every worker holds its own page cache. Default is 2.
+
 ## What it is
 
 `browser-sqlite` v1.0.0-rc.3 — persistent SQLite in the browser: wa-sqlite (WASM) +

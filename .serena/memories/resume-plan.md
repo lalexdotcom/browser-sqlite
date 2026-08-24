@@ -785,6 +785,10 @@ page", not "drop it in any page".
   (dependency bumps, specs) lands on `main` directly.
 - **Unplanned working-tree changes are committed, not discarded — but only after the user
   confirms.** Never resolve a dirty tree by reverting or stashing on your own initiative.
+- **Pushing is not part of committing (user, 2026-08-24).** `main` may sit ahead of
+  `origin/main` for as long as the user wants; do not recommend pushing as housekeeping.
+  Push only when asked, or when the point is to trigger CI and the user has said so. The
+  one push this project has made was deliberate and explicitly requested.
 - **"On clôture la session" is a defined procedure (user, 2026-08-17), not a figure of
   speech.** It means the work continues in a *different* session, so nothing may be left
   live in this one. Three steps, in order:
