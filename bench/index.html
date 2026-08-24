@@ -49,6 +49,7 @@
       #results tbody th { font-weight: 400; }
       .pending { opacity: 0.4; }
       .fail { color: #b00020; }
+      .note { font-size: 0.8rem; opacity: 0.75; max-width: 46rem; }
     </style>
   </head>
   <body>
@@ -71,6 +72,11 @@
 
     <div id="results-wrap"><table id="results"><thead><tr id="head-row">
       <th>row</th></tr></thead><tbody id="body-rows"></tbody></table></div>
+    <p class="note">
+      On a VFS capped at one worker, <code>read-burst-concurrency</code> lands
+      near 1.00× and <code>pool-blocking</code> well above it. That is the
+      declared behaviour, not a failure.
+    </p>
 
     <script type="module">
       import { createSQLiteClient, VFS_CAPABILITIES } from './dist/index.js';
@@ -640,11 +646,45 @@
         ctx.datasetReady = true;
       };
 
+      /**
+       * A single very long sqlite3_step() with no table to populate: SQLite
+       * must run the whole recursion before the first row of count(*) exists.
+       * Copied from tests/browser/helpers.ts.
+       *
+       * That property is what makes it the right instrument for pool-blocking:
+       * a worker inside it never returns to its event loop, which is precisely
+       * HANDLE-1's mechanism.
+       */
+      const longQuery = (iterations) =>
+        `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < ${iterations}) SELECT count(*) AS n FROM c`;
+
+      /**
+       * Finds an iteration count that costs 1.5–3 s ON THIS DEVICE, then reuses
+       * it for every column. A constant would be meaningless across a laptop
+       * and a phone — this repository already measured Firefox at ~5.5× a
+       * Chromium of the same CPU on this exact query.
+       */
+      const calibrateLongQuery = async (ctx) => {
+        if (ctx.longIterations) return ctx.longIterations;
+        let iterations = 1_000_000;
+        for (let attempt = 0; attempt < 6; attempt++) {
+          const ms = await time(() => ctx.db.read(longQuery(iterations)));
+          if (ms >= 1500 && ms <= 3000) break;
+          if (ms > 3000) {
+            iterations = Math.max(100_000, Math.round(iterations / 2));
+            break;
+          }
+          iterations = Math.round(iterations * Math.max(2, 2000 / Math.max(ms, 1)));
+        }
+        ctx.longIterations = iterations;
+        return iterations;
+      };
+
       /** Measurement rows. Filled in Tasks 5 and 6. */
       const MEASUREMENT_ROWS = [
         {
           id: 'bulk-insert-10k',
-          label: `bulk insert ${DATASET_ROWS.toLocaleString('en')} rows`,
+          label: `bulk insert + index build (${DATASET_ROWS.toLocaleString('en')} rows)`,
           unit: 'ms',
           decimals: 0,
           better: 'low',
@@ -723,6 +763,10 @@
           run: (ctx) =>
             abortableRow(async (signal) => {
               await ensureDataset(ctx);
+              // The random OFFSET spans [0, 9950), so the median sample makes
+              // SQLite walk ~4975 index-ordered rows before returning 50. This
+              // is the honest cost of OFFSET pagination at median depth, not
+              // just the cost of fetching 50 rows.
               const page = (offset) =>
                 ctx.db.read(
                   'SELECT id, label FROM bench ORDER BY n, id LIMIT 50 OFFSET ?',
@@ -737,6 +781,123 @@
                 );
               }
               return quantile(samples, 0.5);
+            }),
+        },
+        {
+          id: 'read-burst-concurrency',
+          label: '24 short reads — parallel vs serial (gain)',
+          unit: '×',
+          decimals: 2,
+          better: 'high',
+          applies: () => true,
+          /**
+           * The row that shows the library's reason to exist. On a poolSize-1
+           * VFS it lands near 1.00, which is the declared behaviour and not a
+           * failure — see the note rendered under the table.
+           */
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ensureDataset(ctx);
+              const ids = Array.from({ length: 24 }, randomId);
+
+              await shortRead(ctx.db, ids[0], signal); // warmup
+
+              const serial = await time(async () => {
+                for (const id of ids) await shortRead(ctx.db, id, signal);
+              });
+              const parallel = await time(() =>
+                Promise.all(ids.map((id) => shortRead(ctx.db, id, signal))),
+              );
+              return serial / parallel;
+            }),
+        },
+        {
+          id: 'full-scan',
+          label: `full scan over ${DATASET_ROWS.toLocaleString('en')} rows`,
+          unit: 'ms',
+          decimals: 1,
+          better: 'low',
+          applies: () => true,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ensureDataset(ctx);
+              const scan = () =>
+                ctx.db.read(
+                  'SELECT count(*) AS n, sum(n) AS total, max(label) AS last FROM bench',
+                  undefined,
+                  { signal },
+                );
+              await scan(); // warmup
+              const samples = [];
+              for (let i = 0; i < 5; i++) samples.push(await time(scan));
+              return quantile(samples, 0.5);
+            }),
+        },
+        {
+          id: 'transaction-throughput',
+          label: '500 inserts inside one transaction',
+          unit: 'ms',
+          decimals: 0,
+          better: 'low',
+          applies: () => true,
+          // The gap against write-latency-p50 × 500 is the most useful thing a
+          // developer learns from this page.
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ctx.db.write('CREATE TABLE txput (a INTEGER)', undefined, {
+                signal,
+              });
+              return time(() =>
+                ctx.db.transaction(async (tx) => {
+                  for (let i = 0; i < 500; i++) {
+                    await tx.write('INSERT INTO txput VALUES (?)', [i]);
+                  }
+                }),
+              );
+            }),
+        },
+        {
+          id: 'pool-blocking',
+          label: 'short read during a long query (× idle)',
+          unit: '×',
+          decimals: 2,
+          better: 'low',
+          applies: (cap) => cap.maxPoolSize !== 1,
+          /**
+           * HANDLE-1, measured. ≈1 means the pool served the short read while
+           * the long query ran; ≫1 means one worker inside an uninterruptible
+           * statement stranded the whole pool.
+           *
+           * This is the ONE claim in the README's reduced-mode section that
+           * the test suite does not prove, because proving it means timing
+           * something and CI runs tests rather than benchmarks.
+           */
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ensureDataset(ctx);
+              const iterations = await calibrateLongQuery(ctx);
+
+              const idle = [];
+              for (let i = 0; i < 5; i++) {
+                idle.push(await time(() => shortRead(ctx.db, randomId(), signal)));
+              }
+              const baseline = Math.max(quantile(idle, 0.5), 0.01);
+
+              // Deliberately not awaited: the long query must still be running
+              // while the short reads are timed. Its rejection is swallowed —
+              // the row timeout is what bounds this, not the long query.
+              const long = ctx.db.read(longQuery(iterations), undefined, { signal });
+              long.catch(() => {});
+
+              await new Promise((resolve) => setTimeout(resolve, 50));
+
+              const during = [];
+              for (let i = 0; i < 5; i++) {
+                during.push(await time(() => shortRead(ctx.db, randomId(), signal)));
+              }
+
+              await long.catch(() => {});
+              return quantile(during, 0.5) / baseline;
             }),
         },
       ];
