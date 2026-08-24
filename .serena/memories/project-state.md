@@ -64,16 +64,26 @@ Test tooling: **Chromium and Firefox** are installed by `.devcontainer/post-crea
 CI jobs, under a cache key that names them. `rstest.config.ts` still runs **Chromium alone** — the
 matrix is possible, not yet enabled. rstest accepts no provider but `playwright`.
 
-## Why this project exists — user, 2026-08-24. It arbitrates VFS choice.
+## Memory footprint — one axis of VFS choice, corrected by the user 2026-08-24
 
-**The founding purpose is to bound memory: the user started it to stop loading large data
-structures into RAM**, and assumes other consumers arrive for the same reason. This is not
-derivable from any line of code and it decides questions the code cannot.
+**Origin:** the user started the project to stop loading large data structures into RAM, and
+assumes other consumers arrive for that reason. Not derivable from any line of code.
 
-Immediate consequence: **`IDBMirrorVFS` keeps the whole database in memory in every worker
-(× `poolSize`)**, which runs directly against that purpose. It is the fastest candidate and it
-escapes HANDLE-1, but it must be an explicit opt-in for small databases, never the default —
-recommending it broadly would betray exactly the users who came for the footprint.
+**But it is one criterion among several, not the governing one — the user corrected exactly this
+over-weighting on 2026-08-24.** A VFS that is frugal and slow is as useless as one that is fast and
+enormous. The axes are footprint, throughput and latency, whether the pool actually runs
+concurrently, durability, and browser compatibility; the balance between them is the whole
+question, and **no axis vetoes on its own.** What the library owes a consumer is every cursor made
+visible, not a ranking.
+
+Footprint earns a declared field anyway, for a narrower reason: it is currently the one axis a
+consumer cannot see at all, where builds, concurrency and persistence are at least discoverable.
+
+**Consequence for `IDBMirrorVFS`, stated as a trade and not a verdict:** it is upstream's fastest
+option with and without contention and it escapes HANDLE-1 — two axes won outright — against a
+footprint proportional to database size × `poolSize`, one axis lost outright. **Which way that
+falls is for the measurement campaign to settle; do not pre-empt it.** An earlier version of this
+entry declared it disqualified as a default on footprint alone. That was the over-weighting.
 
 Memory model per VFS, which the README must carry as a column and today does not:
 

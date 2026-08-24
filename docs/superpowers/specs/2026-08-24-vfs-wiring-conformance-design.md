@@ -10,9 +10,13 @@ Wire the four VFS the library ships in `node_modules` but does not expose, decla
 VFS can and cannot do in one compiler-checked table, prove those declarations with a conformance
 suite, and generate the README's VFS table from the same table so it cannot drift.
 
-**The founding constraint governs every choice here: this project exists to bound memory.** The
-user started it to stop loading large data structures into RAM and assumes consumers arrive for
-the same reason. That decides at least one question the measurements cannot — see §3.1.
+**Memory footprint is one axis of the choice, not the choice.** The library was started to stop
+loading large data structures into RAM, and consumers plausibly arrive for that reason, so
+footprint has to be visible per VFS where today it is invisible. But it vetoes nothing on its own:
+a VFS that is frugal and slow is as useless as one that is fast and enormous. The design goal is a
+balance across several axes — footprint, throughput and latency, whether the pool actually runs
+concurrently, durability, browser compatibility — and **the table's job is to expose every cursor
+so a consumer can weigh them, not to rank VFS for them.** See §3.1.
 
 ### Out of scope
 
@@ -106,10 +110,11 @@ export const VFS_CAPABILITIES = {
 the README generator renders it, the guards enforce it, and the benchmark page enumerates it at
 runtime. Nothing may hold a copy.
 
-### 3.1 `memoryModel` is a first-class field, not documentation
+### 3.1 `memoryModel` is one cursor among several, and every VFS must show it
 
-Because bounding memory is why the project exists, the memory model is a selection criterion, not
-a footnote. Two values:
+Footprint is a field rather than prose because it is currently the one axis a consumer cannot see
+at all: builds, concurrency and persistence are at least discoverable, memory behaviour is not. It
+takes its place beside the other axes, with no more weight than they have. Two values:
 
 - `page-cache` — only SQLite's page cache lives in RAM, bounded and tunable via
   `PRAGMA cache_size`. All OPFS VFS, and `IDBBatchAtomicVFS` with the caveat that upstream requires
@@ -117,10 +122,12 @@ a footnote. Two values:
 - `whole-database` — the entire database is resident. `IDBMirrorVFS`, `MemoryVFS`,
   `MemoryAsyncVFS`.
 
-**`IDBMirrorVFS` is the case this field exists for.** It is the fastest candidate and it escapes
-HANDLE-1, and it still cannot be the default, because holding the whole database in RAM in every
-worker runs directly against the reason the library exists. It ships as an explicit opt-in for
-small databases.
+**`IDBMirrorVFS` is the case this field exists for, and it is a trade rather than a verdict.** It
+is upstream's fastest option with and without contention, and it escapes HANDLE-1 — two axes where
+it wins outright — against a footprint proportional to database size × `poolSize`, on an axis
+where it loses outright. Which way that balance falls is exactly what the measurement campaign has
+to settle, and **this spec does not pre-empt it.** Whatever the outcome, the field must exist, so
+that the trade is visible instead of implicit.
 
 Cross-cutting and equally undocumented today: **`poolSize` multiplies the footprint whatever the
 VFS**, since every worker holds its own page cache. Default is 2.
