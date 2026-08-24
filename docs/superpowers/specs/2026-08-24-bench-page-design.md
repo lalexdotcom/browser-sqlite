@@ -153,10 +153,30 @@ Which rows are abortable is read from the method being called, not guessed per r
 tracked as ABORT-1 in `mem:follow-ups`** — when `bulkWrite` and `output` gain a `signal`, that row
 changes category and nothing else on the page does.
 
-**Storage is cleaned per column.** Each pair opens a uniquely named database and removes it
-afterwards: `navigator.storage.getDirectory().removeEntry(name, { recursive: true })` for OPFS,
-`indexedDB.deleteDatabase(name)` for the IndexedDB VFS. Without this a phone fills up silently
-across a few runs.
+### 5.4 Storage cleanup, and the shared-origin hazard
+
+Each pair opens a uniquely named database and removes it afterwards. Without this a phone fills up
+silently across a few runs.
+
+**The page runs on a shared origin.** `lalexdotcom.github.io` serves every one of the user's Pages
+projects from one origin, so its OPFS root and its IndexedDB namespace are shared with unrelated
+applications. Cleanup must therefore be surgical, and the naive version is destructive:
+
+- **OPFS** — `removeEntry(name, { recursive: true })` on the exact generated name, never on
+  anything else and never on the root. Safe because the name is ours and unique.
+- **IndexedDB** — `indexedDB.deleteDatabase(<our file name>)` **does not do what it looks like it
+  does and must not be written.** The worker constructs each VFS as
+  `vfsModule.create(vfs, module, { lockPolicy: 'shared' })` (`worker/worker.ts`), passing the *VFS
+  class name*; wa-sqlite uses that as the IndexedDB database name. So every database this library
+  ever creates with `IDBBatchAtomicVFS` lives inside one IndexedDB store literally called
+  `IDBBatchAtomicVFS`, keyed by file. Deleting it would delete other applications' data on the same
+  origin.
+
+  The rule instead: **snapshot `indexedDB.databases()` before the run, and afterwards delete only
+  the stores that did not exist before it.** If we created `IDBMirrorVFS` from nothing, removing it
+  restores the origin exactly; if it was already there, we leave it alone and accept the leftover.
+  `indexedDB.databases()` is feature-detected — where it is absent, IndexedDB cleanup is skipped
+  entirely and the header banner says so, because a silent skip would be read as a clean run.
 
 ## 6. The rows
 
@@ -290,8 +310,14 @@ code"*. Mitigations, both required:
 
 ## 11. Verification
 
-There is no test suite for the page — see §1, out of scope. What is checked before it is called
-done:
+There is no test suite for the page and no CI job — see §1, out of scope. There *is* a hand-run
+driver, `scripts/bench-check.mjs`: it serves `_site`, opens it in Chromium or Firefox via the
+Playwright already in `devDependencies`, selects pairs, runs, and asserts the table filled. It is
+committed so it does not rot in a scratch directory, it is documented as a developer tool, and
+**nothing runs it automatically.** That is the difference from the CI job §1 declines: this one
+costs a file, not a gate.
+
+What is checked before the page is called done:
 
 - `pnpm build && node scripts/bench-assemble.mjs _site && node scripts/static-server.mjs _site 8080`,
   then a full run in Chromium and in Firefox, both installed in the devcontainer.
@@ -306,13 +332,17 @@ done:
 
 ## 12. Sequencing
 
-1. `scripts/bench-assemble.mjs` and the `_site` gitignore entry.
-2. `bench/index.html` — shell, capability-driven checkboxes, probes, empty table.
-3. The seven conformance rows.
-4. The eight measurement rows.
-5. Display polish: relative bars, containment states, header banner.
-6. Export.
-7. `.github/workflows/pages.yaml`.
-8. The `BENCH-DRIFT` memory entry.
+1. `scripts/bench-assemble.mjs`, `scripts/bench-check.mjs`, the `_site` gitignore entry, and a
+   `bench/index.html` reduced to its header banner and the two probes.
+2. The selection UI — capability-derived checkboxes, All / None, the `<details>` summary, Start.
+3. The run engine: sequential loop, column append, both timeout regimes, storage cleanup, and the
+   `opens` row alone.
+4. The six remaining conformance rows, plus the `BENCH-DRIFT` memory entry.
+5. The dataset, the timing helpers, and four measurements — `bulk-insert-10k`,
+   `write-latency-p50/p95`, `point-read-p50`, `list-page-p50`.
+6. The four remaining measurements, including the `longQuery` calibration.
+7. Display: relative bars and the containment states.
+8. Export.
+9. `.github/workflows/pages.yaml`.
 
-Steps 3 and 4 are the substance; 1, 2, 7 and 8 are small and independent.
+Steps 3 to 6 are the substance; 1, 2, 8 and 9 are small and independent.
