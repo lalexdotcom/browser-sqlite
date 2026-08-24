@@ -35,6 +35,35 @@ path for a full round. It then said the default was `OPFSPermutedVFS` and kept s
 days after that VFS was deleted, which caused a false statement about the project's reliability to
 the user on 2026-08-24. **When the VFS choice changes, this block is the first thing to rewrite.**
 
+## Engine capabilities — measured 2026-08-24, not deduced
+
+Probe run in a dedicated worker on a secure `http://localhost` page, against Playwright's own
+builds (Chromium 151, Firefox 153, WebKit 26.5, all arm64/Linux).
+
+| moteur | `isSecureContext` | `storage.getDirectory` | `FileSystemSyncAccessHandle` | 2nd `readwrite-unsafe` handle |
+|---|---|---|---|---|
+| Chromium | ✅ | `function` | `function` | **succeeds** — mode honoured |
+| Firefox | ✅ | `function` | `function` | **`NoModificationAllowedError`** — mode ignored |
+| WebKit (Linux) | ✅ | **`undefined`** | **`undefined`** | — |
+
+Consequences, each of which cost a measurement:
+
+- **Firefox is the only engine here that exercises `OPFSAdaptiveVFS`'s degraded path**, and it does
+  so correctly: 102/104 browser tests, two concurrent reads overlapping at ratio **1.03** (Chromium
+  control 0.88). See RWU-1, closed.
+- **Firefox is ~5.5× slower** than Chromium on the same CPU-bound query (4192 ms vs 755 ms for
+  `longQuery(3_000_000)`). Every Chromium-calibrated timing constant in the suite is suspect.
+- **WebKit on Linux has no `navigator.storage` at all** — not a partial OPFS, the whole
+  StorageManager is missing. It cannot exercise any VFS this library ships and is removed from CI
+  and the devcontainer (`ee2e9f3`). A real WebKit signal needs Playwright on macOS.
+- **The dividing line for pool behaviour is the synchronous access handle, not `readwrite-unsafe`.**
+  See HANDLE-1 in `mem:follow-ups`: any VFS that rotates one exclusive handle serializes the whole
+  pool for the duration of a long uninterruptible statement, and that includes `OPFSCoopSyncVFS`.
+
+Test tooling: **Chromium and Firefox** are installed by `.devcontainer/post-create.sh` and by both
+CI jobs, under a cache key that names them. `rstest.config.ts` still runs **Chromium alone** — the
+matrix is possible, not yet enabled. rstest accepts no provider but `playwright`.
+
 ## What it is
 
 `browser-sqlite` v1.0.0-rc.3 — persistent SQLite in the browser: wa-sqlite (WASM) +

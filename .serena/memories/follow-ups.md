@@ -267,14 +267,32 @@ open-path BUSY mapping verified by inspection only.
 | VIT-1 | open | **Vite requires consumer configuration** — two independent reasons: (1) Vite's esbuild pre-bundling (`optimizeDeps`) rewrites `import.meta.url` in `node_modules` during dev, breaking the worker URL; fix: `optimizeDeps: { exclude: ['browser-sqlite'] }` in the consumer's `vite.config`. (2) Vite's prod build does not copy `node_modules` wasm beside the emitted worker output; fix: a ~10-line Vite plugin that copies `dist/worker/*` beside the emitted worker. rsbuild and no-bundler modes need nothing. Not a bug in the artifact — a Vite-specific gap documented in the README's "Bundler Configuration" section. Recorded here so it is not re-litigated as an artifact defect. **Fix decided 2026-08-18 (D6, `mem:resume-plan` §1.4): we ship the plugin ourselves as a `browser-sqlite/vite` subpath, wave 4.** Two known fragilities in the currently documented snippet, both fixed by owning the code: `dist/assets` is hard-coded (breaks as soon as the consumer changes `build.assetsDir`) and `node_modules/browser-sqlite/…` assumes a flat node_modules (breaks in a pnpm workspace / monorepo). | README, `tests/consumer/vite.config.ts` |
 
 | COOP-1 | open — **next up**, mechanism analysed 2026-08-24 | See the dedicated block below the tables; it outgrew a row. | `README.md:64`, `worker/worker.ts`, VFS selection |
-| VFS-COV | open, **and it got load-bearing 2026-08-24** | **Two of the five advertised VFS have no test at all: `OPFSWriteAheadVFS` and `IDBBatchAtomicVFS`.** The public set is `VFS_BUILDS` in `types.ts:84` — `OPFSAdaptiveVFS`, `OPFSWriteAheadVFS`, `OPFSCoopSyncVFS`, `AccessHandlePoolVFS`, `IDBBatchAtomicVFS` — and `worker/worker.ts`'s `VFSConfigs` wires all five. Exercised today: `OPFSAdaptiveVFS` implicitly everywhere (it is the default since `be314db`), `AccessHandlePoolVFS` in five places, `OPFSCoopSyncVFS` in one; `tests/browser/vfs.test.ts` covers the pool guard and the vfs/build guard only. **Why this stopped being a tidiness item:** `IDBBatchAtomicVFS` is the leading candidate to replace `OPFSCoopSyncVFS` as the documented universal fallback (see COOP-1), and it is one of the two untested ones. Promoting it without covering it would be recommending untested code — the same mistake COOP-1 already is. It is cheap to cover: it extends `WebLocksMixin(FacadeVFS)` like the default, needs no OPFS, and measured 0/360 stale. | `types.ts`, `worker/worker.ts`, `tests/browser/vfs.test.ts` |
-| RWU-1 | **narrowed 2026-08-24, still open — but not where it was filed** | ~~The *default* VFS requires a proposed, Chromium-only OPFS feature, with no detection and no fallback.~~ **That was true of `OPFSPermutedVFS`, which no longer exists.** Re-read against the code on 2026-08-24: `OPFSAdaptiveVFS` — today's default — **does** detect the feature (`hasUnsafeAccessHandle`, `OPFSAdaptiveVFS.js:8`) and **does** carry a non-unsafe path (`:95-115`): a `navigator.locks` request per file plus a `BroadcastChannel` notify, rotating one exclusive handle between connections, which is structurally what CoopSync does. `AccessHandlePoolVFS`, `IDBBatchAtomicVFS` and `OPFSCoopSyncVFS` never ask for the mode at all (`grep -c 'readwrite-unsafe'` = 0 on each). **Only `OPFSWriteAheadVFS` still calls it unconditionally**, and that is now stated in the README's Known Limitations, so the silent-degradation hazard is documented where it actually lives. **What remains open is not the code, it is the evidence:** the Adaptive fallback path is never executed by anything we run — CI and the consumer smoke are Chromium-only, where the detection is always true. Recommending the default as "works everywhere" therefore rests on a degradation path nobody has ever run. Playwright already ships Firefox and WebKit; this is a harness gap, not a design gap. | `client.ts` (`DEFAULT_VFS`), `.github/workflows/ci.yaml`, `scripts/consumer-smoke.mjs` |
+| VFS-COV | open, **and it is now the blocker for the Firefox recommendation** | **Two of the five wired VFS have no test at all: `OPFSWriteAheadVFS` and `IDBBatchAtomicVFS`.** A sixth exists in the pinned wa-sqlite and is **not wired at all**: `OPFSAnyContextVFS`. That trio is no longer bookkeeping — HANDLE-1 shows the only VFS that structurally escape the pool-blocking defect are `IDBBatchAtomicVFS` and `OPFSAnyContextVFS`, i.e. exactly the untested and the unwired one. Recommending either as the Firefox answer without covering it first would repeat COOP-1's mistake of recommending unmeasured code. `IDBBatchAtomicVFS` is cheap to cover: it extends `WebLocksMixin(FacadeVFS)` like the default, honours our `lockPolicy: 'shared'`, needs no OPFS, and measured 0/360 stale in the 2026-08-20 probe. `OPFSAnyContextVFS` needs wiring first, and upstream warns its write performance is "very bad" — that is the trade the measurement must price. Exercised today: `OPFSAdaptiveVFS` implicitly everywhere (the default), `AccessHandlePoolVFS` in five places, `OPFSCoopSyncVFS` in one. | `types.ts`, `worker/worker.ts`, `tests/browser/vfs.test.ts` |
+| RWU-1 | **done — answered by measurement 2026-08-24** | **The WebIDL deduction was right, and its feared consequence does not happen.** Probe in a dedicated worker on a secure `http://localhost` page: Chromium opens **two simultaneous `readwrite-unsafe` handles on the same file** (mode honoured); **Firefox accepts the call, ignores the mode, and throws `NoModificationAllowedError` on the second handle** — exactly the silent degradation predicted from "WebIDL ignores unknown dictionary members", now observed rather than reasoned. But `OPFSAdaptiveVFS` detects it (`hasUnsafeAccessHandle`, `OPFSAdaptiveVFS.js:8`) and its fallback path holds: **102/104 browser tests pass on Firefox**, concurrency, transactions, barrier, `output()` and `bulkWrite` included, at `poolSize: 2`. Two concurrent reads genuinely overlap (ratio **1.03**, against a Chromium control at 0.88 that proves the harness can detect serialization). The degraded path is real, exercised, and correct. **What the fallback does NOT survive is a long uninterruptible statement — that is HANDLE-1 below, a different defect found by the same campaign.** | closed |
 
 ## COOP-1 in full — `OPFSCoopSyncVFS` under a pool
 
-**Status: open, next up.** Symptom recorded 2026-08-20; mechanism analysed from source
-2026-08-24 and **not yet measured** — treat everything under "Why" as a hypothesis with a
-falsifiable prediction, not as a finding.
+**Status: open, but demoted 2026-08-24 — and its subject has largely been absorbed by HANDLE-1.**
+
+**The symptom did not reproduce.** The whole browser suite forced onto `OPFSCoopSyncVFS`:
+**103/104 on Chromium, 104/104 on Firefox, zero `database is locked` on either.** That neither
+confirms nor refutes the 2026-08-20 observation — the suite defaults to `poolSize: 2` and never
+plays the shape that produced it (interleaved DDL with four concurrent readers at `poolSize: 4`).
+It does establish that **the suite is not the instrument for COOP-1**; a dedicated adversarial test
+is, and that was already step 1 of the recommended order.
+
+**What changed the stakes is HANDLE-1:** CoopSync rotates one exclusive access handle exactly like
+the degraded `OPFSAdaptiveVFS`, so it inherits the pool-blocking defect wholesale. Its 104/104 on
+Firefox is therefore not a reason to recommend it there. Between that and the niche analysis below,
+the likely destination is now removal rather than repair — which would make COOP-1 moot.
+
+**One new defect, distinct from COOP-1, recorded here because nowhere else fits:** forced onto
+CoopSync, Chromium fails `lifecycle :: restarts the slot once and keeps serving` with
+`sqlite3_open_v2`. The replacement worker cannot reopen the database after a crash — consistent
+with the exclusive-handle model, the dead worker's handle not yet being released.
+
+Symptom recorded 2026-08-20; mechanism below analysed from source 2026-08-24 and **never measured** —
+treat everything under "Why" as a hypothesis with a falsifiable prediction, not as a finding.
 
 ### What was measured (2026-08-20, `poolSize` 4, Chromium)
 
@@ -342,6 +360,96 @@ combination that fails.** That argues for D, but D depends on `IDBBatchAtomicVFS
 1. Pin COOP-1 as a failing browser test (DDL interleaved with 4 readers) so there is a stable red.
 2. Probe A against B; the answer alone splits the option table in half.
 3. Run the non-Chromium paths under Playwright's Firefox/WebKit (RWU-1) — that decides D.
+
+## HANDLE-1 — one long statement serializes the whole pool off Chromium
+
+**Status: open. Root cause established by observation 2026-08-24; no remedy exists at our layer.**
+This is the most consequential finding of the browser-matrix campaign and it is not a bug to fix,
+it is a limit to decide and document.
+
+### Symptom
+
+`tests/browser/long-query.test.ts :: does not terminate the worker it abandoned, and does not
+block the pool` fails on Firefox: the second `read()` takes **28-29.5 s** against a 3 s budget —
+exactly the run time of the abandoned `longQuery(20_000_000)`. Reproducible in isolation, so it is
+not cross-test contamination.
+
+### Evidence — statuses sampled without wrapping `Worker`, so the race is not perturbed
+
+| moment | W0 | W1 |
+|---|---|---|
+| after `CREATE TABLE` | READY | READY |
+| after the abort | **ABORTING** | READY |
+| +100 ms → +4000 ms | ABORTING | **RUNNING** |
+| after `SELECT 1` (28 143 ms) | READY | READY |
+
+**The second read is dispatched to the free worker immediately.** W1 goes RUNNING at once and stays
+RUNNING for 28 s. So the scheduler, the lease and `quiesce()` are all innocent — three hypotheses
+that were checked and killed, along with test calibration and zombie accumulation across tests.
+**The block is inside the worker, below our layer.**
+
+### Cause
+
+Without `readwrite-unsafe` there is **one exclusive OPFS access handle**, rotated between
+connections over a `BroadcastChannel`. A worker inside a single long `sqlite3_step()` never returns
+to its event loop — which `long-query.test.ts`'s first test pins deliberately ("runs to completion
+untouched") — so it can never answer the hand-over request. Any file-touching work on another
+worker waits for the abandoned query to finish.
+
+**It is a race, not a certainty.** In an instrumented run W1 had taken the handle before W2 started
+its recursion, and W1's barrier prelude completed in 3 ms while W2 ground on. That is why the test
+goes green when observed and red when not — a genuine Heisenbug. The unperturbed measurement is the
+one to trust.
+
+**Not established:** which of W1's two statements blocks — the barrier prelude or `SELECT 1`'s own
+lock acquisition. It does not change the conclusion.
+
+### What it means, and why it is not fixable here
+
+**"Does not block the pool" is false off Chromium.** The assertion is right; the behaviour is worse.
+Concurrent reads hold on Firefox **only while no worker is running a long uninterruptible
+statement**. One abandoned long query degrades the entire pool to serial for its full duration, and
+since a single `step()` cannot be cut short there is no remedy in our code.
+
+**The dividing line is not `readwrite-unsafe`, it is the synchronous access handle**, so the obvious
+"just use CoopSync on Firefox" is wrong — CoopSync rotates one exclusive handle too and inherits the
+same defect, its 104/104 notwithstanding.
+
+| VFS | model | escapes HANDLE-1 |
+|---|---|---|
+| `OPFSAdaptiveVFS` (degraded) | one exclusive handle, rotated | no |
+| `OPFSCoopSyncVFS` | one exclusive handle, rotated | no |
+| `AccessHandlePoolVFS` | one handle, `poolSize: 1` enforced | n/a |
+| **`IDBBatchAtomicVFS`** | IndexedDB, no handle at all | **yes, structurally** |
+| **`OPFSAnyContextVFS`** | File API (`getFile` / `createWritable`) | **yes, structurally** |
+
+The last two are therefore the only candidates worth measuring as a Firefox recommendation, and
+**neither has a single test** — `IDBBatchAtomicVFS` is one of VFS-COV's two gaps and
+`OPFSAnyContextVFS` is not even wired into `VFSConfigs`. Upstream warns its write performance is
+"very bad". The measurement to run is that trade: **write latency against pool non-blocking.**
+
+## Two Firefox test failures — recorded so they are not rediscovered
+
+Both from the 2026-08-24 matrix run, both open, neither about OPFS availability.
+
+- **`long-query :: does not terminate the worker it abandoned`** — this is HANDLE-1 above. Not a
+  test defect.
+- **`lifecycle :: rejects the in-flight query on a deserialization failure`** — times out at 30 s.
+  Leading explanation is calibration, not code: the test does `sleep(100)` and then synthetically
+  dispatches `messageerror`, betting the query is already in flight. **Firefox is 5.5× slower than
+  Chromium on the same CPU-bound query** (4192 ms vs 755 ms for `longQuery(3_000_000)`), so any
+  Chromium-tuned constant is suspect. Unverified — nobody has traced this one.
+
+## WebKit — dead lead, do not re-add without re-running the check
+
+Playwright's WebKit on Linux exposes **no `navigator.storage` at all**: no OPFS, no
+`FileSystemHandle`, no `FileSystemDirectoryHandle`, no `showDirectoryPicker`. Only `indexedDB`
+answers. Verified in a dedicated worker on a secure `http://localhost` page, so it is neither a
+secure-context nor an rstest problem. The suite reports 9/104 for that single cause. It is a gap in
+the Linux port, not the engine — OPFS is Baseline since March 2023 and shipping Safari has it. A
+real WebKit signal needs Playwright on **macOS**. rstest accepts no provider but `playwright`
+(`BROWSER_PROVIDERS = ['playwright']`), so there is no escape hatch. Removed from CI and the
+devcontainer in `ee2e9f3`.
 
 ## Performance — after correctness, with debug instrumentation live
 

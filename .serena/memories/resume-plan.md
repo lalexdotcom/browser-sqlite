@@ -167,7 +167,7 @@ owner of `available`, relayer the query API on `chunk()` (§1.2), fix abort once
 B9 in `tests/browser/concurrency.test.ts`. Remember the convention: an `it.fails` turning
 red means the bug is fixed.
 
-## 0.1 HOW TO RESUME — rewritten 2026-08-21 (end of the writer-stickiness session), read this first
+## 0.1 HOW TO RESUME — written 2026-08-21. **SUPERSEDED by §0.2; read that first.** Kept for the barrier and stickiness detail, which stays accurate.
 
 **Repository state.** Nothing is in flight. The commit-propagation barrier (`36c664e`) and the
 writer-stickiness work (`4f215f8`) are both **merged into `main`**, both branches deleted. The
@@ -276,6 +276,65 @@ lied: a `// Falsifiable:` naming a line that did not exist, another asserting a 
 measurement contradicted, a JSDoc describing the plan's buggy formula rather than the code beneath
 it. In a codebase where comments carry measurements, that is a defect class, not a tidiness one.
 
+
+## 0.2 HOW TO RESUME — written 2026-08-24 (browser-matrix session). READ THIS FIRST.
+
+**Repository state.** Nothing in flight, working tree clean, **308 tests / 0 failures**, `main`
+pushed and level with `origin/main` for the first time in the project's history — the 165-commit
+backlog is gone. Last commits: `89d4f79` (install the three engines, cache key names them),
+`495a7c4` (memory), `ee2e9f3` (drop WebKit). CI green on all of them.
+
+**Tooling now in place.** Chromium and Firefox installed in the devcontainer and in both CI jobs,
+under a cache key that names its contents. `rstest.config.ts` still runs Chromium alone — **the
+matrix is possible, not yet enabled.** WebKit is deliberately absent, see `mem:follow-ups`.
+
+**What this session settled, all by measurement.** RWU-1 is **closed**. COOP-1 is **demoted** and
+largely absorbed. **HANDLE-1 is new and is the important one.** The engine capability table is in
+`mem:project-state`. Read HANDLE-1 before planning anything about VFS.
+
+**The one-sentence version of HANDLE-1:** off Chromium there is a single exclusive OPFS access
+handle, a worker inside a long uninterruptible `sqlite3_step()` never releases it, so one abandoned
+long query serializes the whole pool for its full duration — and there is no remedy in our code.
+
+### The plan, as the user set it 2026-08-24
+
+**Accepted premise: `readwrite-unsafe` cannot be worked around.** The answer is not a fix, it is a
+documented VFS recommendation per browser, justified by measurement.
+
+1. **Measure the two VFS that structurally escape HANDLE-1** — `IDBBatchAtomicVFS` (untested) and
+   `OPFSAnyContextVFS` (not even wired into `VFSConfigs`). The trade to price is **write latency
+   against pool non-blocking**. Do NOT shortcut to `OPFSCoopSyncVFS`: it rotates one exclusive
+   handle and inherits the defect wholesale, its 104/104 on Firefox notwithstanding. Gated on
+   VFS-COV.
+2. **Then document the per-browser VFS recommendation** in the README, which also finally closes
+   its dangling CoopSync cross-reference and its false "Constraint: None".
+3. **Before release: a static benchmark page** that uses the library and lets anyone run the
+   benchmarks in their own browser, hosted on GitHub Pages if reachable. **This is easier than it
+   looks and it is wave 4's dividend: no COOP/COEP is required any more**, so plain Pages over
+   HTTPS is a sufficient secure context with no special headers. Start from the "no bundler" mode
+   that `scripts/consumer-smoke.mjs` already exercises rather than a fresh page — `dist/` already
+   serves the worker and the three `.wasm` on relative paths.
+4. **A VFS × browser benchmark table**, which is the output of 1 and 3 combined.
+
+### Also open, smaller
+
+- **Wire Firefox into `rstest.config.ts`** — blocked on the two Firefox failures in
+  `mem:follow-ups`, since a browser cannot be made a blocking gate while it is red. One of them is
+  HANDLE-1 (not fixable, so the test needs a per-browser expectation); the other is probably
+  timing calibration and nobody has traced it.
+- **COOP-1's adversarial test**, if COOP-1 survives at all — it may simply be removed with the VFS.
+- **D6** (the `browser-sqlite/vite` plugin subpath) is still owed and still undesigned, see §1.4.
+
+### Lessons this session paid for
+
+- **A probe that does not reproduce the failure is measuring something else.** The abandon path was
+  blamed for hours on a reasonable-looking trace; a standalone reproduction passed at 0 ms while the
+  real test failed at 29 s, and only instrumenting *the failing test in place* showed why.
+- **Instrumentation can hide the bug.** Wrapping `Worker` shifted a millisecond-scale race and
+  turned the failure green. When a probe disagrees with the plain run, trust the plain run and find
+  a lighter instrument — here, sampling `db.debug` statuses instead of wrapping the constructor.
+- **A catastrophic-looking number can be uninformative.** WebKit's 9/104 was one missing API, not 95
+  defects. Read the first failure's cause before reading the count.
 
 ## 1. Decisions — D1 to D5, all settled
 
