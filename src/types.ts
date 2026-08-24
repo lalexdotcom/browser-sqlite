@@ -145,6 +145,42 @@ export const VFS_CAPABILITIES = {
     persistent: true,
     memoryModel: 'page-cache',
   },
+  IDBMirrorVFS: {
+    builds: ['async', 'jspi'],
+    maxPoolSize: null,
+    poolLimitReason: null,
+    multiConnection: true,
+    persistent: true,
+    // Upstream: "keeps all files in memory, persisting database files to
+    // IndexedDB", and the whole database must fit in available memory.
+    memoryModel: 'whole-database',
+  },
+  OPFSAnyContextVFS: {
+    builds: ['async', 'jspi'],
+    maxPoolSize: null,
+    poolLimitReason: null,
+    multiConnection: true,
+    persistent: true,
+    memoryModel: 'page-cache',
+  },
+  MemoryVFS: {
+    builds: ['sync', 'async', 'jspi'],
+    maxPoolSize: 1,
+    poolLimitReason:
+      'its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently',
+    multiConnection: false,
+    persistent: false,
+    memoryModel: 'whole-database',
+  },
+  MemoryAsyncVFS: {
+    builds: ['async', 'jspi'],
+    maxPoolSize: 1,
+    poolLimitReason:
+      'its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently',
+    multiConnection: false,
+    persistent: false,
+    memoryModel: 'whole-database',
+  },
 } as const satisfies Record<string, VFSCapability>;
 
 export type SQLiteVFS = keyof typeof VFS_CAPABILITIES;

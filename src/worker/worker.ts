@@ -79,6 +79,30 @@ const VFSConfigs = {
         /* webpackChunkName: "IDBBatchAtomicVFS" */ 'wa-sqlite/src/examples/IDBBatchAtomicVFS.js'
       ),
   },
+  IDBMirrorVFS: {
+    fs: () =>
+      import(
+        /* webpackChunkName: "IDBMirrorVFS" */ 'wa-sqlite/src/examples/IDBMirrorVFS.js'
+      ),
+  },
+  OPFSAnyContextVFS: {
+    fs: () =>
+      import(
+        /* webpackChunkName: "OPFSAnyContextVFS" */ 'wa-sqlite/src/examples/OPFSAnyContextVFS.js'
+      ),
+  },
+  MemoryVFS: {
+    fs: () =>
+      import(
+        /* webpackChunkName: "MemoryVFS" */ 'wa-sqlite/src/examples/MemoryVFS.js'
+      ),
+  },
+  MemoryAsyncVFS: {
+    fs: () =>
+      import(
+        /* webpackChunkName: "MemoryAsyncVFS" */ 'wa-sqlite/src/examples/MemoryAsyncVFS.js'
+      ),
+  },
 } as const satisfies Record<SQLiteVFS, { fs: () => Promise<any> }>;
 
 let openedDB: Promise<{ sqlite: any; db: any }> | undefined;

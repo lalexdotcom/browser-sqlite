@@ -121,3 +121,60 @@ describe('vfs/build combination guard', () => {
     await db.close();
   });
 });
+
+/**
+ * Each newly wired VFS opens on its default build and serves a round trip.
+ * The exhaustive build sweep lives in the conformance project; this is the
+ * gate that keeps `pnpm test` honest about the four additions.
+ */
+describe('newly wired VFS', () => {
+  // Falsifiable: delete any one loader from VFSConfigs in worker/worker.ts.
+  const cases = [
+    { vfs: 'IDBMirrorVFS', poolSize: 2 },
+    { vfs: 'OPFSAnyContextVFS', poolSize: 2 },
+    { vfs: 'MemoryVFS', poolSize: 1 },
+    { vfs: 'MemoryAsyncVFS', poolSize: 1 },
+  ] as const;
+
+  for (const { vfs, poolSize } of cases) {
+    it(`${vfs} opens and serves a round trip`, async () => {
+      const db = await createTestClient({ vfs, poolSize });
+
+      await db.write('CREATE TABLE wired (id INTEGER, val TEXT)');
+      await db.write("INSERT INTO wired VALUES (1, 'ok')");
+
+      const rows = await db.read<{ id: number; val: string }>(
+        'SELECT * FROM wired',
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0].val).toBe('ok');
+
+      await db.close();
+    });
+  }
+});
+
+/**
+ * The memory VFS hold their pages in the worker that opened them, so a pool
+ * would hold independent databases diverging silently. That is corruption, not
+ * volatility, and the guard states it.
+ */
+describe('memory VFS pool guard', () => {
+  // Falsifiable: set maxPoolSize to null on MemoryVFS in VFS_CAPABILITIES.
+  for (const vfs of ['MemoryVFS', 'MemoryAsyncVFS'] as const) {
+    it(`${vfs} refuses a pool larger than 1`, () => {
+      let caught: unknown;
+      try {
+        createSQLiteClient(`browser-sqlite-test-${crypto.randomUUID()}`, {
+          vfs,
+          poolSize: 2,
+        });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(SQLiteError);
+      expect((caught as SQLiteError).code).toBe('INVALID_OPTION');
+      expect((caught as SQLiteError).message).toMatch(/diverge/);
+    });
+  }
+});
