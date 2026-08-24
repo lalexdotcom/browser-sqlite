@@ -73,10 +73,33 @@ try {
   }
 
   const summary = await page.textContent('#picker-summary');
-  if (!summary || summary === 'None selected') fail(`bad summary: ${summary}`);
   process.stdout.write(`summary: ${summary}\n`);
+  if (all) {
+    if (!summary?.startsWith('All (')) fail(`bad summary after select-all: ${summary}`);
+  } else {
+    if (!summary?.startsWith('1 selected')) fail(`bad summary after select-one: ${summary}`);
+  }
 
   if (problems.length) fail(problems.join('\n'));
+
+  await page.click('#start');
+  await page.waitForFunction(() => window.__BENCH__.done === true, null, {
+    timeout: 10 * 60_000,
+  });
+
+  const stuck = await page.$$eval('#results td', (tds) =>
+    tds.filter((td) => td.textContent === '…').length,
+  );
+  if (stuck > 0) fail(`${stuck} cells never resolved`);
+
+  const columns = await page.$$eval('#head-row th', (th) => th.length - 1);
+  if (columns === 0) fail('no column was rendered');
+
+  process.stdout.write(
+    `${columns} columns, results:\n` +
+      JSON.stringify(await page.evaluate(() => window.__BENCH__.results), null, 2) +
+      '\n',
+  );
 
   await browser.close();
   process.stdout.write('OK\n');

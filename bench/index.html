@@ -38,6 +38,17 @@
       #picker-list label.unavailable { opacity: 0.45; }
       #picker-list .why { font-size: 0.8rem; opacity: 0.75; }
       button { font: inherit; padding: 0.3rem 0.8rem; }
+      #results-wrap { overflow-x: auto; }
+      #results { border-collapse: collapse; font-size: 0.85rem; }
+      #results th, #results td {
+        border: 1px solid var(--border); padding: 0.25rem 0.5rem;
+        text-align: left; white-space: nowrap;
+      }
+      #results thead th { position: sticky; top: 0; background: Canvas; }
+      #results th small { display: block; font-weight: 400; opacity: 0.7; }
+      #results tbody th { font-weight: 400; }
+      .pending { opacity: 0.4; }
+      .fail { color: #b00020; }
     </style>
   </head>
   <body>
@@ -58,10 +69,11 @@
 
     <p id="status"></p>
 
-    <!-- RESULTS TABLE — Task 3 -->
+    <div id="results-wrap"><table id="results"><thead><tr id="head-row">
+      <th>row</th></tr></thead><tbody id="body-rows"></tbody></table></div>
 
     <script type="module">
-      import { VFS_CAPABILITIES } from './dist/index.js';
+      import { createSQLiteClient, VFS_CAPABILITIES } from './dist/index.js';
 
       // ── Identity ────────────────────────────────────────────────────────
       // Substituted by scripts/bench-assemble.mjs. Opening bench/index.html
@@ -268,7 +280,276 @@
       });
       refreshSummary();
 
-      // ── RUNNER — Task 3 ─────────────────────────────────────────────────
+      // ── RUNNER — Task 3 ─────────────────────────────────────────
+      const ROW_TIMEOUT_MS = 30_000;
+
+      /**
+       * Thrown when a row could not be bounded without abandoning its column.
+       * See spec §5.3: for a method that takes no AbortSignal the only bound
+       * available is a race against a timer, which abandons the WAIT without
+       * stopping the WORK. Continuing down the column would then time every
+       * later row against a worker still executing the abandoned statement,
+       * so the whole column is abandoned instead.
+       */
+      class ColumnAbandoned extends Error {}
+
+      /**
+       * A row whose work takes a `signal`: read / write / first / stream /
+       * chunk. The abort reaches the drain, the worker is released, and the
+       * run continues with the next row in the same column.
+       */
+      const abortableRow = async (fn) => {
+        const signal = AbortSignal.timeout(ROW_TIMEOUT_MS);
+        try {
+          return await fn(signal);
+        } catch (error) {
+          if (signal.aborted) throw new RowTimeout();
+          throw error;
+        }
+      };
+
+      class RowTimeout extends Error {}
+
+      /**
+       * A row whose work takes no `signal` — bulkWrite and output today, see
+       * ABORT-1 in mem:follow-ups. When ABORT-1 lands these rows move to
+       * abortableRow and this function loses its last caller.
+       */
+      const unabortableRow = async (fn) => {
+        let timer;
+        const expired = new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new ColumnAbandoned()), ROW_TIMEOUT_MS);
+        });
+        try {
+          return await Promise.race([fn(), expired]);
+        } finally {
+          clearTimeout(timer);
+        }
+      };
+
+      /**
+       * Surgical cleanup. This origin is shared with the user's other Pages
+       * projects, so:
+       *   - OPFS: remove only our exact generated name, never the root;
+       *   - IndexedDB: wa-sqlite names the store after the VFS CLASS, not
+       *     after our file, so every database this library ever created with
+       *     IDBBatchAtomicVFS lives in one store called `IDBBatchAtomicVFS`.
+       *     Deleting it by name would delete other applications' data. We
+       *     therefore delete only stores that did not exist before this run.
+       * See spec §5.4.
+       */
+      const idbBefore = CAN_LIST_IDB
+        ? new Set((await indexedDB.databases()).map((d) => d.name))
+        : null;
+
+      const cleanupOpfs = async (file) => {
+        if (!HAS_OPFS) return;
+        try {
+          const root = await navigator.storage.getDirectory();
+          await root.removeEntry(file, { recursive: true });
+        } catch {
+          // Never created, or this VFS does not use OPFS at all.
+        }
+      };
+
+      const cleanupIdb = async () => {
+        if (!idbBefore) return;
+        const now = await indexedDB.databases();
+        for (const { name } of now) {
+          if (!name || idbBefore.has(name)) continue;
+          await new Promise((resolve) => {
+            const request = indexedDB.deleteDatabase(name);
+            request.onsuccess = request.onerror = request.onblocked = () =>
+              resolve();
+          });
+        }
+      };
+
+      const RESULTS = { conformance: {}, measurements: {} };
+
+      /**
+       * Conformance rows. Ids are the describe() titles of
+       * tests/conformance/invariants.test.ts, verbatim — see BENCH-DRIFT in
+       * mem:follow-ups. `run` resolves true, resolves 'blocked', or throws.
+       */
+      const CONFORMANCE_ROWS = [
+        {
+          id: 'opens',
+          label: 'opens and serves a query',
+          applies: () => true,
+          run: ({ db }) =>
+            abortableRow(async (signal) => {
+              await db.write('CREATE TABLE t (a INTEGER)', undefined, { signal });
+              await db.write('INSERT INTO t VALUES (1)', undefined, { signal });
+              const rows = await db.read('SELECT count(*) AS n FROM t', undefined, {
+                signal,
+              });
+              if (rows[0].n !== 1) throw new Error(`expected 1, got ${rows[0].n}`);
+              return true;
+            }),
+        },
+      ];
+
+      /** Measurement rows. Filled in Tasks 5 and 6. */
+      const MEASUREMENT_ROWS = [];
+
+      const headRow = document.getElementById('head-row');
+      const bodyRows = document.getElementById('body-rows');
+      const cells = new Map(); // `${pairId}|${rowId}` -> <td>
+
+      const buildRows = () => {
+        // Clear all column <th>s except the first (the "row" label column),
+        // and reset the cells map — otherwise a second Start press duplicates
+        // the header columns while mapping cells to the wrong column.
+        for (const th of [...headRow.querySelectorAll('th')].slice(1)) th.remove();
+        cells.clear();
+        bodyRows.replaceChildren();
+        for (const row of [...CONFORMANCE_ROWS, ...MEASUREMENT_ROWS]) {
+          const tr = document.createElement('tr');
+          tr.dataset.row = row.id;
+          const th = document.createElement('th');
+          th.textContent = row.label;
+          th.title = row.id;
+          tr.append(th);
+          bodyRows.append(tr);
+        }
+      };
+
+      const addColumn = (pair) => {
+        const th = document.createElement('th');
+        th.innerHTML = `${pair.vfs} · ${pair.build}<small>pool ${poolFor(pair.cap)}</small>`;
+        headRow.append(th);
+        for (const tr of bodyRows.querySelectorAll('tr')) {
+          const td = document.createElement('td');
+          td.className = 'pending';
+          td.textContent = '…';
+          tr.append(td);
+          cells.set(`${pair.id}|${tr.dataset.row}`, td);
+        }
+      };
+
+      const setCell = (pair, rowId, text, className = '') => {
+        const td = cells.get(`${pair.id}|${rowId}`);
+        if (!td) return;
+        td.className = className;
+        td.textContent = text;
+      };
+
+      const status = document.getElementById('status');
+      const startButton = document.getElementById('start');
+      let stopRequested = false;
+
+      /**
+       * One pair at a time, one row at a time. Two VFS running concurrently
+       * would contend for OPFS and invalidate every number on this page, so
+       * this sequencing is a correctness requirement, not a simplification.
+       */
+      const runPair = async (pair) => {
+        addColumn(pair);
+        const file = `bench-${crypto.randomUUID()}`;
+        RESULTS.conformance[pair.id] = {};
+        RESULTS.measurements[pair.id] = {};
+
+        const db = createSQLiteClient(file, {
+          vfs: pair.vfs,
+          build: pair.build,
+          poolSize: poolFor(pair.cap),
+        });
+        const ctx = { db, file, pair, pool: poolFor(pair.cap) };
+
+        let abandoned = false;
+        for (const row of [...CONFORMANCE_ROWS, ...MEASUREMENT_ROWS]) {
+          const kind = CONFORMANCE_ROWS.includes(row)
+            ? 'conformance'
+            : 'measurements';
+
+          if (abandoned) {
+            RESULTS[kind][pair.id][row.id] = 'timeout';
+            setCell(pair, row.id, '⏱');
+            continue;
+          }
+          if (!row.applies(pair.cap)) {
+            RESULTS[kind][pair.id][row.id] = 'skipped';
+            setCell(pair, row.id, '⃠');
+            continue;
+          }
+
+          status.textContent = `${pair.id} — ${row.id}`;
+          try {
+            const value = await row.run(ctx);
+            if (value === 'blocked') {
+              RESULTS[kind][pair.id][row.id] = 'blocked';
+              setCell(pair, row.id, '⃠ blocked');
+            } else if (kind === 'conformance') {
+              RESULTS[kind][pair.id][row.id] = 'pass';
+              setCell(pair, row.id, '✅');
+            } else {
+              RESULTS[kind][pair.id][row.id] = value;
+              setCell(pair, row.id, formatMeasure(row, value));
+            }
+          } catch (error) {
+            if (error instanceof ColumnAbandoned) {
+              abandoned = true;
+              RESULTS[kind][pair.id][row.id] = 'timeout';
+              setCell(pair, row.id, '⏱ column abandoned', 'fail');
+            } else if (error instanceof RowTimeout) {
+              RESULTS[kind][pair.id][row.id] = 'timeout';
+              setCell(pair, row.id, '⏱', 'fail');
+            } else {
+              RESULTS[kind][pair.id][row.id] =
+                kind === 'conformance' ? 'fail' : null;
+              const td = cells.get(`${pair.id}|${row.id}`);
+              if (td) td.title = String(error?.message ?? error);
+              setCell(pair, row.id, '❌', 'fail');
+            }
+            // Every later row would fail for the same reason and say nothing
+            // new, so a failed `opens` ends this column.
+            if (row.id === 'opens') abandoned = true;
+          }
+        }
+
+        try {
+          await Promise.race([
+            db.close(),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('close timed out')), ROW_TIMEOUT_MS),
+            ),
+          ]);
+        } catch {
+          // A close that never settles is HANDLE-1 holding the pool. Nothing
+          // to do but move on; the worker dies with the page.
+        }
+        await cleanupOpfs(file);
+      };
+
+      /** Measurements render as text here; Task 7 adds the relative bars. */
+      const formatMeasure = (row, value) =>
+        value === null ? '—' : `${value.toFixed(row.decimals ?? 1)} ${row.unit}`;
+
+      startButton.addEventListener('click', async () => {
+        if (startButton.dataset.running) {
+          stopRequested = true;
+          return;
+        }
+        startButton.dataset.running = '1';
+        startButton.textContent = 'Stop';
+        document.getElementById('picker').open = false;
+        window.__BENCH__.done = false;
+
+        buildRows();
+        for (const pair of selectedPairs()) {
+          if (stopRequested) break;
+          await runPair(pair);
+        }
+        await cleanupIdb();
+
+        status.textContent = stopRequested ? 'stopped' : 'done';
+        window.__BENCH__.done = true;
+        window.__BENCH__.results = RESULTS;
+        startButton.textContent = 'Start';
+        delete startButton.dataset.running;
+        stopRequested = false;
+      });
 
       document.getElementById('status').textContent =
         `${PAIRS.length} declared pairs, ` +
