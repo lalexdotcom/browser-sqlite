@@ -392,11 +392,11 @@
           id: 'write-read-back',
           label: 'what is written is read back',
           applies: () => true,
-          run: ({ db }) =>
+          run: (ctx) =>
             abortableRow(async (signal) => {
-              await db.write('CREATE TABLE inv1 (a INTEGER)', undefined, { signal });
-              await db.write('INSERT INTO inv1 VALUES (42)', undefined, { signal });
-              const rows = await db.read('SELECT a FROM inv1', undefined, { signal });
+              await ctx.db.write('CREATE TABLE inv1 (a INTEGER)', undefined, { signal });
+              await ctx.db.write('INSERT INTO inv1 VALUES (42)', undefined, { signal });
+              const rows = await ctx.db.read('SELECT a FROM inv1', undefined, { signal });
               if (rows.length !== 1 || rows[0].a !== 42) {
                 throw new Error(`expected [{a:42}], got ${JSON.stringify(rows)}`);
               }

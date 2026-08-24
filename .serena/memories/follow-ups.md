@@ -584,10 +584,11 @@ of SQLite and of the platform, not of our implementation, so they are expected t
 
 **The rule: changing either copy obliges a review of the other.** Both directions.
 
-What makes a divergence visible rather than silent: **the page's row ids are the conformance
-`describe()` titles verbatim** — `opens`, `write-read-back`, `survives-reopen`,
+What makes a divergence visible rather than silent: **the page's row ids are normalized from the
+conformance `describe()` titles** — the `invariant N — ` prefix is dropped and the remainder is
+kebab-cased — giving `opens`, `write-read-back`, `survives-reopen`,
 `concurrent-writes-lose-nothing`, `rollback-leaves-nothing`, `close-settles`,
-`no-read-inside-transaction`. A row whose id no longer matches a `describe()` is the signal.
+`no-read-inside-transaction`. A row whose id no longer maps to a `describe()` is the signal.
 
 Two places where the copies legitimately differ, and must not be "aligned":
 
