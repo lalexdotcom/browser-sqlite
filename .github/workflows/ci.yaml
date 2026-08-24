@@ -35,18 +35,25 @@ jobs:
       # and consumer-smoke installing an engine it does not drive costs only
       # apt time on a cache hit.
       #
-      # rstest.config.ts still runs Chromium alone, so Firefox and WebKit are
-      # unused for now: they are installed ahead of that switch. RWU-1 and
-      # COOP-1 cannot be settled without a non-Chromium engine — see
-      # mem:follow-ups.
+      # rstest.config.ts still runs Chromium alone, so Firefox is unused for
+      # now: it is installed ahead of that switch. It is the engine that
+      # answers RWU-1 — it ignores the readwrite-unsafe access-handle mode, so
+      # it is the only one here that exercises OPFSAdaptiveVFS's degraded path.
+      #
+      # WebKit is deliberately absent. It was added and removed on 2026-08-24:
+      # Playwright's Linux WebKit exposes no `navigator.storage` at all, so it
+      # cannot exercise any VFS this library ships and reported 9/104 for that
+      # single reason. A real WebKit signal needs Playwright on macOS. Adding
+      # it back means changing this comment, the list below, and the key above,
+      # together.
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-chromium-firefox-webkit-${{ hashFiles('pnpm-lock.yaml') }}
+          key: playwright-${{ runner.os }}-chromium-firefox-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install browsers
-        run: pnpm exec playwright install --with-deps chromium firefox webkit
+        run: pnpm exec playwright install --with-deps chromium firefox
 
       - name: Lint and format check
         run: pnpm exec biome ci .
@@ -81,17 +88,17 @@ jobs:
 
       # Same key and same list as verify, on purpose — see the note there.
       # scripts/consumer-smoke.mjs imports { chromium } and drives nothing
-      # else, so two of these engines are dead weight here; sharing one cache
-      # entry and one list across both jobs is worth that, because a per-job
-      # list is a pair that has to stay in agreement forever.
+      # else, so Firefox is dead weight here; sharing one cache entry and one
+      # list across both jobs is worth that, because a per-job list is a pair
+      # that has to stay in agreement forever.
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-chromium-firefox-webkit-${{ hashFiles('pnpm-lock.yaml') }}
+          key: playwright-${{ runner.os }}-chromium-firefox-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install browsers
-        run: pnpm exec playwright install --with-deps chromium firefox webkit
+        run: pnpm exec playwright install --with-deps chromium firefox
 
       - name: Consumer smoke test
         run: pnpm test:consumer

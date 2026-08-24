@@ -7,24 +7,31 @@ pnpm install
 
 # Install Playwright browsers + OS deps for rstest browser mode.
 #
-# All three engines, on purpose. Chromium alone was the rule until
-# 2026-08-24, and it left two backlog items (RWU-1, COOP-1) unanswerable:
-# the default VFS's non-Chromium degradation path and OPFSCoopSyncVFS's
-# role as a fallback can only be settled by running a non-Chromium engine,
-# not by reasoning about WebIDL. ~370 MB and a minute or two more per
-# container rebuild buys that evidence.
+# Chromium and Firefox, deliberately not WebKit.
 #
-# Caveat to carry: Playwright's Firefox and WebKit are patched builds, not
-# the branded browsers, and WebKit on Linux is not Safari. They give real
-# engine-level evidence about OPFS and Web Locks; they are not proof about
-# shipping Safari. See https://playwright.dev/docs/browsers
+# Firefox earns its place: it ignores the readwrite-unsafe access-handle
+# mode, so it is the only engine here that exercises OPFSAdaptiveVFS's
+# degraded path. Measured 2026-08-24 — a second handle on the same file
+# throws NoModificationAllowedError, and the suite still passes 102/104.
+#
+# WebKit was installed on 2026-08-24 and removed the same day. Playwright's
+# WebKit on Linux exposes no `navigator.storage` at all — no OPFS, no
+# FileSystemHandle, no showDirectoryPicker, only indexedDB — so it cannot
+# exercise a single VFS this library ships. It reported 9/104 for one cause,
+# not 95 defects. This is a limitation of the Linux port, not of the engine:
+# OPFS has been Baseline since March 2023 and shipping Safari has it. A real
+# WebKit signal would need Playwright on macOS. Do not re-add it here without
+# re-running that check.
+#
+# Caveat that stands for Firefox: Playwright's build is patched and is not
+# the branded browser. See https://playwright.dev/docs/browsers
 #
 # `playwright` is declared in the root devDependencies (per the root-only
 # test-tooling convention in mem:conventions), so `pnpm exec` from the
 # root resolves to the catalog-pinned version. `pnpm dlx` would pull
 # Playwright's latest, downloading browsers that the pinned runtime
 # cannot launch. https://rstest.rs/guide/browser-mode
-pnpm exec playwright install --with-deps chromium firefox webkit
+pnpm exec playwright install --with-deps chromium firefox
 
 uv tool install -p 3.13 "serena-agent==1.7.0" --prerelease=allow
 uv tool install mempalace
