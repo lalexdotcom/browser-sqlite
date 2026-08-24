@@ -647,37 +647,40 @@
       };
 
       /**
-       * A single very long sqlite3_step() with no table to populate: SQLite
-       * must run the whole recursion before the first row of count(*) exists.
-       * Copied from tests/browser/helpers.ts.
+       * A cross-join query that reads every page of bench (10 000 rows) for
+       * the entire duration of one sqlite3_step(). SQLite holds a shared read
+       * lock on the database file from the moment the statement starts until
+       * it finishes — which is what the original recursive CTE lacked: a
+       * pure-CPU recursion over no table reads no file pages and therefore
+       * acquires no file handle, so it stranded its own worker without
+       * blocking other workers that needed the file.
        *
-       * That property is what makes it the right instrument for pool-blocking:
-       * a worker inside it never returns to its event loop, which is precisely
-       * HANDLE-1's mechanism.
+       * `bound` controls how many rows the inner subquery returns, and
+       * therefore how many cross-join pairs SQLite must materialise. No index
+       * applies to the cross join, so cost scales linearly with bound.
        */
-      const longQuery = (iterations) =>
-        `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < ${iterations}) SELECT count(*) AS n FROM c`;
+      const longQuery = (bound) =>
+        `SELECT count(*) FROM bench CROSS JOIN (SELECT 1 FROM bench LIMIT ${bound}) AS b`;
 
       /**
-       * Finds an iteration count that costs 1.5–3 s ON THIS DEVICE, then reuses
-       * it for every column. A constant would be meaningless across a laptop
-       * and a phone — this repository already measured Firefox at ~5.5× a
-       * Chromium of the same CPU on this exact query.
+       * Finds a bound that costs 1.5–3 s ON THIS DEVICE, then reuses it for
+       * every column. ensureDataset must have run before this is called.
+       * A constant would be meaningless across a laptop and a phone.
        */
       const calibrateLongQuery = async (ctx) => {
         if (ctx.longIterations) return ctx.longIterations;
-        let iterations = 1_000_000;
+        let bound = 200;
         for (let attempt = 0; attempt < 6; attempt++) {
-          const ms = await time(() => ctx.db.read(longQuery(iterations)));
+          const ms = await time(() => ctx.db.read(longQuery(bound)));
           if (ms >= 1500 && ms <= 3000) break;
           if (ms > 3000) {
-            iterations = Math.max(100_000, Math.round(iterations / 2));
+            bound = Math.max(1, Math.round(bound / 2));
             break;
           }
-          iterations = Math.round(iterations * Math.max(2, 2000 / Math.max(ms, 1)));
+          bound = Math.round(bound * Math.max(2, 2000 / Math.max(ms, 1)));
         }
-        ctx.longIterations = iterations;
-        return iterations;
+        ctx.longIterations = bound;
+        return bound;
       };
 
       /** Measurement rows. Filled in Tasks 5 and 6. */
@@ -864,13 +867,18 @@
           better: 'low',
           applies: (cap) => cap.maxPoolSize !== 1,
           /**
-           * HANDLE-1, measured. ≈1 means the pool served the short read while
-           * the long query ran; ≫1 means one worker inside an uninterruptible
-           * statement stranded the whole pool.
+           * Measures whether a long file-reading statement on one worker
+           * delays short reads issued concurrently on the same pool. ≈1 means
+           * the other workers served the reads freely; ≫1 means the busy
+           * statement starved the pool.
            *
-           * This is the ONE claim in the README's reduced-mode section that
-           * the test suite does not prove, because proving it means timing
-           * something and CI runs tests rather than benchmarks.
+           * NOTE: On Firefox this row does NOT reproduce the README's
+           * reduced-mode blocking claim. Even for VFS that report
+           * no-read-inside-transaction: blocked, short reads complete in ≈1 ms
+           * throughout the long query. The blocking the README describes
+           * applies to WRITE transactions (exclusive file lock); a long READ
+           * holds only a shared lock, which does not prevent other workers
+           * from acquiring their own shared locks.
            */
           run: (ctx) =>
             abortableRow(async (signal) => {
