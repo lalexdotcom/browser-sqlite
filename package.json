@@ -46,7 +46,8 @@
 		"test:watch": "rstest --watch",
 		"test:unit": "rstest --project unit",
 		"test:browser": "rstest --project browser",
-		"test:consumer": "node scripts/consumer-smoke.mjs"
+		"test:consumer": "node scripts/consumer-smoke.mjs",
+		"test:conformance": "rstest --config rstest.conformance.config.ts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.8",

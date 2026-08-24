@@ -5,7 +5,7 @@ import { defineConfig } from '@rstest/core';
 // inside Web Worker bundles. The HMR client calls window.location.reload()
 // without a typeof-window guard. Test failures are still reported through
 // rstest's own reporting mechanism.
-const pluginSilenceWorkerHmrLogs = {
+export const pluginSilenceWorkerHmrLogs = {
   name: 'rsbuild:silence-worker-hmr-logs',
   setup(api: {
     modifyRsbuildConfig: (
@@ -50,7 +50,7 @@ export default defineConfig({
     {
       name: 'unit',
       include: ['tests/**/*.test.ts', 'tests/**/*.spec.ts'],
-      exclude: ['tests/browser/**'],
+      exclude: ['tests/browser/**', 'tests/conformance/**'],
       passWithNoTests: true,
       // Explicit rather than inherited: these are pure Node tests with no I/O,
       // so anything approaching this bound is a deadlock, not slowness.

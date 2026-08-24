@@ -68,6 +68,16 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # Conformance is a separate project and deliberately out of `pnpm test`:
+      # eight VFS through the invariants start workers and open real storage.
+      # It runs on both engines because a VFS can be sound on one and broken on
+      # the other — which is how HANDLE-1 was found.
+      - name: Conformance (Chromium)
+        run: pnpm test:conformance
+
+      - name: Conformance (Firefox)
+        run: CONFORMANCE_BROWSER=firefox pnpm test:conformance
+
   # Exercises the packed tarball across four consumption modes — Vite dev
   # server, Vite build+preview, rsbuild build+preview, and no bundler at all
   # — which `verify` never does because it bundles src/ and never touches
