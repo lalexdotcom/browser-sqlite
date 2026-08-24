@@ -346,9 +346,9 @@ export type SQLiteDB = {
  * @throws {SQLiteError} With code `INVALID_OPTION` when `build` is not one of
  *   the builds the chosen `vfs` supports. The message names the supported
  *   builds; the pairing is declared once, in `VFS_CAPABILITIES`.
- * @throws {Error} When `vfs` is `'AccessHandlePoolVFS'` and `poolSize` is
- *   greater than `1`. AccessHandlePoolVFS does not support concurrent access
- *   handles — set `poolSize: 1` explicitly when using this VFS.
+ * @throws {SQLiteError} With code `INVALID_OPTION` when `poolSize` exceeds the
+ *   `maxPoolSize` the chosen `vfs` declares. The message names the cap and the
+ *   reason for it; both come from `VFS_CAPABILITIES`.
  *
  * @example
  * ```typescript
@@ -396,9 +396,10 @@ export const createSQLiteClient = (
     );
   }
 
-  if (vfs === 'AccessHandlePoolVFS' && poolSize > 1) {
-    throw new Error(
-      'AccessHandlePoolVFS does not support pool sizes greater than 1',
+  if (capability.maxPoolSize !== null && poolSize > capability.maxPoolSize) {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      `${vfs} does not support pool sizes greater than ${capability.maxPoolSize}: ${capability.poolLimitReason}. Set poolSize: ${capability.maxPoolSize}.`,
     );
   }
 

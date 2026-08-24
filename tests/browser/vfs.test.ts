@@ -29,6 +29,26 @@ describe('AccessHandlePoolVFS pool guard', () => {
     ).toThrow(/pool sizes greater than 1/);
   });
 
+  // Falsifiable: revert the pool guard in client.ts to `throw new Error(...)`.
+  it('reports the pool guard as SQLiteError with code INVALID_OPTION', () => {
+    let caught: unknown;
+    try {
+      createSQLiteClient(`browser-sqlite-test-${crypto.randomUUID()}`, {
+        vfs: 'AccessHandlePoolVFS',
+        poolSize: 2,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(SQLiteError);
+    expect((caught as SQLiteError).code).toBe('INVALID_OPTION');
+    // The message must carry the reason, or the caller cannot act on it.
+    expect((caught as SQLiteError).message).toMatch(
+      /pool sizes greater than 1/,
+    );
+    expect((caught as SQLiteError).message).toMatch(/access handles/);
+  });
+
   it('accepts poolSize 1 and serves queries', async () => {
     const db = await createTestClient({
       vfs: 'AccessHandlePoolVFS',
