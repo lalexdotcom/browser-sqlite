@@ -73,9 +73,11 @@
     <div id="results-wrap"><table id="results"><thead><tr id="head-row">
       <th>row</th></tr></thead><tbody id="body-rows"></tbody></table></div>
     <p class="note">
-      On a VFS capped at one worker, <code>read-burst-concurrency</code> lands
-      near 1.00× and <code>pool-blocking</code> well above it. That is the
-      declared behaviour, not a failure.
+      On a VFS capped at one worker, <code>read-burst-concurrency</code> near
+      1.00× is declared behaviour, not a failure.
+      <code>pool-blocking</code> does not apply to those VFS (cell shows ⃠).
+      Where it does apply, ≈1 means the pool kept serving reads freely during
+      the long statement.
     </p>
 
     <script type="module">
@@ -182,6 +184,26 @@
        */
       const CAN_LIST_IDB = typeof indexedDB.databases === 'function';
 
+      // ── Clock granularity ────────────────────────────────────────────────
+      /**
+       * Smallest non-zero performance.now() delta seen over 10 spins.
+       * Chromium: sub-millisecond (typically 0.001–0.1 ms).
+       * Firefox: typically 1 ms or more (PrivacyResistFingerprinting coarsens
+       * the clock to prevent timing-based fingerprinting).
+       * Pool-blocking uses this to avoid printing a ratio whose denominator
+       * the timer never actually measured.
+       */
+      const CLOCK_MS = (() => {
+        let smallest = Infinity;
+        for (let i = 0; i < 10; i++) {
+          const t0 = performance.now();
+          let t1 = t0;
+          while (t1 === t0) t1 = performance.now();
+          if (t1 - t0 < smallest) smallest = t1 - t0;
+        }
+        return smallest;
+      })();
+
       // ── Banner ──────────────────────────────────────────────────────────
       const flag = (label, ok) =>
         `<span class="${ok ? '' : 'no'}"><b>${label}</b> ${ok ? 'yes' : 'no'}</span>`;
@@ -192,6 +214,7 @@
         flag('OPFS', HAS_OPFS),
         flag('readwrite-unsafe', HAS_UNSAFE_HANDLES),
         flag('JSPI', HAS_JSPI),
+        `<span><b>clock</b> ${CLOCK_MS.toFixed(2)} ms</span>`,
         CAN_LIST_IDB
           ? ''
           : `<span class="no"><b>IndexedDB cleanup</b> unavailable — stores created by this run are left in place</span>`,
@@ -665,10 +688,16 @@
       /**
        * Finds a bound that costs 1.5–3 s ON THIS DEVICE, then reuses it for
        * every column. ensureDataset must have run before this is called.
-       * A constant would be meaningless across a laptop and a phone.
+       *
+       * The inner LIMIT cannot return more than DATASET_ROWS rows, so bound
+       * is clamped there — growing past it adds no cost. After the search
+       * loop, one verification measurement confirms the chosen bound actually
+       * costs 1–4 s. If it does not (the cross-join saturates at
+       * DATASET_ROWS² and is still too fast on this device), null is stored
+       * and pool-blocking returns null rather than printing a meaningless 1.
        */
       const calibrateLongQuery = async (ctx) => {
-        if (ctx.longIterations) return ctx.longIterations;
+        if ('longIterations' in ctx) return ctx.longIterations;
         let bound = 200;
         for (let attempt = 0; attempt < 6; attempt++) {
           const ms = await time(() => ctx.db.read(longQuery(bound)));
@@ -677,10 +706,14 @@
             bound = Math.max(1, Math.round(bound / 2));
             break;
           }
-          bound = Math.round(bound * Math.max(2, 2000 / Math.max(ms, 1)));
+          bound = Math.min(
+            DATASET_ROWS,
+            Math.round(bound * Math.max(2, 2000 / Math.max(ms, 1))),
+          );
         }
-        ctx.longIterations = bound;
-        return bound;
+        const verify = await time(() => ctx.db.read(longQuery(bound)));
+        ctx.longIterations = verify >= 1000 && verify <= 4000 ? bound : null;
+        return ctx.longIterations;
       };
 
       /** Measurement rows. Filled in Tasks 5 and 6. */
@@ -883,18 +916,26 @@
           run: (ctx) =>
             abortableRow(async (signal) => {
               await ensureDataset(ctx);
-              const iterations = await calibrateLongQuery(ctx);
+              const bound = await calibrateLongQuery(ctx);
+              // Null means the cross-join saturated at DATASET_ROWS² and the
+              // device is still faster than 1 s — no meaningful ratio possible.
+              if (bound == null) return null;
 
               const idle = [];
               for (let i = 0; i < 5; i++) {
                 idle.push(await time(() => shortRead(ctx.db, randomId(), signal)));
               }
-              const baseline = Math.max(quantile(idle, 0.5), 0.01);
+              const idleP50 = quantile(idle, 0.5);
+              // If the idle baseline is below 2× the clock's granularity, any
+              // ratio we compute reflects the timer's quantisation, not the
+              // pool's behaviour. Return null so the cell shows — rather than
+              // a fabricated triple-digit number.
+              if (idleP50 < CLOCK_MS * 2) return null;
 
               // Deliberately not awaited: the long query must still be running
               // while the short reads are timed. Its rejection is swallowed —
               // the row timeout is what bounds this, not the long query.
-              const long = ctx.db.read(longQuery(iterations), undefined, { signal });
+              const long = ctx.db.read(longQuery(bound), undefined, { signal });
               long.catch(() => {});
 
               await new Promise((resolve) => setTimeout(resolve, 50));
@@ -905,7 +946,7 @@
               }
 
               await long.catch(() => {});
-              return quantile(during, 0.5) / baseline;
+              return quantile(during, 0.5) / idleP50;
             }),
         },
       ];
