@@ -2,96 +2,6 @@
 
 A persistent SQLite database that lives in your browser — yes, for real. Powered by [wa-sqlite](https://github.com/rhashimoto/wa-sqlite) (WebAssembly), built for (read) concurrency.
 
-## Install
-
-```bash
-npm install browser-sqlite
-# or
-pnpm add browser-sqlite
-```
-
-Requires a bundler that supports Web Workers with dynamic imports (Rsbuild, webpack 5, Vite 3+).
-
-## Bundler Configuration
-
-**webpack, rspack, and rsbuild** require no bundler-specific configuration.
-
-**Vite** needs two adjustments because of how it handles dependency pre-bundling and production assets.
-
-### Vite
-
-```typescript
-// vite.config.ts
-import { cp } from 'node:fs/promises';
-import { defineConfig } from 'vite';
-
-export default defineConfig({
-  // Vite pre-bundles dependencies with esbuild in dev, which rewrites
-  // `import.meta.url` to the pre-bundled copy under node_modules/.vite/deps/.
-  // browser-sqlite locates its worker relative to its own module URL, so the
-  // rewrite sends it to a path Vite never populates. Excluding the package
-  // from pre-bundling keeps the URL pointing at the real file.
-  optimizeDeps: { exclude: ['browser-sqlite'] },
-
-  plugins: [
-    {
-      // In a production build Vite copies the worker into the output but does
-      // not follow the `new URL('wa-sqlite.wasm', import.meta.url)` references
-      // inside it — files under node_modules are not re-transformed. The .wasm
-      // files must therefore be placed beside the emitted worker by hand.
-      name: 'copy-browser-sqlite-wasm',
-      apply: 'build',
-      async closeBundle() {
-        await cp('node_modules/browser-sqlite/dist/worker', 'dist/assets', {
-          recursive: true,
-        });
-      },
-    },
-  ],
-});
-```
-
-`dist/worker/` is an asset directory — the worker script and its three `.wasm` siblings must travel with the built app.
-
-## VFS Selection
-
-browser-sqlite delegates storage to a wa-sqlite Virtual File System (VFS). Choose based on browser support and storage requirements:
-
-<!-- BEGIN GENERATED VFS TABLE — edit VFS_CAPABILITIES in src/types.ts, then run `pnpm docs:vfs` -->
-
-| VFS | Builds | Pool size | Shared between connections | Survives close | Memory |
-|-----|--------|-----------|----------------------------|----------------|--------|
-| `OPFSAdaptiveVFS` **(default)** | `async`, `jspi` | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
-| `OPFSWriteAheadVFS` | `sync`, `async`, `jspi` | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
-| `OPFSCoopSyncVFS` | `sync`, `async`, `jspi` | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
-| `AccessHandlePoolVFS` | `sync`, `async`, `jspi` | **1** — it cannot share access handles between connections | No | Yes | Page cache only, bounded by `PRAGMA cache_size` |
-| `IDBBatchAtomicVFS` | `async`, `jspi` | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
-| `IDBMirrorVFS` | `async`, `jspi` | Any | Yes | Yes | **Whole database in RAM**, multiplied by `poolSize` |
-| `OPFSAnyContextVFS` | `async`, `jspi` | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
-| `MemoryVFS` | `sync`, `async`, `jspi` | **1** — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently | No | **No — volatile** | **Whole database in RAM**, multiplied by `poolSize` |
-| `MemoryAsyncVFS` | `async`, `jspi` | **1** — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently | No | **No — volatile** | **Whole database in RAM**, multiplied by `poolSize` |
-
-<!-- END GENERATED VFS TABLE -->
-
-One property the table cannot show, because verifying it means timing something
-and this project's CI runs tests rather than benchmarks: **on a browser without
-`readwrite-unsafe` access handles, any VFS that rotates a single exclusive OPFS
-handle serializes the whole pool for the duration of a long uninterruptible
-statement.** That covers `OPFSAdaptiveVFS` in its degraded mode and
-`OPFSCoopSyncVFS`. `IDBMirrorVFS`, `OPFSAnyContextVFS` and `IDBBatchAtomicVFS`
-hold no such handle and are unaffected.
-
-Browsers nobody has run are marked *not measured* rather than presumed
-compatible.
-
-When `vfs` is omitted, `OPFSAdaptiveVFS` is used.
-
-### Builds
-
-Each VFS runs on one or more wa-sqlite WebAssembly builds: `sync`, `async` (Asyncify), or `jspi` (JavaScript Promise Integration, Chromium-only). The `build` option selects one. Omitted, the first build the VFS declares is used — `async` for the default VFS. A pair the VFS does not support throws a `SQLiteError` with code `INVALID_OPTION` at construction, naming the builds it does support. The pairing is declared in one place, `VFS_CAPABILITIES`, which is also what the `SQLiteVFS` type is derived from.
-
-For a detailed VFS comparison, see the [wa-sqlite VFS comparison](https://github.com/rhashimoto/wa-sqlite/tree/master/src/examples#vfs-comparison).
-
 ## Usage
 
 ### Initialize
@@ -162,12 +72,207 @@ const user = await db.first<User>(
 
 `first()` returns the first result row, or `undefined` if no rows match. Use it for lookups by primary key or unique field.
 
-### Advanced
+### Transaction
 
-For batch inserts, schema-driven table replacement, or explicit transactions, see:
-- `db.bulkWrite(table, keys)` — batches inserts within `SQLITE_MAX_VARS` limit
-- `db.output(table, schema, options)` — drops, recreates, and populates a table from a schema definition
-- `db.transaction(callback, options)` — wraps operations in a SQLite transaction with auto-commit and rollback
+```typescript
+const orders = await db.transaction(async (tx) => {
+  await tx.write('INSERT INTO orders (id, total) VALUES (?, ?)', [1, 42]);
+  await tx.write('UPDATE stock SET qty = qty - 1 WHERE id = ?', [7]);
+  const rows = await tx.read<{ n: number }>('SELECT count(*) AS n FROM orders');
+  return rows[0].n;
+});
+```
+
+One worker is held for the callback's whole lifetime, so nothing else can run on
+it: the transaction is genuinely isolated, not merely wrapped in `BEGIN`.
+Returning commits, throwing rolls back and re-throws. `{ readOnly: true }`
+rejects write statements; `{ autoCommit: false }` leaves the commit to you.
+
+### Close
+
+```typescript
+await db.close();
+```
+
+Drains in-flight work, rejects queued work, closes each database connection, then terminates all workers. The returned promise settles once every worker has closed and been terminated, or once `drainTimeout` has elapsed. Calling `close()` a second time returns the same promise — the operation runs exactly once.
+
+**OPFS files are not deleted.** `close()` does not remove any OPFS database files. To delete them, use `navigator.storage.getDirectory()` directly.
+
+## Install
+
+```bash
+npm install browser-sqlite
+# or
+pnpm add browser-sqlite
+```
+
+Requires a bundler that supports Web Workers with dynamic imports (Rsbuild, webpack 5, Vite 3+).
+
+## Bundler Configuration
+
+**webpack, rspack, and rsbuild** require no bundler-specific configuration.
+
+**Vite** needs two adjustments because of how it handles dependency pre-bundling and production assets.
+
+### Vite
+
+```typescript
+// vite.config.ts
+import { cp } from 'node:fs/promises';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  // Vite pre-bundles dependencies with esbuild in dev, which rewrites
+  // `import.meta.url` to the pre-bundled copy under node_modules/.vite/deps/.
+  // browser-sqlite locates its worker relative to its own module URL, so the
+  // rewrite sends it to a path Vite never populates. Excluding the package
+  // from pre-bundling keeps the URL pointing at the real file.
+  optimizeDeps: { exclude: ['browser-sqlite'] },
+
+  plugins: [
+    {
+      // In a production build Vite copies the worker into the output but does
+      // not follow the `new URL('wa-sqlite.wasm', import.meta.url)` references
+      // inside it — files under node_modules are not re-transformed. The .wasm
+      // files must therefore be placed beside the emitted worker by hand.
+      name: 'copy-browser-sqlite-wasm',
+      apply: 'build',
+      async closeBundle() {
+        await cp('node_modules/browser-sqlite/dist/worker', 'dist/assets', {
+          recursive: true,
+        });
+      },
+    },
+  ],
+});
+```
+
+`dist/worker/` is an asset directory — the worker script and its three `.wasm` siblings must travel with the built app.
+
+## VFS Selection
+
+browser-sqlite delegates storage to a
+[wa-sqlite Virtual File System](https://github.com/rhashimoto/wa-sqlite/tree/master/src/examples#readme)
+(VFS). Choose based on browser support and storage requirements:
+
+<!-- BEGIN GENERATED VFS TABLE — edit VFS_CAPABILITIES in src/types.ts, then run `pnpm docs:vfs` -->
+
+| VFS | Builds | Browser compatibility | Pool size | Shared between connections | Survives close | Memory |
+|-----|--------|-----------------------|-----------|----------------------------|----------------|--------|
+| `OPFSAdaptiveVFS` **(default)** | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 86+/137+<br>Firefox 111+/153+ [(*)](#-reduced-mode)<br>Safari 15.2+/27+ [(*)](#-reduced-mode)<br>Android 109+/?<br>iOS 15.2+ (no jspi) [(*)](#-reduced-mode) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `OPFSWriteAheadVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 121+/137+<br>Android 121+/? | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `OPFSCoopSyncVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 86+/137+<br>Firefox 111+/153+<br>Safari 15.2+/27+<br>Android 109+/?<br>iOS 15.2+ (no jspi) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `AccessHandlePoolVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 86+/137+<br>Firefox 111+/153+<br>Safari 15.2+/27+<br>Android 109+/?<br>iOS 15.2+ (no jspi) | **1** — it cannot share access handles between connections | No | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `IDBBatchAtomicVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 0/137+<br>Firefox 0/153+<br>Safari 0/27+<br>Android 0/?<br>iOS 0 (no jspi) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `IDBMirrorVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 0/137+<br>Firefox 0/153+<br>Safari 0/27+<br>Android 0/?<br>iOS 0 (no jspi) | Any | Yes | Yes | **Whole database in RAM**, multiplied by `poolSize` |
+| `OPFSAnyContextVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 86+/137+<br>Firefox 111+/153+<br>Safari 15.2+/27+<br>Android 109+/?<br>iOS 15.2+ (no jspi) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `MemoryVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 0/137+<br>Firefox 0/153+<br>Safari 0/27+<br>Android 0/?<br>iOS 0 (no jspi) | **1** — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently | No | **No — volatile** | **Whole database in RAM**, multiplied by `poolSize` |
+| `MemoryAsyncVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 0/137+<br>Firefox 0/153+<br>Safari 0/27+<br>Android 0/?<br>iOS 0 (no jspi) | **1** — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently | No | **No — volatile** | **Whole database in RAM**, multiplied by `poolSize` |
+
+<!-- END GENERATED VFS TABLE -->
+
+The **Browser compatibility** column is derived from documented platform support,
+not from our own test runs. It covers where the VFS stores data; which **builds**
+are reachable on each engine is a separate question, answered under
+[Builds](#builds) — the `Builds` column links straight to the build it names.
+
+#### (*) Reduced mode
+
+The VFS runs on that engine, but without `readwrite-unsafe` access handles: one
+exclusive handle rotated between workers instead of one held per connection. It
+is not a partial failure — `OPFSAdaptiveVFS` passes 102 of 104 browser tests on
+Firefox in exactly that mode.
+
+What it costs is pool concurrency under one specific shape. **On an engine
+without `readwrite-unsafe`, any VFS that rotates a single exclusive OPFS access
+handle serializes the whole pool for the duration of a long uninterruptible
+statement** — a worker inside such a statement never returns to its event loop,
+so it cannot hand the handle over. That covers `OPFSAdaptiveVFS` in reduced mode
+and `OPFSCoopSyncVFS`. `IDBMirrorVFS`, `OPFSAnyContextVFS` and
+`IDBBatchAtomicVFS` hold no such handle and are unaffected.
+
+This is the one claim in this section the test suite does not prove: verifying it
+means timing something, and this project's CI runs tests rather than benchmarks.
+
+When `vfs` is omitted, `OPFSAdaptiveVFS` is used.
+
+### Builds
+
+Each VFS runs on one or more wa-sqlite WebAssembly builds. The `build` option
+selects one; omitted, the first build the VFS declares is used — `async` for the
+default VFS. A pair the VFS does not support throws a `SQLiteError` with code
+`INVALID_OPTION` at construction, naming the builds it does support. The pairing
+is declared in one place, `VFS_CAPABILITIES`, which is also what the `SQLiteVFS`
+type is derived from.
+
+A build carries its own engine requirement, independent of where the VFS stores
+data — so a VFS can be reachable in `sync` on an old browser and in `jspi` only
+on a much newer one.
+
+<!-- BEGIN GENERATED BUILD TABLE — edit FEATURE_SUPPORT in scripts/render-vfs-matrix.ts -->
+
+#### Build `sync`
+
+| Chrome / Edge | Firefox | Safari | Chrome Android | Safari iOS |
+|---|---|---|---|---|
+| Any | Any | Any | Any | Any |
+
+Plain synchronous WebAssembly. Needs nothing beyond baseline WASM, so it runs anywhere — but only VFS whose file operations are all synchronous can offer it.
+
+#### Build `async`
+
+| Chrome / Edge | Firefox | Safari | Chrome Android | Safari iOS |
+|---|---|---|---|---|
+| Any | Any | Any | Any | Any |
+
+Asyncify: the WASM stack is unwound and rewound around asynchronous file operations. Also needs nothing beyond baseline WASM. This is the default, and every VFS here can run on it.
+
+#### Build `jspi`
+
+| Chrome / Edge | Firefox | Safari | Chrome Android | Safari iOS |
+|---|---|---|---|---|
+| 137+ | 153+ | 27+ | Yes | **No** |
+
+JavaScript Promise Integration — the same asynchrony handled by the engine rather than by Asyncify. Opt-in, and no default uses it, so its narrower availability constrains nobody who does not ask for it.
+
+
+<!-- END GENERATED BUILD TABLE -->
+
+## Advanced
+
+### bulkWrite
+
+```typescript
+const rows = db.bulkWrite('events', ['id', 'kind', 'at']);
+for (const event of events) rows.enqueue(event);
+const affected = await rows.close();
+```
+
+Batches inserts to stay under SQLite's variable limit (`SQLITE_MAX_VARS`,
+32 766), flushing whenever the next row would cross it. `close()` flushes the
+remainder and resolves with the total number of rows written.
+
+Single-use: `enqueue()` and `close()` throw once closed. A batch that fails
+rejects with a `BulkWriteError` carrying `rowsWritten` and `rowsNotWritten` — a
+multi-row INSERT is statement-atomic, so the failing batch wrote nothing.
+
+### output
+
+```typescript
+const out = db.output(
+  'products',
+  { id: 'INTEGER', name: 'TEXT', price: { type: 'REAL', required: true } },
+  { indexes: ['name', { columns: ['name', 'price'], unique: true }] },
+);
+out.enqueue({ id: 1, name: 'widget', price: 9.99 });
+const affected = await out.close();
+```
+
+Builds a table from a schema declaration and populates it. Rows land in a
+staging table and the swap happens atomically at `close()`, so **the previous
+table stays intact and fully populated until the new one is ready** — a reader
+querying mid-load sees the old data, never a half-filled table. A target that
+did not exist appears only at `close()`. Single-use, like `bulkWrite`.
 
 ### Options
 
@@ -181,16 +286,6 @@ For batch inserts, schema-driven table replacement, or explicit transactions, se
 | `openTimeout` | `number` (ms) | `30_000` | How long a worker has to post `ready` after `open` is sent. On expiry the slot is failed — the most common cause is a database held under an exclusive lock by another tab. |
 | `drainTimeout` | `number` (ms) | `60_000` | How long the drain loop may run in the query generator's `finally` before the worker is presumed dead and the crash path is invoked. |
 | `debug` | `string \| boolean` | `undefined` | Enables lifecycle logging. A string value is used as the log prefix; `true` falls back to the client prefix (e.g. `"SQLite 1"`). Only lifecycle events are logged — worker created, ready, open-error, crash, restart, eviction, close, and skipped staging sweep. No line per query. Off by default. When enabled, `db.debug` also exposes a live introspection state tree for query throughput and worker status. |
-
-### Close
-
-```typescript
-await db.close();
-```
-
-Drains in-flight work, rejects queued work, closes each database connection, then terminates all workers. The returned promise settles once every worker has closed and been terminated, or once `drainTimeout` has elapsed. Calling `close()` a second time returns the same promise — the operation runs exactly once.
-
-**OPFS files are not deleted.** `close()` does not remove any OPFS database files. To delete them, use `navigator.storage.getDirectory()` directly.
 
 ## Error handling
 
@@ -253,14 +348,14 @@ one database a reasonable thing to do.
 
 ## Requirements
 
-browser-sqlite requires no special HTTP headers. OPFS access handles work in a plain worker context; cross-origin isolation is not needed. The default build needs no browser opt-in; only `build: 'jspi'` does, and JSPI is Chromium 126+ — that is an unrelated browser constraint, not a header requirement.
+browser-sqlite requires no special HTTP headers. OPFS access handles work in a plain worker context; cross-origin isolation is not needed. The default build needs no browser opt-in; only `build: 'jspi'` does, and that is an unrelated browser constraint, not a header requirement.
 
 Note: the "Coop" in `OPFSCoopSyncVFS` stands for *cooperative*, not the `Cross-Origin-Opener-Policy` header.
 
 ## Known Limitations
 
 - **`AccessHandlePoolVFS` requires `poolSize: 1`.** Passing `poolSize > 1` with this VFS throws synchronously at client creation time.
-- **`build: 'jspi'` requires Chromium 126+.** JavaScript Promise Integration is not available in Firefox or Safari as of 2025. It is opt-in; the default build does not use it.
-- **`OPFSWriteAheadVFS` is Chromium-only and degrades silently elsewhere.** It opens access handles with `mode: 'readwrite-unsafe'`, a proposed feature no other engine implements, and unknown dictionary members are ignored rather than rejected — so on another browser the first connection opens, the second cannot take the handle, and the pool breaks with no error naming the cause.
+- **`build: 'jspi'` is not available everywhere.** JavaScript Promise Integration ships in Firefox from 153 (caniuse.com, checked 2026-08-24) and in Chromium; Safari support is not established here. It is opt-in and the default build does not use it, so this constrains nobody who does not ask for it. Earlier revisions of this file called JSPI Chromium-only; that was never sourced, and running the conformance suite on Firefox 153 disproved it.
+- **`OPFSWriteAheadVFS` requires Chrome 121+ and degrades silently elsewhere.** It opens access handles with `mode: 'readwrite-unsafe'` — a proposed feature recorded as unsupported for Firefox and Safari in MDN browser-compat-data (checked 2026-08-24) — and unknown dictionary members are ignored rather than rejected — so on another browser the first connection opens, the second cannot take the handle, and the pool breaks with no error naming the cause.
 - **Read-your-own-writes is guaranteed within a tab, not across tabs.** See the
   caveat under [Error handling](#error-handling).
