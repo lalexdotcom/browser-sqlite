@@ -277,6 +277,28 @@ measurement contradicted, a JSDoc describing the plan's buggy formula rather tha
 it. In a codebase where comments carry measurements, that is a defect class, not a tidiness one.
 
 
+## 0.3 WHERE THE WORK IS — written 2026-08-24, end of the VFS-wiring session
+
+**`feat/vfs-capabilities` is the live branch and is NOT merged, by the user's decision.** The
+benchmark page will be developed **on this same branch, in a different session**. Do not merge it
+to `main` and do not branch off `main` for that work — continue here.
+
+State at handoff: 16 commits on top of `3909f2f`, working tree clean, `pnpm test` 323/0,
+conformance green on Chromium (68/8/0) and Firefox (59/17/0), consumer smoke 11/11. Nothing is
+pushed; `main` is untouched.
+
+What shipped on it: the four remaining VFS wired (nine public), `VFS_CAPABILITIES` as the single
+compiler-checked table, guards moved onto it, the table exported from the package entry, a separate
+`conformance` rstest project with six invariants, and a README whose VFS and per-build tables are
+generated from that table with a CI drift check.
+
+**Reviewed through commit `20cd59f` only.** The commits after it — the plan correction, the
+capability-model change and the README work — postdate the whole-branch review and have not been
+reviewed. Review them before any merge.
+
+**The benchmark page's requirements are in §0.2 item 3**, and item 2b records a design that was
+tried and rejected — read the rejection before proposing anything about per-browser data.
+
 ## 0.2 HOW TO RESUME — written 2026-08-24 (browser-matrix session). READ THIS FIRST.
 
 **Repository state.** Nothing in flight, working tree clean, **308 tests / 0 failures**, `main`
@@ -308,12 +330,58 @@ documented VFS recommendation per browser, justified by measurement.
    VFS-COV.
 2. **Then document the per-browser VFS recommendation** in the README, which also finally closes
    its dangling CoopSync cross-reference and its false "Constraint: None".
+2b. **A `Browser compatibility` column in the README table (user, 2026-08-24).**
+
+   **Scope was cut back by the user on 2026-08-24, after an over-engineered first design.** The
+   rejected version had the conformance run emit `docs/conformance/<browser>.json` per engine,
+   committed, merged into the table by the generator, with per-cell provenance and a
+   documented-vs-observed two-layer model. The user's verdict: *"on s'est peut-être emballé sur la
+   conformité"* — and they are right. **Do not rebuild that.**
+
+   **What to build instead: one column, generated, from documented sources.** Sanctioned sources
+   are **caniuse.com** and **MDN browser-compat-data** (raw JSON on GitHub —
+   `api/StorageManager.json`, `api/FileSystemFileHandle.json`). **A fact with no citable source
+   does not enter the table** — that rule is what would have caught JSPI-1 in `mem:follow-ups`.
+
+   Conformance stays what it is: a gate that proves the declarations are true. It is **not** a data
+   source for the documentation, and nothing it produces is committed.
+
+   Verified 2026-08-24 from MDN BCD: OPFS (`getDirectory`, `createSyncAccessHandle`) is Chrome 86 /
+   Firefox 111 / Safari 15.2 / iOS 15.2; the `mode: 'readwrite-unsafe'` option is **Chrome 121**,
+   and `false` for Firefox and Safari — so the old "Chromium-only as of June 2024" note now has a
+   version. JSPI in Firefox from **153** (caniuse), which our own run independently confirmed.
+
+   **The capability model needs three more fields, and the third is the important one:** `storage`
+   (`opfs` / `indexeddb` / `memory`), `requires[]` (hard — without it the VFS fails:
+   `OPFSWriteAheadVFS` → `readwrite-unsafe`), and **`degradesWithout[]`** (soft — the VFS uses the
+   feature when present and works without it: `OPFSAdaptiveVFS` → `readwrite-unsafe`). Without the
+   third, a spec-derived column would mark `OPFSAdaptiveVFS` broken on Firefox. It is not — 102/104
+   — and saying so is reassuring information the README currently gives nowhere. Its degraded mode
+   costs HANDLE-1, which is both documented and observed.
+
+   **Playwright's WebKit is NOT Safari** and licenses no conclusion about it. Safari and iOS rows
+   come from caniuse alone — or from a user running the benchmark page on a real device. **This is pass/fail, not measurement**, so it does not
+   violate the no-benchmarks-in-the-README rule. Do NOT put this on `feat/vfs-capabilities`: that
+   branch is reviewed and clean, and this would invalidate the review for no gain.
+
 3. **Before release: a static benchmark page** that uses the library and lets anyone run the
    benchmarks in their own browser, hosted on GitHub Pages if reachable. **This is easier than it
    looks and it is wave 4's dividend: no COOP/COEP is required any more**, so plain Pages over
    HTTPS is a sufficient secure context with no special headers. Start from the "no bundler" mode
    that `scripts/consumer-smoke.mjs` already exercises rather than a fresh page — `dist/` already
    serves the worker and the three `.wasm` on relative paths.
+
+   **Three requirements the user set on 2026-08-24, before the page's spec is written:**
+   - **It runs the conformance invariants, not only the benchmarks.** At minimum, whether each VFS
+     opens at all. Without this a user on Safari returns numbers and zero compatibility
+     information, which is the one thing no machine here can produce.
+   - **A readable display** for the human who opened it.
+   - **An export in exactly the shape of `docs/conformance/<browser>.json`** (see 2b). That is what
+     makes the loop close: the user runs the page on Safari or iOS, sends the file back, it is
+     dropped in and the README regenerates. No transport format to invent, no manual translation,
+     and Safari enters the table through the same path as Chromium. The compatibility half of the
+     page's output is therefore a *deliverable*, distinct from the benchmark half, which stays on
+     the user's machine and never reaches the README.
 4. **A VFS × browser benchmark table**, which is the output of 1 and 3 combined.
 
 ### Also open, smaller

@@ -468,6 +468,66 @@ real WebKit signal needs Playwright on **macOS**. rstest accepts no provider but
 (`BROWSER_PROVIDERS = ['playwright']`), so there is no escape hatch. Removed from CI and the
 devcontainer in `ee2e9f3`.
 
+## MIRROR-1 — `IDBMirrorVFS`'s `multiConnection: true` has an observed counter-example
+
+**Status: open. Low-rate flake, mechanism plausible and named, declaration not yet corrected.**
+
+`tests/browser/vfs.test.ts :: newly wired VFS > IDBMirrorVFS opens and serves a round trip` failed
+once with **`no such table: wired`** — in a pre-commit hook run, 2026-08-24. Measured immediately
+after: **8/8 green in isolation, 6/6 green on the full suite**. So the rate is roughly ≤1 in 15 and
+it is not reproducible on demand, which is precisely the rate that eventually reddens CI with no
+one able to say why.
+
+**It has now been seen twice.** Task 3 of the wiring plan reported the same failure and could not
+reproduce it either; the declaration was carried forward as PROVISIONAL on the reasoning that the
+conformance suite would settle it. Conformance passed — but its invariants exercise one write and
+one read, or concurrent writes counted afterwards, never the tight
+`CREATE TABLE` → `INSERT` → `SELECT` sequence at `poolSize: 2` that this test runs.
+
+**Mechanism, plausible and not yet verified.** `IDBMirrorVFS` keeps the whole database in memory
+*per worker* and propagates commits between connections over `BroadcastChannel` — asynchronously.
+That is structurally the same defect that got `OPFSPermutedVFS` deleted from this library (24 %
+stale cross-connection reads, measured 2026-08-20). The commit-propagation barrier does not save
+it: the barrier's prelude opens a real read transaction to refresh page 1, but if the mirror has
+not yet received the broadcast there is nothing fresher on the connection to read.
+
+**What that would mean if confirmed:** `multiConnection: true` is false for this VFS, or true only
+with a visibility window. Since `IDBMirrorVFS` is one of the two candidates for the non-Chromium
+recommendation (see HANDLE-1), this is load-bearing rather than cosmetic.
+
+**Do not** weaken the test, add a retry, or pin it to `poolSize: 1` to make the hook green. The
+next step is a deliberate probe: the failing sequence at `poolSize: 2`, repeated enough times to
+get a rate, with the worker that served each statement recorded — the same instrumentation that
+settled HANDLE-1, and the lesson from that session applies, that wrapping `Worker` can shift the
+race and hide it.
+
+## JSPI-1 — three README claims are wrong about Firefox
+
+**Status: open, sourced 2026-08-24.** `caniuse.com` gives **JSPI as available in Firefox from 153**
+(user, 2026-08-24), and our own conformance run on Playwright's Firefox 153 independently detected
+`WebAssembly.Suspending` and executed all 22 declared build pairs, jspi included. Documented source
+and observation agree exactly, which is the strongest state a fact in this project can be in.
+
+Wrong in three places, all asserting Chromium-only JSPI:
+
+- `README.md:91` — "`jspi` (JavaScript Promise Integration, Chromium-only)"
+- `README.md:256` — "only `build: 'jspi'` does, and JSPI is Chromium 126+"
+- `README.md:263` — "JavaScript Promise Integration is not available in Firefox or Safari as of 2025"
+
+**"Chromium 126+" is itself unsourced** and appears twice. It gets the same treatment as everything
+else: a named source, or it goes.
+
+**How this was found, because the method is the point.** Asked where the Firefox claim came from,
+the answer was: from this README and nowhere else. It had never been sourced — it was inherited,
+repeated, and then contradicted by our own measurement without anyone noticing. The rule that
+catches this class is **a fact with no citable source does not enter the table**, and it is why the
+per-browser compatibility work (see `mem:resume-plan` §0.2 item 2b) must carry a named source and a
+date per cell.
+
+**Lucky detail worth keeping:** Firefox 153 is exactly the first supporting version, so our run sat
+on the boundary. On 152 the nine jspi pairs would have skipped with their stated reason and nothing
+would have failed — the feature detection was validated by accident.
+
 ## Performance — after correctness, with debug instrumentation live
 
 - No prepared-statement cache (`worker.ts:169`) — typically the largest single win (2-10×); worst for `bulkWrite`'s ~32k-placeholder template.
