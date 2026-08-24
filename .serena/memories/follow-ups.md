@@ -548,12 +548,19 @@ into one held lease). Threading a `signal` down to each batch's `write` therefor
 that lands *between* batches, which is both the natural granularity and the only point where
 stopping is meaningful — a multi-row INSERT is statement-atomic.
 
-**`output()` needs a decision, not just wiring.** Abandoning it mid-load leaves a staging table
-behind. That is already a handled state rather than a leak — the staging lock is a liveness marker
-and `staleStagingTables` (`locks.ts`) sweeps orphans — so the question is what an aborted `output()`
-should *promise*: silently leave the previous target intact (which the wave-3 change already
-guarantees, since the target is only created at `close()`), or attempt an eager drop. State it
-before implementing.
+**`output()`'s abort semantics — decided by the user, 2026-08-24: an abort drops the staging table
+and touches nothing else.** No rename, no partial publication, and the previous target is left
+exactly as it was — which the wave-3 change already gives for free, since the target is only
+created at `close()`. So an aborted `output()` is observationally a no-op.
+
+Two mechanical consequences to carry into the implementation:
+
+- The eager `DROP` is a write and therefore needs a worker *after* the abort that freed one. It is
+  **best-effort**: if it fails, the state falls back to the one already handled — an orphan staging
+  table, swept by `staleStagingTables` (`locks.ts`) once the staging lock is released. The abort
+  path must not hang or throw on a failed cleanup.
+- Releasing the staging lock is what arms that sweep, so it must happen after the `DROP` attempt,
+  not before.
 
 **First observed consumer of the gap:** the benchmark page's containment design (§5.3 of its spec).
 Because `bulkWrite` cannot be aborted, the only bound available for its row is a `Promise.race`
