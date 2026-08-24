@@ -1,6 +1,11 @@
 import { describe, expect, it } from '@rstest/core';
 import { VFS_CAPABILITIES } from '../../src/types';
-import { ALL_VFS, conformanceClient, HAS_JSPI } from './helpers';
+import {
+  ALL_VFS,
+  conformanceClient,
+  HAS_JSPI,
+  HAS_UNSAFE_HANDLES,
+} from './helpers';
 
 /**
  * Every declared (vfs, build) pair is executed, never trusted. Declaring a
@@ -15,6 +20,10 @@ describe('declared build combinations', () => {
     for (const build of VFS_CAPABILITIES[vfs].builds) {
       if (build === 'jspi' && !HAS_JSPI) {
         it.skip(`${vfs} on ${build} — skipped, no JSPI in this browser`, () => {});
+        continue;
+      }
+      if (VFS_CAPABILITIES[vfs].requiresUnsafeHandles && !HAS_UNSAFE_HANDLES) {
+        it.skip(`${vfs} on ${build} — skipped, no readwrite-unsafe access handles in this browser`, () => {});
         continue;
       }
 

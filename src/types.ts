@@ -89,6 +89,14 @@ export type VFSCapability = {
    * and `poolSize` multiplies it.
    */
   readonly memoryModel: VFSMemoryModel;
+  /**
+   * Whether this VFS opens access handles with `mode: 'readwrite-unsafe'`
+   * with no fallback. WebIDL ignores the unknown member on engines that do
+   * not implement it, so the handle silently opens exclusive and the second
+   * connection hangs rather than failing — which is why this is declared and
+   * probed rather than left to surface as a timeout.
+   */
+  readonly requiresUnsafeHandles: boolean;
 };
 
 /**
@@ -112,6 +120,7 @@ export const VFS_CAPABILITIES = {
     multiConnection: true,
     persistent: true,
     memoryModel: 'page-cache',
+    requiresUnsafeHandles: false,
   },
   OPFSWriteAheadVFS: {
     builds: ['sync', 'async', 'jspi'],
@@ -120,6 +129,7 @@ export const VFS_CAPABILITIES = {
     multiConnection: true,
     persistent: true,
     memoryModel: 'page-cache',
+    requiresUnsafeHandles: true,
   },
   OPFSCoopSyncVFS: {
     builds: ['sync', 'async', 'jspi'],
@@ -128,6 +138,7 @@ export const VFS_CAPABILITIES = {
     multiConnection: true,
     persistent: true,
     memoryModel: 'page-cache',
+    requiresUnsafeHandles: false,
   },
   AccessHandlePoolVFS: {
     builds: ['sync', 'async', 'jspi'],
@@ -136,6 +147,7 @@ export const VFS_CAPABILITIES = {
     multiConnection: false,
     persistent: true,
     memoryModel: 'page-cache',
+    requiresUnsafeHandles: false,
   },
   IDBBatchAtomicVFS: {
     builds: ['async', 'jspi'],
@@ -144,6 +156,7 @@ export const VFS_CAPABILITIES = {
     multiConnection: true,
     persistent: true,
     memoryModel: 'page-cache',
+    requiresUnsafeHandles: false,
   },
   IDBMirrorVFS: {
     builds: ['async', 'jspi'],
@@ -154,6 +167,7 @@ export const VFS_CAPABILITIES = {
     // Upstream: "keeps all files in memory, persisting database files to
     // IndexedDB", and the whole database must fit in available memory.
     memoryModel: 'whole-database',
+    requiresUnsafeHandles: false,
   },
   OPFSAnyContextVFS: {
     builds: ['async', 'jspi'],
@@ -162,6 +176,7 @@ export const VFS_CAPABILITIES = {
     multiConnection: true,
     persistent: true,
     memoryModel: 'page-cache',
+    requiresUnsafeHandles: false,
   },
   MemoryVFS: {
     builds: ['sync', 'async', 'jspi'],
@@ -171,6 +186,7 @@ export const VFS_CAPABILITIES = {
     multiConnection: false,
     persistent: false,
     memoryModel: 'whole-database',
+    requiresUnsafeHandles: false,
   },
   MemoryAsyncVFS: {
     builds: ['async', 'jspi'],
@@ -180,6 +196,7 @@ export const VFS_CAPABILITIES = {
     multiConnection: false,
     persistent: false,
     memoryModel: 'whole-database',
+    requiresUnsafeHandles: false,
   },
 } as const satisfies Record<string, VFSCapability>;
 
