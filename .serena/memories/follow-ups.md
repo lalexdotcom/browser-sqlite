@@ -572,6 +572,33 @@ calls, so nothing else changes.
 
 Not blocking: no consumer on rc.3, and a caller wanting a bound today can chunk their own batches.
 
+## BENCH-DRIFT — the page holds a second copy of the invariants and the probes
+
+**Status: standing rule, not a bug. Opened 2026-08-24 with the benchmark page.**
+
+`bench/index.html` re-implements, in plain JS, what `tests/conformance/invariants.test.ts` and
+`tests/conformance/helpers.ts` hold in TypeScript: the six invariants, the `readwrite-unsafe`
+behavioural probe, and the JSPI detection. The duplication is deliberate — a self-contained HTML
+file cannot import `tests/**` , which import `src/` — and it is bounded: these describe properties
+of SQLite and of the platform, not of our implementation, so they are expected to be static.
+
+**The rule: changing either copy obliges a review of the other.** Both directions.
+
+What makes a divergence visible rather than silent: **the page's row ids are the conformance
+`describe()` titles verbatim** — `opens`, `write-read-back`, `survives-reopen`,
+`concurrent-writes-lose-nothing`, `rollback-leaves-nothing`, `close-settles`,
+`no-read-inside-transaction`. A row whose id no longer matches a `describe()` is the signal.
+
+Two places where the copies legitimately differ, and must not be "aligned":
+
+- The page returns `'blocked'` where invariant 6 logs a `console.warn` and passes. Same
+  observation, different medium: a test suite has nowhere to render a third state, a table does.
+- The page reopens the column's client after `survives-reopen` and `close-settles`, because it runs
+  every row against one client where the suite gets a fresh one per `it()`.
+
+This is the class of defect this repository already knows it has — *"here, comments drift faster
+than code"* — applied to code rather than comments.
+
 ## Performance — after correctness, with debug instrumentation live
 
 - No prepared-statement cache (`worker.ts:169`) — typically the largest single win (2-10×); worst for `bulkWrite`'s ~32k-placeholder template.

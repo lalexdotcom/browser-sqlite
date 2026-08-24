@@ -377,16 +377,217 @@
           id: 'opens',
           label: 'opens and serves a query',
           applies: () => true,
-          run: ({ db }) =>
+          run: (ctx) =>
             abortableRow(async (signal) => {
-              await db.write('CREATE TABLE t (a INTEGER)', undefined, { signal });
-              await db.write('INSERT INTO t VALUES (1)', undefined, { signal });
-              const rows = await db.read('SELECT count(*) AS n FROM t', undefined, {
+              await ctx.db.write('CREATE TABLE t (a INTEGER)', undefined, { signal });
+              await ctx.db.write('INSERT INTO t VALUES (1)', undefined, { signal });
+              const rows = await ctx.db.read('SELECT count(*) AS n FROM t', undefined, {
                 signal,
               });
               if (rows[0].n !== 1) throw new Error(`expected 1, got ${rows[0].n}`);
               return true;
             }),
+        },
+        {
+          id: 'write-read-back',
+          label: 'what is written is read back',
+          applies: () => true,
+          run: ({ db }) =>
+            abortableRow(async (signal) => {
+              await db.write('CREATE TABLE inv1 (a INTEGER)', undefined, { signal });
+              await db.write('INSERT INTO inv1 VALUES (42)', undefined, { signal });
+              const rows = await db.read('SELECT a FROM inv1', undefined, { signal });
+              if (rows.length !== 1 || rows[0].a !== 42) {
+                throw new Error(`expected [{a:42}], got ${JSON.stringify(rows)}`);
+              }
+              return true;
+            }),
+        },
+        {
+          id: 'survives-reopen',
+          label: 'data survives close and reopen',
+          // Read from the table, never hardcoded: the memory VFS declare
+          // persistent: false and this row is meaningless for them.
+          applies: (cap) => cap.persistent,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ctx.db.write('CREATE TABLE inv2 (a INTEGER)', undefined, {
+                signal,
+              });
+              await ctx.db.write('INSERT INTO inv2 VALUES (7)', undefined, {
+                signal,
+              });
+              await ctx.db.close();
+
+              // This row closed the column's client, so it owes the column a
+              // fresh one — the reopened client BECOMES the column's client.
+              // Without this every later row fails with CLIENT_CLOSED. It is
+              // also why rows read `ctx.db` and never destructure it: see
+              // Step 2.
+              ctx.db = createSQLiteClient(ctx.file, {
+                vfs: ctx.pair.vfs,
+                build: ctx.pair.build,
+                poolSize: poolFor(ctx.pair.cap),
+              });
+              const rows = await ctx.db.read('SELECT a FROM inv2', undefined, {
+                signal,
+              });
+              if (rows.length !== 1 || rows[0].a !== 7) {
+                throw new Error(`expected [{a:7}], got ${JSON.stringify(rows)}`);
+              }
+              return true;
+            }),
+        },
+        {
+          id: 'concurrent-writes-lose-nothing',
+          label: 'concurrent writes lose nothing',
+          applies: (cap) => cap.maxPoolSize !== 1,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ctx.db.write('CREATE TABLE inv3 (a INTEGER)', undefined, {
+                signal,
+              });
+              const N = 20;
+              await Promise.all(
+                Array.from({ length: N }, (_, i) =>
+                  ctx.db.write('INSERT INTO inv3 VALUES (?)', [i], { signal }),
+                ),
+              );
+              const rows = await ctx.db.read(
+                'SELECT count(*) AS n FROM inv3',
+                undefined,
+                { signal },
+              );
+              if (rows[0].n !== N) throw new Error(`expected ${N}, got ${rows[0].n}`);
+              return true;
+            }),
+        },
+        {
+          id: 'rollback-leaves-nothing',
+          label: 'a rolled-back transaction leaves nothing',
+          applies: () => true,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ctx.db.write('CREATE TABLE inv4 (a INTEGER)', undefined, {
+                signal,
+              });
+              let threw = false;
+              try {
+                await ctx.db.transaction(async (tx) => {
+                  await tx.write('INSERT INTO inv4 VALUES (1)');
+                  throw new Error('deliberate rollback');
+                });
+              } catch (error) {
+                threw = /deliberate rollback/.test(String(error?.message ?? error));
+              }
+              if (!threw) throw new Error('transaction did not reject');
+              const rows = await ctx.db.read(
+                'SELECT count(*) AS n FROM inv4',
+                undefined,
+                { signal },
+              );
+              if (rows[0].n !== 0) throw new Error(`expected 0, got ${rows[0].n}`);
+              return true;
+            }),
+        },
+        {
+          id: 'close-settles',
+          label: 'close settles',
+          applies: () => true,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ctx.db.write('CREATE TABLE inv5 (a INTEGER)', undefined, {
+                signal,
+              });
+              // No clock: a close that never settles is caught by the row
+              // timeout. Asserting a duration here would be a benchmark, and
+              // benchmarks are the other half of this page.
+              await ctx.db.close();
+              let rejected = false;
+              try {
+                await ctx.db.read('SELECT 1 AS n');
+              } catch {
+                rejected = true;
+              }
+              if (!rejected) throw new Error('read after close did not reject');
+
+              // Same reason as survives-reopen: this row closed the column's
+              // client, so it owes the column a fresh one.
+              ctx.db = createSQLiteClient(ctx.file, {
+                vfs: ctx.pair.vfs,
+                build: ctx.pair.build,
+                poolSize: poolFor(ctx.pair.cap),
+              });
+              return true;
+            }),
+        },
+        {
+          id: 'no-read-inside-transaction',
+          label: 'no read runs inside an open transaction',
+          applies: (cap) => cap.maxPoolSize !== 1,
+          /**
+           * B1 isolation. Exercising it needs a second worker served while the
+           * transaction holds — which HANDLE-1 prevents on any VFS rotating a
+           * single exclusive OPFS access handle. The pool-acquire blocks at the
+           * scheduler, before the signal is ever checked, so the abort is how
+           * we tell "isolated" from "never got the chance to look".
+           *
+           * That distinction is the reason this row can return 'blocked'
+           * instead of pass or fail: reporting a pass there would claim we
+           * proved something we did not.
+           */
+          run: async (ctx) => {
+            await ctx.db.write('CREATE TABLE inv6 (a INTEGER)');
+
+            let release;
+            const held = new Promise((resolve) => {
+              release = resolve;
+            });
+            const tx = ctx.db.transaction(async (inner) => {
+              await inner.write('INSERT INTO inv6 VALUES (1)');
+              await held;
+            });
+
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 2000);
+            const readOutcome = ctx.db
+              .read('SELECT count(*) AS n FROM inv6', undefined, {
+                signal: controller.signal,
+              })
+              .then(
+                (rows) => ({ ok: true, rows }),
+                (error) => ({ ok: false, error }),
+              );
+            const aborted = new Promise((resolve) => {
+              controller.signal.addEventListener('abort', () => resolve(null), {
+                once: true,
+              });
+            });
+
+            const winner = await Promise.race([readOutcome, aborted]);
+            clearTimeout(timer);
+
+            let verdict;
+            if (winner === null) {
+              verdict = 'blocked';
+            } else if (!winner.ok) {
+              release();
+              await tx;
+              throw winner.error;
+            } else if (winner.rows[0].n !== 0) {
+              release();
+              await tx;
+              throw new Error(
+                `read saw ${winner.rows[0].n} uncommitted rows — B1 violated`,
+              );
+            } else {
+              verdict = true;
+            }
+
+            release();
+            await tx;
+            return verdict;
+          },
         },
       ];
 
@@ -510,7 +711,7 @@
 
         try {
           await Promise.race([
-            db.close(),
+            ctx.db.close(),
             new Promise((_, reject) =>
               setTimeout(() => reject(new Error('close timed out')), ROW_TIMEOUT_MS),
             ),
