@@ -78,10 +78,8 @@
       <b>Legend:</b> ✅ pass — conformance check passed · ❌ fail — an error was thrown · ⏱ timed out — row exceeded its time budget; the rest of the column is abandoned if the first row times out · ⃠ not applicable — this VFS's capabilities declare this row out of scope · — no result — we ran it but could not produce a trustworthy number
     </p>
     <p class="note">
-      On persistent VFS (OPFS, IDB), <code>read-burst-concurrency</code> shows real pool
-      concurrency gains; a pool-1 VFS near 1.00× is declared behaviour, not a failure.
-      On memory VFS, reads finish in under 0.1 ms and values are dominated by scheduling
-      jitter — they do not reliably reflect pool behaviour.
+      <code>read-burst-concurrency</code> shows pool concurrency gains for VFS where
+      each read takes ≥0.5 ms; a pool-1 VFS near 1.00× is declared behaviour, not a failure.
       <code>pool-blocking</code> does not apply to pool-1 VFS (cell shows ⃠).
       Where it does apply, ≈1 means the pool kept serving reads freely during
       the long statement.
@@ -834,26 +832,48 @@
           better: 'high',
           applies: () => true,
           /**
-           * Gain ratio: 24 parallel short reads vs. 24 serial ones. Shows real
-           * pool concurrency on persistent VFS where each read costs ≥0.5 ms.
-           * On memory VFS, reads finish in under 0.1 ms and the ratio is
-           * dominated by scheduling jitter — see the note under the table.
-           * A pool-1 VFS is expected near 1.00× on persistent storage.
+           * Median of 5 serial/parallel gain ratios. Alternates which runs
+           * first so cache-warming advantages cancel across repetitions.
+           * Returns null when the median serial total is below 4× the clock's
+           * resolution — reads are too fast to distinguish serial from parallel.
            */
           run: (ctx) =>
             abortableRow(async (signal) => {
               await ensureDataset(ctx);
               const ids = Array.from({ length: 24 }, randomId);
-
               await shortRead(ctx.db, ids[0], signal); // warmup
 
-              const serial = await time(async () => {
-                for (const id of ids) await shortRead(ctx.db, id, signal);
-              });
-              const parallel = await time(() =>
-                Promise.all(ids.map((id) => shortRead(ctx.db, id, signal))),
-              );
-              return serial / parallel;
+              const ratios = [];
+              const serialTotals = [];
+              for (let rep = 0; rep < 5; rep++) {
+                // Alternate order so cache-warming bias cancels.
+                // Even reps: serial first. Odd reps: parallel first.
+                let serial, parallel;
+                if (rep % 2 === 0) {
+                  serial = await time(async () => {
+                    for (const id of ids) await shortRead(ctx.db, id, signal);
+                  });
+                  parallel = await time(() =>
+                    Promise.all(ids.map((id) => shortRead(ctx.db, id, signal))),
+                  );
+                } else {
+                  parallel = await time(() =>
+                    Promise.all(ids.map((id) => shortRead(ctx.db, id, signal))),
+                  );
+                  serial = await time(async () => {
+                    for (const id of ids) await shortRead(ctx.db, id, signal);
+                  });
+                }
+                serialTotals.push(serial);
+                ratios.push(serial / parallel);
+              }
+
+              // If reads are too fast for the timer to distinguish serial from
+              // parallel, return null. CLOCK_MS × 4 matches pool-blocking's
+              // approach: a serial total under that threshold means any ratio
+              // we compute reflects clock quantisation, not pool behaviour.
+              if (quantile(serialTotals, 0.5) < CLOCK_MS * 4) return null;
+              return quantile(ratios, 0.5);
             }),
         },
         {
@@ -1102,6 +1122,13 @@
       const nullMeasureTitle = (rowId) => {
         if (rowId === 'write-latency-p95') {
           return 'p50 did not complete — no samples to derive p95 from';
+        }
+        if (rowId === 'read-burst-concurrency') {
+          return (
+            'reads completed too quickly to time reliably — ' +
+            'median serial total was below 4× the clock\'s resolution; ' +
+            'ratio would reflect scheduling jitter, not pool behaviour'
+          );
         }
         if (rowId === 'pool-blocking') {
           return (
