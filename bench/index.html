@@ -50,6 +50,8 @@
       .pending { opacity: 0.4; }
       .fail { color: #b00020; }
       .note { font-size: 0.8rem; opacity: 0.75; max-width: 46rem; }
+      td.measure { text-align: right; font-variant-numeric: tabular-nums; background: linear-gradient(to right, color-mix(in srgb, currentColor 12%, transparent) var(--bar-w, 0%), transparent var(--bar-w, 0%)); }
+      td.measure.best { font-weight: 600; }
     </style>
   </head>
   <body>
@@ -72,6 +74,9 @@
 
     <div id="results-wrap"><table id="results"><thead><tr id="head-row">
       <th>row</th></tr></thead><tbody id="body-rows"></tbody></table></div>
+    <p class="note">
+      <b>Legend:</b> ✅ pass — conformance check passed · ❌ fail — an error was thrown · ⏱ timed out — row exceeded its time budget; the rest of the column is abandoned if the first row times out · ⃠ not applicable — this VFS's capabilities declare this row out of scope · — no result — we ran it but could not produce a trustworthy number
+    </p>
     <p class="note">
       On a VFS capped at one worker, <code>read-burst-concurrency</code> near
       1.00× is declared behaviour, not a failure.
@@ -1043,7 +1048,13 @@
               setCell(pair, row.id, '✅');
             } else {
               RESULTS[kind][pair.id][row.id] = value;
-              setCell(pair, row.id, formatMeasure(row, value));
+              if (typeof value === 'number') {
+                renderMeasureRow(row);
+              } else {
+                setCell(pair, row.id, '—');
+                const td = cells.get(`${pair.id}|${row.id}`);
+                if (td) td.title = nullMeasureTitle(row.id);
+              }
             }
           } catch (error) {
             if (error instanceof ColumnAbandoned) {
@@ -1080,9 +1091,50 @@
         await cleanupOpfs(file);
       };
 
-      /** Measurements render as text here; Task 7 adds the relative bars. */
-      const formatMeasure = (row, value) =>
-        value === null ? '—' : `${value.toFixed(row.decimals ?? 1)} ${row.unit}`;
+      /** Tooltip for a measurement cell that returned null. */
+      const nullMeasureTitle = (rowId) => {
+        if (rowId === 'write-latency-p95') {
+          return 'p50 did not complete — no samples to derive p95 from';
+        }
+        if (rowId === 'pool-blocking') {
+          return (
+            'reliable ratio unavailable: either the device clock is too coarse to ' +
+            'time the idle baseline, or the long-query calibration could not reach ' +
+            'its 1.5–3 s target on this device (common on Chromium when the ' +
+            'cross-join finishes in under 1 s)'
+          );
+        }
+        return 'measurement could not be produced';
+      };
+
+      /**
+       * Repaints every cell of one measurement row, scaled to the best value
+       * present so far. Called each time a cell lands, because "best" changes
+       * as columns arrive — a bar drawn once against the first column would
+       * be a lie by the third.
+       */
+      const renderMeasureRow = (row) => {
+        const entries = Object.entries(RESULTS.measurements)
+          .map(([pairId, rows]) => [pairId, rows[row.id]])
+          .filter(([, value]) => typeof value === 'number');
+        if (entries.length === 0) return;
+
+        const values = entries.map(([, value]) => value);
+        const best = row.better === 'high' ? Math.max(...values) : Math.min(...values);
+        const worst = row.better === 'high' ? Math.min(...values) : Math.max(...values);
+
+        for (const [pairId, value] of entries) {
+          const td = cells.get(`${pairId}|${row.id}`);
+          if (!td) continue;
+          // Ratio to best, always in [0,1], whichever direction is better.
+          const ratio =
+            row.better === 'high' ? value / best : best / value;
+          td.className = `measure${value === best && worst !== best ? ' best' : ''}`;
+          td.title = '';
+          td.style.setProperty('--bar-w', `${Math.max(2, ratio * 100)}%`);
+          td.textContent = `${value.toFixed(row.decimals ?? 1)} ${row.unit}`;
+        }
+      };
 
       startButton.addEventListener('click', async () => {
         if (startButton.dataset.running) {
