@@ -25,16 +25,28 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # One browser list for the whole workflow, named in the cache key and
+      # installed identically by both jobs. The key names the browsers because
+      # actions/cache only *saves* on a miss: a key that did not would stay
+      # identical when the list grows, hit on the older and smaller cache, and
+      # re-download the missing engines on every run, silently, until the
+      # lockfile happened to change. Keeping one list rather than one per job
+      # is deliberate — two lists that must agree is a drift waiting to happen,
+      # and consumer-smoke installing an engine it does not drive costs only
+      # apt time on a cache hit.
+      #
+      # rstest.config.ts still runs Chromium alone, so Firefox and WebKit are
+      # unused for now: they are installed ahead of that switch. RWU-1 and
+      # COOP-1 cannot be settled without a non-Chromium engine — see
+      # mem:follow-ups.
       - name: Cache Playwright browsers
-        id: playwright-cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          key: playwright-${{ runner.os }}-chromium-firefox-webkit-${{ hashFiles('pnpm-lock.yaml') }}
 
-      # Browser tests run against Chromium only (see rstest.config.ts).
-      - name: Install Chromium
-        run: pnpm exec playwright install --with-deps chromium
+      - name: Install browsers
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
 
       - name: Lint and format check
         run: pnpm exec biome ci .
@@ -67,14 +79,19 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Same key and same list as verify, on purpose — see the note there.
+      # scripts/consumer-smoke.mjs imports { chromium } and drives nothing
+      # else, so two of these engines are dead weight here; sharing one cache
+      # entry and one list across both jobs is worth that, because a per-job
+      # list is a pair that has to stay in agreement forever.
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          key: playwright-${{ runner.os }}-chromium-firefox-webkit-${{ hashFiles('pnpm-lock.yaml') }}
 
-      - name: Install Chromium
-        run: pnpm exec playwright install --with-deps chromium
+      - name: Install browsers
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
 
       - name: Consumer smoke test
         run: pnpm test:consumer

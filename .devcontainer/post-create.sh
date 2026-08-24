@@ -6,15 +6,25 @@ sudo chown -R node:node /ai-tools
 pnpm install
 
 # Install Playwright browsers + OS deps for rstest browser mode.
-# Scoped to chromium (the project's target browser; rstest.config.ts
-# only enables the Chromium provider). Saves ~200 MB and tens of seconds
-# per container rebuild vs the default which installs all browsers.
+#
+# All three engines, on purpose. Chromium alone was the rule until
+# 2026-08-24, and it left two backlog items (RWU-1, COOP-1) unanswerable:
+# the default VFS's non-Chromium degradation path and OPFSCoopSyncVFS's
+# role as a fallback can only be settled by running a non-Chromium engine,
+# not by reasoning about WebIDL. ~370 MB and a minute or two more per
+# container rebuild buys that evidence.
+#
+# Caveat to carry: Playwright's Firefox and WebKit are patched builds, not
+# the branded browsers, and WebKit on Linux is not Safari. They give real
+# engine-level evidence about OPFS and Web Locks; they are not proof about
+# shipping Safari. See https://playwright.dev/docs/browsers
+#
 # `playwright` is declared in the root devDependencies (per the root-only
 # test-tooling convention in mem:conventions), so `pnpm exec` from the
 # root resolves to the catalog-pinned version. `pnpm dlx` would pull
 # Playwright's latest, downloading browsers that the pinned runtime
 # cannot launch. https://rstest.rs/guide/browser-mode
-pnpm exec playwright install --with-deps chromium
+pnpm exec playwright install --with-deps chromium firefox webkit
 
 uv tool install -p 3.13 "serena-agent==1.7.0" --prerelease=allow
 uv tool install mempalace
