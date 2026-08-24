@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>browser-sqlite — conformance and benchmarks</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --gap: 0.75rem;
+        --border: color-mix(in srgb, currentColor 20%, transparent);
+      }
+      body {
+        margin: 0 auto;
+        padding: var(--gap);
+        max-width: 70rem;
+        font: 15px/1.5 system-ui, sans-serif;
+      }
+      h1 { font-size: 1.2rem; margin: 0 0 var(--gap); }
+      #banner {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--gap);
+        padding: var(--gap);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        font-size: 0.85rem;
+      }
+      #banner b { font-weight: 600; }
+      .no { opacity: 0.55; }
+      #status { margin: var(--gap) 0; font-size: 0.85rem; min-height: 1.5em; }
+    </style>
+  </head>
+  <body>
+    <h1>browser-sqlite — conformance and benchmarks</h1>
+
+    <div id="banner">detecting…</div>
+
+    <!-- SELECTION UI — Task 2 -->
+
+    <p id="status"></p>
+
+    <!-- RESULTS TABLE — Task 3 -->
+
+    <script type="module">
+      import { VFS_CAPABILITIES } from './dist/index.js';
+
+      // ── Identity ────────────────────────────────────────────────────────
+      // Substituted by scripts/bench-assemble.mjs. Opening bench/index.html
+      // straight from the repo leaves the placeholder, which is why the guard
+      // tests for it rather than trusting the value.
+      const RAW_VERSION = '__LIB_VERSION__';
+      const LIB_VERSION = RAW_VERSION.startsWith('__') ? 'unknown' : RAW_VERSION;
+
+      /**
+       * User-agent parsing, used for the banner and the export filename only.
+       * Nothing on this page branches on it — feature decisions go through the
+       * probes below. That is what makes a crude parser acceptable here.
+       */
+      const detectAgent = () => {
+        const ua = navigator.userAgent;
+        const match = (re) => ua.match(re)?.[1] ?? null;
+        let engine = 'unknown';
+        let version = null;
+        if (/Firefox\//.test(ua)) {
+          engine = 'firefox';
+          version = match(/Firefox\/([\d.]+)/);
+        } else if (/Edg\//.test(ua)) {
+          engine = 'edge';
+          version = match(/Edg\/([\d.]+)/);
+        } else if (/Chrome\//.test(ua)) {
+          engine = 'chrome';
+          version = match(/Chrome\/([\d.]+)/);
+        } else if (/Safari\//.test(ua)) {
+          engine = 'safari';
+          version = match(/Version\/([\d.]+)/);
+        }
+        return { engine, version, platform: navigator.platform ?? '', ua };
+      };
+
+      const AGENT = detectAgent();
+
+      // ── Platform probes ─────────────────────────────────────────────────
+      const HAS_OPFS =
+        typeof navigator.storage?.getDirectory === 'function' &&
+        typeof FileSystemFileHandle !== 'undefined';
+
+      /** JSPI. Feature-detected, never sniffed from the user agent. */
+      const HAS_JSPI = typeof WebAssembly.Suspending === 'function';
+
+      /**
+       * `mode: 'readwrite-unsafe'` on OPFS sync access handles, probed by
+       * BEHAVIOUR: open two handles on one file and see whether the second
+       * succeeds. Firefox accepts the option and ignores it, so asking whether
+       * the property is supported would answer yes and be wrong.
+       *
+       * createSyncAccessHandle only exists in a dedicated worker, hence the
+       * inline blob worker. Ported from tests/conformance/helpers.ts — see
+       * BENCH-DRIFT in mem:follow-ups before changing either copy.
+       */
+      const probeUnsafeHandles = () =>
+        new Promise((resolve) => {
+          if (!HAS_OPFS) return resolve(false);
+          const src = `
+            self.onmessage = async () => {
+              let h1;
+              try {
+                const root = await navigator.storage.getDirectory();
+                const fh = await root.getFileHandle('__probe_unsafe_handles', { create: true });
+                h1 = await fh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
+                const h2 = await fh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
+                h2.close();
+                self.postMessage(true);
+              } catch {
+                self.postMessage(false);
+              } finally {
+                try { h1?.close(); } catch {}
+                try {
+                  const root = await navigator.storage.getDirectory();
+                  await root.removeEntry('__probe_unsafe_handles');
+                } catch {}
+              }
+            };
+          `;
+          const url = URL.createObjectURL(
+            new Blob([src], { type: 'application/javascript' }),
+          );
+          const worker = new Worker(url);
+          const done = (value) => {
+            resolve(value);
+            worker.terminate();
+            URL.revokeObjectURL(url);
+          };
+          worker.onmessage = (e) => done(e.data);
+          worker.onerror = () => done(false);
+          worker.postMessage(null);
+        });
+
+      const HAS_UNSAFE_HANDLES = await probeUnsafeHandles();
+
+      /**
+       * Whether we may delete IndexedDB stores after the run. Without this API
+       * we cannot tell a store we created from one that was already there, and
+       * this origin is shared with the user's other Pages projects — so the
+       * only safe answer is to clean nothing. See spec §5.4.
+       */
+      const CAN_LIST_IDB = typeof indexedDB.databases === 'function';
+
+      // ── Banner ──────────────────────────────────────────────────────────
+      const flag = (label, ok) =>
+        `<span class="${ok ? '' : 'no'}"><b>${label}</b> ${ok ? 'yes' : 'no'}</span>`;
+
+      document.getElementById('banner').innerHTML = [
+        `<span><b>${AGENT.engine}</b> ${AGENT.version ?? '?'}</span>`,
+        `<span><b>browser-sqlite</b> ${LIB_VERSION}</span>`,
+        flag('OPFS', HAS_OPFS),
+        flag('readwrite-unsafe', HAS_UNSAFE_HANDLES),
+        flag('JSPI', HAS_JSPI),
+        CAN_LIST_IDB
+          ? ''
+          : `<span class="no"><b>IndexedDB cleanup</b> unavailable — stores created by this run are left in place</span>`,
+      ]
+        .filter(Boolean)
+        .join('');
+
+      // ── Pairs ───────────────────────────────────────────────────────────
+      /** Every declared (vfs, build) pair, derived from the library's table. */
+      const PAIRS = Object.entries(VFS_CAPABILITIES).flatMap(([vfs, cap]) =>
+        cap.builds.map((build) => ({ id: `${vfs}/${build}`, vfs, build, cap })),
+      );
+
+      /**
+       * The platform feature this pair needs and this engine lacks, or null.
+       * Read from `requires` — never from a hardcoded VFS name. A VFS that only
+       * `degradesWithout` a feature stays runnable: OPFSAdaptiveVFS without
+       * readwrite-unsafe passes 102 of 104 browser tests, and marking it
+       * unavailable would be false.
+       */
+      const missingFeature = (pair) => {
+        if (pair.build === 'jspi' && !HAS_JSPI) return 'jspi';
+        if (pair.cap.requires.includes('opfs') && !HAS_OPFS) return 'opfs';
+        if (
+          pair.cap.requires.includes('readwrite-unsafe') &&
+          !HAS_UNSAFE_HANDLES
+        )
+          return 'readwrite-unsafe';
+        return null;
+      };
+
+      /** Effective pool size: the declared cap, or 4 where unbounded. */
+      const poolFor = (cap) => Math.min(4, cap.maxPoolSize ?? 4);
+
+      // ── SELECTION UI — Task 2 ───────────────────────────────────────────
+
+      // ── RUNNER — Task 3 ─────────────────────────────────────────────────
+
+      document.getElementById('status').textContent =
+        `${PAIRS.length} declared pairs, ` +
+        `${PAIRS.filter((p) => !missingFeature(p)).length} runnable here`;
+
+      // Read by scripts/bench-check.mjs.
+      window.__BENCH__ = { LIB_VERSION, AGENT, PAIRS: PAIRS.map((p) => p.id) };
+    </script>
+  </body>
+</html>
