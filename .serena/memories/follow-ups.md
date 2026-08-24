@@ -478,7 +478,10 @@ after: **8/8 green in isolation, 6/6 green on the full suite**. So the rate is r
 it is not reproducible on demand, which is precisely the rate that eventually reddens CI with no
 one able to say why.
 
-**It has now been seen twice.** Task 3 of the wiring plan reported the same failure and could not
+**It has now been seen three times.** Third sighting 2026-08-24, again in a pre-commit hook, on a
+**docs-only commit** (the benchmark page spec) whose tree had gone 323/0 in the same hook minutes
+earlier — so the flake is independent of any source change and the rate estimate above survives.
+Task 3 of the wiring plan reported the same failure and could not
 reproduce it either; the declaration was carried forward as PROVISIONAL on the reasoning that the
 conformance suite would settle it. Conformance passed — but its invariants exercise one write and
 one read, or concurrent writes counted afterwards, never the tight
@@ -527,6 +530,40 @@ date per cell.
 **Lucky detail worth keeping:** Firefox 153 is exactly the first supporting version, so our run sat
 on the boundary. On 152 the nine jspi pairs would have skipped with their stated reason and nothing
 would have failed — the feature detection was validated by accident.
+
+## ABORT-1 — `bulkWrite` and `output` take no `signal`
+
+**Status: open, raised by the user 2026-08-24** while reviewing the benchmark page spec
+(`docs/superpowers/specs/2026-08-24-bench-page-design.md`).
+
+`signal` is on `SQLiteQueryOptions` and is honoured by `read` / `write` / `first` / `stream` /
+`chunk` — `queries.ts`'s `chunk()` is the only place an `AbortSignal` is read at all. **`src/bulk.ts`
+contains no `AbortSignal`.** So the two long-running methods in the public surface, the ones most
+likely to need cancelling, are the two that cannot be cancelled. `signal` reads as universal in the
+docs and in `SQLiteQueryOptions`; that it stops at `bulkWrite` is undocumented.
+
+**Why this is cheaper than it looks for `bulkWrite`:** it already calls the **public** `write` once
+per batch and releases the worker between batches (a property D3 depends on — do not consolidate it
+into one held lease). Threading a `signal` down to each batch's `write` therefore gives an abort
+that lands *between* batches, which is both the natural granularity and the only point where
+stopping is meaningful — a multi-row INSERT is statement-atomic.
+
+**`output()` needs a decision, not just wiring.** Abandoning it mid-load leaves a staging table
+behind. That is already a handled state rather than a leak — the staging lock is a liveness marker
+and `staleStagingTables` (`locks.ts`) sweeps orphans — so the question is what an aborted `output()`
+should *promise*: silently leave the previous target intact (which the wave-3 change already
+guarantees, since the target is only created at `close()`), or attempt an eager drop. State it
+before implementing.
+
+**First observed consumer of the gap:** the benchmark page's containment design (§5.3 of its spec).
+Because `bulkWrite` cannot be aborted, the only bound available for its row is a `Promise.race`
+against a timer, which abandons the *wait* without stopping the *work* — leaving the worker busy
+and every later row in that column timed against a machine still executing. The page therefore has
+to abandon the whole column on that one row, where every other row simply moves on. **When ABORT-1
+lands, that special case disappears**; the page reads which regime applies from the method it
+calls, so nothing else changes.
+
+Not blocking: no consumer on rc.3, and a caller wanting a bound today can chunk their own batches.
 
 ## Performance — after correctness, with debug instrumentation live
 
