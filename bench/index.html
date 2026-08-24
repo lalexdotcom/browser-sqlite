@@ -591,8 +591,155 @@
         },
       ];
 
+      const DATASET_ROWS = 10_000;
+
+      /** Wall time of one awaited call, in ms. */
+      const time = async (fn) => {
+        const start = performance.now();
+        await fn();
+        return performance.now() - start;
+      };
+
+      /**
+       * Order statistic over raw samples — never a mean. These VFS differ in
+       * their tail, which is exactly what a mean hides.
+       */
+      const quantile = (samples, q) => {
+        const sorted = [...samples].sort((a, b) => a - b);
+        const index = Math.min(
+          sorted.length - 1,
+          Math.max(0, Math.ceil(q * sorted.length) - 1),
+        );
+        return sorted[index];
+      };
+
+      /** A short read: primary-key lookup, so the cost is round-trip, not SQLite. */
+      const shortRead = (db, id, signal) =>
+        db.first('SELECT id, label FROM bench WHERE id = ?', [id], { signal });
+
+      const randomId = () => 1 + Math.floor(Math.random() * DATASET_ROWS);
+
+      /**
+       * Builds the column's shared dataset exactly once. Rows that need it call
+       * this; rows that do not (bulk-insert, which builds its own) do not pay
+       * for it. Uses bulkWrite, so it inherits the unabortable regime.
+       */
+      const ensureDataset = async (ctx) => {
+        if (ctx.datasetReady) return;
+        await unabortableRow(async () => {
+          await ctx.db.write(
+            'CREATE TABLE bench (id INTEGER PRIMARY KEY, label TEXT, n INTEGER)',
+          );
+          const bulk = ctx.db.bulkWrite('bench', ['id', 'label', 'n']);
+          for (let i = 1; i <= DATASET_ROWS; i++) {
+            bulk.enqueue({ id: i, label: `row-${i}`, n: i % 97 });
+          }
+          await bulk.close();
+          await ctx.db.write('CREATE INDEX bench_n ON bench (n)');
+        });
+        ctx.datasetReady = true;
+      };
+
       /** Measurement rows. Filled in Tasks 5 and 6. */
-      const MEASUREMENT_ROWS = [];
+      const MEASUREMENT_ROWS = [
+        {
+          id: 'bulk-insert-10k',
+          label: `bulk insert ${DATASET_ROWS.toLocaleString('en')} rows`,
+          unit: 'ms',
+          decimals: 0,
+          better: 'low',
+          applies: () => true,
+          // bulkWrite takes no signal (ABORT-1), so this row can only abandon
+          // the column. It is deliberately first: paying that risk before the
+          // dataset exists costs less than paying it halfway down the column.
+          run: async (ctx) => {
+            const ms = await time(() => ensureDataset(ctx));
+            return ms;
+          },
+        },
+        {
+          id: 'write-latency-p50',
+          label: 'single INSERT — p50',
+          unit: 'ms',
+          decimals: 2,
+          better: 'low',
+          applies: () => true,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ensureDataset(ctx);
+              await ctx.db.write('CREATE TABLE lat (a INTEGER)', undefined, { signal });
+              await ctx.db.write('INSERT INTO lat VALUES (0)', undefined, { signal }); // warmup
+              const samples = [];
+              for (let i = 1; i <= 100; i++) {
+                samples.push(
+                  await time(() =>
+                    ctx.db.write('INSERT INTO lat VALUES (?)', [i], { signal }),
+                  ),
+                );
+              }
+              ctx.writeLatency = samples;
+              return quantile(samples, 0.5);
+            }),
+        },
+        {
+          id: 'write-latency-p95',
+          label: 'single INSERT — p95',
+          unit: 'ms',
+          decimals: 2,
+          better: 'low',
+          applies: () => true,
+          // Reuses the samples the p50 row collected rather than running 100
+          // more inserts: two runs would measure two different database sizes.
+          run: (ctx) =>
+            ctx.writeLatency ? quantile(ctx.writeLatency, 0.95) : null,
+        },
+        {
+          id: 'point-read-p50',
+          label: 'point read by primary key — p50',
+          unit: 'ms',
+          decimals: 2,
+          better: 'low',
+          applies: () => true,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ensureDataset(ctx);
+              await shortRead(ctx.db, randomId(), signal); // warmup
+              const samples = [];
+              for (let i = 0; i < 200; i++) {
+                samples.push(
+                  await time(() => shortRead(ctx.db, randomId(), signal)),
+                );
+              }
+              return quantile(samples, 0.5);
+            }),
+        },
+        {
+          id: 'list-page-p50',
+          label: 'one page of a list (LIMIT 50) — p50',
+          unit: 'ms',
+          decimals: 2,
+          better: 'low',
+          applies: () => true,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ensureDataset(ctx);
+              const page = (offset) =>
+                ctx.db.read(
+                  'SELECT id, label FROM bench ORDER BY n, id LIMIT 50 OFFSET ?',
+                  [offset],
+                  { signal },
+                );
+              await page(0); // warmup
+              const samples = [];
+              for (let i = 0; i < 100; i++) {
+                samples.push(
+                  await time(() => page(Math.floor(Math.random() * (DATASET_ROWS - 50)))),
+                );
+              }
+              return quantile(samples, 0.5);
+            }),
+        },
+      ];
 
       const headRow = document.getElementById('head-row');
       const bodyRows = document.getElementById('body-rows');
