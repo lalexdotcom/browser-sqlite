@@ -44,7 +44,7 @@ const WA_SQLITE_BUILDS = {
 } as const satisfies Record<SQLiteBuild, () => Promise<any>>;
 
 /**
- * VFS loaders only. Which build each VFS may run on lives in `VFS_BUILDS`
+ * VFS loaders only. Which build each VFS may run on lives in `VFS_CAPABILITIES`
  * (`src/types.ts`) and nowhere else — the client validates against it and sends
  * the chosen build in the `open` message, so there is no second copy to drift.
  */

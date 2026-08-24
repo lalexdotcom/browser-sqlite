@@ -68,32 +68,98 @@ export type WorkerMessageData =
 /** Which wa-sqlite WebAssembly build a worker loads. */
 export type SQLiteBuild = 'sync' | 'async' | 'jspi';
 
+/** How much of the database a VFS keeps resident in RAM. */
+export type VFSMemoryModel = 'page-cache' | 'whole-database';
+
+/** What a VFS can and cannot do. One entry per VFS, and no second table. */
+export type VFSCapability = {
+  /** Builds this VFS can run on, most preferred first. */
+  readonly builds: readonly [SQLiteBuild, ...SQLiteBuild[]];
+  /** Largest pool this VFS supports; `null` when unbounded. */
+  readonly maxPoolSize: number | null;
+  /** Why the cap exists. Required whenever `maxPoolSize` is not null. */
+  readonly poolLimitReason: string | null;
+  /** Whether several connections may share one database. */
+  readonly multiConnection: boolean;
+  /** Whether data outlives `close()`. */
+  readonly persistent: boolean;
+  /**
+   * `page-cache`: only SQLite's page cache is resident, bounded by
+   * `PRAGMA cache_size`. `whole-database`: the entire database is resident,
+   * and `poolSize` multiplies it.
+   */
+  readonly memoryModel: VFSMemoryModel;
+};
+
 /**
- * The single source of truth for VFS selection: which builds each VFS can run
- * on, most preferred first. `SQLiteVFS` is derived from its keys, and
- * `worker/worker.ts` must supply a loader for every key — so a VFS cannot be
- * added in one place and forgotten in the other.
+ * The single source of truth for VFS selection. `SQLiteVFS` is derived from its
+ * keys, `worker/worker.ts` must supply a loader for every key, the guards in
+ * `client.ts` read it, the conformance suite gates its scenarios on it, and the
+ * README table is generated from it. Nothing may hold a second copy.
  *
- * Order is a decision per VFS, not a rule. `sync` is both the fastest and the
- * most portable build, so it leads wherever it is supported; `OPFSAdaptiveVFS`
+ * Build order is a decision per VFS, not a rule: `sync` is both the fastest and
+ * the most portable build, so it leads wherever supported; `OPFSAdaptiveVFS`
  * cannot use it and leads with `async` because `jspi` is Chromium-only.
  *
- * Source: wa-sqlite's own VFS comparison table on master, cross-checked against
- * this repository's pinned v1.1.2 by running each declared combination.
+ * Every declared build combination is verified by running it against the pinned
+ * wa-sqlite v1.1.2, never copied from upstream's table.
  */
-export const VFS_BUILDS = {
-  OPFSAdaptiveVFS: ['async', 'jspi'],
-  OPFSWriteAheadVFS: ['sync', 'async', 'jspi'],
-  OPFSCoopSyncVFS: ['sync', 'async', 'jspi'],
-  AccessHandlePoolVFS: ['sync', 'async', 'jspi'],
-  IDBBatchAtomicVFS: ['async', 'jspi'],
-} as const satisfies Record<string, readonly [SQLiteBuild, ...SQLiteBuild[]]>;
+export const VFS_CAPABILITIES = {
+  OPFSAdaptiveVFS: {
+    builds: ['async', 'jspi'],
+    maxPoolSize: null,
+    poolLimitReason: null,
+    multiConnection: true,
+    persistent: true,
+    memoryModel: 'page-cache',
+  },
+  OPFSWriteAheadVFS: {
+    builds: ['sync', 'async', 'jspi'],
+    maxPoolSize: null,
+    poolLimitReason: null,
+    multiConnection: true,
+    persistent: true,
+    memoryModel: 'page-cache',
+  },
+  OPFSCoopSyncVFS: {
+    builds: ['sync', 'async', 'jspi'],
+    maxPoolSize: null,
+    poolLimitReason: null,
+    multiConnection: true,
+    persistent: true,
+    memoryModel: 'page-cache',
+  },
+  AccessHandlePoolVFS: {
+    builds: ['sync', 'async', 'jspi'],
+    maxPoolSize: 1,
+    poolLimitReason: 'it cannot share access handles between connections',
+    multiConnection: false,
+    persistent: true,
+    memoryModel: 'page-cache',
+  },
+  IDBBatchAtomicVFS: {
+    builds: ['async', 'jspi'],
+    maxPoolSize: null,
+    poolLimitReason: null,
+    multiConnection: true,
+    persistent: true,
+    memoryModel: 'page-cache',
+  },
+} as const satisfies Record<string, VFSCapability>;
 
-export type SQLiteVFS = keyof typeof VFS_BUILDS;
+export type SQLiteVFS = keyof typeof VFS_CAPABILITIES;
 
 /** The build used when the caller does not name one. */
 export const defaultBuildFor = (vfs: SQLiteVFS): SQLiteBuild =>
-  VFS_BUILDS[vfs][0];
+  VFS_CAPABILITIES[vfs].builds[0];
+
+/**
+ * The VFS used when the caller does not name one. It lives here, beside the
+ * table, because the README generator marks this row `(default)` and would
+ * otherwise hold a second copy — a copy the CI drift check cannot catch, since
+ * changing the default in client.ts alone leaves the rendered table identical.
+ */
+export const DEFAULT_VFS: SQLiteVFS = 'OPFSAdaptiveVFS';
 
 /**
  * Options accepted by query methods.

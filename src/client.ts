@@ -20,11 +20,12 @@ import {
 import { createSupervisor } from './supervisor';
 import { createTransaction, type TransactionDB } from './transaction';
 import {
+  DEFAULT_VFS,
   defaultBuildFor,
   type SQLiteBuild,
   type SQLiteQueryOptions,
   type SQLiteVFS,
-  VFS_BUILDS,
+  VFS_CAPABILITIES,
 } from './types';
 import { assertReadable, normalizeDatabaseFile, renderPragmas } from './utils';
 
@@ -69,7 +70,7 @@ export type CreateSQLiteClientOptions = {
   vfs?: SQLiteVFS;
   /**
    * Which wa-sqlite WebAssembly build to load. Defaults to the first entry of
-   * `VFS_BUILDS[vfs]` — `sync` where the VFS supports it, since it is both the
+   * `VFS_CAPABILITIES[vfs]` — `sync` where the VFS supports it, since it is both the
    * fastest and the most portable, otherwise `async`. `jspi` is Chromium-only.
    *
    * @throws at construction when the build is not one the chosen VFS supports.
@@ -321,8 +322,6 @@ export type SQLiteDB = {
   debug?: ClientDebugState;
 };
 
-const DEFAULT_VFS = 'OPFSAdaptiveVFS';
-
 /**
  * Creates a SQLite client backed by a pool of Web Workers, each running
  * a wa-sqlite instance in a dedicated thread.
@@ -346,7 +345,7 @@ const DEFAULT_VFS = 'OPFSAdaptiveVFS';
  *
  * @throws {SQLiteError} With code `INVALID_OPTION` when `build` is not one of
  *   the builds the chosen `vfs` supports. The message names the supported
- *   builds; the pairing is declared once, in `VFS_BUILDS`.
+ *   builds; the pairing is declared once, in `VFS_CAPABILITIES`.
  * @throws {Error} When `vfs` is `'AccessHandlePoolVFS'` and `poolSize` is
  *   greater than `1`. AccessHandlePoolVFS does not support concurrent access
  *   handles — set `poolSize: 1` explicitly when using this VFS.
@@ -385,13 +384,15 @@ export const createSQLiteClient = (
   const vfs = clientOptions?.vfs ?? DEFAULT_VFS;
   const build = clientOptions?.build ?? defaultBuildFor(vfs);
 
-  // Synchronous, like the AccessHandlePoolVFS guard below: an unsupported
-  // combination must fail here and name itself, not surface later as an opaque
-  // open-error from a worker that could not instantiate its module.
-  if (!(VFS_BUILDS[vfs] as readonly SQLiteBuild[]).includes(build)) {
+  const capability = VFS_CAPABILITIES[vfs];
+
+  // Synchronous: an unsupported combination must fail here and name itself,
+  // not surface later as an opaque open-error from a worker that could not
+  // instantiate its module.
+  if (!(capability.builds as readonly SQLiteBuild[]).includes(build)) {
     throw new SQLiteError(
       'INVALID_OPTION',
-      `${vfs} cannot run on the '${build}' build. Supported: ${VFS_BUILDS[vfs].join(', ')}.`,
+      `${vfs} cannot run on the '${build}' build. Supported: ${capability.builds.join(', ')}.`,
     );
   }
 

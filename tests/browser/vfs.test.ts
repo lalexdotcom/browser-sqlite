@@ -51,7 +51,7 @@ describe('AccessHandlePoolVFS pool guard', () => {
 /**
  * Characterization tests for the `vfs` + `build` combination guard.
  *
- * `VFS_BUILDS` in `types.ts` is the single table declaring which wa-sqlite
+ * `VFS_CAPABILITIES` in `types.ts` is the single table declaring which wa-sqlite
  * builds each VFS accepts. The client checks the pair at construction so a bad
  * combination fails synchronously, with the supported builds named, instead of
  * surfacing later as an opaque `open-error` from inside a worker.
