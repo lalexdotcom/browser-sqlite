@@ -68,6 +68,17 @@ export type WorkerMessageData =
 /** Which wa-sqlite WebAssembly build a worker loads. */
 export type SQLiteBuild = 'sync' | 'async' | 'jspi';
 
+/**
+ * A platform feature a VFS may need. Which browser versions ship each one is
+ * documentation data, not runtime data, so it lives in the README generator
+ * (`scripts/render-vfs-matrix.ts`) with its sources — not here, where it would
+ * ship to every consumer for nothing.
+ */
+export type PlatformFeature = 'opfs' | 'readwrite-unsafe' | 'jspi';
+
+/** Where a VFS keeps the database. */
+export type VFSStorage = 'opfs' | 'indexeddb' | 'memory';
+
 /** How much of the database a VFS keeps resident in RAM. */
 export type VFSMemoryModel = 'page-cache' | 'whole-database';
 
@@ -89,14 +100,31 @@ export type VFSCapability = {
    * and `poolSize` multiplies it.
    */
   readonly memoryModel: VFSMemoryModel;
+  /** Where the database actually lives. */
+  readonly storage: VFSStorage;
   /**
-   * Whether this VFS opens access handles with `mode: 'readwrite-unsafe'`
-   * with no fallback. WebIDL ignores the unknown member on engines that do
-   * not implement it, so the handle silently opens exclusive and the second
-   * connection hangs rather than failing — which is why this is declared and
-   * probed rather than left to surface as a timeout.
+   * Platform features without which this VFS cannot work at all.
+   *
+   * `readwrite-unsafe` is the one that bites: WebIDL ignores the unknown
+   * dictionary member on engines that do not implement it, so the handle
+   * silently opens exclusive and the second connection hangs rather than
+   * failing. Declaring it is what lets the conformance suite probe for it and
+   * skip, instead of leaving it to surface as a 60-second timeout.
    */
-  readonly requiresUnsafeHandles: boolean;
+  readonly requires: readonly PlatformFeature[];
+  /**
+   * Platform features this VFS uses when present and works without, at a cost.
+   *
+   * `OPFSAdaptiveVFS` is the case this field exists for. Without
+   * `readwrite-unsafe` it rotates a single exclusive access handle between
+   * connections instead of holding one each. That works — 102 of 104 browser
+   * tests pass on Firefox — but it serializes the whole pool for the duration
+   * of a long uninterruptible statement.
+   *
+   * Without this distinction, a support table derived from browser specs would
+   * mark that VFS broken everywhere outside Chromium, when it merely degrades.
+   */
+  readonly degradesWithout: readonly PlatformFeature[];
 };
 
 /**
@@ -120,7 +148,9 @@ export const VFS_CAPABILITIES = {
     multiConnection: true,
     persistent: true,
     memoryModel: 'page-cache',
-    requiresUnsafeHandles: false,
+    storage: 'opfs',
+    requires: ['opfs'],
+    degradesWithout: ['readwrite-unsafe'],
   },
   OPFSWriteAheadVFS: {
     builds: ['sync', 'async', 'jspi'],
@@ -129,7 +159,9 @@ export const VFS_CAPABILITIES = {
     multiConnection: true,
     persistent: true,
     memoryModel: 'page-cache',
-    requiresUnsafeHandles: true,
+    storage: 'opfs',
+    requires: ['opfs', 'readwrite-unsafe'],
+    degradesWithout: [],
   },
   OPFSCoopSyncVFS: {
     builds: ['sync', 'async', 'jspi'],
@@ -138,7 +170,9 @@ export const VFS_CAPABILITIES = {
     multiConnection: true,
     persistent: true,
     memoryModel: 'page-cache',
-    requiresUnsafeHandles: false,
+    storage: 'opfs',
+    requires: ['opfs'],
+    degradesWithout: [],
   },
   AccessHandlePoolVFS: {
     builds: ['sync', 'async', 'jspi'],
@@ -147,7 +181,9 @@ export const VFS_CAPABILITIES = {
     multiConnection: false,
     persistent: true,
     memoryModel: 'page-cache',
-    requiresUnsafeHandles: false,
+    storage: 'opfs',
+    requires: ['opfs'],
+    degradesWithout: [],
   },
   IDBBatchAtomicVFS: {
     builds: ['async', 'jspi'],
@@ -156,7 +192,9 @@ export const VFS_CAPABILITIES = {
     multiConnection: true,
     persistent: true,
     memoryModel: 'page-cache',
-    requiresUnsafeHandles: false,
+    storage: 'indexeddb',
+    requires: [],
+    degradesWithout: [],
   },
   IDBMirrorVFS: {
     builds: ['async', 'jspi'],
@@ -167,7 +205,9 @@ export const VFS_CAPABILITIES = {
     // Upstream: "keeps all files in memory, persisting database files to
     // IndexedDB", and the whole database must fit in available memory.
     memoryModel: 'whole-database',
-    requiresUnsafeHandles: false,
+    storage: 'indexeddb',
+    requires: [],
+    degradesWithout: [],
   },
   OPFSAnyContextVFS: {
     builds: ['async', 'jspi'],
@@ -176,7 +216,9 @@ export const VFS_CAPABILITIES = {
     multiConnection: true,
     persistent: true,
     memoryModel: 'page-cache',
-    requiresUnsafeHandles: false,
+    storage: 'opfs',
+    requires: ['opfs'],
+    degradesWithout: [],
   },
   MemoryVFS: {
     builds: ['sync', 'async', 'jspi'],
@@ -186,7 +228,9 @@ export const VFS_CAPABILITIES = {
     multiConnection: false,
     persistent: false,
     memoryModel: 'whole-database',
-    requiresUnsafeHandles: false,
+    storage: 'memory',
+    requires: [],
+    degradesWithout: [],
   },
   MemoryAsyncVFS: {
     builds: ['async', 'jspi'],
@@ -196,7 +240,9 @@ export const VFS_CAPABILITIES = {
     multiConnection: false,
     persistent: false,
     memoryModel: 'whole-database',
-    requiresUnsafeHandles: false,
+    storage: 'memory',
+    requires: [],
+    degradesWithout: [],
   },
 } as const satisfies Record<string, VFSCapability>;
 

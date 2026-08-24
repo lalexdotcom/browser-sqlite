@@ -4,7 +4,7 @@ import {
   ALL_VFS,
   conformanceClient,
   createReopened,
-  HAS_UNSAFE_HANDLES,
+  unsupportedHere,
 } from './helpers';
 
 /**
@@ -18,7 +18,7 @@ import {
  */
 describe('invariant 1 — what is written is read back', () => {
   for (const vfs of ALL_VFS) {
-    if (VFS_CAPABILITIES[vfs].requiresUnsafeHandles && !HAS_UNSAFE_HANDLES) {
+    if (unsupportedHere(vfs)) {
       it.skip(`${vfs} — skipped, no readwrite-unsafe access handles in this browser`, () => {});
       continue;
     }
@@ -35,7 +35,7 @@ describe('invariant 1 — what is written is read back', () => {
 
 describe('invariant 2 — data survives close and reopen', () => {
   for (const vfs of ALL_VFS) {
-    if (VFS_CAPABILITIES[vfs].requiresUnsafeHandles && !HAS_UNSAFE_HANDLES) {
+    if (unsupportedHere(vfs)) {
       it.skip(`${vfs} — skipped, no readwrite-unsafe access handles in this browser`, () => {});
       continue;
     }
@@ -59,7 +59,7 @@ describe('invariant 2 — data survives close and reopen', () => {
 
 describe('invariant 3 — concurrent writes lose nothing', () => {
   for (const vfs of ALL_VFS) {
-    if (VFS_CAPABILITIES[vfs].requiresUnsafeHandles && !HAS_UNSAFE_HANDLES) {
+    if (unsupportedHere(vfs)) {
       it.skip(`${vfs} — skipped, no readwrite-unsafe access handles in this browser`, () => {});
       continue;
     }
@@ -87,7 +87,7 @@ describe('invariant 3 — concurrent writes lose nothing', () => {
 
 describe('invariant 4 — a rolled-back transaction leaves nothing', () => {
   for (const vfs of ALL_VFS) {
-    if (VFS_CAPABILITIES[vfs].requiresUnsafeHandles && !HAS_UNSAFE_HANDLES) {
+    if (unsupportedHere(vfs)) {
       it.skip(`${vfs} — skipped, no readwrite-unsafe access handles in this browser`, () => {});
       continue;
     }
@@ -111,7 +111,7 @@ describe('invariant 4 — a rolled-back transaction leaves nothing', () => {
 
 describe('invariant 5 — close settles', () => {
   for (const vfs of ALL_VFS) {
-    if (VFS_CAPABILITIES[vfs].requiresUnsafeHandles && !HAS_UNSAFE_HANDLES) {
+    if (unsupportedHere(vfs)) {
       it.skip(`${vfs} — skipped, no readwrite-unsafe access handles in this browser`, () => {});
       continue;
     }
@@ -144,7 +144,7 @@ describe('invariant 5 — close settles', () => {
 //     caught before it can become an unhandled rejection.
 describe('invariant 6 — no read runs inside an open transaction', () => {
   for (const vfs of ALL_VFS) {
-    if (VFS_CAPABILITIES[vfs].requiresUnsafeHandles && !HAS_UNSAFE_HANDLES) {
+    if (unsupportedHere(vfs)) {
       it.skip(`${vfs} — skipped, no readwrite-unsafe access handles in this browser`, () => {});
       continue;
     }

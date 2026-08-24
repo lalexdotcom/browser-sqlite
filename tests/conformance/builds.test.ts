@@ -4,7 +4,7 @@ import {
   ALL_VFS,
   conformanceClient,
   HAS_JSPI,
-  HAS_UNSAFE_HANDLES,
+  unsupportedHere,
 } from './helpers';
 
 /**
@@ -22,7 +22,7 @@ describe('declared build combinations', () => {
         it.skip(`${vfs} on ${build} — skipped, no JSPI in this browser`, () => {});
         continue;
       }
-      if (VFS_CAPABILITIES[vfs].requiresUnsafeHandles && !HAS_UNSAFE_HANDLES) {
+      if (unsupportedHere(vfs)) {
         it.skip(`${vfs} on ${build} — skipped, no readwrite-unsafe access handles in this browser`, () => {});
         continue;
       }

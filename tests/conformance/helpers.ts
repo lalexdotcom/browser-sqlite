@@ -2,6 +2,7 @@ import { afterEach } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import {
   defaultBuildFor,
+  type PlatformFeature,
   type SQLiteBuild,
   type SQLiteVFS,
   VFS_CAPABILITIES,
@@ -74,6 +75,18 @@ async function probeUnsafeHandles(): Promise<boolean> {
  * decision can be made synchronously at test-declaration time.
  */
 export const HAS_UNSAFE_HANDLES = await probeUnsafeHandles();
+
+/**
+ * Whether this VFS cannot run at all on the engine we are in. Derived from the
+ * capability table rather than declared twice: a VFS that merely *degrades*
+ * without the feature — `OPFSAdaptiveVFS` — must still be exercised here.
+ */
+export const unsupportedHere = (vfs: SQLiteVFS): boolean =>
+  // The widening cast mirrors client.ts's build guard: `as const` on the table
+  // narrows an empty `requires` to `readonly []`, where `.includes` takes never.
+  (VFS_CAPABILITIES[vfs].requires as readonly PlatformFeature[]).includes(
+    'readwrite-unsafe',
+  ) && !HAS_UNSAFE_HANDLES;
 
 /** The VFS's declared pool cap when it has one, or 2 when the pool is unbounded. */
 export const poolFor = (vfs: SQLiteVFS): number =>
