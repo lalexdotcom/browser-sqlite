@@ -58,7 +58,23 @@ try {
     fail('__LIB_VERSION__ was not substituted — run pnpm bench:build first');
   }
 
-  // Later tasks extend from here: select, start, wait for done, assert cells.
+  const runnable = await page.$$eval(
+    '#picker-list input[data-pair]:not([disabled])',
+    (els) => els.map((e) => e.dataset.pair),
+  );
+  if (runnable.length === 0) fail('no runnable pair on this engine');
+  process.stdout.write(`runnable: ${runnable.join(', ')}\n`);
+
+  if (all) {
+    await page.click('#select-all');
+  } else {
+    await page.click('#select-none');
+    await page.check(`#picker-list input[data-pair="${runnable[0]}"]`);
+  }
+
+  const summary = await page.textContent('#picker-summary');
+  if (!summary || summary === 'None selected') fail(`bad summary: ${summary}`);
+  process.stdout.write(`summary: ${summary}\n`);
 
   if (problems.length) fail(problems.join('\n'));
 

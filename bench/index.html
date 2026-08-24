@@ -29,6 +29,15 @@
       #banner b { font-weight: 600; }
       .no { opacity: 0.55; }
       #status { margin: var(--gap) 0; font-size: 0.85rem; min-height: 1.5em; }
+      #picker { border: 1px solid var(--border); border-radius: 6px; padding: var(--gap); }
+      #picker summary { cursor: pointer; font-weight: 600; }
+      .picker-actions { margin: var(--gap) 0; display: flex; gap: 0.5rem; }
+      #picker-list { display: grid; gap: 0.15rem 1rem;
+        grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr)); }
+      #picker-list label { display: flex; gap: 0.4rem; align-items: baseline; }
+      #picker-list label.unavailable { opacity: 0.45; }
+      #picker-list .why { font-size: 0.8rem; opacity: 0.75; }
+      button { font: inherit; padding: 0.3rem 0.8rem; }
     </style>
   </head>
   <body>
@@ -36,7 +45,16 @@
 
     <div id="banner">detecting…</div>
 
-    <!-- SELECTION UI — Task 2 -->
+    <details id="picker" open>
+      <summary id="picker-summary">All</summary>
+      <div class="picker-actions">
+        <button type="button" id="select-all">All</button>
+        <button type="button" id="select-none">None</button>
+      </div>
+      <div id="picker-list"></div>
+    </details>
+
+    <p><button type="button" id="start">Start</button></p>
 
     <p id="status"></p>
 
@@ -191,6 +209,64 @@
       const poolFor = (cap) => Math.min(4, cap.maxPoolSize ?? 4);
 
       // ── SELECTION UI — Task 2 ───────────────────────────────────────────
+      const list = document.getElementById('picker-list');
+      const summary = document.getElementById('picker-summary');
+
+      for (const pair of PAIRS) {
+        const missing = missingFeature(pair);
+        const label = document.createElement('label');
+        label.className = missing ? 'unavailable' : '';
+
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.dataset.pair = pair.id;
+        box.checked = !missing;
+        box.disabled = Boolean(missing);
+        if (missing) label.title = `this browser has no ${missing}`;
+
+        const text = document.createElement('span');
+        text.textContent = `${pair.vfs} · ${pair.build}`;
+
+        const why = document.createElement('span');
+        why.className = 'why';
+        why.textContent = missing
+          ? `no ${missing}`
+          : `pool ${poolFor(pair.cap)}`;
+
+        label.append(box, text, why);
+        list.append(label);
+      }
+
+      const boxes = () => [...list.querySelectorAll('input[data-pair]')];
+      const byId = new Map(PAIRS.map((p) => [p.id, p]));
+
+      const selectedPairs = () =>
+        boxes()
+          .filter((b) => b.checked)
+          .map((b) => byId.get(b.dataset.pair));
+
+      const refreshSummary = () => {
+        const chosen = selectedPairs();
+        const runnable = boxes().filter((b) => !b.disabled).length;
+        summary.textContent =
+          chosen.length === 0
+            ? 'None selected'
+            : chosen.length === runnable
+              ? `All (${chosen.length})`
+              : `${chosen.length} selected — ${chosen.map((p) => p.id).join(', ')}`;
+        document.getElementById('start').disabled = chosen.length === 0;
+      };
+
+      list.addEventListener('change', refreshSummary);
+      document.getElementById('select-all').addEventListener('click', () => {
+        for (const b of boxes()) if (!b.disabled) b.checked = true;
+        refreshSummary();
+      });
+      document.getElementById('select-none').addEventListener('click', () => {
+        for (const b of boxes()) b.checked = false;
+        refreshSummary();
+      });
+      refreshSummary();
 
       // ── RUNNER — Task 3 ─────────────────────────────────────────────────
 
