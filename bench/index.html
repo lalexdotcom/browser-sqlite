@@ -78,9 +78,11 @@
       <b>Legend:</b> ✅ pass — conformance check passed · ❌ fail — an error was thrown · ⏱ timed out — row exceeded its time budget; the rest of the column is abandoned if the first row times out · ⃠ not applicable — this VFS's capabilities declare this row out of scope · — no result — we ran it but could not produce a trustworthy number
     </p>
     <p class="note">
-      On a VFS capped at one worker, <code>read-burst-concurrency</code> near
-      1.00× is declared behaviour, not a failure.
-      <code>pool-blocking</code> does not apply to those VFS (cell shows ⃠).
+      On persistent VFS (OPFS, IDB), <code>read-burst-concurrency</code> shows real pool
+      concurrency gains; a pool-1 VFS near 1.00× is declared behaviour, not a failure.
+      On memory VFS, reads finish in under 0.1 ms and values are dominated by scheduling
+      jitter — they do not reliably reflect pool behaviour.
+      <code>pool-blocking</code> does not apply to pool-1 VFS (cell shows ⃠).
       Where it does apply, ≈1 means the pool kept serving reads freely during
       the long statement.
     </p>
@@ -832,9 +834,11 @@
           better: 'high',
           applies: () => true,
           /**
-           * The row that shows the library's reason to exist. On a poolSize-1
-           * VFS it lands near 1.00, which is the declared behaviour and not a
-           * failure — see the note rendered under the table.
+           * Gain ratio: 24 parallel short reads vs. 24 serial ones. Shows real
+           * pool concurrency on persistent VFS where each read costs ≥0.5 ms.
+           * On memory VFS, reads finish in under 0.1 ms and the ratio is
+           * dominated by scheduling jitter — see the note under the table.
+           * A pool-1 VFS is expected near 1.00× on persistent storage.
            */
           run: (ctx) =>
             abortableRow(async (signal) => {
@@ -1051,9 +1055,12 @@
               if (typeof value === 'number') {
                 renderMeasureRow(row);
               } else {
-                setCell(pair, row.id, '—');
                 const td = cells.get(`${pair.id}|${row.id}`);
-                if (td) td.title = nullMeasureTitle(row.id);
+                if (td) {
+                  td.className = 'measure';
+                  td.textContent = '—';
+                  td.title = nullMeasureTitle(row.id);
+                }
               }
             }
           } catch (error) {
@@ -1131,7 +1138,7 @@
             row.better === 'high' ? value / best : best / value;
           td.className = `measure${value === best && worst !== best ? ' best' : ''}`;
           td.title = '';
-          td.style.setProperty('--bar-w', `${Math.max(2, ratio * 100)}%`);
+          td.style.setProperty('--bar-w', `${Math.min(100, Math.max(2, ratio * 100))}%`);
           td.textContent = `${value.toFixed(row.decimals ?? 1)} ${row.unit}`;
         }
       };
