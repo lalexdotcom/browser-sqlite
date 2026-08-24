@@ -266,9 +266,82 @@ open-path BUSY mapping verified by inspection only.
 | W-chunks | wontfix | **Chunked worker impossible while Vite is a supported consumer.** Attempted in wave P Task 7 (`asyncChunks: true`): Vite re-bundles worker entries through Rollup with `format=iife`, and Rollup refuses code-splitting in that format — "UMD and IIFE output formats are not supported for code-splitting builds." Reverted immediately. This is structural, not a tuning problem: as long as the worker must survive Vite's re-bundling step, it cannot ship a chunk graph. Monolithic worker (117,405 bytes gzip) is the permanent shipped shape. | `rslib.config.ts` |
 | VIT-1 | open | **Vite requires consumer configuration** — two independent reasons: (1) Vite's esbuild pre-bundling (`optimizeDeps`) rewrites `import.meta.url` in `node_modules` during dev, breaking the worker URL; fix: `optimizeDeps: { exclude: ['browser-sqlite'] }` in the consumer's `vite.config`. (2) Vite's prod build does not copy `node_modules` wasm beside the emitted worker output; fix: a ~10-line Vite plugin that copies `dist/worker/*` beside the emitted worker. rsbuild and no-bundler modes need nothing. Not a bug in the artifact — a Vite-specific gap documented in the README's "Bundler Configuration" section. Recorded here so it is not re-litigated as an artifact defect. **Fix decided 2026-08-18 (D6, `mem:resume-plan` §1.4): we ship the plugin ourselves as a `browser-sqlite/vite` subpath, wave 4.** Two known fragilities in the currently documented snippet, both fixed by owning the code: `dist/assets` is hard-coded (breaks as soon as the consumer changes `build.assetsDir`) and `node_modules/browser-sqlite/…` assumes a flat node_modules (breaks in a pnpm workspace / monorepo). | README, `tests/consumer/vite.config.ts` |
 
-| COOP-1 | open | **`OPFSCoopSyncVFS` fails with `database is locked` under a pool of 4, in ~100 ms, reproducibly (3 runs).** The workload that triggers it: interleaved DDL (`CREATE`/`DROP`) while four connections read concurrently. Note it does NOT fail on a gentler workload — it passed the VFS matrix at `poolSize` 4 (init, INSERTs, concurrent reads, 0/40 stale) and all three of its declared builds passed the combination check. So the trigger is DDL under concurrent readers, not the pool itself. This matters because CoopSync is the "works everywhere" fallback the README is meant to recommend for non-Chromium browsers — **it cannot be recommended for a multi-worker pool until this is understood.** Upstream's own note is consistent: its contention handling returns an error and retries, which it calls "not very efficient". Found 2026-08-20 while measuring the VFS candidates. | `README`, VFS selection |
-| VFS-COV | open | **Two of the five advertised VFS have no test at all.** `SQLiteVFS` (public, in `types.ts`) declares `OPFSPermutedVFS`, `OPFSAdaptiveVFS`, `OPFSCoopSyncVFS`, `AccessHandlePoolVFS`, `IDBBatchAtomicVFS`, and `VFSConfigs` in `worker/worker.ts` wires all five. The suite exercises three: `OPFSPermutedVFS` implicitly everywhere (it is the default), `AccessHandlePoolVFS` in five places, `OPFSCoopSyncVFS` in one. ~~**`OPFSAdaptiveVFS` and `IDBBatchAtomicVFS` are advertised as supported and have never been executed by a test.**~~ **Updated 2026-08-20 with `feat/vfs-default`: `OPFSAdaptiveVFS` is now the default, so the whole suite exercises it, and `vfs.test.ts` covers the `build` guard on it explicitly. The untested pair is now `OPFSWriteAheadVFS` — newly public on this branch, zero tests — and `IDBBatchAtomicVFS`. Still two, different set.** Found 2026-08-20 while scoping the JSPI probe. `OPFSAdaptiveVFS` is cheap to cover — the probe proved it opens and queries in the pinned Chromium. Not wave 4's business; do not fold it in. | `types.ts`, `worker/worker.ts`, `tests/browser/vfs.test.ts` |
-| RWU-1 | open | **The default VFS requires a proposed, Chromium-only OPFS feature, with no detection and no fallback.** `OPFSPermutedVFS.js:88` calls `createSyncAccessHandle({ mode: 'readwrite-unsafe' })` unconditionally; `OPFSWriteAheadVFS` needs it too, and upstream's own doc dates it "only on Chromium browsers as of June 2024". **The failure mode is silent, not loud:** WebIDL ignores unknown dictionary members, so on a browser without the mode the call succeeds in the default exclusive mode — the first connection opens, the second cannot take the handle, and the pool breaks with no error naming the cause. Reasoned from the WebIDL rule, **not observed: we only ever test Chromium**, in CI and in the consumer smoke test. Found 2026-08-20. Decide whether to detect-and-degrade (fall back to `poolSize: 1`), to document Chromium-only, or to change default VFS. | `client.ts` (`DEFAULT_VFS`), README |
+| COOP-1 | open — **next up**, mechanism analysed 2026-08-24 | See the dedicated block below the tables; it outgrew a row. | `README.md:64`, `worker/worker.ts`, VFS selection |
+| VFS-COV | open, **and it got load-bearing 2026-08-24** | **Two of the five advertised VFS have no test at all: `OPFSWriteAheadVFS` and `IDBBatchAtomicVFS`.** The public set is `VFS_BUILDS` in `types.ts:84` — `OPFSAdaptiveVFS`, `OPFSWriteAheadVFS`, `OPFSCoopSyncVFS`, `AccessHandlePoolVFS`, `IDBBatchAtomicVFS` — and `worker/worker.ts`'s `VFSConfigs` wires all five. Exercised today: `OPFSAdaptiveVFS` implicitly everywhere (it is the default since `be314db`), `AccessHandlePoolVFS` in five places, `OPFSCoopSyncVFS` in one; `tests/browser/vfs.test.ts` covers the pool guard and the vfs/build guard only. **Why this stopped being a tidiness item:** `IDBBatchAtomicVFS` is the leading candidate to replace `OPFSCoopSyncVFS` as the documented universal fallback (see COOP-1), and it is one of the two untested ones. Promoting it without covering it would be recommending untested code — the same mistake COOP-1 already is. It is cheap to cover: it extends `WebLocksMixin(FacadeVFS)` like the default, needs no OPFS, and measured 0/360 stale. | `types.ts`, `worker/worker.ts`, `tests/browser/vfs.test.ts` |
+| RWU-1 | **narrowed 2026-08-24, still open — but not where it was filed** | ~~The *default* VFS requires a proposed, Chromium-only OPFS feature, with no detection and no fallback.~~ **That was true of `OPFSPermutedVFS`, which no longer exists.** Re-read against the code on 2026-08-24: `OPFSAdaptiveVFS` — today's default — **does** detect the feature (`hasUnsafeAccessHandle`, `OPFSAdaptiveVFS.js:8`) and **does** carry a non-unsafe path (`:95-115`): a `navigator.locks` request per file plus a `BroadcastChannel` notify, rotating one exclusive handle between connections, which is structurally what CoopSync does. `AccessHandlePoolVFS`, `IDBBatchAtomicVFS` and `OPFSCoopSyncVFS` never ask for the mode at all (`grep -c 'readwrite-unsafe'` = 0 on each). **Only `OPFSWriteAheadVFS` still calls it unconditionally**, and that is now stated in the README's Known Limitations, so the silent-degradation hazard is documented where it actually lives. **What remains open is not the code, it is the evidence:** the Adaptive fallback path is never executed by anything we run — CI and the consumer smoke are Chromium-only, where the detection is always true. Recommending the default as "works everywhere" therefore rests on a degradation path nobody has ever run. Playwright already ships Firefox and WebKit; this is a harness gap, not a design gap. | `client.ts` (`DEFAULT_VFS`), `.github/workflows/ci.yaml`, `scripts/consumer-smoke.mjs` |
+
+## COOP-1 in full — `OPFSCoopSyncVFS` under a pool
+
+**Status: open, next up.** Symptom recorded 2026-08-20; mechanism analysed from source
+2026-08-24 and **not yet measured** — treat everything under "Why" as a hypothesis with a
+falsifiable prediction, not as a finding.
+
+### What was measured (2026-08-20, `poolSize` 4, Chromium)
+
+- **Fails with `database is locked` in ~100 ms, reproducibly (3 runs)**, on interleaved DDL
+  (`CREATE`/`DROP`) while four connections read concurrently.
+- **Does not fail on a gentler workload**: it passed the VFS matrix at `poolSize` 4 (init,
+  INSERTs, concurrent reads, 0/40 stale) and all three of its declared builds passed the
+  combination check. So the trigger is DDL under concurrent readers, not the pool alone.
+- **It is 2-3× slower than the default at concurrent reads**: 8 reads in **29, 35, 33 ms**
+  against `OPFSAdaptiveVFS`'s 13, 12, 16 and `IDBBatchAtomicVFS`'s 15, 26, 19 (probe `a68047b`).
+
+### Why, as read from the source on 2026-08-24 — hypothesis
+
+1. **The handle is exclusive.** A `FileSystemSyncAccessHandle` is exclusive per file for the whole
+   origin unless opened `readwrite-unsafe`, and CoopSync never asks for that mode
+   (`grep -c 'readwrite-unsafe' OPFSCoopSyncVFS.js` = 0). So N connections do not read
+   concurrently — they **rotate one handle**, requested over a `BroadcastChannel`.
+2. **`SQLITE_BUSY` is this VFS's transfer protocol, not an error.** `jLock`
+   (`OPFSCoopSyncVFS.js:391-423`) returns `SQLITE_BUSY` while the handle request is in flight and
+   expects the caller to retry. Upstream says so itself: its contention handling "returns an error
+   and retries", which it calls "not very efficient".
+3. **We never retry.** No `busy_timeout` is applied — `client.ts:83` is explicit that no PRAGMA is
+   applied beyond SQLite defaults — and since wave 4 we map `SQLITE_BUSY`/`SQLITE_LOCKED` straight
+   to `SQLiteError('BUSY')` and hand it to the caller. **We turn a protocol step into a user-visible
+   failure.**
+4. **DDL is what makes it reproducible.** `CREATE`/`DROP` needs EXCLUSIVE, so every other connection
+   must have dropped its shared lock *and* released the handle at the same instant. With four
+   readers churning, that window barely opens.
+5. **Our `lockPolicy: 'shared'` does not reach it.** `OPFSCoopSyncVFS extends FacadeVFS`, **not**
+   `WebLocksMixin(FacadeVFS)` — it implements `jLock`/`jUnlock` itself, so the option we pass every
+   VFS at `worker/worker.ts:134` is silently ignored here. `OPFSAdaptiveVFS` and
+   `IDBBatchAtomicVFS` do extend the mixin and do honour it.
+
+**Falsifiable prediction:** give SQLite a working busy handler and the ~100 ms failure becomes a
+delay, not an error. If it instead *hangs*, hypothesis 3 is wrong about where the retry must live.
+
+### The README is already broken here, independently of the bug
+
+`README.md:64` sends the reader to Known Limitations "before using it with `poolSize > 1`", and
+**there is no CoopSync entry in Known Limitations** (`:241-248`). It also claims
+`Constraint: None`, which point 1 above contradicts. Fix this even if the rest is deferred.
+
+### Option space — none decided
+
+| | Option | Assessment |
+|---|---|---|
+| A | Default `busy_timeout` PRAGMA | Cheapest, already on the perf backlog for other reasons. **Risk to measure, not to deduce:** SQLite's busy handler sleeps; in a synchronous VFS in a worker that may block the very thread that owes the handle release, converting a failure into a deadlock. |
+| B | Bounded retry with backoff in **our** layer | We own the choke point (`applyBarrier` / `acquireInstrumented`, `client.ts:457`/`:513`), and yielding to the event loop avoids A's risk. But it touches every VFS, and replaying a statement inside an open transaction is not safe. |
+| C | `poolSize: 1` guard on CoopSync, like `AccessHandlePoolVFS` | One line, synchronously testable, an established pattern in this code. Costs nothing real: point 1 says a pool buys no concurrency here anyway. |
+| D | Drop CoopSync from the public surface; document `IDBBatchAtomicVFS` as the universal fallback | See the note below — its niche may be empty. Gated on VFS-COV. |
+| E | Documentation only | Minimum honest fix: closes the dangling reference and the false "Constraint: None". |
+
+### The question that precedes the options: does CoopSync have a niche left?
+
+Checked against the source 2026-08-24. Among VFS that never ask for `readwrite-unsafe` and so work
+outside Chromium: `IDBBatchAtomicVFS` (IndexedDB, extends `WebLocksMixin`, honours our shared lock
+policy, 0/360 stale, 15-26 ms), `AccessHandlePoolVFS` (`poolSize: 1` only), and CoopSync. The
+default `OPFSAdaptiveVFS` also degrades on such platforms, by its own detection. **CoopSync's only
+distinguishing combination is OPFS + `poolSize > 1` outside Chromium — which is exactly the
+combination that fails.** That argues for D, but D depends on `IDBBatchAtomicVFS` having tests
+(VFS-COV) and on someone having actually run a non-Chromium browser (RWU-1).
+
+### Recommended order — measure before designing
+
+1. Pin COOP-1 as a failing browser test (DDL interleaved with 4 readers) so there is a stable red.
+2. Probe A against B; the answer alone splits the option table in half.
+3. Run the non-Chromium paths under Playwright's Firefox/WebKit (RWU-1) — that decides D.
 
 ## Performance — after correctness, with debug instrumentation live
 

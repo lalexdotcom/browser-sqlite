@@ -4,6 +4,19 @@ Read `mem:project-state` for what the code is, `mem:follow-ups` for the issue ba
 This file holds only: what is in flight, what is undecided, in what order we work, and
 what changed last.
 
+> **Reading warning, added 2026-08-24.** Sections §1 to §4 are a **historical record**: the
+> decisions as they were taken, with the reasoning of the day. Two things they say are no longer
+> true of the code, and they are left unedited on purpose because the reasoning still explains why
+> later choices were made. Do not act on them:
+> - **`OPFSPermutedVFS` is deleted** and the default is `OPFSAdaptiveVFS` (Asyncify) since
+>   `be314db`. Every §1/§4 passage describing Permuted's asynchronous BroadcastChannel commit
+>   propagation is describing a VFS that is gone. Staleness turned out to be a property of the
+>   multi-connection setup, identical on every VFS.
+> - **Cross-origin isolation is not required.** The `SharedArrayBuffer` and `orchestrator.ts` are
+>   gone since wave 4; every "COOP/COEP is a hard requirement" passage is history.
+>
+> **§0 and §0.1 are the current state. Start there.**
+
 ## 0. Current state
 
 The stack upgrade of 2026-08-17 is **done and verified green** — see `mem:project-state`
@@ -53,6 +66,17 @@ branch**: `pnpm check` clean, `tsc --noEmit` clean, **272 tests / 0 failures**, 
 four bundler modes with no COOP/COEP header served anywhere. **BP-1 and D2 are closed** — see their entries in
 `mem:follow-ups`. 272 tests green, consumer smoke 11/11 with no COOP/COEP header served anywhere. The
 final whole-branch review returned no Critical or Important findings after one documentation fix wave.
+
+**`feat/vfs-default` is DONE, CLOSED and MERGED into `main`** (2026-08-20, merge commit `be314db`,
+8 commits). It is not a wave and has no spec or plan document — it opened with a probe
+(`a68047b`) and the measurement is in that commit's message, which is where to read it. What
+shipped: `OPFSPermutedVFS` **deleted** (24 % stale cross-connection reads, deprecated upstream),
+`OPFSAdaptiveVFS` on Asyncify as the new default (0 stale in 360 samples), a public `build`
+option validated at construction, the single `VFS_BUILDS` table as the source of truth, and
+`SQLiteError('INVALID_OPTION')`. Its whole-branch review returned two Critical and two Important
+findings, **all four documentation or coverage debt on a breaking change** — the README described
+the old world in seven places and the new guard had no falsifiable test. See `mem:project-state`
+for the resulting facts.
 
 Its documents: design `docs/superpowers/specs/2026-08-19-wave-4-backpressure-design.md` (§3.6 and §6.2
 carry in-place corrections dated 2026-08-20 — execution proved both wrong), implementation plan
@@ -125,9 +149,10 @@ a pre-commit view), the writer designation being releasable at all (see rule 3 i
 Its first act is still **BP-1's four-combination measurement**, not a design. Wave 3 narrowed the
 hypothesis without answering it — §1.5's amendment says exactly what was measured and what was not.
 
-**Next up: wave 3** — B4 (`quoteIdent()` + pragma allowlist, which also gives read PRAGMAs back
+~~**Next up: wave 3** — B4 (`quoteIdent()` + pragma allowlist, which also gives read PRAGMAs back
 to `read()`), B5 (`output()` rebuilt as staging + atomic rename per §1.1), B6 (debug wired per
-§1.3). The `navigator.locks` primitive enters the codebase here (D3, §1.1).
+§1.3). The `navigator.locks` primitive enters the codebase here (D3, §1.1).~~ **Struck 2026-08-24
+— wave 3 shipped on 2026-08-19. The next step is COOP-1; see §0.1.**
 
 **Original wave 1 statement, for reference** — extract pool + scheduler, fix exclusivity (B1), relayer the query
 API on `chunk()` (D4, §1.2), fix abort once inside it (covers `stream()`'s early `break`
@@ -148,10 +173,22 @@ red means the bug is fixed.
 writer-stickiness work (`4f215f8`) are both **merged into `main`**, both branches deleted. The
 session was closed on 2026-08-21 with the merged result verified **on `main`, not just on the
 branch**: `pnpm check` clean, `tsc --noEmit` clean, **308 tests / 0 failures** three runs running,
-and consumer smoke **11/11** across the four bundler modes. `main` is still not pushed to origin.
+and consumer smoke **11/11** across the four bundler modes.
 
-Three stale branches remain and none of them is live work: `feat/vfs-default`,
-`wave-1-pool-scheduler`, `wave-3-sql-safety`.
+**Re-verified 2026-08-24, still nothing in flight:** working tree clean, `pnpm test` at **308 tests
+/ 0 failures**. `main` is **163 commits ahead of `origin/main` and still not pushed** — that number
+only grows, and it is the one piece of unfinished housekeeping that predates every open item.
+
+Three local branches remain and **all three are fully merged** — `git rev-list --count main..<b>`
+is 0 for each, verified 2026-08-24: `feat/vfs-default`, `wave-1-pool-scheduler`,
+`wave-3-sql-safety`. They are leftovers to delete, not work to resume.
+
+**`feat/vfs-default` in particular is LIVE, not pending.** An earlier version of this section
+listed it among "stale branches ... none of them is live work", which reads as *unmerged*. It
+merged on 2026-08-20 as `be314db`: `OPFSPermutedVFS` is deleted, `OPFSAdaptiveVFS` is the default,
+and the `build` option exists. `mem:project-state` carried the old default for four days because
+of this wording and a false claim about the project's reliability reached the user on 2026-08-24.
+Say "merged" or "unmerged"; never "stale".
 
 Barrier spec: `docs/superpowers/specs/2026-08-21-ryow-barrier-design.md` — accurate except §2.2's
 claim about the alternating-load worst case, which measurement contradicted (see step 1 below).
@@ -193,8 +230,17 @@ so the file never grows and nothing auto-heals the connection. See spec §1.1.
    One plan claim did NOT survive measurement: relaxing stickiness does **not** fix the barrier's
    alternating-load worst case — on an idle pool the write and the following read take the same
    lowest free worker, so there was nothing there to fix. Spec §2.2 says otherwise; it is wrong.
-2. **`COOP-1`** — it blocks the "works everywhere" half of the README, and it is untouched.
-   **This is the next step.**
+2. **`COOP-1`** — **this is the next step, and it is now scoped.** Its mechanism was analysed from
+   the wa-sqlite source on 2026-08-24 and the full entry lives in `mem:follow-ups` as a dedicated
+   block (hypothesis, falsifiable prediction, five-option table, and the prior question of whether
+   CoopSync has a niche left at all). Read that block before anything else. Three things it
+   establishes: the README already contains a **dangling cross-reference** and a **false
+   "Constraint: None"** that are worth fixing on their own; the likely destination is a `poolSize:
+   1` guard plus documentation, because CoopSync rotates one exclusive handle and so buys no
+   concurrency in a pool; and the decision depends on two other entries — VFS-COV (the fallback
+   candidate `IDBBatchAtomicVFS` has zero tests) and RWU-1 (no non-Chromium browser has ever been
+   run). **Open with the measurement, not the design:** pin the failure as a red test, then probe
+   `busy_timeout` against a retry in our own layer.
 3. **The README's per-VFS trade-off section**, last, because 2 changes what it says. The RYOW
    wording is already rewritten and correct. Step 1 turned out to change nothing here: stickiness
    was never documented publicly (`grep -i sticky README.md src/` is empty).

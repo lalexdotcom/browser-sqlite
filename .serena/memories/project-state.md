@@ -1,17 +1,39 @@
 # Project State — `browser-sqlite`
 
-Snapshot date: 2026-08-19 (post wave 3). Update this file when the facts below change.
+Snapshot date: **2026-08-24** (post wave 4, post VFS branch, post barrier, post stickiness).
+Update this file when the facts below change — it went four days out of date on the VFS and
+caused a false statement to the user.
 
-## Read this first — a fact that cost a whole debugging round
+## Read this first — the VFS facts, twice corrected
 
-**The default VFS is `OPFSPermutedVFS`**, set as `DEFAULT_VFS` in `client.ts`. The
-`OPFSCoopSyncVFS` you will find in `worker/worker.ts` is only the worker's fallback when the
-client passes nothing — and the client always passes something. This matters far beyond
-trivia: `OPFSPermutedVFS` propagates commits to other connections **asynchronously**, over
-BroadcastChannel + IndexedDB, which is why a read on another worker can serve a stale view
-right after a write (see RYOW-1 in `mem:follow-ups`). An earlier version of this file said the
-default was `OPFSCoopSyncVFS`; a wave-3 dispatch repeated that and sent an agent down the
-wrong path for a full round.
+**The default VFS is `OPFSAdaptiveVFS` on the Asyncify build**, `DEFAULT_VFS` in `client.ts:324`.
+`OPFSPermutedVFS` is **gone from the codebase** — removed, not deprecated in place, by
+`feat/vfs-default` (merge `be314db`, 2026-08-20): it measured 24 % stale cross-connection reads
+and is deprecated upstream (rhashimoto/wa-sqlite#317). `grep -rn Permuted src/ README.md tests/`
+returns nothing.
+
+The five public VFS are declared in **one** table, `VFS_BUILDS` in `types.ts:84`, which is also
+what the `SQLiteVFS` type derives from: `OPFSAdaptiveVFS` (async, jspi), `OPFSWriteAheadVFS`
+(sync, async, jspi), `OPFSCoopSyncVFS` (sync, async, jspi), `AccessHandlePoolVFS` (sync, async,
+jspi), `IDBBatchAtomicVFS` (async, jspi). A `build` client option selects the wa-sqlite build;
+an undeclared pair throws `SQLiteError('INVALID_OPTION')` synchronously at construction, like the
+`AccessHandlePoolVFS` pool guard.
+
+**Every VFS is constructed with `{ lockPolicy: 'shared' }`** (`worker/worker.ts:134`) — upstream's
+recommendation in rhashimoto/wa-sqlite#302 for exactly our shape, a pool of workers reading
+concurrently. It reaches `WebLocksMixin`, which `OPFSAdaptiveVFS` extends. **`OPFSCoopSyncVFS` does
+not extend `WebLocksMixin`** — it implements `jLock`/`jUnlock` itself and silently ignores the
+option. That is part of why COOP-1 exists.
+
+Staleness is **not** a property of any one VFS: it is a property of the multi-connection setup,
+measured identical on every VFS and every build (40 runs, 40 stale). This is why the barrier is
+permanent architecture rather than a workaround for a bad default. See RYOW-1 in `mem:follow-ups`.
+
+**Two corrections this very block has had to absorb, both of which cost real time.** It once said
+the default was `OPFSCoopSyncVFS`; a wave-3 dispatch repeated that and sent an agent down the wrong
+path for a full round. It then said the default was `OPFSPermutedVFS` and kept saying it for four
+days after that VFS was deleted, which caused a false statement about the project's reliability to
+the user on 2026-08-24. **When the VFS choice changes, this block is the first thing to rewrite.**
 
 ## What it is
 
@@ -23,8 +45,8 @@ its implementation.
 
 ## Stack
 
-Versions below are post-upgrade (2026-08-17) and verified green: `tsc --noEmit`,
-`biome check`, `pnpm build`, 193 tests (unit + browser) — all pass as of wave 2.
+Versions below are post-upgrade (2026-08-17). Last verified green on `main` **2026-08-24**:
+`tsc --noEmit`, `biome check`, `pnpm build`, **308 tests (unit + browser), 0 failures**.
 
 - **TypeScript 7.0.2** (the native/Go compiler — `tsc` resolves a per-platform binary),
   ESM only, `type: module`. Build: **rslib 0.23.2** (`rslib.config.ts`) → `dist/` (flat,
@@ -33,18 +55,16 @@ Versions below are post-upgrade (2026-08-17) and verified green: `tsc --noEmit`,
 - Lint/format: **biome** 2.5.8 (`biome.json`; note it locally disables `noExplicitAny`
   and `noBannedTypes`). Run `pnpm check` after every modification.
 - Tests: **rstest 0.11.8** with two projects (`rstest.config.ts`):
-  - `unit` — Node, pure logic → `tests/unit/{debug,errors,orchestrator,routing,scheduler,supervisor,utils}.test.ts`
-    (`errors` and `supervisor` added in wave 2; `routing` and `scheduler` added in wave 1).
-  - `browser` — real Chromium via Playwright →
-    `tests/browser/{init,queries,concurrency,transaction,bulk-write,output,vfs,lifecycle,close,long-query,routing}.test.ts`
-    plus `helpers.ts` (`createTestClient(options?)` — unique OPFS name + afterEach cleanup).
-    Needs COOP/COEP headers, injected by an inline rsbuild plugin.
-    **273 tests total as of wave 3** (was 193 after wave 2, 148 after wave 1, 105 after wave 0).
-    Wave-3 additions: `tests/unit/{quoting,bulk,locks,logger}.test.ts` and
-    `tests/browser/debug.test.ts`, plus new cases in `routing`, `scheduler`, `debug`, `init`,
-    `output` and `bulk-write`.
-    - Wave-2 additions: `tests/unit/{errors,supervisor}.test.ts` and
-      `tests/browser/{lifecycle,close,long-query,routing}.test.ts`.
+  - `unit` — Node, pure logic, 13 files → `tests/unit/{bulk,credits,debug,epochs,errors,locks,
+    logger,quoting,routing,scheduler,supervisor,transaction,utils}.test.ts`.
+  - `browser` — real Chromium via Playwright, 15 files + `helpers.ts` →
+    `tests/browser/{backpressure,barrier,bulk-write,close,concurrency,debug,init,lifecycle,
+    long-query,output,queries,routing,transaction,vfs,writer-spread}.test.ts`.
+    `helpers.ts` exposes `createTestClient(options?)` — unique OPFS name + afterEach cleanup.
+    **No COOP/COEP headers anywhere** since the SAB was removed in wave 4 — if you find a
+    reference to them in this file or the config, it is stale.
+  - **308 tests total, 0 failures, re-verified on `main` 2026-08-24** (was 272 after wave 4's
+    first half, 272 after wave 3, 193 after wave 2, 148 after wave 1, 105 after wave 0).
   - **rstest 0.11.8 has no `it.each`** — parameterized tests use a plain `for` loop over an
     array, calling `it()` directly (see `tests/unit/routing.test.ts` for the pattern).
 - Package manager: pnpm 10.31.0. Playwright pinned at 1.62.1 (Chromium 1234 in the
@@ -76,7 +96,8 @@ The extension still carries "native-preview" branding post-GA (installed: 0.2026
 ```
 dist/
   index.js          client-facing entry; keeps new URL('./worker/worker.js', …) literal
-  index.d.ts  client.d.ts  debug.d.ts  orchestrator.d.ts  types.d.ts  utils.d.ts
+  index.d.ts  client.d.ts  debug.d.ts  errors.d.ts  types.d.ts  utils.d.ts  (one per src module;
+                    orchestrator.d.ts is gone with its source)
   worker/
     worker.js             monolithic: 3 Emscripten glues + 5 VFS modules inlined
     wa-sqlite.wasm
@@ -168,25 +189,28 @@ which hashes the config file itself. `pnpm build` is therefore always correct; n
 
 ## Layout (src/)
 
+Line counts verified 2026-08-24. `orchestrator.ts` is **deleted** — do not look for it.
+
 | File | Lines | Role |
 |---|---|---|
-| `client.ts` | 628 | **Assembly only** (since wave 1): options, validation, wiring, the public `SQLiteDB` surface, `close()`. No longer a god module — it was 1016 lines and held everything below. Three new options in wave 2: `maxWorkerRestarts` (default 1), `openTimeout` (default 30 000 ms), `drainTimeout` (default 60 000 ms). `close()` is now `() => Promise<void>`. |
-| `errors.ts` | 25 | **New in wave 2.** `SQLiteError extends Error` with `code: SQLiteErrorCode` and `name` mirroring `code`. Five codes: `NOT_A_READ_QUERY` / `CLIENT_CLOSED` / `WORKER_CRASHED` / `TIMEOUT` / `PROTOCOL_ERROR`. Exported from `index.ts`. |
-| `supervisor.ts` | 94 | **New in wave 2.** Pure per-slot restart policy, zero imports. Slot that never reached `ready` is never restarted; restart counter resets on a request actually served (not on `ready`); `maxWorkerRestarts` bounds it; an eviction leaving no live slot fails the client; `evicted` flag makes eviction permanent against a late `ready`. **`spawned` event added 2026-08-21 (`07b075a`) — a slot holds a worker from creation, not from `ready`.** Without it a replacement that died before booting read as a duplicate death signal, `report()` returned no decision, and the client hung forever with an empty pool. See the entry in `mem:follow-ups`. |
-| `scheduler.ts` | 200 | **Pure** — availability (a private `Set`), both wait queues, writer designation, opaque leases. Gained `remove(index)` and `shutdown(reason)` in wave 2; a per-index generation counter makes a stale lease's `release()` inert after the slot was removed and revived. No `Worker`, no DOM, no orchestrator import — Node tests drive it in milliseconds. **This purity is load-bearing: B1 survived for months because the scheduler was only reachable through slow browser tests.** |
-| `pool.ts` | 362 | Worker creation and transport: `postMessage` / `onmessage` routed by `callId`, the raw query generator, and the stop-and-drain that waits for the worker's in-flight `done` before a lease returns. `PoolWorker` now carries `interrupt()`, `quiesce()`, and `close()`. Wave 2 adds `onerror` (dead worker and the actionable load-failure message), `messageerror` (worker survives, request rejects with `PROTOCOL_ERROR`), a bounded stop-and-drain, and the `close` handshake. |
-| `queries.ts` | 163 | `chunk()` — the single query primitive and **the only place `AbortSignal` is read** — plus `streamRows` / `readWorker` / `firstWorker` / `writeWorker`. Wave 2 adds `makeAbortRace` helper; the abort now races the pending chunk instead of being tested after it, and the caller never awaits the drain. |
-| `transaction.ts` | 151 | `transaction()` over a single lease held for its whole lifetime. |
-| `bulk.ts` | 170 | `bulkWrite()` + `output()`. Still carries B5 verbatim. Calls the **public** `write` (one lease per batch, worker released between batches) — a property D3 depends on; do not consolidate it into one held lease. |
-| `worker/worker.ts` | 326 | Worker thread: VFS bootstrap, `open`, statement execution, chunked streaming. Wave 2: `ready` only on success and `open-error` on failure; every `cause` structured-clone-probed; `sqlite.close(db)` on the `close` message; exhaustive message dispatch. Holds `VFSConfigs` (the good extensibility pattern — `satisfies Record<SQLiteVFS, …>`). |
-| `orchestrator.ts` | 183 | `WorkerOrchestrator`: `SharedArrayBuffer` + `Atomics` for the init mutex and per-worker status flags. `Atomics.wait` is called worker-side only. |
-| `debug.ts` | ~230 | Instrumentation subsystem — **live since wave 3** (B6 closed). `createClientDebug(file, orchestrator, clientOptions, stats)`; both history arrays bounded at 50; `queue` is getter-backed and reads through `scheduler.stats()`, so no counter can go stale. |
-| `logger.ts` | ~30 | **New in wave 3.** `createLogger(prefix, enabled, sink = console)` → prefixed `console.debug/warn/error`. **Lifecycle events only** — 10 call sites, never per query. Disabled, it returns three no-op closures allocated once. |
-| `locks.ts` | ~120 | **New in wave 3.** Web Locks wrapper + the pure sweep decision. Exports `createLocks`, the named `noOpLocks` constant (use this in tests — `createLocks(undefined)` falls back to the real API, and **Node 24 ships one**), `stagingTableName` / `stagingLockName` / `sweepLockName`, and the pure `staleStagingTables`. The staging lock is **not** mutual exclusion — nothing contends for its name. It is a liveness marker: held for as long as a staging table exists, so another tab's sweep can tell in-flight from orphan. A dead tab's locks are released by the browser, which is why no timestamp or grace period is needed. |
-| `types.ts` | 93 | Wire protocol types plus the shared `SQLiteQueryOptions`. Lines 1-38 are still a stale duplicate that disagrees with the live one. |
-| `utils.ts` | 74 | `isReadQuery` / `isWriteQuery` (allowlist since wave 1) + `assertReadable(sql, method)` (new in wave 2, throws `NOT_A_READ_QUERY` before a lease is taken) + `sqlParams`/`addParam` (exported, tested, unused by the lib). |
-| `wa-sqlite.d.ts` | 81 | Hand-written 9-method `SQLiteAPI` subset shadowing wa-sqlite's own shipped types via a deep import; wave 2 added `close`. |
-| `index.ts` | 2 | `export * from './client'; export * from './errors'` — `SQLiteError` is now a public export. |
+| `client.ts` | 835 | **Assembly only** (since wave 1): options, validation, wiring, the public `SQLiteDB` surface, `close()`. It was 1016 lines and held everything below. Holds `DEFAULT_VFS` (`:324`), the vfs/build guard (`:391`), `applyBarrier` (`:457`) and `acquireInstrumented` (`:513`) — **the single choke point through which every read, write, transaction and bulk acquires a lease**, which is what makes the barrier one wrapper rather than six. |
+| `errors.ts` | 60 | `SQLiteError extends Error` with `code: SQLiteErrorCode` and `name` mirroring `code`, plus `BulkWriteError`. **Ten codes:** `NOT_A_READ_QUERY`, `CLIENT_CLOSED`, `WORKER_CRASHED`, `TIMEOUT`, `PROTOCOL_ERROR`, `INVALID_IDENTIFIER`, `INVALID_OPTION`, `INVALID_PRAGMA`, `BULK_WRITE_FAILED`, `BUSY`. |
+| `supervisor.ts` | 94 | Pure per-slot restart policy, zero imports. Slot that never reached `ready` is never restarted; restart counter resets on a request actually served (not on `ready`); `maxWorkerRestarts` bounds it; an eviction leaving no live slot fails the client; `evicted` flag makes eviction permanent against a late `ready`. **`spawned` event added 2026-08-21 (`07b075a`) — a slot holds a worker from creation, not from `ready`** (SUP-1). |
+| `scheduler.ts` | 274 | **Pure** — availability (a private `Set`), both wait queues, writer designation, opaque leases, `remove(index)`, `shutdown(reason)`, per-index generation counter. No `Worker`, no DOM. Node tests drive it in milliseconds. **This purity is load-bearing: B1 survived for months because the scheduler was only reachable through slow browser tests.** |
+| `pool.ts` | 458 | Worker creation and transport: `postMessage` / `onmessage` routed by `callId`, the raw query generator, the stop-and-drain that waits for the worker's in-flight `done` before a lease returns, `onerror` / `messageerror`, the `close` handshake, and the per-worker `status` field that replaced the SAB status byte. |
+| `queries.ts` | 167 | `chunk()` — the single query primitive and **the only place `AbortSignal` is read** — plus `streamRows` / `readWorker` / `firstWorker` / `writeWorker` and `makeAbortRace`. |
+| `transaction.ts` | 177 | `transaction()` over a single lease held for its whole lifetime. Evicts a worker whose fallback `ROLLBACK` failed. |
+| `bulk.ts` | 336 | `bulkWrite()` + `output()`. Calls the **public** `write` (one lease per batch, worker released between batches) — a property D3 depends on; do not consolidate it into one held lease. |
+| `worker/worker.ts` | 372 | Worker thread: VFS bootstrap, `open`, statement execution, chunked streaming. Holds `VFSConfigs` (VFS loaders only) and `WA_SQLITE_BUILDS` (keyed by build name). **Constructs every VFS with `{ lockPolicy: 'shared' }` at `:134`.** `ready` only on success, `open-error` on failure; every `cause` structured-clone-probed; exhaustive message dispatch. |
+| `credits.ts` | 94 | **Wave 4.** The pure credit gate, Node-tested like `scheduler.ts` and for the same reason. `createCreditGate(tick)` → `{ reset, grant, stop, take, isStopped, tick }`, plus `createMessageChannelTick` and `DEFAULT_CREDIT_WINDOW = 2`. |
+| `epochs.ts` | 89 | **The commit-propagation barrier's state.** A per-database commit epoch in the realm-wide symbol registry (`REGISTRY_KEY = Symbol.for('browser-sqlite.epochs.v1')`), so every client in a tab shares it. Exports `epochsFor`, `advanceSeen`, `BARRIER_SQL`. Node-tested. |
+| `debug.ts` | 236 | Instrumentation subsystem, live since wave 3 (B6 closed). Both history arrays bounded at 50; `queue` is getter-backed and reads through `scheduler.stats()`, so no counter can go stale. |
+| `logger.ts` | 30 | `createLogger(prefix, enabled, sink = console)`. **Lifecycle events only** — never per query. Disabled, it returns three no-op closures allocated once. |
+| `locks.ts` | 101 | Web Locks wrapper + the pure sweep decision. Exports `createLocks`, the named `noOpLocks` constant (use this in tests — `createLocks(undefined)` falls back to the real API, and **Node 24 ships one**), `initLockName`, `stagingTableName` / `stagingLockName` / `sweepLockName`, and the pure `staleStagingTables`. The staging lock is **not** mutual exclusion — nothing contends for its name. It is a liveness marker: held for as long as a staging table exists, so another tab's sweep can tell in-flight from orphan. A dead tab's locks are released by the browser, which is why no timestamp or grace period is needed. |
+| `types.ts` | 111 | Wire protocol types, `SQLiteQueryOptions`, and **`VFS_BUILDS` (`:84`) — the single source of truth for which builds each VFS runs on**, with `SQLiteVFS` derived from its keys and `defaultBuildFor()` reading its first entry. Adding a VFS without a loader, or a build without a module, fails to compile. |
+| `utils.ts` | 205 | `isReadQuery` / `isWriteQuery` (allowlist) + `assertReadable(sql, method)` + `quoteIdent` / `renderPragmas` + `sqlParams` / `addParam`. |
+| `wa-sqlite.d.ts` | 81 | Hand-written `SQLiteAPI` subset shadowing wa-sqlite's own shipped types via a deep import. |
+| `index.ts` | 2 | `export * from './client'; export * from './errors'`. |
 
 Public API surface (since wave 1): `chunk` / `read` / `write` / `first` / `stream` /
 `transaction` / `close`, plus `bulkWrite` and `output`. `one()` was renamed `first()`,
@@ -228,6 +252,46 @@ and `'Bundler Configuration'`) rather than the URL, for this reason.
   a half-filled new table, and a target that did not exist appears only at `close()`.
 - `bulkWrite`/`output` are single-use: `enqueue()` and `close()` throw once closed.
 - Read PRAGMAs work through `read()` again; a PRAGMA that assigns or takes an argument is a write.
+
+## Public surface added after wave 3 (VFS branch + barrier, 2026-08-20/21)
+
+- **`build?: 'sync' | 'async' | 'jspi'`** client option, validated synchronously at construction.
+- **`SQLiteError` codes `INVALID_OPTION` and `BUSY`.** `INVALID_OPTION` was introduced because the
+  vfs/build guard first threw `INVALID_IDENTIFIER` — a code meant for SQL identifier problems — so
+  a caller discriminating on `code` would have filed an option mistake as a query mistake.
+- **`SQLiteVFS` no longer includes `OPFSPermutedVFS`** and now includes `OPFSWriteAheadVFS`.
+  Breaking, accepted at rc: a consumer passing the old value no longer compiles, which is the
+  point.
+
+## What the README documents today — read it before changing any of this
+
+`README.md` sections: Install, Bundler Configuration (+ Vite), **VFS Selection (`:56`) + Builds
+(`:70`)**, Usage (Initialize / Read / Write / Stream / First / Advanced / Options / Close),
+Error handling, Requirements, Known Limitations.
+
+**VFS Selection (`:60-68`)** is one table with a Builds column — deliberately one table rather than
+two that could drift, and it names `VFS_BUILDS` as the source of truth. Its five rows:
+
+| VFS | Documented constraint | Documented role |
+|---|---|---|
+| `OPFSAdaptiveVFS` **(default)** | None — adapts to the platform, `poolSize >= 1` | General purpose, best choice for most applications |
+| `OPFSWriteAheadVFS` | **Chromium-only, fails silently elsewhere**; not covered by the test suite | WAL implemented inside the VFS |
+| `OPFSCoopSyncVFS` | *"None — cooperative sync"* | *"Broader browser compatibility fallback. See Known Limitations before using it with `poolSize > 1`."* |
+| `AccessHandlePoolVFS` | **`poolSize` must be `1`** — throws otherwise | Single-connection scenarios |
+| `IDBBatchAtomicVFS` | None | Fallback when OPFS is unavailable |
+
+**Two defects in that table, both found 2026-08-24, both open:**
+1. **The CoopSync row's cross-reference is dangling.** It sends the reader to Known Limitations
+   "before using it with `poolSize > 1`", and **there is no CoopSync entry in Known Limitations**
+   (`:241-248` lists only AccessHandlePool, jspi, WriteAhead and the RYOW caveat). The README warns
+   of a hazard and then documents nothing. See COOP-1 in `mem:follow-ups`.
+2. **Its "Constraint: None" is false as measured.** CoopSync holds an *exclusive* access handle, so
+   a pool does not read concurrently on it — it rotates one handle. Measured 2-3× slower than the
+   default at `poolSize` 4.
+
+**Requirements (`:237`)** correctly states that no special HTTP headers are needed — that is wave
+4's payoff and it must not regress. It also carries the note that the "Coop" in `OPFSCoopSyncVFS`
+means *cooperative*, not `Cross-Origin-Opener-Policy`.
 
 ## Scheduling rules — rules 1 and 2 as of wave 3, rule 3 rewritten 2026-08-21
 
