@@ -95,6 +95,12 @@ try {
   const columns = await page.$$eval('#head-row th', (th) => th.length - 1);
   if (columns === 0) fail('no column was rendered');
 
+  const enabled = await page.$eval('#download', (b) => !b.disabled);
+  if (!enabled) fail('download button never enabled');
+
+  const keys = await page.evaluate(() => Object.keys(window.__BENCH__.results));
+  if (!keys.includes('conformance')) fail('export shape wrong');
+
   process.stdout.write(
     `${columns} columns, results:\n` +
       JSON.stringify(await page.evaluate(() => window.__BENCH__.results), null, 2) +

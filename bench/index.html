@@ -69,6 +69,7 @@
     </details>
 
     <p><button type="button" id="start">Start</button></p>
+    <p><button type="button" id="download" disabled>Download JSON</button></p>
 
     <p id="status"></p>
 
@@ -718,6 +719,7 @@
         }
         const verify = await time(() => ctx.db.read(longQuery(bound)));
         ctx.longIterations = verify >= 1000 && verify <= 4000 ? bound : null;
+        RESULTS.measurements[ctx.pair.id].__iterations = ctx.longIterations;
         return ctx.longIterations;
       };
 
@@ -1104,6 +1106,8 @@
           }
         }
 
+        document.getElementById('download').disabled = false;
+
         try {
           await Promise.race([
             ctx.db.close(),
@@ -1170,6 +1174,59 @@
         }
       };
 
+      /**
+       * The page's output, in one file. Both halves are here and clearly
+       * separated, but only `conformance` is worth citing anywhere: the
+       * measurements describe one device on one day.
+       *
+       * Nothing consumes this automatically. It is not committed and
+       * scripts/render-vfs-matrix.ts never reads it — see spec §1.
+       */
+      const buildExport = () => ({
+        generatedAt: new Date().toISOString(),
+        lib: LIB_VERSION,
+        agent: AGENT,
+        features: {
+          opfs: HAS_OPFS,
+          readwriteUnsafe: HAS_UNSAFE_HANDLES,
+          jspi: HAS_JSPI,
+        },
+        clockMs: CLOCK_MS,
+        // Iteration counts differ per column by design (calibrateLongQuery), so
+        // pool-blocking is uninterpretable without them.
+        longQueryIterations: Object.fromEntries(
+          Object.entries(RESULTS.measurements).map(([pairId, rows]) => [
+            pairId,
+            rows.__iterations ?? null,
+          ]),
+        ),
+        conformance: RESULTS.conformance,
+        measurements: RESULTS.measurements,
+      });
+
+      const pad = (n) => String(n).padStart(2, '0');
+
+      const exportFilename = () => {
+        const d = new Date();
+        const stamp =
+          `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+          `-${pad(d.getHours())}${pad(d.getMinutes())}`;
+        const slug = (s) => String(s ?? 'unknown').replace(/[^\w.-]+/g, '-');
+        return `browser-sqlite-${slug(AGENT.engine)}-${slug(AGENT.version)}-${slug(LIB_VERSION)}-${stamp}.json`;
+      };
+
+      document.getElementById('download').addEventListener('click', () => {
+        const blob = new Blob([JSON.stringify(buildExport(), null, 2)], {
+          type: 'application/json',
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = exportFilename();
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+
       startButton.addEventListener('click', async () => {
         if (startButton.dataset.running) {
           stopRequested = true;
@@ -1178,21 +1235,28 @@
         startButton.dataset.running = '1';
         startButton.textContent = 'Stop';
         document.getElementById('picker').open = false;
+        document.getElementById('download').disabled = true;
         window.__BENCH__.done = false;
 
-        buildRows();
-        for (const pair of selectedPairs()) {
-          if (stopRequested) break;
-          await runPair(pair);
-        }
-        await cleanupIdb();
+        RESULTS.conformance = {};
+        RESULTS.measurements = {};
 
-        status.textContent = stopRequested ? 'stopped' : 'done';
-        window.__BENCH__.done = true;
-        window.__BENCH__.results = RESULTS;
-        startButton.textContent = 'Start';
-        delete startButton.dataset.running;
-        stopRequested = false;
+        try {
+          buildRows();
+          for (const pair of selectedPairs()) {
+            if (stopRequested) break;
+            await runPair(pair);
+          }
+          await cleanupIdb();
+
+          status.textContent = stopRequested ? 'stopped' : 'done';
+          window.__BENCH__.done = true;
+          window.__BENCH__.results = RESULTS;
+        } finally {
+          startButton.textContent = 'Start';
+          delete startButton.dataset.running;
+          stopRequested = false;
+        }
       });
 
       document.getElementById('status').textContent =
