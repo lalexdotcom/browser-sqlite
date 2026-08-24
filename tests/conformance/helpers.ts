@@ -75,7 +75,7 @@ async function probeUnsafeHandles(): Promise<boolean> {
  */
 export const HAS_UNSAFE_HANDLES = await probeUnsafeHandles();
 
-/** The largest pool a VFS allows, capped at 2 so scenarios stay comparable. */
+/** The VFS's declared pool cap when it has one, or 2 when the pool is unbounded. */
 export const poolFor = (vfs: SQLiteVFS): number =>
   VFS_CAPABILITIES[vfs].maxPoolSize ?? 2;
 

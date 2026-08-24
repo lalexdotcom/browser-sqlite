@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs';
-import { DEFAULT_VFS, VFS_CAPABILITIES } from '../src/types.ts';
+import { DEFAULT_VFS, VFS_CAPABILITIES, type VFSMemoryModel } from '../src/types.ts';
 
 const BEGIN =
   '<!-- BEGIN GENERATED VFS TABLE — edit VFS_CAPABILITIES in src/types.ts, then run `pnpm docs:vfs` -->';
@@ -9,7 +9,7 @@ const END = '<!-- END GENERATED VFS TABLE -->';
 const MEMORY_LABEL = {
   'page-cache': 'Page cache only, bounded by `PRAGMA cache_size`',
   'whole-database': '**Whole database in RAM**, multiplied by `poolSize`',
-} as const;
+} as const satisfies Record<VFSMemoryModel, string>;
 
 const rows = Object.entries(VFS_CAPABILITIES).map(([name, cap]) => {
   const label = name === DEFAULT_VFS ? `\`${name}\` **(default)**` : `\`${name}\``;
