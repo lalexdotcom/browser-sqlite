@@ -76,11 +76,13 @@
     <div id="results-wrap"><table id="results"><thead><tr id="head-row">
       <th>row</th></tr></thead><tbody id="body-rows"></tbody></table></div>
     <p class="note">
-      <b>Legend:</b> ✅ pass — conformance check passed · ❌ fail — an error was thrown · ⏱ timed out — row exceeded its time budget; the rest of the column is abandoned if the first row times out · ⃠ not applicable — this VFS's capabilities declare this row out of scope · — no result — we ran it but could not produce a trustworthy number
+      <b>Legend:</b> ✅ pass — conformance check passed · ❌ fail — an error was thrown · ⏱ timed out — row exceeded its time budget; the rest of the column is abandoned if the first row times out · ⃠ not applicable — this VFS's capabilities declare this row out of scope · ⃠ blocked — the row ran, but the concurrent read was never served; the pool-acquire blocked at the scheduler while a write transaction held the VFS's single access handle — this tells you the VFS serializes the pool under a write transaction · — no result — we ran it but could not produce a trustworthy number
     </p>
     <p class="note">
-      <code>read-burst-concurrency</code> shows pool concurrency gains for VFS where
-      each read takes ≥0.5 ms; a pool-1 VFS near 1.00× is declared behaviour, not a failure.
+      <code>read-burst-concurrency</code> shows pool concurrency gains; a ratio is
+      omitted when the median serial total falls below 4× the clock’s resolution —
+      reads too fast to time reliably produce jitter, not a signal.
+      A pool-1 VFS near 1.00× is declared behaviour, not a failure.
       <code>pool-blocking</code> does not apply to pool-1 VFS (cell shows ⃠).
       Where it does apply, ≈1 means the pool kept serving reads freely during
       the long statement.
@@ -404,7 +406,8 @@
 
       /**
        * Conformance rows. Ids are the describe() titles of
-       * tests/conformance/invariants.test.ts, verbatim — see BENCH-DRIFT in
+       * tests/conformance/invariants.test.ts, normalized: the "invariant N — "
+       * prefix is dropped and the remainder is kebab-cased — see BENCH-DRIFT in
        * mem:follow-ups. `run` resolves true, resolves 'blocked', or throws.
        */
       const CONFORMANCE_ROWS = [
@@ -534,10 +537,12 @@
               await ctx.db.write('CREATE TABLE inv5 (a INTEGER)', undefined, {
                 signal,
               });
-              // No clock: a close that never settles is caught by the row
-              // timeout. Asserting a duration here would be a benchmark, and
-              // benchmarks are the other half of this page.
-              await ctx.db.close();
+              // close() accepts no AbortSignal; the library's drainTimeout
+              // defaults to 60 s, which exceeds this row's 30 s budget.
+              // closeWithTimeout races it against a hard timer — ColumnAbandoned
+              // abandons the column if close does not settle, because the
+              // client's state is unknown after a stall.
+              await closeWithTimeout(ctx.db);
               let rejected = false;
               try {
                 await ctx.db.read('SELECT 1 AS n');
@@ -1029,6 +1034,20 @@
       let stopRequested = false;
 
       /**
+       * Races db.close() against a hard timer. The library's drainTimeout
+       * defaults to 60 s; this keeps the sequential run within its budget.
+       * Rejects with ColumnAbandoned on timeout so the caller can signal
+       * that the column or pair cannot continue.
+       */
+      const closeWithTimeout = (db) =>
+        Promise.race([
+          db.close(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new ColumnAbandoned()), ROW_TIMEOUT_MS),
+          ),
+        ]);
+
+      /**
        * One pair at a time, one row at a time. Two VFS running concurrently
        * would contend for OPFS and invalidate every number on this page, so
        * this sequencing is a correctness requirement, not a simplification.
@@ -1109,12 +1128,7 @@
         document.getElementById('download').disabled = false;
 
         try {
-          await Promise.race([
-            ctx.db.close(),
-            new Promise((_, reject) =>
-              setTimeout(() => reject(new Error('close timed out')), ROW_TIMEOUT_MS),
-            ),
-          ]);
+          await closeWithTimeout(ctx.db);
         } catch {
           // A close that never settles is HANDLE-1 holding the pool. Nothing
           // to do but move on; the worker dies with the page.

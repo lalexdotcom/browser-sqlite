@@ -130,7 +130,13 @@ try {
   }
   if (payload.lib === 'unknown') fail('export lib is "unknown"');
 
+  if (Object.keys(payload.measurements).length === 0) {
+    fail('export measurements is empty — no pairs ran');
+  }
   for (const [pairId, rows] of Object.entries(payload.measurements)) {
+    if (Object.keys(rows).length === 0) {
+      fail(`measurements[${pairId}] has no row entries`);
+    }
     const internal = Object.keys(rows).filter((k) => k.startsWith('__'));
     if (internal.length > 0) {
       fail(`measurements[${pairId}] has internal keys: ${internal.join(', ')}`);
