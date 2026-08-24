@@ -57,19 +57,38 @@ export default defineConfig({
 
 browser-sqlite delegates storage to a wa-sqlite Virtual File System (VFS). Choose based on browser support and storage requirements:
 
-| VFS | Storage | Builds | Constraint | When to use |
-|-----|---------|--------|------------|-------------|
-| `OPFSAdaptiveVFS` **(default)** | OPFS | `async`, `jspi` | None — adapts to the platform, supports `poolSize >= 1` | General purpose. Best choice for most applications. |
-| `OPFSWriteAheadVFS` | OPFS | `sync`, `async`, `jspi` | **Chromium-only, and it fails silently elsewhere** — requires `readwrite-unsafe` access handles with no fallback | Write-ahead logging implemented inside the VFS. Not covered by this library's test suite. |
-| `OPFSCoopSyncVFS` | OPFS | `sync`, `async`, `jspi` | None — cooperative sync | Broader browser compatibility fallback. See Known Limitations before using it with `poolSize > 1`. |
-| `AccessHandlePoolVFS` | OPFS | `sync`, `async`, `jspi` | **`poolSize` must be `1`** — throws otherwise | Single-connection scenarios requiring access handle pool semantics. |
-| `IDBBatchAtomicVFS` | IndexedDB | `async`, `jspi` | None | Fallback when OPFS is unavailable (older browsers, some mobile environments). |
+<!-- BEGIN GENERATED VFS TABLE — edit VFS_CAPABILITIES in src/types.ts, then run `pnpm docs:vfs` -->
+
+| VFS | Builds | Pool size | Shared between connections | Survives close | Memory |
+|-----|--------|-----------|----------------------------|----------------|--------|
+| `OPFSAdaptiveVFS` **(default)** | `async`, `jspi` | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `OPFSWriteAheadVFS` | `sync`, `async`, `jspi` | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `OPFSCoopSyncVFS` | `sync`, `async`, `jspi` | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `AccessHandlePoolVFS` | `sync`, `async`, `jspi` | **1** — it cannot share access handles between connections | No | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `IDBBatchAtomicVFS` | `async`, `jspi` | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `IDBMirrorVFS` | `async`, `jspi` | Any | Yes | Yes | **Whole database in RAM**, multiplied by `poolSize` |
+| `OPFSAnyContextVFS` | `async`, `jspi` | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `MemoryVFS` | `sync`, `async`, `jspi` | **1** — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently | No | **No — volatile** | **Whole database in RAM**, multiplied by `poolSize` |
+| `MemoryAsyncVFS` | `async`, `jspi` | **1** — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently | No | **No — volatile** | **Whole database in RAM**, multiplied by `poolSize` |
+
+<!-- END GENERATED VFS TABLE -->
+
+One property the table cannot show, because verifying it means timing something
+and this project's CI runs tests rather than benchmarks: **on a browser without
+`readwrite-unsafe` access handles, any VFS that rotates a single exclusive OPFS
+handle serializes the whole pool for the duration of a long uninterruptible
+statement.** That covers `OPFSAdaptiveVFS` in its degraded mode and
+`OPFSCoopSyncVFS`. `IDBMirrorVFS`, `OPFSAnyContextVFS` and `IDBBatchAtomicVFS`
+hold no such handle and are unaffected.
+
+Browsers nobody has run are marked *not measured* rather than presumed
+compatible.
 
 When `vfs` is omitted, `OPFSAdaptiveVFS` is used.
 
 ### Builds
 
-Each VFS runs on one or more wa-sqlite WebAssembly builds: `sync`, `async` (Asyncify), or `jspi` (JavaScript Promise Integration, Chromium-only). The `build` option selects one. Omitted, the first build the VFS declares is used — `async` for the default VFS. A pair the VFS does not support throws a `SQLiteError` with code `INVALID_OPTION` at construction, naming the builds it does support. The pairing is declared in one place, `VFS_BUILDS`, which is also what the `SQLiteVFS` type is derived from.
+Each VFS runs on one or more wa-sqlite WebAssembly builds: `sync`, `async` (Asyncify), or `jspi` (JavaScript Promise Integration, Chromium-only). The `build` option selects one. Omitted, the first build the VFS declares is used — `async` for the default VFS. A pair the VFS does not support throws a `SQLiteError` with code `INVALID_OPTION` at construction, naming the builds it does support. The pairing is declared in one place, `VFS_CAPABILITIES`, which is also what the `SQLiteVFS` type is derived from.
 
 For a detailed VFS comparison, see the [wa-sqlite VFS comparison](https://github.com/rhashimoto/wa-sqlite/tree/master/src/examples#vfs-comparison).
 

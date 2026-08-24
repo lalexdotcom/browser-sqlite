@@ -47,7 +47,8 @@
 		"test:unit": "rstest --project unit",
 		"test:browser": "rstest --project browser",
 		"test:consumer": "node scripts/consumer-smoke.mjs",
-		"test:conformance": "rstest --config rstest.conformance.config.ts"
+		"test:conformance": "rstest --config rstest.conformance.config.ts",
+		"docs:vfs": "node scripts/render-vfs-matrix.ts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.8",
