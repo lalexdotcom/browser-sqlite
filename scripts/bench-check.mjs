@@ -61,6 +61,12 @@ try {
     fail('__LIB_VERSION__ was not substituted — run pnpm bench:build first');
   }
 
+  // The picker is collapsed by default and Playwright will not act on what it
+  // cannot see.
+  await page.evaluate(() => {
+    document.getElementById('picker').open = true;
+  });
+
   const runnable = await page.$$eval(
     '#picker-list input[data-pair]:not([disabled])',
     (els) => els.map((e) => e.dataset.pair),
