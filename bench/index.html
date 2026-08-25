@@ -325,6 +325,7 @@
 
       document.getElementById('banner').innerHTML = [
         `<span><b>${AGENT.engine}</b> ${AGENT.version ?? '?'}</span>`,
+        `<span><b>os</b> ${AGENT.os}</span>`,
         buildBadge(),
         flag('OPFS', HAS_OPFS),
         flag('readwrite-unsafe', HAS_UNSAFE_HANDLES),
@@ -1834,9 +1835,11 @@
 
       const exportFilename = () => {
         const d = new Date();
+        // One unbroken YYYYMMDDHHMMSS: seconds because two runs a minute apart
+        // are normal, and no separator because the whole stamp is one sort key.
         const stamp =
           `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
-          `-${pad(d.getHours())}${pad(d.getMinutes())}`;
+          `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
         const slug = (s) => String(s ?? 'unknown').replace(/[^\w.-]+/g, '-');
         // Timestamp first so a directory of these sorts chronologically on its
         // own, which is how they are read: a campaign, in order, not a set.
