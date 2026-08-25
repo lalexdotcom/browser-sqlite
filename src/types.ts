@@ -74,7 +74,11 @@ export type SQLiteBuild = 'sync' | 'async' | 'jspi';
  * (`scripts/render-vfs-matrix.ts`) with its sources — not here, where it would
  * ship to every consumer for nothing.
  */
-export type PlatformFeature = 'opfs' | 'readwrite-unsafe' | 'jspi';
+export type PlatformFeature =
+  | 'opfs'
+  | 'readwrite-unsafe'
+  | 'jspi'
+  | 'writable-stream';
 
 /** Where a VFS keeps the database. */
 export type VFSStorage = 'opfs' | 'indexeddb' | 'memory';
@@ -231,7 +235,7 @@ export const VFS_CAPABILITIES = {
     persistent: true,
     memoryModel: 'page-cache',
     storage: 'opfs',
-    requires: ['opfs'],
+    requires: ['opfs', 'writable-stream'],
     degradesWithout: [],
   },
   MemoryVFS: {

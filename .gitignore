@@ -24,3 +24,6 @@ doc_build/
 .pnpm-store
 # Subagent-driven-development scratch: ledgers, briefs, reports, review packages.
 .superpowers/
+
+# Scratch clones for upstream work (forks, patches under review). Never shipped.
+.work/

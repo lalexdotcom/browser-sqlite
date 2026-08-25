@@ -77,7 +77,10 @@
 	"pnpm": {
 		"onlyBuiltDependencies": [
 			"simple-git-hooks"
-		]
+		],
+		"patchedDependencies": {
+			"wa-sqlite@1.1.1": "patches/wa-sqlite@1.1.1.patch"
+		}
 	},
 	"private": false,
 	"packageManager": "pnpm@10.31.0"

@@ -181,7 +181,7 @@ only your device can say what it *costs* there.
 | `AccessHandlePoolVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 111+/153+<br>Safari 15.4+/27+<br>Android 109+/?<br>iOS 15.4+ (no jspi) | **1** — it cannot share access handles between connections | No | Yes | Page cache only, bounded by `PRAGMA cache_size` |
 | `IDBBatchAtomicVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 95+/153+<br>Safari 15.4+/27+<br>Android 92+/?<br>iOS 15.4+ (no jspi) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
 | `IDBMirrorVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 95+/153+<br>Safari 15.4+/27+<br>Android 92+/?<br>iOS 15.4+ (no jspi) | **1** — its pages are mirrored per worker and commits propagate asynchronously, so a larger pool reads stale data or fails outright | No | Yes | **Whole database in RAM**, multiplied by `poolSize` |
-| `OPFSAnyContextVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 111+/153+<br>Safari 15.4+/27+<br>Android 109+/?<br>iOS 15.4+ (no jspi) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `OPFSAnyContextVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 111+/153+<br>Safari 26+/27+<br>Android 109+/?<br>iOS 26+ (no jspi) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
 | `MemoryVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 95+/153+<br>Safari 15.4+/27+<br>Android 92+/?<br>iOS 15.4+ (no jspi) | **1** — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently | No | **No — volatile** | **Whole database in RAM**, multiplied by `poolSize` |
 | `MemoryAsyncVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 95+/153+<br>Safari 15.4+/27+<br>Android 92+/?<br>iOS 15.4+ (no jspi) | **1** — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently | No | **No — volatile** | **Whole database in RAM**, multiplied by `poolSize` |
 
@@ -222,6 +222,12 @@ revision of this section claimed the broader form, and measurement narrowed it.
 Both halves are measured by `scripts/bench/html/index.html`, which runs in your own browser;
 its `no-read-inside-transaction` and `pool-blocking` rows are the two
 observations above.
+
+#### `OPFSAnyContextVFS` and wa-sqlite
+
+This VFS needs a patched wa-sqlite to work on Safari. browser-sqlite ships that
+patch inside its own worker bundle — there is nothing for you to install or
+configure.
 
 ### Builds
 

@@ -262,6 +262,15 @@
       const HAS_JSPI = typeof WebAssembly.Suspending === 'function';
 
       /**
+       * `createWritable()`, which `OPFSAnyContextVFS` writes through. WebKit
+       * shipped it eleven versions after OPFS itself, so a browser can have
+       * OPFS and still not run that VFS.
+       */
+      const HAS_WRITABLE_STREAM =
+        typeof FileSystemFileHandle !== 'undefined' &&
+        typeof FileSystemFileHandle.prototype.createWritable === 'function';
+
+      /**
        * `mode: 'readwrite-unsafe'` on OPFS sync access handles, probed by
        * BEHAVIOUR: open two handles on one file and see whether the second
        * succeeds. Firefox accepts the option and ignores it, so asking whether
@@ -405,6 +414,11 @@
       const missingFeature = (pair) => {
         if (pair.build === 'jspi' && !HAS_JSPI) return 'jspi';
         if (pair.cap.requires.includes('opfs') && !HAS_OPFS) return 'opfs';
+        if (
+          pair.cap.requires.includes('writable-stream') &&
+          !HAS_WRITABLE_STREAM
+        )
+          return 'writable-stream';
         if (
           pair.cap.requires.includes('readwrite-unsafe') &&
           !HAS_UNSAFE_HANDLES

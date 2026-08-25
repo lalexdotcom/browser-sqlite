@@ -46,6 +46,16 @@ const FEATURE_SUPPORT = {
     Safari: null,
     iOS: null,
   },
+  // FileSystemFileHandle.createWritable, which OPFSAnyContextVFS writes
+  // through. WebKit shipped it eleven versions after OPFS itself, so this is
+  // what keeps that row from claiming Safari 15.2.
+  'writable-stream': {
+    Chrome: '86',
+    Android: '109',
+    Firefox: '111',
+    Safari: '26',
+    iOS: '26',
+  },
   jspi: {
     Chrome: '137',
     Android: 'yes',
