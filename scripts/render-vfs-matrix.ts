@@ -92,6 +92,47 @@ const BROWSER_LABEL: Record<Browser, string> = {
 
 /** The highest of several minimum versions, or null if any is unsupported. */
 /** How a single support value reads on its own. */
+/**
+ * What the library itself needs, before any VFS is considered — set by
+ * `Array.prototype.at()` and `crypto.randomUUID()` in the published bundle.
+ * MDN browser-compat-data, checked 2026-08-25. Mobile columns follow their
+ * desktop engine, which BCD was not consulted for separately.
+ *
+ * Every cell below is the LATER of this and the VFS's own requirement: a VFS
+ * that works where the library does not is not information a reader can use.
+ */
+const LIB_FLOOR: Record<string, string> = {
+  Chrome: '92',
+  Firefox: '95',
+  Safari: '15.4',
+  Android: '92',
+  iOS: '15.4',
+};
+
+/** The later of two version strings, comparing segment by segment. */
+const laterOf = (a: string, b: string): string => {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? 0;
+    const y = pb[i] ?? 0;
+    if (x !== y) return x > y ? a : b;
+  }
+  return a;
+};
+
+/** A VFS floor raised to the library's, which no VFS can go below. */
+const withLibFloor = (v: Support | undefined, browser: string): Support => {
+  const lib = LIB_FLOOR[browser] ?? '0';
+  if (v === null) return null;
+  // `yes` means supported from a version no source gives. Raising it to the
+  // library's floor would invent a number: the true floor is at least that, but
+  // may be higher, and only `?` says so honestly.
+  if (v === 'yes') return 'yes';
+  if (v === undefined) return lib;
+  return laterOf(v, lib);
+};
+
 const versionCell = (v: Support): string =>
   v === null ? '**No**' : v === 'yes' ? 'Yes' : `${v}+`;
 
@@ -151,7 +192,7 @@ const supportFor = (
   // `0` rather than a blank: the pair is always two positions, and an engine
   // with no floor at all reads as 0 instead of leaving the reader to guess
   // whether a number went missing.
-  const first = base === undefined || base === 'yes' ? '0' : `${base}+`;
+  const first = `${withLibFloor(base, browser)}+`;
 
   // Opting into `jspi` raises the floor, sometimes by a lot — Firefox runs the
   // default build from 111 but jspi only from 153. Both numbers, or a reader
@@ -163,12 +204,8 @@ const supportFor = (
   let second = '';
   if (cap.builds.includes('jspi')) {
     const f = floorOf([...cap.requires, 'jspi'], browser);
-    second =
-      f === null
-        ? ' (no jspi)'
-        : f === undefined
-          ? '/0'
-          : `/${f === 'yes' ? '?' : `${f}+`}`;
+    const raised = withLibFloor(f, browser);
+    second = raised === null ? ' (no jspi)' : `/${raised === 'yes' ? '?' : `${raised}+`}`;
   }
 
   return `${browser} ${first}${second}${marker}`;

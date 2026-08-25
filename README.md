@@ -154,6 +154,12 @@ export default defineConfig({
 
 `dist/worker/` is an asset directory — the worker script and its three `.wasm` siblings must travel with the built app.
 
+## Browser support
+
+| Chrome | Firefox | Safari |
+|---|---|---|
+| 92+ | 95+ | 15.4+ |
+
 ## VFS Selection
 
 browser-sqlite delegates storage to a
@@ -169,15 +175,15 @@ only your device can say what it *costs* there.
 
 | VFS | Builds | Browser compatibility | Pool size | Shared between connections | Survives close | Memory |
 |-----|--------|-----------------------|-----------|----------------------------|----------------|--------|
-| `OPFSAdaptiveVFS` **(default)** | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 86+/137+<br>Firefox 111+/153+ [(*)](#-reduced-mode)<br>Safari 15.2+/27+ [(*)](#-reduced-mode)<br>Android 109+/?<br>iOS 15.2+ (no jspi) [(*)](#-reduced-mode) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `OPFSAdaptiveVFS` **(default)** | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 111+/153+ [(*)](#-reduced-mode)<br>Safari 15.4+/27+ [(*)](#-reduced-mode)<br>Android 109+/?<br>iOS 15.4+ (no jspi) [(*)](#-reduced-mode) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
 | `OPFSWriteAheadVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 121+/137+<br>Android 121+/? | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
-| `OPFSCoopSyncVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 86+/137+<br>Firefox 111+/153+<br>Safari 15.2+/27+<br>Android 109+/?<br>iOS 15.2+ (no jspi) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
-| `AccessHandlePoolVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 86+/137+<br>Firefox 111+/153+<br>Safari 15.2+/27+<br>Android 109+/?<br>iOS 15.2+ (no jspi) | **1** — it cannot share access handles between connections | No | Yes | Page cache only, bounded by `PRAGMA cache_size` |
-| `IDBBatchAtomicVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 0/137+<br>Firefox 0/153+<br>Safari 0/27+<br>Android 0/?<br>iOS 0 (no jspi) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
-| `IDBMirrorVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 0/137+<br>Firefox 0/153+<br>Safari 0/27+<br>Android 0/?<br>iOS 0 (no jspi) | **1** — its pages are mirrored per worker and commits propagate asynchronously, so a larger pool reads stale data or fails outright | No | Yes | **Whole database in RAM**, multiplied by `poolSize` |
-| `OPFSAnyContextVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 86+/137+<br>Firefox 111+/153+<br>Safari 15.2+/27+<br>Android 109+/?<br>iOS 15.2+ (no jspi) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
-| `MemoryVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 0/137+<br>Firefox 0/153+<br>Safari 0/27+<br>Android 0/?<br>iOS 0 (no jspi) | **1** — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently | No | **No — volatile** | **Whole database in RAM**, multiplied by `poolSize` |
-| `MemoryAsyncVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 0/137+<br>Firefox 0/153+<br>Safari 0/27+<br>Android 0/?<br>iOS 0 (no jspi) | **1** — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently | No | **No — volatile** | **Whole database in RAM**, multiplied by `poolSize` |
+| `OPFSCoopSyncVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 111+/153+<br>Safari 15.4+/27+<br>Android 109+/?<br>iOS 15.4+ (no jspi) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `AccessHandlePoolVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 111+/153+<br>Safari 15.4+/27+<br>Android 109+/?<br>iOS 15.4+ (no jspi) | **1** — it cannot share access handles between connections | No | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `IDBBatchAtomicVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 95+/153+<br>Safari 15.4+/27+<br>Android 92+/?<br>iOS 15.4+ (no jspi) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `IDBMirrorVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 95+/153+<br>Safari 15.4+/27+<br>Android 92+/?<br>iOS 15.4+ (no jspi) | **1** — its pages are mirrored per worker and commits propagate asynchronously, so a larger pool reads stale data or fails outright | No | Yes | **Whole database in RAM**, multiplied by `poolSize` |
+| `OPFSAnyContextVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 111+/153+<br>Safari 15.4+/27+<br>Android 109+/?<br>iOS 15.4+ (no jspi) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `MemoryVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 95+/153+<br>Safari 15.4+/27+<br>Android 92+/?<br>iOS 15.4+ (no jspi) | **1** — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently | No | **No — volatile** | **Whole database in RAM**, multiplied by `poolSize` |
+| `MemoryAsyncVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 95+/153+<br>Safari 15.4+/27+<br>Android 92+/?<br>iOS 15.4+ (no jspi) | **1** — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently | No | **No — volatile** | **Whole database in RAM**, multiplied by `poolSize` |
 
 <!-- END GENERATED VFS TABLE -->
 
@@ -372,41 +378,6 @@ one database a reasonable thing to do.
 browser-sqlite requires no special HTTP headers. OPFS access handles work in a plain worker context; cross-origin isolation is not needed. The default build needs no browser opt-in; only `build: 'jspi'` does, and that is an unrelated browser constraint, not a header requirement.
 
 Note: the "Coop" in `OPFSCoopSyncVFS` stands for *cooperative*, not the `Cross-Origin-Opener-Policy` header.
-
-### Browser baseline
-
-**The VFS table's compatibility column describes what each VFS needs, not what
-this library needs.** A cell reading `0` means the VFS itself imposes no floor —
-it does not mean the package runs on any browser. It does not.
-
-`dist/` is published as `esnext` and is not down-levelled, so the floor is
-whichever of these landed last in a given engine:
-
-| feature | Chrome | Firefox | Safari |
-|---|---|---|---|
-| logical assignment (`??=`, `\|\|=`) | 85 | 79 | 14 |
-| private class fields | 74 | 90 | 14.1 |
-| `Array.prototype.at()` | 92 | 90 | 15.4 |
-| `crypto.randomUUID()` | 92 | 95 | 15.4 |
-| **effective floor** | **92** | **95** | **15.4** |
-
-Versions from MDN browser-compat-data, checked 2026-08-25. `structuredClone()`
-is also used and is not included above: its BCD entry was not located, so no
-number is claimed for it.
-
-The floor is set by the two APIs, not by the syntax. Note that the benchmark
-page — a development tool, not part of the package — additionally uses top-level
-`await`, so it can require a newer browser than the library does. BCD records
-that as arriving in Safari 27, yet the page ran on **Safari 26.5.2**, so either
-the entry is wrong or it means something other than a first supporting version;
-the observation is direct and this table does not depend on it either way.
-
-An engine below the floor fails at parse or first use, not gracefully — a
-2020-era Chromium rejects the module outright. Every browser this project has
-measured (Chrome 149-151, Firefox 154, Safari 26.5) clears it comfortably. Note
-also that OPFS itself starts at Chrome 86 / Firefox 111 / Safari 15.2, so on the
-oldest engines that clear this floor only the IndexedDB and memory VFS are
-available.
 
 ## Known Limitations
 
