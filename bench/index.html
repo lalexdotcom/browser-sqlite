@@ -195,9 +195,14 @@
         const touch = navigator.maxTouchPoints ?? 0;
         if (/Android/.test(ua)) return 'android';
         if (/iPhone|iPod/.test(ua)) return 'ios';
-        if (/iPad/.test(ua) || (platform === 'MacIntel' && touch > 1)) {
-          return 'ipados';
-        }
+        // `navigator.standalone` is exposed by WebKit on iOS and iPadOS and
+        // does not exist on macOS, so it survives a touch-capable Mac — which
+        // `maxTouchPoints > 1` would report as an iPad. Touch stays as the
+        // fallback for the day Apple drops `standalone`. Neither signal is
+        // durable; this labels a file and nothing more.
+        const isIosFamily =
+          'standalone' in navigator || (platform === 'MacIntel' && touch > 1);
+        if (/iPad/.test(ua) || isIosFamily) return 'ipados';
         if (/Mac/.test(platform) || /Mac OS X/.test(ua)) return 'macos';
         if (/Win/.test(platform)) return 'windows';
         if (/Linux|X11/.test(platform)) return 'linux';
