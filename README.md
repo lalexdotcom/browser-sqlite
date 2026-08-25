@@ -382,18 +382,31 @@ it does not mean the package runs on any browser. It does not.
 `dist/` is published as `esnext` and is not down-levelled, so the floor is
 whichever of these landed last in a given engine:
 
-| | |
-|---|---|
-| syntax | logical assignment (`??=`, `\|\|=`), private class fields, top-level `await` |
-| APIs | `crypto.randomUUID()`, `Array.prototype.at()`, `structuredClone()` |
+| feature | Chrome | Firefox | Safari |
+|---|---|---|---|
+| logical assignment (`??=`, `\|\|=`) | 85 | 79 | 14 |
+| private class fields | 74 | 90 | 14.1 |
+| `Array.prototype.at()` | 92 | 90 | 15.4 |
+| `crypto.randomUUID()` | 92 | 95 | 15.4 |
+| top-level `await` | 89 | 89 | see below |
+| **effective floor** | **92** | **95** | **15.4** |
 
-An engine missing any of them fails at parse or first use, not gracefully — a
-2020-era Chromium, for instance, rejects the module outright. Every browser
-version this project has measured (Chrome 149-151, Firefox 154, Safari 26.5)
-clears all of it comfortably.
+Versions from MDN browser-compat-data, checked 2026-08-25. `structuredClone()`
+is also used and is not included above: its BCD entry was not located, so no
+number is claimed for it.
 
-Exact minimum versions are not stated here yet because they have not been
-checked against a citable source; see BASELINE-1 in the project's notes.
+**One caveat, stated because the source and our own observation disagree.** BCD
+records top-level `await` as arriving in Safari 27. This page uses it, and it
+ran on **Safari 26.5.2** — so the entry is either wrong or means something other
+than a first supporting version. The observation is direct and the floor above
+follows the other features instead.
+
+An engine below the floor fails at parse or first use, not gracefully — a
+2020-era Chromium rejects the module outright. Every browser this project has
+measured (Chrome 149-151, Firefox 154, Safari 26.5) clears it comfortably. Note
+also that OPFS itself starts at Chrome 86 / Firefox 111 / Safari 15.2, so on the
+oldest engines that clear this floor only the IndexedDB and memory VFS are
+available.
 
 ## Known Limitations
 
