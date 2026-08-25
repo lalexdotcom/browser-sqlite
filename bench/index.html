@@ -28,6 +28,11 @@
       }
       #banner b { font-weight: 600; }
       #banner .line { display: flex; flex-wrap: wrap; gap: var(--gap); }
+      /* Half a gap on each side puts the dot between the two values it
+         separates, rather than hugging the one it is attached to. */
+      #banner .flags > span:not(:last-child)::after {
+        content: '·'; margin-left: calc(var(--gap) / 2); opacity: 0.45;
+      }
       .no { opacity: 0.55; }
       /* One line, whatever the state: idle it holds a button, running it holds
          the step in flight and the way out of it. */
@@ -300,7 +305,7 @@
 
       // ── Banner ──────────────────────────────────────────────────────────
       const flag = (label, ok) =>
-        `<span class="${ok ? '' : 'no'}"><b>${label}:</b> ${ok ? '✅' : '❌'}</span>`;
+        `<span class="${ok ? '' : 'no'}"><b>${label}</b> ${ok ? '✅' : '❌'}</span>`;
 
       /**
        * Both substituted by scripts/bench-assemble.mjs. A build is a release
@@ -328,7 +333,7 @@
       // capabilities carry a mark rather than a word because they are read at a
       // glance and compared against another device's screenshot.
       const identity = [
-        `<span><b>Browser engine:</b> ${AGENT.engine} ${AGENT.version ?? '?'}</span>`,
+        `<span><b>Engine:</b> ${AGENT.engine} ${AGENT.version ?? '?'}</span>`,
         `<span><b>OS:</b> ${AGENT.os}</span>`,
         buildBadge(),
       ].join('');
@@ -340,13 +345,13 @@
         `<span><b>Clock:</b> ${CLOCK_MS.toFixed(2)} ms</span>`,
         CAN_LIST_IDB
           ? ''
-          : `<span class="no"><b>IndexedDB cleanup:</b> ❌ unavailable — stores created by this run are left in place</span>`,
+          : `<span class="no"><b>IndexedDB cleanup</b> ❌ unavailable — stores created by this run are left in place</span>`,
       ]
         .filter(Boolean)
         .join('');
 
       document.getElementById('banner').innerHTML =
-        `<div class="line">${identity}</div><div class="line">${capabilities}</div>`;
+        `<div class="line">${identity}</div><div class="line flags">${capabilities}</div>`;
 
       // ── Pairs ───────────────────────────────────────────────────────────
       /** Every declared (vfs, build) pair, derived from the library's table. */
