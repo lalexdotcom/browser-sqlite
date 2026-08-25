@@ -303,6 +303,13 @@ last deploy wins** — a manual dispatch from a branch replaces whatever the las
 The `github-pages` environment now allows `main`, `v*` (tag) and `feat/*`; the tag rule was missing
 and would have failed rc4 before its first step.
 
+**Owed, and easy to forget: remove the `feat/*` deployment rule once the pre-rc4 device testing is
+done** (user, 2026-08-25 — it was re-added on that day only so the page could be dispatched from
+the branch onto a real iPhone and an Android tablet). While it stands, any manual dispatch from a
+feature branch replaces the published site, and the only thing distinguishing the two is the
+page's own banner reading "development build". Settings → Environments → github-pages →
+Deployment branches and tags → Remove `feat/*`.
+
 **What the campaign settled**, on real Chromium ×2, Firefox 154 and Safari 26.5.2 (macOS):
 
 - **MIRROR-1 is measured and the declaration is corrected** — `IDBMirrorVFS` is now
