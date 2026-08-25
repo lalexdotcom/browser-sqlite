@@ -116,7 +116,7 @@ try {
   process.stdout.write(`download filename: ${filename}\n`);
   // Timestamp first: the exports are read as an ordered campaign, so the
   // directory has to sort chronologically without help.
-  if (!/^browser-sqlite-\d{8}-\d{4}-\w[\w.-]*-[\w.-]+-[\w.-]+\.json$/.test(filename)) {
+  if (!/^browser-sqlite-\d{8}-\d{4}-\w[\w.-]*-\w[\w.-]*-[\w.-]+-[\w.-]+\.json$/.test(filename)) {
     fail(`download filename has wrong shape: ${filename}`);
   }
 

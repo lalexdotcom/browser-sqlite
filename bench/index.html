@@ -180,7 +180,28 @@
           engine = 'safari';
           version = match(/Version\/([\d.]+)/);
         }
-        return { engine, version, platform: navigator.platform ?? '', ua };
+        return { engine, version, os: detectOs(), platform: navigator.platform ?? '', ua };
+      };
+
+      /**
+       * The OS, because `safari` alone cannot tell a Mac from an iPad — and
+       * iPadOS 13+ makes that worse by reporting `MacIntel` and a desktop user
+       * agent. Touch points are what separate the two, and nothing else does.
+       * Like the engine, this labels the export; no behaviour branches on it.
+       */
+      const detectOs = () => {
+        const ua = navigator.userAgent;
+        const platform = navigator.platform ?? '';
+        const touch = navigator.maxTouchPoints ?? 0;
+        if (/Android/.test(ua)) return 'android';
+        if (/iPhone|iPod/.test(ua)) return 'ios';
+        if (/iPad/.test(ua) || (platform === 'MacIntel' && touch > 1)) {
+          return 'ipados';
+        }
+        if (/Mac/.test(platform) || /Mac OS X/.test(ua)) return 'macos';
+        if (/Win/.test(platform)) return 'windows';
+        if (/Linux|X11/.test(platform)) return 'linux';
+        return 'unknown';
       };
 
       const AGENT = detectAgent();
@@ -1814,7 +1835,7 @@
         const slug = (s) => String(s ?? 'unknown').replace(/[^\w.-]+/g, '-');
         // Timestamp first so a directory of these sorts chronologically on its
         // own, which is how they are read: a campaign, in order, not a set.
-        return `browser-sqlite-${stamp}-${slug(AGENT.engine)}-${slug(AGENT.version)}-${slug(LIB_VERSION)}.json`;
+        return `browser-sqlite-${stamp}-${slug(AGENT.os)}-${slug(AGENT.engine)}-${slug(AGENT.version)}-${slug(LIB_VERSION)}.json`;
       };
 
       document.getElementById('download').addEventListener('click', () => {
