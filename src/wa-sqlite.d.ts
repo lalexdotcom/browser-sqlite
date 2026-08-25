@@ -79,3 +79,19 @@ declare module 'wa-sqlite/src/examples/AccessHandlePoolVFS.js' {
 declare module 'wa-sqlite/src/examples/IDBBatchAtomicVFS.js' {
   export const IDBBatchAtomicVFS: VFSClass;
 }
+
+declare module 'wa-sqlite/src/examples/IDBMirrorVFS.js' {
+  export const IDBMirrorVFS: VFSClass;
+}
+
+declare module 'wa-sqlite/src/examples/OPFSAnyContextVFS.js' {
+  export const OPFSAnyContextVFS: VFSClass;
+}
+
+declare module 'wa-sqlite/src/examples/MemoryVFS.js' {
+  export const MemoryVFS: VFSClass;
+}
+
+declare module 'wa-sqlite/src/examples/MemoryAsyncVFS.js' {
+  export const MemoryAsyncVFS: VFSClass;
+}

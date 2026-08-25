@@ -468,6 +468,403 @@ real WebKit signal needs Playwright on **macOS**. rstest accepts no provider but
 (`BROWSER_PROVIDERS = ['playwright']`), so there is no escape hatch. Removed from CI and the
 devcontainer in `ee2e9f3`.
 
+## MIRROR-1 — `IDBMirrorVFS`'s `multiConnection: true` has an observed counter-example
+
+**Status: open. Low-rate flake, mechanism plausible and named, declaration not yet corrected.**
+
+`tests/browser/vfs.test.ts :: newly wired VFS > IDBMirrorVFS opens and serves a round trip` failed
+once with **`no such table: wired`** — in a pre-commit hook run, 2026-08-24. Measured immediately
+after: **8/8 green in isolation, 6/6 green on the full suite**. So the rate is roughly ≤1 in 15 and
+it is not reproducible on demand, which is precisely the rate that eventually reddens CI with no
+one able to say why.
+
+**It has now been seen four times.** Third sighting 2026-08-24 and fourth 2026-08-25, both in a
+pre-commit hook and both on **docs-only commits** whose trees had gone 323/0 in the same hook
+minutes earlier — so the flake is independent of any source change and the rate estimate above
+survives. Four sightings across two days of heavy committing puts it near the ≤1-in-15 estimate and
+means a CI run will eventually go red on it with nobody able to say why.
+Task 3 of the wiring plan reported the same failure and could not
+reproduce it either; the declaration was carried forward as PROVISIONAL on the reasoning that the
+conformance suite would settle it. Conformance passed — but its invariants exercise one write and
+one read, or concurrent writes counted afterwards, never the tight
+`CREATE TABLE` → `INSERT` → `SELECT` sequence at `poolSize: 2` that this test runs.
+
+### MEASURED 2026-08-25 — the declaration is false, and it is not only staleness
+
+A deliberate probe settled it. Method, which matters as much as the number: a temporary
+`tests/browser/mirror-probe.test.ts` repeating the failing sequence unchanged — `CREATE TABLE` →
+`INSERT` → `SELECT`, `IDBMirrorVFS` at `poolSize: 2`, a fresh database each round, 60 rounds — with
+**no instrumentation at all**: no `Worker` wrapper, no `debug: true`. The last millisecond-scale
+race in this project was hidden by its own instrument, and browser `console` output is not
+forwarded, so the count was surfaced through the assertion message instead.
+
+**In isolation: 0/60. Under the full suite: 5 failures across 300 rounds (~1.7 %), in 4 of 5 runs.**
+The defect needs contention to appear, which is exactly why every sighting has been a pre-commit
+hook and why nobody could reproduce it on demand.
+
+**Two distinct symptoms, not one:**
+- `no such table: wired` — the stale cross-connection read the entry predicted;
+- `database is locked` — `SQLITE_BUSY`, which the entry did not predict.
+
+So `multiConnection: true` is **false as declared** for this VFS: a second connection neither sees a
+committed `CREATE TABLE` reliably nor waits for it correctly. `VFS_CAPABILITIES` is the single
+source the client guards, the conformance suite, the README table and the benchmark page all read,
+so one wrong field propagates everywhere.
+
+**Consequence for the VFS's standing.** It was one of two candidates escaping HANDLE-1 and it is the
+fastest persistent option on Safari (bulk 44 ms vs IDBBatchAtomic's 77 ms, transactions 28 vs 31).
+With `multiConnection` false it leaves the multi-connection shortlist entirely, and — with
+ANYCONTEXT-1 removing `OPFSAnyContextVFS` on Safari — `IDBBatchAtomicVFS` is left as the only
+persistent multi-connection VFS that works on all three desktop engines.
+
+**What is NOT yet decided:** whether the field becomes `false`, or `true` with a stated visibility
+window, and what `maxPoolSize` should then be. That touches `src/types.ts`, the conformance suite
+and the README generator, and it needs its own review.
+
+**The `it.fails` convention does not fit here.** A characterization test pinning a defect that
+appears 1.7 % of the time would itself fail most runs. Until the declaration is corrected,
+`tests/browser/vfs.test.ts :: IDBMirrorVFS opens and serves a round trip` stays a genuine ~1-in-60
+liability in CI — and it is now understood, not mysterious.
+
+**Mechanism, predicted and now half-confirmed.** `IDBMirrorVFS` keeps the whole database in memory
+*per worker* and propagates commits between connections over `BroadcastChannel` — asynchronously.
+That is structurally the same defect that got `OPFSPermutedVFS` deleted from this library (24 %
+stale cross-connection reads, measured 2026-08-20). The commit-propagation barrier does not save
+it: the barrier's prelude opens a real read transaction to refresh page 1, but if the mirror has
+not yet received the broadcast there is nothing fresher on the connection to read.
+
+**What that would mean if confirmed:** `multiConnection: true` is false for this VFS, or true only
+with a visibility window. Since `IDBMirrorVFS` is one of the two candidates for the non-Chromium
+recommendation (see HANDLE-1), this is load-bearing rather than cosmetic.
+
+**Do not** weaken the test, add a retry, or pin it to `poolSize: 1` to make the hook green. The
+next step is a deliberate probe: the failing sequence at `poolSize: 2`, repeated enough times to
+get a rate, with the worker that served each statement recorded — the same instrumentation that
+settled HANDLE-1, and the lesson from that session applies, that wrapping `Worker` can shift the
+race and hide it.
+
+## JSPI-1 — three README claims are wrong about Firefox
+
+**Status: open, sourced 2026-08-24.** `caniuse.com` gives **JSPI as available in Firefox from 153**
+(user, 2026-08-24), and our own conformance run on Playwright's Firefox 153 independently detected
+`WebAssembly.Suspending` and executed all 22 declared build pairs, jspi included. Documented source
+and observation agree exactly, which is the strongest state a fact in this project can be in.
+
+Wrong in three places, all asserting Chromium-only JSPI:
+
+- `README.md:91` — "`jspi` (JavaScript Promise Integration, Chromium-only)"
+- `README.md:256` — "only `build: 'jspi'` does, and JSPI is Chromium 126+"
+- `README.md:263` — "JavaScript Promise Integration is not available in Firefox or Safari as of 2025"
+
+**"Chromium 126+" is itself unsourced** and appears twice. It gets the same treatment as everything
+else: a named source, or it goes.
+
+**How this was found, because the method is the point.** Asked where the Firefox claim came from,
+the answer was: from this README and nowhere else. It had never been sourced — it was inherited,
+repeated, and then contradicted by our own measurement without anyone noticing. The rule that
+catches this class is **a fact with no citable source does not enter the table**, and it is why the
+per-browser compatibility work (see `mem:resume-plan` §0.2 item 2b) must carry a named source and a
+date per cell.
+
+**Lucky detail worth keeping:** Firefox 153 is exactly the first supporting version, so our run sat
+on the boundary. On 152 the nine jspi pairs would have skipped with their stated reason and nothing
+would have failed — the feature detection was validated by accident.
+
+## ABORT-1 — `bulkWrite` and `output` take no `signal`
+
+**Status: open, raised by the user 2026-08-24** while reviewing the benchmark page spec
+(`docs/superpowers/specs/2026-08-24-bench-page-design.md`).
+
+`signal` is on `SQLiteQueryOptions` and is honoured by `read` / `write` / `first` / `stream` /
+`chunk` — `queries.ts`'s `chunk()` is the only place an `AbortSignal` is read at all. **`src/bulk.ts`
+contains no `AbortSignal`.** So the two long-running methods in the public surface, the ones most
+likely to need cancelling, are the two that cannot be cancelled. `signal` reads as universal in the
+docs and in `SQLiteQueryOptions`; that it stops at `bulkWrite` is undocumented.
+
+**Why this is cheaper than it looks for `bulkWrite`:** it already calls the **public** `write` once
+per batch and releases the worker between batches (a property D3 depends on — do not consolidate it
+into one held lease). Threading a `signal` down to each batch's `write` therefore gives an abort
+that lands *between* batches, which is both the natural granularity and the only point where
+stopping is meaningful — a multi-row INSERT is statement-atomic.
+
+**`output()`'s abort semantics — decided by the user, 2026-08-24: an abort drops the staging table
+and touches nothing else.** No rename, no partial publication, and the previous target is left
+exactly as it was — which the wave-3 change already gives for free, since the target is only
+created at `close()`. So an aborted `output()` is observationally a no-op.
+
+Two mechanical consequences to carry into the implementation:
+
+- The eager `DROP` is a write and therefore needs a worker *after* the abort that freed one. It is
+  **best-effort**: if it fails, the state falls back to the one already handled — an orphan staging
+  table, swept by `staleStagingTables` (`locks.ts`) once the staging lock is released. The abort
+  path must not hang or throw on a failed cleanup.
+- Releasing the staging lock is what arms that sweep, so it must happen after the `DROP` attempt,
+  not before.
+
+**First observed consumer of the gap:** the benchmark page's containment design (§5.3 of its spec).
+Because `bulkWrite` cannot be aborted, the only bound available for its row is a `Promise.race`
+against a timer, which abandons the *wait* without stopping the *work* — leaving the worker busy
+and every later row in that column timed against a machine still executing. The page therefore has
+to abandon the whole column on that one row, where every other row simply moves on. **When ABORT-1
+lands, that special case disappears**; the page reads which regime applies from the method it
+calls, so nothing else changes.
+
+Not blocking: no consumer on rc.3, and a caller wanting a bound today can chunk their own batches.
+
+## BENCH-DRIFT — the page holds a second copy of the invariants and the probes
+
+**Status: standing rule, not a bug. Opened 2026-08-24 with the benchmark page.**
+
+`bench/index.html` re-implements, in plain JS, what `tests/conformance/invariants.test.ts` and
+`tests/conformance/helpers.ts` hold in TypeScript: the six invariants, the `readwrite-unsafe`
+behavioural probe, and the JSPI detection. The duplication is deliberate — a self-contained HTML
+file cannot import `tests/**` , which import `src/` — and it is bounded: these describe properties
+of SQLite and of the platform, not of our implementation, so they are expected to be static.
+
+**The rule: changing either copy obliges a review of the other.** Both directions.
+
+What makes a divergence visible rather than silent: **the page's row ids are normalized from the
+conformance `describe()` titles** — the `invariant N — ` prefix is dropped and the remainder is
+kebab-cased — giving `opens`, `write-read-back`, `survives-reopen`,
+`concurrent-writes-lose-nothing`, `rollback-leaves-nothing`, `close-settles`,
+`no-read-inside-transaction`. A row whose id no longer maps to a `describe()` is the signal.
+
+Two places where the copies legitimately differ, and must not be "aligned":
+
+- The page returns `'blocked'` where invariant 6 logs a `console.warn` and passes. Same
+  observation, different medium: a test suite has nowhere to render a third state, a table does.
+- The page reopens the column's client after `survives-reopen` and `close-settles`, because it runs
+  every row against one client where the suite gets a fresh one per `it()`.
+
+This is the class of defect this repository already knows it has — *"here, comments drift faster
+than code"* — applied to code rather than comments.
+
+## DELETE-1 — there is no way to delete a database, and the JSDoc advised a wrong one
+
+**Status: open, found 2026-08-25 by the benchmark page failing on its own second run.**
+
+Every persistent VFS wa-sqlite ships implements `jDelete`, and for `AccessHandlePoolVFS` it is the
+**only** correct removal: `#deletePath` un-associates the SQLite path and returns the slot to the
+pool, deliberately leaving the OPFS file in place because that file *is* a reusable slot. The
+library never exposes it — the worker holds the VFS instance and nothing routes to it.
+
+**How it surfaced.** The bench page opened a uniquely-named database per column and removed it with
+`removeEntry(ourName)`. `AccessHandlePoolVFS` stores every database inside one directory named after
+the VFS class (`#directoryPath = name`), holding `DEFAULT_CAPACITY = 6` files with `Math.random()`
+names, so that removal matched nothing and no slot was ever freed. The seventh column on an origin
+failed with `unable to open database file`. Seven real-device runs fit the 6-slot ceiling exactly,
+including why a single-run browser and Safari (two columns per run, no jspi) never hit it.
+
+**`client.ts`'s `close()` JSDoc told consumers to do exactly the wrong thing** — "to delete OPFS
+files, use the `navigator.storage.getDirectory()` API directly" — which is correct only for the
+plain OPFS VFS on an already-closed database, leaves `-journal`/`-wal` behind even there, silently
+costs `AccessHandlePoolVFS` its capacity, and is a no-op for the two IndexedDB VFS whose data is not
+in OPFS at all. It shipped in `dist/*.d.ts`. **Corrected 2026-08-25** to describe the per-VFS
+reality and to say that no deletion API exists yet — the wrong advice is gone, the missing feature
+is not.
+
+**What a `deleteDatabase(file)` owes, and why it was not bolted on at the end of the VFS branch:**
+
+- it must route to the open VFS's `jDelete`, so it needs a worker that has the VFS loaded — which
+  means opening one to delete, or keeping the deletion in the same worker lifecycle as `close()`;
+- what should happen when the database is open in another tab, where nothing here can revoke a
+  handle;
+- what it returns when the database does not exist — SQLite's `xDelete` is content with that;
+- and whether it also removes the auxiliary files, which differ per VFS.
+
+**It must delete IndexedDB databases too, not only OPFS entries (user, 2026-08-25).** The goal is a
+removal a consumer can actually rely on, whatever VFS they chose. `IDBBatchAtomicVFS` and
+`IDBMirrorVFS` keep their data in an IndexedDB database named after the VFS class, holding every
+database opened with that VFS on the origin — so `jDelete` alone frees the SQLite file inside the
+store while the store itself stays, and `indexedDB.deleteDatabase(<VFS name>)` would destroy every
+other consumer's data on the same origin. Neither is the answer on its own: deleting one database
+means routing through `jDelete`, and reclaiming the store means knowing it holds nothing else. That
+asymmetry between the OPFS and IndexedDB families is the part of this design that actually needs
+thought.
+
+None of that is hard; all of it is a design, and the end of a large branch is the wrong moment.
+
+**The bench page does not wait for it.** It diffs the OPFS root before and after a run and removes
+what appeared — a rule that needs no knowledge of any VFS's layout and survives an upstream change
+to them, and the same rule it already used for IndexedDB. Verified by reproduction: nine
+`AccessHandlePoolVFS` columns across three consecutive runs in one persistent context, where six
+used to fail.
+
+## ANYCONTEXT-1 — RESOLVED 2026-08-25. A WebKit bug, patched in this repo
+
+**Status: closed. Root cause found, fix shipped in `patches/wa-sqlite@1.1.1.patch` (`9fabeb9`),
+same change pushed to `lalexdotcom/wa-sqlite` branch `fix/opfs-anycontext-webkit-view-offset`
+(`28a090d`) for an upstream PR the user will open. Draft PR body: `.work/PR-body.md`.**
+
+**The cause.** `WebKit's FileSystemWritableFileStream.write()` ignores a typed array view's
+`byteOffset` and `byteLength` and writes the **entire underlying `ArrayBuffer`**.
+`OPFSAnyContextVFS.jWrite` passes `pData.subarray()` — a window into the WASM heap — so every
+4 KiB page SQLite wrote landed as a multi-megabyte splat at the target offset, and the database
+header did not survive the second write. Hence `SQLITE_NOTADB` at `opens`. The fix is one word:
+`pData.slice()`, which keeps the Proxy unwrapping `subarray()` was there for (see the note in
+`OPFSAdaptiveVFS.jWrite`) and copies into a buffer that is exactly the page.
+
+**Reduced repro, no SQLite — 64 on WebKit, 4 on Chromium and Firefox:**
+
+```js
+const fh = await (await navigator.storage.getDirectory()).getFileHandle('t', { create: true });
+const buf = new Uint8Array(64).fill(0xAA);
+const view = buf.subarray(16, 20);
+view.set([1, 2, 3, 4]);
+const w = await fh.createWritable();
+await w.write(view);
+await w.close();
+console.log((await fh.getFile()).size);
+```
+
+**Do not re-test these — all conformant on WebKit, each cost a round trip to establish:**
+`keepExistingData: true`, `seek()`, `truncate()`, two handles on one path, sixty-four repeated
+createWritable/write/close cycles with read-back, worker context, and buffer aliasing (WebKit
+copies at call time). The failure also reproduces at `poolSize: 1` under `journal_mode=OFF`, so
+neither the pool nor the rollback journal is involved. **The sync access handle VFS are not
+affected**: `OPFSAdaptiveVFS`, `AccessHandlePoolVFS` and `OPFSCoopSyncVFS` pass the same
+`pData.subarray()` to `FileSystemSyncAccessHandle.write()` and pass conformance on Safari — the
+bug is specific to the writable-stream path.
+
+**Verified**, Safari 26.5.2 / macOS, swept OPFS root: **0 of 7 conformance rows → 7 of 7**, and
+`read-burst-concurrency` **1.70×** at `poolSize: 4` — the highest of any VFS in that run, where
+`OPFSAdaptiveVFS` sat at 0.94×. That makes it the best concurrent-read option on WebKit, and it
+corroborates the 2.0–2.2× measured on Firefox 154. **Still owed: re-run Safari 27, iOS 26 and
+iPadOS 27** — they carry the same fix but have not been measured since.
+
+**Second half of the fix, in this repo.** Nothing declared the requirement. `createWritable()` is
+Safari 26 — eleven versions after OPFS itself — so the generated table claimed `Safari 15.4+` for
+a VFS that could never have run there. `'writable-stream'` is now a `PlatformFeature`,
+`OPFSAnyContextVFS` requires it, `render-vfs-matrix.ts` carries its MDN support matrix, and the
+bench page probes it. The table now reads `Safari 26+ / iOS 26+`.
+
+**The pool declarations are still unmeasured on WebKit.** `maxPoolSize: null` and
+`multiConnection: true` now *look* verified because the VFS opens, which is exactly the trap
+MIRROR-1 documented. One data point exists (`pool-blocking` = 1 at `poolSize` 4); that is not a
+verification.
+
+## RESIDUE-1 — two VFS store under their class name, and cleanup never sees it
+
+**Status: open, observed 2026-08-25. It put two VFS into false failure in one evening, on a
+clean-looking origin.**
+
+A VFS is free to store wherever it likes, and two of ours do not use the filename they were
+given:
+
+- **`AccessHandlePoolVFS`** keeps one OPFS directory named after the class, holding **six**
+  pre-allocated files with random names. The bench page already documents this
+  (`scripts/bench/html/index.html`, `snapshotOpfsRoot`) and handles it by *diffing the root* —
+  but only once, at the end of a run, and it abandons any directory still held by a live handle.
+- **`IDBMirrorVFS`** keeps one IndexedDB database named `IDBMirrorVFS`. **There is no equivalent
+  of the root diff on the IndexedDB side at all.**
+
+**What it cost.** After several interrupted local runs on `http://localhost:8099`, the OPFS root
+held `AccessHandlePoolVFS/` with all six slots taken — five carrying orphaned databases, one
+free. A database in `journal_mode=DELETE` needs two slots (the file and its journal), so
+`AccessHandlePoolVFS` failed at `opens` with a bare `sqlite3_open_v2` and no message, on both
+`sync` and `async`. It read as a regression from the wa-sqlite patch committed minutes earlier;
+it was residue. Deleting the directory by hand restored it with no code change.
+
+**Retroactive reclassification.** The two isolated `opens` failures flagged earlier the same day
+— `AccessHandlePoolVFS/async` on iOS 26 (`unable to open database file`) and
+`AccessHandlePoolVFS/jspi` on macOS Chromium 150 — are very likely the same exhaustion, not
+engine defects. Both were single occurrences contradicted by other runs on the same engine
+family. Re-run on a swept root before recording either as a real finding.
+
+**Also observed:** `navigator.storage.estimate().usage` reported 1.42 GB on that origin while the
+whole OPFS root weighed ~1.6 MB. The IndexedDB `IDBMirrorVFS` store carried the rest. Purging
+OPFS moved the number not at all — a useful reminder that `usage` is origin-wide, not OPFS-wide.
+
+**What would fix it**, in rising order of cost: run `cleanupOpfsResidue` per *column* rather than
+once per run; give IndexedDB the same before/after diff the OPFS root gets; or have each VFS
+declare the storage names it owns, which is the only version that does not rely on diffing.
+
+## DEFAULT-1 — a platform-dependent default VFS was considered and rejected
+
+**Status: decided 2026-08-25 (user). Recorded because the idea is attractive and will come back.**
+
+The measurements make a per-platform default look obviously right: `OPFSAdaptiveVFS` reads 3.24x on
+Chromium and 0.94-1.08x off it, where `OPFSAnyContextVFS` reads 2.50x on Firefox and
+`IDBBatchAtomicVFS` is the only sound persistent choice on Safari. Picking by feature detection
+would hand every user the best available VFS.
+
+**It was rejected for a reason that has nothing to do with performance: the VFS decides where the
+data is written.** A default resolved by detection moves the moment detection changes its mind —
+Firefox ships `readwrite-unsafe`, the choice swings from one VFS to another, and the existing
+database becomes invisible. The bytes are still there, in a VFS nothing queries any more. From the
+user's side that is silent data loss, triggered by a browser update nobody asked for.
+
+Staying on "whichever VFS created this database" does not save it: identifying that would mean
+probing all nine, which is expensive and ambiguous.
+
+An API that *returns* a recommendation for the application to pass explicitly was floated and also
+dropped — the user's call: the default is universal and works everywhere, so a second mechanism
+earns nothing. **The default stays `OPFSAdaptiveVFS`,** which is best where it shines and merely
+degraded elsewhere, never broken, all invariants green on all three engines. The benchmark page is
+what answers "which one here", and the README links to it prominently.
+
+## BASELINE-1 — the library has a browser floor and nobody has sourced it
+
+**Status: open, found 2026-08-25 by a Chrome 81 Android tablet.**
+
+`dist/` is published as `syntax: 'esnext'` (`rslib.config.ts`) and nothing is down-levelled. Grepped
+from the built output, it uses **logical assignment (`??=`, `||=`), private class fields, top-level
+`await`, `crypto.randomUUID()`, `Array.prototype.at()` and `structuredClone()`.** The floor is
+whichever of those landed last in a given engine — and an engine missing any fails at parse or first
+use, not gracefully.
+
+**The VFS table cannot express this.** Its compatibility column is generated from each VFS's
+`requires`, so a VFS with none renders `Chrome 0`, which reads as "any Chrome". The package's own
+floor is invisible there and was stated nowhere until the README's new *Browser baseline* subsection.
+
+**SOURCED AND SHIPPED 2026-08-25.** MDN browser-compat-data, fetched as raw JSON from
+`raw.githubusercontent.com/mdn/browser-compat-data/main/`:
+
+| feature | Chrome | Firefox | Safari |
+|---|---|---|---|
+| logical assignment (`??=`, `\|\|=`) | 85 | 79 | 14 |
+| private class fields | 74 | 90 | 14.1 |
+| `Array.prototype.at()` | 92 | 90 | 15.4 |
+| `crypto.randomUUID()` | 92 | 95 | 15.4 |
+| **effective floor** | **92** | **95** | **15.4** |
+
+**The floor is set by the two APIs, not by the syntax.** `structuredClone()` is also used (once, in
+the worker) and is NOT in the table: its BCD entry was not found at
+`api/structuredClone.json`, `api/Window/structuredClone.json` or
+`api/WorkerGlobalScope/structuredClone.json`, and no number is claimed without one. **Still owed:
+locate it and confirm it does not raise the floor.**
+
+**Top-level `await` is the BENCH PAGE's requirement, not the library's** — corrected after an
+earlier grep matched awaits indented inside async functions and proved nothing. Neither `src/` nor
+`dist/` contains a module-level await; only `bench/index.html` does. A development tool may require
+a newer browser than the package.
+
+**A disagreement worth keeping.** BCD records top-level `await` as arriving in **Safari 27**, yet
+the page uses it and ran on **Safari 26.5.2**. Either the entry is wrong or `27` means something
+other than a first supporting version. The observation is direct. This is JSPI-1 inverted — there an
+unsourced claim was refuted by measurement, here a source is.
+
+**Shipped in the README as of `9af6b37`:** a `## Browser support` table before the VFS section, and
+every VFS compatibility cell folded to `MAX(vfs_required, lib_required)` in
+`scripts/render-vfs-matrix.ts` (`LIB_FLOOR`, `laterOf`, `withLibFloor`). That removed the `Chrome 0`
+cells that read as "any Chrome". One case is deliberately not folded: where a source says supported
+but gives no first version, the cell keeps `?` rather than adopting the library's number — the true
+floor is at least that and may be higher.
+
+**Mobile columns in `LIB_FLOOR` follow their desktop engine; BCD was not consulted separately for
+`chrome_android` and `safari_ios`.** That assumption is commented in the generator and is the second
+thing owed here.
+
+**Not worth supporting below that floor.** OPFS itself is Chrome 86+, so a pre-86 engine cannot run
+the six OPFS VFS at all; only the IndexedDB and memory ones would remain. Making the benchmark page
+parse on such an engine (removing top-level await, `??=`, `crypto.randomUUID`) would buy four VFS on
+a browser that cannot do the thing this library exists for. Decided 2026-08-25: drop it.
+
+**What was built instead:** a classic ES5 script ahead of the module in `bench/index.html` that
+watches for the module having started and, after 8 s, replaces the banner with what is missing. It
+tests for the module running, not for syntax, so it also covers a failed `dist/` fetch. Falsified by
+blocking that fetch, not reasoned about.
+
 ## Performance — after correctness, with debug instrumentation live
 
 - No prepared-statement cache (`worker.ts:169`) — typically the largest single win (2-10×); worst for `bulkWrite`'s ~32k-placeholder template.

@@ -277,6 +277,152 @@ measurement contradicted, a JSDoc describing the plan's buggy formula rather tha
 it. In a codebase where comments carry measurements, that is a defect class, not a tidiness one.
 
 
+## 0.5 WHERE THE WORK IS — written 2026-08-25, end of the WebKit session. READ FIRST.
+
+Branch `feat/vfs-capabilities`, merged into `main` at the close of this session. Still not
+pushed — `origin/main` sits behind, deliberately.
+
+**What this session settled.**
+
+1. **ANYCONTEXT-1 is solved and it was a WebKit bug** — `FileSystemWritableFileStream.write()`
+   ignores a view's `byteOffset`/`byteLength` and writes the whole `ArrayBuffer`, which for
+   wa-sqlite is the WASM heap. Patched here (`patches/wa-sqlite@1.1.1.patch`), pushed to a fork
+   for upstream. Full account, reduced repro and the list of what was ruled out:
+   `mem:follow-ups` ANYCONTEXT-1. **`OPFSAnyContextVFS` is now the best concurrent-read VFS on
+   WebKit (1.70×) and on Firefox (2.0–2.2×)** — which reopens DEFAULT-1's premise, though not
+   its conclusion.
+2. **RESIDUE-1 is new** — `AccessHandlePoolVFS` and `IDBMirrorVFS` store under their class name,
+   and it cost two false VFS failures in one evening. See `mem:follow-ups`.
+3. **The bench page moved to `scripts/bench/`** (`62c2b0c`), page at
+   `scripts/bench/html/index.html`, scripts at `scripts/bench/{assemble,check,dev}.mjs`. The user
+   overruled a reasoned objection here and was entitled to; do not relitigate the layout.
+4. **OS detection was reporting every Mac as an iPad** (`0c7f435`) — `navigator.standalone`
+   exists on macOS since Safari 17, so the presence test that replaced the touch test in
+   `6691df5` was wrong the day it was written. Now `maxTouchPoints > 1` guarded by
+   `matchMedia('(pointer: coarse)')`, which an iPad keeps even with a trackpad (WebKit 209292).
+
+**Owed, and none of it started.**
+
+- **Re-run Safari 27, iOS 26, iPadOS 27** with the patch. Only Safari 26.5.2 has been measured.
+- **`no-read-inside-transaction` is not deterministic on Safari.** Two runs an hour apart flipped
+  it in *opposite* directions — `OPFSAdaptiveVFS/async` pass→blocked, `OPFSCoopSyncVFS/async`
+  blocked→pass. n≥3 before touching the `OPFSCoopSyncVFS` README entry, which rests on that row.
+- **Android 145 vs 151 differ by a factor 2.6** on bulk insert, same emulator. Regression or
+  noise; a single run cannot say.
+- **Chrome Android 109 crashes the bench page before any run starts.** Deliberately dropped by
+  the user (2026-08-25) since 145 and 151 produce full exports. Note the exposure: the README
+  claims `Android 109+` on four VFS rows, and the only observation we hold for that version is a
+  crash. The init path is short — the two candidates are the un-timeout'd `await
+  probeUnsafeHandles()` and the unbounded `while (t1 === t0)` clock spin, both in
+  `scripts/bench/html/index.html`. Triage: banner after 8 s → the probe; frozen page → the spin.
+- **The `feat/*` deployment rule** on the `github-pages` environment is still owed removal.
+- **The upstream PR** is pushed but not opened; body drafted at `.work/PR-body.md` (gitignored).
+
+**Two working conventions the user corrected this session** — both are in the auto-memory, and
+both generalise:
+
+- **The README is for the consumer.** State the constraint and what it costs them; the mechanism,
+  the evidence and the investigation go to code comments, these memories, or a PR description. A
+  fifteen-line Known Limitations entry about a WebKit bug was cut to one sentence plus `26+` in
+  the generated table.
+- **Batch diagnostic probes.** When the user has to run probes by hand, send a whole battery in
+  one paste, each written for the case where the previous came back clean. Four round trips were
+  burned on one-hypothesis-at-a-time before they called it.
+
+**And match the house style of whatever repo you are committing to.** The first upstream commit
+carried a 30-line message and an 8-line comment into a project where 49 of the last 60 commits
+are one line and no VFS file has an inline comment longer than 4. Measure before writing.
+
+## 0.4 WHERE THE WORK IS — written 2026-08-25, end of the benchmark-page session. **Superseded by §0.5.**
+
+**§0.3 below is superseded on one point: the benchmark page is built.** Everything else in it stands.
+
+**Branch state.** `feat/vfs-capabilities`, ~15 commits ahead of `origin` at the time of writing
+(`812d273` local vs `827acfa` pushed) — check `git log origin/feat/vfs-capabilities..HEAD` rather
+than trusting that count. Working tree clean. `main` is at `8b8dfa0`: it carries a registration-only
+copy of `pages.yaml` that was pushed so GitHub would expose `workflow_dispatch` (the trigger is only
+offered for workflows present on the default branch — that cost an hour to discover). **At merge,
+`pages.yaml` conflicts: main's copy still has `push: branches: [main]`, the branch's is
+`workflow_call` + `workflow_dispatch`. Take the branch's.**
+
+**What shipped: `bench/index.html`**, one self-contained file served beside a verbatim `dist/`.
+Conformance rows mirroring the six invariants, nine measurements, capability-derived picker grouped
+by VFS with a tri-state parent, a verdict naming the best per criterion (never an aggregate score —
+see DEFAULT-1), and a JSON export carrying `reasons`, `clockMs` and per-column calibration.
+`pnpm bench:dev` / `bench:serve` / `bench:build`; `scripts/bench-check.mjs` drives it by hand and is
+deliberately not in CI.
+
+**Publishing is release-only.** `pages.yaml` is `workflow_call` + `workflow_dispatch`;
+`release-and-publish.yaml` calls it with `needs: release`, so the site tracks the published package
+and a reusable workflow runs at the caller's ref, which builds the tag. **One Pages site per repo,
+last deploy wins** — a manual dispatch from a branch replaces whatever the last release published.
+The `github-pages` environment now allows `main`, `v*` (tag) and `feat/*`; the tag rule was missing
+and would have failed rc4 before its first step.
+
+**Owed, and easy to forget: remove the `feat/*` deployment rule once the pre-rc4 device testing is
+done** (user, 2026-08-25 — it was re-added on that day only so the page could be dispatched from
+the branch onto a real iPhone and an Android tablet). While it stands, any manual dispatch from a
+feature branch replaces the published site, and the only thing distinguishing the two is the
+page's own banner reading "development build". Settings → Environments → github-pages →
+Deployment branches and tags → Remove `feat/*`.
+
+**What the campaign settled**, on real Chromium ×2, Firefox 154 and Safari 26.5.2 (macOS):
+
+- **MIRROR-1 is measured and the declaration is corrected** — `IDBMirrorVFS` is now
+  `multiConnection: false`, `maxPoolSize: 1`.
+- **ANYCONTEXT-1 is new** — `OPFSAnyContextVFS` fails to open on Safari with `SQLITE_NOTADB`,
+  reproduced on a swept root. On Firefox it measured the *best* read concurrency of any VFS.
+- **The consequence that matters: `IDBBatchAtomicVFS` is now the only persistent multi-connection
+  VFS working on all three desktop engines.** The default is untouched and still right —
+  `OPFSAdaptiveVFS` is degraded off Chromium (3.24x read burst there, ~1x elsewhere) but never
+  broken — the margin is simply thinner than it was.
+- The README's reduced-mode claim was narrowed to what reproduces (write transactions, not long
+  reads) and `OPFSCoopSyncVFS` finally has its Known Limitations entry.
+
+**A trap for anyone running the page on a browser used before 2026-08-25:** early runs leaked
+`AccessHandlePoolVFS/`, whose six slots are consumed by databases nothing ever freed. The sweep
+cannot reclaim it — the directory predates the ownership record, so it is protected as a third
+party's. Symptom: `AccessHandlePoolVFS` fails to open with `sqlite3_open_v2` on *every* build,
+first run. Remedy: clear site data for that origin once. Do not re-diagnose this.
+
+**`.bench/` is gitignored** and holds device exports; they are read, never committed.
+
+**Two working preferences the user stated on 2026-08-25, both worth honouring beyond this branch:**
+
+- **The README is edited iteratively — do not commit each pass.** Several round trips are normal;
+  committing after every one forces the user to brake. Make the edit, show what changed, wait.
+- **Do not explain compatibility in prose.** Version numbers in the tables are enough. An earlier
+  Requirements subsection arguing *why* each API mattered was cut for exactly this reason.
+
+**A Chrome 81 Android tablet cannot run the page or the library** — no OPFS at all (Chrome 86+),
+plus both floors above. Decided not to support below the baseline; a classic ES5 script now reports
+the incompatibility instead of leaving the banner on "detecting…". See BASELINE-1.
+
+**Blocking rc4:** the four commits `d2af8a2`..`a22bd48` have still never been reviewed. Nothing else
+does.
+
+## 0.3 WHERE THE WORK IS — written 2026-08-24, end of the VFS-wiring session
+
+**`feat/vfs-capabilities` is the live branch and is NOT merged, by the user's decision.** The
+benchmark page will be developed **on this same branch, in a different session**. Do not merge it
+to `main` and do not branch off `main` for that work — continue here.
+
+State at handoff: 16 commits on top of `3909f2f`, working tree clean, `pnpm test` 323/0,
+conformance green on Chromium (68/8/0) and Firefox (59/17/0), consumer smoke 11/11. Nothing is
+pushed; `main` is untouched.
+
+What shipped on it: the four remaining VFS wired (nine public), `VFS_CAPABILITIES` as the single
+compiler-checked table, guards moved onto it, the table exported from the package entry, a separate
+`conformance` rstest project with six invariants, and a README whose VFS and per-build tables are
+generated from that table with a CI drift check.
+
+**Reviewed through commit `20cd59f` only.** The commits after it — the plan correction, the
+capability-model change and the README work — postdate the whole-branch review and have not been
+reviewed. Review them before any merge.
+
+**The benchmark page's requirements are in §0.2 item 3**, and item 2b records a design that was
+tried and rejected — read the rejection before proposing anything about per-browser data.
+
 ## 0.2 HOW TO RESUME — written 2026-08-24 (browser-matrix session). READ THIS FIRST.
 
 **Repository state.** Nothing in flight, working tree clean, **308 tests / 0 failures**, `main`
@@ -308,12 +454,58 @@ documented VFS recommendation per browser, justified by measurement.
    VFS-COV.
 2. **Then document the per-browser VFS recommendation** in the README, which also finally closes
    its dangling CoopSync cross-reference and its false "Constraint: None".
+2b. **A `Browser compatibility` column in the README table (user, 2026-08-24).**
+
+   **Scope was cut back by the user on 2026-08-24, after an over-engineered first design.** The
+   rejected version had the conformance run emit `docs/conformance/<browser>.json` per engine,
+   committed, merged into the table by the generator, with per-cell provenance and a
+   documented-vs-observed two-layer model. The user's verdict: *"on s'est peut-être emballé sur la
+   conformité"* — and they are right. **Do not rebuild that.**
+
+   **What to build instead: one column, generated, from documented sources.** Sanctioned sources
+   are **caniuse.com** and **MDN browser-compat-data** (raw JSON on GitHub —
+   `api/StorageManager.json`, `api/FileSystemFileHandle.json`). **A fact with no citable source
+   does not enter the table** — that rule is what would have caught JSPI-1 in `mem:follow-ups`.
+
+   Conformance stays what it is: a gate that proves the declarations are true. It is **not** a data
+   source for the documentation, and nothing it produces is committed.
+
+   Verified 2026-08-24 from MDN BCD: OPFS (`getDirectory`, `createSyncAccessHandle`) is Chrome 86 /
+   Firefox 111 / Safari 15.2 / iOS 15.2; the `mode: 'readwrite-unsafe'` option is **Chrome 121**,
+   and `false` for Firefox and Safari — so the old "Chromium-only as of June 2024" note now has a
+   version. JSPI in Firefox from **153** (caniuse), which our own run independently confirmed.
+
+   **The capability model needs three more fields, and the third is the important one:** `storage`
+   (`opfs` / `indexeddb` / `memory`), `requires[]` (hard — without it the VFS fails:
+   `OPFSWriteAheadVFS` → `readwrite-unsafe`), and **`degradesWithout[]`** (soft — the VFS uses the
+   feature when present and works without it: `OPFSAdaptiveVFS` → `readwrite-unsafe`). Without the
+   third, a spec-derived column would mark `OPFSAdaptiveVFS` broken on Firefox. It is not — 102/104
+   — and saying so is reassuring information the README currently gives nowhere. Its degraded mode
+   costs HANDLE-1, which is both documented and observed.
+
+   **Playwright's WebKit is NOT Safari** and licenses no conclusion about it. Safari and iOS rows
+   come from caniuse alone — or from a user running the benchmark page on a real device. **This is pass/fail, not measurement**, so it does not
+   violate the no-benchmarks-in-the-README rule. Do NOT put this on `feat/vfs-capabilities`: that
+   branch is reviewed and clean, and this would invalidate the review for no gain.
+
 3. **Before release: a static benchmark page** that uses the library and lets anyone run the
    benchmarks in their own browser, hosted on GitHub Pages if reachable. **This is easier than it
    looks and it is wave 4's dividend: no COOP/COEP is required any more**, so plain Pages over
    HTTPS is a sufficient secure context with no special headers. Start from the "no bundler" mode
    that `scripts/consumer-smoke.mjs` already exercises rather than a fresh page — `dist/` already
    serves the worker and the three `.wasm` on relative paths.
+
+   **Three requirements the user set on 2026-08-24, before the page's spec is written:**
+   - **It runs the conformance invariants, not only the benchmarks.** At minimum, whether each VFS
+     opens at all. Without this a user on Safari returns numbers and zero compatibility
+     information, which is the one thing no machine here can produce.
+   - **A readable display** for the human who opened it.
+   - **An export in exactly the shape of `docs/conformance/<browser>.json`** (see 2b). That is what
+     makes the loop close: the user runs the page on Safari or iOS, sends the file back, it is
+     dropped in and the README regenerates. No transport format to invent, no manual translation,
+     and Safari enters the table through the same path as Chromium. The compatibility half of the
+     page's output is therefore a *deliverable*, distinct from the benchmark half, which stays on
+     the user's machine and never reaches the README.
 4. **A VFS × browser benchmark table**, which is the output of 1 and 3 combined.
 
 ### Also open, smaller

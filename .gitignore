@@ -7,6 +7,7 @@
 node_modules
 dist/
 storybook-static
+_site/
 doc_build/
 
 # IDE
@@ -14,7 +15,15 @@ doc_build/
 !.vscode/extensions.json
 .idea
 
+# Benchmark exports collected from real devices. They describe one machine on
+# one day; only their conformance half is ever worth citing, and that gets
+# quoted into the README with its source rather than committed here.
+.bench/
+
 # PNPM
 .pnpm-store
 # Subagent-driven-development scratch: ledgers, briefs, reports, review packages.
 .superpowers/
+
+# Scratch clones for upstream work (forks, patches under review). Never shipped.
+.work/

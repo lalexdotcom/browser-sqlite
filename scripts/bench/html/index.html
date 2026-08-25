@@ -1,0 +1,2009 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>browser-sqlite — conformance and benchmarks</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --gap: 0.75rem;
+        --border: color-mix(in srgb, currentColor 20%, transparent);
+      }
+      body {
+        margin: 0 auto;
+        padding: var(--gap);
+        max-width: 70rem;
+        font: 15px/1.5 system-ui, sans-serif;
+      }
+      h1 { font-size: 1.2rem; margin: 0 0 var(--gap); }
+      #banner {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        padding: var(--gap);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        font-size: 0.85rem;
+      }
+      #banner b { font-weight: 600; }
+      #banner .line { display: flex; flex-wrap: wrap; gap: var(--gap); }
+      /* The flex gap already sits after the dot, so the margin before it must
+         be a full gap too — half of one left it hugging the value it hangs off
+         instead of sitting between the two it separates. */
+      #banner .flags > span:not(:last-child)::after {
+        content: '·'; margin-left: var(--gap); opacity: 0.45;
+      }
+      .no { opacity: 0.55; }
+      /* One line, whatever the state: idle it holds a button, running it holds
+         the step in flight and the way out of it. */
+      #control {
+        display: flex; align-items: center; gap: 0.6rem;
+        margin: var(--gap) 0; min-height: 2.2em;
+      }
+      #status { font-size: 0.85rem; }
+      #stop { margin-left: auto; }
+      #spinner {
+        width: 1em; height: 1em; flex: none; border-radius: 50%;
+        border: 2px solid var(--border); border-top-color: currentColor;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { #spinner { animation: none; } }
+      #picker { border: 1px solid var(--border); border-radius: 6px; padding: var(--gap); }
+      #picker summary { cursor: pointer; font-weight: 600; }
+      .picker-actions { margin: var(--gap) 0; display: flex; gap: 0.5rem; }
+      /* Multi-column rather than grid: the browser balances column heights for
+         us, which is what keeps groups of two and three builds from stacking
+         all the tall ones in one column. */
+      #picker-list { columns: 3 16rem; column-gap: 1.5rem; }
+      .vfs-group { break-inside: avoid; margin: 0 0 0.6rem; }
+      #picker-list label { display: flex; gap: 0.4rem; align-items: baseline; }
+      .vfs-head { font-weight: 600; }
+      label.build { padding-left: 1.15rem; }
+      #picker-list label.unavailable { opacity: 0.45; }
+      #picker-list .why { font-size: 0.8rem; opacity: 0.75; font-weight: 400; }
+      /* The tri-state parent is worth seeing at a glance, not just as a dash. */
+      input[data-vfs]:indeterminate { outline: 2px solid currentColor; outline-offset: 1px; }
+      button { font: inherit; padding: 0.3rem 0.8rem; }
+      #results-wrap { overflow-x: auto; }
+      #results { border-collapse: collapse; font-size: 0.85rem; }
+      #results th, #results td {
+        border: 1px solid var(--border); padding: 0.25rem 0.5rem;
+        text-align: left; white-space: nowrap;
+      }
+      #results thead th { position: sticky; top: 0; background: Canvas; }
+      #results th small { display: block; font-weight: 400; opacity: 0.7; }
+      #results tbody th { font-weight: 400; }
+      .pending { opacity: 0.4; }
+      .fail { color: #b00020; }
+      .note { font-size: 0.8rem; opacity: 0.75; max-width: 46rem; }
+      /* The button sits at the bottom right, level with the report's last line;
+         on a narrow screen it wraps underneath rather than squeezing the text. */
+      /* `hidden` works by setting display:none in the UA sheet, so ANY author
+         display rule overrides it — the box stayed visible mid-run, Download
+         and all. Restated explicitly, and the attribute selector wins. */
+      #verdict[hidden] { display: none; }
+      #verdict {
+        display: flex; align-items: flex-end; flex-wrap: wrap;
+        gap: var(--gap);
+        margin: var(--gap) 0; padding: var(--gap);
+        border: 1px solid var(--border); border-radius: 6px;
+      }
+      #verdict-text { flex: 1 1 20rem; }
+      #verdict > p { margin: 0; }
+      #verdict-text p { margin: 0 0 0.5rem; }
+      #verdict-text p:last-child { margin: 0; }
+      #verdict ul { margin: 0 0 0.5rem; padding-left: 1.2rem; }
+      #verdict .caveat { font-size: 0.85rem; opacity: 0.8; }
+      td.measure { text-align: right; font-variant-numeric: tabular-nums; background: linear-gradient(to right, color-mix(in srgb, currentColor 12%, transparent) var(--bar-w, 0%), transparent var(--bar-w, 0%)); }
+      td.measure.best { font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <h1>browser-sqlite — conformance and benchmarks</h1>
+
+    <div id="banner">detecting…</div>
+
+    <!--
+      Deliberately a CLASSIC script in ES5, placed before the module: a module
+      that fails to parse fails SILENTLY, so nothing inside it can report its
+      own absence. An old engine rejecting the module's top-level await leaves
+      the page reading "detecting…" for ever — which is what a Chrome 81 tablet
+      did before this existed.
+
+      It watches for the module having started rather than testing for syntax,
+      so it covers every reason the module might not run: a parse error, a
+      missing API, a failed fetch of dist/.
+    -->
+    <script>
+      (function () {
+        var waited = 0;
+        var timer = setInterval(function () {
+          if (window.__BENCH__) {
+            clearInterval(timer);
+            return;
+          }
+          waited += 500;
+          if (waited < 8000) return;
+          clearInterval(timer);
+          document.getElementById('banner').innerHTML =
+            '<div class="line"><b>This browser cannot run the page.</b></div>' +
+            '<div class="line">It needs top-level <code>await</code>, logical ' +
+            'assignment, <code>crypto.randomUUID()</code>, ' +
+            '<code>Array.prototype.at()</code> and <code>structuredClone()</code> ' +
+            '\u2014 and browser-sqlite itself needs the same, so a browser that ' +
+            'cannot show this page cannot run the library either.</div>';
+        }, 500);
+      })();
+    </script>
+
+    <!-- Closed by default: the common case is Start with everything
+         selected, and the summary already says so. -->
+    <details id="picker">
+      <summary id="picker-summary">All</summary>
+      <div class="picker-actions">
+        <button type="button" id="select-all">All</button>
+        <button type="button" id="select-none">None</button>
+      </div>
+      <div id="picker-list"></div>
+    </details>
+
+    <div id="control">
+      <button type="button" id="start">Start</button>
+      <span id="spinner" hidden></span>
+      <span id="status"></span>
+      <button type="button" id="stop" hidden>Stop</button>
+    </div>
+
+    <div id="verdict" hidden>
+      <div id="verdict-text"></div>
+      <p><button type="button" id="download" disabled>Download JSON</button></p>
+    </div>
+
+    <!-- The table and the key to reading it appear together, when there is
+         something to read: an empty grid with a lone "row" heading is not a
+         table, and a legend for cells that do not exist yet is noise. -->
+    <div id="results-section" hidden>
+    <div id="results-wrap"><table id="results"><thead><tr id="head-row">
+      <th>row</th></tr></thead><tbody id="body-rows"></tbody></table></div>
+    <p class="note">
+      <b>Legend:</b> ✅ pass — conformance check passed · ❌ fail — an error was thrown · ⏱ timed out — this row exceeded its time budget · ⏭ not run — an earlier row ended this column · ⃠ not applicable — this VFS's capabilities declare this row out of scope · ⃠ blocked — the row ran, but the concurrent read was never served; the pool-acquire blocked at the scheduler while a write transaction held the VFS's single access handle — this tells you the VFS serializes the pool under a write transaction · — no result — we ran it but could not produce a trustworthy number.
+      Hover any of these for the reason; the downloaded JSON carries the same reasons under <code>reasons</code>.
+    </p>
+    <p class="note">
+      <code>read-burst-concurrency</code> shows pool concurrency gains; a ratio is
+      omitted when the median serial total falls below 4× the clock’s resolution —
+      reads too fast to time reliably produce jitter, not a signal.
+      A pool-1 VFS near 1.00× is declared behaviour, not a failure.
+      <code>pool-blocking</code> does not apply to pool-1 VFS (cell shows ⃠).
+      Where it does apply, ≈1 means the pool kept serving reads freely during
+      the long statement.
+    </p>
+    </div>
+
+    <script type="module">
+      import {
+        createSQLiteClient,
+        DEFAULT_VFS,
+        defaultBuildFor,
+        VFS_CAPABILITIES,
+      } from './dist/index.js';
+
+      // ── Identity ────────────────────────────────────────────────────────
+      // Substituted by scripts/bench/assemble.mjs. Opening the page source
+      // straight from the repo leaves the placeholder, which is why the guard
+      // tests for it rather than trusting the value.
+      const RAW_VERSION = '__LIB_VERSION__';
+      const LIB_VERSION = RAW_VERSION.startsWith('__') ? 'unknown' : RAW_VERSION;
+
+      /**
+       * User-agent parsing, used for the banner and the export filename only.
+       * Nothing on this page branches on it — feature decisions go through the
+       * probes below. That is what makes a crude parser acceptable here.
+       */
+      const detectAgent = () => {
+        const ua = navigator.userAgent;
+        const match = (re) => ua.match(re)?.[1] ?? null;
+        let engine = 'unknown';
+        let version = null;
+        if (/Firefox\//.test(ua)) {
+          engine = 'firefox';
+          version = match(/Firefox\/([\d.]+)/);
+        } else if (/Edg\//.test(ua)) {
+          engine = 'edge';
+          version = match(/Edg\/([\d.]+)/);
+        } else if (/Chrome\//.test(ua)) {
+          engine = 'chrome';
+          version = match(/Chrome\/([\d.]+)/);
+        } else if (/Safari\//.test(ua)) {
+          engine = 'safari';
+          version = match(/Version\/([\d.]+)/);
+        }
+        return { engine, version, os: detectOs(), platform: navigator.platform ?? '', ua };
+      };
+
+      /**
+       * The OS, because `safari` alone cannot tell a Mac from an iPad — and
+       * iPadOS 13+ makes that worse by reporting `MacIntel` and a desktop user
+       * agent. Touch points are what separate the two, and nothing else does.
+       * Like the engine, this labels the export; no behaviour branches on it.
+       */
+      const detectOs = () => {
+        const ua = navigator.userAgent;
+        const platform = navigator.platform ?? '';
+        const touch = navigator.maxTouchPoints ?? 0;
+        if (/Android/.test(ua)) return 'android';
+        if (/iPhone|iPod/.test(ua)) return 'ios';
+        // `navigator.standalone` used to separate the two, but Safari 17
+        // shipped it on macOS as well, so it now reports every Mac as an iPad.
+        // What is left is physical input: an iPad stays `pointer: coarse` even
+        // with a trackpad attached (WebKit 209292), where a touch-capable Mac
+        // would keep a fine primary pointer. This labels a file, nothing more.
+        const isIpad =
+          platform === 'MacIntel' &&
+          (touch > 1 || 'ontouchstart' in window) &&
+          matchMedia('(pointer: coarse)').matches;
+        if (/iPad/.test(ua) || isIpad) return 'ipados';
+        if (/Mac/.test(platform) || /Mac OS X/.test(ua)) return 'macos';
+        if (/Win/.test(platform)) return 'windows';
+        if (/Linux|X11/.test(platform)) return 'linux';
+        return 'unknown';
+      };
+
+      const AGENT = detectAgent();
+
+      // ── Platform probes ─────────────────────────────────────────────────
+      const HAS_OPFS =
+        typeof navigator.storage?.getDirectory === 'function' &&
+        typeof FileSystemFileHandle !== 'undefined';
+
+      /** JSPI. Feature-detected, never sniffed from the user agent. */
+      const HAS_JSPI = typeof WebAssembly.Suspending === 'function';
+
+      /**
+       * `createWritable()`, which `OPFSAnyContextVFS` writes through. WebKit
+       * shipped it eleven versions after OPFS itself, so a browser can have
+       * OPFS and still not run that VFS.
+       */
+      const HAS_WRITABLE_STREAM =
+        typeof FileSystemFileHandle !== 'undefined' &&
+        typeof FileSystemFileHandle.prototype.createWritable === 'function';
+
+      /**
+       * `mode: 'readwrite-unsafe'` on OPFS sync access handles, probed by
+       * BEHAVIOUR: open two handles on one file and see whether the second
+       * succeeds. Firefox accepts the option and ignores it, so asking whether
+       * the property is supported would answer yes and be wrong.
+       *
+       * createSyncAccessHandle only exists in a dedicated worker, hence the
+       * inline blob worker. Ported from tests/conformance/helpers.ts — see
+       * BENCH-DRIFT in mem:follow-ups before changing either copy.
+       */
+      const probeUnsafeHandles = () =>
+        new Promise((resolve) => {
+          if (!HAS_OPFS) return resolve(false);
+          const src = `
+            self.onmessage = async () => {
+              let h1;
+              try {
+                const root = await navigator.storage.getDirectory();
+                const fh = await root.getFileHandle('__probe_unsafe_handles', { create: true });
+                h1 = await fh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
+                const h2 = await fh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
+                h2.close();
+                self.postMessage(true);
+              } catch {
+                self.postMessage(false);
+              } finally {
+                try { h1?.close(); } catch {}
+                try {
+                  const root = await navigator.storage.getDirectory();
+                  await root.removeEntry('__probe_unsafe_handles');
+                } catch {}
+              }
+            };
+          `;
+          const url = URL.createObjectURL(
+            new Blob([src], { type: 'application/javascript' }),
+          );
+          const worker = new Worker(url);
+          const done = (value) => {
+            resolve(value);
+            worker.terminate();
+            URL.revokeObjectURL(url);
+          };
+          worker.onmessage = (e) => done(e.data);
+          worker.onerror = () => done(false);
+          worker.postMessage(null);
+        });
+
+      const HAS_UNSAFE_HANDLES = await probeUnsafeHandles();
+
+      /**
+       * Whether we may delete IndexedDB stores after the run. Without this API
+       * we cannot tell a store we created from one that was already there, and
+       * this origin is shared with the user's other Pages projects — so the
+       * only safe answer is to clean nothing. See spec §5.4.
+       */
+      const CAN_LIST_IDB = typeof indexedDB.databases === 'function';
+
+      // ── Clock granularity ────────────────────────────────────────────────
+      /**
+       * Smallest non-zero performance.now() delta seen over 10 spins.
+       * Chromium: sub-millisecond (typically 0.001–0.1 ms).
+       * Firefox: typically 1 ms or more (PrivacyResistFingerprinting coarsens
+       * the clock to prevent timing-based fingerprinting).
+       * Pool-blocking uses this to avoid printing a ratio whose denominator
+       * the timer never actually measured.
+       */
+      const CLOCK_MS = (() => {
+        let smallest = Infinity;
+        for (let i = 0; i < 10; i++) {
+          const t0 = performance.now();
+          let t1 = t0;
+          while (t1 === t0) t1 = performance.now();
+          if (t1 - t0 < smallest) smallest = t1 - t0;
+        }
+        return smallest;
+      })();
+
+      // ── Banner ──────────────────────────────────────────────────────────
+      const flag = (label, ok) =>
+        `<span class="${ok ? '' : 'no'}"><b>${label}</b> ${ok ? '✅' : '❌'}</span>`;
+
+      /**
+       * Both substituted by scripts/bench/assemble.mjs. A build is a release
+       * only when it came from a tag, which is the one case where this page and
+       * the published package are the same code.
+       */
+      const IS_RELEASE = '__BUILD_RELEASE__' === 'true';
+      const BUILD_REF = '__BUILD_REF__'.startsWith('__')
+        ? 'local build'
+        : '__BUILD_REF__';
+
+      /**
+       * What a visitor is actually looking at. A branch preview can carry a
+       * `package.json` version that exists on the registry while running
+       * library code no published tarball contains, so the npm claim is made
+       * only for a tag build — everywhere else the badge says the opposite,
+       * rather than staying quiet and letting the version imply it.
+       */
+      const buildBadge = () =>
+        IS_RELEASE
+          ? `<span><b>Build:</b> <a href="https://www.npmjs.com/package/browser-sqlite/v/${encodeURIComponent(LIB_VERSION)}" target="_blank" rel="noopener">browser-sqlite@${LIB_VERSION}</a> — the published package</span>`
+          : `<span class="no"><b>Build:</b> browser-sqlite ${LIB_VERSION} — <b>development build</b> (${BUILD_REF}), not the published package (<a href="https://www.npmjs.com/package/browser-sqlite" target="_blank" rel="noopener">npm</a>)</span>`;
+
+      // Two lines: what you are running on, then what it can do. The
+      // capabilities carry a mark rather than a word because they are read at a
+      // glance and compared against another device's screenshot.
+      const identity = [
+        `<span><b>Engine:</b> ${AGENT.engine} ${AGENT.version ?? '?'}</span>`,
+        `<span><b>OS:</b> ${AGENT.os}</span>`,
+        buildBadge(),
+      ].join('');
+
+      const capabilities = [
+        flag('OPFS', HAS_OPFS),
+        flag('readwrite-unsafe', HAS_UNSAFE_HANDLES),
+        flag('JSPI', HAS_JSPI),
+        `<span><b>Clock:</b> ${CLOCK_MS.toFixed(2)} ms</span>`,
+        CAN_LIST_IDB
+          ? ''
+          : `<span class="no"><b>IndexedDB cleanup</b> ❌ unavailable — stores created by this run are left in place</span>`,
+      ]
+        .filter(Boolean)
+        .join('');
+
+      document.getElementById('banner').innerHTML =
+        `<div class="line">${identity}</div><div class="line flags">${capabilities}</div>`;
+
+      // ── Pairs ───────────────────────────────────────────────────────────
+      /** Every declared (vfs, build) pair, derived from the library's table. */
+      const PAIRS = Object.entries(VFS_CAPABILITIES).flatMap(([vfs, cap]) =>
+        cap.builds.map((build) => ({ id: `${vfs}/${build}`, vfs, build, cap })),
+      );
+
+      /**
+       * The platform feature this pair needs and this engine lacks, or null.
+       * Read from `requires` — never from a hardcoded VFS name. A VFS that only
+       * `degradesWithout` a feature stays runnable: OPFSAdaptiveVFS without
+       * readwrite-unsafe passes 102 of 104 browser tests, and marking it
+       * unavailable would be false.
+       */
+      const missingFeature = (pair) => {
+        if (pair.build === 'jspi' && !HAS_JSPI) return 'jspi';
+        if (pair.cap.requires.includes('opfs') && !HAS_OPFS) return 'opfs';
+        if (
+          pair.cap.requires.includes('writable-stream') &&
+          !HAS_WRITABLE_STREAM
+        )
+          return 'writable-stream';
+        if (
+          pair.cap.requires.includes('readwrite-unsafe') &&
+          !HAS_UNSAFE_HANDLES
+        )
+          return 'readwrite-unsafe';
+        return null;
+      };
+
+      /** Effective pool size: the declared cap, or 4 where unbounded. */
+      const poolFor = (cap) => Math.min(4, cap.maxPoolSize ?? 4);
+
+      // ── SELECTION UI — Task 2 ───────────────────────────────────────────
+      const list = document.getElementById('picker-list');
+      const summary = document.getElementById('picker-summary');
+
+      /** Pairs grouped under their VFS, in the capability table's order. */
+      const GROUPS = [...new Set(PAIRS.map((p) => p.vfs))].map((vfs) => ({
+        vfs,
+        pairs: PAIRS.filter((p) => p.vfs === vfs),
+      }));
+
+      for (const group of GROUPS) {
+        const box = document.createElement('div');
+        box.className = 'vfs-group';
+
+        const head = document.createElement('label');
+        head.className = 'vfs-head';
+        const parent = document.createElement('input');
+        parent.type = 'checkbox';
+        parent.dataset.vfs = group.vfs;
+        const name = document.createElement('span');
+        name.textContent = group.vfs;
+        const pool = document.createElement('span');
+        pool.className = 'why';
+        pool.textContent = `pool ${poolFor(group.pairs[0].cap)}`;
+        head.append(parent, name, pool);
+        box.append(head);
+
+        for (const pair of group.pairs) {
+          const missing = missingFeature(pair);
+          const label = document.createElement('label');
+          label.className = missing ? 'build unavailable' : 'build';
+
+          const child = document.createElement('input');
+          child.type = 'checkbox';
+          child.dataset.pair = pair.id;
+          child.checked = !missing;
+          child.disabled = Boolean(missing);
+          if (missing) label.title = `this browser has no ${missing}`;
+
+          const text = document.createElement('span');
+          text.textContent = pair.build;
+
+          const why = document.createElement('span');
+          why.className = 'why';
+          why.textContent = missing ? `no ${missing}` : '';
+
+          label.append(child, text, why);
+          box.append(label);
+        }
+
+        list.append(box);
+      }
+
+      const boxes = () => [...list.querySelectorAll('input[data-pair]')];
+      const parents = () => [...list.querySelectorAll('input[data-vfs]')];
+
+      /** The build checkboxes under one VFS heading. */
+      const childrenOf = (parent) => [
+        ...parent.closest('.vfs-group').querySelectorAll('input[data-pair]'),
+      ];
+
+      /**
+       * Reflects the children into the parent. `indeterminate` is a property,
+       * never an attribute, and it is purely presentational — the parent's own
+       * `checked` still has a value underneath, which is why it is set
+       * explicitly on every path rather than left to whatever a click last did.
+       *
+       * "All" means all *available* builds: a VFS whose jspi build this browser
+       * cannot run reads as fully checked with its two others ticked, because
+       * the third was never selectable.
+       */
+      const refreshParents = () => {
+        for (const parent of parents()) {
+          const kids = childrenOf(parent).filter((c) => !c.disabled);
+          if (kids.length === 0) {
+            parent.checked = false;
+            parent.indeterminate = false;
+            parent.disabled = true;
+            continue;
+          }
+          const on = kids.filter((c) => c.checked).length;
+          parent.checked = on === kids.length;
+          parent.indeterminate = on > 0 && on < kids.length;
+        }
+      };
+      const byId = new Map(PAIRS.map((p) => [p.id, p]));
+
+      const selectedPairs = () =>
+        boxes()
+          .filter((b) => b.checked)
+          .map((b) => byId.get(b.dataset.pair));
+
+      /**
+       * Names the selection by VFS, not by pair: listing every pair id put
+       * twenty-one of them in the summary and pushed the picker off the screen.
+       * A VFS whose runnable builds are all selected contributes its name
+       * alone; a partial one names the builds, which is the only case where the
+       * build matters to a reader closing the panel.
+       */
+      const describeSelection = () =>
+        GROUPS.map(({ vfs, pairs }) => {
+          const runnable = pairs.filter((p) => !missingFeature(p));
+          const on = runnable.filter(
+            (p) => list.querySelector(`input[data-pair="${p.id}"]`)?.checked,
+          );
+          if (on.length === 0) return null;
+          return on.length === runnable.length
+            ? vfs
+            : `${vfs} (${on.map((p) => p.build).join(', ')})`;
+        })
+          .filter(Boolean)
+          .join(' · ');
+
+      const refreshSummary = () => {
+        const chosen = selectedPairs();
+        const runnable = boxes().filter((b) => !b.disabled).length;
+        summary.textContent =
+          chosen.length === 0
+            ? 'None selected'
+            : chosen.length === runnable
+              ? `All (${chosen.length})`
+              : `${chosen.length} selected — ${describeSelection()}`;
+        document.getElementById('start').disabled = chosen.length === 0;
+      };
+
+      const refresh = () => {
+        refreshParents();
+        refreshSummary();
+      };
+
+      list.addEventListener('change', (event) => {
+        const target = event.target;
+        // A click on a VFS heading drives its builds; a click on a build only
+        // feeds back up. Both end in the same refresh.
+        if (target.dataset.vfs) {
+          for (const child of childrenOf(target)) {
+            if (!child.disabled) child.checked = target.checked;
+          }
+        }
+        refresh();
+      });
+      document.getElementById('select-all').addEventListener('click', () => {
+        for (const b of boxes()) if (!b.disabled) b.checked = true;
+        refresh();
+      });
+      document.getElementById('select-none').addEventListener('click', () => {
+        for (const b of boxes()) b.checked = false;
+        refresh();
+      });
+      refresh();
+
+      // ── RUNNER — Task 3 ─────────────────────────────────────────
+      const ROW_TIMEOUT_MS = 30_000;
+
+      /**
+       * Thrown when a row could not be bounded without abandoning its column.
+       * See spec §5.3: for a method that takes no AbortSignal the only bound
+       * available is a race against a timer, which abandons the WAIT without
+       * stopping the WORK. Continuing down the column would then time every
+       * later row against a worker still executing the abandoned statement,
+       * so the whole column is abandoned instead.
+       */
+      class ColumnAbandoned extends Error {}
+
+      /**
+       * A row whose work takes a `signal`: read / write / first / stream /
+       * chunk. The abort reaches the drain, the worker is released, and the
+       * run continues with the next row in the same column.
+       */
+      const abortableRow = async (fn) => {
+        const signal = AbortSignal.timeout(ROW_TIMEOUT_MS);
+        try {
+          return await fn(signal);
+        } catch (error) {
+          if (signal.aborted) throw new RowTimeout();
+          throw error;
+        }
+      };
+
+      class RowTimeout extends Error {}
+
+      /**
+       * A row whose work takes no `signal` — bulkWrite and output today, see
+       * ABORT-1 in mem:follow-ups. When ABORT-1 lands these rows move to
+       * abortableRow and this function loses its last caller.
+       */
+      const unabortableRow = async (fn) => {
+        let timer;
+        const expired = new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new ColumnAbandoned()), ROW_TIMEOUT_MS);
+        });
+        try {
+          return await Promise.race([fn(), expired]);
+        } finally {
+          clearTimeout(timer);
+        }
+      };
+
+      /**
+       * Surgical cleanup. This origin is shared with the user's other Pages
+       * projects, so:
+       *   - OPFS: remove only our exact generated name, never the root;
+       *   - IndexedDB: wa-sqlite names the store after the VFS CLASS, not
+       *     after our file, so every database this library ever created with
+       *     IDBBatchAtomicVFS lives in one store called `IDBBatchAtomicVFS`.
+       *     Deleting it by name would delete other applications' data. We
+       *     therefore delete only stores that did not exist before this run.
+       * See spec §5.4.
+       */
+      /**
+       * Both snapshots are taken at the START of a run, after the sweep below,
+       * not at page load: a run must diff against a floor it just established,
+       * or it would inherit whatever the previous one left and protect it.
+       */
+      let idbBefore = null;
+      let opfsBefore = null;
+
+      /**
+       * The OPFS root as it stood before this page touched anything.
+       *
+       * Removing our own database name is not enough, because a VFS is free to
+       * store under a name of its own choosing. `AccessHandlePoolVFS` keeps
+       * every database in one directory named after the VFS class, holding six
+       * pre-allocated files with random names — so `removeEntry(ourName)` finds
+       * nothing, the slots are never freed, and the seventh column on an origin
+       * fails to open. That was measured across seven real runs before it was
+       * understood. SQLite's own `-journal` and `-wal` siblings leak the same
+       * way when a column ends without a clean close.
+       *
+       * So we diff the root instead of guessing at layouts: whatever appeared
+       * while this page ran is ours to remove, whatever was already there is
+       * not. It needs no knowledge of any VFS's internals and survives an
+       * upstream change to them — the same rule already used for IndexedDB.
+       */
+      const snapshotOpfsRoot = async () => {
+        if (!HAS_OPFS) return null;
+        try {
+          const root = await navigator.storage.getDirectory();
+          const names = new Set();
+          for await (const name of root.keys()) names.add(name);
+          return names;
+        } catch {
+          // No directory iteration here: clean nothing rather than guess.
+          return null;
+        }
+      };
+
+      const CAN_LIST_OPFS = (await snapshotOpfsRoot()) !== null;
+
+      // Same honesty as the IndexedDB note: a silent skip would read as a clean
+      // run, and the next run on this origin would inherit the residue.
+      if (HAS_OPFS && !CAN_LIST_OPFS) {
+        document.getElementById('banner').insertAdjacentHTML(
+          'beforeend',
+          '<span class="no"><b>OPFS cleanup</b> limited — this browser will not' +
+            ' list the storage root, so VFS-private files created by this run' +
+            ' are left in place</span>',
+        );
+      }
+
+      /** Per column, so a long run does not carry 22 databases to the end. */
+      const cleanupOpfs = async (file) => {
+        if (!HAS_OPFS) return;
+        try {
+          const root = await navigator.storage.getDirectory();
+          await root.removeEntry(file, { recursive: true });
+        } catch {
+          // Never created, or this VFS does not use OPFS at all.
+        }
+      };
+
+      /**
+       * Everything the run left behind under a name we never chose: VFS-private
+       * directories, orphaned journals. Runs once, after every client is closed
+       * — deleting a VFS's directory while an instance still held it would take
+       * capacity away from something still using it.
+       */
+      const cleanupOpfsResidue = async () => {
+        if (!opfsBefore) return;
+        try {
+          const root = await navigator.storage.getDirectory();
+          const now = [];
+          for await (const name of root.keys()) now.push(name);
+          for (const name of now) {
+            if (opfsBefore.has(name)) continue;
+            // Recorded before the attempt: if the removal fails, or the tab
+            // dies between these two lines, the next run still knows it is ours.
+            remember('opfs', name);
+            try {
+              await root.removeEntry(name, { recursive: true });
+              forget('opfs', name);
+            } catch {
+              // Held open elsewhere; leave it rather than fight for it.
+            }
+          }
+        } catch {
+          // Iteration stopped working mid-run: nothing safe left to do.
+        }
+      };
+
+      const cleanupIdb = async () => {
+        if (!idbBefore) return;
+        const now = await indexedDB.databases();
+        for (const { name } of now) {
+          if (!name || idbBefore.has(name)) continue;
+          remember('idb', name);
+          await deleteIdb(name);
+          forget('idb', name);
+        }
+      };
+
+      // ── Residue that outlives a run ─────────────────────────────────────
+      /**
+       * A run that never reaches its end — the tab closed, a phone suspending
+       * the page — leaves storage behind. The next load would inventory that
+       * residue as pre-existing and the "never touch what was already there"
+       * rule would protect it forever: an abandoned AccessHandlePoolVFS
+       * directory would hold its six slots for good, which is the false failure
+       * we just spent a campaign diagnosing.
+       *
+       * So names we created are remembered across loads. Only names that
+       * appeared DURING one of our own runs are ever recorded, which is what
+       * keeps this from reaching another application's data.
+       *
+       * Unavailable storage (private windows, blocked site data) degrades to
+       * the previous behaviour rather than failing.
+       */
+      const OWNED_KEY = 'browser-sqlite-bench.owned.v1';
+
+      const owned = () => {
+        try {
+          return JSON.parse(localStorage.getItem(OWNED_KEY) ?? '{}');
+        } catch {
+          return {};
+        }
+      };
+
+      const remember = (kind, name) => {
+        try {
+          const all = owned();
+          all[kind] = [...new Set([...(all[kind] ?? []), name])];
+          localStorage.setItem(OWNED_KEY, JSON.stringify(all));
+        } catch {
+          // Nothing to do: this run cleans up after itself or it does not.
+        }
+      };
+
+      const forget = (kind, name) => {
+        try {
+          const all = owned();
+          all[kind] = (all[kind] ?? []).filter((n) => n !== name);
+          localStorage.setItem(OWNED_KEY, JSON.stringify(all));
+        } catch {
+          // As above.
+        }
+      };
+
+      const deleteIdb = (name) =>
+        new Promise((resolve) => {
+          const request = indexedDB.deleteDatabase(name);
+          request.onsuccess = request.onerror = request.onblocked = () =>
+            resolve();
+        });
+
+      /**
+       * Runs before a bench, so it starts from a floor it established itself —
+       * chaining two runs must not measure the first one's leftovers. Removes
+       * three things and nothing else: our own `bench-` databases and their
+       * `-journal` / `-wal` siblings, whose prefix makes them unambiguously
+       * ours; anything a previous run of ours recorded as its own; and the
+       * IndexedDB stores it recorded the same way.
+       */
+      const sweepBeforeRun = async () => {
+        const all = owned();
+        if (HAS_OPFS) {
+          try {
+            const root = await navigator.storage.getDirectory();
+            const names = [];
+            for await (const name of root.keys()) names.push(name);
+            for (const name of names) {
+              const isOurs =
+                name.startsWith('bench-') || (all.opfs ?? []).includes(name);
+              if (!isOurs) continue;
+              try {
+                await root.removeEntry(name, { recursive: true });
+                forget('opfs', name);
+              } catch {
+                // Still held; a later run will try again.
+              }
+            }
+          } catch {
+            // No iteration: the prefix sweep is not available either.
+          }
+        }
+        for (const name of all.idb ?? []) {
+          await deleteIdb(name);
+          forget('idb', name);
+        }
+      };
+
+      /**
+       * `reasons` is the third map because the first two only carry a verdict,
+       * and a verdict without its cause is the least useful thing this page can
+       * send back. A real Safari reported `opens: "fail"` for one VFS and the
+       * message that said why lived only in a cell's tooltip, on a machine
+       * nobody here can reach — so the one discovery of that campaign could not
+       * be read from its own export.
+       *
+       * Keyed pair → row, exactly like the other two, and carrying the cause of
+       * every cell that is not a plain pass or a number: errors, states the
+       * clock could not support, prerequisites that never ran.
+       */
+      const RESULTS = { conformance: {}, measurements: {}, reasons: {} };
+
+      const setReason = (pairId, rowId, text) => {
+        (RESULTS.reasons[pairId] ??= {})[rowId] = text;
+      };
+
+      /**
+       * Conformance rows. Ids are the describe() titles of
+       * tests/conformance/invariants.test.ts, normalized: the "invariant N — "
+       * prefix is dropped and the remainder is kebab-cased — see BENCH-DRIFT in
+       * mem:follow-ups. `run` resolves true, resolves 'blocked', or throws.
+       */
+      const CONFORMANCE_ROWS = [
+        {
+          id: 'opens',
+          label: 'opens and serves a query',
+          applies: () => true,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ctx.db.write('CREATE TABLE t (a INTEGER)', undefined, { signal });
+              await ctx.db.write('INSERT INTO t VALUES (1)', undefined, { signal });
+              const rows = await ctx.db.read('SELECT count(*) AS n FROM t', undefined, {
+                signal,
+              });
+              if (rows[0].n !== 1) throw new Error(`expected 1, got ${rows[0].n}`);
+              return true;
+            }),
+        },
+        {
+          id: 'write-read-back',
+          label: 'what is written is read back',
+          applies: () => true,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ctx.db.write('CREATE TABLE inv1 (a INTEGER)', undefined, { signal });
+              await ctx.db.write('INSERT INTO inv1 VALUES (42)', undefined, { signal });
+              const rows = await ctx.db.read('SELECT a FROM inv1', undefined, { signal });
+              if (rows.length !== 1 || rows[0].a !== 42) {
+                throw new Error(`expected [{a:42}], got ${JSON.stringify(rows)}`);
+              }
+              return true;
+            }),
+        },
+        {
+          id: 'survives-reopen',
+          label: 'data survives close and reopen',
+          // Read from the table, never hardcoded: the memory VFS declare
+          // persistent: false and this row is meaningless for them.
+          applies: (cap) => cap.persistent,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ctx.db.write('CREATE TABLE inv2 (a INTEGER)', undefined, {
+                signal,
+              });
+              await ctx.db.write('INSERT INTO inv2 VALUES (7)', undefined, {
+                signal,
+              });
+              await ctx.db.close();
+
+              // This row closed the column's client, so it owes the column a
+              // fresh one — the reopened client BECOMES the column's client.
+              // Without this every later row fails with CLIENT_CLOSED. It is
+              // also why rows read `ctx.db` and never destructure it: see
+              // Step 2.
+              ctx.db = createSQLiteClient(ctx.file, {
+                vfs: ctx.pair.vfs,
+                build: ctx.pair.build,
+                poolSize: poolFor(ctx.pair.cap),
+              });
+              const rows = await ctx.db.read('SELECT a FROM inv2', undefined, {
+                signal,
+              });
+              if (rows.length !== 1 || rows[0].a !== 7) {
+                throw new Error(`expected [{a:7}], got ${JSON.stringify(rows)}`);
+              }
+              return true;
+            }),
+        },
+        {
+          id: 'concurrent-writes-lose-nothing',
+          label: 'concurrent writes lose nothing',
+          applies: (cap) => cap.maxPoolSize !== 1,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ctx.db.write('CREATE TABLE inv3 (a INTEGER)', undefined, {
+                signal,
+              });
+              const N = 20;
+              await Promise.all(
+                Array.from({ length: N }, (_, i) =>
+                  ctx.db.write('INSERT INTO inv3 VALUES (?)', [i], { signal }),
+                ),
+              );
+              const rows = await ctx.db.read(
+                'SELECT count(*) AS n FROM inv3',
+                undefined,
+                { signal },
+              );
+              if (rows[0].n !== N) throw new Error(`expected ${N}, got ${rows[0].n}`);
+              return true;
+            }),
+        },
+        {
+          id: 'rollback-leaves-nothing',
+          label: 'a rolled-back transaction leaves nothing',
+          applies: () => true,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ctx.db.write('CREATE TABLE inv4 (a INTEGER)', undefined, {
+                signal,
+              });
+              let threw = false;
+              try {
+                await ctx.db.transaction(async (tx) => {
+                  await tx.write('INSERT INTO inv4 VALUES (1)');
+                  throw new Error('deliberate rollback');
+                });
+              } catch (error) {
+                threw = /deliberate rollback/.test(String(error?.message ?? error));
+              }
+              if (!threw) throw new Error('transaction did not reject');
+              const rows = await ctx.db.read(
+                'SELECT count(*) AS n FROM inv4',
+                undefined,
+                { signal },
+              );
+              if (rows[0].n !== 0) throw new Error(`expected 0, got ${rows[0].n}`);
+              return true;
+            }),
+        },
+        {
+          id: 'close-settles',
+          label: 'close settles',
+          applies: () => true,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ctx.db.write('CREATE TABLE inv5 (a INTEGER)', undefined, {
+                signal,
+              });
+              // close() accepts no AbortSignal; the library's drainTimeout
+              // defaults to 60 s, which exceeds this row's 30 s budget.
+              // closeWithTimeout races it against a hard timer — ColumnAbandoned
+              // abandons the column if close does not settle, because the
+              // client's state is unknown after a stall.
+              await closeWithTimeout(ctx.db);
+              let rejected = false;
+              try {
+                await ctx.db.read('SELECT 1 AS n');
+              } catch {
+                rejected = true;
+              }
+              if (!rejected) throw new Error('read after close did not reject');
+
+              // Same reason as survives-reopen: this row closed the column's
+              // client, so it owes the column a fresh one.
+              ctx.db = createSQLiteClient(ctx.file, {
+                vfs: ctx.pair.vfs,
+                build: ctx.pair.build,
+                poolSize: poolFor(ctx.pair.cap),
+              });
+              return true;
+            }),
+        },
+        {
+          id: 'no-read-inside-transaction',
+          label: 'no read runs inside an open transaction',
+          applies: (cap) => cap.maxPoolSize !== 1,
+          /**
+           * B1 isolation. Exercising it needs a second worker served while the
+           * transaction holds — which HANDLE-1 prevents on any VFS rotating a
+           * single exclusive OPFS access handle. The pool-acquire blocks at the
+           * scheduler, before the signal is ever checked, so the abort is how
+           * we tell "isolated" from "never got the chance to look".
+           *
+           * That distinction is the reason this row can return 'blocked'
+           * instead of pass or fail: reporting a pass there would claim we
+           * proved something we did not.
+           */
+          run: async (ctx) => {
+            await ctx.db.write('CREATE TABLE inv6 (a INTEGER)');
+
+            let release;
+            const held = new Promise((resolve) => {
+              release = resolve;
+            });
+            const tx = ctx.db.transaction(async (inner) => {
+              await inner.write('INSERT INTO inv6 VALUES (1)');
+              await held;
+            });
+
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 2000);
+            const readOutcome = ctx.db
+              .read('SELECT count(*) AS n FROM inv6', undefined, {
+                signal: controller.signal,
+              })
+              .then(
+                (rows) => ({ ok: true, rows }),
+                (error) => ({ ok: false, error }),
+              );
+            const aborted = new Promise((resolve) => {
+              controller.signal.addEventListener('abort', () => resolve(null), {
+                once: true,
+              });
+            });
+
+            const winner = await Promise.race([readOutcome, aborted]);
+            clearTimeout(timer);
+
+            let verdict;
+            if (winner === null) {
+              verdict = 'blocked';
+            } else if (!winner.ok) {
+              release();
+              await tx;
+              throw winner.error;
+            } else if (winner.rows[0].n !== 0) {
+              release();
+              await tx;
+              throw new Error(
+                `read saw ${winner.rows[0].n} uncommitted rows — B1 violated`,
+              );
+            } else {
+              verdict = true;
+            }
+
+            release();
+            await tx;
+            return verdict;
+          },
+        },
+      ];
+
+      const DATASET_ROWS = 10_000;
+
+      /** Wall time of one awaited call, in ms. */
+      const time = async (fn) => {
+        const start = performance.now();
+        await fn();
+        return performance.now() - start;
+      };
+
+      /**
+       * Order statistic over raw samples — never a mean. These VFS differ in
+       * their tail, which is exactly what a mean hides.
+       */
+      const quantile = (samples, q) => {
+        const sorted = [...samples].sort((a, b) => a - b);
+        const index = Math.min(
+          sorted.length - 1,
+          Math.max(0, Math.ceil(q * sorted.length) - 1),
+        );
+        return sorted[index];
+      };
+
+      /** A short read: primary-key lookup, so the cost is round-trip, not SQLite. */
+      const shortRead = (db, id, signal) =>
+        db.first('SELECT id, label FROM bench WHERE id = ?', [id], { signal });
+
+      const randomId = () => 1 + Math.floor(Math.random() * DATASET_ROWS);
+
+      /**
+       * Builds the column's shared dataset exactly once. Rows that need it call
+       * this; rows that do not (bulk-insert, which builds its own) do not pay
+       * for it. Uses bulkWrite, so it inherits the unabortable regime.
+       */
+      const ensureDataset = async (ctx) => {
+        if (ctx.datasetReady) return;
+        await unabortableRow(async () => {
+          await ctx.db.write(
+            'CREATE TABLE bench (id INTEGER PRIMARY KEY, label TEXT, n INTEGER)',
+          );
+          const bulk = ctx.db.bulkWrite('bench', ['id', 'label', 'n']);
+          for (let i = 1; i <= DATASET_ROWS; i++) {
+            bulk.enqueue({ id: i, label: `row-${i}`, n: i % 97 });
+          }
+          await bulk.close();
+          await ctx.db.write('CREATE INDEX bench_n ON bench (n)');
+        });
+        ctx.datasetReady = true;
+      };
+
+      /**
+       * A cross-join query that reads every page of bench (10 000 rows) for
+       * the entire duration of one sqlite3_step(). SQLite holds a shared read
+       * lock on the database file from the moment the statement starts until
+       * it finishes — which is what the original recursive CTE lacked: a
+       * pure-CPU recursion over no table reads no file pages and therefore
+       * acquires no file handle, so it stranded its own worker without
+       * blocking other workers that needed the file.
+       *
+       * `bound` controls how many rows the inner subquery returns, and
+       * therefore how many cross-join pairs SQLite must materialise. No index
+       * applies to the cross join, so cost scales linearly with bound.
+       */
+      const longQuery = (bound) =>
+        `SELECT count(*) FROM bench CROSS JOIN (SELECT 1 FROM bench LIMIT ${bound}) AS b`;
+
+      /**
+       * Finds a bound that costs 1.5–3 s ON THIS DEVICE, then reuses it for
+       * every column. ensureDataset must have run before this is called.
+       *
+       * The inner LIMIT cannot return more than DATASET_ROWS rows, so bound
+       * is clamped there — growing past it adds no cost. After the search
+       * loop, one verification measurement confirms the chosen bound actually
+       * costs 1–4 s. If it does not (the cross-join saturates at
+       * DATASET_ROWS² and is still too fast on this device), null is stored
+       * and pool-blocking returns null rather than printing a meaningless 1.
+       */
+      const calibrateLongQuery = async (ctx) => {
+        if ('longIterations' in ctx) return ctx.longIterations;
+        let bound = 200;
+        for (let attempt = 0; attempt < 6; attempt++) {
+          const ms = await time(() => ctx.db.read(longQuery(bound)));
+          if (ms >= 1500 && ms <= 3000) break;
+          if (ms > 3000) {
+            bound = Math.max(1, Math.round(bound / 2));
+            break;
+          }
+          bound = Math.min(
+            DATASET_ROWS,
+            Math.round(bound * Math.max(2, 2000 / Math.max(ms, 1))),
+          );
+        }
+        const verify = await time(() => ctx.db.read(longQuery(bound)));
+        ctx.longIterations = verify >= 1000 && verify <= 4000 ? bound : null;
+        RESULTS.measurements[ctx.pair.id].__iterations = ctx.longIterations;
+        return ctx.longIterations;
+      };
+
+      /** Measurement rows. Filled in Tasks 5 and 6. */
+      const MEASUREMENT_ROWS = [
+        {
+          id: 'bulk-insert-10k',
+          label: `bulk insert + index build (${DATASET_ROWS.toLocaleString('en')} rows)`,
+          unit: 'ms',
+          decimals: 0,
+          better: 'low',
+          applies: () => true,
+          // bulkWrite takes no signal (ABORT-1), so this row can only abandon
+          // the column. It is deliberately first: paying that risk before the
+          // dataset exists costs less than paying it halfway down the column.
+          run: async (ctx) => {
+            const ms = await time(() => ensureDataset(ctx));
+            return ms;
+          },
+        },
+        {
+          id: 'write-latency-p50',
+          label: 'single INSERT — p50',
+          unit: 'ms',
+          decimals: 2,
+          better: 'low',
+          applies: () => true,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ensureDataset(ctx);
+              await ctx.db.write('CREATE TABLE lat (a INTEGER)', undefined, { signal });
+              await ctx.db.write('INSERT INTO lat VALUES (0)', undefined, { signal }); // warmup
+              const samples = [];
+              for (let i = 1; i <= 100; i++) {
+                samples.push(
+                  await time(() =>
+                    ctx.db.write('INSERT INTO lat VALUES (?)', [i], { signal }),
+                  ),
+                );
+              }
+              ctx.writeLatency = samples;
+              return quantile(samples, 0.5);
+            }),
+        },
+        {
+          id: 'write-latency-p95',
+          label: 'single INSERT — p95',
+          unit: 'ms',
+          decimals: 2,
+          better: 'low',
+          applies: () => true,
+          // Reuses the samples the p50 row collected rather than running 100
+          // more inserts: two runs would measure two different database sizes.
+          run: (ctx) =>
+            ctx.writeLatency ? quantile(ctx.writeLatency, 0.95) : null,
+        },
+        {
+          id: 'point-read-p50',
+          label: 'point read by primary key — p50',
+          unit: 'ms',
+          decimals: 2,
+          better: 'low',
+          applies: () => true,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ensureDataset(ctx);
+              await shortRead(ctx.db, randomId(), signal); // warmup
+              const samples = [];
+              for (let i = 0; i < 200; i++) {
+                samples.push(
+                  await time(() => shortRead(ctx.db, randomId(), signal)),
+                );
+              }
+              return quantile(samples, 0.5);
+            }),
+        },
+        {
+          id: 'list-page-p50',
+          label: 'one page of a list (LIMIT 50) — p50',
+          unit: 'ms',
+          decimals: 2,
+          better: 'low',
+          applies: () => true,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ensureDataset(ctx);
+              // The random OFFSET spans [0, 9950), so the median sample makes
+              // SQLite walk ~4975 index-ordered rows before returning 50. This
+              // is the honest cost of OFFSET pagination at median depth, not
+              // just the cost of fetching 50 rows.
+              const page = (offset) =>
+                ctx.db.read(
+                  'SELECT id, label FROM bench ORDER BY n, id LIMIT 50 OFFSET ?',
+                  [offset],
+                  { signal },
+                );
+              await page(0); // warmup
+              const samples = [];
+              for (let i = 0; i < 100; i++) {
+                samples.push(
+                  await time(() => page(Math.floor(Math.random() * (DATASET_ROWS - 50)))),
+                );
+              }
+              return quantile(samples, 0.5);
+            }),
+        },
+        {
+          id: 'read-burst-concurrency',
+          label: '24 short reads — parallel vs serial (gain)',
+          unit: '×',
+          decimals: 2,
+          better: 'high',
+          applies: () => true,
+          /**
+           * Median of 5 serial/parallel gain ratios. Alternates which runs
+           * first so cache-warming advantages cancel across repetitions.
+           * Returns null when the median serial total is below 4× the clock's
+           * resolution — reads are too fast to distinguish serial from parallel.
+           */
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ensureDataset(ctx);
+              const ids = Array.from({ length: 24 }, randomId);
+              await shortRead(ctx.db, ids[0], signal); // warmup
+
+              const ratios = [];
+              const serialTotals = [];
+              for (let rep = 0; rep < 5; rep++) {
+                // Alternate order so cache-warming bias cancels.
+                // Even reps: serial first. Odd reps: parallel first.
+                let serial, parallel;
+                if (rep % 2 === 0) {
+                  serial = await time(async () => {
+                    for (const id of ids) await shortRead(ctx.db, id, signal);
+                  });
+                  parallel = await time(() =>
+                    Promise.all(ids.map((id) => shortRead(ctx.db, id, signal))),
+                  );
+                } else {
+                  parallel = await time(() =>
+                    Promise.all(ids.map((id) => shortRead(ctx.db, id, signal))),
+                  );
+                  serial = await time(async () => {
+                    for (const id of ids) await shortRead(ctx.db, id, signal);
+                  });
+                }
+                serialTotals.push(serial);
+                ratios.push(serial / parallel);
+              }
+
+              // If reads are too fast for the timer to distinguish serial from
+              // parallel, return null. CLOCK_MS × 4 matches pool-blocking's
+              // approach: a serial total under that threshold means any ratio
+              // we compute reflects clock quantisation, not pool behaviour.
+              if (quantile(serialTotals, 0.5) < CLOCK_MS * 4) return null;
+              return quantile(ratios, 0.5);
+            }),
+        },
+        {
+          id: 'full-scan',
+          label: `full scan over ${DATASET_ROWS.toLocaleString('en')} rows`,
+          unit: 'ms',
+          decimals: 1,
+          better: 'low',
+          applies: () => true,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ensureDataset(ctx);
+              const scan = () =>
+                ctx.db.read(
+                  'SELECT count(*) AS n, sum(n) AS total, max(label) AS last FROM bench',
+                  undefined,
+                  { signal },
+                );
+              await scan(); // warmup
+              const samples = [];
+              for (let i = 0; i < 5; i++) samples.push(await time(scan));
+              return quantile(samples, 0.5);
+            }),
+        },
+        {
+          id: 'transaction-throughput',
+          label: '500 inserts inside one transaction',
+          unit: 'ms',
+          decimals: 0,
+          better: 'low',
+          applies: () => true,
+          // The gap against write-latency-p50 × 500 is the most useful thing a
+          // developer learns from this page.
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ctx.db.write('CREATE TABLE txput (a INTEGER)', undefined, {
+                signal,
+              });
+              return time(() =>
+                ctx.db.transaction(async (tx) => {
+                  for (let i = 0; i < 500; i++) {
+                    await tx.write('INSERT INTO txput VALUES (?)', [i]);
+                  }
+                }),
+              );
+            }),
+        },
+        {
+          id: 'pool-blocking',
+          label: 'short read during a long query (× idle)',
+          unit: '×',
+          decimals: 2,
+          better: 'low',
+          applies: (cap) => cap.maxPoolSize !== 1,
+          /**
+           * Measures whether a long file-reading statement on one worker
+           * delays short reads issued concurrently on the same pool. ≈1 means
+           * the other workers served the reads freely; ≫1 means the busy
+           * statement starved the pool.
+           *
+           * NOTE: On Firefox this row does NOT reproduce the README's
+           * reduced-mode blocking claim. Even for VFS that report
+           * no-read-inside-transaction: blocked, short reads complete in ≈1 ms
+           * throughout the long query. The blocking the README describes
+           * applies to WRITE transactions (exclusive file lock); a long READ
+           * holds only a shared lock, which does not prevent other workers
+           * from acquiring their own shared locks.
+           */
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ensureDataset(ctx);
+              const bound = await calibrateLongQuery(ctx);
+              // Null means the cross-join saturated at DATASET_ROWS² and the
+              // device is still faster than 1 s — no meaningful ratio possible.
+              if (bound == null) return null;
+
+              const idle = [];
+              for (let i = 0; i < 5; i++) {
+                idle.push(await time(() => shortRead(ctx.db, randomId(), signal)));
+              }
+              const idleP50 = quantile(idle, 0.5);
+              // If the idle baseline is below 2× the clock's granularity, any
+              // ratio we compute reflects the timer's quantisation, not the
+              // pool's behaviour. Return null so the cell shows — rather than
+              // a fabricated triple-digit number.
+              if (idleP50 < CLOCK_MS * 2) return null;
+
+              // Deliberately not awaited: the long query must still be running
+              // while the short reads are timed. Its rejection is swallowed —
+              // the row timeout is what bounds this, not the long query.
+              const long = ctx.db.read(longQuery(bound), undefined, { signal });
+              long.catch(() => {});
+
+              await new Promise((resolve) => setTimeout(resolve, 50));
+
+              const during = [];
+              for (let i = 0; i < 5; i++) {
+                during.push(await time(() => shortRead(ctx.db, randomId(), signal)));
+              }
+
+              await long.catch(() => {});
+              return quantile(during, 0.5) / idleP50;
+            }),
+        },
+      ];
+
+      const headRow = document.getElementById('head-row');
+      const bodyRows = document.getElementById('body-rows');
+      const cells = new Map(); // `${pairId}|${rowId}` -> <td>
+
+      const buildRows = () => {
+        // Nothing to read before a run, so nothing is shown before one.
+        document.getElementById('results-section').hidden = false;
+        // Clear all column <th>s except the first (the "row" label column),
+        // and reset the cells map — otherwise a second Start press duplicates
+        // the header columns while mapping cells to the wrong column.
+        for (const th of [...headRow.querySelectorAll('th')].slice(1)) th.remove();
+        cells.clear();
+        bodyRows.replaceChildren();
+        for (const row of [...CONFORMANCE_ROWS, ...MEASUREMENT_ROWS]) {
+          const tr = document.createElement('tr');
+          tr.dataset.row = row.id;
+          const th = document.createElement('th');
+          th.textContent = row.label;
+          th.title = row.id;
+          tr.append(th);
+          bodyRows.append(tr);
+        }
+      };
+
+      const addColumn = (pair) => {
+        const th = document.createElement('th');
+        th.innerHTML = `${pair.vfs} · ${pair.build}<small>pool ${poolFor(pair.cap)}</small>`;
+        headRow.append(th);
+        for (const tr of bodyRows.querySelectorAll('tr')) {
+          const td = document.createElement('td');
+          td.className = 'pending';
+          td.textContent = '…';
+          tr.append(td);
+          cells.set(`${pair.id}|${tr.dataset.row}`, td);
+        }
+      };
+
+      const setCell = (pair, rowId, text, className = '') => {
+        const td = cells.get(`${pair.id}|${rowId}`);
+        if (!td) return;
+        td.className = className;
+        td.textContent = text;
+      };
+
+      /**
+       * Three criteria, and the reason there are not four: off Chromium the
+       * clock is 1 ms, so every latency row nulls out and a criterion built on
+       * one would have nothing to say on two of the three desktop engines.
+       * These survive there — bulk writes and transactions run in tens of
+       * milliseconds — except concurrency, which reports its own absence rather
+       * than ranking jitter.
+       */
+      const CRITERIA = [
+        {
+          id: 'read-burst-concurrency',
+          label: 'concurrent reads',
+          better: 'high',
+          why: 'the pool serving several short reads at once',
+        },
+        {
+          id: 'bulk-insert-10k',
+          label: 'bulk writes',
+          better: 'low',
+          why: 'loading 10 000 rows',
+        },
+        {
+          id: 'transaction-throughput',
+          label: 'transactions',
+          better: 'low',
+          why: '500 inserts inside one transaction',
+        },
+      ];
+
+      /**
+       * Out of the running, and why. Deliberately narrow: only a VFS that fails
+       * an invariant is excluded, because that is the one judgement that needs
+       * no weighing — it did not do what every VFS owes. `blocked` is not a
+       * failure and does not exclude; it is reported as a caveat on whoever
+       * wins, since it says something a ranking cannot.
+       */
+      const disqualified = (pairId) => {
+        const rows = RESULTS.conformance[pairId] ?? {};
+        for (const [rowId, verdict] of Object.entries(rows)) {
+          if (verdict === 'fail') {
+            const why = RESULTS.reasons[pairId]?.[rowId];
+            return why ? `${rowId}: ${why}` : rowId;
+          }
+        }
+        return null;
+      };
+
+      const bestFor = (criterion, candidates) => {
+        const scored = candidates
+          .map((pairId) => [pairId, RESULTS.measurements[pairId]?.[criterion.id]])
+          .filter(([, v]) => typeof v === 'number');
+        if (scored.length === 0) return null;
+        return scored.reduce((a, b) =>
+          criterion.better === 'high'
+            ? b[1] > a[1]
+              ? b
+              : a
+            : b[1] < a[1]
+              ? b
+              : a,
+        );
+      };
+
+      const pretty = (pairId) => pairId.replace('/', ' · ');
+
+      /**
+       * Advice, not a verdict. The page knows the device; it does not know the
+       * application, and the weight between these criteria is the caller's to
+       * decide — which is why nothing here is aggregated into a score.
+       */
+      const renderVerdict = (stopped) => {
+        const box = document.getElementById('verdict');
+        const text = document.getElementById('verdict-text');
+        const ran = Object.keys(RESULTS.conformance);
+        if (ran.length === 0) {
+          // Reachable only by stopping before the first pair finished, which
+          // the loop makes hard — but the box is where Download lives, so it
+          // says something rather than staying hidden and taking the button
+          // with it.
+          if (!stopped) return;
+          text.innerHTML =
+            '<p><b>Run stopped</b> before any pair finished — nothing to report.</p>';
+          box.hidden = false;
+          return;
+        }
+
+        const out = ran.map((p) => [p, disqualified(p)]).filter(([, d]) => d);
+        const candidates = ran.filter((p) => !disqualified(p));
+
+        const wins = CRITERIA.map((c) => [c, bestFor(c, candidates)]);
+        const decided = wins.filter(([, w]) => w);
+        const parts = [];
+
+        // A run cut short compares whatever happened to have finished. Saying so
+        // is the difference between a shortlist and a coincidence.
+        if (stopped) {
+          const selected = selectedPairs().length;
+          parts.push(
+            `<p><b>Run stopped.</b> ${ran.length} of the ${selected} selected pair${selected === 1 ? '' : 's'} ran, and what follows compares only those.</p>`,
+          );
+        }
+
+        // One candidate is not a comparison. Announcing it "ahead on all three
+        // criteria" would be true and worthless — it had no opponent.
+        if (candidates.length < 2) {
+          parts.push(
+            candidates.length === 0
+              ? '<p>Nothing ran that could be compared.</p>'
+              : `<p>Only ${pretty(candidates[0])} ran, so there is nothing to compare it against. Its numbers are in the table below.</p>`,
+          );
+          if (out.length > 0) {
+            parts.push(
+              `<p class="caveat">Not ranked, having failed an invariant: ${out.map(([p, d]) => `${pretty(p)} (${d})`).join('; ')}.</p>`,
+            );
+          }
+          text.innerHTML = parts.join('');
+          box.hidden = false;
+          return;
+        }
+
+        if (decided.length === 0) {
+          parts.push(
+            '<p>Nothing measurable separated these VFS on this device — the table below still carries what ran.</p>',
+          );
+        } else {
+          const winners = new Set(decided.map(([, w]) => w[0]));
+          const unit = (c) => (c.better === 'high' ? '×' : ' ms');
+          if (winners.size === 1 && decided.length === CRITERIA.length) {
+            const [pairId] = [...winners];
+            parts.push(
+              `<p>On this device, <b>${pretty(pairId)}</b> came out ahead on all three criteria, so it is probably the one to try first here.</p>`,
+            );
+          } else {
+            parts.push('<p>On this device, the best result per criterion:</p><ul>');
+            for (const [c, w] of decided) {
+              parts.push(
+                `<li><b>${c.label}</b> (${c.why}) — ${pretty(w[0])}, ${w[1].toFixed(2)}${unit(c)}</li>`,
+              );
+            }
+            parts.push('</ul>');
+          }
+          for (const [c, w] of wins) {
+            if (!w) {
+              parts.push(
+                `<p class="caveat">No ranking for <b>${c.label}</b>: this browser's clock could not separate the candidates.</p>`,
+              );
+            }
+          }
+          // A winner that cannot serve a read during a write transaction is a
+          // winner with a condition, and the ranking cannot express that.
+          for (const pairId of new Set(decided.map(([, w]) => w[0]))) {
+            if (RESULTS.conformance[pairId]?.['no-read-inside-transaction'] === 'blocked') {
+              parts.push(
+                `<p class="caveat">Note that ${pretty(pairId)} did not serve a read while a write transaction was open here — see <code>no-read-inside-transaction</code> below.</p>`,
+              );
+            }
+          }
+        }
+
+        const defaultPair = `${DEFAULT_VFS}/${defaultBuildFor(DEFAULT_VFS)}`;
+        if (ran.includes(defaultPair)) {
+          const led = decided.filter(([, w]) => w[0] === defaultPair);
+          parts.push(
+            led.length > 0
+              ? `<p class="caveat">The default, ${pretty(defaultPair)}, led ${led.map(([c]) => c.label).join(' and ')} here.</p>`
+              : `<p class="caveat">The default, ${pretty(defaultPair)}, led none of these criteria on this device.</p>`,
+          );
+        }
+
+        if (out.length > 0) {
+          parts.push(
+            `<p class="caveat">Not ranked, having failed an invariant: ${out.map(([p, d]) => `${pretty(p)} (${d})`).join('; ')}.</p>`,
+          );
+        }
+
+        parts.push(
+          '<p class="caveat">These numbers describe one machine at one moment. The table below has the detail, including the measurements this browser\'s clock could not separate.</p>',
+        );
+
+        text.innerHTML = parts.join('');
+        box.hidden = false;
+      };
+
+      const status = document.getElementById('status');
+      const startButton = document.getElementById('start');
+      let stopRequested = false;
+
+      /**
+       * Races db.close() against a hard timer. The library's drainTimeout
+       * defaults to 60 s; this keeps the sequential run within its budget.
+       * Rejects with ColumnAbandoned on timeout so the caller can signal
+       * that the column or pair cannot continue.
+       */
+      const closeWithTimeout = (db) =>
+        Promise.race([
+          db.close(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new ColumnAbandoned()), ROW_TIMEOUT_MS),
+          ),
+        ]);
+
+      /**
+       * One pair at a time, one row at a time. Two VFS running concurrently
+       * would contend for OPFS and invalidate every number on this page, so
+       * this sequencing is a correctness requirement, not a simplification.
+       */
+      const runPair = async (pair) => {
+        addColumn(pair);
+        const file = `bench-${crypto.randomUUID()}`;
+        RESULTS.conformance[pair.id] = {};
+        RESULTS.measurements[pair.id] = {};
+
+        const db = createSQLiteClient(file, {
+          vfs: pair.vfs,
+          build: pair.build,
+          poolSize: poolFor(pair.cap),
+        });
+        const ctx = { db, file, pair, pool: poolFor(pair.cap) };
+
+        let abandoned = false;
+        for (const row of [...CONFORMANCE_ROWS, ...MEASUREMENT_ROWS]) {
+          const kind = CONFORMANCE_ROWS.includes(row)
+            ? 'conformance'
+            : 'measurements';
+
+          if (abandoned) {
+            // Not a timeout: this row never ran. Reporting it as one claimed
+            // six expirations that never happened, in the same file as the
+            // failure that actually ended the column.
+            RESULTS[kind][pair.id][row.id] = 'not-run';
+            setReason(pair.id, row.id, 'an earlier row ended this column');
+            setCell(pair, row.id, '⏭');
+            continue;
+          }
+          if (!row.applies(pair.cap)) {
+            RESULTS[kind][pair.id][row.id] = 'skipped';
+            setCell(pair, row.id, '⃠');
+            continue;
+          }
+
+          status.textContent = `${pair.id} — ${row.id}`;
+          try {
+            const value = await row.run(ctx);
+            if (value === 'blocked') {
+              RESULTS[kind][pair.id][row.id] = 'blocked';
+              setReason(
+                pair.id,
+                row.id,
+                'the concurrent read was never served — the pool was held',
+              );
+              setCell(pair, row.id, '⃠ blocked');
+            } else if (kind === 'conformance') {
+              RESULTS[kind][pair.id][row.id] = 'pass';
+              setCell(pair, row.id, '✅');
+            } else {
+              // A duration the clock cannot resolve is not a fast result, it is
+              // no result. The ratio rows already refuse to print one; printing
+              // an absolute `0.00 ms` was the same defect wearing a unit — real
+              // Safari and Firefox runs reported 0.00 ms writes for five VFS,
+              // which is the 1 ms tick, not the database.
+              const unresolved =
+                typeof value === 'number' &&
+                row.unit === 'ms' &&
+                value < CLOCK_MS * 2;
+              if (unresolved) {
+                setReason(
+                  pair.id,
+                  row.id,
+                  `${value.toFixed(2)} ms is below 2× this device's clock resolution (${CLOCK_MS.toFixed(2)} ms) — too fast to time here`,
+                );
+              }
+              const stored = unresolved ? null : value;
+              RESULTS[kind][pair.id][row.id] = stored;
+              if (typeof stored === 'number') {
+                renderMeasureRow(row);
+              } else {
+                if (!unresolved) {
+                  setReason(pair.id, row.id, nullMeasureTitle(row.id));
+                }
+                const td = cells.get(`${pair.id}|${row.id}`);
+                if (td) {
+                  td.className = 'measure';
+                  td.textContent = '—';
+                  td.title = RESULTS.reasons[pair.id]?.[row.id] ?? '';
+                }
+              }
+            }
+          } catch (error) {
+            if (error instanceof ColumnAbandoned) {
+              // This row did time out; the ones after it simply never run, and
+              // now say so themselves rather than borrowing this verdict.
+              abandoned = true;
+              RESULTS[kind][pair.id][row.id] = 'timeout';
+              setReason(
+                pair.id,
+                row.id,
+                `exceeded ${ROW_TIMEOUT_MS} ms and takes no AbortSignal, so the rest of this column was abandoned`,
+              );
+              setCell(pair, row.id, '⏱', 'fail');
+            } else if (error instanceof RowTimeout) {
+              RESULTS[kind][pair.id][row.id] = 'timeout';
+              setReason(pair.id, row.id, `exceeded ${ROW_TIMEOUT_MS} ms`);
+              setCell(pair, row.id, '⏱', 'fail');
+            } else {
+              RESULTS[kind][pair.id][row.id] =
+                kind === 'conformance' ? 'fail' : null;
+              setReason(pair.id, row.id, String(error?.message ?? error));
+              const td = cells.get(`${pair.id}|${row.id}`);
+              if (td) td.title = RESULTS.reasons[pair.id][row.id];
+              setCell(pair, row.id, '❌', 'fail');
+            }
+            // Every later row would fail for the same reason and say nothing
+            // new, so a failed `opens` ends this column.
+            if (row.id === 'opens') abandoned = true;
+          }
+        }
+
+
+        try {
+          await closeWithTimeout(ctx.db);
+        } catch {
+          // A close that never settles is HANDLE-1 holding the pool. Nothing
+          // to do but move on; the worker dies with the page.
+        }
+        await cleanupOpfs(file);
+      };
+
+      /** Tooltip for a measurement cell that returned null. */
+      const nullMeasureTitle = (rowId) => {
+        if (rowId === 'write-latency-p95') {
+          return 'p50 did not complete — no samples to derive p95 from';
+        }
+        if (rowId === 'read-burst-concurrency') {
+          return (
+            'reads completed too quickly to time reliably — ' +
+            'median serial total was below 4× the clock\'s resolution; ' +
+            'ratio would reflect scheduling jitter, not pool behaviour'
+          );
+        }
+        if (rowId === 'pool-blocking') {
+          return (
+            'reliable ratio unavailable: either the device clock is too coarse to ' +
+            'time the idle baseline, or the long-query calibration could not reach ' +
+            'its 1.5–3 s target on this device (common on Chromium when the ' +
+            'cross-join finishes in under 1 s)'
+          );
+        }
+        return 'measurement could not be produced';
+      };
+
+      /**
+       * Repaints every cell of one measurement row, scaled to the best value
+       * present so far. Called each time a cell lands, because "best" changes
+       * as columns arrive — a bar drawn once against the first column would
+       * be a lie by the third.
+       */
+      const renderMeasureRow = (row) => {
+        const entries = Object.entries(RESULTS.measurements)
+          .map(([pairId, rows]) => [pairId, rows[row.id]])
+          .filter(([, value]) => typeof value === 'number');
+        if (entries.length === 0) return;
+
+        const values = entries.map(([, value]) => value);
+        const best = row.better === 'high' ? Math.max(...values) : Math.min(...values);
+        const worst = row.better === 'high' ? Math.min(...values) : Math.max(...values);
+
+        for (const [pairId, value] of entries) {
+          const td = cells.get(`${pairId}|${row.id}`);
+          if (!td) continue;
+          // Ratio to best, always in [0,1], whichever direction is better.
+          const ratio =
+            row.better === 'high' ? value / best : best / value;
+          td.className = `measure${value === best && worst !== best ? ' best' : ''}`;
+          td.title = '';
+          td.style.setProperty('--bar-w', `${Math.min(100, Math.max(2, ratio * 100))}%`);
+          td.textContent = `${value.toFixed(row.decimals ?? 1)} ${row.unit}`;
+        }
+      };
+
+      /**
+       * The page's output, in one file. Both halves are here and clearly
+       * separated, but only `conformance` is worth citing anywhere: the
+       * measurements describe one device on one day.
+       *
+       * Nothing consumes this automatically. It is not committed and
+       * scripts/render-vfs-matrix.ts never reads it — see spec §1.
+       */
+      const buildExport = () => ({
+        generatedAt: new Date().toISOString(),
+        lib: LIB_VERSION,
+        agent: AGENT,
+        features: {
+          opfs: HAS_OPFS,
+          readwriteUnsafe: HAS_UNSAFE_HANDLES,
+          jspi: HAS_JSPI,
+        },
+        clockMs: CLOCK_MS,
+        // Iteration counts differ per column by design (calibrateLongQuery), so
+        // pool-blocking is uninterpretable without them.
+        longQueryIterations: Object.fromEntries(
+          Object.entries(RESULTS.measurements).map(([pairId, rows]) => [
+            pairId,
+            rows.__iterations ?? null,
+          ]),
+        ),
+        conformance: RESULTS.conformance,
+        // Why any cell is not a plain pass or a number. Without it a `fail`
+        // travels back from a device nobody here can reach carrying no cause.
+        reasons: RESULTS.reasons,
+        // Strip internal __-prefixed keys (e.g. __iterations) — those live in
+        // longQueryIterations above and do not belong beside row ids.
+        measurements: Object.fromEntries(
+          Object.entries(RESULTS.measurements).map(([pairId, rows]) => [
+            pairId,
+            Object.fromEntries(
+              Object.entries(rows).filter(([key]) => !key.startsWith('__')),
+            ),
+          ]),
+        ),
+      });
+
+      const pad = (n) => String(n).padStart(2, '0');
+
+      const exportFilename = () => {
+        const d = new Date();
+        // One unbroken YYYYMMDDHHMMSS: seconds because two runs a minute apart
+        // are normal, and no separator because the whole stamp is one sort key.
+        const stamp =
+          `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+          `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+        const slug = (s) => String(s ?? 'unknown').replace(/[^\w.-]+/g, '-');
+        // Timestamp first so a directory of these sorts chronologically on its
+        // own, which is how they are read: a campaign, in order, not a set.
+        return `browser-sqlite-${stamp}-${slug(AGENT.os)}-${slug(AGENT.engine)}-${slug(AGENT.version)}-${slug(LIB_VERSION)}.json`;
+      };
+
+      document.getElementById('download').addEventListener('click', () => {
+        const blob = new Blob([JSON.stringify(buildExport(), null, 2)], {
+          type: 'application/json',
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = exportFilename();
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+
+      const spinner = document.getElementById('spinner');
+      const stopButton = document.getElementById('stop');
+      const downloadButton = document.getElementById('download');
+      let hasRun = false;
+
+      /**
+       * The one line before the table, in its two states. Start and Stop are
+       * separate buttons rather than one that changes meaning: a control whose
+       * label flips under the cursor is how you stop a run you meant to launch.
+       */
+      const setRunning = (running) => {
+        startButton.hidden = running;
+        spinner.hidden = !running;
+        stopButton.hidden = !running;
+        if (!running) startButton.textContent = hasRun ? 'Re-start' : 'Start';
+      };
+
+      stopButton.addEventListener('click', () => {
+        stopRequested = true;
+        stopButton.disabled = true;
+        status.textContent = 'stopping after this row…';
+      });
+
+      startButton.addEventListener('click', async () => {
+        setRunning(true);
+        stopButton.disabled = false;
+        document.getElementById('picker').open = false;
+        // Only offered once the run has stopped — a JSON pulled mid-run would
+        // describe a table still being written.
+        downloadButton.disabled = true;
+        window.__BENCH__.done = false;
+
+        RESULTS.conformance = {};
+        RESULTS.measurements = {};
+        RESULTS.reasons = {};
+        const verdictBox = document.getElementById('verdict');
+        verdictBox.hidden = true;
+        document.getElementById('verdict-text').replaceChildren();
+
+        try {
+          // A bench starts from a floor it established itself: chaining two
+          // runs must not measure what the first one left behind.
+          status.textContent = 'cleaning…';
+          await sweepBeforeRun();
+          idbBefore = CAN_LIST_IDB
+            ? new Set((await indexedDB.databases()).map((d) => d.name))
+            : null;
+          opfsBefore = await snapshotOpfsRoot();
+
+          buildRows();
+          for (const pair of selectedPairs()) {
+            if (stopRequested) break;
+            await runPair(pair);
+          }
+          await cleanupIdb();
+          await cleanupOpfsResidue();
+          renderVerdict(stopRequested);
+
+          // No end-of-run text: the results box appearing and the button
+          // reading Re-start already say the run is over.
+          status.textContent = '';
+          window.__BENCH__.done = true;
+          window.__BENCH__.results = RESULTS;
+          // A stopped run still produced columns, and they are still worth
+          // taking away.
+          if (Object.keys(RESULTS.conformance).length > 0) {
+            downloadButton.disabled = false;
+          }
+        } finally {
+          hasRun = true;
+          stopRequested = false;
+          setRunning(false);
+        }
+      });
+
+      document.getElementById('status').textContent =
+        `${PAIRS.length} declared pairs, ` +
+        `${PAIRS.filter((p) => !missingFeature(p)).length} runnable here`;
+
+      // Read by scripts/bench/check.mjs.
+      window.__BENCH__ = { LIB_VERSION, AGENT, PAIRS: PAIRS.map((p) => p.id) };
+    </script>
+  </body>
+</html>

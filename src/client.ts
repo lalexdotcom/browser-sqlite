@@ -20,11 +20,12 @@ import {
 import { createSupervisor } from './supervisor';
 import { createTransaction, type TransactionDB } from './transaction';
 import {
+  DEFAULT_VFS,
   defaultBuildFor,
   type SQLiteBuild,
   type SQLiteQueryOptions,
   type SQLiteVFS,
-  VFS_BUILDS,
+  VFS_CAPABILITIES,
 } from './types';
 import { assertReadable, normalizeDatabaseFile, renderPragmas } from './utils';
 
@@ -69,7 +70,7 @@ export type CreateSQLiteClientOptions = {
   vfs?: SQLiteVFS;
   /**
    * Which wa-sqlite WebAssembly build to load. Defaults to the first entry of
-   * `VFS_BUILDS[vfs]` — `sync` where the VFS supports it, since it is both the
+   * `VFS_CAPABILITIES[vfs]` — `sync` where the VFS supports it, since it is both the
    * fastest and the most portable, otherwise `async`. `jspi` is Chromium-only.
    *
    * @throws at construction when the build is not one the chosen VFS supports.
@@ -306,10 +307,26 @@ export type SQLiteDB = {
    * object — the operation runs exactly once.
    *
    * @remarks
-   * **OPFS files are NOT deleted.** `close()` does not remove any OPFS database
-   * files. Files created by browser-sqlite persist in the origin's private file
-   * system across page loads. To delete OPFS files, use the
-   * `navigator.storage.getDirectory()` API directly.
+   * **Stored data is NOT deleted.** `close()` releases workers and connections;
+   * it removes nothing. What a database leaves behind, and how to remove it,
+   * depends on the VFS — and this library does not yet expose a deletion that
+   * routes through the VFS itself.
+   *
+   * Deleting files under `navigator.storage.getDirectory()` is only correct for
+   * the plain OPFS VFS, on a database that is already closed, and even there it
+   * leaves SQLite's `-journal` and `-wal` siblings unless you remove them too.
+   * It is wrong elsewhere:
+   *
+   * - `AccessHandlePoolVFS` keeps every database inside one directory named
+   *   after the VFS, in a fixed set of pre-allocated files with opaque names.
+   *   Removing a file does not free its slot — it takes capacity away from the
+   *   pool, and once capacity runs out no further database opens.
+   * - `IDBBatchAtomicVFS` and `IDBMirrorVFS` store nothing in OPFS at all;
+   *   their data lives in an IndexedDB database named after the VFS class, so
+   *   an OPFS deletion is a no-op.
+   *
+   * Until a `deleteDatabase` exists here, treat removal as VFS-specific and
+   * check what your chosen VFS actually writes.
    */
   close: () => Promise<void>;
 
@@ -320,8 +337,6 @@ export type SQLiteDB = {
    */
   debug?: ClientDebugState;
 };
-
-const DEFAULT_VFS = 'OPFSAdaptiveVFS';
 
 /**
  * Creates a SQLite client backed by a pool of Web Workers, each running
@@ -346,10 +361,10 @@ const DEFAULT_VFS = 'OPFSAdaptiveVFS';
  *
  * @throws {SQLiteError} With code `INVALID_OPTION` when `build` is not one of
  *   the builds the chosen `vfs` supports. The message names the supported
- *   builds; the pairing is declared once, in `VFS_BUILDS`.
- * @throws {Error} When `vfs` is `'AccessHandlePoolVFS'` and `poolSize` is
- *   greater than `1`. AccessHandlePoolVFS does not support concurrent access
- *   handles — set `poolSize: 1` explicitly when using this VFS.
+ *   builds; the pairing is declared once, in `VFS_CAPABILITIES`.
+ * @throws {SQLiteError} With code `INVALID_OPTION` when `poolSize` exceeds the
+ *   `maxPoolSize` the chosen `vfs` declares. The message names the cap and the
+ *   reason for it; both come from `VFS_CAPABILITIES`.
  *
  * @example
  * ```typescript
@@ -385,19 +400,22 @@ export const createSQLiteClient = (
   const vfs = clientOptions?.vfs ?? DEFAULT_VFS;
   const build = clientOptions?.build ?? defaultBuildFor(vfs);
 
-  // Synchronous, like the AccessHandlePoolVFS guard below: an unsupported
-  // combination must fail here and name itself, not surface later as an opaque
-  // open-error from a worker that could not instantiate its module.
-  if (!(VFS_BUILDS[vfs] as readonly SQLiteBuild[]).includes(build)) {
+  const capability = VFS_CAPABILITIES[vfs];
+
+  // Synchronous: an unsupported combination must fail here and name itself,
+  // not surface later as an opaque open-error from a worker that could not
+  // instantiate its module.
+  if (!(capability.builds as readonly SQLiteBuild[]).includes(build)) {
     throw new SQLiteError(
       'INVALID_OPTION',
-      `${vfs} cannot run on the '${build}' build. Supported: ${VFS_BUILDS[vfs].join(', ')}.`,
+      `${vfs} cannot run on the '${build}' build. Supported: ${capability.builds.join(', ')}.`,
     );
   }
 
-  if (vfs === 'AccessHandlePoolVFS' && poolSize > 1) {
-    throw new Error(
-      'AccessHandlePoolVFS does not support pool sizes greater than 1',
+  if (capability.maxPoolSize !== null && poolSize > capability.maxPoolSize) {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      `${vfs} does not support pool sizes greater than ${capability.maxPoolSize}: ${capability.poolLimitReason}. Set poolSize: ${capability.maxPoolSize}.`,
     );
   }
 

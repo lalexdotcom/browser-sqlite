@@ -29,7 +29,7 @@ Refactor only — the five wired VFS keep their behaviour. No new VFS yet.
 
 **Files:**
 - Modify: `src/types.ts:68-96`
-- Modify: `src/client.ts:391-394` (call sites only)
+- Modify: `src/client.ts:324` (move `DEFAULT_VFS` out) and `src/client.ts:391-394` (call sites)
 - Test: `tests/unit/capabilities.test.ts` (create)
 
 **Interfaces:**
@@ -187,7 +187,18 @@ export type SQLiteVFS = keyof typeof VFS_CAPABILITIES;
 /** The build used when the caller does not name one. */
 export const defaultBuildFor = (vfs: SQLiteVFS): SQLiteBuild =>
   VFS_CAPABILITIES[vfs].builds[0];
+
+/**
+ * The VFS used when the caller does not name one. It lives here, beside the
+ * table, because the README generator marks this row `(default)` and would
+ * otherwise hold a second copy — a copy the CI drift check cannot catch, since
+ * changing the default in client.ts alone leaves the rendered table identical.
+ */
+export const DEFAULT_VFS: SQLiteVFS = 'OPFSAdaptiveVFS';
 ```
+
+Then delete `const DEFAULT_VFS = 'OPFSAdaptiveVFS';` from `src/client.ts:324` and add
+`DEFAULT_VFS` to the existing `./types` import on line 27.
 
 - [ ] **Step 4: Update the two call sites in `src/client.ts`**
 
@@ -841,7 +852,7 @@ Expected: PASS, 323 tests — the same count as Task 4, and no `conformance` pro
 pnpm test:conformance
 CONFORMANCE_BROWSER=firefox pnpm test:conformance
 ```
-Expected on Chromium: 22 tests, all passing. Expected on Firefox: 22 collected, the 8 `jspi` pairs skipped with their reason, 14 passing.
+Expected on Chromium: 22 tests, all passing. Expected on Firefox: 22 collected, the **9** `jspi` pairs skipped with their reason, **13** passing. Every VFS declares `jspi`, so the skip count equals the VFS count.
 
 **If a declared pair fails, the declaration is wrong, not the test.** Remove that build from the VFS's `builds` in `VFS_CAPABILITIES` and record what was observed in the commit message. `IDBMirrorVFS` is the expected candidate.
 
@@ -1144,13 +1155,11 @@ Create `scripts/render-vfs-matrix.ts`:
 ```ts
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs';
-import { VFS_CAPABILITIES } from '../src/types.ts';
+import { DEFAULT_VFS, VFS_CAPABILITIES } from '../src/types.ts';
 
 const BEGIN =
   '<!-- BEGIN GENERATED VFS TABLE — edit VFS_CAPABILITIES in src/types.ts, then run `pnpm docs:vfs` -->';
 const END = '<!-- END GENERATED VFS TABLE -->';
-
-const DEFAULT_VFS = 'OPFSAdaptiveVFS';
 
 const MEMORY_LABEL = {
   'page-cache': 'Page cache only, bounded by `PRAGMA cache_size`',

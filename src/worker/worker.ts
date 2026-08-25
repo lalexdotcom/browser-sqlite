@@ -44,7 +44,7 @@ const WA_SQLITE_BUILDS = {
 } as const satisfies Record<SQLiteBuild, () => Promise<any>>;
 
 /**
- * VFS loaders only. Which build each VFS may run on lives in `VFS_BUILDS`
+ * VFS loaders only. Which build each VFS may run on lives in `VFS_CAPABILITIES`
  * (`src/types.ts`) and nowhere else — the client validates against it and sends
  * the chosen build in the `open` message, so there is no second copy to drift.
  */
@@ -77,6 +77,30 @@ const VFSConfigs = {
     fs: () =>
       import(
         /* webpackChunkName: "IDBBatchAtomicVFS" */ 'wa-sqlite/src/examples/IDBBatchAtomicVFS.js'
+      ),
+  },
+  IDBMirrorVFS: {
+    fs: () =>
+      import(
+        /* webpackChunkName: "IDBMirrorVFS" */ 'wa-sqlite/src/examples/IDBMirrorVFS.js'
+      ),
+  },
+  OPFSAnyContextVFS: {
+    fs: () =>
+      import(
+        /* webpackChunkName: "OPFSAnyContextVFS" */ 'wa-sqlite/src/examples/OPFSAnyContextVFS.js'
+      ),
+  },
+  MemoryVFS: {
+    fs: () =>
+      import(
+        /* webpackChunkName: "MemoryVFS" */ 'wa-sqlite/src/examples/MemoryVFS.js'
+      ),
+  },
+  MemoryAsyncVFS: {
+    fs: () =>
+      import(
+        /* webpackChunkName: "MemoryAsyncVFS" */ 'wa-sqlite/src/examples/MemoryAsyncVFS.js'
       ),
   },
 } as const satisfies Record<SQLiteVFS, { fs: () => Promise<any> }>;

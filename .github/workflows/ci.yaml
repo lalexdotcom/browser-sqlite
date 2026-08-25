@@ -58,6 +58,14 @@ jobs:
       - name: Lint and format check
         run: pnpm exec biome ci .
 
+      # The README's VFS table is generated from VFS_CAPABILITIES. Regenerate
+      # and fail on any diff: the table cannot drift from the declarations,
+      # while the conformance job proves the declarations are true.
+      - name: VFS table is current
+        run: |
+          pnpm docs:vfs
+          git diff --exit-code README.md
+
       - name: Type check
         run: pnpm exec tsc --noEmit
 
@@ -67,6 +75,16 @@ jobs:
       # Unit (Node) + browser (Chromium) projects.
       - name: Test
         run: pnpm test
+
+      # Conformance is a separate project and deliberately out of `pnpm test`:
+      # eight VFS through the invariants start workers and open real storage.
+      # It runs on both engines because a VFS can be sound on one and broken on
+      # the other — which is how HANDLE-1 was found.
+      - name: Conformance (Chromium)
+        run: pnpm test:conformance
+
+      - name: Conformance (Firefox)
+        run: CONFORMANCE_BROWSER=firefox pnpm test:conformance
 
   # Exercises the packed tarball across four consumption modes — Vite dev
   # server, Vite build+preview, rsbuild build+preview, and no bundler at all
