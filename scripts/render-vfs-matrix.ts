@@ -56,12 +56,16 @@ const FEATURE_SUPPORT = {
     Safari: '26',
     iOS: '26',
   },
+  // Safari 27 ships JSPI on every OS it lands on — macOS, iOS, iPadOS and
+  // visionOS (webkit.org/blog/17967, "News from WWDC26: WebKit in Safari 27
+  // beta", checked 2026-08-25). Corroborated: our own runs detect
+  // WebAssembly.Suspending on iPadOS 27 and not on iOS Safari 26.6.
   jspi: {
     Chrome: '137',
     Android: 'yes',
     Firefox: '153',
     Safari: '27',
-    iOS: null,
+    iOS: '27',
   },
 } as const satisfies Record<PlatformFeature, Record<string, Support>>;
 

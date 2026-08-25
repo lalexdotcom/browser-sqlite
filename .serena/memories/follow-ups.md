@@ -741,11 +741,23 @@ affected**: `OPFSAdaptiveVFS`, `AccessHandlePoolVFS` and `OPFSCoopSyncVFS` pass 
 `pData.subarray()` to `FileSystemSyncAccessHandle.write()` and pass conformance on Safari — the
 bug is specific to the writable-stream path.
 
-**Verified**, Safari 26.5.2 / macOS, swept OPFS root: **0 of 7 conformance rows → 7 of 7**, and
-`read-burst-concurrency` **1.70×** at `poolSize: 4` — the highest of any VFS in that run, where
-`OPFSAdaptiveVFS` sat at 0.94×. That makes it the best concurrent-read option on WebKit, and it
-corroborates the 2.0–2.2× measured on Firefox 154. **Still owed: re-run Safari 27, iOS 26 and
-iPadOS 27** — they carry the same fix but have not been measured since.
+**Verified on all four WebKit engines** (2026-08-25, swept roots) — seven pairs, every one
+**0 of 7 conformance rows → 7 of 7**: macOS Safari 26.5.2 (`async`), macOS Safari 27 (`async` and
+`jspi`), iPadOS 27 (`async` and `jspi`), iOS Safari 26.6 (`async`).
+
+**The concurrency win does not extend to iPhone.** `read-burst-concurrency` at `poolSize: 4`:
+
+| engine | read-burst | pool-blocking |
+|---|---|---|
+| macOS Safari 26.5.2 | 1.70× | 1.0 |
+| macOS Safari 27 | 1.55× | 1.33 |
+| iPadOS 27 | 1.49× | — |
+| **iOS Safari 26.6** | **0.82×** | **4.5** |
+
+On Mac and iPad it is the best concurrent-read VFS available, which corroborates the 2.0–2.2×
+measured on Firefox 154. **On iPhone there is no gain at all**, and `pool-blocking` at 4.5 says the
+pool stops serving reads for the duration of a long statement — the HANDLE-1 shape, on a VFS that
+is supposed to escape it. Not investigated. Do not repeat "best on WebKit" without the device.
 
 **Second half of the fix, in this repo.** Nothing declared the requirement. `createWritable()` is
 Safari 26 — eleven versions after OPFS itself — so the generated table claimed `Safari 15.4+` for
@@ -757,6 +769,29 @@ bench page probes it. The table now reads `Safari 26+ / iOS 26+`.
 `multiConnection: true` now *look* verified because the VFS opens, which is exactly the trap
 MIRROR-1 documented. One data point exists (`pool-blocking` = 1 at `poolSize` 4); that is not a
 verification.
+
+## FLAKE-ROW-1 — `no-read-inside-transaction` is a race, not a verdict
+
+**Status: open, characterised 2026-08-25 across four WebKit runs.**
+
+The bench row flips between `pass` and `blocked` on the same VFS, same engine, same build, between
+runs an hour apart — and it flips in **both directions within a single pair of runs**:
+
+- macOS Safari 26.5.2: `OPFSAdaptiveVFS/async` pass → blocked, `OPFSCoopSyncVFS/async` blocked → pass
+- macOS Safari 27: `OPFSAdaptiveVFS/async` blocked → pass, `OPFSAdaptiveVFS/jspi` pass → blocked
+- iOS Safari 26.6: `OPFSAdaptiveVFS/async` pass → blocked
+- iPadOS 27: both `OPFSAdaptiveVFS` builds blocked in both runs
+
+**The honest reading is that `blocked` is the expected state and `pass` is the lucky one.** In
+reduced mode a VFS rotates one exclusive access handle; whether a read is admitted before the write
+transaction takes it is a timing question, not a property. `OPFSAdaptiveVFS`'s
+`read-burst-concurrency` of 0.94–1.00× on every engine without `readwrite-unsafe` says the same
+thing from the other side.
+
+**Consequence: no single run may be cited for this row.** The `OPFSCoopSyncVFS` Known Limitations
+entry in the README rests on it and currently reads as a determinism. It happens to be right —
+`OPFSCoopSyncVFS` blocked on 8 of 8 earlier runs — but the evidence needs n≥3 per engine before
+that wording is defended, and the same row cannot then be read as a verdict for `OPFSAdaptiveVFS`.
 
 ## RESIDUE-1 — two VFS store under their class name, and cleanup never sees it
 
@@ -779,6 +814,12 @@ free. A database in `journal_mode=DELETE` needs two slots (the file and its jour
 `AccessHandlePoolVFS` failed at `opens` with a bare `sqlite3_open_v2` and no message, on both
 `sync` and `async`. It read as a regression from the wa-sqlite patch committed minutes earlier;
 it was residue. Deleting the directory by hand restored it with no code change.
+
+**Corroborated 2026-08-25, and it spreads.** On the iOS 26.6 device, `AccessHandlePoolVFS/sync`
+went **5/7 → 0/7** between two runs, while `/async` was already at 0/7 from the run before. Nothing
+in the wa-sqlite patch touches that VFS; the only thing that changed is that one more run consumed
+one more pair of slots on that origin. **The failure migrates from build to build as the pool
+fills** — which is the signature the six-slot exhaustion predicts and no engine defect does.
 
 **Retroactive reclassification.** The two isolated `opens` failures flagged earlier the same day
 — `AccessHandlePoolVFS/async` on iOS 26 (`unable to open database file`) and
