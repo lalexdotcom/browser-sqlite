@@ -46,10 +46,19 @@ const version = JSON.parse(
  * to the working copy, and a build with no git at all reads as a local build.
  */
 const buildRef = () => {
-  if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME) {
-    return { release: true, label: process.env.GITHUB_REF_NAME };
-  }
   const name = process.env.GITHUB_REF_NAME;
+
+  // Two independent signals, because getting this wrong is silent and lands in
+  // the one place a stranger cannot check. GITHUB_REF_TYPE is the documented
+  // answer, and a reusable workflow inherits its caller's github context — but
+  // if that ever failed to propagate, a genuine release would quietly label
+  // itself a development build. The second test does not depend on it: a ref
+  // named exactly `v<package version>` is a release tag by construction, since
+  // that is how this project tags.
+  if (name && (process.env.GITHUB_REF_TYPE === 'tag' || name === `v${version}`)) {
+    return { release: true, label: name };
+  }
+
   const sha = process.env.GITHUB_SHA?.slice(0, 7);
   if (name) return { release: false, label: sha ? `${name} @ ${sha}` : name };
   try {
@@ -76,4 +85,10 @@ mkdirSync(target, { recursive: true });
 writeFileSync(join(target, 'index.html'), page);
 cpSync(join(root, 'dist'), join(target, 'dist'), { recursive: true });
 
-process.stdout.write(`assembled ${target} (browser-sqlite ${version})\n`);
+// Printed rather than merely decided: this line is where a release that
+// mislabelled itself becomes visible in the run log, instead of on the
+// deployed page.
+process.stdout.write(
+  `assembled ${target} — browser-sqlite ${version}, ` +
+    `${build.release ? 'RELEASE build' : 'development build'} (${build.label})\n`,
+);
