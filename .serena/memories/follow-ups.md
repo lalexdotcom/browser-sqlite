@@ -489,7 +489,44 @@ conformance suite would settle it. Conformance passed — but its invariants exe
 one read, or concurrent writes counted afterwards, never the tight
 `CREATE TABLE` → `INSERT` → `SELECT` sequence at `poolSize: 2` that this test runs.
 
-**Mechanism, plausible and not yet verified.** `IDBMirrorVFS` keeps the whole database in memory
+### MEASURED 2026-08-25 — the declaration is false, and it is not only staleness
+
+A deliberate probe settled it. Method, which matters as much as the number: a temporary
+`tests/browser/mirror-probe.test.ts` repeating the failing sequence unchanged — `CREATE TABLE` →
+`INSERT` → `SELECT`, `IDBMirrorVFS` at `poolSize: 2`, a fresh database each round, 60 rounds — with
+**no instrumentation at all**: no `Worker` wrapper, no `debug: true`. The last millisecond-scale
+race in this project was hidden by its own instrument, and browser `console` output is not
+forwarded, so the count was surfaced through the assertion message instead.
+
+**In isolation: 0/60. Under the full suite: 5 failures across 300 rounds (~1.7 %), in 4 of 5 runs.**
+The defect needs contention to appear, which is exactly why every sighting has been a pre-commit
+hook and why nobody could reproduce it on demand.
+
+**Two distinct symptoms, not one:**
+- `no such table: wired` — the stale cross-connection read the entry predicted;
+- `database is locked` — `SQLITE_BUSY`, which the entry did not predict.
+
+So `multiConnection: true` is **false as declared** for this VFS: a second connection neither sees a
+committed `CREATE TABLE` reliably nor waits for it correctly. `VFS_CAPABILITIES` is the single
+source the client guards, the conformance suite, the README table and the benchmark page all read,
+so one wrong field propagates everywhere.
+
+**Consequence for the VFS's standing.** It was one of two candidates escaping HANDLE-1 and it is the
+fastest persistent option on Safari (bulk 44 ms vs IDBBatchAtomic's 77 ms, transactions 28 vs 31).
+With `multiConnection` false it leaves the multi-connection shortlist entirely, and — with
+ANYCONTEXT-1 removing `OPFSAnyContextVFS` on Safari — `IDBBatchAtomicVFS` is left as the only
+persistent multi-connection VFS that works on all three desktop engines.
+
+**What is NOT yet decided:** whether the field becomes `false`, or `true` with a stated visibility
+window, and what `maxPoolSize` should then be. That touches `src/types.ts`, the conformance suite
+and the README generator, and it needs its own review.
+
+**The `it.fails` convention does not fit here.** A characterization test pinning a defect that
+appears 1.7 % of the time would itself fail most runs. Until the declaration is corrected,
+`tests/browser/vfs.test.ts :: IDBMirrorVFS opens and serves a round trip` stays a genuine ~1-in-60
+liability in CI — and it is now understood, not mysterious.
+
+**Mechanism, predicted and now half-confirmed.** `IDBMirrorVFS` keeps the whole database in memory
 *per worker* and propagates commits between connections over `BroadcastChannel` — asynchronously.
 That is structurally the same defect that got `OPFSPermutedVFS` deleted from this library (24 %
 stale cross-connection reads, measured 2026-08-20). The commit-propagation barrier does not save
