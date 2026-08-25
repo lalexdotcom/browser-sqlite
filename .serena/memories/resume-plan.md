@@ -277,6 +277,56 @@ measurement contradicted, a JSDoc describing the plan's buggy formula rather tha
 it. In a codebase where comments carry measurements, that is a defect class, not a tidiness one.
 
 
+## 0.4 WHERE THE WORK IS — written 2026-08-25, end of the benchmark-page session. READ FIRST.
+
+**§0.3 below is superseded on one point: the benchmark page is built.** Everything else in it stands.
+
+**Branch state.** `feat/vfs-capabilities`, ~15 commits ahead of `origin` at the time of writing
+(`812d273` local vs `827acfa` pushed) — check `git log origin/feat/vfs-capabilities..HEAD` rather
+than trusting that count. Working tree clean. `main` is at `8b8dfa0`: it carries a registration-only
+copy of `pages.yaml` that was pushed so GitHub would expose `workflow_dispatch` (the trigger is only
+offered for workflows present on the default branch — that cost an hour to discover). **At merge,
+`pages.yaml` conflicts: main's copy still has `push: branches: [main]`, the branch's is
+`workflow_call` + `workflow_dispatch`. Take the branch's.**
+
+**What shipped: `bench/index.html`**, one self-contained file served beside a verbatim `dist/`.
+Conformance rows mirroring the six invariants, nine measurements, capability-derived picker grouped
+by VFS with a tri-state parent, a verdict naming the best per criterion (never an aggregate score —
+see DEFAULT-1), and a JSON export carrying `reasons`, `clockMs` and per-column calibration.
+`pnpm bench:dev` / `bench:serve` / `bench:build`; `scripts/bench-check.mjs` drives it by hand and is
+deliberately not in CI.
+
+**Publishing is release-only.** `pages.yaml` is `workflow_call` + `workflow_dispatch`;
+`release-and-publish.yaml` calls it with `needs: release`, so the site tracks the published package
+and a reusable workflow runs at the caller's ref, which builds the tag. **One Pages site per repo,
+last deploy wins** — a manual dispatch from a branch replaces whatever the last release published.
+The `github-pages` environment now allows `main`, `v*` (tag) and `feat/*`; the tag rule was missing
+and would have failed rc4 before its first step.
+
+**What the campaign settled**, on real Chromium ×2, Firefox 154 and Safari 26.5.2 (macOS):
+
+- **MIRROR-1 is measured and the declaration is corrected** — `IDBMirrorVFS` is now
+  `multiConnection: false`, `maxPoolSize: 1`.
+- **ANYCONTEXT-1 is new** — `OPFSAnyContextVFS` fails to open on Safari with `SQLITE_NOTADB`,
+  reproduced on a swept root. On Firefox it measured the *best* read concurrency of any VFS.
+- **The consequence that matters: `IDBBatchAtomicVFS` is now the only persistent multi-connection
+  VFS working on all three desktop engines.** The default is untouched and still right —
+  `OPFSAdaptiveVFS` is degraded off Chromium (3.24x read burst there, ~1x elsewhere) but never
+  broken — the margin is simply thinner than it was.
+- The README's reduced-mode claim was narrowed to what reproduces (write transactions, not long
+  reads) and `OPFSCoopSyncVFS` finally has its Known Limitations entry.
+
+**A trap for anyone running the page on a browser used before 2026-08-25:** early runs leaked
+`AccessHandlePoolVFS/`, whose six slots are consumed by databases nothing ever freed. The sweep
+cannot reclaim it — the directory predates the ownership record, so it is protected as a third
+party's. Symptom: `AccessHandlePoolVFS` fails to open with `sqlite3_open_v2` on *every* build,
+first run. Remedy: clear site data for that origin once. Do not re-diagnose this.
+
+**`.bench/` is gitignored** and holds device exports; they are read, never committed.
+
+**Blocking rc4:** the four commits `d2af8a2`..`a22bd48` have still never been reviewed. Nothing else
+does.
+
 ## 0.3 WHERE THE WORK IS — written 2026-08-24, end of the VFS-wiring session
 
 **`feat/vfs-capabilities` is the live branch and is NOT merged, by the user's decision.** The
