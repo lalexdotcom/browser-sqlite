@@ -57,6 +57,14 @@
       .pending { opacity: 0.4; }
       .fail { color: #b00020; }
       .note { font-size: 0.8rem; opacity: 0.75; max-width: 46rem; }
+      #verdict {
+        margin: var(--gap) 0; padding: var(--gap); max-width: 46rem;
+        border: 1px solid var(--border); border-radius: 6px;
+      }
+      #verdict p { margin: 0 0 0.5rem; }
+      #verdict p:last-child { margin: 0; }
+      #verdict ul { margin: 0 0 0.5rem; padding-left: 1.2rem; }
+      #verdict .caveat { font-size: 0.85rem; opacity: 0.8; }
       td.measure { text-align: right; font-variant-numeric: tabular-nums; background: linear-gradient(to right, color-mix(in srgb, currentColor 12%, transparent) var(--bar-w, 0%), transparent var(--bar-w, 0%)); }
       td.measure.best { font-weight: 600; }
     </style>
@@ -80,6 +88,8 @@
 
     <p id="status"></p>
 
+    <div id="verdict" hidden></div>
+
     <div id="results-wrap"><table id="results"><thead><tr id="head-row">
       <th>row</th></tr></thead><tbody id="body-rows"></tbody></table></div>
     <p class="note">
@@ -97,7 +107,12 @@
     </p>
 
     <script type="module">
-      import { createSQLiteClient, VFS_CAPABILITIES } from './dist/index.js';
+      import {
+        createSQLiteClient,
+        DEFAULT_VFS,
+        defaultBuildFor,
+        VFS_CAPABILITIES,
+      } from './dist/index.js';
 
       // ── Identity ────────────────────────────────────────────────────────
       // Substituted by scripts/bench-assemble.mjs. Opening bench/index.html
@@ -1235,6 +1250,151 @@
         td.textContent = text;
       };
 
+      /**
+       * Three criteria, and the reason there are not four: off Chromium the
+       * clock is 1 ms, so every latency row nulls out and a criterion built on
+       * one would have nothing to say on two of the three desktop engines.
+       * These survive there — bulk writes and transactions run in tens of
+       * milliseconds — except concurrency, which reports its own absence rather
+       * than ranking jitter.
+       */
+      const CRITERIA = [
+        {
+          id: 'read-burst-concurrency',
+          label: 'concurrent reads',
+          better: 'high',
+          why: 'the pool serving several short reads at once',
+        },
+        {
+          id: 'bulk-insert-10k',
+          label: 'bulk writes',
+          better: 'low',
+          why: 'loading 10 000 rows',
+        },
+        {
+          id: 'transaction-throughput',
+          label: 'transactions',
+          better: 'low',
+          why: '500 inserts inside one transaction',
+        },
+      ];
+
+      /**
+       * Out of the running, and why. Deliberately narrow: only a VFS that fails
+       * an invariant is excluded, because that is the one judgement that needs
+       * no weighing — it did not do what every VFS owes. `blocked` is not a
+       * failure and does not exclude; it is reported as a caveat on whoever
+       * wins, since it says something a ranking cannot.
+       */
+      const disqualified = (pairId) => {
+        const rows = RESULTS.conformance[pairId] ?? {};
+        for (const [rowId, verdict] of Object.entries(rows)) {
+          if (verdict === 'fail') {
+            const why = RESULTS.reasons[pairId]?.[rowId];
+            return why ? `${rowId}: ${why}` : rowId;
+          }
+        }
+        return null;
+      };
+
+      const bestFor = (criterion, candidates) => {
+        const scored = candidates
+          .map((pairId) => [pairId, RESULTS.measurements[pairId]?.[criterion.id]])
+          .filter(([, v]) => typeof v === 'number');
+        if (scored.length === 0) return null;
+        return scored.reduce((a, b) =>
+          criterion.better === 'high'
+            ? b[1] > a[1]
+              ? b
+              : a
+            : b[1] < a[1]
+              ? b
+              : a,
+        );
+      };
+
+      const pretty = (pairId) => pairId.replace('/', ' · ');
+
+      /**
+       * Advice, not a verdict. The page knows the device; it does not know the
+       * application, and the weight between these criteria is the caller's to
+       * decide — which is why nothing here is aggregated into a score.
+       */
+      const renderVerdict = () => {
+        const box = document.getElementById('verdict');
+        const ran = Object.keys(RESULTS.conformance);
+        if (ran.length === 0) return;
+
+        const out = ran.map((p) => [p, disqualified(p)]).filter(([, d]) => d);
+        const candidates = ran.filter((p) => !disqualified(p));
+
+        const wins = CRITERIA.map((c) => [c, bestFor(c, candidates)]);
+        const decided = wins.filter(([, w]) => w);
+        const parts = [];
+
+        if (decided.length === 0) {
+          parts.push(
+            '<p>Nothing measurable separated these VFS on this device — the table below still carries what ran.</p>',
+          );
+        } else {
+          const winners = new Set(decided.map(([, w]) => w[0]));
+          const unit = (c) => (c.better === 'high' ? '×' : ' ms');
+          if (winners.size === 1 && decided.length === CRITERIA.length) {
+            const [pairId] = [...winners];
+            parts.push(
+              `<p>On this device, <b>${pretty(pairId)}</b> came out ahead on all three criteria, so it is probably the one to try first here.</p>`,
+            );
+          } else {
+            parts.push('<p>On this device, the best result per criterion:</p><ul>');
+            for (const [c, w] of decided) {
+              parts.push(
+                `<li><b>${c.label}</b> (${c.why}) — ${pretty(w[0])}, ${w[1].toFixed(2)}${unit(c)}</li>`,
+              );
+            }
+            parts.push('</ul>');
+          }
+          for (const [c, w] of wins) {
+            if (!w) {
+              parts.push(
+                `<p class="caveat">No ranking for <b>${c.label}</b>: this browser's clock could not separate the candidates.</p>`,
+              );
+            }
+          }
+          // A winner that cannot serve a read during a write transaction is a
+          // winner with a condition, and the ranking cannot express that.
+          for (const pairId of new Set(decided.map(([, w]) => w[0]))) {
+            if (RESULTS.conformance[pairId]?.['no-read-inside-transaction'] === 'blocked') {
+              parts.push(
+                `<p class="caveat">Note that ${pretty(pairId)} did not serve a read while a write transaction was open here — see <code>no-read-inside-transaction</code> below.</p>`,
+              );
+            }
+          }
+        }
+
+        const defaultPair = `${DEFAULT_VFS}/${defaultBuildFor(DEFAULT_VFS)}`;
+        if (ran.includes(defaultPair)) {
+          const led = decided.filter(([, w]) => w[0] === defaultPair);
+          parts.push(
+            led.length > 0
+              ? `<p class="caveat">The default, ${pretty(defaultPair)}, led ${led.map(([c]) => c.label).join(' and ')} here.</p>`
+              : `<p class="caveat">The default, ${pretty(defaultPair)}, led none of these criteria on this device.</p>`,
+          );
+        }
+
+        if (out.length > 0) {
+          parts.push(
+            `<p class="caveat">Not ranked, having failed an invariant: ${out.map(([p, d]) => `${pretty(p)} (${d})`).join('; ')}.</p>`,
+          );
+        }
+
+        parts.push(
+          '<p class="caveat">These numbers describe one machine at one moment. The table below has the detail, including the measurements this browser\'s clock could not separate.</p>',
+        );
+
+        box.innerHTML = parts.join('');
+        box.hidden = false;
+      };
+
       const status = document.getElementById('status');
       const startButton = document.getElementById('start');
       let stopRequested = false;
@@ -1513,6 +1673,9 @@
         RESULTS.conformance = {};
         RESULTS.measurements = {};
         RESULTS.reasons = {};
+        const verdictBox = document.getElementById('verdict');
+        verdictBox.hidden = true;
+        verdictBox.replaceChildren();
 
         try {
           buildRows();
@@ -1522,6 +1685,7 @@
           }
           await cleanupIdb();
           await cleanupOpfsResidue();
+          renderVerdict();
 
           status.textContent = stopRequested ? 'stopped' : 'done';
           window.__BENCH__.done = true;
