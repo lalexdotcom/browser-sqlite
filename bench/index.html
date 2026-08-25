@@ -105,6 +105,39 @@
 
     <div id="banner">detecting…</div>
 
+    <!--
+      Deliberately a CLASSIC script in ES5, placed before the module: a module
+      that fails to parse fails SILENTLY, so nothing inside it can report its
+      own absence. An old engine rejecting the module's top-level await leaves
+      the page reading "detecting…" for ever — which is what a Chrome 81 tablet
+      did before this existed.
+
+      It watches for the module having started rather than testing for syntax,
+      so it covers every reason the module might not run: a parse error, a
+      missing API, a failed fetch of dist/.
+    -->
+    <script>
+      (function () {
+        var waited = 0;
+        var timer = setInterval(function () {
+          if (window.__BENCH__) {
+            clearInterval(timer);
+            return;
+          }
+          waited += 500;
+          if (waited < 8000) return;
+          clearInterval(timer);
+          document.getElementById('banner').innerHTML =
+            '<div class="line"><b>This browser cannot run the page.</b></div>' +
+            '<div class="line">It needs top-level <code>await</code>, logical ' +
+            'assignment, <code>crypto.randomUUID()</code>, ' +
+            '<code>Array.prototype.at()</code> and <code>structuredClone()</code> ' +
+            '\u2014 and browser-sqlite itself needs the same, so a browser that ' +
+            'cannot show this page cannot run the library either.</div>';
+        }, 500);
+      })();
+    </script>
+
     <!-- Closed by default: the common case is Start with everything
          selected, and the summary already says so. -->
     <details id="picker">

@@ -373,6 +373,28 @@ browser-sqlite requires no special HTTP headers. OPFS access handles work in a p
 
 Note: the "Coop" in `OPFSCoopSyncVFS` stands for *cooperative*, not the `Cross-Origin-Opener-Policy` header.
 
+### Browser baseline
+
+**The VFS table's compatibility column describes what each VFS needs, not what
+this library needs.** A cell reading `0` means the VFS itself imposes no floor —
+it does not mean the package runs on any browser. It does not.
+
+`dist/` is published as `esnext` and is not down-levelled, so the floor is
+whichever of these landed last in a given engine:
+
+| | |
+|---|---|
+| syntax | logical assignment (`??=`, `\|\|=`), private class fields, top-level `await` |
+| APIs | `crypto.randomUUID()`, `Array.prototype.at()`, `structuredClone()` |
+
+An engine missing any of them fails at parse or first use, not gracefully — a
+2020-era Chromium, for instance, rejects the module outright. Every browser
+version this project has measured (Chrome 149-151, Firefox 154, Safari 26.5)
+clears all of it comfortably.
+
+Exact minimum versions are not stated here yet because they have not been
+checked against a citable source; see BASELINE-1 in the project's notes.
+
 ## Known Limitations
 
 - **`AccessHandlePoolVFS` requires `poolSize: 1`.** Passing `poolSize > 1` with this VFS throws synchronously at client creation time.
