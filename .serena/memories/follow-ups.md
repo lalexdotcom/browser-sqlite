@@ -753,9 +753,43 @@ use, not gracefully.
 `requires`, so a VFS with none renders `Chrome 0`, which reads as "any Chrome". The package's own
 floor is invisible there and was stated nowhere until the README's new *Browser baseline* subsection.
 
-**What is owed: the actual version numbers, from MDN browser-compat-data.** They are deliberately
-absent from the README — recall is not a source, and JSPI-1 in this same file is the record of what
-happens when an unsourced version number is written down and then repeated for months.
+**SOURCED AND SHIPPED 2026-08-25.** MDN browser-compat-data, fetched as raw JSON from
+`raw.githubusercontent.com/mdn/browser-compat-data/main/`:
+
+| feature | Chrome | Firefox | Safari |
+|---|---|---|---|
+| logical assignment (`??=`, `\|\|=`) | 85 | 79 | 14 |
+| private class fields | 74 | 90 | 14.1 |
+| `Array.prototype.at()` | 92 | 90 | 15.4 |
+| `crypto.randomUUID()` | 92 | 95 | 15.4 |
+| **effective floor** | **92** | **95** | **15.4** |
+
+**The floor is set by the two APIs, not by the syntax.** `structuredClone()` is also used (once, in
+the worker) and is NOT in the table: its BCD entry was not found at
+`api/structuredClone.json`, `api/Window/structuredClone.json` or
+`api/WorkerGlobalScope/structuredClone.json`, and no number is claimed without one. **Still owed:
+locate it and confirm it does not raise the floor.**
+
+**Top-level `await` is the BENCH PAGE's requirement, not the library's** — corrected after an
+earlier grep matched awaits indented inside async functions and proved nothing. Neither `src/` nor
+`dist/` contains a module-level await; only `bench/index.html` does. A development tool may require
+a newer browser than the package.
+
+**A disagreement worth keeping.** BCD records top-level `await` as arriving in **Safari 27**, yet
+the page uses it and ran on **Safari 26.5.2**. Either the entry is wrong or `27` means something
+other than a first supporting version. The observation is direct. This is JSPI-1 inverted — there an
+unsourced claim was refuted by measurement, here a source is.
+
+**Shipped in the README as of `9af6b37`:** a `## Browser support` table before the VFS section, and
+every VFS compatibility cell folded to `MAX(vfs_required, lib_required)` in
+`scripts/render-vfs-matrix.ts` (`LIB_FLOOR`, `laterOf`, `withLibFloor`). That removed the `Chrome 0`
+cells that read as "any Chrome". One case is deliberately not folded: where a source says supported
+but gives no first version, the cell keeps `?` rather than adopting the library's number — the true
+floor is at least that and may be higher.
+
+**Mobile columns in `LIB_FLOOR` follow their desktop engine; BCD was not consulted separately for
+`chrome_android` and `safari_ios`.** That assumption is commented in the generator and is the second
+thing owed here.
 
 **Not worth supporting below that floor.** OPFS itself is Chrome 86+, so a pre-86 engine cannot run
 the six OPFS VFS at all; only the IndexedDB and memory ones would remain. Making the benchmark page

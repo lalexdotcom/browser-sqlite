@@ -331,6 +331,17 @@ first run. Remedy: clear site data for that origin once. Do not re-diagnose this
 
 **`.bench/` is gitignored** and holds device exports; they are read, never committed.
 
+**Two working preferences the user stated on 2026-08-25, both worth honouring beyond this branch:**
+
+- **The README is edited iteratively — do not commit each pass.** Several round trips are normal;
+  committing after every one forces the user to brake. Make the edit, show what changed, wait.
+- **Do not explain compatibility in prose.** Version numbers in the tables are enough. An earlier
+  Requirements subsection arguing *why* each API mattered was cut for exactly this reason.
+
+**A Chrome 81 Android tablet cannot run the page or the library** — no OPFS at all (Chrome 86+),
+plus both floors above. Decided not to support below the baseline; a classic ES5 script now reports
+the incompatibility instead of leaving the banner on "detecting…". See BASELINE-1.
+
 **Blocking rc4:** the four commits `d2af8a2`..`a22bd48` have still never been reviewed. Nothing else
 does.
 
