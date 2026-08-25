@@ -478,9 +478,11 @@ after: **8/8 green in isolation, 6/6 green on the full suite**. So the rate is r
 it is not reproducible on demand, which is precisely the rate that eventually reddens CI with no
 one able to say why.
 
-**It has now been seen three times.** Third sighting 2026-08-24, again in a pre-commit hook, on a
-**docs-only commit** (the benchmark page spec) whose tree had gone 323/0 in the same hook minutes
-earlier — so the flake is independent of any source change and the rate estimate above survives.
+**It has now been seen four times.** Third sighting 2026-08-24 and fourth 2026-08-25, both in a
+pre-commit hook and both on **docs-only commits** whose trees had gone 323/0 in the same hook
+minutes earlier — so the flake is independent of any source change and the rate estimate above
+survives. Four sightings across two days of heavy committing puts it near the ≤1-in-15 estimate and
+means a CI run will eventually go red on it with nobody able to say why.
 Task 3 of the wiring plan reported the same failure and could not
 reproduce it either; the declaration was carried forward as PROVISIONAL on the reasoning that the
 conformance suite would settle it. Conformance passed — but its invariants exercise one write and
@@ -650,6 +652,55 @@ what appeared — a rule that needs no knowledge of any VFS's layout and survive
 to them, and the same rule it already used for IndexedDB. Verified by reproduction: nine
 `AccessHandlePoolVFS` columns across three consecutive runs in one persistent context, where six
 used to fail.
+
+## ANYCONTEXT-1 — `OPFSAnyContextVFS` does not open on Safari
+
+**Status: open, measured 2026-08-25 on Safari 26.5.2 / macOS. Reproduced in three separate runs,
+the last on a swept storage root — so it is not our residue.**
+
+`opens` fails with **`file is not a database`** (`SQLITE_NOTADB`). Note what that is not: it is not
+"OPFS unavailable" and not a clean refusal at open. The VFS reached storage and SQLite read
+something that was not a database header. For a storage library that is the sharper signal.
+
+**Why it matters beyond one VFS.** `mem:resume-plan` §0.2 named `OPFSAnyContextVFS` and
+`IDBBatchAtomicVFS` as the only two VFS that escape HANDLE-1 structurally, hence the only candidates
+for an engine without `readwrite-unsafe`. Safari is exactly such an engine, and one of the two
+candidates does not run there. On Firefox, by contrast, `OPFSAnyContextVFS` measured the **best**
+read-burst concurrency of any VFS (2.50x, where the default `OPFSAdaptiveVFS` fell to 1.08x), so it
+is not a VFS to write off — it is engine-specific.
+
+**Hypothesis, not established:** the VFS exists to avoid synchronous access handles, so it likely
+writes through `createWritable()`. If that path does not land as expected on WebKit, the file stays
+empty or incoherent and SQLite rejects the header. What would settle it: reading AnyContext's write
+path in wa-sqlite v1.1.2 against what WebKit implements. Nobody has done that.
+
+**The README does not say any of this yet.** Its `Browser compatibility` column is generated from
+MDN/caniuse and cannot express an observed per-engine failure; `OPFSCoopSyncVFS` got a Known
+Limitations entry for the same reason and this one has not.
+
+## DEFAULT-1 — a platform-dependent default VFS was considered and rejected
+
+**Status: decided 2026-08-25 (user). Recorded because the idea is attractive and will come back.**
+
+The measurements make a per-platform default look obviously right: `OPFSAdaptiveVFS` reads 3.24x on
+Chromium and 0.94-1.08x off it, where `OPFSAnyContextVFS` reads 2.50x on Firefox and
+`IDBBatchAtomicVFS` is the only sound persistent choice on Safari. Picking by feature detection
+would hand every user the best available VFS.
+
+**It was rejected for a reason that has nothing to do with performance: the VFS decides where the
+data is written.** A default resolved by detection moves the moment detection changes its mind —
+Firefox ships `readwrite-unsafe`, the choice swings from one VFS to another, and the existing
+database becomes invisible. The bytes are still there, in a VFS nothing queries any more. From the
+user's side that is silent data loss, triggered by a browser update nobody asked for.
+
+Staying on "whichever VFS created this database" does not save it: identifying that would mean
+probing all nine, which is expensive and ambiguous.
+
+An API that *returns* a recommendation for the application to pass explicitly was floated and also
+dropped — the user's call: the default is universal and works everywhere, so a second mechanism
+earns nothing. **The default stays `OPFSAdaptiveVFS`,** which is best where it shines and merely
+degraded elsewhere, never broken, all invariants green on all three engines. The benchmark page is
+what answers "which one here", and the README links to it prominently.
 
 ## Performance — after correctness, with debug instrumentation live
 

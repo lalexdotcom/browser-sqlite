@@ -2,6 +2,11 @@
 
 A persistent SQLite database that lives in your browser — yes, for real. Powered by [wa-sqlite](https://github.com/rhashimoto/wa-sqlite) (WebAssembly), built for (read) concurrency.
 
+**▶ [Run the benchmarks in your own browser](https://lalexdotcom.github.io/browser-sqlite/)** — every
+VFS this library ships, put through the same conformance checks and measurements, on your device.
+It is the honest way to choose one: which VFS wins depends on the engine, and it changes often —
+a single browser release can move the answer.
+
 ## Usage
 
 ### Initialize
@@ -155,7 +160,10 @@ browser-sqlite delegates storage to a
 [wa-sqlite Virtual File System](https://github.com/rhashimoto/wa-sqlite/tree/master/src/examples#readme)
 (VFS). **When `vfs` is omitted, `OPFSAdaptiveVFS` is used.**
 
-Choose based on browser support and storage requirements:
+Choose based on browser support and storage requirements — and, for anything to do
+with speed or concurrency, on [the benchmark page](https://lalexdotcom.github.io/browser-sqlite/)
+run on the browsers you actually target. This table describes what each VFS *is*;
+only your device can say what it *costs* there.
 
 <!-- BEGIN GENERATED VFS TABLE — edit VFS_CAPABILITIES in src/types.ts, then run `pnpm docs:vfs` -->
 
@@ -373,3 +381,41 @@ Note: the "Coop" in `OPFSCoopSyncVFS` stands for *cooperative*, not the `Cross-O
 - **`OPFSCoopSyncVFS` does not read concurrently, and stalls unpredictably under a pool.** Unlike the other OPFS VFS it extends `FacadeVFS` directly rather than `WebLocksMixin(FacadeVFS)` (wa-sqlite v1.1.2, `src/examples/OPFSCoopSyncVFS.js:44` against `OPFSAdaptiveVFS.js:55`), so it implements its own locking and silently ignores the `lockPolicy: 'shared'` this library constructs every VFS with. It holds one *exclusive* access handle and rotates it between workers instead of holding one per connection. Measured with `bench/index.html` on 2026-08-25 at `poolSize: 4`, Chromium 151 and Firefox 153: a read issued while a write transaction is open is **never served on either engine** — the pool acquisition blocks before any `AbortSignal` is consulted — where `IDBBatchAtomicVFS`, `IDBMirrorVFS` and `OPFSAnyContextVFS` serve it every time. Its bulk insert of 10 000 rows either finishes in about 70–90 ms or **exceeds 30 seconds**, with no middle ground and no consistency across builds or runs; on both engines it stranded whole benchmark columns on that row. None of this depends on `readwrite-unsafe`: unlike the reduced mode described above, it happens on Chromium too.
 - **Read-your-own-writes is guaranteed within a tab, not across tabs.** See the
   caveat under [Error handling](#error-handling).
+
+## Development
+
+```bash
+pnpm install
+pnpm build          # rslib → dist/
+pnpm test           # unit (Node) + browser (Playwright/Chromium)
+pnpm check          # biome, with --write
+```
+
+Two suites run on demand rather than on every change:
+
+```bash
+pnpm test:conformance   # every declared (vfs, build) pair through six invariants
+pnpm test:consumer      # packs the tarball and drives four bundler modes
+```
+
+### The benchmark page
+
+`bench/index.html` is the page published above. It is one self-contained file
+served beside a verbatim copy of `dist/`, so it exercises the library exactly as
+a consumer would with no bundler at all.
+
+```bash
+pnpm bench:dev      # build, serve on http://127.0.0.1:8099, rebuild on change
+pnpm bench:serve    # same without the watch
+pnpm bench:build    # assemble _site/ only
+```
+
+`http://127.0.0.1` is a secure context, so OPFS works with no certificate — no
+TLS setup is needed to develop against it. A phone on the LAN is a different
+matter: it is not a secure context, so OPFS is unavailable there and a tunnel
+(or the published page) is the way to test a real device.
+
+`node scripts/bench-check.mjs [chromium|firefox] [--all]` drives the page under
+Playwright and asserts that it still works — it is run by hand and deliberately
+not wired into CI. It checks the *page*, never that a VFS passes: a red cell can
+be a correct report about the engine you are on.
