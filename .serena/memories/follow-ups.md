@@ -690,30 +690,94 @@ to them, and the same rule it already used for IndexedDB. Verified by reproducti
 `AccessHandlePoolVFS` columns across three consecutive runs in one persistent context, where six
 used to fail.
 
-## ANYCONTEXT-1 — `OPFSAnyContextVFS` does not open on Safari
+## ANYCONTEXT-1 — RESOLVED 2026-08-25. A WebKit bug, patched in this repo
 
-**Status: open, measured 2026-08-25 on Safari 26.5.2 / macOS. Reproduced in three separate runs,
-the last on a swept storage root — so it is not our residue.**
+**Status: closed. Root cause found, fix shipped in `patches/wa-sqlite@1.1.1.patch` (`9fabeb9`),
+same change pushed to `lalexdotcom/wa-sqlite` branch `fix/opfs-anycontext-webkit-view-offset`
+(`28a090d`) for an upstream PR the user will open. Draft PR body: `.work/PR-body.md`.**
 
-`opens` fails with **`file is not a database`** (`SQLITE_NOTADB`). Note what that is not: it is not
-"OPFS unavailable" and not a clean refusal at open. The VFS reached storage and SQLite read
-something that was not a database header. For a storage library that is the sharper signal.
+**The cause.** `WebKit's FileSystemWritableFileStream.write()` ignores a typed array view's
+`byteOffset` and `byteLength` and writes the **entire underlying `ArrayBuffer`**.
+`OPFSAnyContextVFS.jWrite` passes `pData.subarray()` — a window into the WASM heap — so every
+4 KiB page SQLite wrote landed as a multi-megabyte splat at the target offset, and the database
+header did not survive the second write. Hence `SQLITE_NOTADB` at `opens`. The fix is one word:
+`pData.slice()`, which keeps the Proxy unwrapping `subarray()` was there for (see the note in
+`OPFSAdaptiveVFS.jWrite`) and copies into a buffer that is exactly the page.
 
-**Why it matters beyond one VFS.** `mem:resume-plan` §0.2 named `OPFSAnyContextVFS` and
-`IDBBatchAtomicVFS` as the only two VFS that escape HANDLE-1 structurally, hence the only candidates
-for an engine without `readwrite-unsafe`. Safari is exactly such an engine, and one of the two
-candidates does not run there. On Firefox, by contrast, `OPFSAnyContextVFS` measured the **best**
-read-burst concurrency of any VFS (2.50x, where the default `OPFSAdaptiveVFS` fell to 1.08x), so it
-is not a VFS to write off — it is engine-specific.
+**Reduced repro, no SQLite — 64 on WebKit, 4 on Chromium and Firefox:**
 
-**Hypothesis, not established:** the VFS exists to avoid synchronous access handles, so it likely
-writes through `createWritable()`. If that path does not land as expected on WebKit, the file stays
-empty or incoherent and SQLite rejects the header. What would settle it: reading AnyContext's write
-path in wa-sqlite v1.1.2 against what WebKit implements. Nobody has done that.
+```js
+const fh = await (await navigator.storage.getDirectory()).getFileHandle('t', { create: true });
+const buf = new Uint8Array(64).fill(0xAA);
+const view = buf.subarray(16, 20);
+view.set([1, 2, 3, 4]);
+const w = await fh.createWritable();
+await w.write(view);
+await w.close();
+console.log((await fh.getFile()).size);
+```
 
-**The README does not say any of this yet.** Its `Browser compatibility` column is generated from
-MDN/caniuse and cannot express an observed per-engine failure; `OPFSCoopSyncVFS` got a Known
-Limitations entry for the same reason and this one has not.
+**Do not re-test these — all conformant on WebKit, each cost a round trip to establish:**
+`keepExistingData: true`, `seek()`, `truncate()`, two handles on one path, sixty-four repeated
+createWritable/write/close cycles with read-back, worker context, and buffer aliasing (WebKit
+copies at call time). The failure also reproduces at `poolSize: 1` under `journal_mode=OFF`, so
+neither the pool nor the rollback journal is involved. **The sync access handle VFS are not
+affected**: `OPFSAdaptiveVFS`, `AccessHandlePoolVFS` and `OPFSCoopSyncVFS` pass the same
+`pData.subarray()` to `FileSystemSyncAccessHandle.write()` and pass conformance on Safari — the
+bug is specific to the writable-stream path.
+
+**Verified**, Safari 26.5.2 / macOS, swept OPFS root: **0 of 7 conformance rows → 7 of 7**, and
+`read-burst-concurrency` **1.70×** at `poolSize: 4` — the highest of any VFS in that run, where
+`OPFSAdaptiveVFS` sat at 0.94×. That makes it the best concurrent-read option on WebKit, and it
+corroborates the 2.0–2.2× measured on Firefox 154. **Still owed: re-run Safari 27, iOS 26 and
+iPadOS 27** — they carry the same fix but have not been measured since.
+
+**Second half of the fix, in this repo.** Nothing declared the requirement. `createWritable()` is
+Safari 26 — eleven versions after OPFS itself — so the generated table claimed `Safari 15.4+` for
+a VFS that could never have run there. `'writable-stream'` is now a `PlatformFeature`,
+`OPFSAnyContextVFS` requires it, `render-vfs-matrix.ts` carries its MDN support matrix, and the
+bench page probes it. The table now reads `Safari 26+ / iOS 26+`.
+
+**The pool declarations are still unmeasured on WebKit.** `maxPoolSize: null` and
+`multiConnection: true` now *look* verified because the VFS opens, which is exactly the trap
+MIRROR-1 documented. One data point exists (`pool-blocking` = 1 at `poolSize` 4); that is not a
+verification.
+
+## RESIDUE-1 — two VFS store under their class name, and cleanup never sees it
+
+**Status: open, observed 2026-08-25. It put two VFS into false failure in one evening, on a
+clean-looking origin.**
+
+A VFS is free to store wherever it likes, and two of ours do not use the filename they were
+given:
+
+- **`AccessHandlePoolVFS`** keeps one OPFS directory named after the class, holding **six**
+  pre-allocated files with random names. The bench page already documents this
+  (`scripts/bench/html/index.html`, `snapshotOpfsRoot`) and handles it by *diffing the root* —
+  but only once, at the end of a run, and it abandons any directory still held by a live handle.
+- **`IDBMirrorVFS`** keeps one IndexedDB database named `IDBMirrorVFS`. **There is no equivalent
+  of the root diff on the IndexedDB side at all.**
+
+**What it cost.** After several interrupted local runs on `http://localhost:8099`, the OPFS root
+held `AccessHandlePoolVFS/` with all six slots taken — five carrying orphaned databases, one
+free. A database in `journal_mode=DELETE` needs two slots (the file and its journal), so
+`AccessHandlePoolVFS` failed at `opens` with a bare `sqlite3_open_v2` and no message, on both
+`sync` and `async`. It read as a regression from the wa-sqlite patch committed minutes earlier;
+it was residue. Deleting the directory by hand restored it with no code change.
+
+**Retroactive reclassification.** The two isolated `opens` failures flagged earlier the same day
+— `AccessHandlePoolVFS/async` on iOS 26 (`unable to open database file`) and
+`AccessHandlePoolVFS/jspi` on macOS Chromium 150 — are very likely the same exhaustion, not
+engine defects. Both were single occurrences contradicted by other runs on the same engine
+family. Re-run on a swept root before recording either as a real finding.
+
+**Also observed:** `navigator.storage.estimate().usage` reported 1.42 GB on that origin while the
+whole OPFS root weighed ~1.6 MB. The IndexedDB `IDBMirrorVFS` store carried the rest. Purging
+OPFS moved the number not at all — a useful reminder that `usage` is origin-wide, not OPFS-wide.
+
+**What would fix it**, in rising order of cost: run `cleanupOpfsResidue` per *column* rather than
+once per run; give IndexedDB the same before/after diff the OPFS root gets; or have each VFS
+declare the storage names it owns, which is the only version that does not rely on diffing.
 
 ## DEFAULT-1 — a platform-dependent default VFS was considered and rejected
 

@@ -277,7 +277,63 @@ measurement contradicted, a JSDoc describing the plan's buggy formula rather tha
 it. In a codebase where comments carry measurements, that is a defect class, not a tidiness one.
 
 
-## 0.4 WHERE THE WORK IS — written 2026-08-25, end of the benchmark-page session. READ FIRST.
+## 0.5 WHERE THE WORK IS — written 2026-08-25, end of the WebKit session. READ FIRST.
+
+Branch `feat/vfs-capabilities`, merged into `main` at the close of this session. Still not
+pushed — `origin/main` sits behind, deliberately.
+
+**What this session settled.**
+
+1. **ANYCONTEXT-1 is solved and it was a WebKit bug** — `FileSystemWritableFileStream.write()`
+   ignores a view's `byteOffset`/`byteLength` and writes the whole `ArrayBuffer`, which for
+   wa-sqlite is the WASM heap. Patched here (`patches/wa-sqlite@1.1.1.patch`), pushed to a fork
+   for upstream. Full account, reduced repro and the list of what was ruled out:
+   `mem:follow-ups` ANYCONTEXT-1. **`OPFSAnyContextVFS` is now the best concurrent-read VFS on
+   WebKit (1.70×) and on Firefox (2.0–2.2×)** — which reopens DEFAULT-1's premise, though not
+   its conclusion.
+2. **RESIDUE-1 is new** — `AccessHandlePoolVFS` and `IDBMirrorVFS` store under their class name,
+   and it cost two false VFS failures in one evening. See `mem:follow-ups`.
+3. **The bench page moved to `scripts/bench/`** (`62c2b0c`), page at
+   `scripts/bench/html/index.html`, scripts at `scripts/bench/{assemble,check,dev}.mjs`. The user
+   overruled a reasoned objection here and was entitled to; do not relitigate the layout.
+4. **OS detection was reporting every Mac as an iPad** (`0c7f435`) — `navigator.standalone`
+   exists on macOS since Safari 17, so the presence test that replaced the touch test in
+   `6691df5` was wrong the day it was written. Now `maxTouchPoints > 1` guarded by
+   `matchMedia('(pointer: coarse)')`, which an iPad keeps even with a trackpad (WebKit 209292).
+
+**Owed, and none of it started.**
+
+- **Re-run Safari 27, iOS 26, iPadOS 27** with the patch. Only Safari 26.5.2 has been measured.
+- **`no-read-inside-transaction` is not deterministic on Safari.** Two runs an hour apart flipped
+  it in *opposite* directions — `OPFSAdaptiveVFS/async` pass→blocked, `OPFSCoopSyncVFS/async`
+  blocked→pass. n≥3 before touching the `OPFSCoopSyncVFS` README entry, which rests on that row.
+- **Android 145 vs 151 differ by a factor 2.6** on bulk insert, same emulator. Regression or
+  noise; a single run cannot say.
+- **Chrome Android 109 crashes the bench page before any run starts.** Deliberately dropped by
+  the user (2026-08-25) since 145 and 151 produce full exports. Note the exposure: the README
+  claims `Android 109+` on four VFS rows, and the only observation we hold for that version is a
+  crash. The init path is short — the two candidates are the un-timeout'd `await
+  probeUnsafeHandles()` and the unbounded `while (t1 === t0)` clock spin, both in
+  `scripts/bench/html/index.html`. Triage: banner after 8 s → the probe; frozen page → the spin.
+- **The `feat/*` deployment rule** on the `github-pages` environment is still owed removal.
+- **The upstream PR** is pushed but not opened; body drafted at `.work/PR-body.md` (gitignored).
+
+**Two working conventions the user corrected this session** — both are in the auto-memory, and
+both generalise:
+
+- **The README is for the consumer.** State the constraint and what it costs them; the mechanism,
+  the evidence and the investigation go to code comments, these memories, or a PR description. A
+  fifteen-line Known Limitations entry about a WebKit bug was cut to one sentence plus `26+` in
+  the generated table.
+- **Batch diagnostic probes.** When the user has to run probes by hand, send a whole battery in
+  one paste, each written for the case where the previous came back clean. Four round trips were
+  burned on one-hypothesis-at-a-time before they called it.
+
+**And match the house style of whatever repo you are committing to.** The first upstream commit
+carried a 30-line message and an 8-line comment into a project where 49 of the last 60 commits
+are one line and no VFS file has an inline comment longer than 4. Measure before writing.
+
+## 0.4 WHERE THE WORK IS — written 2026-08-25, end of the benchmark-page session. **Superseded by §0.5.**
 
 **§0.3 below is superseded on one point: the benchmark page is built.** Everything else in it stands.
 
