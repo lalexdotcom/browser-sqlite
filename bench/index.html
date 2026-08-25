@@ -28,7 +28,21 @@
       }
       #banner b { font-weight: 600; }
       .no { opacity: 0.55; }
-      #status { margin: var(--gap) 0; font-size: 0.85rem; min-height: 1.5em; }
+      /* One line, whatever the state: idle it holds a button, running it holds
+         the step in flight and the way out of it. */
+      #control {
+        display: flex; align-items: center; gap: 0.6rem;
+        margin: var(--gap) 0; min-height: 2.2em;
+      }
+      #status { font-size: 0.85rem; }
+      #stop { margin-left: auto; }
+      #spinner {
+        width: 1em; height: 1em; flex: none; border-radius: 50%;
+        border: 2px solid var(--border); border-top-color: currentColor;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { #spinner { animation: none; } }
       #picker { border: 1px solid var(--border); border-radius: 6px; padding: var(--gap); }
       #picker summary { cursor: pointer; font-weight: 600; }
       .picker-actions { margin: var(--gap) 0; display: flex; gap: 0.5rem; }
@@ -83,13 +97,22 @@
       <div id="picker-list"></div>
     </details>
 
-    <p><button type="button" id="start">Start</button></p>
-    <p><button type="button" id="download" disabled>Download JSON</button></p>
+    <div id="control">
+      <button type="button" id="start">Start</button>
+      <span id="spinner" hidden></span>
+      <span id="status"></span>
+      <button type="button" id="stop" hidden>Stop</button>
+    </div>
 
-    <p id="status"></p>
+    <div id="verdict" hidden>
+      <div id="verdict-text"></div>
+      <p><button type="button" id="download" disabled>Download JSON</button></p>
+    </div>
 
-    <div id="verdict" hidden></div>
-
+    <!-- The table and the key to reading it appear together, when there is
+         something to read: an empty grid with a lone "row" heading is not a
+         table, and a legend for cells that do not exist yet is noise. -->
+    <div id="results-section" hidden>
     <div id="results-wrap"><table id="results"><thead><tr id="head-row">
       <th>row</th></tr></thead><tbody id="body-rows"></tbody></table></div>
     <p class="note">
@@ -105,6 +128,7 @@
       Where it does apply, ≈1 means the pool kept serving reads freely during
       the long statement.
     </p>
+    </div>
 
     <script type="module">
       import {
@@ -1213,6 +1237,8 @@
       const cells = new Map(); // `${pairId}|${rowId}` -> <td>
 
       const buildRows = () => {
+        // Nothing to read before a run, so nothing is shown before one.
+        document.getElementById('results-section').hidden = false;
         // Clear all column <th>s except the first (the "row" label column),
         // and reset the cells map — otherwise a second Start press duplicates
         // the header columns while mapping cells to the wrong column.
@@ -1322,6 +1348,7 @@
        */
       const renderVerdict = () => {
         const box = document.getElementById('verdict');
+        const text = document.getElementById('verdict-text');
         const ran = Object.keys(RESULTS.conformance);
         if (ran.length === 0) return;
 
@@ -1391,7 +1418,7 @@
           '<p class="caveat">These numbers describe one machine at one moment. The table below has the detail, including the measurements this browser\'s clock could not separate.</p>',
         );
 
-        box.innerHTML = parts.join('');
+        text.innerHTML = parts.join('');
         box.hidden = false;
       };
 
@@ -1529,7 +1556,6 @@
           }
         }
 
-        document.getElementById('download').disabled = false;
 
         try {
           await closeWithTimeout(ctx.db);
@@ -1659,15 +1685,36 @@
         URL.revokeObjectURL(url);
       });
 
+      const spinner = document.getElementById('spinner');
+      const stopButton = document.getElementById('stop');
+      const downloadButton = document.getElementById('download');
+      let hasRun = false;
+
+      /**
+       * The one line before the table, in its two states. Start and Stop are
+       * separate buttons rather than one that changes meaning: a control whose
+       * label flips under the cursor is how you stop a run you meant to launch.
+       */
+      const setRunning = (running) => {
+        startButton.hidden = running;
+        spinner.hidden = !running;
+        stopButton.hidden = !running;
+        if (!running) startButton.textContent = hasRun ? 'Re-start' : 'Start';
+      };
+
+      stopButton.addEventListener('click', () => {
+        stopRequested = true;
+        stopButton.disabled = true;
+        status.textContent = 'stopping after this row…';
+      });
+
       startButton.addEventListener('click', async () => {
-        if (startButton.dataset.running) {
-          stopRequested = true;
-          return;
-        }
-        startButton.dataset.running = '1';
-        startButton.textContent = 'Stop';
+        setRunning(true);
+        stopButton.disabled = false;
         document.getElementById('picker').open = false;
-        document.getElementById('download').disabled = true;
+        // Only offered once the run has stopped — a JSON pulled mid-run would
+        // describe a table still being written.
+        downloadButton.disabled = true;
         window.__BENCH__.done = false;
 
         RESULTS.conformance = {};
@@ -1675,7 +1722,7 @@
         RESULTS.reasons = {};
         const verdictBox = document.getElementById('verdict');
         verdictBox.hidden = true;
-        verdictBox.replaceChildren();
+        document.getElementById('verdict-text').replaceChildren();
 
         try {
           buildRows();
@@ -1690,10 +1737,15 @@
           status.textContent = stopRequested ? 'stopped' : 'done';
           window.__BENCH__.done = true;
           window.__BENCH__.results = RESULTS;
+          // A stopped run still produced columns, and they are still worth
+          // taking away.
+          if (Object.keys(RESULTS.conformance).length > 0) {
+            downloadButton.disabled = false;
+          }
         } finally {
-          startButton.textContent = 'Start';
-          delete startButton.dataset.running;
+          hasRun = true;
           stopRequested = false;
+          setRunning(false);
         }
       });
 
