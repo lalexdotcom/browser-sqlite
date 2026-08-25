@@ -123,7 +123,7 @@ try {
 
   const EXPECTED_KEYS = [
     'generatedAt', 'lib', 'agent', 'features', 'clockMs',
-    'longQueryIterations', 'conformance', 'measurements',
+    'longQueryIterations', 'conformance', 'measurements', 'reasons',
   ];
   for (const k of EXPECTED_KEYS) {
     if (!(k in payload)) fail(`export missing key: ${k}`);

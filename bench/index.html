@@ -83,7 +83,8 @@
     <div id="results-wrap"><table id="results"><thead><tr id="head-row">
       <th>row</th></tr></thead><tbody id="body-rows"></tbody></table></div>
     <p class="note">
-      <b>Legend:</b> ✅ pass — conformance check passed · ❌ fail — an error was thrown · ⏱ timed out — row exceeded its time budget; the rest of the column is abandoned if the first row times out · ⃠ not applicable — this VFS's capabilities declare this row out of scope · ⃠ blocked — the row ran, but the concurrent read was never served; the pool-acquire blocked at the scheduler while a write transaction held the VFS's single access handle — this tells you the VFS serializes the pool under a write transaction · — no result — we ran it but could not produce a trustworthy number
+      <b>Legend:</b> ✅ pass — conformance check passed · ❌ fail — an error was thrown · ⏱ timed out — this row exceeded its time budget · ⏭ not run — an earlier row ended this column · ⃠ not applicable — this VFS's capabilities declare this row out of scope · ⃠ blocked — the row ran, but the concurrent read was never served; the pool-acquire blocked at the scheduler while a write transaction held the VFS's single access handle — this tells you the VFS serializes the pool under a write transaction · — no result — we ran it but could not produce a trustworthy number.
+      Hover any of these for the reason; the downloaded JSON carries the same reasons under <code>reasons</code>.
     </p>
     <p class="note">
       <code>read-burst-concurrency</code> shows pool concurrency gains; a ratio is
@@ -522,7 +523,23 @@
         }
       };
 
-      const RESULTS = { conformance: {}, measurements: {} };
+      /**
+       * `reasons` is the third map because the first two only carry a verdict,
+       * and a verdict without its cause is the least useful thing this page can
+       * send back. A real Safari reported `opens: "fail"` for one VFS and the
+       * message that said why lived only in a cell's tooltip, on a machine
+       * nobody here can reach — so the one discovery of that campaign could not
+       * be read from its own export.
+       *
+       * Keyed pair → row, exactly like the other two, and carrying the cause of
+       * every cell that is not a plain pass or a number: errors, states the
+       * clock could not support, prerequisites that never ran.
+       */
+      const RESULTS = { conformance: {}, measurements: {}, reasons: {} };
+
+      const setReason = (pairId, rowId, text) => {
+        (RESULTS.reasons[pairId] ??= {})[rowId] = text;
+      };
 
       /**
        * Conformance rows. Ids are the describe() titles of
@@ -1192,8 +1209,12 @@
             : 'measurements';
 
           if (abandoned) {
-            RESULTS[kind][pair.id][row.id] = 'timeout';
-            setCell(pair, row.id, '⏱');
+            // Not a timeout: this row never ran. Reporting it as one claimed
+            // six expirations that never happened, in the same file as the
+            // failure that actually ended the column.
+            RESULTS[kind][pair.id][row.id] = 'not-run';
+            setReason(pair.id, row.id, 'an earlier row ended this column');
+            setCell(pair, row.id, '⏭');
             continue;
           }
           if (!row.applies(pair.cap)) {
@@ -1207,36 +1228,70 @@
             const value = await row.run(ctx);
             if (value === 'blocked') {
               RESULTS[kind][pair.id][row.id] = 'blocked';
+              setReason(
+                pair.id,
+                row.id,
+                'the concurrent read was never served — the pool was held',
+              );
               setCell(pair, row.id, '⃠ blocked');
             } else if (kind === 'conformance') {
               RESULTS[kind][pair.id][row.id] = 'pass';
               setCell(pair, row.id, '✅');
             } else {
-              RESULTS[kind][pair.id][row.id] = value;
-              if (typeof value === 'number') {
+              // A duration the clock cannot resolve is not a fast result, it is
+              // no result. The ratio rows already refuse to print one; printing
+              // an absolute `0.00 ms` was the same defect wearing a unit — real
+              // Safari and Firefox runs reported 0.00 ms writes for five VFS,
+              // which is the 1 ms tick, not the database.
+              const unresolved =
+                typeof value === 'number' &&
+                row.unit === 'ms' &&
+                value < CLOCK_MS * 2;
+              if (unresolved) {
+                setReason(
+                  pair.id,
+                  row.id,
+                  `${value.toFixed(2)} ms is below 2× this device's clock resolution (${CLOCK_MS.toFixed(2)} ms) — too fast to time here`,
+                );
+              }
+              const stored = unresolved ? null : value;
+              RESULTS[kind][pair.id][row.id] = stored;
+              if (typeof stored === 'number') {
                 renderMeasureRow(row);
               } else {
+                if (!unresolved) {
+                  setReason(pair.id, row.id, nullMeasureTitle(row.id));
+                }
                 const td = cells.get(`${pair.id}|${row.id}`);
                 if (td) {
                   td.className = 'measure';
                   td.textContent = '—';
-                  td.title = nullMeasureTitle(row.id);
+                  td.title = RESULTS.reasons[pair.id]?.[row.id] ?? '';
                 }
               }
             }
           } catch (error) {
             if (error instanceof ColumnAbandoned) {
+              // This row did time out; the ones after it simply never run, and
+              // now say so themselves rather than borrowing this verdict.
               abandoned = true;
               RESULTS[kind][pair.id][row.id] = 'timeout';
-              setCell(pair, row.id, '⏱ column abandoned', 'fail');
+              setReason(
+                pair.id,
+                row.id,
+                `exceeded ${ROW_TIMEOUT_MS} ms and takes no AbortSignal, so the rest of this column was abandoned`,
+              );
+              setCell(pair, row.id, '⏱', 'fail');
             } else if (error instanceof RowTimeout) {
               RESULTS[kind][pair.id][row.id] = 'timeout';
+              setReason(pair.id, row.id, `exceeded ${ROW_TIMEOUT_MS} ms`);
               setCell(pair, row.id, '⏱', 'fail');
             } else {
               RESULTS[kind][pair.id][row.id] =
                 kind === 'conformance' ? 'fail' : null;
+              setReason(pair.id, row.id, String(error?.message ?? error));
               const td = cells.get(`${pair.id}|${row.id}`);
-              if (td) td.title = String(error?.message ?? error);
+              if (td) td.title = RESULTS.reasons[pair.id][row.id];
               setCell(pair, row.id, '❌', 'fail');
             }
             // Every later row would fail for the same reason and say nothing
@@ -1335,6 +1390,9 @@
           ]),
         ),
         conformance: RESULTS.conformance,
+        // Why any cell is not a plain pass or a number. Without it a `fail`
+        // travels back from a device nobody here can reach carrying no cause.
+        reasons: RESULTS.reasons,
         // Strip internal __-prefixed keys (e.g. __iterations) — those live in
         // longQueryIterations above and do not belong beside row ids.
         measurements: Object.fromEntries(
@@ -1383,6 +1441,7 @@
 
         RESULTS.conformance = {};
         RESULTS.measurements = {};
+        RESULTS.reasons = {};
 
         try {
           buildRows();
