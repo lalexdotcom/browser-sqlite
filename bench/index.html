@@ -235,14 +235,16 @@
         const touch = navigator.maxTouchPoints ?? 0;
         if (/Android/.test(ua)) return 'android';
         if (/iPhone|iPod/.test(ua)) return 'ios';
-        // `navigator.standalone` is exposed by WebKit on iOS and iPadOS and
-        // does not exist on macOS, so it survives a touch-capable Mac — which
-        // `maxTouchPoints > 1` would report as an iPad. Touch stays as the
-        // fallback for the day Apple drops `standalone`. Neither signal is
-        // durable; this labels a file and nothing more.
-        const isIosFamily =
-          'standalone' in navigator || (platform === 'MacIntel' && touch > 1);
-        if (/iPad/.test(ua) || isIosFamily) return 'ipados';
+        // `navigator.standalone` used to separate the two, but Safari 17
+        // shipped it on macOS as well, so it now reports every Mac as an iPad.
+        // What is left is physical input: an iPad stays `pointer: coarse` even
+        // with a trackpad attached (WebKit 209292), where a touch-capable Mac
+        // would keep a fine primary pointer. This labels a file, nothing more.
+        const isIpad =
+          platform === 'MacIntel' &&
+          (touch > 1 || 'ontouchstart' in window) &&
+          matchMedia('(pointer: coarse)').matches;
+        if (/iPad/.test(ua) || isIpad) return 'ipados';
         if (/Mac/.test(platform) || /Mac OS X/.test(ua)) return 'macos';
         if (/Win/.test(platform)) return 'windows';
         if (/Linux|X11/.test(platform)) return 'linux';
