@@ -468,9 +468,12 @@ real WebKit signal needs Playwright on **macOS**. rstest accepts no provider but
 (`BROWSER_PROVIDERS = ['playwright']`), so there is no escape hatch. Removed from CI and the
 devcontainer in `ee2e9f3`.
 
-## MIRROR-1 — `IDBMirrorVFS`'s `multiConnection: true` has an observed counter-example
+## MIRROR-1 — CLOSED 2026-08-25. `IDBMirrorVFS` is declared single-connection
 
-**Status: open. Low-rate flake, mechanism plausible and named, declaration not yet corrected.**
+**Status: closed 2026-08-25 (`812d273`). `src/types.ts` now declares `maxPoolSize: 1` and
+`multiConnection: false` for `IDBMirrorVFS`, with the measurement as its `poolLimitReason`. The
+flake itself is not fixed and never will be — the declaration stopped claiming otherwise, which
+was the whole ask. Kept for the method: the measurement below is how a low-rate flake was pinned.**
 
 `tests/browser/vfs.test.ts :: newly wired VFS > IDBMirrorVFS opens and serves a round trip` failed
 once with **`no such table: wired`** — in a pre-commit hook run, 2026-08-24. Measured immediately
@@ -543,9 +546,17 @@ get a rate, with the worker that served each statement recorded — the same ins
 settled HANDLE-1, and the lesson from that session applies, that wrapping `Worker` can shift the
 race and hide it.
 
-## JSPI-1 — three README claims are wrong about Firefox
+## JSPI-1 — CLOSED 2026-08-25. The three Firefox claims are gone
 
-**Status: open, sourced 2026-08-24.** `caniuse.com` gives **JSPI as available in Firefox from 153**
+**Status: closed 2026-08-25.** All three formulations below are out of `README.md`; the only
+surviving mention of "Chromium-only" is the historical note that says it was wrong. The rule the
+entry established stands. **Its own fix later went stale in turn** — the replacement text said
+"Safari support is not established here" while the generated build table beside it said `27+`,
+and Safari 27 / iPadOS 27 both detect `WebAssembly.Suspending` in our own runs. Corrected by
+pointing the bullet at the generated table instead of restating numbers next to it. **That is the
+durable lesson: prose that duplicates a generated table will drift away from it.**
+
+**Originally sourced 2026-08-24.** `caniuse.com` gives **JSPI as available in Firefox from 153**
 (user, 2026-08-24), and our own conformance run on Playwright's Firefox 153 independently detected
 `WebAssembly.Suspending` and executed all 22 declared build pairs, jspi included. Documented source
 and observation agree exactly, which is the strongest state a fact in this project can be in.
@@ -639,9 +650,13 @@ Two places where the copies legitimately differ, and must not be "aligned":
 This is the class of defect this repository already knows it has — *"here, comments drift faster
 than code"* — applied to code rather than comments.
 
-## DELETE-1 — there is no way to delete a database, and the JSDoc advised a wrong one
+## DELETE-1 — there is no way to delete a database
 
-**Status: open, found 2026-08-25 by the benchmark page failing on its own second run.**
+**Status: open, narrowed 2026-08-25. The JSDoc half is DONE** — `client.ts` no longer advises an
+OPFS deletion that does not work, and now states per VFS where the bytes actually live. **What
+remains open is the API**: there is still no `deleteDatabase`, and a consumer has no supported way
+to remove a database. See also RESIDUE-1, which is the same root fact from the cleanup side —
+a VFS stores where it likes, and only the VFS knows where.
 
 Every persistent VFS wa-sqlite ships implements `jDelete`, and for `AccessHandlePoolVFS` it is the
 **only** correct removal: `#deletePath` un-associates the SQLite path and returns the slot to the
@@ -803,9 +818,14 @@ earns nothing. **The default stays `OPFSAdaptiveVFS`,** which is best where it s
 degraded elsewhere, never broken, all invariants green on all three engines. The benchmark page is
 what answers "which one here", and the README links to it prominently.
 
-## BASELINE-1 — the library has a browser floor and nobody has sourced it
+## BASELINE-1 — mostly closed. The floor is sourced and shipped; two residuals
 
-**Status: open, found 2026-08-25 by a Chrome 81 Android tablet.**
+**Status: mostly closed 2026-08-25 (`9af6b37`).** The floor is sourced from MDN and shipped: a
+`## Browser support` table in the README (Chrome 92+, Firefox 95+, Safari 15.4+) and every VFS
+compatibility cell folded to `MAX(vfs_required, lib_required)` in the generator. **Two residuals,
+both named in the text below and neither blocking:** locate `structuredClone`'s BCD entry and
+confirm it does not raise the floor, and check `chrome_android` / `safari_ios` in `LIB_FLOOR`
+rather than inheriting their desktop engine. **Originally found by a Chrome 81 Android tablet.**
 
 `dist/` is published as `syntax: 'esnext'` (`rslib.config.ts`) and nothing is down-levelled. Grepped
 from the built output, it uses **logical assignment (`??=`, `||=`), private class fields, top-level
