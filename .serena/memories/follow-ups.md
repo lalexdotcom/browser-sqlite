@@ -739,6 +739,34 @@ earns nothing. **The default stays `OPFSAdaptiveVFS`,** which is best where it s
 degraded elsewhere, never broken, all invariants green on all three engines. The benchmark page is
 what answers "which one here", and the README links to it prominently.
 
+## BASELINE-1 — the library has a browser floor and nobody has sourced it
+
+**Status: open, found 2026-08-25 by a Chrome 81 Android tablet.**
+
+`dist/` is published as `syntax: 'esnext'` (`rslib.config.ts`) and nothing is down-levelled. Grepped
+from the built output, it uses **logical assignment (`??=`, `||=`), private class fields, top-level
+`await`, `crypto.randomUUID()`, `Array.prototype.at()` and `structuredClone()`.** The floor is
+whichever of those landed last in a given engine — and an engine missing any fails at parse or first
+use, not gracefully.
+
+**The VFS table cannot express this.** Its compatibility column is generated from each VFS's
+`requires`, so a VFS with none renders `Chrome 0`, which reads as "any Chrome". The package's own
+floor is invisible there and was stated nowhere until the README's new *Browser baseline* subsection.
+
+**What is owed: the actual version numbers, from MDN browser-compat-data.** They are deliberately
+absent from the README — recall is not a source, and JSPI-1 in this same file is the record of what
+happens when an unsourced version number is written down and then repeated for months.
+
+**Not worth supporting below that floor.** OPFS itself is Chrome 86+, so a pre-86 engine cannot run
+the six OPFS VFS at all; only the IndexedDB and memory ones would remain. Making the benchmark page
+parse on such an engine (removing top-level await, `??=`, `crypto.randomUUID`) would buy four VFS on
+a browser that cannot do the thing this library exists for. Decided 2026-08-25: drop it.
+
+**What was built instead:** a classic ES5 script ahead of the module in `bench/index.html` that
+watches for the module having started and, after 8 s, replaces the banner with what is missing. It
+tests for the module running, not for syntax, so it also covers a failed `dist/` fetch. Falsified by
+blocking that fetch, not reasoned about.
+
 ## Performance — after correctness, with debug instrumentation live
 
 - No prepared-statement cache (`worker.ts:169`) — typically the largest single win (2-10×); worst for `bulkWrite`'s ~32k-placeholder template.
