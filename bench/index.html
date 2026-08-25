@@ -28,10 +28,11 @@
       }
       #banner b { font-weight: 600; }
       #banner .line { display: flex; flex-wrap: wrap; gap: var(--gap); }
-      /* Half a gap on each side puts the dot between the two values it
-         separates, rather than hugging the one it is attached to. */
+      /* The flex gap already sits after the dot, so the margin before it must
+         be a full gap too — half of one left it hugging the value it hangs off
+         instead of sitting between the two it separates. */
       #banner .flags > span:not(:last-child)::after {
-        content: '·'; margin-left: calc(var(--gap) / 2); opacity: 0.45;
+        content: '·'; margin-left: var(--gap); opacity: 0.45;
       }
       .no { opacity: 0.55; }
       /* One line, whatever the state: idle it holds a button, running it holds
