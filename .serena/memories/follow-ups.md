@@ -600,6 +600,47 @@ Two places where the copies legitimately differ, and must not be "aligned":
 This is the class of defect this repository already knows it has — *"here, comments drift faster
 than code"* — applied to code rather than comments.
 
+## DELETE-1 — there is no way to delete a database, and the JSDoc advised a wrong one
+
+**Status: open, found 2026-08-25 by the benchmark page failing on its own second run.**
+
+Every persistent VFS wa-sqlite ships implements `jDelete`, and for `AccessHandlePoolVFS` it is the
+**only** correct removal: `#deletePath` un-associates the SQLite path and returns the slot to the
+pool, deliberately leaving the OPFS file in place because that file *is* a reusable slot. The
+library never exposes it — the worker holds the VFS instance and nothing routes to it.
+
+**How it surfaced.** The bench page opened a uniquely-named database per column and removed it with
+`removeEntry(ourName)`. `AccessHandlePoolVFS` stores every database inside one directory named after
+the VFS class (`#directoryPath = name`), holding `DEFAULT_CAPACITY = 6` files with `Math.random()`
+names, so that removal matched nothing and no slot was ever freed. The seventh column on an origin
+failed with `unable to open database file`. Seven real-device runs fit the 6-slot ceiling exactly,
+including why a single-run browser and Safari (two columns per run, no jspi) never hit it.
+
+**`client.ts`'s `close()` JSDoc told consumers to do exactly the wrong thing** — "to delete OPFS
+files, use the `navigator.storage.getDirectory()` API directly" — which is correct only for the
+plain OPFS VFS on an already-closed database, leaves `-journal`/`-wal` behind even there, silently
+costs `AccessHandlePoolVFS` its capacity, and is a no-op for the two IndexedDB VFS whose data is not
+in OPFS at all. It shipped in `dist/*.d.ts`. **Corrected 2026-08-25** to describe the per-VFS
+reality and to say that no deletion API exists yet — the wrong advice is gone, the missing feature
+is not.
+
+**What a `deleteDatabase(file)` owes, and why it was not bolted on at the end of the VFS branch:**
+
+- it must route to the open VFS's `jDelete`, so it needs a worker that has the VFS loaded — which
+  means opening one to delete, or keeping the deletion in the same worker lifecycle as `close()`;
+- what should happen when the database is open in another tab, where nothing here can revoke a
+  handle;
+- what it returns when the database does not exist — SQLite's `xDelete` is content with that;
+- and whether it also removes the auxiliary files, which differ per VFS.
+
+None of that is hard; all of it is a design, and the end of a large branch is the wrong moment.
+
+**The bench page does not wait for it.** It diffs the OPFS root before and after a run and removes
+what appeared — a rule that needs no knowledge of any VFS's layout and survives an upstream change
+to them, and the same rule it already used for IndexedDB. Verified by reproduction: nine
+`AccessHandlePoolVFS` columns across three consecutive runs in one persistent context, where six
+used to fail.
+
 ## Performance — after correctness, with debug instrumentation live
 
 - No prepared-statement cache (`worker.ts:169`) — typically the largest single win (2-10×); worst for `bulkWrite`'s ~32k-placeholder template.

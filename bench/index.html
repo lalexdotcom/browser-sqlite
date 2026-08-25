@@ -500,6 +500,50 @@
         ? new Set((await indexedDB.databases()).map((d) => d.name))
         : null;
 
+      /**
+       * The OPFS root as it stood before this page touched anything.
+       *
+       * Removing our own database name is not enough, because a VFS is free to
+       * store under a name of its own choosing. `AccessHandlePoolVFS` keeps
+       * every database in one directory named after the VFS class, holding six
+       * pre-allocated files with random names — so `removeEntry(ourName)` finds
+       * nothing, the slots are never freed, and the seventh column on an origin
+       * fails to open. That was measured across seven real runs before it was
+       * understood. SQLite's own `-journal` and `-wal` siblings leak the same
+       * way when a column ends without a clean close.
+       *
+       * So we diff the root instead of guessing at layouts: whatever appeared
+       * while this page ran is ours to remove, whatever was already there is
+       * not. It needs no knowledge of any VFS's internals and survives an
+       * upstream change to them — the same rule already used for IndexedDB.
+       */
+      const snapshotOpfsRoot = async () => {
+        if (!HAS_OPFS) return null;
+        try {
+          const root = await navigator.storage.getDirectory();
+          const names = new Set();
+          for await (const name of root.keys()) names.add(name);
+          return names;
+        } catch {
+          // No directory iteration here: clean nothing rather than guess.
+          return null;
+        }
+      };
+
+      const opfsBefore = await snapshotOpfsRoot();
+
+      // Same honesty as the IndexedDB note: a silent skip would read as a clean
+      // run, and the next run on this origin would inherit the residue.
+      if (HAS_OPFS && !opfsBefore) {
+        document.getElementById('banner').insertAdjacentHTML(
+          'beforeend',
+          '<span class="no"><b>OPFS cleanup</b> limited — this browser will not' +
+            ' list the storage root, so VFS-private files created by this run' +
+            ' are left in place</span>',
+        );
+      }
+
+      /** Per column, so a long run does not carry 22 databases to the end. */
       const cleanupOpfs = async (file) => {
         if (!HAS_OPFS) return;
         try {
@@ -507,6 +551,31 @@
           await root.removeEntry(file, { recursive: true });
         } catch {
           // Never created, or this VFS does not use OPFS at all.
+        }
+      };
+
+      /**
+       * Everything the run left behind under a name we never chose: VFS-private
+       * directories, orphaned journals. Runs once, after every client is closed
+       * — deleting a VFS's directory while an instance still held it would take
+       * capacity away from something still using it.
+       */
+      const cleanupOpfsResidue = async () => {
+        if (!opfsBefore) return;
+        try {
+          const root = await navigator.storage.getDirectory();
+          const now = [];
+          for await (const name of root.keys()) now.push(name);
+          for (const name of now) {
+            if (opfsBefore.has(name)) continue;
+            try {
+              await root.removeEntry(name, { recursive: true });
+            } catch {
+              // Held open elsewhere; leave it rather than fight for it.
+            }
+          }
+        } catch {
+          // Iteration stopped working mid-run: nothing safe left to do.
         }
       };
 
@@ -1450,6 +1519,7 @@
             await runPair(pair);
           }
           await cleanupIdb();
+          await cleanupOpfsResidue();
 
           status.textContent = stopRequested ? 'stopped' : 'done';
           window.__BENCH__.done = true;

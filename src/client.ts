@@ -307,10 +307,26 @@ export type SQLiteDB = {
    * object — the operation runs exactly once.
    *
    * @remarks
-   * **OPFS files are NOT deleted.** `close()` does not remove any OPFS database
-   * files. Files created by browser-sqlite persist in the origin's private file
-   * system across page loads. To delete OPFS files, use the
-   * `navigator.storage.getDirectory()` API directly.
+   * **Stored data is NOT deleted.** `close()` releases workers and connections;
+   * it removes nothing. What a database leaves behind, and how to remove it,
+   * depends on the VFS — and this library does not yet expose a deletion that
+   * routes through the VFS itself.
+   *
+   * Deleting files under `navigator.storage.getDirectory()` is only correct for
+   * the plain OPFS VFS, on a database that is already closed, and even there it
+   * leaves SQLite's `-journal` and `-wal` siblings unless you remove them too.
+   * It is wrong elsewhere:
+   *
+   * - `AccessHandlePoolVFS` keeps every database inside one directory named
+   *   after the VFS, in a fixed set of pre-allocated files with opaque names.
+   *   Removing a file does not free its slot — it takes capacity away from the
+   *   pool, and once capacity runs out no further database opens.
+   * - `IDBBatchAtomicVFS` and `IDBMirrorVFS` store nothing in OPFS at all;
+   *   their data lives in an IndexedDB database named after the VFS class, so
+   *   an OPFS deletion is a no-op.
+   *
+   * Until a `deleteDatabase` exists here, treat removal as VFS-specific and
+   * check what your chosen VFS actually writes.
    */
   close: () => Promise<void>;
 
