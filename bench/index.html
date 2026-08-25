@@ -1346,11 +1346,21 @@
        * application, and the weight between these criteria is the caller's to
        * decide — which is why nothing here is aggregated into a score.
        */
-      const renderVerdict = () => {
+      const renderVerdict = (stopped) => {
         const box = document.getElementById('verdict');
         const text = document.getElementById('verdict-text');
         const ran = Object.keys(RESULTS.conformance);
-        if (ran.length === 0) return;
+        if (ran.length === 0) {
+          // Reachable only by stopping before the first pair finished, which
+          // the loop makes hard — but the box is where Download lives, so it
+          // says something rather than staying hidden and taking the button
+          // with it.
+          if (!stopped) return;
+          text.innerHTML =
+            '<p><b>Run stopped</b> before any pair finished — nothing to report.</p>';
+          box.hidden = false;
+          return;
+        }
 
         const out = ran.map((p) => [p, disqualified(p)]).filter(([, d]) => d);
         const candidates = ran.filter((p) => !disqualified(p));
@@ -1358,6 +1368,33 @@
         const wins = CRITERIA.map((c) => [c, bestFor(c, candidates)]);
         const decided = wins.filter(([, w]) => w);
         const parts = [];
+
+        // A run cut short compares whatever happened to have finished. Saying so
+        // is the difference between a shortlist and a coincidence.
+        if (stopped) {
+          const selected = selectedPairs().length;
+          parts.push(
+            `<p><b>Run stopped.</b> ${ran.length} of the ${selected} selected pair${selected === 1 ? '' : 's'} ran, and what follows compares only those.</p>`,
+          );
+        }
+
+        // One candidate is not a comparison. Announcing it "ahead on all three
+        // criteria" would be true and worthless — it had no opponent.
+        if (candidates.length < 2) {
+          parts.push(
+            candidates.length === 0
+              ? '<p>Nothing ran that could be compared.</p>'
+              : `<p>Only ${pretty(candidates[0])} ran, so there is nothing to compare it against. Its numbers are in the table below.</p>`,
+          );
+          if (out.length > 0) {
+            parts.push(
+              `<p class="caveat">Not ranked, having failed an invariant: ${out.map(([p, d]) => `${pretty(p)} (${d})`).join('; ')}.</p>`,
+            );
+          }
+          text.innerHTML = parts.join('');
+          box.hidden = false;
+          return;
+        }
 
         if (decided.length === 0) {
           parts.push(
@@ -1732,9 +1769,11 @@
           }
           await cleanupIdb();
           await cleanupOpfsResidue();
-          renderVerdict();
+          renderVerdict(stopRequested);
 
-          status.textContent = stopRequested ? 'stopped' : 'done';
+          // No end-of-run text: the results box appearing and the button
+          // reading Re-start already say the run is over.
+          status.textContent = '';
           window.__BENCH__.done = true;
           window.__BENCH__.results = RESULTS;
           // A stopped run still produced columns, and they are still worth
