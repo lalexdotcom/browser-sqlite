@@ -73,10 +73,14 @@
       .note { font-size: 0.8rem; opacity: 0.75; max-width: 46rem; }
       /* The button sits at the bottom right, level with the report's last line;
          on a narrow screen it wraps underneath rather than squeezing the text. */
+      /* `hidden` works by setting display:none in the UA sheet, so ANY author
+         display rule overrides it — the box stayed visible mid-run, Download
+         and all. Restated explicitly, and the attribute selector wins. */
+      #verdict[hidden] { display: none; }
       #verdict {
         display: flex; align-items: flex-end; flex-wrap: wrap;
         gap: var(--gap);
-        margin: var(--gap) 0; padding: var(--gap); max-width: 46rem;
+        margin: var(--gap) 0; padding: var(--gap);
         border: 1px solid var(--border); border-radius: 6px;
       }
       #verdict-text { flex: 1 1 20rem; }
