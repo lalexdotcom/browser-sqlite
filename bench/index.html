@@ -71,12 +71,18 @@
       .pending { opacity: 0.4; }
       .fail { color: #b00020; }
       .note { font-size: 0.8rem; opacity: 0.75; max-width: 46rem; }
+      /* The button sits at the bottom right, level with the report's last line;
+         on a narrow screen it wraps underneath rather than squeezing the text. */
       #verdict {
+        display: flex; align-items: flex-end; flex-wrap: wrap;
+        gap: var(--gap);
         margin: var(--gap) 0; padding: var(--gap); max-width: 46rem;
         border: 1px solid var(--border); border-radius: 6px;
       }
-      #verdict p { margin: 0 0 0.5rem; }
-      #verdict p:last-child { margin: 0; }
+      #verdict-text { flex: 1 1 20rem; }
+      #verdict > p { margin: 0; }
+      #verdict-text p { margin: 0 0 0.5rem; }
+      #verdict-text p:last-child { margin: 0; }
       #verdict ul { margin: 0 0 0.5rem; padding-left: 1.2rem; }
       #verdict .caveat { font-size: 0.85rem; opacity: 0.8; }
       td.measure { text-align: right; font-variant-numeric: tabular-nums; background: linear-gradient(to right, color-mix(in srgb, currentColor 12%, transparent) var(--bar-w, 0%), transparent var(--bar-w, 0%)); }
