@@ -13,6 +13,7 @@
  *
  * Usage: node scripts/bench-assemble.mjs <outDir>
  */
+import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,10 +31,45 @@ const version = JSON.parse(
   readFileSync(join(root, 'package.json'), 'utf8'),
 ).version;
 
-const page = readFileSync(join(root, 'bench/index.html'), 'utf8').replaceAll(
-  '__LIB_VERSION__',
-  version,
-);
+/**
+ * What this build actually is, so the page cannot claim to be the published
+ * package when it is not.
+ *
+ * A tag build is the only one that coincides with npm: the release workflow
+ * publishes the package and then deploys this page for that same version.
+ * Anything else — a branch preview, a local run — carries library code that is
+ * not in any published tarball, even when `package.json` happens to name a
+ * version that exists on the registry. Labelling those "the npm version" would
+ * be false in the one place a stranger has no way to check.
+ *
+ * GITHUB_REF_TYPE / GITHUB_REF_NAME are set by Actions; outside it we fall back
+ * to the working copy, and a build with no git at all reads as a local build.
+ */
+const buildRef = () => {
+  if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME) {
+    return { release: true, label: process.env.GITHUB_REF_NAME };
+  }
+  const name = process.env.GITHUB_REF_NAME;
+  const sha = process.env.GITHUB_SHA?.slice(0, 7);
+  if (name) return { release: false, label: sha ? `${name} @ ${sha}` : name };
+  try {
+    const git = (...args) =>
+      execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+    const branch = git('rev-parse', '--abbrev-ref', 'HEAD');
+    const sha = git('rev-parse', '--short', 'HEAD');
+    return { release: false, label: `${branch} @ ${sha}` };
+  } catch {
+    // No git, or not a repository: a build with no provenance to report.
+    return { release: false, label: 'local build' };
+  }
+};
+
+const build = buildRef();
+
+const page = readFileSync(join(root, 'bench/index.html'), 'utf8')
+  .replaceAll('__LIB_VERSION__', version)
+  .replaceAll('__BUILD_RELEASE__', String(build.release))
+  .replaceAll('__BUILD_REF__', build.label);
 
 rmSync(target, { recursive: true, force: true });
 mkdirSync(target, { recursive: true });

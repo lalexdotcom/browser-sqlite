@@ -32,11 +32,18 @@
       #picker { border: 1px solid var(--border); border-radius: 6px; padding: var(--gap); }
       #picker summary { cursor: pointer; font-weight: 600; }
       .picker-actions { margin: var(--gap) 0; display: flex; gap: 0.5rem; }
-      #picker-list { display: grid; gap: 0.15rem 1rem;
-        grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr)); }
+      /* Multi-column rather than grid: the browser balances column heights for
+         us, which is what keeps groups of two and three builds from stacking
+         all the tall ones in one column. */
+      #picker-list { columns: 3 16rem; column-gap: 1.5rem; }
+      .vfs-group { break-inside: avoid; margin: 0 0 0.6rem; }
       #picker-list label { display: flex; gap: 0.4rem; align-items: baseline; }
+      .vfs-head { font-weight: 600; }
+      label.build { padding-left: 1.15rem; }
       #picker-list label.unavailable { opacity: 0.45; }
-      #picker-list .why { font-size: 0.8rem; opacity: 0.75; }
+      #picker-list .why { font-size: 0.8rem; opacity: 0.75; font-weight: 400; }
+      /* The tri-state parent is worth seeing at a glance, not just as a dash. */
+      input[data-vfs]:indeterminate { outline: 2px solid currentColor; outline-offset: 1px; }
       button { font: inherit; padding: 0.3rem 0.8rem; }
       #results-wrap { overflow-x: auto; }
       #results { border-collapse: collapse; font-size: 0.85rem; }
@@ -216,9 +223,31 @@
       const flag = (label, ok) =>
         `<span class="${ok ? '' : 'no'}"><b>${label}</b> ${ok ? 'yes' : 'no'}</span>`;
 
+      /**
+       * Both substituted by scripts/bench-assemble.mjs. A build is a release
+       * only when it came from a tag, which is the one case where this page and
+       * the published package are the same code.
+       */
+      const IS_RELEASE = '__BUILD_RELEASE__' === 'true';
+      const BUILD_REF = '__BUILD_REF__'.startsWith('__')
+        ? 'local build'
+        : '__BUILD_REF__';
+
+      /**
+       * What a visitor is actually looking at. A branch preview can carry a
+       * `package.json` version that exists on the registry while running
+       * library code no published tarball contains, so the npm claim is made
+       * only for a tag build — everywhere else the badge says the opposite,
+       * rather than staying quiet and letting the version imply it.
+       */
+      const buildBadge = () =>
+        IS_RELEASE
+          ? `<span><b>npm</b> <a href="https://www.npmjs.com/package/browser-sqlite/v/${encodeURIComponent(LIB_VERSION)}" target="_blank" rel="noopener">browser-sqlite@${LIB_VERSION}</a> — the published package</span>`
+          : `<span class="no"><b>browser-sqlite</b> ${LIB_VERSION} — <b>development build</b> (${BUILD_REF}), not the published package (<a href="https://www.npmjs.com/package/browser-sqlite" target="_blank" rel="noopener">npm</a>)</span>`;
+
       document.getElementById('banner').innerHTML = [
         `<span><b>${AGENT.engine}</b> ${AGENT.version ?? '?'}</span>`,
-        `<span><b>browser-sqlite</b> ${LIB_VERSION}</span>`,
+        buildBadge(),
         flag('OPFS', HAS_OPFS),
         flag('readwrite-unsafe', HAS_UNSAFE_HANDLES),
         flag('JSPI', HAS_JSPI),
@@ -261,38 +290,114 @@
       const list = document.getElementById('picker-list');
       const summary = document.getElementById('picker-summary');
 
-      for (const pair of PAIRS) {
-        const missing = missingFeature(pair);
-        const label = document.createElement('label');
-        label.className = missing ? 'unavailable' : '';
+      /** Pairs grouped under their VFS, in the capability table's order. */
+      const GROUPS = [...new Set(PAIRS.map((p) => p.vfs))].map((vfs) => ({
+        vfs,
+        pairs: PAIRS.filter((p) => p.vfs === vfs),
+      }));
 
-        const box = document.createElement('input');
-        box.type = 'checkbox';
-        box.dataset.pair = pair.id;
-        box.checked = !missing;
-        box.disabled = Boolean(missing);
-        if (missing) label.title = `this browser has no ${missing}`;
+      for (const group of GROUPS) {
+        const box = document.createElement('div');
+        box.className = 'vfs-group';
 
-        const text = document.createElement('span');
-        text.textContent = `${pair.vfs} · ${pair.build}`;
+        const head = document.createElement('label');
+        head.className = 'vfs-head';
+        const parent = document.createElement('input');
+        parent.type = 'checkbox';
+        parent.dataset.vfs = group.vfs;
+        const name = document.createElement('span');
+        name.textContent = group.vfs;
+        const pool = document.createElement('span');
+        pool.className = 'why';
+        pool.textContent = `pool ${poolFor(group.pairs[0].cap)}`;
+        head.append(parent, name, pool);
+        box.append(head);
 
-        const why = document.createElement('span');
-        why.className = 'why';
-        why.textContent = missing
-          ? `no ${missing}`
-          : `pool ${poolFor(pair.cap)}`;
+        for (const pair of group.pairs) {
+          const missing = missingFeature(pair);
+          const label = document.createElement('label');
+          label.className = missing ? 'build unavailable' : 'build';
 
-        label.append(box, text, why);
-        list.append(label);
+          const child = document.createElement('input');
+          child.type = 'checkbox';
+          child.dataset.pair = pair.id;
+          child.checked = !missing;
+          child.disabled = Boolean(missing);
+          if (missing) label.title = `this browser has no ${missing}`;
+
+          const text = document.createElement('span');
+          text.textContent = pair.build;
+
+          const why = document.createElement('span');
+          why.className = 'why';
+          why.textContent = missing ? `no ${missing}` : '';
+
+          label.append(child, text, why);
+          box.append(label);
+        }
+
+        list.append(box);
       }
 
       const boxes = () => [...list.querySelectorAll('input[data-pair]')];
+      const parents = () => [...list.querySelectorAll('input[data-vfs]')];
+
+      /** The build checkboxes under one VFS heading. */
+      const childrenOf = (parent) => [
+        ...parent.closest('.vfs-group').querySelectorAll('input[data-pair]'),
+      ];
+
+      /**
+       * Reflects the children into the parent. `indeterminate` is a property,
+       * never an attribute, and it is purely presentational — the parent's own
+       * `checked` still has a value underneath, which is why it is set
+       * explicitly on every path rather than left to whatever a click last did.
+       *
+       * "All" means all *available* builds: a VFS whose jspi build this browser
+       * cannot run reads as fully checked with its two others ticked, because
+       * the third was never selectable.
+       */
+      const refreshParents = () => {
+        for (const parent of parents()) {
+          const kids = childrenOf(parent).filter((c) => !c.disabled);
+          if (kids.length === 0) {
+            parent.checked = false;
+            parent.indeterminate = false;
+            parent.disabled = true;
+            continue;
+          }
+          const on = kids.filter((c) => c.checked).length;
+          parent.checked = on === kids.length;
+          parent.indeterminate = on > 0 && on < kids.length;
+        }
+      };
       const byId = new Map(PAIRS.map((p) => [p.id, p]));
 
       const selectedPairs = () =>
         boxes()
           .filter((b) => b.checked)
           .map((b) => byId.get(b.dataset.pair));
+
+      /**
+       * Names the selection by VFS, not by pair: listing every pair id put
+       * twenty-one of them in the summary and pushed the picker off the screen.
+       * A VFS whose runnable builds are all selected contributes its name
+       * alone; a partial one names the builds, which is the only case where the
+       * build matters to a reader closing the panel.
+       */
+      const describeSelection = () =>
+        GROUPS.map(({ vfs, pairs }) => {
+          const runnable = pairs.filter((p) => !missingFeature(p));
+          const on = runnable.filter(
+            (p) => list.querySelector(`input[data-pair="${p.id}"]`)?.checked,
+          );
+          if (on.length === 0) return null;
+          return on.length === runnable.length
+            ? vfs
+            : `${vfs} (${on.map((p) => p.build).join(', ')})`;
+        })
+          .filter(Boolean)
+          .join(' · ');
 
       const refreshSummary = () => {
         const chosen = selectedPairs();
@@ -302,20 +407,35 @@
             ? 'None selected'
             : chosen.length === runnable
               ? `All (${chosen.length})`
-              : `${chosen.length} selected — ${chosen.map((p) => p.id).join(', ')}`;
+              : `${chosen.length} selected — ${describeSelection()}`;
         document.getElementById('start').disabled = chosen.length === 0;
       };
 
-      list.addEventListener('change', refreshSummary);
+      const refresh = () => {
+        refreshParents();
+        refreshSummary();
+      };
+
+      list.addEventListener('change', (event) => {
+        const target = event.target;
+        // A click on a VFS heading drives its builds; a click on a build only
+        // feeds back up. Both end in the same refresh.
+        if (target.dataset.vfs) {
+          for (const child of childrenOf(target)) {
+            if (!child.disabled) child.checked = target.checked;
+          }
+        }
+        refresh();
+      });
       document.getElementById('select-all').addEventListener('click', () => {
         for (const b of boxes()) if (!b.disabled) b.checked = true;
-        refreshSummary();
+        refresh();
       });
       document.getElementById('select-none').addEventListener('click', () => {
         for (const b of boxes()) b.checked = false;
-        refreshSummary();
+        refresh();
       });
-      refreshSummary();
+      refresh();
 
       // ── RUNNER — Task 3 ─────────────────────────────────────────
       const ROW_TIMEOUT_MS = 30_000;

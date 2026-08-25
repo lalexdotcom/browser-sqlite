@@ -18,3 +18,16 @@ jobs:
         with:
           npm-token: ${{ secrets.NPM_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  # The benchmark page is published for the version that was just released, and
+  # only if the release actually succeeded — `needs` is what makes that true.
+  # Because a reusable workflow runs at the caller's ref, this builds the tag,
+  # so the page and the npm tarball are the same code and the page's banner can
+  # say so.
+  pages:
+    needs: release
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yaml

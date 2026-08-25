@@ -1,11 +1,16 @@
 name: pages
 
-# workflow_dispatch is not a convenience here: it is what lets the benchmark
-# page be published from a feature branch and opened on a real Safari or iPhone
-# before that branch merges. No machine in this project is either of those.
+# The published site tracks the released package and nothing else: a visitor
+# who lands here must be benchmarking code they can actually install. So the
+# only automatic caller is the release workflow, after it has published — see
+# release-and-publish.yaml, which calls this one with `needs: release`.
+#
+# workflow_dispatch stays as the escape hatch: republishing after a failed
+# deploy, without cutting a release to do it. Dev testing runs locally instead
+# (`pnpm bench:build && pnpm bench:serve` — http://localhost is already a
+# secure context, so OPFS works with no certificate).
 on:
-  push:
-    branches: [main]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
