@@ -1482,7 +1482,9 @@
           `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
           `-${pad(d.getHours())}${pad(d.getMinutes())}`;
         const slug = (s) => String(s ?? 'unknown').replace(/[^\w.-]+/g, '-');
-        return `browser-sqlite-${slug(AGENT.engine)}-${slug(AGENT.version)}-${slug(LIB_VERSION)}-${stamp}.json`;
+        // Timestamp first so a directory of these sorts chronologically on its
+        // own, which is how they are read: a campaign, in order, not a set.
+        return `browser-sqlite-${stamp}-${slug(AGENT.engine)}-${slug(AGENT.version)}-${slug(LIB_VERSION)}.json`;
       };
 
       document.getElementById('download').addEventListener('click', () => {

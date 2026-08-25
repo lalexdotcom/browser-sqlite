@@ -633,6 +633,16 @@ is not.
 - what it returns when the database does not exist — SQLite's `xDelete` is content with that;
 - and whether it also removes the auxiliary files, which differ per VFS.
 
+**It must delete IndexedDB databases too, not only OPFS entries (user, 2026-08-25).** The goal is a
+removal a consumer can actually rely on, whatever VFS they chose. `IDBBatchAtomicVFS` and
+`IDBMirrorVFS` keep their data in an IndexedDB database named after the VFS class, holding every
+database opened with that VFS on the origin — so `jDelete` alone frees the SQLite file inside the
+store while the store itself stays, and `indexedDB.deleteDatabase(<VFS name>)` would destroy every
+other consumer's data on the same origin. Neither is the answer on its own: deleting one database
+means routing through `jDelete`, and reclaiming the store means knowing it holds nothing else. That
+asymmetry between the OPFS and IndexedDB families is the part of this design that actually needs
+thought.
+
 None of that is hard; all of it is a design, and the end of a large branch is the wrong moment.
 
 **The bench page does not wait for it.** It diffs the OPFS root before and after a run and removes
