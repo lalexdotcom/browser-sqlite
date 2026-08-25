@@ -153,7 +153,9 @@ export default defineConfig({
 
 browser-sqlite delegates storage to a
 [wa-sqlite Virtual File System](https://github.com/rhashimoto/wa-sqlite/tree/master/src/examples#readme)
-(VFS). Choose based on browser support and storage requirements:
+(VFS). **When `vfs` is omitted, `OPFSAdaptiveVFS` is used.**
+
+Choose based on browser support and storage requirements:
 
 <!-- BEGIN GENERATED VFS TABLE — edit VFS_CAPABILITIES in src/types.ts, then run `pnpm docs:vfs` -->
 
@@ -184,17 +186,28 @@ is not a partial failure — `OPFSAdaptiveVFS` passes 102 of 104 browser tests o
 Firefox in exactly that mode.
 
 What it costs is pool concurrency under one specific shape. **On an engine
-without `readwrite-unsafe`, any VFS that rotates a single exclusive OPFS access
-handle serializes the whole pool for the duration of a long uninterruptible
-statement** — a worker inside such a statement never returns to its event loop,
-so it cannot hand the handle over. That covers `OPFSAdaptiveVFS` in reduced mode
-and `OPFSCoopSyncVFS`. `IDBMirrorVFS`, `OPFSAnyContextVFS` and
-`IDBBatchAtomicVFS` hold no such handle and are unaffected.
+without `readwrite-unsafe`, a VFS that rotates a single exclusive OPFS access
+handle cannot serve any other worker while a write transaction holds that
+handle** — the worker that took it does not give it back before the transaction
+ends, and the next acquisition blocks in the scheduler, before an `AbortSignal`
+is ever consulted. That covers `OPFSAdaptiveVFS` in reduced mode.
+`IDBMirrorVFS`, `OPFSAnyContextVFS` and `IDBBatchAtomicVFS` hold no such handle
+and are unaffected.
 
-This is the one claim in this section the test suite does not prove: verifying it
-means timing something, and this project's CI runs tests rather than benchmarks.
+`OPFSCoopSyncVFS` has the same symptom for a different reason, and it is **not**
+conditional on the engine — it never uses `readwrite-unsafe`, so it is never in
+reduced mode. See [Known Limitations](#known-limitations).
 
-When `vfs` is omitted, `OPFSAdaptiveVFS` is used.
+**A long *read* does not produce this effect.** A statement that holds the
+file's read lock for several seconds does not delay short reads on the other
+workers: measured on Firefox, they still return in about a millisecond, where a
+stranded pool would put them in the seconds. The blocking is specific to the
+write's exclusive acquisition, not to the statement's duration — an earlier
+revision of this section claimed the broader form, and measurement narrowed it.
+
+Both halves are measured by `bench/index.html`, which runs in your own browser;
+its `no-read-inside-transaction` and `pool-blocking` rows are the two
+observations above.
 
 ### Builds
 
@@ -357,5 +370,6 @@ Note: the "Coop" in `OPFSCoopSyncVFS` stands for *cooperative*, not the `Cross-O
 - **`AccessHandlePoolVFS` requires `poolSize: 1`.** Passing `poolSize > 1` with this VFS throws synchronously at client creation time.
 - **`build: 'jspi'` is not available everywhere.** JavaScript Promise Integration ships in Firefox from 153 (caniuse.com, checked 2026-08-24) and in Chromium; Safari support is not established here. It is opt-in and the default build does not use it, so this constrains nobody who does not ask for it. Earlier revisions of this file called JSPI Chromium-only; that was never sourced, and running the conformance suite on Firefox 153 disproved it.
 - **`OPFSWriteAheadVFS` requires Chrome 121+ and degrades silently elsewhere.** It opens access handles with `mode: 'readwrite-unsafe'` — a proposed feature recorded as unsupported for Firefox and Safari in MDN browser-compat-data (checked 2026-08-24) — and unknown dictionary members are ignored rather than rejected — so on another browser the first connection opens, the second cannot take the handle, and the pool breaks with no error naming the cause.
+- **`OPFSCoopSyncVFS` does not read concurrently, and stalls unpredictably under a pool.** Unlike the other OPFS VFS it extends `FacadeVFS` directly rather than `WebLocksMixin(FacadeVFS)` (wa-sqlite v1.1.2, `src/examples/OPFSCoopSyncVFS.js:44` against `OPFSAdaptiveVFS.js:55`), so it implements its own locking and silently ignores the `lockPolicy: 'shared'` this library constructs every VFS with. It holds one *exclusive* access handle and rotates it between workers instead of holding one per connection. Measured with `bench/index.html` on 2026-08-25 at `poolSize: 4`, Chromium 151 and Firefox 153: a read issued while a write transaction is open is **never served on either engine** — the pool acquisition blocks before any `AbortSignal` is consulted — where `IDBBatchAtomicVFS`, `IDBMirrorVFS` and `OPFSAnyContextVFS` serve it every time. Its bulk insert of 10 000 rows either finishes in about 70–90 ms or **exceeds 30 seconds**, with no middle ground and no consistency across builds or runs; on both engines it stranded whole benchmark columns on that row. None of this depends on `readwrite-unsafe`: unlike the reduced mode described above, it happens on Chromium too.
 - **Read-your-own-writes is guaranteed within a tab, not across tabs.** See the
   caveat under [Error handling](#error-handling).
