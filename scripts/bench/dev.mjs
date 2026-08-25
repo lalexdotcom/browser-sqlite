@@ -3,7 +3,7 @@
  * Watch-mode dev server for the benchmark page.
  *
  * The trap this removes: `bench:serve` serves `_site`, not the sources, so an
- * edit to bench/index.html changed nothing on screen until the assembler ran
+ * edit to the page source changed nothing on screen until the assembler ran
  * again — from a second terminal, because the first was held by the server.
  *
  * Two watch paths, because they do not cost the same. Editing the page needs
@@ -15,14 +15,14 @@
  * fired mid-run would destroy the measurement in progress and the visitor
  * would never know why. It prints when the rebuild lands, and you refresh.
  *
- * Usage: node scripts/bench-dev.mjs [port]
+ * Usage: node scripts/bench/dev.mjs [port]
  */
 import { spawn } from 'node:child_process';
 import { watch } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const port = process.argv[2] ?? '8099';
 const OUT = '_site';
 
@@ -36,7 +36,7 @@ const run = (command, args) =>
   });
 
 const buildLibrary = () => run('pnpm', ['build']);
-const assemble = () => run(process.execPath, ['scripts/bench-assemble.mjs', OUT]);
+const assemble = () => run(process.execPath, ['scripts/bench/assemble.mjs', OUT]);
 
 const stamp = () =>
   new Date().toLocaleTimeString('en-GB', { hour12: false });
@@ -100,11 +100,11 @@ server.on('exit', (code) => {
 
 // Watch the directory rather than the file: editors replace a file on save
 // instead of writing through it, which detaches a watch bound to the inode.
-watch(join(root, 'bench'), () => request('page'));
+watch(join(root, 'scripts/bench/html'), () => request('page'));
 watch(join(root, 'src'), { recursive: true }, () => request('full'));
 
 process.stdout.write(
-  `\nserving ${OUT} on http://127.0.0.1:${port}/ — watching bench/ and src/\n` +
+  `\nserving ${OUT} on http://127.0.0.1:${port}/ — watching scripts/bench/html/ and src/\n` +
     'http://127.0.0.1 is a secure context, so OPFS works without a certificate.\n' +
     'Ctrl-C to stop.\n\n',
 );

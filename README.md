@@ -219,7 +219,7 @@ stranded pool would put them in the seconds. The blocking is specific to the
 write's exclusive acquisition, not to the statement's duration — an earlier
 revision of this section claimed the broader form, and measurement narrowed it.
 
-Both halves are measured by `bench/index.html`, which runs in your own browser;
+Both halves are measured by `scripts/bench/html/index.html`, which runs in your own browser;
 its `no-read-inside-transaction` and `pool-blocking` rows are the two
 observations above.
 
@@ -384,7 +384,7 @@ Note: the "Coop" in `OPFSCoopSyncVFS` stands for *cooperative*, not the `Cross-O
 - **`AccessHandlePoolVFS` requires `poolSize: 1`.** Passing `poolSize > 1` with this VFS throws synchronously at client creation time.
 - **`build: 'jspi'` is not available everywhere.** JavaScript Promise Integration ships in Firefox from 153 (caniuse.com, checked 2026-08-24) and in Chromium; Safari support is not established here. It is opt-in and the default build does not use it, so this constrains nobody who does not ask for it. Earlier revisions of this file called JSPI Chromium-only; that was never sourced, and running the conformance suite on Firefox 153 disproved it.
 - **`OPFSWriteAheadVFS` requires Chrome 121+ and degrades silently elsewhere.** It opens access handles with `mode: 'readwrite-unsafe'` — a proposed feature recorded as unsupported for Firefox and Safari in MDN browser-compat-data (checked 2026-08-24) — and unknown dictionary members are ignored rather than rejected — so on another browser the first connection opens, the second cannot take the handle, and the pool breaks with no error naming the cause.
-- **`OPFSCoopSyncVFS` does not read concurrently, and stalls unpredictably under a pool.** Unlike the other OPFS VFS it extends `FacadeVFS` directly rather than `WebLocksMixin(FacadeVFS)` (wa-sqlite v1.1.2, `src/examples/OPFSCoopSyncVFS.js:44` against `OPFSAdaptiveVFS.js:55`), so it implements its own locking and silently ignores the `lockPolicy: 'shared'` this library constructs every VFS with. It holds one *exclusive* access handle and rotates it between workers instead of holding one per connection. Measured with `bench/index.html` on 2026-08-25 at `poolSize: 4`, Chromium 151 and Firefox 153: a read issued while a write transaction is open is **never served on either engine** — the pool acquisition blocks before any `AbortSignal` is consulted — where `IDBBatchAtomicVFS`, `IDBMirrorVFS` and `OPFSAnyContextVFS` serve it every time. Its bulk insert of 10 000 rows either finishes in about 70–90 ms or **exceeds 30 seconds**, with no middle ground and no consistency across builds or runs; on both engines it stranded whole benchmark columns on that row. None of this depends on `readwrite-unsafe`: unlike the reduced mode described above, it happens on Chromium too.
+- **`OPFSCoopSyncVFS` does not read concurrently, and stalls unpredictably under a pool.** Unlike the other OPFS VFS it extends `FacadeVFS` directly rather than `WebLocksMixin(FacadeVFS)` (wa-sqlite v1.1.2, `src/examples/OPFSCoopSyncVFS.js:44` against `OPFSAdaptiveVFS.js:55`), so it implements its own locking and silently ignores the `lockPolicy: 'shared'` this library constructs every VFS with. It holds one *exclusive* access handle and rotates it between workers instead of holding one per connection. Measured with `scripts/bench/html/index.html` on 2026-08-25 at `poolSize: 4`, Chromium 151 and Firefox 153: a read issued while a write transaction is open is **never served on either engine** — the pool acquisition blocks before any `AbortSignal` is consulted — where `IDBBatchAtomicVFS`, `IDBMirrorVFS` and `OPFSAnyContextVFS` serve it every time. Its bulk insert of 10 000 rows either finishes in about 70–90 ms or **exceeds 30 seconds**, with no middle ground and no consistency across builds or runs; on both engines it stranded whole benchmark columns on that row. None of this depends on `readwrite-unsafe`: unlike the reduced mode described above, it happens on Chromium too.
 - **Read-your-own-writes is guaranteed within a tab, not across tabs.** See the
   caveat under [Error handling](#error-handling).
 
@@ -406,7 +406,7 @@ pnpm test:consumer      # packs the tarball and drives four bundler modes
 
 ### The benchmark page
 
-`bench/index.html` is the page published above. It is one self-contained file
+`scripts/bench/html/index.html` is the page published above. It is one self-contained file
 served beside a verbatim copy of `dist/`, so it exercises the library exactly as
 a consumer would with no bundler at all.
 
@@ -421,7 +421,7 @@ TLS setup is needed to develop against it. A phone on the LAN is a different
 matter: it is not a secure context, so OPFS is unavailable there and a tunnel
 (or the published page) is the way to test a real device.
 
-`node scripts/bench-check.mjs [chromium|firefox] [--all]` drives the page under
+`node scripts/bench/check.mjs [chromium|firefox] [--all]` drives the page under
 Playwright and asserts that it still works — it is run by hand and deliberately
 not wired into CI. It checks the *page*, never that a VFS passes: a red cell can
 be a correct report about the engine you are on.

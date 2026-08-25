@@ -191,7 +191,7 @@
       } from './dist/index.js';
 
       // ── Identity ────────────────────────────────────────────────────────
-      // Substituted by scripts/bench-assemble.mjs. Opening bench/index.html
+      // Substituted by scripts/bench/assemble.mjs. Opening the page source
       // straight from the repo leaves the placeholder, which is why the guard
       // tests for it rather than trusting the value.
       const RAW_VERSION = '__LIB_VERSION__';
@@ -344,7 +344,7 @@
         `<span class="${ok ? '' : 'no'}"><b>${label}</b> ${ok ? '✅' : '❌'}</span>`;
 
       /**
-       * Both substituted by scripts/bench-assemble.mjs. A build is a release
+       * Both substituted by scripts/bench/assemble.mjs. A build is a release
        * only when it came from a tag, which is the one case where this page and
        * the published package are the same code.
        */
@@ -1988,7 +1988,7 @@
         `${PAIRS.length} declared pairs, ` +
         `${PAIRS.filter((p) => !missingFeature(p)).length} runnable here`;
 
-      // Read by scripts/bench-check.mjs.
+      // Read by scripts/bench/check.mjs.
       window.__BENCH__ = { LIB_VERSION, AGENT, PAIRS: PAIRS.map((p) => p.id) };
     </script>
   </body>

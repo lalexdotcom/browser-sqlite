@@ -45,7 +45,7 @@ jobs:
         run: pnpm build
 
       - name: Assemble the page
-        run: node scripts/bench-assemble.mjs _site
+        run: node scripts/bench/assemble.mjs _site
 
       - uses: actions/upload-pages-artifact@v3
         with:

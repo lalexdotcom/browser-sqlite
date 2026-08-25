@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Hand-run driver for bench/index.html. NOTHING RUNS THIS AUTOMATICALLY — it
+ * Hand-run driver for the benchmark page. NOTHING RUNS THIS AUTOMATICALLY — it
  * is not wired into CI and must not be. It exists so a developer can prove the
  * page still works on both engines without clicking through it.
  *
@@ -9,7 +9,7 @@
  *
  * Usage:
  *   pnpm bench:build
- *   node scripts/bench-check.mjs [chromium|firefox] [--all]
+ *   node scripts/bench/check.mjs [chromium|firefox] [--all]
  */
 import { readFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,7 +18,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import playwright from 'playwright';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const engine = process.argv[2] ?? 'chromium';
 const all = process.argv.includes('--all');
 const PORT = 8099;

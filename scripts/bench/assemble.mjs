@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Assembles the servable benchmark page: bench/index.html beside a verbatim
- * copy of dist/.
+ * Assembles the servable benchmark page: scripts/bench/html/index.html beside
+ * a verbatim copy of dist/.
  *
  * The copy is verbatim on purpose. dist/index.js carries a literal
  * `new URL('./worker/worker.js', import.meta.url)` and the three .wasm sit
@@ -11,18 +11,18 @@
  * The only transformation is substituting __LIB_VERSION__, because the package
  * does not export its own version and the page has no build step to ask.
  *
- * Usage: node scripts/bench-assemble.mjs <outDir>
+ * Usage: node scripts/bench/assemble.mjs <outDir>
  */
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 const outDir = process.argv[2];
 if (!outDir) {
-  process.stderr.write('usage: bench-assemble.mjs <outDir>\n');
+  process.stderr.write('usage: assemble.mjs <outDir>\n');
   process.exit(2);
 }
 
@@ -75,7 +75,7 @@ const buildRef = () => {
 
 const build = buildRef();
 
-const page = readFileSync(join(root, 'bench/index.html'), 'utf8')
+const page = readFileSync(join(root, 'scripts/bench/html/index.html'), 'utf8')
   .replaceAll('__LIB_VERSION__', version)
   .replaceAll('__BUILD_RELEASE__', String(build.release))
   .replaceAll('__BUILD_REF__', build.label);

@@ -49,9 +49,9 @@
 		"test:consumer": "node scripts/consumer-smoke.mjs",
 		"test:conformance": "rstest --config rstest.conformance.config.ts",
 		"docs:vfs": "node scripts/render-vfs-matrix.ts",
-		"bench:build": "pnpm build && node scripts/bench-assemble.mjs _site",
+		"bench:build": "pnpm build && node scripts/bench/assemble.mjs _site",
 		"bench:serve": "npx --yes kill-port 8099 && pnpm bench:build && node scripts/static-server.mjs _site 8099",
-		"bench:dev": "npx --yes kill-port 8099 && node scripts/bench-dev.mjs 8099"
+		"bench:dev": "npx --yes kill-port 8099 && node scripts/bench/dev.mjs 8099"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.8",
