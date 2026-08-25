@@ -537,9 +537,13 @@
        *     therefore delete only stores that did not exist before this run.
        * See spec §5.4.
        */
-      const idbBefore = CAN_LIST_IDB
-        ? new Set((await indexedDB.databases()).map((d) => d.name))
-        : null;
+      /**
+       * Both snapshots are taken at the START of a run, after the sweep below,
+       * not at page load: a run must diff against a floor it just established,
+       * or it would inherit whatever the previous one left and protect it.
+       */
+      let idbBefore = null;
+      let opfsBefore = null;
 
       /**
        * The OPFS root as it stood before this page touched anything.
@@ -571,11 +575,11 @@
         }
       };
 
-      const opfsBefore = await snapshotOpfsRoot();
+      const CAN_LIST_OPFS = (await snapshotOpfsRoot()) !== null;
 
       // Same honesty as the IndexedDB note: a silent skip would read as a clean
       // run, and the next run on this origin would inherit the residue.
-      if (HAS_OPFS && !opfsBefore) {
+      if (HAS_OPFS && !CAN_LIST_OPFS) {
         document.getElementById('banner').insertAdjacentHTML(
           'beforeend',
           '<span class="no"><b>OPFS cleanup</b> limited — this browser will not' +
@@ -609,8 +613,12 @@
           for await (const name of root.keys()) now.push(name);
           for (const name of now) {
             if (opfsBefore.has(name)) continue;
+            // Recorded before the attempt: if the removal fails, or the tab
+            // dies between these two lines, the next run still knows it is ours.
+            remember('opfs', name);
             try {
               await root.removeEntry(name, { recursive: true });
+              forget('opfs', name);
             } catch {
               // Held open elsewhere; leave it rather than fight for it.
             }
@@ -625,11 +633,98 @@
         const now = await indexedDB.databases();
         for (const { name } of now) {
           if (!name || idbBefore.has(name)) continue;
-          await new Promise((resolve) => {
-            const request = indexedDB.deleteDatabase(name);
-            request.onsuccess = request.onerror = request.onblocked = () =>
-              resolve();
-          });
+          remember('idb', name);
+          await deleteIdb(name);
+          forget('idb', name);
+        }
+      };
+
+      // ── Residue that outlives a run ─────────────────────────────────────
+      /**
+       * A run that never reaches its end — the tab closed, a phone suspending
+       * the page — leaves storage behind. The next load would inventory that
+       * residue as pre-existing and the "never touch what was already there"
+       * rule would protect it forever: an abandoned AccessHandlePoolVFS
+       * directory would hold its six slots for good, which is the false failure
+       * we just spent a campaign diagnosing.
+       *
+       * So names we created are remembered across loads. Only names that
+       * appeared DURING one of our own runs are ever recorded, which is what
+       * keeps this from reaching another application's data.
+       *
+       * Unavailable storage (private windows, blocked site data) degrades to
+       * the previous behaviour rather than failing.
+       */
+      const OWNED_KEY = 'browser-sqlite-bench.owned.v1';
+
+      const owned = () => {
+        try {
+          return JSON.parse(localStorage.getItem(OWNED_KEY) ?? '{}');
+        } catch {
+          return {};
+        }
+      };
+
+      const remember = (kind, name) => {
+        try {
+          const all = owned();
+          all[kind] = [...new Set([...(all[kind] ?? []), name])];
+          localStorage.setItem(OWNED_KEY, JSON.stringify(all));
+        } catch {
+          // Nothing to do: this run cleans up after itself or it does not.
+        }
+      };
+
+      const forget = (kind, name) => {
+        try {
+          const all = owned();
+          all[kind] = (all[kind] ?? []).filter((n) => n !== name);
+          localStorage.setItem(OWNED_KEY, JSON.stringify(all));
+        } catch {
+          // As above.
+        }
+      };
+
+      const deleteIdb = (name) =>
+        new Promise((resolve) => {
+          const request = indexedDB.deleteDatabase(name);
+          request.onsuccess = request.onerror = request.onblocked = () =>
+            resolve();
+        });
+
+      /**
+       * Runs before a bench, so it starts from a floor it established itself —
+       * chaining two runs must not measure the first one's leftovers. Removes
+       * three things and nothing else: our own `bench-` databases and their
+       * `-journal` / `-wal` siblings, whose prefix makes them unambiguously
+       * ours; anything a previous run of ours recorded as its own; and the
+       * IndexedDB stores it recorded the same way.
+       */
+      const sweepBeforeRun = async () => {
+        const all = owned();
+        if (HAS_OPFS) {
+          try {
+            const root = await navigator.storage.getDirectory();
+            const names = [];
+            for await (const name of root.keys()) names.push(name);
+            for (const name of names) {
+              const isOurs =
+                name.startsWith('bench-') || (all.opfs ?? []).includes(name);
+              if (!isOurs) continue;
+              try {
+                await root.removeEntry(name, { recursive: true });
+                forget('opfs', name);
+              } catch {
+                // Still held; a later run will try again.
+              }
+            }
+          } catch {
+            // No iteration: the prefix sweep is not available either.
+          }
+        }
+        for (const name of all.idb ?? []) {
+          await deleteIdb(name);
+          forget('idb', name);
         }
       };
 
@@ -1764,6 +1859,15 @@
         document.getElementById('verdict-text').replaceChildren();
 
         try {
+          // A bench starts from a floor it established itself: chaining two
+          // runs must not measure what the first one left behind.
+          status.textContent = 'cleaning…';
+          await sweepBeforeRun();
+          idbBefore = CAN_LIST_IDB
+            ? new Set((await indexedDB.databases()).map((d) => d.name))
+            : null;
+          opfsBefore = await snapshotOpfsRoot();
+
           buildRows();
           for (const pair of selectedPairs()) {
             if (stopRequested) break;
