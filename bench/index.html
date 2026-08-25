@@ -19,14 +19,15 @@
       h1 { font-size: 1.2rem; margin: 0 0 var(--gap); }
       #banner {
         display: flex;
-        flex-wrap: wrap;
-        gap: var(--gap);
+        flex-direction: column;
+        gap: 0.35rem;
         padding: var(--gap);
         border: 1px solid var(--border);
         border-radius: 6px;
         font-size: 0.85rem;
       }
       #banner b { font-weight: 600; }
+      #banner .line { display: flex; flex-wrap: wrap; gap: var(--gap); }
       .no { opacity: 0.55; }
       /* One line, whatever the state: idle it holds a button, running it holds
          the step in flight and the way out of it. */
@@ -299,7 +300,7 @@
 
       // ── Banner ──────────────────────────────────────────────────────────
       const flag = (label, ok) =>
-        `<span class="${ok ? '' : 'no'}"><b>${label}</b> ${ok ? 'yes' : 'no'}</span>`;
+        `<span class="${ok ? '' : 'no'}"><b>${label}:</b> ${ok ? '✅' : '❌'}</span>`;
 
       /**
        * Both substituted by scripts/bench-assemble.mjs. A build is a release
@@ -320,23 +321,32 @@
        */
       const buildBadge = () =>
         IS_RELEASE
-          ? `<span><b>npm</b> <a href="https://www.npmjs.com/package/browser-sqlite/v/${encodeURIComponent(LIB_VERSION)}" target="_blank" rel="noopener">browser-sqlite@${LIB_VERSION}</a> — the published package</span>`
-          : `<span class="no"><b>browser-sqlite</b> ${LIB_VERSION} — <b>development build</b> (${BUILD_REF}), not the published package (<a href="https://www.npmjs.com/package/browser-sqlite" target="_blank" rel="noopener">npm</a>)</span>`;
+          ? `<span><b>Build:</b> <a href="https://www.npmjs.com/package/browser-sqlite/v/${encodeURIComponent(LIB_VERSION)}" target="_blank" rel="noopener">browser-sqlite@${LIB_VERSION}</a> — the published package</span>`
+          : `<span class="no"><b>Build:</b> browser-sqlite ${LIB_VERSION} — <b>development build</b> (${BUILD_REF}), not the published package (<a href="https://www.npmjs.com/package/browser-sqlite" target="_blank" rel="noopener">npm</a>)</span>`;
 
-      document.getElementById('banner').innerHTML = [
-        `<span><b>${AGENT.engine}</b> ${AGENT.version ?? '?'}</span>`,
-        `<span><b>os</b> ${AGENT.os}</span>`,
+      // Two lines: what you are running on, then what it can do. The
+      // capabilities carry a mark rather than a word because they are read at a
+      // glance and compared against another device's screenshot.
+      const identity = [
+        `<span><b>Browser engine:</b> ${AGENT.engine} ${AGENT.version ?? '?'}</span>`,
+        `<span><b>OS:</b> ${AGENT.os}</span>`,
         buildBadge(),
+      ].join('');
+
+      const capabilities = [
         flag('OPFS', HAS_OPFS),
         flag('readwrite-unsafe', HAS_UNSAFE_HANDLES),
         flag('JSPI', HAS_JSPI),
-        `<span><b>clock</b> ${CLOCK_MS.toFixed(2)} ms</span>`,
+        `<span><b>Clock:</b> ${CLOCK_MS.toFixed(2)} ms</span>`,
         CAN_LIST_IDB
           ? ''
-          : `<span class="no"><b>IndexedDB cleanup</b> unavailable — stores created by this run are left in place</span>`,
+          : `<span class="no"><b>IndexedDB cleanup:</b> ❌ unavailable — stores created by this run are left in place</span>`,
       ]
         .filter(Boolean)
         .join('');
+
+      document.getElementById('banner').innerHTML =
+        `<div class="line">${identity}</div><div class="line">${capabilities}</div>`;
 
       // ── Pairs ───────────────────────────────────────────────────────────
       /** Every declared (vfs, build) pair, derived from the library's table. */
