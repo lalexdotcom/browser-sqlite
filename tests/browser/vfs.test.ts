@@ -130,7 +130,8 @@ describe('vfs/build combination guard', () => {
 describe('newly wired VFS', () => {
   // Falsifiable: delete any one loader from VFSConfigs in worker/worker.ts.
   const cases = [
-    { vfs: 'IDBMirrorVFS', poolSize: 2 },
+    // poolSize 1 because the capability table now says so — see MIRROR-1.
+    { vfs: 'IDBMirrorVFS', poolSize: 1 },
     { vfs: 'OPFSAnyContextVFS', poolSize: 2 },
     { vfs: 'MemoryVFS', poolSize: 1 },
     { vfs: 'MemoryAsyncVFS', poolSize: 1 },

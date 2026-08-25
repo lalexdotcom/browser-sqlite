@@ -198,9 +198,23 @@ export const VFS_CAPABILITIES = {
   },
   IDBMirrorVFS: {
     builds: ['async', 'jspi'],
-    maxPoolSize: null,
-    poolLimitReason: null,
-    multiConnection: true,
+    // Measured 2026-08-25, not inferred: `CREATE TABLE` → `INSERT` → `SELECT`
+    // at poolSize 2, 300 rounds under a loaded suite, failed 5 times — with
+    // `no such table` (a connection not seeing a committed statement) and
+    // `database is locked`. Nothing at all in 60 rounds unloaded, which is why
+    // four sightings over two days never reproduced on demand. See MIRROR-1 in
+    // mem:follow-ups for the method.
+    //
+    // It mirrors the whole database in memory PER WORKER and propagates
+    // commits over BroadcastChannel, asynchronously — so a pool holds copies
+    // that diverge, the same shape that had OPFSPermutedVFS removed from this
+    // library. The commit barrier cannot rescue it: its prelude refreshes page
+    // 1 through a real read transaction, and there is nothing fresher to read
+    // on a connection whose mirror has not received the broadcast yet.
+    maxPoolSize: 1,
+    poolLimitReason:
+      'its pages are mirrored per worker and commits propagate asynchronously, so a larger pool reads stale data or fails outright',
+    multiConnection: false,
     persistent: true,
     // Upstream: "keeps all files in memory, persisting database files to
     // IndexedDB", and the whole database must fit in available memory.
