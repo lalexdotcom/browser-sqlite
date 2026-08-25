@@ -50,7 +50,7 @@
 		"test:conformance": "rstest --config rstest.conformance.config.ts",
 		"docs:vfs": "node scripts/render-vfs-matrix.ts",
 		"bench:build": "pnpm build && node scripts/bench-assemble.mjs _site",
-		"bench:serve": "node scripts/static-server.mjs _site 8099"
+		"bench:serve": "npx --yes kill-port 8099 && pnpm bench:build && node scripts/static-server.mjs _site 8099"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.8",
