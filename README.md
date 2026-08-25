@@ -388,18 +388,18 @@ whichever of these landed last in a given engine:
 | private class fields | 74 | 90 | 14.1 |
 | `Array.prototype.at()` | 92 | 90 | 15.4 |
 | `crypto.randomUUID()` | 92 | 95 | 15.4 |
-| top-level `await` | 89 | 89 | see below |
 | **effective floor** | **92** | **95** | **15.4** |
 
 Versions from MDN browser-compat-data, checked 2026-08-25. `structuredClone()`
 is also used and is not included above: its BCD entry was not located, so no
 number is claimed for it.
 
-**One caveat, stated because the source and our own observation disagree.** BCD
-records top-level `await` as arriving in Safari 27. This page uses it, and it
-ran on **Safari 26.5.2** — so the entry is either wrong or means something other
-than a first supporting version. The observation is direct and the floor above
-follows the other features instead.
+The floor is set by the two APIs, not by the syntax. Note that the benchmark
+page — a development tool, not part of the package — additionally uses top-level
+`await`, so it can require a newer browser than the library does. BCD records
+that as arriving in Safari 27, yet the page ran on **Safari 26.5.2**, so either
+the entry is wrong or it means something other than a first supporting version;
+the observation is direct and this table does not depend on it either way.
 
 An engine below the floor fails at parse or first use, not gracefully — a
 2020-era Chromium rejects the module outright. Every browser this project has
