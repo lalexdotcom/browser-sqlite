@@ -70,13 +70,6 @@ const FEATURE_SUPPORT = {
   },
 } as const satisfies Record<PlatformFeature, Record<string, Support>>;
 
-/**
- * What each wa-sqlite build needs from the engine beyond plain WebAssembly.
- * `sync` and `async` (Asyncify) need nothing, which is why they are reachable
- * wherever the VFS's storage is.
- */
-
-
 /** Desktop first, then mobile. Order is deliberate and shared by both tables. */
 const BROWSERS = [
   'Chrome',

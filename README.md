@@ -170,10 +170,10 @@ browser-sqlite delegates storage to a
 is written, so a default that moved between versions would leave you reading an
 empty database while your bytes sat in a store nothing queries.
 
-**Pass `OPFSAdaptiveVFS` unless you have a reason not to.** Across 13 benchmark
-runs on 8 engines — every Chrome, Firefox and Safari we could reach, desktop and
-mobile — it opened and passed every conformance check without exception. It is
-the only VFS here of which that is true.
+**Pass `OPFSAdaptiveVFS` unless you have a reason not to.** Across every engine we
+could test — Chrome, Firefox and Safari, desktop and mobile — it opened and passed
+every conformance check without exception. It is the only VFS here of which that is
+true.
 
 > **Each VFS is a separate store.** A database written through one VFS is not
 > visible through another — the bytes are still there, but nothing reads them.
