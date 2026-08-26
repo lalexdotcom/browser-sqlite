@@ -28,6 +28,10 @@ with it.
   and is invisible to the rest of the pool.
 - **`bulkWrite()` and `output()` are single-use.** Enqueueing after `close()`
   throws rather than buffering rows nothing will flush.
+- **`SQLiteQueryOptions` lost its type parameter and two fields that did
+  nothing.** `id` and `debug` were declared on every query method and read
+  nowhere. Code that passed them keeps behaving identically; it simply stops
+  compiling.
 - **`OPFSPermutedVFS` is removed.** It measured 24 % stale cross-connection
   reads and is deprecated upstream.
 

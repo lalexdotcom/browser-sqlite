@@ -138,13 +138,13 @@ export type SQLiteDB = {
    *
    * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
    * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`chunkSize`, `signal`, `id`).
+   * @param options - Optional query options (`chunkSize`, `signal`).
    * @returns Promise resolving to an array of typed rows (`T[]`). Returns `[]` for empty results.
    */
   read: <T extends Record<string, unknown>>(
     sql: string,
     params?: any[],
-    options?: SQLiteQueryOptions<T>,
+    options?: SQLiteQueryOptions,
   ) => Promise<T[]>;
 
   /**
@@ -156,14 +156,14 @@ export type SQLiteDB = {
    *
    * @param sql - SQL statement. Any statement not classified as a read by `isReadQuery`.
    * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`signal`, `id`).
+   * @param options - Optional query options (`signal`).
    * @returns Promise resolving to `{ result: T[], affected: number }` where
    *   `affected` is the SQLite `changes()` count for the statement.
    */
   write: <T extends Record<string, unknown>>(
     sql: string,
     params?: any[],
-    options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
+    options?: Omit<SQLiteQueryOptions, 'chunkSize'>,
   ) => Promise<{ result: T[]; affected: number }>;
 
   /**
@@ -206,13 +206,13 @@ export type SQLiteDB = {
    *
    * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
    * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`signal`, `id`).
+   * @param options - Optional query options (`signal`).
    * @returns AsyncGenerator yielding individual rows of type `T`.
    */
   stream: <T extends Record<string, unknown>>(
     sql: string,
     params?: any[],
-    options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
+    options?: Omit<SQLiteQueryOptions, 'chunkSize'>,
   ) => AsyncGenerator<T>;
 
   /**
@@ -225,13 +225,13 @@ export type SQLiteDB = {
    *
    * @param sql - SQL query string.
    * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`signal`, `id`).
+   * @param options - Optional query options (`signal`).
    * @returns Promise resolving to the first row as `T`, or `undefined` if no rows.
    */
   first: <T extends Record<string, unknown>>(
     sql: string,
     params?: any[],
-    options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
+    options?: Omit<SQLiteQueryOptions, 'chunkSize'>,
   ) => Promise<T | undefined>;
 
   /**
@@ -592,7 +592,7 @@ export const createSQLiteClient = (
   >(
     sql: string,
     params?: unknown[],
-    options?: SQLiteQueryOptions<T>,
+    options?: SQLiteQueryOptions,
   ) => {
     assertReadable(sql, 'read');
     const lease = await acquireInstrumented('read');
@@ -648,7 +648,7 @@ export const createSQLiteClient = (
    */
   const stream = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
-  >(sql: string, params?: unknown[], options?: SQLiteQueryOptions<T>) {
+  >(sql: string, params?: unknown[], options?: SQLiteQueryOptions) {
     assertReadable(sql, 'stream');
     const lease = await acquireInstrumented('read');
     try {
@@ -673,7 +673,7 @@ export const createSQLiteClient = (
   >(
     sql: string,
     params?: unknown[],
-    options?: SQLiteQueryOptions<T>,
+    options?: SQLiteQueryOptions,
   ) => {
     const lease = await acquireInstrumented('write');
     try {

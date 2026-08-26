@@ -307,9 +307,7 @@ export const RECOMMENDED_VFS: SQLiteVFS = 'OPFSAdaptiveVFS';
  * from their signatures so callers cannot set a field that would be silently
  * ignored.
  */
-export type SQLiteQueryOptions<_T extends Record<string, unknown>> = {
-  id?: string;
+export type SQLiteQueryOptions = {
   chunkSize?: number;
   signal?: AbortSignal;
-  debug?: string;
 };

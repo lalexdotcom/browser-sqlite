@@ -15,27 +15,27 @@ export type TransactionDB = {
   read: <T extends Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    options?: SQLiteQueryOptions<T>,
+    options?: SQLiteQueryOptions,
   ) => Promise<T[]>;
   write: <T extends Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
+    options?: Omit<SQLiteQueryOptions, 'chunkSize'>,
   ) => Promise<{ result: T[]; affected: number }>;
   chunk: <T extends Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    options?: SQLiteQueryOptions<T>,
+    options?: SQLiteQueryOptions,
   ) => AsyncGenerator<T[]>;
   stream: <T extends Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
+    options?: Omit<SQLiteQueryOptions, 'chunkSize'>,
   ) => AsyncGenerator<T>;
   first: <T extends Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
+    options?: Omit<SQLiteQueryOptions, 'chunkSize'>,
   ) => Promise<T | undefined>;
   commit: () => Promise<void>;
   rollback: () => Promise<void>;
@@ -87,31 +87,31 @@ export const createTransaction =
       read: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: SQLiteQueryOptions<T>,
+        options?: SQLiteQueryOptions,
       ) => readWorker<T>(worker, checksql(sql), params, options),
 
       write: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
+        options?: Omit<SQLiteQueryOptions, 'chunkSize'>,
       ) => writeWorker<T>(worker, checksql(sql), params, options),
 
       chunk: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: SQLiteQueryOptions<T>,
+        options?: SQLiteQueryOptions,
       ) => chunkWorker<T>(worker, checksql(sql), params, options),
 
       stream: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
+        options?: Omit<SQLiteQueryOptions, 'chunkSize'>,
       ) => streamRows<T>(worker, checksql(sql), params, options),
 
       first: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
+        options?: Omit<SQLiteQueryOptions, 'chunkSize'>,
       ) => firstWorker<T>(worker, checksql(sql), params, options),
 
       commit: async () => {
