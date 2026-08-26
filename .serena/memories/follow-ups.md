@@ -286,14 +286,24 @@ block.
 - the unstated phantom row type on `read`/`first`/`chunk`/`stream`. The JSDoc now says the
   type parameter is a cast, and why validating instead would be worse.
 
-**What survives:**
+**And a fifth was found already done, on 2026-08-26:** "no exhaustiveness on either
+message-union dispatch". All three `switch` statements in `src/` carry
+`default: { const _unexpected: never = data; throw … }` — `pool.ts:298`,
+`worker.ts:353` and `worker.ts:389`. Nothing to do.
 
-- **No exhaustiveness (`default: const _x: never`) on either message-union dispatch.** A
-  real change, worth its own pass: an unhandled message type would stop compiling.
+**What survives — and neither is a cleanup:**
+
 - `wa-sqlite.d.ts` shadows wa-sqlite's own shipped types via three `declare module` deep
   imports. **Not a one-liner** — it touches how the worker compiles. A project.
 - 29 `any` in `src/`; `tsconfig` could enable `noUncheckedIndexedAccess` and
   `exactOptionalPropertyTypes`. **Also a project, not a cleanup.**
+
+**A hygiene note this list earned.** Five entries were found already done and unmarked in
+one session — VFS-COV, COOP-1's README half, `SQLiteVFS`'s export, six of the nine
+cleanups, and the exhaustiveness above. The backlog was being appended to and never
+retired, so its length stopped meaning anything. **Verify an item against the source before
+scheduling work on it**, and delete it the moment it is done rather than leaving it to be
+rediscovered.
 
 **Kept deliberately, do not "clean up":** the no-op degradation branch in `locks.ts`, which
 is unreachable in Node ≥ 21 and every current browser. The final review recommended keeping
