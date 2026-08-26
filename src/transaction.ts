@@ -79,6 +79,9 @@ export const createTransaction =
       write: (sql, params, options) =>
         writeWorker(worker, checksql(sql), params, options),
       // The caller's transaction is already open. No BEGIN, no COMMIT.
+      // db is referenced before its const declaration, deliberately: this arrow
+      // only runs when output().close() fires, by which point db is assigned.
+      // Moving `bulk` below `const db` breaks the literal that consumes it.
       transaction: (fn) => fn(db),
     });
 

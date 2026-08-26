@@ -12,6 +12,10 @@ describe('bulkWrite inside a transaction', () => {
         bulk.enqueue({ a: 1 });
         bulk.enqueue({ a: 2 });
         await bulk.close();
+        const inside = await tx.read<{ n: number }>(
+          'SELECT count(*) AS n FROM t',
+        );
+        expect(inside[0].n).toBe(2);
         throw new Error('caller gave up');
       }),
     ).rejects.toThrow('caller gave up');
