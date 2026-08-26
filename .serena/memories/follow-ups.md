@@ -269,21 +269,31 @@ now one small item rather than three.**
 
 ### Cleanups — pruned 2026-08-26 against the source
 
-Six of the nine listed here were **already done and unmarked**: `status: 'HAHA'`, the
+Six of the nine originally listed were **already done and unmarked**: `status: 'HAHA'`, the
 `'Cannot werite…'` typo, the `SQLiteCLientCallParams` protocol duplicate,
 `SQLiteStreamOptions`, the unbounded `worker.requests`, and the stale `types.ts` protocol
-block. What survives, verified present:
+block.
 
-- `acquireInstrumented`'s comment says "seven acquisition sites"; there are six.
-- `package.json` has no `sideEffects: false` and no `engines`.
-- `wa-sqlite.d.ts` shadows wa-sqlite's own shipped types via a deep import; import the bare
-  specifier instead.
-- The release action is pinned to a mutable `@v1` tag while holding `NPM_TOKEN`.
-- No exhaustiveness (`default: const _x: never`) on either message-union dispatch.
-- `read<T>`/`first<T>`/`stream<T>` are phantom types (`as T[]`, no validation) and the
-  JSDoc never says so.
-- ~30 `any` in `src/`; `tsconfig` could enable `noUncheckedIndexedAccess` and
-  `exactOptionalPropertyTypes`.
+**Four more were done on 2026-08-26 (`c64b8c9`)**, each verified live first:
+
+- the release action's mutable `@v1` pin — **this was never a cleanup**, it was a mutable
+  reference in the job holding `NPM_TOKEN`; now pinned to a SHA;
+- `sideEffects` and `engines`. Note the item as written was **wrong**: `sideEffects: false`
+  would invite a bundler to drop `worker.ts`, which assigns `self.onmessage` at module
+  scope. The declaration names the worker entry instead — true, and still tree-shakeable.
+  Falsifiable by the consumer smoke, which passed 11/11;
+- `acquireInstrumented`'s "seven acquisition sites" — there are six;
+- the unstated phantom row type on `read`/`first`/`chunk`/`stream`. The JSDoc now says the
+  type parameter is a cast, and why validating instead would be worse.
+
+**What survives:**
+
+- **No exhaustiveness (`default: const _x: never`) on either message-union dispatch.** A
+  real change, worth its own pass: an unhandled message type would stop compiling.
+- `wa-sqlite.d.ts` shadows wa-sqlite's own shipped types via three `declare module` deep
+  imports. **Not a one-liner** — it touches how the worker compiles. A project.
+- 29 `any` in `src/`; `tsconfig` could enable `noUncheckedIndexedAccess` and
+  `exactOptionalPropertyTypes`. **Also a project, not a cleanup.**
 
 **Kept deliberately, do not "clean up":** the no-op degradation branch in `locks.ts`, which
 is unreachable in Node ≥ 21 and every current browser. The final review recommended keeping
