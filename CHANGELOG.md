@@ -45,6 +45,9 @@ with it.
 
 ### Added
 
+- `SQLiteError` code `READ_ONLY_TRANSACTION`, raised when a write, `bulkWrite()`
+  or `output()` is attempted in a `readOnly` transaction. `bulkWrite()` and
+  `output()` refuse at the call rather than at the first flush.
 - **`bulkWrite()` and `output()` are available on a transaction.** A bulk load
   inside `transaction()` is atomic: it rolls back with everything else. Outside
   one, `bulkWrite()` stays streaming and commits per batch.
@@ -96,6 +99,8 @@ with it.
 
 ### Fixed
 
+- A write in a read-only transaction threw a bare `Error`, the only guard in the
+  library that escaped the `code` discriminant.
 - **Exclusivity.** A borrowed worker could be handed to a concurrent read, so a
   query could execute inside someone else's open transaction. Availability now
   lives behind opaque leases and is unreachable from outside the scheduler.

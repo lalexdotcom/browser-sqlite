@@ -344,7 +344,7 @@ did not exist appears only at `close()`. Single-use, like `bulkWrite`.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `poolSize` | `number` | `2` | Number of Web Workers spawned in the pool. A larger pool allows more concurrent reads but uses more memory. Must be `1` with `AccessHandlePoolVFS`. |
-| `vfs` | `SQLiteVFS` | `'OPFSAdaptiveVFS'` | VFS implementation for storage. See the [VFS Selection](#vfs-selection) table. |
+| `vfs` | `SQLiteVFS` | — (required) | VFS implementation for storage. See the [VFS Selection](#vfs-selection) table. |
 | `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite WebAssembly build to load: `'sync'`, `'async'`, or `'jspi'`. Throws `INVALID_OPTION` at construction if the VFS does not support it. See [Builds](#builds). |
 | `pragmas` | `Record<string, string>` | `undefined` | SQLite PRAGMAs applied to each worker connection on open. |
 | `maxWorkerRestarts` | `number` | `1` | How many times a slot may be restarted after it dies. A slot that never reached readiness is never restarted — an initial failure is deterministic and restarting only delays the diagnostic. The counter resets once a replacement has actually served a request. |
@@ -364,6 +364,7 @@ Errors raised by this library are instances of `SQLiteError`, exported from the 
 | `TIMEOUT` | A worker did not post `ready` within `openTimeout` milliseconds. The most common cause is a database held under an exclusive lock by another tab or client. |
 | `PROTOCOL_ERROR` | A message was received from a worker that could not be deserialized (`messageerror`). The worker survives; only the in-flight request is rejected. |
 | `BUSY` | SQLite reported a lock conflict (`SQLITE_BUSY` or `SQLITE_LOCKED`); the numeric SQLite code is on `sqliteCode`. The operation is not retried. |
+| `READ_ONLY_TRANSACTION` | raised when a write statement, `bulkWrite()` or `output()` is used inside a transaction opened with `readOnly: true`. |
 
 ```typescript
 import { SQLiteError } from 'browser-sqlite';

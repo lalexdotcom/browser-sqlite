@@ -13,7 +13,8 @@ export type SQLiteErrorCode =
   | 'INVALID_OPTION'
   | 'INVALID_PRAGMA'
   | 'BULK_WRITE_FAILED'
-  | 'BUSY';
+  | 'BUSY'
+  | 'READ_ONLY_TRANSACTION';
 
 export class SQLiteError extends Error {
   readonly code: SQLiteErrorCode;

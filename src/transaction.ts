@@ -67,23 +67,41 @@ export const createTransaction =
 
     const checksql = (sql: string): string => {
       if (readOnly && isWriteQuery(sql))
-        throw new Error('Cannot write in read-only transaction');
+        throw new SQLiteError(
+          'READ_ONLY_TRANSACTION',
+          'Cannot write in a read-only transaction.',
+        );
       return sql;
     };
 
     let done = false;
 
-    const bulk = deps.bulkFor({
-      read: (sql, params, options) =>
-        readWorker(worker, checksql(sql), params, options),
-      write: (sql, params, options) =>
-        writeWorker(worker, checksql(sql), params, options),
-      // The caller's transaction is already open. No BEGIN, no COMMIT.
-      // db is referenced before its const declaration, deliberately: this arrow
-      // only runs when output().close() fires, by which point db is assigned.
-      // Moving `bulk` below `const db` breaks the literal that consumes it.
-      transaction: (fn) => fn(db),
-    });
+    // Guarded at the call, not at the first flush. bulkWrite buffers, so the
+    // failure would otherwise surface once the buffer overflows — and for
+    // output() later still, trapped inside the createStaging promise.
+    const refuse = (method: string) => (): never => {
+      throw new SQLiteError(
+        'READ_ONLY_TRANSACTION',
+        `${method}() writes, and this transaction is read-only.`,
+      );
+    };
+
+    const bulk = readOnly
+      ? {
+          bulkWrite: refuse('bulkWrite') as SQLiteQueryAPI['bulkWrite'],
+          output: refuse('output') as SQLiteQueryAPI['output'],
+        }
+      : deps.bulkFor({
+          read: (sql, params, options) =>
+            readWorker(worker, checksql(sql), params, options),
+          write: (sql, params, options) =>
+            writeWorker(worker, checksql(sql), params, options),
+          // The caller's transaction is already open. No BEGIN, no COMMIT.
+          // db is referenced before its const declaration, deliberately: this arrow
+          // only runs when output().close() fires, by which point db is assigned.
+          // Moving `bulk` below `const db` breaks the literal that consumes it.
+          transaction: (fn) => fn(db),
+        });
 
     const db: SQLiteTransactionDB = {
       read: <T extends Record<string, unknown>>(

@@ -79,3 +79,48 @@ describe('output inside a transaction', () => {
     expect(rows).toEqual([{ a: 7 }]);
   });
 });
+
+describe('a read-only transaction', () => {
+  // Falsifiable: build the stub lazily, so the throw moves to close(). The
+  // `expect(() => …).toThrow` form is what pins the timing — a caller must not
+  // be handed a writer that fails only after it has enqueued a million rows.
+  it('refuses bulkWrite at the call, not at the first flush', async () => {
+    const db = await createTestClient();
+    await db.write('CREATE TABLE t (a INTEGER)');
+
+    await db.transaction(
+      async (tx) => {
+        expect(() => tx.bulkWrite('t', ['a'])).toThrow(
+          expect.objectContaining({ code: 'READ_ONLY_TRANSACTION' }),
+        );
+      },
+      { readOnly: true },
+    );
+  });
+
+  it('refuses output at the call', async () => {
+    const db = await createTestClient();
+
+    await db.transaction(
+      async (tx) => {
+        expect(() => tx.output('t', { a: 'INTEGER' })).toThrow(
+          expect.objectContaining({ code: 'READ_ONLY_TRANSACTION' }),
+        );
+      },
+      { readOnly: true },
+    );
+  });
+
+  it('rejects a write statement with a SQLiteError, not a bare Error', async () => {
+    const db = await createTestClient();
+
+    await expect(
+      db.transaction(
+        async (tx) => {
+          await tx.write('CREATE TABLE nope (a INTEGER)');
+        },
+        { readOnly: true },
+      ),
+    ).rejects.toMatchObject({ code: 'READ_ONLY_TRANSACTION' });
+  });
+});
