@@ -184,6 +184,41 @@ describe('bulkWrite failure (B5)', () => {
   });
 });
 
+describe('the staging sweep', () => {
+  /** Locks that are available but always refuse the sweep lock. */
+  const refusing = () => {
+    let attempts = 0;
+    return {
+      attempts: () => attempts,
+      locks: {
+        available: true,
+        hold: async () => () => {},
+        withLock: async <T>(_name: string, fn: () => Promise<T>) => fn(),
+        tryWithLock: async () => {
+          attempts += 1;
+          return false;
+        },
+        heldNames: async () => [],
+      },
+    };
+  };
+
+  // Falsifiable: memoize `swept` only when the sweep actually ran. If the lock
+  // was held, another client was doing the work — retrying on every output()
+  // would put a lock request in front of every single call.
+  it('attempts the sweep once even when the lock is refused', async () => {
+    const { attempts, locks } = refusing();
+    const { sql, deps } = recorder();
+    const { output } = createBulk({ ...deps, locks });
+
+    await output('t', { a: 'INTEGER' }).close();
+    await output('t', { a: 'INTEGER' }).close();
+
+    expect(attempts()).toBe(1);
+    expect(sql.some((s) => s.includes('sqlite_master'))).toBe(false);
+  });
+});
+
 /** Records statements from both plain writes and the swap transaction. */
 const outputRecorder = () => {
   const sql: string[] = [];

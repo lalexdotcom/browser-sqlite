@@ -174,8 +174,15 @@ export const createBulk = (deps: {
       return swept;
     }
 
+    // tryWithLock, not withLock: awaiting this lock inside an open transaction
+    // would hold SQLite's write lock while waiting on a holder that may itself
+    // be waiting for that write lock — reachable with two clients in one tab.
+    //
+    // A refused attempt is memoized deliberately. If the lock was held, another
+    // client was sweeping; retrying would put a lock request in front of every
+    // output() for nothing.
     swept ??= locks
-      .withLock(sweepLockName(file), async () => {
+      .tryWithLock(sweepLockName(file), async () => {
         const rows = await read(
           `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '__bsq_staging_%'`,
         );
@@ -188,6 +195,7 @@ export const createBulk = (deps: {
           await write(`DROP TABLE IF EXISTS ${quoteIdent(orphan)}`);
         }
       })
+      .then(() => undefined)
       .catch(() => {
         // A failed sweep must never fail the output() that triggered it.
       });
