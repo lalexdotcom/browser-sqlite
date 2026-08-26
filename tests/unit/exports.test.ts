@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from '@rstest/core';
 import type { SQLiteDB, SQLiteTransactionDB } from '../../src/api';
 import * as api from '../../src/index';
@@ -76,4 +79,62 @@ describe('public entry', () => {
     expect(typeof api.detectFeatures).toBe('function');
     expect(typeof api.missingFeature).toBe('function');
   });
+});
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/**
+ * The files that import the built package **by path** rather than by bare
+ * specifier. They are HTML, so nothing type-checks them and no test loads
+ * them — which makes them the one place a removed export fails silently.
+ *
+ * This is not hypothetical. When `DEFAULT_VFS` stopped being exported, the
+ * benchmark page kept importing it and nothing went red: not `tsc`, not the
+ * suite, not CI. It was caught by hand, late. See BENCH-DRIFT in
+ * `mem:follow-ups`.
+ *
+ * The two scaffolded consumer apps are NOT listed: they import the bare
+ * specifier and are compiled by the consumer smoke, which already fails on a
+ * missing export.
+ */
+const PATH_IMPORTERS = [
+  'scripts/bench/html/index.html',
+  'tests/consumer-nobundler/index.html',
+];
+
+/** The names a source pulls out of `dist/index.js`, aliases resolved to origin. */
+const namedImportsOfEntry = (source: string): string[] => {
+  const names: string[] = [];
+  const statement =
+    /import\s*\{([^}]*)\}\s*from\s*['"][^'"]*dist\/index\.js['"]/g;
+  for (const match of source.matchAll(statement)) {
+    for (const clause of match[1].split(',')) {
+      const name = clause
+        .trim()
+        .split(/\s+as\s+/)[0]
+        ?.trim();
+      if (name) names.push(name);
+    }
+  }
+  return names;
+};
+
+describe('files that import the entry by path', () => {
+  for (const file of PATH_IMPORTERS) {
+    // Falsifiable: drop one of these names from src/index.ts's re-exports, or
+    // rename it. Either turns this red — which is exactly what failed to happen
+    // when DEFAULT_VFS was removed.
+    it(`${file} imports only names the entry exports`, () => {
+      const names = namedImportsOfEntry(
+        readFileSync(join(repoRoot, file), 'utf8'),
+      );
+
+      // Guards the parse, not the package: a reformatted import statement that
+      // stopped matching would otherwise let this test pass having checked
+      // nothing at all.
+      expect(names.length).toBeGreaterThan(0);
+
+      expect(names.filter((name) => !(name in api))).toEqual([]);
+    });
+  }
 });
