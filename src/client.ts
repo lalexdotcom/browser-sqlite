@@ -1,4 +1,9 @@
 import { createBulk } from './bulk';
+import {
+  describeMissing,
+  detectFeatures,
+  missingFeature,
+} from './capabilities';
 import { type ClientDebugState, createClientDebug } from './debug';
 import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
 import { SQLiteError } from './errors';
@@ -20,8 +25,8 @@ import {
 import { createSupervisor } from './supervisor';
 import { createTransaction, type TransactionDB } from './transaction';
 import {
-  DEFAULT_VFS,
   defaultBuildFor,
+  RECOMMENDED_VFS,
   type SQLiteBuild,
   type SQLiteQueryOptions,
   type SQLiteVFS,
@@ -62,16 +67,16 @@ export type CreateSQLiteClientOptions = {
   poolSize?: number;
 
   /**
-   * Virtual File System implementation used for SQLite storage.
-   * Controls whether data is stored in OPFS, IndexedDB, or memory.
-   * See the README VFS Selection guide for a comparison.
-   * @defaultValue `'OPFSAdaptiveVFS'`
+   * Which VFS stores the database. Required: a VFS decides *where* the bytes
+   * live, and a database written through one VFS is not visible through
+   * another. See the README's VFS Selection guide.
    */
-  vfs?: SQLiteVFS;
+  vfs: SQLiteVFS;
   /**
    * Which wa-sqlite WebAssembly build to load. Defaults to the first entry of
    * `VFS_CAPABILITIES[vfs]` — `sync` where the VFS supports it, since it is both the
-   * fastest and the most portable, otherwise `async`. `jspi` is Chromium-only.
+   * fastest and the most portable, otherwise `async`. `jspi` needs engine
+   * support; see the README's Builds section for versions.
    *
    * @throws at construction when the build is not one the chosen VFS supports.
    */
@@ -354,7 +359,8 @@ export type SQLiteDB = {
  *
  * @param file - SQLite database file name within the OPFS origin.
  *   Each distinct name corresponds to a separate database file.
- * @param clientOptions - Optional pool and VFS configuration.
+ * @param clientOptions - Pool and VFS configuration. Required: `vfs` has no
+ *   default, because a VFS decides where the database is written.
  *   See {@link CreateSQLiteClientOptions} for field defaults.
  * @returns A {@link SQLiteDB} object providing `read`, `write`, `chunk`,
  *   `stream`, `first`, `transaction`, `bulkWrite`, `output`, and `close` methods.
@@ -384,21 +390,37 @@ export type SQLiteDB = {
  */
 export const createSQLiteClient = (
   file: string,
-  clientOptions?: CreateSQLiteClientOptions,
+  clientOptions: CreateSQLiteClientOptions,
 ) => {
   // One definition of database identity for the workers, the VFS, the epoch
   // registry, every lock name and the returned `db.debug.file`.
   const dbFile = normalizeDatabaseFile(file);
 
+  // FIRST, before anything reads the options. `clientOptions` is required in
+  // the type, but a JavaScript caller can still omit it entirely — and then
+  // every access below would throw a bare TypeError naming nothing. The `?.`
+  // here is the only one left in this function, and it is load-bearing: it is
+  // what turns a missing argument into the error that says what to pass.
+  //
+  // Required, and thrown for rather than defaulted: a moving default would
+  // leave a consumer reading an empty database while their bytes sat in a VFS
+  // nothing queries.
+  if (!clientOptions?.vfs) {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      `vfs is required. ${RECOMMENDED_VFS} is the recommended universal choice and was the previous default — pass it to keep reading a database created before this version. Compare VFS in the README's VFS Selection guide, and measure your own targets at https://lalexdotcom.github.io/browser-sqlite/`,
+    );
+  }
+
   const clientIndex = ++clientCount;
 
-  const clientPrefix = `${clientOptions?.name ?? 'SQLite'} ${clientIndex}`;
+  const clientPrefix = `${clientOptions.name ?? 'SQLite'} ${clientIndex}`;
 
-  const poolSize = clientOptions?.poolSize ?? DEFAULT_POOL_SIZE;
+  const poolSize = clientOptions.poolSize ?? DEFAULT_POOL_SIZE;
   const pool: (PoolWorker | undefined)[] = [];
 
-  const vfs = clientOptions?.vfs ?? DEFAULT_VFS;
-  const build = clientOptions?.build ?? defaultBuildFor(vfs);
+  const vfs = clientOptions.vfs;
+  const build = clientOptions.build ?? defaultBuildFor(vfs);
 
   const capability = VFS_CAPABILITIES[vfs];
 
@@ -419,15 +441,24 @@ export const createSQLiteClient = (
     );
   }
 
+  // The engine, not the declaration. Without this the mismatch surfaces later
+  // as an opaque open-error from a worker that could not instantiate wasm.
+  const absent = missingFeature(vfs, build, detectFeatures());
+  if (absent) {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      describeMissing(vfs, build, absent),
+    );
+  }
+
   // Fail at construction, not inside the first unrelated query.
-  if (clientOptions?.pragmas) renderPragmas(clientOptions.pragmas);
+  if (clientOptions.pragmas) renderPragmas(clientOptions.pragmas);
 
   // TEST-ONLY, UNSUPPORTED. Read once here, validated, and converted to a
   // typed internal value so no `any` travels further. Absent from the public
   // options type on purpose — see InternalSQLiteClientOptions in scheduler.ts.
-  const testWriterPolicy = (
-    clientOptions as InternalSQLiteClientOptions | undefined
-  )?.__unsafeTestWriterPolicy;
+  const testWriterPolicy = (clientOptions as InternalSQLiteClientOptions)
+    .__unsafeTestWriterPolicy;
   const writerPolicy: WriterPolicy | undefined =
     typeof testWriterPolicy === 'function' ? testWriterPolicy : undefined;
 
@@ -439,7 +470,7 @@ export const createSQLiteClient = (
     writerPolicy ? { canDesignateWriter: writerPolicy } : {},
   );
 
-  const debugOption = clientOptions?.debug;
+  const debugOption = clientOptions.debug;
 
   const debugPrefix =
     typeof debugOption === 'string' ? debugOption : clientPrefix;
@@ -452,8 +483,8 @@ export const createSQLiteClient = (
         pool,
         {
           vfs,
-          pragmas: clientOptions?.pragmas ?? {},
-          name: clientOptions?.name ?? 'SQLite',
+          pragmas: clientOptions.pragmas ?? {},
+          name: clientOptions.name ?? 'SQLite',
         },
         () => scheduler.stats(),
       )
@@ -757,12 +788,12 @@ export const createSQLiteClient = (
     return closing;
   };
 
-  const openTimeout = clientOptions?.openTimeout ?? 30_000;
-  const drainTimeout = clientOptions?.drainTimeout ?? 60_000;
+  const openTimeout = clientOptions.openTimeout ?? 30_000;
+  const drainTimeout = clientOptions.drainTimeout ?? 60_000;
 
   const supervisor = createSupervisor({
     size: poolSize,
-    maxWorkerRestarts: clientOptions?.maxWorkerRestarts,
+    maxWorkerRestarts: clientOptions.maxWorkerRestarts,
   });
 
   let fatal: SQLiteError | undefined;
@@ -798,7 +829,7 @@ export const createSQLiteClient = (
       file: dbFile,
       vfs,
       build,
-      pragmas: clientOptions?.pragmas,
+      pragmas: clientOptions.pragmas,
       onDeath: handleDeath,
       onServed: (served) => {
         supervisor.report(served, 'served');

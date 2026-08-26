@@ -624,7 +624,26 @@ Not blocking: no consumer on rc.3, and a caller wanting a bound today can chunk 
 
 ## BENCH-DRIFT — the page holds a second copy of the invariants and the probes
 
-**Status: standing rule, not a bug. Opened 2026-08-24 with the benchmark page.**
+**Status: HALVED 2026-08-26. The probe half is closed; the invariants half is permanent by design.**
+
+**Closed:** the page no longer derives `HAS_OPFS`, `HAS_JSPI` or `HAS_WRITABLE_STREAM`, and no
+longer holds its own `missingFeature`. It imports `detectFeatures` and `missingFeature` from the
+package. The entry's original justification — "a self-contained HTML file cannot import `tests/**`"
+— never covered these: the page already imports `dist/index.js`.
+
+**Permanent:** the six conformance invariants, ~220 lines on each side. `dist/index.js` is the
+page's only import channel, so sharing them would mean shipping conformance assertions to every
+consumer of the package. That is a design decision, not a debt.
+
+**Still open, small:** `HAS_UNSAFE_HANDLES`, which needs a worker and two access handles and has no
+synchronous equivalent in `src/`.
+
+**Found while doing it (2026-08-26):** the benchmark page is a package consumer with no
+compile-time guard. When `DEFAULT_VFS` stopped being exported, the page kept importing it
+and nothing failed — not `tsc`, not the suite, because the page is HTML that no test
+loads. `scripts/bench/check.mjs` is the only thing that would have caught it, and it is
+hand-run by design. Any change to the package's public exports must be checked against
+the page by hand until that gap is closed.
 
 `bench/index.html` re-implements, in plain JS, what `tests/conformance/invariants.test.ts` and
 `tests/conformance/helpers.ts` hold in TypeScript: the six invariants, the `readwrite-unsafe`

@@ -47,3 +47,77 @@ describe('VFS_CAPABILITIES', () => {
     }
   });
 });
+
+import {
+  describeMissing,
+  detectFeatures,
+  KNOWN_FEATURES,
+  missingFeature,
+} from '../../src/capabilities';
+import { BUILD_REQUIREMENTS, type PlatformFeature } from '../../src/types';
+
+describe('platform requirements', () => {
+  // Falsifiable: add a feature to any `requires` without adding a probe.
+  // This is the invariant that would have caught `writable-stream` shipping
+  // with no probe — ANYCONTEXT-1's exact gap.
+  it('gives every declared feature either a probe or an explicit exemption', () => {
+    const declared = new Set<PlatformFeature>();
+    for (const cap of Object.values(VFS_CAPABILITIES)) {
+      for (const f of cap.requires) declared.add(f);
+      for (const f of cap.degradesWithout) declared.add(f);
+    }
+    for (const reqs of Object.values(BUILD_REQUIREMENTS)) {
+      for (const f of reqs) declared.add(f);
+    }
+
+    expect(declared.size).toBeGreaterThan(0);
+    for (const feature of declared) {
+      expect(KNOWN_FEATURES.has(feature)).toBe(true);
+    }
+  });
+
+  it('reports the first missing feature a pair requires', () => {
+    // OPFSAdaptiveVFS requires opfs; the jspi build requires jspi.
+    expect(missingFeature('OPFSAdaptiveVFS', 'async', new Set())).toBe('opfs');
+    expect(missingFeature('OPFSAdaptiveVFS', 'jspi', new Set(['opfs']))).toBe(
+      'jspi',
+    );
+    expect(
+      missingFeature('OPFSAdaptiveVFS', 'async', new Set(['opfs'])),
+    ).toBeNull();
+  });
+
+  it('needs nothing for a VFS that requires nothing', () => {
+    // IDBBatchAtomicVFS declares `requires: []`.
+    expect(missingFeature('IDBBatchAtomicVFS', 'async', new Set())).toBeNull();
+  });
+
+  it('requires writable-stream for OPFSAnyContextVFS', () => {
+    expect(
+      missingFeature('OPFSAnyContextVFS', 'async', new Set(['opfs'])),
+    ).toBe('writable-stream');
+  });
+
+  // Falsifiable: remove 'readwrite-unsafe' from UNPROBEABLE.
+  it('never reports readwrite-unsafe, which has no synchronous probe', () => {
+    expect(
+      missingFeature('OPFSWriteAheadVFS', 'sync', new Set(['opfs'])),
+    ).toBeNull();
+  });
+
+  it('names an alternative build when the build is what is missing', () => {
+    const message = describeMissing('OPFSAdaptiveVFS', 'jspi', 'jspi');
+    expect(message).toContain("the 'jspi' build requires");
+    expect(message).toContain('async');
+  });
+
+  it('names VFS that do not need the feature when the VFS is what is missing', () => {
+    const message = describeMissing('OPFSAdaptiveVFS', 'async', 'opfs');
+    expect(message).toContain('OPFSAdaptiveVFS requires');
+    expect(message).toContain('IDBBatchAtomicVFS');
+  });
+
+  it('detects nothing in Node, where none of the globals exist', () => {
+    expect(detectFeatures().has('opfs')).toBe(false);
+  });
+});

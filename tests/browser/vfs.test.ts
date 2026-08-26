@@ -179,3 +179,30 @@ describe('memory VFS pool guard', () => {
     });
   }
 });
+
+describe('vfs is required', () => {
+  // Falsifiable: restore `?? RECOMMENDED_VFS` in client.ts.
+  it('throws synchronously when vfs is omitted', () => {
+    expect(() =>
+      // @ts-expect-error — the point of the guard is the runtime half, for
+      // JavaScript consumers and for anyone who reached for `as any`.
+      createSQLiteClient(`browser-sqlite-test-${crypto.randomUUID()}`, {}),
+    ).toThrow(/vfs is required/);
+  });
+
+  it('names the recommended VFS and the benchmark page', () => {
+    let caught: unknown;
+    try {
+      // @ts-expect-error — see above.
+      createSQLiteClient(`browser-sqlite-test-${crypto.randomUUID()}`, {});
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(SQLiteError);
+    expect((caught as SQLiteError).code).toBe('INVALID_OPTION');
+    expect((caught as SQLiteError).message).toContain('OPFSAdaptiveVFS');
+    expect((caught as SQLiteError).message).toContain(
+      'lalexdotcom.github.io/browser-sqlite',
+    );
+  });
+});

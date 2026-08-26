@@ -164,18 +164,44 @@ export default defineConfig({
 
 browser-sqlite delegates storage to a
 [wa-sqlite Virtual File System](https://github.com/rhashimoto/wa-sqlite/tree/master/src/examples#readme)
-(VFS). **When `vfs` is omitted, `OPFSAdaptiveVFS` is used.**
+(VFS).
 
-Choose based on browser support and storage requirements — and, for anything to do
-with speed or concurrency, on [the benchmark page](https://lalexdotcom.github.io/browser-sqlite/)
-run on the browsers you actually target. This table describes what each VFS *is*;
-only your device can say what it *costs* there.
+**`vfs` is required — there is no default.** A VFS decides *where* your database
+is written, so a default that moved between versions would leave you reading an
+empty database while your bytes sat in a store nothing queries.
+
+**Pass `OPFSAdaptiveVFS` unless you have a reason not to.** Across every engine we
+could test — Chrome, Firefox and Safari, desktop and mobile — it opened and passed
+every conformance check without exception. It is the only VFS here of which that is
+true.
+
+> **Each VFS is a separate store.** A database written through one VFS is not
+> visible through another — the bytes are still there, but nothing reads them.
+> Changing `vfs` later does not migrate anything.
+
+You would leave that choice when you control which browser runs your code — an
+Electron app, a kiosk, a managed fleet — and need something it cannot give you:
+
+| Browser you can guarantee | Concurrent reads | Write-heavy workloads |
+|---|---|---|
+| None — the open web | `OPFSAnyContextVFS` if you can require Safari 26+; otherwise `IDBBatchAtomicVFS` | stay on `OPFSAdaptiveVFS` |
+| Chromium 121+ | already the case | `OPFSWriteAheadVFS` |
+| Firefox 111+ | `OPFSAnyContextVFS` | stay |
+| Safari 26+ / iPadOS 26+ | `OPFSAnyContextVFS` | stay |
+| iOS (iPhone) | none measured to help | stay |
+
+**Concurrent reads** covers both serving a read while a write transaction is open
+and running several reads at once under a pool: a VFS holding one exclusive
+access handle can do neither, because it is the same handle a second worker never
+gets. For how much any of this is worth on your own targets, run
+[the benchmark page](https://lalexdotcom.github.io/browser-sqlite/) — no timings
+appear in this file.
 
 <!-- BEGIN GENERATED VFS TABLE — edit VFS_CAPABILITIES in src/types.ts, then run `pnpm docs:vfs` -->
 
 | VFS | Builds | Browser compatibility | Pool size | Shared between connections | Survives close | Memory |
 |-----|--------|-----------------------|-----------|----------------------------|----------------|--------|
-| `OPFSAdaptiveVFS` **(default)** | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 111+/153+ [(*)](#-reduced-mode)<br>Safari 15.4+/27+ [(*)](#-reduced-mode)<br>Android 109+/?<br>iOS 15.4+/27+ [(*)](#-reduced-mode) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
+| `OPFSAdaptiveVFS` **(recommended)** | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 111+/153+ [(*)](#-reduced-mode)<br>Safari 15.4+/27+ [(*)](#-reduced-mode)<br>Android 109+/?<br>iOS 15.4+/27+ [(*)](#-reduced-mode) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
 | `OPFSWriteAheadVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 121+/137+<br>Android 121+/? | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
 | `OPFSCoopSyncVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 111+/153+<br>Safari 15.4+/27+<br>Android 109+/?<br>iOS 15.4+/27+ | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` |
 | `AccessHandlePoolVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 111+/153+<br>Safari 15.4+/27+<br>Android 109+/?<br>iOS 15.4+/27+ | **1** — it cannot share access handles between connections | No | Yes | Page cache only, bounded by `PRAGMA cache_size` |

@@ -8,10 +8,12 @@ import * as api from '../../src/index';
  * public option that no consumer could name.
  */
 describe('public entry', () => {
-  // Falsifiable: remove the types re-export from src/index.ts.
-  it('exposes the capability table and its default-build helper', () => {
+  // Falsifiable: re-export DEFAULT_VFS from src/index.ts.
+  it('exposes the capability table and its default-build helper, but no default VFS', () => {
     expect(typeof api.VFS_CAPABILITIES).toBe('object');
     expect(typeof api.defaultBuildFor).toBe('function');
+    expect('DEFAULT_VFS' in api).toBe(false);
+    expect('RECOMMENDED_VFS' in api).toBe(false);
   });
 
   // Falsifiable: drop one VFS from VFS_CAPABILITIES.
@@ -35,5 +37,13 @@ describe('public entry', () => {
   it('still exposes the client and the error type', () => {
     expect(typeof api.createSQLiteClient).toBe('function');
     expect(typeof api.SQLiteError).toBe('function');
+  });
+
+  // Falsifiable: drop the capabilities re-export from src/index.ts. The
+  // benchmark page imports these instead of holding a second copy of the
+  // probes — see BENCH-DRIFT in mem:follow-ups.
+  it('exposes the capability probes the benchmark page needs', () => {
+    expect(typeof api.detectFeatures).toBe('function');
+    expect(typeof api.missingFeature).toBe('function');
   });
 });

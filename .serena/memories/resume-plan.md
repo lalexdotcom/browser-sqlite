@@ -277,7 +277,57 @@ measurement contradicted, a JSDoc describing the plan's buggy formula rather tha
 it. In a codebase where comments carry measurements, that is a defect class, not a tidiness one.
 
 
-## 0.5 WHERE THE WORK IS — written 2026-08-25, end of the WebKit session. READ FIRST.
+## 0.6 WHERE THE WORK IS — written 2026-08-26, end of the required-vfs session. READ FIRST.
+
+`feat/vfs-required` merged into `main`. Seven commits, executed through
+subagent-driven-development from `docs/superpowers/plans/2026-08-26-vfs-required.md`,
+which argues from `docs/superpowers/specs/2026-08-26-vfs-required-design.md`. Not pushed.
+
+**What shipped, and why it is one change and not two.** The library declared platform
+requirements and storage placement, then acted on neither. `vfs` is now **required** — no
+default, in either of the two places that used to supply one — because a VFS decides
+where the bytes live and a moving default would leave a consumer reading an empty
+database while their data sat in a store nothing queries. And `src/capabilities.ts` now
+holds the probes the library had never had: `VFS_CAPABILITIES[*].requires` was read by the
+README generator, the benchmark page and the conformance helpers, and by nothing in
+`src/`. `build: 'jspi'` on an engine without JSPI used to pass the client guard and fail
+later inside a worker with whatever Emscripten threw.
+
+**The shape to keep.** `missingFeature(vfs, build, available)` is pure and takes the
+feature set rather than probing, because the branches worth testing are the negative ones
+and they are unreachable in a real browser — JSPI cannot be taken away from Chromium.
+`BUILD_REQUIREMENTS` carries `satisfies Record<SQLiteBuild, …>` and `SQLiteBuild` stays a
+literal union: that direction is what makes a new build fail to compile until its
+requirements are declared. Do not "uniformise" it with `SQLiteVFS = keyof typeof
+VFS_CAPABILITIES` — that table *is* the VFS registry, this one describes one attribute of
+builds, and the build registry is `WA_SQLITE_BUILDS` in the worker.
+
+**`RECOMMENDED_VFS` is deliberately not exported.** A consumer writing
+`vfs: RECOMMENDED_VFS` would be exposed to the same displacement the day the
+recommendation changes. The name must live in the consumer's own source — which is why
+the benchmark page uses the literal `'OPFSAdaptiveVFS'` too.
+
+**A defect class this session proved is real.** Task 2 removed the `DEFAULT_VFS` export
+while the benchmark page still imported it, and **nothing failed** — not `tsc`, not the
+suite, because the page is HTML no test loads. It was caught by hand, late. The same
+exposure covers `tests/consumer-nobundler/index.html`. Until `scripts/bench/check.mjs`
+runs automatically, **any change to the package's public exports must be checked against
+the page by hand.** Recorded on BENCH-DRIFT.
+
+**BENCH-DRIFT is halved.** The page imports `detectFeatures` and `missingFeature` instead
+of deriving them; it keeps `probeUnsafeHandles` because `readwrite-unsafe` has no
+synchronous probe. The conformance-invariant half is permanent by design: the page's only
+import channel is `dist/`, so sharing them would ship test assertions to every consumer.
+
+**A CHANGELOG now exists.** First genuinely breaking change; more will land before 1.0.
+
+**Owed, none started.** `readwrite-unsafe` still has no guard, so `OPFSWriteAheadVFS`
+keeps its obscure off-Chromium failure. `RESIDUE-1`, `DELETE-1` and `ABORT-1` are
+untouched and each needs its own design. `FLAKE-ROW-1` needs n≥3 per engine before the
+`OPFSCoopSyncVFS` README entry can be defended. The upstream wa-sqlite PR is open on
+`lalexdotcom/wa-sqlite`. The `feat/*` Pages deployment rule stays, by decision (§0.4).
+
+## 0.5 WHERE THE WORK IS — written 2026-08-25, end of the WebKit session. **Superseded by §0.6.**
 
 Branch `feat/vfs-capabilities`, merged into `main` at the close of this session. Still not
 pushed — `origin/main` sits behind, deliberately.

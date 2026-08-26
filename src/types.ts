@@ -28,7 +28,7 @@ export type ClientMessageData =
   | {
       type: 'open';
       file: string;
-      vfs?: SQLiteVFS;
+      vfs: SQLiteVFS;
       build?: SQLiteBuild;
       pragmas?: Record<string, string>;
     }
@@ -67,6 +67,23 @@ export type WorkerMessageData =
 
 /** Which wa-sqlite WebAssembly build a worker loads. */
 export type SQLiteBuild = 'sync' | 'async' | 'jspi';
+
+/**
+ * What each build needs from the engine beyond plain WebAssembly.
+ *
+ * `satisfies Record<SQLiteBuild, …>` and not `SQLiteBuild = keyof typeof …`:
+ * the check must run in this direction. Adding a build to the union then fails
+ * to compile until its requirements are declared, where `keyof` would let a
+ * forgotten entry mean silently that the build does not exist. `VFS_CAPABILITIES`
+ * derives `SQLiteVFS` from its keys because it *is* the VFS registry; the build
+ * registry is `WA_SQLITE_BUILDS` in the worker, and this table describes one
+ * attribute of builds rather than the builds themselves.
+ */
+export const BUILD_REQUIREMENTS = {
+  sync: [],
+  async: [],
+  jspi: ['jspi'],
+} as const satisfies Record<SQLiteBuild, readonly PlatformFeature[]>;
 
 /**
  * A platform feature a VFS may need. Which browser versions ship each one is
@@ -271,12 +288,16 @@ export const defaultBuildFor = (vfs: SQLiteVFS): SQLiteBuild =>
   VFS_CAPABILITIES[vfs].builds[0];
 
 /**
- * The VFS used when the caller does not name one. It lives here, beside the
- * table, because the README generator marks this row `(default)` and would
- * otherwise hold a second copy — a copy the CI drift check cannot catch, since
- * changing the default in client.ts alone leaves the rendered table identical.
+ * The VFS this project recommends when a caller has no reason to choose
+ * another. It is NOT a default — `vfs` is required, precisely so that the name
+ * lives in the consumer's own source and cannot move underneath their data.
+ *
+ * It lives here, beside the table, because the README generator marks this row
+ * `(recommended)` and would otherwise hold a second copy. It is deliberately
+ * not exported: a consumer writing `vfs: RECOMMENDED_VFS` would be exposed to
+ * the same displacement the day the recommendation changes.
  */
-export const DEFAULT_VFS: SQLiteVFS = 'OPFSAdaptiveVFS';
+export const RECOMMENDED_VFS: SQLiteVFS = 'OPFSAdaptiveVFS';
 
 /**
  * Options accepted by query methods.

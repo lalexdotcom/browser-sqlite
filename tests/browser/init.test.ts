@@ -39,7 +39,10 @@ describe('createSQLiteClient (INT-02)', () => {
 
     // afterEach is not available here directly — clean up manually
     try {
-      const db = createSQLiteClient(dbName, { poolSize: 1 });
+      const db = createSQLiteClient(dbName, {
+        vfs: 'OPFSAdaptiveVFS',
+        poolSize: 1,
+      });
       const rows = await db.read<{ n: number }>('SELECT 42 AS n');
       expect(rows[0].n).toBe(42);
       db.close();

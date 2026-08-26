@@ -9,7 +9,9 @@ declare global {
 }
 
 async function run(): Promise<string> {
-  const db = createSQLiteClient(`consumer-smoke-${crypto.randomUUID()}`);
+  const db = createSQLiteClient(`consumer-smoke-${crypto.randomUUID()}`, {
+    vfs: 'OPFSAdaptiveVFS',
+  });
 
   await db.write('CREATE TABLE smoke (id INTEGER PRIMARY KEY, label TEXT)');
   await db.write(
