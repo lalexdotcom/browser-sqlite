@@ -5,21 +5,32 @@ a new dated section under the old one.
 
 ## Right now
 
-**`feat/tx-query-surface` is complete and awaiting the merge decision** — 15 commits,
-not merged, not pushed. `main` is at `d92ac71` and carries the memory reorganisation.
-`package.json` still says `1.0.0-rc.3`; the bump to rc.4 is the user's explicit call and
-has not been made.
+**Everything is on `main`, working tree clean, nothing pushed.** `main` is at `8461397`,
+**38 commits ahead of `origin/main`** — deliberately, per `mem:conventions`. The branch
+`feat/tx-query-surface` was merged (`6f8ff48`) and deleted.
 
-Verified on the branch, 2026-08-26: `tsc --noEmit` clean, `pnpm build` clean,
-**348 tests**, conformance 66 passed / 10 skipped, consumer smoke 11/11,
-`scripts/bench/check.mjs` OK. `dependencies` still empty.
+`package.json` still says `1.0.0-rc.3`. **The bump is the user's explicit call and has not
+been made** — until they say so, everything lands in the unreleased section of
+`CHANGELOG.md`.
 
-**The published version is 1.0.0-rc.3 (2026-03-26).** Everything since — waves 0 to 4,
-the VFS branch, the RYOW barrier, the benchmark page, the capability guard, and this
-branch — is unreleased. `CHANGELOG.md` carries that delta and is the place to read it,
-not this file.
+Verified on `main`, 2026-08-26: `tsc --noEmit` clean, `pnpm build` clean, **350 tests**,
+conformance 66 passed / 10 skipped, consumer smoke 11/11, `scripts/bench/check.mjs` OK,
+`dependencies` empty.
 
-## Last branch — `feat/tx-query-surface` (2026-08-26)
+**The published version is 1.0.0-rc.3 (2026-03-26).** Everything since — waves 0 to 4, the
+VFS branch, the RYOW barrier, the benchmark page, the capability guard, and this session —
+is unreleased. `CHANGELOG.md` carries that delta and is the place to read it, not this file.
+
+## What this session did after the merge
+
+- **Four cleanups** (`c64b8c9`), two of which were mislabelled in the backlog — see the
+  Cleanups entry in `mem:follow-ups`, it records what they actually were.
+- **BENCH-DRIFT's export gap closed** (`de3abdf`): a unit test asserts every name the
+  benchmark page and the no-bundler fixture import from `dist/index.js` exists on the entry.
+- **The exhaustiveness backlog item was found already done** — the fifth such find in one
+  session. `mem:follow-ups` carries the hygiene note that came out of it.
+
+## The merged branch — `feat/tx-query-surface` (2026-08-26, merge `6f8ff48`)
 
 **A transaction now carries the client's whole querying surface.** Before it, a caller who
 wanted to load rows atomically into an *existing* table had no path at all: `output()` only
@@ -70,6 +81,16 @@ Three shapes worth not undoing:
   `vfs: RECOMMENDED_VFS` is exposed to the same displacement the day the recommendation
   changes. The name must live in the consumer's own source — which is why the benchmark
   page uses the literal `'OPFSAdaptiveVFS'` too.
+
+## Decisions the user owes, and nothing can proceed on them without one
+
+Both were raised on 2026-08-26 and left open. Do not decide either alone.
+
+- **D6 — the `browser-sqlite/vite` plugin subpath.** Designed 2026-08-18, approved, never
+  built. In scope for 1.0, or dropped? Full design in `mem:follow-ups`.
+- **The `readwrite-unsafe` guard.** It cannot be probed synchronously, so the client guard
+  cannot catch `OPFSWriteAheadVFS` failing off Chromium; the README entry is its only
+  defence. Accept that and delete the item, or design an async probe?
 
 ## Owed before the release
 
