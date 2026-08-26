@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
+import { sweepLockName } from '../../src/locks';
 import { createTestClient } from './helpers';
 
 describe('bulkWrite inside a transaction', () => {
@@ -122,5 +123,68 @@ describe('a read-only transaction', () => {
         { readOnly: true },
       ),
     ).rejects.toMatchObject({ code: 'READ_ONLY_TRANSACTION' });
+  });
+});
+
+describe('the staging sweep under a transaction', () => {
+  // Falsifiable: change tryWithLock back to withLock in bulk.ts's sweepOnce.
+  // The transaction then waits on a lock this test never releases and the race
+  // below rejects.
+  it('does not stall while another holder has the sweep lock', async () => {
+    // debug: true is how the test learns the NORMALIZED database name --
+    // ClientDebugState.file is set from client.ts's `dbFile`, so the lock name
+    // is exact rather than assumed. createTestClient does not return the name
+    // it generates, and changing that would touch fifteen browser test files.
+    const db = await createTestClient({ debug: true });
+    const lockName = sweepLockName(db.debug!.file);
+
+    await db.write('CREATE TABLE target (a INTEGER)');
+    // A staging table nobody holds a lock for: the sweep would drop it.
+    await db.write('CREATE TABLE __bsq_staging_orphan (a INTEGER)');
+
+    let releaseSweepLock!: () => void;
+    const lockTaken = new Promise<void>((taken) => {
+      navigator.locks.request(lockName, () => {
+        taken();
+        return new Promise<void>((release) => {
+          releaseSweepLock = release;
+        });
+      });
+    });
+    await lockTaken;
+
+    try {
+      const finished = db.transaction(async (tx) => {
+        // Mandatory: takes SQLite's write lock, which BEGIN alone does not.
+        await tx.write('INSERT INTO target VALUES (1)');
+        const out = tx.output('target', { a: 'INTEGER' });
+        out.enqueue({ a: 2 });
+        await out.close();
+      });
+
+      await Promise.race([
+        finished,
+        new Promise((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error(
+                  'the transaction stalled: the sweep waited for a lock it should have skipped',
+                ),
+              ),
+            5000,
+          ),
+        ),
+      ]);
+
+      // The control. If this orphan is gone the sweep ran, which means the lock
+      // name did not match and the test proved nothing about skipping.
+      const staging = await db.read<{ name: string }>(
+        `SELECT name FROM sqlite_master WHERE name = '__bsq_staging_orphan'`,
+      );
+      expect(staging).toHaveLength(1);
+    } finally {
+      releaseSweepLock();
+    }
   });
 });
