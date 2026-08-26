@@ -196,8 +196,9 @@
     <script type="module">
       import {
         createSQLiteClient,
-        DEFAULT_VFS,
         defaultBuildFor,
+        detectFeatures,
+        missingFeature,
         VFS_CAPABILITIES,
       } from './dist/index.js';
 
@@ -265,21 +266,12 @@
       const AGENT = detectAgent();
 
       // ── Platform probes ─────────────────────────────────────────────────
-      const HAS_OPFS =
-        typeof navigator.storage?.getDirectory === 'function' &&
-        typeof FileSystemFileHandle !== 'undefined';
-
-      /** JSPI. Feature-detected, never sniffed from the user agent. */
-      const HAS_JSPI = typeof WebAssembly.Suspending === 'function';
-
-      /**
-       * `createWritable()`, which `OPFSAnyContextVFS` writes through. WebKit
-       * shipped it eleven versions after OPFS itself, so a browser can have
-       * OPFS and still not run that VFS.
-       */
-      const HAS_WRITABLE_STREAM =
-        typeof FileSystemFileHandle !== 'undefined' &&
-        typeof FileSystemFileHandle.prototype.createWritable === 'function';
+      // Imported, not re-derived: `src/capabilities.ts` holds these probes and
+      // the client guard uses the same ones. See BENCH-DRIFT in mem:follow-ups
+      // — its probe half is closed, its invariants half is not.
+      const FEATURES = detectFeatures();
+      const HAS_OPFS = FEATURES.has('opfs');
+      const HAS_JSPI = FEATURES.has('jspi');
 
       /**
        * `mode: 'readwrite-unsafe'` on OPFS sync access handles, probed by
@@ -417,19 +409,12 @@
 
       /**
        * The platform feature this pair needs and this engine lacks, or null.
-       * Read from `requires` — never from a hardcoded VFS name. A VFS that only
-       * `degradesWithout` a feature stays runnable: OPFSAdaptiveVFS without
-       * readwrite-unsafe passes 102 of 104 browser tests, and marking it
-       * unavailable would be false.
+       * `readwrite-unsafe` is checked here and not in the library: it has no
+       * synchronous probe, so `missingFeature` skips it by design.
        */
-      const missingFeature = (pair) => {
-        if (pair.build === 'jspi' && !HAS_JSPI) return 'jspi';
-        if (pair.cap.requires.includes('opfs') && !HAS_OPFS) return 'opfs';
-        if (
-          pair.cap.requires.includes('writable-stream') &&
-          !HAS_WRITABLE_STREAM
-        )
-          return 'writable-stream';
+      const missingFor = (pair) => {
+        const absent = missingFeature(pair.vfs, pair.build, FEATURES);
+        if (absent) return absent;
         if (
           pair.cap.requires.includes('readwrite-unsafe') &&
           !HAS_UNSAFE_HANDLES
@@ -469,7 +454,7 @@
         box.append(head);
 
         for (const pair of group.pairs) {
-          const missing = missingFeature(pair);
+          const missing = missingFor(pair);
           const label = document.createElement('label');
           label.className = missing ? 'build unavailable' : 'build';
 
@@ -542,7 +527,7 @@
        */
       const describeSelection = () =>
         GROUPS.map(({ vfs, pairs }) => {
-          const runnable = pairs.filter((p) => !missingFeature(p));
+          const runnable = pairs.filter((p) => !missingFor(p));
           const on = runnable.filter(
             (p) => list.querySelector(`input[data-pair="${p.id}"]`)?.checked,
           );
@@ -1645,7 +1630,9 @@
           }
         }
 
-        const defaultPair = `${DEFAULT_VFS}/${defaultBuildFor(DEFAULT_VFS)}`;
+        // DEFAULT_VFS is intentionally not imported: the design requires a VFS
+        // name to live in the consumer's own source, and this page is a consumer.
+        const defaultPair = `OPFSAdaptiveVFS/${defaultBuildFor('OPFSAdaptiveVFS')}`;
         if (ran.includes(defaultPair)) {
           const led = decided.filter(([, w]) => w[0] === defaultPair);
           parts.push(
@@ -2011,7 +1998,7 @@
 
       document.getElementById('status').textContent =
         `${PAIRS.length} declared pairs, ` +
-        `${PAIRS.filter((p) => !missingFeature(p)).length} runnable here`;
+        `${PAIRS.filter((p) => !missingFor(p)).length} runnable here`;
 
       // Read by scripts/bench/check.mjs.
       window.__BENCH__ = { LIB_VERSION, AGENT, PAIRS: PAIRS.map((p) => p.id) };

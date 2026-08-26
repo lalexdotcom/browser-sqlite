@@ -38,4 +38,12 @@ describe('public entry', () => {
     expect(typeof api.createSQLiteClient).toBe('function');
     expect(typeof api.SQLiteError).toBe('function');
   });
+
+  // Falsifiable: drop the capabilities re-export from src/index.ts. The
+  // benchmark page imports these instead of holding a second copy of the
+  // probes — see BENCH-DRIFT in mem:follow-ups.
+  it('exposes the capability probes the benchmark page needs', () => {
+    expect(typeof api.detectFeatures).toBe('function');
+    expect(typeof api.missingFeature).toBe('function');
+  });
 });
