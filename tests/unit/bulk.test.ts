@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@rstest/core';
 import { createBulk } from '../../src/bulk';
-import { BulkWriteError } from '../../src/errors';
+import { SQLiteBulkWriteError } from '../../src/errors';
 import { noOpLocks } from '../../src/locks';
 import { createLogger } from '../../src/logger';
 
@@ -106,7 +106,7 @@ describe('bulkWrite failure (B5)', () => {
     const bulk = bulkWrite('t', ['a']);
     bulk.enqueue({ a: 1 });
     const first = bulk.close();
-    await expect(first).rejects.toBeInstanceOf(BulkWriteError);
+    await expect(first).rejects.toBeInstanceOf(SQLiteBulkWriteError);
 
     expect(sql).toHaveLength(1);
   });
@@ -119,7 +119,7 @@ describe('bulkWrite failure (B5)', () => {
     bulk.enqueue({ a: 1 });
 
     const error = await bulk.close().catch((e) => e);
-    expect(error).toBeInstanceOf(BulkWriteError);
+    expect(error).toBeInstanceOf(SQLiteBulkWriteError);
     expect(error.code).toBe('BULK_WRITE_FAILED');
     expect((error.cause as Error).message).toMatch(/UNIQUE/);
   });
@@ -132,7 +132,7 @@ describe('bulkWrite failure (B5)', () => {
     bulk.enqueue({ a: 1 });
     await bulk.close().catch(() => {});
 
-    expect(() => bulk.enqueue({ a: 2 })).toThrow(BulkWriteError);
+    expect(() => bulk.enqueue({ a: 2 })).toThrow(SQLiteBulkWriteError);
   });
 
   it('counts rows written and rows not written across batches', async () => {
@@ -146,7 +146,7 @@ describe('bulkWrite failure (B5)', () => {
     for (const a of [1, 2, 3, 4, 5]) bulk.enqueue({ a });
     const error = await bulk.close().catch((e) => e);
 
-    expect(error).toBeInstanceOf(BulkWriteError);
+    expect(error).toBeInstanceOf(SQLiteBulkWriteError);
     expect(error.rowsWritten).toBe(2);
     expect(error.rowsNotWritten).toBe(3);
     expect(sql).toHaveLength(2); // the third batch was never sent
@@ -163,7 +163,7 @@ describe('bulkWrite failure (B5)', () => {
     bulk.enqueue({ a: 1 });
     await bulk.close(); // succeeds — closed flag is now set
 
-    expect(() => bulk.enqueue({ a: 2 })).toThrow(BulkWriteError);
+    expect(() => bulk.enqueue({ a: 2 })).toThrow(SQLiteBulkWriteError);
     expect(() => bulk.enqueue({ a: 2 })).toThrow(/closed/i);
     // No extra INSERT was sent: the enqueue threw before buffering.
     expect(sql).toHaveLength(1);
@@ -179,7 +179,7 @@ describe('bulkWrite failure (B5)', () => {
     bulk.enqueue({ a: 1 });
     await bulk.close(); // succeeds — closed flag is now set
 
-    await expect(bulk.close()).rejects.toThrow(BulkWriteError);
+    await expect(bulk.close()).rejects.toThrow(SQLiteBulkWriteError);
     await expect(bulk.close()).rejects.toThrow(/closed/i);
   });
 });

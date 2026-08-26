@@ -298,16 +298,3 @@ export const defaultBuildFor = (vfs: SQLiteVFS): SQLiteBuild =>
  * the same displacement the day the recommendation changes.
  */
 export const RECOMMENDED_VFS: SQLiteVFS = 'OPFSAdaptiveVFS';
-
-/**
- * Options accepted by query methods.
- *
- * `chunkSize` controls the number of rows per chunk and is only meaningful for
- * `read()` and `chunk()`. Other methods (`write`, `stream`, `first`) omit it
- * from their signatures so callers cannot set a field that would be silently
- * ignored.
- */
-export type SQLiteQueryOptions = {
-  chunkSize?: number;
-  signal?: AbortSignal;
-};

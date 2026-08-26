@@ -44,7 +44,7 @@ export class SQLiteError extends Error {
  * while their rows had already been spliced out of the buffer (B5). A caller now
  * learns how much of its data reached the database.
  */
-export class BulkWriteError extends SQLiteError {
+export class SQLiteBulkWriteError extends SQLiteError {
   readonly rowsWritten: number;
   readonly rowsNotWritten: number;
 

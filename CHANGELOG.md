@@ -10,6 +10,14 @@ with it.
 
 ### Breaking
 
+- **`TransactionDB` is now `SQLiteTransactionDB`, and it is exported.** It
+  appeared in `transaction()`'s signature without a consumer being able to name
+  it.
+- **`BulkWriteError` is now `SQLiteBulkWriteError`.**
+- **`SQLiteQueryOptions` no longer carries `chunkSize`.** The methods that
+  stream take `SQLiteChunkOptions`; the others take `SQLiteQueryOptions`.
+- **`output()` is typed.** Its options and the rows passed to `enqueue` were
+  `any`; a call that passed a mistyped row now stops compiling.
 - **`vfs` is now required.** If you relied on the default, pass
   `vfs: 'OPFSAdaptiveVFS'` to keep reading your existing database. A VFS decides
   where the bytes live, so a default that moved between versions would leave you
@@ -37,6 +45,9 @@ with it.
 
 ### Added
 
+- The public type layer is exported: `SQLiteQueryAPI`, the two surfaces deriving
+  from it, and every option, result and writer type they use. `stream()` now
+  accepts `chunkSize`, which bounds how far the worker may run ahead.
 - `chunk()` — the chunk-wise read primitive every other read method is layered
   on, and the single place an `AbortSignal` is honoured.
 - `signal` on every query method.

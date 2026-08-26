@@ -1,3 +1,8 @@
+import type {
+  SQLiteChunkOptions,
+  SQLiteQueryOptions,
+  SQLiteTransactionDB,
+} from './api';
 import { SQLiteError } from './errors';
 import type { PoolWorker } from './pool';
 import {
@@ -8,38 +13,7 @@ import {
   writeWorker,
 } from './queries';
 import type { Scheduler } from './scheduler';
-import type { SQLiteQueryOptions } from './types';
 import { isWriteQuery } from './utils';
-
-export type TransactionDB = {
-  read: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-    options?: SQLiteQueryOptions,
-  ) => Promise<T[]>;
-  write: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-    options?: Omit<SQLiteQueryOptions, 'chunkSize'>,
-  ) => Promise<{ result: T[]; affected: number }>;
-  chunk: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-    options?: SQLiteQueryOptions,
-  ) => AsyncGenerator<T[]>;
-  stream: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-    options?: Omit<SQLiteQueryOptions, 'chunkSize'>,
-  ) => AsyncGenerator<T>;
-  first: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-    options?: Omit<SQLiteQueryOptions, 'chunkSize'>,
-  ) => Promise<T | undefined>;
-  commit: () => Promise<void>;
-  rollback: () => Promise<void>;
-};
 
 // Drains a statement that returns no rows (BEGIN, COMMIT, ROLLBACK) without
 // the chunkSize-1 + break overhead of firstWorker.
@@ -51,7 +25,7 @@ const exec = async (worker: PoolWorker, sql: string): Promise<void> => {
  * Returns the `transaction()` method for a SQLiteDB instance.
  *
  * The returned function acquires exactly one lease for the full lifetime of
- * the transaction. All TransactionDB methods call worker-bound derivations
+ * the transaction. All SQLiteTransactionDB methods call worker-bound derivations
  * directly — never the public API — so no secondary lease acquisition can
  * occur during the callback.
  */
@@ -68,7 +42,7 @@ export const createTransaction =
     onPoisoned: (index: number, error: SQLiteError) => void;
   }) =>
   async <T = void>(
-    callback: (db: TransactionDB) => Promise<T>,
+    callback: (db: SQLiteTransactionDB) => Promise<T>,
     options?: { readOnly?: boolean; autoCommit?: boolean },
   ): Promise<T> => {
     const { readOnly = false, autoCommit = true } = options ?? {};
@@ -83,35 +57,35 @@ export const createTransaction =
 
     let done = false;
 
-    const db: TransactionDB = {
+    const db: SQLiteTransactionDB = {
       read: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: SQLiteQueryOptions,
+        options?: SQLiteChunkOptions,
       ) => readWorker<T>(worker, checksql(sql), params, options),
 
       write: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: Omit<SQLiteQueryOptions, 'chunkSize'>,
+        options?: SQLiteQueryOptions,
       ) => writeWorker<T>(worker, checksql(sql), params, options),
 
       chunk: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: SQLiteQueryOptions,
+        options?: SQLiteChunkOptions,
       ) => chunkWorker<T>(worker, checksql(sql), params, options),
 
       stream: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: Omit<SQLiteQueryOptions, 'chunkSize'>,
+        options?: SQLiteChunkOptions,
       ) => streamRows<T>(worker, checksql(sql), params, options),
 
       first: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: Omit<SQLiteQueryOptions, 'chunkSize'>,
+        options?: SQLiteQueryOptions,
       ) => firstWorker<T>(worker, checksql(sql), params, options),
 
       commit: async () => {

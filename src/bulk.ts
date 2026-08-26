@@ -1,4 +1,5 @@
-import { BulkWriteError } from './errors';
+import type { Schema, SQLiteOutputOptions, SQLiteOutputRow } from './api';
+import { SQLiteBulkWriteError } from './errors';
 import {
   type Locks,
   stagingLockName,
@@ -13,39 +14,15 @@ import {
   quoteIdent,
 } from './utils';
 
-// Schema and related types for schema-driven bulk write operations.
-
-export type Schema = Record<
-  string,
-  | string
-  | { type: string; generated?: string; required?: boolean; unique?: boolean }
->;
-
-export type Index<SCHEMA extends Schema> =
-  | keyof SCHEMA
-  | (keyof SCHEMA)[]
-  | ({ unique?: boolean } & (
-      | {
-          column: keyof SCHEMA;
-        }
-      | { columns: (keyof SCHEMA)[] }
-    ));
-
-export type OutputOptions<SCHEMA extends Schema> = {
-  indexes?: Index<SCHEMA>[];
-};
-
-// Structural mirror of SQLiteDB['write'].
-// Kept inline to avoid a circular import: client.ts imports createBulk, so
-// createBulk cannot import SQLiteDB from client.ts.
+// Structural, and deliberately narrower than SQLiteQueryAPI: bulk needs only
+// these three calls, and requiring the full surface would make every unit test
+// build a complete stub to exercise a single INSERT.
 type WriteFn = (
   sql: string,
   params?: any[],
   options?: any,
 ) => Promise<{ result: any[]; affected: number }>;
 
-// Structural mirrors of SQLiteDB methods. Kept inline to avoid a circular
-// import: client.ts imports createBulk, so createBulk cannot import from it.
 type ReadFn = (sql: string, params?: any[], options?: any) => Promise<any[]>;
 
 type TransactionFn = <T>(
@@ -95,8 +72,8 @@ export const createBulk = (deps: {
     let rowsWritten = 0;
     let rowsNotWritten = 0;
 
-    const fail = (): BulkWriteError =>
-      new BulkWriteError(
+    const fail = (): SQLiteBulkWriteError =>
+      new SQLiteBulkWriteError(
         `bulkWrite into "${table}" failed after ${rowsWritten} row(s); ${rowsNotWritten} row(s) were not written.`,
         { rowsWritten, rowsNotWritten },
         { cause: failure },
@@ -129,8 +106,8 @@ export const createBulk = (deps: {
       });
     };
 
-    const failClosed = (): BulkWriteError =>
-      new BulkWriteError(`Bulk writer for "${table}" is closed.`, {
+    const failClosed = (): SQLiteBulkWriteError =>
+      new SQLiteBulkWriteError(`Bulk writer for "${table}" is closed.`, {
         rowsWritten,
         rowsNotWritten,
       });
@@ -205,7 +182,7 @@ export const createBulk = (deps: {
   /** CREATE INDEX statements for the final table, built after the rename. */
   const indexStatements = <SCHEMA extends Schema>(
     table: string,
-    options?: OutputOptions<SCHEMA>,
+    options?: SQLiteOutputOptions<SCHEMA>,
   ): string[] => {
     const statements: string[] = [];
     for (const index of options?.indexes ?? []) {
@@ -246,7 +223,7 @@ export const createBulk = (deps: {
   const output = <SCHEMA extends Schema>(
     table: string,
     schema: SCHEMA,
-    options?: OutputOptions<SCHEMA>,
+    options?: SQLiteOutputOptions<SCHEMA>,
   ) => {
     const staging = stagingTableName(crypto.randomUUID());
 
@@ -296,13 +273,7 @@ export const createBulk = (deps: {
       });
 
     return {
-      enqueue: (
-        data: {
-          [K in keyof SCHEMA as SCHEMA[K] extends { generated: string }
-            ? never
-            : K]: any;
-        },
-      ) => enqueue(data as any),
+      enqueue: (data: SQLiteOutputRow<SCHEMA>) => enqueue(data as any),
 
       close: async () => {
         let affected: number;

@@ -1,5 +1,27 @@
 import { describe, expect, it } from '@rstest/core';
+import type {
+  SQLiteDB,
+  SQLiteQueryAPI,
+  SQLiteTransactionDB,
+} from '../../src/api';
 import * as api from '../../src/index';
+
+/**
+ * Compile-time pin. Types are erased, so no runtime assertion can check that
+ * both surfaces derive from one base — `tsc --noEmit` is the only thing that
+ * can, and `tsconfig.json` already type-checks `tests/`.
+ *
+ * Falsifiable: remove a member from SQLiteQueryAPI's contribution to either
+ * surface, or add one to a surface without adding it to the base.
+ */
+const asQueryAPI = (surface: SQLiteQueryAPI) => surface;
+declare const pinnedClient: SQLiteDB;
+declare const pinnedTransaction: SQLiteTransactionDB;
+// biome-ignore lint/correctness/noConstantCondition: compile-time pin — never executed, type-checked only
+if (false) {
+  void asQueryAPI(pinnedClient);
+  void asQueryAPI(pinnedTransaction);
+}
 
 /**
  * The benchmark page enumerates VFS from the library at runtime instead of
@@ -37,6 +59,8 @@ describe('public entry', () => {
   it('still exposes the client and the error type', () => {
     expect(typeof api.createSQLiteClient).toBe('function');
     expect(typeof api.SQLiteError).toBe('function');
+    expect(typeof api.SQLiteBulkWriteError).toBe('function');
+    expect('BulkWriteError' in api).toBe(false);
   });
 
   // Falsifiable: drop the capabilities re-export from src/index.ts. The
