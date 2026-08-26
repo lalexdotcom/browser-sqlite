@@ -509,7 +509,7 @@ Use Serena's `rename_symbol` for each — it is reference-aware and updates ever
 Then, in the **implementation** signatures (not the types, which `api.ts` now owns):
 
 - `src/client.ts`: every `params?: any[]` becomes `params?: unknown[]`.
-- Every `Omit<SQLiteQueryOptions, 'chunkSize'>` disappears — the method takes plain `SQLiteQueryOptions`, which no longer has `chunkSize`. There are nine, in `client.ts` and `transaction.ts`.
+- Every `Omit<SQLiteQueryOptions, 'chunkSize'>` disappears — the method takes plain `SQLiteQueryOptions`, which no longer has `chunkSize`. There are nine today, but **six of them are inside the two type declarations you delete in Step 2** (three in `client.ts`'s `SQLiteDB`, three in `transaction.ts`'s `TransactionDB`) and vanish with them. Do not hunt for nine edits: delete the declarations first, then fix whatever `npx tsc --noEmit` still reports — three sites, all in `createTransaction`'s `db` literal.
 - `read`, `chunk` and `stream` take `SQLiteChunkOptions`.
 - `client.ts`'s `stream` must forward the caller's `chunkSize` to `streamRows`, which already accepts it (`queries.ts:72-83`). Confirm the options object reaches it unfiltered.
 - **`output`'s implementation signature loses its `any`s.** In `client.ts` the
@@ -653,7 +653,21 @@ const recorder = (locks: Locks = noOpLocks) => {
 };
 ```
 
-Then update every existing test in the file from `const { bulkWrite } = createBulk(deps)` to `const { bulkWrite } = target()`, and add:
+Then update every existing test in the file to the new shape. Most read
+`const { bulkWrite } = createBulk(deps)` and become `const { bulkWrite } = target()`.
+
+**One does not match that pattern and is easy to miss.** Task 2 added
+`'attempts the sweep once even when the lock is refused'`, which reads
+`const { output } = createBulk({ ...deps, locks })` — it had to, because
+`createBulk` was still one-stage when it was written. It becomes:
+
+```ts
+    const { attempts, locks } = refusing();
+    const { sql, forTarget, deps } = recorder(locks);
+    const { output } = forTarget(deps);
+```
+
+Add after the migration:
 
 ```ts
   // Falsifiable: move `swept` inside forTarget. Two targets from one client
