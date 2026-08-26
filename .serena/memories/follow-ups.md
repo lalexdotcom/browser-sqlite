@@ -5,9 +5,12 @@ record what was fixed. Evidence and numbers live in `mem:measurements`; VFS beha
 `mem:vfs`.
 
 > **Triage proposed 2026-08-26, awaiting the user's decision.** The "verdict" column is a
-> recommendation, not a decision. Nothing has been deleted or acted on. What *has* been
-> done is verification: four items below were found already fixed and unmarked, and are
+> recommendation, not a decision. Nothing has been deleted on the strength of it. What *has*
+> been done is verification: four items were found already fixed and unmarked, and are
 > annotated as such.
+>
+> Since then `feat/tx-query-surface` shipped and moved two entries on its own account —
+> `W-types` is nearly closed, `ABORT-1` is narrowed. Both are marked below.
 
 ## Designs owed — each needs its own brainstorming, none started
 
@@ -37,8 +40,13 @@ First observed consumer of the gap: the benchmark page's containment design. Bec
 abandons the *wait* without stopping the *work* — so the page has to abandon a whole column
 on that one row. When ABORT-1 lands, that special case disappears.
 
-Not blocking: no consumer on rc.3, and a caller wanting a bound today can chunk their own
-batches. **Verdict: keep.**
+**Narrowed 2026-08-26 by `feat/tx-query-surface`.** A caller who needs a bulk load to stop
+cleanly now has one answer that did not exist before: run it inside `transaction()`, where
+abandoning means rolling back. That does not close ABORT-1 — there is still no `signal` on
+either method, and the non-transactional path still has no bound — but it removes the case
+where the *only* remedy was to chunk your own batches by hand.
+
+Not blocking: no consumer on rc.3. **Verdict: keep.**
 
 ### DELETE-1 — there is no way to delete a database
 
@@ -247,11 +255,17 @@ reasoned about.
 
 ## Small and cheap
 
-### W-types — narrowed
+### W-types — nearly closed
 
-**Already done and unmarked:** `SQLiteVFS` is exported from `index.ts`. Still open:
-`SQLiteDB` is a hand-maintained duplicate, and the shipped `.d.ts` leaks unnameable
-internal types. **Verdict: keep.**
+**Closed 2026-08-26 by `feat/tx-query-surface`:** the two named instances of "the shipped
+`.d.ts` leaks unnameable internal types" are gone — `SQLiteQueryOptions` and
+`TransactionDB` (now `SQLiteTransactionDB`) both appeared in public signatures without
+being exported, and both are exported now. `SQLiteVFS` was already exported.
+
+`SQLiteDB` is still hand-written rather than derived from the implementation, but it is no
+longer a *duplicate* of anything: it and `SQLiteTransactionDB` share `SQLiteQueryAPI`, and
+a bidirectional compile-time pin fails the build if they drift. **Verdict: keep, but it is
+now one small item rather than three.**
 
 ### Cleanups — pruned 2026-08-26 against the source
 

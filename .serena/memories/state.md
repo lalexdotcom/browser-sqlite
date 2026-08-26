@@ -5,19 +5,50 @@ a new dated section under the old one.
 
 ## Right now
 
-`main` at `1783db7`, working tree clean, **not pushed** — `origin/main` sits behind on
-purpose (see `mem:conventions`). `package.json` still says `1.0.0-rc.3`; the bump to
-rc.4 has not been made.
+**`feat/tx-query-surface` is complete and awaiting the merge decision** — 15 commits,
+not merged, not pushed. `main` is at `d92ac71` and carries the memory reorganisation.
+`package.json` still says `1.0.0-rc.3`; the bump to rc.4 is the user's explicit call and
+has not been made.
 
-Last verified green on `main` (2026-08-24): `tsc --noEmit`, `biome check`, `pnpm build`,
-**308 tests** (unit + browser), consumer smoke 11/11. The conformance suite and the
-consumer smoke run on demand, not on every change.
+Verified on the branch, 2026-08-26: `tsc --noEmit` clean, `pnpm build` clean,
+**348 tests**, conformance 66 passed / 10 skipped, consumer smoke 11/11,
+`scripts/bench/check.mjs` OK. `dependencies` still empty.
 
 **The published version is 1.0.0-rc.3 (2026-03-26).** Everything since — waves 0 to 4,
-the VFS branch, the RYOW barrier, the benchmark page, the capability guard — is
-unreleased. `CHANGELOG.md` carries that delta and is the place to read it, not this file.
+the VFS branch, the RYOW barrier, the benchmark page, the capability guard, and this
+branch — is unreleased. `CHANGELOG.md` carries that delta and is the place to read it,
+not this file.
 
-## Last branch merged — `feat/vfs-required` (2026-08-26)
+## Last branch — `feat/tx-query-surface` (2026-08-26)
+
+**A transaction now carries the client's whole querying surface.** Before it, a caller who
+wanted to load rows atomically into an *existing* table had no path at all: `output()` only
+replaces a table, `bulkWrite()` commits per batch, and the transaction surface offered
+neither. `db.bulkWrite` stays streaming and non-atomic; `tx.bulkWrite` is bounded by the
+callback and rolls back with it.
+
+Four shapes worth not undoing:
+
+- **`SQLiteQueryAPI` is the shared base, and `tests/unit/exports.test.ts` pins it
+  bidirectionally.** The pin compares `Omit<SQLiteDB, extras>` against
+  `Omit<SQLiteTransactionDB, extras>` in **both** directions. A one-directional check —
+  "each surface is a superset of the base" — looks equivalent and is not: it stays green
+  when a method is added to one surface alone, which is exactly the drift the base exists
+  to prevent. **When a member moves between the base and a surface, its name must move in
+  or out of the extras lists**, or the pin silently stops watching it.
+- **`api.ts` is re-exported wholesale by `index.ts`.** That is deliberate: `types.ts` needs
+  a name list, and a name list is what someone forgets — which is how `SQLiteQueryOptions`
+  and `TransactionDB` ended up in the shipped `.d.ts` with no way for a consumer to name
+  them.
+- **`createBulk` is two stages, and the sweep memo lives in the outer one.** A transaction
+  builds its own target; a per-target memo would sweep on every `tx.output()` instead of
+  once per client.
+- **The sweep never waits.** `locks.tryWithLock` asks with `ifAvailable`. Waiting on that
+  lock inside an open transaction is a deadlock — reachable with **two clients in one tab**,
+  which the barrier already supports and tests. One behaviour everywhere beats an
+  "am I in a transaction?" flag threaded through the injection seam.
+
+## Previous branch — `feat/vfs-required` (2026-08-26)
 
 `vfs` is now required, and `src/capabilities.ts` holds the platform probes the library
 had declared but never run. One change, not two: a VFS decides where the bytes live, so a

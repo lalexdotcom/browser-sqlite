@@ -17,6 +17,7 @@ This file exists only so a date or a merge commit can be found without archaeolo
 | 2026-08-21 | `feat/writer-stickiness` | The writer designation released once nothing is queued (`e2f454b`), plus SUP-1 — a restarted slot holds a worker from spawn, not from ready (`07b075a`). Merge `4f215f8`. |
 | 2026-08-24 | `feat/vfs-capabilities` | `VFS_BUILDS` → `VFS_CAPABILITIES`, four more VFS wired, the conformance project, the generated README VFS table. |
 | 2026-08-25 | (same branch) | The benchmark page and its Pages publication; the device campaign; the WebKit `OPFSAnyContextVFS` patch; `IDBMirrorVFS` corrected to single-connection; the sourced browser baseline. |
+| 2026-08-26 | `feat/tx-query-surface` | A transaction gets the client's whole querying surface. `SQLiteQueryAPI` factors both surfaces so they cannot drift; the public type layer moves to `src/api.ts`; `createBulk` splits in two stages so the sweep memo stays per-client; `tryWithLock` stops the sweep waiting; `READ_ONLY_TRANSACTION`. Spec `2026-08-26-tx-query-surface-design.md`, plan of seven tasks, 15 commits, 348 tests. |
 | 2026-08-26 | `feat/vfs-required` | `vfs` required, `DEFAULT_VFS` unexported, `src/capabilities.ts` and the construction-time platform guard. 7 commits, merge `1783db7`. First `CHANGELOG.md`. |
 
 ## Where the specs are
