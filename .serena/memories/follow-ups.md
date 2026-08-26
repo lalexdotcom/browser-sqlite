@@ -232,8 +232,20 @@ somewhere to render a third state, a suite does not); and the page reopens the c
 client after `survives-reopen` and `close-settles`, because it runs every row against one
 client where the suite gets a fresh one per `it()`.
 
-**The real remaining risk is the export gap**, not the duplication — see `mem:state`.
-**Verdict: treat the export gap; keep the invariant note as documentation.**
+**The export gap is CLOSED, 2026-08-26 (`de3abdf`).** `tests/unit/exports.test.ts` reads
+every file that imports the entry **by path** — the benchmark page and the no-bundler
+consumer fixture — extracts the names it pulls out of `dist/index.js`, and asserts each one
+exists on the package entry. It runs in the Node unit project, so no browser and no CI
+change, and it leaves the page's single-file layout alone. Both falsifiability directions
+were executed: removing an export reddens it, and breaking the parse reddens the
+`names.length > 0` guard that stops it becoming a no-op.
+
+The scaffolded consumer apps are deliberately not covered by it: they import the bare
+specifier and the consumer smoke compiles them already.
+
+**What remains is documentation, not risk:** the six conformance invariants are duplicated
+between the page and `tests/conformance/`, permanently and by design, and `HAS_UNSAFE_HANDLES`
+has no synchronous equivalent in `src/`. **Verdict: keep as a note; there is nothing to fix.**
 
 ### BASELINE-1 — two residuals, both small
 

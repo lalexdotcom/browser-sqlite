@@ -95,12 +95,11 @@ Three shapes worth not undoing:
 
 ## Known live exposures
 
-- **The benchmark page is a package consumer with no compile-time guard.** When
-  `DEFAULT_VFS` stopped being exported, the page kept importing it and *nothing failed* —
-  not `tsc`, not the suite, because the page is HTML that no test loads.
-  `scripts/bench/check.mjs` is the only thing that would catch it and it is hand-run by
-  design. **Any change to the package's public exports must be checked against the page
-  by hand.** `tests/consumer-nobundler/index.html` has the same exposure.
+- ~~The benchmark page is a package consumer with no compile-time guard.~~ **Closed
+  2026-08-26 (`de3abdf`).** `tests/unit/exports.test.ts` now asserts that every name the
+  page — and `tests/consumer-nobundler/index.html` — imports from `dist/index.js` exists on
+  the package entry. Public exports no longer have to be checked against the page by hand.
+  Add any new by-path importer to that test's `PATH_IMPORTERS` list.
 - **One Pages site per repo, last deploy wins.** A manual dispatch from any `feat/*`
   branch replaces whatever the last release published. The rule was kept deliberately
   (2026-08-26, user) because dispatching onto a real device without merging is worth the
