@@ -10,6 +10,7 @@ import { createTestClient } from './helpers';
  * would pin nothing. Control before the barrier: 8/8 stale.
  */
 const forced = {
+  vfs: 'OPFSAdaptiveVFS' as const,
   poolSize: 2,
   __unsafeTestWriterPolicy: (i: number) => i !== 0,
 };

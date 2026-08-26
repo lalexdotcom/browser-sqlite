@@ -11,7 +11,9 @@
       import { createSQLiteClient } from '/node_modules/browser-sqlite/dist/index.js';
 
       async function run() {
-        const db = createSQLiteClient(`consumer-smoke-${crypto.randomUUID()}`);
+        const db = createSQLiteClient(`consumer-smoke-${crypto.randomUUID()}`, {
+          vfs: 'OPFSAdaptiveVFS',
+        });
 
         await db.write('CREATE TABLE smoke (id INTEGER PRIMARY KEY, label TEXT)');
         await db.write(

@@ -1,6 +1,12 @@
 import { afterEach, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import type { InternalSQLiteClientOptions } from '../../src/scheduler';
+import type { SQLiteVFS } from '../../src/types';
+
+/** Options for createTestClient — vfs defaults to OPFSAdaptiveVFS. */
+type TestClientOptions = Omit<InternalSQLiteClientOptions, 'name' | 'vfs'> & {
+  vfs?: SQLiteVFS;
+};
 
 /**
  * Creates a SQLite client with a unique database name (UUID) and registers
@@ -10,9 +16,7 @@ import type { InternalSQLiteClientOptions } from '../../src/scheduler';
  * VFS: OPFSAdaptiveVFS on the Asyncify build by default — do not pass `vfs`
  * or `build` unless the test is about VFS selection itself.
  */
-export async function createTestClient(
-  options?: Omit<InternalSQLiteClientOptions, 'name'>,
-) {
+export async function createTestClient(options: TestClientOptions = {}) {
   const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
 
   afterEach(async () => {
@@ -26,7 +30,11 @@ export async function createTestClient(
 
   // createSQLiteClient is synchronous — workers initialize in the background.
   // The first query queues until a worker reaches READY.
-  return createSQLiteClient(dbName, options);
+  const vfs: SQLiteVFS = options.vfs ?? 'OPFSAdaptiveVFS';
+  return createSQLiteClient(dbName, {
+    ...options,
+    vfs,
+  } as InternalSQLiteClientOptions);
 }
 
 export type WorkerRecord = {

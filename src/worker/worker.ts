@@ -115,7 +115,7 @@ const idleUntilQueryEnds = () => queryRunning?.promise ?? Promise.resolve();
 let closing = false;
 
 type OpenOptions = {
-  vfs?: SQLiteVFS;
+  vfs: SQLiteVFS;
   build?: SQLiteBuild;
   pragmas?: Record<string, string>;
 };
@@ -134,13 +134,13 @@ type OpenOptions = {
  * @param file - Normalized database file name passed from `createSQLiteClient`.
  * @param options - VFS selection and PRAGMA map.
  */
-const open = (file: string, options?: OpenOptions) => {
+const open = (file: string, options: OpenOptions) => {
   if (openedDB) {
     throw new Error('DB already opened');
   }
 
-  const { vfs = 'OPFSAdaptiveVFS', pragmas = {} } = options ?? {};
-  const build = options?.build ?? defaultBuildFor(vfs);
+  const { vfs, pragmas = {} } = options;
+  const build = options.build ?? defaultBuildFor(vfs);
 
   const vfsConfig = VFSConfigs[vfs];
 

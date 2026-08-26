@@ -3,7 +3,6 @@ export * from './errors';
 // Named rather than `export *`: the wire-protocol types in types.ts are
 // internal and must not reach the public surface.
 export {
-  DEFAULT_VFS,
   defaultBuildFor,
   type SQLiteBuild,
   type SQLiteVFS,

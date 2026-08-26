@@ -8,10 +8,12 @@ import * as api from '../../src/index';
  * public option that no consumer could name.
  */
 describe('public entry', () => {
-  // Falsifiable: remove the types re-export from src/index.ts.
-  it('exposes the capability table and its default-build helper', () => {
+  // Falsifiable: re-export DEFAULT_VFS from src/index.ts.
+  it('exposes the capability table and its default-build helper, but no default VFS', () => {
     expect(typeof api.VFS_CAPABILITIES).toBe('object');
     expect(typeof api.defaultBuildFor).toBe('function');
+    expect('DEFAULT_VFS' in api).toBe(false);
+    expect('RECOMMENDED_VFS' in api).toBe(false);
   });
 
   // Falsifiable: drop one VFS from VFS_CAPABILITIES.

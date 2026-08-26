@@ -314,8 +314,8 @@ describe('output() atomicity and sweep', () => {
     // Two clients share the same OPFS file so their sweeps interact.
     const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
     // The barrier now supplies the RYOW guarantee; that property is pinned in tests/browser/barrier.test.ts.
-    const dbA = createSQLiteClient(dbName);
-    const dbB = createSQLiteClient(dbName);
+    const dbA = createSQLiteClient(dbName, { vfs: 'OPFSAdaptiveVFS' });
+    const dbB = createSQLiteClient(dbName, { vfs: 'OPFSAdaptiveVFS' });
 
     onTestFinished(async () => {
       try {

@@ -1,4 +1,9 @@
 import { createBulk } from './bulk';
+import {
+  describeMissing,
+  detectFeatures,
+  missingFeature,
+} from './capabilities';
 import { type ClientDebugState, createClientDebug } from './debug';
 import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
 import { SQLiteError } from './errors';
@@ -20,8 +25,8 @@ import {
 import { createSupervisor } from './supervisor';
 import { createTransaction, type TransactionDB } from './transaction';
 import {
-  DEFAULT_VFS,
   defaultBuildFor,
+  RECOMMENDED_VFS,
   type SQLiteBuild,
   type SQLiteQueryOptions,
   type SQLiteVFS,
@@ -62,16 +67,16 @@ export type CreateSQLiteClientOptions = {
   poolSize?: number;
 
   /**
-   * Virtual File System implementation used for SQLite storage.
-   * Controls whether data is stored in OPFS, IndexedDB, or memory.
-   * See the README VFS Selection guide for a comparison.
-   * @defaultValue `'OPFSAdaptiveVFS'`
+   * Which VFS stores the database. Required: a VFS decides *where* the bytes
+   * live, and a database written through one VFS is not visible through
+   * another. See the README's VFS Selection guide.
    */
-  vfs?: SQLiteVFS;
+  vfs: SQLiteVFS;
   /**
    * Which wa-sqlite WebAssembly build to load. Defaults to the first entry of
    * `VFS_CAPABILITIES[vfs]` — `sync` where the VFS supports it, since it is both the
-   * fastest and the most portable, otherwise `async`. `jspi` is Chromium-only.
+   * fastest and the most portable, otherwise `async`. `jspi` needs engine
+   * support; see the README's Builds section for versions.
    *
    * @throws at construction when the build is not one the chosen VFS supports.
    */
@@ -384,7 +389,7 @@ export type SQLiteDB = {
  */
 export const createSQLiteClient = (
   file: string,
-  clientOptions?: CreateSQLiteClientOptions,
+  clientOptions: CreateSQLiteClientOptions,
 ) => {
   // One definition of database identity for the workers, the VFS, the epoch
   // registry, every lock name and the returned `db.debug.file`.
@@ -397,7 +402,16 @@ export const createSQLiteClient = (
   const poolSize = clientOptions?.poolSize ?? DEFAULT_POOL_SIZE;
   const pool: (PoolWorker | undefined)[] = [];
 
-  const vfs = clientOptions?.vfs ?? DEFAULT_VFS;
+  // Required, and thrown for rather than defaulted: a moving default would
+  // leave a consumer reading an empty database while their bytes sat in a VFS
+  // nothing queries.
+  if (!clientOptions?.vfs) {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      `vfs is required. ${RECOMMENDED_VFS} is the recommended universal choice and was the previous default — pass it to keep reading a database created before this version. Compare VFS in the README's VFS Selection guide, and measure your own targets at https://lalexdotcom.github.io/browser-sqlite/`,
+    );
+  }
+  const vfs = clientOptions.vfs;
   const build = clientOptions?.build ?? defaultBuildFor(vfs);
 
   const capability = VFS_CAPABILITIES[vfs];
@@ -416,6 +430,16 @@ export const createSQLiteClient = (
     throw new SQLiteError(
       'INVALID_OPTION',
       `${vfs} does not support pool sizes greater than ${capability.maxPoolSize}: ${capability.poolLimitReason}. Set poolSize: ${capability.maxPoolSize}.`,
+    );
+  }
+
+  // The engine, not the declaration. Without this the mismatch surfaces later
+  // as an opaque open-error from a worker that could not instantiate wasm.
+  const absent = missingFeature(vfs, build, detectFeatures());
+  if (absent) {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      describeMissing(vfs, build, absent),
     );
   }
 
