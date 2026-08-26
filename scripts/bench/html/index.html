@@ -35,6 +35,17 @@
         content: '·'; margin-left: var(--gap); opacity: 0.45;
       }
       .no { opacity: 0.55; }
+      /* A warning is not an absent capability: `.no` dims, which is right for a
+         feature this engine lacks and exactly wrong for the one line telling a
+         visitor the code under it is not the published package. Amber rather
+         than red — the page still works, it just is not what npm ships.
+         `prefers-color-scheme` rather than `light-dark()`, which postdates this
+         page's browser floor. */
+      .warn { font-weight: 600; color: #b45309; }
+      @media (prefers-color-scheme: dark) {
+        .warn { color: #f59e0b; }
+      }
+      .warn b { font-weight: 700; }
       /* One line, whatever the state: idle it holds a button, running it holds
          the step in flight and the way out of it. */
       #control {
@@ -372,7 +383,7 @@
       const buildBadge = () =>
         IS_RELEASE
           ? `<span><b>Build:</b> <a href="https://www.npmjs.com/package/browser-sqlite/v/${encodeURIComponent(LIB_VERSION)}" target="_blank" rel="noopener">browser-sqlite@${LIB_VERSION}</a> — the published package</span>`
-          : `<span class="no"><b>Build:</b> browser-sqlite ${LIB_VERSION} — <b>development build</b> (${BUILD_REF}), not the published package (<a href="https://www.npmjs.com/package/browser-sqlite" target="_blank" rel="noopener">npm</a>)</span>`;
+          : `<span class="warn">⚠ <b>Build:</b> browser-sqlite ${LIB_VERSION} — <b>development build</b> (${BUILD_REF}), not the published package (<a href="https://www.npmjs.com/package/browser-sqlite" target="_blank" rel="noopener">npm</a>)</span>`;
 
       // Two lines: what you are running on, then what it can do. The
       // capabilities carry a mark rather than a word because they are read at a
