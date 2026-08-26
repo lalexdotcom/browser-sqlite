@@ -69,6 +69,23 @@ export type WorkerMessageData =
 export type SQLiteBuild = 'sync' | 'async' | 'jspi';
 
 /**
+ * What each build needs from the engine beyond plain WebAssembly.
+ *
+ * `satisfies Record<SQLiteBuild, …>` and not `SQLiteBuild = keyof typeof …`:
+ * the check must run in this direction. Adding a build to the union then fails
+ * to compile until its requirements are declared, where `keyof` would let a
+ * forgotten entry mean silently that the build does not exist. `VFS_CAPABILITIES`
+ * derives `SQLiteVFS` from its keys because it *is* the VFS registry; the build
+ * registry is `WA_SQLITE_BUILDS` in the worker, and this table describes one
+ * attribute of builds rather than the builds themselves.
+ */
+export const BUILD_REQUIREMENTS = {
+  sync: [],
+  async: [],
+  jspi: ['jspi'],
+} as const satisfies Record<SQLiteBuild, readonly PlatformFeature[]>;
+
+/**
  * A platform feature a VFS may need. Which browser versions ship each one is
  * documentation data, not runtime data, so it lives in the README generator
  * (`scripts/render-vfs-matrix.ts`) with its sources — not here, where it would
