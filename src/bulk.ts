@@ -48,9 +48,18 @@ export const createBulk = (shared: {
 }) => {
   const { file, locks, maxVariables = 32766, logger } = shared;
 
-  // Net 2 of the three-net cleanup, and it lives HERE rather than in forTarget
-  // on purpose: a transaction builds its own target, so a per-target memo would
-  // sweep on every tx.output() instead of once per client.
+  // Net 2 of the three-net cleanup: orphans left by a closed tab or a crashed
+  // session.
+  //
+  // It runs at the FIRST output() of this client, never at open(). The writer is
+  // only designated lazily, on the first write, so a sweep at open would race
+  // the n workers. That is the argument against making it eager to make the
+  // first output() faster — an attractive idea that the two-stage split does
+  // NOT rule out on its own.
+  //
+  // The memo lives HERE rather than in forTarget on purpose: a transaction
+  // builds its own target, so a per-target memo would sweep on every
+  // tx.output() instead of once per client.
   let swept: Promise<void> | undefined;
 
   return (target: {
