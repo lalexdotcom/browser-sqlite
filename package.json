@@ -4,6 +4,12 @@
 	"description": "Browser SQLite with concurrent read / serial write isolation, backed by Web Workers and wa-sqlite",
 	"author": "LAlex",
 	"license": "MIT",
+	"sideEffects": [
+		"./dist/worker/worker.js"
+	],
+	"engines": {
+		"node": ">=18"
+	},
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/lalexdotcom/browser-sqlite.git"

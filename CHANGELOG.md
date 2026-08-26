@@ -81,6 +81,10 @@ with it.
 
 ### Changed
 
+- **The package declares `sideEffects` and `engines`.** `sideEffects` lists the
+  worker entry alone — it installs a message handler on import — so a bundler
+  may tree-shake everything else. `engines` states `node >= 18`.
+
 - **Cross-origin isolation is no longer required.** No COOP/COEP headers,
   anywhere — the `SharedArrayBuffer` is gone.
 - **No runtime dependencies.** wa-sqlite is vendored into the shipped worker at

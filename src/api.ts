@@ -87,6 +87,15 @@ export type SQLiteOutputWriter<SCHEMA extends Schema> = {
  * It exists so the two cannot drift: they had already done so, one taking
  * `any[]` where the other took `unknown[]`, and two different option types on
  * `chunk`. A method added to one is now added to both by construction.
+ *
+ * @remarks
+ * **The row type parameter is a claim, not a check.** `read<T>`, `first<T>`,
+ * `chunk<T>` and `stream<T>` cast SQLite's output to `T` and validate nothing:
+ * a column that is missing, renamed or of another type reaches you typed as if
+ * it were not. SQLite is dynamically typed and a query's shape is only known at
+ * runtime, so the alternative would be a schema the caller declares twice.
+ * Validate at the boundary if you need the guarantee — this is `as`, not a
+ * parser.
  */
 export type SQLiteQueryAPI = {
   /**

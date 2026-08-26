@@ -335,7 +335,7 @@ export const createSQLiteClient = (
   /**
    * The single owner of the request level of the debug tree.
    *
-   * There are seven acquisition sites; instrumenting each is seven chances to
+   * There are six acquisition sites; instrumenting each is six chances to
    * miss one. This wrapper stamps `acquireTime` (through `assign`) and
    * `releaseTime`, and is a pass-through when debug is off. Nothing outside it
    * calls `scheduler.acquire`. The barrier runs on the acquired lease before

@@ -14,7 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: lalexdotcom/action-release-and-publish@v1
+      # Pinned to a SHA, not the mutable v1 tag: this job holds NPM_TOKEN, and
+      # whoever can move that tag can move what runs with the token.
+      - uses: lalexdotcom/action-release-and-publish@447a5fa6494f463fd8fb001ebfe4f93b47f374bd # v1
         with:
           npm-token: ${{ secrets.NPM_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
