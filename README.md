@@ -314,7 +314,7 @@ Batches inserts to stay under SQLite's variable limit (`SQLITE_MAX_VARS`,
 remainder and resolves with the total number of rows written.
 
 Single-use: `enqueue()` and `close()` throw once closed. A batch that fails
-rejects with a `BulkWriteError` carrying `rowsWritten` and `rowsNotWritten` — a
+rejects with a `SQLiteBulkWriteError` carrying `rowsWritten` and `rowsNotWritten` — a
 multi-row INSERT is statement-atomic, so the failing batch wrote nothing.
 
 `bulkWrite()` is not atomic: batches are committed as they flush, so a failure leaves the rows already written in place. Call it on a `tx` if you need all-or-nothing.
