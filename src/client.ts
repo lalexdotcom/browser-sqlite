@@ -512,14 +512,8 @@ export const createSQLiteClient = (
     onPoisoned: (index, error) => handleDeath(index, error),
   });
 
-  const { bulkWrite, output } = createBulk({
-    write,
-    read,
-    transaction,
-    file: dbFile,
-    locks: createLocks(),
-    logger,
-  });
+  const bulkFor = createBulk({ file: dbFile, locks: createLocks(), logger });
+  const { bulkWrite, output } = bulkFor({ read, write, transaction });
 
   /** Bounds any settlement that depends on a worker answering. */
   const bounded = async (promise: Promise<unknown>, ms: number) => {
