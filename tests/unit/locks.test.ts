@@ -123,3 +123,66 @@ describe('initLockName', () => {
     expect(initLockName('a.db').startsWith('bsq:init:')).toBe(true);
   });
 });
+
+describe('tryWithLock', () => {
+  /**
+   * A LockManager stand-in. `ifAvailable: true` makes the real API invoke the
+   * callback with `null` when the lock is held elsewhere; `granted` chooses
+   * which of the two the fake plays.
+   */
+  const manager = (granted: boolean, seen?: unknown[]) => ({
+    request: async (_name: string, options: any, callback?: any) => {
+      const cb = typeof options === 'function' ? options : callback;
+      if (typeof options !== 'function') seen?.push(options);
+      return cb(granted ? {} : null);
+    },
+    query: async () => ({ held: [] as { name?: string }[] }),
+  });
+
+  it('does not run the callback when the lock is held elsewhere', async () => {
+    let ran = false;
+    const locks = createLocks(manager(false));
+
+    const acquired = await locks.tryWithLock('n', async () => {
+      ran = true;
+    });
+
+    expect(ran).toBe(false);
+    expect(acquired).toBe(false);
+  });
+
+  it('runs the callback when the lock is free', async () => {
+    let ran = false;
+    const locks = createLocks(manager(true));
+
+    const acquired = await locks.tryWithLock('n', async () => {
+      ran = true;
+    });
+
+    expect(ran).toBe(true);
+    expect(acquired).toBe(true);
+  });
+
+  // Falsifiable: drop `ifAvailable` from the request options. Without it the
+  // real API waits, which is the whole thing this method exists not to do —
+  // and no behavioural assertion above can see the difference against a fake.
+  it('asks for ifAvailable, which is what makes it never wait', async () => {
+    const seen: unknown[] = [];
+    const locks = createLocks(manager(true, seen));
+
+    await locks.tryWithLock('n', async () => {});
+
+    expect(seen[0]).toEqual({ mode: 'exclusive', ifAvailable: true });
+  });
+
+  it('runs the callback when the Web Locks API is absent', async () => {
+    let ran = false;
+
+    const acquired = await noOpLocks.tryWithLock('n', async () => {
+      ran = true;
+    });
+
+    expect(ran).toBe(true);
+    expect(acquired).toBe(true);
+  });
+});
