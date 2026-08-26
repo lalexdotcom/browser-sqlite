@@ -315,7 +315,9 @@ pushed — `origin/main` sits behind, deliberately.
   crash. The init path is short — the two candidates are the un-timeout'd `await
   probeUnsafeHandles()` and the unbounded `while (t1 === t0)` clock spin, both in
   `scripts/bench/html/index.html`. Triage: banner after 8 s → the probe; frozen page → the spin.
-- **The `feat/*` deployment rule** on the `github-pages` environment is still owed removal.
+- ~~The `feat/*` deployment rule is owed removal.~~ **Kept, decided 2026-08-26** — see §0.4.
+  Branch dispatch onto a real device is worth the exposure; the "development build" banner
+  is what carries the distinction.
 - **The upstream PR** is pushed but not opened; body drafted at `.work/PR-body.md` (gitignored).
 
 **Two working conventions the user corrected this session** — both are in the auto-memory, and
@@ -359,12 +361,14 @@ last deploy wins** — a manual dispatch from a branch replaces whatever the las
 The `github-pages` environment now allows `main`, `v*` (tag) and `feat/*`; the tag rule was missing
 and would have failed rc4 before its first step.
 
-**Owed, and easy to forget: remove the `feat/*` deployment rule once the pre-rc4 device testing is
-done** (user, 2026-08-25 — it was re-added on that day only so the page could be dispatched from
-the branch onto a real iPhone and an Android tablet). While it stands, any manual dispatch from a
-feature branch replaces the published site, and the only thing distinguishing the two is the
-page's own banner reading "development build". Settings → Environments → github-pages →
-Deployment branches and tags → Remove `feat/*`.
+**The `feat/*` deployment rule STAYS — decided 2026-08-26 (user), reversing the 2026-08-25 note
+that had it owed for removal.** It was re-added for pre-rc4 device testing, and the user kept it
+because dispatching the page from a branch onto a real device without merging to `main` is worth
+more than the exposure. **Know the exposure, because nothing in the repo prevents it:** one Pages
+site, last deploy wins, so a manual dispatch from any feature branch replaces whatever the last
+release published, and the only thing telling a visitor apart is the page's own banner reading
+"development build". That banner is therefore load-bearing — `buildRef()` in
+`scripts/bench/assemble.mjs` is not decoration, and its two independent signals exist for this.
 
 **What the campaign settled**, on real Chromium ×2, Firefox 154 and Safari 26.5.2 (macOS):
 
