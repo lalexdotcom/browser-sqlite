@@ -45,13 +45,16 @@ with it.
 
 ### Added
 
+- **`bulkWrite()` and `output()` are available on a transaction.** A bulk load
+  inside `transaction()` is atomic: it rolls back with everything else. Outside
+  one, `bulkWrite()` stays streaming and commits per batch.
 - The public type layer is exported: `SQLiteQueryAPI`, the two surfaces deriving
   from it, and every option, result and writer type they use. `stream()` now
   accepts `chunkSize`, which bounds how far the worker may run ahead.
 - `chunk()` — the chunk-wise read primitive every other read method is layered
   on, and the single place an `AbortSignal` is honoured.
 - `signal` on every query method.
-- `SQLiteError` with a `code` discriminant, and `BulkWriteError` carrying
+- `SQLiteError` with a `code` discriminant, and `SQLiteBulkWriteError` carrying
   `rowsWritten` / `rowsNotWritten`.
 - `build` option — choose the wa-sqlite WASM build (`sync`, `async`, `jspi`),
   validated at construction.

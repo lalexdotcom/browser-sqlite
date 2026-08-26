@@ -165,7 +165,7 @@ export type SQLiteQueryAPI = {
    *
    * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
    * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`signal`).
+   * @param options - Optional query options (`chunkSize`, `signal`).
    * @returns AsyncGenerator yielding individual rows of type `T`.
    */
   stream: <T extends Record<string, unknown>>(
@@ -192,15 +192,18 @@ export type SQLiteQueryAPI = {
     params?: unknown[],
     options?: SQLiteQueryOptions,
   ) => Promise<T | undefined>;
-};
 
-export type SQLiteDB = SQLiteQueryAPI & {
   /**
    * Creates a buffered bulk-insert utility that batches rows to stay within
    * SQLite's variable limit (`SQLITE_MAX_VARS = 32766`).
    *
    * Call `enqueue()` for each row to insert, then `close()` to flush the
    * remaining buffer and await completion.
+   *
+   * @remarks
+   * **`bulkWrite()` is not atomic:** batches are committed as they flush, so a
+   * failure leaves the rows already written in place. Call it on a `tx` if you
+   * need all-or-nothing.
    *
    * @param table - Target table name.
    * @param keys - Column names for the INSERT statement.
@@ -219,23 +222,31 @@ export type SQLiteDB = SQLiteQueryAPI & {
    *
    * Useful for full-refresh ETL patterns where a table is rebuilt from scratch.
    *
+   * @remarks
+   * **Inside a transaction, `output()` costs more than it looks.** On its own it
+   * loads rows outside any transaction and holds the write lock only for the
+   * final swap. Called on a `tx`, the entire load runs inside your transaction —
+   * every other write, in this tab and in others, waits for it to finish.
+   *
    * @param table - Table name to drop and recreate.
    * @param schema - Column definition map. Values are SQL type strings or
    *   objects with `{ type, required?, unique?, generated? }`.
    * @param options - `indexes` array for index creation after the swap.
    * @returns Object with `enqueue(data)` and `close()` following the same
-   *   contract as {@link SQLiteDB.bulkWrite}.
+   *   contract as {@link SQLiteQueryAPI.bulkWrite}.
    */
   output: <SCHEMA extends Schema>(
     table: string,
     schema: SCHEMA,
     options?: SQLiteOutputOptions<SCHEMA>,
   ) => SQLiteOutputWriter<SCHEMA>;
+};
 
+export type SQLiteDB = SQLiteQueryAPI & {
   /**
    * Executes a callback within a SQLite transaction, providing a scoped
    * `SQLiteTransactionDB` with `read`, `write`, `chunk`, `stream`, `first`,
-   * `commit`, and `rollback` methods.
+   * `bulkWrite`, `output`, `commit`, and `rollback` methods.
    *
    * The worker is held exclusively for the transaction's duration.
    * On callback success: auto-commits if `autoCommit` is `true` (default).

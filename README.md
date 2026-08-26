@@ -93,6 +93,8 @@ it: the transaction is genuinely isolated, not merely wrapped in `BEGIN`.
 Returning commits, throwing rolls back and re-throws. `{ readOnly: true }`
 rejects write statements; `{ autoCommit: false }` leaves the commit to you.
 
+`tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit` and `rollback`.
+
 ### Close
 
 ```typescript
@@ -315,6 +317,8 @@ Single-use: `enqueue()` and `close()` throw once closed. A batch that fails
 rejects with a `BulkWriteError` carrying `rowsWritten` and `rowsNotWritten` — a
 multi-row INSERT is statement-atomic, so the failing batch wrote nothing.
 
+`bulkWrite()` is not atomic: batches are committed as they flush, so a failure leaves the rows already written in place. Call it on a `tx` if you need all-or-nothing.
+
 ### output
 
 ```typescript
@@ -332,6 +336,8 @@ staging table and the swap happens atomically at `close()`, so **the previous
 table stays intact and fully populated until the new one is ready** — a reader
 querying mid-load sees the old data, never a half-filled table. A target that
 did not exist appears only at `close()`. Single-use, like `bulkWrite`.
+
+**Inside a transaction, `output()` costs more than it looks.** On its own it loads rows outside any transaction and holds the write lock only for the final swap. Called on a `tx`, the entire load runs inside your transaction — every other write, in this tab and in others, waits for it to finish.
 
 ### Options
 

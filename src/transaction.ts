@@ -1,8 +1,10 @@
 import type {
   SQLiteChunkOptions,
+  SQLiteQueryAPI,
   SQLiteQueryOptions,
   SQLiteTransactionDB,
 } from './api';
+import type { ReadFn, TransactionFn, WriteFn } from './bulk';
 import { SQLiteError } from './errors';
 import type { PoolWorker } from './pool';
 import {
@@ -40,6 +42,20 @@ export const createTransaction =
      * connection is transaction-free by construction.
      */
     onPoisoned: (index: number, error: SQLiteError) => void;
+    /**
+     * The client's bulk factory. Called per transaction with the transaction's
+     * own read/write and a pass-through `transaction`, so output()'s swap runs
+     * on the caller's transaction instead of opening a BEGIN SQLite does not
+     * allow.
+     */
+    bulkFor: (target: {
+      read: ReadFn;
+      write: WriteFn;
+      transaction: TransactionFn;
+    }) => {
+      bulkWrite: SQLiteQueryAPI['bulkWrite'];
+      output: SQLiteQueryAPI['output'];
+    };
   }) =>
   async <T = void>(
     callback: (db: SQLiteTransactionDB) => Promise<T>,
@@ -56,6 +72,15 @@ export const createTransaction =
     };
 
     let done = false;
+
+    const bulk = deps.bulkFor({
+      read: (sql, params, options) =>
+        readWorker(worker, checksql(sql), params, options),
+      write: (sql, params, options) =>
+        writeWorker(worker, checksql(sql), params, options),
+      // The caller's transaction is already open. No BEGIN, no COMMIT.
+      transaction: (fn) => fn(db),
+    });
 
     const db: SQLiteTransactionDB = {
       read: <T extends Record<string, unknown>>(
@@ -87,6 +112,9 @@ export const createTransaction =
         params?: unknown[],
         options?: SQLiteQueryOptions,
       ) => firstWorker<T>(worker, checksql(sql), params, options),
+
+      bulkWrite: bulk.bulkWrite,
+      output: bulk.output,
 
       commit: async () => {
         await exec(worker, 'COMMIT');

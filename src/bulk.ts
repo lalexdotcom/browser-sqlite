@@ -17,15 +17,19 @@ import {
 // Structural, and deliberately narrower than SQLiteQueryAPI: bulk needs only
 // these three calls, and requiring the full surface would make every unit test
 // build a complete stub to exercise a single INSERT.
-type WriteFn = (
+export type WriteFn = (
   sql: string,
   params?: any[],
   options?: any,
 ) => Promise<{ result: any[]; affected: number }>;
 
-type ReadFn = (sql: string, params?: any[], options?: any) => Promise<any[]>;
+export type ReadFn = (
+  sql: string,
+  params?: any[],
+  options?: any,
+) => Promise<any[]>;
 
-type TransactionFn = <T>(
+export type TransactionFn = <T>(
   callback: (db: {
     write: (
       sql: string,
