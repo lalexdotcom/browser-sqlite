@@ -16,7 +16,7 @@ import { createSQLiteClient } from 'browser-sqlite';
 
 const db = createSQLiteClient('myapp.sqlite', {
   poolSize: 2,                    // number of worker threads (default: 2)
-  vfs: 'OPFSAdaptiveVFS',         // VFS selection (default: 'OPFSAdaptiveVFS')
+  vfs: 'OPFSAdaptiveVFS',         // required — see VFS Selection
   build: 'async',                 // wa-sqlite build (default: the VFS's first)
   pragmas: {                      // SQLite PRAGMAs applied on open
     journal_mode: 'WAL',
