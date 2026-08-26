@@ -26,6 +26,16 @@ export type Locks = {
   hold: (name: string) => Promise<() => void>;
   /** Runs `fn` while holding `name` exclusively. */
   withLock: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
+  /**
+   * Runs `fn` while holding `name`, or skips it entirely when the lock is held
+   * elsewhere. Never waits — which is the point: the staging sweep is
+   * opportunistic, and awaiting this lock inside an open transaction would
+   * hold SQLite's write lock while waiting on a holder that may itself be
+   * waiting for that write lock.
+   *
+   * Resolves `true` if `fn` ran, `false` if it was skipped.
+   */
+  tryWithLock: (name: string, fn: () => Promise<unknown>) => Promise<boolean>;
   /** Names currently held anywhere in this origin — every tab included. */
   heldNames: () => Promise<string[]>;
 };
@@ -64,6 +74,10 @@ export const noOpLocks: Locks = {
   available: false,
   hold: async () => () => {},
   withLock: async (_name, fn) => fn(),
+  tryWithLock: async (_name, fn) => {
+    await fn();
+    return true;
+  },
   heldNames: async () => [],
 };
 
@@ -91,6 +105,20 @@ export const createLocks = (
       }),
     withLock: <T>(name: string, fn: () => Promise<T>) =>
       manager.request(name, { mode: 'exclusive' }, () => fn()) as Promise<T>,
+    tryWithLock: async (name, fn) => {
+      let ran = false;
+      await manager.request(
+        name,
+        { mode: 'exclusive', ifAvailable: true },
+        async (lock) => {
+          // `ifAvailable` hands the callback null instead of waiting.
+          if (!lock) return;
+          ran = true;
+          await fn();
+        },
+      );
+      return ran;
+    },
     heldNames: async () => {
       const snapshot = await manager.query();
       return (snapshot.held ?? [])

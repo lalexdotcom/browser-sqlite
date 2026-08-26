@@ -1,3 +1,10 @@
+import type {
+  SQLiteChunkOptions,
+  SQLiteQueryAPI,
+  SQLiteQueryOptions,
+  SQLiteTransactionDB,
+} from './api';
+import type { ReadFn, TransactionFn, WriteFn } from './bulk';
 import { SQLiteError } from './errors';
 import type { PoolWorker } from './pool';
 import {
@@ -8,38 +15,7 @@ import {
   writeWorker,
 } from './queries';
 import type { Scheduler } from './scheduler';
-import type { SQLiteQueryOptions } from './types';
 import { isWriteQuery } from './utils';
-
-export type TransactionDB = {
-  read: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-    options?: SQLiteQueryOptions<T>,
-  ) => Promise<T[]>;
-  write: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-    options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
-  ) => Promise<{ result: T[]; affected: number }>;
-  chunk: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-    options?: SQLiteQueryOptions<T>,
-  ) => AsyncGenerator<T[]>;
-  stream: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-    options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
-  ) => AsyncGenerator<T>;
-  first: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-    options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
-  ) => Promise<T | undefined>;
-  commit: () => Promise<void>;
-  rollback: () => Promise<void>;
-};
 
 // Drains a statement that returns no rows (BEGIN, COMMIT, ROLLBACK) without
 // the chunkSize-1 + break overhead of firstWorker.
@@ -51,7 +27,7 @@ const exec = async (worker: PoolWorker, sql: string): Promise<void> => {
  * Returns the `transaction()` method for a SQLiteDB instance.
  *
  * The returned function acquires exactly one lease for the full lifetime of
- * the transaction. All TransactionDB methods call worker-bound derivations
+ * the transaction. All SQLiteTransactionDB methods call worker-bound derivations
  * directly — never the public API — so no secondary lease acquisition can
  * occur during the callback.
  */
@@ -66,9 +42,23 @@ export const createTransaction =
      * connection is transaction-free by construction.
      */
     onPoisoned: (index: number, error: SQLiteError) => void;
+    /**
+     * The client's bulk factory. Called per transaction with the transaction's
+     * own read/write and a pass-through `transaction`, so output()'s swap runs
+     * on the caller's transaction instead of opening a BEGIN SQLite does not
+     * allow.
+     */
+    bulkFor: (target: {
+      read: ReadFn;
+      write: WriteFn;
+      transaction: TransactionFn;
+    }) => {
+      bulkWrite: SQLiteQueryAPI['bulkWrite'];
+      output: SQLiteQueryAPI['output'];
+    };
   }) =>
   async <T = void>(
-    callback: (db: TransactionDB) => Promise<T>,
+    callback: (db: SQLiteTransactionDB) => Promise<T>,
     options?: { readOnly?: boolean; autoCommit?: boolean },
   ): Promise<T> => {
     const { readOnly = false, autoCommit = true } = options ?? {};
@@ -77,42 +67,75 @@ export const createTransaction =
 
     const checksql = (sql: string): string => {
       if (readOnly && isWriteQuery(sql))
-        throw new Error('Cannot write in read-only transaction');
+        throw new SQLiteError(
+          'READ_ONLY_TRANSACTION',
+          'Cannot write in a read-only transaction.',
+        );
       return sql;
     };
 
     let done = false;
 
-    const db: TransactionDB = {
+    // Guarded at the call, not at the first flush. bulkWrite buffers, so the
+    // failure would otherwise surface once the buffer overflows — and for
+    // output() later still, trapped inside the createStaging promise.
+    const refuse = (method: string) => (): never => {
+      throw new SQLiteError(
+        'READ_ONLY_TRANSACTION',
+        `${method}() writes, and this transaction is read-only.`,
+      );
+    };
+
+    const bulk = readOnly
+      ? {
+          bulkWrite: refuse('bulkWrite') as SQLiteQueryAPI['bulkWrite'],
+          output: refuse('output') as SQLiteQueryAPI['output'],
+        }
+      : deps.bulkFor({
+          read: (sql, params, options) =>
+            readWorker(worker, checksql(sql), params, options),
+          write: (sql, params, options) =>
+            writeWorker(worker, checksql(sql), params, options),
+          // The caller's transaction is already open. No BEGIN, no COMMIT.
+          // db is referenced before its const declaration, deliberately: this arrow
+          // only runs when output().close() fires, by which point db is assigned.
+          // Moving `bulk` below `const db` breaks the literal that consumes it.
+          transaction: (fn) => fn(db),
+        });
+
+    const db: SQLiteTransactionDB = {
       read: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: SQLiteQueryOptions<T>,
+        options?: SQLiteChunkOptions,
       ) => readWorker<T>(worker, checksql(sql), params, options),
 
       write: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
+        options?: SQLiteQueryOptions,
       ) => writeWorker<T>(worker, checksql(sql), params, options),
 
       chunk: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: SQLiteQueryOptions<T>,
+        options?: SQLiteChunkOptions,
       ) => chunkWorker<T>(worker, checksql(sql), params, options),
 
       stream: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
+        options?: SQLiteChunkOptions,
       ) => streamRows<T>(worker, checksql(sql), params, options),
 
       first: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
+        options?: SQLiteQueryOptions,
       ) => firstWorker<T>(worker, checksql(sql), params, options),
+
+      bulkWrite: bulk.bulkWrite,
+      output: bulk.output,
 
       commit: async () => {
         await exec(worker, 'COMMIT');

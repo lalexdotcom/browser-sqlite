@@ -10,6 +10,14 @@ with it.
 
 ### Breaking
 
+- **`TransactionDB` is now `SQLiteTransactionDB`, and it is exported.** It
+  appeared in `transaction()`'s signature without a consumer being able to name
+  it.
+- **`BulkWriteError` is now `SQLiteBulkWriteError`.**
+- **`SQLiteQueryOptions` no longer carries `chunkSize`.** The methods that
+  stream take `SQLiteChunkOptions`; the others take `SQLiteQueryOptions`.
+- **`output()` is typed.** Its options and the rows passed to `enqueue` were
+  `any`; a call that passed a mistyped row now stops compiling.
 - **`vfs` is now required.** If you relied on the default, pass
   `vfs: 'OPFSAdaptiveVFS'` to keep reading your existing database. A VFS decides
   where the bytes live, so a default that moved between versions would leave you
@@ -28,15 +36,28 @@ with it.
   and is invisible to the rest of the pool.
 - **`bulkWrite()` and `output()` are single-use.** Enqueueing after `close()`
   throws rather than buffering rows nothing will flush.
+- **`SQLiteQueryOptions` lost its type parameter and two fields that did
+  nothing.** `id` and `debug` were declared on every query method and read
+  nowhere. Code that passed them keeps behaving identically; it simply stops
+  compiling.
 - **`OPFSPermutedVFS` is removed.** It measured 24 % stale cross-connection
   reads and is deprecated upstream.
 
 ### Added
 
+- `SQLiteError` code `READ_ONLY_TRANSACTION`, raised when a write, `bulkWrite()`
+  or `output()` is attempted in a `readOnly` transaction. `bulkWrite()` and
+  `output()` refuse at the call rather than at the first flush.
+- **`bulkWrite()` and `output()` are available on a transaction.** A bulk load
+  inside `transaction()` is atomic: it rolls back with everything else. Outside
+  one, `bulkWrite()` stays streaming and commits per batch.
+- The public type layer is exported: `SQLiteQueryAPI`, the two surfaces deriving
+  from it, and every option, result and writer type they use. `stream()` now
+  accepts `chunkSize`, which bounds how far the worker may run ahead.
 - `chunk()` — the chunk-wise read primitive every other read method is layered
   on, and the single place an `AbortSignal` is honoured.
 - `signal` on every query method.
-- `SQLiteError` with a `code` discriminant, and `BulkWriteError` carrying
+- `SQLiteError` with a `code` discriminant, and `SQLiteBulkWriteError` carrying
   `rowsWritten` / `rowsNotWritten`.
 - `build` option — choose the wa-sqlite WASM build (`sync`, `async`, `jspi`),
   validated at construction.
@@ -78,6 +99,8 @@ with it.
 
 ### Fixed
 
+- A write in a read-only transaction threw a bare `Error`, the only guard in the
+  library that escaped the `code` discriminant.
 - **Exclusivity.** A borrowed worker could be handed to a concurrent read, so a
   query could execute inside someone else's open transaction. Availability now
   lives behind opaque leases and is unreachable from outside the scheduler.

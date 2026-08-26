@@ -28,6 +28,10 @@ const harness = (worker: ReturnType<typeof fakeWorker>) => {
     scheduler: scheduler as never,
     afterWrite: () => {},
     onPoisoned: (index: number) => poisoned.push(index),
+    bulkFor: () => ({
+      bulkWrite: () => ({ enqueue: () => {}, close: async () => 0 }),
+      output: () => ({ enqueue: () => {}, close: async () => 0 }),
+    }),
   });
   return { transaction, poisoned };
 };

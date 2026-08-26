@@ -16,7 +16,7 @@ import { createSQLiteClient } from 'browser-sqlite';
 
 const db = createSQLiteClient('myapp.sqlite', {
   poolSize: 2,                    // number of worker threads (default: 2)
-  vfs: 'OPFSAdaptiveVFS',         // VFS selection (default: 'OPFSAdaptiveVFS')
+  vfs: 'OPFSAdaptiveVFS',         // required — see VFS Selection
   build: 'async',                 // wa-sqlite build (default: the VFS's first)
   pragmas: {                      // SQLite PRAGMAs applied on open
     journal_mode: 'WAL',
@@ -92,6 +92,8 @@ One worker is held for the callback's whole lifetime, so nothing else can run on
 it: the transaction is genuinely isolated, not merely wrapped in `BEGIN`.
 Returning commits, throwing rolls back and re-throws. `{ readOnly: true }`
 rejects write statements; `{ autoCommit: false }` leaves the commit to you.
+
+`tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit` and `rollback`.
 
 ### Close
 
@@ -312,8 +314,10 @@ Batches inserts to stay under SQLite's variable limit (`SQLITE_MAX_VARS`,
 remainder and resolves with the total number of rows written.
 
 Single-use: `enqueue()` and `close()` throw once closed. A batch that fails
-rejects with a `BulkWriteError` carrying `rowsWritten` and `rowsNotWritten` — a
+rejects with a `SQLiteBulkWriteError` carrying `rowsWritten` and `rowsNotWritten` — a
 multi-row INSERT is statement-atomic, so the failing batch wrote nothing.
+
+`bulkWrite()` is not atomic: batches are committed as they flush, so a failure leaves the rows already written in place. Call it on a `tx` if you need all-or-nothing.
 
 ### output
 
@@ -333,12 +337,14 @@ table stays intact and fully populated until the new one is ready** — a reader
 querying mid-load sees the old data, never a half-filled table. A target that
 did not exist appears only at `close()`. Single-use, like `bulkWrite`.
 
+**Inside a transaction, `output()` costs more than it looks.** On its own it loads rows outside any transaction and holds the write lock only for the final swap. Called on a `tx`, the entire load runs inside your transaction — every other write, in this tab and in others, waits for it to finish.
+
 ### Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `poolSize` | `number` | `2` | Number of Web Workers spawned in the pool. A larger pool allows more concurrent reads but uses more memory. Must be `1` with `AccessHandlePoolVFS`. |
-| `vfs` | `SQLiteVFS` | `'OPFSAdaptiveVFS'` | VFS implementation for storage. See the [VFS Selection](#vfs-selection) table. |
+| `vfs` | `SQLiteVFS` | — (required) | VFS implementation for storage. See the [VFS Selection](#vfs-selection) table. |
 | `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite WebAssembly build to load: `'sync'`, `'async'`, or `'jspi'`. Throws `INVALID_OPTION` at construction if the VFS does not support it. See [Builds](#builds). |
 | `pragmas` | `Record<string, string>` | `undefined` | SQLite PRAGMAs applied to each worker connection on open. |
 | `maxWorkerRestarts` | `number` | `1` | How many times a slot may be restarted after it dies. A slot that never reached readiness is never restarted — an initial failure is deterministic and restarting only delays the diagnostic. The counter resets once a replacement has actually served a request. |
@@ -358,6 +364,7 @@ Errors raised by this library are instances of `SQLiteError`, exported from the 
 | `TIMEOUT` | A worker did not post `ready` within `openTimeout` milliseconds. The most common cause is a database held under an exclusive lock by another tab or client. |
 | `PROTOCOL_ERROR` | A message was received from a worker that could not be deserialized (`messageerror`). The worker survives; only the in-flight request is rejected. |
 | `BUSY` | SQLite reported a lock conflict (`SQLITE_BUSY` or `SQLITE_LOCKED`); the numeric SQLite code is on `sqliteCode`. The operation is not retried. |
+| `READ_ONLY_TRANSACTION` | raised when a write statement, `bulkWrite()` or `output()` is used inside a transaction opened with `readOnly: true`. |
 
 ```typescript
 import { SQLiteError } from 'browser-sqlite';

@@ -42,11 +42,11 @@ Four projects. `pnpm test` runs the first two.
 | Project | Where | What |
 |---|---|---|
 | `unit` | `tests/unit/` (15 files) | Node, pure logic — bulk, capabilities, credits, debug, epochs, errors, exports, locks, logger, quoting, routing, scheduler, supervisor, transaction, utils |
-| `browser` | `tests/browser/` (15 files + `helpers.ts`) | Real Chromium via Playwright. `createTestClient(options?)` gives a unique OPFS name and an `afterEach` cleanup |
+| `browser` | `tests/browser/` (16 files + `helpers.ts`) | Real Chromium via Playwright. `createTestClient(options?)` gives a unique OPFS name and an `afterEach` cleanup |
 | `conformance` | `tests/conformance/` | On demand: every declared (vfs, build) pair through six invariants. `pnpm test:conformance` |
 | `consumer` | `scripts/consumer-smoke.mjs` | On demand: packs the tarball into two temp app dirs **outside** the repo and drives four modes — Vite dev, Vite build+preview, rsbuild preview, no-bundler static serve. Plus a static bare-specifier assertion over `dist/**/*.js`. `pnpm test:consumer` |
 
-308 tests green on `main`, 2026-08-24. **No COOP/COEP headers anywhere** since the SAB was
+348 tests green on `feat/tx-query-surface`, 2026-08-26 (`main` is at 334). **No COOP/COEP headers anywhere** since the SAB was
 removed — if you find a reference to them in a config, it is stale.
 
 Two rstest facts that cost time:

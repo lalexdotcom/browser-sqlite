@@ -7,36 +7,40 @@ thing worth preserving.
 
 Stack, build output and test tooling: `mem:stack-and-build`. VFS: `mem:vfs`.
 
-## Layout — line counts verified 2026-08-26
+## Layout — line counts verified 2026-08-26 (post `feat/tx-query-surface`)
 
 | File | Lines | Role |
 |---|---|---|
-| `client.ts` | 884 | **Assembly only**: options, validation, wiring, the public `SQLiteDB` surface, `close()`. Holds `DEFAULT_POOL_SIZE = 2` (`:47`), the vfs/build guard, `applyBarrier` (`:506`) and `acquireInstrumented` (`:562`) — **the single choke point through which every read, write, transaction and bulk acquires a lease**, which is what makes the barrier one wrapper rather than six. |
+| `api.ts` | 318 | **The public type layer, and the only module `index.ts` re-exports wholesale.** `SQLiteQueryAPI` is the querying surface; `SQLiteDB` and `SQLiteTransactionDB` are it plus their own extras. Everything here is public by construction, which is what stops the leak that made `SQLiteQueryOptions` and `TransactionDB` unnameable — a name list in `types.ts` is what you forget to update. |
+| `client.ts` | 659 | **Assembly only**: options, validation, wiring, the public `SQLiteDB` surface, `close()`. Holds `DEFAULT_POOL_SIZE = 2` (`:47`), the vfs/build guard, `applyBarrier` (`:506`) and `acquireInstrumented` (`:562`) — **the single choke point through which every read, write, transaction and bulk acquires a lease**, which is what makes the barrier one wrapper rather than six. |
 | `capabilities.ts` | 121 | `detectFeatures` / `missingFeature` / `describeMissing`, `BUILD_REQUIREMENTS`, `UNPROBEABLE`. Public: the first two only. |
-| `types.ts` | 315 | Wire protocol, `SQLiteQueryOptions`, and **`VFS_CAPABILITIES` — the single source of truth** the client guard, the conformance suite, the README generator and the benchmark page all read. `SQLiteVFS` derives from its keys. |
-| `errors.ts` | 60 | `SQLiteError extends Error` with `code` and `name` mirroring it, plus `BulkWriteError`. Ten codes: `NOT_A_READ_QUERY`, `CLIENT_CLOSED`, `WORKER_CRASHED`, `TIMEOUT`, `PROTOCOL_ERROR`, `INVALID_IDENTIFIER`, `INVALID_OPTION`, `INVALID_PRAGMA`, `BULK_WRITE_FAILED`, `BUSY`. |
+| `types.ts` | 300 | Wire protocol, `SQLiteQueryOptions`, and **`VFS_CAPABILITIES` — the single source of truth** the client guard, the conformance suite, the README generator and the benchmark page all read. `SQLiteVFS` derives from its keys. |
+| `errors.ts` | 61 | `SQLiteError extends Error` with `code` and `name` mirroring it, plus `SQLiteBulkWriteError`. Eleven codes: `NOT_A_READ_QUERY`, `CLIENT_CLOSED`, `WORKER_CRASHED`, `TIMEOUT`, `PROTOCOL_ERROR`, `INVALID_IDENTIFIER`, `INVALID_OPTION`, `INVALID_PRAGMA`, `BULK_WRITE_FAILED`, `BUSY`, `READ_ONLY_TRANSACTION`. |
 | `scheduler.ts` | 274 | **Pure** — availability (a private `Set`), both wait queues, writer designation, opaque leases, `remove(index)`, `shutdown(reason)`, per-index generation counter. No `Worker`, no DOM. **This purity is load-bearing: B1 survived for months because the scheduler was only reachable through slow browser tests.** |
-| `pool.ts` | 458 | Worker creation and transport: `postMessage`/`onmessage` routed by `callId`, the raw query generator, the stop-and-drain that waits for the worker's in-flight `done` before a lease returns, `onerror`/`messageerror`, the `close` handshake, the per-worker `status` field. |
+| `pool.ts` | 456 | Worker creation and transport: `postMessage`/`onmessage` routed by `callId`, the raw query generator, the stop-and-drain that waits for the worker's in-flight `done` before a lease returns, `onerror`/`messageerror`, the `close` handshake, the per-worker `status` field. |
 | `supervisor.ts` | 94 | Pure per-slot restart policy, zero imports. A slot holds a worker **from `spawned`, not from `ready`** — that is SUP-1's fix. Restart counter resets on a request actually served; eviction leaving no live slot fails the client; `evicted` is permanent against a late `ready`. |
 | `queries.ts` | 167 | `chunk()` — the single query primitive and **the only place an `AbortSignal` is read** — plus `streamRows`/`readWorker`/`firstWorker`/`writeWorker` and `makeAbortRace`. |
-| `transaction.ts` | 177 | `transaction()` over a single lease held for its whole lifetime. Evicts a worker whose fallback `ROLLBACK` failed. |
-| `bulk.ts` | 336 | `bulkWrite()` + `output()`. Calls the **public** `write` — one lease per batch, worker released between batches. Do not consolidate it into one held lease; multi-tab safety depends on it. |
+| `transaction.ts` | 200 | `transaction()` over a single lease held for its whole lifetime. Evicts a worker whose fallback `ROLLBACK` failed. |
+| `bulk.ts` | 334 | `bulkWrite()` + `output()`. Calls the **public** `write` — one lease per batch, worker released between batches. Do not consolidate it into one held lease; multi-tab safety depends on it. |
 | `credits.ts` | 94 | The pure credit gate. `createCreditGate(tick)`, `createMessageChannelTick`, `DEFAULT_CREDIT_WINDOW = 2`. |
 | `epochs.ts` | 89 | The barrier's state: a per-database commit epoch in the realm-wide symbol registry (`Symbol.for('browser-sqlite.epochs.v1')`), so every client in a tab shares it. `epochsFor`, `advanceSeen`, `BARRIER_SQL`. |
 | `debug.ts` | 236 | Instrumentation behind the `debug` option. Both histories bounded at 50; `queue` is getter-backed and reads through `scheduler.stats()`, so no counter can go stale. |
 | `logger.ts` | 30 | `createLogger(prefix, enabled, sink = console)`. **Lifecycle events only** — never per query. Disabled, it returns three no-op closures allocated once. |
-| `locks.ts` | 101 | Web Locks wrapper + the pure sweep decision. `createLocks`, `noOpLocks` (use this in tests — `createLocks(undefined)` falls back to the real API and **Node 24 ships one**), `initLockName`, `stagingTableName`/`stagingLockName`/`sweepLockName`, `staleStagingTables`. |
+| `locks.ts` | 129 | Web Locks wrapper + the pure sweep decision. `createLocks`, `noOpLocks` (use this in tests — `createLocks(undefined)` falls back to the real API and **Node 24 ships one**), `initLockName`, `stagingTableName`/`stagingLockName`/`sweepLockName`, `staleStagingTables`. |
 | `utils.ts` | 205 | `isReadQuery`/`isWriteQuery` + `assertReadable` + `quoteIdent`/`renderPragmas` + `sqlParams`/`addParam`. |
 | `worker/worker.ts` | 396 | Worker thread: VFS bootstrap, `open`, statement execution, chunked streaming. Holds `VFSConfigs` and `WA_SQLITE_BUILDS`. **Constructs every VFS with `{ lockPolicy: 'shared' }` (`:159`).** `ready` only on success, `open-error` on failure; every `cause` structured-clone-probed; exhaustive message dispatch. |
-| `index.ts` | 16 | Re-exports. `types.ts` is exported **by name**, never `export *` — the wire-protocol types are internal. |
+| `index.ts` | 17 | Re-exports. `types.ts` is exported **by name**, never `export *` — the wire-protocol types are internal. |
 
 `src/orchestrator.ts` is **deleted** and with it every `SharedArrayBuffer`. Do not look
 for it.
 
 ## Public surface
 
-`chunk` / `read` / `write` / `first` / `stream` / `transaction` / `close`, plus
-`bulkWrite` and `output`. `signal` on every method. Client options: `name`, `poolSize`,
+`SQLiteQueryAPI` — `read` / `write` / `chunk` / `stream` / `first` / `bulkWrite` /
+`output` — is shared by **both** the client and a transaction, so a method cannot be
+added to one and forgotten on the other. `SQLiteDB` adds `transaction` / `close` /
+`debug`; `SQLiteTransactionDB` adds `commit` / `rollback`. `signal` on every method,
+and `chunkSize` on the three that stream. Client options: `name`, `poolSize`,
 **`vfs` (required)**, `build`, `pragmas`, `maxWorkerRestarts`, `openTimeout`,
 `drainTimeout`, `debug`. Exported besides: `SQLiteError`, `BulkWriteError`,
 `VFS_CAPABILITIES`, `defaultBuildFor`, `detectFeatures`, `missingFeature`, and the types

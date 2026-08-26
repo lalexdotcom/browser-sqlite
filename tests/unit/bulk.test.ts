@@ -1,13 +1,13 @@
 import { describe, expect, it } from '@rstest/core';
 import { createBulk } from '../../src/bulk';
-import { BulkWriteError } from '../../src/errors';
-import { noOpLocks } from '../../src/locks';
+import { SQLiteBulkWriteError } from '../../src/errors';
+import { type Locks, noOpLocks } from '../../src/locks';
 import { createLogger } from '../../src/logger';
 
 const noopLogger = createLogger('test', false);
 
 /** Records every statement the unit under test emits. */
-const recorder = () => {
+const recorder = (locks: Locks = noOpLocks) => {
   const sql: string[] = [];
   const write = async (statement: string) => {
     sql.push(statement);
@@ -22,23 +22,22 @@ const recorder = () => {
       },
       read: async () => [],
     });
+
+  const forTarget = createBulk({ file: 'app.db', locks, logger: noopLogger });
+
   return {
     sql,
-    deps: {
-      write,
-      read,
-      transaction,
-      file: 'app.db',
-      locks: noOpLocks,
-      logger: noopLogger,
-    },
+    forTarget,
+    /** A target bound to this recorder — what most tests want. */
+    target: () => forTarget({ read, write, transaction }),
+    deps: { read, write, transaction },
   };
 };
 
 describe('bulkWrite quoting (B4)', () => {
   it('quotes the table and every column in the INSERT', async () => {
-    const { sql, deps } = recorder();
-    const { bulkWrite } = createBulk(deps);
+    const { sql, target } = recorder();
+    const { bulkWrite } = target();
 
     const bulk = bulkWrite('my table', ['a b', 'c']);
     bulk.enqueue({ 'a b': 1, c: 2 });
@@ -50,8 +49,8 @@ describe('bulkWrite quoting (B4)', () => {
   });
 
   it('neutralises an injection in the table name', async () => {
-    const { sql, deps } = recorder();
-    const { bulkWrite } = createBulk(deps);
+    const { sql, target } = recorder();
+    const { bulkWrite } = target();
 
     const bulk = bulkWrite('t"; DROP TABLE users; --', ['a']);
     bulk.enqueue({ a: 1 });
@@ -84,61 +83,68 @@ const failingRecorder = (failAt: number) => {
       },
       read: async () => [],
     });
+
+  const forTarget = createBulk({
+    file: 'app.db',
+    locks: noOpLocks,
+    logger: noopLogger,
+  });
+
   return {
     sql,
-    deps: {
-      write,
-      read,
-      transaction,
-      file: 'app.db',
-      locks: noOpLocks,
-      logger: noopLogger,
-    },
+    forTarget,
+    target: () => forTarget({ read, write, transaction }),
+    deps: { read, write, transaction },
   };
 };
 
 describe('bulkWrite failure (B5)', () => {
   it('does not attempt later batches once one fails', async () => {
-    const { sql, deps } = failingRecorder(0);
-    const { bulkWrite } = createBulk(deps);
+    const { sql, target } = failingRecorder(0);
+    const { bulkWrite } = target();
 
     // keys.length 1 → maxBufferSize is 32766; flush explicitly instead.
     const bulk = bulkWrite('t', ['a']);
     bulk.enqueue({ a: 1 });
     const first = bulk.close();
-    await expect(first).rejects.toBeInstanceOf(BulkWriteError);
+    await expect(first).rejects.toBeInstanceOf(SQLiteBulkWriteError);
 
     expect(sql).toHaveLength(1);
   });
 
   it('rejects close() with the original error as cause', async () => {
-    const { deps } = failingRecorder(0);
-    const { bulkWrite } = createBulk(deps);
+    const { target } = failingRecorder(0);
+    const { bulkWrite } = target();
 
     const bulk = bulkWrite('t', ['a']);
     bulk.enqueue({ a: 1 });
 
     const error = await bulk.close().catch((e) => e);
-    expect(error).toBeInstanceOf(BulkWriteError);
+    expect(error).toBeInstanceOf(SQLiteBulkWriteError);
     expect(error.code).toBe('BULK_WRITE_FAILED');
     expect((error.cause as Error).message).toMatch(/UNIQUE/);
   });
 
   it('throws from enqueue() once the latch is set', async () => {
-    const { deps } = failingRecorder(0);
-    const { bulkWrite } = createBulk(deps);
+    const { target } = failingRecorder(0);
+    const { bulkWrite } = target();
 
     const bulk = bulkWrite('t', ['a']);
     bulk.enqueue({ a: 1 });
     await bulk.close().catch(() => {});
 
-    expect(() => bulk.enqueue({ a: 2 })).toThrow(BulkWriteError);
+    expect(() => bulk.enqueue({ a: 2 })).toThrow(SQLiteBulkWriteError);
   });
 
   it('counts rows written and rows not written across batches', async () => {
     // maxVariables 2 with one key → two rows per batch.
     const { sql, deps } = failingRecorder(1);
-    const { bulkWrite } = createBulk({ ...deps, maxVariables: 2 });
+    const { bulkWrite } = createBulk({
+      file: 'app.db',
+      locks: noOpLocks,
+      logger: noopLogger,
+      maxVariables: 2,
+    })(deps);
 
     // Batch 1 (rows 1-2) succeeds, batch 2 (rows 3-4) fails,
     // batch 3 (row 5, flushed by close) is never attempted.
@@ -146,7 +152,7 @@ describe('bulkWrite failure (B5)', () => {
     for (const a of [1, 2, 3, 4, 5]) bulk.enqueue({ a });
     const error = await bulk.close().catch((e) => e);
 
-    expect(error).toBeInstanceOf(BulkWriteError);
+    expect(error).toBeInstanceOf(SQLiteBulkWriteError);
     expect(error.rowsWritten).toBe(2);
     expect(error.rowsNotWritten).toBe(3);
     expect(sql).toHaveLength(2); // the third batch was never sent
@@ -156,14 +162,14 @@ describe('bulkWrite failure (B5)', () => {
   // a second enqueue() succeed silently, producing a second INSERT statement →
   // sql.toHaveLength(1) turns red.
   it('throws from enqueue() after a successful close()', async () => {
-    const { sql, deps } = recorder();
-    const { bulkWrite } = createBulk(deps);
+    const { sql, target } = recorder();
+    const { bulkWrite } = target();
 
     const bulk = bulkWrite('t', ['a']);
     bulk.enqueue({ a: 1 });
     await bulk.close(); // succeeds — closed flag is now set
 
-    expect(() => bulk.enqueue({ a: 2 })).toThrow(BulkWriteError);
+    expect(() => bulk.enqueue({ a: 2 })).toThrow(SQLiteBulkWriteError);
     expect(() => bulk.enqueue({ a: 2 })).toThrow(/closed/i);
     // No extra INSERT was sent: the enqueue threw before buffering.
     expect(sql).toHaveLength(1);
@@ -172,15 +178,74 @@ describe('bulkWrite failure (B5)', () => {
   // Falsifiability pin: deleting the `if (closed) throw` guard in close() lets
   // the second close() return 0 silently → rejects.toThrow() turns red.
   it('throws from close() after a successful close()', async () => {
-    const { deps } = recorder();
-    const { bulkWrite } = createBulk(deps);
+    const { target } = recorder();
+    const { bulkWrite } = target();
 
     const bulk = bulkWrite('t', ['a']);
     bulk.enqueue({ a: 1 });
     await bulk.close(); // succeeds — closed flag is now set
 
-    await expect(bulk.close()).rejects.toThrow(BulkWriteError);
+    await expect(bulk.close()).rejects.toThrow(SQLiteBulkWriteError);
     await expect(bulk.close()).rejects.toThrow(/closed/i);
+  });
+});
+
+describe('the staging sweep', () => {
+  /** Locks that are available but always refuse the sweep lock. */
+  const refusing = () => {
+    let attempts = 0;
+    return {
+      attempts: () => attempts,
+      locks: {
+        available: true,
+        hold: async () => () => {},
+        withLock: async <T>(_name: string, fn: () => Promise<T>) => fn(),
+        tryWithLock: async () => {
+          attempts += 1;
+          return false;
+        },
+        heldNames: async () => [],
+      },
+    };
+  };
+
+  // Falsifiable: memoize `swept` only when the sweep actually ran. If the lock
+  // was held, another client was doing the work — retrying on every output()
+  // would put a lock request in front of every single call.
+  it('attempts the sweep once even when the lock is refused', async () => {
+    const { attempts, locks } = refusing();
+    const { sql, forTarget, deps } = recorder(locks);
+    const { output } = forTarget(deps);
+
+    await output('t', { a: 'INTEGER' }).close();
+    await output('t', { a: 'INTEGER' }).close();
+
+    expect(attempts()).toBe(1);
+    expect(sql.some((s) => s.includes('sqlite_master'))).toBe(false);
+  });
+
+  // Falsifiable: move `swept` inside forTarget. Two targets from one client
+  // would then each sweep, and a transaction — which builds its own target —
+  // would sweep on every single call.
+  it('sweeps once across two targets built from one client', async () => {
+    let sweeps = 0;
+    const locks: Locks = {
+      available: true,
+      hold: async () => () => {},
+      withLock: async <T>(_n: string, fn: () => Promise<T>) => fn(),
+      tryWithLock: async (_n, fn) => {
+        sweeps += 1;
+        await fn();
+        return true;
+      },
+      heldNames: async () => [],
+    };
+    const { forTarget, deps } = recorder(locks);
+
+    await forTarget(deps).output('a', { x: 'INTEGER' }).close();
+    await forTarget(deps).output('b', { x: 'INTEGER' }).close();
+
+    expect(sweeps).toBe(1);
   });
 });
 
@@ -207,23 +272,25 @@ const outputRecorder = () => {
     sql.push('COMMIT');
     return result;
   };
+
+  const forTarget = createBulk({
+    file: 'app.db',
+    locks: noOpLocks,
+    logger: noopLogger,
+  });
+
   return {
     sql,
-    deps: {
-      write,
-      read,
-      transaction,
-      file: 'app.db',
-      locks: noOpLocks,
-      logger: noopLogger,
-    },
+    forTarget,
+    target: () => forTarget({ read, write, transaction }),
+    deps: { read, write, transaction },
   };
 };
 
 describe('output() staging and swap (B5)', () => {
   it('creates a staging table, never the target, before close()', async () => {
-    const { sql, deps } = outputRecorder();
-    const { output } = createBulk(deps);
+    const { sql, target } = outputRecorder();
+    const { output } = target();
 
     const out = output('report', { id: 'INTEGER' });
     out.enqueue({ id: 1 });
@@ -242,8 +309,8 @@ describe('output() staging and swap (B5)', () => {
   });
 
   it('drops, renames and indexes inside one transaction, in that order', async () => {
-    const { sql, deps } = outputRecorder();
-    const { output } = createBulk(deps);
+    const { sql, target } = outputRecorder();
+    const { output } = target();
 
     const out = output(
       'report',
@@ -275,23 +342,22 @@ describe('output() staging and swap (B5)', () => {
   it('drops the staging table and leaves the target alone when a batch fails', async () => {
     const sql: string[] = [];
     let calls = 0;
-    const deps = {
-      write: async (statement: string) => {
-        sql.push(statement);
-        if (statement.startsWith('INSERT')) throw new Error('constraint');
-        calls++;
-        return { result: [] as any[], affected: 0 };
-      },
-      read: async () => [] as any[],
-      transaction: async <T>(cb: (db: any) => Promise<T>) => {
-        sql.push('BEGIN');
-        return cb({ write: async () => ({ result: [], affected: 0 }) });
-      },
+    const write = async (statement: string) => {
+      sql.push(statement);
+      if (statement.startsWith('INSERT')) throw new Error('constraint');
+      calls++;
+      return { result: [] as any[], affected: 0 };
+    };
+    const read = async () => [] as any[];
+    const transaction = async <T>(cb: (db: any) => Promise<T>) => {
+      sql.push('BEGIN');
+      return cb({ write: async () => ({ result: [], affected: 0 }) });
+    };
+    const { output } = createBulk({
       file: 'app.db',
       locks: noOpLocks,
       logger: noopLogger,
-    };
-    const { output } = createBulk(deps as any);
+    })({ write, read, transaction } as any);
 
     const out = output('report', { id: 'INTEGER' });
     out.enqueue({ id: 1 });

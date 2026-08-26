@@ -1,10 +1,11 @@
+import type { SQLiteChunkOptions, SQLiteDB, SQLiteQueryOptions } from './api';
 import { createBulk } from './bulk';
 import {
   describeMissing,
   detectFeatures,
   missingFeature,
 } from './capabilities';
-import { type ClientDebugState, createClientDebug } from './debug';
+import { createClientDebug } from './debug';
 import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
 import { SQLiteError } from './errors';
 import { createLocks } from './locks';
@@ -23,12 +24,11 @@ import {
   type WriterPolicy,
 } from './scheduler';
 import { createSupervisor } from './supervisor';
-import { createTransaction, type TransactionDB } from './transaction';
+import { createTransaction } from './transaction';
 import {
   defaultBuildFor,
   RECOMMENDED_VFS,
   type SQLiteBuild,
-  type SQLiteQueryOptions,
   type SQLiteVFS,
   VFS_CAPABILITIES,
 } from './types';
@@ -125,223 +125,6 @@ export type CreateSQLiteClientOptions = {
 };
 
 let clientCount = 0;
-
-/**
- * Main SQLite database API.
- */
-export type SQLiteDB = {
-  /**
-   * Executes a SELECT query and returns all matching rows as an array.
-   *
-   * Read queries are dispatched to any available worker in the pool,
-   * enabling concurrent execution across multiple readers.
-   *
-   * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
-   * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`chunkSize`, `signal`, `id`).
-   * @returns Promise resolving to an array of typed rows (`T[]`). Returns `[]` for empty results.
-   */
-  read: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: any[],
-    options?: SQLiteQueryOptions<T>,
-  ) => Promise<T[]>;
-
-  /**
-   * Executes a DML or DDL statement (INSERT, UPDATE, DELETE, CREATE, DROP, etc.)
-   * and returns both any result rows and the number of affected rows.
-   *
-   * Write queries are serialized through a single dedicated writer worker.
-   * Concurrent writes queue behind each other — only one write executes at a time.
-   *
-   * @param sql - SQL statement. Any statement not classified as a read by `isReadQuery`.
-   * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`signal`, `id`).
-   * @returns Promise resolving to `{ result: T[], affected: number }` where
-   *   `affected` is the SQLite `changes()` count for the statement.
-   */
-  write: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: any[],
-    options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
-  ) => Promise<{ result: T[]; affected: number }>;
-
-  /**
-   * Executes a query and yields result rows in chunks via an async generator.
-   * Memory-efficient for large result sets — rows are not buffered in full.
-   *
-   * @remarks
-   * **Worker held for full generator lifetime.** A pool worker is acquired when
-   * the generator is created and released only when the generator is fully
-   * exhausted or the caller uses `break`. Failing to exhaust the generator
-   * starves the pool. Always use `for await...of` to completion or `break` to exit.
-   *
-   * **`NOT_A_READ_QUERY` timing.** Because `chunk()` is an async generator, its
-   * body does not run until the first `next()` call. Passing a write statement
-   * does not throw at the call site — the `SQLiteError` arrives on the first
-   * `await gen.next()` (or the first iteration of `for await...of`).
-   *
-   * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
-   * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional options including `chunkSize` (default `500`),
-   *   `signal` (AbortSignal to cancel).
-   * @returns AsyncGenerator yielding `T[]` chunks of at most `chunkSize` rows.
-   */
-  chunk: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: any[],
-    options?: { chunkSize?: number; signal?: AbortSignal },
-  ) => AsyncGenerator<T[]>;
-
-  /**
-   * Executes a query and yields individual result rows via an async generator.
-   * Flattens chunk boundaries — each iteration yields one `T` row, not a chunk.
-   * Use `chunk()` when you need the rows grouped by chunk.
-   *
-   * @remarks
-   * **`NOT_A_READ_QUERY` timing.** Because `stream()` is an async generator, its
-   * body does not run until the first `next()` call. Passing a write statement
-   * does not throw at the call site — the `SQLiteError` arrives on the first
-   * `await gen.next()` (or the first iteration of `for await...of`).
-   *
-   * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
-   * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`signal`, `id`).
-   * @returns AsyncGenerator yielding individual rows of type `T`.
-   */
-  stream: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: any[],
-    options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
-  ) => AsyncGenerator<T>;
-
-  /**
-   * Executes a query and returns the first row, or `undefined` if no rows match.
-   *
-   * Internally uses `chunkSize: 1` and asks the worker to stop after the first
-   * row. Because the worker runs in a separate thread it may race ahead between
-   * the break and the stop signal, so early termination is best-effort on small
-   * result sets. A hard bound will arrive with back-pressure in a future wave.
-   *
-   * @param sql - SQL query string.
-   * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`signal`, `id`).
-   * @returns Promise resolving to the first row as `T`, or `undefined` if no rows.
-   */
-  first: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: any[],
-    options?: Omit<SQLiteQueryOptions<T>, 'chunkSize'>,
-  ) => Promise<T | undefined>;
-
-  /**
-   * Executes a callback within a SQLite transaction, providing a scoped
-   * `TransactionDB` with `read`, `write`, `chunk`, `stream`, `first`,
-   * `commit`, and `rollback` methods.
-   *
-   * The worker is held exclusively for the transaction's duration.
-   * On callback success: auto-commits if `autoCommit` is `true` (default).
-   * On callback error: rolls back automatically.
-   * The callback may call `db.commit()` or `db.rollback()` manually.
-   *
-   * @remarks
-   * **Worker crash mid-transaction.** If the worker dies while the callback is
-   * running, the transaction rejects with a `WORKER_CRASHED` error. The
-   * database engine inside the terminated worker handles its own rollback, but
-   * any OPFS file lock the worker held is not released until the browser
-   * reclaims the terminated worker's file handles — the timing of that
-   * reclamation is outside this library's control.
-   *
-   * @param callback - Async function receiving a `TransactionDB` instance.
-   * @param options - `readOnly` (default `false`) prevents write statements;
-   *   `autoCommit` (default `true`) commits on callback success.
-   * @returns Promise resolving to the value returned by `callback`.
-   */
-  transaction: <T = void>(
-    callback: (db: TransactionDB) => Promise<T>,
-    options?: { readOnly?: boolean; autoCommit?: boolean },
-  ) => Promise<T>;
-
-  /**
-   * Creates a buffered bulk-insert utility that batches rows to stay within
-   * SQLite's variable limit (`SQLITE_MAX_VARS = 32766`).
-   *
-   * Call `enqueue()` for each row to insert, then `close()` to flush the
-   * remaining buffer and await completion.
-   *
-   * @param table - Target table name.
-   * @param keys - Column names for the INSERT statement.
-   * @returns Object with:
-   *   - `enqueue(data)` — buffers a row, flushing automatically when the buffer fills.
-   *   - `close()` — flushes remaining rows and resolves with total affected row count.
-   */
-  bulkWrite: <KEYS extends string>(
-    table: string,
-    keys: KEYS[],
-  ) => {
-    enqueue: (data: Record<KEYS, any>) => void;
-    close: () => Promise<number>;
-  };
-
-  /**
-   * Schema-driven table replacement: drops the existing table, creates a new one
-   * from the provided schema, bulk-inserts all enqueued rows, then creates indexes.
-   *
-   * Useful for full-refresh ETL patterns where a table is rebuilt from scratch.
-   *
-   * @param table - Table name to drop and recreate.
-   * @param schema - Column definition map. Values are SQL type strings or
-   *   objects with `{ type, required?, unique?, generated? }`.
-   * @param options - `indexes` array for index creation after the swap.
-   * @returns Object with `enqueue(data)` and `close()` following the same
-   *   contract as {@link SQLiteDB.bulkWrite}.
-   */
-  output: <SCHEMA extends Record<string, any>>(
-    table: string,
-    schema: SCHEMA,
-    options?: any,
-  ) => { enqueue: (data: any) => void; close: () => Promise<number> };
-
-  /**
-   * Drains in-flight work, rejects queued work, closes each database connection,
-   * then terminates all workers in the pool.
-   *
-   * The returned promise settles once every worker has posted `closed` and been
-   * terminated, or once `drainTimeout` milliseconds have elapsed (whichever
-   * comes first). Calling `close()` a second time returns the **same** promise
-   * object — the operation runs exactly once.
-   *
-   * @remarks
-   * **Stored data is NOT deleted.** `close()` releases workers and connections;
-   * it removes nothing. What a database leaves behind, and how to remove it,
-   * depends on the VFS — and this library does not yet expose a deletion that
-   * routes through the VFS itself.
-   *
-   * Deleting files under `navigator.storage.getDirectory()` is only correct for
-   * the plain OPFS VFS, on a database that is already closed, and even there it
-   * leaves SQLite's `-journal` and `-wal` siblings unless you remove them too.
-   * It is wrong elsewhere:
-   *
-   * - `AccessHandlePoolVFS` keeps every database inside one directory named
-   *   after the VFS, in a fixed set of pre-allocated files with opaque names.
-   *   Removing a file does not free its slot — it takes capacity away from the
-   *   pool, and once capacity runs out no further database opens.
-   * - `IDBBatchAtomicVFS` and `IDBMirrorVFS` store nothing in OPFS at all;
-   *   their data lives in an IndexedDB database named after the VFS class, so
-   *   an OPFS deletion is a no-op.
-   *
-   * Until a `deleteDatabase` exists here, treat removal as VFS-specific and
-   * check what your chosen VFS actually writes.
-   */
-  close: () => Promise<void>;
-
-  /**
-   * Internal diagnostic handle. Not part of the stable public API.
-   * Shape is subject to change without notice.
-   * @internal
-   */
-  debug?: ClientDebugState;
-};
 
 /**
  * Creates a SQLite client backed by a pool of Web Workers, each running
@@ -592,7 +375,7 @@ export const createSQLiteClient = (
   >(
     sql: string,
     params?: unknown[],
-    options?: SQLiteQueryOptions<T>,
+    options?: SQLiteQueryOptions,
   ) => {
     assertReadable(sql, 'read');
     const lease = await acquireInstrumented('read');
@@ -619,11 +402,7 @@ export const createSQLiteClient = (
    */
   const chunk = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
-  >(
-    sql: string,
-    params?: unknown[],
-    options?: { chunkSize?: number; signal?: AbortSignal },
-  ) {
+  >(sql: string, params?: unknown[], options?: SQLiteChunkOptions) {
     assertReadable(sql, 'chunk');
     const lease = await acquireInstrumented('read');
     try {
@@ -648,7 +427,7 @@ export const createSQLiteClient = (
    */
   const stream = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
-  >(sql: string, params?: unknown[], options?: SQLiteQueryOptions<T>) {
+  >(sql: string, params?: unknown[], options?: SQLiteChunkOptions) {
     assertReadable(sql, 'stream');
     const lease = await acquireInstrumented('read');
     try {
@@ -673,7 +452,7 @@ export const createSQLiteClient = (
   >(
     sql: string,
     params?: unknown[],
-    options?: SQLiteQueryOptions<T>,
+    options?: SQLiteQueryOptions,
   ) => {
     const lease = await acquireInstrumented('write');
     try {
@@ -708,7 +487,7 @@ export const createSQLiteClient = (
   >(
     sql: string,
     params?: unknown[],
-    options?: { signal?: AbortSignal },
+    options?: SQLiteQueryOptions,
   ) => {
     assertReadable(sql, 'first');
     const lease = await acquireInstrumented('read');
@@ -725,22 +504,18 @@ export const createSQLiteClient = (
     }
   };
 
+  const bulkFor = createBulk({ file: dbFile, locks: createLocks(), logger });
+
   const transaction = createTransaction({
     scheduler: { ...scheduler, acquire: acquireInstrumented },
     afterWrite,
     // Wrapped, not passed by reference: handleDeath is declared further down
     // and would be in its temporal dead zone here.
     onPoisoned: (index, error) => handleDeath(index, error),
+    bulkFor,
   });
 
-  const { bulkWrite, output } = createBulk({
-    write,
-    read,
-    transaction,
-    file: dbFile,
-    locks: createLocks(),
-    logger,
-  });
+  const { bulkWrite, output } = bulkFor({ read, write, transaction });
 
   /** Bounds any settlement that depends on a worker answering. */
   const bounded = async (promise: Promise<unknown>, ms: number) => {

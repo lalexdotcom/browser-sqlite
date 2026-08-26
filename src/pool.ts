@@ -7,10 +7,8 @@ import type { SQLiteBuild, SQLiteVFS, WorkerMessageData } from './types';
  * Query execution options forwarded to a pool worker.
  */
 export type PoolWorkerQueryOptions = {
-  id?: string;
   chunkSize?: number;
   credits?: number;
-  debug?: string;
   /**
    * When true, the query's completion does not call `deps.onServed`. Set for
    * the commit-propagation barrier: it is a synthetic probe, not user work, and
