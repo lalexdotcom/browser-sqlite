@@ -216,6 +216,7 @@
       import {
         createSQLiteClient,
         defaultBuildFor,
+        deleteDatabase,
         detectFeatures,
         missingFeature,
         VFS_CAPABILITIES,
@@ -1470,6 +1471,68 @@
         },
       ];
 
+      /**
+       * Runs after every other row, and is the only one here that is terminal
+       * by design: it does NOT reopen the column's client. `survives-reopen`
+       * and `close-settles` both close and then owe the column a fresh client,
+       * because rows follow them. Nothing follows this one, and reopening
+       * would leave a live connection on a file that no longer exists.
+       *
+       * Its own array rather than an entry at the end of CONFORMANCE_ROWS:
+       * those all run before MEASUREMENT_ROWS, so deleting the database there
+       * would destroy the 10 000-row dataset every measurement needs.
+       *
+       * The assertion is "no tables at all", not "the table some earlier row
+       * created is gone". Which rows ran varies by VFS and by what was
+       * skipped, so naming one couples this row to them; a database that was
+       * deleted and recreated has an empty sqlite_master whatever came before.
+       */
+      const DELETE_CONFORMANCE = [
+        {
+          id: 'deleted-is-gone',
+          label: 'a deleted database is gone',
+          // The same predicate survives-reopen uses: the memory VFS have
+          // nothing to delete, and are excluded by their declaration rather
+          // than by name.
+          applies: (cap) => cap.persistent,
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              // deleteDatabase reports BUSY while the init lock is held, and
+              // cannot remove a file a live connection still holds.
+              await closeWithTimeout(ctx.db);
+              await deleteDatabase(ctx.file, {
+                vfs: ctx.pair.vfs,
+                build: ctx.pair.build,
+              });
+
+              const probe = createSQLiteClient(ctx.file, {
+                vfs: ctx.pair.vfs,
+                build: ctx.pair.build,
+                poolSize: poolFor(ctx.pair.cap),
+              });
+              let tables;
+              try {
+                const rows = await probe.read(
+                  "SELECT count(*) AS n FROM sqlite_master WHERE type = 'table'",
+                  undefined,
+                  { signal },
+                );
+                tables = rows[0].n;
+              } finally {
+                // Columns run sequentially; a probe left open would contend
+                // with the next one and move its numbers.
+                await closeWithTimeout(probe);
+              }
+              if (tables !== 0) {
+                throw new Error(
+                  `expected an empty database, found ${tables} table(s)`,
+                );
+              }
+              return true;
+            }),
+        },
+      ];
+
       const headRow = document.getElementById('head-row');
       const bodyRows = document.getElementById('body-rows');
       const cells = new Map(); // `${pairId}|${rowId}` -> <td>
@@ -1483,7 +1546,11 @@
         for (const th of [...headRow.querySelectorAll('th')].slice(1)) th.remove();
         cells.clear();
         bodyRows.replaceChildren();
-        for (const row of [...CONFORMANCE_ROWS, ...MEASUREMENT_ROWS]) {
+        for (const row of [
+          ...CONFORMANCE_ROWS,
+          ...MEASUREMENT_ROWS,
+          ...DELETE_CONFORMANCE,
+        ]) {
           const tr = document.createElement('tr');
           tr.dataset.row = row.id;
           const th = document.createElement('th');
@@ -1736,10 +1803,17 @@
         const ctx = { db, file, pair, pool: poolFor(pair.cap) };
 
         let abandoned = false;
-        for (const row of [...CONFORMANCE_ROWS, ...MEASUREMENT_ROWS]) {
-          const kind = CONFORMANCE_ROWS.includes(row)
-            ? 'conformance'
-            : 'measurements';
+        for (const row of [
+          ...CONFORMANCE_ROWS,
+          ...MEASUREMENT_ROWS,
+          ...DELETE_CONFORMANCE,
+        ]) {
+          // Membership of MEASUREMENT_ROWS, not of CONFORMANCE_ROWS: the
+          // teardown row is a pass/fail invariant and belongs in the
+          // conformance results, while running after every measurement.
+          const kind = MEASUREMENT_ROWS.includes(row)
+            ? 'measurements'
+            : 'conformance';
 
           if (abandoned) {
             // Not a timeout: this row never ran. Reporting it as one claimed
