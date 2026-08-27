@@ -78,10 +78,19 @@ isolated `opens` failures — `AccessHandlePoolVFS/async` on iOS 26 and `/jspi` 
 Chromium 150 — are **very likely the same exhaustion**; re-run on a swept root before
 recording either as real.
 
-*Cleanup fixes in rising order of cost:* run `cleanupOpfsResidue` per **column** rather
-than once per run; give IndexedDB the same before/after diff the OPFS root gets; or have
-each VFS **declare the storage names it owns** — the only version that does not rely on
-diffing, and the one that composes with `deleteDatabase`.
+*The cheap cleanup fix does not exist — corrected 2026-08-27.* `cleanupOpfsResidue` opens
+with `if (opfsBefore.has(name)) continue`: it is a **diff against a snapshot taken at run
+start**, so it only removes what that run created. Once a run leaves the
+`AccessHandlePoolVFS` directory behind, every later run finds it in `opfsBefore` and
+**protects it for ever**. Running it per *column* instead of per *run* changes nothing —
+the diff still shields it. That is why iOS 26.6 fails identically on 2026-08-25 and
+2026-08-27, `sync` and `async`, same bare `sqlite3_open_v2`: not drift, a permanent state
+the cleanup cannot reach.
+
+*So the only fix that works is the one the entry already called most expensive:* have each
+VFS **declare the storage names it owns**, and delete by declaration rather than by
+difference. Which is the same answer `deleteDatabase` needs — one design, two problems.
+IndexedDB needs it too; it has no equivalent diff at all.
 
 ### `wasmUrl`, optional — approved 2026-08-18, never built
 
@@ -149,6 +158,19 @@ Linux WebKit having no OPFS at all. Narrow the entry from "does not work off Chr
 "not measured on Safari", and add this VFS to the owed Safari 27 / iOS 26 / iPadOS 27
 campaign. The degradation itself is also unmeasured — the read-burst ratio would say
 whether it degrades like `OPFSAdaptiveVFS` or not at all.
+
+### REOPEN-1 — `OPFSWriteAheadVFS/sync` cannot reopen on Safari 27
+
+`survives-reopen` times out on **macOS Safari 27.0 and iPadOS Safari 27.0**, both on
+2026-08-27, and only on the `sync` build. Safari 26.5.2 and 26.6 are clean, and the other
+two builds are clean on the same devices. It is the only non-skipped, non-`blocked` failure
+in that campaign apart from residue.
+
+Narrow enough to be tractable: one VFS, one build, one engine version. **Two devices, one
+run each, and nobody has looked at the mechanism** — do not write one down before it has
+been reproduced deliberately. Note `OPFSWriteAheadVFS` gives no concurrency on Safari
+anyway (`mem:measurements`), so the honest question may be whether it should be recommended
+there at all rather than why one build cannot reopen.
 
 ## Evidence owed
 
