@@ -74,7 +74,7 @@ export type SQLiteBulkWriter<KEYS extends string> = {
    * Buffers a row, flushing automatically when the buffer fills.
    *
    * Awaiting the returned promise applies back-pressure: it is already
-   * resolved while fewer than `maxPendingRows` rows are in flight, and
+   * resolved while fewer than `queueSize` rows are queued for writing, and
    * resolves once a batch settles when they are not. Ignoring it is legal
    * and leaves the load unbounded, as it was before this option existed.
    *
@@ -86,13 +86,13 @@ export type SQLiteBulkWriter<KEYS extends string> = {
 };
 ```
 
-`maxPendingRows?: number` joins `SQLiteBulkWriteOptions` and
+`queueSize?: number` joins `SQLiteBulkWriteOptions` and
 `SQLiteOutputOptions`. `output()`'s writer changes the same way — it wraps the
 same `enqueue`, and a load that stages its rows has the same problem.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `maxPendingRows` | `number` | `2 × floor(32766 / columns)` | Rows in flight above which `enqueue()`'s promise defers instead of being already resolved. |
+| `queueSize` | `number` | `2 × floor(32766 / columns)` | Rows queued for writing above which `enqueue()`'s promise defers instead of being already resolved. |
 
 The default is 13 106 rows at 5 columns and 2 184 at 30 — about two batches
 either way, so the memory bounded is roughly the same from one table to the
@@ -102,15 +102,29 @@ imposing the word.
 The column count is known at the call (`bulkWrite(table, keys)`, and the
 schema for `output()`), so the default needs no deferred state.
 
+**On the name** (user, 2026-08-27, after four passes — do not reopen it without
+reading this). `maxRows` and `maxPendingRows` read as a cap on the load itself,
+which is the opposite of what it bounds; what it caps is what is not yet
+written. `maxRowsInFlight` and `maxUnwrittenRows` say that precisely and were
+both rejected as jargon for a knob whose unit is not in doubt: **the caller
+enqueues rows, so the option counts rows.** The internal `maxBufferSize` is in
+rows too.
+
+`queueSize` over `bufferSize`, which was the other finalist, for one reason:
+the input buffer is fully encapsulated today, but the rows-per-`INSERT` figure
+is a knob that could be exposed — it decides how many commits a load costs —
+and `bufferSize` is the name it would want. The two words keep one object each:
+`queueSize` the queue out, `bufferSize` the buffer in.
+
 ## 5. Mechanism
 
-- **`pendingRows`**, a counter. `flush()` adds `toInsert.length`; the chain link
+- **`queuedRows`**, a counter. `flush()` adds `toInsert.length`; the chain link
   subtracts it when it settles, on every path — success, latched failure, and
   the batch an abort skipped.
 - **`enqueue()`** compares after pushing. Below the cap it returns a **shared,
   already-resolved promise** held as a module constant: no allocation per row.
   At or above it, it returns a single deferred, the same one for every call
-  while the writer is over the cap, resolved as soon as `pendingRows` falls
+  while the writer is over the cap, resolved as soon as `queuedRows` falls
   back below.
 - **One deferred, no waiter queue.** `enqueue()` is not concurrent-safe today
   and this does not make it so; a single producer is the only shape that has to
@@ -131,7 +145,7 @@ different `await`s (`mem:lessons`). The producer leaves its `await`, and its nex
 Unit tests, in `tests/unit/bulk.test.ts` — none of this needs a browser.
 
 1. `enqueue()` resolves without deferring while under the cap.
-2. It defers once `pendingRows` reaches the cap, and resolves when a batch
+2. It defers once `queuedRows` reaches the cap, and resolves when a batch
    settles.
 3. The default cap derives from the column count: a 30-column writer defers
    earlier, in rows, than a 5-column one.
