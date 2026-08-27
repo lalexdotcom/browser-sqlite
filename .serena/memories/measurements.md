@@ -175,6 +175,54 @@ project can be in. Lucky detail: 153 is exactly the first supporting version, so
 sat on the boundary; on 152 the nine jspi pairs would have skipped with their stated reason
 and nothing would have failed. The feature detection was validated by accident.
 
+## Bundler matrix — 2026-08-27, Node 24.13, Chromium via Playwright
+
+Method: the packed tarball installed by npm into a temp dir **outside** the repo, then
+**both** the dev server and the production build driven with a real page load asserting
+`window.__SMOKE__`. A build that emits is not a pass; the page must read rows back. The
+throwaway harness that produced this lives at `.work/bundler-probe.mjs` (gitignored).
+
+| bundler | versions passing | floor, and why it is there |
+|---|---|---|
+| rsbuild | 1.0.1, 1.7.6, 2.0.0 | `1.0.0` is deprecated **by its authors** ("mistakenly released version") |
+| rspack | 1.0.0, 1.7.12, 2.0.0 | none found in the 1.x/2.x range |
+| Parcel | 2.0.0, 2.9.0, 2.16.4 | the whole 2.x line works — **only** once `main` exists, see below |
+| webpack | 5.60.0\*, 5.90.0, 5.101.0, 5.109.2 | 5.20/5.30 fail; `webpack-cli@7` requires `webpack ≥5.101` anyway |
+| Vite | 6.1.0 … 8.2.2 | **6.0.x fails entirely, through 6.0.15** |
+
+\* 5.60 needs `--openssl-legacy-provider`: webpack of that era hashes with MD4, which
+OpenSSL 3 removed. Its own defect, not ours, and not worth chasing — webpack stayed on
+major 5 throughout, so an old consumer updates without a breaking change.
+
+**Vite 6.0 and Vite 5 fail the same way**, at build *and* dev: `Vite is unable to parse the
+worker options as the value is not static` — our `new Worker(url, { name: workerName, … })`
+passes a variable. Vite **6.1** lifted it. Testing `6.4.3` and calling the floor "6+" would
+have been a lie; the `.0.0` of each major is the only honest probe.
+
+**`optimizeDeps.exclude` is a dev-server fix only.** Without it on 6.1.0 and 7.0.0: dev
+fails, `vite build` and the served production bundle pass. Vite **8** needs nothing at all.
+
+**Parcel is the only resolver here that does not read the `exports` map.** It falls back to
+`main`, which the package did not declare, so it could not resolve `browser-sqlite` at any
+version. One field fixed all three versions. That is why Parcel earns a place in the smoke:
+the other four share too much genealogy to catch a packaging gap of that shape.
+
+## Published artifact sizes — 2026-08-27, after `minify` + `sourceMap`
+
+| file | before | after |
+|---|---|---|
+| `dist/worker/worker.js` | 758 kB / **125** gzip | **302 kB / 84 gzip** |
+| `dist/index.js` | 49 kB / 11 gzip | **21 kB / 8 gzip** |
+| published tarball | 1215 kB | **1459 kB** (the maps) |
+
+**`mem:stack-and-build` said 117 kB gzip for the worker. That was already stale before this
+session** — it measured 125 kB unminified. Corrected there.
+
+The bundlers gain nothing from this: Vite emits 311 kB, rspack 303 kB, webpack 307 kB and
+Parcel 310 kB from the same source, each minifying it themselves. The beneficiary is the
+no-bundler path and `dist/` copied to a CDN. Source maps carry `sourcesContent` (15/15 and
+28/28) and cost nothing at runtime — a browser fetches them only with devtools open.
+
 ## Numbers that are one observation, not a measurement
 
 - **Android 145 vs 151 differ by a factor 2.6** on bulk insert, same emulator. Regression

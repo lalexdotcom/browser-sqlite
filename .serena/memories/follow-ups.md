@@ -102,29 +102,27 @@ run; give IndexedDB the same before/after diff the OPFS root gets; or have each 
 the storage names it owns — the only version that does not rely on diffing. **Verdict: keep,
 fold into DELETE-1's design.**
 
-### D6 — the `browser-sqlite/vite` plugin subpath
+### D6 is dead, and `wasmUrl` outlived it — 2026-08-27
 
-Designed 2026-08-18, approved, never built. Ship a `browser-sqlite/vite` export returning a
-Vite plugin that does both corrections itself: push `optimizeDeps.exclude`, and copy
-`dist/worker/*` using the **resolved** `build.assetsDir` rather than a literal
-`dist/assets`. Consumer config collapses to `plugins: [browserSqlite()]`.
-Zero-runtime-dependency is preserved — a Vite plugin is a plain object, so `vite` stays a
-devDependency for types only. Coverage is free: consumer smoke mode 2 already exercises the
-path, the fixture just switches to the shipped plugin.
+**The plugin's premise was false.** D6 existed because "Vite's production build does not
+copy `dist/worker/*.wasm` beside the emitted worker". Measured 2026-08-27 on Vite 6.1
+through 8.2.2: Vite **does** follow the worker's `new URL('wa-sqlite.wasm', import.meta.url)`
+references and emits all three. The consumer smoke passes with **no plugin at all**. What
+remains for Vite 6.1–7 is one line, `optimizeDeps.exclude`, and it is a **dev-server fix
+only** — nothing to carry in a build plugin. VIT-1 died with it.
 
-The documented snippet must die with it: it hard-codes `dist/assets` (wrong the moment a
-consumer sets `build.assetsDir`) and `node_modules/browser-sqlite/dist/worker` (wrong in a
-pnpm workspace). Resolve the package via `import.meta.resolve`. If the plugin slips, fix
-the snippet in place — it is wrong as written either way.
+What the investigation found instead was a real defect the plugin would have papered over:
+a second, bare `new URL('./worker/worker.js', import.meta.url)` in `pool.ts`, feeding only
+an error-message fallback, made every Vite consumer ship a duplicate untransformed worker.
+Removed; see `git log`.
 
-Also approved and unbuilt: **`wasmUrl`, optional** — an explicit base URL for the three
-`.wasm`. When omitted, behaviour is **exactly today's** resolution; this is an escape
-hatch, not a new default, and the default config must not change by a single byte.
+**Still open and still approved: `wasmUrl`, optional** — an explicit base URL for the three
+`.wasm`. When omitted, behaviour is **exactly today's** resolution; this is an escape hatch,
+not a new default, and the default config must not change by a single byte. **Verdict:
+keep** — it was never D6's dependant, it was merely listed beside it.
 
-Rejected: inlining the `.wasm` as base64 (+33 % on 2.4 MB raw, gives up streaming
-compilation — acceptable only as an opt-in subpath, never the default); and waiting for
-Vite (the `import.meta.url` rewrite during esbuild pre-bundling is intended behaviour, not
-a bug in flight). **Verdict: user to decide — in scope for 1.0 or dropped.**
+Rejected then and still rejected: inlining the `.wasm` as base64 (+33 % on 2.4 MB raw,
+gives up streaming compilation — acceptable only as an opt-in subpath, never the default).
 
 ## Limits to document rather than fix
 
@@ -156,14 +154,6 @@ staging sweep is `navigator.locks`-guarded. The rest of the client stays uncoord
 in `UNPROBEABLE` — detecting it needs a worker and two access handles, and the client guard
 is synchronous. So the VFS keeps its obscure off-Chromium failure and the README entry is
 the only defence. **Verdict: user to decide — accept and delete, or design an async probe.**
-
-### VIT-1 — Vite requires consumer configuration
-
-Two independent reasons, both documented in the README's Bundler Configuration: esbuild
-pre-bundling rewrites `import.meta.url` in `node_modules` during dev (fix:
-`optimizeDeps.exclude`), and Vite's prod build does not copy `node_modules` wasm beside the
-emitted worker (fix: a ~10-line plugin). rsbuild and no-bundler modes need nothing. Not a
-defect in the artefact. **Verdict: delete — it is D6's motivation, and D6 carries it.**
 
 ## Evidence owed
 

@@ -8,6 +8,10 @@
   entries, `index` and `worker`, with opposite goals — see below. `.d.ts` via `tsgo`.
 - Lint/format: **biome 2.5.8** (`biome.json`; it locally disables `noExplicitAny` and
   `noBannedTypes`). Run `pnpm check` after every modification.
+  - **biome ignores `rslib.config.ts`.** Neither `pnpm format` nor `biome ci .` in CI will
+    touch it, so a hand-edit's formatting survives untouched and nothing flags it. That
+    file's style is maintained by hand — verified 2026-08-27 after a `},{` survived a
+    format run.
 - Tests: **rstest 0.11.8**, Playwright pinned at 1.62.1.
 - **Runtime dependencies: none.** `wa-sqlite` is a devDependency only
   (`github:rhashimoto/wa-sqlite#v1.1.2`, commit `2bf1c59`), vendored into
@@ -44,7 +48,7 @@ Four projects. `pnpm test` runs the first two.
 | `unit` | `tests/unit/` (15 files) | Node, pure logic — bulk, capabilities, credits, debug, epochs, errors, exports, locks, logger, quoting, routing, scheduler, supervisor, transaction, utils |
 | `browser` | `tests/browser/` (16 files + `helpers.ts`) | Real Chromium via Playwright. `createTestClient(options?)` gives a unique OPFS name and an `afterEach` cleanup |
 | `conformance` | `tests/conformance/` | On demand: every declared (vfs, build) pair through six invariants. `pnpm test:conformance` |
-| `consumer` | `scripts/consumer-smoke.mjs` | On demand: packs the tarball into two temp app dirs **outside** the repo and drives four modes — Vite dev, Vite build+preview, rsbuild preview, no-bundler static serve. Plus a static bare-specifier assertion over `dist/**/*.js`. `pnpm test:consumer` |
+| `consumer` | `scripts/consumer-smoke.mjs` | On demand: packs the tarball into **five** temp app dirs **outside** the repo and drives **dev and build for each** — Vite, Vite 6 (pinned), rsbuild, webpack, Parcel — plus no-bundler static serve and a bare-specifier assertion over `dist/**/*.js`. **24 stages.** `pnpm test:consumer` |
 
 350 tests green on `main`, 2026-08-26. **No COOP/COEP headers anywhere** since the SAB was
 removed — if you find a reference to them in a config, it is stale.
@@ -78,9 +82,21 @@ dist/
     wa-sqlite.wasm  wa-sqlite-async.wasm  wa-sqlite-jspi.wasm
 ```
 
-Sizes (wa-sqlite v1.1.2, gzip): `worker.js` 117 KB, `index.js` 4 KB, the three `.wasm`
-2.4 MB raw combined. Only the VFS the consumer selects is fetched at runtime; the others
-are tarball weight only.
+**Both entries are minified and ship `.js.map` since 2026-08-27.** Sizes live in
+`mem:measurements` and nowhere else. (The figure that stood here, "worker.js 117 KB gzip",
+was stale even before minification — it measured 125.)
+
+Only the VFS the consumer selects is fetched at runtime; the others are tarball weight
+only. Source maps are never fetched unless devtools are open.
+
+`dist/` also carries `LICENSE` beside `NOTICE`: `dist/NOTICE` says "see LICENSE", and
+`dist/` is routinely separated from its package. Same reasoning as the inlined worker
+banner — a pointer to a file that may not travel is no use.
+
+**`package.json` declares `main` as well as `exports`.** Not redundant: Parcel's default
+resolver does not read `exports` and falls back to `main`, so without it Parcel cannot
+resolve the package at any version. The Parcel fixture in the consumer smoke is what stops
+this field being deleted as dead weight.
 
 ### Build facts — not re-derivable without reading rslib source
 
@@ -112,7 +128,18 @@ the old output. Fixed by `performance.buildCache.buildDependencies: [import.meta
 in `rslib.config.ts`, which hashes the config file itself. `pnpm build` is therefore always
 correct; no manual `dist/` deletion is ever needed.
 
-### Three traps, each paid for once
+### Traps, each paid for once
+
+- **`BannerPlugin`'s `stage`, once the output is minified.** Its default,
+  `PROCESS_ASSETS_STAGE_ADDITIONS` (-100), runs *before* the minifier at `OPTIMIZE_SIZE`
+  (400), so minification hoists declarations in front of the banner
+  (`let e,t,r,…;/*! browser-sqlite …`). The notice still travels, but it is no longer the
+  first bytes. The obvious fix is worse: a late stage such as `OPTIMIZE_INLINE` (700) puts
+  the banner first **and silently breaks the source map**, because `DEV_TOOLING` (500) has
+  already written it — the map then has no leading `;` for the banner's nine lines and
+  every mapping is off by nine. The window is `OPTIMIZE_SIZE + 1`. **How to check:** the
+  `mappings` field must open with as many `;` as the banner has lines.
+
 
 - **Never put `/* webpackIgnore: true */` on the `new Worker(new URL(...))` call in
   `client.ts`.** rslib strips it from `dist/index.js` so it never reaches a consumer — but
@@ -133,6 +160,29 @@ correct; no manual `dist/` deletion is ever needed.
 test may assert a `worker/worker.js` substring in an error message. The lifecycle test
 asserts the stable wording (`'could not load its worker from'`, `'Bundler Configuration'`)
 instead.
+
+### The consumer smoke's five fixtures — why each exists
+
+`tests/consumer` (Vite), `tests/consumer-vite6`, `tests/consumer-rsbuild`,
+`tests/consumer-webpack`, `tests/consumer-parcel`, plus `tests/consumer-nobundler`.
+
+- **`consumer-vite6` is not redundant with `consumer`.** The latter's range resolves to the
+  newest Vite, where `optimizeDeps.exclude` is a no-op — so the one line of configuration
+  the README asks a consumer to write was verified by nothing. The pinned fixture is where
+  that line decides whether dev works. **Falsified 2026-08-27**: delete the line and
+  "Vite 6 dev server" reddens, alone.
+- **`consumer-parcel` guards the `main` field** — the only resolver here that ignores
+  `exports`.
+- **`consumer-webpack` needs `scriptLoading: 'module'` on `HtmlWebpackPlugin`.** The output
+  is ESM (`experiments.outputModule`), and the plugin's default `<script src>` has no
+  `type="module"`, giving `Cannot use 'import.meta' outside a module` at runtime while the
+  build passes.
+- webpack and Parcel fixtures are **plain JS on purpose**: a TS loader is not what they are
+  there to prove.
+- `tsconfig.json` excludes them by prefix, `"tests/consumer*"`, not one by one — a new
+  fixture must not redden `tsc --noEmit` for a resolution that is correct where it runs.
+- `scaffoldApp` returns false rather than throwing: one bundler failing to install must not
+  cancel the other four.
 
 ## CI and hooks
 

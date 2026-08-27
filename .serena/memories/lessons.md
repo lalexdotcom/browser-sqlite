@@ -85,6 +85,35 @@ back.
 a 30-line message and an 8-line comment into a project where 49 of the last 60 commits are
 one line and no VFS file has an inline comment longer than 4. Measure before writing.
 
+**A documented instruction that nothing exercises will drift.** Three instances found in
+one session, 2026-08-27: the README's Vite snippet was copied verbatim into
+`tests/consumer/vite.config.ts`, so the fixture *was* the snippet and could never falsify
+it; the benchmark page imported names from `dist/` that no compiler checked; and the one
+config line the README asks a consumer to write was exercised only at a Vite version where
+it is a no-op. **When the README tells a consumer to write something, something must fail
+when it is wrong** — and the fixture must not be a copy of the prose.
+
+**Test the `.0.0`, not the latest patch, before writing "X+".** "Vite 6+" was about to ship
+on the strength of 6.4.3. Vite **6.0.x fails entirely**, through its last patch, with the
+same error as Vite 5; the fix landed in 6.1. The `.0` of a major is the only probe that
+justifies a `+`.
+
+**Separate the toolchain's floor from yours.** Old webpack fails on Node 24 in its own MD4
+hashing, old Parcel in its own Babel, and `webpack-cli@7` refuses `webpack < 5.101` outright
+— none of it a statement about this package. Before recording a floor, check whether the
+failure is even reachable through the tool's own supported install.
+
+**A premise ages faster than the workaround it justified.** A `browser-sqlite/vite` plugin
+was designed, approved and carried in the backlog for nine days on the premise that "Vite
+does not copy the worker's `.wasm`". By the time it was reached, Vite did — and the README
+had been documenting a workaround for a bug that no longer existed. **Re-measure a
+workaround's premise before building on it**, not after.
+
+**A pointer to a file that may not travel is no use.** Recorded once for the worker's MIT
+banner (hence `legalComments: 'inline'`) and missed a second time in the same repo:
+`dist/NOTICE` said "see LICENSE" while `dist/` shipped without one, and `dist/` is
+routinely served alone. When a rule is bought for one artifact, sweep the neighbours.
+
 ## About this project's own memory
 
 **A memory that goes stale states falsehoods with confidence.** The default VFS was wrong
