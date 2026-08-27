@@ -97,15 +97,6 @@ const workerError = (data: {
 }) => busyFromCode(data) ?? new Error(data.message, { cause: data.cause });
 
 /**
- * Creates a new pool worker and registers it in the pool array.
- * Sets up message routing via callId for query responses.
- *
- * Moved verbatim from `createWorker` in client.ts, with three changes:
- *  1. Closure variables become explicit `deps` parameters.
- *  2. Both `available` assignments are deleted (availability lives in the Scheduler).
- *  3. `worker.available = false/true` in the `query` generator are deleted.
- */
-/**
  * The single `new Worker(new URL(…))` expression in this package.
  *
  * It must stay one literal, in one place: bundlers find the worker by static
@@ -122,6 +113,15 @@ export const spawnWorker = (name: string): Worker =>
     { name, type: 'module' },
   );
 
+/**
+ * Creates a new pool worker and registers it in the pool array.
+ * Sets up message routing via callId for query responses.
+ *
+ * Moved verbatim from `createWorker` in client.ts, with three changes:
+ *  1. Closure variables become explicit `deps` parameters.
+ *  2. Both `available` assignments are deleted (availability lives in the Scheduler).
+ *  3. `worker.available = false/true` in the `query` generator are deleted.
+ */
 export const createPoolWorker = (deps: {
   index: number;
   pool: (PoolWorker | undefined)[];
