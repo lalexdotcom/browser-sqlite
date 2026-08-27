@@ -465,7 +465,27 @@ const deleteDatabaseFiles = async (data: {
 
   try {
     for (const suffix of DB_RELATED_SUFFIXES) {
-      await vfsInstance.jDelete(`${file}${suffix}`, 0);
+      // Pass syncDir=1, not 0. IDBBatchAtomicVFS.jDelete (wa-sqlite
+      // IDBBatchAtomicVFS.js:119-133) only awaits its IndexedDB transaction
+      // when syncDir is truthy — with 0 the delete is queued on #chain but
+      // the worker exits before it commits, leaving the data intact.
+      // OPFSAdaptiveVFS, OPFSAnyContextVFS and IDBMirrorVFS honour the same
+      // flag with `if (syncDir) await result`; the remaining VFS ignore it.
+      await vfsInstance.jDelete(`${file}${suffix}`, 1);
+    }
+
+    // IDBBatchAtomicVFS.jDelete with syncDir=1 calls sync(false) which awaits
+    // the #chain (IDB requests submitted) but NOT #txComplete (transaction
+    // oncomplete). The rw transactions are still pending when the worker would
+    // otherwise exit, and worker termination closes the IDB connection and
+    // aborts them. Fix: issue a ro read on the same connection. IDB serialises
+    // the ro transaction after all pending rw transactions, so its onsuccess
+    // can only fire after the deletes have committed. jAccess awaits that
+    // onsuccess (its lambda returns the metadata.get promise, which #q awaits).
+    // IDBMirrorVFS is unaffected — its #deleteFile already awaits oncomplete.
+    if (VFS_CAPABILITIES[vfs].layout === 'idb-store') {
+      const pResOut = new DataView(new ArrayBuffer(4));
+      await vfsInstance.jAccess(`${file}`, 0, pResOut);
     }
   } finally {
     await vfsInstance.close?.();
