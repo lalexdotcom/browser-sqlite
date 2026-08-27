@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
-import { createTestClient } from './helpers';
+import { createTestClient, longQuery } from './helpers';
 
 /**
  * INT-07: Concurrent reads are served by different workers in parallel
@@ -391,6 +391,52 @@ describe('AbortSignal on write() (INT-11)', () => {
     expect(rows.length === 1 || rows.length === 2).toBe(true);
     expect(rows[0].n).toBe(1);
 
+    db.close();
+  });
+});
+
+/**
+ * The abort has to reach a caller that has not been given a worker yet.
+ *
+ * Until `scheduler.acquire` took a signal it was consulted only after a lease
+ * was granted, so a pool with nothing to lend could not be abandoned at all.
+ * On Chromium that state is transient and this test merely passes; the state
+ * it guards against is `OPFSCoopSyncVFS` on an engine without
+ * `readwrite-unsafe`, where one exclusive OPFS handle rotates between workers
+ * and a hand-over may never arrive — there, the benchmark page hung for good.
+ */
+describe('AbortSignal while queued for a worker', () => {
+  it('rejects a read that never got a worker, without waiting for one', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    await db.write('CREATE TABLE queued (n INTEGER)');
+
+    // The only worker is busy for far longer than this test may take.
+    const holder = db.read(longQuery(40_000_000));
+
+    const controller = new AbortController();
+    const queued = db.read('SELECT 1 AS n', [], {
+      signal: controller.signal,
+    });
+    const rejected = expect(queued).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+
+    controller.abort();
+
+    // Falsifiable: drop the signal from scheduler.acquire and this races the
+    // holder instead of the abort — it then fails on the test timeout rather
+    // than resolving here.
+    await Promise.race([
+      rejected,
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error('the queued read outlived its abort')),
+          5_000,
+        ),
+      ),
+    ]);
+
+    await holder.catch(() => {});
     db.close();
   });
 });
