@@ -83,7 +83,18 @@
         border: 1px solid var(--border); padding: 0.25rem 0.5rem;
         text-align: left; white-space: nowrap;
       }
-      #results thead th { position: sticky; top: 0; background: Canvas; }
+      #results thead th { position: sticky; top: 0; background: Canvas; z-index: 1; }
+      /* The row label follows the horizontal scroll: with a dozen (vfs, build)
+         columns the far right is unreadable without it. `box-shadow` rather
+         than `border-right` because a sticky cell's own border scrolls with the
+         cell it is drawn on, leaving no seam. The corner cell is sticky on both
+         axes and must outrank the two edges it belongs to. */
+      #results tbody th:first-child, #results thead th:first-child {
+        position: sticky; left: 0; background: Canvas;
+        box-shadow: 1px 0 0 var(--border);
+      }
+      #results tbody th:first-child { z-index: 1; }
+      #results thead th:first-child { z-index: 2; }
       #results th small { display: block; font-weight: 400; opacity: 0.7; }
       #results tbody th { font-weight: 400; }
       .pending { opacity: 0.4; }
