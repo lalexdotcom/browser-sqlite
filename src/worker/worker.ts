@@ -474,15 +474,33 @@ const deleteDatabaseFiles = async (data: {
       await vfsInstance.jDelete(`${file}${suffix}`, 1);
     }
 
-    // IDBBatchAtomicVFS.jDelete with syncDir=1 calls sync(false) which awaits
-    // the #chain (IDB requests submitted) but NOT #txComplete (transaction
-    // oncomplete). The rw transactions are still pending when the worker would
-    // otherwise exit, and worker termination closes the IDB connection and
-    // aborts them. Fix: issue a ro read on the same connection. IDB serialises
-    // the ro transaction after all pending rw transactions, so its onsuccess
-    // can only fire after the deletes have committed. jAccess awaits that
-    // onsuccess (its lambda returns the metadata.get promise, which #q awaits).
-    // IDBMirrorVFS is unaffected — its #deleteFile already awaits oncomplete.
+    // Commit barrier for idb-store VFS. This call is a barrier, not a check —
+    // its return value is deliberately discarded. Removing it silently
+    // reintroduces the data-survives-deletion defect that invariant 7 caught.
+    //
+    // Why it works: IDBBatchAtomicVFS.jDelete with syncDir=1 calls sync(false),
+    // which awaits #chain (IDB requests submitted) but NOT #txComplete
+    // (transaction oncomplete). The rw delete transactions are still pending
+    // when the worker would otherwise exit; worker termination closes the IDB
+    // connection and aborts them. jAccess issues a ro transaction on the same
+    // connection whose lambda returns the metadata.get promise, so #q awaits
+    // the request result (IDBBatchAtomicVFS.js:146-157). Per the IndexedDB
+    // specification, a ro transaction cannot acquire its object-store locks
+    // until every rw transaction with overlapping scope on the same connection
+    // has committed — that is a spec requirement, not engine behaviour. When
+    // metadata.get's onsuccess fires, the rw deletes are durably committed.
+    //
+    // IDBMirrorVFS (also idb-store) is inert here: its jAccess is a pure
+    // in-memory map lookup that issues no IDB transaction (IDBMirrorVFS.js:
+    // 239-253), so no serialisation barrier is created. That is harmless
+    // because IDBMirrorVFS.#deleteFile already awaits oncomplete before
+    // returning (IDBMirrorVFS.js:738-751).
+    //
+    // The gate is by layout declaration, not by VFS name, keeping with this
+    // project's convention that VFS behaviour is declared once in
+    // VFS_CAPABILITIES and never special-cased by name. A future idb-store VFS
+    // inherits the barrier, which is either needed (like IDBBatchAtomicVFS) or
+    // inert (like IDBMirrorVFS).
     if (VFS_CAPABILITIES[vfs].layout === 'idb-store') {
       const pResOut = new DataView(new ArrayBuffer(4));
       await vfsInstance.jAccess(`${file}`, 0, pResOut);
