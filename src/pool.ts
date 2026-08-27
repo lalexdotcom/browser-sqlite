@@ -169,8 +169,6 @@ export const createPoolWorker = (deps: {
   // the generator's finally still stops and drains it.
   let lost: PromiseWithResolvers<never> | undefined;
 
-  const workerUrl = new URL('./worker/worker.js', import.meta.url).href;
-
   const die = (error: SQLiteError) => {
     if (dead) return;
     dead = true;
@@ -186,17 +184,33 @@ export const createPoolWorker = (deps: {
       typeof event === 'object' && event !== null && 'message' in event
         ? String(errorEvent.message ?? '')
         : '';
-    // Chrome's onerror for Worker script-load failures leaves ErrorEvent.filename
-    // empty; fall back to the URL this library passed to the Worker constructor.
-    const failedUrl = errorEvent.filename || workerUrl;
+    // Chrome leaves ErrorEvent.filename empty for worker script-load failures,
+    // so this is usually absent — measured 2026-08-27, and it is why the
+    // fallback below is not simply the worker's own URL.
+    //
+    // Deliberately NOT `new URL('./worker/worker.js', import.meta.url)`: that
+    // expression is an asset reference every bundler follows, and Vite emits a
+    // second, untransformed copy of the worker for it — 777 KB whose own
+    // `new URL('wa-sqlite.wasm', …)` references dangle, and which nothing ever
+    // loads. It existed only so this message could name a URL.
+    //
+    // A bare `import.meta.url` is not an asset reference, so naming where the
+    // client itself was loaded from costs nothing, and it points at the
+    // directory the worker should have been emitted beside — which is the
+    // thing a consumer actually needs to check.
+    const failedUrl = errorEvent.filename;
     logger.error(`worker ${index + 1} crashed: ${detail}`);
     die(
       new SQLiteError(
         'WORKER_CRASHED',
         ready
           ? `Worker ${index + 1} failed: ${detail || 'uncaught error'}`
-          : `browser-sqlite could not load its worker from ${failedUrl}. ` +
-              `If that URL 404s, your bundler did not emit the worker beside your build output — ` +
+          : `browser-sqlite could not load its worker${
+              failedUrl
+                ? ` from ${failedUrl}`
+                : `; the client itself was loaded from ${import.meta.url}, and the worker must be emitted beside it`
+            }. ` +
+              `If the worker URL 404s, your bundler did not emit the worker beside your build output — ` +
               `see the "Bundler Configuration" section of the browser-sqlite README. ${detail}`,
         { cause: event },
       ),

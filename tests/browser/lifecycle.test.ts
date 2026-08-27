@@ -116,21 +116,27 @@ describe('worker lifecycle — crash detection', () => {
   });
 
   // Falsifiable: replace the load-failure branch with a generic message that
-  // omits both the 'could not load its worker from' wording and the
+  // omits both the 'could not load its worker' wording and the
   // 'Bundler Configuration' README pointer.
-  it('names the URL it failed to load', async () => {
+  it('sends a load failure to the bundler configuration section, with a URL', async () => {
     interceptWorkers({ url: '/definitely-missing-worker.js' });
     const db = await createTestClient({ poolSize: 1 });
 
-    // pool.ts reports the URL it passed to `new Worker` (resolved from
-    // import.meta.url). The bundler may rename the chunk, so assert the stable
-    // wording rather than the URL itself.
+    // Chrome leaves ErrorEvent.filename empty here, so pool.ts names
+    // import.meta.url instead — the directory the worker should sit beside.
+    // The bundler may rename either chunk, so assert the stable wording and
+    // the presence of some URL, never a literal path. The scheme is not
+    // pinned either: a consumer bundle yields http(s), while rstest bundles
+    // with source paths and yields file:.
     await expect(db.read('SELECT 1')).rejects.toMatchObject({
       code: 'WORKER_CRASHED',
-      message: expect.stringContaining('could not load its worker from'),
+      message: expect.stringContaining('could not load its worker'),
     });
     await expect(db.read('SELECT 1')).rejects.toMatchObject({
       message: expect.stringContaining('Bundler Configuration'),
+    });
+    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+      message: expect.stringMatching(/\w+:\/\/\S+/),
     });
   });
 
