@@ -53,6 +53,33 @@ with it.
 
 ### Added
 
+- **An abort now reaches a call that is still waiting for a worker.** `signal`
+  was consulted only once a worker had been leased, so while the pool had
+  nothing to lend — `OPFSCoopSyncVFS` on an engine without `readwrite-unsafe`
+  rotates one exclusive OPFS handle, and a hand-over may never arrive — an
+  abort could not land at all. It now rejects with `signal.reason` while the
+  request is queued, and is ignored once the lease is granted.
+
+  **Timing changed with it:** an aborted call that is still queued rejects
+  synchronously from inside `abort()`, where it used to reject only when a
+  worker came free. Attach your handler before calling `abort()`, or the
+  promise crosses a microtask checkpoint unhandled.
+- **`bulkWrite()` and `output()` accept `{ signal }`.** They were the two
+  longest-running methods in the public surface and the only two that could not
+  be cancelled. The abort lands **between** batches — a multi-row INSERT is
+  statement-atomic, so stopping inside one either wastes it whole or lets it
+  commit whole. `close()` rejects with `signal.reason`, the same contract the
+  query methods already honour. An aborted `bulkWrite()` leaves the batches
+  already written in place; run it inside `transaction()` when abandoning must
+  mean rolling back. An aborted `output()` is observationally a no-op: the
+  staging table is dropped and the previous target is untouched.
+- **`deleteDatabase(file, { vfs })`** — a supported way to remove a database and
+  the `-journal` / `-wal` files beside it, on every VFS that persists one. On
+  `AccessHandlePoolVFS` it is the only correct removal: it returns the pool slot,
+  where deleting the OPFS file by name would match nothing. Storage a VFS keeps
+  for itself is left alone — the shared IndexedDB store and the pool directory —
+  while the named database's bytes are freed. Deleting a database that is not
+  there is not an error; deleting one that is open reports `BUSY`.
 - **`wasmUrl` client option** — an escape hatch for where the workers fetch
   their `.wasm`. A string names a directory, resolved against the page; a
   callback receives the resolved `build` and names one file, for a

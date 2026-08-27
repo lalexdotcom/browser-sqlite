@@ -1,4 +1,4 @@
-import type { SQLiteChunkOptions, SQLiteDB, SQLiteQueryOptions } from './api';
+import type { Abortable, SQLiteChunkOptions, SQLiteDB } from './api';
 import { createBulk } from './bulk';
 import {
   describeMissing,
@@ -14,6 +14,7 @@ import { createPoolWorker, type PoolWorker } from './pool';
 import {
   chunk as chunkWorker,
   firstWorker,
+  makeAbortRace,
   readWorker,
   streamRows,
   writeWorker,
@@ -357,13 +358,16 @@ export const createSQLiteClient = (
    * Debug-stamps the acquisition with request timing. Extracted from
    * acquireInstrumented so the barrier wrapper can cover both paths uniformly.
    */
-  const acquireWithDebug = async (kind: 'read' | 'write') => {
+  const acquireWithDebug = async (
+    kind: 'read' | 'write',
+    signal?: AbortSignal,
+  ) => {
     // Called only when clientDebug is set — cast to NonNullable to avoid the
     // forbidden non-null assertion operator while preserving the correct type.
     const request = (
       clientDebug as NonNullable<typeof clientDebug>
     ).createRequestDebugState();
-    const lease = await scheduler.acquire(kind);
+    const lease = await scheduler.acquire(kind, signal);
     request.assign(lease.worker.index);
 
     return {
@@ -385,12 +389,36 @@ export const createSQLiteClient = (
    * the caller sees it — the lease atomically covers the barrier statement and
    * the real query together.
    */
-  const acquireInstrumented = async (kind: 'read' | 'write') => {
+  const acquireInstrumented = async (
+    kind: 'read' | 'write',
+    signal?: AbortSignal,
+  ) => {
     const lease = clientDebug
-      ? await acquireWithDebug(kind)
-      : await scheduler.acquire(kind);
+      ? await acquireWithDebug(kind, signal)
+      : await scheduler.acquire(kind, signal);
     try {
-      await applyBarrier(lease.worker);
+      // Raced, not merely passed a signal. `applyBarrier` drains a real query
+      // on the worker, and `PoolWorkerQueryOptions` carries no signal — so on
+      // a worker that never answers, that loop is unbounded and every method
+      // goes through it. Firefox 154 stopped here, on OPFSCoopSyncVFS, after
+      // the two earlier abort paths were closed.
+      //
+      // This is the second and last phase of a call that was not already
+      // abortable: `scheduler.acquire` now honours the signal while queued,
+      // and the query phase has honoured it since wave 1. Guarding here rather
+      // than at each public method is what makes that complete — an await
+      // added to this function later is covered without being remembered.
+      //
+      // The race abandons the WAIT, not the WORK: the barrier statement runs
+      // on. The catch below releases through `quiesce()`, which returns the
+      // worker only once it is actually idle, so nothing is re-lent mid-flight.
+      const { aborted, teardown } = makeAbortRace(signal);
+      try {
+        const barrier = applyBarrier(lease.worker);
+        await (aborted ? Promise.race([barrier, aborted]) : barrier);
+      } finally {
+        teardown();
+      }
     } catch (error) {
       // The caller never received the lease, so its try/finally cannot return
       // the worker. Release on the same path a normal caller would.
@@ -418,10 +446,10 @@ export const createSQLiteClient = (
   >(
     sql: string,
     params?: unknown[],
-    options?: SQLiteQueryOptions,
+    options?: Abortable,
   ) => {
     assertReadable(sql, 'read');
-    const lease = await acquireInstrumented('read');
+    const lease = await acquireInstrumented('read', options?.signal);
     try {
       return await readWorker<T>(lease.worker, sql, params, options);
     } finally {
@@ -447,7 +475,7 @@ export const createSQLiteClient = (
     T extends Record<string, unknown> = Record<string, unknown>,
   >(sql: string, params?: unknown[], options?: SQLiteChunkOptions) {
     assertReadable(sql, 'chunk');
-    const lease = await acquireInstrumented('read');
+    const lease = await acquireInstrumented('read', options?.signal);
     try {
       yield* chunkWorker<T>(lease.worker, sql, params, options);
     } finally {
@@ -472,7 +500,7 @@ export const createSQLiteClient = (
     T extends Record<string, unknown> = Record<string, unknown>,
   >(sql: string, params?: unknown[], options?: SQLiteChunkOptions) {
     assertReadable(sql, 'stream');
-    const lease = await acquireInstrumented('read');
+    const lease = await acquireInstrumented('read', options?.signal);
     try {
       yield* streamRows<T>(lease.worker, sql, params, options);
     } finally {
@@ -495,9 +523,9 @@ export const createSQLiteClient = (
   >(
     sql: string,
     params?: unknown[],
-    options?: SQLiteQueryOptions,
+    options?: Abortable,
   ) => {
-    const lease = await acquireInstrumented('write');
+    const lease = await acquireInstrumented('write', options?.signal);
     try {
       return await writeWorker<T>(lease.worker, sql, params, options);
     } finally {
@@ -530,10 +558,10 @@ export const createSQLiteClient = (
   >(
     sql: string,
     params?: unknown[],
-    options?: SQLiteQueryOptions,
+    options?: Abortable,
   ) => {
     assertReadable(sql, 'first');
-    const lease = await acquireInstrumented('read');
+    const lease = await acquireInstrumented('read', options?.signal);
     try {
       return await firstWorker<T>(lease.worker, sql, params, options);
     } finally {

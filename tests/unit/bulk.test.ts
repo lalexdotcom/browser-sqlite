@@ -373,3 +373,166 @@ describe('output() staging and swap (B5)', () => {
     expect(calls).toBeGreaterThan(0);
   });
 });
+
+describe('bulkWrite abort (ABORT-1)', () => {
+  /** Lets the chained write promise run before the test looks at it. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('rejects close() with the caller’s own reason, not a library error', async () => {
+    const { target } = recorder();
+    const { bulkWrite } = target();
+    const controller = new AbortController();
+    const reason = new Error('caller stopped it');
+
+    const bulk = bulkWrite('t', ['a'], { signal: controller.signal });
+    bulk.enqueue({ a: 1 });
+    controller.abort(reason);
+
+    // Falsifiable: wrap the abort in a SQLiteBulkWriteError and this goes red.
+    // Decision A — the abort contract is `rejects with signal.reason`, the same
+    // one read/write/first/stream/chunk already honour.
+    await expect(bulk.close()).rejects.toBe(reason);
+  });
+
+  it('lands between batches, leaving the batches already written in place', async () => {
+    // maxVariables 2 with one key → two rows per batch.
+    const { sql, deps } = recorder();
+    const { bulkWrite } = createBulk({
+      file: 'app.db',
+      locks: noOpLocks,
+      logger: noopLogger,
+      maxVariables: 2,
+    })(deps);
+    const controller = new AbortController();
+
+    const bulk = bulkWrite('t', ['a'], { signal: controller.signal });
+    bulk.enqueue({ a: 1 });
+    bulk.enqueue({ a: 2 }); // fills the buffer, flushes batch 1
+    await settle(); // let batch 1 actually run
+
+    expect(sql).toHaveLength(1);
+    controller.abort();
+
+    await expect(bulk.close()).rejects.toMatchObject({ name: 'AbortError' });
+    // Falsifiable: drop the pre-write abort check and a second INSERT appears
+    // here — issued, then aborted mid-flight, rather than never attempted. The
+    // signal does reach the write; this asserts that a batch the abort beat to
+    // the start pays no round trip at all.
+    expect(sql).toHaveLength(1);
+  });
+
+  it('throws the reason from enqueue() once aborted', async () => {
+    const { target } = recorder();
+    const { bulkWrite } = target();
+    const controller = new AbortController();
+    const reason = new Error('stop');
+
+    const bulk = bulkWrite('t', ['a'], { signal: controller.signal });
+    controller.abort(reason);
+
+    expect(() => bulk.enqueue({ a: 1 })).toThrow(reason);
+  });
+
+  it('writes nothing when the signal is already aborted at construction', async () => {
+    const { sql, target } = recorder();
+    const { bulkWrite } = target();
+    const reason = new Error('too late');
+
+    const bulk = bulkWrite('t', ['a'], {
+      signal: AbortSignal.abort(reason),
+    });
+
+    expect(() => bulk.enqueue({ a: 1 })).toThrow(reason);
+    await expect(bulk.close()).rejects.toBe(reason);
+    expect(sql).toHaveLength(0);
+  });
+
+  it('leaves the target untouched and drops the staging table when output is aborted', async () => {
+    const sql: string[] = [];
+    const write = async (statement: string) => {
+      sql.push(statement);
+      return { result: [] as any[], affected: 0 };
+    };
+    const read = async () => [] as any[];
+    const transaction = async <T>(cb: (db: any) => Promise<T>) => {
+      sql.push('BEGIN');
+      return cb({ write: async () => ({ result: [], affected: 0 }) });
+    };
+    const { output } = createBulk({
+      file: 'app.db',
+      locks: noOpLocks,
+      logger: noopLogger,
+    })({ write, read, transaction } as any);
+    const controller = new AbortController();
+
+    const out = output(
+      'report',
+      { id: 'INTEGER' },
+      { signal: controller.signal },
+    );
+    out.enqueue({ id: 1 });
+    controller.abort();
+
+    await expect(out.close()).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(
+      sql.some((s) => s.includes('DROP TABLE IF EXISTS "__bsq_staging_')),
+    ).toBe(true);
+    // An aborted output() is observationally a no-op: no rename, no partial
+    // publication, previous target untouched.
+    expect(sql.some((s) => s.includes('"report"'))).toBe(false);
+    expect(sql.some((s) => s.startsWith('BEGIN'))).toBe(false);
+  });
+});
+
+describe('bulkWrite abort with a stalled batch (ABORT-1 regression)', () => {
+  /**
+   * A write that never settles — what OPFSCoopSyncVFS does on an engine
+   * without `readwrite-unsafe`, where one exclusive access handle rotates
+   * between workers and a hand-over may never arrive.
+   *
+   * Falsifiable: drop the signal from the inner write() and this hangs until
+   * the test timeout instead of rejecting, which is exactly what the benchmark
+   * page did on macOS Safari 27.0.
+   */
+  it('rejects close() even when a batch is already in flight', async () => {
+    const stalled = new Promise<never>(() => {});
+    const write = (_sql: string, _params?: any[], options?: any) =>
+      Promise.race([
+        stalled,
+        new Promise((_, reject) => {
+          options?.signal?.addEventListener('abort', () =>
+            reject(options.signal.reason),
+          );
+        }),
+      ]) as Promise<{ result: any[]; affected: number }>;
+    const read = async () => [] as any[];
+    const transaction = async <T>(cb: (db: any) => Promise<T>) =>
+      cb({ write: async () => ({ result: [], affected: 0 }) });
+
+    const { bulkWrite } = createBulk({
+      file: 'app.db',
+      locks: noOpLocks,
+      logger: noopLogger,
+      maxVariables: 2,
+    })({ read, write, transaction } as any);
+
+    const controller = new AbortController();
+    const bulk = bulkWrite('t', ['a'], { signal: controller.signal });
+    bulk.enqueue({ a: 1 });
+    bulk.enqueue({ a: 2 }); // flushes; the batch stalls inside write()
+
+    const closing = bulk.close();
+    await new Promise((r) => setTimeout(r, 0)); // let the batch reach write()
+    controller.abort();
+
+    await expect(
+      Promise.race([
+        closing,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('close() never settled')), 1000),
+        ),
+      ]),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});

@@ -58,7 +58,15 @@ export type ClientMessageData =
     }
   | { type: 'close'; callId: number }
   | { type: 'credit'; callId: number; n: number }
-  | { type: 'stop'; callId: number };
+  | { type: 'stop'; callId: number }
+  | {
+      type: 'delete';
+      callId: number;
+      file: string;
+      vfs: SQLiteVFS;
+      build?: SQLiteBuild;
+      wasm?: WasmLocation;
+    };
 
 export type WorkerMessageData =
   | { type: 'ready'; callId: number }
@@ -73,6 +81,7 @@ export type WorkerMessageData =
       sqliteCode?: number;
     }
   | { type: 'closed'; callId: number }
+  | { type: 'deleted'; callId: number }
   | {
       type: 'open-error';
       callId: number;
@@ -117,6 +126,19 @@ export type PlatformFeature =
 /** Where a VFS keeps the database. */
 export type VFSStorage = 'opfs' | 'indexeddb' | 'memory';
 
+/**
+ * How a VFS arranges a database in its storage — which is not the same
+ * question as `storage`, and cannot be derived from it: `AccessHandlePoolVFS`
+ * is `storage: 'opfs'` yet keeps opaque, randomly named slot files whose
+ * association with a SQLite path lives in a header inside each file.
+ *
+ * `deleteDatabase` reads this to decide whether the database is also an OPFS
+ * entry it can remove by name after `jDelete` — the pass that covers the two
+ * VFS whose `jDelete` does not delete. A wrong value here is a deletion that
+ * reports success over an intact file.
+ */
+export type VFSLayout = 'opfs-path' | 'opfs-pool' | 'idb-store' | 'memory';
+
 /** How much of the database a VFS keeps resident in RAM. */
 export type VFSMemoryModel = 'page-cache' | 'whole-database';
 
@@ -140,6 +162,8 @@ export type VFSCapability = {
   readonly memoryModel: VFSMemoryModel;
   /** Where the database actually lives. */
   readonly storage: VFSStorage;
+  /** How the database is arranged within that storage. */
+  readonly layout: VFSLayout;
   /**
    * Platform features without which this VFS cannot work at all.
    *
@@ -187,6 +211,7 @@ export const VFS_CAPABILITIES = {
     persistent: true,
     memoryModel: 'page-cache',
     storage: 'opfs',
+    layout: 'opfs-path',
     requires: ['opfs'],
     degradesWithout: ['readwrite-unsafe'],
   },
@@ -198,6 +223,7 @@ export const VFS_CAPABILITIES = {
     persistent: true,
     memoryModel: 'page-cache',
     storage: 'opfs',
+    layout: 'opfs-path',
     // Measured on Firefox 2026-08-27, HAS_UNSAFE_HANDLES false: all three
     // build pairs and all six invariants pass, concurrent writes included, at
     // poolSize 1, 2 and 4. `requires` used to name readwrite-unsafe, which made
@@ -214,6 +240,7 @@ export const VFS_CAPABILITIES = {
     persistent: true,
     memoryModel: 'page-cache',
     storage: 'opfs',
+    layout: 'opfs-path',
     requires: ['opfs'],
     degradesWithout: [],
   },
@@ -225,6 +252,7 @@ export const VFS_CAPABILITIES = {
     persistent: true,
     memoryModel: 'page-cache',
     storage: 'opfs',
+    layout: 'opfs-pool',
     requires: ['opfs'],
     degradesWithout: [],
   },
@@ -236,6 +264,7 @@ export const VFS_CAPABILITIES = {
     persistent: true,
     memoryModel: 'page-cache',
     storage: 'indexeddb',
+    layout: 'idb-store',
     requires: [],
     degradesWithout: [],
   },
@@ -263,6 +292,7 @@ export const VFS_CAPABILITIES = {
     // IndexedDB", and the whole database must fit in available memory.
     memoryModel: 'whole-database',
     storage: 'indexeddb',
+    layout: 'idb-store',
     requires: [],
     degradesWithout: [],
   },
@@ -274,6 +304,7 @@ export const VFS_CAPABILITIES = {
     persistent: true,
     memoryModel: 'page-cache',
     storage: 'opfs',
+    layout: 'opfs-path',
     requires: ['opfs', 'writable-stream'],
     degradesWithout: [],
   },
@@ -286,6 +317,7 @@ export const VFS_CAPABILITIES = {
     persistent: false,
     memoryModel: 'whole-database',
     storage: 'memory',
+    layout: 'memory',
     requires: [],
     degradesWithout: [],
   },
@@ -298,6 +330,7 @@ export const VFS_CAPABILITIES = {
     persistent: false,
     memoryModel: 'whole-database',
     storage: 'memory',
+    layout: 'memory',
     requires: [],
     degradesWithout: [],
   },

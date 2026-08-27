@@ -1,3 +1,4 @@
+import type { Abortable, SQLiteChunkOptions } from './api';
 import type { PoolWorker } from './pool';
 
 /**
@@ -9,7 +10,7 @@ import type { PoolWorker } from './pool';
  * This is the only place in the module that reads an AbortSignal; both
  * `chunk()` and `writeWorker()` delegate here.
  */
-const makeAbortRace = (
+export const makeAbortRace = (
   signal: AbortSignal | undefined,
 ): { aborted: Promise<never> | undefined; teardown: () => void } => {
   if (!signal) return { aborted: undefined, teardown: () => {} };
@@ -38,7 +39,7 @@ export const chunk = async function* <
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  options?: { chunkSize?: number; signal?: AbortSignal; credits?: number },
+  options?: SQLiteChunkOptions & { credits?: number },
 ): AsyncGenerator<T[]> {
   const { signal, chunkSize, credits } = options ?? {};
 
@@ -76,7 +77,7 @@ export const streamRows = async function* <
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  options?: { chunkSize?: number; signal?: AbortSignal },
+  options?: SQLiteChunkOptions,
 ): AsyncGenerator<T> {
   for await (const rows of chunk<T>(worker, sql, params, options)) {
     for (const row of rows) yield row;
@@ -89,7 +90,7 @@ export const readWorker = async <
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  options?: { chunkSize?: number; signal?: AbortSignal },
+  options?: SQLiteChunkOptions,
 ): Promise<T[]> => {
   const result: T[] = [];
   for await (const rows of chunk<T>(worker, sql, params, options)) {
@@ -111,7 +112,7 @@ export const firstWorker = async <
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  options?: { signal?: AbortSignal },
+  options?: Abortable,
 ): Promise<T | undefined> => {
   for await (const rows of chunk<T>(worker, sql, params, {
     ...options,
@@ -132,7 +133,7 @@ export const writeWorker = async <
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  options?: { signal?: AbortSignal },
+  options?: Abortable,
 ): Promise<{ result: T[]; affected: number }> => {
   const { signal } = options ?? {};
 

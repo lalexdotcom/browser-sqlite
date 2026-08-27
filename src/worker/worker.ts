@@ -24,6 +24,7 @@ import {
   defaultBuildFor,
   type SQLiteBuild,
   type SQLiteVFS,
+  VFS_CAPABILITIES,
   type WasmLocation,
   type WorkerMessageData,
 } from '../types';
@@ -237,18 +238,7 @@ const open = (file: string, options: OpenOptions) => {
     self.postMessage(data);
   };
 
-  /**
-   * A cause that cannot be structured-cloned makes `postMessage` itself throw —
-   * inside the catch block — so the client receives nothing and waits forever.
-   */
-  const cloneable = (value: unknown): unknown => {
-    try {
-      structuredClone(value);
-      return value;
-    } catch {
-      return String(value);
-    }
-  };
+  // `cloneable` is defined at module level; see below.
 
   const query = async function* (
     sql: string,
@@ -369,6 +359,13 @@ const open = (file: string, options: OpenOptions) => {
         // A second open is a protocol error; open() already guards against this.
         throw new Error('DB already opened');
       }
+      case 'delete': {
+        // A delete worker never opens a database, so this message cannot arrive
+        // here: it is handled by the top-level onmessage before open() runs.
+        throw new Error(
+          'delete message cannot arrive after a database is opened',
+        );
+      }
       case 'credit': {
         gate.grant(data.callId, data.n);
         break;
@@ -387,6 +384,138 @@ const open = (file: string, options: OpenOptions) => {
   };
 };
 
+/**
+ * A cause that cannot be structured-cloned makes `postMessage` itself throw —
+ * inside the catch block — so the client receives nothing and waits forever.
+ */
+const cloneable = (value: unknown): unknown => {
+  try {
+    structuredClone(value);
+    return value;
+  } catch {
+    return String(value);
+  }
+};
+
+/**
+ * The database and the two siblings SQLite may leave beside it. The set is
+ * upstream's own (`OPFSCoopSyncVFS.js:8`), not a guess: a stale `-journal` next
+ * to a deleted database is a hot journal, and recreating a database of that
+ * name would have SQLite attempt a rollback from it. On `AccessHandlePoolVFS`
+ * each sibling also occupies its own pool slot.
+ */
+const DB_RELATED_SUFFIXES = ['', '-journal', '-wal'] as const;
+
+/**
+ * Removes one OPFS entry if it is there, walking the path's directories.
+ * A missing entry is success — which is what makes this pass inert should
+ * upstream's `jDelete` start removing the file itself.
+ */
+const removeOpfsEntry = async (path: string): Promise<void> => {
+  const segments = path.split('/').filter(Boolean);
+  const name = segments.pop();
+  if (!name) return;
+  try {
+    let dir = await navigator.storage.getDirectory();
+    for (const segment of segments) {
+      dir = await dir.getDirectoryHandle(segment);
+    }
+    await dir.removeEntry(name);
+  } catch (error) {
+    if ((error as DOMException)?.name === 'NotFoundError') return;
+    throw error;
+  }
+};
+
+/**
+ * Deletes a database without opening it.
+ *
+ * The VFS is instantiated because `jDelete` is the only correct removal on
+ * `AccessHandlePoolVFS` — it un-associates the SQLite path and returns the slot
+ * to the pool, where deleting the OPFS file by name would match nothing.
+ *
+ * The second pass exists because two of the seven persistent `jDelete`
+ * implementations do not delete: `OPFSCoopSyncVFS` truncates a file it never
+ * removes, and is a silent no-op for a database that is not open — which is
+ * every database here, since nothing is opened; `OPFSWriteAheadVFS` throws for
+ * anything that is not a bound temporary file. Both keep the database at the
+ * plain OPFS path, so the remedy is the `removeEntry` the other two OPFS VFS
+ * already perform internally. It runs for all four `opfs-path` VFS rather than
+ * for an exception list, because it is idempotent and a list would be a second
+ * place to update when a VFS is added.
+ */
+const deleteDatabaseFiles = async (data: {
+  file: string;
+  vfs: SQLiteVFS;
+  build?: SQLiteBuild;
+  wasm?: WasmLocation;
+}) => {
+  const { file, vfs, wasm } = data;
+  const build = data.build ?? defaultBuildFor(vfs);
+
+  const { default: factory } = await WA_SQLITE_BUILDS[build]();
+  const module = await factory(wasmModuleArg(wasm));
+  const vfsModule = (await VFSConfigs[vfs].fs()) as unknown as Record<
+    string,
+    VFSClass
+  >;
+  const vfsInstance = (await vfsModule[vfs].create(vfs, module, {
+    lockPolicy: 'shared',
+  })) as any;
+
+  try {
+    for (const suffix of DB_RELATED_SUFFIXES) {
+      // Pass syncDir=1, not 0. IDBBatchAtomicVFS.jDelete (wa-sqlite
+      // IDBBatchAtomicVFS.js:119-133) only awaits its IndexedDB transaction
+      // when syncDir is truthy — with 0 the delete is queued on #chain but
+      // the worker exits before it commits, leaving the data intact.
+      // OPFSAdaptiveVFS, OPFSAnyContextVFS and IDBMirrorVFS honour the same
+      // flag with `if (syncDir) await result`; the remaining VFS ignore it.
+      await vfsInstance.jDelete(`${file}${suffix}`, 1);
+    }
+
+    // Commit barrier for idb-store VFS. This call is a barrier, not a check —
+    // its return value is deliberately discarded. Removing it silently
+    // reintroduces the data-survives-deletion defect that invariant 7 caught.
+    //
+    // Why it works: IDBBatchAtomicVFS.jDelete with syncDir=1 calls sync(false),
+    // which awaits #chain (IDB requests submitted) but NOT #txComplete
+    // (transaction oncomplete). The rw delete transactions are still pending
+    // when the worker would otherwise exit; worker termination closes the IDB
+    // connection and aborts them. jAccess issues a ro transaction on the same
+    // connection whose lambda returns the metadata.get promise, so #q awaits
+    // the request result (IDBBatchAtomicVFS.js:146-157). Per the IndexedDB
+    // specification, a ro transaction cannot acquire its object-store locks
+    // until every rw transaction with overlapping scope on the same connection
+    // has committed — that is a spec requirement, not engine behaviour. When
+    // metadata.get's onsuccess fires, the rw deletes are durably committed.
+    //
+    // IDBMirrorVFS (also idb-store) is inert here: its jAccess is a pure
+    // in-memory map lookup that issues no IDB transaction (IDBMirrorVFS.js:
+    // 239-253), so no serialisation barrier is created. That is harmless
+    // because IDBMirrorVFS.#deleteFile already awaits oncomplete before
+    // returning (IDBMirrorVFS.js:738-751).
+    //
+    // The gate is by layout declaration, not by VFS name, keeping with this
+    // project's convention that VFS behaviour is declared once in
+    // VFS_CAPABILITIES and never special-cased by name. A future idb-store VFS
+    // inherits the barrier, which is either needed (like IDBBatchAtomicVFS) or
+    // inert (like IDBMirrorVFS).
+    if (VFS_CAPABILITIES[vfs].layout === 'idb-store') {
+      const pResOut = new DataView(new ArrayBuffer(4));
+      await vfsInstance.jAccess(`${file}`, 0, pResOut);
+    }
+  } finally {
+    await vfsInstance.close?.();
+  }
+
+  if (VFS_CAPABILITIES[vfs].layout === 'opfs-path') {
+    for (const suffix of DB_RELATED_SUFFIXES) {
+      await removeOpfsEntry(`${file}${suffix}`);
+    }
+  }
+};
+
 // Top-level message handler: processes only 'open' messages.
 // After open() completes, the query handler installed inside open() takes over
 // and this handler is no longer the active responder for incoming messages.
@@ -396,6 +525,27 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
     case 'open': {
       const { file, vfs, build, pragmas } = data;
       open(file, { vfs, build, pragmas });
+      break;
+    }
+    case 'delete': {
+      deleteDatabaseFiles(data)
+        .then(() => {
+          self.postMessage({ type: 'deleted', callId: 0 });
+        })
+        .catch((error: unknown) => {
+          self.postMessage({
+            type: 'error',
+            callId: 0,
+            message:
+              error instanceof Error
+                ? error.message
+                : `Failed to delete ${data.file}`,
+            cause: cloneable(error),
+            ...(typeof (error as { code?: unknown })?.code === 'number'
+              ? { sqliteCode: (error as { code: number }).code }
+              : {}),
+          });
+        });
       break;
     }
     case 'query': {

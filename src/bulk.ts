@@ -1,4 +1,10 @@
-import type { Schema, SQLiteOutputOptions, SQLiteOutputRow } from './api';
+import type {
+  Abortable,
+  Schema,
+  SQLiteOutputOptions,
+  SQLiteOutputRow,
+  SQLiteTransactionOptions,
+} from './api';
 import { SQLiteBulkWriteError } from './errors';
 import {
   type Locks,
@@ -37,8 +43,15 @@ export type TransactionFn = <T>(
       options?: any,
     ) => Promise<{ result: any[]; affected: number }>;
   }) => Promise<T>,
-  options?: { readOnly?: boolean; autoCommit?: boolean },
+  options?: SQLiteTransactionOptions,
 ) => Promise<T>;
+
+/**
+ * How long the best-effort staging DROP may wait for a worker before the
+ * caller is let go. Not an option: a caller has nothing useful to tune here,
+ * and the consequence of expiry is a table the sweep already collects.
+ */
+const DROP_STAGING_TIMEOUT = 5_000;
 
 export const createBulk = (shared: {
   file: string;
@@ -86,9 +99,11 @@ export const createBulk = (shared: {
     const bulkWrite = <KEYS extends string>(
       table: string,
       keys: KEYS[],
+      options?: Abortable,
       /** Internal: awaited before the first batch. `output()` passes its staging DDL. */
       before?: Promise<unknown>,
     ) => {
+      const signal = options?.signal;
       const maxBufferSize = Math.floor(maxVariables / keys.length);
 
       const buffer: { [K in KEYS]: any }[] = [];
@@ -116,15 +131,40 @@ export const createBulk = (shared: {
             rowsNotWritten += toInsert.length;
             return currentAffected;
           }
+          // Skips a batch the abort beat to the start, so no round trip is
+          // paid for rows that will not be written.
+          if (signal?.aborted) {
+            rowsNotWritten += toInsert.length;
+            return currentAffected;
+          }
           try {
             if (before) await before;
+            // The signal goes DOWN to the write. An earlier version withheld
+            // it, reasoning that an aborted batch would be caught below and
+            // recorded as `failure`, making close() reject with
+            // SQLiteBulkWriteError instead of the caller's reason. The premise
+            // was right and the conclusion wrong: the catch is ours, and it
+            // tells the two apart.
+            //
+            // Withholding it cost a hang. A batch already in flight had no way
+            // to be rejected, so a write that never settles — OPFSCoopSyncVFS
+            // on an engine without `readwrite-unsafe`, waiting on a handle
+            // hand-over that never comes — left this chain pending for ever,
+            // and close() with it. Observed on macOS Safari 27.0.
             const { affected } = await write(
               `INSERT INTO ${quoteIdent(table)} (${keys.map(quoteIdent).join(',')}) VALUES ${toInsert.map(() => `(${keys.map(() => '?')})`)}`,
               toInsert.flatMap((data) => keys.map((k) => data[k])),
+              { signal },
             );
             rowsWritten += toInsert.length;
             return currentAffected + affected;
           } catch (error) {
+            // An abort is not a failure. This branch is what keeps close()
+            // rejecting with `signal.reason` rather than SQLiteBulkWriteError.
+            if (signal?.aborted) {
+              rowsNotWritten += toInsert.length;
+              return currentAffected;
+            }
             failure = error;
             // A multi-row INSERT is statement-atomic: nothing of this batch landed.
             rowsNotWritten += toInsert.length;
@@ -142,6 +182,10 @@ export const createBulk = (shared: {
       return {
         enqueue: (data: { [K in KEYS]: any }) => {
           if (closed) throw failClosed();
+          // Before the failure guard: an aborted writer is not a failed one,
+          // and the caller who aborted wants their own reason back, not a
+          // report about rows they stopped caring about.
+          signal?.throwIfAborted();
           if (failure) throw fail();
           buffer.push(data);
           if (buffer.length >= maxBufferSize) flush();
@@ -150,6 +194,9 @@ export const createBulk = (shared: {
           if (closed) throw failClosed();
           if (buffer.length) flush();
           const affected = await writePromise;
+          // Ordered ahead of the failure check for the same reason: a batch
+          // skipped by the abort is not a batch that failed.
+          signal?.throwIfAborted();
           if (failure) throw fail();
           closed = true;
           return affected;
@@ -287,6 +334,7 @@ export const createBulk = (shared: {
         Object.keys(schema).filter(
           (col) => typeof schema[col] !== 'object' || !schema[col].generated,
         ),
+        { signal: options?.signal },
         createStaging,
       );
 
@@ -295,7 +343,20 @@ export const createBulk = (shared: {
       };
 
       const dropStaging = () =>
-        write(`DROP TABLE IF EXISTS ${quoteIdent(staging)}`).catch(() => {
+        Promise.race([
+          write(`DROP TABLE IF EXISTS ${quoteIdent(staging)}`),
+          // Bounded, because this runs on the path whose whole point is to
+          // stop quickly. The DROP is a write, so it needs a worker — and
+          // after an abort the pool may still be finishing the batch the abort
+          // skipped, or be stuck for the reason the caller aborted over.
+          // Unbounded, a best-effort cleanup would hold close() open forever.
+          //
+          // Giving up here is safe by construction: the fallback is an orphan
+          // staging table, and releasing the staging lock — which happens
+          // AFTER this attempt, deliberately — is what tells another sweep it
+          // may collect it.
+          new Promise((resolve) => setTimeout(resolve, DROP_STAGING_TIMEOUT)),
+        ]).catch(() => {
           // Net 2 (the sweep) collects what this could not.
         });
 

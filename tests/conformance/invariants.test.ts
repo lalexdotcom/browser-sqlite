@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
+import { deleteDatabase } from '../../src/delete';
 import { VFS_CAPABILITIES } from '../../src/types';
 import {
   ALL_VFS,
@@ -219,6 +220,49 @@ describe('invariant 6 — no read runs inside an open transaction', () => {
       release();
       await tx;
       await db.close();
+    });
+  }
+});
+
+/**
+ * A database that is deleted is gone, on every VFS that persists one.
+ *
+ * Asserted through a fresh client rather than through OPFS: half the VFS keep
+ * nothing at that name, and `AccessHandlePoolVFS` keeps a slot file whose name
+ * is unrelated to the database's.
+ *
+ * Falsifiable, and worth doing by hand once: change `OPFSCoopSyncVFS`'s
+ * `layout` away from `'opfs-path'` and this must go red for that VFS. Only
+ * `jDelete` would then run, and `OPFSCoopSyncVFS.jDelete` truncates a file it
+ * never removes — and does nothing at all for a database that is not open,
+ * which is every database here. A step whose removal leaves the suite green is
+ * a step nothing depends on.
+ */
+describe('invariant 7 — a deleted database is gone', () => {
+  for (const vfs of ALL_VFS) {
+    if (VFS_CAPABILITIES[vfs].layout === 'memory') {
+      it.skip(`${vfs} — skipped, nothing persists to delete`, () => {});
+      continue;
+    }
+    const missing = missingHere(vfs);
+    if (missing) {
+      it.skip(`${vfs} — skipped, no ${missing} in this browser`, () => {});
+      continue;
+    }
+    it(`${vfs}`, async () => {
+      const { file, db } = conformanceClient(vfs);
+      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.write('INSERT INTO t VALUES (1)');
+      await db.close();
+
+      await deleteDatabase(file, { vfs });
+
+      const reopened = createReopened(file, vfs);
+      const rows = await reopened.read<{ n: number }>(
+        "SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 't'",
+      );
+      expect(rows[0].n).toBe(0);
+      await reopened.close();
     });
   }
 });
