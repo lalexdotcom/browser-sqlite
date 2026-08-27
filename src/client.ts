@@ -14,6 +14,7 @@ import { createPoolWorker, type PoolWorker } from './pool';
 import {
   chunk as chunkWorker,
   firstWorker,
+  makeAbortRace,
   readWorker,
   streamRows,
   writeWorker,
@@ -396,7 +397,28 @@ export const createSQLiteClient = (
       ? await acquireWithDebug(kind, signal)
       : await scheduler.acquire(kind, signal);
     try {
-      await applyBarrier(lease.worker);
+      // Raced, not merely passed a signal. `applyBarrier` drains a real query
+      // on the worker, and `PoolWorkerQueryOptions` carries no signal — so on
+      // a worker that never answers, that loop is unbounded and every method
+      // goes through it. Firefox 154 stopped here, on OPFSCoopSyncVFS, after
+      // the two earlier abort paths were closed.
+      //
+      // This is the second and last phase of a call that was not already
+      // abortable: `scheduler.acquire` now honours the signal while queued,
+      // and the query phase has honoured it since wave 1. Guarding here rather
+      // than at each public method is what makes that complete — an await
+      // added to this function later is covered without being remembered.
+      //
+      // The race abandons the WAIT, not the WORK: the barrier statement runs
+      // on. The catch below releases through `quiesce()`, which returns the
+      // worker only once it is actually idle, so nothing is re-lent mid-flight.
+      const { aborted, teardown } = makeAbortRace(signal);
+      try {
+        const barrier = applyBarrier(lease.worker);
+        await (aborted ? Promise.race([barrier, aborted]) : barrier);
+      } finally {
+        teardown();
+      }
     } catch (error) {
       // The caller never received the lease, so its try/finally cannot return
       // the worker. Release on the same path a normal caller would.

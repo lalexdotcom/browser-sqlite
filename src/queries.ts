@@ -10,7 +10,7 @@ import type { PoolWorker } from './pool';
  * This is the only place in the module that reads an AbortSignal; both
  * `chunk()` and `writeWorker()` delegate here.
  */
-const makeAbortRace = (
+export const makeAbortRace = (
   signal: AbortSignal | undefined,
 ): { aborted: Promise<never> | undefined; teardown: () => void } => {
   if (!signal) return { aborted: undefined, teardown: () => {} };
