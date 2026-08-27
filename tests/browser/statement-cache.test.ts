@@ -136,4 +136,21 @@ describe('statement cache', () => {
     expect(runsOf(db, sql)[1]?.prepared).toBe(0);
     await db.close();
   });
+
+  it('sees a column added after the statement was cached', async () => {
+    const db = await createTestClient(single);
+    await db.write('CREATE TABLE t (a)');
+    await db.write('INSERT INTO t (a) VALUES (1)');
+    await db.read('SELECT * FROM t');
+    await db.write('ALTER TABLE t ADD COLUMN b');
+    const rows = await db.read<Record<string, unknown>>('SELECT * FROM t');
+    // The cached statement re-prepares itself during step() when the schema
+    // has moved. Column names read before that step describe the old table
+    // while row() returns the new one — correct values under wrong keys.
+    // Falsifiability: move `cols ??= sqlite.column_names(stmt)` from inside
+    // the SQLITE_ROW branch to `const cols = …` above the while-loop in
+    // `run` (worker.ts line 282) and `b` is missing from the returned row.
+    expect(Object.keys(rows[0] ?? {})).toEqual(['a', 'b']);
+    await db.close();
+  });
 });
