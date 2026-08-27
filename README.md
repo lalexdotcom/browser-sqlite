@@ -197,9 +197,12 @@ multi-row INSERT is statement-atomic, so the failing batch wrote nothing.
 
 Pass `{ signal }` to abort a load. `close()` then rejects with `signal.reason`, and the abort lands **between** batches — never inside one, because a multi-row INSERT is statement-atomic. The batches already written stay written, for the same reason a failure leaves them: an abort stops the load, it does not undo it.
 
+Await `enqueue()` to be slowed to the speed of the database. It resolves immediately while fewer than `queueSize` rows are queued for writing, and only defers beyond that — so a producer that awaits every row never holds more than that many unwritten rows in memory. Ignoring the returned promise is legal and loads exactly as before: the bound is an offer, not a guarantee, and only you can take it.
+
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `signal` | `AbortSignal` | — | Aborts the load between batches. `close()` rejects with `signal.reason`. |
+| `queueSize` | `number` | 2 batches | Rows queued for writing above which `enqueue()` defers. A batch is `floor(32766 / columns)` rows. |
 
 ### *client*.output
 
@@ -225,6 +228,7 @@ did not exist appears only at `close()`. Single-use, like `bulkWrite`.
 |---|---|---|---|
 | `indexes` | `Index[]` | — | Indexes built after the swap, under their final names. A column name, an array of them, or `{ columns, unique }`. |
 | `signal` | `AbortSignal` | — | Aborts the load between batches. `close()` rejects with `signal.reason` and the target is untouched. |
+| `queueSize` | `number` | 2 batches | Rows queued for writing above which `enqueue()` defers. A batch is `floor(32766 / columns)` rows. |
 
 **Inside a transaction, `output()` costs more than it looks.** On its own it loads rows outside any transaction and holds the write lock only for the final swap. Called on a `tx`, the entire load runs inside your transaction — every other write, in this tab and in others, waits for it to finish.
 
