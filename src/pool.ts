@@ -73,7 +73,7 @@ const BUSY_CODES = new Set([5, 6]);
  * code (5 or 6), else undefined. Shared by both the query-error and
  * open-error paths so the BUSY_CODES decision lives in exactly one place.
  */
-const busyFromCode = (data: {
+export const busyFromCode = (data: {
   message: string;
   cause?: unknown;
   sqliteCode?: number;
@@ -105,6 +105,23 @@ const workerError = (data: {
  *  2. Both `available` assignments are deleted (availability lives in the Scheduler).
  *  3. `worker.available = false/true` in the `query` generator are deleted.
  */
+/**
+ * The single `new Worker(new URL(…))` expression in this package.
+ *
+ * It must stay one literal, in one place: bundlers find the worker by static
+ * analysis of exactly this shape, and a second copy would have them emit a
+ * second, untransformed worker bundle. `pool.ts:191` records what that cost
+ * when the expression was written a second time for an error message.
+ */
+export const spawnWorker = (name: string): Worker =>
+  new Worker(
+    /* webpackChunkName: "browser-sqlite" */ new URL(
+      './worker/worker.js',
+      import.meta.url,
+    ),
+    { name, type: 'module' },
+  );
+
 export const createPoolWorker = (deps: {
   index: number;
   pool: (PoolWorker | undefined)[];
@@ -132,16 +149,12 @@ export const createPoolWorker = (deps: {
   const deferredInit = Promise.withResolvers<PoolWorker>();
 
   const workerName = `${clientPrefix} / Worker ${index + 1}`;
-  const worker = Object.assign(
-    new Worker(
-      /* webpackChunkName: "browser-sqlite" */ new URL(
-        './worker/worker.js',
-        import.meta.url,
-      ),
-      { name: workerName, type: 'module' },
-    ) as PoolWorker,
-    { index, status: 'NEW', seen: -1, epochTarget: 0 },
-  );
+  const worker = Object.assign(spawnWorker(workerName) as PoolWorker, {
+    index,
+    status: 'NEW',
+    seen: -1,
+    epochTarget: 0,
+  });
   pool[index] = worker;
   logger.info(`worker ${index + 1} created`);
 
