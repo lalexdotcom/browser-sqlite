@@ -114,13 +114,12 @@ describe('statement cache', () => {
     const db = await createTestClient(single);
     await db.write('CREATE TABLE t (a)');
     await db.read('SELECT * FROM t');
-    // SQLite refuses to close a connection holding live statements. Without
-    // the drain the catch swallows SQLITE_BUSY and close resolves silently on
-    // a database that never actually closed. This test verifies that close()
-    // does not throw; the drain's correctness is structural, not observable
-    // from JavaScript.
-    // Falsifiability (structural): delete the drain in worker.ts's close case;
-    // the database never truly closes, which the JS boundary cannot observe.
+    // Verifies that close() resolves and does not reject after statements have
+    // been cached. The drain's structural necessity — SQLite returns SQLITE_BUSY
+    // when live statements exist — is not observable from JavaScript: the close
+    // path's own catch{} swallows the error and the worker is terminated
+    // either way, releasing OPFS handles. No edit to worker.ts makes this test
+    // go red; the drain is a structural requirement covered by no falsifying test.
     await expect(db.close()).resolves.toBeUndefined();
   });
 
