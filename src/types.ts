@@ -71,7 +71,18 @@ export type ClientMessageData =
 export type WorkerMessageData =
   | { type: 'ready'; callId: number }
   | { type: 'chunk'; callId: number; data: any[] }
-  | { type: 'done'; callId: number; affected: number }
+  | {
+      type: 'done';
+      callId: number;
+      affected: number;
+      /**
+       * Statements compiled while serving this query — zero on a cache hit.
+       * Rides the same message as `affected` rather than opening a channel:
+       * the effect this instruments is a count, not a duration (`mem:lessons`,
+       * "for a sub-millisecond effect, count the round trips").
+       */
+      prepared: number;
+    }
   | {
       type: 'error';
       callId: number;

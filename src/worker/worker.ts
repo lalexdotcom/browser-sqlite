@@ -238,6 +238,10 @@ const open = (file: string, options: OpenOptions) => {
     self.postMessage(data);
   };
 
+  // One query at a time per worker (a worker holds one lease), so a single
+  // counter cannot interleave. Reset by the `query` case, read by its reply.
+  let prepared = 0;
+
   // `cloneable` is defined at module level; see below.
 
   const query = async function* (
@@ -253,6 +257,7 @@ const open = (file: string, options: OpenOptions) => {
     const buffer = [];
 
     for await (const stmt of sqlite.statements(db, sql)) {
+      prepared++;
       if (params?.length) {
         sqlite.bind_collection(stmt, params);
       }
@@ -294,6 +299,7 @@ const open = (file: string, options: OpenOptions) => {
           // Reset the credit gate for this call. pool.ts sets the worker's
           // status to RUNNING after posting the query.
           gate.reset(callId, options?.credits ?? DEFAULT_CREDIT_WINDOW);
+          prepared = 0;
           queryRunning = Promise.withResolvers<void>();
           let affected = 0;
 
@@ -313,7 +319,7 @@ const open = (file: string, options: OpenOptions) => {
               message: 'The SQLite client has been closed.',
             });
           } else {
-            reply({ type: 'done', callId, affected });
+            reply({ type: 'done', callId, affected, prepared });
           }
         } catch (e) {
           reply({

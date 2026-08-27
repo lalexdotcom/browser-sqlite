@@ -94,6 +94,7 @@ type QueryDebugState = {
   endTime?: number;
   error?: any;
   affectedRows: number;
+  prepared: number;
 };
 
 type RequestDebugState = {
@@ -215,6 +216,7 @@ export const createClientDebug = (
       params,
       startTime: Date.now(),
       affectedRows: 0,
+      prepared: 0,
     };
     const worker = clientState.workers[workerIndex];
     if (worker?.currentRequest) {

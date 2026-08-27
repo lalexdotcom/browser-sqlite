@@ -296,6 +296,7 @@ export const createPoolWorker = (deps: {
           const affected = data.affected;
           if (state?.currentRequest?.currentQuery) {
             state.currentRequest.currentQuery.affectedRows = affected;
+            state.currentRequest.currentQuery.prepared = data.prepared;
             state.currentRequest.affectedRows += affected;
             state.currentRequest.currentQuery.endTime = Date.now();
           }
