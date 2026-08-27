@@ -73,14 +73,14 @@ on both `sync` and `async`. It read as a regression from a wa-sqlite patch commi
 minutes earlier; it was residue, and deleting the directory by hand restored it with no
 code change. Corroborated on an iOS device where `/sync` went 5/7 → 0/7 between two runs
 while `/async` was already at 0/7: **the failure migrates from build to build as the pool
-fills**, the signature six-slot exhaustion predicts and no engine defect does. **The iOS attribution is refuted, 2026-08-27.** This entry said the isolated
-`AccessHandlePoolVFS` `opens` failures on iOS were "very likely the same exhaustion", and
-prescribed re-running on a swept root before recording either as real. That was done: site
-data cleared on the device, page reloaded, and **`sync` and `async` both still fail with
-the same bare `sqlite3_open_v2`**. Two arguments say it is not residue — it survives a
-cleared root, and it is the iPhone alone, while macOS 26.5.2, macOS 27.0 and iPadOS 27.0
-all pass with the same residue history. See IOS-AHP-1 below. The `/jspi` failure on macOS
-Chromium 150 is untouched by this and still owes its re-run.
+fills**, the signature six-slot exhaustion predicts and no engine defect does. **The iOS attribution held, and the fix is field-verified — 2026-08-27.** This entry said
+the isolated `AccessHandlePoolVFS` `opens` failures were "very likely the same exhaustion"
+and prescribed a re-run on a swept root. Three runs on one iPhone, an hour apart:
+`fail, fail, pass`. The pass came on the first page served with the automatic sweep, and
+the two failures include one taken **after the device's site data was cleared by hand** —
+so the manual clearing never reached OPFS, which is why the middle run looked like a
+refutation. It was not. `AccessHandlePoolVFS/jspi` on macOS Chromium 150 also passes now,
+on all three builds, which retires the other isolated failure this entry was holding.
 
 *Corrected twice on 2026-08-27, and the second correction is the true one.* The durable
 mechanism already exists and shipped in `76141b3`: `sweepBeforeRun` runs before every bench
@@ -174,35 +174,25 @@ Linux WebKit having no OPFS at all. Narrow the entry from "does not work off Chr
 campaign. The degradation itself is also unmeasured — the read-burst ratio would say
 whether it degrades like `OPFSAdaptiveVFS` or not at all.
 
-### IOS-AHP-1 — `AccessHandlePoolVFS` cannot open on iOS 26.6, and it is not residue
+### REOPEN-1 — `OPFSWriteAheadVFS/sync :: survives-reopen`, a flake at n=3
 
-`sync` and `async` both fail at `opens` with a bare `sqlite3_open_v2`, on 2026-08-25 and
-twice on 2026-08-27 — including **after the device's site data was cleared**, which is the
-test RESIDUE-1 prescribed for exactly this. macOS 26.5.2, macOS 27.0 and iPadOS 27.0 all
-pass, so it is the iPhone specifically rather than the engine version or accumulated
-residue.
+| device | runs |
+|---|---|
+| macOS Safari 27.0 | `timeout` `pass` `pass` |
+| iPadOS Safari 27.0 | `timeout` `pass` `pass` |
+| macOS Safari 26.5.2 | `pass` `pass` |
+| iOS Safari 26.6 | `pass` `pass` `pass` |
+| macOS Chrome 150 | `pass` |
 
-Reproducible, unlike everything else that came out of this campaign. Nothing is known about
-the mechanism: `sqlite3_open_v2` with no message is what the VFS returns when it cannot
-take two of its six slots, but that is the same symptom exhaustion produces, and exhaustion
-has been ruled out. **Do not reuse RESIDUE-1's explanation for it.**
+One occurrence in three runs on each of the two devices that showed it, all 2026-08-27.
+**Opened as a defect on the strength of "reproduced on two devices", which was two devices
+at one run each and distinguishes nothing.** Both timeouts fell on the first run of the day
+on their device — recorded as an observation, not a hypothesis: macOS's second run passed
+while its root was in all likelihood still dirty.
 
-The VFS is `poolSize: 1` and niche; this blocks nothing. But it is the one solid,
-repeatable device finding available, which makes it the cheapest place to learn something
-real about OPFS on iOS.
-
-### REOPEN-1 — `OPFSWriteAheadVFS/sync :: survives-reopen` is a flake on Safari 27
-
-Seen as `timeout` on macOS 27.0 and iPadOS 27.0 on 2026-08-27, and **`pass` on the very
-next run of each, twenty minutes later**. One occurrence in two runs on each device. Clean
-on Safari 26.5.2 and 26.6, and clean on the other two builds throughout.
-
-**Opened as a defect on the strength of "reproduced on two devices" — which was two devices
-at one run each, and that distinguishes nothing.** It is the same shape as FLAKE-ROW-1: a
-race whose verdict depends on timing. Do not write a mechanism for it before n≥3 per
-device, and note the honest question may not be "why can one build not reopen" at all:
+Not worth a mechanism at this rate. If it is ever chased, note the prior question:
 `OPFSWriteAheadVFS` gives no concurrency on Safari (`mem:measurements`), so whether it
-should be recommended there is the prior question.
+should be recommended there at all comes first.
 
 ## Evidence owed
 

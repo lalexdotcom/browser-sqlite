@@ -114,6 +114,19 @@ banner (hence `legalComments: 'inline'`) and missed a second time in the same re
 `dist/NOTICE` said "see LICENSE" while `dist/` shipped without one, and `dist/` is
 routinely served alone. When a rule is bought for one artifact, sweep the neighbours.
 
+**A manual step you did not observe is not evidence.** A device failure was declared "not
+residue" because it survived a hand-clearing of the browser's site data. Three runs later
+the automatic sweep fixed it: the clearing had never reached OPFS. The refutation rested
+entirely on an action nobody verified, and the instrument was right there — the page could
+have reported whether the root was empty. **When a human step is a premise of a
+conclusion, make the machine confirm it happened.**
+
+**One run per device reads like reproduction when two devices agree.** It is not. Two
+findings were written this way on 2026-08-27 and both were wrong, in opposite directions: a
+flake recorded as a defect, and a real residue recorded as refuted. n≥3 per device is the
+floor for a verdict, and it applies to failures as much as to the flaky row it was
+originally written for.
+
 ## About this project's own memory
 
 **A memory that goes stale states falsehoods with confidence.** The default VFS was wrong

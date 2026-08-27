@@ -248,23 +248,26 @@ So it degrades exactly like `OPFSAdaptiveVFS` without `readwrite-unsafe`, which 
 `degradesWithout` as the right declaration — and means it offers a Safari user nothing over
 the recommended default.
 
-**A second round, twenty minutes later, changed what the first round appeared to say.** The
-device's site data was cleared between them, and each device was re-run.
+**Three rounds over ninety minutes settled what one round could not.** Round 2 followed a
+manual clearing of the device's site data; round 3 was the first served by the page
+carrying the automatic VFS-name sweep (`a82f0ee`).
 
-- **`OPFSWriteAheadVFS/sync :: survives-reopen` did not reproduce.** `timeout` then `pass`
-  on macOS 27.0, and `timeout` then `pass` on iPadOS 27.0. One occurrence in two runs on
-  each device — a flake, not the defect the first round looked like. See REOPEN-1.
-- **`AccessHandlePoolVFS` still fails at `opens` on iOS 26.6, on a cleared root.** Same bare
-  `sqlite3_open_v2`, both builds, before and after. macOS 26.5.2, macOS 27.0 and iPadOS
-  27.0 pass. So it is neither residue nor the engine version: it is the iPhone. See
-  IOS-AHP-1.
-- **`no-read-inside-transaction` flipped in both directions again**, twenty minutes apart:
-  `OPFSAdaptiveVFS` `blocked` → `pass` on two devices, `OPFSCoopSyncVFS` `pass` → `blocked`
-  on iOS. FLAKE-ROW-1's n≥3 rule keeps earning itself.
+- **`AccessHandlePoolVFS` on iOS 26.6: `fail`, `fail`, `pass`.** It was residue after all.
+  The manual clearing never reached OPFS — which is exactly why round 2 read as a
+  refutation and was not. Round 3 is the sweep working on a real device, on the case it was
+  written for. `AccessHandlePoolVFS/jspi` on macOS Chromium 150 passes too, retiring the
+  other isolated `opens` failure this project was carrying.
+- **`OPFSWriteAheadVFS/sync :: survives-reopen`: one `timeout` in three runs**, on macOS
+  27.0 and on iPadOS 27.0, `pass` everywhere else including all three iOS runs and macOS
+  Chrome 150. A flake at n=3, not the defect round 1 looked like. See REOPEN-1.
+- **`no-read-inside-transaction` flipped in both directions between rounds**, on three VFS.
+  FLAKE-ROW-1's n≥3 rule keeps earning itself.
 
-**The lesson the second round taught: one run per device reads like reproduction when two
-devices agree, and it is not.** Both REOPEN-1 and the residue attribution were written from
-a single run each and both were wrong.
+**What the three rounds taught, and it is not "run more":** two conclusions were written
+from one run per device and both were wrong, in opposite directions. The first said a flake
+was a defect. The second said a defect was not residue — resting on a manual clearing whose
+effect was never verified. **A manual step you did not observe is not evidence**; the page
+could have reported whether the OPFS root was empty, and nobody asked it.
 
 ## Numbers that are one observation, not a measurement
 
