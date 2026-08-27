@@ -739,3 +739,62 @@ describe('scheduler — aborting while queued', () => {
     expect(next.worker.index).toBe(0);
   });
 });
+
+describe('scheduler — the last writer is preferred', () => {
+  /**
+   * Pushes the write designation off index 0 by holding index 0 with a read
+   * while the write acquires. Without this the writer IS index 0, where
+   * "prefer the last writer" and "lowest index first" name the same worker and
+   * nothing here would discriminate.
+   */
+  const withWriterAtOne = async () => {
+    const { scheduler, workers } = makeScheduler(2);
+    const held = await scheduler.acquire('read');
+    const wrote = await scheduler.acquire('write');
+    expect(held.worker.index).toBe(0);
+    expect(wrote.worker.index).toBe(1);
+    held.release();
+    wrote.release();
+    await flush();
+    return { scheduler, workers };
+  };
+
+  // Falsifiable: delete the lastWriterIndex branch from takeAvailable and this
+  // goes red — the read takes worker 0, which is what the lowest-index scan
+  // has always done.
+  it('gives a read the worker that wrote last, not the lowest index', async () => {
+    const { scheduler } = await withWriterAtOne();
+
+    const read = await scheduler.acquire('read');
+    expect(read.worker.index).toBe(1);
+  });
+
+  it('gives a new write the worker that wrote last', async () => {
+    const { scheduler } = await withWriterAtOne();
+
+    const write = await scheduler.acquire('write');
+    expect(write.worker.index).toBe(1);
+  });
+
+  // The guard that keeps this a preference and not a pin: a busy last writer
+  // is skipped, never waited for. Falsifiable by making the branch return
+  // undefined instead of falling through — the read would then queue.
+  it('falls back to the lowest index when the last writer is busy', async () => {
+    const { scheduler } = await withWriterAtOne();
+
+    const onLastWriter = await scheduler.acquire('read');
+    expect(onLastWriter.worker.index).toBe(1);
+
+    const next = await scheduler.acquire('read');
+    expect(next.worker.index).toBe(0);
+  });
+
+  it('forgets the last writer when that worker is removed', async () => {
+    const { scheduler, workers } = await withWriterAtOne();
+
+    scheduler.remove(1);
+    const read = await scheduler.acquire('read');
+    expect(read.worker.index).toBe(0);
+    expect(workers[1]).toBeDefined();
+  });
+});
