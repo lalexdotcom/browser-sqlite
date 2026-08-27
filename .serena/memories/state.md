@@ -36,18 +36,17 @@ Verified 2026-08-27: `tsc --noEmit` clean, `pnpm build` clean, **350 tests**, co
 3. **Build output.** `minify` and `sourceMap` on both entries, and `LICENSE` copied into
    `dist/` beside `NOTICE`.
 
-## Decisions the user owes
+## Decisions — both settled 2026-08-27
 
-- **The `readwrite-unsafe` guard.** It cannot be probed synchronously, so the client guard
-  cannot catch `OPFSWriteAheadVFS` failing off Chromium; the README entry is its only
-  defence. Accept that and delete the item, or design an async probe? Raised 2026-08-26,
-  still open. Note `tests/unit/capabilities.test.ts` holds a falsifiable pin on the current
-  semantics — changing `missingFeature`'s contract reddens it, which is the tripwire.
-- **The backlog triage in `mem:follow-ups`** was proposed 2026-08-26 and is still awaiting
-  a decision; nothing has been deleted on its strength.
+- **The `readwrite-unsafe` guard: there was never one to design.** `missingFeature` skips
+  `UNPROBEABLE` features, so the declaration never blocked anything at construction. What
+  the investigation found instead is that `OPFSWriteAheadVFS`'s `requires` is simply wrong
+  — see `mem:follow-ups`. **The correction is owed and not applied**: it touches
+  `VFS_CAPABILITIES`, which everything reads.
+- **The backlog triage is applied.** `mem:follow-ups` is the backlog now, not a proposal
+  about one.
 
-**D6 is closed** — its premise was measured false, see `mem:follow-ups`. `wasmUrl` survives
-it as the remaining designed-but-unbuilt item, and the user has said it comes next.
+`wasmUrl` is the remaining designed-but-unbuilt item, and the user has said it comes next.
 
 ## Owed before the release
 

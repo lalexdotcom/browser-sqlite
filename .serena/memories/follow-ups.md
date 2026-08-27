@@ -4,13 +4,10 @@ One short entry each. Anything closed is deleted from here — `CHANGELOG.md` an
 record what was fixed. Evidence and numbers live in `mem:measurements`; VFS behaviour in
 `mem:vfs`.
 
-> **Triage proposed 2026-08-26, awaiting the user's decision.** The "verdict" column is a
-> recommendation, not a decision. Nothing has been deleted on the strength of it. What *has*
-> been done is verification: four items were found already fixed and unmarked, and are
-> annotated as such.
->
-> Since then `feat/tx-query-surface` shipped and moved two entries on its own account —
-> `W-types` is nearly closed, `ABORT-1` is narrowed. Both are marked below.
+**Triaged 2026-08-27 (user).** The 2026-08-26 proposal was applied: `COOP-1` and the wave-3
+deferred minors deleted, `RESIDUE-1` folded into `DELETE-1`, `BENCH-DRIFT` reduced to its
+live rule, `D6` and `VIT-1` closed on measurement. Verdict annotations are gone with it —
+what is written here is the backlog, not a proposal about it.
 
 ## Designs owed — each needs its own brainstorming, none started
 
@@ -27,39 +24,30 @@ that lands *between* batches — the natural granularity, and the only point whe
 is meaningful, since a multi-row INSERT is statement-atomic.
 
 **`output()`'s semantics are decided (user, 2026-08-24): an abort drops the staging table
-and touches nothing else.** No rename, no partial publication, previous target untouched —
-which the wave-3 change already gives for free. An aborted `output()` is observationally a
-no-op. Two mechanical consequences: the eager `DROP` is a write and needs a worker *after*
-the abort freed one, so it is **best-effort** and must not hang or throw on failure (the
-fallback is an orphan staging table, which `staleStagingTables` already sweeps); and
-releasing the staging lock is what arms that sweep, so it must happen **after** the `DROP`
-attempt.
+and touches nothing else.** No rename, no partial publication, previous target untouched.
+An aborted `output()` is observationally a no-op. Two mechanical consequences: the eager
+`DROP` is a write and needs a worker *after* the abort freed one, so it is **best-effort**
+and must not hang or throw on failure (the fallback is an orphan staging table, which
+`staleStagingTables` already sweeps); and releasing the staging lock is what arms that
+sweep, so it must happen **after** the `DROP` attempt.
 
 First observed consumer of the gap: the benchmark page's containment design. Because
 `bulkWrite` cannot be aborted, its only bound is a `Promise.race` against a timer, which
-abandons the *wait* without stopping the *work* — so the page has to abandon a whole column
-on that one row. When ABORT-1 lands, that special case disappears.
+abandons the *wait* without stopping the *work* — so the page abandons a whole column on
+that row. When ABORT-1 lands, that special case disappears.
 
-**Narrowed 2026-08-26 by `feat/tx-query-surface`.** A caller who needs a bulk load to stop
-cleanly now has one answer that did not exist before: run it inside `transaction()`, where
-abandoning means rolling back. That does not close ABORT-1 — there is still no `signal` on
-either method, and the non-transactional path still has no bound — but it removes the case
-where the *only* remedy was to chunk your own batches by hand.
+**Narrowed 2026-08-26 by `feat/tx-query-surface`:** a caller who needs a bulk load to stop
+cleanly can run it inside `transaction()`, where abandoning means rolling back. The
+non-transactional path still has no bound.
 
-Not blocking: no consumer on rc.3. **Verdict: keep.**
-
-### DELETE-1 — there is no way to delete a database
+### DELETE-1 — there is no way to delete a database, and cleanup cannot see the residue
 
 No `deleteDatabase`, and a consumer has no supported way to remove one. Every persistent
 VFS wa-sqlite ships implements `jDelete`, and for `AccessHandlePoolVFS` it is the **only**
 correct removal — `#deletePath` un-associates the SQLite path and returns the slot to the
 pool, deliberately leaving the OPFS file in place because that file *is* a reusable slot.
 The library never exposes it: the worker holds the VFS instance and nothing routes to it.
-
-The JSDoc half is **done** — `client.ts`'s `close()` no longer tells consumers to use
-`navigator.storage.getDirectory()` directly, advice that was correct only for the plain
-OPFS VFS on an already-closed database, left `-journal`/`-wal` behind even there, silently
-cost `AccessHandlePoolVFS` its capacity, and was a no-op for the two IndexedDB VFS.
+The JSDoc half is done.
 
 What a `deleteDatabase(file)` owes: route to the open VFS's `jDelete`, so it needs a worker
 with that VFS loaded; decide what happens when the database is open in another tab, where
@@ -67,62 +55,47 @@ nothing here can revoke a handle; decide what it returns when the database does 
 (SQLite's `xDelete` is content with that); and decide whether it removes auxiliary files,
 which differ per VFS.
 
-**It must delete IndexedDB databases too, not only OPFS entries (user, 2026-08-25).**
-`IDBBatchAtomicVFS` and `IDBMirrorVFS` keep their data in an IndexedDB database named after
-the VFS class, holding **every** database opened with that VFS on the origin — so `jDelete`
-alone frees the SQLite file inside the store while the store itself stays, and
-`indexedDB.deleteDatabase(<VFS name>)` would destroy every other consumer's data on the
-same origin. Neither is the answer on its own. **That asymmetry between the OPFS and
-IndexedDB families is the part that actually needs thought.** **Verdict: keep, and merge
-RESIDUE-1 into it.**
+**It must delete IndexedDB databases too (user, 2026-08-25).** `IDBBatchAtomicVFS` and
+`IDBMirrorVFS` keep their data in an IndexedDB database named after the VFS class, holding
+**every** database opened with that VFS on the origin — so `jDelete` alone frees the SQLite
+file inside the store while the store stays, and `indexedDB.deleteDatabase(<VFS name>)`
+would destroy every other consumer's data on the same origin. Neither is the answer alone.
+**That asymmetry between the OPFS and IndexedDB families is the part that needs thought.**
 
-### RESIDUE-1 — two VFS store under their class name, and cleanup never sees it
+**RESIDUE-1, folded in 2026-08-27** — the same root fact from the cleanup side. A VFS
+stores where it likes and only the VFS knows where, so a design that answers deletion
+answers residue too.
 
-Same root fact as DELETE-1, from the cleanup side: a VFS stores where it likes, and only
-the VFS knows where. `AccessHandlePoolVFS` keeps one OPFS directory named after the class
-holding six pre-allocated files with random names; `IDBMirrorVFS` keeps one IndexedDB
-database named `IDBMirrorVFS`, and **there is no equivalent of the OPFS root diff on the
-IndexedDB side at all**.
+*What residue cost:* after several interrupted local runs, five of six
+`AccessHandlePoolVFS` slots held orphaned databases. A database in `journal_mode=DELETE`
+needs two slots, so the VFS failed at `opens` with a bare `sqlite3_open_v2` and no message,
+on both `sync` and `async`. It read as a regression from a wa-sqlite patch committed
+minutes earlier; it was residue, and deleting the directory by hand restored it with no
+code change. Corroborated on an iOS device where `/sync` went 5/7 → 0/7 between two runs
+while `/async` was already at 0/7: **the failure migrates from build to build as the pool
+fills**, the signature six-slot exhaustion predicts and no engine defect does. Two earlier
+isolated `opens` failures — `AccessHandlePoolVFS/async` on iOS 26 and `/jspi` on macOS
+Chromium 150 — are **very likely the same exhaustion**; re-run on a swept root before
+recording either as real.
 
-**What it cost:** after several interrupted local runs, five of six `AccessHandlePoolVFS`
-slots held orphaned databases. A database in `journal_mode=DELETE` needs two slots, so the
-VFS failed at `opens` with a bare `sqlite3_open_v2` and no message, on both `sync` and
-`async`. It read as a regression from a wa-sqlite patch committed minutes earlier; it was
-residue. Deleting the directory by hand restored it with no code change. Corroborated on an
-iOS device where `/sync` went 5/7 → 0/7 between two runs while `/async` was already at 0/7:
-**the failure migrates from build to build as the pool fills**, which is the signature
-six-slot exhaustion predicts and no engine defect does.
+*Cleanup fixes in rising order of cost:* run `cleanupOpfsResidue` per **column** rather
+than once per run; give IndexedDB the same before/after diff the OPFS root gets; or have
+each VFS **declare the storage names it owns** — the only version that does not rely on
+diffing, and the one that composes with `deleteDatabase`.
 
-Two earlier isolated `opens` failures — `AccessHandlePoolVFS/async` on iOS 26 and
-`/jspi` on macOS Chromium 150 — are **very likely the same exhaustion**, not engine
-defects. Re-run on a swept root before recording either as real.
+### `wasmUrl`, optional — approved 2026-08-18, never built
 
-Fixes in rising order of cost: run `cleanupOpfsResidue` per *column* rather than once per
-run; give IndexedDB the same before/after diff the OPFS root gets; or have each VFS declare
-the storage names it owns — the only version that does not rely on diffing. **Verdict: keep,
-fold into DELETE-1's design.**
+An explicit base URL for the three `.wasm`. When omitted, behaviour is **exactly today's**
+resolution: this is an escape hatch, not a new default, and the default config must not
+change by a single byte.
 
-### D6 is dead, and `wasmUrl` outlived it — 2026-08-27
+Rejected then and still rejected: inlining the `.wasm` as base64 (+33 % on 2.4 MB raw, and
+it gives up streaming compilation — acceptable only as an opt-in subpath, never the
+default).
 
-**The plugin's premise was false.** D6 existed because "Vite's production build does not
-copy `dist/worker/*.wasm` beside the emitted worker". Measured 2026-08-27 on Vite 6.1
-through 8.2.2: Vite **does** follow the worker's `new URL('wa-sqlite.wasm', import.meta.url)`
-references and emits all three. The consumer smoke passes with **no plugin at all**. What
-remains for Vite 6.1–7 is one line, `optimizeDeps.exclude`, and it is a **dev-server fix
-only** — nothing to carry in a build plugin. VIT-1 died with it.
-
-What the investigation found instead was a real defect the plugin would have papered over:
-a second, bare `new URL('./worker/worker.js', import.meta.url)` in `pool.ts`, feeding only
-an error-message fallback, made every Vite consumer ship a duplicate untransformed worker.
-Removed; see `git log`.
-
-**Still open and still approved: `wasmUrl`, optional** — an explicit base URL for the three
-`.wasm`. When omitted, behaviour is **exactly today's** resolution; this is an escape hatch,
-not a new default, and the default config must not change by a single byte. **Verdict:
-keep** — it was never D6's dependant, it was merely listed beside it.
-
-Rejected then and still rejected: inlining the `.wasm` as base64 (+33 % on 2.4 MB raw,
-gives up streaming compilation — acceptable only as an opt-in subpath, never the default).
+*It used to be listed beside D6, the `browser-sqlite/vite` plugin. D6 died on 2026-08-27
+when its premise was measured false — Vite does emit the worker's `.wasm`, from 6.1 through
+8.2.2, and the consumer smoke passes with no plugin. `wasmUrl` never depended on it.*
 
 ## Limits to document rather than fix
 
@@ -138,22 +111,44 @@ not block the pool` fails on Firefox at 28-29.5 s against a 3 s budget. The sche
 lease and `quiesce()` were each checked and exonerated — statuses sampled without wrapping
 `Worker`, so the race was not perturbed.
 
-**Verdict: treat = write it into Known Limitations (today only `OPFSCoopSyncVFS` has an
-entry covering this shape), then delete this item.**
+**To treat:** write it into Known Limitations (today only `OPFSCoopSyncVFS` has an entry
+covering this shape), then delete this item.
 
 ### W-multitab — multi-tab is entirely uncoordinated
 
 `currentWriterIndex` and both queues are per-realm; two tabs each enforce their own "single
 writer". Partly settled: `output()` **must** be multi-tab safe (user requirement) and its
 staging sweep is `navigator.locks`-guarded. The rest of the client stays uncoordinated.
-**Verdict: treat = one line in Known Limitations saying so, before 1.0.**
 
-### `readwrite-unsafe` has no guard
+**To treat:** one line in Known Limitations saying so, before 1.0.
 
-`OPFSWriteAheadVFS` declares `requires: ['opfs', 'readwrite-unsafe']`, but that feature is
-in `UNPROBEABLE` — detecting it needs a worker and two access handles, and the client guard
-is synchronous. So the VFS keeps its obscure off-Chromium failure and the README entry is
-the only defence. **Verdict: user to decide — accept and delete, or design an async probe.**
+### `OPFSWriteAheadVFS`'s `requires` is wrong — measured 2026-08-27
+
+It declares `requires: ['opfs', 'readwrite-unsafe']`, and `mem:vfs` said that off Chromium
+"the second connection cannot take the handle, and the pool breaks with no error naming the
+cause". **Both are false.** Forced onto Firefox with `HAS_UNSAFE_HANDLES=false`, the VFS
+passes all three build pairs and all six invariants — including invariant 3, concurrent
+writes — at `poolSize` 1, 2 and 4. The mechanism was inferred and never executed.
+
+**Why nobody saw it: the declaration and the skip confirmed each other.** `requires` caused
+the conformance skip, and the skip prevented `requires` from ever being falsified. Nine
+pairs skipped themselves on the strength of their own declaration.
+
+**There was never a guard to design.** `missingFeature` skips `UNPROBEABLE` features, so
+`requires: ['readwrite-unsafe']` has never blocked anything at construction on any engine.
+The long-running "accept it, or design an async probe?" question was about a defence that
+did not exist.
+
+**The fix is `requires: ['opfs']` with `degradesWithout: ['readwrite-unsafe']`** — the
+shape `OPFSAdaptiveVFS` already uses. It changes no runtime behaviour, un-skips nine
+conformance entries, and changes the generated README row.
+
+**Do not simply delete the README warning.** Firefox is one engine; WebKit is where OPFS
+diverges (ANYCONTEXT-1 was a WebKit-only bug in this exact area) and cannot be tested here,
+Linux WebKit having no OPFS at all. Narrow the entry from "does not work off Chromium" to
+"not measured on Safari", and add this VFS to the owed Safari 27 / iOS 26 / iPadOS 27
+campaign. The degradation itself is also unmeasured — the read-burst ratio would say
+whether it degrades like `OPFSAdaptiveVFS` or not at all.
 
 ## Evidence owed
 
@@ -172,7 +167,6 @@ write transaction takes it is timing, not a property. `OPFSAdaptiveVFS`'s read-b
 Limitations entry rests on it and currently reads as a determinism. It happens to be right
 (blocked on 8 of 8 earlier runs) but needs **n≥3 per engine** before that wording is
 defensible — and the same row cannot then be read as a verdict for `OPFSAdaptiveVFS`.
-**Verdict: keep.**
 
 ### Two Firefox failures block wiring Firefox into CI
 
@@ -183,66 +177,17 @@ A browser cannot be a blocking gate while it is red.
 - `lifecycle :: rejects the in-flight query on a deserialization failure` — times out at
   30 s. **Nobody has traced it.** Leading explanation is calibration: the test sleeps 100 ms
   then synthetically dispatches `messageerror`, betting the query is already in flight, and
-  Firefox is 5.5× slower on the same CPU-bound query. Unverified. **Verdict: keep.**
+  Firefox is 5.5× slower on the same CPU-bound query. Unverified.
 
-### COOP-1's adversarial test — if COOP-1 survives at all
-
-The symptom (`database is locked` in ~100 ms on interleaved DDL with four concurrent
-readers) never reproduced under the suite, which defaults to `poolSize: 2` and never plays
-that shape — so **the suite is not the instrument**. Its subject is largely absorbed by
-HANDLE-1, and the mechanism analysis reads CoopSync's `SQLITE_BUSY` as a transfer protocol
-we fail to retry.
-
-A distinct defect recorded here because nowhere else fits: forced onto CoopSync, Chromium
-fails `lifecycle :: restarts the slot once and keeps serving` with `sqlite3_open_v2` — the
-replacement worker cannot reopen the database after a crash, consistent with the dead
-worker's exclusive handle not yet being released.
-
-**Already done and unmarked:** the README half. `OPFSCoopSyncVFS` now has a Known
-Limitations entry, and it is considerably harder than the one this item asked for.
-**Verdict: delete unless the decision is to remove CoopSync from the public surface, which
-the niche analysis in `mem:vfs` argues for.**
-
-### BENCH-DRIFT — the page holds a second copy of the invariants
-
-**Halved 2026-08-26.** The probe half is closed: the page imports `detectFeatures` and
-`missingFeature` from the package instead of deriving them. `HAS_UNSAFE_HANDLES` stays,
-because it needs a worker and two access handles and has no synchronous equivalent.
-
-**Permanent by design:** the six conformance invariants, ~220 lines on each side.
-`dist/index.js` is the page's only import channel, so sharing them would ship conformance
-assertions to every consumer.
-
-**The rule: changing either copy obliges a review of the other, both directions.** What
-makes a divergence visible rather than silent is that the page's row ids are normalized
-from the conformance `describe()` titles — a row whose id no longer maps to a `describe()`
-is the signal. Two places where the copies legitimately differ and must **not** be aligned:
-the page returns `'blocked'` where invariant 6 logs a `console.warn` and passes (a table has
-somewhere to render a third state, a suite does not); and the page reopens the column's
-client after `survives-reopen` and `close-settles`, because it runs every row against one
-client where the suite gets a fresh one per `it()`.
-
-**The export gap is CLOSED, 2026-08-26 (`de3abdf`).** `tests/unit/exports.test.ts` reads
-every file that imports the entry **by path** — the benchmark page and the no-bundler
-consumer fixture — extracts the names it pulls out of `dist/index.js`, and asserts each one
-exists on the package entry. It runs in the Node unit project, so no browser and no CI
-change, and it leaves the page's single-file layout alone. Both falsifiability directions
-were executed: removing an export reddens it, and breaking the parse reddens the
-`names.length > 0` guard that stops it becoming a no-op.
-
-The scaffolded consumer apps are deliberately not covered by it: they import the bare
-specifier and the consumer smoke compiles them already.
-
-**What remains is documentation, not risk:** the six conformance invariants are duplicated
-between the page and `tests/conformance/`, permanently and by design, and `HAS_UNSAFE_HANDLES`
-has no synchronous equivalent in `src/`. **Verdict: keep as a note; there is nothing to fix.**
+Note the conformance suite already runs on both engines and is green on both; this is about
+`pnpm test`'s browser project.
 
 ### BASELINE-1 — two residuals, both small
 
 Locate `structuredClone`'s BCD entry and confirm it does not raise the floor; and check
 `chrome_android` / `safari_ios` in `LIB_FLOOR` rather than inheriting their desktop engine
 (the assumption is commented in `scripts/render-vfs-matrix.ts`). Everything else shipped in
-`9af6b37`. **Verdict: treat — about fifteen minutes.**
+`9af6b37`. **About fifteen minutes.**
 
 One case is deliberately **not** folded to `MAX(vfs, lib)`: where a source says supported
 but gives no first version, the cell keeps `?` rather than adopting the library's number —
@@ -250,75 +195,53 @@ the true floor is at least that and may be higher.
 
 **Decided 2026-08-25: do not support below the floor.** OPFS itself is Chrome 86+, so a
 pre-86 engine cannot run the six OPFS VFS at all. What was built instead is a classic ES5
-script ahead of the module in the bench page that watches for the module having started and,
-after 8 s, replaces the banner with what is missing. It tests for the module *running*, not
-for syntax, so it also covers a failed `dist/` fetch. Falsified by blocking that fetch, not
-reasoned about.
+script ahead of the module in the bench page that watches for the module having started
+and, after 8 s, replaces the banner with what is missing. It tests for the module
+*running*, not for syntax, so it also covers a failed `dist/` fetch. Falsified by blocking
+that fetch, not reasoned about.
+
+## Notes, with nothing to fix
+
+### BENCH-DRIFT — the page holds a second copy of the invariants, permanently
+
+The six conformance invariants are duplicated between `scripts/bench/html/index.html` and
+`tests/conformance/`, ~220 lines each side. `dist/index.js` is the page's only import
+channel, so sharing them would ship conformance assertions to every consumer. The export
+half is closed (`de3abdf`); the probe half is closed; `HAS_UNSAFE_HANDLES` stays on the
+page because it needs a worker and two access handles.
+
+**The live rule: changing either copy obliges a review of the other, both directions.** The
+page's row ids are normalized from the conformance `describe()` titles, so a row whose id
+no longer maps to a `describe()` is the signal. Two places where the copies legitimately
+differ and must **not** be aligned: the page returns `'blocked'` where invariant 6 logs a
+`console.warn` and passes (a table has somewhere to render a third state, a suite does
+not); and the page reopens the column's client after `survives-reopen` and `close-settles`,
+because it runs every row against one client where the suite gets a fresh one per `it()`.
 
 ## Small and cheap
 
-### W-types — nearly closed
+### W-types — one item, not three
 
-**Closed 2026-08-26 by `feat/tx-query-surface`:** the two named instances of "the shipped
-`.d.ts` leaks unnameable internal types" are gone — `SQLiteQueryOptions` and
-`TransactionDB` (now `SQLiteTransactionDB`) both appeared in public signatures without
-being exported, and both are exported now. `SQLiteVFS` was already exported.
+`SQLiteDB` is hand-written rather than derived from the implementation. It is no longer a
+*duplicate* of anything: it and `SQLiteTransactionDB` share `SQLiteQueryAPI`, and a
+bidirectional compile-time pin fails the build if they drift.
 
-`SQLiteDB` is still hand-written rather than derived from the implementation, but it is no
-longer a *duplicate* of anything: it and `SQLiteTransactionDB` share `SQLiteQueryAPI`, and
-a bidirectional compile-time pin fails the build if they drift. **Verdict: keep, but it is
-now one small item rather than three.**
-
-### Cleanups — pruned 2026-08-26 against the source
-
-Six of the nine originally listed were **already done and unmarked**: `status: 'HAHA'`, the
-`'Cannot werite…'` typo, the `SQLiteCLientCallParams` protocol duplicate,
-`SQLiteStreamOptions`, the unbounded `worker.requests`, and the stale `types.ts` protocol
-block.
-
-**Four more were done on 2026-08-26 (`c64b8c9`)**, each verified live first:
-
-- the release action's mutable `@v1` pin — **this was never a cleanup**, it was a mutable
-  reference in the job holding `NPM_TOKEN`; now pinned to a SHA;
-- `sideEffects` and `engines`. Note the item as written was **wrong**: `sideEffects: false`
-  would invite a bundler to drop `worker.ts`, which assigns `self.onmessage` at module
-  scope. The declaration names the worker entry instead — true, and still tree-shakeable.
-  Falsifiable by the consumer smoke, which passed 11/11;
-- `acquireInstrumented`'s "seven acquisition sites" — there are six;
-- the unstated phantom row type on `read`/`first`/`chunk`/`stream`. The JSDoc now says the
-  type parameter is a cast, and why validating instead would be worse.
-
-**And a fifth was found already done, on 2026-08-26:** "no exhaustiveness on either
-message-union dispatch". All three `switch` statements in `src/` carry
-`default: { const _unexpected: never = data; throw … }` — `pool.ts:298`,
-`worker.ts:353` and `worker.ts:389`. Nothing to do.
-
-**What survives — and neither is a cleanup:**
+### Two things called cleanups that are projects
 
 - `wa-sqlite.d.ts` shadows wa-sqlite's own shipped types via three `declare module` deep
-  imports. **Not a one-liner** — it touches how the worker compiles. A project.
+  imports. Not a one-liner — it touches how the worker compiles.
 - 29 `any` in `src/`; `tsconfig` could enable `noUncheckedIndexedAccess` and
-  `exactOptionalPropertyTypes`. **Also a project, not a cleanup.**
+  `exactOptionalPropertyTypes`.
 
-**A hygiene note this list earned.** Five entries were found already done and unmarked in
-one session — VFS-COV, COOP-1's README half, `SQLiteVFS`'s export, six of the nine
-cleanups, and the exhaustiveness above. The backlog was being appended to and never
-retired, so its length stopped meaning anything. **Verify an item against the source before
-scheduling work on it**, and delete it the moment it is done rather than leaving it to be
-rediscovered.
+**Kept deliberately, do not "clean up":** the no-op degradation branch in `locks.ts`,
+unreachable in Node ≥ 21 and every current browser. Spec-mandated, correct, zero
+maintenance.
 
-**Kept deliberately, do not "clean up":** the no-op degradation branch in `locks.ts`, which
-is unreachable in Node ≥ 21 and every current browser. The final review recommended keeping
-it — spec-mandated, correct, zero maintenance.
-
-### Deferred minors from wave 3 — test-naming nits
-
-Test names that overclaim what they pin (`quoteIdent`'s "preserves case", `renderPragmas`'s
-"re-escapes a quoted string literal", the scheduler's second designation assertion); vacuous
-assertions sitting beside falsifiable ones; one comment naming the wrong assertion as the
-one that turns red; a `deps as any` cast in the third `output()` unit test; a `String(value)`
-no-op in `renderPragmas`; an orphaned "Routing predicate" JSDoc in `utils.ts`; and quoting
-pinned by unit tests only at the INSERT site. **Verdict: one cleanup pass, or delete.**
+**The hygiene note this list earned.** Five entries were found already done and unmarked in
+one session — VFS-COV, COOP-1's README half, `SQLiteVFS`'s export, six of nine cleanups,
+and message-union exhaustiveness. The backlog was appended to and never retired, so its
+length stopped meaning anything. **Verify an item against the source before scheduling work
+on it**, and delete it the moment it is done rather than leaving it to be rediscovered.
 
 ## Performance backlog — after correctness, none blocking
 
@@ -350,8 +273,8 @@ liveness marker" pattern `stagingLockName` already uses. It is *state*, not *del
 there is no in-flight window.
 
 **The measurement that settles it:** the cost of `navigator.locks.query()` per acquisition
-against the one worker round-trip it avoids. `query()` returns every lock held in the origin
-and is specified as a diagnostic snapshot. If it is not clearly cheaper, the cross-tab
-answer is the unconditional prelude, probably opt-in, not this. **Do not treat this as
-promising until that number exists** — that is exactly how `PRAGMA data_version` and the
-WAL VFS each cost a session.
+against the one worker round-trip it avoids. `query()` returns every lock held in the
+origin and is specified as a diagnostic snapshot. If it is not clearly cheaper, the
+cross-tab answer is the unconditional prelude, probably opt-in, not this. **Do not treat
+this as promising until that number exists** — that is exactly how `PRAGMA data_version`
+and the WAL VFS each cost a session.
