@@ -40,7 +40,7 @@ with no message during the 2026-08 campaigns.
 | D3 | **Route to `jDelete`, then remove the OPFS entry ourselves on every `opfs-path` VFS** | Two of seven persistent VFS do not delete. See §5. A success reported over an intact file is the worst failure this API can have. The removal is applied to all four `opfs-path` VFS rather than to the two that need it: it is idempotent, so the two that do not need it pay one `NotFoundError`, and an exception list would be a second place to update when a VFS is added. |
 | D4 | **Fix both upstream in `patches/`, but never depend on it** | The channel exists — `patches/wa-sqlite@1.1.1.patch` carries the ANYCONTEXT-1 fix and its PR is pushed. Both `jDelete` defects harm every consumer, not only us. D3 is written to become inert when the fix lands rather than to conflict with it (§6). |
 | D5 | **A standalone exported function, not a client method** | Deletion is a lifecycle operation on a file. The likeliest caller has no client — the database was left by an earlier session or an earlier version. A method would force a consumer to spawn a pool of workers in order to destroy something, and would leave a live client bound to a file that no longer exists. |
-| D6 | **`vfs` required, `build` optional** | A VFS decides where the bytes live, so deleting without naming it deletes in the wrong place, or nowhere while reporting success — the same reasoning that made `vfs` required on `createSQLiteClient`. `build` does **not** affect location: it selects the `.wasm` flavour, and the VFS's JavaScript is identical across all three. It is optional only because a VFS runs solely on the builds it declares, so a compatible one must be loaded to instantiate it at all. |
+| D6 | **`vfs` required, `build` and `wasmUrl` optional** | A VFS decides where the bytes live, so deleting without naming it deletes in the wrong place, or nowhere while reporting success — the same reasoning that made `vfs` required on `createSQLiteClient`. `build` does **not** affect location: it selects the `.wasm` flavour, and the VFS's JavaScript is identical across all three. It is optional only because a VFS runs solely on the builds it declares, so a compatible one must be loaded to instantiate it at all. |
 | D7 | **Absence is success** | SQLite's own `xDelete` is content with a missing file. Idempotence is also what makes D3 inert after D4. |
 | D8 | **Delete `['', '-journal', '-wal']`, not just the database** | A stale `-journal` beside a deleted database is a hot journal: recreate a database of the same name and SQLite may attempt rollback from it. This is a correctness requirement, not tidiness. The suffix set is upstream's own (`OPFSCoopSyncVFS.js:8`), not ours to guess. On `AccessHandlePoolVFS` each sibling occupies its own slot, so deleting the database alone leaves the pool one short. |
 | D9 | **Take `initLockName(file)` exclusively, `ifAvailable`** | `navigator.locks` is origin-wide, so this serialises against any cooperating client's open in any tab. It closes the interleave window; it cannot reach a connection already holding its handles. That residue becomes a named error instead of a platform exception. |
@@ -51,9 +51,19 @@ with no message during the 2026-08 campaigns.
 ```ts
 export const deleteDatabase = (
   file: string,
-  options: { vfs: SQLiteVFS; build?: SQLiteBuild },
+  options: {
+    vfs: SQLiteVFS;
+    build?: SQLiteBuild;
+    wasmUrl?: string | ((build: SQLiteBuild) => string);
+  },
 ): Promise<void>;
 ```
+
+**`wasmUrl` is not optional decoration, and it was missed on the first pass of this
+document.** The delete path spawns a worker that loads a `.wasm`; a consumer who needed
+`wasmUrl` to open a database needs it just as much to delete one, or deletion fails in
+exactly the deployments the option exists for. It is resolved by `resolveWasmLocation`
+(`src/utils.ts`) and travels in the message, the same way `createSQLiteClient` sends it.
 
 Exported from `src/index.ts`, implemented in a new `src/delete.ts` — `client.ts` is already
 large and this shares none of its state.
@@ -106,7 +116,9 @@ the other two VFS already perform internally — no private constant, no private
 2. `tryWithLock(initLockName(file), …)` — `src/locks.ts:108-114` already requests exclusive
    with `ifAvailable: true` and reports failure rather than waiting. A `false` return becomes
    `SQLiteError('BUSY')` naming the file.
-3. Spawn one worker; post `{ type: 'delete', callId, file, vfs, build }`.
+3. Spawn one worker; post `{ type: 'delete', callId, file, vfs, build, wasm }`, where
+   `wasm` is `resolveWasmLocation`'s output — `undefined` unless the caller passed
+   `wasmUrl`.
 4. In the worker: load the build, instantiate the VFS, **open nothing**. Call `jDelete` for
    each of `['', '-journal', '-wal']`.
 5. In the worker, when `VFS_CAPABILITIES[vfs].layout === 'opfs-path'`: walk the path
