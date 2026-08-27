@@ -287,3 +287,37 @@ could have reported whether the OPFS root was empty, and nobody asked it.
 - **`navigator.storage.estimate().usage` reported 1.42 GB** on an origin whose whole OPFS
   root weighed ~1.6 MB. The IndexedDB `IDBMirrorVFS` store carried the rest. `usage` is
   origin-wide, not OPFS-wide.
+
+## Delete campaign — 2026-08-27, six devices, `feat/delete-database` @ `a55a3bd`
+
+The first campaign the benchmark page could complete on every engine. Its
+predecessors on the same day stopped for good on Firefox 154 and macOS Safari
+27.0; three abort defects were fixed between them (`mem:lessons`).
+
+| device | clock | columns | `deleted-is-gone` | `not-run` cells | burst ratio reported |
+|---|---|---|---|---|---|
+| macOS Chrome 150 | 0.1 ms | 22 | 17 pass | 0 | 20/22 |
+| macOS Firefox 154 | 1 ms | 22 | 14 pass, 3 timeout | 0 | **6/22** |
+| macOS Safari 27.0 | 1 ms | 22 | 16 pass, 1 timeout | 0 | 15/22 |
+| macOS Safari 26.5.2 | 1 ms | 13 | 9 pass, 1 timeout | 0 | 7/13 |
+| iPadOS Safari 27.0 | 1 ms | 22 | 16 pass, 1 timeout | 0 | 19/22 |
+| iOS Safari 26.6 | 1 ms | 13 | 10 pass | 0 | 11/13 |
+
+**Zero `not-run` on all six** — the state the earlier runs could not reach at
+all, because a wedged column abandoned every row after it.
+
+**The six deletion timeouts sit on two VFS and nowhere else:**
+`OPFSWriteAheadVFS` ×4 (Safari 26.5.2 `sync`, iPadOS 27.0 `jspi`, Firefox
+`sync` and `async`) and `OPFSCoopSyncVFS` ×2 (Safari 27.0 and Firefox, both
+`async`). Never on Chromium, never on iOS 26.6. Both rotate one exclusive OPFS
+handle without `readwrite-unsafe` — `HANDLE-1` reaching the delete path.
+`DELETE-TIMEOUT-1` in `mem:follow-ups`. **n=1 per device.**
+
+**The concurrency burst was unmeasurable on a 1 ms clock at 24 reads.** The row
+refuses a ratio when the median serial total falls below 4× the clock's
+resolution; that refusal fired on 16 of 22 Firefox columns — the engine where
+`HANDLE-1` makes the answer matter most. Raised to 96 the same day. Chromium
+measured 2.15× at 24 and 2.26× at 96 on the same VFS, which is why the ratio is
+held to survive the change: it is normalised, and 96 against a pool of 4
+saturates it either way. The 96-read numbers are not in this table — the six
+runs above predate that commit.

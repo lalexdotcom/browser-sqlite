@@ -9,103 +9,10 @@ deferred minors deleted, `RESIDUE-1` folded into `DELETE-1`, `BENCH-DRIFT` reduc
 live rule, `D6` and `VIT-1` closed on measurement. Verdict annotations are gone with it —
 what is written here is the backlog, not a proposal about it.
 
-## Designs owed — each needs its own brainstorming, none started
+## Designs owed
 
-### ABORT-1 — `bulkWrite` and `output` take no `signal`
-
-`signal` is on `SQLiteQueryOptions` and honoured by `read`/`write`/`first`/`stream`/
-`chunk`. **`src/bulk.ts` contains no `AbortSignal` at all.** So the two long-running
-methods in the public surface, the ones most likely to need cancelling, are the two that
-cannot be. That it stops at `bulkWrite` is undocumented.
-
-Cheaper than it looks for `bulkWrite`: it already calls the **public** `write` once per
-batch and releases the worker between batches, so threading a `signal` down gives an abort
-that lands *between* batches — the natural granularity, and the only point where stopping
-is meaningful, since a multi-row INSERT is statement-atomic.
-
-**`output()`'s semantics are decided (user, 2026-08-24): an abort drops the staging table
-and touches nothing else.** No rename, no partial publication, previous target untouched.
-An aborted `output()` is observationally a no-op. Two mechanical consequences: the eager
-`DROP` is a write and needs a worker *after* the abort freed one, so it is **best-effort**
-and must not hang or throw on failure (the fallback is an orphan staging table, which
-`staleStagingTables` already sweeps); and releasing the staging lock is what arms that
-sweep, so it must happen **after** the `DROP` attempt.
-
-First observed consumer of the gap: the benchmark page's containment design. Because
-`bulkWrite` cannot be aborted, its only bound is a `Promise.race` against a timer, which
-abandons the *wait* without stopping the *work* — so the page abandons a whole column on
-that row. When ABORT-1 lands, that special case disappears.
-
-**Narrowed 2026-08-26 by `feat/tx-query-surface`:** a caller who needs a bulk load to stop
-cleanly can run it inside `transaction()`, where abandoning means rolling back. The
-non-transactional path still has no bound.
-
-### DELETE-1 — there is no way to delete a database, and cleanup cannot see the residue
-
-No `deleteDatabase`, and a consumer has no supported way to remove one. Every persistent
-VFS wa-sqlite ships implements `jDelete`, and for `AccessHandlePoolVFS` it is the **only**
-correct removal — `#deletePath` un-associates the SQLite path and returns the slot to the
-pool, deliberately leaving the OPFS file in place because that file *is* a reusable slot.
-The library never exposes it: the worker holds the VFS instance and nothing routes to it.
-The JSDoc half is done.
-
-What a `deleteDatabase(file)` owes: route to the open VFS's `jDelete`, so it needs a worker
-with that VFS loaded; decide what happens when the database is open in another tab, where
-nothing here can revoke a handle; decide what it returns when the database does not exist
-(SQLite's `xDelete` is content with that); and decide whether it removes auxiliary files,
-which differ per VFS.
-
-**It must delete IndexedDB databases too (user, 2026-08-25).** `IDBBatchAtomicVFS` and
-`IDBMirrorVFS` keep their data in an IndexedDB database named after the VFS class, holding
-**every** database opened with that VFS on the origin — so `jDelete` alone frees the SQLite
-file inside the store while the store stays, and `indexedDB.deleteDatabase(<VFS name>)`
-would destroy every other consumer's data on the same origin. Neither is the answer alone.
-**That asymmetry between the OPFS and IndexedDB families is the part that needs thought.**
-
-**RESIDUE-1, folded in 2026-08-27** — the same root fact from the cleanup side. A VFS
-stores where it likes and only the VFS knows where, so a design that answers deletion
-answers residue too.
-
-*What residue cost:* after several interrupted local runs, five of six
-`AccessHandlePoolVFS` slots held orphaned databases. A database in `journal_mode=DELETE`
-needs two slots, so the VFS failed at `opens` with a bare `sqlite3_open_v2` and no message,
-on both `sync` and `async`. It read as a regression from a wa-sqlite patch committed
-minutes earlier; it was residue, and deleting the directory by hand restored it with no
-code change. Corroborated on an iOS device where `/sync` went 5/7 → 0/7 between two runs
-while `/async` was already at 0/7: **the failure migrates from build to build as the pool
-fills**, the signature six-slot exhaustion predicts and no engine defect does. **The iOS attribution held, and the fix is field-verified — 2026-08-27.** This entry said
-the isolated `AccessHandlePoolVFS` `opens` failures were "very likely the same exhaustion"
-and prescribed a re-run on a swept root. Three runs on one iPhone, an hour apart:
-`fail, fail, pass`. The pass came on the first page served with the automatic sweep, and
-the two failures include one taken **after the device's site data was cleared by hand** —
-so the manual clearing never reached OPFS, which is why the middle run looked like a
-refutation. It was not. `AccessHandlePoolVFS/jspi` on macOS Chromium 150 also passes now,
-on all three builds, which retires the other isolated failure this entry was holding.
-
-*Corrected twice on 2026-08-27, and the second correction is the true one.* The durable
-mechanism already exists and shipped in `76141b3`: `sweepBeforeRun` runs before every bench
-and removes anything prefixed `bench-` plus every name a previous run recorded as its own
-in `localStorage`, and `remember('opfs', name)` is written **before** the removal attempt,
-so a directory that resists removal is retried on the next run. Its own comment names this
-exact failure. `cleanupOpfsResidue`'s run-start diff is only the second half of the pair —
-reading it alone led to the wrong conclusion that per-column cleanup or per-VFS declaration
-were the only options.
-
-**The real gap was narrow: the mechanism cannot reach residue older than itself.** A
-directory created before `76141b3` was never recorded as ours and does not start with
-`bench-`, so both passes skip it for ever. That is why iOS 26.6 fails identically on
-2026-08-25 and 2026-08-27 rather than drifting.
-
-**Closed 2026-08-27** by having `sweepBeforeRun` also reclaim names taken from
-`VFS_CAPABILITIES` itself — the OPFS directory or IndexedDB database a VFS keeps under its
-own class name, derived from the `storage` field so a new VFS needs no edit. Legacy residue
-and any future gap are both covered, with no device-side intervention.
-
-*What stays open here is the library-side question, not the bench one:* a VFS should
-**declare the storage names it owns** so `deleteDatabase` can delete by declaration rather
-than by difference. IndexedDB needs it most — it has no equivalent diff at all, and
-`indexedDB.deleteDatabase(<VFS name>)` would take every other consumer's data on the
-origin with it.
+`ABORT-1` and `DELETE-1` are gone from here: both shipped on 2026-08-27 (merge
+`a2c1b26`). What they left behind is below and in `mem:lessons`.
 
 ### BACKPRESSURE-1 — `bulkWrite` has none, and `output` inherits that
 
@@ -132,6 +39,31 @@ Adjacent to but distinct from ABORT-1: abort lets a caller **stop** a load, back
 lets them **slow** it. Shapes floated and not chosen: `enqueue()` returning a promise to
 await when the queue is deep, or a `drain()` on the writer. Both change a method documented
 today as "buffers a row" — a public-surface decision, not a detail. **Nothing is decided.**
+
+### DELETE-TIMEOUT-1 — `deleteDatabase` expires on two VFS off Chromium
+
+Measured 2026-08-27, six devices, one run each. `deleted-is-gone` reports
+`timeout` on **`OPFSWriteAheadVFS`** (macOS Safari 26.5.2 `sync`, iPadOS 27.0
+`jspi`, Firefox 154 `sync` and `async`) and on **`OPFSCoopSyncVFS`** (macOS
+Safari 27.0 and Firefox 154, both `async`). **Never on Chromium, never on iOS
+26.6.** Counts in `mem:measurements`.
+
+Both are the VFS that rotate one exclusive OPFS access handle where there is no
+`readwrite-unsafe` — so this is `HANDLE-1` reaching the delete path, not a
+defect of the deletion itself. It is a timeout, never a false success.
+
+**Owed before a release: one Known Limitations line.** It is the honest half of
+what the campaign found, and rc.4 would otherwise ship a method with a measured
+limit nobody wrote down. n=1 per device, so cite it as an observation until a
+second campaign says otherwise.
+
+### `transaction()` takes no `signal`
+
+Every other public method now honours one, including while queued for a worker.
+`transaction()` acquires the same way and cannot be abandoned. Left alone
+deliberately on 2026-08-27: adding the option is a public-surface decision, not
+a bug fix, and the three abort defects that session found were all in code that
+already claimed to be abortable.
 
 ## Limits to document rather than fix
 

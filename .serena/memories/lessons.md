@@ -143,3 +143,47 @@ dispatched during the query's start-up awaits, each resolving a signal nobody is
 on, after which the worker awaits a fresh signal that never arrives. The probe found it by
 hanging. **Accounting and yielding are two separate roles** — a counter for the first, an
 unconditional task turn for the second.
+
+## Abandonment needs an owner, or every `await` is a hole — 2026-08-27
+
+`ABORT-1` looked like "give `bulkWrite` and `output` a signal". Three separate
+places consulted none, and **each was found by one more device run**, never by
+a test in this repo:
+
+1. `bulkWrite`'s chained batches called `write()` without the signal, so a batch
+   already in flight could not be rejected.
+2. `scheduler.acquire` took no signal at all — so while the pool had nothing to
+   lend, an abort could not land for **any** method. This predated the abort
+   work by a wave.
+3. `applyBarrier` drained a query on the worker with no signal, inside
+   `acquireInstrumented`, so every method passed through it.
+
+The common fact is the lesson: **no single place owned "this call may be
+abandoned"**, so any `await` without a signal was a hole, and holes surfaced one
+engine at a time. Chromium never reproduced any of them — it always frees a
+worker eventually — so the repo's own suite was green through all three.
+
+The fix that ends it is placement, not plumbing: the guard sits in
+`acquireInstrumented`, which covers the only phase of a call that was not
+already abortable, so an `await` added there later is covered without being
+remembered. A top-level race per method was considered and dropped as
+redundant once that was true.
+
+**Two reflexes this bought.** A green suite on one engine proves nothing about
+a pool that can stay empty — the benchmark page is the reproducer, and the
+campaign is the verification. And when a fix "should have worked" and did not,
+the count matters: at three, stop patching and ask what the three have in
+common.
+
+## Reading a test report needs four fields, not three — 2026-08-27
+
+`pnpm test` was reported green from `tests`, `passedTests` and `failedTests`
+while `status` was `fail` and `failedFiles` was 1: an unhandled rejection had
+escaped **outside** any test, which the per-test counters cannot show. Grep
+`status` and `failedFiles` too, or a file-level failure reads as a pass.
+
+What it was hiding is worth keeping: making `scheduler.acquire` reject a queued
+request moved the rejection **into `abort()`**, synchronously, where it used to
+wait for a lease. A caller that attaches its handler after the next `await`
+then lets the promise cross a microtask checkpoint unhandled. That is a real
+consumer-visible timing change, and it is in `CHANGELOG.md` for that reason.

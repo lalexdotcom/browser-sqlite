@@ -25,10 +25,15 @@ obligations and unmeasured ground.
 
 Not history: the numbers a regression is detected against.
 
-`tsc --noEmit` clean · `pnpm build` clean · **358 tests** · conformance **66 passed /
-10 skipped on Chromium and the same on Firefox** · **consumer smoke 24/24** ·
-`scripts/bench/check.mjs` OK · biome 13 warnings, none in recently touched files ·
+`tsc --noEmit` clean · `pnpm build` clean · **383 tests, 0 failed files** ·
+conformance **73 passed / 12 skipped on Chromium and the same on Firefox** ·
+**consumer smoke 24/24** · `scripts/bench/check.mjs chromium --all` OK, 22 pairs,
+zero `not-run` · biome 13 warnings, none in recently touched files ·
 `dependencies` empty.
+
+**Read four fields from a test report, not three.** `status` and `failedFiles`
+show an unhandled rejection escaping outside any test, which the per-test
+counters cannot. That was reported green once — see `mem:lessons`.
 
 Firefox conformance was 57/19 until `OPFSWriteAheadVFS`'s declaration was corrected; the
 two engines agreeing is the current expectation, and a divergence means something skipped.
@@ -56,6 +61,13 @@ data on the origin with it. Neither is the answer alone.
 - **`OPFSWriteAheadVFS` on Safari is measured now** and gives no concurrency there, so it
   earns a Safari user nothing. What is *not* measured is any engine beyond Chromium,
   Firefox and the four Apple devices of 2026-08-27.
+- **`deleteDatabase` is measured on six devices and times out on two VFS off
+  Chromium** — `DELETE-TIMEOUT-1`. n=1 per device, and it owes a Known
+  Limitations line before any release.
+- **Nothing in this repo reproduces a pool that never frees a worker.** Chromium
+  always does, so the suite stayed green through three real abort defects. The
+  benchmark page is the reproducer and a device campaign is the verification —
+  `mem:lessons` records what that cost.
 - **`no-read-inside-transaction` and `survives-reopen` both flip between runs.** n≥3 per
   device before either is cited — `mem:follow-ups` carries the counts.
 - **The benchmark page cannot report whether the OPFS root was empty when a run started.**
