@@ -7,104 +7,6 @@ VFS this library ships, put through the same conformance checks and measurements
 It is the honest way to choose one: which VFS wins depends on the engine, and it changes often —
 a single browser release can move the answer.
 
-## Usage
-
-### Initialize
-
-```typescript
-import { createSQLiteClient } from 'browser-sqlite';
-
-const db = createSQLiteClient('myapp.sqlite', {
-  poolSize: 2,                    // number of worker threads (default: 2)
-  vfs: 'OPFSAdaptiveVFS',         // required — see VFS Selection
-  build: 'async',                 // wa-sqlite build (default: the VFS's first)
-  pragmas: {                      // SQLite PRAGMAs applied on open
-    journal_mode: 'WAL',
-    synchronous: 'NORMAL',
-  },
-});
-```
-
-`createSQLiteClient` spawns `poolSize` Web Worker threads immediately. Workers reach READY state asynchronously — queries made before workers are ready are queued automatically.
-
-### Read
-
-```typescript
-type User = { id: number; name: string };
-
-const users = await db.read<User>(
-  'SELECT id, name FROM users WHERE active = ?',
-  [1],
-);
-// users: User[]
-```
-
-Read queries are dispatched to any available worker, enabling concurrent reads.
-
-### Write
-
-```typescript
-const { affected } = await db.write(
-  'INSERT INTO users (name, email) VALUES (?, ?)',
-  ['Alice', 'alice@example.com'],
-);
-// affected: number of rows inserted
-```
-
-Write queries are serialized through a dedicated writer worker — only one write executes at a time.
-
-### Stream (large result sets)
-
-```typescript
-// Worker is held for the full generator lifetime — always exhaust or break.
-for await (const row of db.stream<User>('SELECT * FROM large_table', [])) {
-  processRow(row); // row is User
-}
-```
-
-`stream()` yields individual rows without buffering the full result set in memory.
-Use `chunk()` to iterate in batches: `for await (const rows of db.chunk(...))`.
-
-### First (first row)
-
-```typescript
-const user = await db.first<User>(
-  'SELECT * FROM users WHERE id = ?',
-  [42],
-);
-// user: User | undefined
-```
-
-`first()` returns the first result row, or `undefined` if no rows match. Use it for lookups by primary key or unique field.
-
-### Transaction
-
-```typescript
-const orders = await db.transaction(async (tx) => {
-  await tx.write('INSERT INTO orders (id, total) VALUES (?, ?)', [1, 42]);
-  await tx.write('UPDATE stock SET qty = qty - 1 WHERE id = ?', [7]);
-  const rows = await tx.read<{ n: number }>('SELECT count(*) AS n FROM orders');
-  return rows[0].n;
-});
-```
-
-One worker is held for the callback's whole lifetime, so nothing else can run on
-it: the transaction is genuinely isolated, not merely wrapped in `BEGIN`.
-Returning commits, throwing rolls back and re-throws. `{ readOnly: true }`
-rejects write statements; `{ autoCommit: false }` leaves the commit to you.
-
-`tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit` and `rollback`.
-
-### Close
-
-```typescript
-await db.close();
-```
-
-Drains in-flight work, rejects queued work, closes each database connection, then terminates all workers. The returned promise settles once every worker has closed and been terminated, or once `drainTimeout` has elapsed. Calling `close()` a second time returns the same promise — the operation runs exactly once.
-
-**Stored data is not deleted.** `close()` releases workers and connections; it removes nothing, and this library does not yet expose a deletion that routes through the VFS. Removing files under `navigator.storage.getDirectory()` is only correct for the plain OPFS VFS on a closed database, and even there it leaves SQLite's `-journal` and `-wal` siblings. It is wrong elsewhere: `AccessHandlePoolVFS` keeps its databases in pre-allocated files inside one directory named after the VFS, so removing one takes capacity from the pool instead of freeing it; `IDBBatchAtomicVFS` and `IDBMirrorVFS` store nothing in OPFS at all. Treat removal as VFS-specific until an API exists.
-
 ## Install
 
 ```bash
@@ -131,6 +33,176 @@ export default defineConfig({
 Another bundler will likely work — the worker and its `.wasm` are reached through plain, statically analysable URLs — but may need configuration of its own.
 
 The `.wasm` are read from beside `worker.js`. If a build separates them, or you move them by hand, point at them with [`wasmUrl`](#options).
+
+## Usage
+
+### createSQLiteClient
+
+```typescript
+import { createSQLiteClient } from 'browser-sqlite';
+
+const db = createSQLiteClient('myapp.sqlite', {
+  poolSize: 2,                    // number of worker threads (default: 2)
+  vfs: 'OPFSAdaptiveVFS',         // required — see VFS Selection
+  build: 'async',                 // wa-sqlite build (default: the VFS's first)
+  pragmas: {                      // SQLite PRAGMAs applied on open
+    journal_mode: 'WAL',
+    synchronous: 'NORMAL',
+  },
+});
+```
+
+`createSQLiteClient` spawns `poolSize` Web Worker threads immediately. Workers reach READY state asynchronously — queries made before workers are ready are queued automatically.
+
+Every option is listed under [Options](#options).
+
+### *client*.read
+
+```typescript
+type User = { id: number; name: string };
+
+const users = await db.read<User>(
+  'SELECT id, name FROM users WHERE active = ?',
+  [1],
+);
+// users: User[]
+```
+
+Read queries are dispatched to any available worker, enabling concurrent reads.
+
+### *client*.write
+
+```typescript
+const { affected } = await db.write(
+  'INSERT INTO users (name, email) VALUES (?, ?)',
+  ['Alice', 'alice@example.com'],
+);
+// affected: number of rows inserted
+```
+
+Write queries are serialized through a dedicated writer worker — only one write executes at a time.
+
+### *client*.stream
+
+```typescript
+// Worker is held for the full generator lifetime — always exhaust or break.
+for await (const row of db.stream<User>('SELECT * FROM large_table', [])) {
+  processRow(row); // row is User
+}
+```
+
+`stream()` yields individual rows without buffering the full result set in memory.
+Use `chunk()` to iterate in batches: `for await (const rows of db.chunk(...))`.
+
+### *client*.first
+
+```typescript
+const user = await db.first<User>(
+  'SELECT * FROM users WHERE id = ?',
+  [42],
+);
+// user: User | undefined
+```
+
+`first()` returns the first result row, or `undefined` if no rows match. Use it for lookups by primary key or unique field.
+
+### *client*.transaction
+
+```typescript
+const orders = await db.transaction(async (tx) => {
+  await tx.write('INSERT INTO orders (id, total) VALUES (?, ?)', [1, 42]);
+  await tx.write('UPDATE stock SET qty = qty - 1 WHERE id = ?', [7]);
+  const rows = await tx.read<{ n: number }>('SELECT count(*) AS n FROM orders');
+  return rows[0].n;
+});
+```
+
+One worker is held for the callback's whole lifetime, so nothing else can run on
+it: the transaction is genuinely isolated, not merely wrapped in `BEGIN`.
+Returning commits, throwing rolls back and re-throws. `{ readOnly: true }`
+rejects write statements; `{ autoCommit: false }` leaves the commit to you.
+
+`tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit` and `rollback`.
+
+### *client*.bulkWrite
+
+```typescript
+const rows = db.bulkWrite('events', ['id', 'kind', 'at']);
+for (const event of events) rows.enqueue(event);
+const affected = await rows.close();
+```
+
+Batches inserts to stay under SQLite's variable limit (`SQLITE_MAX_VARS`,
+32 766), flushing whenever the next row would cross it. `close()` flushes the
+remainder and resolves with the total number of rows written.
+
+Single-use: `enqueue()` and `close()` throw once closed. A batch that fails
+rejects with a `SQLiteBulkWriteError` carrying `rowsWritten` and `rowsNotWritten` — a
+multi-row INSERT is statement-atomic, so the failing batch wrote nothing.
+
+`bulkWrite()` is not atomic: batches are committed as they flush, so a failure leaves the rows already written in place. Call it on a `tx` if you need all-or-nothing.
+
+### *client*.output
+
+```typescript
+const out = db.output(
+  'products',
+  { id: 'INTEGER', name: 'TEXT', price: { type: 'REAL', required: true } },
+  { indexes: ['name', { columns: ['name', 'price'], unique: true }] },
+);
+out.enqueue({ id: 1, name: 'widget', price: 9.99 });
+const affected = await out.close();
+```
+
+Builds a table from a schema declaration and populates it. Rows land in a
+staging table and the swap happens atomically at `close()`, so **the previous
+table stays intact and fully populated until the new one is ready** — a reader
+querying mid-load sees the old data, never a half-filled table. A target that
+did not exist appears only at `close()`. Single-use, like `bulkWrite`.
+
+**Inside a transaction, `output()` costs more than it looks.** On its own it loads rows outside any transaction and holds the write lock only for the final swap. Called on a `tx`, the entire load runs inside your transaction — every other write, in this tab and in others, waits for it to finish.
+
+### *client*.close
+
+```typescript
+await db.close();
+```
+
+Drains in-flight work, rejects queued work, closes each database connection, then terminates all workers. The returned promise settles once every worker has closed and been terminated, or once `drainTimeout` has elapsed. Calling `close()` a second time returns the same promise — the operation runs exactly once.
+
+**Stored data is not deleted.** `close()` releases workers and connections; it removes nothing. To remove the database itself, use [`deleteDatabase`](#deletedatabase).
+
+### deleteDatabase
+
+Removes a database and the `-journal` / `-wal` files SQLite may have left beside it. The database must not be open, in this tab or any other.
+
+```typescript
+import { deleteDatabase } from 'browser-sqlite';
+
+await deleteDatabase('myapp.sqlite', { vfs: 'OPFSAdaptiveVFS' });
+```
+
+`vfs` is required and must be the VFS the database was created with: a database written through one VFS is not visible through another, so deleting through the wrong one deletes nothing and reports success. `build` and `wasmUrl` are accepted with the same meaning as on `createSQLiteClient`.
+
+Deleting a database that does not exist is not an error.
+
+What a VFS keeps for itself is left alone — the IndexedDB store shared by every database that VFS holds on this origin, and the `AccessHandlePoolVFS` directory whose files are its reusable capacity. The deleted database's own bytes are freed in both cases.
+
+Throws `SQLiteError` with code `BUSY` when the database is open or being opened, and `TIMEOUT` when the VFS cannot answer within 30 seconds — most often the same cause.
+
+## Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `poolSize` | `number` | `2` | Number of Web Workers spawned in the pool. A larger pool allows more concurrent reads but uses more memory. Must be `1` with `AccessHandlePoolVFS`. |
+| `vfs` | `SQLiteVFS` | — (required) | VFS implementation for storage. See the [VFS Selection](#vfs-selection) table. |
+| `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite WebAssembly build to load: `'sync'`, `'async'`, or `'jspi'`. Throws `INVALID_OPTION` at construction if the VFS does not support it. See [Builds](#builds). |
+| `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Where the workers fetch their `.wasm`. Omit it and resolution is unchanged: the files are read from beside `worker.js`. A string is a directory resolved against the page — relative, absolute or a full URL, trailing slash optional. A callback receives the resolved `build` and names one file, for a bundler-emitted asset carrying a content hash. Called once, at construction. Throws `INVALID_OPTION` there if the value is not a URL. Another origin needs CORS and `Content-Type: application/wasm`. |
+| `pragmas` | `Record<string, string>` | `undefined` | SQLite PRAGMAs applied to each worker connection on open. |
+| `maxWorkerRestarts` | `number` | `1` | How many times a slot may be restarted after it dies. A slot that never reached readiness is never restarted — an initial failure is deterministic and restarting only delays the diagnostic. The counter resets once a replacement has actually served a request. |
+| `openTimeout` | `number` (ms) | `30_000` | How long a worker has to post `ready` after `open` is sent. On expiry the slot is failed — the most common cause is a database held under an exclusive lock by another tab. |
+| `drainTimeout` | `number` (ms) | `60_000` | How long the drain loop may run in the query generator's `finally` before the worker is presumed dead and the crash path is invoked. |
+| `debug` | `string \| boolean` | `undefined` | Enables lifecycle logging. A string value is used as the log prefix; `true` falls back to the client prefix (e.g. `"SQLite 1"`). Only lifecycle events are logged — worker created, ready, open-error, crash, restart, eviction, close, and skipped staging sweep. No line per query. Off by default. When enabled, `db.debug` also exposes a live introspection state tree for query throughput and worker status. |
 
 ## Browser support
 
@@ -274,78 +346,6 @@ JavaScript Promise Integration — the same asynchrony handled by the engine rat
 
 
 <!-- END GENERATED BUILD TABLE -->
-
-## Advanced
-
-### bulkWrite
-
-```typescript
-const rows = db.bulkWrite('events', ['id', 'kind', 'at']);
-for (const event of events) rows.enqueue(event);
-const affected = await rows.close();
-```
-
-Batches inserts to stay under SQLite's variable limit (`SQLITE_MAX_VARS`,
-32 766), flushing whenever the next row would cross it. `close()` flushes the
-remainder and resolves with the total number of rows written.
-
-Single-use: `enqueue()` and `close()` throw once closed. A batch that fails
-rejects with a `SQLiteBulkWriteError` carrying `rowsWritten` and `rowsNotWritten` — a
-multi-row INSERT is statement-atomic, so the failing batch wrote nothing.
-
-`bulkWrite()` is not atomic: batches are committed as they flush, so a failure leaves the rows already written in place. Call it on a `tx` if you need all-or-nothing.
-
-### output
-
-```typescript
-const out = db.output(
-  'products',
-  { id: 'INTEGER', name: 'TEXT', price: { type: 'REAL', required: true } },
-  { indexes: ['name', { columns: ['name', 'price'], unique: true }] },
-);
-out.enqueue({ id: 1, name: 'widget', price: 9.99 });
-const affected = await out.close();
-```
-
-Builds a table from a schema declaration and populates it. Rows land in a
-staging table and the swap happens atomically at `close()`, so **the previous
-table stays intact and fully populated until the new one is ready** — a reader
-querying mid-load sees the old data, never a half-filled table. A target that
-did not exist appears only at `close()`. Single-use, like `bulkWrite`.
-
-**Inside a transaction, `output()` costs more than it looks.** On its own it loads rows outside any transaction and holds the write lock only for the final swap. Called on a `tx`, the entire load runs inside your transaction — every other write, in this tab and in others, waits for it to finish.
-
-### deleteDatabase
-
-Removes a database and the `-journal` / `-wal` files SQLite may have left beside it. The database must not be open, in this tab or any other.
-
-```typescript
-import { deleteDatabase } from 'browser-sqlite';
-
-await deleteDatabase('myapp.sqlite', { vfs: 'OPFSAdaptiveVFS' });
-```
-
-`vfs` is required and must be the VFS the database was created with: a database written through one VFS is not visible through another, so deleting through the wrong one deletes nothing and reports success. `build` and `wasmUrl` are accepted with the same meaning as on `createSQLiteClient`.
-
-Deleting a database that does not exist is not an error.
-
-What a VFS keeps for itself is left alone — the IndexedDB store shared by every database that VFS holds on this origin, and the `AccessHandlePoolVFS` directory whose files are its reusable capacity. The deleted database's own bytes are freed in both cases.
-
-Throws `SQLiteError` with code `BUSY` when the database is open or being opened, and `TIMEOUT` when the VFS cannot answer within 30 seconds — most often the same cause.
-
-### Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `poolSize` | `number` | `2` | Number of Web Workers spawned in the pool. A larger pool allows more concurrent reads but uses more memory. Must be `1` with `AccessHandlePoolVFS`. |
-| `vfs` | `SQLiteVFS` | — (required) | VFS implementation for storage. See the [VFS Selection](#vfs-selection) table. |
-| `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite WebAssembly build to load: `'sync'`, `'async'`, or `'jspi'`. Throws `INVALID_OPTION` at construction if the VFS does not support it. See [Builds](#builds). |
-| `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Where the workers fetch their `.wasm`. Omit it and resolution is unchanged: the files are read from beside `worker.js`. A string is a directory resolved against the page — relative, absolute or a full URL, trailing slash optional. A callback receives the resolved `build` and names one file, for a bundler-emitted asset carrying a content hash. Called once, at construction. Throws `INVALID_OPTION` there if the value is not a URL. Another origin needs CORS and `Content-Type: application/wasm`. |
-| `pragmas` | `Record<string, string>` | `undefined` | SQLite PRAGMAs applied to each worker connection on open. |
-| `maxWorkerRestarts` | `number` | `1` | How many times a slot may be restarted after it dies. A slot that never reached readiness is never restarted — an initial failure is deterministic and restarting only delays the diagnostic. The counter resets once a replacement has actually served a request. |
-| `openTimeout` | `number` (ms) | `30_000` | How long a worker has to post `ready` after `open` is sent. On expiry the slot is failed — the most common cause is a database held under an exclusive lock by another tab. |
-| `drainTimeout` | `number` (ms) | `60_000` | How long the drain loop may run in the query generator's `finally` before the worker is presumed dead and the crash path is invoked. |
-| `debug` | `string \| boolean` | `undefined` | Enables lifecycle logging. A string value is used as the log prefix; `true` falls back to the client prefix (e.g. `"SQLite 1"`). Only lifecycle events are logged — worker created, ready, open-error, crash, restart, eviction, close, and skipped staging sweep. No line per query. Off by default. When enabled, `db.debug` also exposes a live introspection state tree for query throughput and worker status. |
 
 ## Error handling
 
