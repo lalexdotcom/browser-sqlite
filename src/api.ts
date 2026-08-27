@@ -60,6 +60,17 @@ export type Index<SCHEMA extends Schema> =
 
 export type SQLiteOutputOptions<SCHEMA extends Schema> = {
   indexes?: Index<SCHEMA>[];
+  /**
+   * Aborts the load. Rejects `close()` with `signal.reason`, exactly as the
+   * query methods do.
+   *
+   * An aborted `output()` is observationally a no-op: the staging table is
+   * dropped and nothing else is touched. No rename, no partial publication —
+   * whatever was in the target before is still there, whole.
+   *
+   * The abort lands between batches, never inside one.
+   */
+  signal?: AbortSignal;
 };
 
 /** A row for `output()`: generated columns are computed, never supplied. */
@@ -216,6 +227,11 @@ export type SQLiteQueryAPI = {
    *
    * @param table - Target table name.
    * @param keys - Column names for the INSERT statement.
+   * @param options - `signal` aborts the load between batches. `close()` then
+   *   rejects with `signal.reason`. **The batches already flushed stay
+   *   written** — `bulkWrite()` is not atomic outside a transaction, so an
+   *   abort stops the load, it does not undo it. Run it inside `transaction()`
+   *   when abandoning must mean rolling back.
    * @returns Object with:
    *   - `enqueue(data)` — buffers a row, flushing automatically when the buffer fills.
    *   - `close()` — flushes remaining rows and resolves with total affected row count.
@@ -223,6 +239,7 @@ export type SQLiteQueryAPI = {
   bulkWrite: <KEYS extends string>(
     table: string,
     keys: KEYS[],
+    options?: { signal?: AbortSignal },
   ) => SQLiteBulkWriter<KEYS>;
 
   /**
@@ -240,7 +257,9 @@ export type SQLiteQueryAPI = {
    * @param table - Table name to drop and recreate.
    * @param schema - Column definition map. Values are SQL type strings or
    *   objects with `{ type, required?, unique?, generated? }`.
-   * @param options - `indexes` array for index creation after the swap.
+   * @param options - `indexes` array for index creation after the swap, and
+   *   `signal` to abort the load. An aborted `output()` leaves the previous
+   *   target intact and untouched.
    * @returns Object with `enqueue(data)` and `close()` following the same
    *   contract as {@link SQLiteQueryAPI.bulkWrite}.
    */

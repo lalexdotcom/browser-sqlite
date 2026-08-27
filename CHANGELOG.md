@@ -53,6 +53,15 @@ with it.
 
 ### Added
 
+- **`bulkWrite()` and `output()` accept `{ signal }`.** They were the two
+  longest-running methods in the public surface and the only two that could not
+  be cancelled. The abort lands **between** batches — a multi-row INSERT is
+  statement-atomic, so stopping inside one either wastes it whole or lets it
+  commit whole. `close()` rejects with `signal.reason`, the same contract the
+  query methods already honour. An aborted `bulkWrite()` leaves the batches
+  already written in place; run it inside `transaction()` when abandoning must
+  mean rolling back. An aborted `output()` is observationally a no-op: the
+  staging table is dropped and the previous target is untouched.
 - **`deleteDatabase(file, { vfs })`** — a supported way to remove a database and
   the `-journal` / `-wal` files beside it, on every VFS that persists one. On
   `AccessHandlePoolVFS` it is the only correct removal: it returns the pool slot,

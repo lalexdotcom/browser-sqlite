@@ -142,6 +142,8 @@ multi-row INSERT is statement-atomic, so the failing batch wrote nothing.
 
 `bulkWrite()` is not atomic: batches are committed as they flush, so a failure leaves the rows already written in place. Call it on a `tx` if you need all-or-nothing.
 
+Pass `{ signal }` to abort a load. `close()` then rejects with `signal.reason`, and the abort lands **between** batches — never inside one, because a multi-row INSERT is statement-atomic. The batches already written stay written, for the same reason a failure leaves them: an abort stops the load, it does not undo it.
+
 ### *client*.output
 
 ```typescript
@@ -159,6 +161,8 @@ staging table and the swap happens atomically at `close()`, so **the previous
 table stays intact and fully populated until the new one is ready** — a reader
 querying mid-load sees the old data, never a half-filled table. A target that
 did not exist appears only at `close()`. Single-use, like `bulkWrite`.
+
+`output()` takes `{ signal }` too, and an aborted one is observationally a no-op: the staging table is dropped and nothing else is touched. No rename, no partial publication — whatever was in the target before is still there, whole.
 
 **Inside a transaction, `output()` costs more than it looks.** On its own it loads rows outside any transaction and holds the write lock only for the final swap. Called on a `tx`, the entire load runs inside your transaction — every other write, in this tab and in others, waits for it to finish.
 

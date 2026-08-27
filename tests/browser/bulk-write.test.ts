@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
-import { createTestClient } from './helpers';
+import { createTestClient, sleep } from './helpers';
 
 /**
  * Characterization tests for `db.bulkWrite()`.
@@ -129,5 +129,97 @@ describe('bulkWrite() batching', () => {
     expect(error.rowsNotWritten).toBe(WIDE_FLUSH_AT + 10);
 
     await db.close();
+  });
+});
+
+describe('bulkWrite() and output() abort (ABORT-1)', () => {
+  it('writes nothing when the abort beats the first batch', async () => {
+    const db = await createTestClient();
+    await db.write(wideTableDDL('bulk_abort_early'));
+
+    const controller = new AbortController();
+    const bulk = db.bulkWrite('bulk_abort_early', WIDE_COLUMNS, {
+      signal: controller.signal,
+    });
+
+    // The auto-flush at WIDE_FLUSH_AT chains the batch, it does not await it.
+    // Aborting in the same turn therefore reaches the batch before it runs —
+    // and a batch that never started is a batch that must not start.
+    for (let i = 1; i <= WIDE_FLUSH_AT; i++) bulk.enqueue(wideRow(i));
+    controller.abort();
+
+    await expect(bulk.close()).rejects.toMatchObject({ name: 'AbortError' });
+
+    const [{ n }] = await db.read<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM bulk_abort_early',
+    );
+    expect(n).toBe(0);
+
+    db.close();
+  });
+
+  it('stops between batches and keeps the ones already written', async () => {
+    const db = await createTestClient();
+    await db.write(wideTableDDL('bulk_abort'));
+
+    const countRows = async () =>
+      (await db.read<{ n: number }>('SELECT COUNT(*) AS n FROM bulk_abort'))[0]
+        .n;
+
+    const controller = new AbortController();
+    const bulk = db.bulkWrite('bulk_abort', WIDE_COLUMNS, {
+      signal: controller.signal,
+    });
+
+    for (let i = 1; i <= WIDE_FLUSH_AT; i++) bulk.enqueue(wideRow(i));
+
+    // Wait for the first batch to actually land, so the abort below falls
+    // BETWEEN batches. Without this the test measures the previous case.
+    for (let i = 0; i < 200 && (await countRows()) === 0; i++) await sleep(20);
+    expect(await countRows()).toBe(WIDE_FLUSH_AT);
+
+    for (let i = 1; i <= 10; i++) bulk.enqueue(wideRow(WIDE_FLUSH_AT + i));
+    controller.abort();
+
+    await expect(bulk.close()).rejects.toMatchObject({ name: 'AbortError' });
+
+    // bulkWrite is not atomic outside a transaction: the abort stops the load,
+    // it does not undo it. The first batch is there and the table is usable —
+    // which is the fact the README tells a caller to expect.
+    expect(await countRows()).toBe(WIDE_FLUSH_AT);
+
+    db.close();
+  });
+
+  it('leaves the previous table whole when output() is aborted', async () => {
+    const db = await createTestClient();
+
+    await db.write('CREATE TABLE report (id INTEGER, label TEXT)');
+    await db.write("INSERT INTO report VALUES (1, 'before')");
+
+    const controller = new AbortController();
+    const out = db.output(
+      'report',
+      { id: 'INTEGER', label: 'TEXT' },
+      { signal: controller.signal },
+    );
+    out.enqueue({ id: 2, label: 'after' });
+    controller.abort();
+
+    await expect(out.close()).rejects.toMatchObject({ name: 'AbortError' });
+
+    // Observationally a no-op: no rename, no partial publication.
+    const rows = await db.read<{ id: number; label: string }>(
+      'SELECT id, label FROM report',
+    );
+    expect(rows).toEqual([{ id: 1, label: 'before' }]);
+
+    // And no staging table survives the abort.
+    const staging = await db.read<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '__bsq_staging_%'",
+    );
+    expect(staging).toEqual([]);
+
+    db.close();
   });
 });
