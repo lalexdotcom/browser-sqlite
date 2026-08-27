@@ -53,6 +53,13 @@ with it.
 
 ### Added
 
+- **`wasmUrl` client option** — an escape hatch for where the workers fetch
+  their `.wasm`. A string names a directory, resolved against the page; a
+  callback receives the resolved `build` and names one file, for a
+  bundler-emitted asset carrying a content hash. It is called once, at
+  construction. Omitting the option leaves resolution exactly as it was: the
+  files are read from beside `worker.js`, which is where every bundler in the
+  smoke test emits them.
 - `SQLiteError` code `READ_ONLY_TRANSACTION`, raised when a write, `bulkWrite()`
   or `output()` is attempted in a `readOnly` transaction. `bulkWrite()` and
   `output()` refuse at the call rather than at the first flush.

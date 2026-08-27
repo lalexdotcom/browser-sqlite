@@ -24,6 +24,22 @@ type SQLOptions = {
   credits?: number;
 };
 
+/**
+ * Where a worker fetches its `.wasm` from, when the consumer overrode it.
+ *
+ * Discriminated rather than a single string because the two forms differ in
+ * what they leave to the Emscripten glue. `base` is a directory: the glue
+ * supplies the file name (`locateFile('wa-sqlite-async.wasm')`), so nothing
+ * here names the three builds' files — and nothing has to be renamed when
+ * wa-sqlite renames one. `file` is the whole URL, typically content-hashed by
+ * a bundler, so the glue's file name is discarded.
+ *
+ * Always absolute: `resolveWasmLocation` (`src/utils.ts`) resolves against the
+ * page before the `open` message is posted, so the worker applies it without
+ * knowing what it was relative to.
+ */
+export type WasmLocation = { base: string } | { file: string };
+
 export type ClientMessageData =
   | {
       type: 'open';
@@ -31,6 +47,7 @@ export type ClientMessageData =
       vfs: SQLiteVFS;
       build?: SQLiteBuild;
       pragmas?: Record<string, string>;
+      wasm?: WasmLocation;
     }
   | {
       type: 'query';

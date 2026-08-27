@@ -1,7 +1,10 @@
 import { describe, expect, it } from '@rstest/core';
+import { SQLiteError } from '../../src/errors';
+import type { SQLiteBuild } from '../../src/types';
 import {
   isWriteQuery,
   normalizeDatabaseFile,
+  resolveWasmLocation,
   sqlParams,
 } from '../../src/utils';
 
@@ -165,5 +168,86 @@ describe('normalizeDatabaseFile', () => {
     const input = '/' + 'x'.repeat(56); // 57 chars as written
     const normalized = normalizeDatabaseFile(input);
     expect(normalized.length).toBe(56);
+  });
+});
+
+describe('resolveWasmLocation', () => {
+  // A page URL with a directory and a document, so a page-relative value and an
+  // absolute one cannot accidentally agree.
+  const PAGE = 'https://app.example/dashboard/index.html';
+
+  // Falsifiable: make the option resolve to anything when it is absent and this
+  // goes red. It is the whole guarantee that the default path is untouched —
+  // the worker only sets `locateFile` when this returns a value.
+  it('returns undefined when the option is absent', () => {
+    expect(resolveWasmLocation(undefined, 'sync', PAGE)).toBeUndefined();
+  });
+
+  it('anchors a relative base on the page, with or without the ./ prefix', () => {
+    expect(resolveWasmLocation('wasm/', 'sync', PAGE)).toEqual({
+      base: 'https://app.example/dashboard/wasm/',
+    });
+    expect(resolveWasmLocation('./wasm/', 'sync', PAGE)).toEqual({
+      base: 'https://app.example/dashboard/wasm/',
+    });
+  });
+
+  // Without the completion, URL resolution treats `wasm` as a document and
+  // drops it, yielding `/static/wa-sqlite.wasm` — a plausible-looking 404.
+  it('completes a missing trailing slash instead of dropping the last segment', () => {
+    expect(resolveWasmLocation('/static/wasm', 'sync', PAGE)).toEqual({
+      base: 'https://app.example/static/wasm/',
+    });
+  });
+
+  it('is idempotent on a base that already ends with a slash', () => {
+    expect(resolveWasmLocation('/static/wasm/', 'sync', PAGE)).toEqual(
+      resolveWasmLocation('/static/wasm', 'sync', PAGE),
+    );
+  });
+
+  it('lets an absolute path skip the page directory and a full URL skip the origin', () => {
+    expect(resolveWasmLocation('/wasm', 'sync', PAGE)).toEqual({
+      base: 'https://app.example/wasm/',
+    });
+    expect(resolveWasmLocation('https://cdn.example/w', 'sync', PAGE)).toEqual({
+      base: 'https://cdn.example/w/',
+    });
+  });
+
+  it('passes the resolved build to the callback and takes its answer as a file', () => {
+    const seen: SQLiteBuild[] = [];
+    const location = resolveWasmLocation(
+      (build) => {
+        seen.push(build);
+        return `/assets/wa-sqlite-${build}.a1b2c3.wasm`;
+      },
+      'async',
+      PAGE,
+    );
+    expect(seen).toEqual(['async']);
+    expect(location).toEqual({
+      file: 'https://app.example/assets/wa-sqlite-async.a1b2c3.wasm',
+    });
+  });
+
+  // No slash is appended here: a callback names a file, and appending one would
+  // turn a hashed asset into a directory that does not exist.
+  it('resolves a relative answer from the callback against the page as well', () => {
+    expect(resolveWasmLocation(() => 'w/x.wasm', 'jspi', PAGE)).toEqual({
+      file: 'https://app.example/dashboard/w/x.wasm',
+    });
+  });
+
+  it('throws a named INVALID_OPTION rather than deferring to an opaque open failure', () => {
+    expect(() => resolveWasmLocation('https://', 'sync', PAGE)).toThrow(
+      SQLiteError,
+    );
+    expect(() => resolveWasmLocation('https://', 'sync', PAGE)).toThrow(
+      /https:\/\//,
+    );
+    expect(() => resolveWasmLocation(() => 'https://', 'sync', PAGE)).toThrow(
+      SQLiteError,
+    );
   });
 });
