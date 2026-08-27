@@ -96,13 +96,7 @@ export default defineConfig({
               banner: WORKER_BANNER,
               raw: true,
               entryOnly: true,
-              // Default is PROCESS_ASSETS_STAGE_ADDITIONS (-100), which runs
-              // before the minifier at OPTIMIZE_SIZE (400): the banner lands
-              // first, then minification hoists declarations in front of it.
-              // Past OPTIMIZE_SIZE the banner stays where it was put.
-              // Just after minification (OPTIMIZE_SIZE, 400) and before
-              // DEV_TOOLING (500) writes the source map, so the map accounts
-              // for the nine lines the banner adds.
+              // Keeps the banner on top after minification, before the map is written.
               stage: rspack.Compilation.PROCESS_ASSETS_STAGE_OPTIMIZE_SIZE + 1,
             }),
           ],
