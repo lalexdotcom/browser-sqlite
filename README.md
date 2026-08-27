@@ -498,6 +498,7 @@ Note: the "Coop" in `OPFSCoopSyncVFS` stands for *cooperative*, not the `Cross-O
 - **Read-your-own-writes is guaranteed within a tab, not across tabs.** See the
   caveat under [Error handling](#error-handling).
 - **A database that is open cannot be deleted**, in this tab or another. `deleteDatabase` takes the same origin-wide lock a client takes while opening, which prevents an open from interleaving with a delete, and reports `BUSY` rather than deleting under a live connection. A connection that already holds its handles cannot be revoked from this library — close every client on the database first.
+- **`deleteDatabase` can time out outside Chromium**, on `OPFSWriteAheadVFS` and `OPFSCoopSyncVFS`. Observed on macOS Safari 26.5.2 and 27.0, iPadOS 27.0 and Firefox 154 — one run per device, 2026-08-27, so treat it as an observation rather than a measured rate. The call fails to settle rather than reporting an error; it has never reported success without deleting. Both VFS rotate a single exclusive OPFS access handle where `readwrite-unsafe` is unavailable, the same shape as the reduced mode described above. Not seen on Chromium, nor on iOS 26.6.
 
 ## Development
 

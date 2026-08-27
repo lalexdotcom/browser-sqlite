@@ -24,39 +24,7 @@ targets, each flush taking a write lease. What is real is that the buffer is bou
 before the first flush. **If either is ever built, `maxBufferBytes` is the one with a case,
 and the timer's commit cost is to be measured, not deduced.**
 
-### DELETE-TIMEOUT-1 — `deleteDatabase` expires on two VFS off Chromium
-
-Measured 2026-08-27, six devices, one run each. `deleted-is-gone` reports
-`timeout` on **`OPFSWriteAheadVFS`** (macOS Safari 26.5.2 `sync`, iPadOS 27.0
-`jspi`, Firefox 154 `sync` and `async`) and on **`OPFSCoopSyncVFS`** (macOS
-Safari 27.0 and Firefox 154, both `async`). **Never on Chromium, never on iOS
-26.6.** Counts in `mem:measurements`.
-
-Both are the VFS that rotate one exclusive OPFS access handle where there is no
-`readwrite-unsafe` — so this is `HANDLE-1` reaching the delete path, not a
-defect of the deletion itself. It is a timeout, never a false success.
-
-**Owed before a release: one Known Limitations line.** It is the honest half of
-what the campaign found, and rc.4 would otherwise ship a method with a measured
-limit nobody wrote down. n=1 per device, so cite it as an observation until a
-second campaign says otherwise.
-
 ## Limits to document rather than fix
-
-### HANDLE-1 — a long statement serializes the pool off Chromium
-
-Root cause established 2026-08-24; **no remedy exists at our layer**. Full account in
-`mem:vfs`. The public consequence: *"does not block the pool"* is false off Chromium.
-Concurrent reads hold on Firefox only while no worker is running a long uninterruptible
-statement.
-
-`tests/browser/long-query.test.ts :: does not terminate the worker it abandoned, and does
-not block the pool` fails on Firefox at 28-29.5 s against a 3 s budget. The scheduler, the
-lease and `quiesce()` were each checked and exonerated — statuses sampled without wrapping
-`Worker`, so the race was not perturbed.
-
-**To treat:** write it into Known Limitations (today only `OPFSCoopSyncVFS` has an entry
-covering this shape), then delete this item.
 
 ### W-multitab — multi-tab is entirely uncoordinated
 
@@ -64,35 +32,10 @@ covering this shape), then delete this item.
 writer". Partly settled: `output()` **must** be multi-tab safe (user requirement) and its
 staging sweep is `navigator.locks`-guarded. The rest of the client stays uncoordinated.
 
-**To treat:** one line in Known Limitations saying so, before 1.0.
-
-### `OPFSWriteAheadVFS`'s `requires` is wrong — measured 2026-08-27
-
-It declares `requires: ['opfs', 'readwrite-unsafe']`, and `mem:vfs` said that off Chromium
-"the second connection cannot take the handle, and the pool breaks with no error naming the
-cause". **Both are false.** Forced onto Firefox with `HAS_UNSAFE_HANDLES=false`, the VFS
-passes all three build pairs and all six invariants — including invariant 3, concurrent
-writes — at `poolSize` 1, 2 and 4. The mechanism was inferred and never executed.
-
-**Why nobody saw it: the declaration and the skip confirmed each other.** `requires` caused
-the conformance skip, and the skip prevented `requires` from ever being falsified. Nine
-pairs skipped themselves on the strength of their own declaration.
-
-**There was never a guard to design.** `missingFeature` skips `UNPROBEABLE` features, so
-`requires: ['readwrite-unsafe']` has never blocked anything at construction on any engine.
-The long-running "accept it, or design an async probe?" question was about a defence that
-did not exist.
-
-**The fix is `requires: ['opfs']` with `degradesWithout: ['readwrite-unsafe']`** — the
-shape `OPFSAdaptiveVFS` already uses. It changes no runtime behaviour, un-skips nine
-conformance entries, and changes the generated README row.
-
-**Do not simply delete the README warning.** Firefox is one engine; WebKit is where OPFS
-diverges (ANYCONTEXT-1 was a WebKit-only bug in this exact area) and cannot be tested here,
-Linux WebKit having no OPFS at all. Narrow the entry from "does not work off Chromium" to
-"not measured on Safari", and add this VFS to the owed Safari 27 / iOS 26 / iPadOS 27
-campaign. The degradation itself is also unmeasured — the read-burst ratio would say
-whether it degrades like `OPFSAdaptiveVFS` or not at all.
+**Scoped to rc.5 (user, 2026-08-27): multi-tab is rc.5's subject, implemented or
+abandoned, and its Known Limitations line goes with that decision.** The README already
+says it twice in the read-your-own-writes section — "It is not guaranteed across tabs" and
+"Nothing serializes writes between clients" — so nothing is currently unstated.
 
 ### REOPEN-1 — `OPFSWriteAheadVFS/sync :: survives-reopen`, a flake at n=3
 
@@ -115,6 +58,33 @@ Not worth a mechanism at this rate. If it is ever chased, note the prior questio
 should be recommended there at all comes first.
 
 ## Evidence owed
+
+### HANDLE-1 — the backlog and the README contradict each other
+
+**Do not write the Known Limitations line this entry used to ask for.** It would
+contradict a measured claim already in the README, in the same file.
+
+The README (§ the reduced-mode section, "A long *read* does not produce this effect") says
+short reads on the other workers still return in about a millisecond on Firefox while a
+long read runs, and records that an earlier revision claimed the broader form and that
+measurement narrowed it. This entry claimed the opposite: that concurrent reads hold only
+while no worker runs a long uninterruptible statement.
+
+The evidence for this side is one test: `tests/browser/long-query.test.ts :: does not
+terminate the worker it abandoned, and does not block the pool` fails on Firefox at
+28-29.5 s against a 3 s budget, with `poolSize: 2` — a long read abandoned at 200 ms, then
+a plain `SELECT 1` that should land on the other worker. The scheduler, the lease and
+`quiesce()` were each checked and exonerated (statuses sampled without wrapping `Worker`,
+so the race was not perturbed), and the failure was attributed to the exclusive-handle
+rotation.
+
+**What separates them is what nobody has measured:** whether it is the *abandonment* that
+blocks — `interrupt()`, the generator's return path, `quiesce()` — rather than the long
+statement itself, which the README's measurement says does not. Both readings fit the
+evidence; only one can go in the README.
+
+The two Firefox failures below block CI for the same reason. Measure before writing
+anything.
 
 ### FLAKE-ROW-1 — `no-read-inside-transaction` is a race, not a verdict
 

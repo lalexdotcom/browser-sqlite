@@ -206,3 +206,23 @@ breath.** Either re-read the file first, or rename textually with
 `replace_in_files`, which works on the file as it is on disk and cannot desync.
 Typecheck immediately after any rename either way — the second rename of that
 session, done textually, was clean and `tsc` is what proved it.
+
+## A declaration and the skip it causes confirm each other — 2026-08-27
+
+`OPFSWriteAheadVFS` declared `requires: ['readwrite-unsafe']`. That declaration made the
+conformance suite skip exactly the pairs that would have falsified it, so nine entries
+skipped themselves on the strength of their own claim, and `mem:vfs` carried an inferred
+mechanism — "the second connection cannot take the handle, and the pool breaks with no
+error naming the cause" — that had never been executed. Forced onto Firefox with
+`HAS_UNSAFE_HANDLES=false`, the VFS passed all three build pairs and all six invariants,
+concurrent writes included, at `poolSize` 1, 2 and 4.
+
+**When a declaration decides whether its own test runs, it is unfalsifiable by
+construction.** Look for that shape: a `requires`, a capability probe, a feature flag that
+gates the suite that would check it. The fix was `requires: ['opfs']` with
+`degradesWithout: ['readwrite-unsafe']`, which changed no runtime behaviour and un-skipped
+nine conformance entries.
+
+A second cost, paid separately: the long-running question "accept it, or design an async
+probe?" was about a defence that did not exist — `missingFeature` skips `UNPROBEABLE`
+features, so that `requires` had never blocked anything at construction on any engine.

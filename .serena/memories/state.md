@@ -46,10 +46,17 @@ item is whatever the user picks from `mem:follow-ups`.
 
 ## Owed before the release
 
+**Scope, set by the user on 2026-08-27: everything open belongs to rc.4 except
+multi-tab, which is rc.5's subject — implemented or abandoned.** So rc.4 carries
+the evidence owed and the small items below; `W-multitab` and its Known
+Limitations line travel with the rc.5 decision.
+
 - Bump `package.json` to `1.0.0-rc.4`.
-- The upstream wa-sqlite PR is pushed to `lalexdotcom/wa-sqlite` (branch
-  `fix/opfs-anycontext-webkit-view-offset`) but **not opened**. Body drafted at
-  `.work/PR-body.md`, gitignored.
+- **The upstream PR is open: `rhashimoto/wa-sqlite#344`**, "Fix OPFSAnyContextVFS
+  writes on WebKit by copying the page buffer", from `lalexdotcom`. This file
+  said "pushed but not opened" for a day after it was opened — verified against
+  the GitHub PR list on 2026-08-27, `gh` not being installed in this
+  container.
 
 ## Unmeasured ground — what a claim here would be inventing
 
@@ -57,8 +64,8 @@ item is whatever the user picks from `mem:follow-ups`.
   earns a Safari user nothing. What is *not* measured is any engine beyond Chromium,
   Firefox and the four Apple devices of 2026-08-27.
 - **`deleteDatabase` is measured on six devices and times out on two VFS off
-  Chromium** — `DELETE-TIMEOUT-1`. n=1 per device, and it owes a Known
-  Limitations line before any release.
+  Chromium.** n=1 per device; written into Known Limitations on 2026-08-27 as an
+  observation, in those words.
 - **Nothing in this repo reproduces a pool that never frees a worker.** Chromium
   always does, so the suite stayed green through three real abort defects. The
   benchmark page is the reproducer and a device campaign is the verification —
