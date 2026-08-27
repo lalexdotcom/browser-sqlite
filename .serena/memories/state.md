@@ -40,12 +40,12 @@ two engines agreeing is the current expectation, and a divergence means somethin
 
 ## Decisions the user owes
 
-None outstanding. **`BACKPRESSURE-1` is next** — the user said so on 2026-08-27,
-straight after `feat/transaction-signal` merged. Nothing about it is decided;
-`mem:follow-ups` carries what is bounded today and what is not, and the shapes
-floated so far (`enqueue()` returning a promise, a `drain()` on the writer) both
-change a method documented as "buffers a row", which makes it a public-surface
-decision rather than a fix.
+None outstanding. **`BACKPRESSURE-1` is designed and unbuilt** — brainstormed with
+the user on 2026-08-27, spec at
+`docs/superpowers/specs/2026-08-27-bulk-backpressure-design.md`, four decisions
+recorded there and summarised in `mem:follow-ups`. It is the
+designed-and-approved-but-unbuilt item this slot exists for; implementation has
+not started.
 
 ## Owed before the release
 

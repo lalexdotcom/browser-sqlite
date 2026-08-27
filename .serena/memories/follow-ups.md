@@ -36,9 +36,25 @@ large volumes, and it is where volume accumulates in RAM. `mem:vfs` records that
 started this project to *stop* loading large structures into memory.
 
 Adjacent to but distinct from ABORT-1: abort lets a caller **stop** a load, back-pressure
-lets them **slow** it. Shapes floated and not chosen: `enqueue()` returning a promise to
-await when the queue is deep, or a `drain()` on the writer. Both change a method documented
-today as "buffers a row" — a public-surface decision, not a detail. **Nothing is decided.**
+lets them **slow** it.
+
+**Designed 2026-08-27, not implemented:**
+`docs/superpowers/specs/2026-08-27-bulk-backpressure-design.md`. Four decisions, taken with
+the user: the bound is cooperative (`enqueue()` returns a promise; ignoring it is legal and
+gives today's behaviour); it is counted in **rows**, not batches; the default derives from
+the column count (`2 × floor(32766 / columns)`) and an explicit value is never clamped; and
+the promise **never rejects** — failures keep their existing exits, which is also what
+preserves B5. Read the spec, not this paragraph.
+
+### A timed flush, and the byte-bounded buffer behind it
+
+Both raised on 2026-08-27 and kept out of the back-pressure spec, which records the full
+argument in its §7. Short form: a timer's memory case is weak — the buffer is already
+bounded at one batch — and it multiplies commits on exactly the slow-producer workload it
+targets, each flush taking a write lease. What is real is that the buffer is bounded in
+*values*, not bytes: one TEXT column admits 32 766 rows, so 10 KB blobs mean 327 MB held
+before the first flush. **If either is ever built, `maxBufferBytes` is the one with a case,
+and the timer's commit cost is to be measured, not deduced.**
 
 ### DELETE-TIMEOUT-1 — `deleteDatabase` expires on two VFS off Chromium
 
