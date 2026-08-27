@@ -14,6 +14,7 @@ export {
   type SQLiteVFS,
   VFS_CAPABILITIES,
   type VFSCapability,
+  type VFSLayout,
   type VFSMemoryModel,
   type VFSStorage,
 } from './types';

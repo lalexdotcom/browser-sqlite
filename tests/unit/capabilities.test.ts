@@ -121,3 +121,29 @@ describe('platform requirements', () => {
     expect(detectFeatures().has('opfs')).toBe(false);
   });
 });
+
+describe('VFS layout declarations', () => {
+  // These are not documentation. `deleteDatabase` runs its OPFS removal pass
+  // only for `opfs-path`, and OPFSCoopSyncVFS's jDelete truncates without
+  // removing — so a wrong value here is a deletion that silently leaves the
+  // file in place. Pinned by name, one line per VFS.
+  it('names where each VFS keeps a database', () => {
+    expect(VFS_CAPABILITIES.OPFSAdaptiveVFS.layout).toBe('opfs-path');
+    expect(VFS_CAPABILITIES.OPFSAnyContextVFS.layout).toBe('opfs-path');
+    expect(VFS_CAPABILITIES.OPFSCoopSyncVFS.layout).toBe('opfs-path');
+    expect(VFS_CAPABILITIES.OPFSWriteAheadVFS.layout).toBe('opfs-path');
+    expect(VFS_CAPABILITIES.AccessHandlePoolVFS.layout).toBe('opfs-pool');
+    expect(VFS_CAPABILITIES.IDBBatchAtomicVFS.layout).toBe('idb-store');
+    expect(VFS_CAPABILITIES.IDBMirrorVFS.layout).toBe('idb-store');
+    expect(VFS_CAPABILITIES.MemoryVFS.layout).toBe('memory');
+    expect(VFS_CAPABILITIES.MemoryAsyncVFS.layout).toBe('memory');
+  });
+
+  it('agrees with `storage` wherever both speak', () => {
+    for (const cap of Object.values(VFS_CAPABILITIES)) {
+      if (cap.layout === 'idb-store') expect(cap.storage).toBe('indexeddb');
+      if (cap.layout === 'memory') expect(cap.storage).toBe('memory');
+      if (cap.layout.startsWith('opfs-')) expect(cap.storage).toBe('opfs');
+    }
+  });
+});
