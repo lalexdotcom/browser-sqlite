@@ -1,5 +1,5 @@
 import type {
-  Abortable,
+  OptionsWithSignal,
   Schema,
   SQLiteOutputOptions,
   SQLiteOutputRow,
@@ -99,7 +99,7 @@ export const createBulk = (shared: {
     const bulkWrite = <KEYS extends string>(
       table: string,
       keys: KEYS[],
-      options?: Abortable,
+      options?: OptionsWithSignal,
       /** Internal: awaited before the first batch. `output()` passes its staging DDL. */
       before?: Promise<unknown>,
     ) => {

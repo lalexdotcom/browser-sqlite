@@ -73,6 +73,25 @@ with it.
   already written in place; run it inside `transaction()` when abandoning must
   mean rolling back. An aborted `output()` is observationally a no-op: the
   staging table is dropped and the previous target is untouched.
+- **`transaction()` accepts `{ signal }`.** It was the last public method that
+  could not be abandoned, and the only one that held a worker exclusively while
+  it could not. The signal aborts the wait for a worker, every statement issued
+  through `tx`, and the callback itself — a callback parked on something that is
+  not a statement no longer keeps the transaction alive. An abandoned
+  transaction rolls back and rejects with `signal.reason`, and it never commits:
+  a callback that catches its own statement's rejection and returns normally is
+  refused at the commit. A statement given a signal of its own is aborted by
+  either signal, with the reason of whichever fired.
+
+  Your callback is not interrupted — it is your code — but it can no longer
+  reach the database: every statement it issues after the abort rejects without
+  a worker round trip.
+
+  **`BEGIN`, `COMMIT` and `ROLLBACK` never carry the signal.** Their completion
+  is what decides whether a rollback is owed, so aborting one client-side would
+  risk returning a worker to the pool with the transaction still open. A
+  transaction is therefore not abandonable while one of them is in flight; the
+  abort lands as soon as it settles.
 - **`deleteDatabase(file, { vfs })`** — a supported way to remove a database and
   the `-journal` / `-wal` files beside it, on every VFS that persists one. On
   `AccessHandlePoolVFS` it is the only correct removal: it returns the pool slot,
@@ -147,6 +166,11 @@ with it.
 
 - A write in a read-only transaction threw a bare `Error`, the only guard in the
   library that escaped the `code` discriminant.
+- **A `BEGIN` that failed evicted a healthy worker.** `transaction()` rolled
+  back on any error from the moment it held a lease, including one raised by the
+  `BEGIN` itself — and a `ROLLBACK` on a connection holding no transaction fails
+  in turn, which the client read as a connection that could not be trusted and
+  respawned. The rollback is now owed only once `BEGIN` has come back.
 - **Exclusivity.** A borrowed worker could be handed to a concurrent read, so a
   query could execute inside someone else's open transaction. Availability now
   lives behind opaque leases and is unreachable from outside the scheduler.

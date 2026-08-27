@@ -68,6 +68,44 @@ export const isReadQuery = (sql: string) =>
 export const isWriteQuery = (sql: string) => !isReadQuery(sql);
 
 /**
+ * Combines two abort signals into one that fires with the reason of whichever
+ * source aborted first, plus the `release()` that unsubscribes it.
+ *
+ * NOT `AbortSignal.any()`. That is Chrome 116 / Firefox 124 / Safari 17.4, far
+ * above this library's floor (Chrome 92 / Firefox 95 / Safari 15.4), and
+ * adopting it would raise every row of the generated README matrix for every
+ * consumer.
+ *
+ * The common case allocates nothing: with one side absent, or one side already
+ * aborted, the surviving signal is returned as itself — no listener, no
+ * teardown owed, and the caller sees the original `reason` rather than a copy.
+ */
+export const mergeSignals = (
+  a: AbortSignal | undefined,
+  b: AbortSignal | undefined,
+): { signal: AbortSignal | undefined; release: () => void } => {
+  const noop = () => {};
+  if (!a || a === b) return { signal: b, release: noop };
+  if (!b) return { signal: a, release: noop };
+  if (a.aborted) return { signal: a, release: noop };
+  if (b.aborted) return { signal: b, release: noop };
+
+  const merged = new AbortController();
+  const relay = (source: AbortSignal) => () => merged.abort(source.reason);
+  const onA = relay(a);
+  const onB = relay(b);
+  a.addEventListener('abort', onA, { once: true });
+  b.addEventListener('abort', onB, { once: true });
+  return {
+    signal: merged.signal,
+    release: () => {
+      a.removeEventListener('abort', onA);
+      b.removeEventListener('abort', onB);
+    },
+  };
+};
+
+/**
  * Routing guard for the read-shaped methods (`read`, `chunk`, `stream`, `first`).
  * Throws before a lease is taken, so a rejected statement costs no pool capacity.
  *

@@ -268,3 +268,37 @@ describe('transaction() error-path masking (rollback-fix)', () => {
     db.close();
   });
 });
+
+describe('transaction() abandonment', () => {
+  // The end-to-end half of the unit tests: a real ROLLBACK reaches real SQLite,
+  // and the worker goes back to the pool clean enough to serve the read that
+  // checks it. Falsifiable by removing the callback/signal race — the callback
+  // below never returns, so without it this times out instead of rejecting.
+  it('rolls back when the signal fires while the callback is in user code', async () => {
+    const db = await createTestClient();
+
+    await db.write('CREATE TABLE tx_abandon (id INTEGER)');
+    await db.write('INSERT INTO tx_abandon VALUES (1)');
+
+    const ctl = new AbortController();
+    const reason = new Error('abandoned mid-callback');
+
+    await expect(
+      db.transaction(
+        async (tx) => {
+          await tx.write('INSERT INTO tx_abandon VALUES (2)');
+          ctl.abort(reason);
+          // User code that never returns: only the signal can end this.
+          await new Promise(() => {});
+        },
+        { signal: ctl.signal },
+      ),
+    ).rejects.toBe(reason);
+
+    const rows = await db.read<{ id: number }>('SELECT id FROM tx_abandon');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(1);
+
+    db.close();
+  });
+});

@@ -14,18 +14,20 @@ import type { ClientDebugState } from './debug';
 /**
  * Marks an options type as carrying an abort signal.
  *
- * The name is the point. `options?: Abortable<…>` says at the signature that
- * the method can be abandoned, where a bare alias would make a reader open the
- * type to find out. Every abortable option type in this file is built from it,
- * so `signal` is documented once and cannot drift between them.
+ * The name is the point. `options?: OptionsWithSignal<…>` says at the signature
+ * that the method can be abandoned, where a bare alias would make a reader open
+ * the type to find out. Every abortable option type in this file is built from
+ * it, so `signal` is documented once and cannot drift between them.
  *
- * The name is also not ours: `@types/node` exports `interface Abortable` with
- * exactly this member, so a consumer may already know it.
+ * Not the bare `Abortable` that `@types/node` uses: this reads as an options
+ * bag augmented with one member — `PropsWithChildren`, not an adjective — which
+ * is what it is both wrapped, `OptionsWithSignal<{ chunkSize?: number }>`, and
+ * alone, `options?: OptionsWithSignal`.
  *
  * `T = unknown` rather than `Record<string, never>`: intersecting with the
  * latter collapses `signal` to `never` and makes it unassignable.
  */
-export type Abortable<T = unknown> = T & {
+export type OptionsWithSignal<T = unknown> = T & {
   /**
    * Aborts the work. Rejects with `signal.reason` — your reason, not an error
    * of this library's making.
@@ -41,7 +43,7 @@ export type Abortable<T = unknown> = T & {
 };
 
 /** Options every query method accepts. */
-export type SQLiteQueryOptions = Abortable;
+export type SQLiteQueryOptions = OptionsWithSignal;
 
 /**
  * Options for the methods that cross the worker boundary in chunks.
@@ -51,7 +53,7 @@ export type SQLiteQueryOptions = Abortable;
  * ahead of the consumer. On `stream()` that is the only lever on how many rows
  * are in flight.
  */
-export type SQLiteChunkOptions = Abortable<{
+export type SQLiteChunkOptions = OptionsWithSignal<{
   /** Rows per chunk. Defaults to 500. */
   chunkSize?: number;
 }>;
@@ -61,12 +63,31 @@ export type SQLiteWriteResult<T extends Record<string, unknown>> = {
   affected: number;
 };
 
-export type SQLiteTransactionOptions = {
+/**
+ * Options for `transaction()`.
+ *
+ * `signal` abandons the transaction at every stage: while it waits for a
+ * worker, once it holds one, and from inside the callback — every statement
+ * issued through `tx` inherits it, and a statement that carries a signal of its
+ * own can be aborted by either. An abandoned transaction rolls back and rejects
+ * with `signal.reason`; it never commits, not even when the callback catches
+ * its statement's rejection and returns normally.
+ *
+ * The callback itself cannot be interrupted — it is your code — but it can no
+ * longer reach the database: every statement it issues after the abort rejects
+ * without a worker round trip.
+ *
+ * One window is not abortable: `BEGIN`, `COMMIT` and `ROLLBACK` never carry the
+ * signal. Their completion is what decides whether a rollback is owed, so a
+ * client-side abort of one of them would risk leaving the transaction open on
+ * the connection. The abort lands as soon as such a statement settles.
+ */
+export type SQLiteTransactionOptions = OptionsWithSignal<{
   /** Rejects write statements with `READ_ONLY_TRANSACTION`. Defaults to false. */
   readOnly?: boolean;
   /** Commits when the callback resolves. Defaults to true. */
   autoCommit?: boolean;
-};
+}>;
 
 /** Column definitions for `output()`. */
 export type Schema = Record<
@@ -83,12 +104,12 @@ export type Index<SCHEMA extends Schema> =
       | { columns: (keyof SCHEMA)[] }
     ));
 
-export type SQLiteOutputOptions<SCHEMA extends Schema> = Abortable<{
+export type SQLiteOutputOptions<SCHEMA extends Schema> = OptionsWithSignal<{
   indexes?: Index<SCHEMA>[];
 }>;
 
 /** Options `bulkWrite()` accepts. */
-export type SQLiteBulkWriteOptions = Abortable;
+export type SQLiteBulkWriteOptions = OptionsWithSignal;
 
 /** A row for `output()`: generated columns are computed, never supplied. */
 export type SQLiteOutputRow<SCHEMA extends Schema> = {
@@ -159,7 +180,7 @@ export type SQLiteQueryAPI = {
   write: <T extends Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    options?: Abortable,
+    options?: OptionsWithSignal,
   ) => Promise<SQLiteWriteResult<T>>;
 
   /**
@@ -227,7 +248,7 @@ export type SQLiteQueryAPI = {
   first: <T extends Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    options?: Abortable,
+    options?: OptionsWithSignal,
   ) => Promise<T | undefined>;
 
   /**
@@ -256,7 +277,7 @@ export type SQLiteQueryAPI = {
   bulkWrite: <KEYS extends string>(
     table: string,
     keys: KEYS[],
-    options?: Abortable,
+    options?: OptionsWithSignal,
   ) => SQLiteBulkWriter<KEYS>;
 
   /**
