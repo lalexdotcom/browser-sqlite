@@ -35,6 +35,23 @@ may be left live in this one. Three steps, in order:
    Whatever lives only in a scratch ledger or in the conversation is lost.
 3. **Commit whatever is still outstanding.** Obvious leftovers go in directly; for anything
    that is not obvious, ask first.
+4. **Delete every branch that is no longer needed, local and remote** (user, 2026-08-27).
+   A ref whose commits are all in `main` is noise: the next session cannot tell it apart
+   from work in progress and will ask.
+
+   **`superpowers:finishing-a-development-branch` covers this only partly — do not stop
+   where it stops.** Its merge option ends with `git branch -d <branch>`, and that command
+   compares against the branch's *upstream*, not against `main`: a branch that was ever
+   pushed is refused even when it is fully merged, which is exactly how ours survived its
+   own merge. The skill also never touches the remote ref — its push option deliberately
+   keeps the branch for PR iteration, so nothing cleans `origin/feat/*` after a local
+   merge. And it is scoped to the branch in hand, so refs left by earlier waves are
+   nobody's job.
+
+   So: prove containment with `git merge-base --is-ancestor <branch> main`, then
+   `git branch -D` locally and `git push origin --delete` for the remote, and sweep every
+   ref rather than only the current one. Four stale local branches and two merged remote
+   ones came out of one such sweep.
 
 ## Git and versioning
 
