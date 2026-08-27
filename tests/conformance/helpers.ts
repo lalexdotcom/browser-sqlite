@@ -1,6 +1,8 @@
 import { afterEach } from '@rstest/core';
+import { detectFeatures } from '../../src/capabilities';
 import { createSQLiteClient } from '../../src/client';
 import {
+  BUILD_REQUIREMENTS,
   defaultBuildFor,
   type PlatformFeature,
   type SQLiteBuild,
@@ -10,13 +12,6 @@ import {
 
 /** Every wired VFS, in declaration order. */
 export const ALL_VFS = Object.keys(VFS_CAPABILITIES) as SQLiteVFS[];
-
-/**
- * JSPI is Chromium 126+. Feature-detected rather than sniffed from the user
- * agent, so a browser that gains it later is picked up with no edit here.
- */
-export const HAS_JSPI =
-  typeof (WebAssembly as { Suspending?: unknown }).Suspending === 'function';
 
 /**
  * Probes for `mode: 'readwrite-unsafe'` OPFS access handle support by
@@ -77,16 +72,39 @@ async function probeUnsafeHandles(): Promise<boolean> {
 export const HAS_UNSAFE_HANDLES = await probeUnsafeHandles();
 
 /**
- * Whether this VFS cannot run at all on the engine we are in. Derived from the
- * capability table rather than declared twice: a VFS that merely *degrades*
- * without the feature — `OPFSAdaptiveVFS` — must still be exercised here.
+ * Every platform feature this engine has. The probeable ones come from the
+ * shipped guard, so a feature added to `PlatformFeature` is answered here with
+ * no edit in this file; `readwrite-unsafe` has no synchronous probe — which is
+ * why `detectFeatures` cannot report it — and comes from the async probe above.
  */
-export const unsupportedHere = (vfs: SQLiteVFS): boolean =>
-  // The widening cast mirrors client.ts's build guard: `as const` on the table
-  // narrows an empty `requires` to `readonly []`, where `.includes` takes never.
-  (VFS_CAPABILITIES[vfs].requires as readonly PlatformFeature[]).includes(
-    'readwrite-unsafe',
-  ) && !HAS_UNSAFE_HANDLES;
+const AVAILABLE_FEATURES: ReadonlySet<PlatformFeature> = new Set([
+  ...detectFeatures(),
+  ...(HAS_UNSAFE_HANDLES ? (['readwrite-unsafe'] as const) : []),
+]);
+
+/**
+ * The first feature this (vfs, build) pair needs and this engine lacks, or
+ * null when the pair can run. Both requirement lists are read from the tables
+ * rather than restated here, so a feature added to a VFS's `requires` or to
+ * `BUILD_REQUIREMENTS` is honoured with no edit in this file — which is how
+ * `writable-stream` was missed once already.
+ *
+ * Returned by name, not as a boolean, so the skip message states the reason it
+ * actually found instead of restating the only one anybody remembered.
+ *
+ * A VFS that merely *degrades* without a feature — `OPFSAdaptiveVFS` — does not
+ * appear in `requires` and must still be exercised here.
+ */
+export const missingHere = (
+  vfs: SQLiteVFS,
+  build: SQLiteBuild = defaultBuildFor(vfs),
+): PlatformFeature | null =>
+  // The widening casts mirror client.ts's build guard: `as const` on the tables
+  // narrows an empty requirement list to `readonly []`, where `.find` takes never.
+  [
+    ...(VFS_CAPABILITIES[vfs].requires as readonly PlatformFeature[]),
+    ...(BUILD_REQUIREMENTS[build] as readonly PlatformFeature[]),
+  ].find((feature) => !AVAILABLE_FEATURES.has(feature)) ?? null;
 
 /** The VFS's declared pool cap when it has one, or 2 when the pool is unbounded. */
 export const poolFor = (vfs: SQLiteVFS): number =>
