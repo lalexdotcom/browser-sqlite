@@ -769,6 +769,8 @@ describe('scheduler — the last writer is preferred', () => {
     expect(read.worker.index).toBe(1);
   });
 
+  // Falsifiable: delete the same branch — the write then falls through to the
+  // lowest-index scan and takes worker 0, claiming a fresh designation there.
   it('gives a new write the worker that wrote last', async () => {
     const { scheduler } = await withWriterAtOne();
 
@@ -789,12 +791,22 @@ describe('scheduler — the last writer is preferred', () => {
     expect(next.worker.index).toBe(0);
   });
 
-  it('forgets the last writer when that worker is removed', async () => {
-    const { scheduler, workers } = await withWriterAtOne();
+  // The slot is REUSED, and that is the whole test. Stopping at `remove(1)`
+  // proves nothing: remove() also drops the index from `available`, and the
+  // preference tests that set before it dereferences the hint — so the read
+  // would land on worker 0 whether or not the hint was cleared. Only a worker
+  // re-added at index 1 makes the stale hint reachable again.
+  //
+  // Falsifiable: delete `if (lastWriterIndex === index) lastWriterIndex = -1;`
+  // from remove() — the read is then routed to the respawned worker, which is a
+  // different connection with a fresh epoch and has seen nothing.
+  it('forgets the last writer when that index is respawned', async () => {
+    const { scheduler } = await withWriterAtOne();
 
     scheduler.remove(1);
+    scheduler.add({ index: 1 });
+
     const read = await scheduler.acquire('read');
     expect(read.worker.index).toBe(0);
-    expect(workers[1]).toBeDefined();
   });
 });
