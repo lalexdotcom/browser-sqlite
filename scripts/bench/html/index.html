@@ -791,12 +791,30 @@
         });
 
       /**
+       * A VFS stores under its own class name: AccessHandlePoolVFS keeps an
+       * OPFS directory called `AccessHandlePoolVFS`, IDBMirrorVFS an IndexedDB
+       * database called `IDBMirrorVFS`. Derived from the table rather than
+       * listed, so a new VFS is covered with no edit here.
+       *
+       * `remember` can only record what one of our own runs created. Residue
+       * older than that mechanism was never recorded, does not start with
+       * `bench-`, and is therefore invisible to every pass — which is exactly
+       * the state that had AccessHandlePoolVFS fail at `opens` on the same
+       * device on 2026-08-25 and again, byte for byte, on 2026-08-27.
+       */
+      const vfsOwnedNames = (kind) =>
+        Object.entries(VFS_CAPABILITIES)
+          .filter(([, cap]) => cap.storage === kind)
+          .map(([vfs]) => vfs);
+
+      /**
        * Runs before a bench, so it starts from a floor it established itself —
        * chaining two runs must not measure the first one's leftovers. Removes
-       * three things and nothing else: our own `bench-` databases and their
+       * four things and nothing else: our own `bench-` databases and their
        * `-journal` / `-wal` siblings, whose prefix makes them unambiguously
-       * ours; anything a previous run of ours recorded as its own; and the
-       * IndexedDB stores it recorded the same way.
+       * ours; anything a previous run of ours recorded as its own; the
+       * IndexedDB stores it recorded the same way; and the per-VFS stores
+       * above, which this page is about to exercise anyway.
        */
       const sweepBeforeRun = async () => {
         const all = owned();
@@ -805,9 +823,12 @@
             const root = await navigator.storage.getDirectory();
             const names = [];
             for await (const name of root.keys()) names.push(name);
+            const vfsOpfs = vfsOwnedNames('opfs');
             for (const name of names) {
               const isOurs =
-                name.startsWith('bench-') || (all.opfs ?? []).includes(name);
+                name.startsWith('bench-') ||
+                (all.opfs ?? []).includes(name) ||
+                vfsOpfs.includes(name);
               if (!isOurs) continue;
               try {
                 await root.removeEntry(name, { recursive: true });
@@ -820,7 +841,10 @@
             // No iteration: the prefix sweep is not available either.
           }
         }
-        for (const name of all.idb ?? []) {
+        for (const name of new Set([
+          ...(all.idb ?? []),
+          ...vfsOwnedNames('indexeddb'),
+        ])) {
           await deleteIdb(name);
           forget('idb', name);
         }

@@ -78,19 +78,30 @@ isolated `opens` failures — `AccessHandlePoolVFS/async` on iOS 26 and `/jspi` 
 Chromium 150 — are **very likely the same exhaustion**; re-run on a swept root before
 recording either as real.
 
-*The cheap cleanup fix does not exist — corrected 2026-08-27.* `cleanupOpfsResidue` opens
-with `if (opfsBefore.has(name)) continue`: it is a **diff against a snapshot taken at run
-start**, so it only removes what that run created. Once a run leaves the
-`AccessHandlePoolVFS` directory behind, every later run finds it in `opfsBefore` and
-**protects it for ever**. Running it per *column* instead of per *run* changes nothing —
-the diff still shields it. That is why iOS 26.6 fails identically on 2026-08-25 and
-2026-08-27, `sync` and `async`, same bare `sqlite3_open_v2`: not drift, a permanent state
-the cleanup cannot reach.
+*Corrected twice on 2026-08-27, and the second correction is the true one.* The durable
+mechanism already exists and shipped in `76141b3`: `sweepBeforeRun` runs before every bench
+and removes anything prefixed `bench-` plus every name a previous run recorded as its own
+in `localStorage`, and `remember('opfs', name)` is written **before** the removal attempt,
+so a directory that resists removal is retried on the next run. Its own comment names this
+exact failure. `cleanupOpfsResidue`'s run-start diff is only the second half of the pair —
+reading it alone led to the wrong conclusion that per-column cleanup or per-VFS declaration
+were the only options.
 
-*So the only fix that works is the one the entry already called most expensive:* have each
-VFS **declare the storage names it owns**, and delete by declaration rather than by
-difference. Which is the same answer `deleteDatabase` needs — one design, two problems.
-IndexedDB needs it too; it has no equivalent diff at all.
+**The real gap was narrow: the mechanism cannot reach residue older than itself.** A
+directory created before `76141b3` was never recorded as ours and does not start with
+`bench-`, so both passes skip it for ever. That is why iOS 26.6 fails identically on
+2026-08-25 and 2026-08-27 rather than drifting.
+
+**Closed 2026-08-27** by having `sweepBeforeRun` also reclaim names taken from
+`VFS_CAPABILITIES` itself — the OPFS directory or IndexedDB database a VFS keeps under its
+own class name, derived from the `storage` field so a new VFS needs no edit. Legacy residue
+and any future gap are both covered, with no device-side intervention.
+
+*What stays open here is the library-side question, not the bench one:* a VFS should
+**declare the storage names it owns** so `deleteDatabase` can delete by declaration rather
+than by difference. IndexedDB needs it most — it has no equivalent diff at all, and
+`indexedDB.deleteDatabase(<VFS name>)` would take every other consumer's data on the
+origin with it.
 
 ### `wasmUrl`, optional — approved 2026-08-18, never built
 
