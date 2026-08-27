@@ -12,7 +12,10 @@
  * message and is observed through the credit gate's stopped flag.
  */
 import * as SQLite from 'wa-sqlite/src/sqlite-api.js';
-import { SQLITE_ROW } from 'wa-sqlite/src/sqlite-constants.js';
+import {
+  SQLITE_PREPARE_PERSISTENT,
+  SQLITE_ROW,
+} from 'wa-sqlite/src/sqlite-constants.js';
 import {
   createCreditGate,
   createMessageChannelTick,
@@ -29,6 +32,7 @@ import {
   type WorkerMessageData,
 } from '../types';
 import { renderPragmas } from '../utils';
+import { createStatementCache } from './statement-cache';
 
 type SQLOptions = { chunkSize?: number; signal?: AbortSignal };
 
@@ -121,6 +125,7 @@ type OpenOptions = {
   build?: SQLiteBuild;
   wasm?: WasmLocation;
   pragmas?: Record<string, string>;
+  statementCacheSize?: number;
 };
 
 /**
@@ -242,6 +247,8 @@ const open = (file: string, options: OpenOptions) => {
   // counter cannot interleave. Reset by the `query` case, read by its reply.
   let prepared = 0;
 
+  const cache = createStatementCache(options.statementCacheSize ?? 0);
+
   // `cloneable` is defined at module level; see below.
 
   const query = async function* (
@@ -254,14 +261,17 @@ const open = (file: string, options: OpenOptions) => {
     const { sqlite, db } = await openedDB;
     const { chunkSize = 1 } = options ?? {};
 
-    const buffer = [];
+    const buffer: Record<string, unknown>[] = [];
 
-    for await (const stmt of sqlite.statements(db, sql)) {
-      prepared++;
+    /** Binds and streams one statement. Never finalises: the caller owns it. */
+    const run = async function* (stmt: number) {
       if (params?.length) {
-        sqlite.bind_collection(stmt, params);
+        sqlite.bind_collection(stmt, params as any);
       }
-      const cols = sqlite.column_names(stmt) as string[];
+      // Column names are read after the first SQLITE_ROW, not before: v2
+      // re-preparation happens during step(), so names read beforehand would
+      // describe the old schema on a cached statement after an ALTER TABLE.
+      let cols: string[] | undefined;
 
       while (true) {
         if (gate.isStopped()) break;
@@ -270,11 +280,9 @@ const open = (file: string, options: OpenOptions) => {
         if (gate.isStopped()) break;
 
         if (result === SQLITE_ROW) {
+          cols ??= sqlite.column_names(stmt) as string[];
           const row = sqlite.row(stmt);
-          const rowObject = Object.fromEntries(
-            cols.map((key, i) => [key, row[i]]),
-          );
-          buffer.push(rowObject);
+          buffer.push(Object.fromEntries(cols.map((key, i) => [key, row[i]])));
 
           if (buffer.length >= chunkSize) {
             yield buffer.splice(0, chunkSize);
@@ -286,7 +294,95 @@ const open = (file: string, options: OpenOptions) => {
           break;
         }
       }
+    };
+
+    /**
+     * The exit discipline, on every path out of a retained statement:
+     * `reset` ends the statement's implicit transaction, which is what keeps
+     * a cached statement from holding a read transaction open and poisoning
+     * the barrier; `clear_bindings` is the correctness condition of reuse.
+     * A statement that errored is finalised instead — `sqlite3_reset` returns
+     * the failed step's code, so resetting it throws.
+     */
+    const settle = async (stmt: number, failed: boolean) => {
+      if (failed) {
+        cache.delete(sql);
+        await sqlite.finalize(stmt);
+        return;
+      }
+      try {
+        await sqlite.reset(stmt);
+        sqlite.clear_bindings(stmt);
+      } catch {
+        cache.delete(sql);
+        await sqlite.finalize(stmt);
+        return;
+      }
+      for (const handle of cache.set(sql, stmt)) {
+        await sqlite.finalize(handle);
+      }
+    };
+
+    const cached = cache.get(sql);
+
+    if (typeof cached === 'number') {
+      let failed = false;
+      try {
+        yield* run(cached);
+      } catch (e) {
+        failed = true;
+        throw e;
+      } finally {
+        await settle(cached, failed);
+      }
+    } else if (cached === 'uncacheable') {
+      // Today's path, untouched: the generator finalises what it yields.
+      for await (const stmt of sqlite.statements(db, sql)) {
+        prepared++;
+        yield* run(stmt);
+      }
+    } else {
+      let keep: number | undefined;
+      let live: number | undefined;
+      let single: boolean | undefined;
+      let failed = false;
+      try {
+        for await (const stmt of sqlite.statements(db, sql, {
+          unscoped: true,
+          flags: SQLITE_PREPARE_PERSISTENT,
+        })) {
+          prepared++;
+          single ??= isSingleStatement(sql, sqlite.sql(stmt));
+          // Assigned BEFORE the rows are streamed: first() breaks out of the
+          // loop, and an assignment after `yield*` would never run.
+          if (single) keep = stmt;
+          else live = stmt;
+
+          yield* run(stmt);
+
+          if (!single) {
+            await sqlite.finalize(stmt);
+            live = undefined;
+          }
+        }
+      } catch (e) {
+        failed = true;
+        throw e;
+      } finally {
+        if (keep !== undefined) {
+          await settle(keep, failed);
+        } else if (live !== undefined) {
+          // An early exit from a multi-statement string.
+          await sqlite.finalize(live);
+        }
+        if (single === false) {
+          for (const handle of cache.markUncacheable(sql)) {
+            await sqlite.finalize(handle);
+          }
+        }
+      }
     }
+
     yield sqlite.changes(db);
   };
 
@@ -353,6 +449,13 @@ const open = (file: string, options: OpenOptions) => {
         await idleUntilQueryEnds();
         try {
           const { sqlite, db } = await openedDB!;
+          // SQLite refuses to close a connection carrying live statements,
+          // and the catch below would swallow the SQLITE_BUSY. idleUntilQueryEnds
+          // has already returned, so the in-flight query's statement is reset
+          // and filed: nothing here is in use.
+          for (const handle of cache.drain()) {
+            await sqlite.finalize(handle);
+          }
           await sqlite.close(db);
         } catch {
           // A database that never opened has nothing to close; the client is
@@ -394,6 +497,24 @@ const open = (file: string, options: OpenOptions) => {
  * A cause that cannot be structured-cloned makes `postMessage` itself throw —
  * inside the catch block — so the client receives nothing and waits forever.
  */
+/**
+ * Whether `sql` compiled to exactly one statement, decided from the text
+ * `sqlite3_sql` returns for the first statement — its own span of the input,
+ * not the whole input. Asked before the first `step`, because `first()` and an
+ * aborted read both leave the generator early and would never learn a count.
+ *
+ * Normalisation is edge whitespace and one trailing semicolon, applied
+ * identically to both sides, which are two views of the same text: nothing is
+ * case-folded, and an interior newline sits in the same place on both sides.
+ * A false negative costs a compilation; a false positive would replay only
+ * the first statement of a multi-statement string, so the failure direction
+ * is the safe one.
+ */
+const isSingleStatement = (sql: string, statementText: string) => {
+  const normalize = (s: string) => s.trim().replace(/;+$/, '').trim();
+  return normalize(sql) === normalize(statementText);
+};
+
 const cloneable = (value: unknown): unknown => {
   try {
     structuredClone(value);
@@ -529,8 +650,8 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
   const { data } = event;
   switch (data.type) {
     case 'open': {
-      const { file, vfs, build, pragmas } = data;
-      open(file, { vfs, build, pragmas });
+      const { file, vfs, build, pragmas, statementCacheSize } = data;
+      open(file, { vfs, build, pragmas, statementCacheSize });
       break;
     }
     case 'delete': {

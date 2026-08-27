@@ -132,6 +132,7 @@ export const createPoolWorker = (deps: {
   /** Already resolved and absolute; relayed to the worker, never read here. */
   wasm?: WasmLocation;
   pragmas?: Record<string, string>;
+  statementCacheSize?: number;
   onDeath?: (index: number, error: SQLiteError) => void;
   onServed?: (index: number) => void;
   drainTimeout: number;
@@ -143,7 +144,17 @@ export const createPoolWorker = (deps: {
   ) => any;
   logger: Logger;
 }): Promise<PoolWorker> => {
-  const { index, pool, clientPrefix, file, vfs, build, wasm, pragmas } = deps;
+  const {
+    index,
+    pool,
+    clientPrefix,
+    file,
+    vfs,
+    build,
+    wasm,
+    pragmas,
+    statementCacheSize,
+  } = deps;
   const { createWorkerDebugState, createQueryDebugState, logger } = deps;
 
   const deferredInit = Promise.withResolvers<PoolWorker>();
@@ -491,6 +502,7 @@ export const createPoolWorker = (deps: {
     build,
     wasm,
     pragmas,
+    statementCacheSize,
   });
 
   return deferredInit.promise;

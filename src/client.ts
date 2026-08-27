@@ -53,6 +53,13 @@ import {
 const DEFAULT_POOL_SIZE = 2;
 
 /**
+ * Statements retained per worker. Not a consumer option (spec §3.2): the
+ * value is declared here rather than in the worker so that exposing it later
+ * is one options line, not a move.
+ */
+const DEFAULT_STATEMENT_CACHE_SIZE = 32;
+
+/**
  * Configuration options for creating a SQLite client.
  */
 export type CreateSQLiteClientOptions = {
@@ -677,6 +684,7 @@ export const createSQLiteClient = (
       build,
       wasm,
       pragmas: clientOptions.pragmas,
+      statementCacheSize: DEFAULT_STATEMENT_CACHE_SIZE,
       onDeath: handleDeath,
       onServed: (served) => {
         supervisor.report(served, 'served');

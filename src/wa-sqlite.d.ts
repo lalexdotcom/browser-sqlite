@@ -18,14 +18,34 @@ type WASQLiteModule = {};
  */
 type WASQLiteModuleArg = { locateFile?: (path: string) => string };
 
+/** Options passed to SQLiteAPI.statements() */
+interface SQLitePrepareOptions {
+  /** Keep statement handles alive after iteration (do not finalise on exit). */
+  unscoped?: boolean;
+  /** SQLITE_PREPARE_* flags, e.g. SQLITE_PREPARE_PERSISTENT. */
+  flags?: number;
+}
+
 /** The SQLite API surface returned by SQLite.Factory(module) */
 interface SQLiteAPI {
   open_v2(filename: string): Promise<WASQLiteDB>;
-  statements(db: WASQLiteDB, sql: string): AsyncIterable<WASQLiteStmt>;
+  statements(
+    db: WASQLiteDB,
+    sql: string,
+    options?: SQLitePrepareOptions,
+  ): AsyncIterable<WASQLiteStmt>;
   bind_collection(stmt: WASQLiteStmt, params: unknown[]): void;
   column_names(stmt: WASQLiteStmt): string[];
   step(stmt: WASQLiteStmt): Promise<number>;
   row(stmt: WASQLiteStmt): unknown[];
+  /** Returns the SQL text of the statement (its own span of the input). */
+  sql(stmt: WASQLiteStmt): string;
+  /** Resets the statement; async and throws if the prior step returned an error. */
+  reset(stmt: WASQLiteStmt): Promise<number>;
+  /** Clears all bound parameter values; synchronous. */
+  clear_bindings(stmt: WASQLiteStmt): void;
+  /** Finalises (destroys) the statement; async. */
+  finalize(stmt: WASQLiteStmt): Promise<void>;
   changes(db: WASQLiteDB): number;
   close(db: WASQLiteDB): Promise<number>;
   vfs_register(vfs: unknown, makeDefault?: boolean): void;
@@ -39,6 +59,7 @@ declare module 'wa-sqlite/src/sqlite-api.js' {
 // ── sqlite-constants.js ────────────────────────────────────────────────────
 declare module 'wa-sqlite/src/sqlite-constants.js' {
   export const SQLITE_ROW: number;
+  export const SQLITE_PREPARE_PERSISTENT: number;
 }
 
 // ── WASM factory modules (.mjs) ────────────────────────────────────────────

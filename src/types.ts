@@ -47,6 +47,8 @@ export type ClientMessageData =
       vfs: SQLiteVFS;
       build?: SQLiteBuild;
       pragmas?: Record<string, string>;
+      /** Statements retained per worker; see `src/client.ts`. Internal. */
+      statementCacheSize?: number;
       wasm?: WasmLocation;
     }
   | {
