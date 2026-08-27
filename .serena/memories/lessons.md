@@ -187,3 +187,22 @@ request moved the rejection **into `abort()`**, synchronously, where it used to
 wait for a lease. A caller that attaches its handler after the next `await`
 then lets the promise cross a microtask checkpoint unhandled. That is a real
 consumer-visible timing change, and it is in `CHANGELOG.md` for that reason.
+
+## A symbolic rename lands at stale offsets after a symbolic edit — 2026-08-27
+
+`rename_symbol` on `Abortable` reported "5 changes applied" and **corrupted two
+places** in a file whose body had been replaced with `replace_symbol_body`
+earlier in the same session: `const { options, release } = …` became
+`const AbortableOptions, release } = …`, and a comment lost three words. The
+language server was renaming ranges it had computed against its own, older view
+of the file.
+
+It was loud — `tsc` failed immediately with a parse error — but it is exactly
+the class of edit that would be silent if it landed inside a string or a
+comment, and two of the five did land in prose.
+
+**So: after replacing a symbol body, do not rename through the LSP in the same
+breath.** Either re-read the file first, or rename textually with
+`replace_in_files`, which works on the file as it is on disk and cannot desync.
+Typecheck immediately after any rename either way — the second rename of that
+session, done textually, was clean and `tsc` is what proved it.

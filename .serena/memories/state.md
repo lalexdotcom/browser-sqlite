@@ -25,7 +25,7 @@ obligations and unmeasured ground.
 
 Not history: the numbers a regression is detected against.
 
-`tsc --noEmit` clean · `pnpm build` clean · **383 tests, 0 failed files** ·
+`tsc --noEmit` clean · `pnpm build` clean · **397 tests, 0 failed files** ·
 conformance **73 passed / 12 skipped on Chromium and the same on Firefox** ·
 **consumer smoke 24/24** · `scripts/bench/check.mjs chromium --all` OK, 22 pairs,
 zero `not-run` · biome 13 warnings, none in recently touched files ·
@@ -40,14 +40,12 @@ two engines agreeing is the current expectation, and a divergence means somethin
 
 ## Decisions the user owes
 
-None outstanding. **`DELETE-1` is next** — the user said so on 2026-08-27, to be
-brainstormed on its own branch. `wasmUrl`, which held this slot, shipped the same day;
-there is no longer a designed-and-approved-but-unbuilt item.
-
-The asymmetry `DELETE-1` turns on is already written in `mem:follow-ups` and is the part
-that needs thought: `jDelete` frees the SQLite file inside an IndexedDB store while the
-store stays, and `indexedDB.deleteDatabase(<VFS name>)` would take every other consumer's
-data on the origin with it. Neither is the answer alone.
+None outstanding. **`BACKPRESSURE-1` is next** — the user said so on 2026-08-27,
+straight after `feat/transaction-signal` merged. Nothing about it is decided;
+`mem:follow-ups` carries what is bounded today and what is not, and the shapes
+floated so far (`enqueue()` returning a promise, a `drain()` on the writer) both
+change a method documented as "buffers a row", which makes it a public-surface
+decision rather than a fix.
 
 ## Owed before the release
 

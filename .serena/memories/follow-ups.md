@@ -57,14 +57,6 @@ what the campaign found, and rc.4 would otherwise ship a method with a measured
 limit nobody wrote down. n=1 per device, so cite it as an observation until a
 second campaign says otherwise.
 
-### `transaction()` takes no `signal`
-
-Every other public method now honours one, including while queued for a worker.
-`transaction()` acquires the same way and cannot be abandoned. Left alone
-deliberately on 2026-08-27: adding the option is a public-surface decision, not
-a bug fix, and the three abort defects that session found were all in code that
-already claimed to be abortable.
-
 ## Limits to document rather than fix
 
 ### HANDLE-1 — a long statement serializes the pool off Chromium
