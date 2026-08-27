@@ -17,26 +17,18 @@ const WORKER_BANNER = `/*!
 
 export default defineConfig({
   // Declarations are generated from tsconfig.build.json, which is scoped to
-  // `src` only. The root tsconfig also includes `tests` and the config files at
-  // the repo root, which would push the common source root up to the repo root:
-  // declarations would land in dist/src/ (while package.json points at
-  // dist/index.d.ts) and dist/tests/ would ship inside the package.
+  // `src` only. 
   source: {
     tsconfigPath: './tsconfig.build.json',
   },
-  // rslib forces rsbuild's persistent build cache on. Its digest tracks the
-  // config's resolved values but not its key structure, so swapping which key
-  // holds a value (distPath.assets -> distPath.wasm) silently reuses the old
-  // output. Hashing this file catches every kind of edit; verified 2026-08-17.
+  // rslib forces the build cache on, and its digest misses key-structure edits.
   performance: {
     buildCache: { buildDependencies: [import.meta.filename] },
   },
   lib: [
     // The client. rslib's esm preset disables `importMeta`, `importDynamic`,
-    // `worker` and `url` parsing — which is exactly right here: we WANT
-    // `new URL('./worker/worker.js', import.meta.url)` to survive literally, so
-    // the consumer's bundler and a bare browser both resolve it themselves,
-    // with no publicPath runtime in between.
+    // `worker` and `url` parsing
+    // - preserves `new URL('./worker/worker.js', import.meta.url)`
     {
       format: 'esm',
       syntax: 'esnext',
@@ -46,7 +38,13 @@ export default defineConfig({
       },
       output: {
         distPath: { root: './dist' },
-        copy: [{ from: 'NOTICE', context: import.meta.dirname }],
+        minify: true,
+        sourceMap: { js: 'source-map' },
+        // LICENSE and NOTICE travel with dist/
+        copy: [
+          { from: 'NOTICE', context: import.meta.dirname },
+          { from: 'LICENSE', context: import.meta.dirname },
+        ],
       },
     },
     // The worker. Opposite goal: absorb wa-sqlite entirely so the published
@@ -55,19 +53,7 @@ export default defineConfig({
     //   importDynamic: true  — pull the 5 VFS and 3 Emscripten glues in
     //   asyncChunks: false   — one self-contained file, no chunk graph for a
     //                          consumer's bundler to re-resolve
-    //
-    // `url: false` is the load-bearing one, and it is deliberately NOT `true`.
-    // With `true`, rspack emits the .wasm itself but rewrites the Emscripten
-    // glue's reference to `__webpack_require__.p + "..."` and anchors it with
-    // `__webpack_require__.b = new URL("./", import.meta.url)`. Neither rollup
-    // nor a consumer's own rspack can follow that: Vite then copies the worker
-    // without its .wasm, and consumer rspack fails outright trying to resolve
-    // `"./"`. With `false` the glue keeps a literal
-    // `new URL("wa-sqlite.wasm", import.meta.url)` — portable, statically
-    // analysable, and resolvable by a bare browser — so we copy the three .wasm
-    // beside worker.js ourselves. Measured 2026-08-17: this drops
-    // `__webpack_require__.b` from 4 occurrences to 0 and makes both rsbuild
-    // consumer modes pass with no consumer configuration at all.
+    //   url: false           — keep the glue's `new URL('wa-sqlite.wasm', …)`
     {
       format: 'esm',
       syntax: 'esnext',
@@ -78,10 +64,9 @@ export default defineConfig({
       },
       output: {
         distPath: { root: './dist/worker' },
-        // Keep the banner IN the file. The default ('linked') extracts it to a
-        // sibling .LICENSE.txt and leaves a pointer — but the whole reason the
-        // banner exists is to survive the artifact being separated from its
-        // neighbours, so a pointer to a file that may not travel is no use.
+        minify: true,
+        sourceMap: { js: 'source-map' },
+        // Keep the banner IN the file.
         legalComments: 'inline',
         // Flat, beside worker.js: the glue's literal is the bare filename
         // `wa-sqlite.wasm`, resolved against worker.js's own URL.
@@ -111,6 +96,14 @@ export default defineConfig({
               banner: WORKER_BANNER,
               raw: true,
               entryOnly: true,
+              // Default is PROCESS_ASSETS_STAGE_ADDITIONS (-100), which runs
+              // before the minifier at OPTIMIZE_SIZE (400): the banner lands
+              // first, then minification hoists declarations in front of it.
+              // Past OPTIMIZE_SIZE the banner stays where it was put.
+              // Just after minification (OPTIMIZE_SIZE, 400) and before
+              // DEV_TOOLING (500) writes the source map, so the map accounts
+              // for the nine lines the banner adds.
+              stage: rspack.Compilation.PROCESS_ASSETS_STAGE_OPTIMIZE_SIZE + 1,
             }),
           ],
         },
