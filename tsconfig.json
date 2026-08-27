@@ -14,5 +14,7 @@
   "include": ["src", "tests", "rslib.config.ts", "rstest.config.ts"],
   // Consumer fixtures are standalone apps: they resolve `browser-sqlite` and
   // their bundler from their own install, not from this package's node_modules.
-  "exclude": ["tests/consumer", "tests/consumer-rsbuild"]
+  // Matched by prefix rather than listed one by one, so adding a fixture cannot
+  // redden `tsc --noEmit` for a resolution that is correct where it runs.
+  "exclude": ["tests/consumer*"]
 }

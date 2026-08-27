@@ -1,0 +1,13 @@
+{
+  "name": "browser-sqlite-consumer-smoke-parcel",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "parcel build index.html",
+    "dev": "parcel index.html"
+  },
+  "devDependencies": {
+    "parcel": "^2.0.0"
+  }
+}

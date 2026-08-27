@@ -29,6 +29,13 @@ const DEV_PORT = 5199;
 const PREVIEW_PORT = 5198;
 const NOBUNDLER_PORT = 5197;
 const RSBUILD_PORT = 5196;
+const RSBUILD_DEV_PORT = 5195;
+const VITE6_DEV_PORT = 5194;
+const VITE6_PREVIEW_PORT = 5193;
+const WEBPACK_DEV_PORT = 5192;
+const WEBPACK_SERVE_PORT = 5191;
+const PARCEL_DEV_PORT = 5190;
+const PARCEL_SERVE_PORT = 5189;
 // 127.0.0.1, not `localhost`: Node resolves `localhost` to ::1 first while Vite
 // binds IPv4, so every request would hang.
 const HOST = '127.0.0.1';
@@ -197,9 +204,65 @@ async function checkMode(name, serverArgs, url, appDir) {
   }
 }
 
+/** The packed tarball every consumer app installs. Set by the pack stage. */
+let tarball;
+
+/**
+ * Copies a fixture outside the repo and installs the tarball into it. Returns
+ * false rather than throwing: one bundler failing to install must not cancel
+ * the others, or a single npm hiccup hides the whole matrix.
+ */
+function scaffoldApp(label, fixture, dir, nested) {
+  const s = stage(`scaffold and install the ${label} consumer app`);
+  try {
+    cpSync(join(ROOT, 'tests', fixture), dir, { recursive: true });
+    for (const [sub, from] of Object.entries(nested ?? {})) {
+      cpSync(join(ROOT, 'tests', from), join(dir, sub), { recursive: true });
+    }
+    // npm, not pnpm, and outside the repo: nothing can resolve
+    // `browser-sqlite` back to the local sources.
+    run('npm', ['install', '--no-audit', '--no-fund'], dir);
+    run('npm', ['install', '--no-audit', '--no-fund', tarball], dir);
+    s.pass(dir);
+    return true;
+  } catch (error) {
+    s.fail(errText(error));
+    return false;
+  }
+}
+
+/** Runs a production build and reports whether there is output worth serving. */
+function buildStage(label, args, dir) {
+  const s = stage(label);
+  try {
+    run('npx', args, dir);
+    s.pass('production bundle emitted');
+    return true;
+  } catch (error) {
+    s.fail(errText(error));
+    return false;
+  }
+}
+
+/** A mode that never ran still owes the summary a line, with the reason. */
+function skipped(name, why) {
+  results.push({ name, ok: false, detail: `skipped — ${why}` });
+}
+
+/** Serves a built directory with the repo's own static server. */
+const staticServe = (dir, port) => [
+  'node',
+  join(ROOT, 'scripts', 'static-server.mjs'),
+  dir,
+  String(port),
+];
+
 const tmp = mkdtempSync(join(tmpdir(), 'browser-sqlite-smoke-'));
 const appDir = join(tmp, 'app');
 const rsbuildAppDir = join(tmp, 'app-rsbuild');
+const vite6AppDir = join(tmp, 'app-vite6');
+const webpackAppDir = join(tmp, 'app-webpack');
+const parcelAppDir = join(tmp, 'app-parcel');
 
 try {
   {
@@ -223,7 +286,7 @@ try {
     }
   }
 
-  let tarball;
+  // Assigned to the module-scope binding: scaffoldApp reads it from there.
   {
     const s = stage('pack the tarball');
     try {
@@ -238,110 +301,147 @@ try {
     }
   }
 
-  {
-    const s = stage('scaffold and install the consumer app');
-    try {
-      cpSync(join(ROOT, 'tests', 'consumer'), appDir, { recursive: true });
-      cpSync(join(ROOT, 'tests', 'consumer-nobundler'), join(appDir, 'nobundler'), {
-        recursive: true,
-      });
-      // npm, not pnpm, and outside the repo: nothing can resolve
-      // `browser-sqlite` back to the local sources.
-      run('npm', ['install', '--no-audit', '--no-fund'], appDir);
-      run('npm', ['install', '--no-audit', '--no-fund', tarball], appDir);
-      s.pass(appDir);
-    } catch (error) {
-      s.fail(errText(error));
-      throw error;
-    }
-  }
-
-  await checkMode(
-    'Vite dev server',
-    ['vite', '--host', HOST, '--port', String(DEV_PORT), '--strictPort'],
-    `http://${HOST}:${DEV_PORT}/`,
-    appDir,
-  );
-
-  let built = false;
-  {
-    const s = stage('vite build');
-    try {
-      run('npx', ['vite', 'build'], appDir);
-      built = true;
-      s.pass('production bundle emitted');
-    } catch (error) {
-      s.fail(errText(error));
-    }
-  }
-
-  if (built) {
+  // ── Vite, newest (the fixture range resolves to the current major) ────────
+  if (scaffoldApp('Vite', 'consumer', appDir, { nobundler: 'consumer-nobundler' })) {
     await checkMode(
-      'Vite preview (production bundle)',
-      ['vite', 'preview', '--host', HOST, '--port', String(PREVIEW_PORT), '--strictPort'],
-      `http://${HOST}:${PREVIEW_PORT}/`,
+      'Vite dev server',
+      ['vite', '--host', HOST, '--port', String(DEV_PORT), '--strictPort'],
+      `http://${HOST}:${DEV_PORT}/`,
+      appDir,
+    );
+
+    if (buildStage('vite build', ['vite', 'build'], appDir)) {
+      await checkMode(
+        'Vite preview (production bundle)',
+        ['vite', 'preview', '--host', HOST, '--port', String(PREVIEW_PORT), '--strictPort'],
+        `http://${HOST}:${PREVIEW_PORT}/`,
+        appDir,
+      );
+    } else {
+      skipped('Vite preview (production bundle)', 'vite build failed');
+    }
+
+    await checkMode(
+      'No bundler (static server)',
+      staticServe(appDir, NOBUNDLER_PORT),
+      `http://${HOST}:${NOBUNDLER_PORT}/nobundler/index.html`,
       appDir,
     );
   } else {
-    results.push({
-      name: 'Vite preview (production bundle)',
-      ok: false,
-      detail: 'skipped — vite build failed',
-    });
-  }
-
-  await checkMode(
-    'No bundler (static server)',
-    [
-      'node',
-      join(ROOT, 'scripts', 'static-server.mjs'),
-      appDir,
-      String(NOBUNDLER_PORT),
-    ],
-    `http://${HOST}:${NOBUNDLER_PORT}/nobundler/index.html`,
-    appDir,
-  );
-
-  {
-    const s = stage('scaffold and install the rsbuild consumer app');
-    try {
-      cpSync(join(ROOT, 'tests', 'consumer-rsbuild'), rsbuildAppDir, {
-        recursive: true,
-      });
-      run('npm', ['install', '--no-audit', '--no-fund'], rsbuildAppDir);
-      run('npm', ['install', '--no-audit', '--no-fund', tarball], rsbuildAppDir);
-      s.pass(rsbuildAppDir);
-    } catch (error) {
-      s.fail(errText(error));
-      throw error;
+    for (const m of [
+      'Vite dev server',
+      'Vite preview (production bundle)',
+      'No bundler (static server)',
+    ]) {
+      skipped(m, 'the Vite app did not install');
     }
   }
 
-  let rsbuildBuilt = false;
-  {
-    const s = stage('rsbuild build');
-    try {
-      run('npx', ['rsbuild', 'build'], rsbuildAppDir);
-      rsbuildBuilt = true;
-      s.pass('production bundle emitted');
-    } catch (error) {
-      s.fail(errText(error));
-    }
-  }
-
-  if (rsbuildBuilt) {
+  // ── Vite 6, pinned ────────────────────────────────────────────────────────
+  // Not redundant with the app above. That one resolves to the newest Vite,
+  // where `optimizeDeps.exclude` is a no-op, so it never exercised the single
+  // line of configuration the README asks a consumer to write. This one is
+  // pinned to the range where that line decides whether dev works at all.
+  if (scaffoldApp('Vite 6', 'consumer-vite6', vite6AppDir)) {
     await checkMode(
-      'rsbuild preview (production bundle)',
-      ['rsbuild', 'preview', '--host', HOST, '--port', String(RSBUILD_PORT), '--strict-port'],
-      `http://${HOST}:${RSBUILD_PORT}/`,
+      'Vite 6 dev server',
+      ['vite', '--host', HOST, '--port', String(VITE6_DEV_PORT), '--strictPort'],
+      `http://${HOST}:${VITE6_DEV_PORT}/`,
+      vite6AppDir,
+    );
+
+    if (buildStage('vite 6 build', ['vite', 'build'], vite6AppDir)) {
+      await checkMode(
+        'Vite 6 preview (production bundle)',
+        ['vite', 'preview', '--host', HOST, '--port', String(VITE6_PREVIEW_PORT), '--strictPort'],
+        `http://${HOST}:${VITE6_PREVIEW_PORT}/`,
+        vite6AppDir,
+      );
+    } else {
+      skipped('Vite 6 preview (production bundle)', 'vite 6 build failed');
+    }
+  } else {
+    for (const m of ['Vite 6 dev server', 'Vite 6 preview (production bundle)']) {
+      skipped(m, 'the Vite 6 app did not install');
+    }
+  }
+
+  // ── rsbuild (which is rspack) ─────────────────────────────────────────────
+  if (scaffoldApp('rsbuild', 'consumer-rsbuild', rsbuildAppDir)) {
+    await checkMode(
+      'rsbuild dev server',
+      ['rsbuild', 'dev', '--host', HOST, '--port', String(RSBUILD_DEV_PORT)],
+      `http://${HOST}:${RSBUILD_DEV_PORT}/`,
       rsbuildAppDir,
     );
+
+    if (buildStage('rsbuild build', ['rsbuild', 'build'], rsbuildAppDir)) {
+      await checkMode(
+        'rsbuild preview (production bundle)',
+        ['rsbuild', 'preview', '--host', HOST, '--port', String(RSBUILD_PORT), '--strict-port'],
+        `http://${HOST}:${RSBUILD_PORT}/`,
+        rsbuildAppDir,
+      );
+    } else {
+      skipped('rsbuild preview (production bundle)', 'rsbuild build failed');
+    }
   } else {
-    results.push({
-      name: 'rsbuild preview (production bundle)',
-      ok: false,
-      detail: 'skipped — rsbuild build failed',
-    });
+    for (const m of ['rsbuild dev server', 'rsbuild preview (production bundle)']) {
+      skipped(m, 'the rsbuild app did not install');
+    }
+  }
+
+  // ── webpack ───────────────────────────────────────────────────────────────
+  if (scaffoldApp('webpack', 'consumer-webpack', webpackAppDir)) {
+    await checkMode(
+      'webpack dev server',
+      ['webpack', 'serve', '--host', HOST, '--port', String(WEBPACK_DEV_PORT)],
+      `http://${HOST}:${WEBPACK_DEV_PORT}/`,
+      webpackAppDir,
+    );
+
+    if (buildStage('webpack build', ['webpack', 'build'], webpackAppDir)) {
+      await checkMode(
+        'webpack output (static server)',
+        staticServe(join(webpackAppDir, 'dist'), WEBPACK_SERVE_PORT),
+        `http://${HOST}:${WEBPACK_SERVE_PORT}/index.html`,
+        webpackAppDir,
+      );
+    } else {
+      skipped('webpack output (static server)', 'webpack build failed');
+    }
+  } else {
+    for (const m of ['webpack dev server', 'webpack output (static server)']) {
+      skipped(m, 'the webpack app did not install');
+    }
+  }
+
+  // ── Parcel ────────────────────────────────────────────────────────────────
+  // The only resolver here that does not read the `exports` map: it falls back
+  // to `main`, which is why the package declares one. Keeping Parcel in the
+  // matrix is what stops that field being dropped as dead weight.
+  if (scaffoldApp('Parcel', 'consumer-parcel', parcelAppDir)) {
+    await checkMode(
+      'Parcel dev server',
+      ['parcel', 'index.html', '--port', String(PARCEL_DEV_PORT)],
+      `http://${HOST}:${PARCEL_DEV_PORT}/`,
+      parcelAppDir,
+    );
+
+    if (buildStage('Parcel build', ['parcel', 'build', 'index.html'], parcelAppDir)) {
+      await checkMode(
+        'Parcel output (static server)',
+        staticServe(join(parcelAppDir, 'dist'), PARCEL_SERVE_PORT),
+        `http://${HOST}:${PARCEL_SERVE_PORT}/index.html`,
+        parcelAppDir,
+      );
+    } else {
+      skipped('Parcel output (static server)', 'Parcel build failed');
+    }
+  } else {
+    for (const m of ['Parcel dev server', 'Parcel output (static server)']) {
+      skipped(m, 'the Parcel app did not install');
+    }
   }
 } catch {
   // A thrown stage already recorded its failure; fall through to the summary.
