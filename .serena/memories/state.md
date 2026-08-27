@@ -5,10 +5,8 @@ a new dated section under the old one.
 
 ## Right now
 
-`main` is at `2188bbf`, **41 commits ahead of `origin/main`** — deliberately, per
-`mem:conventions`. **The working tree is dirty on purpose**: a whole session's work is
-staged in the tree and not yet committed, because the user is editing `rslib.config.ts`
-comments by hand and asked to hold. See "Uncommitted" below before doing anything else.
+`main` is at `15a6c56`, **48 commits ahead of `origin/main`**, working tree clean —
+deliberately unpushed, per `mem:conventions`.
 
 `package.json` still says `1.0.0-rc.3`. **The bump is the user's explicit call and has not
 been made** — until they say so, everything lands in the unreleased section of
@@ -21,9 +19,7 @@ Verified 2026-08-27: `tsc --noEmit` clean, `pnpm build` clean, **350 tests**, co
 **The published version is 1.0.0-rc.3 (2026-03-26).** Everything since is unreleased;
 `CHANGELOG.md` carries that delta and is the place to read it, not this file.
 
-## Uncommitted, and what it is
-
-One session, three strands. Nothing here is committed.
+## What this session shipped, `43f8572..15a6c56`
 
 1. **`pool.ts`'s duplicate worker.** A second, bare
    `new URL('./worker/worker.js', import.meta.url)` fed only an error-message fallback, and
@@ -56,7 +52,6 @@ it as the remaining designed-but-unbuilt item, and the user has said it comes ne
 ## Owed before the release
 
 - Bump `package.json` to `1.0.0-rc.4`.
-- Commit the working tree (three commits' worth, above).
 
 **The four unreviewed commits `d2af8a2..a22bd48` are done** — reviewed 2026-08-27, findings
 verified against `main` rather than taken at face value: two "Critical" were already fixed
