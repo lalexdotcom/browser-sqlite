@@ -1,80 +1,76 @@
 # State — where the work stands
 
-**Updated 2026-08-27.** Rewrite this whole file when it stops being true; do not append
-a new dated section under the old one.
+**Updated 2026-08-27.** Rewrite this whole file when it stops being true; do not append a
+new dated section under the old one.
 
-## Right now
+**No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
+`git status` and `git branch` answer all of that in one command and always correctly, while
+a copy here rots — it did three times in a single day, on the same file, naming a stale
+HEAD, a stale count and a conformance result that a fix had already changed. `mem:index`
+already says it: these memories carry what cannot be re-derived. This file is decisions,
+obligations and unmeasured ground.
 
-`main` is at `15a6c56`, **48 commits ahead of `origin/main`**, working tree clean —
-deliberately unpushed, per `mem:conventions`.
+## Standing facts about the repository
 
-`package.json` still says `1.0.0-rc.3`. **The bump is the user's explicit call and has not
-been made** — until they say so, everything lands in the unreleased section of
-`CHANGELOG.md`.
+- **`main` sits ahead of `origin/main` on purpose, indefinitely.** Pushing is not part of
+  committing (`mem:conventions`). Do not push as housekeeping, and do not read the distance
+  as an oversight.
+- **`package.json` stays at `1.0.0-rc.3` until the user says otherwise.** The bump is
+  theirs to call; everything lands in the unreleased section of `CHANGELOG.md`, which is
+  where to read the delta since the published rc.3 of 2026-03-26.
+- **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
+  every previous merge.
 
-Verified 2026-08-27: `tsc --noEmit` clean, `pnpm build` clean, **350 tests**, conformance
-**66 passed / 10 skipped** on Chromium and **57 / 19** on Firefox, **consumer smoke 24/24**,
-`scripts/bench/check.mjs` OK, `dependencies` empty.
+## The verification baseline — compare against these, 2026-08-27
 
-**The published version is 1.0.0-rc.3 (2026-03-26).** Everything since is unreleased;
-`CHANGELOG.md` carries that delta and is the place to read it, not this file.
+Not history: the numbers a regression is detected against.
 
-## What this session shipped, `43f8572..15a6c56`
+`tsc --noEmit` clean · `pnpm build` clean · **350 tests** · conformance **66 passed /
+10 skipped on Chromium and the same on Firefox** · **consumer smoke 24/24** ·
+`scripts/bench/check.mjs` OK · biome 13 warnings, none in recently touched files ·
+`dependencies` empty.
 
-1. **`pool.ts`'s duplicate worker.** A second, bare
-   `new URL('./worker/worker.js', import.meta.url)` fed only an error-message fallback, and
-   made every Vite consumer ship a **777 kB untransformed copy** of the worker with dangling
-   `.wasm` references that nothing ever loads. Removed. The message now names
-   `import.meta.url` when `ErrorEvent.filename` is empty — which is what Chromium does, and
-   the reason the fallback existed. A bare `import.meta.url` is not an asset reference, so
-   it costs nothing.
-2. **Bundler coverage.** `main` added to `package.json`; three new fixtures
-   (`consumer-vite6`, `consumer-webpack`, `consumer-parcel`); rsbuild dev added; the smoke
-   goes 11 → **24 stages**, five bundlers, dev *and* build each. README's Bundler
-   Configuration cut from 36 lines to four sentences. Details in `mem:stack-and-build`,
-   numbers in `mem:measurements`.
-3. **Build output.** `minify` and `sourceMap` on both entries, and `LICENSE` copied into
-   `dist/` beside `NOTICE`.
+Firefox conformance was 57/19 until `OPFSWriteAheadVFS`'s declaration was corrected; the
+two engines agreeing is the current expectation, and a divergence means something skipped.
 
-## Decisions — both settled 2026-08-27
+## Decisions the user owes
 
-- **The `readwrite-unsafe` guard: there was never one to design.** `missingFeature` skips
-  `UNPROBEABLE` features, so the declaration never blocked anything at construction. What
-  the investigation found instead is that `OPFSWriteAheadVFS`'s `requires` is simply wrong
-  — see `mem:follow-ups`. **The correction is owed and not applied**: it touches
-  `VFS_CAPABILITIES`, which everything reads.
-- **The backlog triage is applied.** `mem:follow-ups` is the backlog now, not a proposal
-  about one.
-
-`wasmUrl` is the remaining designed-but-unbuilt item, and the user has said it comes next.
+None outstanding. The two that stood for days are settled: the `readwrite-unsafe` guard
+never existed to be designed, and the backlog triage is applied. **`wasmUrl` is next** — the
+user said so; it is the remaining designed-and-approved-but-unbuilt item, described in
+`mem:follow-ups`.
 
 ## Owed before the release
 
 - Bump `package.json` to `1.0.0-rc.4`.
-
-**The four unreviewed commits `d2af8a2..a22bd48` are done** — reviewed 2026-08-27, findings
-verified against `main` rather than taken at face value: two "Critical" were already fixed
-by later commits, and the three that survived shipped in `0c83d32` and `2188bbf`.
-
-## Owed, no work started
-
-- `ABORT-1`, `DELETE-1`, `RESIDUE-1` — each needs its own design, none started.
-- `FLAKE-ROW-1` needs n≥3 per engine before the `OPFSCoopSyncVFS` README entry can be
-  defended as written.
 - The upstream wa-sqlite PR is pushed to `lalexdotcom/wa-sqlite` (branch
-  `fix/opfs-anycontext-webkit-view-offset`, `28a090d`) but **not opened**. Body drafted at
+  `fix/opfs-anycontext-webkit-view-offset`) but **not opened**. Body drafted at
   `.work/PR-body.md`, gitignored.
-- Re-run the device campaign on Safari 27, iOS 26 and iPadOS 27 **with the WebKit patch**.
-  Only Safari 26.5.2 has been measured against it.
+
+## Unmeasured ground — what a claim here would be inventing
+
+- **`OPFSWriteAheadVFS` on Safari is measured now** and gives no concurrency there, so it
+  earns a Safari user nothing. What is *not* measured is any engine beyond Chromium,
+  Firefox and the four Apple devices of 2026-08-27.
+- **`no-read-inside-transaction` and `survives-reopen` both flip between runs.** n≥3 per
+  device before either is cited — `mem:follow-ups` carries the counts.
+- **The benchmark page cannot report whether the OPFS root was empty when a run started.**
+  That gap is what let a hand-clearing be mistaken for evidence; a run inventorying the
+  root in its export would close it. Nobody has done it.
 
 ## Known live exposures
 
 - **One Pages site per repo, last deploy wins.** A manual dispatch from any `feat/*` branch
-  replaces whatever the last release published. Kept deliberately (2026-08-26, user)
-  because dispatching onto a real device without merging is worth the exposure — but that
+  replaces whatever the last release published. Kept deliberately (2026-08-26, user):
+  dispatching onto a real device without merging is worth the exposure — which is what
   makes the page's "development build" banner load-bearing. `buildRef()` in
   `scripts/bench/assemble.mjs` is not decoration.
-- **The Vite 6 fixture is the only thing verifying the README's one instruction.** Delete
-  `tests/consumer-vite6` and that line goes back to being unverified prose.
+- **The pinned Vite 6 consumer fixture is the only thing verifying the README's one
+  instruction.** `tests/consumer` resolves to the newest Vite, where `optimizeDeps.exclude`
+  is a no-op. Delete `tests/consumer-vite6` and that line goes back to unverified prose.
+- **The Parcel fixture is what keeps `main` in `package.json` alive.** Parcel is the only
+  resolver in the smoke that ignores `exports`; without the fixture the field reads as dead
+  weight and will be deleted.
 
-Related: `mem:follow-ups` for the backlog, `mem:history` for what each wave shipped.
+Related: `mem:follow-ups` for the backlog, `mem:history` for what each wave shipped,
+`mem:measurements` for every number this project owns.
