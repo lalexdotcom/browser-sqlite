@@ -1105,6 +1105,35 @@
 
       const DATASET_ROWS = 10_000;
 
+      /**
+       * How many short reads the concurrency burst issues, per phase.
+       *
+       * It was 24, and on a 1 ms clock that was not enough to be measured: the
+       * row refuses to publish a ratio when the median serial total falls below
+       * 4× the clock's resolution, because below that it would be reporting
+       * quantisation rather than pool behaviour. Measured across six devices on
+       * 2026-08-27, the refusal fired on 16 of 22 columns on Firefox 154 and on
+       * 6 of 22 on macOS Safari 27 — and Firefox is precisely where the answer
+       * matters, since it has no `readwrite-unsafe` and HANDLE-1 is in play.
+       * Chromium, whose clock is 0.1 ms, reported 22 of 22 either way.
+       *
+       * Four times the reads puts the serial total four times further above
+       * that floor. The ratio stays comparable across devices and across burst
+       * sizes: it is normalised, and the ideal gain is `poolSize` whatever the
+       * count.
+       */
+      const BURST_READS = 96;
+
+      /**
+       * The burst row's own budget, larger because its work grew fourfold.
+       *
+       * A stuck column now costs twice as long before it gives up, which is a
+       * real price on an engine that is already slow — but a row that expires
+       * before it can finish honest work reports nothing at all, which is the
+       * state this change exists to leave.
+       */
+      const BURST_ROW_TIMEOUT_MS = 2 * ROW_TIMEOUT_MS;
+
       /** Wall time of one awaited call, in ms. */
       const time = async (fn) => {
         const start = performance.now();
@@ -1315,7 +1344,7 @@
         },
         {
           id: 'read-burst-concurrency',
-          label: '24 short reads — parallel vs serial (gain)',
+          label: `${BURST_READS} short reads — parallel vs serial (gain)`,
           unit: '×',
           decimals: 2,
           better: 'high',
@@ -1329,7 +1358,7 @@
           run: (ctx) =>
             abortableRow(async (signal) => {
               await ensureDataset(ctx, signal);
-              const ids = Array.from({ length: 24 }, randomId);
+              const ids = Array.from({ length: BURST_READS }, randomId);
               await shortRead(ctx.db, ids[0], signal); // warmup
 
               const ratios = [];
@@ -1363,7 +1392,7 @@
               // we compute reflects clock quantisation, not pool behaviour.
               if (quantile(serialTotals, 0.5) < CLOCK_MS * 4) return null;
               return quantile(ratios, 0.5);
-            }),
+            }, BURST_ROW_TIMEOUT_MS),
         },
         {
           id: 'full-scan',
