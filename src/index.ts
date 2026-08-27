@@ -9,9 +9,11 @@ export * from './errors';
 // internal and must not reach the public surface.
 export {
   defaultBuildFor,
+  type PlatformFeature,
   type SQLiteBuild,
   type SQLiteVFS,
   VFS_CAPABILITIES,
   type VFSCapability,
   type VFSMemoryModel,
+  type VFSStorage,
 } from './types';

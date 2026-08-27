@@ -42,6 +42,14 @@ with it.
   compiling.
 - **`OPFSPermutedVFS` is removed.** It measured 24 % stale cross-connection
   reads and is deprecated upstream.
+- **`VFSCapability.requiresUnsafeHandles` is replaced by `requires`,
+  `degradesWithout` and `storage`.** A boolean could only say "unsupported",
+  which was wrong for `OPFSAdaptiveVFS` — it runs everywhere and merely degrades
+  without `readwrite-unsafe`. Code that read `requiresUnsafeHandles` reads
+  `requires.includes('readwrite-unsafe')` instead; the two new fields carry the
+  degradation and the storage placement the boolean could not express. The
+  feature names are the exported `PlatformFeature` union, and `storage` is
+  `VFSStorage`.
 
 ### Added
 

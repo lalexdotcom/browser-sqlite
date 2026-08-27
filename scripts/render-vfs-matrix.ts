@@ -94,7 +94,6 @@ const BROWSER_LABEL: Record<Browser, string> = {
   iOS: 'Safari iOS',
 };
 
-/** The highest of several minimum versions, or null if any is unsupported. */
 /** How a single support value reads on its own. */
 /**
  * What the library itself needs, before any VFS is considered — set by
