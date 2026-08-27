@@ -107,20 +107,6 @@ than by difference. IndexedDB needs it most — it has no equivalent diff at all
 `indexedDB.deleteDatabase(<VFS name>)` would take every other consumer's data on the
 origin with it.
 
-### `wasmUrl`, optional — approved 2026-08-18, never built
-
-An explicit base URL for the three `.wasm`. When omitted, behaviour is **exactly today's**
-resolution: this is an escape hatch, not a new default, and the default config must not
-change by a single byte.
-
-Rejected then and still rejected: inlining the `.wasm` as base64 (+33 % on 2.4 MB raw, and
-it gives up streaming compilation — acceptable only as an opt-in subpath, never the
-default).
-
-*It used to be listed beside D6, the `browser-sqlite/vite` plugin. D6 died on 2026-08-27
-when its premise was measured false — Vite does emit the worker's `.wasm`, from 6.1 through
-8.2.2, and the consumer smoke passes with no plugin. `wasmUrl` never depended on it.*
-
 ## Limits to document rather than fix
 
 ### HANDLE-1 — a long statement serializes the pool off Chromium

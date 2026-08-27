@@ -25,7 +25,7 @@ obligations and unmeasured ground.
 
 Not history: the numbers a regression is detected against.
 
-`tsc --noEmit` clean · `pnpm build` clean · **350 tests** · conformance **66 passed /
+`tsc --noEmit` clean · `pnpm build` clean · **358 tests** · conformance **66 passed /
 10 skipped on Chromium and the same on Firefox** · **consumer smoke 24/24** ·
 `scripts/bench/check.mjs` OK · biome 13 warnings, none in recently touched files ·
 `dependencies` empty.
@@ -35,10 +35,14 @@ two engines agreeing is the current expectation, and a divergence means somethin
 
 ## Decisions the user owes
 
-None outstanding. The two that stood for days are settled: the `readwrite-unsafe` guard
-never existed to be designed, and the backlog triage is applied. **`wasmUrl` is next** — the
-user said so; it is the remaining designed-and-approved-but-unbuilt item, described in
-`mem:follow-ups`.
+None outstanding. **`DELETE-1` is next** — the user said so on 2026-08-27, to be
+brainstormed on its own branch. `wasmUrl`, which held this slot, shipped the same day;
+there is no longer a designed-and-approved-but-unbuilt item.
+
+The asymmetry `DELETE-1` turns on is already written in `mem:follow-ups` and is the part
+that needs thought: `jDelete` frees the SQLite file inside an IndexedDB store while the
+store stays, and `indexedDB.deleteDatabase(<VFS name>)` would take every other consumer's
+data on the origin with it. Neither is the answer alone.
 
 ## Owed before the release
 

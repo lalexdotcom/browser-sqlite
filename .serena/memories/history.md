@@ -19,6 +19,7 @@ This file exists only so a date or a merge commit can be found without archaeolo
 | 2026-08-25 | (same branch) | The benchmark page and its Pages publication; the device campaign; the WebKit `OPFSAnyContextVFS` patch; `IDBMirrorVFS` corrected to single-connection; the sourced browser baseline. |
 | 2026-08-26 | `feat/tx-query-surface` | A transaction gets the client's whole querying surface. `SQLiteQueryAPI` factors both surfaces so they cannot drift; the public type layer moves to `src/api.ts`; `createBulk` splits in two stages so the sweep memo stays per-client; `tryWithLock` stops the sweep waiting; `READ_ONLY_TRANSACTION`. Spec `2026-08-26-tx-query-surface-design.md`, plan of seven tasks, 16 commits, merge `6f8ff48`. Followed on `main` by four cleanups (`c64b8c9`) and BENCH-DRIFT's export guard (`de3abdf`). |
 | 2026-08-26 | `feat/vfs-required` | `vfs` required, `DEFAULT_VFS` unexported, `src/capabilities.ts` and the construction-time platform guard. 7 commits, merge `1783db7`. First `CHANGELOG.md`. |
+| 2026-08-27 | `feat/wasm-url` | `wasmUrl`, approved 2026-08-18 and never built: a directory or a callback naming one file, resolved once on the client, reaching Emscripten's `locateFile` only when given. No spec — bounded, brainstormed in chat. Merge `003cc09`, 1 commit. |
 
 ## Where the specs are
 
