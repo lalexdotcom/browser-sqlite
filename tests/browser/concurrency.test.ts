@@ -360,20 +360,26 @@ describe('AbortSignal on write() (INT-11)', () => {
     const ac = new AbortController();
 
     // Issue a blocking write and the aborted write in the same synchronous turn.
-    // The blocking write takes the writer lease immediately (synchronous fast-path
-    // in takeAvailable); the second write queues.  abort() fires before any of
-    // writeWorker's microtask continuations run, so the entry check in writeWorker
-    // will see signal.aborted === true when acquire() eventually resolves.
+    // The blocking write takes the writer lease immediately (synchronous
+    // fast-path in takeAvailable); the second write queues.
+    //
+    // The assertion is attached BEFORE the abort, and that ordering is the
+    // point rather than a style choice. `scheduler.acquire` now rejects a
+    // request that is still queued, synchronously from inside `abort()` — it
+    // no longer waits for a lease it may never get. So the rejection lands
+    // before `await blocker` yields, and a handler attached after that would
+    // let the promise cross a microtask checkpoint unhandled.
     const blocker = db.write('INSERT INTO abort_write_mid VALUES (1)');
     const abortedWrite = db.write(
       'INSERT INTO abort_write_mid VALUES (2)',
       [],
       { signal: ac.signal },
     );
+    const rejected = expect(abortedWrite).rejects.toThrow();
     ac.abort();
 
     await blocker;
-    await expect(abortedWrite).rejects.toThrow();
+    await rejected;
 
     // The second INSERT never ran; only the first row exists.
     // (State is verified rather than assumed: if the abort raced and the SQL

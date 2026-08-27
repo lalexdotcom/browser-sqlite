@@ -53,6 +53,17 @@ with it.
 
 ### Added
 
+- **An abort now reaches a call that is still waiting for a worker.** `signal`
+  was consulted only once a worker had been leased, so while the pool had
+  nothing to lend — `OPFSCoopSyncVFS` on an engine without `readwrite-unsafe`
+  rotates one exclusive OPFS handle, and a hand-over may never arrive — an
+  abort could not land at all. It now rejects with `signal.reason` while the
+  request is queued, and is ignored once the lease is granted.
+
+  **Timing changed with it:** an aborted call that is still queued rejects
+  synchronously from inside `abort()`, where it used to reject only when a
+  worker came free. Attach your handler before calling `abort()`, or the
+  promise crosses a microtask checkpoint unhandled.
 - **`bulkWrite()` and `output()` accept `{ signal }`.** They were the two
   longest-running methods in the public surface and the only two that could not
   be cancelled. The abort lands **between** batches — a multi-row INSERT is

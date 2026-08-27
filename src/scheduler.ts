@@ -43,7 +43,17 @@ export type InternalSQLiteClientOptions = CreateSQLiteClientOptions & {
 
 export type Scheduler<W> = {
   add: (worker: W) => void;
-  acquire: (kind: 'read' | 'write') => Promise<Lease<W>>;
+  /**
+   * Leases a worker, queueing when none is free.
+   *
+   * `signal` aborts the WAIT, and only the wait: it rejects with
+   * `signal.reason` while the request is still queued, and is ignored once a
+   * lease has been granted — from that point the caller owns the worker and
+   * owes a `release()`. Without it an abort could not land at all while the
+   * pool had nothing to lend, which is the state a VFS rotating one exclusive
+   * OPFS handle can stay in indefinitely.
+   */
+  acquire: (kind: 'read' | 'write', signal?: AbortSignal) => Promise<Lease<W>>;
   /**
    * Takes a worker out of the pool for good. A lease already outstanding on
    * that index becomes inert: its `release()` neither hands the worker back nor
@@ -259,16 +269,51 @@ export const createScheduler = <W extends { index: number }>(
       leased: leased.size,
     }),
 
-    acquire: async (kind) => {
+    acquire: async (kind, signal) => {
       if (shutdownReason) throw shutdownReason;
+      // Before the queue, not after: a caller who has already given up must not
+      // take a place in line and be served a worker nobody will release.
+      signal?.throwIfAborted();
       const write = kind === 'write';
 
       const immediate = takeAvailable(write);
       if (immediate) return makeLease(immediate);
 
       const { promise, resolve, reject } = Promise.withResolvers<W>();
-      (write ? writerQueue : readerQueue).push({ resolve, reject });
-      return makeLease(await promise);
+      const queue = write ? writerQueue : readerQueue;
+      const waiter = { resolve, reject };
+      queue.push(waiter);
+
+      if (!signal) return makeLease(await promise);
+
+      const onAbort = () => {
+        const at = queue.indexOf(waiter);
+        // The guard is the whole correctness of this branch, in both
+        // directions. A waiter still in the queue is REMOVED, never merely
+        // rejected in place: the drains take the head with `shift()`, so a
+        // dead entry left behind would be handed a worker that nobody then
+        // releases. And a waiter already shifted is left alone: its lease is
+        // real, the caller owes a release for it, and rejecting here would
+        // strand that worker for the life of the client. The in-query abort
+        // race in `queries.ts` covers what happens after the lease.
+        //
+        // Read-then-mutate needs no lock: this is one synchronous block with
+        // no await and no yield, and the drains (`handOver`, `serveWriterFirst`)
+        // are synchronous too, so nothing can shift this waiter out between the
+        // lookup and the removal. `splice` before `reject` for the same reason
+        // read the other way — `reject` only schedules a microtask, but the
+        // queue is left consistent before anything else can observe it.
+        const queued = at !== -1;
+        if (!queued) return;
+        queue.splice(at, 1);
+        reject(signal.reason);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      try {
+        return makeLease(await promise);
+      } finally {
+        signal.removeEventListener('abort', onAbort);
+      }
     },
   };
 };

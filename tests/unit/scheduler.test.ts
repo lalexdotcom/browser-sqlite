@@ -651,3 +651,91 @@ describe('scheduler — writer designation release', () => {
     read.release();
   });
 });
+
+/**
+ * The abort has to reach a caller that is still QUEUED. Until this existed the
+ * signal was only consulted once a worker had been leased, so a pool with
+ * nothing to lend could not be abandoned at all — which is how the benchmark
+ * page hung for good on OPFSCoopSyncVFS, where one exclusive OPFS handle
+ * rotates between workers and a hand-over may never arrive.
+ */
+describe('scheduler — aborting while queued', () => {
+  it('rejects a queued acquisition with the caller’s reason', async () => {
+    const { scheduler } = makeScheduler(1);
+    await scheduler.acquire('read'); // the only worker is out
+    const controller = new AbortController();
+    const reason = new Error('gave up waiting');
+
+    const queued = scheduler.acquire('read', controller.signal);
+    await flush();
+    expect(scheduler.stats().read).toBe(1);
+
+    controller.abort(reason);
+    await expect(queued).rejects.toBe(reason);
+    // Falsifiable: reject without splicing and the count stays at 1 — a dead
+    // waiter that a later handOver would shift and hand a worker to, losing it.
+    expect(scheduler.stats().read).toBe(0);
+  });
+
+  it('never queues an acquisition whose signal is already aborted', async () => {
+    const { scheduler } = makeScheduler(1);
+    await scheduler.acquire('read');
+    const reason = new Error('too late');
+
+    await expect(
+      scheduler.acquire('read', AbortSignal.abort(reason)),
+    ).rejects.toBe(reason);
+    expect(scheduler.stats().read).toBe(0);
+  });
+
+  it('does not strand the worker an aborted waiter was queued for', async () => {
+    const { scheduler } = makeScheduler(1);
+    const held = await scheduler.acquire('read');
+    const controller = new AbortController();
+
+    const abandoned = scheduler.acquire('read', controller.signal);
+    const next = scheduler.acquire('read');
+    await flush();
+    controller.abort();
+    await expect(abandoned).rejects.toMatchObject({ name: 'AbortError' });
+
+    held.release();
+    // The worker goes to the waiter still there, not into the void.
+    expect((await next).worker.index).toBe(0);
+  });
+
+  it('leaves a lease alone when the abort arrives after it was granted', async () => {
+    const { scheduler } = makeScheduler(1);
+    const held = await scheduler.acquire('read');
+    const controller = new AbortController();
+
+    const queued = scheduler.acquire('read', controller.signal);
+    await flush();
+    held.release(); // the waiter is served here
+    await flush();
+    controller.abort(); // too late — the lease is real
+
+    const lease = await queued;
+    expect(lease.worker.index).toBe(0);
+    lease.release();
+    // Falsifiable: reject regardless of whether the waiter was still queued,
+    // and this worker never comes back.
+    expect((await scheduler.acquire('read')).worker.index).toBe(0);
+  });
+
+  it('aborts a queued write without disturbing the writer designation', async () => {
+    const { scheduler } = makeScheduler(1);
+    const writer = await scheduler.acquire('write');
+    const controller = new AbortController();
+
+    const queued = scheduler.acquire('write', controller.signal);
+    await flush();
+    controller.abort();
+    await expect(queued).rejects.toMatchObject({ name: 'AbortError' });
+    expect(scheduler.stats().write).toBe(0);
+
+    writer.release();
+    const next = await scheduler.acquire('write');
+    expect(next.worker.index).toBe(0);
+  });
+});
