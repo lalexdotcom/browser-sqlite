@@ -81,6 +81,12 @@ export const deleteDatabase = async (
   const dbFile = normalizeDatabaseFile(file);
   const wasm = resolveWasmLocation(options.wasmUrl, build, location.href);
 
+  // Yield to the microtask queue so that a lock release triggered by resolving
+  // a promise in the caller's current task propagates through the Web Locks API
+  // before the ifAvailable check inside tryWithLock runs. Without this yield,
+  // calling deleteDatabase synchronously after release.resolve() races the lock
+  // release and can report BUSY when the lock is already free.
+  await Promise.resolve();
   const ran = await createLocks().tryWithLock(initLockName(dbFile), () =>
     runDelete({ file: dbFile, vfs, build, wasm }),
   );
@@ -93,6 +99,16 @@ export const deleteDatabase = async (
   }
 };
 
+/**
+ * How long a delete may take before the worker is presumed unable to answer.
+ * Matches `openTimeout`'s default, because the failure it catches is the same
+ * one: a VFS that cannot acquire what it needs — `AccessHandlePoolVFS` whose
+ * six slots are held elsewhere reaches neither success nor error. Not a public
+ * option: a caller has nothing useful to tune here, and a delete that takes
+ * thirty seconds has already failed.
+ */
+const DELETE_TIMEOUT = 30_000;
+
 const runDelete = (message: {
   file: string;
   vfs: SQLiteVFS;
@@ -102,7 +118,17 @@ const runDelete = (message: {
   new Promise<void>((resolve, reject) => {
     const worker = spawnWorker(`SQLite delete / ${message.file}`);
 
+    const timer = setTimeout(() => {
+      settle(
+        new SQLiteError(
+          'TIMEOUT',
+          `deleting ${message.file} timed out after ${DELETE_TIMEOUT} ms. The database is most likely held open by another client or tab.`,
+        ),
+      );
+    }, DELETE_TIMEOUT);
+
     const settle = (error?: SQLiteError) => {
+      clearTimeout(timer);
       worker.terminate();
       if (error) reject(error);
       else resolve();

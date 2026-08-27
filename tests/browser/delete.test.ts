@@ -85,4 +85,47 @@ describe('deleteDatabase', () => {
       deleteDatabase('anything', { vfs: 'MemoryVFS' }),
     ).resolves.toBeUndefined();
   });
+
+  // `navigator.locks` is origin-wide, so this is the same lock a client in
+  // another tab would hold while opening. Held here directly, because the point
+  // is the lock and not the client that usually takes it.
+  it('rejects with BUSY while the init lock is held', async () => {
+    const file = freshFile();
+    const release = Promise.withResolvers<void>();
+    const held = Promise.withResolvers<void>();
+
+    void navigator.locks.request(`bsq:init:${file}`, () => {
+      held.resolve();
+      return release.promise;
+    });
+    await held.promise;
+
+    await expect(
+      deleteDatabase(file, { vfs: 'OPFSAdaptiveVFS' }),
+    ).rejects.toMatchObject({ code: 'BUSY' });
+
+    release.resolve();
+  });
+
+  // Falsifiable: make the BUSY path return instead of throwing from inside
+  // `tryWithLock`, and the second call finds a lock nobody released.
+  it('releases the lock after a rejection, so a retry is possible', async () => {
+    const file = freshFile();
+    const release = Promise.withResolvers<void>();
+    const held = Promise.withResolvers<void>();
+
+    void navigator.locks.request(`bsq:init:${file}`, () => {
+      held.resolve();
+      return release.promise;
+    });
+    await held.promise;
+    await expect(
+      deleteDatabase(file, { vfs: 'OPFSAdaptiveVFS' }),
+    ).rejects.toMatchObject({ code: 'BUSY' });
+    release.resolve();
+
+    await expect(
+      deleteDatabase(file, { vfs: 'OPFSAdaptiveVFS' }),
+    ).resolves.toBeUndefined();
+  });
 });
