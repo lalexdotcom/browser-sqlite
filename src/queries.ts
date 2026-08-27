@@ -1,4 +1,4 @@
-import type { Abortable, SQLiteChunkOptions } from './api';
+import type { OptionsWithSignal, SQLiteChunkOptions } from './api';
 import type { PoolWorker } from './pool';
 
 /**
@@ -112,7 +112,7 @@ export const firstWorker = async <
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  options?: Abortable,
+  options?: OptionsWithSignal,
 ): Promise<T | undefined> => {
   for await (const rows of chunk<T>(worker, sql, params, {
     ...options,
@@ -133,7 +133,7 @@ export const writeWorker = async <
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  options?: Abortable,
+  options?: OptionsWithSignal,
 ): Promise<{ result: T[]; affected: number }> => {
   const { signal } = options ?? {};
 

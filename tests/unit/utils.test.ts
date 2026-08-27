@@ -3,6 +3,7 @@ import { SQLiteError } from '../../src/errors';
 import type { SQLiteBuild } from '../../src/types';
 import {
   isWriteQuery,
+  mergeSignals,
   normalizeDatabaseFile,
   resolveWasmLocation,
   sqlParams,
@@ -249,5 +250,67 @@ describe('resolveWasmLocation', () => {
     expect(() => resolveWasmLocation(() => 'https://', 'sync', PAGE)).toThrow(
       SQLiteError,
     );
+  });
+});
+
+describe('mergeSignals', () => {
+  // The helper exists because AbortSignal.any() is Chrome 116 / Firefox 124 /
+  // Safari 17.4, far above LIB_FLOOR (Chrome 92 / Firefox 95 / Safari 15.4).
+  // Using it would raise the floor of the generated README table for every
+  // consumer.
+
+  it('passes the surviving signal through when only one side exists', () => {
+    const ctl = new AbortController();
+    expect(mergeSignals(ctl.signal, undefined).signal).toBe(ctl.signal);
+    expect(mergeSignals(undefined, ctl.signal).signal).toBe(ctl.signal);
+    expect(mergeSignals(undefined, undefined).signal).toBeUndefined();
+  });
+
+  it('returns an already-aborted source as itself, reason included', () => {
+    const reason = new Error('already gone');
+    const dead = new AbortController();
+    dead.abort(reason);
+    const live = new AbortController();
+
+    expect(mergeSignals(dead.signal, live.signal).signal).toBe(dead.signal);
+    expect(mergeSignals(live.signal, dead.signal).signal).toBe(dead.signal);
+  });
+
+  it('fires with the reason of whichever source aborted', () => {
+    const first = new AbortController();
+    const second = new AbortController();
+    const reason = new Error('second won');
+
+    const { signal } = mergeSignals(first.signal, second.signal);
+    expect(signal?.aborted).toBe(false);
+
+    second.abort(reason);
+    expect(signal?.aborted).toBe(true);
+    expect(signal?.reason).toBe(reason);
+  });
+
+  it('fires from the first source too', () => {
+    const first = new AbortController();
+    const second = new AbortController();
+    const reason = new Error('first won');
+
+    const { signal } = mergeSignals(first.signal, second.signal);
+    first.abort(reason);
+
+    expect(signal?.reason).toBe(reason);
+  });
+
+  // Falsifiable: make release() a no-op and this goes red. Without it every
+  // statement that carries its own signal leaves two listeners on the
+  // transaction's signal for as long as the caller holds it.
+  it('stops listening once released', () => {
+    const first = new AbortController();
+    const second = new AbortController();
+
+    const { signal, release } = mergeSignals(first.signal, second.signal);
+    release();
+    first.abort(new Error('too late'));
+
+    expect(signal?.aborted).toBe(false);
   });
 });

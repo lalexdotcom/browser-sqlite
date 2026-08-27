@@ -169,10 +169,13 @@ rejects write statements; `{ autoCommit: false }` leaves the commit to you.
 
 `tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit` and `rollback`.
 
+`{ signal }` abandons the transaction at any point, including while it waits for a worker and while your callback sits on something that is not a statement. It rolls back and rejects with `signal.reason`, and it never commits — a callback that catches its own statement's rejection cannot commit around the abort. Your callback is not interrupted, but every statement it issues afterwards rejects. `BEGIN`, `COMMIT` and `ROLLBACK` are the exception: they do not carry the signal, so an abort raised while one of them is in flight lands when it settles.
+
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `readOnly` | `boolean` | `false` | Rejects write statements with `READ_ONLY_TRANSACTION`, at the call rather than at the first flush. |
 | `autoCommit` | `boolean` | `true` | Commits when the callback resolves. Set it false to commit or roll back yourself. |
+| `signal` | `AbortSignal` | — | Abandons the transaction. Rolls back and rejects with `signal.reason`; never commits. |
 
 ### *client*.bulkWrite
 
