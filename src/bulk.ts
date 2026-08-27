@@ -1,6 +1,6 @@
 import type {
-  OptionsWithSignal,
   Schema,
+  SQLiteBulkWriteOptions,
   SQLiteOutputOptions,
   SQLiteOutputRow,
   SQLiteTransactionOptions,
@@ -53,6 +53,21 @@ export type TransactionFn = <T>(
  */
 const DROP_STAGING_TIMEOUT = 5_000;
 
+/**
+ * Returned by every `enqueue()` that does not have to wait. Shared rather than
+ * created per call: the hot path allocates nothing.
+ */
+const ADMITTED = Promise.resolve();
+
+/** A promise and the handle that resolves it. */
+const makeRoom = (): { promise: Promise<void>; resolve: () => void } => {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+};
+
 export const createBulk = (shared: {
   file: string;
   locks: Locks;
@@ -99,12 +114,17 @@ export const createBulk = (shared: {
     const bulkWrite = <KEYS extends string>(
       table: string,
       keys: KEYS[],
-      options?: OptionsWithSignal,
+      options?: SQLiteBulkWriteOptions,
       /** Internal: awaited before the first batch. `output()` passes its staging DDL. */
       before?: Promise<unknown>,
     ) => {
       const signal = options?.signal;
       const maxBufferSize = Math.floor(maxVariables / keys.length);
+      // Two batches' worth by default. A batch is at most `maxVariables` bound
+      // values whatever the table, so this bounds about the same memory whether
+      // the caller loads 2 columns or 30 — which was the whole merit of
+      // counting in batches, without imposing the word on the consumer.
+      const queueSize = options?.queueSize ?? 2 * maxBufferSize;
 
       const buffer: { [K in KEYS]: any }[] = [];
 
@@ -113,6 +133,22 @@ export const createBulk = (shared: {
       let closed = false;
       let rowsWritten = 0;
       let rowsNotWritten = 0;
+      /** Rows handed to a batch that has not settled yet. */
+      let queuedRows = 0;
+      /** Shared by every enqueue() parked while the queue is full. */
+      let room: { promise: Promise<void>; resolve: () => void } | undefined;
+
+      const releaseRoom = () => {
+        room?.resolve();
+        room = undefined;
+      };
+
+      // The abort must release a producer parked on enqueue(): the batch it
+      // waits for may never settle — the pool can stay empty on a VFS that
+      // rotates one exclusive handle — and the release is what lets its next
+      // enqueue() throw signal.reason. Removed by close(), so a signal the
+      // caller keeps does not collect one listener per writer.
+      signal?.addEventListener('abort', releaseRoom, { once: true });
 
       const fail = (): SQLiteBulkWriteError =>
         new SQLiteBulkWriteError(
@@ -124,9 +160,10 @@ export const createBulk = (shared: {
       const flush = () => {
         const toInsert = [...buffer];
         buffer.length = 0;
+        queuedRows += toInsert.length;
         // The chain never rejects: a rejection here is what used to skip every
         // later `.then()` and drop already-spliced rows without a word (B5).
-        writePromise = writePromise.then(async (currentAffected) => {
+        const runBatch = async (currentAffected: number) => {
           if (failure) {
             rowsNotWritten += toInsert.length;
             return currentAffected;
@@ -170,6 +207,17 @@ export const createBulk = (shared: {
             rowsNotWritten += toInsert.length;
             return currentAffected;
           }
+        };
+        writePromise = writePromise.then(async (currentAffected) => {
+          try {
+            return await runBatch(currentAffected);
+          } finally {
+            // Every exit passes here — success, latched failure, and the batch
+            // an abort skipped. One missed decrement and enqueue() never
+            // resolves again.
+            queuedRows -= toInsert.length;
+            if (queuedRows < queueSize) releaseRoom();
+          }
         });
       };
 
@@ -189,17 +237,26 @@ export const createBulk = (shared: {
           if (failure) throw fail();
           buffer.push(data);
           if (buffer.length >= maxBufferSize) flush();
+          if (queuedRows < queueSize) return ADMITTED;
+          // One deferred for every caller while the queue is full: enqueue() is
+          // not concurrent-safe today and this does not make it so.
+          room ??= makeRoom();
+          return room.promise;
         },
         close: async () => {
           if (closed) throw failClosed();
-          if (buffer.length) flush();
-          const affected = await writePromise;
-          // Ordered ahead of the failure check for the same reason: a batch
-          // skipped by the abort is not a batch that failed.
-          signal?.throwIfAborted();
-          if (failure) throw fail();
-          closed = true;
-          return affected;
+          try {
+            if (buffer.length) flush();
+            const affected = await writePromise;
+            // Ordered ahead of the failure check for the same reason: a batch
+            // skipped by the abort is not a batch that failed.
+            signal?.throwIfAborted();
+            if (failure) throw fail();
+            closed = true;
+            return affected;
+          } finally {
+            signal?.removeEventListener('abort', releaseRoom);
+          }
         },
       };
     };
@@ -334,7 +391,7 @@ export const createBulk = (shared: {
         Object.keys(schema).filter(
           (col) => typeof schema[col] !== 'object' || !schema[col].generated,
         ),
-        { signal: options?.signal },
+        { signal: options?.signal, queueSize: options?.queueSize },
         createStaging,
       );
 

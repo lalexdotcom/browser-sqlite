@@ -106,10 +106,27 @@ export type Index<SCHEMA extends Schema> =
 
 export type SQLiteOutputOptions<SCHEMA extends Schema> = OptionsWithSignal<{
   indexes?: Index<SCHEMA>[];
+  /** Rows queued for writing above which `enqueue()` defers. See `SQLiteBulkWriteOptions`. */
+  queueSize?: number;
 }>;
 
-/** Options `bulkWrite()` accepts. */
-export type SQLiteBulkWriteOptions = OptionsWithSignal;
+/**
+ * Options `bulkWrite()` accepts.
+ *
+ * `queueSize` bounds how far the producer may run ahead of the database. Rows
+ * are handed over in batches of at most 32 766 bound values; a batch that has
+ * been handed over but not yet written is held in memory until it is, and
+ * nothing caps how many of those accumulate unless you await `enqueue()`.
+ *
+ * The default is two batches' worth, derived from the column count — about
+ * 13 100 rows for 5 columns, 2 180 for 30 — so the memory bounded is roughly
+ * the same from one table to the next. A value smaller than one batch is legal
+ * and means one INSERT in flight, the least the batching allows.
+ */
+export type SQLiteBulkWriteOptions = OptionsWithSignal<{
+  /** Rows queued for writing above which `enqueue()` defers. */
+  queueSize?: number;
+}>;
 
 /** A row for `output()`: generated columns are computed, never supplied. */
 export type SQLiteOutputRow<SCHEMA extends Schema> = {
@@ -118,15 +135,28 @@ export type SQLiteOutputRow<SCHEMA extends Schema> = {
     : K]: any;
 };
 
+/**
+ * Buffers a row, flushing automatically when the buffer fills.
+ *
+ * Awaiting the returned promise applies back-pressure: it is already resolved
+ * while fewer than `queueSize` rows are queued for writing, and resolves once
+ * a batch settles when they are not. Ignoring it is legal, and leaves the load
+ * unbounded exactly as it was before the option existed — the bound is an
+ * offer, not a guarantee.
+ *
+ * It never rejects. A failed batch surfaces at the next `enqueue()`, which
+ * throws, and at `close()`, which rejects.
+ */
+type EnqueueRow<ROW> = (data: ROW) => Promise<void>;
+
 export type SQLiteBulkWriter<KEYS extends string> = {
-  /** Buffers a row, flushing automatically when the buffer fills. */
-  enqueue: (data: Record<KEYS, any>) => void;
+  enqueue: EnqueueRow<Record<KEYS, any>>;
   /** Flushes what remains and resolves with the total affected row count. */
   close: () => Promise<number>;
 };
 
 export type SQLiteOutputWriter<SCHEMA extends Schema> = {
-  enqueue: (data: SQLiteOutputRow<SCHEMA>) => void;
+  enqueue: EnqueueRow<SQLiteOutputRow<SCHEMA>>;
   close: () => Promise<number>;
 };
 

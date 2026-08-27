@@ -44,8 +44,8 @@ const harness = (worker: ReturnType<typeof fakeWorker>) => {
     afterWrite: () => {},
     onPoisoned: (index: number) => poisoned.push(index),
     bulkFor: () => ({
-      bulkWrite: () => ({ enqueue: () => {}, close: async () => 0 }),
-      output: () => ({ enqueue: () => {}, close: async () => 0 }),
+      bulkWrite: () => ({ enqueue: async () => {}, close: async () => 0 }),
+      output: () => ({ enqueue: async () => {}, close: async () => 0 }),
     }),
   });
   return { transaction, poisoned };
