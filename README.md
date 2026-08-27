@@ -113,48 +113,22 @@ npm install browser-sqlite
 pnpm add browser-sqlite
 ```
 
-Requires a bundler that supports Web Workers with dynamic imports (Rsbuild, webpack 5, Vite 3+).
+Requires a bundler that supports Web Workers with dynamic imports — or no bundler at all.
 
 ## Bundler Configuration
 
-**webpack, rspack, and rsbuild** require no bundler-specific configuration.
+Works with no configuration under **rsbuild 1+**, **rspack 1+**, **Parcel 2+**, **Vite 8+**, **webpack 5.101+** — and with no bundler at all.
 
-**Vite** needs two adjustments because of how it handles dependency pre-bundling and production assets.
-
-### Vite
+Works under **Vite 6.1 to 7** with the following config, which only the dev server needs:
 
 ```typescript
 // vite.config.ts
-import { cp } from 'node:fs/promises';
-import { defineConfig } from 'vite';
-
 export default defineConfig({
-  // Vite pre-bundles dependencies with esbuild in dev, which rewrites
-  // `import.meta.url` to the pre-bundled copy under node_modules/.vite/deps/.
-  // browser-sqlite locates its worker relative to its own module URL, so the
-  // rewrite sends it to a path Vite never populates. Excluding the package
-  // from pre-bundling keeps the URL pointing at the real file.
   optimizeDeps: { exclude: ['browser-sqlite'] },
-
-  plugins: [
-    {
-      // In a production build Vite copies the worker into the output but does
-      // not follow the `new URL('wa-sqlite.wasm', import.meta.url)` references
-      // inside it — files under node_modules are not re-transformed. The .wasm
-      // files must therefore be placed beside the emitted worker by hand.
-      name: 'copy-browser-sqlite-wasm',
-      apply: 'build',
-      async closeBundle() {
-        await cp('node_modules/browser-sqlite/dist/worker', 'dist/assets', {
-          recursive: true,
-        });
-      },
-    },
-  ],
 });
 ```
 
-`dist/worker/` is an asset directory — the worker script and its three `.wasm` siblings must travel with the built app.
+Another bundler will likely work — the worker and its `.wasm` are reached through plain, statically analysable URLs — but may need configuration of its own.
 
 ## Browser support
 
