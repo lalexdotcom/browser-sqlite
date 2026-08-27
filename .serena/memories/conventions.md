@@ -21,7 +21,21 @@ only what `AGENTS.md` does not say.**
 Each wave or phase is implemented **on its own feature branch, by a subagent** — not on
 `main`, not inline in the main session. A phase is closed only when all three hold:
 **CI green** (types, format, lint), **memories updated**, **git clean**. Groundwork already
-validated by the user outside a phase (dependency bumps, specs) lands on `main` directly.
+validated by the user outside a phase (dependency bumps) lands on `main` directly.
+
+**Specs and plans go on the branch, not on `main` (user, 2026-08-27).** This file said the
+opposite and it was wrong: a spec is the first artefact of the work it designs, so it
+travels with that work and lands at the merge. Two spec commits went straight to `main`
+before the correction and were left there rather than rewritten, so the history carries
+the exception once.
+
+**A plan's per-task commits do not survive this repository's pre-commit hook.** The hook
+runs the whole suite and refuses a red tree, so a plan written as "task N: write the
+failing test / commit" cannot be executed as written — the commit after a RED step is
+refused. Write plans whose every commit lands on green: the failing test and the code that
+satisfies it belong to the same task, and a task that only adds tests must be one whose
+tests pass on arrival. `feat/bulk-backpressure`'s five tasks collapsed into two commits
+for this reason, which is a property of the repository, not of that plan.
 
 ## "On clôture la session" is a defined procedure (user, 2026-08-17)
 
@@ -85,6 +99,16 @@ may be left live in this one. Three steps, in order:
   round trips were burned on one-hypothesis-at-a-time before they called it.
 - **Always give a verdict when offering options.** A menu without a recommendation is not
   an answer.
+- **That rule runs one way only (user, 2026-08-27).** When *you* offer options, decide and
+  recommend. When the *user* offers two without stating a preference — "soit A, soit B" —
+  that is a question to answer, not a mandate to pick one and act. In one session an option
+  was chosen and committed on the user's behalf minutes after they had said explicitly not
+  to commit until the name suited them.
+- **A choice a skill asks you to offer belongs to the user (user, 2026-08-27).**
+  `writing-plans` ends by offering subagent-driven or inline execution. That offer was
+  resolved unilaterally, by treating "I may not dispatch subagents unless asked" as the
+  answer — when it was precisely the reason to ask. At every point where a skill offers a
+  choice, put it to the user, including when one option looks closed.
 - **Open questions stay in the backlog; each wave's own brainstorming raises them when it
   gets there** (user, 2026-08-17). Do not front-load a decision session for a wave that is
   not the next one.

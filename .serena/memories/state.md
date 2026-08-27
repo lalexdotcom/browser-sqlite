@@ -25,7 +25,7 @@ obligations and unmeasured ground.
 
 Not history: the numbers a regression is detected against.
 
-`tsc --noEmit` clean · `pnpm build` clean · **397 tests, 0 failed files** ·
+`tsc --noEmit` clean · `pnpm build` clean · **405 tests, 0 failed files** ·
 conformance **73 passed / 12 skipped on Chromium and the same on Firefox** ·
 **consumer smoke 24/24** · `scripts/bench/check.mjs chromium --all` OK, 22 pairs,
 zero `not-run` · biome 13 warnings, none in recently touched files ·
@@ -40,12 +40,9 @@ two engines agreeing is the current expectation, and a divergence means somethin
 
 ## Decisions the user owes
 
-None outstanding. **`BACKPRESSURE-1` is designed and unbuilt** — brainstormed with
-the user on 2026-08-27, spec at
-`docs/superpowers/specs/2026-08-27-bulk-backpressure-design.md`, four decisions
-recorded there and summarised in `mem:follow-ups`. It is the
-designed-and-approved-but-unbuilt item this slot exists for; implementation has
-not started.
+None outstanding, and **nothing is designed-and-approved-but-unbuilt** —
+`BACKPRESSURE-1` shipped on 2026-08-27, the slot's previous occupant. The next
+item is whatever the user picks from `mem:follow-ups`.
 
 ## Owed before the release
 
