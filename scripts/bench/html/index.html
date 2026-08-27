@@ -615,8 +615,8 @@
        * chunk. The abort reaches the drain, the worker is released, and the
        * run continues with the next row in the same column.
        */
-      const abortableRow = async (fn) => {
-        const signal = AbortSignal.timeout(ROW_TIMEOUT_MS);
+      const abortableRow = async (fn, budgetMs = ROW_TIMEOUT_MS) => {
+        const signal = AbortSignal.timeout(budgetMs);
         try {
           return await fn(signal);
         } catch (error) {
@@ -1487,6 +1487,23 @@
        * skipped, so naming one couples this row to them; a database that was
        * deleted and recreated has an empty sqlite_master whatever came before.
        */
+      /**
+       * Deliberately larger than ROW_TIMEOUT_MS, and the reason is a defect
+       * this row had on its first campaign: its budget equalled the library's
+       * own DELETE_TIMEOUT (30 s) while its clock started earlier — before the
+       * close — so the row always expired first and `timeout` could not be
+       * told apart from deleteDatabase rejecting with its own TIMEOUT.
+       *
+       * Three row budgets covers what this row contains: closeWithTimeout
+       * (≤ ROW_TIMEOUT_MS, else ColumnAbandoned), deleteDatabase (≤ 30 s, its
+       * own bound), and the probe. So an expiry here now means something hung
+       * OUTSIDE both bounds, and a delete that merely times out surfaces as a
+       * failure carrying the library's message instead.
+       *
+       * It costs wall-clock only where something is already wrong.
+       */
+      const DELETE_ROW_TIMEOUT_MS = 3 * ROW_TIMEOUT_MS;
+
       const DELETE_CONFORMANCE = [
         {
           id: 'deleted-is-gone',
@@ -1529,7 +1546,7 @@
                 );
               }
               return true;
-            }),
+            }, DELETE_ROW_TIMEOUT_MS),
         },
       ];
 
