@@ -43,10 +43,18 @@ placeholder `undefined` must keep a callable union type.
 
 Four projects. `pnpm test` runs the first two.
 
+**Both engines are installed locally** — `~/.cache/ms-playwright` carries chromium, firefox
+and webkit. WebKit is not offered anywhere: the Linux build ships without OPFS, so every VFS
+this library uses is missing there and the suite would report a platform gap as a failure.
+The variable is `TEST_BROWSER`, **not** `BROWSER`: VS Code and devcontainers already export
+the latter, pointing at a URL-opening helper, and Playwright then fails with "Cannot read
+properties of undefined (reading 'launch')". Conformance has its own, older switch,
+`CONFORMANCE_BROWSER`.
+
 | Project | Where | What |
 |---|---|---|
 | `unit` | `tests/unit/` (15 files) | Node, pure logic — bulk, capabilities, credits, debug, epochs, errors, exports, locks, logger, quoting, routing, scheduler, supervisor, transaction, utils |
-| `browser` | `tests/browser/` (16 files + `helpers.ts`) | Real Chromium via Playwright. `createTestClient(options?)` gives a unique OPFS name and an `afterEach` cleanup |
+| `browser` | `tests/browser/` (16 files + `helpers.ts`) | Real Chromium via Playwright, or Firefox with `TEST_BROWSER=firefox pnpm test:browser` (2026-08-27). `createTestClient(options?)` gives a unique OPFS name and an `afterEach` cleanup |
 | `conformance` | `tests/conformance/` | On demand: every declared (vfs, build) pair through six invariants. `pnpm test:conformance` |
 | `consumer` | `scripts/consumer-smoke.mjs` | On demand: packs the tarball into **five** temp app dirs **outside** the repo and drives **dev and build for each** — Vite, Vite 6 (pinned), rsbuild, webpack, Parcel — plus no-bundler static serve and a bare-specifier assertion over `dist/**/*.js`. **24 stages.** `pnpm test:consumer` |
 

@@ -193,8 +193,8 @@ on it**, and delete it the moment it is done rather than leaving it to be redisc
 
 ## Performance backlog — after correctness, none blocking
 
-- **No prepared-statement cache** (`worker.ts`) — typically the largest single win (2-10×);
-  worst for `bulkWrite`'s ~32k-placeholder template.
+- **No prepared-statement cache** (`worker.ts`) — the largest single win on the list, and the
+  one whose shape is already settled. Its own section below.
 - **No default PRAGMAs** → consumers silently run `journal_mode=DELETE` + `synchronous=FULL`.
   Shipping WAL + NORMAL + `busy_timeout` is on the list for its own reasons — note that
   `busy_timeout` is also option A for CoopSync, with a risk to **measure, not deduce**:
@@ -208,6 +208,49 @@ on it**, and delete it the moment it is done rather than leaving it to be redisc
   extended to new write designations as well. The routing works, proven as a barrier-statement
   count on both engines; no latency gain is measurable on either, and `mem:measurements` says
   why the timer is the wrong instrument for an effect this size.
+
+## The prepared-statement cache — discussed 2026-08-27, not built
+
+**Read this before designing it; every point below cost a round of conversation.**
+
+**Today every statement is compiled and thrown away.** Both worker paths go through
+`sqlite.statements(db, sql)` (`worker/worker.ts`, the exec path and the query path). In
+wa-sqlite that generator loops on `sqlite3_prepare_v3`, yields the statement, and in its
+`finally` unwinds an `onFinally` stack that finalises it and frees the SQL buffer. That
+holds for every `BEGIN`, `COMMIT`, `ROLLBACK`, every barrier statement and every
+`bulkWrite` batch with its ~65 KB of placeholders.
+
+**So "prepared versus classic" is not the question.** For a single execution the two are
+the same three calls and cost the same. **The entire gain is reuse**, which makes the
+cache the feature — not a public `prepare()`.
+
+**No public `prepare()`, and the architecture is what decides it.** A prepared statement
+belongs to one connection; this pool has `poolSize` of them. A public handle would either
+pin its caller to one worker — destroying the concurrent reads the lease system exists to
+protect — or prepare lazily on whichever worker serves the call, which *is* a cache keyed
+by SQL. The only thing an explicit API would add is a guarantee that a hot query is never
+evicted, and that is a number (a cache size), not a handle.
+
+**The real work is not the cache, it is the cleanup it removes.** That `finally` is what
+guarantees today that an abandoned statement is finalised — an abort mid-`step`, the
+`break` inside `first()`. A cache leaves the generator for `prepare_v3` directly and must
+replace the guarantee with `reset` + `clear_bindings` **on every exit**. A statement left
+in place keeps its read transaction open, which poisons the barrier and meets HANDLE-1.
+Three more obligations come with it: finalise everything before closing a connection
+(SQLite refuses to close otherwise), bound the cache (the 32k-placeholder program is not
+small, and there is one cache per worker), and decide what to do with multi-statement
+strings, which `statements()` accepts today.
+
+**`bulkWrite` is where it pays first.** Every full batch has the identical template, so one
+entry per writer catches all but the final partial batch. And since `feat/last-writer-routing`
+shipped, a `bulkWrite` tends to stay on one worker instead of walking the pool, so the cache
+warms once rather than `poolSize` times. `tx.bulkWrite()` was already pinned to a single
+worker by construction.
+
+**Measure on repeated identical SQL**, never on a single query — there is nothing to see
+there by construction. Unlike the routing change, this effect is a compile cost and is
+genuinely a duration, so timing is the right instrument here; `mem:lessons` explains when it
+is not.
 
 ## A cross-tab lead, recorded unverified
 
