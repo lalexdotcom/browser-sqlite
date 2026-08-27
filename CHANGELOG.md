@@ -73,6 +73,17 @@ with it.
   already written in place; run it inside `transaction()` when abandoning must
   mean rolling back. An aborted `output()` is observationally a no-op: the
   staging table is dropped and the previous target is untouched.
+- **`enqueue()` returns a promise, and `{ queueSize }` bounds the load.** A
+  producer that awaits it is slowed to the speed of the database; one that
+  ignores it loads exactly as before, so nothing written against the old
+  signature changes behaviour. Only the buffer was ever bounded — the chain of
+  batches handed over and not yet written was not, so a JavaScript loop against
+  OPFS writes grew memory with batches in flight. The default is two batches'
+  worth, derived from the column count, so the memory bounded is about the same
+  from one table to the next; a value smaller than one batch is legal and means
+  one INSERT in flight. The promise **never rejects**: a failed batch still
+  surfaces at the next `enqueue()`, which throws, and at `close()`, which
+  rejects.
 - **`transaction()` accepts `{ signal }`.** It was the last public method that
   could not be abandoned, and the only one that held a worker exclusively while
   it could not. The signal aborts the wait for a worker, every statement issued

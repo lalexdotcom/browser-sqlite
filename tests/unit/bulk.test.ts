@@ -536,3 +536,218 @@ describe('bulkWrite abort with a stalled batch (ABORT-1 regression)', () => {
     ).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
+
+/**
+ * A recorder whose writes settle only when the test says so — the only way to
+ * observe a queue that is full, since a write that resolves immediately empties
+ * it before the next enqueue can see it.
+ */
+const gatedRecorder = () => {
+  const sql: string[] = [];
+  const gates: (() => void)[] = [];
+  const write = (statement: string) => {
+    sql.push(statement);
+    return new Promise<{ result: any[]; affected: number }>((resolve) => {
+      gates.push(() => resolve({ result: [], affected: 1 }));
+    });
+  };
+  const read = async () => [] as any[];
+  const transaction = async <T>(cb: (db: any) => Promise<T>) =>
+    cb({
+      write: async () => ({ result: [], affected: 0 }),
+      read: async () => [],
+    });
+
+  return {
+    sql,
+    /** Settles the oldest write still in flight. */
+    settleOne: () => gates.shift()?.(),
+    settleAll: () => {
+      while (gates.length) gates.shift()?.();
+    },
+    deps: { read, write, transaction } as any,
+  };
+};
+
+/** Tracks whether a promise has settled, without awaiting it. */
+const watch = (promise: Promise<unknown>) => {
+  let settled = false;
+  promise.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  return () => settled;
+};
+
+/** Lets every queued microtask run. */
+const ticks = async (n = 3) => {
+  for (let i = 0; i < n; i++) await Promise.resolve();
+};
+
+describe('bulkWrite back-pressure', () => {
+  // maxVariables 2 with one key → 2 rows per batch, so the derived default
+  // queueSize is 4 rows.
+  const bulkFactory = (maxVariables: number, deps: any) =>
+    createBulk({
+      file: 'app.db',
+      locks: noOpLocks,
+      logger: noopLogger,
+      maxVariables,
+    })(deps);
+
+  // Falsifiable, verified: delete `if (queuedRows < queueSize) return ADMITTED;`
+  // from enqueue() and this goes red — every call would return the deferred, and
+  // the gated batch never settles.
+  it('resolves without deferring while the queue is under the cap', async () => {
+    const { deps } = gatedRecorder();
+    const { bulkWrite } = bulkFactory(2, deps);
+    const bulk = bulkWrite('t', ['a']);
+
+    const first = watch(bulk.enqueue({ a: 1 }));
+    const second = watch(bulk.enqueue({ a: 2 })); // flushes 2 rows, cap is 4
+    await ticks();
+
+    expect(first()).toBe(true);
+    expect(second()).toBe(true);
+  });
+
+  // Falsifiable: return the shared resolved promise unconditionally and this
+  // goes red — the fourth enqueue would settle with nothing written.
+  it('defers once the queue is full, and resolves when a batch settles', async () => {
+    const { deps, settleOne } = gatedRecorder();
+    const { bulkWrite } = bulkFactory(2, deps);
+    const bulk = bulkWrite('t', ['a']);
+
+    bulk.enqueue({ a: 1 });
+    bulk.enqueue({ a: 2 }); // queued: 2
+    bulk.enqueue({ a: 3 });
+    const fourth = watch(bulk.enqueue({ a: 4 })); // queued: 4, at the cap
+    await ticks();
+    expect(fourth()).toBe(false);
+
+    settleOne(); // queued falls back to 2
+    await ticks();
+    expect(fourth()).toBe(true);
+  });
+
+  // Falsifiable: hard-code the default and this goes red — both writers would
+  // defer at the same row count regardless of their width.
+  it('derives the default cap from the column count', async () => {
+    const narrow = gatedRecorder();
+    const wide = gatedRecorder();
+    // maxVariables 4: one column → 4 rows per batch, cap 8;
+    // two columns → 2 rows per batch, cap 4.
+    const one = bulkFactory(4, narrow.deps).bulkWrite('t', ['a']);
+    const two = bulkFactory(4, wide.deps).bulkWrite('t', ['a', 'b']);
+
+    let lastNarrow!: () => boolean;
+    let lastWide!: () => boolean;
+    for (let i = 0; i < 4; i++) {
+      lastNarrow = watch(one.enqueue({ a: i }));
+      lastWide = watch(two.enqueue({ a: i, b: i }));
+    }
+    await ticks();
+
+    // Four rows: the wide writer has flushed two batches and reached its cap;
+    // the narrow one has flushed one batch and is at half of its own.
+    expect(lastWide()).toBe(false);
+    expect(lastNarrow()).toBe(true);
+  });
+
+  // Falsifiable, verified: drop `options?.queueSize ??` from the queueSize
+  // initialiser and this goes red — the explicit 1 is silently replaced by the
+  // derived default of 4, which two queued rows do not reach.
+  it('honours an explicit cap smaller than a single batch', async () => {
+    const { deps } = gatedRecorder();
+    const { bulkWrite } = bulkFactory(2, deps);
+    const bulk = bulkWrite('t', ['a'], { queueSize: 1 });
+
+    const first = watch(bulk.enqueue({ a: 1 })); // buffered, nothing queued
+    const second = watch(bulk.enqueue({ a: 2 })); // flushes 2 rows ≥ 1
+    await ticks();
+
+    expect(first()).toBe(true);
+    expect(second()).toBe(false);
+  });
+
+  // Falsifiable: reject the returned promise on failure and this goes red.
+  // A promise the caller is allowed to ignore must never reject — that is one
+  // unhandledrejection per failed load.
+  it('resolves rather than rejecting when a batch fails', async () => {
+    const { deps } = failingRecorder(0);
+    const { bulkWrite } = bulkFactory(2, deps);
+    const bulk = bulkWrite('t', ['a'], { queueSize: 1 });
+
+    bulk.enqueue({ a: 1 });
+    await expect(bulk.enqueue({ a: 2 })).resolves.toBeUndefined();
+
+    // The failure still surfaces where it always did.
+    expect(() => bulk.enqueue({ a: 3 })).toThrow(SQLiteBulkWriteError);
+    await expect(bulk.close()).rejects.toBeInstanceOf(SQLiteBulkWriteError);
+  });
+
+  // Falsifiable, verified: drop the abort listener that releases the waiter and
+  // this fails at the release assertion — `watch()` polls a flag, so the test
+  // reports rather than hanging. What would hang is the real producer: parked on
+  // a pool that never frees a worker, it could not be abandoned, which is the
+  // hole ABORT-1 paid for three times.
+  it('releases a waiting enqueue() when the signal fires', async () => {
+    const { deps } = gatedRecorder();
+    const { bulkWrite } = bulkFactory(2, deps);
+    const controller = new AbortController();
+    const reason = new Error('load abandoned');
+    const bulk = bulkWrite('t', ['a'], {
+      queueSize: 1,
+      signal: controller.signal,
+    });
+
+    bulk.enqueue({ a: 1 });
+    const waiting = watch(bulk.enqueue({ a: 2 })); // flushes, never settles
+    await ticks();
+    expect(waiting()).toBe(false);
+
+    controller.abort(reason);
+    await ticks();
+    expect(waiting()).toBe(true);
+
+    expect(() => bulk.enqueue({ a: 3 })).toThrow(reason);
+  });
+
+  // Falsifiable, verified: drop `queueSize` from the bulkWrite() call inside
+  // output() and this is the ONLY test that goes red. One forwarded field, one
+  // pin — it is the kind of line a refactor loses in silence.
+  // Falsifiable, verified: drop the `Math.max(1, …)` around queueSize and this
+  // fails at the last assertion — with a cap of 0 the release condition
+  // `queuedRows < queueSize` is never true, so the producer is parked for ever.
+  it('treats a cap below one as one', async () => {
+    const { deps, settleOne } = gatedRecorder();
+    const { bulkWrite } = bulkFactory(2, deps);
+    const bulk = bulkWrite('t', ['a'], { queueSize: 0 });
+
+    bulk.enqueue({ a: 1 });
+    const second = watch(bulk.enqueue({ a: 2 })); // flushes 2 rows
+    await ticks();
+    expect(second()).toBe(false);
+
+    settleOne();
+    await ticks();
+    expect(second()).toBe(true);
+  });
+
+  it('applies the cap to output() as well', async () => {
+    const { deps } = gatedRecorder();
+    const { output } = bulkFactory(2, deps);
+    const out = output('products', { a: 'INTEGER' }, { queueSize: 1 });
+
+    const first = watch(out.enqueue({ a: 1 }));
+    const second = watch(out.enqueue({ a: 2 }));
+    await ticks();
+
+    expect(first()).toBe(true);
+    expect(second()).toBe(false);
+  });
+});
