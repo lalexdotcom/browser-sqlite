@@ -321,3 +321,35 @@ measured 2.15× at 24 and 2.26× at 96 on the same VFS, which is why the ratio i
 held to survive the change: it is normalised, and 96 against a pool of 4
 saturates it either way. The 96-read numbers are not in this table — the six
 runs above predate that commit.
+
+## Last-writer routing — 2026-08-27, throwaway Playwright harness against `dist/`
+
+**The change is proven as a count, not as a duration.** After a write, the next read is
+routed to the worker that wrote and pays no `BARRIER_SQL` statement — asserted by
+`tests/browser/barrier.test.ts` on Chromium **and** on Firefox, and falsified by deleting
+the branch in `takeAvailable`.
+
+**No latency gain is measurable on either engine.** One run per configuration, 200
+write→read iterations, `OPFSAdaptiveVFS`.
+
+| | Chromium before | Chromium after | Firefox before | Firefox after |
+|---|---|---|---|---|
+| read after write, p50 | 1.1 ms | 1.1 ms | 1 ms | 1 ms |
+| read after write, mean | 1.115 | 1.107 | 0.750 | 0.705 |
+| same, pool 4, mean | 1.208 | 1.131 | 0.755 | 0.780 |
+| bulkWrite 10 k, pool 2 | 52.6 ms | 49.1 ms | 43 ms | 43 ms |
+| bulkWrite 10 k, pool 4 | 52.5 ms | 51.8 ms | 50 ms | 56 ms |
+
+Differences go both ways between pool sizes, which is what noise looks like at n=1. **Do
+not cite any of these as a gain.**
+
+**Two instrument facts worth more than the table.** Firefox reduces `performance.now()` to
+1 ms precision by default, so p50 and p95 come back as integers: a sub-millisecond effect
+cannot be timed there at all, whatever the run count. And on this machine the saved worker
+round trip is worth about 0.2 ms against a 1.1 ms read — inside the noise of any single
+run. **For an effect this size, count the round trips; do not time them.** That is what the
+barrier test does, and it is the only reason anything could be claimed at all.
+
+The harness itself was throwaway and is not in the repository: it wrote its own page into
+`_site/` and drove it with Playwright. Re-creating it is fifteen minutes; the shape is in
+the merge commit of `feat/last-writer-routing`.

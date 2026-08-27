@@ -226,3 +226,31 @@ nine conformance entries.
 A second cost, paid separately: the long-running question "accept it, or design an async
 probe?" was about a defence that did not exist — `missingFeature` skips `UNPROBEABLE`
 features, so that `requires` had never blocked anything at construction on any engine.
+
+## For a sub-millisecond effect, count the round trips — 2026-08-27
+
+`lastWriterIndex` saves one worker round trip per read that follows a write. Timed on this
+machine it is worth about 0.2 ms against a 1.1 ms read, so a before/after harness returned
+differences that went **both ways** between pool sizes — the signature of noise, not of a
+gain. Firefox made it worse in a way no run count fixes: it reduces `performance.now()` to
+1 ms precision by default, five times the effect, so p50 and p95 come back as integers.
+
+What settled it was a **counter**: the barrier test asserts that the read pays no
+`BARRIER_SQL` statement, which is deterministic, engine-independent, and falsifiable by
+deleting the branch. The claim shipped as "one round trip fewer", never as "faster", and
+nothing about it reached the README.
+
+**Before building a timing harness, ask whether the thing being changed can be counted
+instead.** A count survives a fast machine, a clamped timer and an n of one; a duration
+survives none of them.
+
+## Use every platform you have before announcing a measurement — 2026-08-27
+
+The same session installed a Firefox selector for the browser suite, then measured
+`lastWriterIndex` on Chromium alone and *offered* Firefox as a follow-up. The user's
+correction was blunt and right. Firefox then produced the finding that mattered — the 1 ms
+timer clamp — which Chromium alone could never have shown.
+
+**Two engines are installed here** (`~/.cache/ms-playwright`: chromium, firefox, webkit;
+WebKit is useless for OPFS on Linux). A measurement announced from one of the two is half a
+measurement.

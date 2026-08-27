@@ -25,7 +25,7 @@ obligations and unmeasured ground.
 
 Not history: the numbers a regression is detected against.
 
-`tsc --noEmit` clean · `pnpm build` clean · **405 tests, 0 failed files** ·
+`tsc --noEmit` clean · `pnpm build` clean · **410 tests, 0 failed files** ·
 conformance **73 passed / 12 skipped on Chromium and the same on Firefox** ·
 **consumer smoke 24/24** · `scripts/bench/check.mjs chromium --all` OK, 22 pairs,
 zero `not-run` · biome 13 warnings, none in recently touched files ·

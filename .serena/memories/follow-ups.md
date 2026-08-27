@@ -204,12 +204,10 @@ on it**, and delete it the moment it is done rather than leaving it to be redisc
 - **Every worker compiles its own WASM copy** (1.23 MB × `poolSize`).
   `WebAssembly.Module` is structured-cloneable — compile once, `postMessage` it.
 - Per-row `Object.fromEntries(cols.map(...))` in the hottest loop.
-- **The one read-side idea worth measuring (user, 2026-08-21): prefer the LAST WRITER for
-  reads, then lowest index.** A `lastWriterIndex` used purely as a freshness hint — no
-  exclusivity, no effect on who may write, correctness carried by the barrier alone.
-  Distinct from the shape the user rejected in wave 3 (reads preferring the *designated*
-  writer), which was a correctness crutch. The prelude census in `mem:measurements` says
-  there is room to recover something on mixed loads.
+- ~~Prefer the last writer for reads~~ — **shipped 2026-08-27** (`feat/last-writer-routing`),
+  extended to new write designations as well. The routing works, proven as a barrier-statement
+  count on both engines; no latency gain is measurable on either, and `mem:measurements` says
+  why the timer is the wrong instrument for an effect this size.
 
 ## A cross-tab lead, recorded unverified
 
