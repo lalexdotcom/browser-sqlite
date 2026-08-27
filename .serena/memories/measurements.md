@@ -248,11 +248,23 @@ So it degrades exactly like `OPFSAdaptiveVFS` without `readwrite-unsafe`, which 
 `degradesWithout` as the right declaration — and means it offers a Safari user nothing over
 the recommended default.
 
-**The one real failure: `OPFSWriteAheadVFS/sync :: survives-reopen` times out on Safari
-27**, on macOS *and* iPadOS, and not on 26.5.2 or 26.6. It is the only non-skipped,
-non-`blocked` failure in the whole campaign apart from `AccessHandlePoolVFS/opens`, which is
-residue (below). **One run per device** — reproduced across two devices, but the mechanism
-is unexamined.
+**A second round, twenty minutes later, changed what the first round appeared to say.** The
+device's site data was cleared between them, and each device was re-run.
+
+- **`OPFSWriteAheadVFS/sync :: survives-reopen` did not reproduce.** `timeout` then `pass`
+  on macOS 27.0, and `timeout` then `pass` on iPadOS 27.0. One occurrence in two runs on
+  each device — a flake, not the defect the first round looked like. See REOPEN-1.
+- **`AccessHandlePoolVFS` still fails at `opens` on iOS 26.6, on a cleared root.** Same bare
+  `sqlite3_open_v2`, both builds, before and after. macOS 26.5.2, macOS 27.0 and iPadOS
+  27.0 pass. So it is neither residue nor the engine version: it is the iPhone. See
+  IOS-AHP-1.
+- **`no-read-inside-transaction` flipped in both directions again**, twenty minutes apart:
+  `OPFSAdaptiveVFS` `blocked` → `pass` on two devices, `OPFSCoopSyncVFS` `pass` → `blocked`
+  on iOS. FLAKE-ROW-1's n≥3 rule keeps earning itself.
+
+**The lesson the second round taught: one run per device reads like reproduction when two
+devices agree, and it is not.** Both REOPEN-1 and the residue attribution were written from
+a single run each and both were wrong.
 
 ## Numbers that are one observation, not a measurement
 
