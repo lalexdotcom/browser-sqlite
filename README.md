@@ -54,7 +54,7 @@ const db = createSQLiteClient('myapp.sqlite', {
 
 `createSQLiteClient` spawns `poolSize` Web Worker threads immediately. Workers reach READY state asynchronously — queries made before workers are ready are queued automatically.
 
-Every option is listed under [Options](#options).
+Every option is listed under [Options](#options). `vfs` is the one with no default — [VFS Selection](#vfs-selection) is how to choose it, and a database written through one VFS is not readable through another.
 
 ### *client*.read
 
