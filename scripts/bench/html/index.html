@@ -78,12 +78,31 @@
       input[data-vfs]:indeterminate { outline: 2px solid currentColor; outline-offset: 1px; }
       button { font: inherit; padding: 0.3rem 0.8rem; }
       #results-wrap { overflow-x: auto; }
-      #results { border-collapse: collapse; font-size: 0.85rem; }
+      /* `separate`, not `collapse`, and the sticky first column is the whole
+         reason. Under `collapse` the borders belong to the TABLE rather than to
+         the cells, so a cell that sticks scrolls away from its own borders and
+         arrives bare — and one pixel to the left, because the collapsed border
+         it used to share no longer occupies that column. Each cell owning its
+         edges costs one rule and makes the problem disappear instead of being
+         painted over. */
+      #results { border-collapse: separate; border-spacing: 0; font-size: 0.85rem; }
       #results th, #results td {
-        border: 1px solid var(--border); padding: 0.25rem 0.5rem;
+        border-right: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+        padding: 0.25rem 0.5rem;
         text-align: left; white-space: nowrap;
       }
-      #results thead th { position: sticky; top: 0; background: Canvas; }
+      #results tr > :first-child { border-left: 1px solid var(--border); }
+      #results thead th { border-top: 1px solid var(--border); }
+      #results thead th { position: sticky; top: 0; background: Canvas; z-index: 1; }
+      /* With a dozen (vfs, build) columns the right-hand half is unreadable
+         once the label naming the row has scrolled away. The corner cell is
+         sticky on both axes and outranks the two edges it belongs to. */
+      #results tbody th:first-child, #results thead th:first-child {
+        position: sticky; left: 0; background: Canvas;
+      }
+      #results tbody th:first-child { z-index: 1; }
+      #results thead th:first-child { z-index: 2; }
       #results th small { display: block; font-weight: 400; opacity: 0.7; }
       #results tbody th { font-weight: 400; }
       .pending { opacity: 0.4; }
@@ -791,12 +810,30 @@
         });
 
       /**
+       * A VFS stores under its own class name: AccessHandlePoolVFS keeps an
+       * OPFS directory called `AccessHandlePoolVFS`, IDBMirrorVFS an IndexedDB
+       * database called `IDBMirrorVFS`. Derived from the table rather than
+       * listed, so a new VFS is covered with no edit here.
+       *
+       * `remember` can only record what one of our own runs created. Residue
+       * older than that mechanism was never recorded, does not start with
+       * `bench-`, and is therefore invisible to every pass — which is exactly
+       * the state that had AccessHandlePoolVFS fail at `opens` on the same
+       * device on 2026-08-25 and again, byte for byte, on 2026-08-27.
+       */
+      const vfsOwnedNames = (kind) =>
+        Object.entries(VFS_CAPABILITIES)
+          .filter(([, cap]) => cap.storage === kind)
+          .map(([vfs]) => vfs);
+
+      /**
        * Runs before a bench, so it starts from a floor it established itself —
        * chaining two runs must not measure the first one's leftovers. Removes
-       * three things and nothing else: our own `bench-` databases and their
+       * four things and nothing else: our own `bench-` databases and their
        * `-journal` / `-wal` siblings, whose prefix makes them unambiguously
-       * ours; anything a previous run of ours recorded as its own; and the
-       * IndexedDB stores it recorded the same way.
+       * ours; anything a previous run of ours recorded as its own; the
+       * IndexedDB stores it recorded the same way; and the per-VFS stores
+       * above, which this page is about to exercise anyway.
        */
       const sweepBeforeRun = async () => {
         const all = owned();
@@ -805,9 +842,12 @@
             const root = await navigator.storage.getDirectory();
             const names = [];
             for await (const name of root.keys()) names.push(name);
+            const vfsOpfs = vfsOwnedNames('opfs');
             for (const name of names) {
               const isOurs =
-                name.startsWith('bench-') || (all.opfs ?? []).includes(name);
+                name.startsWith('bench-') ||
+                (all.opfs ?? []).includes(name) ||
+                vfsOpfs.includes(name);
               if (!isOurs) continue;
               try {
                 await root.removeEntry(name, { recursive: true });
@@ -820,7 +860,10 @@
             // No iteration: the prefix sweep is not available either.
           }
         }
-        for (const name of all.idb ?? []) {
+        for (const name of new Set([
+          ...(all.idb ?? []),
+          ...vfsOwnedNames('indexeddb'),
+        ])) {
           await deleteIdb(name);
           forget('idb', name);
         }

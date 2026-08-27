@@ -73,15 +73,39 @@ on both `sync` and `async`. It read as a regression from a wa-sqlite patch commi
 minutes earlier; it was residue, and deleting the directory by hand restored it with no
 code change. Corroborated on an iOS device where `/sync` went 5/7 → 0/7 between two runs
 while `/async` was already at 0/7: **the failure migrates from build to build as the pool
-fills**, the signature six-slot exhaustion predicts and no engine defect does. Two earlier
-isolated `opens` failures — `AccessHandlePoolVFS/async` on iOS 26 and `/jspi` on macOS
-Chromium 150 — are **very likely the same exhaustion**; re-run on a swept root before
-recording either as real.
+fills**, the signature six-slot exhaustion predicts and no engine defect does. **The iOS attribution held, and the fix is field-verified — 2026-08-27.** This entry said
+the isolated `AccessHandlePoolVFS` `opens` failures were "very likely the same exhaustion"
+and prescribed a re-run on a swept root. Three runs on one iPhone, an hour apart:
+`fail, fail, pass`. The pass came on the first page served with the automatic sweep, and
+the two failures include one taken **after the device's site data was cleared by hand** —
+so the manual clearing never reached OPFS, which is why the middle run looked like a
+refutation. It was not. `AccessHandlePoolVFS/jspi` on macOS Chromium 150 also passes now,
+on all three builds, which retires the other isolated failure this entry was holding.
 
-*Cleanup fixes in rising order of cost:* run `cleanupOpfsResidue` per **column** rather
-than once per run; give IndexedDB the same before/after diff the OPFS root gets; or have
-each VFS **declare the storage names it owns** — the only version that does not rely on
-diffing, and the one that composes with `deleteDatabase`.
+*Corrected twice on 2026-08-27, and the second correction is the true one.* The durable
+mechanism already exists and shipped in `76141b3`: `sweepBeforeRun` runs before every bench
+and removes anything prefixed `bench-` plus every name a previous run recorded as its own
+in `localStorage`, and `remember('opfs', name)` is written **before** the removal attempt,
+so a directory that resists removal is retried on the next run. Its own comment names this
+exact failure. `cleanupOpfsResidue`'s run-start diff is only the second half of the pair —
+reading it alone led to the wrong conclusion that per-column cleanup or per-VFS declaration
+were the only options.
+
+**The real gap was narrow: the mechanism cannot reach residue older than itself.** A
+directory created before `76141b3` was never recorded as ours and does not start with
+`bench-`, so both passes skip it for ever. That is why iOS 26.6 fails identically on
+2026-08-25 and 2026-08-27 rather than drifting.
+
+**Closed 2026-08-27** by having `sweepBeforeRun` also reclaim names taken from
+`VFS_CAPABILITIES` itself — the OPFS directory or IndexedDB database a VFS keeps under its
+own class name, derived from the `storage` field so a new VFS needs no edit. Legacy residue
+and any future gap are both covered, with no device-side intervention.
+
+*What stays open here is the library-side question, not the bench one:* a VFS should
+**declare the storage names it owns** so `deleteDatabase` can delete by declaration rather
+than by difference. IndexedDB needs it most — it has no equivalent diff at all, and
+`indexedDB.deleteDatabase(<VFS name>)` would take every other consumer's data on the
+origin with it.
 
 ### `wasmUrl`, optional — approved 2026-08-18, never built
 
@@ -149,6 +173,26 @@ Linux WebKit having no OPFS at all. Narrow the entry from "does not work off Chr
 "not measured on Safari", and add this VFS to the owed Safari 27 / iOS 26 / iPadOS 27
 campaign. The degradation itself is also unmeasured — the read-burst ratio would say
 whether it degrades like `OPFSAdaptiveVFS` or not at all.
+
+### REOPEN-1 — `OPFSWriteAheadVFS/sync :: survives-reopen`, a flake at n=3
+
+| device | runs |
+|---|---|
+| macOS Safari 27.0 | `timeout` `pass` `pass` |
+| iPadOS Safari 27.0 | `timeout` `pass` `pass` |
+| macOS Safari 26.5.2 | `pass` `pass` |
+| iOS Safari 26.6 | `pass` `pass` `pass` |
+| macOS Chrome 150 | `pass` |
+
+One occurrence in three runs on each of the two devices that showed it, all 2026-08-27.
+**Opened as a defect on the strength of "reproduced on two devices", which was two devices
+at one run each and distinguishes nothing.** Both timeouts fell on the first run of the day
+on their device — recorded as an observation, not a hypothesis: macOS's second run passed
+while its root was in all likelihood still dirty.
+
+Not worth a mechanism at this rate. If it is ever chased, note the prior question:
+`OPFSWriteAheadVFS` gives no concurrency on Safari (`mem:measurements`), so whether it
+should be recommended there at all comes first.
 
 ## Evidence owed
 

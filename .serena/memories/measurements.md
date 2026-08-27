@@ -223,6 +223,52 @@ Parcel 310 kB from the same source, each minifying it themselves. The beneficiar
 no-bundler path and `dist/` copied to a CDN. Source maps carry `sourcesContent` (15/15 and
 28/28) and cost nothing at runtime — a browser fetches them only with devtools open.
 
+## Safari campaign — 2026-08-27, real devices, `feat/safari-device-campaign` on Pages
+
+Four exports in `.bench/`: iOS Safari 26.6, macOS Safari 26.5.2, macOS Safari 27.0,
+iPadOS Safari 27.0. All four report `readwriteUnsafe: false`. **This is the first campaign
+that could measure `OPFSWriteAheadVFS` at all** — the page carried the same
+`cap.requires.includes('readwrite-unsafe')` skip the conformance suite did, so the column
+was invisible until `70b2b7a`.
+
+**It opens and serves on every one of them**, all builds, all six invariants — with the one
+exception below. `no-read-inside-transaction` reads `blocked`, but so does it for **seven
+of the nine VFS**, `OPFSAdaptiveVFS` included: that is the reduced-mode signature FLAKE-ROW-1
+describes, not a property of this VFS.
+
+**Read-burst concurrency ≈ 1.00 — there is none.**
+
+| device | `OPFSWriteAheadVFS` | `OPFSAdaptiveVFS` (control) |
+|---|---|---|
+| iOS 26.6 | 1.00 | 0.92 |
+| macOS 27.0 (`jspi`) | 1.00 | 1.00 |
+| iPadOS 27.0 | 1.00–1.20 | 0.98–1.00 |
+
+So it degrades exactly like `OPFSAdaptiveVFS` without `readwrite-unsafe`, which confirms
+`degradesWithout` as the right declaration — and means it offers a Safari user nothing over
+the recommended default.
+
+**Three rounds over ninety minutes settled what one round could not.** Round 2 followed a
+manual clearing of the device's site data; round 3 was the first served by the page
+carrying the automatic VFS-name sweep (`a82f0ee`).
+
+- **`AccessHandlePoolVFS` on iOS 26.6: `fail`, `fail`, `pass`.** It was residue after all.
+  The manual clearing never reached OPFS — which is exactly why round 2 read as a
+  refutation and was not. Round 3 is the sweep working on a real device, on the case it was
+  written for. `AccessHandlePoolVFS/jspi` on macOS Chromium 150 passes too, retiring the
+  other isolated `opens` failure this project was carrying.
+- **`OPFSWriteAheadVFS/sync :: survives-reopen`: one `timeout` in three runs**, on macOS
+  27.0 and on iPadOS 27.0, `pass` everywhere else including all three iOS runs and macOS
+  Chrome 150. A flake at n=3, not the defect round 1 looked like. See REOPEN-1.
+- **`no-read-inside-transaction` flipped in both directions between rounds**, on three VFS.
+  FLAKE-ROW-1's n≥3 rule keeps earning itself.
+
+**What the three rounds taught, and it is not "run more":** two conclusions were written
+from one run per device and both were wrong, in opposite directions. The first said a flake
+was a defect. The second said a defect was not residue — resting on a manual clearing whose
+effect was never verified. **A manual step you did not observe is not evidence**; the page
+could have reported whether the OPFS root was empty, and nobody asked it.
+
 ## Numbers that are one observation, not a measurement
 
 - **Android 145 vs 151 differ by a factor 2.6** on bulk insert, same emulator. Regression
@@ -232,6 +278,12 @@ no-bundler path and `dist/` copied to a CDN. Source maps carry `sourcesContent` 
   crash. The init path is short — the two candidates are the un-timeout'd
   `await probeUnsafeHandles()` and the unbounded `while (t1 === t0)` clock spin. Triage:
   banner after 8 s → the probe; frozen page → the spin.
+- **`OPFSWriteAheadVFS`'s `bulk-insert-10k` lands at ~1050 ms on macOS Safari, and nowhere
+  else.** 1046 and 1049 ms on 26.5.2, 1048 and 1053 ms on 27.0, for the `sync` and `async`
+  builds — against 58 and 76 ms for `OPFSAdaptiveVFS` on the same devices, and **41 ms for
+  its own `jspi` build**. Four values inside 7 ms of each other is a timer, not a
+  throughput. iOS and iPadOS are unremarkable (42–150 ms). One run per device; nothing has
+  been traced.
 - **`navigator.storage.estimate().usage` reported 1.42 GB** on an origin whose whole OPFS
   root weighed ~1.6 MB. The IndexedDB `IDBMirrorVFS` store carried the rest. `usage` is
   origin-wide, not OPFS-wide.
