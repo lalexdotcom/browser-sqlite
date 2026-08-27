@@ -181,8 +181,13 @@ export const VFS_CAPABILITIES = {
     persistent: true,
     memoryModel: 'page-cache',
     storage: 'opfs',
-    requires: ['opfs', 'readwrite-unsafe'],
-    degradesWithout: [],
+    // Measured on Firefox 2026-08-27, HAS_UNSAFE_HANDLES false: all three
+    // build pairs and all six invariants pass, concurrent writes included, at
+    // poolSize 1, 2 and 4. `requires` used to name readwrite-unsafe, which made
+    // the conformance suite skip the very pairs that would have falsified it.
+    // Safari is still unmeasured for this VFS — see `mem:follow-ups`.
+    requires: ['opfs'],
+    degradesWithout: ['readwrite-unsafe'],
   },
   OPFSCoopSyncVFS: {
     builds: ['sync', 'async', 'jspi'],
