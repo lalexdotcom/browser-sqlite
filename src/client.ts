@@ -32,7 +32,12 @@ import {
   type SQLiteVFS,
   VFS_CAPABILITIES,
 } from './types';
-import { assertReadable, normalizeDatabaseFile, renderPragmas } from './utils';
+import {
+  assertReadable,
+  normalizeDatabaseFile,
+  renderPragmas,
+  resolveWasmLocation,
+} from './utils';
 
 /**
  * SQLite client for browser environments using a pool of Web Workers.
@@ -81,6 +86,39 @@ export type CreateSQLiteClientOptions = {
    * @throws at construction when the build is not one the chosen VFS supports.
    */
   build?: SQLiteBuild;
+
+  /**
+   * Where the workers fetch their `.wasm` from. **An escape hatch, not a
+   * setting**: omit it and resolution is exactly what it was before this
+   * option existed — the file is taken from beside `worker.js`, which is where
+   * the package ships it and where every bundler emits it.
+   *
+   * Reach for it only when the `.wasm` have been separated from `worker.js`:
+   * assets moved by hand with no bundler, or a build whose emitted URL is
+   * wrong at runtime.
+   *
+   * A **string is a directory**, resolved against the page — relative
+   * (`'wasm/'`), absolute (`'/static/wasm'`) or a full URL. A missing trailing
+   * slash is added. The file name comes from wa-sqlite itself, so one base
+   * serves whichever `build` is loaded.
+   *
+   * A **callback names one file** and receives the resolved `build`, for a
+   * bundler-emitted asset whose name carries a content hash:
+   * ```ts
+   * import wasmUrl from 'browser-sqlite/dist/worker/wa-sqlite.wasm?url';
+   * createSQLiteClient('app.db', { vfs, wasmUrl: () => wasmUrl });
+   * ```
+   * It is called once, at construction, and its answer is reused by every
+   * worker and every restart.
+   *
+   * Serving the `.wasm` from another origin has two requirements beyond this
+   * option, both enforced by the browser: the response needs CORS
+   * (`Access-Control-Allow-Origin`), since the glue fetches it, and it must
+   * carry `Content-Type: application/wasm` for streaming compilation.
+   *
+   * @throws at construction when the value cannot be parsed as a URL.
+   */
+  wasmUrl?: string | ((build: SQLiteBuild) => string);
 
   /**
    * SQLite PRAGMAs applied to each worker's database connection on open.
@@ -216,6 +254,11 @@ export const createSQLiteClient = (
       `${vfs} cannot run on the '${build}' build. Supported: ${capability.builds.join(', ')}.`,
     );
   }
+
+  // Resolved once, here, and reused by every worker in the pool and by every
+  // restart — a callback must not be re-entered per slot. Undefined when the
+  // option was not given, which is what leaves the worker's resolution alone.
+  const wasm = resolveWasmLocation(clientOptions.wasmUrl, build, location.href);
 
   if (capability.maxPoolSize !== null && poolSize > capability.maxPoolSize) {
     throw new SQLiteError(
@@ -604,6 +647,7 @@ export const createSQLiteClient = (
       file: dbFile,
       vfs,
       build,
+      wasm,
       pragmas: clientOptions.pragmas,
       onDeath: handleDeath,
       onServed: (served) => {

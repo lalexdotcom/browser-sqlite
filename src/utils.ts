@@ -1,4 +1,5 @@
 import { SQLiteError } from './errors';
+import type { SQLiteBuild, WasmLocation } from './types';
 
 export const sqlParams = () => {
   const sqlParamsMap = new Map<any, number>();
@@ -203,3 +204,53 @@ export const renderPragmas = (pragmas: Record<string, string>): string[] =>
  */
 export const normalizeDatabaseFile = (file: string): string =>
   new URL(file, 'file://').pathname.replace(/^\//, '');
+
+/**
+ * Turns the `wasmUrl` client option into the absolute location posted in the
+ * `open` message, or `undefined` when the option was not given.
+ *
+ * `undefined` is the load-bearing case: the worker sets Emscripten's
+ * `locateFile` only when it receives a location, and `findWasmBinary` takes its
+ * `new URL('wa-sqlite.wasm', import.meta.url)` branch whenever `locateFile` is
+ * absent. So an omitted option leaves resolution byte-for-byte as it was
+ * before this option existed — which is the entire contract of the escape
+ * hatch.
+ *
+ * Resolution happens **here**, on the client, against the page: what the
+ * consumer writes means what it means from the page they wrote it on, not from
+ * the worker's own directory one level down. The callback is therefore called
+ * once, at client construction, before any worker exists — its result is
+ * reused by every worker in the pool and by every restart.
+ *
+ * A string is a **directory** and gets its missing trailing slash back before
+ * resolution: URL resolution treats a last segment without a slash as a
+ * document and replaces it, so `'/static/wasm'` would otherwise silently mean
+ * `/static/`. A callback names a **file**, so nothing is appended to it.
+ *
+ * @throws `SQLiteError('INVALID_OPTION')` when the value cannot be parsed as a
+ * URL — synchronously, at construction, rather than as an opaque open failure
+ * from a worker that could not fetch its module.
+ */
+export const resolveWasmLocation = (
+  wasmUrl: string | ((build: SQLiteBuild) => string) | undefined,
+  build: SQLiteBuild,
+  baseHref: string,
+): WasmLocation | undefined => {
+  if (wasmUrl === undefined) return undefined;
+
+  const isCallback = typeof wasmUrl === 'function';
+  const raw = isCallback ? wasmUrl(build) : wasmUrl;
+  const value = isCallback || raw.endsWith('/') ? raw : `${raw}/`;
+
+  let href: string;
+  try {
+    href = new URL(value, baseHref).href;
+  } catch {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      `wasmUrl could not be parsed as a URL: ${JSON.stringify(raw)}. Pass a directory (relative, absolute, or a full URL), or a callback returning the full URL of one .wasm file.`,
+    );
+  }
+
+  return isCallback ? { file: href } : { base: href };
+};

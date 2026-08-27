@@ -24,6 +24,7 @@ import {
   defaultBuildFor,
   type SQLiteBuild,
   type SQLiteVFS,
+  type WasmLocation,
   type WorkerMessageData,
 } from '../types';
 import { renderPragmas } from '../utils';
@@ -117,8 +118,34 @@ let closing = false;
 type OpenOptions = {
   vfs: SQLiteVFS;
   build?: SQLiteBuild;
+  wasm?: WasmLocation;
   pragmas?: Record<string, string>;
 };
+
+/**
+ * The Emscripten module argument carrying the consumer's `wasmUrl`, or
+ * `undefined` when they gave none.
+ *
+ * `undefined` is not a detail. `findWasmBinary` reads
+ * `if (Module["locateFile"])` and otherwise takes its
+ * `new URL('wa-sqlite.wasm', import.meta.url)` branch — the branch a bundler
+ * rewrites to the hashed asset it emitted. Setting `locateFile`
+ * unconditionally, even to a faithful pass-through, would leave that branch
+ * for a path built from the worker's own directory, where no hashed asset
+ * exists. Every bundled consumer would break to serve a hand-moved one.
+ *
+ * The two forms differ in who names the file: with a `base`, the glue passes
+ * its own file name and each build finds its own `.wasm` from one directory;
+ * with a `file`, the caller has named a specific build's asset, so the glue's
+ * name is discarded.
+ */
+const wasmModuleArg = (wasm: WasmLocation | undefined) =>
+  wasm === undefined
+    ? undefined
+    : {
+        locateFile:
+          'base' in wasm ? (path: string) => wasm.base + path : () => wasm.file,
+      };
 
 /**
  * Called once per worker thread when the client sends the `open` message.
@@ -139,13 +166,13 @@ const open = (file: string, options: OpenOptions) => {
     throw new Error('DB already opened');
   }
 
-  const { vfs, pragmas = {} } = options;
+  const { vfs, wasm, pragmas = {} } = options;
   const build = options.build ?? defaultBuildFor(vfs);
 
   const vfsConfig = VFSConfigs[vfs];
 
   openedDB = WA_SQLITE_BUILDS[build]()
-    .then(({ default: factory }) => factory())
+    .then(({ default: factory }) => factory(wasmModuleArg(wasm)))
     .then((module) => {
       const sqlite = SQLite.Factory(module);
       return vfsConfig.fs().then((vfsModule) => ({

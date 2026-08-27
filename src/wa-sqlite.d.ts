@@ -10,6 +10,14 @@ type WASQLiteStmt = any;
 /** The compiled WASM module instance passed to SQLite.Factory() */
 type WASQLiteModule = {};
 
+/**
+ * Emscripten's module argument. Only `locateFile` is used, and only when the
+ * consumer passed `wasmUrl` — its mere presence changes which branch
+ * `findWasmBinary` takes, so it must stay optional here and be omitted rather
+ * than defaulted. See `wasmModuleArg` in `src/worker/worker.ts`.
+ */
+type WASQLiteModuleArg = { locateFile?: (path: string) => string };
+
 /** The SQLite API surface returned by SQLite.Factory(module) */
 interface SQLiteAPI {
   open_v2(filename: string): Promise<WASQLiteDB>;
@@ -36,17 +44,17 @@ declare module 'wa-sqlite/src/sqlite-constants.js' {
 // ── WASM factory modules (.mjs) ────────────────────────────────────────────
 // Each default export is a factory function that resolves to the WASM module.
 declare module 'wa-sqlite/dist/wa-sqlite.mjs' {
-  const factory: () => Promise<WASQLiteModule>;
+  const factory: (moduleArg?: WASQLiteModuleArg) => Promise<WASQLiteModule>;
   export default factory;
 }
 
 declare module 'wa-sqlite/dist/wa-sqlite-async.mjs' {
-  const factory: () => Promise<WASQLiteModule>;
+  const factory: (moduleArg?: WASQLiteModuleArg) => Promise<WASQLiteModule>;
   export default factory;
 }
 
 declare module 'wa-sqlite/dist/wa-sqlite-jspi.mjs' {
-  const factory: () => Promise<WASQLiteModule>;
+  const factory: (moduleArg?: WASQLiteModuleArg) => Promise<WASQLiteModule>;
   export default factory;
 }
 
