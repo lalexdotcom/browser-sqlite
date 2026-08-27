@@ -414,8 +414,10 @@ describe('bulkWrite abort (ABORT-1)', () => {
     controller.abort();
 
     await expect(bulk.close()).rejects.toMatchObject({ name: 'AbortError' });
-    // Falsifiable: pass the signal to the inner write() and a second INSERT
-    // appears here, aborted mid-statement instead of never attempted.
+    // Falsifiable: drop the pre-write abort check and a second INSERT appears
+    // here — issued, then aborted mid-flight, rather than never attempted. The
+    // signal does reach the write; this asserts that a batch the abort beat to
+    // the start pays no round trip at all.
     expect(sql).toHaveLength(1);
   });
 
@@ -480,5 +482,57 @@ describe('bulkWrite abort (ABORT-1)', () => {
     // publication, previous target untouched.
     expect(sql.some((s) => s.includes('"report"'))).toBe(false);
     expect(sql.some((s) => s.startsWith('BEGIN'))).toBe(false);
+  });
+});
+
+describe('bulkWrite abort with a stalled batch (ABORT-1 regression)', () => {
+  /**
+   * A write that never settles — what OPFSCoopSyncVFS does on an engine
+   * without `readwrite-unsafe`, where one exclusive access handle rotates
+   * between workers and a hand-over may never arrive.
+   *
+   * Falsifiable: drop the signal from the inner write() and this hangs until
+   * the test timeout instead of rejecting, which is exactly what the benchmark
+   * page did on macOS Safari 27.0.
+   */
+  it('rejects close() even when a batch is already in flight', async () => {
+    const stalled = new Promise<never>(() => {});
+    const write = (_sql: string, _params?: any[], options?: any) =>
+      Promise.race([
+        stalled,
+        new Promise((_, reject) => {
+          options?.signal?.addEventListener('abort', () =>
+            reject(options.signal.reason),
+          );
+        }),
+      ]) as Promise<{ result: any[]; affected: number }>;
+    const read = async () => [] as any[];
+    const transaction = async <T>(cb: (db: any) => Promise<T>) =>
+      cb({ write: async () => ({ result: [], affected: 0 }) });
+
+    const { bulkWrite } = createBulk({
+      file: 'app.db',
+      locks: noOpLocks,
+      logger: noopLogger,
+      maxVariables: 2,
+    })({ read, write, transaction } as any);
+
+    const controller = new AbortController();
+    const bulk = bulkWrite('t', ['a'], { signal: controller.signal });
+    bulk.enqueue({ a: 1 });
+    bulk.enqueue({ a: 2 }); // flushes; the batch stalls inside write()
+
+    const closing = bulk.close();
+    await new Promise((r) => setTimeout(r, 0)); // let the batch reach write()
+    controller.abort();
+
+    await expect(
+      Promise.race([
+        closing,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('close() never settled')), 1000),
+        ),
+      ]),
+    ).rejects.toMatchObject({ name: 'AbortError' });
   });
 });

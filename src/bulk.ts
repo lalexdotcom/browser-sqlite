@@ -131,29 +131,40 @@ export const createBulk = (shared: {
             rowsNotWritten += toInsert.length;
             return currentAffected;
           }
-          // The only abort check, and it sits BEFORE the write rather than
-          // inside it. Passing the signal down to `write()` would abort a batch
-          // mid-statement, and the catch below would record that as `failure` —
-          // so close() would reject with SQLiteBulkWriteError instead of the
-          // caller's own reason, which is the contract every other abortable
-          // method honours (`api.ts`: "Rejects with signal.reason").
-          //
-          // Stopping between batches is also the only granularity that means
-          // anything: a multi-row INSERT is statement-atomic, so an abort
-          // landing inside one either lets it commit whole or wastes it whole.
+          // Skips a batch the abort beat to the start, so no round trip is
+          // paid for rows that will not be written.
           if (signal?.aborted) {
             rowsNotWritten += toInsert.length;
             return currentAffected;
           }
           try {
             if (before) await before;
+            // The signal goes DOWN to the write. An earlier version withheld
+            // it, reasoning that an aborted batch would be caught below and
+            // recorded as `failure`, making close() reject with
+            // SQLiteBulkWriteError instead of the caller's reason. The premise
+            // was right and the conclusion wrong: the catch is ours, and it
+            // tells the two apart.
+            //
+            // Withholding it cost a hang. A batch already in flight had no way
+            // to be rejected, so a write that never settles — OPFSCoopSyncVFS
+            // on an engine without `readwrite-unsafe`, waiting on a handle
+            // hand-over that never comes — left this chain pending for ever,
+            // and close() with it. Observed on macOS Safari 27.0.
             const { affected } = await write(
               `INSERT INTO ${quoteIdent(table)} (${keys.map(quoteIdent).join(',')}) VALUES ${toInsert.map(() => `(${keys.map(() => '?')})`)}`,
               toInsert.flatMap((data) => keys.map((k) => data[k])),
+              { signal },
             );
             rowsWritten += toInsert.length;
             return currentAffected + affected;
           } catch (error) {
+            // An abort is not a failure. This branch is what keeps close()
+            // rejecting with `signal.reason` rather than SQLiteBulkWriteError.
+            if (signal?.aborted) {
+              rowsNotWritten += toInsert.length;
+              return currentAffected;
+            }
             failure = error;
             // A multi-row INSERT is statement-atomic: nothing of this batch landed.
             rowsNotWritten += toInsert.length;
