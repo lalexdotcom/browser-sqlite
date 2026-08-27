@@ -36,6 +36,8 @@ The `.wasm` are read from beside `worker.js`. If a build separates them, or you 
 
 ## Usage
 
+[createSQLiteClient](#createsqliteclient) · [*client*.read](#clientread) · [*client*.write](#clientwrite) · [*client*.stream](#clientstream) · [*client*.chunk](#clientchunk) · [*client*.first](#clientfirst) · [*client*.transaction](#clienttransaction) · [*client*.bulkWrite](#clientbulkwrite) · [*client*.output](#clientoutput) · [*client*.close](#clientclose) · [deleteDatabase](#deletedatabase)
+
 ### createSQLiteClient
 
 ```typescript
@@ -70,6 +72,13 @@ const users = await db.read<User>(
 
 Read queries are dispatched to any available worker, enabling concurrent reads.
 
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. |
+| `chunkSize` | `number` | `500` | Rows per chunk crossing the worker boundary. Back-pressure grants credits per chunk with a window of 2, so the worker may run up to `2 × chunkSize` rows ahead of the consumer. |
+
+On `read()` this is transport only — it still resolves with the whole array.
+
 ### *client*.write
 
 ```typescript
@@ -81,6 +90,10 @@ const { affected } = await db.write(
 ```
 
 Write queries are serialized through a dedicated writer worker — only one write executes at a time.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. |
 
 ### *client*.stream
 
@@ -94,6 +107,32 @@ for await (const row of db.stream<User>('SELECT * FROM large_table', [])) {
 `stream()` yields individual rows without buffering the full result set in memory.
 Use `chunk()` to iterate in batches: `for await (const rows of db.chunk(...))`.
 
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. |
+| `chunkSize` | `number` | `500` | Rows per chunk crossing the worker boundary. Back-pressure grants credits per chunk with a window of 2, so the worker may run up to `2 × chunkSize` rows ahead of the consumer. |
+
+On `stream()`, `chunkSize` is the only lever on how many rows are in flight.
+
+### *client*.chunk
+
+```typescript
+// Worker is held for the full generator lifetime — always exhaust or break.
+for await (const rows of db.chunk<User>('SELECT * FROM large_table', [])) {
+  processBatch(rows); // rows is User[]
+}
+```
+
+`chunk()` yields arrays instead of rows. Prefer it over `stream()` when the work
+is per-batch — one `INSERT` per chunk rather than per row.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. |
+| `chunkSize` | `number` | `500` | Rows per chunk crossing the worker boundary. Back-pressure grants credits per chunk with a window of 2, so the worker may run up to `2 × chunkSize` rows ahead of the consumer. |
+
+Here `chunkSize` is the batch size the consumer sees, not only a transport detail.
+
 ### *client*.first
 
 ```typescript
@@ -105,6 +144,12 @@ const user = await db.first<User>(
 ```
 
 `first()` returns the first result row, or `undefined` if no rows match. Use it for lookups by primary key or unique field.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. |
+
+`first()` stops the query after one row instead of draining the result set.
 
 ### *client*.transaction
 
@@ -124,6 +169,11 @@ rejects write statements; `{ autoCommit: false }` leaves the commit to you.
 
 `tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit` and `rollback`.
 
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `readOnly` | `boolean` | `false` | Rejects write statements with `READ_ONLY_TRANSACTION`, at the call rather than at the first flush. |
+| `autoCommit` | `boolean` | `true` | Commits when the callback resolves. Set it false to commit or roll back yourself. |
+
 ### *client*.bulkWrite
 
 ```typescript
@@ -142,6 +192,12 @@ multi-row INSERT is statement-atomic, so the failing batch wrote nothing.
 
 `bulkWrite()` is not atomic: batches are committed as they flush, so a failure leaves the rows already written in place. Call it on a `tx` if you need all-or-nothing.
 
+Pass `{ signal }` to abort a load. `close()` then rejects with `signal.reason`, and the abort lands **between** batches — never inside one, because a multi-row INSERT is statement-atomic. The batches already written stay written, for the same reason a failure leaves them: an abort stops the load, it does not undo it.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `signal` | `AbortSignal` | — | Aborts the load between batches. `close()` rejects with `signal.reason`. |
+
 ### *client*.output
 
 ```typescript
@@ -159,6 +215,13 @@ staging table and the swap happens atomically at `close()`, so **the previous
 table stays intact and fully populated until the new one is ready** — a reader
 querying mid-load sees the old data, never a half-filled table. A target that
 did not exist appears only at `close()`. Single-use, like `bulkWrite`.
+
+`output()` takes `{ signal }` too, and an aborted one is observationally a no-op: the staging table is dropped and nothing else is touched. No rename, no partial publication — whatever was in the target before is still there, whole.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `indexes` | `Index[]` | — | Indexes built after the swap, under their final names. A column name, an array of them, or `{ columns, unique }`. |
+| `signal` | `AbortSignal` | — | Aborts the load between batches. `close()` rejects with `signal.reason` and the target is untouched. |
 
 **Inside a transaction, `output()` costs more than it looks.** On its own it loads rows outside any transaction and holds the write lock only for the final swap. Called on a `tx`, the entire load runs inside your transaction — every other write, in this tab and in others, waits for it to finish.
 
@@ -189,6 +252,12 @@ Deleting a database that does not exist is not an error.
 What a VFS keeps for itself is left alone — the IndexedDB store shared by every database that VFS holds on this origin, and the `AccessHandlePoolVFS` directory whose files are its reusable capacity. The deleted database's own bytes are freed in both cases.
 
 Throws `SQLiteError` with code `BUSY` when the database is open or being opened, and `TIMEOUT` when the VFS cannot answer within 30 seconds — most often the same cause.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `vfs` | `SQLiteVFS` | — (required) | The VFS the database was created with. Deleting through another one deletes nothing and reports success. |
+| `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite build to load. It does not affect where the database lives — only which builds can instantiate the VFS. |
+| `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Same meaning as on [`createSQLiteClient`](#options). A deployment that needs it to open a database needs it to delete one. |
 
 ## Options
 

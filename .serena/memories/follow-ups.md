@@ -107,6 +107,32 @@ than by difference. IndexedDB needs it most — it has no equivalent diff at all
 `indexedDB.deleteDatabase(<VFS name>)` would take every other consumer's data on the
 origin with it.
 
+### BACKPRESSURE-1 — `bulkWrite` has none, and `output` inherits that
+
+`enqueue()` is synchronous and returns nothing (`src/bulk.ts`). It pushes into a
+buffer and, at `maxBufferSize`, calls `flush()` — which splices the buffer and **chains**
+the write onto `writePromise`. Nothing is ever awaited, so a caller can enqueue a million
+rows in a tight loop without yielding.
+
+**What is bounded and what is not.** The *buffer* is bounded — never more than
+`32766 / keys.length`. The *chain of pending batches is not*: each `.then()` link captures
+its own `toInsert` array of up to that many rows, and nothing caps the number of links. A
+producer faster than SQLite — a JavaScript loop against OPFS writes, i.e. the normal case —
+grows memory with batches in flight.
+
+**The library does have back-pressure, looking the other way.** BP-1's credit window
+(`src/credits.ts`) bounds worker → client chunk delivery for `chunk`/`stream`. It does not
+apply to writes. So reads are governed and bulk loads are not.
+
+**Why this one matters more than its size suggests:** it is the only API here meant for
+large volumes, and it is where volume accumulates in RAM. `mem:vfs` records that the user
+started this project to *stop* loading large structures into memory.
+
+Adjacent to but distinct from ABORT-1: abort lets a caller **stop** a load, back-pressure
+lets them **slow** it. Shapes floated and not chosen: `enqueue()` returning a promise to
+await when the queue is deep, or a `drain()` on the writer. Both change a method documented
+today as "buffers a row" — a public-surface decision, not a detail. **Nothing is decided.**
+
 ## Limits to document rather than fix
 
 ### HANDLE-1 — a long statement serializes the pool off Chromium

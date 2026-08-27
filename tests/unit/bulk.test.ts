@@ -373,3 +373,112 @@ describe('output() staging and swap (B5)', () => {
     expect(calls).toBeGreaterThan(0);
   });
 });
+
+describe('bulkWrite abort (ABORT-1)', () => {
+  /** Lets the chained write promise run before the test looks at it. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('rejects close() with the caller’s own reason, not a library error', async () => {
+    const { target } = recorder();
+    const { bulkWrite } = target();
+    const controller = new AbortController();
+    const reason = new Error('caller stopped it');
+
+    const bulk = bulkWrite('t', ['a'], { signal: controller.signal });
+    bulk.enqueue({ a: 1 });
+    controller.abort(reason);
+
+    // Falsifiable: wrap the abort in a SQLiteBulkWriteError and this goes red.
+    // Decision A — the abort contract is `rejects with signal.reason`, the same
+    // one read/write/first/stream/chunk already honour.
+    await expect(bulk.close()).rejects.toBe(reason);
+  });
+
+  it('lands between batches, leaving the batches already written in place', async () => {
+    // maxVariables 2 with one key → two rows per batch.
+    const { sql, deps } = recorder();
+    const { bulkWrite } = createBulk({
+      file: 'app.db',
+      locks: noOpLocks,
+      logger: noopLogger,
+      maxVariables: 2,
+    })(deps);
+    const controller = new AbortController();
+
+    const bulk = bulkWrite('t', ['a'], { signal: controller.signal });
+    bulk.enqueue({ a: 1 });
+    bulk.enqueue({ a: 2 }); // fills the buffer, flushes batch 1
+    await settle(); // let batch 1 actually run
+
+    expect(sql).toHaveLength(1);
+    controller.abort();
+
+    await expect(bulk.close()).rejects.toMatchObject({ name: 'AbortError' });
+    // Falsifiable: pass the signal to the inner write() and a second INSERT
+    // appears here, aborted mid-statement instead of never attempted.
+    expect(sql).toHaveLength(1);
+  });
+
+  it('throws the reason from enqueue() once aborted', async () => {
+    const { target } = recorder();
+    const { bulkWrite } = target();
+    const controller = new AbortController();
+    const reason = new Error('stop');
+
+    const bulk = bulkWrite('t', ['a'], { signal: controller.signal });
+    controller.abort(reason);
+
+    expect(() => bulk.enqueue({ a: 1 })).toThrow(reason);
+  });
+
+  it('writes nothing when the signal is already aborted at construction', async () => {
+    const { sql, target } = recorder();
+    const { bulkWrite } = target();
+    const reason = new Error('too late');
+
+    const bulk = bulkWrite('t', ['a'], {
+      signal: AbortSignal.abort(reason),
+    });
+
+    expect(() => bulk.enqueue({ a: 1 })).toThrow(reason);
+    await expect(bulk.close()).rejects.toBe(reason);
+    expect(sql).toHaveLength(0);
+  });
+
+  it('leaves the target untouched and drops the staging table when output is aborted', async () => {
+    const sql: string[] = [];
+    const write = async (statement: string) => {
+      sql.push(statement);
+      return { result: [] as any[], affected: 0 };
+    };
+    const read = async () => [] as any[];
+    const transaction = async <T>(cb: (db: any) => Promise<T>) => {
+      sql.push('BEGIN');
+      return cb({ write: async () => ({ result: [], affected: 0 }) });
+    };
+    const { output } = createBulk({
+      file: 'app.db',
+      locks: noOpLocks,
+      logger: noopLogger,
+    })({ write, read, transaction } as any);
+    const controller = new AbortController();
+
+    const out = output(
+      'report',
+      { id: 'INTEGER' },
+      { signal: controller.signal },
+    );
+    out.enqueue({ id: 1 });
+    controller.abort();
+
+    await expect(out.close()).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(
+      sql.some((s) => s.includes('DROP TABLE IF EXISTS "__bsq_staging_')),
+    ).toBe(true);
+    // An aborted output() is observationally a no-op: no rename, no partial
+    // publication, previous target untouched.
+    expect(sql.some((s) => s.includes('"report"'))).toBe(false);
+    expect(sql.some((s) => s.startsWith('BEGIN'))).toBe(false);
+  });
+});
