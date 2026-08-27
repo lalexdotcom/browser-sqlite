@@ -53,6 +53,13 @@ with it.
 
 ### Added
 
+- **`deleteDatabase(file, { vfs })`** — a supported way to remove a database and
+  the `-journal` / `-wal` files beside it, on every VFS that persists one. On
+  `AccessHandlePoolVFS` it is the only correct removal: it returns the pool slot,
+  where deleting the OPFS file by name would match nothing. Storage a VFS keeps
+  for itself is left alone — the shared IndexedDB store and the pool directory —
+  while the named database's bytes are freed. Deleting a database that is not
+  there is not an error; deleting one that is open reports `BUSY`.
 - **`wasmUrl` client option** — an escape hatch for where the workers fetch
   their `.wasm`. A string names a directory, resolved against the page; a
   callback receives the resolved `build` and names one file, for a
