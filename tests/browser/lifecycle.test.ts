@@ -149,7 +149,12 @@ describe('worker lifecycle — crash detection', () => {
     const db = await createTestClient({ poolSize: 1 });
     await db.write('CREATE TABLE t (a)');
 
-    const running = db.read(longQuery(20_000_000));
+    // Long enough to still be in flight after the sleep below, and no longer:
+    // 20 000 000 iterations cost 30 s on Firefox — against a 30 s budget, which
+    // the test lost three times out of three — for a margin of 300× over what
+    // it needs. At 2 000 000 the query still runs for seconds on the slowest
+    // engine measured, twenty times the sleep.
+    const running = db.read(longQuery(2_000_000));
     await sleep(100);
     records[0].worker.dispatchEvent(new MessageEvent('messageerror'));
 

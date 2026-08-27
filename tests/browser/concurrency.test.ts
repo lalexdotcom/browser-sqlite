@@ -410,8 +410,15 @@ describe('AbortSignal while queued for a worker', () => {
     const db = await createTestClient({ poolSize: 1 });
     await db.write('CREATE TABLE queued (n INTEGER)');
 
-    // The only worker is busy for far longer than this test may take.
-    const holder = db.read(longQuery(40_000_000));
+    // The only worker is busy for far longer than this test may take — and it
+    // is ABANDONED at the end rather than awaited. Waiting for it made the test
+    // cost the query: 59 s on Firefox against a 30 s budget, where the same
+    // query costs about a fifth of that on Chromium. None of it is what this
+    // test checks.
+    const holderAbort = new AbortController();
+    const holder = db.read(longQuery(40_000_000), [], {
+      signal: holderAbort.signal,
+    });
 
     const controller = new AbortController();
     const queued = db.read('SELECT 1 AS n', [], {
@@ -436,6 +443,7 @@ describe('AbortSignal while queued for a worker', () => {
       ),
     ]);
 
+    holderAbort.abort();
     await holder.catch(() => {});
     db.close();
   });

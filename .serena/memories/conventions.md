@@ -19,7 +19,15 @@ only what `AGENTS.md` does not say.**
 ## Phase workflow (user, 2026-08-17)
 
 Each wave or phase is implemented **on its own feature branch, by a subagent** — not on
-`main`, not inline in the main session. A phase is closed only when all three hold:
+`main`, not inline in the main session.
+
+**A branch is for a feature going through the superpowers workflow, and for nothing else
+(user, 2026-08-27).** Editing the README, fixing a test's calibration, adding a config
+switch — that is inline work and it stays on the branch already in hand, `main` included.
+Two branches were opened in one afternoon for a Known Limitations line and a browser
+selector; they then diverged on the same memory file and had to be collapsed. The earlier
+note about specs travelling with their branch still holds — it is about the branch a
+*feature* already has, not a reason to open one. A phase is closed only when all three hold:
 **CI green** (types, format, lint), **memories updated**, **git clean**. Groundwork already
 validated by the user outside a phase (dependency bumps) lands on `main` directly.
 

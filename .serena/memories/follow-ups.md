@@ -69,32 +69,21 @@ should be recommended there at all comes first.
 
 ## Evidence owed
 
-### HANDLE-1 — the backlog and the README contradict each other
+### HANDLE-1 — the evidence was a flake, and the README stands
 
-**Do not write the Known Limitations line this entry used to ask for.** It would
-contradict a measured claim already in the README, in the same file.
+This entry claimed that "does not block the pool" is false off Chromium, on the strength of
+`tests/browser/long-query.test.ts :: does not terminate the worker it abandoned, and does
+not block the pool` failing on Firefox at 28-29.5 s against a 3 s budget.
 
-The README (§ the reduced-mode section, "A long *read* does not produce this effect") says
-short reads on the other workers still return in about a millisecond on Firefox while a
-long read runs, and records that an earlier revision claimed the broader form and that
-measurement narrowed it. This entry claimed the opposite: that concurrent reads hold only
-while no worker runs a long uninterruptible statement.
+**At n=3 on 2026-08-27 that test failed once and passed twice.** One run had been read as a
+reproduction. The README's measured claim on the other side — that a long read does not
+delay short reads on the other workers, about a millisecond on Firefox — is unopposed, and
+no Known Limitations line is owed.
 
-The evidence for this side is one test: `tests/browser/long-query.test.ts :: does not
-terminate the worker it abandoned, and does not block the pool` fails on Firefox at
-28-29.5 s against a 3 s budget, with `poolSize: 2` — a long read abandoned at 200 ms, then
-a plain `SELECT 1` that should land on the other worker. The scheduler, the lease and
-`quiesce()` were each checked and exonerated (statuses sampled without wrapping `Worker`,
-so the race was not perturbed), and the failure was attributed to the exclusive-handle
-rotation.
-
-**What separates them is what nobody has measured:** whether it is the *abandonment* that
-blocks — `interrupt()`, the generator's return path, `quiesce()` — rather than the long
-statement itself, which the README's measurement says does not. Both readings fit the
-evidence; only one can go in the README.
-
-The two Firefox failures below block CI for the same reason. Measure before writing
-anything.
+What is left is a flake at 1/3 with no mechanism, tracked above with `barrier`. The
+underlying VFS fact is unchanged and documented already: on an engine without
+`readwrite-unsafe`, a VFS rotating one exclusive OPFS handle cannot serve another worker
+while a write transaction holds it. That is in the README, measured, and is not this.
 
 ### FLAKE-ROW-1 — `no-read-inside-transaction` is a race, not a verdict
 
@@ -112,19 +101,33 @@ Limitations entry rests on it and currently reads as a determinism. It happens t
 (blocked on 8 of 8 earlier runs) but needs **n≥3 per engine** before that wording is
 defensible — and the same row cannot then be read as a verdict for `OPFSAdaptiveVFS`.
 
-### Two Firefox failures block wiring Firefox into CI
+### Firefox: two flakes at 1/3, and what the deterministic failures really were
 
-A browser cannot be a blocking gate while it is red.
+Measured 2026-08-27, three full runs of the browser project on Firefox
+(`TEST_BROWSER=firefox pnpm test:browser`, the override added that day; Chromium stays the
+default).
 
-- `long-query :: does not terminate the worker it abandoned` — this is HANDLE-1. Not a test
-  defect; it needs a per-browser expectation.
-- `lifecycle :: rejects the in-flight query on a deserialization failure` — times out at
-  30 s. **Nobody has traced it.** Leading explanation is calibration: the test sleeps 100 ms
-  then synthetically dispatches `messageerror`, betting the query is already in flight, and
-  Firefox is 5.5× slower on the same CPU-bound query. Unverified.
+| test | 3 runs |
+|---|---|
+| `concurrency :: rejects a read that never got a worker` | fail, fail, fail |
+| `lifecycle :: rejects the in-flight query on a deserialization failure` | fail, fail, fail |
+| `long-query :: does not block the pool` | pass, **fail**, pass |
+| `barrier :: does not repeat the barrier on a worker that is already current` | pass, pass, **fail** |
 
-Note the conformance suite already runs on both engines and is green on both; this is about
-`pnpm test`'s browser project.
+**The two deterministic failures were calibration, and are fixed.** Both tests ran a
+recursive CTE sized on Chromium and then waited for it: 40 M iterations cost 58.9 s on
+Firefox and 20 M cost 29.7 s, against a 30 s budget. Given 180 s both passed, and the two
+durations are in exact proportion to their iteration counts — the cost was the query and
+nothing else. `concurrency` now abandons its holder instead of awaiting it; `lifecycle`
+asks for 2 M iterations instead of 20 M.
+
+**What remains is two flakes at 1/3**, and neither is understood. `long-query` is the one
+this backlog used to cite as a deterministic Firefox failure — it is not. `barrier` had
+never been recorded anywhere.
+
+**Firefox cannot be a CI gate until those two are understood.** Nothing measured so far
+points at a defect in the library; both flakes are in tests that race an abandonment
+against a worker, which is where the timing lives.
 
 ### BASELINE-1 — two residuals, both small
 
