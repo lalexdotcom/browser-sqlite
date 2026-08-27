@@ -1,9 +1,9 @@
 import type {
+  Abortable,
   SQLiteChunkOptions,
   SQLiteQueryAPI,
   SQLiteTransactionDB,
   SQLiteTransactionOptions,
-  WithSignal,
 } from './api';
 import type { ReadFn, TransactionFn, WriteFn } from './bulk';
 import { SQLiteError } from './errors';
@@ -114,7 +114,7 @@ export const createTransaction =
       write: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: WithSignal,
+        options?: Abortable,
       ) => writeWorker<T>(worker, checksql(sql), params, options),
 
       chunk: <T extends Record<string, unknown>>(
@@ -132,7 +132,7 @@ export const createTransaction =
       first: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: WithSignal,
+        options?: Abortable,
       ) => firstWorker<T>(worker, checksql(sql), params, options),
 
       bulkWrite: bulk.bulkWrite,

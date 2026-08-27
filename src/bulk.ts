@@ -1,9 +1,9 @@
 import type {
+  Abortable,
   Schema,
   SQLiteOutputOptions,
   SQLiteOutputRow,
   SQLiteTransactionOptions,
-  WithSignal,
 } from './api';
 import { SQLiteBulkWriteError } from './errors';
 import {
@@ -99,7 +99,7 @@ export const createBulk = (shared: {
     const bulkWrite = <KEYS extends string>(
       table: string,
       keys: KEYS[],
-      options?: WithSignal,
+      options?: Abortable,
       /** Internal: awaited before the first batch. `output()` passes its staging DDL. */
       before?: Promise<unknown>,
     ) => {

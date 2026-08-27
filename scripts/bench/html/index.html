@@ -602,18 +602,23 @@
 
       /**
        * Thrown when a row could not be bounded without abandoning its column.
-       * See spec §5.3: for a method that takes no AbortSignal the only bound
-       * available is a race against a timer, which abandons the WAIT without
-       * stopping the WORK. Continuing down the column would then time every
-       * later row against a worker still executing the abandoned statement,
-       * so the whole column is abandoned instead.
+       * For a method that takes no AbortSignal the only bound available is a
+       * race against a timer, which abandons the WAIT without stopping the
+       * WORK. Continuing down the column would then time every later row
+       * against a worker still executing the abandoned statement, so the whole
+       * column is abandoned instead.
+       *
+       * Since ABORT-1 the only such method left is `close()`, reached through
+       * closeWithTimeout. bulkWrite and output used to come here too, and it
+       * cost five columns on the 2026-08-27 campaign.
        */
       class ColumnAbandoned extends Error {}
 
       /**
-       * A row whose work takes a `signal`: read / write / first / stream /
-       * chunk. The abort reaches the drain, the worker is released, and the
-       * run continues with the next row in the same column.
+       * A row whose work takes a `signal` — which, since ABORT-1, is every
+       * method this page drives except `close()`. The abort reaches the drain,
+       * the worker is released, and the run continues with the next row in the
+       * same column.
        */
       const abortableRow = async (fn, budgetMs = ROW_TIMEOUT_MS) => {
         const signal = AbortSignal.timeout(budgetMs);
@@ -626,23 +631,6 @@
       };
 
       class RowTimeout extends Error {}
-
-      /**
-       * A row whose work takes no `signal` — bulkWrite and output today, see
-       * ABORT-1 in mem:follow-ups. When ABORT-1 lands these rows move to
-       * abortableRow and this function loses its last caller.
-       */
-      const unabortableRow = async (fn) => {
-        let timer;
-        const expired = new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new ColumnAbandoned()), ROW_TIMEOUT_MS);
-        });
-        try {
-          return await Promise.race([fn(), expired]);
-        } finally {
-          clearTimeout(timer);
-        }
-      };
 
       /**
        * Surgical cleanup. This origin is shared with the user's other Pages
@@ -1146,20 +1134,29 @@
       /**
        * Builds the column's shared dataset exactly once. Rows that need it call
        * this; rows that do not (bulk-insert, which builds its own) do not pay
-       * for it. Uses bulkWrite, so it inherits the unabortable regime.
+       * for it.
+       *
+       * It used to run under unabortableRow, because bulkWrite took no signal:
+       * the only bound available was a race against a timer, which abandoned
+       * the WAIT without stopping the WORK, so the whole column had to go. That
+       * cost five columns on the 2026-08-27 campaign — three on Firefox 154,
+       * two on Safari 27.0. ABORT-1 landed, so the signal now reaches the
+       * bulkWrite between its batches and the column survives a slow device.
        */
-      const ensureDataset = async (ctx) => {
+      const ensureDataset = async (ctx, signal) => {
         if (ctx.datasetReady) return;
-        await unabortableRow(async () => {
-          await ctx.db.write(
-            'CREATE TABLE bench (id INTEGER PRIMARY KEY, label TEXT, n INTEGER)',
-          );
-          const bulk = ctx.db.bulkWrite('bench', ['id', 'label', 'n']);
-          for (let i = 1; i <= DATASET_ROWS; i++) {
-            bulk.enqueue({ id: i, label: `row-${i}`, n: i % 97 });
-          }
-          await bulk.close();
-          await ctx.db.write('CREATE INDEX bench_n ON bench (n)');
+        await ctx.db.write(
+          'CREATE TABLE bench (id INTEGER PRIMARY KEY, label TEXT, n INTEGER)',
+          undefined,
+          { signal },
+        );
+        const bulk = ctx.db.bulkWrite('bench', ['id', 'label', 'n'], { signal });
+        for (let i = 1; i <= DATASET_ROWS; i++) {
+          bulk.enqueue({ id: i, label: `row-${i}`, n: i % 97 });
+        }
+        await bulk.close();
+        await ctx.db.write('CREATE INDEX bench_n ON bench (n)', undefined, {
+          signal,
         });
         ctx.datasetReady = true;
       };
@@ -1221,13 +1218,14 @@
           decimals: 0,
           better: 'low',
           applies: () => true,
-          // bulkWrite takes no signal (ABORT-1), so this row can only abandon
-          // the column. It is deliberately first: paying that risk before the
-          // dataset exists costs less than paying it halfway down the column.
-          run: async (ctx) => {
-            const ms = await time(() => ensureDataset(ctx));
-            return ms;
-          },
+          // Still deliberately first: it builds the dataset every later row
+          // reads, so paying its cost here rather than halfway down the column
+          // keeps one slow device from timing rows that were never given a
+          // chance. It no longer risks the column — ABORT-1 gave bulkWrite a
+          // signal, so an expiry here stops at a batch boundary and the run
+          // continues.
+          run: (ctx) =>
+            abortableRow((signal) => time(() => ensureDataset(ctx, signal))),
         },
         {
           id: 'write-latency-p50',
@@ -1238,7 +1236,7 @@
           applies: () => true,
           run: (ctx) =>
             abortableRow(async (signal) => {
-              await ensureDataset(ctx);
+              await ensureDataset(ctx, signal);
               await ctx.db.write('CREATE TABLE lat (a INTEGER)', undefined, { signal });
               await ctx.db.write('INSERT INTO lat VALUES (0)', undefined, { signal }); // warmup
               const samples = [];
@@ -1274,7 +1272,7 @@
           applies: () => true,
           run: (ctx) =>
             abortableRow(async (signal) => {
-              await ensureDataset(ctx);
+              await ensureDataset(ctx, signal);
               await shortRead(ctx.db, randomId(), signal); // warmup
               const samples = [];
               for (let i = 0; i < 200; i++) {
@@ -1294,7 +1292,7 @@
           applies: () => true,
           run: (ctx) =>
             abortableRow(async (signal) => {
-              await ensureDataset(ctx);
+              await ensureDataset(ctx, signal);
               // The random OFFSET spans [0, 9950), so the median sample makes
               // SQLite walk ~4975 index-ordered rows before returning 50. This
               // is the honest cost of OFFSET pagination at median depth, not
@@ -1330,7 +1328,7 @@
            */
           run: (ctx) =>
             abortableRow(async (signal) => {
-              await ensureDataset(ctx);
+              await ensureDataset(ctx, signal);
               const ids = Array.from({ length: 24 }, randomId);
               await shortRead(ctx.db, ids[0], signal); // warmup
 
@@ -1376,7 +1374,7 @@
           applies: () => true,
           run: (ctx) =>
             abortableRow(async (signal) => {
-              await ensureDataset(ctx);
+              await ensureDataset(ctx, signal);
               const scan = () =>
                 ctx.db.read(
                   'SELECT count(*) AS n, sum(n) AS total, max(label) AS last FROM bench',
@@ -1435,7 +1433,7 @@
            */
           run: (ctx) =>
             abortableRow(async (signal) => {
-              await ensureDataset(ctx);
+              await ensureDataset(ctx, signal);
               const bound = await calibrateLongQuery(ctx);
               // Null means the cross-join saturated at DATASET_ROWS² and the
               // device is still faster than 1 s — no meaningful ratio possible.
@@ -1903,7 +1901,7 @@
               setReason(
                 pair.id,
                 row.id,
-                `exceeded ${ROW_TIMEOUT_MS} ms and takes no AbortSignal, so the rest of this column was abandoned`,
+                `close() exceeded ${ROW_TIMEOUT_MS} ms and takes no AbortSignal, so the rest of this column was abandoned`,
               );
               setCell(pair, row.id, '⏱', 'fail');
             } else if (error instanceof RowTimeout) {

@@ -14,15 +14,18 @@ import type { ClientDebugState } from './debug';
 /**
  * Marks an options type as carrying an abort signal.
  *
- * The name is the point. `options?: WithSignal<…>` says at the signature that
+ * The name is the point. `options?: Abortable<…>` says at the signature that
  * the method can be abandoned, where a bare alias would make a reader open the
  * type to find out. Every abortable option type in this file is built from it,
  * so `signal` is documented once and cannot drift between them.
  *
+ * The name is also not ours: `@types/node` exports `interface Abortable` with
+ * exactly this member, so a consumer may already know it.
+ *
  * `T = unknown` rather than `Record<string, never>`: intersecting with the
  * latter collapses `signal` to `never` and makes it unassignable.
  */
-export type WithSignal<T = unknown> = T & {
+export type Abortable<T = unknown> = T & {
   /**
    * Aborts the work. Rejects with `signal.reason` — your reason, not an error
    * of this library's making.
@@ -38,7 +41,7 @@ export type WithSignal<T = unknown> = T & {
 };
 
 /** Options every query method accepts. */
-export type SQLiteQueryOptions = WithSignal;
+export type SQLiteQueryOptions = Abortable;
 
 /**
  * Options for the methods that cross the worker boundary in chunks.
@@ -48,7 +51,7 @@ export type SQLiteQueryOptions = WithSignal;
  * ahead of the consumer. On `stream()` that is the only lever on how many rows
  * are in flight.
  */
-export type SQLiteChunkOptions = WithSignal<{
+export type SQLiteChunkOptions = Abortable<{
   /** Rows per chunk. Defaults to 500. */
   chunkSize?: number;
 }>;
@@ -80,12 +83,12 @@ export type Index<SCHEMA extends Schema> =
       | { columns: (keyof SCHEMA)[] }
     ));
 
-export type SQLiteOutputOptions<SCHEMA extends Schema> = WithSignal<{
+export type SQLiteOutputOptions<SCHEMA extends Schema> = Abortable<{
   indexes?: Index<SCHEMA>[];
 }>;
 
 /** Options `bulkWrite()` accepts. */
-export type SQLiteBulkWriteOptions = WithSignal;
+export type SQLiteBulkWriteOptions = Abortable;
 
 /** A row for `output()`: generated columns are computed, never supplied. */
 export type SQLiteOutputRow<SCHEMA extends Schema> = {
@@ -156,7 +159,7 @@ export type SQLiteQueryAPI = {
   write: <T extends Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    options?: WithSignal,
+    options?: Abortable,
   ) => Promise<SQLiteWriteResult<T>>;
 
   /**
@@ -224,7 +227,7 @@ export type SQLiteQueryAPI = {
   first: <T extends Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    options?: WithSignal,
+    options?: Abortable,
   ) => Promise<T | undefined>;
 
   /**
@@ -253,7 +256,7 @@ export type SQLiteQueryAPI = {
   bulkWrite: <KEYS extends string>(
     table: string,
     keys: KEYS[],
-    options?: WithSignal,
+    options?: Abortable,
   ) => SQLiteBulkWriter<KEYS>;
 
   /**
