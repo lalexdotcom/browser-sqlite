@@ -124,7 +124,12 @@ export const createBulk = (shared: {
       // values whatever the table, so this bounds about the same memory whether
       // the caller loads 2 columns or 30 — which was the whole merit of
       // counting in batches, without imposing the word on the consumer.
-      const queueSize = options?.queueSize ?? 2 * maxBufferSize;
+      // Raised to 1 rather than trusted: a flush always queues at least one
+      // row, so anything lower can never be satisfied and would park the
+      // producer for ever. This is the one place an explicit value is not taken
+      // as given — the spec's "no clamping" was about a value too HIGH, whose
+      // worst case is the behaviour that predates this option.
+      const queueSize = Math.max(1, options?.queueSize ?? 2 * maxBufferSize);
 
       const buffer: { [K in KEYS]: any }[] = [];
 

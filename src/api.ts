@@ -121,7 +121,9 @@ export type SQLiteOutputOptions<SCHEMA extends Schema> = OptionsWithSignal<{
  * The default is two batches' worth, derived from the column count — about
  * 13 100 rows for 5 columns, 2 180 for 30 — so the memory bounded is roughly
  * the same from one table to the next. A value smaller than one batch is legal
- * and means one INSERT in flight, the least the batching allows.
+ * and means one INSERT in flight, the least the batching allows. Anything below
+ * 1 is raised to 1: a batch always holds at least one row, so a lower cap could
+ * never be satisfied.
  */
 export type SQLiteBulkWriteOptions = OptionsWithSignal<{
   /** Rows queued for writing above which `enqueue()` defers. */

@@ -599,6 +599,9 @@ describe('bulkWrite back-pressure', () => {
       maxVariables,
     })(deps);
 
+  // Falsifiable, verified: delete `if (queuedRows < queueSize) return ADMITTED;`
+  // from enqueue() and this goes red — every call would return the deferred, and
+  // the gated batch never settles.
   it('resolves without deferring while the queue is under the cap', async () => {
     const { deps } = gatedRecorder();
     const { bulkWrite } = bulkFactory(2, deps);
@@ -655,6 +658,9 @@ describe('bulkWrite back-pressure', () => {
     expect(lastNarrow()).toBe(true);
   });
 
+  // Falsifiable, verified: drop `options?.queueSize ??` from the queueSize
+  // initialiser and this goes red — the explicit 1 is silently replaced by the
+  // derived default of 4, which two queued rows do not reach.
   it('honours an explicit cap smaller than a single batch', async () => {
     const { deps } = gatedRecorder();
     const { bulkWrite } = bulkFactory(2, deps);
@@ -684,9 +690,11 @@ describe('bulkWrite back-pressure', () => {
     await expect(bulk.close()).rejects.toBeInstanceOf(SQLiteBulkWriteError);
   });
 
-  // Falsifiable: drop the abort listener that releases the waiter and this
-  // hangs — a producer parked on a pool that never frees a worker could not be
-  // abandoned, which is the hole ABORT-1 paid for three times.
+  // Falsifiable, verified: drop the abort listener that releases the waiter and
+  // this fails at the release assertion — `watch()` polls a flag, so the test
+  // reports rather than hanging. What would hang is the real producer: parked on
+  // a pool that never frees a worker, it could not be abandoned, which is the
+  // hole ABORT-1 paid for three times.
   it('releases a waiting enqueue() when the signal fires', async () => {
     const { deps } = gatedRecorder();
     const { bulkWrite } = bulkFactory(2, deps);
@@ -707,6 +715,27 @@ describe('bulkWrite back-pressure', () => {
     expect(waiting()).toBe(true);
 
     expect(() => bulk.enqueue({ a: 3 })).toThrow(reason);
+  });
+
+  // Falsifiable, verified: drop `queueSize` from the bulkWrite() call inside
+  // output() and this is the ONLY test that goes red. One forwarded field, one
+  // pin — it is the kind of line a refactor loses in silence.
+  // Falsifiable, verified: drop the `Math.max(1, …)` around queueSize and this
+  // fails at the last assertion — with a cap of 0 the release condition
+  // `queuedRows < queueSize` is never true, so the producer is parked for ever.
+  it('treats a cap below one as one', async () => {
+    const { deps, settleOne } = gatedRecorder();
+    const { bulkWrite } = bulkFactory(2, deps);
+    const bulk = bulkWrite('t', ['a'], { queueSize: 0 });
+
+    bulk.enqueue({ a: 1 });
+    const second = watch(bulk.enqueue({ a: 2 })); // flushes 2 rows
+    await ticks();
+    expect(second()).toBe(false);
+
+    settleOne();
+    await ticks();
+    expect(second()).toBe(true);
   });
 
   it('applies the cap to output() as well', async () => {
