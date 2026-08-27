@@ -76,6 +76,27 @@ describe('commit-propagation barrier', () => {
     await db.read('SELECT * FROM t'); // w0 is current — must pay nothing
     expect(countBarrierStatements(db)).toBe(before);
   });
+
+  // The point of lastWriterIndex, stated as a count rather than a duration: the
+  // worker that just wrote has already seen the commit, so a read routed there
+  // owes no barrier. `forced` keeps the writer off index 0, without which the
+  // preference and the lowest-index scan would name the same worker.
+  //
+  // Falsifiable: delete the lastWriterIndex branch from takeAvailable() — the
+  // read then lands on worker 0, whose epoch the INSERT left behind, and pays a
+  // barrier.
+  it('sends a read to the worker that just wrote, which owes no barrier', async () => {
+    const db = await createTestClient({ ...forced, debug: true });
+
+    await db.write('CREATE TABLE t (a)');
+    await db.read('SELECT * FROM t');
+    const before = countBarrierStatements(db);
+
+    await db.write('INSERT INTO t VALUES (1)');
+    await db.read('SELECT * FROM t');
+
+    expect(countBarrierStatements(db)).toBe(before);
+  });
 });
 
 describe('barrier — two clients in one tab', () => {

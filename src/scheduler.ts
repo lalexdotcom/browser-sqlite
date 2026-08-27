@@ -131,6 +131,13 @@ export const createScheduler = <W extends { index: number }>(
   // 30 ms spread over worker 1 against 934-1052 ms pinned behind the read.
   let currentWriterIndex = -1;
 
+  /**
+   * The worker that most recently held the write designation, kept after that
+   * designation is released. `currentWriterIndex` answers "who may write now";
+   * this answers "who has already seen the last commit", which outlives it.
+   */
+  let lastWriterIndex = -1;
+
   const canDesignate = opts.canDesignateWriter ?? (() => true);
 
   /**
@@ -147,6 +154,7 @@ export const createScheduler = <W extends { index: number }>(
     // Claim the designation before serving: without this, a later write
     // acquisition could designate a second writer while this one still runs.
     currentWriterIndex = worker.index;
+    lastWriterIndex = worker.index;
     writerQueue.shift()?.resolve(worker);
     return true;
   };
@@ -210,6 +218,28 @@ export const createScheduler = <W extends { index: number }>(
       return workers[currentWriterIndex];
     }
 
+    // Prefer the worker that wrote last, for a read and for a new designation
+    // alike. A read served there skips the barrier, that worker having already
+    // seen the commit; a write served there keeps a run of writes on one
+    // connection instead of walking the pool between batches.
+    //
+    // A PREFERENCE, never a pin: it picks only among workers that are already
+    // available, so it can never make anything wait. That is what keeps it
+    // clear of the measurement above — which was about writes queued BEHIND a
+    // busy designated writer, not about which free worker to choose.
+    //
+    // `workers[-1]` is undefined, so the unset case needs no separate guard.
+    const preferred = workers[lastWriterIndex];
+    if (
+      preferred !== undefined &&
+      available.has(lastWriterIndex) &&
+      (!write || canDesignate(lastWriterIndex))
+    ) {
+      available.delete(lastWriterIndex);
+      if (write) currentWriterIndex = lastWriterIndex;
+      return preferred;
+    }
+
     // Lowest-index-first for both reads and new writes (reads never touch
     // the designation; write designation is set below when a new one starts).
     const found = workers.find(
@@ -221,7 +251,10 @@ export const createScheduler = <W extends { index: number }>(
     if (!found) return undefined;
 
     available.delete(found.index);
-    if (write) currentWriterIndex = found.index;
+    if (write) {
+      currentWriterIndex = found.index;
+      lastWriterIndex = found.index;
+    }
     return found;
   };
 
@@ -250,6 +283,9 @@ export const createScheduler = <W extends { index: number }>(
       // stale when its release() eventually fires.
       generations.set(index, gen(index) + 1);
       if (currentWriterIndex === index) currentWriterIndex = -1;
+      // A respawned slot is a different connection with a fresh epoch, so the
+      // freshness hint this index carried is void.
+      if (lastWriterIndex === index) lastWriterIndex = -1;
       checkShutdown();
     },
 
