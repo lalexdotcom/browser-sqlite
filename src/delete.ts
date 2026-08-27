@@ -81,12 +81,6 @@ export const deleteDatabase = async (
   const dbFile = normalizeDatabaseFile(file);
   const wasm = resolveWasmLocation(options.wasmUrl, build, location.href);
 
-  // Yield to the microtask queue so that a lock release triggered by resolving
-  // a promise in the caller's current task propagates through the Web Locks API
-  // before the ifAvailable check inside tryWithLock runs. Without this yield,
-  // calling deleteDatabase synchronously after release.resolve() races the lock
-  // release and can report BUSY when the lock is already free.
-  await Promise.resolve();
   const ran = await createLocks().tryWithLock(initLockName(dbFile), () =>
     runDelete({ file: dbFile, vfs, build, wasm }),
   );

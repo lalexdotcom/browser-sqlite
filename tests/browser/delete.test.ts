@@ -124,6 +124,12 @@ describe('deleteDatabase', () => {
     ).rejects.toMatchObject({ code: 'BUSY' });
     release.resolve();
 
+    // No real caller releases a lock and retries in the same turn, but this
+    // test does exactly that. Yield to the task queue (stronger than a single
+    // microtask) so the Web Locks API has a chance to process the release
+    // before the next ifAvailable check.
+    await new Promise((r) => setTimeout(r, 0));
+
     await expect(
       deleteDatabase(file, { vfs: 'OPFSAdaptiveVFS' }),
     ).resolves.toBeUndefined();
