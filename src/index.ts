@@ -4,6 +4,7 @@
 export * from './api';
 export { detectFeatures, missingFeature } from './capabilities';
 export * from './client';
+export * from './delete';
 export * from './errors';
 // Named rather than `export *`: the wire-protocol types in types.ts are
 // internal and must not reach the public surface.

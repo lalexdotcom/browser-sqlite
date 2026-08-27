@@ -329,6 +329,11 @@ export const createPoolWorker = (deps: {
         }
         break;
       }
+      case 'deleted': {
+        // A connection worker never deletes; this message belongs to the
+        // delete-worker path handled in src/delete.ts and cannot arrive here.
+        break;
+      }
       default: {
         const _unexpected: never = data;
         throw new Error(

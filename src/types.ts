@@ -58,7 +58,15 @@ export type ClientMessageData =
     }
   | { type: 'close'; callId: number }
   | { type: 'credit'; callId: number; n: number }
-  | { type: 'stop'; callId: number };
+  | { type: 'stop'; callId: number }
+  | {
+      type: 'delete';
+      callId: number;
+      file: string;
+      vfs: SQLiteVFS;
+      build?: SQLiteBuild;
+      wasm?: WasmLocation;
+    };
 
 export type WorkerMessageData =
   | { type: 'ready'; callId: number }
@@ -73,6 +81,7 @@ export type WorkerMessageData =
       sqliteCode?: number;
     }
   | { type: 'closed'; callId: number }
+  | { type: 'deleted'; callId: number }
   | {
       type: 'open-error';
       callId: number;
