@@ -1,4 +1,10 @@
-import type { Schema, SQLiteOutputOptions, SQLiteOutputRow } from './api';
+import type {
+  Schema,
+  SQLiteOutputOptions,
+  SQLiteOutputRow,
+  SQLiteTransactionOptions,
+  WithSignal,
+} from './api';
 import { SQLiteBulkWriteError } from './errors';
 import {
   type Locks,
@@ -37,7 +43,7 @@ export type TransactionFn = <T>(
       options?: any,
     ) => Promise<{ result: any[]; affected: number }>;
   }) => Promise<T>,
-  options?: { readOnly?: boolean; autoCommit?: boolean },
+  options?: SQLiteTransactionOptions,
 ) => Promise<T>;
 
 /**
@@ -93,7 +99,7 @@ export const createBulk = (shared: {
     const bulkWrite = <KEYS extends string>(
       table: string,
       keys: KEYS[],
-      options?: { signal?: AbortSignal },
+      options?: WithSignal,
       /** Internal: awaited before the first batch. `output()` passes its staging DDL. */
       before?: Promise<unknown>,
     ) => {

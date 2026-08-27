@@ -1,8 +1,9 @@
 import type {
   SQLiteChunkOptions,
   SQLiteQueryAPI,
-  SQLiteQueryOptions,
   SQLiteTransactionDB,
+  SQLiteTransactionOptions,
+  WithSignal,
 } from './api';
 import type { ReadFn, TransactionFn, WriteFn } from './bulk';
 import { SQLiteError } from './errors';
@@ -59,7 +60,7 @@ export const createTransaction =
   }) =>
   async <T = void>(
     callback: (db: SQLiteTransactionDB) => Promise<T>,
-    options?: { readOnly?: boolean; autoCommit?: boolean },
+    options?: SQLiteTransactionOptions,
   ): Promise<T> => {
     const { readOnly = false, autoCommit = true } = options ?? {};
     const lease = await deps.scheduler.acquire(readOnly ? 'read' : 'write');
@@ -113,7 +114,7 @@ export const createTransaction =
       write: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: SQLiteQueryOptions,
+        options?: WithSignal,
       ) => writeWorker<T>(worker, checksql(sql), params, options),
 
       chunk: <T extends Record<string, unknown>>(
@@ -131,7 +132,7 @@ export const createTransaction =
       first: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        options?: SQLiteQueryOptions,
+        options?: WithSignal,
       ) => firstWorker<T>(worker, checksql(sql), params, options),
 
       bulkWrite: bulk.bulkWrite,

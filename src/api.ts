@@ -11,11 +11,34 @@
  */
 import type { ClientDebugState } from './debug';
 
-/** Options every query method accepts. */
-export type SQLiteQueryOptions = {
-  /** Aborts the query. Rejects with `signal.reason`. */
+/**
+ * Marks an options type as carrying an abort signal.
+ *
+ * The name is the point. `options?: WithSignal<…>` says at the signature that
+ * the method can be abandoned, where a bare alias would make a reader open the
+ * type to find out. Every abortable option type in this file is built from it,
+ * so `signal` is documented once and cannot drift between them.
+ *
+ * `T = unknown` rather than `Record<string, never>`: intersecting with the
+ * latter collapses `signal` to `never` and makes it unassignable.
+ */
+export type WithSignal<T = unknown> = T & {
+  /**
+   * Aborts the work. Rejects with `signal.reason` — your reason, not an error
+   * of this library's making.
+   *
+   * On `bulkWrite()` and `output()` the abort lands **between** batches, never
+   * inside one: a multi-row INSERT is statement-atomic, so stopping inside a
+   * batch would either waste it whole or let it commit whole. An aborted
+   * `bulkWrite()` leaves the batches already written in place; an aborted
+   * `output()` is observationally a no-op, dropping its staging table and
+   * touching nothing else.
+   */
   signal?: AbortSignal;
 };
+
+/** Options every query method accepts. */
+export type SQLiteQueryOptions = WithSignal;
 
 /**
  * Options for the methods that cross the worker boundary in chunks.
@@ -25,12 +48,11 @@ export type SQLiteQueryOptions = {
  * ahead of the consumer. On `stream()` that is the only lever on how many rows
  * are in flight.
  */
-export type SQLiteChunkOptions = SQLiteQueryOptions & {
+export type SQLiteChunkOptions = WithSignal<{
   /** Rows per chunk. Defaults to 500. */
   chunkSize?: number;
-};
+}>;
 
-/** What a write resolves with: any returned rows, and SQLite's `changes()`. */
 export type SQLiteWriteResult<T extends Record<string, unknown>> = {
   result: T[];
   affected: number;
@@ -58,20 +80,12 @@ export type Index<SCHEMA extends Schema> =
       | { columns: (keyof SCHEMA)[] }
     ));
 
-export type SQLiteOutputOptions<SCHEMA extends Schema> = {
+export type SQLiteOutputOptions<SCHEMA extends Schema> = WithSignal<{
   indexes?: Index<SCHEMA>[];
-  /**
-   * Aborts the load. Rejects `close()` with `signal.reason`, exactly as the
-   * query methods do.
-   *
-   * An aborted `output()` is observationally a no-op: the staging table is
-   * dropped and nothing else is touched. No rename, no partial publication —
-   * whatever was in the target before is still there, whole.
-   *
-   * The abort lands between batches, never inside one.
-   */
-  signal?: AbortSignal;
-};
+}>;
+
+/** Options `bulkWrite()` accepts. */
+export type SQLiteBulkWriteOptions = WithSignal;
 
 /** A row for `output()`: generated columns are computed, never supplied. */
 export type SQLiteOutputRow<SCHEMA extends Schema> = {
@@ -142,7 +156,7 @@ export type SQLiteQueryAPI = {
   write: <T extends Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    options?: SQLiteQueryOptions,
+    options?: WithSignal,
   ) => Promise<SQLiteWriteResult<T>>;
 
   /**
@@ -210,7 +224,7 @@ export type SQLiteQueryAPI = {
   first: <T extends Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    options?: SQLiteQueryOptions,
+    options?: WithSignal,
   ) => Promise<T | undefined>;
 
   /**
@@ -239,7 +253,7 @@ export type SQLiteQueryAPI = {
   bulkWrite: <KEYS extends string>(
     table: string,
     keys: KEYS[],
-    options?: { signal?: AbortSignal },
+    options?: WithSignal,
   ) => SQLiteBulkWriter<KEYS>;
 
   /**
