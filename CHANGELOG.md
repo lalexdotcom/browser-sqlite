@@ -79,9 +79,9 @@ with it.
   signature changes behaviour. Only the buffer was ever bounded — the chain of
   batches handed over and not yet written was not, so a JavaScript loop against
   OPFS writes grew memory with batches in flight. The default is two batches'
-  worth, derived from the column count, so the memory bounded is about the same
-  from one table to the next; a value smaller than one batch is legal and means
-  one INSERT in flight. The promise **never rejects**: a failed batch still
+  worth, derived from the column count; a value smaller than one batch is legal
+  and means one INSERT in flight. It bounds a number of rows and says nothing
+  about what they weigh — set it yourself when your columns carry blobs. The promise **never rejects**: a failed batch still
   surfaces at the next `enqueue()`, which throws, and at `close()`, which
   rejects.
 - **`transaction()` accepts `{ signal }`.** It was the last public method that

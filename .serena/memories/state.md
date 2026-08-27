@@ -46,10 +46,12 @@ item is whatever the user picks from `mem:follow-ups`.
 
 ## Owed before the release
 
-**Scope, set by the user on 2026-08-27: everything open belongs to rc.4 except
-multi-tab, which is rc.5's subject — implemented or abandoned.** So rc.4 carries
-the evidence owed and the small items below; `W-multitab` and its Known
-Limitations line travel with the rc.5 decision.
+**Scope, set by the user on 2026-08-27, and stated twice because the first
+reading was wrong.** rc.4 closes every open point that does not *touch* multi-tab,
+**and documents multi-tab as it stands, limitations included** — the Known
+Limitations line is rc.4 work, not rc.5. rc.5 is where multi-tab is studied for
+feasibility and either built or abandoned. Anything that would *change* multi-tab
+behaviour waits for rc.5; describing today's behaviour does not.
 
 - Bump `package.json` to `1.0.0-rc.4`.
 - **The upstream PR is open: `rhashimoto/wa-sqlite#344`**, "Fix OPFSAnyContextVFS

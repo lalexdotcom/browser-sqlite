@@ -120,10 +120,12 @@ export const createBulk = (shared: {
     ) => {
       const signal = options?.signal;
       const maxBufferSize = Math.floor(maxVariables / keys.length);
-      // Two batches' worth by default. A batch is at most `maxVariables` bound
-      // values whatever the table, so this bounds about the same memory whether
-      // the caller loads 2 columns or 30 — which was the whole merit of
-      // counting in batches, without imposing the word on the consumer.
+      // Two batches' worth by default: the batch is the unit that gets queued,
+      // so anything smaller than one is meaningless and two is the smallest
+      // window that lets a batch settle while another is being filled. Derived
+      // rather than fixed because the same row count means a different number
+      // of INSERTs on a wide table than on a narrow one. It bounds ROWS — what
+      // they weigh is the caller's business, and `queueSize` is theirs to set.
       // Raised to 1 rather than trusted: a flush always queues at least one
       // row, so anything lower can never be satisfied and would park the
       // producer for ever. This is the one place an explicit value is not taken

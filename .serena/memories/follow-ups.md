@@ -14,15 +14,23 @@ what is written here is the backlog, not a proposal about it.
 `ABORT-1` and `DELETE-1` are gone from here: both shipped on 2026-08-27 (merge
 `a2c1b26`). What they left behind is below and in `mem:lessons`.
 
-### A timed flush, and the byte-bounded buffer behind it
+### A timed flush — out of rc.4 (user, 2026-08-27)
 
-Both raised on 2026-08-27 and kept out of the back-pressure spec, which records the full
-argument in its §7. Short form: a timer's memory case is weak — the buffer is already
-bounded at one batch — and it multiplies commits on exactly the slow-producer workload it
-targets, each flush taking a write lease. What is real is that the buffer is bounded in
-*values*, not bytes: one TEXT column admits 32 766 rows, so 10 KB blobs mean 327 MB held
-before the first flush. **If either is ever built, `maxBufferBytes` is the one with a case,
-and the timer's commit cost is to be measured, not deduced.**
+Raised by the user during the back-pressure brainstorm and kept out of the spec, which
+records the full argument in its §7. Short form: a timer's memory case is weak — the input
+buffer is already bounded at one batch — while its real cost lands on the workload it
+targets, since `bulkWrite` commits per batch and a timer on a trickle multiplies commits,
+hence OPFS fsyncs, each flush also taking a write lease. What it would buy is latency and
+durability: a slow producer's rows reaching SQLite without waiting for `close()`. **The
+commit cost is to be measured, not deduced, if it is ever picked up.**
+
+**`maxBufferBytes` is dropped, not deferred (user, 2026-08-27).** It was my
+counter-proposal to the timer, never something the user asked for. The input buffer is
+bounded in *values*, not bytes, so one TEXT column admits 32 766 rows and 10 KB blobs mean
+327 MB held before the first flush — the case is real. It is not worth a per-row size
+computation on the hot path for an abstraction the consumer can handle themselves:
+`queueSize` is theirs to set, and a blob loader sets it small. The spec's §7 still
+describes the idea as it stood that day; it is a dated record, not a live proposal.
 
 ## Limits to document rather than fix
 
@@ -32,10 +40,12 @@ and the timer's commit cost is to be measured, not deduced.**
 writer". Partly settled: `output()` **must** be multi-tab safe (user requirement) and its
 staging sweep is `navigator.locks`-guarded. The rest of the client stays uncoordinated.
 
-**Scoped to rc.5 (user, 2026-08-27): multi-tab is rc.5's subject, implemented or
-abandoned, and its Known Limitations line goes with that decision.** The README already
-says it twice in the read-your-own-writes section — "It is not guaranteed across tabs" and
-"Nothing serializes writes between clients" — so nothing is currently unstated.
+**To treat, in rc.4: one Known Limitations line describing what is true today** (user,
+2026-08-27 — an earlier note in this file scoped it to rc.5 and that was a misreading).
+rc.4 documents multi-tab as it stands; rc.5 studies whether to build or abandon it. The
+README already says it twice in the read-your-own-writes section — "It is not guaranteed
+across tabs" and "Nothing serializes writes between clients" — so the line restates rather
+than reveals, and Known Limitations is where a reader looks for it.
 
 ### REOPEN-1 — `OPFSWriteAheadVFS/sync :: survives-reopen`, a flake at n=3
 
@@ -162,9 +172,10 @@ bidirectional compile-time pin fails the build if they drift.
 
 ### Two things called cleanups that are projects
 
-- `wa-sqlite.d.ts` shadows wa-sqlite's own shipped types via three `declare module` deep
-  imports. Not a one-liner — it touches how the worker compiles.
-- 29 `any` in `src/`; `tsconfig` could enable `noUncheckedIndexedAccess` and
+- `wa-sqlite.d.ts` shadows wa-sqlite's own shipped types — 14 `declare module` blocks, not
+  the three this entry claimed until 2026-08-27. Not a one-liner — it touches how the worker compiles.
+- 32 `any` in `src/` (29 before back-pressure — the count drifts, do not cite it without
+  re-counting); `tsconfig` could enable `noUncheckedIndexedAccess` and
   `exactOptionalPropertyTypes`.
 
 **Kept deliberately, do not "clean up":** the no-op degradation branch in `locks.ts`,

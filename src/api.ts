@@ -118,9 +118,13 @@ export type SQLiteOutputOptions<SCHEMA extends Schema> = OptionsWithSignal<{
  * been handed over but not yet written is held in memory until it is, and
  * nothing caps how many of those accumulate unless you await `enqueue()`.
  *
- * The default is two batches' worth, derived from the column count — about
- * 13 100 rows for 5 columns, 2 180 for 30 — so the memory bounded is roughly
- * the same from one table to the next. A value smaller than one batch is legal
+ * It is a number of rows, and nothing else: it says nothing about what those
+ * rows weigh. A table whose columns carry blobs holds far more per row than a
+ * table of integers, and only you know which one you are loading — set the
+ * value yourself when the rows are heavy.
+ *
+ * The default is two batches' worth, derived from the column count: about
+ * 13 100 rows for 5 columns, 2 180 for 30. A value smaller than one batch is legal
  * and means one INSERT in flight, the least the batching allows. Anything below
  * 1 is raised to 1: a batch always holds at least one row, so a lower cap could
  * never be satisfied.
