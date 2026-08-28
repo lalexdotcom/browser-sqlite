@@ -151,6 +151,16 @@ with it.
 - A benchmark and conformance page, published alongside each release, that
   measures the VFS on the visitor's own browser.
 
+### Performance
+
+- **Repeated SQL is compiled once per worker.** A per-worker LRU cache (32
+  entries) retains prepared statements across executions; every `bulkWrite`
+  INSERT template, every barrier statement, and every repeated `SELECT` benefits
+  after its first execution on that worker. Measured on Chromium and Firefox,
+  two VFS/build pairs: 6–20 % on identical-read workloads, 13–55 % on `bulkWrite`
+  and `tx.bulkWrite`. The cache is invisible to consumers: no option, no
+  constraint, no behaviour change.
+
 ### Changed
 
 - **The package declares `sideEffects` and `engines`.** `sideEffects` lists the
