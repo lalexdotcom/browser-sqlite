@@ -74,6 +74,16 @@ worker confirms it is idle. The caller does not wait — it already has its resu
 worker still inside `sqlite.step()` is never re-lent: the exclusivity guarantee holds at
 the worker level, not just at the scheduler level.
 
+**`lockPolicy: 'shared'` on every VFS is a condition of the pool's existence, not a
+preference.** wa-sqlite's own default is `'exclusive'`, where a connection holds the file
+for its whole session — under it the second worker of our own pool would never open the
+database. `'shared'` maps SQLite's lock levels onto Web Locks instead, which is what lets
+`poolSize` connections share one file. Anyone tempted to drop the option and inherit the
+default is removing concurrent reads. The other option of the same mixin, `lockTimeout`,
+is left at `Infinity` deliberately: it applies only to blocking acquisitions, and the
+write-lock transitions are polled (`ifAvailable`), so it would change nothing that matters
+(`mem:follow-ups`, W-multitab).
+
 **Routing is an allowlist, and its second clause is not decoration.** `isReadQuery`
 requires an allowlisted opening keyword **and** no write keyword anywhere in the
 statement, because the worker executes `;`-separated statements — `SELECT 1; DROP TABLE t`

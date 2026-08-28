@@ -36,9 +36,27 @@ describes the idea as it stood that day; it is a dated record, not a live propos
 
 ### W-multitab — multi-tab is entirely uncoordinated
 
-`currentWriterIndex` and both queues are per-realm; two tabs each enforce their own "single
-writer". Partly settled: `output()` **must** be multi-tab safe (user requirement) and its
-staging sweep is `navigator.locks`-guarded. The rest of the client stays uncoordinated.
+`currentWriterIndex` and both queues are **per client**, not per realm — `createScheduler`
+runs once per `createSQLiteClient`. This entry said "per-realm" until 2026-08-28 and that
+understated the limit: two clients in the *same tab* do not serialize their writes against
+each other either. Only the commit epoch is realm-wide, so what one tab's clients share is
+**visibility**, never exclusion. Partly settled: `output()` **must** be multi-tab safe (user
+requirement) and its staging sweep is `navigator.locks`-guarded. The rest of the client
+stays uncoordinated.
+
+**What actually happens when two clients write at once — verified in the source,
+2026-08-28.** Not corruption, and not a silent lost write: the second writer fails
+immediately with `SQLITE_BUSY`. The VFS asks for its lock with `ifAvailable: true`
+(`WebLocksMixin.js`), so it never waits, and no busy handler is registered because the
+library ships no PRAGMAs — `busy_timeout` is still on the performance list above, with its
+own risk to measure. `pool.ts` turns the code into `SQLiteError('BUSY')`. Web Locks are
+origin-wide, so this is identical between two clients and two tabs.
+
+Two shapes to describe in the Known Limitations line, because neither is where a reader
+looks for the failure: a `bulkWrite` interrupted mid-way leaves its earlier batches
+committed and raises `SQLiteBulkWriteError` — a *partial* load; and `BEGIN` is deferred, so
+both clients open their transaction cleanly and it is the first write inside that fails.
+Today the consumer's only remedy is to retry.
 
 **To treat, in rc.4: one Known Limitations line describing what is true today** (user,
 2026-08-27 — an earlier note in this file scoped it to rc.5 and that was a misreading).
