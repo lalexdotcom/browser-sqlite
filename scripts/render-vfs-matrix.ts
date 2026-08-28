@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs';
+import bcd from '@mdn/browser-compat-data' with { type: 'json' };
 import {
   RECOMMENDED_VFS,
   BUILD_REQUIREMENTS,
@@ -95,23 +96,6 @@ const BROWSER_LABEL: Record<Browser, string> = {
 };
 
 /** How a single support value reads on its own. */
-/**
- * What the library itself needs, before any VFS is considered — set by
- * `Array.prototype.at()` and `crypto.randomUUID()` in the published bundle.
- * MDN browser-compat-data, checked 2026-08-25. Mobile columns follow their
- * desktop engine, which BCD was not consulted for separately.
- *
- * Every cell below is the LATER of this and the VFS's own requirement: a VFS
- * that works where the library does not is not information a reader can use.
- */
-const LIB_FLOOR: Record<string, string> = {
-  Chrome: '92',
-  Firefox: '95',
-  Safari: '15.4',
-  Android: '92',
-  iOS: '15.4',
-};
-
 /** The later of two version strings, comparing segment by segment. */
 const laterOf = (a: string, b: string): string => {
   const pa = a.split('.').map(Number);
@@ -123,6 +107,75 @@ const laterOf = (a: string, b: string): string => {
   }
   return a;
 };
+
+/** How this script's browser keys are spelled in browser-compat-data. */
+const BCD_KEY: Record<Browser, string> = {
+  Chrome: 'chrome',
+  Firefox: 'firefox',
+  Safari: 'safari',
+  Android: 'chrome_android',
+  iOS: 'safari_ios',
+};
+
+/**
+ * What the library itself needs in the published bundle, before any VFS is
+ * considered. Named as browser-compat-data paths and READ from it, not
+ * transcribed: a hand-copied floor rots behind a "checked <date>" comment that
+ * nobody re-checks, and this one was already a year of drift waiting to happen.
+ *
+ * `MessageChannel` is what `cloneable()` in the worker probes with. It could
+ * have been `structuredClone`, which is the obvious call — and which lands at
+ * Chrome 98 against MessageChannel's Chrome 2. The floor of the whole library
+ * would have moved six versions to protect an error *cause*.
+ */
+const LIB_REQUIRES: Record<string, { __compat?: { support: object } }> = {
+  'Array.prototype.at': bcd.javascript.builtins.Array.at,
+  'crypto.randomUUID': bcd.api.Crypto.randomUUID,
+  MessageChannel: bcd.api.MessageChannel,
+};
+
+/**
+ * The first version of `browser` shipping `feature`, as a plain version string.
+ *
+ * Throws on anything else on purpose. `true` ("supported, no version") and
+ * `false` are both meaningful in browser-compat-data and neither can be folded
+ * into a floor: one would invent a number, the other means the library does not
+ * run there at all. Either is a table this script must not silently emit.
+ */
+const bcdVersion = (name: string, node: unknown, browser: Browser): string => {
+  const key = BCD_KEY[browser];
+  const support = (node as { __compat: { support: Record<string, unknown> } })
+    .__compat.support[key];
+  const entry = (Array.isArray(support) ? support[0] : support) as
+    | { version_added?: unknown }
+    | undefined;
+  const added = entry?.version_added;
+  if (typeof added !== 'string') {
+    throw new Error(
+      `browser-compat-data gives ${name} on ${key} as ${JSON.stringify(added)}, ` +
+        'not a version. A floor cannot be computed from it — decide what the ' +
+        'library claims there and say so here explicitly.',
+    );
+  }
+  return added;
+};
+
+/**
+ * The library's own floor per browser: the latest first-version among the APIs
+ * it uses.
+ *
+ * Every VFS cell is the LATER of this and the VFS's own requirement — a VFS
+ * that works where the library does not is not information a reader can use.
+ */
+const LIB_FLOOR: Record<string, string> = Object.fromEntries(
+  BROWSERS.map((browser) => [
+    browser,
+    Object.entries(LIB_REQUIRES).reduce(
+      (floor, [name, node]) => laterOf(floor, bcdVersion(name, node, browser)),
+      '0',
+    ),
+  ]),
+);
 
 /** A VFS floor raised to the library's, which no VFS can go below. */
 const withLibFloor = (v: Support | undefined, browser: string): Support => {

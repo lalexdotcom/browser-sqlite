@@ -143,25 +143,42 @@ Limitations entry rests on it and currently reads as a determinism. It happens t
 (blocked on 8 of 8 earlier runs) but needs **n≥3 per engine** before that wording is
 defensible — and the same row cannot then be read as a verdict for `OPFSAdaptiveVFS`.
 
-### BASELINE-1 — two residuals, both small
-
-Locate `structuredClone`'s BCD entry and confirm it does not raise the floor; and check
-`chrome_android` / `safari_ios` in `LIB_FLOOR` rather than inheriting their desktop engine
-(the assumption is commented in `scripts/render-vfs-matrix.ts`). Everything else shipped in
-`9af6b37`. **About fifteen minutes.**
-
-One case is deliberately **not** folded to `MAX(vfs, lib)`: where a source says supported
-but gives no first version, the cell keeps `?` rather than adopting the library's number —
-the true floor is at least that and may be higher.
-
-**Decided 2026-08-25: do not support below the floor.** OPFS itself is Chrome 86+, so a
-pre-86 engine cannot run the six OPFS VFS at all. What was built instead is a classic ES5
-script ahead of the module in the bench page that watches for the module having started
-and, after 8 s, replaces the banner with what is missing. It tests for the module
-*running*, not for syntax, so it also covers a failed `dist/` fetch. Falsified by blocking
-that fetch, not reasoned about.
-
 ## Notes, with nothing to fix
+
+### The library's floor is computed, not transcribed (2026-08-28)
+
+`LIB_FLOOR` in `scripts/render-vfs-matrix.ts` is read from
+`@mdn/browser-compat-data` (a devDependency) over a named list of the APIs the
+published bundle uses, mobile columns from `chrome_android` / `safari_ios`
+rather than inherited from desktop. The computed floors reproduced the
+transcribed ones byte for byte, so the old numbers were right — they simply
+could not stay right on their own. `bcdVersion` throws rather than guessing when
+BCD gives `true` or `false` instead of a version.
+
+**`FEATURE_SUPPORT`, right above it, is still transcribed by hand and cannot be
+fully mechanised**: JSPI's `Safari: '27'` comes from a WebKit blog post, not from
+BCD. Its "checked 2026-08-24" comment is load-bearing; do not delete it under the
+impression that the file now reads everything from BCD.
+
+**`structuredClone` was the trap.** It would have raised the floor from Chrome 92
+to 98 — for an error *cause*. `cloneable()` now probes with `MessageChannel`
+(Chrome 2, Firefox 41, Safari 5), which runs the same algorithm and throws the
+same `DataCloneError`. The probe exists because a cause that cannot be cloned
+makes `postMessage` throw *inside a catch block*, so the client receives no reply
+at all and waits for ever. It lives in `src/worker/cloneable.ts` — pure, and
+tested in Node, for the reason `statement-cache.ts` is.
+
+**Decided 2026-08-25: do not support below the floor.** OPFS itself is Chrome
+86+, so a pre-86 engine cannot run the six OPFS VFS at all. What was built
+instead is a classic ES5 script ahead of the module in the bench page that
+watches for the module having started and, after 8 s, replaces the banner with
+what is missing. It tests for the module *running*, not for syntax, so it also
+covers a failed `dist/` fetch. Falsified by blocking that fetch, not reasoned
+about.
+
+One case is deliberately **not** folded to `MAX(vfs, lib)`: where a source says
+supported but gives no first version, the cell keeps `?` rather than adopting the
+library's number — the true floor is at least that and may be higher.
 
 ### BENCH-DRIFT — the page holds a second copy of the invariants, permanently
 

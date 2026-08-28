@@ -32,6 +32,7 @@ import {
   type WorkerMessageData,
 } from '../types';
 import { renderPragmas } from '../utils';
+import { cloneable } from './cloneable';
 import { createStatementCache } from './statement-cache';
 
 type SQLOptions = { chunkSize?: number; signal?: AbortSignal };
@@ -248,8 +249,6 @@ const open = (file: string, options: OpenOptions) => {
   let prepared = 0;
 
   const cache = createStatementCache(options.statementCacheSize ?? 0);
-
-  // `cloneable` is defined at module level; see below.
 
   const query = async function* (
     sql: string,
@@ -494,10 +493,6 @@ const open = (file: string, options: OpenOptions) => {
 };
 
 /**
- * A cause that cannot be structured-cloned makes `postMessage` itself throw —
- * inside the catch block — so the client receives nothing and waits forever.
- */
-/**
  * Whether `sql` compiled to exactly one statement, decided from the text
  * `sqlite3_sql` returns for the first statement — its own span of the input,
  * not the whole input. Asked before the first `step`, because `first()` and an
@@ -513,15 +508,6 @@ const open = (file: string, options: OpenOptions) => {
 const isSingleStatement = (sql: string, statementText: string) => {
   const normalize = (s: string) => s.trim().replace(/;+$/, '').trim();
   return normalize(sql) === normalize(statementText);
-};
-
-const cloneable = (value: unknown): unknown => {
-  try {
-    structuredClone(value);
-    return value;
-  } catch {
-    return String(value);
-  }
 };
 
 /**
