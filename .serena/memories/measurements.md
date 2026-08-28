@@ -353,3 +353,109 @@ barrier test does, and it is the only reason anything could be claimed at all.
 The harness itself was throwaway and is not in the repository: it wrote its own page into
 `_site/` and drove it with Playwright. Re-creating it is fifteen minutes; the shape is in
 the merge commit of `feat/last-writer-routing`.
+
+## Statement-cache gain — 2026-08-28, feat/statement-cache, devcontainer arm64/linux
+
+**Method.** Scratch harness `tests/browser/prepare-bench.test.ts` (deleted), using
+`createTestClient` from the existing test helpers. Three workloads, three runs each, two
+VFS cells (OPFSCoopSyncVFS/sync build, OPFSAdaptiveVFS/async build), two engines
+(Chromium 151, Firefox 153 via Playwright). Control: same build with
+`DEFAULT_STATEMENT_CACHE_SIZE=0` — identical code, cache disabled, single variable
+difference. `prepared` counter read via `db.debug` with `poolSize: 1`. Footprint via
+`_sqlite3_stmt_status(stmt, 99 /* SQLITE_STMTSTATUS_MEMUSED */, 0)` in the worker. `jspi`
+not measured — Chromium only, no cross-engine comparison possible; recorded as not
+measured.
+
+**WL1 — 2 000 identical reads (`SELECT a FROM t WHERE a = ?`).**
+Microbenchmark; percentage means nothing outside its own context.
+Observed: the last 50 of 2 000 executions were visible through the 50-entry debug-state
+history cap. With cache=0, all 50 compiled (prepared=1 each). With cache=32, none of the
+50 compiled (prepared=0 each). The total of 2 000 compiles for cache=0, and the single
+first compile for cache=32, are inferred from the workload's structure and the 50-entry
+history cap — neither total was directly read.
+
+| engine | VFS/build | before (ms, median) | after (ms, median) | gain | ms/compile saved |
+|---|---|---|---|---|---|
+| Chromium | sync/OPFSCoopSyncVFS | 573 | 539 | 5.9% | 0.017 |
+| Chromium | async/OPFSAdaptiveVFS | 2142 | 1722 | 19.6% | 0.21 |
+| Firefox | sync/OPFSCoopSyncVFS | 487 | 417 | 14.4% | 0.035 |
+| Firefox | async/OPFSAdaptiveVFS | 1277 | 1148 | 10.1% | 0.065 |
+
+Firefox times are integers (1 ms `performance.now()` resolution). Chromium/async shows the
+largest per-compile cost (0.21 ms) because Asyncify suspends the stack on every schema read
+inside `sqlite3_prepare_v3`. Firefox/async is lower (0.065 ms) likely due to different
+Asyncify implementation. Firefox/async WL1 shows high within-condition variance (1 096–
+1 268 ms cache=32, 1 189–1 289 ms cache=0); the 129 ms median difference is real but
+marginal — treat the 10.1 % figure as a floor, not a ceiling.
+
+**WL2 — `bulkWrite` 100 000 rows, 5 columns (16 batches, each its own transaction).**
+Each batch: BEGIN + INSERT + COMMIT. `prepared` counts INSERT batches only.
+Cache=0: 16 INSERT compilations per run. Cache=32: 2 (one full-batch template, one
+partial-batch template). 14 INSERT compiles avoided; BEGIN/COMMIT saves additional.
+Signal-to-noise: commit + OPFS fsync dominate on some cells; the percentage is
+meaningful but not the primary consumer signal.
+
+| engine | VFS/build | before (ms) | after (ms) | gain | ms/INSERT compile saved |
+|---|---|---|---|---|---|
+| Chromium | sync | 326 | 284 | 12.9% | 3.0 |
+| Chromium | async | 399 | 340 | 14.8% | 4.2 |
+| Firefox | sync | 531 | 260 | 51.0% | 19.4 |
+| Firefox | async | 722 | 350 | 51.5% | 26.6 |
+
+Firefox WL2 gain (~51 %) is anomalously large relative to Chromium (~13–15 %). The 78 680-
+character INSERT template is expensive to compile on Firefox regardless of engine; the
+cache removes that cost on 14 of 16 batches.
+
+**WL3 — `tx.bulkWrite` 100 000 rows (same batches, one transaction).**
+One commit instead of 16; cache warms once by construction. Clearest reading of the
+mechanism. Same INSERT compiled count as WL2.
+
+| engine | VFS/build | before (ms) | after (ms) | gain | ms/INSERT compile saved |
+|---|---|---|---|---|---|
+| Chromium | sync | 266 | 233 | 12.4% | 2.4 |
+| Chromium | async | 312 | 261 | 16.3% | 3.6 |
+| Firefox | sync | 519 | 247 | 52.4% | 19.4 |
+| Firefox | async | 685 | 313 | 54.3% | 26.6 |
+
+**WL2→WL3 gap — pricing the 15 intermediate commits.**
+(after-WL2 minus after-WL3, in ms: Chromium sync 51, async 79; Firefox sync 13, async 37.)
+Firefox sync 13 ms at 1 ms resolution over 3 runs is near noise; treat as ≤ 13 ms per
+15 commits. Chromium sync ~3.4 ms/commit, async ~5.3 ms/commit. This is the first direct
+measurement of the intermediate-commit overhead; previously open in `mem:follow-ups`.
+
+**Footprint — `_sqlite3_stmt_status(stmt, SQLITE_STMTSTATUS_MEMUSED=99, 0)`.**
+Measured on cache=32 run (Chromium; identical on Firefox — same WASM binary).
+`_sqlite3_memory_used()` returns 0 throughout: this build sets
+`SQLITE_DEFAULT_MEMSTATUS=0`, disabling allocator tracking. Only `stmtBytes` is available.
+
+| SQL (truncated) | sqlLen (chars) | stmtBytes | bytes/char |
+|---|---|---|---|
+| `SELECT count(*) FROM sqlite_master` (barrier) | 34 | 1 336 | 39 |
+| `CREATE TABLE t (a INTEGER)` | 26 | 1 915 | 74 |
+| `INSERT INTO t (a) VALUES (?)` | 28 | 1 283 | 46 |
+| `SELECT a FROM t WHERE a = ?` | 27 | 1 352 | 50 |
+| `CREATE TABLE t (a INTEGER, b INTEGER, …)` | 70 | 2 003 | 29 |
+| Full-batch INSERT (5 cols × 6 553 rows) | 78 680 | 2 433 999 | 31 |
+| Partial-batch INSERT (5 cols × 1 705 rows) | 20 504 | 622 863 | 30 |
+
+The bytes/char ratio is **not stable** (29–74 for small statements vs 30–31 for large
+ones): no extrapolation rule is possible. The two bulkWrite templates together hold 3.06 MB.
+If both are in the 32-entry cache simultaneously (the typical case after a `bulkWrite`
+workload), the cache commits ~3 MB. Small statements (SELECT, barrier, small INSERT) add
+1–2 KB each and are negligible beside the templates.
+
+**Raw runs (three per cell):**
+
+Chromium cache=32: WL1 sync [511.4, 550.5, 538.7] WL2 sync [288.1, 282.7, 283.9]
+WL3 sync [234.4, 232.8, 231.9] WL1 async [1694, 1722.3, 1830.5] WL2 async [340.2, 340.6,
+329.9] WL3 async [261, 265.9, 258.2]
+
+Chromium cache=0: WL1 sync [546.8, 572.7, 639.2] WL2 sync [330.3, 326.2, 323.3]
+WL3 sync [266.3, 270.1, 264.5] WL1 async [2132.8, 2142, 2229.5] WL2 async [398.4, 415,
+399.2] WL3 async [315.8, 311.9, 307.1]
+
+Firefox cache=32: WL1 sync [416, 417, 427] WL2 sync [260, 265, 259] WL3 sync [253, 243,
+247] WL1 async [1096, 1268, 1148] WL2 async [352, 350, 339] WL3 async [324, 313, 304]
+
+Firefox cache=0: WL1 sync [487, 480, 501] WL2 sync [534, 531, 531] WL3 sync [520, 519,
+516] WL1 async [1189, 1289, 1277] WL2 async [744, 720, 722] WL3 async [685, 685, 698]

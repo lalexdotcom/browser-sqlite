@@ -193,14 +193,18 @@ on it**, and delete it the moment it is done rather than leaving it to be redisc
 
 ## Performance backlog — after correctness, none blocking
 
-- **No prepared-statement cache** (`worker.ts`) — the largest single win on the list, and the
-  one whose shape is already settled. Its own section below.
+- ~~No prepared-statement cache~~ — **built on `feat/statement-cache` (2026-08-28), not yet
+  merged.** What it leaves open is one number: its own section below.
 - **No default PRAGMAs** → consumers silently run `journal_mode=DELETE` + `synchronous=FULL`.
   Shipping WAL + NORMAL + `busy_timeout` is on the list for its own reasons — note that
   `busy_timeout` is also option A for CoopSync, with a risk to **measure, not deduce**:
   SQLite's busy handler sleeps, and in a synchronous VFS in a worker that may block the very
   thread that owes the handle release, converting a failure into a deadlock.
-- `bulkWrite` flushes are separate transactions (~300 commits for 1M rows).
+- `bulkWrite` flushes are separate transactions (~300 commits for 1M rows). **Priced on
+  2026-08-28**, as a by-product of the statement-cache campaign: ~3.4 ms per commit on
+  Chromium/sync and ~5.3 ms on Chromium/async, from the gap between `bulkWrite` and
+  `tx.bulkWrite` (`mem:measurements`). No longer a guess — it is what a consumer buys back by
+  wrapping a bulk load in a transaction.
 - **Every worker compiles its own WASM copy** (1.23 MB × `poolSize`).
   `WebAssembly.Module` is structured-cloneable — compile once, `postMessage` it.
 - Per-row `Object.fromEntries(cols.map(...))` in the hottest loop.
@@ -209,48 +213,66 @@ on it**, and delete it the moment it is done rather than leaving it to be redisc
   count on both engines; no latency gain is measurable on either, and `mem:measurements` says
   why the timer is the wrong instrument for an effect this size.
 
-## The prepared-statement cache — discussed 2026-08-27, not built
+## The statement cache's bound is in entries, and an entry can weigh megabytes
 
-**Read this before designing it; every point below cost a round of conversation.**
+**Built on `feat/statement-cache` (2026-08-28), not yet merged.** The design is in
+`docs/superpowers/specs/2026-08-27-statement-cache-design.md` and every number is in
+`mem:measurements`; neither is repeated here. What is open is the bound.
 
-**Today every statement is compiled and thrown away.** Both worker paths go through
-`sqlite.statements(db, sql)` (`worker/worker.ts`, the exec path and the query path). In
-wa-sqlite that generator loops on `sqlite3_prepare_v3`, yields the statement, and in its
-`finally` unwinds an `onFinally` stack that finalises it and frees the SQL buffer. That
-holds for every `BEGIN`, `COMMIT`, `ROLLBACK`, every barrier statement and every
-`bulkWrite` batch with its ~65 KB of placeholders.
+`DEFAULT_STATEMENT_CACHE_SIZE = 32` (`client.ts`) counts **entries**. That number was picked
+before anything had been weighed. It has been weighed since: the two INSERT templates one
+`bulkWrite` retains come to **3.06 MB together**, and there is one cache per worker,
+multiplied by `poolSize`.
 
-**So "prepared versus classic" is not the question.** For a single execution the two are
-the same three calls and cost the same. **The entire gain is reuse**, which makes the
-cache the feature — not a public `prepare()`.
+**The case the measurement did not cover.** One `bulkWrite` is fine. An application writing
+to four tables of different widths produces eight distinct templates — order of 24 MB per
+worker, ~100 MB at `poolSize: 4`. The whole-branch review called 32 entries safe and was
+right about the case in front of it; that case was one table.
 
-**No public `prepare()`, and the architecture is what decides it.** A prepared statement
-belongs to one connection; this pool has `poolSize` of them. A public handle would either
-pin its caller to one worker — destroying the concurrent reads the lease system exists to
-protect — or prepare lazily on whichever worker serves the call, which *is* a cache keyed
-by SQL. The only thing an explicit API would add is a guarantee that a hot query is never
-evicted, and that is a number (a cache size), not a handle.
+So moving the eviction criterion to a byte budget fed by `sqlite3_stmt_status(stmt, 99, 0)`
+is **not an optimisation, it is the answer to a memory risk**. The change is confined to the
+pure module — eviction is all it decides. Do not expect help from `_sqlite3_memory_used()`:
+this build sets `SQLITE_DEFAULT_MEMSTATUS=0` and it returns 0.
 
-**The real work is not the cache, it is the cleanup it removes.** That `finally` is what
-guarantees today that an abandoned statement is finalised — an abort mid-`step`, the
-`break` inside `first()`. A cache leaves the generator for `prepare_v3` directly and must
-replace the guarantee with `reset` + `clear_bindings` **on every exit**. A statement left
-in place keeps its read transaction open, which poisons the barrier and meets HANDLE-1.
-Three more obligations come with it: finalise everything before closing a connection
-(SQLite refuses to close otherwise), bound the cache (the 32k-placeholder program is not
-small, and there is one cache per worker), and decide what to do with multi-statement
-strings, which `statements()` accepts today.
+**A smaller effect to know before touching this:** SQL generated per call fills the LRU with
+single-use entries. The bound stops the growth, not the churn, and every eviction is a
+`finalize` on the hot path. Nobody has profiled it.
 
-**`bulkWrite` is where it pays first.** Every full batch has the identical template, so one
-entry per writer catches all but the final partial batch. And since `feat/last-writer-routing`
-shipped, a `bulkWrite` tends to stay on one worker instead of walking the pool, so the cache
-warms once rather than `poolSize` times. `tx.bulkWrite()` was already pinned to a single
-worker by construction.
+## Three things about the statement cache that no test can see
 
-**Measure on repeated identical SQL**, never on a single query — there is nothing to see
-there by construction. Unlike the routing change, this effect is a compile cost and is
-genuinely a duration, so timing is the right instrument here; `mem:lessons` explains when it
-is not.
+**The drain before `close` is falsifiable by nothing.** Deleting it leaves the whole suite
+green: `sqlite3_close` returns `SQLITE_BUSY`, the close path's `catch` swallows it, and the
+pool terminates the worker regardless, releasing every OPFS handle. Two observations were
+tried and neither sees it — `deleteDatabase` after `close()`, and reopening the same
+database. The test comment says so plainly rather than claiming a falsifier. The
+whole-branch review's verdict on that swallowing `catch`: **not a defect** — a worker that
+failed to open has nothing to close, and the worker dies either way. Reopen only if a future
+close path must tell "nothing to close" from "close refused".
+
+**An abandoned statement's read transaction is unobservable.** `settle` resets the statement
+on every non-error exit, and the reset is what ends its implicit read transaction. That an
+aborted query leaves its statement cached and reusable **is** tested, with a verified
+falsifier. That it leaves no read transaction open is not. With the reset removed, a second
+client writing the same file still succeeds and a later read still observes it — in
+`journal_mode=DELETE` and in WAL. Either the statement had already reached `SQLITE_DONE`
+before the abort landed, or the lock goes back on some other path; nobody has established
+which. **The prior question, if this is ever chased:** can the abort be made to land strictly
+inside a `step()` that has not yet returned `DONE`? Until that is answerable, no assertion
+here can discriminate.
+
+**The one-query-per-worker invariant became load-bearing.** The cache needs no lock because a
+worker holds one lease at a time. Before the cache, breaking that would have produced
+confusing behaviour; now it is a `reset` on a statement another query is stepping. Nothing at
+the place where someone would break it says so.
+
+## Read before designing anything cross-tab (user, 2026-08-28)
+
+**`https://github.com/rhashimoto/wa-sqlite/discussions/81`** — the user wants this
+discussion examined as part of multi-tab / multi-client handling. **Nobody here has read it
+yet**, so nothing in these memories reflects it and no claim below is informed by it. Read
+it before the Web-Locks-as-registry lead underneath, and before `W-multitab`'s Known
+Limitations line is written: it is upstream's own thread on the problem, and this project
+has twice built on a premise it could have sourced instead.
 
 ## A cross-tab lead, recorded unverified
 

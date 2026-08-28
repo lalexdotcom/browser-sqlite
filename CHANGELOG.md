@@ -151,6 +151,18 @@ with it.
 - A benchmark and conformance page, published alongside each release, that
   measures the VFS on the visitor's own browser.
 
+### Performance
+
+- **Repeated SQL is compiled once per worker.** A per-worker LRU cache retains
+  prepared statements across executions, where each execution used to compile
+  its own and throw it away. Anything you run more than once on the same worker
+  benefits after its first execution — a repeated `SELECT`, and every batch of a
+  `bulkWrite`, whose INSERT template is the same for all but the last batch. The
+  gain is largest where the statement is largest and where compilation is
+  slowest, so it varies by browser. Multi-statement strings are not cached and
+  keep their previous behaviour. The cache is invisible: no option, no
+  constraint, no behaviour change.
+
 ### Changed
 
 - **The package declares `sideEffects` and `engines`.** `sideEffects` lists the

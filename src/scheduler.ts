@@ -96,6 +96,17 @@ export const createScheduler = <W extends { index: number }>(
   // Availability lives HERE and nowhere else. No worker carries an `available`
   // flag, so no other module can republish a borrowed worker — which is exactly
   // how B1 happened.
+  //
+  // A second guarantee rests on this set, and nothing about it is visible from
+  // here. A leased worker leaves `available` until `release()` puts it back, so
+  // exactly one query is ever in flight per worker. `worker/statement-cache.ts`
+  // is built on that and takes no lock of any kind: its statements outlive the
+  // query that compiled them, and are reset and cleared on the way out. Lend a
+  // worker to a second concurrent caller and that reset lands on a statement
+  // another query is part-way through — rewound cursor, cleared bindings, wrong
+  // rows — while an eviction can finalise a handle that other query still
+  // holds, which is a use-after-free on a `sqlite3_stmt` pointer. Before the
+  // cache, breaking this was merely confusing.
   const available = new Set<number>();
 
   const dead = new Set<number>();
