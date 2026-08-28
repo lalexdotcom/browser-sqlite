@@ -153,14 +153,14 @@ with it.
 
 ### Performance
 
-- **Repeated SQL is compiled once per worker.** A per-worker LRU cache (32
-  entries) retains prepared statements across executions; every `bulkWrite`
-  INSERT template, every barrier statement, and every repeated `SELECT` benefits
-  after its first execution on that worker. Measured on Chromium and Firefox,
-  two VFS/build pairs: 6–20 % on identical-read workloads; on `bulkWrite` and
-  `tx.bulkWrite`, 12–16 % on Chromium and 51–55 % on Firefox (the large INSERT
-  template is expensive to compile on Firefox; the cache eliminates that cost on
-  14 of 16 batches). The cache is invisible to consumers: no option, no
+- **Repeated SQL is compiled once per worker.** A per-worker LRU cache retains
+  prepared statements across executions, where each execution used to compile
+  its own and throw it away. Anything you run more than once on the same worker
+  benefits after its first execution — a repeated `SELECT`, and every batch of a
+  `bulkWrite`, whose INSERT template is the same for all but the last batch. The
+  gain is largest where the statement is largest and where compilation is
+  slowest, so it varies by browser. Multi-statement strings are not cached and
+  keep their previous behaviour. The cache is invisible: no option, no
   constraint, no behaviour change.
 
 ### Changed
