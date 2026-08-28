@@ -368,8 +368,11 @@ measured.
 
 **WL1 — 2 000 identical reads (`SELECT a FROM t WHERE a = ?`).**
 Microbenchmark; percentage means nothing outside its own context.
-Compile count: cache=0 → every execution (50/50 visible); cache=32 → 0/50 visible (warm
-after first). Savings are 1 compilation per run of 2 000.
+Observed: the last 50 of 2 000 executions were visible through the 50-entry debug-state
+history cap. With cache=0, all 50 compiled (prepared=1 each). With cache=32, none of the
+50 compiled (prepared=0 each). The total of 2 000 compiles for cache=0, and the single
+first compile for cache=32, are inferred from the workload's structure and the 50-entry
+history cap — neither total was directly read.
 
 | engine | VFS/build | before (ms, median) | after (ms, median) | gain | ms/compile saved |
 |---|---|---|---|---|---|
