@@ -168,6 +168,35 @@ export type CreateSQLiteClientOptions = {
    * @defaultValue undefined — no collection, no output, `db.debug` undefined.
    */
   debug?: string | boolean;
+
+  /**
+   * Called whenever a worker slot is permanently lost. Receives the slot index,
+   * the number of workers still alive after the loss, the requested pool size,
+   * and the error that killed the slot.
+   *
+   * Guaranteed to be called **before** the client is failed when the last slot
+   * is lost. Wrapped in try/catch — a throwing callback is reported through
+   * `logger.always.warn` and does not break the pool.
+   *
+   * @defaultValue undefined
+   */
+  onWorkerLost?: (event: WorkerLostEvent) => void;
+};
+
+/**
+ * What `onWorkerLost` receives. Named and exported rather than inlined in the
+ * option: a consumer whose handler is a standalone function needs to be able
+ * to type its parameter.
+ */
+export type WorkerLostEvent = {
+  /** Zero-based index of the lost slot. */
+  index: number;
+  /** Number of workers still alive after this loss. */
+  live: number;
+  /** The requested pool size (`poolSize` option). */
+  size: number;
+  /** The error that killed the worker. */
+  cause: SQLiteError;
 };
 
 let clientCount = 0;
@@ -296,12 +325,128 @@ export const createSQLiteClient = (
   const writerPolicy: WriterPolicy | undefined =
     typeof testWriterPolicy === 'function' ? testWriterPolicy : undefined;
 
+  // ---------------------------------------------------------------------------
+  // Startup state: the deferred first-settle verdict
+  //
+  // While inStartup is true the gate is still closed and handleDeath skips
+  // supervisor entirely. The verdict (fast-fail or single retry round) fires
+  // from the scheduler's onFirstSettle callback.  inStartup is cleared in
+  // onGateOpen (which fires after the retry round, or immediately when all
+  // slots opened without failure).
+  // ---------------------------------------------------------------------------
+  let inStartup = true;
+  let startupFirstError: SQLiteError | undefined;
+  // Every startup death is recorded here keyed by slot index, and removed in
+  // spawn's .then() when the slot becomes ready (retry round success). What
+  // remains when the gate opens are the slots that permanently failed.
+  const startupLosses = new Map<number, SQLiteError>();
+
   /**
    * Creates a new pool worker and adds it to the pool.
    * Sets up message routing via callId for query responses.
    */
   const scheduler = createScheduler<PoolWorker>(
-    writerPolicy ? { canDesignateWriter: writerPolicy } : {},
+    (() => {
+      // onFirstSettle and onGateOpen are callbacks that fire asynchronously
+      // (after all const declarations in this scope have been initialised), so
+      // references to spawn / failClient / supervisor / emitWorkerLost are
+      // safe even though those names appear later in the source.
+      const onFirstSettle = (result: {
+        openedCount: number;
+        failedIndices: number[];
+      }) => {
+        if (result.openedCount === 0) {
+          // Total startup failure: every slot failed to open. No retry —
+          // when nothing opened the config is wrong and a retry only delays
+          // the error.
+          //
+          // Emit loss for every failed slot before failing the client — the
+          // contract requires the callback to fire before the client is failed.
+          // The supervisor is not consulted here: no R1 restart or liveness
+          // logic applies when nothing opened; the failure is total and
+          // permanent.
+          //
+          // startupFirstError is always set when openedCount === 0 because
+          // every settled-failed slot goes through handleDeath, which sets it.
+          // The fallback is unreachable but satisfies the linter.
+          inStartup = false;
+          for (const [index, error] of startupLosses) {
+            emitWorkerLost(index, error);
+          }
+          startupLosses.clear();
+          failClient(
+            startupFirstError ??
+              new SQLiteError(
+                'WORKER_CRASHED',
+                'All workers failed to open the database.',
+              ),
+          );
+          return;
+        }
+        // One retry round, hardcoded.  The count is not an option yet because:
+        // the startup contention that motivates this path (exclusive OPFS
+        // handle rotating between workers on Firefox) is a transient, bounded
+        // race, not a persistent fault.  One round is enough to resolve it.
+        // Exposing a knob before we have evidence the default is wrong would
+        // make the option permanent to remove.
+        for (const index of result.failedIndices) {
+          scheduler.rearmSlot(index);
+          spawn(index);
+        }
+        // If failedIndices is empty the gate opens immediately (no re-arming).
+        // If not, it stays closed until retry slots settle.
+      };
+
+      const onGateOpen = () => {
+        inStartup = false;
+        // Report all startup deaths to the supervisor first so liveCount() is
+        // correct for post-startup R1 decisions, and collect verdicts.
+        let failClientError: SQLiteError | undefined;
+        for (const [index, error] of startupLosses) {
+          // 'lost', not 'died': the retry round is capped at one, so these
+          // slots are not coming back and the consumer is about to be told so.
+          // 'died' would return 'restart' for a slot that had opened, leave it
+          // revivable, and spend a restart that never happens — the supervisor
+          // would then disagree with the `onWorkerLost` we emit below.
+          const verdict = supervisor.report(index, 'lost');
+          // Honour a 'fail-client' verdict from the supervisor.
+          if (verdict === 'fail-client') failClientError ??= error;
+        }
+        // Emit all losses BEFORE possibly failing the client — the contract
+        // requires the callback to fire before the client is failed.
+        for (const [index, error] of startupLosses) {
+          emitWorkerLost(index, error);
+        }
+        startupLosses.clear();
+        // Also fail the client when the pool is empty even if no verdict was
+        // 'fail-client'. This handles the case where supervisor returns
+        // 'restart' for an everReady slot (e.g., slot 0 opened in round 1 and
+        // died during the retry round) while slot 1's verdict depends on
+        // iteration order — the pool check is order-independent.
+        if (
+          failClientError !== undefined ||
+          pool.filter(Boolean).length === 0
+        ) {
+          failClient(
+            failClientError ??
+              startupFirstError ??
+              new SQLiteError(
+                'WORKER_CRASHED',
+                'All workers failed to open the database.',
+              ),
+          );
+        }
+      };
+
+      return writerPolicy
+        ? {
+            canDesignateWriter: writerPolicy,
+            poolSize,
+            onFirstSettle,
+            onGateOpen,
+          }
+        : { poolSize, onFirstSettle, onGateOpen };
+    })(),
   );
 
   const debugOption = clientOptions.debug;
@@ -696,6 +841,10 @@ export const createSQLiteClient = (
     })
       .then((worker) => {
         supervisor.report(index, 'ready');
+        // If this slot was recorded in startupLosses (it failed in a prior
+        // round and is now recovering in the retry), remove the record so it
+        // is not reported as permanently lost in onGateOpen.
+        startupLosses.delete(index);
         scheduler.add(worker);
       })
       .catch(() => {
@@ -704,16 +853,70 @@ export const createSQLiteClient = (
       .finally(() => clearTimeout(timer));
   };
 
+  /**
+   * Permanently loses a worker slot: logs the loss via the always-on channel
+   * and calls the onWorkerLost callback (if provided). Must be called BEFORE
+   * failClient so the callback sees the event before the client is shut down.
+   */
+  const emitWorkerLost = (index: number, error: SQLiteError) => {
+    // pool[index] is already undefined here (cleared by handleDeath or startup).
+    const live = pool.filter(Boolean).length;
+    logger.always.warn(
+      `worker ${index + 1} lost; pool is now ${live} of ${poolSize}`,
+    );
+    const cb = clientOptions.onWorkerLost;
+    if (cb) {
+      try {
+        cb({ index, live, size: poolSize, cause: error });
+      } catch (cbError) {
+        logger.always.warn(
+          `onWorkerLost callback threw: ${cbError instanceof Error ? cbError.message : String(cbError)}`,
+        );
+      }
+    }
+  };
+
   const handleDeath = (index: number, error: SQLiteError) => {
-    scheduler.remove(index);
+    // Snapshot inStartup BEFORE scheduler.remove() may trigger onFirstSettle or
+    // onGateOpen (both of which can change inStartup synchronously).
+    const wasInStartup = inStartup;
+
+    if (wasInStartup) {
+      // During startup (gate still closed), defer the verdict to onFirstSettle.
+      // A slot that fails before all others have settled must not be restarted
+      // or marked lost immediately: we cannot yet distinguish "only this slot
+      // is broken" from "contention during startup resolved itself for others".
+      //
+      // Set startupFirstError BEFORE scheduler.remove() so that onFirstSettle
+      // (which fires synchronously inside remove()) reads the correct error.
+      startupFirstError ??= error;
+      // Record every startup death — not only retry-slot deaths (defect 1).
+      // The entry is removed in spawn's .then() when the slot becomes ready,
+      // so only permanently lost slots remain by the time onGateOpen fires.
+      startupLosses.set(index, error);
+    }
+
+    // Terminate and clear BEFORE scheduler.remove() so that emitWorkerLost
+    // (called from onGateOpen / post-startup path, both inside or after remove)
+    // computes the correct live count from pool.
     pool[index]?.terminate();
     pool[index] = undefined;
+
+    scheduler.remove(index); // may synchronously trigger onFirstSettle/onGateOpen
+
+    if (wasInStartup) return; // startup: handled entirely by the scheduler callbacks
+
+    // Post-startup: apply R1 exactly as before — supervisor decides.
     const decision = supervisor.report(index, 'died');
     if (decision === 'restart') {
       logger.warn(`restarting worker ${index + 1}`);
       void spawn(index);
+    } else if (decision === 'lost') {
+      // Slot permanently lost, but the pool still has workers.
+      emitWorkerLost(index, error);
     } else if (decision === 'fail-client') {
-      logger.error(`worker ${index + 1} evicted`);
+      // Last worker gone — emit loss (with live=0) before failing the client.
+      emitWorkerLost(index, error);
       failClient(error);
     }
   };

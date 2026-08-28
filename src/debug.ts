@@ -124,6 +124,13 @@ export type ClientDebugState = {
   readonly queue: {
     readonly read: number;
     readonly write: number;
+    /**
+     * Callers suspended on the pool's readiness gate, waiting for the pool to
+     * exist rather than for a free worker. They sit in neither wait queue, so
+     * `read` and `write` are both 0 while they wait — during startup, and
+     * during the retry round that follows a failed open.
+     */
+    readonly gated: number;
   };
   workers: WorkerDebugState[];
 };
@@ -137,7 +144,7 @@ export const createClientDebug = (
   clientOptions: Required<
     Pick<CreateSQLiteClientOptions, 'vfs' | 'pragmas' | 'name'>
   >,
-  stats: () => { read: number; write: number },
+  stats: () => { read: number; write: number; gated: number },
 ) => {
   const { vfs, pragmas, name } = clientOptions;
 
@@ -149,6 +156,9 @@ export const createClientDebug = (
     },
     get write() {
       return stats().write;
+    },
+    get gated() {
+      return stats().gated;
     },
   };
 

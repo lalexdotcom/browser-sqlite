@@ -67,9 +67,11 @@ export default defineConfig({
         // library actually uses is unavailable there and the suite would report
         // a platform gap as a failure.
         //
-        // Chromium stays the default because the two engines do not agree yet —
-        // `long-query` and `lifecycle` fail on Firefox (see mem:follow-ups), so
-        // Firefox is a tool for chasing those, not a gate, until they are.
+        // Chromium stays the default for a local `pnpm test:browser`; Firefox
+        // is a CI gate as of 2026-08-28 and runs as its own step (ci.yaml).
+        // The two engines agree now: `lifecycle` was a calibration error and
+        // `long-query` timed the file rather than the pool — both fixed, both
+        // understood. Set TEST_BROWSER=firefox to reproduce a CI failure here.
         //
         // NOT named `BROWSER`: VS Code and devcontainers export that variable
         // already (here, a helper script that opens URLs), so the project read

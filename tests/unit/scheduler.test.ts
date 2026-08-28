@@ -652,6 +652,163 @@ describe('scheduler — writer designation release', () => {
   });
 });
 
+describe('scheduler — onFirstSettle callback', () => {
+  // Falsifiable: never call onFirstSettle — the callback is never invoked and
+  // result stays undefined.
+  it('fires once when all poolSize slots have settled', () => {
+    let result: { openedCount: number; failedIndices: number[] } | undefined;
+    const scheduler = createScheduler<TestWorker>({
+      poolSize: 3,
+      onFirstSettle: (r) => {
+        result = r;
+      },
+    });
+
+    scheduler.add({ index: 0 });
+    scheduler.add({ index: 1 });
+    expect(result).toBeUndefined(); // not yet — slot 2 pending
+
+    scheduler.remove(2); // slot 2 failed
+    expect(result).toEqual({ openedCount: 2, failedIndices: [2] });
+  });
+
+  // Falsifiable: call onFirstSettle again after re-armed slots settle —
+  // firedCount would be 2 instead of 1.
+  it('fires exactly once regardless of retry re-arming', () => {
+    let firedCount = 0;
+    const scheduler = createScheduler<TestWorker>({
+      poolSize: 2,
+      onFirstSettle: ({ failedIndices }) => {
+        firedCount += 1;
+        for (const i of failedIndices) scheduler.rearmSlot(i);
+      },
+    });
+
+    scheduler.add({ index: 0 });
+    scheduler.remove(1); // triggers onFirstSettle, re-arms slot 1
+    scheduler.remove(1); // slot 1 re-settles (retry also failed)
+    expect(firedCount).toBe(1);
+  });
+
+  // Falsifiable: count only add() calls in openedCount — a slot settled via
+  // remove() would be missed, giving a wrong total.
+  it('reports correct openedCount and failedIndices', () => {
+    let result: { openedCount: number; failedIndices: number[] } | undefined;
+    const scheduler = createScheduler<TestWorker>({
+      poolSize: 4,
+      onFirstSettle: (r) => {
+        result = r;
+      },
+    });
+
+    scheduler.add({ index: 0 });
+    scheduler.remove(1);
+    scheduler.add({ index: 2 });
+    scheduler.remove(3);
+    expect(result).toEqual({ openedCount: 2, failedIndices: [1, 3] });
+  });
+});
+
+describe('scheduler — rearmSlot and the retry-round gate', () => {
+  // Falsifiable: make rearmSlot a no-op — re-armed slots are already settled,
+  // the gate opens immediately inside onFirstSettle, and acquired is set
+  // before the retry slot settles.
+  it('gate stays closed across a retry round and opens when retry settles', async () => {
+    let retryIndex = -1;
+    const scheduler = createScheduler<TestWorker>({
+      poolSize: 2,
+      onFirstSettle: ({ failedIndices }) => {
+        for (const i of failedIndices) {
+          retryIndex = i;
+          scheduler.rearmSlot(i);
+        }
+      },
+    });
+
+    scheduler.add({ index: 0 }); // slot 0 opens
+    scheduler.remove(1); // slot 1 fails → onFirstSettle fires, slot 1 re-armed
+
+    let acquired = false;
+    void scheduler.acquire('read').then((l) => {
+      acquired = true;
+      l.release();
+    });
+    await flush();
+    expect(acquired).toBe(false); // gate still closed: slot 1 not yet re-settled
+
+    scheduler.add({ index: retryIndex }); // retry slot 1 succeeds (retryIndex===1)
+    await flush();
+    expect(acquired).toBe(true); // gate open after retry settle
+  });
+
+  // Falsifiable: reset gateOpen or firstSettleFired in rearmSlot so the gate
+  // can be re-blocked after it has opened — an acquire() after the retry
+  // settle would then block indefinitely.
+  it('gate is still one-shot after the retry round: a further remove+add does not re-block', async () => {
+    const scheduler = createScheduler<TestWorker>({
+      poolSize: 2,
+      onFirstSettle: ({ failedIndices }) => {
+        for (const i of failedIndices) scheduler.rearmSlot(i);
+      },
+    });
+
+    scheduler.add({ index: 0 });
+    scheduler.remove(1); // trigger retry round
+    scheduler.add({ index: 1 }); // retry succeeds → gate opens
+
+    // Simulate a post-startup restart on slot 1
+    scheduler.remove(1);
+    scheduler.add({ index: 1 });
+
+    let acquired = false;
+    void scheduler.acquire('read').then((l) => {
+      acquired = true;
+      l.release();
+    });
+    await flush();
+    expect(acquired).toBe(true); // gate stays open
+  });
+
+  // Falsifiable: call onGateOpen when shutdown() fires inside onFirstSettle
+  // (the opened===0 fast-fail path) — onGateOpen would run when it should not.
+  it('onGateOpen is not called when shutdown() fires inside onFirstSettle', async () => {
+    let gateOpenCalled = false;
+    const scheduler = createScheduler<TestWorker>({
+      poolSize: 2,
+      onFirstSettle: () => {
+        void scheduler.shutdown(new Error('startup failed'));
+      },
+      onGateOpen: () => {
+        gateOpenCalled = true;
+      },
+    });
+
+    scheduler.add({ index: 0 });
+    scheduler.remove(1); // all settled → onFirstSettle → shutdown()
+    await flush();
+    expect(gateOpenCalled).toBe(false);
+  });
+
+  // Falsifiable: make rearmSlot work even when the gate is already open —
+  // a post-startup remove+rearm+add would then re-block acquire().
+  it('rearmSlot is a no-op when the gate is already open', async () => {
+    const scheduler = createScheduler<TestWorker>({ poolSize: 1 });
+    scheduler.add({ index: 0 }); // gate opens immediately
+
+    scheduler.remove(0); // post-startup death
+    scheduler.rearmSlot(0); // must be a no-op
+    scheduler.add({ index: 0 }); // revival
+
+    let acquired = false;
+    void scheduler.acquire('read').then((l) => {
+      acquired = true;
+      l.release();
+    });
+    await flush();
+    expect(acquired).toBe(true); // gate was already open, rearmSlot did nothing
+  });
+});
+
 /**
  * The abort has to reach a caller that is still QUEUED. Until this existed the
  * signal was only consulted once a worker had been leased, so a pool with
@@ -808,5 +965,156 @@ describe('scheduler — the last writer is preferred', () => {
 
     const read = await scheduler.acquire('read');
     expect(read.worker.index).toBe(0);
+  });
+});
+
+describe('scheduler — readiness gate', () => {
+  // Falsifiable: remove the gate await from acquire() and the acquired flag is
+  // set before slot 1 settles, because a worker is already available.
+  it('acquire() does not resolve while at least one slot is unsettled', async () => {
+    const scheduler = createScheduler<TestWorker>({ poolSize: 2 });
+    scheduler.add({ index: 0 }); // slot 0 ready; slot 1 still pending
+
+    let acquired = false;
+    void scheduler.acquire('read').then((l) => {
+      acquired = true;
+      l.release();
+    });
+    await flush();
+    expect(acquired).toBe(false); // gate not yet open
+
+    scheduler.add({ index: 1 }); // slot 1 settles → gate opens
+    await flush();
+    expect(acquired).toBe(true);
+  });
+
+  // Falsifiable: count only add() calls in settleGateSlot — a dead slot never
+  // opens the gate, and acquired stays false after the remove().
+  it('a slot settled by remove() counts: a pool where one slot dies and the rest are ready still serves', async () => {
+    const scheduler = createScheduler<TestWorker>({ poolSize: 2 });
+    scheduler.add({ index: 0 }); // slot 0 ready
+    scheduler.remove(1); // slot 1 died → gate opens
+
+    let acquired = false;
+    void scheduler.acquire('read').then((l) => {
+      acquired = true;
+      l.release();
+    });
+    await flush();
+    expect(acquired).toBe(true);
+  });
+
+  // Falsifiable: reset settledSlots or gateOpen in remove() so the restart
+  // re-blocks the gate — acquired stays false after the restart cycle.
+  it('gate is one-shot: after opening, a remove()+add() cycle does not re-block acquire()', async () => {
+    const scheduler = createScheduler<TestWorker>({ poolSize: 2 });
+    scheduler.add({ index: 0 });
+    scheduler.add({ index: 1 }); // gate opens
+
+    // Simulate a worker restart.
+    scheduler.remove(1);
+    scheduler.add({ index: 1 });
+
+    let acquired = false;
+    void scheduler.acquire('read').then((l) => {
+      acquired = true;
+      l.release();
+    });
+    await flush();
+    expect(acquired).toBe(true);
+  });
+
+  // Falsifiable: do not reject gateDeferred in shutdown() — the caller hangs
+  // on gateDeferred.promise for ever.
+  it('shutdown(reason) rejects a caller that is waiting on the gate', async () => {
+    const scheduler = createScheduler<TestWorker>({ poolSize: 2 });
+    scheduler.add({ index: 0 }); // slot 1 still pending → gate not open
+
+    const reason = new Error('closing');
+    const pending = scheduler.acquire('read');
+    await flush();
+    void scheduler.shutdown(reason);
+    await expect(pending).rejects.toBe(reason);
+  });
+
+  // Falsifiable: remove the `if (shutdownReason) throw shutdownReason` re-check
+  // after the gate await. remove() settles the gate (resolve) synchronously
+  // before failClient runs, so the gate resolves a microtask before shutdown
+  // sets shutdownReason. Without the re-check the caller falls through to
+  // takeAvailable (no workers), pushes to a queue already drained by shutdown,
+  // and hangs forever.
+  it('shutdown fires in the same tick as the gate resolve: caller is still rejected', async () => {
+    const scheduler = createScheduler<TestWorker>({ poolSize: 1 });
+
+    const reason = new Error('fail-client');
+    const pending = scheduler.acquire('read');
+    // settle the gate via remove(), then shutdown in the same synchronous tick
+    scheduler.remove(0);
+    void scheduler.shutdown(reason);
+
+    await expect(pending).rejects.toBe(reason);
+  });
+
+  // Falsifiable: remove the abort race from the gate-await block — the caller
+  // hangs on the gate indefinitely when its signal fires first.
+  it('an AbortSignal aborted while waiting on the gate rejects that caller', async () => {
+    const scheduler = createScheduler<TestWorker>({ poolSize: 2 });
+    scheduler.add({ index: 0 }); // gate not yet open
+
+    const controller = new AbortController();
+    const reason = new Error('aborted while waiting for gate');
+    const pending = scheduler.acquire('read', controller.signal);
+    await flush();
+    controller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
+  });
+});
+
+describe('scheduler — callers waiting on the readiness gate are counted', () => {
+  // A caller blocked on the gate sits in NEITHER wait queue: it is suspended
+  // before takeAvailable is ever reached. Without its own counter the debug
+  // surface reads "nothing is waiting" for the whole startup window, which is
+  // exactly when someone is looking.
+  //
+  // Falsifiable: remove the `gatedWaiters += 1` from the gate block — `gated`
+  // then stays 0 while the caller below is demonstrably still waiting.
+  it('counts a gate waiter, and stops counting once the gate serves it', async () => {
+    const scheduler = createScheduler<TestWorker>({ poolSize: 2 });
+    scheduler.add({ index: 0 }); // slot 1 still pending → gate closed
+    expect(scheduler.stats().gated).toBe(0);
+
+    let served = false;
+    void scheduler.acquire('read').then((lease) => {
+      served = true;
+      lease.release();
+    });
+    await flush();
+
+    // The distinction the counter exists for: waiting for the pool to EXIST is
+    // not waiting for a free worker, and `read` cannot see the first.
+    expect(scheduler.stats().read).toBe(0);
+    expect(scheduler.stats().gated).toBe(1);
+
+    scheduler.add({ index: 1 }); // gate opens
+    await flush();
+    expect(served).toBe(true);
+    expect(scheduler.stats().gated).toBe(0);
+  });
+
+  // Falsifiable: move the `gatedWaiters -= 1` out of the `finally` and onto the
+  // success path — an aborted waiter then leaks its count for ever and this
+  // reads 1.
+  it('stops counting a waiter whose signal aborts on the gate', async () => {
+    const scheduler = createScheduler<TestWorker>({ poolSize: 2 });
+    scheduler.add({ index: 0 });
+
+    const controller = new AbortController();
+    const pending = scheduler.acquire('read', controller.signal);
+    await flush();
+    expect(scheduler.stats().gated).toBe(1);
+
+    controller.abort(new Error('caller gave up'));
+    await expect(pending).rejects.toThrow();
+    expect(scheduler.stats().gated).toBe(0);
   });
 });

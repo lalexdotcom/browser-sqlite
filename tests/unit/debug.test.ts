@@ -98,6 +98,7 @@ describe('debug history bounds (D5)', () => {
     const debug = createClientDebug('f.db', [], options, () => ({
       read: 0,
       write: 0,
+      gated: 0,
     }));
     debug.createWorkerDebugState(0, 'w0');
 
@@ -112,6 +113,7 @@ describe('debug history bounds (D5)', () => {
     const debug = createClientDebug('f.db', [], options, () => ({
       read: 0,
       write: 0,
+      gated: 0,
     }));
     debug.createWorkerDebugState(0, 'w0');
     debug.createRequestDebugState().assign(0);
@@ -125,13 +127,15 @@ describe('debug history bounds (D5)', () => {
   });
 
   it('exposes queue depths from the scheduler, never a stale copy', () => {
-    let depth = { read: 1, write: 2 };
+    let depth = { read: 1, write: 2, gated: 3 };
     const debug = createClientDebug('f.db', [], options, () => depth);
 
     expect(debug.state.queue.read).toBe(1);
-    depth = { read: 7, write: 9 };
+    expect(debug.state.queue.gated).toBe(3);
+    depth = { read: 7, write: 9, gated: 0 };
     expect(debug.state.queue.read).toBe(7);
     expect(debug.state.queue.write).toBe(9);
+    expect(debug.state.queue.gated).toBe(0);
   });
 
   it('reflects the live pool status, not a construction-time snapshot', () => {
@@ -142,6 +146,7 @@ describe('debug history bounds (D5)', () => {
     const debug = createClientDebug('f.db', pool, options, () => ({
       read: 0,
       write: 0,
+      gated: 0,
     }));
     const state = debug.createWorkerDebugState(0, 'w0');
 
