@@ -54,11 +54,30 @@ feasibility and either built or abandoned. Anything that would *change* multi-ta
 behaviour waits for rc.5; describing today's behaviour does not.
 
 - Bump `package.json` to `1.0.0-rc.4`.
-- **The upstream PR is open: `rhashimoto/wa-sqlite#344`**, "Fix OPFSAnyContextVFS
-  writes on WebKit by copying the page buffer", from `lalexdotcom`. This file
-  said "pushed but not opened" for a day after it was opened — verified against
-  the GitHub PR list on 2026-08-27, `gh` not being installed in this
-  container.
+- **The upstream PR is open and the ball is in the maintainer's court:
+  `rhashimoto/wa-sqlite#344`**, "Fix OPFSAnyContextVFS writes on WebKit by
+  copying the page buffer", from `lalexdotcom`. rhashimoto reviewed it on
+  2026-08-27: he will merge on two conditions — a link to a filed WebKit bug,
+  and the original `.subarray()` line kept commented out above a TODO, because
+  he refuses to slow conforming browsers for a non-conforming one without a
+  trail back. **Both were satisfied on 2026-08-28** and the reply was posted by
+  the user; nothing is owed upstream until he answers.
+  - **The WebKit bug already existed — do not file another one.**
+    <https://bugs.webkit.org/show_bug.cgi?id=302733>, "FileSystemWritableFileStream.write()
+    ignores byteOffset when writing TypedArray subarrays", Website Storage,
+    still `NEW`, filed 2025-11-18, radar `rdar://problem/165411850`. It is our
+    exact case and the report itself names `.slice()` as the workaround, so the
+    patch is the sanctioned fix, not a guess. A second reporter extended it to
+    `DataView` on 2026-08-24. No WebKit PR touches it.
+  - `patches/wa-sqlite@1.1.1.patch` carries the same TODO and link as the
+    upstream commit and must keep doing so — regenerate it with `pnpm patch` /
+    `pnpm patch-commit`, never by hand, or the lock's patch hash and the file
+    disagree.
+  - **Tooling, since `gh` is still not installed here:** PR bodies, comments and
+    Bugzilla all read fine through `WebFetch` on `api.github.com` and
+    `bugs.webkit.org`; the fork clone lives at `.work/wa-sqlite` and pushes
+    through the VS Code credential helper. Creating a fork or posting a comment
+    still needs the user — no token in this container.
 
 ## Unmeasured ground — what a claim here would be inventing
 
