@@ -7,19 +7,19 @@
  *
  * The caller reports facts; this module returns a decision and never acts.
  */
-export type SupervisorDecision = 'restart' | 'evict' | 'fail-client';
+export type SupervisorDecision = 'restart' | 'lost' | 'fail-client';
 
 export type Supervisor = {
   report: (
     index: number,
-    event: 'spawned' | 'ready' | 'served' | 'died',
+    event: 'spawned' | 'ready' | 'served' | 'died' | 'lost',
   ) => SupervisorDecision | undefined;
 };
 
 type Slot = {
   everReady: boolean;
   alive: boolean;
-  evicted: boolean;
+  lost: boolean;
   restarts: number;
 };
 
@@ -32,7 +32,7 @@ export const createSupervisor = (options: {
   const slots: Slot[] = Array.from({ length: size }, () => ({
     everReady: false,
     alive: true,
-    evicted: false,
+    lost: false,
     restarts: 0,
   }));
 
@@ -51,15 +51,15 @@ export const createSupervisor = (options: {
         // worker that died before it: the guard below returns no decision, the
         // client neither restarts nor fails, and every queued request waits on
         // a pool that will never have a worker again.
-        if (slot.evicted) return undefined;
+        if (slot.lost) return undefined;
         slot.alive = true;
         return undefined;
       }
 
       if (event === 'ready') {
-        // An evicted slot cannot be revived: the eviction was permanent and a
+        // A lost slot cannot be revived: the loss was permanent and a
         // late ready would inflate liveCount, masking an empty pool.
-        if (slot.evicted) return undefined;
+        if (slot.lost) return undefined;
         slot.everReady = true;
         slot.alive = true;
         // Deliberately NOT resetting `restarts`: a worker that boots fine and
@@ -75,6 +75,23 @@ export const createSupervisor = (options: {
         return undefined;
       }
 
+      if (event === 'lost') {
+        // A death the caller has ALREADY judged terminal, which 'died' cannot
+        // express. The startup retry round is capped at one, so a slot the
+        // client has announced through `onWorkerLost` must never come back.
+        // Reported as 'died' it would take the restart branch instead: `lost`
+        // would stay false, leaving the slot revivable by a later
+        // 'spawned'/'ready', and a restart would be charged against a budget
+        // for a restart that never happens. The supervisor's view and the
+        // consumer's would then disagree, with no source of truth to arbitrate.
+        //
+        // Same duplicate-signal guard as 'died': one report per slot.
+        if (!slot.alive) return undefined;
+        slot.alive = false;
+        slot.lost = true;
+        return liveCount() === 0 ? 'fail-client' : 'lost';
+      }
+
       // 'died' — a slot already counted as dead reports once per signal
       // (onerror and a drain timeout can both fire), so ignore repeats.
       if (!slot.alive) return undefined;
@@ -87,8 +104,8 @@ export const createSupervisor = (options: {
         return 'restart';
       }
 
-      slot.evicted = true;
-      return liveCount() === 0 ? 'fail-client' : 'evict';
+      slot.lost = true;
+      return liveCount() === 0 ? 'fail-client' : 'lost';
     },
   };
 };

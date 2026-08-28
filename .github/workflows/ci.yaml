@@ -35,10 +35,11 @@ jobs:
       # and consumer-smoke installing an engine it does not drive costs only
       # apt time on a cache hit.
       #
-      # rstest.config.ts still runs Chromium alone, so Firefox is unused for
-      # now: it is installed ahead of that switch. It is the engine that
-      # answers RWU-1 — it ignores the readwrite-unsafe access-handle mode, so
-      # it is the only one here that exercises OPFSAdaptiveVFS's degraded path.
+      # Both engines are driven: Chromium by `pnpm test`, Firefox by the step
+      # after it. Firefox is the engine that answers RWU-1 — it ignores the
+      # readwrite-unsafe access-handle mode, so it is the only one here that
+      # exercises OPFSAdaptiveVFS's degraded path, which is where the pool's
+      # readiness gate and the commit barrier are actually load-bearing.
       #
       # WebKit is deliberately absent. It was added and removed on 2026-08-24:
       # Playwright's Linux WebKit exposes no `navigator.storage` at all, so it
@@ -75,6 +76,15 @@ jobs:
       # Unit (Node) + browser (Chromium) projects.
       - name: Test
         run: pnpm test
+
+      # The browser project again, on Firefox. A gate since 2026-08-28, on the
+      # strength of 13 consecutive green runs after `long-query` was diagnosed
+      # (it timed the FILE, not the pool) and `barrier` stopped reproducing.
+      # Expect this to be the step that catches a reduced-mode regression: it
+      # is the only one that runs the pool against a rotating exclusive OPFS
+      # handle. A single failure here is signal, not noise — chase it.
+      - name: Browser project (Firefox)
+        run: TEST_BROWSER=firefox pnpm test:browser
 
       # Conformance is a separate project and deliberately out of `pnpm test`:
       # eight VFS through the invariants start workers and open real storage.

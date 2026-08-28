@@ -56,7 +56,7 @@ describe('transaction — a poisoned connection is never re-lent', () => {
   // rollback in src/transaction.ts and this goes red. Without it the worker
   // goes back to the pool with an open transaction, where the barrier would
   // refresh nothing and report success.
-  it('evicts the worker when the fallback ROLLBACK also fails', async () => {
+  it('loses the worker when the fallback ROLLBACK also fails', async () => {
     const worker = fakeWorker(['COMMIT', 'ROLLBACK']);
     const { transaction, poisoned } = harness(worker);
 
@@ -69,7 +69,7 @@ describe('transaction — a poisoned connection is never re-lent', () => {
     expect(poisoned).toEqual([3]);
   });
 
-  it('does not evict when the rollback succeeds', async () => {
+  it('does not lose the worker when the rollback succeeds', async () => {
     const worker = fakeWorker(['COMMIT']);
     const { transaction, poisoned } = harness(worker);
 
@@ -79,7 +79,7 @@ describe('transaction — a poisoned connection is never re-lent', () => {
     expect(poisoned).toEqual([]);
   });
 
-  it('does not evict a transaction that committed cleanly', async () => {
+  it('does not lose a transaction that committed cleanly', async () => {
     const worker = fakeWorker([]);
     const { transaction, poisoned } = harness(worker);
 
@@ -118,7 +118,7 @@ describe('transaction — the caller may abandon it', () => {
 
   // Falsifiable: drop the `begun` flag and this goes red. The catch would send
   // a ROLLBACK to a connection holding no transaction, and the failure of that
-  // ROLLBACK would evict a healthy worker.
+  // ROLLBACK would lose a healthy worker.
   it('does not roll back a BEGIN that never opened', async () => {
     const worker = fakeWorker(['BEGIN']);
     const { transaction, poisoned } = harness(worker);

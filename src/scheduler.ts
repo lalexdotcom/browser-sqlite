@@ -75,7 +75,26 @@ export type Scheduler<W> = {
     write: number;
     available: number;
     leased: number;
+    /**
+     * Callers suspended on the readiness gate. They are in NEITHER wait queue —
+     * the gate is awaited before `takeAvailable` is ever reached — so `read`
+     * and `write` cannot see them, and without this the debug surface reports
+     * an idle pool for the whole startup window.
+     *
+     * Waiting for the pool to *exist* is a different wait from waiting for a
+     * free worker, which is why this is its own counter and not folded in.
+     */
+    gated: number;
   };
+  /**
+   * Removes a slot from the settled-set so that its next `add()` or `remove()`
+   * call counts again toward opening the readiness gate. Only effective while
+   * the gate is still closed; a no-op once the gate has opened.
+   *
+   * Used by the startup retry round: the client re-arms the failed slots so
+   * the gate stays closed until the retry slots have settled.
+   */
+  rearmSlot: (index: number) => void;
 };
 
 /**
@@ -89,6 +108,31 @@ export const createScheduler = <W extends { index: number }>(
   opts: {
     onIdle?: (worker: W) => void;
     canDesignateWriter?: WriterPolicy;
+    /**
+     * Total number of worker slots the pool will spawn. Once every slot has
+     * settled (via `add` when it becomes ready, or via `remove` when it dies or
+     * fails to open), a one-shot gate is lifted and `acquire()` may proceed.
+     * Omit or pass 0 for an immediately-open gate (tests and single-shot use).
+     */
+    poolSize?: number;
+    /**
+     * Called exactly once when every slot in [0, poolSize) has settled for the
+     * first time. Fires before the gate opens so the callback can call
+     * `rearmSlot()` to extend the wait for a retry round.
+     *
+     * `openedCount` — slots that settled via `add()` (became ready).
+     * `failedIndices` — slots that settled via `remove()` (died / timed out).
+     */
+    onFirstSettle?: (result: {
+      openedCount: number;
+      failedIndices: number[];
+    }) => void;
+    /**
+     * Called when the readiness gate resolves (opens). Not called when the gate
+     * is rejected via `shutdown()`. Use this to clear any startup-pending flag
+     * after the retry round (if any) has fully settled.
+     */
+    onGateOpen?: () => void;
   } = {},
 ): Scheduler<W> => {
   const workers: (W | undefined)[] = [];
@@ -104,7 +148,7 @@ export const createScheduler = <W extends { index: number }>(
   // query that compiled them, and are reset and cleared on the way out. Lend a
   // worker to a second concurrent caller and that reset lands on a statement
   // another query is part-way through — rewound cursor, cleared bindings, wrong
-  // rows — while an eviction can finalise a handle that other query still
+  // rows — while losing a worker can finalise a handle that other query still
   // holds, which is a use-after-free on a `sqlite3_stmt` pointer. Before the
   // cache, breaking this was merely confusing.
   const available = new Set<number>();
@@ -118,6 +162,58 @@ export const createScheduler = <W extends { index: number }>(
 
   let shutdownReason: Error | undefined;
   let shutdownDeferred: PromiseWithResolvers<void> | undefined;
+
+  // One-shot readiness gate: lifts once every slot in [0, poolSize) has
+  // settled — either via add() (ready) or remove() (died / failed to open).
+  // poolSize 0 or absent → gate is open from the start.
+  //
+  // Genuinely one-shot: once gateOpen is true it stays true. A worker that
+  // restarts (remove → add) after the gate has lifted must not re-block callers
+  // already in flight.
+  const settledSlots = new Set<number>();
+  let gateOpen = (opts.poolSize ?? 0) === 0;
+  const gateDeferred = Promise.withResolvers<void>();
+  if (gateOpen) gateDeferred.resolve();
+  // Suppress unhandled-rejection when shutdown() fires before any acquire()
+  // has attached a handler. Each awaiting acquire() still sees the rejection.
+  void gateDeferred.promise.catch(() => {});
+
+  // Tracks slots that settled via add() (became ready) in the first round,
+  // used to compute openedCount/failedIndices for onFirstSettle.
+  const firstSettleOpened = new Set<number>();
+  let firstSettleFired = false;
+
+  // Callers currently suspended on the gate. See `stats().gated`.
+  let gatedWaiters = 0;
+
+  const settleGateSlot = (index: number, kind: 'opened' | 'failed') => {
+    if (gateOpen || settledSlots.has(index)) return;
+    settledSlots.add(index);
+    if (kind === 'opened') firstSettleOpened.add(index);
+    if (settledSlots.size < (opts.poolSize ?? 0)) return;
+
+    // All slots have now settled (first round or retry round).
+    if (opts.onFirstSettle && !firstSettleFired) {
+      firstSettleFired = true;
+      const failedIndices = [...settledSlots].filter(
+        (i) => !firstSettleOpened.has(i),
+      );
+      opts.onFirstSettle({
+        openedCount: firstSettleOpened.size,
+        failedIndices,
+      });
+      // After the callback the client may have:
+      //   (a) called rearmSlot() for retry slots → settledSlots.size < poolSize,
+      //       gate stays closed; or
+      //   (b) called shutdown() (opened===0 fast-fail) → shutdownReason is set.
+      // In both cases skip the resolve/open below.
+      if (settledSlots.size < (opts.poolSize ?? 0) || shutdownReason) return;
+    }
+
+    gateOpen = true;
+    gateDeferred.resolve();
+    opts.onGateOpen?.();
+  };
 
   const readerQueue: Array<{
     resolve: (worker: W) => void;
@@ -271,6 +367,10 @@ export const createScheduler = <W extends { index: number }>(
 
   return {
     add: (worker) => {
+      // Settle this slot in the gate (first call per index only; restarts are
+      // ignored because gateOpen is already true by then).
+      settleGateSlot(worker.index, 'opened');
+
       dead.delete(worker.index);
       workers[worker.index] = worker;
       // Serve any requests that arrived before this worker was ready, preserving
@@ -286,6 +386,10 @@ export const createScheduler = <W extends { index: number }>(
     },
 
     remove: (index) => {
+      // Settle this slot in the gate — a dead slot counts. First call per
+      // index only; a restart after the gate is open is a no-op here.
+      settleGateSlot(index, 'failed');
+
       dead.add(index);
       available.delete(index);
       leased.delete(index);
@@ -301,6 +405,11 @@ export const createScheduler = <W extends { index: number }>(
     },
 
     shutdown: (reason) => {
+      // Reject the gate so any caller blocked on it gets the shutdown error.
+      if (!gateOpen) {
+        gateOpen = true;
+        gateDeferred.reject(reason);
+      }
       shutdownReason ??= reason;
       shutdownDeferred ??= Promise.withResolvers<void>();
       for (const waiter of readerQueue.splice(0)) waiter.reject(reason);
@@ -314,13 +423,56 @@ export const createScheduler = <W extends { index: number }>(
       write: writerQueue.length,
       available: available.size,
       leased: leased.size,
+      gated: gatedWaiters,
     }),
+
+    rearmSlot: (index) => {
+      if (!gateOpen) settledSlots.delete(index);
+    },
 
     acquire: async (kind, signal) => {
       if (shutdownReason) throw shutdownReason;
       // Before the queue, not after: a caller who has already given up must not
       // take a place in line and be served a worker nobody will release.
       signal?.throwIfAborted();
+
+      // Readiness gate: block until every slot has settled. The gate is
+      // one-shot — once open it never closes, so this branch is never re-entered
+      // by callers already in flight after a worker restarts.
+      if (!gateOpen) {
+        // In a `finally`, so an abort or a shutdown rejection decrements too:
+        // a leaked count would make the pool look permanently congested.
+        gatedWaiters += 1;
+        try {
+          // The tie is settled by microtask order, and it settles in favour of
+          // the gate: `resolve()` queues its reaction before a synchronous
+          // `abort()` queues `abortP`'s, so a caller aborted in the very tick
+          // the last slot settles still gets its lease. That is the queue
+          // path's behaviour too — `onAbort` there returns early once the
+          // waiter has been shifted — so the two agree rather than diverge.
+          if (signal) {
+            const { promise: abortP, reject: abortReject } =
+              Promise.withResolvers<void>();
+            const onGateAbort = () => abortReject(signal.reason);
+            signal.addEventListener('abort', onGateAbort, { once: true });
+            try {
+              await Promise.race([gateDeferred.promise, abortP]);
+            } finally {
+              signal.removeEventListener('abort', onGateAbort);
+            }
+          } else {
+            await gateDeferred.promise;
+          }
+        } finally {
+          gatedWaiters -= 1;
+        }
+      }
+
+      // Re-check after the gate: shutdown() may have fired while we waited
+      // (remove() settles the gate synchronously before failClient can run, so
+      // the gate resolves a microtask before shutdown() sets shutdownReason).
+      if (shutdownReason) throw shutdownReason;
+
       const write = kind === 'write';
 
       const immediate = takeAvailable(write);

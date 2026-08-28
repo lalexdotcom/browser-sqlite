@@ -39,7 +39,7 @@ export const createTransaction =
     afterWrite: (worker: PoolWorker) => void;
     /**
      * Called when a connection may still hold an open transaction. The worker
-     * is evicted rather than repaired: a "dirty worker" state is one more
+     * is lost rather than repaired: a "dirty worker" state is one more
      * state the barrier would have to reason about, while a respawned
      * connection is transaction-free by construction.
      */
@@ -84,7 +84,7 @@ export const createTransaction =
 
     let done = false;
     // Set only once BEGIN has come back. A ROLLBACK sent to a connection that
-    // opened no transaction fails, and that failure would evict a healthy
+    // opened no transaction fails, and that failure would lose a healthy
     // worker through onPoisoned.
     let begun = false;
 
