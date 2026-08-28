@@ -25,11 +25,11 @@ obligations and unmeasured ground.
 
 Not history: the numbers a regression is detected against.
 
-`tsc --noEmit` clean · `pnpm build` clean · **428 tests, 0 failed files** ·
-conformance **73 passed / 12 skipped on Chromium and the same on Firefox** ·
-**consumer smoke 24/24** · `scripts/bench/check.mjs chromium --all` OK, 22 pairs,
-zero `not-run` · biome 13 warnings, none in recently touched files ·
-`dependencies` empty.
+`tsc --noEmit` clean · `pnpm build` clean · **460 tests, 0 failed files**
+(308 unit + 152 browser) · conformance **73 passed / 12 skipped on Chromium and
+the same on Firefox** · **consumer smoke 24/24** ·
+`scripts/bench/check.mjs chromium --all` OK, 22 pairs, zero `not-run` ·
+biome 13 warnings, none in recently touched files · `dependencies` empty.
 
 **Read four fields from a test report, not three.** `status` and `failedFiles`
 show an unhandled rejection escaping outside any test, which the per-test
@@ -38,9 +38,15 @@ counters cannot. That was reported green once — see `mem:lessons`.
 Firefox conformance was 57/19 until `OPFSWriteAheadVFS`'s declaration was corrected; the
 two engines agreeing is the current expectation, and a divergence means something skipped.
 
-**Firefox's browser project is 427/428, not 428.** `long-query :: does not block the pool`
-is the flake at 1/3 that `mem:follow-ups` carries with its three runs. Expect it; a *second*
-Firefox failure is the signal.
+**Firefox is a CI gate since 2026-08-28, and its browser project is 152/152 like
+Chromium's.** It runs as its own step in `ci.yaml`, after `pnpm test`. The two
+flakes this file used to warn about are gone: `long-query :: does not block the
+pool` was never a pool defect (it timed the FILE — see `mem:follow-ups`), and
+`barrier` did not reproduce in 13 consecutive runs. **A failure on the Firefox
+step is signal, not noise** — it is the only step that drives the pool against a
+rotating exclusive OPFS handle, so it is where a reduced-mode regression lands
+first. The 13-run campaign was one machine and one build; slower CI hardware may
+still surface timing the campaign did not.
 
 ## Decisions the user owes
 
@@ -59,14 +65,15 @@ feasibility and either built or abandoned. Anything that would *change* multi-ta
 behaviour waits for rc.5; describing today's behaviour does not.
 
 - Bump `package.json` to `1.0.0-rc.4`.
-- **The upstream PR is open and the ball is in the maintainer's court:
-  `rhashimoto/wa-sqlite#344`**, "Fix OPFSAnyContextVFS writes on WebKit by
-  copying the page buffer", from `lalexdotcom`. rhashimoto reviewed it on
-  2026-08-27: he will merge on two conditions — a link to a filed WebKit bug,
-  and the original `.subarray()` line kept commented out above a TODO, because
-  he refuses to slow conforming browsers for a non-conforming one without a
-  trail back. **Both were satisfied on 2026-08-28** and the reply was posted by
-  the user; nothing is owed upstream until he answers.
+- **The upstream PR is MERGED (user, 2026-08-28): `rhashimoto/wa-sqlite#344`**,
+  "Fix OPFSAnyContextVFS writes on WebKit by copying the page buffer", from
+  `lalexdotcom`. rhashimoto's two conditions — a link to a filed WebKit bug, and
+  the original `.subarray()` kept commented out above a TODO — were satisfied
+  before he merged. **Nothing is owed upstream.**
+  - **What is now pending is a wa-sqlite RELEASE, not a decision of ours.** The
+    re-vendoring waits for it: until wa-sqlite publishes a version carrying the
+    fix, `patches/wa-sqlite@1.1.1.patch` stays exactly as it is. Do not remove
+    it early and do not hand-edit it (see below).
   - **The WebKit bug already existed — do not file another one.**
     <https://bugs.webkit.org/show_bug.cgi?id=302733>, "FileSystemWritableFileStream.write()
     ignores byteOffset when writing TypedArray subarrays", Website Storage,

@@ -275,10 +275,11 @@ Throws `SQLiteError` with code `BUSY` when the database is open or being opened,
 | `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite WebAssembly build to load: `'sync'`, `'async'`, or `'jspi'`. Throws `INVALID_OPTION` at construction if the VFS does not support it. See [Builds](#builds). |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Where the workers fetch their `.wasm`. Omit it and resolution is unchanged: the files are read from beside `worker.js`. A string is a directory resolved against the page — relative, absolute or a full URL, trailing slash optional. A callback receives the resolved `build` and names one file, for a bundler-emitted asset carrying a content hash. Called once, at construction. Throws `INVALID_OPTION` there if the value is not a URL. Another origin needs CORS and `Content-Type: application/wasm`. |
 | `pragmas` | `Record<string, string>` | `undefined` | SQLite PRAGMAs applied to each worker connection on open. |
-| `maxWorkerRestarts` | `number` | `1` | How many times a slot may be restarted after it dies. A slot that never reached readiness is never restarted — an initial failure is deterministic and restarting only delays the diagnostic. The counter resets once a replacement has actually served a request. |
+| `maxWorkerRestarts` | `number` | `1` | How many times a slot may be restarted after it dies. The counter resets once a replacement has actually served a request. A slot that fails to open is retried once, but only if another worker did open — when none did, the failure is a configuration error and the client fails immediately rather than retrying. |
 | `openTimeout` | `number` (ms) | `30_000` | How long a worker has to post `ready` after `open` is sent. On expiry the slot is failed — the most common cause is a database held under an exclusive lock by another tab. |
 | `drainTimeout` | `number` (ms) | `60_000` | How long the drain loop may run in the query generator's `finally` before the worker is presumed dead and the crash path is invoked. |
-| `debug` | `string \| boolean` | `undefined` | Enables lifecycle logging. A string value is used as the log prefix; `true` falls back to the client prefix (e.g. `"SQLite 1"`). Only lifecycle events are logged — worker created, ready, open-error, crash, restart, eviction, close, and skipped staging sweep. No line per query. Off by default. When enabled, `db.debug` also exposes a live introspection state tree for query throughput and worker status. |
+| `debug` | `string \| boolean` | `undefined` | Enables lifecycle logging. A string value is used as the log prefix; `true` falls back to the client prefix (e.g. `"SQLite 1"`). Only lifecycle events are logged — worker created, ready, open-error, crash, restart, worker lost, close, and skipped staging sweep. No line per query. Off by default, with one exception: a permanently lost worker always warns, because a pool quietly smaller than `poolSize` is not something to discover later. When enabled, `db.debug` also exposes a live introspection state tree for query throughput and worker status. |
+| `onWorkerLost` | `(event: WorkerLostEvent) => void` | `undefined` | Called when a worker is lost for good, with the slot index, how many workers are left, the requested `poolSize`, and the error. Fires before the client fails if it was the last one. A throwing callback is caught and warned about; it cannot break the pool. |
 
 ## Browser support
 
@@ -364,16 +365,8 @@ and are unaffected.
 conditional on the engine — it never uses `readwrite-unsafe`, so it is never in
 reduced mode. See [Known Limitations](#known-limitations).
 
-**A long *read* does not produce this effect.** A statement that holds the
-file's read lock for several seconds does not delay short reads on the other
-workers: measured on Firefox, they still return in about a millisecond, where a
-stranded pool would put them in the seconds. The blocking is specific to the
-write's exclusive acquisition, not to the statement's duration — an earlier
-revision of this section claimed the broader form, and measurement narrowed it.
-
-Both halves are measured by `scripts/bench/html/index.html`, which runs in your own browser;
-its `no-read-inside-transaction` and `pool-blocking` rows are the two
-observations above.
+**A long *read* does not produce this effect, except once per worker after a
+write.**
 
 #### `OPFSAnyContextVFS` and wa-sqlite
 

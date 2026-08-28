@@ -87,21 +87,45 @@ should be recommended there at all comes first.
 
 ## Evidence owed
 
-### HANDLE-1 — the evidence was a flake, and the README stands
+### GATE-1 — the readiness gate rests on a starvation nobody watched to the end
 
-This entry claimed that "does not block the pool" is false off Chromium, on the strength of
-`tests/browser/long-query.test.ts :: does not terminate the worker it abandoned, and does
-not block the pool` failing on Firefox at 28-29.5 s against a 3 s budget.
+Shipped 2026-08-28 on `feat/pool-readiness-gate`: the first query now waits for
+every worker slot to settle, a slot that fails to open is retried once when
+another slot opened, and a permanent loss warns unconditionally and calls
+`onWorkerLost`. Four things about it are reasoned rather than measured.
 
-**At n=3 on 2026-08-27 that test failed once and passed twice.** One run had been read as a
-reproduction. The README's measured claim on the other side — that a long read does not
-delay short reads on the other workers, about a millisecond on Firefox — is unopposed, and
-no Known Limitations line is owed.
+- **The motivating scenario was never observed end to end.** A worker's `open`
+  was watched starved for 30 s on Firefox — the rotating exclusive OPFS handle
+  was held by another worker's long `step()` — but the test ended before that
+  slot's `openTimeout` fired. "The contention lasts long enough to lose a slot
+  permanently" is an inference. The retry round is built on it.
+- **The tests force the wrong kind of failure.** The four covering the retry
+  round point a worker at a missing URL, which is a *load* failure. None
+  exercises handle starvation, the actual cause. They pin the orchestration,
+  not the phenomenon.
+- **The gate costs the SUM of the opens, not the slowest.** `bsq:init:<file>`
+  is exclusive and origin-wide (`locks.ts`, `withLock`), held across
+  `open_v2` *and* the PRAGMAs, so opens serialise across every worker, client
+  and tab on that file. Measured only at `poolSize: 2` — 70-105 ms per worker.
+  Nobody has measured 4 or 8, where it grows linearly and lands on the first
+  query.
+- **The retry round multiplies the worst case**: up to two `openTimeout`,
+  ~60 s by default, before the first query on a pool that will never open.
 
-What is left is a flake at 1/3 with no mechanism, tracked above with `barrier`. The
-underlying VFS fact is unchanged and documented already: on an engine without
-`readwrite-unsafe`, a VFS rotating one exclusive OPFS handle cannot serve another worker
-while a write transaction holds it. That is in the README, measured, and is not this.
+### GATE-2 — Firefox got faster and nobody knows which half
+
+The user observed the benchmark page much faster on Firefox once the gate
+shipped. Two explanations, not discriminated: the library really is faster
+(queries no longer compete with pending opens for the handle), or **the
+measurement is no longer polluted** (the bench used to start timing while
+workers were still opening, so that cost fell into the first readings — total
+wall clock may even be slightly worse, the gate waiting for the sum).
+
+**The discriminator is cheap and already specified:** the mechanism is handle
+contention, which exists only in reduced mode. So the gain must be large on
+Firefox and near zero on Chromium. If Chromium gains as much, the mechanism is
+wrong and the cause is elsewhere. **No number goes in the README or the
+CHANGELOG until that pair exists.**
 
 ### FLAKE-ROW-1 — `no-read-inside-transaction` is a race, not a verdict
 
@@ -118,34 +142,6 @@ write transaction takes it is timing, not a property. `OPFSAdaptiveVFS`'s read-b
 Limitations entry rests on it and currently reads as a determinism. It happens to be right
 (blocked on 8 of 8 earlier runs) but needs **n≥3 per engine** before that wording is
 defensible — and the same row cannot then be read as a verdict for `OPFSAdaptiveVFS`.
-
-### Firefox: two flakes at 1/3, and what the deterministic failures really were
-
-Measured 2026-08-27, three full runs of the browser project on Firefox
-(`TEST_BROWSER=firefox pnpm test:browser`, the override added that day; Chromium stays the
-default).
-
-| test | 3 runs |
-|---|---|
-| `concurrency :: rejects a read that never got a worker` | fail, fail, fail |
-| `lifecycle :: rejects the in-flight query on a deserialization failure` | fail, fail, fail |
-| `long-query :: does not block the pool` | pass, **fail**, pass |
-| `barrier :: does not repeat the barrier on a worker that is already current` | pass, pass, **fail** |
-
-**The two deterministic failures were calibration, and are fixed.** Both tests ran a
-recursive CTE sized on Chromium and then waited for it: 40 M iterations cost 58.9 s on
-Firefox and 20 M cost 29.7 s, against a 30 s budget. Given 180 s both passed, and the two
-durations are in exact proportion to their iteration counts — the cost was the query and
-nothing else. `concurrency` now abandons its holder instead of awaiting it; `lifecycle`
-asks for 2 M iterations instead of 20 M.
-
-**What remains is two flakes at 1/3**, and neither is understood. `long-query` is the one
-this backlog used to cite as a deterministic Firefox failure — it is not. `barrier` had
-never been recorded anywhere.
-
-**Firefox cannot be a CI gate until those two are understood.** Nothing measured so far
-points at a defect in the library; both flakes are in tests that race an abandonment
-against a worker, which is where the timing lives.
 
 ### BASELINE-1 — two residuals, both small
 
@@ -211,8 +207,8 @@ on it**, and delete it the moment it is done rather than leaving it to be redisc
 
 ## Performance backlog — after correctness, none blocking
 
-- ~~No prepared-statement cache~~ — **built on `feat/statement-cache` (2026-08-28), not yet
-  merged.** What it leaves open is one number: its own section below.
+- ~~No prepared-statement cache~~ — **shipped and merged (2026-08-28).** What it
+  leaves open is one number: its own section below.
 - **No default PRAGMAs** → consumers silently run `journal_mode=DELETE` + `synchronous=FULL`.
   Shipping WAL + NORMAL + `busy_timeout` is on the list for its own reasons — note that
   `busy_timeout` is also option A for CoopSync, with a risk to **measure, not deduce**:
@@ -233,7 +229,7 @@ on it**, and delete it the moment it is done rather than leaving it to be redisc
 
 ## The statement cache's bound is in entries, and an entry can weigh megabytes
 
-**Built on `feat/statement-cache` (2026-08-28), not yet merged.** The design is in
+**Shipped and merged (2026-08-28).** The design is in
 `docs/superpowers/specs/2026-08-27-statement-cache-design.md` and every number is in
 `mem:measurements`; neither is repeated here. What is open is the bound.
 

@@ -117,6 +117,18 @@ may be left live in this one. Three steps, in order:
   resolved unilaterally, by treating "I may not dispatch subagents unless asked" as the
   answer — when it was precisely the reason to ask. At every point where a skill offers a
   choice, put it to the user, including when one option looks closed.
+- **Never substitute your own design for a decision the user has already made (user,
+  2026-08-28).** Propose the alternative and confront them with it; if they hold, implement
+  theirs. They judge a delivery against what they decided, so a silent substitution makes
+  them re-audit work they thought was settled — and the drift surfaces late, or never.
+  The retry round's decision point had been specified as "une fois le allSettled terminé".
+  It was replaced by "remove the `everReady` condition in the supervisor's R1", which cannot
+  work: `liveCount()` counts a slot as alive from `report('spawned')`, so during startup the
+  predicate is true before anything has opened. Two turns went into rediscovering the user's
+  own formulation and handing it back to them as a correction. **When an instruction names a
+  *when*, a *where* or a *what*, check that choice against the code before proposing another
+  one.**
+
 - **Open questions stay in the backlog; each wave's own brainstorming raises them when it
   gets there** (user, 2026-08-17). Do not front-load a decision session for a wave that is
   not the next one.

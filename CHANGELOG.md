@@ -150,6 +150,14 @@ with it.
 - Worker crash detection with bounded per-slot restart.
 - A benchmark and conformance page, published alongside each release, that
   measures the VFS on the visitor's own browser.
+- **`onWorkerLost`** — a callback for a worker lost for good, receiving the slot
+  index, how many workers are left, the requested `poolSize` and the error. It
+  fires before the client fails when the last worker goes, and a callback that
+  throws is caught rather than allowed to break the pool. `WorkerLostEvent` is
+  exported so a standalone handler can name its parameter.
+- **`db.debug.queue.gated`** — callers waiting for the pool to *exist*, which is
+  a different wait from waiting for a free worker and which `read` and `write`
+  cannot see: a caller suspended on the readiness gate is in neither queue.
 
 ### Performance
 
@@ -184,6 +192,20 @@ with it.
   measured, not inferred.
 - The README documents a sourced browser baseline and generates its VFS table
   from the capability table.
+- **The first query waits for every worker to settle, not for the first one to
+  be ready.** `poolSize` was a request rather than a promise: a query served
+  while the other workers were still opening could, on a VFS in reduced mode,
+  hold the one exclusive OPFS handle their `open` needs and starve them for its
+  whole duration — leaving a pool permanently smaller than asked for. The cost
+  is the first query's latency, which is now the time to open the pool.
+- **A worker that fails to open is retried once, if another worker did open.**
+  The old rule refused to restart any slot that had never been ready, on the
+  grounds that an initial failure is a configuration error. That holds only when
+  *no* slot opened; when the others opened with the same configuration, the
+  failure is contention, not configuration. With none opened the client still
+  fails immediately rather than retrying.
+- **A permanently lost worker always warns, even with `debug` off.** A pool
+  quietly smaller than `poolSize` is not something to discover later.
 
 ### Fixed
 
