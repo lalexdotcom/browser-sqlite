@@ -157,8 +157,10 @@ with it.
   entries) retains prepared statements across executions; every `bulkWrite`
   INSERT template, every barrier statement, and every repeated `SELECT` benefits
   after its first execution on that worker. Measured on Chromium and Firefox,
-  two VFS/build pairs: 6–20 % on identical-read workloads, 13–55 % on `bulkWrite`
-  and `tx.bulkWrite`. The cache is invisible to consumers: no option, no
+  two VFS/build pairs: 6–20 % on identical-read workloads; on `bulkWrite` and
+  `tx.bulkWrite`, 12–16 % on Chromium and 51–55 % on Firefox (the large INSERT
+  template is expensive to compile on Firefox; the cache eliminates that cost on
+  14 of 16 batches). The cache is invisible to consumers: no option, no
   constraint, no behaviour change.
 
 ### Changed

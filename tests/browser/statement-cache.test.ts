@@ -149,7 +149,7 @@ describe('statement cache', () => {
     // while row() returns the new one — correct values under wrong keys.
     // Falsifiability: move `cols ??= sqlite.column_names(stmt)` from inside
     // the SQLITE_ROW branch to `const cols = …` above the while-loop in
-    // `run` (worker.ts line 282) and `b` is missing from the returned row.
+    // `run` and `b` is missing from the returned row.
     expect(Object.keys(rows[0] ?? {})).toEqual(['a', 'b']);
     await db.close();
   });
