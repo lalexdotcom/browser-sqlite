@@ -265,6 +265,15 @@ worker holds one lease at a time. Before the cache, breaking that would have pro
 confusing behaviour; now it is a `reset` on a statement another query is stepping. Nothing at
 the place where someone would break it says so.
 
+## Read before designing anything cross-tab (user, 2026-08-28)
+
+**`https://github.com/rhashimoto/wa-sqlite/discussions/81`** — the user wants this
+discussion examined as part of multi-tab / multi-client handling. **Nobody here has read it
+yet**, so nothing in these memories reflects it and no claim below is informed by it. Read
+it before the Web-Locks-as-registry lead underneath, and before `W-multitab`'s Known
+Limitations line is written: it is upstream's own thread on the problem, and this project
+has twice built on a premise it could have sourced instead.
+
 ## A cross-tab lead, recorded unverified
 
 **Web Locks as a registry, not as mutual exclusion.** Preferred over `BroadcastChannel`,

@@ -21,11 +21,11 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, 2026-08-27
+## The verification baseline — compare against these, 2026-08-28
 
 Not history: the numbers a regression is detected against.
 
-`tsc --noEmit` clean · `pnpm build` clean · **410 tests, 0 failed files** ·
+`tsc --noEmit` clean · `pnpm build` clean · **428 tests, 0 failed files** ·
 conformance **73 passed / 12 skipped on Chromium and the same on Firefox** ·
 **consumer smoke 24/24** · `scripts/bench/check.mjs chromium --all` OK, 22 pairs,
 zero `not-run` · biome 13 warnings, none in recently touched files ·
@@ -38,11 +38,16 @@ counters cannot. That was reported green once — see `mem:lessons`.
 Firefox conformance was 57/19 until `OPFSWriteAheadVFS`'s declaration was corrected; the
 two engines agreeing is the current expectation, and a divergence means something skipped.
 
+**Firefox's browser project is 427/428, not 428.** `long-query :: does not block the pool`
+is the flake at 1/3 that `mem:follow-ups` carries with its three runs. Expect it; a *second*
+Firefox failure is the signal.
+
 ## Decisions the user owes
 
 None outstanding, and **nothing is designed-and-approved-but-unbuilt** —
-`BACKPRESSURE-1` shipped on 2026-08-27, the slot's previous occupant. The next
-item is whatever the user picks from `mem:follow-ups`.
+`PREPARE-1`, the statement cache, shipped on 2026-08-28 and took the slot from
+`BACKPRESSURE-1`. The next item is whatever the user picks from
+`mem:follow-ups`.
 
 ## Owed before the release
 
