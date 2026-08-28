@@ -1,15 +1,16 @@
 diff --git a/src/examples/OPFSAnyContextVFS.js b/src/examples/OPFSAnyContextVFS.js
-index 9cc6a67e6a204c5c2c22937341a64600aba268f6..3174872dd534f9dfb7cafa03f85d7e4da3f255b8 100644
+index 9cc6a67e6a204c5c2c22937341a64600aba268f6..4a6b4f5a2b815b77e4417d5e2b2beaef6ab8dc2b 100644
 --- a/src/examples/OPFSAnyContextVFS.js
 +++ b/src/examples/OPFSAnyContextVFS.js
-@@ -198,7 +198,10 @@ export class OPFSAnyContextVFS extends WebLocksMixin(FacadeVFS) {
+@@ -198,7 +198,11 @@ export class OPFSAnyContextVFS extends WebLocksMixin(FacadeVFS) {
          file.writable = await file.fileHandle.createWritable({ keepExistingData: true });
        }
        await file.writable.seek(iOffset);
 -      await file.writable.write(pData.subarray());
-+      // WebKit's writable stream ignores a view's byteOffset and byteLength
-+      // and writes the whole ArrayBuffer, which here is the WASM heap.
-+      // slice() copies just the page and still unwraps the Proxy.
++      // TODO: restore the subarray() call below once WebKit honors a view's
++      // byteOffset and byteLength instead of writing the whole ArrayBuffer,
++      // which here is the WASM heap: https://bugs.webkit.org/show_bug.cgi?id=302733
++      // await file.writable.write(pData.subarray());
 +      await file.writable.write(pData.slice());
        file.blob = null;
  

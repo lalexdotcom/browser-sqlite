@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   wa-sqlite@1.1.1:
-    hash: a3a00d2907c0a2f9e6ce215f86328708452cc35ad7bd3d2b9154851859e78de7
+    hash: a39e6df9c8bde4e460111f3bf67ad85803f75ed1e6a9ce813e28ba1507c91735
     path: patches/wa-sqlite@1.1.1.patch
 
 importers:
@@ -45,7 +45,7 @@ importers:
         version: 7.0.2
       wa-sqlite:
         specifier: github:rhashimoto/wa-sqlite#v1.1.2
-        version: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/2bf1c59d89eb6497535a4217bc62fec68a0bb994(patch_hash=a3a00d2907c0a2f9e6ce215f86328708452cc35ad7bd3d2b9154851859e78de7)
+        version: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/2bf1c59d89eb6497535a4217bc62fec68a0bb994(patch_hash=a39e6df9c8bde4e460111f3bf67ad85803f75ed1e6a9ce813e28ba1507c91735)
 
 packages:
 
@@ -1431,7 +1431,7 @@ snapshots:
 
   unicorn-magic@0.4.0: {}
 
-  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/2bf1c59d89eb6497535a4217bc62fec68a0bb994(patch_hash=a3a00d2907c0a2f9e6ce215f86328708452cc35ad7bd3d2b9154851859e78de7): {}
+  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/2bf1c59d89eb6497535a4217bc62fec68a0bb994(patch_hash=a39e6df9c8bde4e460111f3bf67ad85803f75ed1e6a9ce813e28ba1507c91735): {}
 
   which@2.0.2:
     dependencies:
