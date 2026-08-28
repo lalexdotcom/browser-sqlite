@@ -1,4 +1,6 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it, onTestFinished } from '@rstest/core';
+import { createSQLiteClient } from '../../src/client';
+import type { InternalSQLiteClientOptions } from '../../src/scheduler';
 import { createTestClient } from './helpers';
 
 /**
@@ -152,5 +154,61 @@ describe('statement cache', () => {
     // `run` and `b` is missing from the returned row.
     expect(Object.keys(rows[0] ?? {})).toEqual(['a', 'b']);
     await db.close();
+  });
+
+  it('an aborted query leaves its cached statement reusable', async () => {
+    // poolSize: 1 ensures every C1 request goes to the same single worker.
+    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    onTestFinished(async () => {
+      try {
+        const root = await navigator.storage.getDirectory();
+        await root.removeEntry(dbName, { recursive: true });
+      } catch {}
+    });
+    const base = { vfs: 'OPFSAdaptiveVFS' } as InternalSQLiteClientOptions;
+    const db1 = createSQLiteClient(dbName, {
+      ...base,
+      poolSize: 1,
+      debug: true,
+    } as InternalSQLiteClientOptions);
+    const db2 = createSQLiteClient(dbName, base);
+
+    await db1.write('CREATE TABLE t (a INTEGER)');
+    await db1.write('INSERT INTO t VALUES (1)');
+
+    // The 2 M-iteration CTE is slow enough that the 100 ms AbortSignal reliably
+    // fires before the query returns its first row, exercising the settle() path
+    // where the statement is still mid-execution when the worker sees 'stop'.
+    const sql =
+      'WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 2000000) ' +
+      'SELECT count(*) AS n FROM t CROSS JOIN (SELECT count(*) FROM c)';
+
+    // First run: compile and cache (prepared = 1).
+    await db1.read(sql);
+
+    // Second run: abort at 100 ms, inside the slow step().
+    await expect(
+      db1.read<{ n: number }>(sql, [], { signal: AbortSignal.timeout(100) }),
+    ).rejects.toThrow();
+
+    // C2 commits a write on the shared file while C1's abort may have left an
+    // open read transaction on its connection.
+    await db2.write('INSERT INTO t VALUES (2)');
+
+    // Third run on C1: must hit the cache (prepared = 0).
+    // Falsifiability: in `settle`, treat gate.isStopped() as `failed = true`
+    // so the aborted statement is finalised instead of cached; this becomes 1.
+    // The read-transaction isolation half (rows[0]?.n === 2) was investigated
+    // with a two-client approach in journal_mode=DELETE and WAL. In both modes
+    // the assertion could not be made to fail by removing sqlite.reset alone:
+    // either wa-sqlite auto-resets SQLITE_DONE statements before step(), or the
+    // abort fires after the CTE result is already consumed. Omitted to avoid
+    // shipping an assertion that does not discriminate.
+    await db1.read<{ n: number }>(sql);
+    const runs = runsOf(db1, sql);
+    expect(runs[2]?.prepared).toBe(0);
+
+    await db1.close();
+    await db2.close();
   });
 });
