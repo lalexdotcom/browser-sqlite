@@ -48,9 +48,19 @@ rotating exclusive OPFS handle, so it is where a reduced-mode regression lands
 first. The 13-run campaign was one machine and one build; slower CI hardware may
 still surface timing the campaign did not.
 
+## Work paused mid-task, 2026-08-28
+
+**`tests/browser/multi-client.test.ts` is on disk, untracked, and must not be committed as
+it stands** — it passes on Chromium and hangs on Firefox, and the pre-commit hook is
+Chromium only, so it would pass the hook and redden the Firefox gate. The full state,
+the two regimes it uncovered and the user's decision are in `mem:follow-ups`, entry
+`W-multitab`. Everything else is committed and `main` is clean.
+
 ## Decisions the user owes
 
-None outstanding, and **nothing is designed-and-approved-but-unbuilt** —
+**One is designed, approved and unbuilt: the `W-multitab` Known Limitations line**, in
+its thorough form (both regimes, discriminated by `readwrite-unsafe`) — see
+`mem:follow-ups`. Otherwise none outstanding —
 `PREPARE-1`, the statement cache, shipped on 2026-08-28 and took the slot from
 `BACKPRESSURE-1`. The next item is whatever the user picks from
 `mem:follow-ups`.

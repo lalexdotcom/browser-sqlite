@@ -44,19 +44,44 @@ each other either. Only the commit epoch is realm-wide, so what one tab's client
 requirement) and its staging sweep is `navigator.locks`-guarded. The rest of the client
 stays uncoordinated.
 
-**What actually happens when two clients write at once — verified in the source,
-2026-08-28.** Not corruption, and not a silent lost write: the second writer fails
-immediately with `SQLITE_BUSY`. The VFS asks for its lock with `ifAvailable: true`
-(`WebLocksMixin.js`), so it never waits, and no busy handler is registered because the
-library ships no PRAGMAs — `busy_timeout` is still on the performance list above, with its
-own risk to measure. `pool.ts` turns the code into `SQLiteError('BUSY')`. Web Locks are
-origin-wide, so this is identical between two clients and two tabs.
+**What happens when two clients write at once — RUN on both engines, 2026-08-28.**
+This entry claimed "the second writer fails immediately with `SQLITE_BUSY`, identical
+between two clients and two tabs", from reading `WebLocksMixin.js` (`ifAvailable: true`,
+so it never waits), the absence of any shipped PRAGMA registering a busy handler, and
+`pool.ts` turning the code into `SQLiteError('BUSY')`. **That reading is Chromium only.**
+Three tests written for it pass on Chromium and all three *hang* on Firefox.
 
-Two shapes to describe in the Known Limitations line, because neither is where a reader
-looks for the failure: a `bulkWrite` interrupted mid-way leaves its earlier batches
-committed and raises `SQLiteBulkWriteError` — a *partial* load; and `BEGIN` is deferred, so
-both clients open their transaction cleanly and it is the first write inside that fails.
-Today the consumer's only remedy is to retry.
+**There are two regimes, and the discriminator is `readwrite-unsafe`, never the engine
+name.**
+
+- **With it** (Chromium): the second writer fails at once with `BUSY`. The source reading
+  was right here.
+- **Without it** (reduced mode — Firefox, Safari): the contention is settled one layer
+  earlier, by the rotating exclusive OPFS handle, and the acquisition blocks in the
+  scheduler *before an `AbortSignal` is consulted*. Web Locks are never reached, so
+  `SQLITE_BUSY` never happens — **the second writer waits.** This is the mechanism the
+  README's "Reduced mode" section already describes for a write; it had simply never been
+  connected to this entry.
+
+Two falsifiers were executed, and one corrected its own claim:
+
+- `BEGIN IMMEDIATE` in `transaction.ts` makes B fail at the BEGIN rather than at the first
+  write inside it. `BEGIN` being DEFERRED is therefore pinned — on Chromium. On a
+  reduced-mode engine B's BEGIN can block on the file, so the test does not prove it there.
+- `pragmas: { busy_timeout: '5000' }` does **not** turn the rejection into a success: B
+  waits 5111 ms and still fails. A busy handler is caught by an elapsed-time budget, never
+  by the error type — which matters, `busy_timeout` being on the performance list above.
+
+The third shape is unaffected and holds: a `bulkWrite` interrupted mid-way leaves its
+earlier batches committed and raises `SQLiteBulkWriteError` — a *partial* load, which is
+not where a reader looks for a failure. The consumer's only remedy today is to retry, or
+to use `tx.bulkWrite`, which shares one transaction across every batch and so leaves
+nothing behind rather than half.
+
+**The test trap, paid for once: A cannot hold the lock while awaiting B.** The first
+version opened A's transaction and awaited B's attempt inside the callback. On an engine
+where B waits, the two deadlock — the test presupposed the fail-fast behaviour it was
+written to observe. Any rewrite needs a BOUNDED wait on B.
 
 **To treat, in rc.4: one Known Limitations line describing what is true today** (user,
 2026-08-27 — an earlier note in this file scoped it to rc.5 and that was a misreading).
@@ -64,6 +89,26 @@ rc.4 documents multi-tab as it stands; rc.5 studies whether to build or abandon 
 README already says it twice in the read-your-own-writes section — "It is not guaranteed
 across tabs" and "Nothing serializes writes between clients" — so the line restates rather
 than reveals, and Known Limitations is where a reader looks for it.
+
+**IN PROGRESS, paused 2026-08-28 mid-task. The user chose the thorough option, in these
+words: the line describes BOTH regimes, discriminated by `readwrite-unsafe` and not by the
+engine name, with tests pinning both.** Estimated ~1 h. The cheaper option — a line
+claiming only what holds everywhere, that two writers never corrupt and never both succeed
+— was offered and NOT taken; do not quietly fall back to it.
+
+- `tests/browser/multi-client.test.ts` exists and is **uncommitted and untracked**. Three
+  tests: BUSY on the second writer, `BEGIN` deferred, and the half-loaded `bulkWrite`.
+  3/3 pass on Chromium, 3/3 hang on Firefox for the deadlock described above. It is a
+  starting point, not a result — every test needs the bounded wait before it means
+  anything off Chromium. **Do not commit it as it stands.** The pre-commit hook runs
+  `pnpm test`, which is Chromium only, so it would sail through — and then turn the
+  Firefox CI step red, the step that became a gate the same day.
+- **The discriminator already exists: `HAS_UNSAFE_HANDLES` in
+  `tests/conformance/helpers.ts`,** resolved at module load by opening two access handles
+  on one file. Use it rather than writing a third probe or branching on the engine.
+- My 45-minute estimate for this line was wrong because it assumed true the very claim we
+  had just decided to verify. Do not re-estimate from the memory; re-estimate from what
+  the tests do.
 
 ### REOPEN-1 — `OPFSWriteAheadVFS/sync :: survives-reopen`, a flake at n=3
 
