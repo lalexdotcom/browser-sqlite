@@ -161,46 +161,19 @@ another slot opened, and a permanent loss warns unconditionally and calls
 - **The retry round multiplies the worst case**: up to two `openTimeout`,
   ~60 s by default, before the first query on a pool that will never open.
 
-### GATE-2 — closed: the pool was running at a quarter, and nothing said so
+### FLAKE-ROW-1 — only the WebKit flip is left, and it is not reachable here
 
-**Answered 2026-08-31.** The user's benchmark page got much faster on Firefox
-once the readiness gate shipped, and the cause is the gate — for the reason they
-proposed. With the gate disabled, an early write burst starves the other
-workers' opens and the client keeps running on the one worker that opened. The
-speed-up is a pool returning to its requested size, not a query getting faster.
+`no-read-inside-transaction` flipped in both directions on three VFS during the
+four-device Apple campaign of 2026-08-27. Measured at n=3 per engine on
+2026-08-31 it does not flip at all, so the `OPFSCoopSyncVFS` Known Limitations
+wording that rested on it is defensible; the table is in `mem:measurements`.
 
-**Nothing goes in the README or the CHANGELOG.** The comparison spans a complete
-rework with a public API change, one observer and one machine, so it cannot be
-attributed cleanly as a performance claim — and rc.4 was never deployed, so there
-is no slowdown any consumer experienced. The mechanism is what was worth having.
-
-**What the measurement did NOT reproduce is the magnitude.** A burst of 40 tiny
-`sqlite_master` reads takes about the same time on one worker as on four, so the
-probe confirms the mechanism and says nothing about the size of the effect. The
-bench rows that measure read concurrency are where a quartered pool is paid for.
-
-### FLAKE-ROW-1 — closed for what opened it; the WebKit flip is not reachable here
-
-The bench row `no-read-inside-transaction` flipped between `pass` and `blocked`
-in both directions, on three VFS, during the four-device Apple campaign of
-2026-08-27. It was opened because the `OPFSCoopSyncVFS` Known Limitations entry
-rests on that row and reads as a determinism, and n≥3 per engine was owed before
-that wording could be defended.
-
-**Measured 2026-08-31, n=3 per engine: no flip at all, either direction.**
-`OPFSCoopSyncVFS` is `blocked` 3/3 on both Chromium and Firefox, so the README
-wording is defensible. The table is in `mem:measurements`.
-
-The entry's second worry settles differently than it expected: `OPFSAdaptiveVFS`
-*is* `blocked` on Firefox, deterministically — but that is the reduced-mode
-signature the README already describes, not a verdict about that VFS.
-
-**What is NOT closed, and cannot be from here: the WebKit flip itself.** Linux
-WebKit exposes no `navigator.storage`, so no VFS this library ships runs there;
-the platform where the flip was seen needs the user's Apple hardware. It gates
-no published sentence any more, so it is curiosity, not evidence owed. The user's
-machine is now macOS Safari 26.6.2, which also makes the 2026-08-27 campaign a
-stale baseline rather than a comparison.
+What is left is the flip itself, on WebKit. Linux WebKit exposes no
+`navigator.storage`, so no VFS this library ships runs there and the platform
+cannot be reached from this container — it needs the user's Apple hardware, and
+their machine is now macOS Safari 26.6.2, which makes the 2026-08-27 campaign a
+stale baseline rather than a comparison. **It gates no published sentence**, so
+it is curiosity rather than evidence owed.
 
 ## Notes, with nothing to fix
 

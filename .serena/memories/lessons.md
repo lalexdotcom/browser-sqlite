@@ -254,3 +254,30 @@ timer clamp — which Chromium alone could never have shown.
 **Two engines are installed here** (`~/.cache/ms-playwright`: chromium, firefox, webkit;
 WebKit is useless for OPFS on Linux). A measurement announced from one of the two is half a
 measurement.
+
+## When a timing says nothing, count a state instead — 2026-08-31
+
+A benchmark page ran much faster on Firefox after the readiness gate shipped, and
+the question was why. Two probes timed queries: one from client creation, one for
+a burst after a warm-up. Both came back flat on both engines, and the second
+looked like a clean refutation — the gate simply costs its ~15 ms of serialised
+opens and buys nothing.
+
+Both were measuring the wrong quantity. The third probe counted **how many
+workers had ever reported `initializationTime`**, and answered on the first run:
+without the gate, two Firefox runs in three ended with one worker opened out of
+four, permanently. The effect was never in latency. It was in the size of the
+pool, and a duration cannot see the difference between forty small reads on one
+worker and on four.
+
+**What it cost:** most of a morning, and a confident negative that would have
+closed the question wrongly had the user accepted it.
+
+**What to do instead:** before timing anything, ask what STATE the hypothesis
+claims is different, and whether an observable for it already exists. Here
+`db.debug` had exposed it all along. A duration is a last resort — it aggregates
+every cause at once, so a flat one refutes nothing in particular.
+
+**The tell:** a probe that returns "no difference" on *both* engines, when the
+mechanism under test exists on only one of them, is not evidence about the
+mechanism. It is evidence that the probe does not reach it.
