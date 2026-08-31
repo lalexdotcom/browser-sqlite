@@ -281,3 +281,48 @@ every cause at once, so a flat one refutes nothing in particular.
 **The tell:** a probe that returns "no difference" on *both* engines, when the
 mechanism under test exists on only one of them, is not evidence about the
 mechanism. It is evidence that the probe does not reach it.
+
+## An empty `${{ }}` in a shell comment breaks a composite action — 2026-08-31
+
+A comment inside a composite action's `run:` block explained that a value travels
+through `env:` **rather than through `${{ }}` interpolation** — and wrote that
+sequence literally, empty. GitHub's template parser scans the whole `run:` string,
+comments included, found an expression with nothing in it, and refused the
+manifest:
+
+```
+action.yml (Line: 146, Col: 12): An expression was expected
+```
+
+**What it cost:** a released action version that no consumer could load at all,
+and a failed release tag. Every job pinned to it died at *Set up job*, before a
+single step ran — so the error is nowhere near the code that caused it, and the
+annotation names the action's line, not the workflow's.
+
+**What to do instead:** never write the literal `${{` in a composite action, in
+any position — a comment is not a hiding place. Name the mechanism ("a workflow
+expression") instead of quoting it. `grep -n '\${{ *}}'` over the file catches
+the empty case; the general form is that every `${{ … }}` in the file must
+contain something.
+
+**The tell:** a failure at *Set up job* with zero steps executed is never your
+logic. It is the manifest failing to load or to parse.
+
+## Check the upstream signal before waiting on the downstream one — 2026-08-31
+
+After pushing a release tag, the agent polled npm for the new version on a loop
+and sat there for ten minutes. The workflow had already failed sixty seconds in;
+npm was never going to change. The user had to say so.
+
+**What it cost:** ten minutes of silence during a live release, and the user
+chasing the agent rather than the other way round.
+
+**What to do instead:** wait on the thing that produces the outcome, not on the
+outcome. Here that is the workflow run — its `status`/`conclusion`, then its
+per-step conclusions. Only once it succeeds does the registry become worth
+polling. The same shape applies anywhere a pipeline feeds a store: watch the
+pipeline.
+
+**The tell:** if your poll cannot distinguish "not finished yet" from "will never
+happen", it is the wrong poll. A run's `conclusion` distinguishes them; a
+registry listing does not.

@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-08-27.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-08-31.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one.
 
 **No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
@@ -12,16 +12,19 @@ obligations and unmeasured ground.
 
 ## Standing facts about the repository
 
-- **`main` sits ahead of `origin/main` on purpose, indefinitely.** Pushing is not part of
-  committing (`mem:conventions`). Do not push as housekeeping, and do not read the distance
-  as an oversight.
-- **`package.json` stays at `1.0.0-rc.3` until the user says otherwise.** The bump is
-  theirs to call; everything lands in the unreleased section of `CHANGELOG.md`, which is
-  where to read the delta since the published rc.3 of 2026-03-26.
+- **`1.0.0-rc.4` is published**, on 2026-08-31: on npm under `rc`, `next` and `latest`, and
+  as a GitHub prerelease whose body is the CHANGELOG section for the tag. `package.json`
+  sits at `1.0.0-rc.4` and stays there until the user calls the next bump; everything since
+  lands in a new unreleased section of `CHANGELOG.md`, which **the user's instruction
+  creates** — no automation opens one.
+- **Pushing is still not part of committing** (`mem:conventions`), and `main` may sit ahead
+  of `origin/main` indefinitely. It was pushed on 2026-08-31 because a release needs the
+  remote to carry the tagged commits, not because the convention changed. Do not push as
+  housekeeping.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, 2026-08-28
+## The verification baseline — compare against these, re-verified 2026-08-31
 
 Not history: the numbers a regression is detected against.
 
@@ -50,36 +53,22 @@ still surface timing the campaign did not.
 
 ## Decisions the user owes
 
-None outstanding, and nothing is designed-and-approved-but-unbuilt. Everything
-rc.4 owed except the bump is done: the readiness gate and the worker-loss
-surface, Firefox as a CI gate, the floor computed from browser-compat-data, the
-signal audit with its tests, the `W-multitab` Known Limitations line, and the
-type work. **What remains for rc.4 is the version bump and nothing else.** The
-next item after it is whatever the user picks from `mem:follow-ups`, whose
-entries are all rc.5 or unblocked-by-hardware.
+None outstanding, and nothing is designed-and-approved-but-unbuilt. rc.4 closed
+everything it owed, and shipped. **The next thing is rc.5's scope, which is the
+user's to pick from `mem:follow-ups`** — where every entry is now rc.5, or
+evidence blocked on hardware this container does not have.
 
-## Owed before the release
+## Pending, and not ours to move
 
-**Scope, set by the user on 2026-08-27, and stated twice because the first
-reading was wrong.** rc.4 closes every open point that does not *touch* multi-tab,
-**and documents multi-tab as it stands, limitations included** — the Known
-Limitations line is rc.4 work, not rc.5. rc.5 is where multi-tab is studied for
-feasibility and either built or abandoned. Anything that would *change* multi-tab
-behaviour waits for rc.5; describing today's behaviour does not.
-
-- **Cut rc.4.** No longer a one-line edit since 2026-08-31: the release workflow
-  refuses a tag whose version disagrees with `package.json` or with a dated
-  `## <version> — <date>` heading in `CHANGELOG.md`, so the bump is one commit
-  carrying both edits, then the tag. The procedure is in `mem:conventions`.
 - **The upstream PR is MERGED (user, 2026-08-28): `rhashimoto/wa-sqlite#344`**,
   "Fix OPFSAnyContextVFS writes on WebKit by copying the page buffer", from
   `lalexdotcom`. rhashimoto's two conditions — a link to a filed WebKit bug, and
   the original `.subarray()` kept commented out above a TODO — were satisfied
   before he merged. **Nothing is owed upstream.**
-  - **What is now pending is a wa-sqlite RELEASE, not a decision of ours.** The
-    re-vendoring waits for it: until wa-sqlite publishes a version carrying the
-    fix, `patches/wa-sqlite@1.1.1.patch` stays exactly as it is. Do not remove
-    it early and do not hand-edit it (see below).
+  - **What is pending is a wa-sqlite RELEASE, and there was none as of
+    2026-08-31 (user).** The re-vendoring waits for it: until wa-sqlite publishes
+    a version carrying the fix, `patches/wa-sqlite@1.1.1.patch` stays exactly as
+    it is. Do not remove it early and do not hand-edit it (see below).
   - **The WebKit bug already existed — do not file another one.**
     <https://bugs.webkit.org/show_bug.cgi?id=302733>, "FileSystemWritableFileStream.write()
     ignores byteOffset when writing TypedArray subarrays", Website Storage,
@@ -95,7 +84,28 @@ behaviour waits for rc.5; describing today's behaviour does not.
     Bugzilla all read fine through `WebFetch` on `api.github.com` and
     `bugs.webkit.org`; the fork clone lives at `.work/wa-sqlite` and pushes
     through the VS Code credential helper. Creating a fork or posting a comment
-    still needs the user — no token in this container.
+    still needs the user — no token in this container. **Reading Actions logs
+    needs admin rights and is refused too**, so a failing run is diagnosed from
+    its check-run annotations, or by the user pasting the step.
+
+## The release path, now that it has run for real
+
+Procedure and invariants are in `mem:conventions`; this is only what rc.4's two
+failures established that no reading would have.
+
+- **The ordering is load-bearing and was proved twice.** rc.4 failed once before
+  anything existed and once with the GitHub Release created but `npm publish`
+  refused; neither burnt the version number. Under the old order — publish first —
+  the second failure would have cost `1.0.0-rc.4` permanently.
+- **The action is not idempotent, and nothing fixes that yet.** Once the release
+  exists, re-running the job fails at `gh release create` before reaching npm.
+  Recovery is: delete the release and the tag, then retag. A
+  `gh release view … || gh release create …` in
+  `lalexdotcom/action-release-and-publish` would make a partial failure replayable;
+  it is not written.
+- **`NPM_TOKEN` is a long-lived secret that expired unnoticed** and is what failed
+  the second attempt. `mem:follow-ups` carries trusted publishing as the rc.5
+  answer, with the reason it does not fully remove the token here.
 
 ## Unmeasured ground — what a claim here would be inventing
 
@@ -119,10 +129,11 @@ behaviour waits for rc.5; describing today's behaviour does not.
 
 ## Known live exposures
 
-- **One Pages site per repo, last deploy wins.** A manual dispatch from any `feat/*` branch
-  replaces whatever the last release published. Kept deliberately (2026-08-26, user):
-  dispatching onto a real device without merging is worth the exposure — which is what
-  makes the page's "development build" banner load-bearing. `buildRef()` in
+- **One Pages site per repo, last deploy wins.** It currently carries the rc.4
+  release build, deployed by the release itself. A manual dispatch from any
+  `feat/*` branch replaces it. Kept deliberately (2026-08-26, user): dispatching
+  onto a real device without merging is worth the exposure — which is what makes
+  the page's "development build" banner load-bearing. `buildRef()` in
   `scripts/bench/assemble.mjs` is not decoration.
 - **The pinned Vite 6 consumer fixture is the only thing verifying the README's one
   instruction.** `tests/consumer` resolves to the newest Vite, where `optimizeDeps.exclude`
