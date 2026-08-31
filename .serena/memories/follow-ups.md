@@ -11,9 +11,6 @@ what is written here is the backlog, not a proposal about it.
 
 ## Designs owed
 
-`ABORT-1` and `DELETE-1` are gone from here: both shipped on 2026-08-27 (merge
-`a2c1b26`). What they left behind is below and in `mem:lessons`.
-
 ### A timed flush — out of rc.4 (user, 2026-08-27)
 
 Raised by the user during the back-pressure brainstorm and kept out of the spec, which
