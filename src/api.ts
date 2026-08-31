@@ -81,6 +81,11 @@ export type SQLiteWriteResult<T extends Record<string, unknown>> = {
  * signal. Their completion is what decides whether a rollback is owed, so a
  * client-side abort of one of them would risk leaving the transaction open on
  * the connection. The abort lands as soon as such a statement settles.
+ *
+ * That window is short on a VFS holding one access handle per connection, and
+ * it is not on a VFS rotating a single exclusive one: there such a statement
+ * waits for whichever client holds the file, and your signal cannot shorten
+ * that wait. See the reduced mode described under VFS Selection.
  */
 export type SQLiteTransactionOptions = OptionsWithSignal<{
   /** Rejects write statements with `READ_ONLY_TRANSACTION`. Defaults to false. */
@@ -313,7 +318,7 @@ export type SQLiteQueryAPI = {
   bulkWrite: <KEYS extends string>(
     table: string,
     keys: KEYS[],
-    options?: OptionsWithSignal,
+    options?: SQLiteBulkWriteOptions,
   ) => SQLiteBulkWriter<KEYS>;
 
   /**
