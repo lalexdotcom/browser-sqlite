@@ -1,7 +1,9 @@
 # History — what each wave shipped
 
-One line each. `CHANGELOG.md` holds the consumer-facing delta; `git log` holds the detail.
-This file exists only so a date or a merge commit can be found without archaeology.
+One line each, with one sanctioned exception: a **release** also gets a short section
+saying what it was, because a table of increments cannot show an arc. `CHANGELOG.md` holds
+the consumer-facing delta; `git log` holds the detail. This file exists only so a date or a
+merge commit can be found without archaeology.
 
 | When | Branch / wave | What it shipped |
 |---|---|---|
@@ -25,6 +27,46 @@ This file exists only so a date or a merge commit can be found without archaeolo
 | 2026-08-27 | `feat/transaction-signal` | `transaction()` honours a `signal` — four checkpoints, the callback raced against it, every `tx` statement inheriting it, `BEGIN`/`COMMIT`/`ROLLBACK` deliberately excluded. `mergeSignals()` rather than `AbortSignal.any()`. A failed `BEGIN` stops evicting a healthy worker. `Abortable` → `OptionsWithSignal`. No spec — bounded, brainstormed in chat. Merge `05596f4`, 1 commit, 397 tests. |
 | 2026-08-27 | `feat/wasm-url` | `wasmUrl`, approved 2026-08-18 and never built: a directory or a callback naming one file, resolved once on the client, reaching Emscripten's `locateFile` only when given. No spec — bounded, brainstormed in chat. Merge `003cc09`, 1 commit. |
 | 2026-08-28 | `feat/statement-cache` | `PREPARE-1`: a per-worker LRU of prepared statements, so single-statement SQL is compiled once instead of once per execution. wa-sqlite's own `unscoped` option retains what its generator yields; the worker takes over only the statement's lifetime — `reset` + `clear_bindings` on every non-error exit, finalise-and-evict on error, drain before `close`. A `prepared` counter on the `done` message proves reuse. Carried a latent fix: column names are read after the first row, not before, which four barrier tests turned out to depend on. Spec `2026-08-27-statement-cache-design.md`, plan of five tasks by subagents. Measured on two engines and two builds — `mem:measurements`. 16 commits, 428 tests. |
+| 2026-08-28 | `feat/pool-readiness-gate` | `poolSize` becomes a promise instead of a request: nothing is served until every slot has settled, a slot that failed to open is retried once when another one opened, and a worker lost for good warns unconditionally and calls `onWorkerLost`. It began as a Firefox flake and ended elsewhere — `long-query :: does not block the pool` was failing *every* run because last-writer routing had removed the coin flip hiding it, and the test timed the file rather than the pool. The real defect the diagnosis turned up: a worker's `open` needs the same rotating exclusive handle, so a long query during warm-up could starve it and shrink the pool for good, silently. **Firefox is a CI gate from here on.** Merge `fa65cf3`, 2 commits. |
+| 2026-08-31 | on `main`, no branch | The type work and the surface it exposed: `exactOptionalPropertyTypes` and the seven sites it named, wa-sqlite's own types adopted with only the gaps declared here, thirty-seven `any` down to twelve. A breaking fix rode with it — `bulkWrite`'s public signature now accepts the options it documents. Plus the signal audit with its tests, the floor computed from `@mdn/browser-compat-data`, and `W-multitab`'s Known Limitations line. Inline work, per the rule that a branch is for a feature going through the workflow. |
+| 2026-08-31 | `feat/perf-measure` | The performance backlog closed on measurement rather than argument. Kept: the per-row object built by a loop instead of `Object.fromEntries(cols.map(...))` — 17.5 → 4.4 ms on Chromium, 23 → 14 ms on Firefox over 50 000 rows x 12 columns. Dropped: sharing one compiled `WebAssembly.Module` across the pool, because Chromium overlaps those compiles (6.0 ms at one worker, 8.1 at four) and Firefox does not (29 against 68) — ~8 ms at the default `poolSize`, for a handshake on the open path. Both numbers in `mem:measurements`. Merge `6bbb01e`. |
+| 2026-08-31 | `feat/release-notes-from-changelog` | A tag now produces a GitHub Release whose body is the matching `CHANGELOG.md` section, and npm is never published before that release exists. Spans two repositories: `lalexdotcom/action-release-and-publish` gained an optional `release-notes-file` (a path, never a string — an interpolated body would execute on a runner holding `NPM_TOKEN`) and moved release creation ahead of `npm publish`; here, one inline shell step asserts the tag, `package.json` and a dated heading all name the same version, then extracts the section. Nothing writes to `CHANGELOG.md`. Spec `2026-08-31-release-notes-from-changelog-design.md`, plan of four tasks by subagents. Merge `d8d7cf4`. |
+| 2026-08-31 | — | **`1.0.0-rc.4` published.** On npm under `rc`, `next` and `latest`; a GitHub prerelease carrying the CHANGELOG section. |
+
+## What rc.4 was — the one entry that is not one line
+
+**Deliberately longer than the rule above (user, 2026-08-31),** because the table
+reads as twenty increments and rc.4 was not twenty increments. Between rc.3 of
+2026-03-26 and rc.4 the library was **reimplemented**, and the rows are the steps
+of one arc rather than a list of features.
+
+What actually changed shape:
+
+- **Concurrency became a design instead of a hope.** Exclusivity moved to opaque
+  leases with availability unreachable from outside the scheduler; one query is in
+  flight per worker; the writer designation is released as soon as nothing is
+  queued behind it. `SharedArrayBuffer` and `orchestrator.ts` were deleted
+  outright, which is what removed the cross-origin-isolation requirement.
+- **Cross-connection staleness turned out to be a property of the setup, not of a
+  VFS** — measured identical on every VFS and every build. The commit-propagation
+  barrier is permanent architecture because of that, and it is what holds the
+  scheduling rules up.
+- **The VFS surface became declared and executed rather than described.**
+  `VFS_CAPABILITIES` is the single source of truth the client guard, the
+  conformance suite, the README generator and the benchmark page all read; every
+  declared pair is run, never trusted. `vfs` became required, because a default
+  that moves decides where a consumer's bytes live.
+- **The failure surface was built.** Typed errors and codes, worker death
+  detection with bounded restart, a real asynchronous `close()`, abort implemented
+  once and honoured everywhere, back-pressure on `bulkWrite`, and a readiness gate
+  so `poolSize` means what it says.
+- **Evidence became the currency.** A benchmark page on Pages, a conformance
+  project, device campaigns on real Apple hardware, a bundler matrix over five
+  bundlers, and `mem:measurements` — where a number without a date and a method
+  does not go.
+
+The consumer-facing delta is `CHANGELOG.md`; this section is the shape, which the
+changelog's Breaking/Added/Changed/Fixed cannot show.
 
 ## Where the specs are
 
