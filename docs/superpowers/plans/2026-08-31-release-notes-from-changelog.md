@@ -25,7 +25,7 @@
 | File | Responsibility | Task |
 |---|---|---|
 | `.work/action-release-and-publish/action.yml` | the input, and the step order | 1 |
-| `.work/action-release-and-publish/README.md` | the input table consumers read | 1 |
+| `.work/action-release-and-publish/README.md` | the per-input `###` section consumers read | 1 |
 | `.work/action-release-and-publish/USAGE.md` | the worked example | 1 |
 | `.github/workflows/release-and-publish.yaml` | version checks, extraction, the repointed pin | 3 |
 | `.serena/memories/conventions.md` | the release procedure and the two-repo ordering | 4 |
@@ -40,7 +40,7 @@ Work happens in the clone at `.work/action-release-and-publish` (already present
 
 **Files:**
 - Modify: `.work/action-release-and-publish/action.yml` — inputs block (after `:26`), and the `Create GitHub Release 🎉` step (`:181-193`) moved to sit between `Validate inputs for publishing 🔐` (`:127-139`) and `Publish to NPM 🚀` (`:141-147`)
-- Modify: `.work/action-release-and-publish/README.md` — inputs table
+- Modify: `.work/action-release-and-publish/README.md` — a new `### `release-notes-file`` section
 - Modify: `.work/action-release-and-publish/USAGE.md` — example
 - Test: `$SCRATCH/argv-probe.sh` where `SCRATCH=/tmp/claude-1000/-workspaces-wsqlite/28e03af0-53be-4c7b-adca-5a927eb11add/scratchpad` (throwaway, committed nowhere)
 
