@@ -62,7 +62,7 @@ jobs:
 
       # Pinned to a SHA, not the mutable v1 tag: this job holds NPM_TOKEN, and
       # whoever can move that tag can move what runs with the token.
-      - uses: lalexdotcom/action-release-and-publish@6fe5644675925268919bd87c0da430651e6c0389 # v1.3.0
+      - uses: lalexdotcom/action-release-and-publish@090f72d88c4a3d608e79e0a92daa50eec44e2ae4 # v1.3.1
         with:
           npm-token: ${{ secrets.NPM_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
