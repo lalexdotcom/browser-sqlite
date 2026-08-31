@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## Unreleased — 1.0.0-rc.4
+## 1.0.0-rc.4 — 2026-08-31
 
 Everything below lands between rc.3 (2026-03-26) and rc.4. The library was
 rewritten around a leased worker pool in that interval; the public surface moved

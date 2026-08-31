@@ -101,6 +101,31 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
+### The statement cache's bound is in entries, and an entry can weigh megabytes (rc.5, user 2026-08-31)
+
+The design is in `docs/superpowers/specs/2026-08-27-statement-cache-design.md`
+and every number is in `mem:measurements`; neither is repeated here. What is open
+is the bound.
+
+`DEFAULT_STATEMENT_CACHE_SIZE = 32` (`client.ts`) counts **entries**. That number was picked
+before anything had been weighed. It has been weighed since: the two INSERT templates one
+`bulkWrite` retains come to **3.06 MB together**, and there is one cache per worker,
+multiplied by `poolSize`.
+
+**The case the measurement did not cover.** One `bulkWrite` is fine. An application writing
+to four tables of different widths produces eight distinct templates — order of 24 MB per
+worker, ~100 MB at `poolSize: 4`. The whole-branch review called 32 entries safe and was
+right about the case in front of it; that case was one table.
+
+So moving the eviction criterion to a byte budget fed by `sqlite3_stmt_status(stmt, 99, 0)`
+is **not an optimisation, it is the answer to a memory risk**. The change is confined to the
+pure module — eviction is all it decides. Do not expect help from `_sqlite3_memory_used()`:
+this build sets `SQLITE_DEFAULT_MEMSTATUS=0` and it returns 0.
+
+**A smaller effect to know before touching this:** SQL generated per call fills the LRU with
+single-use entries. The bound stops the growth, not the churn, and every eviction is a
+`finalize` on the hot path. Nobody has profiled it.
+
 ## Evidence owed
 
 ### REOPEN-1 — `OPFSWriteAheadVFS/sync :: survives-reopen`, a flake at n=3
@@ -204,31 +229,6 @@ differ and must **not** be aligned: the page returns `'blocked'` where invariant
 `console.warn` and passes (a table has somewhere to render a third state, a suite does
 not); and the page reopens the column's client after `survives-reopen` and `close-settles`,
 because it runs every row against one client where the suite gets a fresh one per `it()`.
-
-## The statement cache's bound is in entries, and an entry can weigh megabytes
-
-The design is in `docs/superpowers/specs/2026-08-27-statement-cache-design.md`
-and every number is in `mem:measurements`; neither is repeated here. What is open
-is the bound.
-
-`DEFAULT_STATEMENT_CACHE_SIZE = 32` (`client.ts`) counts **entries**. That number was picked
-before anything had been weighed. It has been weighed since: the two INSERT templates one
-`bulkWrite` retains come to **3.06 MB together**, and there is one cache per worker,
-multiplied by `poolSize`.
-
-**The case the measurement did not cover.** One `bulkWrite` is fine. An application writing
-to four tables of different widths produces eight distinct templates — order of 24 MB per
-worker, ~100 MB at `poolSize: 4`. The whole-branch review called 32 entries safe and was
-right about the case in front of it; that case was one table.
-
-So moving the eviction criterion to a byte budget fed by `sqlite3_stmt_status(stmt, 99, 0)`
-is **not an optimisation, it is the answer to a memory risk**. The change is confined to the
-pure module — eviction is all it decides. Do not expect help from `_sqlite3_memory_used()`:
-this build sets `SQLITE_DEFAULT_MEMSTATUS=0` and it returns 0.
-
-**A smaller effect to know before touching this:** SQL generated per call fills the LRU with
-single-use entries. The bound stops the growth, not the churn, and every eviction is a
-`finalize` on the hot path. Nobody has profiled it.
 
 ## Three things about the statement cache that no test can see
 
