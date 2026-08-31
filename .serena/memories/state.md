@@ -53,10 +53,48 @@ still surface timing the campaign did not.
 
 ## Decisions the user owes
 
-None outstanding, and nothing is designed-and-approved-but-unbuilt. rc.4 closed
-everything it owed, and shipped. **The next thing is rc.5's scope, which is the
-user's to pick from `mem:follow-ups`** — where every entry is now rc.5, or
-evidence blocked on hardware this container does not have.
+**One, and only one: how to execute the cross-tab plan** — a fresh subagent per
+task with review between each, or inline in this session with checkpoints.
+`writing-plans` ends by offering that choice, and it belongs to the user, not to
+the agent (`mem:conventions`). Everything else rc.5 needs is decided.
+
+## rc.5's first item: designed, approved, unbuilt
+
+**Scope picked by the user 2026-08-31: multi-client / multi-tab, and they asked for
+BOTH halves** — write serialization *and* cross-tab read-your-own-writes. The two are
+independent problems with independent answers, which is the design's organising idea.
+
+Spec and plan are committed on the feature branch (`git branch` names it). It is
+**unmerged and not pushed** — nothing outside this container holds them.
+
+- `docs/superpowers/specs/2026-08-31-cross-tab-coordination-design.md`
+- `docs/superpowers/plans/2026-08-31-cross-tab-coordination.md` — seven tasks, each
+  committing green because the hook refuses a red tree.
+
+**Read the spec, not a summary of it.** What it settles that nothing would re-derive:
+
+- **A SharedWorker cannot be the writer, and that is not a cost judgement.** Spawning a
+  dedicated worker from inside a SharedWorker **throws on Chrome** — Firefox supports
+  it, Safari 27 beta added it (rhashimoto/wa-sqlite#81, finally read on 2026-08-31,
+  which `mem:follow-ups` had been demanding since 2026-08-28). The four VFS that matter
+  need a dedicated worker for `createSyncAccessHandle()`, so a SharedWorker can
+  coordinate but never hold a connection. Upstream's migrating-service pattern is the
+  only route to one connection per origin and is a different product.
+- **Every lock and the epoch key on a storage namespace derived from
+  `VFS_CAPABILITIES.layout`, never on the VFS name.** `OPFSAdaptiveVFS`,
+  `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` resolve one database
+  name to the same OPFS path, so a per-VFS key would let two clients write the same
+  bytes without ever excluding each other. A missed conflict corrupts; an invented one
+  only slows.
+- **The realm-wide epoch cell survives as a FLOOR, not as the authority.** That is what
+  stops `max` dipping to zero when the last realm holding a marker dies.
+- **Cross-client visibility inside one tab already works** and is already reasoned
+  about — `advanceSeen`'s `next === target + 1` clause exists for exactly that case. The
+  gap this design closes is cross-*tab* only.
+
+**Two throwaway probes were run and deleted.** Their numbers are in `mem:measurements`
+(Web Locks priced, 2026-08-31); the iframe-realm platform facts are in the spec's §6,
+and Task 5 of the plan turns them into a test that stays.
 
 ## Pending, and not ours to move
 

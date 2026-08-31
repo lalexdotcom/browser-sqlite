@@ -81,8 +81,14 @@ database. `'shared'` maps SQLite's lock levels onto Web Locks instead, which is 
 `poolSize` connections share one file. Anyone tempted to drop the option and inherit the
 default is removing concurrent reads. The other option of the same mixin, `lockTimeout`,
 is left at `Infinity` deliberately: it applies only to blocking acquisitions, and the
-write-lock transitions are polled (`ifAvailable`), so it would change nothing that matters
-(`mem:follow-ups`, W-multitab).
+write-lock transitions are polled (`ifAvailable`), so it would change nothing that matters.
+
+**`WebLocksMixin` is also what makes `poolSize` visible to `navigator.locks.query()`**, and
+rc.5's cross-tab design has to know it: the mixin takes up to three named locks
+`lock##<file>##{gate,access,reserved}` per connection, held only while that connection holds
+a SQLite lock. One query in flight per worker bounds it at one or two per simultaneously
+active worker. **Read from source, never measured** — see `mem:state` for the design that
+depends on it and `mem:measurements` for what a held lock costs a `query()`.
 
 **Routing is an allowlist, and its second clause is not decoration.** `isReadQuery`
 requires an allowlisted opening keyword **and** no write keyword anywhere in the

@@ -16,68 +16,20 @@ been work on nothing.
 
 ## Designs owed — rc.5 or later
 
-### W-multitab — uncoordinated by design, and rc.5 decides whether it stays that way
+### One compiled `WebAssembly.Module` for the pool — the premise it waited on is dead
 
-`currentWriterIndex` and both queues are **per client**, not per realm —
-`createScheduler` runs once per `createSQLiteClient` — so two clients in the
-*same tab* do not serialize their writes against each other either. Only the
-commit epoch is realm-wide: what clients share is **visibility**, never
-exclusion. One part is already coordinated, because the user required it:
-`output()` is multi-tab safe, its staging sweep `navigator.locks`-guarded.
+Every worker compiles its own copy of the 1.23 MB binary. Sharing one is verified and
+priced in `mem:measurements`: the clone is free and arrives usable, but it buys ~2 ms on
+Chromium, which overlaps those compiles anyway, and ~8 ms at the default `poolSize` on
+Firefox, which does not.
 
-**rc.5 studies whether to build or abandon it, and multi-CLIENT comes with it**
-(user, 2026-08-31): a second tab is a second client that cannot be reached
-through a module-level channel, so anything that coordinates tabs coordinates
-clients by construction. Solving one is solving both; the reverse is not true.
-
-What rc.4 owed — a Known Limitations line describing what is true today — is
-written, and `tests/browser/multi-client.test.ts` pins it on both regimes. Read
-those two before designing anything: they carry the behaviour, the falsifiers,
-and the deadlock the first version of the tests walked into. Nothing about it is
-repeated here.
-
-**One compiled `WebAssembly.Module` for the pool rides on whatever rc.5 builds
-(user, 2026-08-31).** Every worker compiles its own copy of the 1.23 MB binary
-today. Sharing one is verified and priced in `mem:measurements`: the clone is
-free and arrives usable, but it buys ~2 ms on Chromium, which overlaps those
-compiles anyway, and ~8 ms at the default `poolSize` on Firefox, which does not.
-Too little to justify infrastructure by itself — and better than measured if a
-coordinator appears, since a coordinator compiles once per **origin** rather than
-once per client, so the second tab gains and not only the second worker.
-
-**A SharedWorker cannot be the pool, only a coordinator.** Upstream's context
-column (`mem:vfs`) reads `Worker`, not `All`, for `OPFSAdaptiveVFS`,
-`OPFSCoopSyncVFS`, `OPFSWriteAheadVFS` and `AccessHandlePoolVFS` — the
-`createSyncAccessHandle()` restriction. It can compile, arbitrate and hold a
-registry; it cannot open a connection on the four VFS that matter, the
-recommended default included. **That rc.5 will want one is a premise, not a
-finding:** the lead these memories carry is Web Locks as a registry, and the
-discussion below is still unread.
-
-### Read before designing anything cross-tab (user, 2026-08-28)
-
-**`https://github.com/rhashimoto/wa-sqlite/discussions/81`** — the user wants this
-discussion examined as part of multi-tab / multi-client handling. **Nobody here has read it
-yet**, so nothing in these memories reflects it and no claim below is informed by it. Read
-it before the Web-Locks-as-registry lead underneath, and before any cross-tab design: it
-is upstream's own thread on the problem, and this project has twice built on a premise it
-could have sourced instead.
-
-### A cross-tab lead, recorded unverified
-
-**Web Locks as a registry, not as mutual exclusion.** Preferred over `BroadcastChannel`,
-which loses the race on a message still in flight. Shape: a tab holds
-`bsq:epoch:<file>:<n>`, takes `n+1` and releases `n` at commit, and other tabs read the
-epoch as the max of the held names via `navigator.locks.query()` — the same "lock as
-liveness marker" pattern `stagingLockName` already uses. It is *state*, not *delivery*, so
-there is no in-flight window.
-
-**The measurement that settles it:** the cost of `navigator.locks.query()` per acquisition
-against the one worker round-trip it avoids. `query()` returns every lock held in the
-origin and is specified as a diagnostic snapshot. If it is not clearly cheaper, the
-cross-tab answer is the unconditional prelude, probably opt-in, not this. **Do not treat
-this as promising until that number exists** — that is exactly how `PRAGMA data_version`
-and the WAL VFS each cost a session.
+It was carried on the premise that whatever solved multi-tab would improve those numbers —
+a coordinator compiles once per **origin** rather than once per client. **That premise is
+gone:** rc.5's cross-tab design has no coordinator and cannot have one, because a
+SharedWorker cannot open a connection on the four VFS that matter (`mem:state`). So the
+measured numbers are the whole case, and they do not justify adding a handshake to the open
+path — the path GATE-1 and three abort defects were paid for. Reviving it needs no new
+measurement, only that table.
 
 ### CoopSync turns a protocol step into a failure — `busy_timeout` is option A
 
