@@ -126,6 +126,36 @@ this build sets `SQLITE_DEFAULT_MEMSTATUS=0` and it returns 0.
 single-use entries. The bound stops the growth, not the churn, and every eviction is a
 `finalize` on the hot path. Nobody has profiled it.
 
+### npm trusted publishing — it would remove the secret, but not all of it
+
+<https://docs.npmjs.com/trusted-publishers>. npm trusts GitHub Actions over OIDC
+instead of a stored secret: the runner gets a short-lived token signed for one
+named workflow, verified against a trusted publisher declared per package. **The
+motivation is not tidiness — it is that `NPM_TOKEN` expired unnoticed and failed
+the first rc.4 attempt**, after the GitHub Release had already been created.
+
+**What is already satisfied**, checked 2026-08-31: cloud-hosted runner
+(`ubuntu-latest`); npm ≥ 11.5.1 and Node ≥ 22.14.0 (the action takes
+`node-version: lts/*`); and `repository.url` matching the repository exactly,
+which npm requires. **Missing: `id-token: write`** — the `release` job declares
+only `contents: write`.
+
+**What blocks a clean adoption, and it is the whole question:** OIDC covers
+`npm publish` and nothing else. `npm dist-tag add` explicitly still needs
+traditional authentication, and the action runs it twice, for `latest` and for
+`next`. So trusted publishing shrinks the token here rather than removing it,
+unless the dist-tags are posted differently. Three shapes, and the choice is a
+product one: keep a granular token for the dist-tags alone; publish directly
+under the wanted tag and drop the triplet; or wait for a stable 1.0.0, after
+which the action stops adding `latest` to prereleases by itself — today's
+`rc`/`next`/`latest` triplet is an artefact of no stable existing yet.
+
+**One thing to verify rather than assume:** the docs record a validation
+mismatch for `workflow_call` reusable workflows. Our publish runs inside a
+**composite** action, which executes in the calling job, so the claim should
+carry `release-and-publish.yaml` — adjacent to a documented rough edge, not
+inside it.
+
 ## Evidence owed
 
 ### REOPEN-1 — `OPFSWriteAheadVFS/sync :: survives-reopen`, a flake at n=3
