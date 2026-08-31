@@ -14,12 +14,59 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The release body is the CHANGELOG section for this tag. Nothing here
+      # writes to CHANGELOG.md - the file is editorial, and CI only reads it.
+      #
+      # This runs before the action because it is the only place the tag, the
+      # published version and the changelog are compared: the action publishes
+      # the version it reads from package.json and validates the tag
+      # separately, so nothing else checks that they agree.
+      - name: Release notes from CHANGELOG.md 📝
+        id: notes
+        shell: bash
+        run: |
+          set -uo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          PKG=$(grep '"version"' package.json | head -1 | sed 's/.*"version": "\(.*\)".*/\1/')
+          if [ "$PKG" != "$VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json ($PKG)"
+            exit 1
+          fi
+
+          HEADING=$(awk -v ver="$VERSION" 'index($0, "## " ver " — ") == 1 { print; exit }' CHANGELOG.md)
+          if [ -z "$HEADING" ]; then
+            echo "::error::no CHANGELOG.md heading for $VERSION"
+            exit 1
+          fi
+          case "$HEADING" in
+            *" — "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+            *) echo "::error::CHANGELOG.md heading for $VERSION is not dated: $HEADING"; exit 1 ;;
+          esac
+
+          FILE="$RUNNER_TEMP/release-notes.md"
+          awk -v ver="$VERSION" '
+            index($0, "## " ver " — ") == 1 { found=1; next }
+            found && index($0, "## ") == 1  { exit }
+            found                           { print }
+          ' CHANGELOG.md > "$FILE"
+
+          # Not [ -s ]: a section of one blank line is one byte and would pass.
+          if ! grep -q '[^[:space:]]' "$FILE"; then
+            echo "::error::CHANGELOG.md section for $VERSION is empty"
+            exit 1
+          fi
+
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+          echo "Release body: $HEADING ($(wc -l < "$FILE") lines)"
+
       # Pinned to a SHA, not the mutable v1 tag: this job holds NPM_TOKEN, and
       # whoever can move that tag can move what runs with the token.
-      - uses: lalexdotcom/action-release-and-publish@447a5fa6494f463fd8fb001ebfe4f93b47f374bd # v1
+      - uses: lalexdotcom/action-release-and-publish@6fe5644675925268919bd87c0da430651e6c0389 # v1.3.0
         with:
           npm-token: ${{ secrets.NPM_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          release-notes-file: ${{ steps.notes.outputs.file }}
 
   # The benchmark page is published for the version that was just released, and
   # only if the release actually succeeded — `needs` is what makes that true.

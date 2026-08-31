@@ -88,6 +88,31 @@ may be left live in this one. Three steps, in order:
 - **Unplanned working-tree changes are committed, not discarded — but only after the user
   confirms.** Never resolve a dirty tree by reverting or stashing on your own initiative.
 
+## Releasing (user, 2026-08-31)
+
+**No automation writes to `CHANGELOG.md`.** The workflow reads it; the action
+receives a file path and never learns where it came from. Dating a heading,
+opening a new `## Unreleased`, and consolidating the rc sections into a final
+`## 1.0.0 — <date>` are all instructed acts, never scripted ones.
+
+**The bump is one commit, then a tag.** `package.json` and the dated CHANGELOG
+heading must be true of the same tree, because the release workflow refuses a
+tag that disagrees with either. `upversion` is **not** used for this package —
+it was, and the tag/`package.json` coupling it provided is now enforced in the
+workflow instead.
+
+**The two repositories cannot be updated together.**
+`lalexdotcom/action-release-and-publish` releases itself on push to `main` from
+conventional commits, and we consume it by SHA, so its change must be pushed and
+released before the pin in `release-and-publish.yaml` can be repointed. The
+clone lives at `.work/action-release-and-publish`.
+
+**The GitHub Release is created before `npm publish`**, inside the action. That
+ordering is the whole reason a failed release costs a retag rather than a burnt
+version number; do not reorder it back.
+
+Design: `docs/superpowers/specs/2026-08-31-release-notes-from-changelog-design.md`.
+
 ## Writing for the consumer
 
 - **The README is for the consumer.** State the constraint and what it costs them; the
