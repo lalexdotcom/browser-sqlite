@@ -168,6 +168,13 @@ not by this paragraph.
 browser releases a dead tab's locks, so a killed tab cannot pin a stale epoch. It is the
 "lock as liveness marker" pattern `stagingLockName` already uses.
 
+**The marker is held in `shared` mode.** Nobody ever reads the lock — the name is the whole
+of the state — so exclusivity would buy nothing and would cost the one thing that can go
+wrong here: two realms arriving at the same `n` would block on each other, inside the write
+lock, with no bound. Shared mode removes the question rather than handling it. `query()`
+lists one entry per granted lock, so duplicates are simply duplicates and `max` is
+unaffected.
+
 **The sharpest constraint, and where it comes from.** `client.ts:506` posts the bump
 **synchronously** in the write path's `finally`, because `release` is async and a read
 chained after `write()` would otherwise still see the old epoch. `query()` is async.
@@ -219,8 +226,10 @@ publish restores a higher `max`.
 **Degradation.** Without `navigator.locks`, `originMax()` returns 0 and behaviour is exactly
 today's, realm-only. `noOpLocks` covers it with no extra branch.
 
-**Parsing.** `<n>` is read with `lastIndexOf(':')`, never a `split` — `<file>` is a
-normalized relative path and may contain separators.
+**Parsing.** The tail after the prefix must be **all digits**, which is stricter than a
+prefix match plus `lastIndexOf(':')` and is the point: `normalizeDatabaseFile` yields
+`new URL(file, 'file://').pathname`, which may contain a colon — `'./a:b'` gives `a:b`. Under
+the loose form, a marker for `a.db:extra` would be read as `a.db`'s epoch.
 
 ## 6. Testing
 
