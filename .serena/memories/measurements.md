@@ -269,6 +269,51 @@ was a defect. The second said a defect was not residue — resting on a manual c
 effect was never verified. **A manual step you did not observe is not evidence**; the page
 could have reported whether the OPFS root was empty, and nobody asked it.
 
+## Web Locks priced — 2026-08-31, Chromium 151 / Firefox 153, this container
+
+**Method.** Throwaway `tests/browser/locks-probe.test.ts` (deleted), headless, 16 cores,
+origin empty at start (`query()` reported 0 held). Three runs per cell, medians below;
+every figure is a **batch total divided by its count** — 1000 hold/release cycles, 500
+`query()` calls — never a single timed call, because Firefox reduces `performance.now()`
+to 1 ms. Control (`await Promise.resolve()` in the same loop): 0.0001 ms Chromium,
+0.0030 ms Firefox, so no figure below contains its loop.
+
+| | Chromium | Firefox |
+|---|---|---|
+| `hold`+`release`, exclusive | **0.0732 ms** | **0.0580 ms** |
+| `hold`+`release`, shared | 0.0629 ms | 0.0530 ms |
+| `query()`, 0 held | 0.0310 | 0.0340 |
+| `query()`, 8 held | 0.0360 | 0.0360 |
+| `query()`, 64 held | 0.0626 | 0.0680 |
+| `query()`, 256 held | 0.1326 | 0.1560 |
+| `query()`, 512 held | 0.2236 | 0.2980 |
+
+**`navigator.locks.query()` is O(n) in the locks held by the WHOLE ORIGIN**, not flat, and
+cleanly so: `≈ 0.032 ms + 0.00038 ms × n` on Chromium, `≈ 0.034 + 0.00052 × n` on Firefox.
+The 64→512 slope equals the 0→512 slope on both engines, which is what makes it linear
+rather than an artefact. **The 0.2 ms budget is crossed near 450 held locks on Chromium
+and 320 on Firefox.**
+
+**The decision it settled, and half the rule failed.** The rule was set before the run:
+the cross-tab epoch registry is viable if `query()` is ≤ 0.2 ms **and** flat. It is the
+first and not the second. Taken anyway, on this basis: our own contribution is ≤ 1 marker
+per tab per database, so a plausible origin holds 60–120 and pays 0.06–0.08 ms — three to
+six times less than the ~0.2 ms worker round trip the registry avoids, and the registry
+also *skips* the barrier when nothing changed where the unconditional prelude cannot.
+**The residual exposure is that the count is not ours:** an application using Web Locks
+heavily makes us pay for its locks on every `query()`. A fallback to the unconditional
+prelude above a threshold is possible and was not built.
+
+**The 256 and 512 points exist because the first run only went to 64** and showed growth
+where flatness was expected. Extrapolating that slope was the obvious move and is exactly
+what this project keeps paying for; they were measured instead.
+
+Also settled: **the rc.5 write lock costs 0.058–0.073 ms per write** against a commit
+measured at 3.4–5.3 ms — under a percent. And a shared read lock would cost 0.053–0.063 ms
+per read, ~5 % of a 1.1 ms read; not needed by the chosen design.
+
+n=3, one machine, headless, one container. The two engines agree closely.
+
 ## Numbers that are one observation, not a measurement
 
 - **Android 145 vs 151 differ by a factor 2.6** on bulk insert, same emulator. Regression
