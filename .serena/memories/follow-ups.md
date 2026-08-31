@@ -14,7 +14,52 @@ descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` clai
 shadow types that were never loaded, `W-types` a duplication already gone. Both would have
 been work on nothing.
 
-## Designs owed
+## Designs owed — rc.5 or later
+
+### W-multitab — uncoordinated by design, and rc.5 decides whether it stays that way
+
+`currentWriterIndex` and both queues are **per client**, not per realm —
+`createScheduler` runs once per `createSQLiteClient` — so two clients in the
+*same tab* do not serialize their writes against each other either. Only the
+commit epoch is realm-wide: what clients share is **visibility**, never
+exclusion. One part is already coordinated, because the user required it:
+`output()` is multi-tab safe, its staging sweep `navigator.locks`-guarded.
+
+**rc.5 studies whether to build or abandon it, and multi-CLIENT comes with it**
+(user, 2026-08-31): a second tab is a second client that cannot be reached
+through a module-level channel, so anything that coordinates tabs coordinates
+clients by construction. Solving one is solving both; the reverse is not true.
+
+What rc.4 owed — a Known Limitations line describing what is true today — is
+written, and `tests/browser/multi-client.test.ts` pins it on both regimes. Read
+those two before designing anything: they carry the behaviour, the falsifiers,
+and the deadlock the first version of the tests walked into. Nothing about it is
+repeated here.
+
+### Read before designing anything cross-tab (user, 2026-08-28)
+
+**`https://github.com/rhashimoto/wa-sqlite/discussions/81`** — the user wants this
+discussion examined as part of multi-tab / multi-client handling. **Nobody here has read it
+yet**, so nothing in these memories reflects it and no claim below is informed by it. Read
+it before the Web-Locks-as-registry lead underneath, and before `W-multitab`'s Known
+Limitations line is written: it is upstream's own thread on the problem, and this project
+has twice built on a premise it could have sourced instead.
+
+### A cross-tab lead, recorded unverified
+
+**Web Locks as a registry, not as mutual exclusion.** Preferred over `BroadcastChannel`,
+which loses the race on a message still in flight. Shape: a tab holds
+`bsq:epoch:<file>:<n>`, takes `n+1` and releases `n` at commit, and other tabs read the
+epoch as the max of the held names via `navigator.locks.query()` — the same "lock as
+liveness marker" pattern `stagingLockName` already uses. It is *state*, not *delivery*, so
+there is no in-flight window.
+
+**The measurement that settles it:** the cost of `navigator.locks.query()` per acquisition
+against the one worker round-trip it avoids. `query()` returns every lock held in the
+origin and is specified as a diagnostic snapshot. If it is not clearly cheaper, the
+cross-tab answer is the unconditional prelude, probably opt-in, not this. **Do not treat
+this as promising until that number exists** — that is exactly how `PRAGMA data_version`
+and the WAL VFS each cost a session.
 
 ### A timed flush — out of rc.4 (user, 2026-08-27)
 
@@ -26,83 +71,7 @@ hence OPFS fsyncs, each flush also taking a write lease. What it would buy is la
 durability: a slow producer's rows reaching SQLite without waiting for `close()`. **The
 commit cost is to be measured, not deduced, if it is ever picked up.**
 
-## Limits to document rather than fix
-
-### W-multitab — multi-tab is entirely uncoordinated
-
-`currentWriterIndex` and both queues are **per client**, not per realm — `createScheduler`
-runs once per `createSQLiteClient`. This entry said "per-realm" until 2026-08-28 and that
-understated the limit: two clients in the *same tab* do not serialize their writes against
-each other either. Only the commit epoch is realm-wide, so what one tab's clients share is
-**visibility**, never exclusion. Partly settled: `output()` **must** be multi-tab safe (user
-requirement) and its staging sweep is `navigator.locks`-guarded. The rest of the client
-stays uncoordinated.
-
-**What happens when two clients write at once — RUN on both engines, 2026-08-28.**
-This entry claimed "the second writer fails immediately with `SQLITE_BUSY`, identical
-between two clients and two tabs", from reading `WebLocksMixin.js` (`ifAvailable: true`,
-so it never waits), the absence of any shipped PRAGMA registering a busy handler, and
-`pool.ts` turning the code into `SQLiteError('BUSY')`. **That reading is Chromium only.**
-Three tests written for it pass on Chromium and all three *hang* on Firefox.
-
-**There are two regimes, and the discriminator is `readwrite-unsafe`, never the engine
-name.**
-
-- **With it** (Chromium): the second writer fails at once with `BUSY`. The source reading
-  was right here.
-- **Without it** (reduced mode — Firefox, Safari): the contention is settled one layer
-  earlier, by the rotating exclusive OPFS handle, and the acquisition blocks in the
-  scheduler *before an `AbortSignal` is consulted*. Web Locks are never reached, so
-  `SQLITE_BUSY` never happens — **the second writer waits.** This is the mechanism the
-  README's "Reduced mode" section already describes for a write; it had simply never been
-  connected to this entry.
-
-Two falsifiers were executed, and one corrected its own claim:
-
-- `BEGIN IMMEDIATE` in `transaction.ts` makes B fail at the BEGIN rather than at the first
-  write inside it. `BEGIN` being DEFERRED is therefore pinned — on Chromium. On a
-  reduced-mode engine B's BEGIN can block on the file, so the test does not prove it there.
-- `pragmas: { busy_timeout: '5000' }` does **not** turn the rejection into a success: B
-  waits 5111 ms and still fails. A busy handler is caught by an elapsed-time budget, never
-  by the error type — which matters, `busy_timeout` being on the performance list above.
-
-The third shape is unaffected and holds: a `bulkWrite` interrupted mid-way leaves its
-earlier batches committed and raises `SQLiteBulkWriteError` — a *partial* load, which is
-not where a reader looks for a failure. The consumer's only remedy today is to retry, or
-to use `tx.bulkWrite`, which shares one transaction across every batch and so leaves
-nothing behind rather than half.
-
-**The test trap, paid for once: A cannot hold the lock while awaiting B.** The first
-version opened A's transaction and awaited B's attempt inside the callback. On an engine
-where B waits, the two deadlock — the test presupposed the fail-fast behaviour it was
-written to observe. Any rewrite needs a BOUNDED wait on B.
-
-**To treat, in rc.4: one Known Limitations line describing what is true today** (user,
-2026-08-27 — an earlier note in this file scoped it to rc.5 and that was a misreading).
-rc.4 documents multi-tab as it stands; rc.5 studies whether to build or abandon it. The
-README already says it twice in the read-your-own-writes section — "It is not guaranteed
-across tabs" and "Nothing serializes writes between clients" — so the line restates rather
-than reveals, and Known Limitations is where a reader looks for it.
-
-**IN PROGRESS, paused 2026-08-28 mid-task. The user chose the thorough option, in these
-words: the line describes BOTH regimes, discriminated by `readwrite-unsafe` and not by the
-engine name, with tests pinning both.** Estimated ~1 h. The cheaper option — a line
-claiming only what holds everywhere, that two writers never corrupt and never both succeed
-— was offered and NOT taken; do not quietly fall back to it.
-
-- `tests/browser/multi-client.test.ts` exists and is **uncommitted and untracked**. Three
-  tests: BUSY on the second writer, `BEGIN` deferred, and the half-loaded `bulkWrite`.
-  3/3 pass on Chromium, 3/3 hang on Firefox for the deadlock described above. It is a
-  starting point, not a result — every test needs the bounded wait before it means
-  anything off Chromium. **Do not commit it as it stands.** The pre-commit hook runs
-  `pnpm test`, which is Chromium only, so it would sail through — and then turn the
-  Firefox CI step red, the step that became a gate the same day.
-- **The discriminator already exists: `HAS_UNSAFE_HANDLES` in
-  `tests/conformance/helpers.ts`,** resolved at module load by opening two access handles
-  on one file. Use it rather than writing a third probe or branching on the engine.
-- My 45-minute estimate for this line was wrong because it assumed true the very claim we
-  had just decided to verify. Do not re-estimate from the memory; re-estimate from what
-  the tests do.
+## Evidence owed
 
 ### REOPEN-1 — `OPFSWriteAheadVFS/sync :: survives-reopen`, a flake at n=3
 
@@ -123,8 +92,6 @@ while its root was in all likelihood still dirty.
 Not worth a mechanism at this rate. If it is ever chased, note the prior question:
 `OPFSWriteAheadVFS` gives no concurrency on Safari (`mem:measurements`), so whether it
 should be recommended there at all comes first.
-
-## Evidence owed
 
 ### GATE-1 — what the readiness gate still rests on, after 2026-08-31
 
@@ -296,28 +263,3 @@ here can discriminate.
 worker holds one lease at a time. Before the cache, breaking that would have produced
 confusing behaviour; now it is a `reset` on a statement another query is stepping. Nothing at
 the place where someone would break it says so.
-
-## Read before designing anything cross-tab (user, 2026-08-28)
-
-**`https://github.com/rhashimoto/wa-sqlite/discussions/81`** — the user wants this
-discussion examined as part of multi-tab / multi-client handling. **Nobody here has read it
-yet**, so nothing in these memories reflects it and no claim below is informed by it. Read
-it before the Web-Locks-as-registry lead underneath, and before `W-multitab`'s Known
-Limitations line is written: it is upstream's own thread on the problem, and this project
-has twice built on a premise it could have sourced instead.
-
-## A cross-tab lead, recorded unverified
-
-**Web Locks as a registry, not as mutual exclusion.** Preferred over `BroadcastChannel`,
-which loses the race on a message still in flight. Shape: a tab holds
-`bsq:epoch:<file>:<n>`, takes `n+1` and releases `n` at commit, and other tabs read the
-epoch as the max of the held names via `navigator.locks.query()` — the same "lock as
-liveness marker" pattern `stagingLockName` already uses. It is *state*, not *delivery*, so
-there is no in-flight window.
-
-**The measurement that settles it:** the cost of `navigator.locks.query()` per acquisition
-against the one worker round-trip it avoids. `query()` returns every lock held in the
-origin and is specified as a diagnostic snapshot. If it is not clearly cheaper, the
-cross-tab answer is the unconditional prelude, probably opt-in, not this. **Do not treat
-this as promising until that number exists** — that is exactly how `PRAGMA data_version`
-and the WAL VFS each cost a session.
