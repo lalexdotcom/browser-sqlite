@@ -106,8 +106,10 @@ behaviour waits for rc.5; describing today's behaviour does not.
   always does, so the suite stayed green through three real abort defects. The
   benchmark page is the reproducer and a device campaign is the verification —
   `mem:lessons` records what that cost.
-- **`no-read-inside-transaction` and `survives-reopen` both flip between runs.** n≥3 per
-  device before either is cited — `mem:follow-ups` carries the counts.
+- **`survives-reopen` flips between runs**; n≥3 per device before it is cited, and
+  `mem:follow-ups` carries the counts (REOPEN-1). `no-read-inside-transaction` does
+  **not** flip at n=3 per engine in this container — measured 2026-08-31, table in
+  `mem:measurements`, which is also where the unreachable WebKit flip is recorded.
 - **The benchmark page cannot report whether the OPFS root was empty when a run started.**
   That gap is what let a hand-clearing be mistaken for evidence; a run inventorying the
   root in its export would close it. Nobody has done it.

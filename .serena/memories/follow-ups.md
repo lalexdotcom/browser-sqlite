@@ -36,14 +36,32 @@ those two before designing anything: they carry the behaviour, the falsifiers,
 and the deadlock the first version of the tests walked into. Nothing about it is
 repeated here.
 
+**One compiled `WebAssembly.Module` for the pool rides on whatever rc.5 builds
+(user, 2026-08-31).** Every worker compiles its own copy of the 1.23 MB binary
+today. Sharing one is verified and priced in `mem:measurements`: the clone is
+free and arrives usable, but it buys ~2 ms on Chromium, which overlaps those
+compiles anyway, and ~8 ms at the default `poolSize` on Firefox, which does not.
+Too little to justify infrastructure by itself — and better than measured if a
+coordinator appears, since a coordinator compiles once per **origin** rather than
+once per client, so the second tab gains and not only the second worker.
+
+**A SharedWorker cannot be the pool, only a coordinator.** Upstream's context
+column (`mem:vfs`) reads `Worker`, not `All`, for `OPFSAdaptiveVFS`,
+`OPFSCoopSyncVFS`, `OPFSWriteAheadVFS` and `AccessHandlePoolVFS` — the
+`createSyncAccessHandle()` restriction. It can compile, arbitrate and hold a
+registry; it cannot open a connection on the four VFS that matter, the
+recommended default included. **That rc.5 will want one is a premise, not a
+finding:** the lead these memories carry is Web Locks as a registry, and the
+discussion below is still unread.
+
 ### Read before designing anything cross-tab (user, 2026-08-28)
 
 **`https://github.com/rhashimoto/wa-sqlite/discussions/81`** — the user wants this
 discussion examined as part of multi-tab / multi-client handling. **Nobody here has read it
 yet**, so nothing in these memories reflects it and no claim below is informed by it. Read
-it before the Web-Locks-as-registry lead underneath, and before `W-multitab`'s Known
-Limitations line is written: it is upstream's own thread on the problem, and this project
-has twice built on a premise it could have sourced instead.
+it before the Web-Locks-as-registry lead underneath, and before any cross-tab design: it
+is upstream's own thread on the problem, and this project has twice built on a premise it
+could have sourced instead.
 
 ### A cross-tab lead, recorded unverified
 
@@ -65,9 +83,7 @@ and the WAL VFS each cost a session.
 
 `OPFSCoopSyncVFS`'s `jLock` returns `SQLITE_BUSY` while a handle request is in flight and
 expects a retry; no `busy_timeout` is applied anywhere, so the library surfaces a step of
-the VFS's own transfer protocol as a user-visible error (`mem:vfs`). This is a correctness
-entry, not a performance one — it was carried in the performance backlog until
-2026-08-31 and does not belong there.
+the VFS's own transfer protocol as a user-visible error (`mem:vfs`).
 
 **The risk to measure, not deduce:** SQLite's busy handler sleeps, and in a synchronous
 VFS inside a worker it may block the very thread that owes the handle release — turning a
@@ -81,7 +97,9 @@ buffer is already bounded at one batch — while its real cost lands on the work
 targets, since `bulkWrite` commits per batch and a timer on a trickle multiplies commits,
 hence OPFS fsyncs, each flush also taking a write lease. What it would buy is latency and
 durability: a slow producer's rows reaching SQLite without waiting for `close()`. **The
-commit cost is to be measured, not deduced, if it is ever picked up.**
+commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5.3 ms on
+Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
+trickle, and it is no longer a deduction.
 
 ## Evidence owed
 
@@ -113,28 +131,13 @@ Three things the readiness gate rests on are reasoned rather than measured.
   round point a worker at a missing URL, which is a *load* failure. None
   exercises handle starvation, the actual cause. They pin the orchestration,
   not the phenomenon.
-- **The gate costs the SUM of the opens, not the slowest.** `bsq:init:<file>`
-  is exclusive and origin-wide (`locks.ts`, `withLock`), held across
-  `open_v2` *and* the PRAGMAs, so opens serialise across every worker, client
-  and tab on that file. Measured at `poolSize: 2` (70-105 ms per worker) and at
-  `poolSize: 4` (**~15 ms of added first-query latency**, both engines).
-  Nobody has measured 8.
+- **The gate costs the SUM of the opens, not the slowest**, and nobody has
+  measured `poolSize: 8`. `bsq:init:<file>` is exclusive and origin-wide
+  (`locks.ts`, `withLock`), held across `open_v2` *and* the PRAGMAs, so opens
+  serialise across every worker, client and tab on that file. 2 and 4 are
+  measured (`mem:measurements`); the shape above 4 is the open part.
 - **The retry round multiplies the worst case**: up to two `openTimeout`,
   ~60 s by default, before the first query on a pool that will never open.
-
-### FLAKE-ROW-1 — only the WebKit flip is left, and it is not reachable here
-
-`no-read-inside-transaction` flipped in both directions on three VFS during the
-four-device Apple campaign of 2026-08-27. Measured at n=3 per engine on
-2026-08-31 it does not flip at all, so the `OPFSCoopSyncVFS` Known Limitations
-wording that rested on it is defensible; the table is in `mem:measurements`.
-
-What is left is the flip itself, on WebKit. Linux WebKit exposes no
-`navigator.storage`, so no VFS this library ships runs there and the platform
-cannot be reached from this container — it needs the user's Apple hardware, and
-their machine is now macOS Safari 26.6.2, which makes the 2026-08-27 campaign a
-stale baseline rather than a comparison. **It gates no published sentence**, so
-it is curiosity rather than evidence owed.
 
 ## Notes, with nothing to fix
 

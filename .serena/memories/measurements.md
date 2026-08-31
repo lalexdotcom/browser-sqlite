@@ -233,8 +233,8 @@ was invisible until `70b2b7a`.
 
 **It opens and serves on every one of them**, all builds, all six invariants — with the one
 exception below. `no-read-inside-transaction` reads `blocked`, but so does it for **seven
-of the nine VFS**, `OPFSAdaptiveVFS` included: that is the reduced-mode signature FLAKE-ROW-1
-describes, not a property of this VFS.
+of the nine VFS**, `OPFSAdaptiveVFS` included: that is the reduced-mode signature, not a
+property of this VFS.
 
 **Read-burst concurrency ≈ 1.00 — there is none.**
 
@@ -261,7 +261,7 @@ carrying the automatic VFS-name sweep (`a82f0ee`).
   27.0 and on iPadOS 27.0, `pass` everywhere else including all three iOS runs and macOS
   Chrome 150. A flake at n=3, not the defect round 1 looked like. See REOPEN-1.
 - **`no-read-inside-transaction` flipped in both directions between rounds**, on three VFS.
-  FLAKE-ROW-1's n≥3 rule keeps earning itself.
+  The n≥3 rule keeps earning itself.
 
 **What the three rounds taught, and it is not "run more":** two conclusions were written
 from one run per device and both were wrong, in opposite directions. The first said a flake
@@ -507,9 +507,12 @@ either direction, on either engine.
 `OPFSCoopSyncVFS` blocked on both, which is what the README's Known Limitations
 entry claims — defensible at n=3 per engine now. The other two OPFS VFS blocked
 on Firefox only: the reduced-mode signature, not a property of those VFS.
-**The WebKit flip FLAKE-ROW-1 recorded is NOT covered here** — Linux WebKit
-exposes no `navigator.storage`, so the platform where it was seen cannot be
-reached from this container.
+**The WebKit flip is NOT covered here** — Linux WebKit exposes no
+`navigator.storage`, so the platform where the 2026-08-27 campaign saw it cannot
+be reached from this container at all; it needs the user's Apple hardware, whose
+Safari has moved to 26.6.2 since, making that campaign a stale baseline rather
+than a comparison. It gates no published sentence, so nothing is owed on it —
+this table is where it is recorded, and there is no backlog entry.
 
 ## Performance backlog closed — 2026-08-31, this container, Chromium 151 / Firefox 153
 
