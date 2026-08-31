@@ -190,26 +190,6 @@ differ and must **not** be aligned: the page returns `'blocked'` where invariant
 not); and the page reopens the column's client after `survives-reopen` and `close-settles`,
 because it runs every row against one client where the suite gets a fresh one per `it()`.
 
-## Small and cheap
-
-### `exactOptionalPropertyTypes` — 7 errors, all one shape
-
-Measured 2026-08-31 by switching it on: seven errors, every one of them the same
-— passing `{ x: value | undefined }` where the target declares `x?: T`.
-
-It is worth doing because this repository already guards that distinction by
-hand and says so: `wasmModuleArg` in `src/worker/worker.ts` builds its object
-conditionally because Emscripten's `findWasmBinary` branches on whether
-`locateFile` is PRESENT, not on whether it is defined. The flag turns a rule
-written in a comment into one the compiler enforces.
-
-The cost is that the fix is often `...(x !== undefined && { x })`, which is
-uglier at seven construction sites.
-
-**`noUncheckedIndexedAccess` was measured beside it and dropped:** 81 errors
-across 21 files, and nobody has argued it would catch a defect here. Re-measure
-before reopening it; it takes thirty seconds.
-
 ## Performance backlog — after correctness, none blocking
 
 - **No default PRAGMAs** → consumers silently run `journal_mode=DELETE` + `synchronous=FULL`.

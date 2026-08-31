@@ -39,7 +39,7 @@ export type OptionsWithSignal<T = unknown> = T & {
    * `output()` is observationally a no-op, dropping its staging table and
    * touching nothing else.
    */
-  signal?: AbortSignal;
+  signal?: AbortSignal | undefined;
 };
 
 /** Options every query method accepts. */
@@ -112,7 +112,7 @@ export type Index<SCHEMA extends Schema> =
 export type SQLiteOutputOptions<SCHEMA extends Schema> = OptionsWithSignal<{
   indexes?: Index<SCHEMA>[];
   /** Rows queued for writing above which `enqueue()` defers. See `SQLiteBulkWriteOptions`. */
-  queueSize?: number;
+  queueSize?: number | undefined;
 }>;
 
 /**
@@ -136,7 +136,7 @@ export type SQLiteOutputOptions<SCHEMA extends Schema> = OptionsWithSignal<{
  */
 export type SQLiteBulkWriteOptions = OptionsWithSignal<{
   /** Rows queued for writing above which `enqueue()` defers. */
-  queueSize?: number;
+  queueSize?: number | undefined;
 }>;
 
 /** A row for `output()`: generated columns are computed, never supplied. */

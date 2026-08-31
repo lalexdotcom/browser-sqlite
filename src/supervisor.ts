@@ -25,7 +25,7 @@ type Slot = {
 
 export const createSupervisor = (options: {
   size: number;
-  maxWorkerRestarts?: number;
+  maxWorkerRestarts?: number | undefined;
 }): Supervisor => {
   const { size, maxWorkerRestarts = 1 } = options;
 

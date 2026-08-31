@@ -95,7 +95,7 @@ export const createTransaction =
      * statement has settled — the merge is the only thing here that subscribes
      * to a signal the caller may keep alive far longer than this transaction.
      */
-    const withSignal = <O extends { signal?: AbortSignal }>(
+    const withSignal = <O extends { signal?: AbortSignal | undefined }>(
       given: O | undefined,
     ): { options: O; release: () => void } => {
       const { signal: merged, release } = mergeSignals(signal, given?.signal);

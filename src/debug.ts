@@ -88,7 +88,7 @@ export const debugSQLQuery = (sql: string, params?: unknown[]) => {
 
 type QueryDebugState = {
   sql: string;
-  params?: unknown[];
+  params?: unknown[] | undefined;
   startTime: number;
   firstRowTime?: number;
   endTime?: number;

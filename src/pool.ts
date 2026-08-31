@@ -12,8 +12,8 @@ import type {
  * Query execution options forwarded to a pool worker.
  */
 export type PoolWorkerQueryOptions = {
-  chunkSize?: number;
-  credits?: number;
+  chunkSize?: number | undefined;
+  credits?: number | undefined;
   /**
    * When true, the query's completion does not call `deps.onServed`. Set for
    * the commit-propagation barrier: it is a synthetic probe, not user work, and
@@ -130,18 +130,16 @@ export const createPoolWorker = (deps: {
   vfs: SQLiteVFS;
   build: SQLiteBuild;
   /** Already resolved and absolute; relayed to the worker, never read here. */
-  wasm?: WasmLocation;
-  pragmas?: Record<string, string>;
-  statementCacheSize?: number;
+  wasm?: WasmLocation | undefined;
+  pragmas?: Record<string, string> | undefined;
+  statementCacheSize?: number | undefined;
   onDeath?: (index: number, error: SQLiteError) => void;
   onServed?: (index: number) => void;
   drainTimeout: number;
-  createWorkerDebugState?: (index: number, name: string) => any;
-  createQueryDebugState?: (
-    index: number,
-    sql: string,
-    params?: unknown[],
-  ) => any;
+  createWorkerDebugState?: ((index: number, name: string) => any) | undefined;
+  createQueryDebugState?:
+    | ((index: number, sql: string, params?: unknown[]) => any)
+    | undefined;
   logger: Logger;
 }): Promise<PoolWorker> => {
   const {

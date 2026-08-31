@@ -28,7 +28,7 @@ import {
  * is what they ask for. `any` here accepted a misspelt option in silence, which
  * is the one thing a narrow type was never meant to buy.
  */
-type BulkCallOptions = { signal?: AbortSignal };
+type BulkCallOptions = { signal?: AbortSignal | undefined };
 
 export type WriteFn = (
   sql: string,

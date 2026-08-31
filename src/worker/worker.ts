@@ -123,10 +123,10 @@ let closing = false;
 
 type OpenOptions = {
   vfs: SQLiteVFS;
-  build?: SQLiteBuild;
-  wasm?: WasmLocation;
-  pragmas?: Record<string, string>;
-  statementCacheSize?: number;
+  build?: SQLiteBuild | undefined;
+  wasm?: WasmLocation | undefined;
+  pragmas?: Record<string, string> | undefined;
+  statementCacheSize?: number | undefined;
 };
 
 /**
