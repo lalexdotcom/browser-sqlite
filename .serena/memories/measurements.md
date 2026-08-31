@@ -459,3 +459,54 @@ Firefox cache=32: WL1 sync [416, 417, 427] WL2 sync [260, 265, 259] WL3 sync [25
 
 Firefox cache=0: WL1 sync [487, 480, 501] WL2 sync [534, 531, 531] WL3 sync [520, 519,
 516] WL1 async [1189, 1289, 1277] WL2 async [744, 720, 722] WL3 async [685, 685, 698]
+
+## The readiness gate, measured 2026-08-31 (Chromium 151 / Firefox 153, this container)
+
+Toggled by passing `poolSize: 0` to `createScheduler`, which leaves the gate open
+from the start. Everything else unchanged.
+
+**What the gate prevents, and it is not what was inferred.** `poolSize: 4`, a
+`CREATE TABLE` and a 4 000-row `bulkWrite` issued immediately after client
+creation, then a 40-read burst. Counting workers that ever reported
+`initializationTime`:
+
+| | gate on | gate off |
+|---|---|---|
+| Firefox | 4w · 4w · 4w | **1w · 1w** · 4w |
+| Chromium | 4w · 4w · 4w | 4w · 4w · 4w |
+
+Two runs in three, the early write seizes the one exclusive handle and the other
+three workers never open — for the life of the client. No eviction, no log, no
+`openTimeout`: the pool is simply a quarter of what was asked for. Chromium holds
+one handle per connection and is unaffected.
+
+**What the gate costs.** Same shape, timing from client creation to a 40-read
+burst completing, `poolSize: 4`: 147/159/161 ms with the gate against 140/130/153
+without on Chromium, 196/175/191 against 176/179/143 on Firefox. About 15 ms,
+both engines — the serialised opens, nothing more.
+
+**Where the effect is NOT.** Timing the same read burst *after* a warm-up query,
+so the opens fall outside the measurement: 28/28/26 against 34/29/30 on Chromium,
+78/65/69 against 71/65/68 on Firefox. Indistinguishable. Forty small
+`sqlite_master` reads do not care whether they run on one worker or four, which
+is why this probe confirms the mechanism and says nothing about magnitude.
+
+## `no-read-inside-transaction` per VFS, 2026-08-31 — deterministic at n=3
+
+Invariant 6's race, run three times per engine in this container. No flip, in
+either direction, on either engine.
+
+| VFS | Chromium ×3 | Firefox ×3 |
+|---|---|---|
+| `OPFSAdaptiveVFS` | pass | blocked |
+| `OPFSWriteAheadVFS` | pass | blocked |
+| `OPFSCoopSyncVFS` | **blocked** | **blocked** |
+| `IDBBatchAtomicVFS` | pass | pass |
+| `OPFSAnyContextVFS` | pass | pass |
+
+`OPFSCoopSyncVFS` blocked on both, which is what the README's Known Limitations
+entry claims — defensible at n=3 per engine now. The other two OPFS VFS blocked
+on Firefox only: the reduced-mode signature, not a property of those VFS.
+**The WebKit flip FLAKE-ROW-1 recorded is NOT covered here** — Linux WebKit
+exposes no `navigator.storage`, so the platform where it was seen cannot be
+reached from this container.

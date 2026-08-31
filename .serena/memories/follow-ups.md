@@ -132,18 +132,22 @@ should be recommended there at all comes first.
 
 ## Evidence owed
 
-### GATE-1 — the readiness gate rests on a starvation nobody watched to the end
+### GATE-1 — what the readiness gate still rests on, after 2026-08-31
 
 Shipped 2026-08-28 on `feat/pool-readiness-gate`: the first query now waits for
 every worker slot to settle, a slot that fails to open is retried once when
 another slot opened, and a permanent loss warns unconditionally and calls
 `onWorkerLost`. Four things about it are reasoned rather than measured.
 
-- **The motivating scenario was never observed end to end.** A worker's `open`
-  was watched starved for 30 s on Firefox — the rotating exclusive OPFS handle
-  was held by another worker's long `step()` — but the test ended before that
-  slot's `openTimeout` fired. "The contention lasts long enough to lose a slot
-  permanently" is an inference. The retry round is built on it.
+- ~~The motivating scenario was never observed end to end~~ — **observed
+  2026-08-31, and the harm is worse than the one that was inferred.** With the
+  gate disabled on Firefox, a write burst issued at startup seizes the exclusive
+  handle while the other workers are still opening and starves them: **two runs
+  in three ended with one worker opened out of four**, and they never opened
+  afterwards. It is not an `openTimeout` eviction — nothing is evicted, nothing
+  is logged, the client simply lives its whole life at a quarter of the pool it
+  was asked for. With the gate: 4/4 every run. On Chromium: 4/4 either way, no
+  handle to contend for. Numbers in `mem:measurements`.
 - **The tests force the wrong kind of failure.** The four covering the retry
   round point a worker at a missing URL, which is a *load* failure. None
   exercises handle starvation, the actual cause. They pin the orchestration,
@@ -151,42 +155,52 @@ another slot opened, and a permanent loss warns unconditionally and calls
 - **The gate costs the SUM of the opens, not the slowest.** `bsq:init:<file>`
   is exclusive and origin-wide (`locks.ts`, `withLock`), held across
   `open_v2` *and* the PRAGMAs, so opens serialise across every worker, client
-  and tab on that file. Measured only at `poolSize: 2` — 70-105 ms per worker.
-  Nobody has measured 4 or 8, where it grows linearly and lands on the first
-  query.
+  and tab on that file. Measured at `poolSize: 2` (70-105 ms per worker) and at
+  `poolSize: 4` (**~15 ms of added first-query latency**, both engines).
+  Nobody has measured 8.
 - **The retry round multiplies the worst case**: up to two `openTimeout`,
   ~60 s by default, before the first query on a pool that will never open.
 
-### GATE-2 — Firefox got faster and nobody knows which half
+### GATE-2 — closed: the pool was running at a quarter, and nothing said so
 
-The user observed the benchmark page much faster on Firefox once the gate
-shipped. Two explanations, not discriminated: the library really is faster
-(queries no longer compete with pending opens for the handle), or **the
-measurement is no longer polluted** (the bench used to start timing while
-workers were still opening, so that cost fell into the first readings — total
-wall clock may even be slightly worse, the gate waiting for the sum).
+**Answered 2026-08-31.** The user's benchmark page got much faster on Firefox
+once the readiness gate shipped, and the cause is the gate — for the reason they
+proposed. With the gate disabled, an early write burst starves the other
+workers' opens and the client keeps running on the one worker that opened. The
+speed-up is a pool returning to its requested size, not a query getting faster.
 
-**The discriminator is cheap and already specified:** the mechanism is handle
-contention, which exists only in reduced mode. So the gain must be large on
-Firefox and near zero on Chromium. If Chromium gains as much, the mechanism is
-wrong and the cause is elsewhere. **No number goes in the README or the
-CHANGELOG until that pair exists.**
+**Nothing goes in the README or the CHANGELOG.** The comparison spans a complete
+rework with a public API change, one observer and one machine, so it cannot be
+attributed cleanly as a performance claim — and rc.4 was never deployed, so there
+is no slowdown any consumer experienced. The mechanism is what was worth having.
 
-### FLAKE-ROW-1 — `no-read-inside-transaction` is a race, not a verdict
+**What the measurement did NOT reproduce is the magnitude.** A burst of 40 tiny
+`sqlite_master` reads takes about the same time on one worker as on four, so the
+probe confirms the mechanism and says nothing about the size of the effect. The
+bench rows that measure read concurrency are where a quartered pool is paid for.
 
-The bench row flips between `pass` and `blocked` on the same VFS, engine and build between
-runs an hour apart — and **in both directions within a single pair of runs**. Four WebKit
-runs, 2026-08-25.
+### FLAKE-ROW-1 — closed for what opened it; the WebKit flip is not reachable here
 
-**The honest reading is that `blocked` is the expected state and `pass` is the lucky one.**
-In reduced mode a VFS rotates one exclusive handle; whether a read is admitted before the
-write transaction takes it is timing, not a property. `OPFSAdaptiveVFS`'s read-burst of
-0.94–1.00× on every engine without `readwrite-unsafe` says the same from the other side.
+The bench row `no-read-inside-transaction` flipped between `pass` and `blocked`
+in both directions, on three VFS, during the four-device Apple campaign of
+2026-08-27. It was opened because the `OPFSCoopSyncVFS` Known Limitations entry
+rests on that row and reads as a determinism, and n≥3 per engine was owed before
+that wording could be defended.
 
-**Consequence: no single run may be cited for this row.** The `OPFSCoopSyncVFS` Known
-Limitations entry rests on it and currently reads as a determinism. It happens to be right
-(blocked on 8 of 8 earlier runs) but needs **n≥3 per engine** before that wording is
-defensible — and the same row cannot then be read as a verdict for `OPFSAdaptiveVFS`.
+**Measured 2026-08-31, n=3 per engine: no flip at all, either direction.**
+`OPFSCoopSyncVFS` is `blocked` 3/3 on both Chromium and Firefox, so the README
+wording is defensible. The table is in `mem:measurements`.
+
+The entry's second worry settles differently than it expected: `OPFSAdaptiveVFS`
+*is* `blocked` on Firefox, deterministically — but that is the reduced-mode
+signature the README already describes, not a verdict about that VFS.
+
+**What is NOT closed, and cannot be from here: the WebKit flip itself.** Linux
+WebKit exposes no `navigator.storage`, so no VFS this library ships runs there;
+the platform where the flip was seen needs the user's Apple hardware. It gates
+no published sentence any more, so it is curiosity, not evidence owed. The user's
+machine is now macOS Safari 26.6.2, which also makes the 2026-08-27 campaign a
+stale baseline rather than a comparison.
 
 ## Notes, with nothing to fix
 
