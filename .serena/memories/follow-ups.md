@@ -1,13 +1,13 @@
 # Follow-ups — the open backlog
 
-One short entry each. Anything closed is deleted from here — `CHANGELOG.md` and `git log`
-record what was fixed. Evidence and numbers live in `mem:measurements`; VFS behaviour in
-`mem:vfs`.
+One short entry each, and every entry OPEN. Anything closed is deleted from here —
+`CHANGELOG.md` and `git log` record what was fixed, `mem:measurements` holds the numbers,
+`mem:vfs` the VFS behaviour, `mem:lessons` what a closure taught.
 
-**Triaged 2026-08-27 (user).** The 2026-08-26 proposal was applied: `COOP-1` and the wave-3
-deferred minors deleted, `RESIDUE-1` folded into `DELETE-1`, `BENCH-DRIFT` reduced to its
-live rule, `D6` and `VIT-1` closed on measurement. Verdict annotations are gone with it —
-what is written here is the backlog, not a proposal about it.
+**Delete, never annotate.** No struck-through lines, no "shipped and merged", no headstone
+saying an entry is gone, no verdict on an entry: what is written here is the backlog, not a
+report about it. Each of those was tried, and each made the file's length stop meaning
+anything.
 
 ## Designs owed
 
@@ -20,14 +20,6 @@ targets, since `bulkWrite` commits per batch and a timer on a trickle multiplies
 hence OPFS fsyncs, each flush also taking a write lease. What it would buy is latency and
 durability: a slow producer's rows reaching SQLite without waiting for `close()`. **The
 commit cost is to be measured, not deduced, if it is ever picked up.**
-
-**`maxBufferBytes` is dropped, not deferred (user, 2026-08-27).** It was my
-counter-proposal to the timer, never something the user asked for. The input buffer is
-bounded in *values*, not bytes, so one TEXT column admits 32 766 rows and 10 KB blobs mean
-327 MB held before the first flush — the case is real. It is not worth a per-row size
-computation on the hot path for an abstraction the consumer can handle themselves:
-`queueSize` is theirs to set, and a blob loader sets it small. The spec's §7 still
-describes the idea as it stood that day; it is a dated record, not a live proposal.
 
 ## Limits to document rather than fix
 
