@@ -9,6 +9,11 @@ saying an entry is gone, no verdict on an entry: what is written here is the bac
 report about it. Each of those was tried, and each made the file's length stop meaning
 anything.
 
+**Verify an entry against the source before scheduling work on it.** Entries rot into
+descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` claimed to
+shadow types that were never loaded, `W-types` a duplication already gone. Both would have
+been work on nothing.
+
 ## Designs owed
 
 ### A timed flush — out of rc.4 (user, 2026-08-27)
@@ -154,6 +159,20 @@ it is curiosity rather than evidence owed.
 
 ## Notes, with nothing to fix
 
+### Twelve `any` remain in `src/`, and they are structural
+
+The return type of the dynamic VFS and WASM imports inside their `satisfies`
+constraints; the VFS instance, which upstream does not type (it declares only
+`examples/tag.js`); `bulk.ts`'s `{ [K in KEYS]: any }` row shape, where `unknown`
+breaks the `keys.map((k) => data[k])` indexing; and one overload dispatch in
+`locks.ts`. Thirty-seven became twelve on 2026-08-31 and the remainder is not
+worth chasing. **Re-count before citing this.**
+
+**Kept deliberately, do not "clean up":** the no-op degradation branch in
+`locks.ts`, unreachable in Node ≥ 21 and every current browser. Spec-mandated,
+correct, zero maintenance.
+
+
 ### The library's floor is computed, not transcribed (2026-08-28)
 
 `LIB_FLOOR` in `scripts/render-vfs-matrix.ts` is read from
@@ -206,32 +225,10 @@ because it runs every row against one client where the suite gets a fresh one pe
 
 ## Small and cheap
 
-### W-types — one item, not three
+### Two tsconfig flags never tried
 
-`SQLiteDB` is hand-written rather than derived from the implementation. It is no longer a
-*duplicate* of anything: it and `SQLiteTransactionDB` share `SQLiteQueryAPI`, and a
-bidirectional compile-time pin fails the build if they drift.
-
-### Two things called cleanups that are projects
-
-- Twelve `any` left in `src/`, and they are the structural ones: the return type
-  of the dynamic VFS and WASM imports inside their `satisfies` constraints, the
-  VFS instance (upstream types only `examples/tag.js`, so it is genuinely
-  opaque), `bulk.ts`'s `{ [K in KEYS]: any }` row shape where `unknown` breaks
-  the `keys.map((k) => data[k])` indexing, and an overload dispatch in
-  `locks.ts`. **Re-count before citing; do not chase the number for itself.**
-- `tsconfig` could enable `noUncheckedIndexedAccess` and
-  `exactOptionalPropertyTypes`. Neither has been tried.
-
-**Kept deliberately, do not "clean up":** the no-op degradation branch in `locks.ts`,
-unreachable in Node ≥ 21 and every current browser. Spec-mandated, correct, zero
-maintenance.
-
-**The hygiene note this list earned.** Five entries were found already done and unmarked in
-one session — VFS-COV, COOP-1's README half, `SQLiteVFS`'s export, six of nine cleanups,
-and message-union exhaustiveness. The backlog was appended to and never retired, so its
-length stopped meaning anything. **Verify an item against the source before scheduling work
-on it**, and delete it the moment it is done rather than leaving it to be rediscovered.
+`noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`. Neither has been
+switched on, so nobody knows what either would surface — that is the whole item.
 
 ## Performance backlog — after correctness, none blocking
 
