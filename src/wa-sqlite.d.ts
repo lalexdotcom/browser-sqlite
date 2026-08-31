@@ -1,5 +1,23 @@
-// Ambient declarations for wa-sqlite — covers ONLY the surface used in worker.ts.
-// Typed minimally: opaque handles are `any`, row values are `unknown`.
+/// <reference types="wa-sqlite" />
+//
+// Ambient declarations for wa-sqlite — ONLY what upstream does not ship.
+//
+// The reference above pulls in `wa-sqlite/src/types/index.d.ts`, which declares
+// the global `SQLiteAPI`, `SQLiteVFS` and `SQLitePrepareOptions`, plus the
+// modules `wa-sqlite`, `wa-sqlite/src/sqlite-constants.js`,
+// `wa-sqlite/dist/wa-sqlite.mjs` and `-async.mjs`. Nothing here may redeclare
+// any of those: ambient module blocks merge, and two `export default` for one
+// module is a duplicate identifier.
+//
+// It does NOT pull in their `globals.d.ts` — no `/// <reference>` links the two
+// — which is deliberate on our side too: that file declares `Module`, `HEAPU8`,
+// `ccall` and forty Emscripten internals as untyped globals, and a typo would
+// stop being an error the day it loaded.
+//
+// What upstream leaves out, and what is therefore below: `src/sqlite-api.js`
+// (the module this library actually imports — upstream types the bare
+// `wa-sqlite` entry point instead), the `jspi` build, and the nine VFS example
+// classes, of which upstream declares only `examples/tag.js`.
 
 /** Opaque database handle returned by sqlite.open_v2() */
 type WASQLiteDB = any;
@@ -15,65 +33,18 @@ type WASQLiteModule = {};
  * consumer passed `wasmUrl` — its mere presence changes which branch
  * `findWasmBinary` takes, so it must stay optional here and be omitted rather
  * than defaulted. See `wasmModuleArg` in `src/worker/worker.ts`.
+ *
+ * Upstream types the factory argument as `config?: object`, which loses that.
+ * Kept here and applied where the argument is BUILT, not where it is declared.
  */
 type WASQLiteModuleArg = { locateFile?: (path: string) => string };
 
-/** Options passed to SQLiteAPI.statements() */
-interface SQLitePrepareOptions {
-  /** Keep statement handles alive after iteration (do not finalise on exit). */
-  unscoped?: boolean;
-  /** SQLITE_PREPARE_* flags, e.g. SQLITE_PREPARE_PERSISTENT. */
-  flags?: number;
-}
-
-/** The SQLite API surface returned by SQLite.Factory(module) */
-interface SQLiteAPI {
-  open_v2(filename: string): Promise<WASQLiteDB>;
-  statements(
-    db: WASQLiteDB,
-    sql: string,
-    options?: SQLitePrepareOptions,
-  ): AsyncIterable<WASQLiteStmt>;
-  bind_collection(stmt: WASQLiteStmt, params: unknown[]): void;
-  column_names(stmt: WASQLiteStmt): string[];
-  step(stmt: WASQLiteStmt): Promise<number>;
-  row(stmt: WASQLiteStmt): unknown[];
-  /** Returns the SQL text of the statement (its own span of the input). */
-  sql(stmt: WASQLiteStmt): string;
-  /** Resets the statement; async and throws if the prior step returned an error. */
-  reset(stmt: WASQLiteStmt): Promise<number>;
-  /** Clears all bound parameter values; synchronous. */
-  clear_bindings(stmt: WASQLiteStmt): void;
-  /** Finalises (destroys) the statement; async. */
-  finalize(stmt: WASQLiteStmt): Promise<void>;
-  changes(db: WASQLiteDB): number;
-  close(db: WASQLiteDB): Promise<number>;
-  vfs_register(vfs: unknown, makeDefault?: boolean): void;
-}
-
-// ── sqlite-api.js ──────────────────────────────────────────────────────────
+// ── sqlite-api.js — upstream declares the bare `wa-sqlite` entry, not this one ─
 declare module 'wa-sqlite/src/sqlite-api.js' {
   export function Factory(module: WASQLiteModule): SQLiteAPI;
 }
 
-// ── sqlite-constants.js ────────────────────────────────────────────────────
-declare module 'wa-sqlite/src/sqlite-constants.js' {
-  export const SQLITE_ROW: number;
-  export const SQLITE_PREPARE_PERSISTENT: number;
-}
-
-// ── WASM factory modules (.mjs) ────────────────────────────────────────────
-// Each default export is a factory function that resolves to the WASM module.
-declare module 'wa-sqlite/dist/wa-sqlite.mjs' {
-  const factory: (moduleArg?: WASQLiteModuleArg) => Promise<WASQLiteModule>;
-  export default factory;
-}
-
-declare module 'wa-sqlite/dist/wa-sqlite-async.mjs' {
-  const factory: (moduleArg?: WASQLiteModuleArg) => Promise<WASQLiteModule>;
-  export default factory;
-}
-
+// ── the jspi build — upstream declares only the sync and async ones ──────────
 declare module 'wa-sqlite/dist/wa-sqlite-jspi.mjs' {
   const factory: (moduleArg?: WASQLiteModuleArg) => Promise<WASQLiteModule>;
   export default factory;
