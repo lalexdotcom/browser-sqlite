@@ -23,25 +23,32 @@ import {
 // Structural, and deliberately narrower than SQLiteQueryAPI: bulk needs only
 // these three calls, and requiring the full surface would make every unit test
 // build a complete stub to exercise a single INSERT.
+/**
+ * The options these three actually pass is a signal and nothing else, so that
+ * is what they ask for. `any` here accepted a misspelt option in silence, which
+ * is the one thing a narrow type was never meant to buy.
+ */
+type BulkCallOptions = { signal?: AbortSignal };
+
 export type WriteFn = (
   sql: string,
-  params?: any[],
-  options?: any,
-) => Promise<{ result: any[]; affected: number }>;
+  params?: unknown[],
+  options?: BulkCallOptions,
+) => Promise<{ result: unknown[]; affected: number }>;
 
 export type ReadFn = (
   sql: string,
-  params?: any[],
-  options?: any,
-) => Promise<any[]>;
+  params?: unknown[],
+  options?: BulkCallOptions,
+) => Promise<unknown[]>;
 
 export type TransactionFn = <T>(
   callback: (db: {
     write: (
       sql: string,
-      params?: any[],
-      options?: any,
-    ) => Promise<{ result: any[]; affected: number }>;
+      params?: unknown[],
+      options?: BulkCallOptions,
+    ) => Promise<{ result: unknown[]; affected: number }>;
   }) => Promise<T>,
   options?: SQLiteTransactionOptions,
 ) => Promise<T>;
@@ -296,7 +303,7 @@ export const createBulk = (shared: {
             `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '__bsq_staging_%'`,
           );
           const tables = rows
-            .map((row: any) => row.name)
+            .map((row) => (row as { name?: unknown }).name)
             .filter(
               (name: unknown): name is string => typeof name === 'string',
             );

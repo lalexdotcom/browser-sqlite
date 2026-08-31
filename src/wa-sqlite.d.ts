@@ -19,13 +19,13 @@
 // `wa-sqlite` entry point instead), the `jspi` build, and the nine VFS example
 // classes, of which upstream declares only `examples/tag.js`.
 
-/** Opaque database handle returned by sqlite.open_v2() */
-type WASQLiteDB = any;
-
-/** Opaque statement handle used in sqlite.statements() iteration */
-type WASQLiteStmt = any;
-
-/** The compiled WASM module instance passed to SQLite.Factory() */
+/**
+ * The compiled WASM module instance passed to SQLite.Factory().
+ *
+ * The database and statement handle aliases that used to sit here are gone:
+ * they were `any`, they existed only to type the hand-written `SQLiteAPI` this
+ * file no longer carries, and upstream types both as the `number` they are.
+ */
 type WASQLiteModule = {};
 
 /**

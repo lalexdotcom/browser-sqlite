@@ -2,7 +2,7 @@ import type { CreateSQLiteClientOptions } from './client';
 import type { PoolWorker } from './pool';
 import type { SQLiteVFS } from './types';
 
-export const debugSQLQuery = (sql: string, params?: any[]) => {
+export const debugSQLQuery = (sql: string, params?: unknown[]) => {
   if (!params || params.length === 0) return sql;
 
   let result = '';
@@ -60,7 +60,7 @@ export const debugSQLQuery = (sql: string, params?: any[]) => {
 
   return result;
 
-  function formatValue(value: any): string {
+  function formatValue(value: unknown): string {
     if (value === null || value === undefined) {
       return 'NULL';
     }
@@ -88,11 +88,11 @@ export const debugSQLQuery = (sql: string, params?: any[]) => {
 
 type QueryDebugState = {
   sql: string;
-  params?: any[];
+  params?: unknown[];
   startTime: number;
   firstRowTime?: number;
   endTime?: number;
-  error?: any;
+  error?: unknown;
   affectedRows: number;
   prepared: number;
 };
@@ -219,7 +219,7 @@ export const createClientDebug = (
   const createQueryDebugState = (
     workerIndex: number,
     sql: string,
-    params?: any[],
+    params?: unknown[],
   ) => {
     const state: QueryDebugState = {
       sql,

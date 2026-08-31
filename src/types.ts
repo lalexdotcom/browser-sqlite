@@ -55,7 +55,7 @@ export type ClientMessageData =
       type: 'query';
       callId: number;
       sql: string;
-      params: any[];
+      params: unknown[];
       options?: SQLOptions;
     }
   | { type: 'close'; callId: number }
@@ -72,7 +72,7 @@ export type ClientMessageData =
 
 export type WorkerMessageData =
   | { type: 'ready'; callId: number }
-  | { type: 'chunk'; callId: number; data: any[] }
+  | { type: 'chunk'; callId: number; data: unknown[] }
   | {
       type: 'done';
       callId: number;

@@ -214,11 +214,14 @@ bidirectional compile-time pin fails the build if they drift.
 
 ### Two things called cleanups that are projects
 
-- `wa-sqlite.d.ts` shadows wa-sqlite's own shipped types — 14 `declare module` blocks, not
-  the three this entry claimed until 2026-08-27. Not a one-liner — it touches how the worker compiles.
-- 32 `any` in `src/` (29 before back-pressure — the count drifts, do not cite it without
-  re-counting); `tsconfig` could enable `noUncheckedIndexedAccess` and
-  `exactOptionalPropertyTypes`.
+- Twelve `any` left in `src/`, and they are the structural ones: the return type
+  of the dynamic VFS and WASM imports inside their `satisfies` constraints, the
+  VFS instance (upstream types only `examples/tag.js`, so it is genuinely
+  opaque), `bulk.ts`'s `{ [K in KEYS]: any }` row shape where `unknown` breaks
+  the `keys.map((k) => data[k])` indexing, and an overload dispatch in
+  `locks.ts`. **Re-count before citing; do not chase the number for itself.**
+- `tsconfig` could enable `noUncheckedIndexedAccess` and
+  `exactOptionalPropertyTypes`. Neither has been tried.
 
 **Kept deliberately, do not "clean up":** the no-op degradation branch in `locks.ts`,
 unreachable in Node ≥ 21 and every current browser. Spec-mandated, correct, zero

@@ -2,10 +2,14 @@ import { SQLiteError } from './errors';
 import type { SQLiteBuild, WasmLocation } from './types';
 
 export const sqlParams = () => {
-  const sqlParamsMap = new Map<any, number>();
-  const sqlParams: any[] = [];
+  // `unknown`, not `any`: these are SQL bind values and they are never
+  // inspected here — only counted, de-duplicated by identity, and handed on.
+  // The public query surface has always said `unknown[]`; this was the one
+  // place that quietly said less.
+  const sqlParamsMap = new Map<unknown, number>();
+  const sqlParams: unknown[] = [];
 
-  const addParam = (v: any) => {
+  const addParam = (v: unknown) => {
     let paramIndex = sqlParamsMap.get(v);
     if (!paramIndex) {
       paramIndex = sqlParams.length + 1;
@@ -14,7 +18,7 @@ export const sqlParams = () => {
     }
     return `?${paramIndex.toString().padStart(3, '0')}`;
   };
-  const addParamArray = (values: any[]) => {
+  const addParamArray = (values: unknown[]) => {
     return values.map((v) => addParam(v)).join(',');
   };
   return {

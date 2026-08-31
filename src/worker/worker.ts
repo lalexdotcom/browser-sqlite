@@ -112,7 +112,7 @@ const VFSConfigs = {
   },
 } as const satisfies Record<SQLiteVFS, { fs: () => Promise<any> }>;
 
-let openedDB: Promise<{ sqlite: any; db: any }> | undefined;
+let openedDB: Promise<{ sqlite: SQLiteAPI; db: number }> | undefined;
 const gate = createCreditGate(createMessageChannelTick());
 const locks = createLocks();
 
