@@ -281,7 +281,17 @@ const open = (file: string, options: OpenOptions) => {
         if (result === SQLITE_ROW) {
           cols ??= sqlite.column_names(stmt) as string[];
           const row = sqlite.row(stmt);
-          buffer.push(Object.fromEntries(cols.map((key, i) => [key, row[i]])));
+          // Deliberately not `Object.fromEntries(cols.map(...))`: that shape
+          // allocates one two-element array per column per row on the hottest
+          // path in the library. Measured 2026-08-31 over 50 000 rows x 12
+          // columns — 17.5 ms against 4.4 ms on Chromium, 23 ms against 14 ms
+          // on Firefox (`mem:measurements`). Same output, so nothing but the
+          // allocation is lost. Do not "simplify" it back.
+          const out: Record<string, unknown> = {};
+          for (let i = 0; i < cols.length; i++) {
+            out[cols[i] as string] = row[i];
+          }
+          buffer.push(out);
 
           if (buffer.length >= chunkSize) {
             yield buffer.splice(0, chunkSize);

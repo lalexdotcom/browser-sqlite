@@ -510,3 +510,70 @@ on Firefox only: the reduced-mode signature, not a property of those VFS.
 **The WebKit flip FLAKE-ROW-1 recorded is NOT covered here** — Linux WebKit
 exposes no `navigator.storage`, so the platform where it was seen cannot be
 reached from this container.
+
+## Performance backlog closed — 2026-08-31, this container, Chromium 151 / Firefox 153
+
+Scratch harness `tests/browser/perf-probe.test.ts` (deleted). Numbers left the page
+through thrown assertion messages: `browserLogs: false` in `rstest.config.ts` means
+`console` is not forwarded. `navigator.hardwareConcurrency` 16 on both engines.
+
+### The per-row object build — why the loop replaced `Object.fromEntries`
+
+Isolated microbenchmark, both variants **alternating inside one page** so drift lands on
+both sides, 5 rounds, 50 000 rows x 12 columns. Ranges are tight; this is the one
+deterministic measurement of the campaign.
+
+| | `Object.fromEntries(cols.map(...))` | hoisted loop | saved |
+|---|---|---|---|
+| Chromium | 17.5 ms (17.3-18.0) | **4.4 ms** (4.3-4.4) | 13.1 ms |
+| Firefox | 23.0 ms (23.0-24.0) | **14.0 ms** (14.0-16.0) | 9.0 ms |
+
+End to end, the same read through the client at `poolSize: 1`, medians of 5 after a
+discarded warm-up: Chromium 183 -> 160 ms, Firefox 631 -> 619 ms. **The end-to-end A/B is
+noise-dominated** (Firefox's narrow-row control moved further than its wide-row case,
+which is impossible if the effect were real at that size) — it corroborates the direction
+on Chromium and settles nothing on Firefox. The microbenchmark is the measurement; the
+end-to-end figure is what fraction of a read it represents, ~7 % on Chromium and ~1.4 %
+on Firefox.
+
+### Sharing one compiled `WebAssembly.Module` across the pool — measured, then dropped
+
+`wa-sqlite-async.wasm` is 1 233 KiB. The mechanism works: `structuredClone` of a compiled
+module costs 0.00-0.10 ms and the clone arrives as a usable `WebAssembly.Module`
+(273 exports read in the receiving worker).
+
+**A fresh worker, handed the bytes against handed the module**, 5 rounds, blob workers so
+no bundler is involved:
+
+| | compile bytes, in worker | receive Module, in worker | round trip delta |
+|---|---|---|---|
+| Chromium | 3.3 ms | **0.0 ms** | 3.9 ms |
+| Firefox | 19.0 ms | **0.0 ms** | 19.0 ms |
+
+**What kills it on Chromium and keeps it alive on Firefox is whether those compiles
+overlap.** N fresh workers each compiling the same bytes, wall clock to the last reply:
+
+| workers | Chromium | Firefox |
+|---|---|---|
+| 1 | 6.0 ms | 29 ms |
+| 2 | 5.9 ms | 37 ms |
+| 4 | 8.1 ms | 68 ms |
+
+Chromium is flat — the compiles are parallel and sharing the module buys ~2 ms at
+`poolSize: 4`. **Firefox scales almost linearly**, so it does not overlap them: sharing
+would take `poolSize: 4` from ~68 ms to ~29 ms, about **39 ms**, and the default
+`poolSize: 2` from 37 to 29 ms, about **8 ms**. Against a first query measured at
+175-196 ms on Firefox.
+
+`performance.measureUserAgentSpecificMemory()` is **undefined** in this harness —
+`crossOriginIsolated` is false on both engines — so the code-memory side, the reason the
+entry survived this long, could not be measured at all.
+
+Two shapes exist and only one is cheap. Having the client fetch and compile moves wasm URL
+resolution out of the worker bundle, which is the exact fragility the five-bundler smoke
+exists to catch, and `resolveWasmLocation` yields a URL only when the consumer overrode
+`wasmUrl`. Having worker 0 relay its module to the others keeps resolution where it is and
+loses nothing, since Firefox serialises those compiles anyway. **Dropped on the numbers,
+not on the difficulty:** nothing on Chromium, 8 ms at the default `poolSize` on Firefox,
+and a handshake added to the open path — the path GATE-1 and three abort defects were paid
+for. Reviving it needs no new measurement, only this table.

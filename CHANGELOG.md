@@ -170,6 +170,11 @@ with it.
   slowest, so it varies by browser. Multi-statement strings are not cached and
   keep their previous behaviour. The cache is invisible: no option, no
   constraint, no behaviour change.
+- **Each result row is built with less allocation.** Building a row no longer
+  goes through an intermediate array of key/value pairs. Measured over 50 000
+  rows of 12 columns, that step alone drops from 17.5 ms to 4.4 ms on Chromium
+  and from 23 ms to 14 ms on Firefox; what it is worth on your query depends on
+  how much of it is spent reading rows back. No API or behaviour change.
 
 ### Changed
 

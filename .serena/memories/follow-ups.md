@@ -202,22 +202,6 @@ differ and must **not** be aligned: the page returns `'blocked'` where invariant
 not); and the page reopens the column's client after `survives-reopen` and `close-settles`,
 because it runs every row against one client where the suite gets a fresh one per `it()`.
 
-## Performance backlog — after correctness, none blocking
-
-Both entries are **unmeasured**, and neither is scheduled until a number exists.
-
-- **Every worker compiles its own WASM copy** (1.23 MB × `poolSize`).
-  `WebAssembly.Module` is structured-cloneable — compile once on the client and
-  `postMessage` it, through Emscripten's `instantiateWasm` hook. Still true in
-  `worker/worker.ts`'s `open`: `WA_SQLITE_BUILDS[build]().then(({ default: factory }) =>
-  factory(...))` runs per worker and shares nothing. **The likely prize is code
-  memory, not latency** — both engines keep a per-origin compiled-WASM cache, so
-  the second worker's compile may already be near-free. It also lands on the open
-  path, which the readiness gate has made expensive (GATE-1).
-- Per-row `Object.fromEntries(cols.map(...))` in the hottest loop
-  (`worker/worker.ts`, the row branch of `run`): one pairs array plus one object
-  per row. A hoisted loop is four lines and confined to the worker — but
-  `step()` may swallow the whole effect.
 ## The statement cache's bound is in entries, and an entry can weigh megabytes
 
 The design is in `docs/superpowers/specs/2026-08-27-statement-cache-design.md`
