@@ -206,6 +206,13 @@ with it.
   fails immediately rather than retrying.
 - **A permanently lost worker always warns, even with `debug` off.** A pool
   quietly smaller than `poolSize` is not something to discover later.
+- **Option types now say `?: T | undefined` where an explicit `undefined` is
+  accepted.** The library compiles under `exactOptionalPropertyTypes`, which
+  separates "the property is absent" from "the property is `undefined`" — a
+  distinction JavaScript makes wherever code branches on presence, and one this
+  library depends on when it decides whether to pass Emscripten a `locateFile`.
+  Nothing a caller could write before stops compiling; the declarations simply
+  say which of the two they mean.
 
 ### Fixed
 

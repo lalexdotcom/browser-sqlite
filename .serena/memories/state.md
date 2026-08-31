@@ -25,8 +25,8 @@ obligations and unmeasured ground.
 
 Not history: the numbers a regression is detected against.
 
-`tsc --noEmit` clean · `pnpm build` clean · **464 tests, 0 failed files**
-(312 unit + 152 browser) · conformance **73 passed / 12 skipped on Chromium and
+`tsc --noEmit` clean · `pnpm build` clean · **470 tests, 0 failed files**
+(312 unit + 158 browser) · conformance **73 passed / 12 skipped on Chromium and
 the same on Firefox** · **consumer smoke 24/24** ·
 `scripts/bench/check.mjs chromium --all` OK, 22 pairs, zero `not-run` ·
 biome 13 warnings, none in recently touched files · `dependencies` empty.
@@ -38,7 +38,7 @@ counters cannot. That was reported green once — see `mem:lessons`.
 Firefox conformance was 57/19 until `OPFSWriteAheadVFS`'s declaration was corrected; the
 two engines agreeing is the current expectation, and a divergence means something skipped.
 
-**Firefox is a CI gate since 2026-08-28, and its browser project is 152/152 like
+**Firefox is a CI gate since 2026-08-28, and its browser project is 158/158 like
 Chromium's.** It runs as its own step in `ci.yaml`, after `pnpm test`. The two
 flakes this file used to warn about are gone: `long-query :: does not block the
 pool` was never a pool defect (it timed the FILE — see `mem:follow-ups`), and
