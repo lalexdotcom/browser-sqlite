@@ -42,7 +42,7 @@ Work happens in the clone at `.work/action-release-and-publish` (already present
 - Modify: `.work/action-release-and-publish/action.yml` — inputs block (after `:26`), and the `Create GitHub Release 🎉` step (`:181-193`) moved to sit between `Validate inputs for publishing 🔐` (`:127-139`) and `Publish to NPM 🚀` (`:141-147`)
 - Modify: `.work/action-release-and-publish/README.md` — a new `### `release-notes-file`` section
 - Modify: `.work/action-release-and-publish/USAGE.md` — example
-- Test: `$SCRATCH/argv-probe.sh` where `SCRATCH=/tmp/claude-1000/-workspaces-wsqlite/28e03af0-53be-4c7b-adca-5a927eb11add/scratchpad` (throwaway, committed nowhere)
+- Test: `.scratchpad/argv-probe.sh` (gitignored; every probe below assumes `SCRATCH=.scratchpad` exported from the repository root)
 
 **Interfaces:**
 - Produces: an action input named exactly `release-notes-file`, optional, whose value is a filesystem path readable by the runner. Task 3 passes `${{ steps.notes.outputs.file }}` to it.
@@ -271,7 +271,7 @@ Note the full 40-character SHA from `git rev-parse v1.1.0`. Task 3 writes it ver
 
 **Files:**
 - Modify: `.github/workflows/release-and-publish.yaml` — insert a step after `- uses: actions/checkout@v6` (`:15`), and repoint the pin (`:19`)
-- Test: `$SCRATCH/extract.sh` and `$SCRATCH/heading.sh` plus two fixtures, `SCRATCH=/tmp/claude-1000/-workspaces-wsqlite/28e03af0-53be-4c7b-adca-5a927eb11add/scratchpad` (throwaway)
+- Test: `.scratchpad/extract.sh` and `.scratchpad/heading.sh` plus two fixtures (gitignored; `SCRATCH=.scratchpad`)
 
 **Interfaces:**
 - Consumes: the action input `release-notes-file` from Task 1, and the SHA from Task 2.
