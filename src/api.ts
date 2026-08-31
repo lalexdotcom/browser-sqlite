@@ -304,6 +304,10 @@ export type SQLiteQueryAPI = {
    * failure leaves the rows already written in place. Call it on a `tx` if you
    * need all-or-nothing.
    *
+   * That commit per batch is also what it costs: measured at ~3.4 ms
+   * (synchronous build) and ~5.3 ms (Asyncify build) per commit on Chromium.
+   * A load wrapped in `transaction()` commits once and buys the rest back.
+   *
    * @param table - Target table name.
    * @param keys - Column names for the INSERT statement.
    * @param options - `signal` aborts the load between batches. `close()` then

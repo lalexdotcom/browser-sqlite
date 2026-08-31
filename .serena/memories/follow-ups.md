@@ -61,6 +61,18 @@ cross-tab answer is the unconditional prelude, probably opt-in, not this. **Do n
 this as promising until that number exists** — that is exactly how `PRAGMA data_version`
 and the WAL VFS each cost a session.
 
+### CoopSync turns a protocol step into a failure — `busy_timeout` is option A
+
+`OPFSCoopSyncVFS`'s `jLock` returns `SQLITE_BUSY` while a handle request is in flight and
+expects a retry; no `busy_timeout` is applied anywhere, so the library surfaces a step of
+the VFS's own transfer protocol as a user-visible error (`mem:vfs`). This is a correctness
+entry, not a performance one — it was carried in the performance backlog until
+2026-08-31 and does not belong there.
+
+**The risk to measure, not deduce:** SQLite's busy handler sleeps, and in a synchronous
+VFS inside a worker it may block the very thread that owes the handle release — turning a
+failure into a deadlock.
+
 ### A timed flush — out of rc.4 (user, 2026-08-27)
 
 Raised by the user during the back-pressure brainstorm and kept out of the spec, which
@@ -192,19 +204,20 @@ because it runs every row against one client where the suite gets a fresh one pe
 
 ## Performance backlog — after correctness, none blocking
 
-- **No default PRAGMAs** → consumers silently run `journal_mode=DELETE` + `synchronous=FULL`.
-  Shipping WAL + NORMAL + `busy_timeout` is on the list for its own reasons — note that
-  `busy_timeout` is also option A for CoopSync, with a risk to **measure, not deduce**:
-  SQLite's busy handler sleeps, and in a synchronous VFS in a worker that may block the very
-  thread that owes the handle release, converting a failure into a deadlock.
-- `bulkWrite` flushes are separate transactions (~300 commits for 1M rows). **Priced on
-  2026-08-28**, as a by-product of the statement-cache campaign: ~3.4 ms per commit on
-  Chromium/sync and ~5.3 ms on Chromium/async, from the gap between `bulkWrite` and
-  `tx.bulkWrite` (`mem:measurements`). No longer a guess — it is what a consumer buys back by
-  wrapping a bulk load in a transaction.
+Both entries are **unmeasured**, and neither is scheduled until a number exists.
+
 - **Every worker compiles its own WASM copy** (1.23 MB × `poolSize`).
-  `WebAssembly.Module` is structured-cloneable — compile once, `postMessage` it.
-- Per-row `Object.fromEntries(cols.map(...))` in the hottest loop.
+  `WebAssembly.Module` is structured-cloneable — compile once on the client and
+  `postMessage` it, through Emscripten's `instantiateWasm` hook. Still true in
+  `worker/worker.ts`'s `open`: `WA_SQLITE_BUILDS[build]().then(({ default: factory }) =>
+  factory(...))` runs per worker and shares nothing. **The likely prize is code
+  memory, not latency** — both engines keep a per-origin compiled-WASM cache, so
+  the second worker's compile may already be near-free. It also lands on the open
+  path, which the readiness gate has made expensive (GATE-1).
+- Per-row `Object.fromEntries(cols.map(...))` in the hottest loop
+  (`worker/worker.ts`, the row branch of `run`): one pairs array plus one object
+  per row. A hoisted loop is four lines and confined to the worker — but
+  `step()` may swallow the whole effect.
 ## The statement cache's bound is in entries, and an entry can weigh megabytes
 
 The design is in `docs/superpowers/specs/2026-08-27-statement-cache-design.md`

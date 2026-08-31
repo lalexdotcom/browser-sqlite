@@ -22,6 +22,19 @@ Numbers live in `mem:measurements`.
   `jLock`/`jUnlock` itself and silently ignores the option.
 - **`poolSize` multiplies the footprint whatever the VFS**, since every worker holds its
   own page cache. Default `poolSize` is 2.
+- **Journal mode and durability are not ours to default (2026-08-31).** Upstream's own
+  table, `node_modules/wa-sqlite/src/examples/README.md`, gives write-ahead logging to
+  `OPFSWriteAheadVFS` alone — and there it is implemented *inside* the VFS, always on,
+  not reachable through `PRAGMA journal_mode`. `AccessHandlePoolVFS` accepts
+  `journal_mode=wal` only under `locking_mode=exclusive`, i.e. `poolSize: 1`.
+  `OPFSAdaptiveVFS` without multiple access handles allows only `delete`, `memory` and
+  `off`. No VFS shipped here implements `xShmMap`. Relaxed durability
+  (`synchronous=normal`) is declared by three: `IDBBatchAtomicVFS`, `IDBMirrorVFS`,
+  `OPFSWriteAheadVFS`. **So a universal default PRAGMA set of WAL + NORMAL was dropped**:
+  it would buy nothing on six VFS and trade durability in silence on three — the shape
+  DEFAULT-1 already rejected, arrived at from the other direction. The one sourced lever
+  left is `cache_size` on `IDBBatchAtomicVFS`, whose batch-atomic mode needs a cache large
+  enough to hold the journal; that is a documented recommendation, never a default.
 
 ## Per-VFS, beyond the table
 
