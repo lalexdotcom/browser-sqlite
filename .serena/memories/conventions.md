@@ -12,6 +12,10 @@ only what `AGENTS.md` does not say.**
   not a summary of it, when picking up designed-but-unbuilt work.
 - The agent framework is **superpowers**. A `.planning/` directory from a previous
   framework was deleted on 2026-08-17 — do not recreate it or trust anything quoting it.
+- **Probes and fixtures go in `.scratchpad/` (user, 2026-08-31)**, gitignored, at the
+  repository root rather than in the session's own temp directory — the user wants to
+  open them. Nothing in `src/`, `tests/` or CI may depend on anything there. `.work/` is
+  the neighbouring convention, for scratch clones of upstream repositories.
 - The external assessment `docs/reviews/2026-08-17-0759-browser-sqlite.md` (9-agent review)
   is substantively correct but its **severity grading is not** — it marked all 9 axes
   BLOCKING, which discriminates nothing. Our triage is `mem:follow-ups`.
@@ -110,6 +114,15 @@ clone lives at `.work/action-release-and-publish`.
 **The GitHub Release is created before `npm publish`**, inside the action. That
 ordering is the whole reason a failed release costs a retag rather than a burnt
 version number; do not reorder it back.
+
+**Do not add `set -e` to the extraction step.** Two reviews have proposed it and it
+was refused both times: under `pipefail` it would abort
+`PKG=$(grep '"version"' package.json | …)` silently when the grep finds nothing,
+replacing a diagnosable `tag vX != package.json ()` with no message at all. The
+only path it would newly protect — a missing `CHANGELOG.md` — is already caught
+by the emptiness test. That test is `grep -q '[^[:space:]]'` and **not `[ -s ]`**,
+because a section holding one blank line is one byte long and `-s` calls it
+non-empty; this was found by running the block against a fixture, not by reading it.
 
 Design: `docs/superpowers/specs/2026-08-31-release-notes-from-changelog-design.md`.
 

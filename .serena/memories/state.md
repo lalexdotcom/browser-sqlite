@@ -67,7 +67,10 @@ Limitations line is rc.4 work, not rc.5. rc.5 is where multi-tab is studied for
 feasibility and either built or abandoned. Anything that would *change* multi-tab
 behaviour waits for rc.5; describing today's behaviour does not.
 
-- Bump `package.json` to `1.0.0-rc.4`.
+- **Cut rc.4.** No longer a one-line edit since 2026-08-31: the release workflow
+  refuses a tag whose version disagrees with `package.json` or with a dated
+  `## <version> — <date>` heading in `CHANGELOG.md`, so the bump is one commit
+  carrying both edits, then the tag. The procedure is in `mem:conventions`.
 - **The upstream PR is MERGED (user, 2026-08-28): `rhashimoto/wa-sqlite#344`**,
   "Fix OPFSAnyContextVFS writes on WebKit by copying the page buffer", from
   `lalexdotcom`. rhashimoto's two conditions — a link to a filed WebKit bug, and
