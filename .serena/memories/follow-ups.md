@@ -131,20 +131,8 @@ should be recommended there at all comes first.
 
 ### GATE-1 — what the readiness gate still rests on, after 2026-08-31
 
-Shipped 2026-08-28 on `feat/pool-readiness-gate`: the first query now waits for
-every worker slot to settle, a slot that fails to open is retried once when
-another slot opened, and a permanent loss warns unconditionally and calls
-`onWorkerLost`. Four things about it are reasoned rather than measured.
+Three things the readiness gate rests on are reasoned rather than measured.
 
-- ~~The motivating scenario was never observed end to end~~ — **observed
-  2026-08-31, and the harm is worse than the one that was inferred.** With the
-  gate disabled on Firefox, a write burst issued at startup seizes the exclusive
-  handle while the other workers are still opening and starves them: **two runs
-  in three ended with one worker opened out of four**, and they never opened
-  afterwards. It is not an `openTimeout` eviction — nothing is evicted, nothing
-  is logged, the client simply lives its whole life at a quarter of the pool it
-  was asked for. With the gate: 4/4 every run. On Chromium: 4/4 either way, no
-  handle to contend for. Numbers in `mem:measurements`.
 - **The tests force the wrong kind of failure.** The four covering the retry
   round point a worker at a missing URL, which is a *load* failure. None
   exercises handle starvation, the actual cause. They pin the orchestration,
@@ -213,9 +201,8 @@ library's number — the true floor is at least that and may be higher.
 
 The six conformance invariants are duplicated between `scripts/bench/html/index.html` and
 `tests/conformance/`, ~220 lines each side. `dist/index.js` is the page's only import
-channel, so sharing them would ship conformance assertions to every consumer. The export
-half is closed (`de3abdf`); the probe half is closed; `HAS_UNSAFE_HANDLES` stays on the
-page because it needs a worker and two access handles.
+channel, so sharing them would ship conformance assertions to every consumer.
+`HAS_UNSAFE_HANDLES` stays on the page because it needs a worker and two access handles.
 
 **The live rule: changing either copy obliges a review of the other, both directions.** The
 page's row ids are normalized from the conformance `describe()` titles, so a row whose id
@@ -253,8 +240,6 @@ on it**, and delete it the moment it is done rather than leaving it to be redisc
 
 ## Performance backlog — after correctness, none blocking
 
-- ~~No prepared-statement cache~~ — **shipped and merged (2026-08-28).** What it
-  leaves open is one number: its own section below.
 - **No default PRAGMAs** → consumers silently run `journal_mode=DELETE` + `synchronous=FULL`.
   Shipping WAL + NORMAL + `busy_timeout` is on the list for its own reasons — note that
   `busy_timeout` is also option A for CoopSync, with a risk to **measure, not deduce**:
@@ -268,16 +253,11 @@ on it**, and delete it the moment it is done rather than leaving it to be redisc
 - **Every worker compiles its own WASM copy** (1.23 MB × `poolSize`).
   `WebAssembly.Module` is structured-cloneable — compile once, `postMessage` it.
 - Per-row `Object.fromEntries(cols.map(...))` in the hottest loop.
-- ~~Prefer the last writer for reads~~ — **shipped 2026-08-27** (`feat/last-writer-routing`),
-  extended to new write designations as well. The routing works, proven as a barrier-statement
-  count on both engines; no latency gain is measurable on either, and `mem:measurements` says
-  why the timer is the wrong instrument for an effect this size.
-
 ## The statement cache's bound is in entries, and an entry can weigh megabytes
 
-**Shipped and merged (2026-08-28).** The design is in
-`docs/superpowers/specs/2026-08-27-statement-cache-design.md` and every number is in
-`mem:measurements`; neither is repeated here. What is open is the bound.
+The design is in `docs/superpowers/specs/2026-08-27-statement-cache-design.md`
+and every number is in `mem:measurements`; neither is repeated here. What is open
+is the bound.
 
 `DEFAULT_STATEMENT_CACHE_SIZE = 32` (`client.ts`) counts **entries**. That number was picked
 before anything had been weighed. It has been weighed since: the two INSERT templates one
