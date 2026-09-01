@@ -482,7 +482,6 @@ export const createSQLiteClient = (
    * The in-flight epoch publication, awaited before the write lock is handed
    * back. Task 6 assigns it; until then it is always already settled.
    */
-  // biome-ignore lint/style/useConst: Task 6 assigns this after its first epoch publication.
   let publishing: Promise<unknown> = Promise.resolve();
   /**
    * Aborted by `close()` the moment closing begins. Merged into every pending
@@ -504,6 +503,13 @@ export const createSQLiteClient = (
    * be credited with it.
    */
   const applyBarrier = async (worker: PoolWorker) => {
+    // The origin can only ever RAISE the target. That is what lets the local
+    // cell stay synchronous — `epochs.bump()` is posted in the write path's
+    // finally, and a read chained after write() must see it without awaiting
+    // anything. `query()` is async and could never live there.
+    const origin = await epochs.originMax();
+    epochs.raiseTo(origin);
+
     const target = epochs.current();
     worker.epochTarget = target;
     if (worker.seen >= target) return;
@@ -524,7 +530,15 @@ export const createSQLiteClient = (
 
   /** Records a commit. Called after the write, before its promise resolves. */
   const afterWrite = (worker: PoolWorker) => {
-    worker.seen = advanceSeen(worker.seen, worker.epochTarget, epochs.bump());
+    const next = epochs.bump();
+    worker.seen = advanceSeen(worker.seen, worker.epochTarget, next);
+    // Assigned, not awaited: the bump must stay synchronous. The write lock's
+    // release awaits this, so no other tab can take the lock, run its query()
+    // and miss this marker. A failure leaves this realm correct and the others
+    // one commit behind; the next publish restores a higher max.
+    publishing = epochs.publish(next).catch((error: unknown) => {
+      logger.warn(`epoch publish failed: ${String(error)}`);
+    });
   };
 
   /**
@@ -759,12 +773,15 @@ export const createSQLiteClient = (
     try {
       return await writeWorker<T>(lease.worker, sql, params, options);
     } finally {
-      // Before the void: release is asynchronous, so write() resolves first. A
-      // read chained on this promise would otherwise acquire before the
-      // increment, observe the old epoch, and skip the barrier — the exact bug
-      // being fixed. In `finally`, so a failed write bumps too: that costs a
-      // barrier statement, never a wrong read.
+      // Before the await: afterWrite bumps the epoch synchronously so that a
+      // read chained after write() sees the new epoch and runs the barrier. In
+      // `finally`, so a failed write bumps too: that costs a barrier statement,
+      // never a wrong read.
       afterWrite(lease.worker);
+      // Wait for the marker transition (new epoch acquired, previous released)
+      // before write() resolves. A caller that queries held lock names
+      // immediately after write() must see exactly one marker — the new one.
+      await publishing;
       // The lease returns when the worker confirms it is idle, not when the
       // caller leaves: a worker still inside step() must not be re-lent, and
       // the caller must not wait for it.
