@@ -172,7 +172,14 @@ export const createLocks = (
 
   return {
     available: true,
-    hold: ((name: string, options?: any) =>
+    hold: ((
+      name: string,
+      options?: {
+        mode?: 'exclusive' | 'shared';
+        signal?: AbortSignal;
+        ifAvailable?: boolean;
+      },
+    ) =>
       new Promise<(() => void) | undefined>((resolveReleaser, rejectOuter) => {
         const ifAvail: boolean = options?.ifAvailable === true;
         let release!: () => void;

@@ -1121,7 +1121,20 @@ export const createSQLiteClient = (
               `Close that client to open a new one here.`,
           ),
         );
-      } else {
+      } else if (!closing) {
+        // Guard: if close() was called before the lock settled, the pool
+        // sweep has already run (pool.length = 0) and close() is now
+        // awaiting this very promise. Spawning workers here would orphan
+        // them — close() will not see them because it has already cleared
+        // the pool. Checking `closing` prevents that: a closing client
+        // has no use for workers, and not starting them is strictly better
+        // than starting and immediately terminating them.
+        //
+        // Falsifiable: remove this `else if (!closing)` guard and replace
+        // with a plain `else`. Then create an AHP client, call close()
+        // immediately (before any query), and create a new client on the
+        // same name — the orphaned worker holds OPFS handles, and the new
+        // client's own worker gets WORKER_CRASHED.
         startWorkers();
       }
     });

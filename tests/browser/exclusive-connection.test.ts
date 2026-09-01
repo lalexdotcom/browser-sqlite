@@ -130,6 +130,52 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Orphan-worker race (AHP-CLOSE-RACE): if close() is called before any
+  // query — before the lock even settles — the deferred-spawn callback fires
+  // as a microtask when `close()` awaits connLockPromise. At that point
+  // `pool.length = 0` has already run, so any worker spawned there is
+  // orphaned: close() will never terminate it. The orphan holds OPFS access
+  // handles; a new client on the same name gets WORKER_CRASHED instead of
+  // opening cleanly.
+  //
+  // The fix: `else if (!closing)` in the deferred-spawn callback — don't
+  // start workers if close() has already been called.
+  //
+  // Falsifiable: replace `else if (!closing)` with `else` in the deferred-
+  // spawn block in src/client.ts. Then this test goes RED on Firefox: the
+  // orphaned worker has a head start over B's worker (it was spawned while
+  // close() awaited connLockPromise, before the lock was released) and opens
+  // the OPFS handles first, causing B's worker to get WORKER_CRASHED.
+  // On Chromium the timing is tighter and B may win the race, so falsifying
+  // there is less reliable. Firefox is the authoritative engine for this test.
+  //
+  // No wall-clock dependency: the test waits on `a.close()` (a concrete
+  // observable) before constructing B. If the orphan is present, B's worker
+  // crashes deterministically on Firefox because the orphan already holds the
+  // OPFS handles by the time B's workers start.
+  // -------------------------------------------------------------------------
+  it('does not orphan workers when close() is called before any query', async () => {
+    const name = dbName();
+    const opts = { vfs: 'AccessHandlePoolVFS' as const, poolSize: 1 };
+
+    // Create A and close it immediately — before any query forces the lock
+    // to settle. This is the path that previously orphaned a worker.
+    const a = createSQLiteClient(name, opts);
+    await a.close();
+
+    // B opens cleanly: no orphaned worker should be holding OPFS handles.
+    const b = createSQLiteClient(name, opts);
+    onTestFinished(() => closeAll(b));
+
+    // If an orphan holds the handles, this write fails with WORKER_CRASHED.
+    await b.write('CREATE TABLE t (n)');
+    await b.write('INSERT INTO t VALUES (1)');
+    const rows = await b.read<{ n: number }>('SELECT n FROM t');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].n).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
   // Control: the guard must not over-reach. OPFSAdaptiveVFS supports multiple
   // connections, so two clients on the same database must both work.
   //
