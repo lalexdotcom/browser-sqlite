@@ -1,6 +1,14 @@
 import { describe, expect, it } from '@rstest/core';
 import { createTestClient, interceptWorkers, sleep } from './helpers';
 
+/**
+ * Polls until the predicate is true, yielding to the macrotask queue between
+ * checks. Used to observe scheduler state without a fixed-duration sleep.
+ */
+const waitUntil = async (predicate: () => boolean): Promise<void> => {
+  while (!predicate()) await sleep(0);
+};
+
 describe('close()', () => {
   // Falsifiable: drop the await on the 'closed' reply in pool.ts — 'terminate'
   // then appears before 'recv:closed' in the trace.
@@ -23,22 +31,41 @@ describe('close()', () => {
 
   // Falsifiable: reject in-flight work instead of draining it.
   it('lets an in-flight write finish', async () => {
-    const db = await createTestClient({ poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1, debug: true });
     await db.write('CREATE TABLE t (a)');
     const inFlight = db.write('INSERT INTO t (a) VALUES (1)');
+    // Wait until inFlight has crossed the web-lock threshold and holds the
+    // scheduler lease. Before this point close()'s abort signal would cancel
+    // inFlight's pending lock request; after it the lock is granted and the
+    // Web Locks spec guarantees the signal cannot revoke it.
+    await waitUntil(() =>
+      (db.debug?.workers ?? []).some(
+        (w) => w.currentRequest && !w.currentRequest.releaseTime,
+      ),
+    );
     const closing = db.close();
     await expect(inFlight).resolves.toMatchObject({ affected: 1 });
     await closing;
   });
 
-  // Falsifiable: delete the scheduler.shutdown() call in close().
+  // Falsifiable: delete the closeAbort.abort() call in close() — queued then
+  // waits behind inFlight's web lock and completes instead of rejecting.
   it('rejects a queued request and every later call', async () => {
-    const db = await createTestClient({ poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1, debug: true });
     await db.write('CREATE TABLE t (a)');
     const inFlight = db.write('INSERT INTO t (a) VALUES (1)');
+    // Wait until inFlight holds the web lock and the scheduler lease. Starting
+    // queued before this point would race: inFlight's lock might not be granted
+    // yet and close() could abort both. After this point inFlight's lock is
+    // irrevocable and queued is parked behind it — exactly where close() needs
+    // to find it.
+    await waitUntil(() =>
+      (db.debug?.workers ?? []).some(
+        (w) => w.currentRequest && !w.currentRequest.releaseTime,
+      ),
+    );
     const queued = db.write('INSERT INTO t (a) VALUES (2)');
     const closing = db.close();
-
     await expect(queued).rejects.toMatchObject({ code: 'CLIENT_CLOSED' });
     await inFlight;
     await closing;

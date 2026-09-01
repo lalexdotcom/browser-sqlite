@@ -35,6 +35,7 @@ import {
 } from './types';
 import {
   assertReadable,
+  mergeSignals,
   normalizeDatabaseFile,
   renderPragmas,
   resolveWasmLocation,
@@ -484,21 +485,12 @@ export const createSQLiteClient = (
   // biome-ignore lint/style/useConst: Task 6 assigns this after its first epoch publication.
   let publishing: Promise<unknown> = Promise.resolve();
   /**
-   * Shared write-lock state across concurrent writes from this client.
-   * Concurrent writes share ONE acquisition so they do not contend with each
-   * other for the origin-wide lock; only the FIRST write in a batch acquires
-   * it and the rest piggyback. `pendingWriteLock` is the settled-to-void
-   * promise; `pendingWriteLockRelease` is the function that drops the lock;
-   * `lockWriteCount` is the reference count — the lock is released when it
-   * falls to zero.
-   *
-   * `pendingWriteLock` is also read by `close()`, which awaits it before
-   * calling `scheduler.shutdown()` so that writes started before `close()`
-   * can enter the scheduler — and thus be drained — before it shuts the door.
+   * Aborted by `close()` the moment closing begins. Merged into every pending
+   * write-lock request so that close() cancels writes still waiting on the
+   * origin-wide lock. A lock already granted is unaffected — per the Web Locks
+   * specification the signal cancels a pending request only.
    */
-  let pendingWriteLock: Promise<void> | undefined;
-  let lockWriteCount = 0;
-  let pendingWriteLockRelease: (() => void) | undefined;
+  const closeAbort = new AbortController();
 
   const epochs = epochsFor(dbFile);
 
@@ -578,40 +570,34 @@ export const createSQLiteClient = (
     // while blocked on a cross-tab lock: at poolSize 2, two queued writes
     // would starve this tab's own reads behind a lock another tab holds.
     //
-    // The wait is abortable by the caller's signal; the HOLD is not, and must
-    // not be — a lock released while SQLite still holds its own would lie.
-    //
-    // Concurrent writes from this client share ONE acquisition (via
-    // `pendingWriteLock`) rather than contending with each other: the
-    // scheduler already serialises same-client writes, so only the first in
-    // each batch needs the origin-wide exclusive lock.
+    // The wait is abortable by the caller's signal AND by the internal close
+    // signal. The HOLD is not aborted — a lock released while SQLite still
+    // holds its own would lie. Per the Web Locks spec, the signal cancels a
+    // pending request only; once granted the hold is irrevocable from here.
     let releaseWrite: (() => void) | undefined;
     if (kind === 'write' && writeLock) {
-      lockWriteCount++;
-      if (!pendingWriteLock) {
-        const held = locks.hold(writeLock, signal ? { signal } : undefined);
-        pendingWriteLock = held.then((release) => {
-          pendingWriteLockRelease = release;
-        });
-      }
+      // Merge the caller's signal with the close-abort signal. mergeSignals is
+      // used rather than AbortSignal.any to stay within the library's browser
+      // floor (Chrome 92 / Firefox 95 / Safari 15.4).
+      const { signal: lockSignal, release: releaseMerge } = mergeSignals(
+        signal,
+        closeAbort.signal,
+      );
+      let webRelease: () => void;
       try {
-        await pendingWriteLock;
+        webRelease = await locks.hold(
+          writeLock,
+          lockSignal ? { signal: lockSignal } : undefined,
+        );
       } catch (error) {
-        lockWriteCount--;
-        if (lockWriteCount === 0) {
-          pendingWriteLock = undefined;
-          pendingWriteLockRelease = undefined;
-        }
+        releaseMerge();
+        // Surface CLIENT_CLOSED when the close signal caused the abort.
+        // If the caller's signal fired first, rethrow the original error.
+        if (closeAbort.signal.aborted) throw closeAbort.signal.reason;
         throw error;
       }
-      releaseWrite = () => {
-        lockWriteCount--;
-        if (lockWriteCount === 0) {
-          pendingWriteLockRelease?.();
-          pendingWriteLockRelease = undefined;
-          pendingWriteLock = undefined;
-        }
-      };
+      releaseMerge();
+      releaseWrite = webRelease;
     }
 
     let lease: Awaited<ReturnType<typeof scheduler.acquire>>;
@@ -858,24 +844,19 @@ export const createSQLiteClient = (
     if (closing) return closing;
     closing = (async () => {
       logger.info('client closing');
-      // If writes are waiting on the cross-tab write lock, let them reach the
-      // scheduler before shutdown fires. Without this wait, a write started
-      // before close() finds the scheduler already shut when the lock resolves
-      // — violating the drain contract that in-flight work finishes.
-      if (pendingWriteLock) {
-        await bounded(
-          pendingWriteLock.then(
-            () => {},
-            () => {},
-          ),
-          drainTimeout,
-        );
-      }
-      // Shutting the front door first: queued waiters reject at once and no new
-      // work can be acquired while the in-flight work drains.
-      const draining = scheduler.shutdown(
-        new SQLiteError('CLIENT_CLOSED', 'The SQLite client has been closed.'),
+      const closingError = new SQLiteError(
+        'CLIENT_CLOSED',
+        'The SQLite client has been closed.',
       );
+      // Cancel every pending write-lock request (those still waiting for the
+      // browser's lock manager to grant the lock). Writes that already hold
+      // the lock are past the lock phase and unaffected — per the Web Locks
+      // spec the signal cancels a pending request only. Those writes hold a
+      // scheduler lease and are drained by shutdown() below.
+      closeAbort.abort(closingError);
+      // Shutting the front door: queued scheduler waiters reject at once and
+      // no new leases can be taken while in-flight work drains.
+      const draining = scheduler.shutdown(closingError);
       // A transaction's lease is held by user code, so this wait is bounded like
       // the rest: a callback that never returns must not make close() hang.
       await bounded(draining, drainTimeout);
