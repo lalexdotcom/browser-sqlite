@@ -492,7 +492,7 @@ export const createSQLiteClient = (
    */
   const closeAbort = new AbortController();
 
-  const epochs = epochsFor(dbFile);
+  const epochs = epochsFor(vfs, dbFile, locks);
 
   /**
    * The barrier. Runs on a leased worker, so nothing can interleave a

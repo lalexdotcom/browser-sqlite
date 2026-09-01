@@ -13,6 +13,10 @@
  * changes — bumping it per release recreates the fragmentation it prevents.
  */
 
+import type { Locks } from './locks';
+import { namespaceFor } from './locks';
+import type { SQLiteVFS } from './types';
+
 /**
  * The statement the barrier runs and discards.
  *
@@ -25,9 +29,40 @@
  */
 export const BARRIER_SQL = 'SELECT count(*) FROM sqlite_master';
 
+/**
+ * The marker a realm holds to publish the epoch it last committed.
+ *
+ * Held in SHARED mode: many realms may hold one name at once, so publishing
+ * never waits and two realms can never collide on a number. Nobody reads the
+ * lock — the NAME is the state, which is why this beats a BroadcastChannel:
+ * there is no message that can still be in flight.
+ */
+export const epochLockName = (ns: string, file: string, n: number) =>
+  `bsq:epoch:${ns}:${file}:${n}`;
+
+/**
+ * The highest epoch any realm in this origin has published under `prefix`.
+ *
+ * The tail after the prefix must be ALL digits, which is stricter than a
+ * prefix match plus `lastIndexOf(':')` and is the point: a normalized file may
+ * contain a colon (`new URL('./a:b', 'file://').pathname` is `a:b`), so the
+ * loose form would read another database's epoch as this one's.
+ */
+export const maxEpochIn = (heldNames: string[], prefix: string): number => {
+  let max = 0;
+  for (const name of heldNames) {
+    if (!name.startsWith(`${prefix}:`)) continue;
+    const tail = name.slice(prefix.length + 1);
+    if (!/^\d+$/.test(tail)) continue;
+    const n = Number(tail);
+    if (n > max) max = n;
+  }
+  return max;
+};
+
 const REGISTRY_KEY = Symbol.for('browser-sqlite.epochs.v1');
 
-type Cell = { value: number };
+type Cell = { value: number; releaseMarker?: () => void };
 type Registry = Map<string, Cell>;
 
 const registry = (): Registry => {
@@ -40,28 +75,61 @@ const registry = (): Registry => {
 };
 
 export type Epochs = {
-  /** The number of commits observed in this realm for this database. */
+  /** The number of commits observed for this database, floor included. */
   current: () => number;
   /** Records one commit and returns the new epoch. */
   bump: () => number;
+  /** Raises the local floor. Never lowers it. */
+  raiseTo: (n: number) => void;
+  /** The highest epoch published by any realm in this origin. */
+  originMax: () => Promise<number>;
+  /** Publishes `n` for this realm, replacing its previous marker. */
+  publish: (n: number) => Promise<void>;
 };
 
 /**
- * Handles onto the counter for `file`, which MUST already be normalized by
- * `normalizeDatabaseFile`. Entries are never removed: deleting one would
- * restart the counter at 0, and a worker still alive with `seen = 5` would
- * then read `5 > 0`, believe itself current forever, and serve stale data.
+ * Handles onto the counter for `(namespace, file)`, which MUST already be
+ * normalized by `normalizeDatabaseFile`. Entries are never removed: deleting
+ * one would restart the counter at 0, and a worker still alive with `seen = 5`
+ * would then read `5 > 0`, believe itself current forever, and serve stale
+ * data.
+ *
+ * The cell is realm-wide, so every client in a tab shares one counter AND one
+ * marker — publication is per realm, not per client.
  */
-export const epochsFor = (file: string): Epochs => {
+export const epochsFor = (
+  vfs: SQLiteVFS,
+  file: string,
+  locks: Locks,
+): Epochs => {
+  const ns = namespaceFor(vfs);
+  const key = `${ns}:${file}`;
   const map = registry();
-  const existing = map.get(file);
+  const existing = map.get(key);
   const cell: Cell = existing ?? { value: 0 };
-  if (!existing) map.set(file, cell);
+  if (!existing) map.set(key, cell);
+
+  const prefix = `bsq:epoch:${ns}:${file}`;
+
   return {
     current: () => cell.value,
     bump: () => {
       cell.value += 1;
       return cell.value;
+    },
+    raiseTo: (n) => {
+      if (n > cell.value) cell.value = n;
+    },
+    originMax: async () =>
+      locks.available ? maxEpochIn(await locks.heldNames(), prefix) : 0,
+    publish: async (n) => {
+      if (!locks.available) return;
+      const previous = cell.releaseMarker;
+      // New before old, always: `max` must never dip between the two.
+      cell.releaseMarker = await locks.hold(epochLockName(ns, file, n), {
+        mode: 'shared',
+      });
+      previous?.();
     },
   };
 };
