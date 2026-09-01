@@ -10,15 +10,42 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-31-cross-tab-coordination-design.md`
 
+## Invariants — break one of these and the feature is wrong
+
+**Read this section before every task. Each line names what goes wrong if it is broken.**
+
+### Ordering — these are the whole design
+
+- **I1 · Lock before lease, never after.** Taking the worker first holds a pool worker while blocked on a cross-tab lock: at `poolSize: 2`, two queued writes starve this tab's own reads behind a lock another tab holds.
+- **I2 · The epoch bump stays synchronous.** `client.ts` posts it in the write path's `finally` because `release` is async; a read chained after `write()` would otherwise see the old epoch. **Nothing in this plan may make `epochs.current()` async** — that is why the origin's contribution folds into `applyBarrier` and nowhere else.
+- **I3 · The origin can only RAISE the target, never lower it.** The realm-wide cell is a *floor*, not a cache of the origin's value. Break this and the last realm holding a marker dying makes `max` fall to 0, a live worker reads `seen 5 >= 0`, and it believes itself current for ever. `epochs.ts:51-53` describes the same hole.
+- **I4 · New marker acquired before the old one is released.** `max` must never dip between the two, not even for a microtask.
+- **I5 · The write lock is released only after this write's marker is published.** Otherwise another tab takes the lock, runs its `query()`, and misses the commit that just happened.
+
+### Keying
+
+- **I6 · Never key a lock or the epoch on the VFS name.** `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` resolve one database name to the same OPFS path. **A missed conflict corrupts; an invented one only slows** — when in doubt, key coarser.
+- **I7 · One marker per realm per database.** Released only when a higher one is taken — **never on `close()`**. This is the bound that keeps `query()` cheap; `query()` is linear in the origin's held-lock count.
+- **I8 · The marker is held in `shared` mode.** Nobody reads the lock — the name is the state. Exclusive would make two realms arriving at the same `n` block on each other *inside the write lock*, with no bound.
+
+### What must not move
+
+- **I9 · `Lease.release()` stays idempotent.** A dropped release now leaks an origin-wide lock, not merely a worker.
+- **I10 · Read paths take no write lock.** Reads, streams, `chunk`, `first` and `readOnly` transactions must never queue behind a writer.
+- **I11 · One query in flight per worker.** Untouched by this work, and the statement cache's correctness depends on it — a second concurrent caller lands a `reset` on a statement another query is stepping.
+- **I12 · Availability stays unreachable from outside `scheduler.ts`.** No `available` flag on a worker object, ever.
+
+### Testing
+
+- **I13 · Never await a second client to completion inside the first's transaction callback.** In reduced mode the second waits for the rotated exclusive OPFS handle, so the two deadlock and the test hangs rather than fails. Every cross-client wait is **bounded** by `settledWithin`, and only awaited to completion after the first transaction has returned. `multi-client.test.ts`'s first version made exactly this mistake.
+- **I14 · Name the line whose deletion makes each test fail**, and for the load-bearing ones actually delete it, observe red, restore, observe green. A reasoned falsifiability claim is worth nothing here — four of wave 3's were wrong.
+
 ## Global Constraints
 
 - **Serena's symbolic tools are primary for code.** `get_symbols_overview` / `find_symbol` to read, `replace_symbol_body` / `replace_content` to edit. Built-in Read/Edit only for `.md` and config.
 - **Every commit must land on green.** The pre-commit hook runs the whole suite (`pnpm test`) and refuses a red tree, so a failing test and the code that satisfies it belong to the **same** task. Never plan a commit after a RED step.
 - **Run `pnpm check` after every modification** (biome, `--write`).
-- **Never key a lock or the epoch on the VFS name.** `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` resolve one database name to the same OPFS path. A missed conflict corrupts; an invented one only slows.
-- **`Lease.release()` is idempotent and must stay so** — a dropped release now leaks an origin-wide lock, not merely a worker.
-- **The epoch bump stays synchronous.** `client.ts` posts it in the write path's `finally` because `release` is async; a read chained after `write()` would otherwise see the old epoch. Nothing in this plan may make `epochs.current()` async.
-- **One query in flight per worker** — do not weaken it; the statement cache depends on it.
+- **Both engines, always.** A browser assertion is verified on Chromium *and* `TEST_BROWSER=firefox`. Firefox is the only engine here that exercises the reduced-mode path, and it is a CI gate.
 - Verification baseline to compare against: `tsc --noEmit` clean, `pnpm build` clean, **470 tests / 0 failed files**, conformance 73 passed / 12 skipped on both engines. Read `status` **and** `failedFiles` from a test report, not just the per-test counters.
 
 ---
@@ -38,6 +65,8 @@
   - `sharesStorage(vfs: SQLiteVFS): boolean`
   - `initLockName(vfs: SQLiteVFS, file: string): string` — **signature changed**, was `(file)`
   - `writeLockName(vfs: SQLiteVFS, file: string): string`
+
+**Invariants this task carries:** **I6** — the whole task is I6. If a test you write would still pass with `namespaceFor` returning `vfs` unconditionally, it is not testing this task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -232,6 +261,8 @@ already gates on in those words."
 
 Why both options: the write lock must be abortable by the `signal` every public method already carries, and the epoch marker of Task 4 must be **shared** so two realms publishing the same epoch number never contend.
 
+**Invariants this task carries:** **I8** — `shared` must actually reach `navigator.locks.request`, which is why the tests assert the options object rather than the outcome. The pre-existing `hold` abort test must stay green: check it explicitly, it is the only coverage the signal path has.
+
 - [ ] **Step 1: Write the failing tests**
 
 Add to `tests/unit/locks.test.ts`:
@@ -390,6 +421,13 @@ same epoch number never contend."
 - Consumes: `writeLockName`, `sharesStorage`, `createLocks`, `Locks.hold` from Tasks 1–2.
 - Produces: nothing new in the public surface. `acquireInstrumented('write', signal)` now resolves only once the origin-wide write lock is held, and the returned lease releases that lock when it releases the worker.
 
+**Invariants this task carries:**
+- **I1** — the lock is taken before `scheduler.acquire`, and every path that throws between the two releases it. There are three such paths in the code below; all three are written out.
+- **I9** — the wrapper's `release` is guarded by `handedBack` so a double release does not double-release the lock.
+- **I10** — `kind === 'write'` gates the lock. A `readOnly` transaction acquires with `kind: 'read'` (`transaction.ts:70`), so it is covered by that gate and by nothing else — do not add a second condition.
+- **I13** — every cross-client wait in the tests is bounded by `settledWithin` and awaited to completion only after the first transaction returns.
+- **Controller ruling (pre-flight):** declare `locks`, `writeLock` and `publishing` **above** `const epochs = …`, not beside it. Task 4 makes `epochs` depend on `locks`.
+
 - [ ] **Step 1: Rewrite the three browser tests**
 
 `tests/browser/multi-client.test.ts` — replace the file's three `it` bodies. The header comment's claim that the two regimes differ is now **false for writers** and must go with them.
@@ -449,28 +487,41 @@ describe('two clients writing at once', () => {
     expect(rows.map((row) => row.n)).toEqual([1, 2]);
   });
 
-  // Falsifiable: give the readOnly branch a write lock too and `entered` goes
-  // false — a read-only transaction must never queue behind a writer.
-  it('lets a read-only transaction run while a writer holds the lock', async () => {
+  // I13: B is never awaited to completion inside A's callback. In reduced mode
+  // a read waits for the rotated exclusive handle, so awaiting it there
+  // deadlocks the test rather than failing it — which is precisely how the
+  // first version of this file was written, and why it is called out.
+  //
+  // So what is asserted is the claim our lock actually makes: a read-only
+  // transaction is never REFUSED by it. Whether it also completes promptly is
+  // the VFS's business, and differs by regime.
+  //
+  // Falsifiable: give the readOnly branch a write lock too, and `error` becomes
+  // an AbortError once the budget's signal fires — or the test times out where
+  // no signal is passed. Verify by making the change, not by reasoning.
+  it('never refuses a read-only transaction opened under a writer', async () => {
     const { a, b } = twoClients();
     await a.write('CREATE TABLE t (n)');
     await a.write('INSERT INTO t VALUES (1)');
 
-    let entered = false;
-    let rows: { n: number }[] = [];
+    let attempt!: Promise<unknown>;
     await a.transaction(async (tx) => {
       await tx.write('INSERT INTO t VALUES (2)');
-      await b.transaction(
-        async (btx) => {
-          entered = true;
-          rows = await btx.read<{ n: number }>('SELECT n FROM t');
-        },
-        { readOnly: true },
+      attempt = rejectionOf(
+        b.transaction(
+          async (btx) => {
+            await btx.read<{ n: number }>('SELECT n FROM t');
+          },
+          { readOnly: true },
+        ),
       );
+      // Bounded, and the result is deliberately not asserted: on one regime it
+      // settles here, on the other it is still waiting on the OPFS handle.
+      await settledWithin(attempt, TURNED_AWAY_WITHIN);
     });
 
-    expect(entered).toBe(true);
-    expect(rows.length).toBeGreaterThanOrEqual(1);
+    // Awaited to completion only now that A has let the file go.
+    expect(await attempt).toBeUndefined();
   });
 
   // `bulkWrite` still commits PER BATCH and still takes one lock per batch —
@@ -667,6 +718,13 @@ then goes through, on both."
   - `maxEpochIn(heldNames: string[], prefix: string): number`
   - `epochsFor(vfs: SQLiteVFS, file: string, locks: Locks): Epochs`
   - `Epochs` gains `raiseTo(n: number): void`, `originMax(): Promise<number>`, `publish(n: number): Promise<void>`
+
+**Invariants this task carries:**
+- **I2** — `current()`, `bump()` and `raiseTo()` are **synchronous**. Only `originMax` and `publish` are async. If you find yourself making `current()` async, stop: the design is built to avoid exactly that.
+- **I3** — `raiseTo` never lowers. The test that pins it is the one asserting `current()` stays 9 while `originMax()` reports 0.
+- **I4** — `publish` acquires the new marker **before** releasing the previous one. The `publish` test asserts the event ORDER, which is the only thing that catches an inversion.
+- **I7** — the releaser lives on the realm-wide `Cell`, not on the returned handle. Two clients in one tab must share one marker; putting it in the closure would give each client its own.
+- **I8** — `{ mode: 'shared' }` on the marker.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -946,6 +1004,8 @@ collide on a number."
 
 This task ships **green**: it pins the platform facts the design rests on and gives Task 6 its vehicle. `multi-client.test.ts` argues that two clients in one page contend exactly as two tabs would — true of Web Locks and OPFS handles, and **false of the epoch**, which those two clients share through the realm-wide registry. Without a second realm, nothing about Task 6 is falsifiable.
 
+**Invariants this task carries:** this task *is* the falsifier I14 asks for. If the first test ever goes red, `multi-client.test.ts`'s "two clients contend exactly as two tabs would" would start being true of the epoch as well, and every cross-tab assertion in Task 6 would be measuring nothing.
+
 - [ ] **Step 1: Write the helper**
 
 `tests/browser/helpers/realm.ts`:
@@ -1124,6 +1184,13 @@ suite that can falsify anything cross-tab."
 **Interfaces:**
 - Consumes: `Epochs.originMax` / `raiseTo` / `publish` (Task 4), `publishing` and the write-lock wrapper (Task 3), `makeRealm` / `holdIn` (Task 5).
 - Produces: no public surface change. A commit published by any realm in the origin now raises this client's barrier target.
+
+**Invariants this task carries:**
+- **I2** — `afterWrite` calls `epochs.bump()` **synchronously** and only then assigns `publishing`. Never `await` the publish inside `afterWrite`: it runs in the write path's `finally`, and awaiting there is the bug this whole design was built around.
+- **I3** — `applyBarrier` calls `raiseTo(origin)`, it does not assign the origin's value. The difference is the entire point.
+- **I5** — the write lock's release awaits `publishing`. That wiring lives in Task 3's lease wrapper; verify it is still there rather than re-adding it.
+- **I7** — the third test asserts exactly one marker survives three commits. If it finds three, `publish` is not releasing the previous one.
+- **I14** — Step 6 is not optional. Delete the `originMax` line, observe red, restore, observe green, and report both.
 
 - [ ] **Step 1: Write the failing test**
 
