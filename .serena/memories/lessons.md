@@ -75,6 +75,16 @@ Measure before acting on either half.
 over a scheduler branch without noticing it contradicted its untouched sibling path. When a
 change adds a rule to one of two symmetric paths, review the pair, not the diff.
 
+**It happened again on 2026-09-01, and the shape is worth naming.** Implementation found a
+real hole in the cross-tab spec — a write's epoch marker must be published before the write
+resolves, because reads take no lock and a foreign read can `query()` in the gap. The fix went
+into `write()`. Nobody extended it to `transaction()`, which has the same `finally` and the
+same hole; the task reviewer confirmed the fix was correct *for the path it was shown*, and
+the controller confirmed the ruling was right without asking where else it applied. Only the
+whole-branch review caught it. **A ruling made about one path is a question about every
+sibling path** — when you accept a mid-flight correction, the next thing to do is grep for the
+other callers of whatever it touched, not to close the finding.
+
 **Plan defects reach implementers as instructions.** Four defects in the wave-3 plan — a
 corrupting re-escape, an assertion matching messages instead of codes, a test that could
 never reach its own failure case, a probe defeated by Node 24 shipping `navigator.locks` —

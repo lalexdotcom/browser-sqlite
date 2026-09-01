@@ -28,8 +28,8 @@ obligations and unmeasured ground.
 
 Not history: the numbers a regression is detected against.
 
-`tsc --noEmit` clean · `pnpm build` clean · **470 tests, 0 failed files**
-(312 unit + 158 browser) · conformance **73 passed / 12 skipped on Chromium and
+`tsc --noEmit` clean · `pnpm build` clean · **500 tests, 0 failed files** on the
+cross-tab branch (470 on `main`) · conformance **73 passed / 12 skipped on Chromium and
 the same on Firefox** · **consumer smoke 24/24** ·
 `scripts/bench/check.mjs chromium --all` OK, 22 pairs, zero `not-run` ·
 biome 13 warnings, none in recently touched files · `dependencies` empty.
@@ -53,48 +53,34 @@ still surface timing the campaign did not.
 
 ## Decisions the user owes
 
-**One, and only one: how to execute the cross-tab plan** — a fresh subagent per
-task with review between each, or inline in this session with checkpoints.
-`writing-plans` ends by offering that choice, and it belongs to the user, not to
-the agent (`mem:conventions`). Everything else rc.5 needs is decided.
+**One: whether to merge the cross-tab branch**, which is finished and reviewed clean. Nothing
+else is outstanding.
 
-## rc.5's first item: designed, approved, unbuilt
+## rc.5's first item: built, reviewed, unmerged
 
-**Scope picked by the user 2026-08-31: multi-client / multi-tab, and they asked for
-BOTH halves** — write serialization *and* cross-tab read-your-own-writes. The two are
-independent problems with independent answers, which is the design's organising idea.
+**Multi-client / multi-tab, both halves, delivered 2026-09-01.** Writes serialize across every
+client and tab in the origin; read-your-own-writes holds across tabs on every VFS but
+`IDBMirrorVFS`. Spec, plan and mechanism: `mem:architecture`'s cross-tab section and
+`docs/superpowers/specs/2026-08-31-cross-tab-coordination-design.md`. **Read the spec, not a
+summary** — it carries an amendment made during implementation.
 
-Spec and plan are committed on the feature branch (`git branch` names it). It is
-**unmerged and not pushed** — nothing outside this container holds them.
+The branch is **unmerged and not pushed**; `git branch` names it. Its baseline: **500 tests,
+0 failed files**, both engines, conformance 73/12, biome 13 warnings.
 
-- `docs/superpowers/specs/2026-08-31-cross-tab-coordination-design.md`
-- `docs/superpowers/plans/2026-08-31-cross-tab-coordination.md` — seven tasks, each
-  committing green because the hook refuses a red tree.
+**What it does NOT deliver, and the README says so:** reads still wait on the rotated
+exclusive OPFS handle wherever `readwrite-unsafe` is missing — serializing writers does not
+change which handle a VFS holds. `IDBMirrorVFS` gains nothing cross-tab and cannot.
+`OPFSCoopSyncVFS`'s stalls are untouched.
 
-**Read the spec, not a summary of it.** What it settles that nothing would re-derive:
+**Unverified, and worth knowing before promising anything:** nobody has checked whether two
+tabs can even *open* the same database on the VFS declared `multiConnection: false`
+(`AccessHandlePoolVFS`, `IDBMirrorVFS`). Serializing writers is moot if the second tab never
+opens.
 
-- **A SharedWorker cannot be the writer, and that is not a cost judgement.** Spawning a
-  dedicated worker from inside a SharedWorker **throws on Chrome** — Firefox supports
-  it, Safari 27 beta added it (rhashimoto/wa-sqlite#81, finally read on 2026-08-31,
-  which `mem:follow-ups` had been demanding since 2026-08-28). The four VFS that matter
-  need a dedicated worker for `createSyncAccessHandle()`, so a SharedWorker can
-  coordinate but never hold a connection. Upstream's migrating-service pattern is the
-  only route to one connection per origin and is a different product.
-- **Every lock and the epoch key on a storage namespace derived from
-  `VFS_CAPABILITIES.layout`, never on the VFS name.** `OPFSAdaptiveVFS`,
-  `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` resolve one database
-  name to the same OPFS path, so a per-VFS key would let two clients write the same
-  bytes without ever excluding each other. A missed conflict corrupts; an invented one
-  only slows.
-- **The realm-wide epoch cell survives as a FLOOR, not as the authority.** That is what
-  stops `max` dipping to zero when the last realm holding a marker dies.
-- **Cross-client visibility inside one tab already works** and is already reasoned
-  about — `advanceSeen`'s `next === target + 1` clause exists for exactly that case. The
-  gap this design closes is cross-*tab* only.
-
-**Two throwaway probes were run and deleted.** Their numbers are in `mem:measurements`
-(Web Locks priced, 2026-08-31); the iframe-realm platform facts are in the spec's §6,
-and Task 5 of the plan turns them into a test that stays.
+**A behaviour change consumers can depend on:** two clients writing at once no longer produce
+`BUSY` — the second waits. Code that caught `BUSY` between a consumer's own clients and
+retried is now unreachable. It is in `CHANGELOG.md` under Breaking for that reason, even
+though nothing stops compiling.
 
 ## Pending, and not ours to move
 
