@@ -481,7 +481,8 @@ export const createSQLiteClient = (
    * The in-flight epoch publication, awaited before the write lock is handed
    * back. Task 6 assigns it; until then it is always already settled.
    */
-  const publishing: Promise<unknown> = Promise.resolve();
+  // biome-ignore lint/style/useConst: Task 6 assigns this after its first epoch publication.
+  let publishing: Promise<unknown> = Promise.resolve();
   /**
    * Shared write-lock state across concurrent writes from this client.
    * Concurrent writes share ONE acquisition so they do not contend with each
