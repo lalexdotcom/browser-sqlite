@@ -32,11 +32,24 @@ export type Locks = {
    * same name at once, so publishing never waits and two realms can never
    * collide on one epoch number. `signal` aborts the WAIT — never the hold —
    * and makes the request reject with `AbortError`.
+   *
+   * `ifAvailable: true` mirrors `tryWithLock`'s semantics: the real API hands
+   * the callback `null` rather than waiting when the lock is held elsewhere.
+   * Resolves with `undefined` in that case instead of waiting. Never waits —
+   * that is the point for the connection guard.
    */
-  hold: (
+  hold(
     name: string,
     options?: { mode?: 'exclusive' | 'shared'; signal?: AbortSignal },
-  ) => Promise<() => void>;
+  ): Promise<() => void>;
+  hold(
+    name: string,
+    options: {
+      mode?: 'exclusive' | 'shared';
+      signal?: AbortSignal;
+      ifAvailable: true;
+    },
+  ): Promise<(() => void) | undefined>;
   /** Runs `fn` while holding `name` exclusively. */
   withLock: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
   /**
@@ -110,6 +123,22 @@ export const writeLockName = (vfs: SQLiteVFS, file: string) =>
   `bsq:write:${namespaceFor(vfs)}:${file}`;
 
 /**
+ * Origin-wide exclusive connection lock for VFS that cannot safely share a
+ * database across clients (`exclusiveConnection: true` in `VFS_CAPABILITIES`).
+ *
+ * Held for the client's lifetime. A second `createSQLiteClient` that tries to
+ * open the same database will fail its first query with `BUSY` instead of
+ * silently reading a broken, frozen view — the failure mode measured as
+ * AHP-2TAB (2026-09-01) where `SELECT 1` passes and `SELECT count(*) FROM
+ * sqlite_master` returns 0 on an unfixable connection.
+ *
+ * The key uses `namespaceFor(vfs)` for the same reason `writeLockName` does:
+ * the gate is by layout declaration, not by VFS name.
+ */
+export const connectionLockName = (vfs: SQLiteVFS, file: string) =>
+  `bsq:conn:${namespaceFor(vfs)}:${file}`;
+
+/**
  * Which staging tables no live `output()` is using — pure, so it is driven by
  * Node tests rather than by two browser tabs.
  */
@@ -143,8 +172,9 @@ export const createLocks = (
 
   return {
     available: true,
-    hold: (name, options) =>
-      new Promise<() => void>((resolveReleaser, rejectOuter) => {
+    hold: ((name: string, options?: any) =>
+      new Promise<(() => void) | undefined>((resolveReleaser, rejectOuter) => {
+        const ifAvail: boolean = options?.ifAvailable === true;
         let release!: () => void;
         const held = new Promise<void>((resolveHeld) => {
           release = resolveHeld;
@@ -152,17 +182,28 @@ export const createLocks = (
         // Built conditionally rather than with `signal: options?.signal`: an
         // explicit undefined is not reliably "absent" across engines, and Web
         // Locks refuses `signal` alongside `ifAvailable`.
-        const requestOptions: { mode: string; signal?: AbortSignal } = {
-          mode: options?.mode ?? 'exclusive',
-        };
+        const requestOptions: {
+          mode: string;
+          signal?: AbortSignal;
+          ifAvailable?: true;
+        } = { mode: options?.mode ?? 'exclusive' };
         if (options?.signal) requestOptions.signal = options.signal;
+        // `ifAvailable` must be absent (not merely false) when not requested —
+        // Web Locks refuses `signal` alongside `ifAvailable`, so we only set it
+        // when the caller explicitly asked for the non-blocking behaviour.
+        if (ifAvail) requestOptions.ifAvailable = true;
         manager
-          .request(name, requestOptions, () => {
+          .request(name, requestOptions, (lock) => {
+            // `ifAvailable` hands the callback null instead of waiting.
+            if (ifAvail && !lock) {
+              resolveReleaser(undefined);
+              return Promise.resolve();
+            }
             resolveReleaser(release);
             return held;
           })
           .catch(rejectOuter);
-      }),
+      })) as Locks['hold'],
     withLock: <T>(name: string, fn: () => Promise<T>) =>
       manager.request(name, { mode: 'exclusive' }, () => fn()) as Promise<T>,
     tryWithLock: async (name, fn) => {

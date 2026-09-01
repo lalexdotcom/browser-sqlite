@@ -175,9 +175,14 @@ describe('worker lifecycle — bounds', () => {
     }
   });
 
-  // Falsifiable: put `postMessage({type:'ready'})` back in a `.finally()` in
-  // worker.ts — the second client then reports ready and hangs on its query.
-  it('reports a failed open instead of reporting ready', async () => {
+  // The connection guard (AHP-2TAB fix) fires before workers start, so the
+  // second client now fails BUSY — not WORKER_CRASHED. Workers for the second
+  // client are never spawned, which is faster and cleaner.
+  //
+  // Falsifiable: delete the `if (connLockPromise !== undefined)` deferred-
+  // spawn block in src/client.ts. Without it, workers start immediately and
+  // collide on the OPFS handle, producing WORKER_CRASHED instead of BUSY.
+  it('rejects a second client with BUSY instead of crashing its workers', async () => {
     shared = `browser-sqlite-test-${crypto.randomUUID()}`;
     const first = createSQLiteClient(shared, {
       poolSize: 1,
@@ -188,14 +193,13 @@ describe('worker lifecycle — bounds', () => {
     const second = createSQLiteClient(shared, {
       poolSize: 1,
       vfs: 'AccessHandlePoolVFS',
-      openTimeout: 3000,
     });
     await expect(second.read('SELECT 1')).rejects.toMatchObject({
-      name: expect.stringMatching(/WORKER_CRASHED|TIMEOUT/),
+      code: 'BUSY',
     });
 
     await first.close();
-    await second.close();
+    await second.close().catch(() => {});
   });
 });
 

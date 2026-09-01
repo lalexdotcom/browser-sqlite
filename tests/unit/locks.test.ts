@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@rstest/core';
 import {
+  connectionLockName,
   createLocks,
   initLockName,
   namespaceFor,
@@ -322,5 +323,87 @@ describe('hold options', () => {
     const release = await noOpLocks.hold('bsq:probe', { mode: 'shared' });
     expect(typeof release).toBe('function');
     release();
+  });
+
+  it('no-op locks with ifAvailable still resolve a releaser — lock always free in no-op mode', async () => {
+    const release = await noOpLocks.hold('bsq:conn:ahp:test.db', {
+      ifAvailable: true,
+    });
+    // No-op mode has no real lock manager, so the connection is always "available".
+    expect(release).toBeDefined();
+    expect(typeof release).toBe('function');
+    release?.();
+  });
+});
+
+describe('hold ifAvailable', () => {
+  /**
+   * A LockManager stand-in for the ifAvailable path. When `granted` is false,
+   * the callback receives null (lock held elsewhere), matching the real Web
+   * Locks API's ifAvailable behaviour.
+   */
+  const manager = (granted: boolean, seen?: unknown[]) => ({
+    request: async (_name: string, options: any, callback?: any) => {
+      const cb = typeof options === 'function' ? options : callback;
+      if (typeof options !== 'function') seen?.push(options);
+      return cb(granted ? { name: _name } : null);
+    },
+    query: async () => ({ held: [] as { name?: string }[] }),
+  });
+
+  // Falsifiable: remove the `if (ifAvail && !lock)` branch in createLocks.hold.
+  // Without it the function waits forever (the held promise never resolves),
+  // and this test times out or hangs.
+  it('resolves with undefined when the lock is held elsewhere', async () => {
+    const locks = createLocks(manager(false));
+    const result = await locks.hold('bsq:conn:AccessHandlePoolVFS:app.db', {
+      ifAvailable: true,
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it('resolves with a release function when the lock is free', async () => {
+    const locks = createLocks(manager(true));
+    const result = await locks.hold('bsq:conn:AccessHandlePoolVFS:app.db', {
+      ifAvailable: true,
+    });
+    expect(typeof result).toBe('function');
+    result?.();
+  });
+
+  // Falsifiable: remove `ifAvailable: true` from the requestOptions build. The
+  // real API would then wait instead of resolving with null, and the test above
+  // would time out rather than asserting undefined.
+  it('passes ifAvailable: true to the lock manager', async () => {
+    const seen: unknown[] = [];
+    const locks = createLocks(manager(true, seen));
+    const result = await locks.hold('bsq:conn:AccessHandlePoolVFS:app.db', {
+      ifAvailable: true,
+    });
+    result?.();
+    expect(seen[0]).toEqual({ mode: 'exclusive', ifAvailable: true });
+  });
+});
+
+describe('connectionLockName', () => {
+  // Falsifiable: return a hardcoded string and the distinctness assertions fail.
+  it('follows the bsq:conn:<ns>:<file> pattern', () => {
+    expect(connectionLockName('AccessHandlePoolVFS', 'app.db')).toBe(
+      `bsq:conn:AccessHandlePoolVFS:app.db`,
+    );
+  });
+
+  it('is distinct per database file', () => {
+    expect(connectionLockName('AccessHandlePoolVFS', 'a.db')).not.toBe(
+      connectionLockName('AccessHandlePoolVFS', 'b.db'),
+    );
+  });
+
+  it('does not collide with init, write, sweep or staging lock names', () => {
+    const conn = connectionLockName('AccessHandlePoolVFS', 'a.db');
+    expect(conn).not.toBe(initLockName('AccessHandlePoolVFS', 'a.db'));
+    expect(conn).not.toBe(writeLockName('AccessHandlePoolVFS', 'a.db'));
+    expect(conn).not.toBe(sweepLockName('a.db'));
+    expect(conn.startsWith('bsq:conn:')).toBe(true);
   });
 });

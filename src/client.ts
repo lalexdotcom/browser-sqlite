@@ -8,7 +8,12 @@ import {
 import { createClientDebug } from './debug';
 import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
 import { SQLiteError } from './errors';
-import { createLocks, sharesStorage, writeLockName } from './locks';
+import {
+  connectionLockName,
+  createLocks,
+  sharesStorage,
+  writeLockName,
+} from './locks';
 import { createLogger } from './logger';
 import { createPoolWorker, type PoolWorker } from './pool';
 import {
@@ -478,6 +483,31 @@ export const createSQLiteClient = (
    * independent databases — see `sharesStorage`.
    */
   const writeLock = sharesStorage(vfs) ? writeLockName(vfs, dbFile) : undefined;
+
+  /**
+   * The release function for the origin-wide exclusive connection lock, held
+   * for this client's lifetime when `capability.exclusiveConnection` is true.
+   * `undefined` when the lock was unavailable (another client holds it) or
+   * when this VFS does not require exclusive connections.
+   */
+  let connRelease: (() => void) | undefined;
+
+  /**
+   * A one-shot promise that settles as soon as the Web Locks API responds to
+   * the connection lock request. Awaited at the top of `acquireInstrumented`
+   * so that the first use of any method surfaces the BUSY error legibly rather
+   * than appearing to work with a broken connection.
+   *
+   * `undefined` when `capability.exclusiveConnection` is false.
+   */
+  const connLockPromise: Promise<void> | undefined =
+    capability.exclusiveConnection
+      ? locks
+          .hold(connectionLockName(vfs, dbFile), { ifAvailable: true })
+          .then((release) => {
+            connRelease = release;
+          })
+      : undefined;
   /**
    * The in-flight epoch publication, awaited before the write lock is handed
    * back. Task 6 assigns it; until then it is always already settled.
@@ -581,6 +611,27 @@ export const createSQLiteClient = (
     kind: 'read' | 'write',
     signal?: AbortSignal,
   ) => {
+    // Connection guard — first thing, before any pool or lock interaction.
+    //
+    // For VFS that enforce an exclusive connection (`exclusiveConnection: true`
+    // in VFS_CAPABILITIES), the lock request was started at construction and
+    // resolves exactly once. Subsequent awaits on an already-settled promise
+    // are instant. If the lock was unavailable (another client holds it), fail
+    // fast here on every method rather than returning a client that looks
+    // healthy but cannot read any table — the silent failure measured as
+    // AHP-2TAB (2026-09-01).
+    if (connLockPromise !== undefined) {
+      await connLockPromise;
+      if (connRelease === undefined) {
+        throw new SQLiteError(
+          'BUSY',
+          `${vfs} supports one connection at a time across the whole origin. ` +
+            `Another tab or client is already connected to '${dbFile}'. ` +
+            `Close that client to open a new one here.`,
+        );
+      }
+    }
+
     // Lock BEFORE the lease, never after. The reverse holds a pool worker
     // while blocked on a cross-tab lock: at poolSize 2, two queued writes
     // would starve this tab's own reads behind a lock another tab holds.
@@ -885,6 +936,25 @@ export const createSQLiteClient = (
         }),
       );
       pool.length = 0;
+
+      // Release the exclusive connection lock after workers are gone, so no
+      // incoming client can grab the database while our OPFS handles are still
+      // being closed. Await `connLockPromise` to handle the edge case where
+      // `close()` is called before the first query ever ran (lock in flight).
+      if (connLockPromise !== undefined) await connLockPromise;
+      connRelease?.();
+      // Yield one event-loop turn so the browser's lock manager processes the
+      // release before `close()` resolves. Without this, a new client
+      // constructed immediately after `await a.close()` may try its
+      // `ifAvailable` lock request before the engine marks the lock free —
+      // getting `null` (lock busy) instead of the lock, and surfacing BUSY on
+      // a database that is actually available. A single setTimeout(0) is
+      // enough: the lock release is a microtask queued synchronously by
+      // `connRelease()`, so it settles within the same event-loop turn, and
+      // the next turn (setTimeout callback) sees the freed lock.
+      if (connRelease !== undefined) {
+        await new Promise<void>((r) => setTimeout(r, 0));
+      }
     })();
     return closing;
   };
@@ -1024,8 +1094,40 @@ export const createSQLiteClient = (
     }
   };
 
-  // Initialize the worker pool with the requested number of workers
-  for (let index = 0; index < poolSize; index += 1) spawn(index);
+  // Initialize the worker pool with the requested number of workers.
+  //
+  // When an exclusive connection lock is required (e.g. AccessHandlePoolVFS),
+  // defer spawning until after the lock settles. On Firefox, workers that open
+  // OPFS handles while another client already holds them crash with
+  // WORKER_CRASHED ("No modification allowed") before `acquireInstrumented`
+  // can surface a legible BUSY error. Deferring prevents that: workers never
+  // start when the lock is held elsewhere, and `failClient` sets `fatal` so
+  // any query on B surfaces BUSY via the `acquireInstrumented` guard.
+  const startWorkers = () => {
+    for (let index = 0; index < poolSize; index += 1) spawn(index);
+  };
+  if (connLockPromise !== undefined) {
+    void connLockPromise.then(() => {
+      if (connRelease === undefined) {
+        // Lock was held elsewhere — fail the client now so workers never open
+        // the database. The BUSY error surfaced here matches the one thrown in
+        // `acquireInstrumented`, ensuring the first query on this client fails
+        // with a legible message rather than a WORKER_CRASHED stall.
+        failClient(
+          new SQLiteError(
+            'BUSY',
+            `${vfs} supports one connection at a time across the whole origin. ` +
+              `Another tab or client is already connected to '${dbFile}'. ` +
+              `Close that client to open a new one here.`,
+          ),
+        );
+      } else {
+        startWorkers();
+      }
+    });
+  } else {
+    startWorkers();
+  }
 
   // Return the public API
   const api = {
