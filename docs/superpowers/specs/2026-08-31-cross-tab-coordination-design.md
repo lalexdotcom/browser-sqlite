@@ -211,6 +211,16 @@ means nothing; only the comparison does.
 3. release the write lock **after** step 2 settles — otherwise another tab takes the write
    lock, runs its `query()`, and misses our marker. Costs ~0.06 ms per write.
 
+**Amended during implementation, 2026-09-01: `write()` itself awaits the publication**, after
+the synchronous bump and before the lease is handed back. Holding the write lock across the
+publish is **not sufficient**, and the reason is the one thing this design deliberately does
+not lock: *reads take no lock at all*. Between `write()` resolving and the marker being
+published, another tab's read runs `query()` and misses the commit — no write lock is
+involved, so nothing holds it off. The bump stays synchronous and precedes the await, so
+read-your-own-writes within the tab is untouched. The cost is the same ~0.06 ms, now paid on
+`write()`'s own latency rather than only on the lock's release. Found by an implementer, as a
+test race, and it was a real hole.
+
 **A realm releases its marker only when it takes a higher one, never on `close()`.** That
 is the bound that keeps `query()` cheap: **at most one marker per realm per database**,
 whatever `poolSize` and whatever the number of clients in that realm.

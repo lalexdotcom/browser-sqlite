@@ -2,6 +2,68 @@
 
 All notable changes to this project are documented here.
 
+## Unreleased
+
+### Breaking
+
+- **Two clients writing at once no longer produce `BUSY`.** Writes are now
+  serialized across every client and tab in the origin, so a second writer waits
+  and then goes through instead of being refused. Nothing stops compiling and no
+  call changes, but code that caught `SQLiteError` with code `BUSY` between your
+  own clients and retried is now unreachable — the condition it handled cannot
+  arise. `BUSY` still exists for what it always covered otherwise, including
+  `deleteDatabase` against an open database.
+- **A write now waits where it used to fail, and the wait is unbounded.** It is
+  first-come-first-served. **Pass a `signal` if you would rather fail than
+  wait.**
+
+### Added
+
+- **Read-your-own-writes now holds across tabs.** A commit in any tab is observed
+  by the next read in every other tab on the same database. `IDBMirrorVFS` is the
+  exception and cannot be fixed here: it mirrors the whole database in memory per
+  worker and propagates commits asynchronously, so a connection whose mirror has
+  not caught up has nothing fresher to read.
+- **Writes serialize across clients and tabs**, on every VFS and every browser.
+  Previously the outcome depended on the browser: where each connection held its
+  own OPFS access handle the second writer was refused, and where one exclusive
+  handle was rotated it waited. There is one behaviour now.
+
+### Changed
+
+- **A write transaction holds the origin's write lock for the whole of its
+  callback.** A callback that never returns now blocks every other writer in the
+  origin, not only its own client.
+- **`bulkWrite` takes the lock per batch**, matching the per-batch commit it
+  already did. Another client's write can still land between two batches, and an
+  abandoned load is still partial rather than failed. Use `tx.bulkWrite` where you
+  need all or nothing.
+- **A write waiting on the origin lock when `close()` is called is rejected with
+  `CLIENT_CLOSED`**, the same contract a request queued in the pool already had.
+
+### Performance
+
+- **Every lease acquisition costs exactly one `navigator.locks.query()`** — reads
+  included — to read the origin's published epoch. Counted, on both engines. It
+  measures ~0.03 ms on an idle origin and grows ~0.0004 ms per lock held anywhere
+  in the origin.
+- **Every write costs exactly one exclusive lock and one shared marker.**
+  Counted, on both engines; together ~0.11–0.14 ms against a commit measured at
+  3.4–5.3 ms.
+- **A single-tab application runs no extra barrier statements at all.** The
+  barrier count over a mixed read/write workload is identical to the branch point,
+  on both engines. The `query()` is the whole of what a single tab pays.
+- **Another tab's commit costs one barrier statement per worker, not per read.**
+  The first read on a worker that is behind runs it; that worker is then current
+  and the reads after it run nothing. Those reads previously ran nothing *and
+  served an incoherent snapshot*.
+
+### Known limitation, unchanged and now more visible
+
+- **Serializing writers does not change which access handle a VFS holds.** Where
+  `readwrite-unsafe` is unavailable, a read in another tab still waits for the
+  rotated exclusive handle while a writer holds it.
+
 ## 1.0.0-rc.4 — 2026-08-31
 
 Everything below lands between rc.3 (2026-03-26) and rc.4. The library was

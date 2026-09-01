@@ -314,6 +314,40 @@ per read, ~5 % of a 1.1 ms read; not needed by the chosen design.
 
 n=3, one machine, headless, one container. The two engines agree closely.
 
+## Cross-tab coordination priced as COUNTS — 2026-09-01, Chromium 151 / Firefox 153, this container
+
+**Method.** Throwaway `tests/browser/cross-tab-probe.test.ts` (deleted). `navigator.locks.query`
+and `navigator.locks.request` wrapped in the test page before the client is created and counted
+by name prefix; `BARRIER_SQL` executions counted through `db.debug` the way
+`tests/browser/barrier.test.ts` does. The before/after arm ran the same workload in a scratch
+`git worktree` at `git merge-base main HEAD`. **Every figure below is a count. No durations
+were taken, deliberately** — the effect is ~0.03 ms, Firefox clamps `performance.now()` to 1 ms,
+and this project has already paid once for timing an effect this size.
+
+| | Chromium | Firefox |
+|---|---|---|
+| `query()` per **read** | 1 | 1 |
+| `query()` per **write** | 1 | 1 |
+| `request(bsq:write:…)` per write | 1 | 1 |
+| `request(bsq:epoch:…)` per write | 1 | 1 |
+| `BARRIER_SQL`, mixed workload, **this branch** | 0 | 0 |
+| `BARRIER_SQL`, same workload, **branch point** | 0 | 0 |
+| `BARRIER_SQL`, 5 reads, no foreign marker | 0 | 0 |
+| `BARRIER_SQL`, 5 reads, foreign marker held | **1** | **1** |
+
+**The two numbers that matter.** A single-tab application runs **no extra barrier
+statements**: identical to the branch point on both engines, so the `query()` is the whole of
+what it pays. And a foreign commit costs **one barrier per worker, not one per read** — the
+first read on a worker that is behind runs it, that worker is then current, and the reads after
+it run nothing.
+
+**A caveat the probe reported against itself, and it is right to.** The mixed workload produced
+zero barriers on *both* arms, so the before/after comparison establishes "no regression" without
+ever exercising the barrier. The cause is `lastWriterIndex`: alternating write→read routes the
+read back to the worker that just wrote, which is always current, so the other worker never
+serves a read. Not a probe defect — it faithfully measures that workload — but a workload that
+forces reads onto a cold worker would be a stronger arm, and nobody has run one.
+
 ## Numbers that are one observation, not a measurement
 
 - **Android 145 vs 151 differ by a factor 2.6** on bulk insert, same emulator. Regression
