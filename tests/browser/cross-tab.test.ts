@@ -131,11 +131,28 @@ describe('an epoch published by another realm', () => {
     // counter stays at 0, so afterWrite will publish epoch 1 and be blocked.
     // A realm (iframe) is used for the hold so the exclusive and shared
     // requests come from different JS contexts, guaranteeing contention.
+    //
+    // ORDERING HAZARD (fixed): releaseExclusive was assigned inside the
+    // callback after an async write. Under a loaded suite the write can take
+    // longer than the 400 ms budget, so the finally ran while releaseExclusive
+    // was still undefined. The ?.() no-op skipped the release; the exclusive
+    // lock was never freed; afterWrite hung waiting for the shared-lock grant;
+    // txDone never settled. Fix: a lockHeld promise is resolved from inside
+    // the callback the moment holdIn() returns. The body awaits that promise
+    // before starting the race, so the 400 ms budget measures only what it
+    // claims — whether transaction() is blocked by the lock — not the write
+    // round-trip time. Never use a wall-clock budget to order two async events.
     const { db, dbName } = oneClient();
     const realm = await makeRealm();
     // The first commit in a fresh client publishes epoch 1.
     const marker = epochLockName(namespaceFor(VFS), dbName, 1);
     let releaseExclusive: (() => void) | undefined;
+
+    // Resolves the moment holdIn() returns — i.e., the exclusive lock is actually held.
+    let signalHeld!: () => void;
+    const lockHeld = new Promise<void>((resolve) => {
+      signalHeld = resolve;
+    });
 
     let txResolved = false;
     const txDone = db
@@ -145,10 +162,16 @@ describe('an epoch published by another realm', () => {
         // The epoch counter is still 0. afterWrite will bump to 1 and try
         // to hold epoch 1 as shared; our exclusive blocks that grant.
         releaseExclusive = await holdIn(realm, marker);
+        signalHeld();
       })
       .then(() => {
         txResolved = true;
       });
+
+    // Wait until the exclusive lock is actually held before starting the race.
+    // If txDone settles first, the callback never reached holdIn (lock never
+    // taken), and releaseExclusive?.() in the finally is a correct no-op.
+    await Promise.race([lockHeld, txDone]);
 
     try {
       // 400 ms is far longer than the write round-trip. If transaction() has

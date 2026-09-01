@@ -43,15 +43,36 @@ Numbers live in `mem:measurements`.
 | **`OPFSAdaptiveVFS`** *(recommended)* | The one general-purpose choice. Detects `readwrite-unsafe` and degrades correctly without it — but degraded means one exclusive handle rotated between workers, i.e. HANDLE-1 below. Best where it shines, merely degraded elsewhere, never broken. |
 | **`OPFSWriteAheadVFS`** | It used to declare `requires: ['readwrite-unsafe']`, and this table used to state, as observed fact, that the pool breaks without it. **Both were inferred and never executed** — the declaration caused the conformance skip, and the skip kept the declaration from being falsified. Measured false on Firefox and on Safari 26.6 / 27.0 / iPadOS 27.0 (2026-08-27): it opens and passes every invariant, and **degrades exactly like `OPFSAdaptiveVFS` — read-burst ≈ 1.00, no concurrency at all**. So outside Chromium it earns nothing over the default. One real defect remains: `sync` cannot reopen on Safari 27 (REOPEN-1). |
 | **`OPFSCoopSyncVFS`** | Holds one *exclusive* handle and rotates it — so a pool buys no concurrency here. `SQLITE_BUSY` is its transfer protocol, not an error: `jLock` returns it while a handle request is in flight and expects a retry, and **we never retry** (no `busy_timeout` is applied anywhere). We turn a protocol step into a user-visible failure. Its only distinguishing combination is OPFS + `poolSize > 1` outside Chromium — which is exactly the combination that fails. |
-| **`AccessHandlePoolVFS`** | `poolSize: 1`, guarded synchronously at construction. Stores **every** database in one OPFS directory named after the class, holding `DEFAULT_CAPACITY = 6` files with `Math.random()` names. `jDelete` is the only correct removal; deleting the file by name matches nothing and frees no slot. |
+| **`AccessHandlePoolVFS`** | `poolSize: 1`, guarded synchronously at construction. Stores **every** database in one OPFS directory named after the class, holding `DEFAULT_CAPACITY = 6` files with `Math.random()` names. `jDelete` is the only correct removal; deleting the file by name matches nothing and frees no slot. **Two clients on one database silently break at least one of them — see AHP-2TAB below.** |
 | **`IDBBatchAtomicVFS`** | **The only persistent multi-connection VFS working on all three desktop engines.** Escapes HANDLE-1 structurally — no handle at all. Its page cache has a floor: upstream notes the cache must be large enough to hold the journal. |
-| **`IDBMirrorVFS`** | Declared `multiConnection: false`, `maxPoolSize: 1` — **measured, not inferred**. Whole database in RAM per worker, commits propagated over `BroadcastChannel` asynchronously; the barrier cannot rescue it because there is nothing fresher on a connection whose mirror has not received the broadcast. Stores in one IndexedDB database named after the class. |
+| **`IDBMirrorVFS`** | Declared `multiConnection: false`, `maxPoolSize: 1` — **measured, not inferred**. **But `multiConnection: false` does not mean "isolated from other clients":** two clients on one database DO share data here, immediately, over the origin-wide `BroadcastChannel` (3/3 both engines, isolated runs, 2026-09-01). The flag marks concurrent-writer unsafety, which MIRROR-1 measures under load. Whole database in RAM per worker, commits propagated over `BroadcastChannel` asynchronously; the barrier cannot rescue it because there is nothing fresher on a connection whose mirror has not received the broadcast. Stores in one IndexedDB database named after the class. |
 | **`OPFSAnyContextVFS`** | Escapes HANDLE-1 structurally (File API, not sync handles). Needed a WebKit fix — see ANYCONTEXT-1 below. |
 | **`MemoryVFS` / `MemoryAsyncVFS`** | Volatile, single connection, whole database in RAM. |
 
 `OPFSPermutedVFS` is **gone from the codebase** — removed, not deprecated in place
 (merge `be314db`, 2026-08-20): 24 % stale cross-connection reads, and deprecated upstream
 (rhashimoto/wa-sqlite#317). `grep -rn Permuted src/ README.md tests/` returns nothing.
+
+## AHP-2TAB — `AccessHandlePoolVFS` is not multi-tab, and it does not say so
+
+Measured 2026-09-01, n=3 per engine; numbers in `mem:measurements`. **Pre-existing — the
+cross-tab work did not cause it, it only made someone look.**
+
+Two clients on one database, created before either queries: **the second resolves `SELECT 1`
+and cannot read any table**, 6 runs of 6. It looks healthy and is useless. And **which client
+loses the handle race is non-deterministic — it is sometimes the first one**, so two concurrent
+clients leave at least one broken client and sometimes two.
+
+**No cheap probe detects it.** `SELECT 1` touches no file. `SELECT count(*) FROM sqlite_master`
+— the barrier statement — returns 0 on a frozen empty view rather than erroring. Anything that
+verifies an open by running a statement will pass.
+
+Created sequentially instead, the second client fails cleanly with `WORKER_CRASHED` (3/3, both
+engines), and closing the first lets it in. **Match on the code, never the message:** Chromium
+names `createSyncAccessHandle`, Firefox says "No modification allowed".
+
+The obvious remedy, unbuilt and undecided: hold an origin-wide lock for the client's lifetime
+when `sharesStorage(vfs) && !multiConnection`, so the second client fails fast and legibly.
 
 ## HANDLE-1 — the limit that shapes every recommendation
 

@@ -348,6 +348,51 @@ read back to the worker that just wrote, which is always current, so the other w
 serves a read. Not a probe defect — it faithfully measures that workload — but a workload that
 forces reads onto a cold worker would be a stronger arm, and nobody has run one.
 
+## Two clients on a `multiConnection: false` VFS — 2026-09-01, n=3 per engine
+
+**Method.** Throwaway `tests/browser/multiconnection-probe.test.ts` (deleted). Two clients in
+one page on one database name, `poolSize: 1` everywhere, `openTimeout: 5000` so a stall stays
+inside the test budget. **Two clients in one page are a faithful stand-in for two tabs here** —
+OPFS access handles and IndexedDB are origin-scoped. (The commit epoch is not, but it is not
+part of this question.) Chromium 151 / Firefox 153, this devcontainer.
+
+| VFS | 2nd client opens | data shared |
+|---|---|---|
+| `OPFSAdaptiveVFS` *(control)* | yes | **yes** |
+| `IDBBatchAtomicVFS` *(control)* | yes | **yes** |
+| **`AccessHandlePoolVFS`** | **yes, and broken** | **no** |
+| `IDBMirrorVFS` | yes | **yes, immediately** |
+| `MemoryVFS` / `MemoryAsyncVFS` | yes | no — isolated by construction |
+
+### AHP-2TAB — `AccessHandlePoolVFS` fails silently, and it can break the FIRST client
+
+Two clients created **before either queries**, n=3 per engine:
+
+- **The second client resolves `SELECT 1` in 6 runs of 6, and cannot read any table in 6 of 6**
+  (`no such table`). It looks healthy and is useless. A guard that probes an open with
+  `SELECT 1` gives a false positive here — and so would `SELECT count(*) FROM sqlite_master`,
+  which returns 0 rather than erroring on a frozen empty view.
+- **Which client loses the handle race is non-deterministic**, and it is sometimes the FIRST
+  one: client A crashed with `WORKER_CRASHED` in 1 of 3 Chromium runs and 2 of 3 Firefox runs.
+  So two concurrent clients leave **at least one broken client, always, and sometimes both**.
+- Created **sequentially** instead — B after A has run a query — B fails cleanly with
+  `WORKER_CRASHED`, 3/3 on both engines, message stable within an engine but **different
+  between them** (Chromium names `createSyncAccessHandle`, Firefox says "No modification
+  allowed"). Matching on the message rather than the code will not port.
+- After `A.close()`, B opens, 3/3 both engines.
+
+**This is pre-existing, not caused by the cross-tab work.** It matters more now only because
+the README began promising cross-tab write serialization.
+
+### `IDBMirrorVFS` does share across clients
+
+B sees A's row every time, 3/3 on both engines, **isolated runs**. So `multiConnection: false`
+does not mean "isolated from other clients" — it flags concurrent-writer unsafety. This does
+**not** refute MIRROR-1 (5 failures in 300 rounds, ~1.7 %): that was measured under a loaded
+suite, and 0/60 in isolation. Loaded behaviour across clients was not probed here.
+
+Wall-clock open timings in the report are single observations and are recorded as such.
+
 ## Numbers that are one observation, not a measurement
 
 - **Android 145 vs 151 differ by a factor 2.6** on bulk insert, same emulator. Regression
