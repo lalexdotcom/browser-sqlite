@@ -8,7 +8,7 @@ import {
 import { createClientDebug } from './debug';
 import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
 import { SQLiteError } from './errors';
-import { createLocks } from './locks';
+import { createLocks, sharesStorage, writeLockName } from './locks';
 import { createLogger } from './logger';
 import { createPoolWorker, type PoolWorker } from './pool';
 import {
@@ -471,6 +471,34 @@ export const createSQLiteClient = (
 
   const debug = clientDebug?.state;
 
+  const locks = createLocks();
+  /**
+   * Undefined on the memory VFS, where two clients on one name are two
+   * independent databases — see `sharesStorage`.
+   */
+  const writeLock = sharesStorage(vfs) ? writeLockName(vfs, dbFile) : undefined;
+  /**
+   * The in-flight epoch publication, awaited before the write lock is handed
+   * back. Task 6 assigns it; until then it is always already settled.
+   */
+  const publishing: Promise<unknown> = Promise.resolve();
+  /**
+   * Shared write-lock state across concurrent writes from this client.
+   * Concurrent writes share ONE acquisition so they do not contend with each
+   * other for the origin-wide lock; only the FIRST write in a batch acquires
+   * it and the rest piggyback. `pendingWriteLock` is the settled-to-void
+   * promise; `pendingWriteLockRelease` is the function that drops the lock;
+   * `lockWriteCount` is the reference count — the lock is released when it
+   * falls to zero.
+   *
+   * `pendingWriteLock` is also read by `close()`, which awaits it before
+   * calling `scheduler.shutdown()` so that writes started before `close()`
+   * can enter the scheduler — and thus be drained — before it shuts the door.
+   */
+  let pendingWriteLock: Promise<void> | undefined;
+  let lockWriteCount = 0;
+  let pendingWriteLockRelease: (() => void) | undefined;
+
   const epochs = epochsFor(dbFile);
 
   /**
@@ -545,9 +573,56 @@ export const createSQLiteClient = (
     kind: 'read' | 'write',
     signal?: AbortSignal,
   ) => {
-    const lease = clientDebug
-      ? await acquireWithDebug(kind, signal)
-      : await scheduler.acquire(kind, signal);
+    // Lock BEFORE the lease, never after. The reverse holds a pool worker
+    // while blocked on a cross-tab lock: at poolSize 2, two queued writes
+    // would starve this tab's own reads behind a lock another tab holds.
+    //
+    // The wait is abortable by the caller's signal; the HOLD is not, and must
+    // not be — a lock released while SQLite still holds its own would lie.
+    //
+    // Concurrent writes from this client share ONE acquisition (via
+    // `pendingWriteLock`) rather than contending with each other: the
+    // scheduler already serialises same-client writes, so only the first in
+    // each batch needs the origin-wide exclusive lock.
+    let releaseWrite: (() => void) | undefined;
+    if (kind === 'write' && writeLock) {
+      lockWriteCount++;
+      if (!pendingWriteLock) {
+        const held = locks.hold(writeLock, signal ? { signal } : undefined);
+        pendingWriteLock = held.then((release) => {
+          pendingWriteLockRelease = release;
+        });
+      }
+      try {
+        await pendingWriteLock;
+      } catch (error) {
+        lockWriteCount--;
+        if (lockWriteCount === 0) {
+          pendingWriteLock = undefined;
+          pendingWriteLockRelease = undefined;
+        }
+        throw error;
+      }
+      releaseWrite = () => {
+        lockWriteCount--;
+        if (lockWriteCount === 0) {
+          pendingWriteLockRelease?.();
+          pendingWriteLockRelease = undefined;
+          pendingWriteLock = undefined;
+        }
+      };
+    }
+
+    let lease: Awaited<ReturnType<typeof scheduler.acquire>>;
+    try {
+      lease = clientDebug
+        ? await acquireWithDebug(kind, signal)
+        : await scheduler.acquire(kind, signal);
+    } catch (error) {
+      releaseWrite?.();
+      throw error;
+    }
+
     try {
       // Raced, not merely passed a signal. `applyBarrier` drains a real query
       // on the worker, and `PoolWorkerQueryOptions` carries no signal — so on
@@ -578,9 +653,25 @@ export const createSQLiteClient = (
         () => lease.release(),
         () => lease.release(),
       );
+      releaseWrite?.();
       throw error;
     }
-    return lease;
+
+    if (!releaseWrite) return lease;
+
+    // The write lock outlives the worker: it is released once the lease is
+    // released AND the epoch this write published has been taken, so no other
+    // tab can acquire the lock, run its query(), and miss our marker.
+    let handedBack = false;
+    return {
+      ...lease,
+      release: () => {
+        lease.release();
+        if (handedBack) return;
+        handedBack = true;
+        void publishing.then(releaseWrite, releaseWrite);
+      },
+    };
   };
 
   /**
@@ -766,6 +857,19 @@ export const createSQLiteClient = (
     if (closing) return closing;
     closing = (async () => {
       logger.info('client closing');
+      // If writes are waiting on the cross-tab write lock, let them reach the
+      // scheduler before shutdown fires. Without this wait, a write started
+      // before close() finds the scheduler already shut when the lock resolves
+      // — violating the drain contract that in-flight work finishes.
+      if (pendingWriteLock) {
+        await bounded(
+          pendingWriteLock.then(
+            () => {},
+            () => {},
+          ),
+          drainTimeout,
+        );
+      }
       // Shutting the front door first: queued waiters reject at once and no new
       // work can be acquired while the in-flight work drains.
       const draining = scheduler.shutdown(
