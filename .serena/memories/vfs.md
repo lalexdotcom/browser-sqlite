@@ -71,8 +71,27 @@ Created sequentially instead, the second client fails cleanly with `WORKER_CRASH
 engines), and closing the first lets it in. **Match on the code, never the message:** Chromium
 names `createSyncAccessHandle`, Firefox says "No modification allowed".
 
-The obvious remedy, unbuilt and undecided: hold an origin-wide lock for the client's lifetime
-when `sharesStorage(vfs) && !multiConnection`, so the second client fails fast and legibly.
+**Guarded since 2026-09-01.** `VFS_CAPABILITIES` gained `exclusiveConnection`, true for this
+VFS alone, and a client on such a VFS holds `bsq:conn:<ns>:<file>` exclusively for its whole
+life — taken with `ifAvailable`, so a second client fails its first query with `BUSY`
+immediately rather than stalling. `acquireInstrumented` is where it is awaited, for the same
+reason everything else in this area lives there: it is the one choke point every method passes
+through.
+
+**The predicate is `exclusiveConnection`, NOT `!multiConnection`.** `IDBMirrorVFS` declares
+`multiConnection: false` and is deliberately left unguarded, because it genuinely shares data
+between clients (measured). The two flags mean different things and conflating them would lock
+out a working VFS.
+
+**Two things the implementation needed that the design did not foresee.** Worker spawning is
+deferred until the connection lock settles — on Firefox a worker that opens OPFS handles while
+another client holds them crashes before the `BUSY` check can fire, so the guard has to run
+first. And `close()` yields one event-loop turn after releasing the lock: Web Locks exposes no
+"lock freed" notification, so there is no condition to await and a fixed one-turn yield is the
+only way the next client sees the release. **The deferral cost a Critical defect on the way in**
+— `close()` empties the pool *before* awaiting that promise, so a `close()` called before the
+first query left a live orphan worker holding handles for thirty seconds, delivering exactly
+the `WORKER_CRASHED` the guard replaces. Fixed by not spawning at all once `closing` is set.
 
 ## HANDLE-1 — the limit that shapes every recommendation
 

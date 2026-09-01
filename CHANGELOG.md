@@ -58,6 +58,18 @@ All notable changes to this project are documented here.
   and the reads after it run nothing. Those reads previously ran nothing *and
   served an incoherent snapshot*.
 
+### Fixed
+
+- **A second client on an `AccessHandlePoolVFS` database no longer opens and then
+  silently fails to read anything.** Measured on both engines: it used to resolve
+  `SELECT 1` and return `no such table` for every real table, and which of the two
+  clients lost the OPFS handle race was non-deterministic — sometimes it was the
+  first one, so opening a second tab could break the tab already working. The VFS
+  now declares that it holds its storage exclusively, and a second client fails its
+  first query with `BUSY` instead. Closing the first client releases it.
+  **The error a second client receives changed** from `WORKER_CRASHED` or `TIMEOUT`
+  to `BUSY`, and it now arrives immediately rather than after a stall.
+
 ### Known limitation, unchanged and now more visible
 
 - **Serializing writers does not change which access handle a VFS holds.** Where
