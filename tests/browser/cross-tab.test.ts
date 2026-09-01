@@ -1,6 +1,6 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
-import { epochLockName } from '../../src/epochs';
+import { BARRIER_SQL, epochLockName } from '../../src/epochs';
 import { namespaceFor } from '../../src/locks';
 import { heldNamesIn, holdIn, makeRealm } from './helpers/realm';
 
@@ -25,31 +25,65 @@ const oneClient = () => {
   return { db, dbName };
 };
 
+const countBarrierStatements = (
+  db: ReturnType<typeof createSQLiteClient>,
+): number =>
+  (db.debug?.workers ?? [])
+    .flatMap((worker) => worker.requests)
+    .flatMap((request) => request.queries)
+    .filter((query) => query.sql === BARRIER_SQL).length;
+
 describe('an epoch published by another realm', () => {
-  // A foreign tab manifests to us ONLY as a held lock name, so holding that
-  // name from the iframe is the whole of what a second tab does to us. It
-  // isolates the mechanism rather than shortcutting it.
+  // poolSize: 1 makes the control direction deterministic: after the writes
+  // the single worker is current (seen = local epoch) and a read runs no
+  // barrier. Holding a foreign marker far ahead then forces exactly one.
   //
-  // Falsifiable: drop the `await epochs.originMax()` line in `applyBarrier`
-  // and this goes red — `barriers` stays 0 because the local cell never hears
-  // about the foreign commit.
+  // Falsifiable: drop the `await epochs.originMax(); epochs.raiseTo(origin);`
+  // lines in `applyBarrier` and this goes red — the local cell never hears
+  // about the foreign epoch, so barriers stays 0.
   it('makes this client run the barrier it would otherwise skip', async () => {
-    const { db, dbName } = oneClient();
+    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const db = createSQLiteClient(dbName, {
+      vfs: VFS,
+      poolSize: 1,
+      debug: true,
+    });
+    onTestFinished(async () => {
+      try {
+        await db.close();
+      } catch {
+        /* a failed client has nothing to close */
+      }
+      try {
+        const root = await navigator.storage.getDirectory();
+        await root.removeEntry(dbName, { recursive: true });
+      } catch {
+        /* the entry may not exist if the test failed before creation */
+      }
+    });
+
     await db.write('CREATE TABLE t (n)');
     await db.write('INSERT INTO t VALUES (1)');
-    // Every worker is now current with the local epoch, so a read here would
-    // run no barrier at all.
+    // The single worker is now current with the local epoch. A read here
+    // will not run a barrier — seen equals target, no foreign marker.
     await db.read('SELECT n FROM t');
 
+    // Control direction: no foreign marker → read adds no barrier statements.
+    const noMarkerBefore = countBarrierStatements(db);
+    await db.read('SELECT n FROM t');
+    expect(countBarrierStatements(db)).toBe(noMarkerBefore);
+
+    // Hold a marker far ahead of the local epoch from another realm, exactly
+    // as a foreign tab would after committing at epoch 9999.
     const realm = await makeRealm();
     const marker = epochLockName(namespaceFor(VFS), dbName, 9_999);
     const release = await holdIn(realm, marker, 'shared');
-    expect(await heldNamesIn(window)).toContain(marker);
 
-    // The read must now go through BARRIER_SQL: the origin reports 9999 and
-    // every worker's `seen` is far below it.
-    const rows = await db.read<{ n: number }>('SELECT n FROM t');
-    expect(rows.map((row) => row.n)).toEqual([1]);
+    // Foreign-marker direction: originMax() now reports 9999, raiseTo raises
+    // the local floor, and every worker's seen (≤ 2) is below the new target.
+    const withMarkerBefore = countBarrierStatements(db);
+    await db.read('SELECT n FROM t');
+    expect(countBarrierStatements(db)).toBeGreaterThan(withMarkerBefore);
 
     release();
   });
