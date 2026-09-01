@@ -40,6 +40,9 @@ export type Locks = {
   heldNames: () => Promise<string[]>;
 };
 
+import type { SQLiteVFS } from './types';
+import { VFS_CAPABILITIES } from './types';
+
 const STAGING_PREFIX = '__bsq_staging_';
 
 export const stagingTableName = (uuid: string) =>
@@ -53,8 +56,48 @@ export const stagingLockName = (file: string, table: string) =>
 
 export const sweepLockName = (file: string) => `bsq:sweep:${file}`;
 
+/**
+ * The storage namespace a VFS writes into — derived from `layout`, NEVER from
+ * the VFS name.
+ *
+ * `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and
+ * `OPFSWriteAheadVFS` all walk from `navigator.storage.getDirectory()` and open
+ * `getFileHandle(filename)`, so one database name is ONE file for all four. A
+ * per-VFS key would let two of them write the same bytes without ever
+ * excluding each other: a missed conflict corrupts, an invented one only slows.
+ *
+ * `idb-store` goes finer than its layout on purpose — its two VFS each own an
+ * IndexedDB database named after their class, so grouping them would invent a
+ * conflict for free. `opfs-pool` and `memory` are alone in their layout, so the
+ * VFS name is already the namespace.
+ *
+ * `worker/worker.ts:627` gates on `layout` for the same reason, in those words.
+ */
+export const namespaceFor = (vfs: SQLiteVFS): string =>
+  VFS_CAPABILITIES[vfs].layout === 'opfs-path' ? 'opfs' : vfs;
+
+/**
+ * Whether two clients on this VFS can reach the same bytes at all.
+ *
+ * False for the memory VFS: its pages live in the worker that opened them and
+ * `maxPoolSize` is 1, so two clients on one name are two independent
+ * databases. Locking them against each other would be wrong as well as slow —
+ * an origin round trip charged to the VFS chosen for speed. `delete.ts:79`
+ * skips the same layout, for the same reason.
+ */
+export const sharesStorage = (vfs: SQLiteVFS): boolean =>
+  VFS_CAPABILITIES[vfs].layout !== 'memory';
+
 /** Serializes database opening across the pool — replaces the SAB init mutex. */
-export const initLockName = (file: string) => `bsq:init:${file}`;
+export const initLockName = (vfs: SQLiteVFS, file: string) =>
+  `bsq:init:${namespaceFor(vfs)}:${file}`;
+
+/**
+ * Serializes WRITERS across every client and tab in the origin. Exclusive, so
+ * at most one is held per database at any instant however many clients exist.
+ */
+export const writeLockName = (vfs: SQLiteVFS, file: string) =>
+  `bsq:write:${namespaceFor(vfs)}:${file}`;
 
 /**
  * Which staging tables no live `output()` is using — pure, so it is driven by

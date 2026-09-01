@@ -81,7 +81,7 @@ export const deleteDatabase = async (
   const dbFile = normalizeDatabaseFile(file);
   const wasm = resolveWasmLocation(options.wasmUrl, build, location.href);
 
-  const ran = await createLocks().tryWithLock(initLockName(dbFile), () =>
+  const ran = await createLocks().tryWithLock(initLockName(vfs, dbFile), () =>
     runDelete({ file: dbFile, vfs, build, wasm }),
   );
 

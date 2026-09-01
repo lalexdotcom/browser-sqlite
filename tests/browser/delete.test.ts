@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
+import { initLockName } from '../../src/locks';
 
 /**
  * The database is gone when a fresh client on the same name finds no table.
@@ -94,7 +95,7 @@ describe('deleteDatabase', () => {
     const release = Promise.withResolvers<void>();
     const held = Promise.withResolvers<void>();
 
-    void navigator.locks.request(`bsq:init:${file}`, () => {
+    void navigator.locks.request(initLockName('OPFSAdaptiveVFS', file), () => {
       held.resolve();
       return release.promise;
     });
@@ -114,7 +115,7 @@ describe('deleteDatabase', () => {
     const release = Promise.withResolvers<void>();
     const held = Promise.withResolvers<void>();
 
-    void navigator.locks.request(`bsq:init:${file}`, () => {
+    void navigator.locks.request(initLockName('OPFSAdaptiveVFS', file), () => {
       held.resolve();
       return release.promise;
     });

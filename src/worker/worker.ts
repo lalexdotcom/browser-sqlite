@@ -204,7 +204,7 @@ const open = (file: string, options: OpenOptions) => {
         // xOpen, so an absolute name costs a character the budget cannot spare
         // (measured: broke all 96 browser tests on 56-char names). The VFS
         // normalizes internally, so 'data' and '/data' open the same OPFS file.
-        return locks.withLock(initLockName(file), async () => {
+        return locks.withLock(initLockName(vfs, file), async () => {
           const db = await sqlite.open_v2(file);
           for (const statement of renderPragmas(pragmas)) {
             for await (const stmt of sqlite.statements(db, statement)) {
