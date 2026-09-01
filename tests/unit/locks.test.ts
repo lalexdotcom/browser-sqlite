@@ -251,3 +251,79 @@ describe('tryWithLock', () => {
     expect(acquired).toBe(true);
   });
 });
+
+describe('hold options', () => {
+  it('defaults to an exclusive request', async () => {
+    const seen: unknown[] = [];
+    const manager = {
+      request: (
+        _name: string,
+        options: unknown,
+        callback: () => Promise<unknown>,
+      ) => {
+        seen.push(options);
+        void callback();
+        return Promise.resolve();
+      },
+      query: async () => ({ held: [] }),
+      // biome-ignore lint/suspicious/noExplicitAny: LockManager stand-in
+    } as any;
+    const release = await createLocks(manager).hold('bsq:probe');
+    release();
+    expect(seen).toEqual([{ mode: 'exclusive' }]);
+  });
+
+  it('passes a shared mode through', async () => {
+    const seen: unknown[] = [];
+    const manager = {
+      request: (
+        _name: string,
+        options: unknown,
+        callback: () => Promise<unknown>,
+      ) => {
+        seen.push(options);
+        void callback();
+        return Promise.resolve();
+      },
+      query: async () => ({ held: [] }),
+      // biome-ignore lint/suspicious/noExplicitAny: LockManager stand-in
+    } as any;
+    const release = await createLocks(manager).hold('bsq:probe', {
+      mode: 'shared',
+    });
+    release();
+    expect(seen).toEqual([{ mode: 'shared' }]);
+  });
+
+  // The signal is omitted rather than passed as undefined: Web Locks rejects
+  // `signal` together with `ifAvailable`, and an explicit undefined is the kind
+  // of thing an engine may or may not treat as absent.
+  it('includes the signal only when one was given', async () => {
+    const seen: unknown[] = [];
+    const manager = {
+      request: (
+        _name: string,
+        options: unknown,
+        callback: () => Promise<unknown>,
+      ) => {
+        seen.push(options);
+        void callback();
+        return Promise.resolve();
+      },
+      query: async () => ({ held: [] }),
+      // biome-ignore lint/suspicious/noExplicitAny: LockManager stand-in
+    } as any;
+    const controller = new AbortController();
+    const release = await createLocks(manager).hold('bsq:probe', {
+      signal: controller.signal,
+    });
+    release();
+    expect(seen).toEqual([{ mode: 'exclusive', signal: controller.signal }]);
+  });
+
+  it('no-op locks accept the options and still resolve a releaser', async () => {
+    const release = await noOpLocks.hold('bsq:probe', { mode: 'shared' });
+    expect(typeof release).toBe('function');
+    release();
+  });
+});

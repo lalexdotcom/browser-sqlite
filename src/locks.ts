@@ -9,6 +9,9 @@
  * collectable immediately, with no timestamp and no grace period.
  */
 
+import type { SQLiteVFS } from './types';
+import { VFS_CAPABILITIES } from './types';
+
 /** The slice of the Web Locks API this module uses. */
 type LockManager = {
   request: (
@@ -22,8 +25,18 @@ type LockManager = {
 export type Locks = {
   /** False when the Web Locks API is missing; every method then no-ops. */
   readonly available: boolean;
-  /** Acquires `name` and resolves with the function that releases it. */
-  hold: (name: string) => Promise<() => void>;
+  /**
+   * Acquires `name` and resolves with the function that releases it.
+   *
+   * `mode: 'shared'` is what the epoch marker uses: many realms may hold the
+   * same name at once, so publishing never waits and two realms can never
+   * collide on one epoch number. `signal` aborts the WAIT — never the hold —
+   * and makes the request reject with `AbortError`.
+   */
+  hold: (
+    name: string,
+    options?: { mode?: 'exclusive' | 'shared'; signal?: AbortSignal },
+  ) => Promise<() => void>;
   /** Runs `fn` while holding `name` exclusively. */
   withLock: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
   /**
@@ -39,9 +52,6 @@ export type Locks = {
   /** Names currently held anywhere in this origin — every tab included. */
   heldNames: () => Promise<string[]>;
 };
-
-import type { SQLiteVFS } from './types';
-import { VFS_CAPABILITIES } from './types';
 
 const STAGING_PREFIX = '__bsq_staging_';
 
@@ -133,14 +143,21 @@ export const createLocks = (
 
   return {
     available: true,
-    hold: (name) =>
+    hold: (name, options) =>
       new Promise<() => void>((resolveReleaser, rejectOuter) => {
         let release!: () => void;
         const held = new Promise<void>((resolveHeld) => {
           release = resolveHeld;
         });
+        // Built conditionally rather than with `signal: options?.signal`: an
+        // explicit undefined is not reliably "absent" across engines, and Web
+        // Locks refuses `signal` alongside `ifAvailable`.
+        const requestOptions: { mode: string; signal?: AbortSignal } = {
+          mode: options?.mode ?? 'exclusive',
+        };
+        if (options?.signal) requestOptions.signal = options.signal;
         manager
-          .request(name, () => {
+          .request(name, requestOptions, () => {
             resolveReleaser(release);
             return held;
           })
