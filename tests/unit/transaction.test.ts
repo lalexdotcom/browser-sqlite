@@ -41,7 +41,7 @@ const harness = (worker: ReturnType<typeof fakeWorker>) => {
   };
   const transaction = createTransaction({
     scheduler: scheduler as never,
-    afterWrite: () => {},
+    afterWrite: () => Promise.resolve(),
     onPoisoned: (index: number) => poisoned.push(index),
     bulkFor: () => ({
       bulkWrite: () => ({ enqueue: async () => {}, close: async () => 0 }),

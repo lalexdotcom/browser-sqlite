@@ -529,7 +529,7 @@ export const createSQLiteClient = (
   };
 
   /** Records a commit. Called after the write, before its promise resolves. */
-  const afterWrite = (worker: PoolWorker) => {
+  const afterWrite = (worker: PoolWorker): Promise<unknown> => {
     const next = epochs.bump();
     worker.seen = advanceSeen(worker.seen, worker.epochTarget, next);
     // Assigned, not awaited: the bump must stay synchronous. The write lock's
@@ -539,6 +539,7 @@ export const createSQLiteClient = (
     publishing = epochs.publish(next).catch((error: unknown) => {
       logger.warn(`epoch publish failed: ${String(error)}`);
     });
+    return publishing;
   };
 
   /**
@@ -777,11 +778,10 @@ export const createSQLiteClient = (
       // read chained after write() sees the new epoch and runs the barrier. In
       // `finally`, so a failed write bumps too: that costs a barrier statement,
       // never a wrong read.
-      afterWrite(lease.worker);
       // Wait for the marker transition (new epoch acquired, previous released)
       // before write() resolves. A caller that queries held lock names
       // immediately after write() must see exactly one marker — the new one.
-      await publishing;
+      await afterWrite(lease.worker);
       // The lease returns when the worker confirms it is idle, not when the
       // caller leaves: a worker still inside step() must not be re-lent, and
       // the caller must not wait for it.

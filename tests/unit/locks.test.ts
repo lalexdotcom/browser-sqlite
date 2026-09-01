@@ -266,7 +266,6 @@ describe('hold options', () => {
         return Promise.resolve();
       },
       query: async () => ({ held: [] }),
-      // biome-ignore lint/suspicious/noExplicitAny: LockManager stand-in
     } as any;
     const release = await createLocks(manager).hold('bsq:probe');
     release();
@@ -286,7 +285,6 @@ describe('hold options', () => {
         return Promise.resolve();
       },
       query: async () => ({ held: [] }),
-      // biome-ignore lint/suspicious/noExplicitAny: LockManager stand-in
     } as any;
     const release = await createLocks(manager).hold('bsq:probe', {
       mode: 'shared',
@@ -311,7 +309,6 @@ describe('hold options', () => {
         return Promise.resolve();
       },
       query: async () => ({ held: [] }),
-      // biome-ignore lint/suspicious/noExplicitAny: LockManager stand-in
     } as any;
     const controller = new AbortController();
     const release = await createLocks(manager).hold('bsq:probe', {

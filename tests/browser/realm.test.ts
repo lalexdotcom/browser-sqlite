@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { heldNamesIn, holdIn, makeRealm } from './helpers/realm';
 
 const KEY_NAME = 'browser-sqlite.epochs.v1';
@@ -22,6 +22,9 @@ describe('a same-origin iframe as a second realm', () => {
     (globalThis as unknown as Record<symbol, unknown>)[parentSymbol] = new Map([
       ['probe.db', { value: 42 }],
     ]);
+    onTestFinished(() => {
+      delete (globalThis as unknown as Record<symbol, unknown>)[parentSymbol];
+    });
     expect(
       (realm as unknown as Record<symbol, unknown>)[realmSymbol],
     ).toBeUndefined();

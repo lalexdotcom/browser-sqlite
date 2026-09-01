@@ -110,6 +110,63 @@ describe('an epoch published by another realm', () => {
     ]);
   });
 
+  it('blocks transaction() until the epoch marker is granted', async () => {
+    // Falsifiable: remove the `await` before `deps.afterWrite(worker)` in
+    // transaction.ts's finally and this goes red — transaction() resolves
+    // before publish() grants the shared lock, so txResolved is true while
+    // our exclusive lock still blocks the grant.
+    //
+    // The simpler heldNamesIn shape (check after await transaction()) was
+    // attempted first and found non-falsifiable on both engines: the `await`
+    // in heldNamesIn itself yields to the browser, which grants the shared
+    // lock before the query() snapshot runs.
+    //
+    // A pre-held exclusive lock on epoch 1 was tried second and also failed
+    // WITH the fix: applyBarrier (run before the callback) calls originMax(),
+    // sees the pre-held lock, calls raiseTo(1), then afterWrite bumps to 2
+    // and publishes epoch 2 — bypassing the blocked epoch 1 entirely.
+    //
+    // This version holds the exclusive lock INSIDE the callback, AFTER tx.write().
+    // applyBarrier runs before the callback and cannot see it. The epoch
+    // counter stays at 0, so afterWrite will publish epoch 1 and be blocked.
+    // A realm (iframe) is used for the hold so the exclusive and shared
+    // requests come from different JS contexts, guaranteeing contention.
+    const { db, dbName } = oneClient();
+    const realm = await makeRealm();
+    // The first commit in a fresh client publishes epoch 1.
+    const marker = epochLockName(namespaceFor(VFS), dbName, 1);
+    let releaseExclusive: (() => void) | undefined;
+
+    let txResolved = false;
+    const txDone = db
+      .transaction(async (tx) => {
+        await tx.write('CREATE TABLE t (n)');
+        // applyBarrier ran before this callback — it does not see this lock.
+        // The epoch counter is still 0. afterWrite will bump to 1 and try
+        // to hold epoch 1 as shared; our exclusive blocks that grant.
+        releaseExclusive = await holdIn(realm, marker);
+      })
+      .then(() => {
+        txResolved = true;
+      });
+
+    try {
+      // 400 ms is far longer than the write round-trip. If transaction() has
+      // not resolved by then it is genuinely waiting for the lock grant.
+      const winner = await Promise.race([
+        txDone.then(() => 'tx' as const),
+        new Promise<'timeout'>((r) => setTimeout(r, 400, 'timeout')),
+      ]);
+      // With fix: transaction blocked → timeout wins.
+      // Without fix: transaction resolves early → tx wins.
+      expect(winner).toBe('timeout');
+      expect(txResolved).toBe(false);
+    } finally {
+      releaseExclusive?.();
+      await txDone;
+    }
+  });
+
   it('publishes exactly one marker per realm, whatever the pool size', async () => {
     const { db, dbName } = oneClient();
     await db.write('CREATE TABLE t (n)');
