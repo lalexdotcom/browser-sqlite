@@ -27,19 +27,17 @@ obligations and unmeasured ground.
 ## The verification baseline — compare against these, re-measured 2026-09-02
 
 Not history: the numbers a regression is detected against. **Every figure below was read off
-a run on 2026-09-02 in this container, on `feat/statement-cache-byte-bound`** — none is
-carried forward from an earlier session, and none is arithmetic. That branch adds 7 unit tests
-and 5 browser tests; **if it is ever dropped rather than merged, this table is 12 too high and
-must be re-measured, not decremented.**
+a run on 2026-09-02 in this container** — none is carried forward from an earlier session,
+and none is arithmetic.
 
 | command | result |
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | `status: pass`, **555 tests, 39 files, 0 failed files** |
-| `pnpm test:unit` | 354 tests, 17 files |
-| `pnpm test:browser` | 201 tests, 22 files |
-| `TEST_BROWSER=firefox pnpm test:browser` | **201 tests, 22 files — identical to Chromium** |
+| `pnpm test` | `status: pass`, **564 tests, 40 files, 0 failed files** |
+| `pnpm test:unit` | 359 tests, 17 files |
+| `pnpm test:browser` | 205 tests, 23 files |
+| `TEST_BROWSER=firefox pnpm test:browser` | **205 tests — identical to Chromium** |
 | `pnpm test:conformance` | 85 tests, 2 files, **73 passed / 12 skipped** |
 | `TEST_BROWSER=firefox pnpm test:conformance` | **85 tests, 73 / 12 — identical to Chromium** |
 | `pnpm test:consumer` | 24/24 stages |
@@ -49,9 +47,9 @@ must be re-measured, not decremented.**
 
 **The per-project split is here on purpose.** A total alone cannot say which suite moved, and
 the totals are what rot: this file carried "the browser project is 158/158" from 2026-08-28
-until 2026-09-02, by which point the same command read 201 — three rc.5 lots plus this one had
-added browser tests and nobody re-read the line. **Re-measure the whole table when you touch it; do not patch one
-cell.**
+until 2026-09-02, by which point the same command was reading well over two hundred — several
+rc.5 lots had added browser tests and nobody re-read the line. **Re-measure the whole table
+when you touch it; do not patch one cell.**
 
 **Read four fields from a test report, not three.** `status` and `failedFiles`
 show an unhandled rejection escaping outside any test, which the per-test
@@ -75,17 +73,19 @@ one machine and one build; slower CI hardware may still surface timing the campa
 None outstanding. **The next thing is rc.5's remaining scope, which is the user's to pick from
 `mem:follow-ups`.**
 
-## rc.5 so far: four lots, merged 2026-09-02
+## rc.5 so far: five lots, merged 2026-09-02
 
-Two branches, each merged into `main` with `--no-ff` and verified on the merged result; both are
+Three branches, each merged into `main` with `--no-ff` and verified on the merged result; all are
 deleted and no stale ref remains. Lots 1-3 rode one branch — the user judged them three faces of one
-feature and accepted a larger whole-branch review for it; lot 4 had its own. Both were verified
+feature and accepted a larger whole-branch review for it; lots 4 and 5 each had their own. Each was verified
 against the baseline table above, which is the only place that table lives.
 
 **Not pushed.** `main` sits ahead of `origin/main`, which is normal here.
 
-**Read the specs, not a summary** — all four are in `docs/superpowers/specs/`, dated 2026-08-31 and
-2026-09-02, and three carry amendments made during implementation.
+**Read the specs, not a summary** — lots 1-4 have one each in `docs/superpowers/specs/`, dated
+2026-08-31 and 2026-09-02, and three carry amendments made during implementation. **Lot 5 has no
+spec**: bounded, brainstormed in chat, and its whole case is the measurement campaign in
+`mem:measurements`.
 
 1. **Cross-tab coordination.** Writes serialize across every client and tab; read-your-own-writes
    holds across tabs on every VFS but `IDBMirrorVFS`. Mechanism and invariants: `mem:architecture`.
@@ -97,6 +97,11 @@ against the baseline table above, which is the only place that table lives.
    keeps. Internal only — no option changed. **It buys a ceiling, not a saving**, and the CHANGELOG
    says so in those words: one `bulkWrite` retained ~3 MB before and retains ~3 MB after. What was
    unbounded is an application accumulating many large templates.
+5. **Per-VFS default PRAGMAs**, declared in `VFS_CAPABILITIES.defaultPragmas` and generated into
+   the README's VFS table. Exactly one VFS clears the bar — `AccessHandlePoolVFS` gets
+   `locking_mode=exclusive` + `journal_mode=wal`, ~4.7x on write-transaction overhead, measured.
+   **Consumer pragmas are MERGED over the defaults, not substituted**, so setting `foreign_keys`
+   no longer costs a default nobody knew was there; naming a key is how one is refused.
 
 **Three consumer-visible behaviour changes, all from lots 1-3 and all in `CHANGELOG.md` under
 Breaking:** two clients

@@ -22,19 +22,36 @@ Numbers live in `mem:measurements`.
   `jLock`/`jUnlock` itself and silently ignores the option.
 - **`poolSize` multiplies the footprint whatever the VFS**, since every worker holds its
   own page cache. Default `poolSize` is 2.
-- **Journal mode and durability are not ours to default (2026-08-31).** Upstream's own
-  table, `node_modules/wa-sqlite/src/examples/README.md`, gives write-ahead logging to
-  `OPFSWriteAheadVFS` alone — and there it is implemented *inside* the VFS, always on,
-  not reachable through `PRAGMA journal_mode`. `AccessHandlePoolVFS` accepts
-  `journal_mode=wal` only under `locking_mode=exclusive`, i.e. `poolSize: 1`.
-  `OPFSAdaptiveVFS` without multiple access handles allows only `delete`, `memory` and
-  `off`. No VFS shipped here implements `xShmMap`. Relaxed durability
-  (`synchronous=normal`) is declared by three: `IDBBatchAtomicVFS`, `IDBMirrorVFS`,
-  `OPFSWriteAheadVFS`. **So a universal default PRAGMA set of WAL + NORMAL was dropped**:
-  it would buy nothing on six VFS and trade durability in silence on three — the shape
-  DEFAULT-1 already rejected, arrived at from the other direction. The one sourced lever
-  left is `cache_size` on `IDBBatchAtomicVFS`, whose batch-atomic mode needs a cache large
-  enough to hold the journal; that is a documented recommendation, never a default.
+- **Journal mode and durability are not ours to default — with exactly one exception
+  (2026-08-31, amended 2026-09-02).** Upstream's own table,
+  `node_modules/wa-sqlite/src/examples/README.md`, gives write-ahead logging to
+  `OPFSWriteAheadVFS` alone — and there it is implemented *inside* the VFS, always on, not
+  reachable through `PRAGMA journal_mode`. `OPFSAdaptiveVFS` without multiple access handles
+  allows only `delete`, `memory` and `off`. **No VFS shipped here implements `xShmMap`**, so
+  SQLite's own WAL is unavailable except where `locking_mode=exclusive` lets it run without
+  shared memory. Relaxed durability (`synchronous=normal`) is declared by three:
+  `IDBBatchAtomicVFS`, `IDBMirrorVFS`, `OPFSWriteAheadVFS` — and it is never ours to set,
+  because it spends the consumer's data rather than their milliseconds. **So a universal
+  default set of WAL + NORMAL stays dropped**: it would buy nothing on six VFS and trade
+  durability in silence on three.
+
+  **The exception is `AccessHandlePoolVFS`, and it ships:** `locking_mode=exclusive` +
+  `journal_mode=wal`, declared in `VFS_CAPABILITIES.defaultPragmas` and applied by
+  `resolvePragmas`. That VFS is single-connection by construction, which is what makes
+  exclusive locking free and SQLite's WAL reachable. **~4.7x on write-transaction overhead,
+  measured on both engines, with no capacity or durability cost** — `mem:measurements`.
+
+- **`cache_size` is NOT the lever this file used to call it (measured 2026-09-02).** The
+  claim was that it is the one sourced per-VFS lever left, `IDBBatchAtomicVFS`'s batch-atomic
+  mode needing a cache large enough to hold the journal. The mode is real and SQLite's
+  default does miss it. But **raising the bound costs zero bytes** (it is a cap, not a
+  reservation, 30 runs of 30) **and buys no measurable time** — Firefox shows none at all.
+  It is a documented recommendation, never a default, and now for a measured reason.
+
+- **Defaults are merged under the consumer's `pragmas`, never substituted for them.** A
+  consumer setting `foreign_keys` is answering their own question, not declining the VFS's
+  defaults; replacing would silently drop them. Naming a key is how a default is refused.
+  The full per-VFS set is generated into the README's VFS table from the same declaration.
 
 ## Per-VFS, beyond the table
 

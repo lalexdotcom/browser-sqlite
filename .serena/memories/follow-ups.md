@@ -48,42 +48,28 @@ measured numbers are the whole case, and they do not justify adding a handshake 
 path — the path GATE-1 and three abort defects were paid for. Reviving it needs no new
 measurement, only that table.
 
-### No default PRAGMAs — the entry that fell between two closures
+### A default `busy_timeout` — never decided, and now the only half left
 
-**Verified against the source 2026-09-02, not inherited:** `client.ts` passes
-`pragmas: clientOptions.pragmas ?? {}`, so a consumer who does not copy the README example
-runs on `journal_mode=DELETE` + `synchronous=FULL`. The README shows `journal_mode: 'WAL'`
-in its example only; nothing applies it.
+The PRAGMA-defaults half of this subject shipped on 2026-09-02 (`mem:vfs`, `mem:history`).
+`busy_timeout` did not, and it is not covered by that work: it is neither a journal nor a
+durability pragma, and no per-VFS default touches it.
 
-Raised by the external assessment of 2026-08-17 in two separate places — *"Ship `WAL` +
-`NORMAL` (+ `busy_timeout`) as defaults"* under Performance, and *"No `busy_timeout` and no
-`SQLITE_BUSY` retry"* under Robustness. Its severity grading is not trusted
-(`mem:conventions`); the observation is, because the code says so.
+**Where it came from.** The external assessment of 2026-08-17 raised it under Robustness —
+*"No `busy_timeout` and no `SQLITE_BUSY` retry. Each pool worker opens its own connection to
+the same file; legitimate lock collisions surface as raw errors."* The ryow-barrier design
+routed it to *the perf list* as a separate decision, and the perf list was closed by name in
+`feat/perf-measure` without touching it. **A subject routed to a list that is later closed by
+name is a subject nobody closed** — it took a session to notice.
 
-**How it was lost, which is worth as much as the item.** The ryow-barrier design routed "a
-default `busy_timeout`" to *the perf list* as a separate decision. The perf list was closed
-on 2026-08-31 by `feat/perf-measure`, which decided two items — the per-row object build and
-the shared `WebAssembly.Module` — and never touched this one. Nothing carried it here. **A
-subject routed to a list that is later closed by name is a subject nobody closed.**
+**rc.5 answered half of it by another mechanism.** Writes serialize across every client and
+tab through an origin-wide Web Lock, so the writer-against-writer `BUSY` is gone. What
+survives is a **reader against a writer**, and it is structural rather than fixable by a
+default: `journal_mode=DELETE` is permanent on almost every VFS here, because no VFS
+implements `xShmMap`. WAL is not the escape it would be on a filesystem.
 
-**rc.5 already answered half of it, by another mechanism.** Writes now serialize across every
-client and tab through an origin-wide Web Lock, so the writer-against-writer `BUSY` that
-motivated a busy handler is gone (`CHANGELOG.md`, Breaking). What survives is a **reader
-against a writer**, and only because `journal_mode=DELETE` makes a writer block readers.
-
-**So the order matters, and it is the opposite of the assessment's.** Decide the PRAGMA
-defaults first: WAL would remove most of those reader/writer collisions by itself, without a
-busy handler, without SQLite's handler sleeping, and without the deadlock risk the CoopSync
-entry below has to measure. A `busy_timeout` may have almost nothing left to do on the
-contention side once WAL is the default.
-
-**What has to be weighed, and none of it is measured here.** Changing a default is breaking
-for anyone relying on `DELETE`. WAL is not free or even available on every one of the nine
-VFS. And the assessment's "often an order of magnitude of write throughput on OPFS" is its
-claim, not a number this project owns — it does not enter `mem:measurements` as it stands.
-
-**Not the same subject as the entry below.** CoopSync's `SQLITE_BUSY` is a step of the VFS's
-own handle-transfer protocol, not a lock collision, and no PRAGMA default touches it.
+**Not the same subject as the entry below.** `OPFSCoopSyncVFS`'s `SQLITE_BUSY` is a step of
+the VFS's own handle-transfer protocol, not a lock collision. One setting reaches both; they
+fail for different reasons and the deadlock risk is only on that one.
 
 ### CoopSync turns a protocol step into a failure — `busy_timeout` is option A
 

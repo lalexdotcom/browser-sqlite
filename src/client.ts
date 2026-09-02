@@ -43,6 +43,7 @@ import {
   mergeSignals,
   normalizeDatabaseFile,
   renderPragmas,
+  resolvePragmas,
   resolveWasmLocation,
 } from './utils';
 
@@ -335,7 +336,14 @@ export const createSQLiteClient = (
   }
 
   // Fail at construction, not inside the first unrelated query.
-  if (clientOptions.pragmas) renderPragmas(clientOptions.pragmas);
+  // The VFS's declared defaults with the consumer's layered over them. Every
+  // later site reads THIS, never `clientOptions.pragmas` — including the debug
+  // state, so what `db.debug` reports is what the workers actually ran.
+  const pragmas = resolvePragmas(vfs, clientOptions.pragmas);
+
+  // Fail at construction, not inside the first unrelated query. The merged set
+  // is what gets validated: a bad default would otherwise reach a worker.
+  renderPragmas(pragmas);
 
   // TEST-ONLY, UNSUPPORTED. Read once here, validated, and converted to a
   // typed internal value so no `any` travels further. Absent from the public
@@ -491,7 +499,7 @@ export const createSQLiteClient = (
         pool,
         {
           vfs,
-          pragmas: clientOptions.pragmas ?? {},
+          pragmas,
           name: clientOptions.name ?? 'SQLite',
         },
         () => scheduler.stats(),
@@ -1035,7 +1043,7 @@ export const createSQLiteClient = (
       vfs,
       build,
       wasm,
-      pragmas: clientOptions.pragmas,
+      pragmas,
       statementCacheSize: DEFAULT_STATEMENT_CACHE_SIZE,
       statementCacheBytes,
       onDeath: handleDeath,
