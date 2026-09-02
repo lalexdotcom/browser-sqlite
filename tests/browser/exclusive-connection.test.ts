@@ -66,7 +66,7 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
     }
 
     expect(error).toBeInstanceOf(SQLiteError);
-    expect((error as SQLiteError).code).toBe('BUSY');
+    expect((error as SQLiteError).code).toBe('DATABASE_IN_USE');
     // The message must name the VFS and explain what to do.
     expect((error as SQLiteError).message).toMatch(/AccessHandlePoolVFS/);
     expect((error as SQLiteError).message).toMatch(/one connection at a time/);
@@ -96,7 +96,7 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
     const elapsed = Date.now() - start;
 
     expect(error).toBeInstanceOf(SQLiteError);
-    expect((error as SQLiteError).code).toBe('BUSY');
+    expect((error as SQLiteError).code).toBe('DATABASE_IN_USE');
     // Must be fast — well under the default 30-second open timeout.
     expect(elapsed).toBeLessThan(3000);
   });

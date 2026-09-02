@@ -624,7 +624,7 @@ export const createSQLiteClient = (
       await connLockPromise;
       if (connRelease === undefined) {
         throw new SQLiteError(
-          'BUSY',
+          'DATABASE_IN_USE',
           `${vfs} supports one connection at a time across the whole origin. ` +
             `Another tab or client is already connected to '${dbFile}'. ` +
             `Close that client to open a new one here.`,
@@ -1115,7 +1115,7 @@ export const createSQLiteClient = (
         // with a legible message rather than a WORKER_CRASHED stall.
         failClient(
           new SQLiteError(
-            'BUSY',
+            'DATABASE_IN_USE',
             `${vfs} supports one connection at a time across the whole origin. ` +
               `Another tab or client is already connected to '${dbFile}'. ` +
               `Close that client to open a new one here.`,

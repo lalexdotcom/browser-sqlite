@@ -195,7 +195,7 @@ describe('worker lifecycle — bounds', () => {
       vfs: 'AccessHandlePoolVFS',
     });
     await expect(second.read('SELECT 1')).rejects.toMatchObject({
-      code: 'BUSY',
+      code: 'DATABASE_IN_USE',
     });
 
     await first.close();

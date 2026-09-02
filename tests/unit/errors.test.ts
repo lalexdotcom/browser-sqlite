@@ -19,6 +19,13 @@ describe('SQLiteError', () => {
   it('is an Error', () => {
     expect(new SQLiteError('TIMEOUT', 'late')).toBeInstanceOf(Error);
   });
+
+  it('carries DATABASE_IN_USE on both code and name', () => {
+    const error = new SQLiteError('DATABASE_IN_USE', 'held elsewhere');
+    expect(error.code).toBe('DATABASE_IN_USE');
+    expect(error.name).toBe('DATABASE_IN_USE');
+    expect(error.sqliteCode).toBeUndefined();
+  });
 });
 
 describe('SQLiteError — SQLite result codes', () => {
