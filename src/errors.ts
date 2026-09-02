@@ -2,6 +2,11 @@
  * Every failure this library raises on its own behalf. A caller discriminates
  * on `code`, or on `name` — they carry the same value, so `err.name` reads the
  * way `'AbortError'` does on the DOMException an aborted signal throws.
+ * `DATABASE_IN_USE` is this library's own: a database that a live client holds,
+ * as opposed to `BUSY`, which covers a transient conflict worth retrying.
+ * `DATABASE_NOT_FOUND` is raised only by `deleteDatabase`: there is nothing at
+ * that name to delete. `createSQLiteClient` creates what is absent, so it has
+ * no such case.
  */
 export type SQLiteErrorCode =
   | 'NOT_A_READ_QUERY'
@@ -14,6 +19,8 @@ export type SQLiteErrorCode =
   | 'INVALID_PRAGMA'
   | 'BULK_WRITE_FAILED'
   | 'BUSY'
+  | 'DATABASE_IN_USE'
+  | 'DATABASE_NOT_FOUND'
   | 'READ_ONLY_TRANSACTION';
 
 export class SQLiteError extends Error {

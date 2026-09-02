@@ -147,3 +147,39 @@ describe('VFS layout declarations', () => {
     }
   });
 });
+
+describe('exclusiveConnection', () => {
+  const names = Object.keys(VFS_CAPABILITIES) as SQLiteVFS[];
+
+  // Falsifiable: set exclusiveConnection to false on AccessHandlePoolVFS and
+  // this goes red. That is the whole point — the guard in client.ts reads this
+  // field to decide whether to enforce the origin-wide connection lock, so a
+  // wrong false here means a second client is handed a silently broken view.
+  it('is true only for AccessHandlePoolVFS', () => {
+    expect(VFS_CAPABILITIES.AccessHandlePoolVFS.exclusiveConnection).toBe(true);
+    for (const vfs of names) {
+      if (vfs === 'AccessHandlePoolVFS') continue;
+      expect(VFS_CAPABILITIES[vfs].exclusiveConnection).toBe(false);
+    }
+  });
+
+  // Falsifiable: set exclusiveConnection to true on IDBMirrorVFS. Despite
+  // multiConnection: false, that VFS shares data via BroadcastChannel (measured
+  // 2026-09-01), so exclusiveConnection must stay false there.
+  it('is false for IDBMirrorVFS, which shares data across clients via BroadcastChannel', () => {
+    expect(VFS_CAPABILITIES.IDBMirrorVFS.exclusiveConnection).toBe(false);
+    expect(VFS_CAPABILITIES.IDBMirrorVFS.multiConnection).toBe(false);
+  });
+
+  // Falsifiable: set exclusiveConnection to true on MemoryVFS.
+  it('is false for the memory VFS, which are isolated by construction', () => {
+    expect(VFS_CAPABILITIES.MemoryVFS.exclusiveConnection).toBe(false);
+    expect(VFS_CAPABILITIES.MemoryAsyncVFS.exclusiveConnection).toBe(false);
+  });
+
+  it('declares the field for every VFS', () => {
+    for (const vfs of names) {
+      expect(typeof VFS_CAPABILITIES[vfs].exclusiveConnection).toBe('boolean');
+    }
+  });
+});

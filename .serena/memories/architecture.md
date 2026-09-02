@@ -2,7 +2,8 @@
 
 `browser-sqlite`: persistent SQLite in the browser — wa-sqlite (WASM) + a Web Worker
 pool + an OPFS/IndexedDB VFS. **Concurrency model: concurrent reads across the pool,
-writes serialized through one designated writer worker.** That model is sound and is the
+writes serialized through one designated writer worker — and, since rc.5, serialized again
+across every client and tab by an origin-wide Web Lock.** That model is sound and is the
 thing worth preserving.
 
 Stack, build output and test tooling: `mem:stack-and-build`. VFS: `mem:vfs`.
@@ -23,10 +24,10 @@ Stack, build output and test tooling: `mem:stack-and-build`. VFS: `mem:vfs`.
 | `transaction.ts` | 200 | `transaction()` over a single lease held for its whole lifetime. Evicts a worker whose fallback `ROLLBACK` failed. |
 | `bulk.ts` | 334 | `bulkWrite()` + `output()`. Calls the **public** `write` — one lease per batch, worker released between batches. Do not consolidate it into one held lease; multi-tab safety depends on it. |
 | `credits.ts` | 94 | The pure credit gate. `createCreditGate(tick)`, `createMessageChannelTick`, `DEFAULT_CREDIT_WINDOW = 2`. |
-| `epochs.ts` | 89 | The barrier's state: a per-database commit epoch in the realm-wide symbol registry (`Symbol.for('browser-sqlite.epochs.v1')`), so every client in a tab shares it. `epochsFor`, `advanceSeen`, `BARRIER_SQL`. |
+| `epochs.ts` | — | The barrier's state. The realm-wide symbol registry (`Symbol.for('browser-sqlite.epochs.v1')`) is still there and every client in a tab shares it — but since rc.5 it is a **floor**, not the authority: `originMax()` reads `max(n)` over held `bsq:epoch:<ns>:<file>:<n>` lock names and `raiseTo` can only lift the cell. **`Symbol.for` is shared across realms; `globalThis` is not** — measured, and that is where the per-realm separation actually comes from, not from the symbol. `current`/`bump`/`raiseTo` are synchronous and must stay so; only `originMax`/`publish` are async. |
 | `debug.ts` | 238 | Instrumentation behind the `debug` option. Both histories bounded at 50; `queue` is getter-backed and reads through `scheduler.stats()`, so no counter can go stale. |
 | `logger.ts` | 30 | `createLogger(prefix, enabled, sink = console)`. **Lifecycle events only** — never per query. Disabled, it returns three no-op closures allocated once. |
-| `locks.ts` | 129 | Web Locks wrapper + the pure sweep decision. `createLocks`, `noOpLocks` (use this in tests — `createLocks(undefined)` falls back to the real API and **Node 24 ships one**), `initLockName`, `stagingTableName`/`stagingLockName`/`sweepLockName`, `staleStagingTables`. |
+| `locks.ts` | — | Web Locks wrapper + the pure sweep decision + **every lock name this library takes**. `createLocks`, `noOpLocks` (use this in tests — `createLocks(undefined)` falls back to the real API and **Node 24 ships one**), `hold(name, { mode, signal })`, `namespaceFor`/`sharesStorage`, `initLockName(vfs, file)`/`writeLockName(vfs, file)`, `stagingTableName`/`stagingLockName`/`sweepLockName`, `staleStagingTables`. **`namespaceFor` derives from `VFS_CAPABILITIES.layout`, never from the VFS name** — four VFS resolve one database name to the same OPFS path, so a per-VFS key would let two clients write the same bytes unexcluded. Staging and sweep stay keyed on the file alone, deliberately: their uniqueness comes from the table's UUID. |
 | `utils.ts` | 205 | `isReadQuery`/`isWriteQuery` + `assertReadable` + `quoteIdent`/`renderPragmas` + `sqlParams`/`addParam`. |
 | `worker/worker.ts` | 700 | Worker thread: VFS bootstrap, `open`, statement execution, chunked streaming. Holds `VFSConfigs` and `WA_SQLITE_BUILDS`. **Constructs every VFS with `{ lockPolicy: 'shared' }` (`:159`).** `ready` only on success, `open-error` on failure; every `cause` structured-clone-probed; exhaustive message dispatch. |
 | `worker/statement-cache.ts` | 85 | **Pure** — a per-worker LRU of prepared statements keyed by the exact SQL string. Prepares nothing, finalises nothing, imports nothing: `set`/`markUncacheable` return the handles their insertion evicted and `worker.ts` finalises them, so no handle can be dropped by omission. Unit-tested in Node against plain integers. |
@@ -81,8 +82,14 @@ database. `'shared'` maps SQLite's lock levels onto Web Locks instead, which is 
 `poolSize` connections share one file. Anyone tempted to drop the option and inherit the
 default is removing concurrent reads. The other option of the same mixin, `lockTimeout`,
 is left at `Infinity` deliberately: it applies only to blocking acquisitions, and the
-write-lock transitions are polled (`ifAvailable`), so it would change nothing that matters
-(`mem:follow-ups`, W-multitab).
+write-lock transitions are polled (`ifAvailable`), so it would change nothing that matters.
+
+**`WebLocksMixin` is also what makes `poolSize` visible to `navigator.locks.query()`**, and
+rc.5's cross-tab design has to know it: the mixin takes up to three named locks
+`lock##<file>##{gate,access,reserved}` per connection, held only while that connection holds
+a SQLite lock. One query in flight per worker bounds it at one or two per simultaneously
+active worker. **Read from source, never measured** — see `mem:state` for the design that
+depends on it and `mem:measurements` for what a held lock costs a `query()`.
 
 **Routing is an allowlist, and its second clause is not decoration.** `isReadQuery`
 requires an allowlisted opening keyword **and** no write keyword anywhere in the
@@ -121,9 +128,11 @@ the barrier must know it is what holds rule 3 up.**
 
 ## The commit-propagation barrier
 
-Read-your-own-writes is guaranteed **within a tab**, not across tabs. Design:
-`docs/superpowers/specs/2026-08-21-ryow-barrier-design.md` — read it rather than any
-summary. Four things it settled that are easy to get wrong again:
+Read-your-own-writes holds **within a tab and across tabs** since rc.5, on every VFS but
+`IDBMirrorVFS`. Two designs, and read both rather than any summary:
+`docs/superpowers/specs/2026-08-21-ryow-barrier-design.md` for the barrier itself, and
+`docs/superpowers/specs/2026-08-31-cross-tab-coordination-design.md` for how the epoch left
+the realm. Four things the first settled that are easy to get wrong again:
 
 - The epoch bump **cannot** ride on `lease.release()`: release is async, so `write()`
   resolves first and a read chained after it would still see the old epoch. It is posted
@@ -135,6 +144,28 @@ summary. Four things it settled that are easy to get wrong again:
   `initLockName`'s raw-string key and `OPFSWriteAheadVFS` throwing on `'./name'`.
 - A failed fallback `ROLLBACK` leaves an open transaction on a pooled connection, where
   the prelude would succeed and refresh nothing. The worker is evicted instead.
+
+## Cross-tab, since rc.5 — the invariants that hold it up
+
+Design: `docs/superpowers/specs/2026-08-31-cross-tab-coordination-design.md`. Line counts in
+the table above are stale from here on; re-count before citing them.
+
+- **Lock before lease, never after.** `acquireInstrumented` takes `bsq:write:<ns>:<file>`
+  before `scheduler.acquire`. The reverse holds a pool worker while blocked on a cross-tab
+  lock, and at `poolSize: 2` two queued writes then starve the same tab's reads.
+- **The epoch bump stays synchronous, and `write()`/`transaction()` await the publication.**
+  Holding the write lock across the publish is **not** sufficient — reads take no lock, so a
+  foreign read can `query()` in the gap and miss the commit. That hole was found twice: once
+  on `write()` during implementation, once on `transaction()` by the final review.
+- **The marker is held `shared`.** Nobody reads the lock; the name is the state. Exclusive
+  would make two realms arriving at the same `n` block on each other, inside the write lock,
+  unbounded.
+- **One marker per realm per database**, released only when a higher one is taken and never on
+  `close()`. That bound is what keeps `query()` cheap — its cost is linear in the origin's
+  held-lock count (`mem:measurements`).
+- **A client must never hold the write lock across more than one write.** A refcounted hold
+  shared between a client's concurrent writes was proposed and rejected: with overlapping
+  writes the count never reaches zero and that client starves every other tab.
 
 **The barrier is permanent architecture, not a stopgap awaiting a better VFS** —
 staleness is a property of the multi-connection setup, measured identical on every VFS

@@ -1,6 +1,8 @@
-import { afterEach, describe, expect, it } from '@rstest/core';
+import { afterEach, describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
+import { SQLiteError } from '../../src/errors';
+import { initLockName } from '../../src/locks';
 
 /**
  * The database is gone when a fresh client on the same name finds no table.
@@ -47,26 +49,6 @@ describe('deleteDatabase', () => {
     expect(await tableCount(file)).toBe(0);
   });
 
-  // SQLite's own xDelete is content with a missing file, and this is also what
-  // makes the OPFS pass inert once upstream's jDelete is fixed.
-  it('succeeds on a database that was never created', async () => {
-    await expect(
-      deleteDatabase(freshFile(), { vfs: 'OPFSAdaptiveVFS' }),
-    ).resolves.toBeUndefined();
-  });
-
-  it('is idempotent', async () => {
-    const file = freshFile();
-    const db = createSQLiteClient(file, { vfs: 'OPFSAdaptiveVFS' });
-    await db.write('CREATE TABLE t (a INTEGER)');
-    await db.close();
-
-    await deleteDatabase(file, { vfs: 'OPFSAdaptiveVFS' });
-    await expect(
-      deleteDatabase(file, { vfs: 'OPFSAdaptiveVFS' }),
-    ).resolves.toBeUndefined();
-  });
-
   it('rejects with INVALID_OPTION when vfs is missing', async () => {
     await expect(
       // @ts-expect-error — the guard exists for JavaScript callers
@@ -94,7 +76,7 @@ describe('deleteDatabase', () => {
     const release = Promise.withResolvers<void>();
     const held = Promise.withResolvers<void>();
 
-    void navigator.locks.request(`bsq:init:${file}`, () => {
+    void navigator.locks.request(initLockName('OPFSAdaptiveVFS', file), () => {
       held.resolve();
       return release.promise;
     });
@@ -111,10 +93,15 @@ describe('deleteDatabase', () => {
   // `tryWithLock`, and the second call finds a lock nobody released.
   it('releases the lock after a rejection, so a retry is possible', async () => {
     const file = freshFile();
+    // Create the database so the retry resolves rather than throwing DATABASE_NOT_FOUND.
+    const db = createSQLiteClient(file, { vfs: 'OPFSAdaptiveVFS' });
+    await db.write('CREATE TABLE t (a INTEGER)');
+    await db.close();
+
     const release = Promise.withResolvers<void>();
     const held = Promise.withResolvers<void>();
 
-    void navigator.locks.request(`bsq:init:${file}`, () => {
+    void navigator.locks.request(initLockName('OPFSAdaptiveVFS', file), () => {
       held.resolve();
       return release.promise;
     });
@@ -133,5 +120,164 @@ describe('deleteDatabase', () => {
     await expect(
       deleteDatabase(file, { vfs: 'OPFSAdaptiveVFS' }),
     ).resolves.toBeUndefined();
+  });
+
+  describe('deleteDatabase on a database that is not there', () => {
+    for (const vfs of [
+      'OPFSAdaptiveVFS',
+      'OPFSAnyContextVFS',
+      'OPFSCoopSyncVFS',
+      'OPFSWriteAheadVFS',
+      'AccessHandlePoolVFS',
+      'IDBBatchAtomicVFS',
+      'IDBMirrorVFS',
+    ] as const) {
+      // Falsifiable: remove the probe in deleteDatabaseFiles and every one of
+      // these resolves instead of throwing — that is what the code does today.
+      it(`throws DATABASE_NOT_FOUND on ${vfs} when nothing was created`, async () => {
+        const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+        const error = await deleteDatabase(dbName, { vfs }).then(
+          () => undefined,
+          (e) => e,
+        );
+        expect(error).toBeInstanceOf(SQLiteError);
+        expect((error as SQLiteError).code).toBe('DATABASE_NOT_FOUND');
+      });
+
+      it(`deletes on ${vfs}, then reports the second attempt`, async () => {
+        const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+        const db = createSQLiteClient(dbName, { vfs, poolSize: 1 });
+        await db.write('CREATE TABLE t (n)');
+        await db.close();
+
+        await expect(deleteDatabase(dbName, { vfs })).resolves.toBeUndefined();
+
+        const error = await deleteDatabase(dbName, { vfs }).then(
+          () => undefined,
+          (e) => e,
+        );
+        expect((error as SQLiteError).code).toBe('DATABASE_NOT_FOUND');
+      });
+    }
+
+    it('still resolves on the memory VFS, which persists nothing', async () => {
+      await expect(
+        deleteDatabase(`browser-sqlite-test-${crypto.randomUUID()}`, {
+          vfs: 'MemoryVFS',
+        }),
+      ).resolves.toBeUndefined();
+    });
+  });
+});
+
+describe('deleteDatabase under a live connection', () => {
+  const liveClient = (
+    vfs:
+      | 'OPFSAnyContextVFS'
+      | 'IDBBatchAtomicVFS'
+      | 'IDBMirrorVFS'
+      | 'OPFSAdaptiveVFS',
+  ) => {
+    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const db = createSQLiteClient(dbName, { vfs, poolSize: 1 });
+    onTestFinished(async () => {
+      try {
+        await db.close();
+      } catch {
+        /* a failed client has nothing to close */
+      }
+      try {
+        await deleteDatabase(dbName, { vfs });
+      } catch {
+        /* best-effort cleanup */
+      }
+    });
+    return { db, dbName };
+  };
+
+  for (const vfs of [
+    'OPFSAnyContextVFS',
+    'IDBBatchAtomicVFS',
+    'IDBMirrorVFS',
+    'OPFSAdaptiveVFS',
+  ] as const) {
+    // Falsifiable: remove the connection-lock acquisition in delete.ts and the
+    // first three go red by resolving (they delete the database today), while
+    // OPFSAdaptiveVFS goes red with WORKER_CRASHED instead of DATABASE_IN_USE.
+    it(`refuses with DATABASE_IN_USE on ${vfs}`, async () => {
+      const { db, dbName } = liveClient(vfs);
+      await db.write('CREATE TABLE t (n)');
+      await db.write('INSERT INTO t VALUES (1)');
+
+      const error = await deleteDatabase(dbName, { vfs }).then(
+        () => undefined,
+        (e) => e,
+      );
+      expect(error).toBeInstanceOf(SQLiteError);
+      expect((error as SQLiteError).code).toBe('DATABASE_IN_USE');
+
+      // The live client is untouched — this is the whole point.
+      const rows = await db.read<{ n: number }>('SELECT n FROM t');
+      expect(rows.map((r) => r.n)).toEqual([1]);
+    });
+
+    it(`deletes on ${vfs} once the client has closed`, async () => {
+      const { db, dbName } = liveClient(vfs);
+      await db.write('CREATE TABLE t (n)');
+      await db.close();
+      await expect(deleteDatabase(dbName, { vfs })).resolves.toBeUndefined();
+    });
+  }
+
+  it('still deletes on the memory VFS with a client open — nothing is shared there', async () => {
+    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const db = createSQLiteClient(dbName, { vfs: 'MemoryVFS', poolSize: 1 });
+    onTestFinished(async () => {
+      try {
+        await db.close();
+      } catch {
+        /* a failed client has nothing to close */
+      }
+    });
+    await db.write('CREATE TABLE t (n)');
+    await expect(
+      deleteDatabase(dbName, { vfs: 'MemoryVFS' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('refuses a delete issued in the same task as a client construction', async () => {
+    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const vfs = 'OPFSAdaptiveVFS' as const;
+
+    // Both requests are issued in this one task, client first. Per the Web Locks
+    // specification the queue is FIFO per name, so the client's shared request is
+    // processed first and the delete's ifAvailable request meets it pending.
+    const db = createSQLiteClient(dbName, { vfs, poolSize: 1 });
+    const attempt = deleteDatabase(dbName, { vfs }).then(
+      () => undefined,
+      (e) => e,
+    );
+
+    onTestFinished(async () => {
+      try {
+        await db.close();
+      } catch {
+        /* a failed client has nothing to close */
+      }
+      try {
+        await deleteDatabase(dbName, { vfs });
+      } catch {
+        /* best-effort cleanup */
+      }
+    });
+
+    const error = await attempt;
+    expect(error).toBeInstanceOf(SQLiteError);
+    expect((error as SQLiteError).code).toBe('DATABASE_IN_USE');
+
+    // And the client that won the race is usable.
+    await db.write('CREATE TABLE t (n)');
+    const rows = await db.read('SELECT n FROM t');
+    expect(rows).toEqual([]);
   });
 });

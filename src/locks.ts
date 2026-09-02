@@ -9,6 +9,9 @@
  * collectable immediately, with no timestamp and no grace period.
  */
 
+import type { SQLiteVFS } from './types';
+import { VFS_CAPABILITIES } from './types';
+
 /** The slice of the Web Locks API this module uses. */
 type LockManager = {
   request: (
@@ -22,8 +25,31 @@ type LockManager = {
 export type Locks = {
   /** False when the Web Locks API is missing; every method then no-ops. */
   readonly available: boolean;
-  /** Acquires `name` and resolves with the function that releases it. */
-  hold: (name: string) => Promise<() => void>;
+  /**
+   * Acquires `name` and resolves with the function that releases it.
+   *
+   * `mode: 'shared'` is what the epoch marker uses: many realms may hold the
+   * same name at once, so publishing never waits and two realms can never
+   * collide on one epoch number. `signal` aborts the WAIT — never the hold —
+   * and makes the request reject with `AbortError`.
+   *
+   * `ifAvailable: true` mirrors `tryWithLock`'s semantics: the real API hands
+   * the callback `null` rather than waiting when the lock is held elsewhere.
+   * Resolves with `undefined` in that case instead of waiting. Never waits —
+   * that is the point for the connection guard.
+   */
+  hold(
+    name: string,
+    options?: { mode?: 'exclusive' | 'shared'; signal?: AbortSignal },
+  ): Promise<() => void>;
+  hold(
+    name: string,
+    options: {
+      mode?: 'exclusive' | 'shared';
+      signal?: AbortSignal;
+      ifAvailable: true;
+    },
+  ): Promise<(() => void) | undefined>;
   /** Runs `fn` while holding `name` exclusively. */
   withLock: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
   /**
@@ -53,8 +79,64 @@ export const stagingLockName = (file: string, table: string) =>
 
 export const sweepLockName = (file: string) => `bsq:sweep:${file}`;
 
+/**
+ * The storage namespace a VFS writes into — derived from `layout`, NEVER from
+ * the VFS name.
+ *
+ * `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and
+ * `OPFSWriteAheadVFS` all walk from `navigator.storage.getDirectory()` and open
+ * `getFileHandle(filename)`, so one database name is ONE file for all four. A
+ * per-VFS key would let two of them write the same bytes without ever
+ * excluding each other: a missed conflict corrupts, an invented one only slows.
+ *
+ * `idb-store` goes finer than its layout on purpose — its two VFS each own an
+ * IndexedDB database named after their class, so grouping them would invent a
+ * conflict for free. `opfs-pool` and `memory` are alone in their layout, so the
+ * VFS name is already the namespace.
+ *
+ * `worker/worker.ts:627` gates on `layout` for the same reason, in those words.
+ */
+export const namespaceFor = (vfs: SQLiteVFS): string =>
+  VFS_CAPABILITIES[vfs].layout === 'opfs-path' ? 'opfs' : vfs;
+
+/**
+ * Whether two clients on this VFS can reach the same bytes at all.
+ *
+ * False for the memory VFS: its pages live in the worker that opened them and
+ * `maxPoolSize` is 1, so two clients on one name are two independent
+ * databases. Locking them against each other would be wrong as well as slow —
+ * an origin round trip charged to the VFS chosen for speed. `delete.ts:79`
+ * skips the same layout, for the same reason.
+ */
+export const sharesStorage = (vfs: SQLiteVFS): boolean =>
+  VFS_CAPABILITIES[vfs].layout !== 'memory';
+
 /** Serializes database opening across the pool — replaces the SAB init mutex. */
-export const initLockName = (file: string) => `bsq:init:${file}`;
+export const initLockName = (vfs: SQLiteVFS, file: string) =>
+  `bsq:init:${namespaceFor(vfs)}:${file}`;
+
+/**
+ * Serializes WRITERS across every client and tab in the origin. Exclusive, so
+ * at most one is held per database at any instant however many clients exist.
+ */
+export const writeLockName = (vfs: SQLiteVFS, file: string) =>
+  `bsq:write:${namespaceFor(vfs)}:${file}`;
+
+/**
+ * Origin-wide exclusive connection lock for VFS that cannot safely share a
+ * database across clients (`exclusiveConnection: true` in `VFS_CAPABILITIES`).
+ *
+ * Held for the client's lifetime. A second `createSQLiteClient` that tries to
+ * open the same database will fail its first query with `BUSY` instead of
+ * silently reading a broken, frozen view — the failure mode measured as
+ * AHP-2TAB (2026-09-01) where `SELECT 1` passes and `SELECT count(*) FROM
+ * sqlite_master` returns 0 on an unfixable connection.
+ *
+ * The key uses `namespaceFor(vfs)` for the same reason `writeLockName` does:
+ * the gate is by layout declaration, not by VFS name.
+ */
+export const connectionLockName = (vfs: SQLiteVFS, file: string) =>
+  `bsq:conn:${namespaceFor(vfs)}:${file}`;
 
 /**
  * Which staging tables no live `output()` is using — pure, so it is driven by
@@ -90,19 +172,45 @@ export const createLocks = (
 
   return {
     available: true,
-    hold: (name) =>
-      new Promise<() => void>((resolveReleaser, rejectOuter) => {
+    hold: ((
+      name: string,
+      options?: {
+        mode?: 'exclusive' | 'shared';
+        signal?: AbortSignal;
+        ifAvailable?: boolean;
+      },
+    ) =>
+      new Promise<(() => void) | undefined>((resolveReleaser, rejectOuter) => {
+        const ifAvail: boolean = options?.ifAvailable === true;
         let release!: () => void;
         const held = new Promise<void>((resolveHeld) => {
           release = resolveHeld;
         });
+        // Built conditionally rather than with `signal: options?.signal`: an
+        // explicit undefined is not reliably "absent" across engines, and Web
+        // Locks refuses `signal` alongside `ifAvailable`.
+        const requestOptions: {
+          mode: string;
+          signal?: AbortSignal;
+          ifAvailable?: true;
+        } = { mode: options?.mode ?? 'exclusive' };
+        if (options?.signal) requestOptions.signal = options.signal;
+        // `ifAvailable` must be absent (not merely false) when not requested —
+        // Web Locks refuses `signal` alongside `ifAvailable`, so we only set it
+        // when the caller explicitly asked for the non-blocking behaviour.
+        if (ifAvail) requestOptions.ifAvailable = true;
         manager
-          .request(name, () => {
+          .request(name, requestOptions, (lock) => {
+            // `ifAvailable` hands the callback null instead of waiting.
+            if (ifAvail && !lock) {
+              resolveReleaser(undefined);
+              return Promise.resolve();
+            }
             resolveReleaser(release);
             return held;
           })
           .catch(rejectOuter);
-      }),
+      })) as Locks['hold'],
     withLock: <T>(name: string, fn: () => Promise<T>) =>
       manager.request(name, { mode: 'exclusive' }, () => fn()) as Promise<T>,
     tryWithLock: async (name, fn) => {

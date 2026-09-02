@@ -95,6 +95,8 @@ export type WorkerMessageData =
     }
   | { type: 'closed'; callId: number }
   | { type: 'deleted'; callId: number }
+  /** The delete worker found nothing at that name; deleteDatabase turns it into DATABASE_NOT_FOUND. */
+  | { type: 'not-found' }
   | {
       type: 'open-error';
       callId: number;
@@ -200,6 +202,31 @@ export type VFSCapability = {
    * mark that VFS broken everywhere outside Chromium, when it merely degrades.
    */
   readonly degradesWithout: readonly PlatformFeature[];
+  /**
+   * Whether this VFS enforces an origin-wide exclusive connection lock for the
+   * client's lifetime.
+   *
+   * When `true`, `createSQLiteClient` acquires a `bsq:conn:…` Web Lock on first
+   * use. A second client that attempts to open the same database receives `BUSY`
+   * immediately on its first query instead of silently reading a frozen, broken
+   * view. This field is the only thing standing between a consumer and an
+   * unfalsifiable silent failure — `SELECT 1` and even
+   * `SELECT count(*) FROM sqlite_master` pass on a broken second client.
+   *
+   * `true` only for `AccessHandlePoolVFS`, whose OPFS access-handle pool is not
+   * sharable across connections (measured AHP-2TAB, 2026-09-01).
+   * `false` for `IDBMirrorVFS` — despite `multiConnection: false` — because two
+   * clients on that VFS DO share data over its origin-wide `BroadcastChannel`
+   * (measured 2026-09-01, 3/3 both engines). `multiConnection: false` there marks
+   * concurrent-writer unsafety, not isolation.
+   * `false` for the memory VFS, which are isolated by construction and have
+   * nothing to exclude.
+   *
+   * `VFS_CAPABILITIES` is the single source of truth the client guard, the
+   * conformance suite, the README generator and the benchmark page all read.
+   * The gate is by this declaration, not by VFS name.
+   */
+  readonly exclusiveConnection: boolean;
 };
 
 /**
@@ -227,6 +254,7 @@ export const VFS_CAPABILITIES = {
     layout: 'opfs-path',
     requires: ['opfs'],
     degradesWithout: ['readwrite-unsafe'],
+    exclusiveConnection: false,
   },
   OPFSWriteAheadVFS: {
     builds: ['sync', 'async', 'jspi'],
@@ -244,6 +272,7 @@ export const VFS_CAPABILITIES = {
     // Safari is still unmeasured for this VFS — see `mem:follow-ups`.
     requires: ['opfs'],
     degradesWithout: ['readwrite-unsafe'],
+    exclusiveConnection: false,
   },
   OPFSCoopSyncVFS: {
     builds: ['sync', 'async', 'jspi'],
@@ -256,6 +285,7 @@ export const VFS_CAPABILITIES = {
     layout: 'opfs-path',
     requires: ['opfs'],
     degradesWithout: [],
+    exclusiveConnection: false,
   },
   AccessHandlePoolVFS: {
     builds: ['sync', 'async', 'jspi'],
@@ -268,6 +298,11 @@ export const VFS_CAPABILITIES = {
     layout: 'opfs-pool',
     requires: ['opfs'],
     degradesWithout: [],
+    // Two clients on one database break each other silently (AHP-2TAB,
+    // 2026-09-01): the second resolves SELECT 1 but cannot read any table. An
+    // origin-wide connection lock ensures the second client fails fast with
+    // BUSY instead of appearing healthy and being useless.
+    exclusiveConnection: true,
   },
   IDBBatchAtomicVFS: {
     builds: ['async', 'jspi'],
@@ -280,6 +315,7 @@ export const VFS_CAPABILITIES = {
     layout: 'idb-store',
     requires: [],
     degradesWithout: [],
+    exclusiveConnection: false,
   },
   IDBMirrorVFS: {
     builds: ['async', 'jspi'],
@@ -308,6 +344,10 @@ export const VFS_CAPABILITIES = {
     layout: 'idb-store',
     requires: [],
     degradesWithout: [],
+    // `multiConnection: false` marks concurrent-writer unsafety (MIRROR-1),
+    // not isolation. Two clients share data over BroadcastChannel (measured
+    // 2026-09-01, 3/3 both engines), so no exclusive lock is needed or correct.
+    exclusiveConnection: false,
   },
   OPFSAnyContextVFS: {
     builds: ['async', 'jspi'],
@@ -320,6 +360,7 @@ export const VFS_CAPABILITIES = {
     layout: 'opfs-path',
     requires: ['opfs', 'writable-stream'],
     degradesWithout: [],
+    exclusiveConnection: false,
   },
   MemoryVFS: {
     builds: ['sync', 'async', 'jspi'],
@@ -333,6 +374,7 @@ export const VFS_CAPABILITIES = {
     layout: 'memory',
     requires: [],
     degradesWithout: [],
+    exclusiveConnection: false,
   },
   MemoryAsyncVFS: {
     builds: ['async', 'jspi'],
@@ -346,6 +388,7 @@ export const VFS_CAPABILITIES = {
     layout: 'memory',
     requires: [],
     degradesWithout: [],
+    exclusiveConnection: false,
   },
 } as const satisfies Record<string, VFSCapability>;
 

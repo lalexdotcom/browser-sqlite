@@ -252,17 +252,19 @@ import { deleteDatabase } from 'browser-sqlite';
 await deleteDatabase('myapp.sqlite', { vfs: 'OPFSAdaptiveVFS' });
 ```
 
-`vfs` is required and must be the VFS the database was created with: a database written through one VFS is not visible through another, so deleting through the wrong one deletes nothing and reports success. `build` and `wasmUrl` are accepted with the same meaning as on `createSQLiteClient`.
+`vfs` is required and must be the VFS the database was created with. `build` and `wasmUrl` are accepted with the same meaning as on `createSQLiteClient`.
 
-Deleting a database that does not exist is not an error.
+Deleting a database that is not there throws — most often because `vfs` is not the one it was created with.
 
 What a VFS keeps for itself is left alone — the IndexedDB store shared by every database that VFS holds on this origin, and the `AccessHandlePoolVFS` directory whose files are its reusable capacity. The deleted database's own bytes are freed in both cases.
 
-Throws `SQLiteError` with code `BUSY` when the database is open or being opened, and `TIMEOUT` when the VFS cannot answer within 30 seconds — most often the same cause.
+> **Warning:** `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` share one file per database name, so deleting through any of them deletes what the others created.
+
+Throws `SQLiteError` with code `DATABASE_IN_USE` when a client still holds the database, in this tab or any other — retrying will not help, close every client on it first. `DATABASE_NOT_FOUND` means there was nothing at that name. `BUSY` is the transient case: another open or another delete was in flight at that moment, and retrying is the remedy. `TIMEOUT` means the VFS could not answer within 30 seconds; `OPFSWriteAheadVFS` and `OPFSCoopSyncVFS` have been seen doing that outside Chromium even with nothing open.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `vfs` | `SQLiteVFS` | — (required) | The VFS the database was created with. Deleting through another one deletes nothing and reports success. |
+| `vfs` | `SQLiteVFS` | — (required) | The VFS the database was created with. |
 | `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite build to load. It does not affect where the database lives — only which builds can instantiate the VFS. |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Same meaning as on [`createSQLiteClient`](#options). A deployment that needs it to open a database needs it to delete one. |
 
@@ -427,7 +429,9 @@ Errors raised by this library are instances of `SQLiteError`, exported from the 
 | `WORKER_CRASHED` | A pool worker died and the supervisor decided not to restart it. All queued and in-flight work on that slot is rejected. |
 | `TIMEOUT` | A worker did not post `ready` within `openTimeout` milliseconds. The most common cause is a database held under an exclusive lock by another tab or client. |
 | `PROTOCOL_ERROR` | A message was received from a worker that could not be deserialized (`messageerror`). The worker survives; only the in-flight request is rejected. |
-| `BUSY` | SQLite reported a lock conflict (`SQLITE_BUSY` or `SQLITE_LOCKED`); the numeric SQLite code is on `sqliteCode`. The operation is not retried. |
+| `BUSY` | A transient conflict, worth retrying. Either SQLite reported a lock conflict — `SQLITE_BUSY` or `SQLITE_LOCKED`, with the numeric code on `sqliteCode` — or a database was being opened or deleted elsewhere at that moment. The operation is not retried for you. |
+| `DATABASE_IN_USE` | A client still holds the database, in this tab or another. Retrying will not help: close every client on it first. Raised by `deleteDatabase`, and by any method on a second client where the VFS supports one connection at a time. |
+| `DATABASE_NOT_FOUND` | There is nothing at that name to delete. Raised by `deleteDatabase` alone — `createSQLiteClient` creates a database that is absent, so it has no such case. The likeliest cause is a `vfs` that is not the one the database was created with. |
 | `READ_ONLY_TRANSACTION` | raised when a write statement, `bulkWrite()` or `output()` is used inside a transaction opened with `readOnly: true`. |
 
 ```typescript
@@ -466,15 +470,19 @@ worker round-trip on each worker's first statement after a write, and nothing
 under read-only load. `poolSize: 1` and reading inside the same `transaction()`
 remain valid, they are no longer required.
 
-**It is not guaranteed across tabs.** A write in one tab may not be visible to a
-read in another. No bound is claimed on how long that lasts.
+**It holds across tabs too, except on `IDBMirrorVFS`.** A commit in any tab is
+observed by the next read in every other tab on the same database. The exception
+cannot be fixed here: `IDBMirrorVFS` mirrors the whole database in memory per
+worker and propagates commits asynchronously, so a connection whose mirror has
+not caught up has nothing fresher to read.
 
-**Nothing serializes writes between clients.** Two clients writing to one
-database concurrently can fail on a lock; the failure surfaces as
-`SQLiteError` with code `BUSY` and `sqliteCode` 5 or 6, and it is **not**
-retried — no `busy_timeout` is applied. This was true before the guarantee
-above existed; it matters now because the guarantee makes several clients on
-one database a reasonable thing to do.
+**Writes are serialized between clients and between tabs.** A write, a write
+transaction, and each batch of a `bulkWrite` take one lock per database across
+the whole origin, so a second writer **waits** rather than failing. The wait is
+unbounded and first-come-first-served: pass a `signal` if you would rather fail
+than wait. A write transaction holds that lock for the whole of its callback, so
+a callback that never returns blocks every other writer in the origin, not only
+its own client.
 
 ## Requirements
 
@@ -485,13 +493,15 @@ Note: the "Coop" in `OPFSCoopSyncVFS` stands for *cooperative*, not the `Cross-O
 ## Known Limitations
 
 - **`AccessHandlePoolVFS` requires `poolSize: 1`.** Passing `poolSize > 1` with this VFS throws synchronously at client creation time.
+- **`AccessHandlePoolVFS` allows one connection per origin, not one per tab.** A second client on the same database — in this tab or another — fails its first query with `BUSY`, immediately. Close the first client and the next one opens. This is the one VFS where two tabs cannot share a database at all, so choose another if your application expects to be open twice.
 - **`build: 'jspi'` is not available everywhere.** The [`jspi` build table](#build-jspi) carries the per-engine versions; it is generated, so it is the one place that stays current. The build is opt-in and no default uses it, so this constrains nobody who does not ask for it.
 - **`OPFSWriteAheadVFS` buys you nothing outside Chromium.** It opens access handles with `mode: 'readwrite-unsafe'`, which Firefox and Safari do not support — and which they ignore rather than reject, so it still works but falls back to the same reduced mode as `OPFSAdaptiveVFS` and serves no concurrent reads there. On **Safari 27 the `sync` build can also fail to reopen a database** — seen once in three runs, on macOS and on iPadOS. Use `OPFSAdaptiveVFS` outside Chromium.
 - **`OPFSCoopSyncVFS` does not read concurrently, and stalls unpredictably under a pool.** Unlike the other OPFS VFS it implements its own locking and silently ignores the `lockPolicy: 'shared'` this library constructs every VFS with, holding one *exclusive* access handle and rotating it between workers instead of one per connection. A read issued while a write transaction is open is **never served** — the pool acquisition blocks before any `AbortSignal` is consulted — where `IDBBatchAtomicVFS`, `IDBMirrorVFS` and `OPFSAnyContextVFS` serve it every time. A bulk insert either finishes promptly or **exceeds 30 seconds**, with no middle ground and no consistency across runs. None of this depends on `readwrite-unsafe`: unlike the reduced mode described above, it happens on Chromium too.
-- **Read-your-own-writes is guaranteed within a tab, not across tabs.** See the
+- **Read-your-own-writes holds across tabs, except on `IDBMirrorVFS`.** See the
   caveat under [Error handling](#error-handling).
-- **Two clients writing at once are not serialized, and what the loser gets depends on the VFS.** Nothing here orders writes between clients or between tabs — SQLite's own locking decides, and it decides differently in the two modes above. Where each connection holds its own access handle, the second writer is refused at once with `BUSY`, and retrying is the remedy; `BEGIN` is deferred, so both transactions open cleanly and it is the first write *inside* that fails. Where one exclusive handle is rotated instead, the second writer is not refused at all — it waits for the file as long as the first one holds it, then goes through. **Pass a `signal` and the two read alike**: an error inside a budget you chose, rather than a wait you did not. **A `bulkWrite` that is refused or abandoned leaves a partial load, not a failed one** — it commits per batch, so everything before is in the database, and one further batch may still land after you gave up: the one already handed to a worker, which no signal can recall. Use `tx.bulkWrite` where you need all or nothing.
-- **A database that is open cannot be deleted**, in this tab or another. `deleteDatabase` takes the same origin-wide lock a client takes while opening, which prevents an open from interleaving with a delete, and reports `BUSY` rather than deleting under a live connection. A connection that already holds its handles cannot be revoked from this library — close every client on the database first.
+- **Writes are serialized across clients and tabs; reads are not.** A second writer waits rather than failing, on every VFS and every browser. **Pass a `signal` if you would rather fail than wait** — the wait is otherwise unbounded, though first-come-first-served. A write transaction holds the lock for the whole of its callback, so a callback that never returns blocks every other writer in the origin, not only its own client. **A `bulkWrite` takes the lock per batch and commits per batch**, so another client's write can land between two of its batches, and abandoning one leaves a partial load rather than a failed one: everything before is in the database, and one further batch may still land after you gave up — the one already handed to a worker, which no signal can recall. Use `tx.bulkWrite` where you need all or nothing.
+- **Reads still wait on the file where your browser gives you one access handle.** Serializing writers does not change which handle a VFS holds. Where `readwrite-unsafe` is unavailable, a read in another tab still waits for the rotated exclusive handle while a writer holds it.
+- **A database that any client still holds cannot be deleted**, in this tab or another, on every VFS. `deleteDatabase` reports `DATABASE_IN_USE` immediately rather than deleting under a live connection, and reports `BUSY` when an open or another delete is merely in flight — the first means close it, the second means retry. **Closing every client on the database is what releases it**, so a client your application has stopped using but never closed keeps blocking until its tab goes. This library cannot revoke a connection it did not open: another library or native code on the same origin is invisible to it.
 - **`deleteDatabase` can time out outside Chromium**, on `OPFSWriteAheadVFS` and `OPFSCoopSyncVFS` — an observation rather than a measured rate. The call fails to settle rather than reporting an error; it has never reported success without deleting. Both VFS rotate a single exclusive OPFS access handle where `readwrite-unsafe` is unavailable, the same shape as the reduced mode described above.
 
 ## Development

@@ -1,27 +1,24 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
-import { SQLiteBulkWriteError, SQLiteError } from '../../src/errors';
-import { HAS_UNSAFE_HANDLES } from '../conformance/helpers';
 
 /**
- * What two clients writing at once actually do — on both regimes.
+ * What two clients writing at once actually do.
  *
  * Nothing here mentions tabs and everything here is about them: Web Locks and
  * OPFS access handles are both origin-wide, so two clients in this one page
- * contend exactly as two tabs would. That is what lets the Known Limitations
- * entry these tests back speak about tabs while being exercised in one.
+ * contend exactly as two tabs would.
  *
- * **The engine is never named.** What splits the behaviour is
- * `readwrite-unsafe`: with it, a VFS holds one access handle per connection and
- * the conflict reaches SQLite's Web Locks, which this library asks for with
- * `ifAvailable: true` — so the loser is turned away at once. Without it, the VFS
- * rotates ONE exclusive handle and the loser blocks in the scheduler before Web
- * Locks is ever consulted. Same limitation, two shapes, and a consumer meets
- * whichever their user's browser gives them.
+ * **There is one behaviour now, not two.** Before the origin-wide write lock,
+ * `readwrite-unsafe` split these tests down the middle: with it the second
+ * writer was refused at once with BUSY, without it it waited for the rotated
+ * exclusive handle and went through late. The lock puts the queue in front of
+ * SQLite's locking on both regimes, so B always waits and always goes through.
+ * `HAS_UNSAFE_HANDLES` is deliberately no longer consulted here — if a
+ * regime-dependent assertion comes back, the lock has stopped covering a path.
  *
  * Every wait here is BOUNDED, and that is not decoration: the first version of
- * this file awaited B inside A's transaction callback, so on any engine where B
- * waits the two deadlocked — the test presupposed the fail-fast behaviour it
+ * this file awaited B inside A's transaction callback, so on any engine where
+ * B waits the two deadlocked — the test presupposed the fail-fast behaviour it
  * was written to observe.
  */
 const twoClients = () => {
@@ -71,95 +68,78 @@ const settledWithin = (
   ]);
 
 describe('two clients writing at once', () => {
-  // Falsifiable on either regime: give both clients
-  // `pragmas: { busy_timeout: '5000' }`. Where the writer is turned away it
-  // then WAITS instead — measured 5111 ms — and `settled` goes false. The
-  // rejection survives that change, so the elapsed budget is what catches a
-  // busy handler, never the error type. `busy_timeout` is on the performance
-  // backlog, and this is the test that will notice the day it ships.
-  it('turns the second writer away, and how depends on readwrite-unsafe', async () => {
+  // Falsifiable: delete the `locks.hold(writeLock, …)` line in
+  // `acquireInstrumented` and this goes red on `settled` where handles are
+  // per-connection — B is refused with BUSY instead of waiting.
+  it('makes the second writer wait, on both regimes', async () => {
     const { a, b } = twoClients();
     await a.write('CREATE TABLE t (n)');
 
     let settled = false;
     let attempt!: Promise<unknown>;
     await a.transaction(async (tx) => {
-      // A holds the file from here until this callback returns.
+      // A holds the write lock from here until this callback returns.
       await tx.write('INSERT INTO t VALUES (1)');
       attempt = rejectionOf(b.write('INSERT INTO t VALUES (2)'));
       settled = await settledWithin(attempt, TURNED_AWAY_WITHIN);
     });
     const error = await attempt;
 
-    if (HAS_UNSAFE_HANDLES) {
-      // The conflict reaches Web Locks, asked for with `ifAvailable: true`.
-      expect(settled).toBe(true);
-      expect(error).toBeInstanceOf(SQLiteError);
-      expect((error as SQLiteError).code).toBe('BUSY');
-    } else {
-      // Reduced mode: B is still queued for the one exclusive handle, held by
-      // the scheduler — no error has been produced at all.
-      expect(settled).toBe(false);
-      // It goes through once A lets the file go. Late, never lost.
-      expect(error).toBeUndefined();
-    }
+    expect(settled).toBe(false);
+    expect(error).toBeUndefined();
 
-    // The invariant both regimes share, and the one a consumer cares about:
-    // exactly the writes that were accepted are in the database. Never a
-    // partial row, never a silent loss, never two winners.
+    // The invariant a consumer cares about: exactly the writes that were
+    // accepted are in the database, and now BOTH are accepted.
     const rows = await a.read<{ n: number }>('SELECT n FROM t ORDER BY n');
-    expect(rows.map((row) => row.n)).toEqual(HAS_UNSAFE_HANDLES ? [1] : [1, 2]);
+    expect(rows.map((row) => row.n)).toEqual([1, 2]);
   });
 
-  // Falsifiable where the writer is turned away: ship `BEGIN IMMEDIATE` in
-  // transaction.ts and B fails at the BEGIN instead — `entered` stays false.
-  // Verified 2026-08-28. In reduced mode the BEGIN can itself block on the
-  // file, so that regime pins only that B waits, which is why the assertions
-  // below are split rather than shared.
-  it('lets B open its transaction and fails on the first write inside it', async () => {
+  // I13: B is never awaited to completion inside A's callback. In reduced mode
+  // a read waits for the rotated exclusive handle, so awaiting it there
+  // deadlocks the test rather than failing it — which is precisely how the
+  // first version of this file was written, and why it is called out.
+  //
+  // So what is asserted is the claim our lock actually makes: a read-only
+  // transaction is never REFUSED by it. Whether it also completes promptly is
+  // the VFS's business, and differs by regime.
+  //
+  // Falsifiable: give the readOnly branch a write lock too, and `error` becomes
+  // an AbortError once the budget's signal fires — or the test times out where
+  // no signal is passed. Verify by making the change, not by reasoning.
+  it('never refuses a read-only transaction opened under a writer', async () => {
     const { a, b } = twoClients();
     await a.write('CREATE TABLE t (n)');
+    await a.write('INSERT INTO t VALUES (1)');
 
-    let entered = false;
-    let settled = false;
     let attempt!: Promise<unknown>;
     await a.transaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.write('INSERT INTO t VALUES (2)');
       attempt = rejectionOf(
-        b.transaction(async (btx) => {
-          // Reached only if BEGIN took no lock of its own.
-          entered = true;
-          await btx.write('INSERT INTO t VALUES (2)');
-        }),
+        b.transaction(
+          async (btx) => {
+            await btx.read<{ n: number }>('SELECT n FROM t');
+          },
+          { readOnly: true },
+        ),
       );
-      settled = await settledWithin(attempt, TURNED_AWAY_WITHIN);
+      // Bounded, and the result is deliberately not asserted: on one regime it
+      // settles here, on the other it is still waiting on the OPFS handle.
+      await settledWithin(attempt, TURNED_AWAY_WITHIN);
     });
-    const error = await attempt;
 
-    if (HAS_UNSAFE_HANDLES) {
-      expect(entered).toBe(true);
-      expect(settled).toBe(true);
-      expect((error as SQLiteError).code).toBe('BUSY');
-    } else {
-      expect(settled).toBe(false);
-      expect(error).toBeUndefined();
-    }
+    // Awaited to completion only now that A has let the file go.
+    expect(await attempt).toBeUndefined();
   });
 
-  // The shape a consumer is least likely to expect, and only one regime has
-  // it: not "the load failed" but "the load half happened". `bulkWrite` commits
-  // per batch, so a writer taking the file partway through leaves every earlier
-  // batch behind.
+  // `bulkWrite` still commits PER BATCH and still takes one lock per batch —
+  // `bulk.ts` calls the public `write`. So another client's write can still
+  // land between two batches; what changed is that neither side is refused.
   //
   // Falsifiable by its own middle assertion: if `bulkWrite` did not commit per
-  // batch, the first batch would be invisible to A until `close()`, `committed`
-  // would stay 0 through all hundred polls, and the run would stop there. The
-  // consumer's remedy is the other API — `tx.bulkWrite` shares one transaction
-  // across every batch, so a failure leaves nothing rather than half.
-  it('leaves a bulkWrite half-loaded where a writer can take the file from it', async () => {
+  // batch, the first batch would be invisible to A until `close()` and
+  // `committed` would stay 0 through all hundred polls.
+  it('interleaves a bulkWrite with another client, refusing neither', async () => {
     const { a, b } = twoClients();
-    // Sixteen columns so a batch is 32766/16 = 2047 rows rather than 32766:
-    // the test needs TWO flushes and the first has to be affordable.
     const keys = Array.from({ length: 16 }, (_, i) => `c${i}`);
     await a.write(`CREATE TABLE t (${keys.join(', ')})`);
 
@@ -170,8 +150,6 @@ describe('two clients writing at once', () => {
     const writer = b.bulkWrite('t', keys);
     for (let i = 0; i < batch; i += 1) await writer.enqueue(row(i));
 
-    // Wait for the first batch to be COMMITTED as the other client sees it —
-    // an observation, not a guess about when a flush settles.
     let committed = 0;
     for (let poll = 0; poll < 100 && committed === 0; poll += 1) {
       const [count] = await a.read<{ n: number }>(
@@ -182,36 +160,14 @@ describe('two clients writing at once', () => {
     }
     expect(committed).toBe(batch);
 
-    let settled = false;
-    let attempt!: Promise<unknown>;
-    await a.transaction(async (tx) => {
-      await tx.write(`INSERT INTO t (${keys[0]}) VALUES (-1)`);
-      attempt = rejectionOf(
-        (async () => {
-          for (let i = 0; i < batch; i += 1) await writer.enqueue(row(i));
-          return writer.close();
-        })(),
-      );
-      settled = await settledWithin(attempt, TURNED_AWAY_WITHIN);
-    });
-    const error = await attempt;
+    await a.write(`INSERT INTO t (${keys[0]}) VALUES (-1)`);
+    for (let i = 0; i < batch; i += 1) await writer.enqueue(row(i));
+    await writer.close();
 
     const [after] = await a.read<{ n: number }>(
       'SELECT count(*) AS n FROM t WHERE c0 >= 0',
     );
-
-    if (HAS_UNSAFE_HANDLES) {
-      expect(settled).toBe(true);
-      expect(error).toBeInstanceOf(SQLiteBulkWriteError);
-      // The first batch is still there: a failed bulk load is a PARTIAL load.
-      expect(after?.n).toBe(batch);
-    } else {
-      // Reduced mode has no partial load to warn about — the remaining batches
-      // wait for the file rather than being refused, and the load completes.
-      expect(settled).toBe(false);
-      expect(error).toBeUndefined();
-      expect(after?.n).toBe(batch * 2);
-    }
+    expect(after?.n).toBe(batch * 2);
   });
 
   // The other half of the sentence the README puts in front of a consumer:

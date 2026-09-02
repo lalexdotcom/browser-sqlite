@@ -1,11 +1,15 @@
 import { describe, expect, it } from '@rstest/core';
 import {
+  connectionLockName,
   createLocks,
   initLockName,
+  namespaceFor,
   noOpLocks,
+  sharesStorage,
   stagingLockName,
   staleStagingTables,
   sweepLockName,
+  writeLockName,
 } from '../../src/locks';
 
 describe('staleStagingTables', () => {
@@ -113,14 +117,76 @@ describe('createLocks', () => {
   }, 1000);
 });
 
+describe('namespaceFor', () => {
+  // Falsifiable: return `vfs` unconditionally and this goes red. That is the
+  // whole point — these four VFS open the SAME OPFS path for one name, so a
+  // per-VFS key would let two clients write the same bytes unexcluded.
+  it('gives every opfs-path VFS one namespace', () => {
+    expect(namespaceFor('OPFSAdaptiveVFS')).toBe('opfs');
+    expect(namespaceFor('OPFSAnyContextVFS')).toBe('opfs');
+    expect(namespaceFor('OPFSCoopSyncVFS')).toBe('opfs');
+    expect(namespaceFor('OPFSWriteAheadVFS')).toBe('opfs');
+  });
+
+  it('keeps the two idb-store VFS apart — each owns its own IndexedDB database', () => {
+    expect(namespaceFor('IDBBatchAtomicVFS')).not.toBe(
+      namespaceFor('IDBMirrorVFS'),
+    );
+  });
+
+  it('keeps AccessHandlePoolVFS out of the opfs namespace', () => {
+    // Its own directory, random filenames: /<file> is not its file.
+    expect(namespaceFor('AccessHandlePoolVFS')).not.toBe('opfs');
+  });
+});
+
+describe('sharesStorage', () => {
+  it('is false only for the memory VFS', () => {
+    expect(sharesStorage('MemoryVFS')).toBe(false);
+    expect(sharesStorage('MemoryAsyncVFS')).toBe(false);
+    expect(sharesStorage('OPFSAdaptiveVFS')).toBe(true);
+    expect(sharesStorage('IDBBatchAtomicVFS')).toBe(true);
+  });
+});
+
+describe('writeLockName', () => {
+  it('is shared by the opfs-path VFS and distinct per file', () => {
+    expect(writeLockName('OPFSAdaptiveVFS', 'a.db')).toBe(
+      writeLockName('OPFSCoopSyncVFS', 'a.db'),
+    );
+    expect(writeLockName('OPFSAdaptiveVFS', 'a.db')).not.toBe(
+      writeLockName('OPFSAdaptiveVFS', 'b.db'),
+    );
+  });
+
+  it('does not collide with the init, sweep or staging namespaces', () => {
+    const write = writeLockName('OPFSAdaptiveVFS', 'a.db');
+    expect(write).not.toBe(initLockName('OPFSAdaptiveVFS', 'a.db'));
+    expect(write).not.toBe(sweepLockName('a.db'));
+    expect(write.startsWith('bsq:write:')).toBe(true);
+  });
+});
+
 describe('initLockName', () => {
   it('is distinct per database file', () => {
-    expect(initLockName('a.db')).not.toBe(initLockName('b.db'));
+    expect(initLockName('OPFSAdaptiveVFS', 'a.db')).not.toBe(
+      initLockName('OPFSAdaptiveVFS', 'b.db'),
+    );
+  });
+
+  it('is shared by VFS that open the same file', () => {
+    expect(initLockName('OPFSAdaptiveVFS', 'a.db')).toBe(
+      initLockName('OPFSWriteAheadVFS', 'a.db'),
+    );
   });
 
   it('does not collide with the sweep or staging namespaces', () => {
-    expect(initLockName('a.db')).not.toBe(sweepLockName('a.db'));
-    expect(initLockName('a.db').startsWith('bsq:init:')).toBe(true);
+    expect(initLockName('OPFSAdaptiveVFS', 'a.db')).not.toBe(
+      sweepLockName('a.db'),
+    );
+    expect(
+      initLockName('OPFSAdaptiveVFS', 'a.db').startsWith('bsq:init:'),
+    ).toBe(true);
   });
 });
 
@@ -184,5 +250,160 @@ describe('tryWithLock', () => {
 
     expect(ran).toBe(true);
     expect(acquired).toBe(true);
+  });
+});
+
+describe('hold options', () => {
+  it('defaults to an exclusive request', async () => {
+    const seen: unknown[] = [];
+    const manager = {
+      request: (
+        _name: string,
+        options: unknown,
+        callback: () => Promise<unknown>,
+      ) => {
+        seen.push(options);
+        void callback();
+        return Promise.resolve();
+      },
+      query: async () => ({ held: [] }),
+    } as any;
+    const release = await createLocks(manager).hold('bsq:probe');
+    release();
+    expect(seen).toEqual([{ mode: 'exclusive' }]);
+  });
+
+  it('passes a shared mode through', async () => {
+    const seen: unknown[] = [];
+    const manager = {
+      request: (
+        _name: string,
+        options: unknown,
+        callback: () => Promise<unknown>,
+      ) => {
+        seen.push(options);
+        void callback();
+        return Promise.resolve();
+      },
+      query: async () => ({ held: [] }),
+    } as any;
+    const release = await createLocks(manager).hold('bsq:probe', {
+      mode: 'shared',
+    });
+    release();
+    expect(seen).toEqual([{ mode: 'shared' }]);
+  });
+
+  // The signal is omitted rather than passed as undefined: Web Locks rejects
+  // `signal` together with `ifAvailable`, and an explicit undefined is the kind
+  // of thing an engine may or may not treat as absent.
+  it('includes the signal only when one was given', async () => {
+    const seen: unknown[] = [];
+    const manager = {
+      request: (
+        _name: string,
+        options: unknown,
+        callback: () => Promise<unknown>,
+      ) => {
+        seen.push(options);
+        void callback();
+        return Promise.resolve();
+      },
+      query: async () => ({ held: [] }),
+    } as any;
+    const controller = new AbortController();
+    const release = await createLocks(manager).hold('bsq:probe', {
+      signal: controller.signal,
+    });
+    release();
+    expect(seen).toEqual([{ mode: 'exclusive', signal: controller.signal }]);
+  });
+
+  it('no-op locks accept the options and still resolve a releaser', async () => {
+    const release = await noOpLocks.hold('bsq:probe', { mode: 'shared' });
+    expect(typeof release).toBe('function');
+    release();
+  });
+
+  it('no-op locks with ifAvailable still resolve a releaser — lock always free in no-op mode', async () => {
+    const release = await noOpLocks.hold('bsq:conn:ahp:test.db', {
+      ifAvailable: true,
+    });
+    // No-op mode has no real lock manager, so the connection is always "available".
+    expect(release).toBeDefined();
+    expect(typeof release).toBe('function');
+    release?.();
+  });
+});
+
+describe('hold ifAvailable', () => {
+  /**
+   * A LockManager stand-in for the ifAvailable path. When `granted` is false,
+   * the callback receives null (lock held elsewhere), matching the real Web
+   * Locks API's ifAvailable behaviour.
+   */
+  const manager = (granted: boolean, seen?: unknown[]) => ({
+    request: async (_name: string, options: any, callback?: any) => {
+      const cb = typeof options === 'function' ? options : callback;
+      if (typeof options !== 'function') seen?.push(options);
+      return cb(granted ? { name: _name } : null);
+    },
+    query: async () => ({ held: [] as { name?: string }[] }),
+  });
+
+  // Falsifiable: remove the `if (ifAvail && !lock)` branch in createLocks.hold.
+  // Without it the function waits forever (the held promise never resolves),
+  // and this test times out or hangs.
+  it('resolves with undefined when the lock is held elsewhere', async () => {
+    const locks = createLocks(manager(false));
+    const result = await locks.hold('bsq:conn:AccessHandlePoolVFS:app.db', {
+      ifAvailable: true,
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it('resolves with a release function when the lock is free', async () => {
+    const locks = createLocks(manager(true));
+    const result = await locks.hold('bsq:conn:AccessHandlePoolVFS:app.db', {
+      ifAvailable: true,
+    });
+    expect(typeof result).toBe('function');
+    result?.();
+  });
+
+  // Falsifiable: remove `ifAvailable: true` from the requestOptions build. The
+  // real API would then wait instead of resolving with null, and the test above
+  // would time out rather than asserting undefined.
+  it('passes ifAvailable: true to the lock manager', async () => {
+    const seen: unknown[] = [];
+    const locks = createLocks(manager(true, seen));
+    const result = await locks.hold('bsq:conn:AccessHandlePoolVFS:app.db', {
+      ifAvailable: true,
+    });
+    result?.();
+    expect(seen[0]).toEqual({ mode: 'exclusive', ifAvailable: true });
+  });
+});
+
+describe('connectionLockName', () => {
+  // Falsifiable: return a hardcoded string and the distinctness assertions fail.
+  it('follows the bsq:conn:<ns>:<file> pattern', () => {
+    expect(connectionLockName('AccessHandlePoolVFS', 'app.db')).toBe(
+      `bsq:conn:AccessHandlePoolVFS:app.db`,
+    );
+  });
+
+  it('is distinct per database file', () => {
+    expect(connectionLockName('AccessHandlePoolVFS', 'a.db')).not.toBe(
+      connectionLockName('AccessHandlePoolVFS', 'b.db'),
+    );
+  });
+
+  it('does not collide with init, write, sweep or staging lock names', () => {
+    const conn = connectionLockName('AccessHandlePoolVFS', 'a.db');
+    expect(conn).not.toBe(initLockName('AccessHandlePoolVFS', 'a.db'));
+    expect(conn).not.toBe(writeLockName('AccessHandlePoolVFS', 'a.db'));
+    expect(conn).not.toBe(sweepLockName('a.db'));
+    expect(conn.startsWith('bsq:conn:')).toBe(true);
   });
 });

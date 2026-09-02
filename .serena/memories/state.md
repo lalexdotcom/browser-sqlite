@@ -28,8 +28,8 @@ obligations and unmeasured ground.
 
 Not history: the numbers a regression is detected against.
 
-`tsc --noEmit` clean · `pnpm build` clean · **470 tests, 0 failed files**
-(312 unit + 158 browser) · conformance **73 passed / 12 skipped on Chromium and
+`tsc --noEmit` clean · `pnpm build` clean · **543 tests, 0 failed files** on the
+cross-tab branch (470 on `main`) · conformance **73 passed / 12 skipped on Chromium and
 the same on Firefox** · **consumer smoke 24/24** ·
 `scripts/bench/check.mjs chromium --all` OK, 22 pairs, zero `not-run` ·
 biome 13 warnings, none in recently touched files · `dependencies` empty.
@@ -53,10 +53,36 @@ still surface timing the campaign did not.
 
 ## Decisions the user owes
 
-None outstanding, and nothing is designed-and-approved-but-unbuilt. rc.4 closed
-everything it owed, and shipped. **The next thing is rc.5's scope, which is the
-user's to pick from `mem:follow-ups`** — where every entry is now rc.5, or
-evidence blocked on hardware this container does not have.
+**One: whether to merge the cross-tab branch**, which is finished and reviewed clean. Nothing
+else is outstanding.
+
+## rc.5 so far: three lots, built, reviewed clean, unmerged
+
+All on one feature branch (`git branch` names it), **unmerged and not pushed**. The user judged them
+three faces of one feature and kept them together deliberately, accepting that the whole-branch
+review runs over a larger diff. Baseline: **543 tests, 0 failed files**, both engines, conformance
+73/12, biome 13 warnings.
+
+**Read the specs, not a summary** — all three are in `docs/superpowers/specs/`, dated 2026-08-31 and
+2026-09-02, and two carry amendments made during implementation.
+
+1. **Cross-tab coordination.** Writes serialize across every client and tab; read-your-own-writes
+   holds across tabs on every VFS but `IDBMirrorVFS`. Mechanism and invariants: `mem:architecture`.
+2. **The connection lifetime lock.** Every client holds `bsq:conn:<ns>:<file>` for its life —
+   shared normally, exclusive where `exclusiveConnection` is declared, absent on the memory VFS.
+3. **`deleteDatabase` reports.** `DATABASE_IN_USE` when a client holds it, `DATABASE_NOT_FOUND` when
+   nothing is there. Two new public error codes.
+
+**Three consumer-visible behaviour changes, all in `CHANGELOG.md` under Breaking:** two clients
+writing at once no longer produce `BUSY` (the second waits); a refused deletion reports
+`DATABASE_IN_USE` where it reported `WORKER_CRASHED` or nothing; and **deletion is no longer
+idempotent**.
+
+**What it does NOT deliver, and the README says so:** reads still wait on the rotated exclusive OPFS
+handle wherever `readwrite-unsafe` is missing. `IDBMirrorVFS` gains nothing cross-tab.
+`OPFSCoopSyncVFS`'s stalls are untouched. And deleting through the wrong VFS is still destructive
+within the `opfs-path` family — that family shares one file, which is measured and now carries a
+README warning.
 
 ## Pending, and not ours to move
 

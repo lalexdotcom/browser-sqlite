@@ -269,6 +269,295 @@ was a defect. The second said a defect was not residue — resting on a manual c
 effect was never verified. **A manual step you did not observe is not evidence**; the page
 could have reported whether the OPFS root was empty, and nobody asked it.
 
+## Web Locks priced — 2026-08-31, Chromium 151 / Firefox 153, this container
+
+**Method.** Throwaway `tests/browser/locks-probe.test.ts` (deleted), headless, 16 cores,
+origin empty at start (`query()` reported 0 held). Three runs per cell, medians below;
+every figure is a **batch total divided by its count** — 1000 hold/release cycles, 500
+`query()` calls — never a single timed call, because Firefox reduces `performance.now()`
+to 1 ms. Control (`await Promise.resolve()` in the same loop): 0.0001 ms Chromium,
+0.0030 ms Firefox, so no figure below contains its loop.
+
+| | Chromium | Firefox |
+|---|---|---|
+| `hold`+`release`, exclusive | **0.0732 ms** | **0.0580 ms** |
+| `hold`+`release`, shared | 0.0629 ms | 0.0530 ms |
+| `query()`, 0 held | 0.0310 | 0.0340 |
+| `query()`, 8 held | 0.0360 | 0.0360 |
+| `query()`, 64 held | 0.0626 | 0.0680 |
+| `query()`, 256 held | 0.1326 | 0.1560 |
+| `query()`, 512 held | 0.2236 | 0.2980 |
+
+**`navigator.locks.query()` is O(n) in the locks held by the WHOLE ORIGIN**, not flat, and
+cleanly so: `≈ 0.032 ms + 0.00038 ms × n` on Chromium, `≈ 0.034 + 0.00052 × n` on Firefox.
+The 64→512 slope equals the 0→512 slope on both engines, which is what makes it linear
+rather than an artefact. **The 0.2 ms budget is crossed near 450 held locks on Chromium
+and 320 on Firefox.**
+
+**The decision it settled, and half the rule failed.** The rule was set before the run:
+the cross-tab epoch registry is viable if `query()` is ≤ 0.2 ms **and** flat. It is the
+first and not the second. Taken anyway, on this basis: our own contribution is ≤ 1 marker
+per tab per database, so a plausible origin holds 60–120 and pays 0.06–0.08 ms — three to
+six times less than the ~0.2 ms worker round trip the registry avoids, and the registry
+also *skips* the barrier when nothing changed where the unconditional prelude cannot.
+**The residual exposure is that the count is not ours:** an application using Web Locks
+heavily makes us pay for its locks on every `query()`. A fallback to the unconditional
+prelude above a threshold is possible and was not built.
+
+**The 256 and 512 points exist because the first run only went to 64** and showed growth
+where flatness was expected. Extrapolating that slope was the obvious move and is exactly
+what this project keeps paying for; they were measured instead.
+
+Also settled: **the rc.5 write lock costs 0.058–0.073 ms per write** against a commit
+measured at 3.4–5.3 ms — under a percent. And a shared read lock would cost 0.053–0.063 ms
+per read, ~5 % of a 1.1 ms read; not needed by the chosen design.
+
+n=3, one machine, headless, one container. The two engines agree closely.
+
+## Cross-tab coordination priced as COUNTS — 2026-09-01, Chromium 151 / Firefox 153, this container
+
+**Method.** Throwaway `tests/browser/cross-tab-probe.test.ts` (deleted). `navigator.locks.query`
+and `navigator.locks.request` wrapped in the test page before the client is created and counted
+by name prefix; `BARRIER_SQL` executions counted through `db.debug` the way
+`tests/browser/barrier.test.ts` does. The before/after arm ran the same workload in a scratch
+`git worktree` at `git merge-base main HEAD`. **Every figure below is a count. No durations
+were taken, deliberately** — the effect is ~0.03 ms, Firefox clamps `performance.now()` to 1 ms,
+and this project has already paid once for timing an effect this size.
+
+| | Chromium | Firefox |
+|---|---|---|
+| `query()` per **read** | 1 | 1 |
+| `query()` per **write** | 1 | 1 |
+| `request(bsq:write:…)` per write | 1 | 1 |
+| `request(bsq:epoch:…)` per write | 1 | 1 |
+| `BARRIER_SQL`, mixed workload, **this branch** | 0 | 0 |
+| `BARRIER_SQL`, same workload, **branch point** | 0 | 0 |
+| `BARRIER_SQL`, 5 reads, no foreign marker | 0 | 0 |
+| `BARRIER_SQL`, 5 reads, foreign marker held | **1** | **1** |
+
+**The two numbers that matter.** A single-tab application runs **no extra barrier
+statements**: identical to the branch point on both engines, so the `query()` is the whole of
+what it pays. And a foreign commit costs **one barrier per worker, not one per read** — the
+first read on a worker that is behind runs it, that worker is then current, and the reads after
+it run nothing.
+
+**A caveat the probe reported against itself, and it is right to.** The mixed workload produced
+zero barriers on *both* arms, so the before/after comparison establishes "no regression" without
+ever exercising the barrier. The cause is `lastWriterIndex`: alternating write→read routes the
+read back to the worker that just wrote, which is always current, so the other worker never
+serves a read. Not a probe defect — it faithfully measures that workload — but a workload that
+forces reads onto a cold worker would be a stronger arm, and nobody has run one.
+
+## Two clients on a `multiConnection: false` VFS — 2026-09-01, n=3 per engine
+
+**Method.** Throwaway `tests/browser/multiconnection-probe.test.ts` (deleted). Two clients in
+one page on one database name, `poolSize: 1` everywhere, `openTimeout: 5000` so a stall stays
+inside the test budget. **Two clients in one page are a faithful stand-in for two tabs here** —
+OPFS access handles and IndexedDB are origin-scoped. (The commit epoch is not, but it is not
+part of this question.) Chromium 151 / Firefox 153, this devcontainer.
+
+| VFS | 2nd client opens | data shared |
+|---|---|---|
+| `OPFSAdaptiveVFS` *(control)* | yes | **yes** |
+| `IDBBatchAtomicVFS` *(control)* | yes | **yes** |
+| **`AccessHandlePoolVFS`** | **yes, and broken** | **no** |
+| `IDBMirrorVFS` | yes | **yes, immediately** |
+| `MemoryVFS` / `MemoryAsyncVFS` | yes | no — isolated by construction |
+
+### AHP-2TAB — `AccessHandlePoolVFS` fails silently, and it can break the FIRST client
+
+Two clients created **before either queries**, n=3 per engine:
+
+- **The second client resolves `SELECT 1` in 6 runs of 6, and cannot read any table in 6 of 6**
+  (`no such table`). It looks healthy and is useless. A guard that probes an open with
+  `SELECT 1` gives a false positive here — and so would `SELECT count(*) FROM sqlite_master`,
+  which returns 0 rather than erroring on a frozen empty view.
+- **Which client loses the handle race is non-deterministic**, and it is sometimes the FIRST
+  one: client A crashed with `WORKER_CRASHED` in 1 of 3 Chromium runs and 2 of 3 Firefox runs.
+  So two concurrent clients leave **at least one broken client, always, and sometimes both**.
+- Created **sequentially** instead — B after A has run a query — B fails cleanly with
+  `WORKER_CRASHED`, 3/3 on both engines, message stable within an engine but **different
+  between them** (Chromium names `createSyncAccessHandle`, Firefox says "No modification
+  allowed"). Matching on the message rather than the code will not port.
+- After `A.close()`, B opens, 3/3 both engines.
+
+**This is pre-existing, not caused by the cross-tab work.** It matters more now only because
+the README began promising cross-tab write serialization.
+
+### `IDBMirrorVFS` does share across clients
+
+B sees A's row every time, 3/3 on both engines, **isolated runs**. So `multiConnection: false`
+does not mean "isolated from other clients" — it flags concurrent-writer unsafety. This does
+**not** refute MIRROR-1 (5 failures in 300 rounds, ~1.7 %): that was measured under a loaded
+suite, and 0/60 in isolation. Loaded behaviour across clients was not probed here.
+
+Wall-clock open timings in the report are single observations and are recorded as such.
+
+## DELETE-LIVE — `deleteDatabase` under a live connection, 2026-09-02, n=3 per engine
+
+**Method.** Throwaway `tests/browser/delete-live-connection-probe.test.ts`. Open a client,
+create a table, insert and read back a row so the connection is demonstrably working, then call
+`deleteDatabase` **with that client still open**. Fresh database name per case, storage cleaned
+between cases, each VFS at its declared `maxPoolSize`. Chromium 151 / Firefox 153, this
+devcontainer. **Identical on both engines, 3/3, no variation between runs.**
+
+| VFS | outcome | data destroyed |
+|---|---|---|
+| `OPFSAdaptiveVFS` | throws `WORKER_CRASHED` | no |
+| `OPFSCoopSyncVFS` | throws `WORKER_CRASHED` | no |
+| `OPFSWriteAheadVFS` | throws `WORKER_CRASHED` | no |
+| `AccessHandlePoolVFS` | throws `WORKER_CRASHED` | no |
+| **`OPFSAnyContextVFS`** | **resolves** | **YES** |
+| **`IDBBatchAtomicVFS`** | **resolves** | **YES** |
+| **`IDBMirrorVFS`** | **resolves** | **YES** |
+
+Controls: after `close()`, `deleteDatabase` resolves on every VFS, both engines.
+
+**The README's sentence is wrong on both halves.** It claims a database that is open cannot be
+deleted, and that `BUSY` is reported. Three VFS delete it. The four that survive report
+`WORKER_CRASHED`, never `BUSY`.
+
+**The protection on those four is accidental.** It is OPFS access-handle exclusivity: the
+delete worker cannot open its own handles while the live client holds them, so it crashes. It
+is an operating-system-level constraint that `deleteDatabase` was never designed around, and it
+disappears for any VFS that does not hold exclusive handles. `bsq:init` plays no part — a live
+client does not hold it, since `worker.ts` releases it when the open finishes.
+
+**The three failure shapes differ, and `IDBMirrorVFS`'s is the worst:** after the delete
+resolves, its live client keeps reading its correct row out of the in-memory mirror, with no
+error and no signal, while a fresh client finds an empty database. `IDBBatchAtomicVFS` — **the
+one persistent multi-connection VFS that works on all three desktop engines** — leaves the live
+client hanging on any subsequent read. `OPFSAnyContextVFS` at least errors immediately.
+
+**`AccessHandlePoolVFS`'s new `bsq:conn` guard plays no role here**: `deleteDatabase` contests
+`bsq:init` only.
+
+## `navigator.locks.query()` counts shared holders one by one — 2026-09-02, both engines
+
+**Method.** Throwaway `tests/browser/query-holders-probe.test.ts` (deleted). The same name held
+in `mode: 'shared'` from N contexts, then `query()`, counting entries carrying that name. Done
+both same-realm (N holds from the page) and cross-realm (N same-origin iframes, via
+`tests/browser/helpers/realm.ts`). Chromium 151 / Firefox 153, this devcontainer. **The two
+engines agree completely.**
+
+| N | same-realm entries | cross-realm entries |
+|---|---|---|
+| 1 | 1 | 1 |
+| 2 | 2 | 2 |
+| 4 | 4 | 4 |
+
+**So a per-client shared lifetime lock is countable**, which is what the DELETE-LIVE remedy
+rests on. The assumption held; it was checked rather than reasoned.
+
+**`LockInfo` carries exactly three keys on both engines** — no extras beyond the specification:
+
+```json
+{ "clientId": "94621D6D…", "mode": "shared", "name": "bsq:conn:opfs:app.db" }
+```
+
+**`clientId` is realm-scoped, not hold-scoped, and this is the part that matters for any API
+built on it.** N holds from one page produce N entries carrying **one** `clientId`; N holds
+from N iframes produce N entries with N distinct ones. So the two questions have two different
+answers from one query:
+
+- **how many clients** → `entries.length`, valid only if the design enforces exactly one hold
+  per client;
+- **how many tabs** → `new Set(entries.map(e => e.clientId)).size`.
+
+Using `clientId` for the client count would undercount several clients in one page. Using
+`entries.length` for the tab count would overcount them.
+
+**An iframe is a separate Web Locks client.** Anything in this library that ever requested a
+lock from inside an iframe would be counted as an independent client.
+
+## A delete cannot slip past a client under construction — 2026-09-02, 20 runs per engine
+
+**Method.** `tests/browser/delete.test.ts`, kept: `createSQLiteClient` and `deleteDatabase` issued in
+**one synchronous task**, client first, no `await` between them. Twenty runs on Chromium 151 and
+twenty on Firefox 153, this devcontainer. **20/20 refused with `DATABASE_IN_USE` on each engine, no
+variation.**
+
+A client's connection lock is *requested* synchronously at construction but *granted* asynchronously,
+so the window is real in principle. The Web Locks queue being FIFO per name is what closes it: the
+client's request is processed first, and the delete's `ifAvailable` request meets it pending and is
+refused. **That was a reading of a specification until this measurement** — and it is the sixth claim
+of that shape on this branch, the first five of which turned out false when finally tested.
+
+The result rests on one property of the production code: `locks.hold` is called in
+`createSQLiteClient`'s own body, and `hold` calls `manager.request` synchronously inside its Promise
+executor. Move either behind an `await` and the window reopens without any test noticing.
+
+## CROSS-VFS — deleting through the "wrong" VFS destroys data, 2026-09-02, n=3 per case per engine
+
+**Method.** Throwaway `tests/browser/cross-vfs-probe.test.ts` (deleted). Create with VFS **A**, write a
+row, `close()`, `deleteDatabase(name, { vfs: B })`, reopen with **A**, check the row. `poolSize: 1`
+throughout. Chromium 151 / Firefox 153, this devcontainer. **Both engines agreed on every case, and
+`deleteDatabase` RESOLVED in all seven — it never reported anything.**
+
+| A | B | layouts | row survived |
+|---|---|---|---|
+| `OPFSAdaptiveVFS` | `OPFSCoopSyncVFS` | opfs-path → opfs-path | **destroyed** |
+| `OPFSAdaptiveVFS` | `OPFSAnyContextVFS` | opfs-path → opfs-path | **destroyed** |
+| `OPFSCoopSyncVFS` | `OPFSAdaptiveVFS` | opfs-path → opfs-path | **destroyed** |
+| `OPFSAdaptiveVFS` | `OPFSWriteAheadVFS` | opfs-path → opfs-path | **destroyed** |
+| `OPFSAdaptiveVFS` | `IDBBatchAtomicVFS` | opfs-path → idb-store | survived |
+| `OPFSAdaptiveVFS` | `AccessHandlePoolVFS` | opfs-path → opfs-pool | survived |
+| `IDBBatchAtomicVFS` | `IDBMirrorVFS` | idb-store → idb-store | survived |
+
+**So the README's reassurance — "deleting through the wrong one deletes nothing and reports success" —
+is true only ACROSS layout families and false WITHIN `opfs-path`, in the dangerous direction.** All
+four members of that family resolve one database name to the same OPFS file, which is why this
+library's lock names derive from `layout` and never from the VFS name. The doc and the lock keys had
+been saying opposite things.
+
+**Read-visibility, the sentence's other half, is not a clean yes or no.** Same family, no deletion:
+Adaptive→CoopSync visible, Adaptive→AnyContext visible, Adaptive→WriteAhead visible — but
+CoopSync→Adaptive **not** visible, 3/3 both engines, while the delete in that same direction still
+destroyed the data. The likely cause is the build rather than the VFS: `OPFSCoopSyncVFS` defaults to
+`sync` and `OPFSAdaptiveVFS` to `async`. **Deletion does not care** — it removes a file, it does not
+read one — which is exactly why "not visible" cannot be used to argue "deletes nothing".
+
+## EXISTS-PROBE — telling "this database is there" from "it is not", 2026-09-02, n=3 per cell per engine
+
+**Method.** Throwaway probe (deleted). Each persistent VFS in three states — never created, created and
+closed, created and closed then deleted — interrogated by two candidate signals. Chromium 151 /
+Firefox 153, this devcontainer. **Both engines identical on every cell, no variation.**
+
+### `jAccess` is NOT usable, and the reason matters more than the table
+
+Reliable on four of seven — `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `AccessHandlePoolVFS`,
+`IDBBatchAtomicVFS`. On the other three it returns 0 in **every** state, so an existing database and
+one that never existed are indistinguishable: `OPFSCoopSyncVFS` consults an in-memory `Set`,
+`OPFSWriteAheadVFS` and `IDBMirrorVFS` in-memory `Map`s, none of them seeded from storage at
+construction.
+
+**On `IDBMirrorVFS` it is deliberate** — the upstream source says SQLite never calls `xAccess` on a
+main database file, so the VFS skips the IndexedDB round trip. We would be reading a field whose
+contract explicitly excludes our use. **A signal that is right by luck on four of seven is worse than
+none:** right often enough that nobody notices when it is wrong.
+
+### `open_v2` without `SQLITE_OPEN_CREATE` is uniform on all seven
+
+| state | every one of the seven persistent VFS |
+|---|---|
+| never created | `SQLITE_CANTOPEN` (14) |
+| created and closed | **opens** |
+| created, closed, deleted | `SQLITE_CANTOPEN` (14) |
+
+One guard covers every VFS, no special cases, because it goes through `jOpen` — the VFS's real notion
+of existence, and what SQLite itself does.
+
+Three practical answers that make it usable and not merely correct:
+
+- **The probe handle is closed immediately.** On `AccessHandlePoolVFS` `jClose` leaves the handle
+  associated with the VFS *instance* rather than the file, and the delete worker runs the check and
+  `jDelete` on that same instance — so nothing is re-acquired and nothing is held against the delete.
+- **`CANTOPEN` (14) is distinguishable from the failures it must not swallow.** A corrupt file reaches
+  the header read and returns `SQLITE_CORRUPT` (11); a WASM or VFS start-up failure throws before
+  `open_v2` is reached at all.
+- **It consumes no `AccessHandlePoolVFS` slot.** `getSize()` went 0→0 absent, 1→1 present, 0→0 after
+  deletion.
+
 ## Numbers that are one observation, not a measurement
 
 - **Android 145 vs 151 differ by a factor 2.6** on bulk insert, same emulator. Regression

@@ -8,7 +8,12 @@ import {
 import { createClientDebug } from './debug';
 import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
 import { SQLiteError } from './errors';
-import { createLocks } from './locks';
+import {
+  connectionLockName,
+  createLocks,
+  sharesStorage,
+  writeLockName,
+} from './locks';
 import { createLogger } from './logger';
 import { createPoolWorker, type PoolWorker } from './pool';
 import {
@@ -35,6 +40,7 @@ import {
 } from './types';
 import {
   assertReadable,
+  mergeSignals,
   normalizeDatabaseFile,
   renderPragmas,
   resolveWasmLocation,
@@ -471,7 +477,62 @@ export const createSQLiteClient = (
 
   const debug = clientDebug?.state;
 
-  const epochs = epochsFor(dbFile);
+  const locks = createLocks();
+  /**
+   * Undefined on the memory VFS, where two clients on one name are two
+   * independent databases — see `sharesStorage`.
+   */
+  const writeLock = sharesStorage(vfs) ? writeLockName(vfs, dbFile) : undefined;
+
+  /**
+   * The release function for the origin-wide exclusive connection lock, held
+   * for this client's lifetime when `capability.exclusiveConnection` is true.
+   * `undefined` when the lock was unavailable (another client holds it) or
+   * when this VFS does not require exclusive connections.
+   */
+  let connRelease: (() => void) | undefined;
+
+  /**
+   * Settles as soon as the Web Locks API responds to the connection request.
+   *
+   * The mode is the VFS's: `exclusive` where `exclusiveConnection` is declared,
+   * so a second client is refused; `shared` everywhere else, so any number of
+   * clients coexist while `deleteDatabase` — which asks for the same name
+   * exclusively — is still kept out.
+   *
+   * **`ifAvailable` is exclusive-only, and the asymmetry is deliberate.** A
+   * second client on an exclusive VFS must fail fast rather than wait for the
+   * first one to close. A shared client must WAIT: the only thing it can queue
+   * behind is a delete holding this name, and waiting that delete out is the
+   * correct behaviour. Its workers are separately held at `open_v2` by
+   * `bsq:init`, which the delete holds too.
+   *
+   * `undefined` on the memory VFS, where two clients are two databases.
+   */
+  const connLockPromise: Promise<void> | undefined = sharesStorage(vfs)
+    ? (
+        locks.hold(connectionLockName(vfs, dbFile), {
+          mode: capability.exclusiveConnection ? 'exclusive' : 'shared',
+          ...(capability.exclusiveConnection ? { ifAvailable: true } : {}),
+        }) as Promise<(() => void) | undefined>
+      ).then((release) => {
+        connRelease = release;
+      })
+    : undefined;
+  /**
+   * The in-flight epoch publication, awaited before the write lock is handed
+   * back. Task 6 assigns it; until then it is always already settled.
+   */
+  let publishing: Promise<unknown> = Promise.resolve();
+  /**
+   * Aborted by `close()` the moment closing begins. Merged into every pending
+   * write-lock request so that close() cancels writes still waiting on the
+   * origin-wide lock. A lock already granted is unaffected — per the Web Locks
+   * specification the signal cancels a pending request only.
+   */
+  const closeAbort = new AbortController();
+
+  const epochs = epochsFor(vfs, dbFile, locks);
 
   /**
    * The barrier. Runs on a leased worker, so nothing can interleave a
@@ -483,6 +544,13 @@ export const createSQLiteClient = (
    * be credited with it.
    */
   const applyBarrier = async (worker: PoolWorker) => {
+    // The origin can only ever RAISE the target. That is what lets the local
+    // cell stay synchronous — `epochs.bump()` is posted in the write path's
+    // finally, and a read chained after write() must see it without awaiting
+    // anything. `query()` is async and could never live there.
+    const origin = await epochs.originMax();
+    epochs.raiseTo(origin);
+
     const target = epochs.current();
     worker.epochTarget = target;
     if (worker.seen >= target) return;
@@ -502,8 +570,17 @@ export const createSQLiteClient = (
   };
 
   /** Records a commit. Called after the write, before its promise resolves. */
-  const afterWrite = (worker: PoolWorker) => {
-    worker.seen = advanceSeen(worker.seen, worker.epochTarget, epochs.bump());
+  const afterWrite = (worker: PoolWorker): Promise<unknown> => {
+    const next = epochs.bump();
+    worker.seen = advanceSeen(worker.seen, worker.epochTarget, next);
+    // Assigned, not awaited: the bump must stay synchronous. The write lock's
+    // release awaits this, so no other tab can take the lock, run its query()
+    // and miss this marker. A failure leaves this realm correct and the others
+    // one commit behind; the next publish restores a higher max.
+    publishing = epochs.publish(next).catch((error: unknown) => {
+      logger.warn(`epoch publish failed: ${String(error)}`);
+    });
+    return publishing;
   };
 
   /**
@@ -545,9 +622,71 @@ export const createSQLiteClient = (
     kind: 'read' | 'write',
     signal?: AbortSignal,
   ) => {
-    const lease = clientDebug
-      ? await acquireWithDebug(kind, signal)
-      : await scheduler.acquire(kind, signal);
+    // Connection guard — first thing, before any pool or lock interaction.
+    //
+    // For VFS that enforce an exclusive connection (`exclusiveConnection: true`
+    // in VFS_CAPABILITIES), the lock request was started at construction and
+    // resolves exactly once. Subsequent awaits on an already-settled promise
+    // are instant. If the lock was unavailable (another client holds it), fail
+    // fast here on every method rather than returning a client that looks
+    // healthy but cannot read any table — the silent failure measured as
+    // AHP-2TAB (2026-09-01).
+    if (connLockPromise !== undefined) {
+      await connLockPromise;
+      if (connRelease === undefined) {
+        throw new SQLiteError(
+          'DATABASE_IN_USE',
+          `${vfs} supports one connection at a time across the whole origin. ` +
+            `Another tab or client is already connected to '${dbFile}'. ` +
+            `Close that client to open a new one here.`,
+        );
+      }
+    }
+
+    // Lock BEFORE the lease, never after. The reverse holds a pool worker
+    // while blocked on a cross-tab lock: at poolSize 2, two queued writes
+    // would starve this tab's own reads behind a lock another tab holds.
+    //
+    // The wait is abortable by the caller's signal AND by the internal close
+    // signal. The HOLD is not aborted — a lock released while SQLite still
+    // holds its own would lie. Per the Web Locks spec, the signal cancels a
+    // pending request only; once granted the hold is irrevocable from here.
+    let releaseWrite: (() => void) | undefined;
+    if (kind === 'write' && writeLock) {
+      // Merge the caller's signal with the close-abort signal. mergeSignals is
+      // used rather than AbortSignal.any to stay within the library's browser
+      // floor (Chrome 92 / Firefox 95 / Safari 15.4).
+      const { signal: lockSignal, release: releaseMerge } = mergeSignals(
+        signal,
+        closeAbort.signal,
+      );
+      let webRelease: () => void;
+      try {
+        webRelease = await locks.hold(
+          writeLock,
+          lockSignal ? { signal: lockSignal } : undefined,
+        );
+      } catch (error) {
+        releaseMerge();
+        // Surface CLIENT_CLOSED when the close signal caused the abort.
+        // If the caller's signal fired first, rethrow the original error.
+        if (closeAbort.signal.aborted) throw closeAbort.signal.reason;
+        throw error;
+      }
+      releaseMerge();
+      releaseWrite = webRelease;
+    }
+
+    let lease: Awaited<ReturnType<typeof scheduler.acquire>>;
+    try {
+      lease = clientDebug
+        ? await acquireWithDebug(kind, signal)
+        : await scheduler.acquire(kind, signal);
+    } catch (error) {
+      releaseWrite?.();
+      throw error;
+    }
+
     try {
       // Raced, not merely passed a signal. `applyBarrier` drains a real query
       // on the worker, and `PoolWorkerQueryOptions` carries no signal — so on
@@ -578,9 +717,25 @@ export const createSQLiteClient = (
         () => lease.release(),
         () => lease.release(),
       );
+      releaseWrite?.();
       throw error;
     }
-    return lease;
+
+    if (!releaseWrite) return lease;
+
+    // The write lock outlives the worker: it is released once the lease is
+    // released AND the epoch this write published has been taken, so no other
+    // tab can acquire the lock, run its query(), and miss our marker.
+    let handedBack = false;
+    return {
+      ...lease,
+      release: () => {
+        lease.release();
+        if (handedBack) return;
+        handedBack = true;
+        void publishing.then(releaseWrite, releaseWrite);
+      },
+    };
   };
 
   /**
@@ -681,12 +836,14 @@ export const createSQLiteClient = (
     try {
       return await writeWorker<T>(lease.worker, sql, params, options);
     } finally {
-      // Before the void: release is asynchronous, so write() resolves first. A
-      // read chained on this promise would otherwise acquire before the
-      // increment, observe the old epoch, and skip the barrier — the exact bug
-      // being fixed. In `finally`, so a failed write bumps too: that costs a
-      // barrier statement, never a wrong read.
-      afterWrite(lease.worker);
+      // Before the await: afterWrite bumps the epoch synchronously so that a
+      // read chained after write() sees the new epoch and runs the barrier. In
+      // `finally`, so a failed write bumps too: that costs a barrier statement,
+      // never a wrong read.
+      // Wait for the marker transition (new epoch acquired, previous released)
+      // before write() resolves. A caller that queries held lock names
+      // immediately after write() must see exactly one marker — the new one.
+      await afterWrite(lease.worker);
       // The lease returns when the worker confirms it is idle, not when the
       // caller leaves: a worker still inside step() must not be re-lent, and
       // the caller must not wait for it.
@@ -766,11 +923,19 @@ export const createSQLiteClient = (
     if (closing) return closing;
     closing = (async () => {
       logger.info('client closing');
-      // Shutting the front door first: queued waiters reject at once and no new
-      // work can be acquired while the in-flight work drains.
-      const draining = scheduler.shutdown(
-        new SQLiteError('CLIENT_CLOSED', 'The SQLite client has been closed.'),
+      const closingError = new SQLiteError(
+        'CLIENT_CLOSED',
+        'The SQLite client has been closed.',
       );
+      // Cancel every pending write-lock request (those still waiting for the
+      // browser's lock manager to grant the lock). Writes that already hold
+      // the lock are past the lock phase and unaffected — per the Web Locks
+      // spec the signal cancels a pending request only. Those writes hold a
+      // scheduler lease and are drained by shutdown() below.
+      closeAbort.abort(closingError);
+      // Shutting the front door: queued scheduler waiters reject at once and
+      // no new leases can be taken while in-flight work drains.
+      const draining = scheduler.shutdown(closingError);
       // A transaction's lease is held by user code, so this wait is bounded like
       // the rest: a callback that never returns must not make close() hang.
       await bounded(draining, drainTimeout);
@@ -782,6 +947,25 @@ export const createSQLiteClient = (
         }),
       );
       pool.length = 0;
+
+      // Release the exclusive connection lock after workers are gone, so no
+      // incoming client can grab the database while our OPFS handles are still
+      // being closed. Await `connLockPromise` to handle the edge case where
+      // `close()` is called before the first query ever ran (lock in flight).
+      if (connLockPromise !== undefined) await connLockPromise;
+      connRelease?.();
+      // Yield one event-loop turn so the browser's lock manager processes the
+      // release before `close()` resolves. Without this, a new client
+      // constructed immediately after `await a.close()` may try its
+      // `ifAvailable` lock request before the engine marks the lock free —
+      // getting `null` (lock busy) instead of the lock, and surfacing BUSY on
+      // a database that is actually available. A single setTimeout(0) is
+      // enough: the lock release is a microtask queued synchronously by
+      // `connRelease()`, so it settles within the same event-loop turn, and
+      // the next turn (setTimeout callback) sees the freed lock.
+      if (connRelease !== undefined) {
+        await new Promise<void>((r) => setTimeout(r, 0));
+      }
     })();
     return closing;
   };
@@ -921,8 +1105,60 @@ export const createSQLiteClient = (
     }
   };
 
-  // Initialize the worker pool with the requested number of workers
-  for (let index = 0; index < poolSize; index += 1) spawn(index);
+  // Initialize the worker pool with the requested number of workers.
+  //
+  // When an exclusive connection lock is required (e.g. AccessHandlePoolVFS),
+  // defer spawning until after the lock settles. On Firefox, workers that open
+  // OPFS handles while another client already holds them crash with
+  // WORKER_CRASHED ("No modification allowed") before `acquireInstrumented`
+  // can surface a legible DATABASE_IN_USE error. Deferring prevents that:
+  // workers never start when the lock is held elsewhere, and `failClient` sets
+  // `fatal` so any query on B surfaces DATABASE_IN_USE via the
+  // `acquireInstrumented` guard.
+  const startWorkers = () => {
+    for (let index = 0; index < poolSize; index += 1) spawn(index);
+  };
+  if (capability.exclusiveConnection && connLockPromise !== undefined) {
+    void connLockPromise.then(() => {
+      if (connRelease === undefined) {
+        // Lock was held elsewhere — fail the client now so workers never open
+        // the database. The DATABASE_IN_USE error here matches the one thrown
+        // in `acquireInstrumented`, ensuring the first query on this client
+        // fails with a legible message rather than a WORKER_CRASHED stall.
+        //
+        // This code is not independently covered by any test: both sites fire
+        // on the same condition (connRelease === undefined after
+        // connLockPromise settles), and acquireInstrumented's throw wins on
+        // every method call because it runs before scheduler.acquire. A
+        // silent revert of this code stays green.
+        failClient(
+          new SQLiteError(
+            'DATABASE_IN_USE',
+            `${vfs} supports one connection at a time across the whole origin. ` +
+              `Another tab or client is already connected to '${dbFile}'. ` +
+              `Close that client to open a new one here.`,
+          ),
+        );
+      } else if (!closing) {
+        // Guard: if close() was called before the lock settled, the pool
+        // sweep has already run (pool.length = 0) and close() is now
+        // awaiting this very promise. Spawning workers here would orphan
+        // them — close() will not see them because it has already cleared
+        // the pool. Checking `closing` prevents that: a closing client
+        // has no use for workers, and not starting them is strictly better
+        // than starting and immediately terminating them.
+        //
+        // Falsifiable: remove this `else if (!closing)` guard and replace
+        // with a plain `else`. Then create an AHP client, call close()
+        // immediately (before any query), and create a new client on the
+        // same name — the orphaned worker holds OPFS handles, and the new
+        // client's own worker gets WORKER_CRASHED.
+        startWorkers();
+      }
+    });
+  } else {
+    startWorkers();
+  }
 
   // Return the public API
   const api = {
