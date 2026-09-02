@@ -127,7 +127,7 @@ twelve structural `any` in `src/` are not to become thirteen.
   memory reduction and not find one.
 - **It does not bound consumer SQL.** A hand-written statement has no ceiling. The peak formula
   degrades gracefully — `maxBytes + that statement` — but it degrades.
-- **It does not protect three or more concurrent `bulkWrite`s.** At the 8 MB default they thrash,
+- **It does not protect four or more concurrent `bulkWrite`s.** At the 8 MB default they thrash,
   and the cost of that is measured: the cache is cancelled, not degraded.
 - **It changes nothing about churn.** Generated SQL still fills the LRU with single-use entries
   and every eviction is still a `finalize` on the hot path. Unprofiled, and it stays that way.
