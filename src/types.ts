@@ -95,6 +95,8 @@ export type WorkerMessageData =
     }
   | { type: 'closed'; callId: number }
   | { type: 'deleted'; callId: number }
+  /** The delete worker found nothing at that name; deleteDatabase turns it into DATABASE_NOT_FOUND. */
+  | { type: 'not-found' }
   | {
       type: 'open-error';
       callId: number;

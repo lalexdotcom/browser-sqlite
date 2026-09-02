@@ -258,9 +258,10 @@ export const createPoolWorker = (deps: {
 
   // Message handler routes responses by callId
   worker.onmessage = ({ data }: MessageEvent<WorkerMessageData>) => {
-    const { callId, type } = data;
+    const { type } = data;
     switch (type) {
       case 'ready': {
+        const { callId } = data;
         if (callId === 0) {
           ready = true;
           worker.status = 'READY';
@@ -271,6 +272,7 @@ export const createPoolWorker = (deps: {
         break;
       }
       case 'open-error': {
+        const { callId } = data;
         if (callId === 0) {
           logger.error(`worker ${index + 1} failed to open: ${data.message}`);
           die(
@@ -283,6 +285,7 @@ export const createPoolWorker = (deps: {
         break;
       }
       case 'closed': {
+        const { callId } = data;
         if (callId === 0) {
           logger.info(`worker ${index + 1} closed`);
           worker.status = 'CLOSED';
@@ -291,6 +294,7 @@ export const createPoolWorker = (deps: {
         break;
       }
       case 'chunk': {
+        const { callId } = data;
         if (deferredChunk && callId === currentCallId) {
           if (state?.currentRequest?.currentQuery) {
             state.currentRequest.currentQuery.firstRowTime ??= Date.now();
@@ -301,6 +305,7 @@ export const createPoolWorker = (deps: {
         break;
       }
       case 'done': {
+        const { callId } = data;
         if (deferredChunk && callId === currentCallId) {
           const affected = data.affected;
           if (state?.currentRequest?.currentQuery) {
@@ -317,6 +322,7 @@ export const createPoolWorker = (deps: {
         break;
       }
       case 'error': {
+        const { callId } = data;
         if (deferredChunk && callId === currentCallId) {
           const error = workerError(data);
           if (state?.currentRequest?.currentQuery) {
@@ -342,6 +348,11 @@ export const createPoolWorker = (deps: {
       case 'deleted': {
         // A connection worker never deletes; this message belongs to the
         // delete-worker path handled in src/delete.ts and cannot arrive here.
+        break;
+      }
+      case 'not-found': {
+        // Same as deleted: only the delete-worker path (src/delete.ts) receives
+        // this message. A connection worker never sends it.
         break;
       }
       default: {

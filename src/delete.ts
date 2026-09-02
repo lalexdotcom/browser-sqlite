@@ -165,6 +165,14 @@ const runDelete = (message: {
     worker.onmessage = (event: MessageEvent<WorkerMessageData>) => {
       const data = event.data;
       if (data.type === 'deleted') return settle();
+      if (data.type === 'not-found') {
+        return settle(
+          new SQLiteError(
+            'DATABASE_NOT_FOUND',
+            `There is no database named '${message.file}' for ${message.vfs} to delete.`,
+          ),
+        );
+      }
       if (data.type === 'error') {
         return settle(
           busyFromCode(data) ??

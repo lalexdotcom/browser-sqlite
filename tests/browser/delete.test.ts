@@ -49,26 +49,6 @@ describe('deleteDatabase', () => {
     expect(await tableCount(file)).toBe(0);
   });
 
-  // SQLite's own xDelete is content with a missing file, and this is also what
-  // makes the OPFS pass inert once upstream's jDelete is fixed.
-  it('succeeds on a database that was never created', async () => {
-    await expect(
-      deleteDatabase(freshFile(), { vfs: 'OPFSAdaptiveVFS' }),
-    ).resolves.toBeUndefined();
-  });
-
-  it('is idempotent', async () => {
-    const file = freshFile();
-    const db = createSQLiteClient(file, { vfs: 'OPFSAdaptiveVFS' });
-    await db.write('CREATE TABLE t (a INTEGER)');
-    await db.close();
-
-    await deleteDatabase(file, { vfs: 'OPFSAdaptiveVFS' });
-    await expect(
-      deleteDatabase(file, { vfs: 'OPFSAdaptiveVFS' }),
-    ).resolves.toBeUndefined();
-  });
-
   it('rejects with INVALID_OPTION when vfs is missing', async () => {
     await expect(
       // @ts-expect-error — the guard exists for JavaScript callers
@@ -113,6 +93,11 @@ describe('deleteDatabase', () => {
   // `tryWithLock`, and the second call finds a lock nobody released.
   it('releases the lock after a rejection, so a retry is possible', async () => {
     const file = freshFile();
+    // Create the database so the retry resolves rather than throwing DATABASE_NOT_FOUND.
+    const db = createSQLiteClient(file, { vfs: 'OPFSAdaptiveVFS' });
+    await db.write('CREATE TABLE t (a INTEGER)');
+    await db.close();
+
     const release = Promise.withResolvers<void>();
     const held = Promise.withResolvers<void>();
 
@@ -135,6 +120,53 @@ describe('deleteDatabase', () => {
     await expect(
       deleteDatabase(file, { vfs: 'OPFSAdaptiveVFS' }),
     ).resolves.toBeUndefined();
+  });
+
+  describe('deleteDatabase on a database that is not there', () => {
+    for (const vfs of [
+      'OPFSAdaptiveVFS',
+      'OPFSAnyContextVFS',
+      'OPFSCoopSyncVFS',
+      'OPFSWriteAheadVFS',
+      'AccessHandlePoolVFS',
+      'IDBBatchAtomicVFS',
+      'IDBMirrorVFS',
+    ] as const) {
+      // Falsifiable: remove the probe in deleteDatabaseFiles and every one of
+      // these resolves instead of throwing — that is what the code does today.
+      it(`throws DATABASE_NOT_FOUND on ${vfs} when nothing was created`, async () => {
+        const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+        const error = await deleteDatabase(dbName, { vfs }).then(
+          () => undefined,
+          (e) => e,
+        );
+        expect(error).toBeInstanceOf(SQLiteError);
+        expect((error as SQLiteError).code).toBe('DATABASE_NOT_FOUND');
+      });
+
+      it(`deletes on ${vfs}, then reports the second attempt`, async () => {
+        const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+        const db = createSQLiteClient(dbName, { vfs, poolSize: 1 });
+        await db.write('CREATE TABLE t (n)');
+        await db.close();
+
+        await expect(deleteDatabase(dbName, { vfs })).resolves.toBeUndefined();
+
+        const error = await deleteDatabase(dbName, { vfs }).then(
+          () => undefined,
+          (e) => e,
+        );
+        expect((error as SQLiteError).code).toBe('DATABASE_NOT_FOUND');
+      });
+    }
+
+    it('still resolves on the memory VFS, which persists nothing', async () => {
+      await expect(
+        deleteDatabase(`browser-sqlite-test-${crypto.randomUUID()}`, {
+          vfs: 'MemoryVFS',
+        }),
+      ).resolves.toBeUndefined();
+    });
   });
 });
 
