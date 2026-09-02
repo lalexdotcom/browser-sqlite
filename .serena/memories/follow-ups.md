@@ -90,12 +90,13 @@ statement that is structurally uncacheable. **The peak is `B + largest statement
 it that way, never as a multiple of an assumed maximum, because consumer-written SQL has no
 ceiling.
 
-**B is not a memory figure, it is a count of concurrent `bulkWrite`s protected.** Two
-concurrent writers alternate two full templates; a budget that cannot hold both **cancels
+**B is not a memory figure, it is a count of concurrent `bulkWrite`s protected.** The
+insertion rule drops the key being re-set before it measures the total, so what must fit
+under the budget is the sum of the **other** retained entries. N alternating writers
+therefore require `B > (N − 1) × 3.4 MB`; a budget that cannot satisfy this **cancels
 the cache outright** rather than degrading it (+19 % Chromium, +110 % Firefox — measured).
-So `B > 2 × 3.4 MB`. **The proposal on the table is 8 MB per worker**, peak ~11.4 MB, and
-it protects two concurrent writers. Three would need ~11 MB. Past that, the thrash is
-accepted on purpose.
+**The proposal on the table is 8 MB per worker**, peak ~11.4 MB, and it protects three
+concurrent writers. Four would need ~11 MB. Past that, the thrash is accepted on purpose.
 
 **Keep the entry bound alongside the byte bound.** Bytes alone let ~6000 small statements
 live; the entry cap is what still answers the churn noted below.
