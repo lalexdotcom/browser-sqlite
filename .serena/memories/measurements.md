@@ -393,6 +393,45 @@ suite, and 0/60 in isolation. Loaded behaviour across clients was not probed her
 
 Wall-clock open timings in the report are single observations and are recorded as such.
 
+## DELETE-LIVE — `deleteDatabase` under a live connection, 2026-09-02, n=3 per engine
+
+**Method.** Throwaway `tests/browser/delete-live-connection-probe.test.ts`. Open a client,
+create a table, insert and read back a row so the connection is demonstrably working, then call
+`deleteDatabase` **with that client still open**. Fresh database name per case, storage cleaned
+between cases, each VFS at its declared `maxPoolSize`. Chromium 151 / Firefox 153, this
+devcontainer. **Identical on both engines, 3/3, no variation between runs.**
+
+| VFS | outcome | data destroyed |
+|---|---|---|
+| `OPFSAdaptiveVFS` | throws `WORKER_CRASHED` | no |
+| `OPFSCoopSyncVFS` | throws `WORKER_CRASHED` | no |
+| `OPFSWriteAheadVFS` | throws `WORKER_CRASHED` | no |
+| `AccessHandlePoolVFS` | throws `WORKER_CRASHED` | no |
+| **`OPFSAnyContextVFS`** | **resolves** | **YES** |
+| **`IDBBatchAtomicVFS`** | **resolves** | **YES** |
+| **`IDBMirrorVFS`** | **resolves** | **YES** |
+
+Controls: after `close()`, `deleteDatabase` resolves on every VFS, both engines.
+
+**The README's sentence is wrong on both halves.** It claims a database that is open cannot be
+deleted, and that `BUSY` is reported. Three VFS delete it. The four that survive report
+`WORKER_CRASHED`, never `BUSY`.
+
+**The protection on those four is accidental.** It is OPFS access-handle exclusivity: the
+delete worker cannot open its own handles while the live client holds them, so it crashes. It
+is an operating-system-level constraint that `deleteDatabase` was never designed around, and it
+disappears for any VFS that does not hold exclusive handles. `bsq:init` plays no part — a live
+client does not hold it, since `worker.ts` releases it when the open finishes.
+
+**The three failure shapes differ, and `IDBMirrorVFS`'s is the worst:** after the delete
+resolves, its live client keeps reading its correct row out of the in-memory mirror, with no
+error and no signal, while a fresh client finds an empty database. `IDBBatchAtomicVFS` — **the
+one persistent multi-connection VFS that works on all three desktop engines** — leaves the live
+client hanging on any subsequent read. `OPFSAnyContextVFS` at least errors immediately.
+
+**`AccessHandlePoolVFS`'s new `bsq:conn` guard plays no role here**: `deleteDatabase` contests
+`bsq:init` only.
+
 ## Numbers that are one observation, not a measurement
 
 - **Android 145 vs 151 differ by a factor 2.6** on bulk insert, same emulator. Regression

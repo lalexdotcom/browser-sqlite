@@ -16,6 +16,36 @@ been work on nothing.
 
 ## Designs owed — rc.5 or later
 
+### DELETE-LIVE — `deleteDatabase` destroys data under a live connection, on three VFS
+
+Measured 2026-09-02, n=3 per engine, identical on both; table in `mem:measurements`.
+**Pre-existing, and the worst defect currently known in this library.**
+
+`OPFSAnyContextVFS`, `IDBBatchAtomicVFS` and `IDBMirrorVFS` let `deleteDatabase` resolve while a
+client is open, and the database is gone. `IDBMirrorVFS` does it **silently** — the live client
+keeps serving correct rows from its mirror while a fresh client finds nothing.
+`IDBBatchAtomicVFS` is the most consequential, being the only persistent multi-connection VFS
+that works on all three desktop engines.
+
+The four that survive do so **by accident** — OPFS handle exclusivity crashes the delete worker
+— and they report `WORKER_CRASHED`, not the `BUSY` the README promises. `bsq:init` protects
+nothing here: `worker.ts` releases it when the open finishes, so a live client holds no lock at
+all.
+
+**The remedy the machinery already supports, and it unifies what rc.5 just built.** Every
+client holds `bsq:conn:<ns>:<file>` for its lifetime — **shared** normally, **exclusive** where
+`exclusiveConnection` is declared — and `deleteDatabase` requests the same name **exclusively
+with `ifAvailable`**, failing fast with `BUSY` when any client holds it. One lock, two modes,
+and the README's existing sentence becomes true instead of being corrected. Reader-writer, and
+Web Locks does it natively.
+
+What it still would not cover: a connection outside this library, and a consumer who abandons a
+client without closing it. Nothing at our layer can revoke either.
+
+**Do not fix the README sentence on its own.** Deleting the promise instead of the defect would
+leave the data loss in place and undocumented.
+
+
 ### One compiled `WebAssembly.Module` for the pool — the premise it waited on is dead
 
 Every worker compiles its own copy of the 1.23 MB binary. Sharing one is verified and
