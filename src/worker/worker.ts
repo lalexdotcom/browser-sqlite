@@ -114,7 +114,28 @@ const VFSConfigs = {
   },
 } as const satisfies Record<SQLiteVFS, { fs: () => Promise<any> }>;
 
-let openedDB: Promise<{ sqlite: SQLiteAPI; db: number }> | undefined;
+/**
+ * `SQLITE_STMTSTATUS_MEMUSED`. Not in `sqlite-constants.js` — the façade does
+ * not wrap the call that uses it.
+ */
+const SQLITE_STMTSTATUS_MEMUSED = 99;
+
+/**
+ * The statement's retained footprint, for the cache's byte bound.
+ *
+ * Read in `settle` rather than after `prepare` because `settle` is the only
+ * place `cache.set` is called, so no branch needs a special case and no state
+ * is threaded through the generator. Measured 2026-09-02: the value does not
+ * move over a statement's life — after prepare, after binding 32 765 values,
+ * after step, after reset — so where it is read cannot change it. Synchronous
+ * and not an I/O call, so it suspends nothing on the Asyncify build.
+ */
+const stmtWeight = (module: WASQLiteModule, stmt: number) =>
+  module._sqlite3_stmt_status(stmt, SQLITE_STMTSTATUS_MEMUSED, 0);
+
+let openedDB:
+  | Promise<{ sqlite: SQLiteAPI; module: WASQLiteModule; db: number }>
+  | undefined;
 const gate = createCreditGate(createMessageChannelTick());
 const locks = createLocks();
 
@@ -129,6 +150,7 @@ type OpenOptions = {
   wasm?: WasmLocation | undefined;
   pragmas?: Record<string, string> | undefined;
   statementCacheSize?: number | undefined;
+  statementCacheBytes?: number | undefined;
 };
 
 /**
@@ -213,7 +235,7 @@ const open = (file: string, options: OpenOptions) => {
               while ((await sqlite.step(stmt)) === SQLITE_ROW) {}
             }
           }
-          return { sqlite, db };
+          return { sqlite, module, db };
         });
       });
     })
@@ -252,9 +274,7 @@ const open = (file: string, options: OpenOptions) => {
 
   const cache = createStatementCache({
     maxEntries: options.statementCacheSize ?? 0,
-    // Task 2 replaces this with the plumbed budget. Until weights are real the
-    // total is 0, so no finite value here would change anything.
-    maxBytes: Number.POSITIVE_INFINITY,
+    maxBytes: options.statementCacheBytes ?? 0,
   });
 
   const query = async function* (
@@ -264,7 +284,7 @@ const open = (file: string, options: OpenOptions) => {
   ) {
     if (!openedDB) throw new Error('No DB opened');
 
-    const { sqlite, db } = await openedDB;
+    const { sqlite, db, module } = await openedDB;
     const { chunkSize = 1 } = options ?? {};
 
     const buffer: Record<string, unknown>[] = [];
@@ -334,7 +354,7 @@ const open = (file: string, options: OpenOptions) => {
         await sqlite.finalize(stmt);
         return;
       }
-      for (const handle of cache.set(sql, stmt, 0)) {
+      for (const handle of cache.set(sql, stmt, stmtWeight(module, stmt))) {
         await sqlite.finalize(handle);
       }
     };
@@ -680,8 +700,21 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
   const { data } = event;
   switch (data.type) {
     case 'open': {
-      const { file, vfs, build, pragmas, statementCacheSize } = data;
-      open(file, { vfs, build, pragmas, statementCacheSize });
+      const {
+        file,
+        vfs,
+        build,
+        pragmas,
+        statementCacheSize,
+        statementCacheBytes,
+      } = data;
+      open(file, {
+        vfs,
+        build,
+        pragmas,
+        statementCacheSize,
+        statementCacheBytes,
+      });
       break;
     }
     case 'delete': {

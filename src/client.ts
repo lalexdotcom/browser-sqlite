@@ -66,6 +66,20 @@ const DEFAULT_POOL_SIZE = 2;
 const DEFAULT_STATEMENT_CACHE_SIZE = 32;
 
 /**
+ * Bytes retained per worker, `SQLITE_STMTSTATUS_MEMUSED`. Not a consumer
+ * option, for the same reason as the entry count (spec §3.3).
+ *
+ * 8 MB is not a memory figure, it is a count of concurrent `bulkWrite`s
+ * protected. The cache drops the key being re-set before it measures, so what
+ * must fit is the sum of the OTHER entries: N alternating templates need
+ * `(N - 1) x 3.4 MB`. 8 MB therefore covers three concurrent writers, with a
+ * peak of this value plus the largest single statement — not a multiple of it.
+ * A budget that cannot hold them does not degrade the cache, it cancels it
+ * (+19 % Chromium, +110 % Firefox, measured 2026-09-02).
+ */
+const DEFAULT_STATEMENT_CACHE_BYTES = 8 * 1024 * 1024;
+
+/**
  * Configuration options for creating a SQLite client.
  */
 export type CreateSQLiteClientOptions = {
@@ -330,6 +344,15 @@ export const createSQLiteClient = (
     .__unsafeTestWriterPolicy;
   const writerPolicy: WriterPolicy | undefined =
     typeof testWriterPolicy === 'function' ? testWriterPolicy : undefined;
+
+  // TEST-ONLY, UNSUPPORTED. Read once here and validated, like the writer
+  // policy above. See InternalSQLiteClientOptions in scheduler.ts.
+  const testCacheBytes = (clientOptions as InternalSQLiteClientOptions)
+    .__unsafeTestStatementCacheBytes;
+  const statementCacheBytes =
+    typeof testCacheBytes === 'number' && testCacheBytes >= 0
+      ? testCacheBytes
+      : DEFAULT_STATEMENT_CACHE_BYTES;
 
   // ---------------------------------------------------------------------------
   // Startup state: the deferred first-settle verdict
@@ -1014,6 +1037,7 @@ export const createSQLiteClient = (
       wasm,
       pragmas: clientOptions.pragmas,
       statementCacheSize: DEFAULT_STATEMENT_CACHE_SIZE,
+      statementCacheBytes,
       onDeath: handleDeath,
       onServed: (served) => {
         supervisor.report(served, 'served');

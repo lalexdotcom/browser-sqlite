@@ -183,3 +183,112 @@ describe('statement cache', () => {
     await db.close();
   });
 });
+
+/** 5 columns → bulkWrite flushes every floor(32766 / 5) = 6553 rows. */
+const BULK_COLUMNS = ['c0', 'c1', 'c2', 'c3', 'c4'];
+/** Four batches: three full templates and one partial. */
+const BULK_ROWS = 20_000;
+
+const bulkRow = (i: number) => ({ c0: i, c1: i, c2: i, c3: i, c4: i });
+
+const feed = async (
+  bulk: ReturnType<Awaited<ReturnType<typeof createTestClient>>['bulkWrite']>,
+) => {
+  for (let i = 0; i < BULK_ROWS; i++) await bulk.enqueue(bulkRow(i));
+  return bulk.close();
+};
+
+/** Every INSERT batch the pool served, oldest first. */
+const insertRuns = (db: Awaited<ReturnType<typeof createTestClient>>) =>
+  (db.debug?.workers ?? [])
+    .flatMap((w) => w.requests)
+    .flatMap((r) => r.queries)
+    .filter((q) => q.sql.startsWith('INSERT INTO'));
+
+describe('the byte bound', () => {
+  it('holds two statements at the default budget', async () => {
+    const db = await createTestClient(single);
+    await db.write('CREATE TABLE t (a)');
+    const first = 'SELECT a FROM t';
+    const second = 'SELECT a FROM t WHERE a = 1';
+    await db.read(first);
+    await db.read(second);
+    await db.read(first);
+    // THE CONTROL, and it is the one the 2026-09-02 campaign proved is
+    // load-bearing: if the budget never reaches the worker it defaults to 0,
+    // which evicts on every insertion of a DIFFERENT key, and the third read
+    // compiles again.
+    // Falsifiability: drop `statementCacheBytes` from the `open` postMessage
+    // in pool.ts and this is 1.
+    expect(runsOf(db, first)[1]?.prepared).toBe(0);
+    await db.close();
+  });
+
+  it('evicts when the budget cannot hold the other entry', async () => {
+    const db = await createTestClient({
+      ...single,
+      __unsafeTestStatementCacheBytes: 1,
+    } as never);
+    await db.write('CREATE TABLE t (a)');
+    const first = 'SELECT a FROM t';
+    await db.read(first);
+    await db.read('SELECT a FROM t WHERE a = 1');
+    await db.read(first);
+    // A one-byte budget cannot hold the other statement, so each insertion
+    // evicts its predecessor and the third read compiles.
+    // Falsifiability: delete the byte loop from `insert` and this is 0.
+    expect(runsOf(db, first)[1]?.prepared).toBe(1);
+    await db.close();
+  });
+
+  it('retains a bulkWrite template across its batches', async () => {
+    const db = await createTestClient(single);
+    await db.write(`CREATE TABLE ta (${BULK_COLUMNS.join(',')})`);
+    await feed(db.bulkWrite('ta', BULK_COLUMNS));
+    const runs = insertRuns(db);
+    // The full template weighs ~2.4 MB and is compiled once for three batches.
+    // Falsifiability: return `undefined` unconditionally from `cache.get` and
+    // every batch compiles.
+    expect(runs.length).toBeGreaterThan(2);
+    expect(runs[1]?.prepared).toBe(0);
+    expect(runs[2]?.prepared).toBe(0);
+    await db.close();
+  });
+
+  it('holds both templates of two concurrent bulkWrites', async () => {
+    const db = await createTestClient(single);
+    await db.write(`CREATE TABLE ta (${BULK_COLUMNS.join(',')})`);
+    await db.write(`CREATE TABLE tb (${BULK_COLUMNS.join(',')})`);
+    await Promise.all([
+      feed(db.bulkWrite('ta', BULK_COLUMNS)),
+      feed(db.bulkWrite('tb', BULK_COLUMNS)),
+    ]);
+    // Two writers interleave and their two FULL templates alternate. This is
+    // the regression test for the measured +110 % on Firefox: a budget that
+    // cannot hold them does not degrade the cache, it cancels it. Four
+    // compilations is two full templates plus two partials.
+    // Falsifiability: pass `__unsafeTestStatementCacheBytes: 2_000_000` —
+    // below ONE template, which is what §3.1's `N − 1` requires — and this
+    // climbs to one compilation per batch.
+    const compiles = insertRuns(db).reduce((n, q) => n + q.prepared, 0);
+    expect(compiles).toBeLessThanOrEqual(4);
+    await db.close();
+  });
+
+  it('caches a template heavier than the whole budget', async () => {
+    const db = await createTestClient({
+      ...single,
+      __unsafeTestStatementCacheBytes: 1024,
+    } as never);
+    await db.write(`CREATE TABLE ta (${BULK_COLUMNS.join(',')})`);
+    await feed(db.bulkWrite('ta', BULK_COLUMNS));
+    const runs = insertRuns(db);
+    // The rule never refuses an entry and never reads the incoming weight: a
+    // 2.4 MB template is admitted under a 1 KB budget, and because re-setting
+    // it drops it first, nothing else is left to push the total over.
+    // Falsifiability: add a "refuse to cache what does not fit" branch at the
+    // top of `insert` and this is 1.
+    expect(runs[1]?.prepared).toBe(0);
+    await db.close();
+  });
+});

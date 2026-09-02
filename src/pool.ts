@@ -133,6 +133,7 @@ export const createPoolWorker = (deps: {
   wasm?: WasmLocation | undefined;
   pragmas?: Record<string, string> | undefined;
   statementCacheSize?: number | undefined;
+  statementCacheBytes?: number | undefined;
   onDeath?: (index: number, error: SQLiteError) => void;
   onServed?: (index: number) => void;
   drainTimeout: number;
@@ -152,6 +153,7 @@ export const createPoolWorker = (deps: {
     wasm,
     pragmas,
     statementCacheSize,
+    statementCacheBytes,
   } = deps;
   const { createWorkerDebugState, createQueryDebugState, logger } = deps;
 
@@ -512,6 +514,7 @@ export const createPoolWorker = (deps: {
     wasm,
     pragmas,
     statementCacheSize,
+    statementCacheBytes,
   });
 
   return deferredInit.promise;
