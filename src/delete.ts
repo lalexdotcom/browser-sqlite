@@ -59,7 +59,7 @@ export const deleteDatabase = async (
   if (!options?.vfs) {
     throw new SQLiteError(
       'INVALID_OPTION',
-      `vfs is required. Pass the VFS the database was created with — ${RECOMMENDED_VFS} is the recommended universal choice. A database written through one VFS is not visible through another, so deleting through the wrong one deletes nothing.`,
+      `vfs is required. Pass the VFS the database was created with — ${RECOMMENDED_VFS} is the recommended universal choice. Four VFS share one underlying file: passing the wrong one deletes a real database without reporting anything.`,
     );
   }
 
