@@ -53,6 +53,23 @@ Numbers live in `mem:measurements`.
 (merge `be314db`, 2026-08-20): 24 % stale cross-connection reads, and deprecated upstream
 (rhashimoto/wa-sqlite#317). `grep -rn Permuted src/ README.md tests/` returns nothing.
 
+## CROSS-VFS — the four `opfs-path` VFS share one file, and deleting proves it
+
+Measured 2026-09-02, n=3 per case per engine, both agreeing; table in `mem:measurements`.
+
+`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` all resolve one
+database name to the same OPFS file. **Deleting through any of them destroys a database created by
+any other, and `deleteDatabase` resolves without reporting anything.** Across layout families —
+`opfs-path` against `idb-store` or `opfs-pool` — the data survives, as the docs always claimed.
+
+**Reading is a different question from deleting, and the two must not be argued from each other.**
+Within the family, three of four read pairs saw each other's data; `OPFSCoopSyncVFS` → `OPFSAdaptiveVFS`
+did not, most likely because those two default to different builds (`sync` against `async`) rather
+than because of the VFS. Deletion is unaffected either way: it removes a file, it does not read one.
+
+This is why lock names in `locks.ts` derive from `layout` and never from a VFS name. The
+documentation had been claiming the opposite of what the lock keys already assumed.
+
 ## AHP-2TAB — `AccessHandlePoolVFS` is not multi-tab, and it does not say so
 
 Measured 2026-09-01, n=3 per engine; numbers in `mem:measurements`. **Pre-existing — the

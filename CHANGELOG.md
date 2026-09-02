@@ -16,6 +16,14 @@ All notable changes to this project are documented here.
 - **A write now waits where it used to fail, and the wait is unbounded.** It is
   first-come-first-served. **Pass a `signal` if you would rather fail than
   wait.**
+- **`DATABASE_IN_USE` is a new error code, and it replaces what a refused
+  deletion used to report.** `deleteDatabase` against a database a client still
+  holds raised `WORKER_CRASHED` on four VFS and nothing at all on three; it now
+  raises `DATABASE_IN_USE` on all of them. A second client on
+  `AccessHandlePoolVFS` reports it too. `BUSY` keeps the transient cases —
+  an open or another delete in flight, and SQLite's own lock conflicts — so the
+  two now say different things: `DATABASE_IN_USE` means close it, `BUSY` means
+  retry.
 
 ### Added
 
@@ -60,6 +68,21 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **The documentation said deleting through the wrong VFS was harmless. It is not,
+  and now it says so.** Measured on both engines: `OPFSAdaptiveVFS`,
+  `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` all resolve a
+  database name to the same file, so `deleteDatabase` through any of them destroys
+  a database created by any other — and resolves without reporting anything. The
+  README and the error message raised when `vfs` is omitted both claimed the
+  opposite. Behaviour is unchanged; the guidance was wrong.
+- **`deleteDatabase` no longer destroys a database a client still has open.** On
+  `OPFSAnyContextVFS`, `IDBBatchAtomicVFS` and `IDBMirrorVFS` it used to resolve
+  while a client was working and the data was gone — **silently on
+  `IDBMirrorVFS`**, where the live client kept serving correct rows out of its
+  in-memory mirror while a fresh client found an empty database. The four VFS
+  that survived survived by accident, on an OPFS constraint this library never
+  arranged, and reported `WORKER_CRASHED`. Every client now holds a lock for its
+  lifetime and `deleteDatabase` refuses while any client holds it.
 - **A second client on an `AccessHandlePoolVFS` database no longer opens and then
   silently fails to read anything.** Measured on both engines: it used to resolve
   `SELECT 1` and return `no such table` for every real table, and which of the two

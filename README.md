@@ -252,17 +252,17 @@ import { deleteDatabase } from 'browser-sqlite';
 await deleteDatabase('myapp.sqlite', { vfs: 'OPFSAdaptiveVFS' });
 ```
 
-`vfs` is required and must be the VFS the database was created with: a database written through one VFS is not visible through another, so deleting through the wrong one deletes nothing and reports success. `build` and `wasmUrl` are accepted with the same meaning as on `createSQLiteClient`.
+**`vfs` is required and must be the VFS the database was created with. Passing the wrong one is not harmless.** `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` all resolve a database name to the same file, so deleting through any of them destroys a database created by any other — and reports success. Between those four and the rest, the mismatch is harmless: the delete finds nothing and reports success too, which is why success tells you nothing either way. `build` and `wasmUrl` are accepted with the same meaning as on `createSQLiteClient`.
 
 Deleting a database that does not exist is not an error.
 
 What a VFS keeps for itself is left alone — the IndexedDB store shared by every database that VFS holds on this origin, and the `AccessHandlePoolVFS` directory whose files are its reusable capacity. The deleted database's own bytes are freed in both cases.
 
-Throws `SQLiteError` with code `BUSY` when the database is open or being opened, and `TIMEOUT` when the VFS cannot answer within 30 seconds — most often the same cause.
+Throws `SQLiteError` with code `DATABASE_IN_USE` when a client still holds the database, in this tab or any other — retrying will not help, close every client on it first. It throws `BUSY` for the transient case instead: another open or another delete was in flight at that moment, and retrying is the remedy. `TIMEOUT` means the VFS could not answer within 30 seconds; `OPFSWriteAheadVFS` and `OPFSCoopSyncVFS` have been seen doing that outside Chromium even with nothing open.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `vfs` | `SQLiteVFS` | — (required) | The VFS the database was created with. Deleting through another one deletes nothing and reports success. |
+| `vfs` | `SQLiteVFS` | — (required) | The VFS the database was created with. The four OPFS path-based VFS share one file, so passing another of those deletes the database anyway; passing one from a different family deletes nothing. Both report success. |
 | `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite build to load. It does not affect where the database lives — only which builds can instantiate the VFS. |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Same meaning as on [`createSQLiteClient`](#options). A deployment that needs it to open a database needs it to delete one. |
 
@@ -427,7 +427,8 @@ Errors raised by this library are instances of `SQLiteError`, exported from the 
 | `WORKER_CRASHED` | A pool worker died and the supervisor decided not to restart it. All queued and in-flight work on that slot is rejected. |
 | `TIMEOUT` | A worker did not post `ready` within `openTimeout` milliseconds. The most common cause is a database held under an exclusive lock by another tab or client. |
 | `PROTOCOL_ERROR` | A message was received from a worker that could not be deserialized (`messageerror`). The worker survives; only the in-flight request is rejected. |
-| `BUSY` | SQLite reported a lock conflict (`SQLITE_BUSY` or `SQLITE_LOCKED`); the numeric SQLite code is on `sqliteCode`. The operation is not retried. |
+| `BUSY` | A transient conflict, worth retrying. Either SQLite reported a lock conflict — `SQLITE_BUSY` or `SQLITE_LOCKED`, with the numeric code on `sqliteCode` — or a database was being opened or deleted elsewhere at that moment. The operation is not retried for you. |
+| `DATABASE_IN_USE` | A client still holds the database, in this tab or another. Retrying will not help: close every client on it first. Raised by `deleteDatabase`, and by any method on a second client where the VFS supports one connection at a time. |
 | `READ_ONLY_TRANSACTION` | raised when a write statement, `bulkWrite()` or `output()` is used inside a transaction opened with `readOnly: true`. |
 
 ```typescript
@@ -497,7 +498,7 @@ Note: the "Coop" in `OPFSCoopSyncVFS` stands for *cooperative*, not the `Cross-O
   caveat under [Error handling](#error-handling).
 - **Writes are serialized across clients and tabs; reads are not.** A second writer waits rather than failing, on every VFS and every browser. **Pass a `signal` if you would rather fail than wait** — the wait is otherwise unbounded, though first-come-first-served. A write transaction holds the lock for the whole of its callback, so a callback that never returns blocks every other writer in the origin, not only its own client. **A `bulkWrite` takes the lock per batch and commits per batch**, so another client's write can land between two of its batches, and abandoning one leaves a partial load rather than a failed one: everything before is in the database, and one further batch may still land after you gave up — the one already handed to a worker, which no signal can recall. Use `tx.bulkWrite` where you need all or nothing.
 - **Reads still wait on the file where your browser gives you one access handle.** Serializing writers does not change which handle a VFS holds. Where `readwrite-unsafe` is unavailable, a read in another tab still waits for the rotated exclusive handle while a writer holds it.
-- **A database that is open cannot be deleted**, in this tab or another. `deleteDatabase` takes the same origin-wide lock a client takes while opening, which prevents an open from interleaving with a delete, and reports `BUSY` rather than deleting under a live connection. A connection that already holds its handles cannot be revoked from this library — close every client on the database first.
+- **A database that any client still holds cannot be deleted**, in this tab or another, on every VFS. `deleteDatabase` reports `DATABASE_IN_USE` immediately rather than deleting under a live connection, and reports `BUSY` when an open or another delete is merely in flight — the first means close it, the second means retry. **Closing every client on the database is what releases it**, so a client your application has stopped using but never closed keeps blocking until its tab goes. This library cannot revoke a connection it did not open: another library or native code on the same origin is invisible to it.
 - **`deleteDatabase` can time out outside Chromium**, on `OPFSWriteAheadVFS` and `OPFSCoopSyncVFS` — an observation rather than a measured rate. The call fails to settle rather than reporting an error; it has never reported success without deleting. Both VFS rotate a single exclusive OPFS access handle where `readwrite-unsafe` is unavailable, the same shape as the reduced mode described above.
 
 ## Development

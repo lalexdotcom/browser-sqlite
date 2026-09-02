@@ -470,6 +470,94 @@ Using `clientId` for the client count would undercount several clients in one pa
 **An iframe is a separate Web Locks client.** Anything in this library that ever requested a
 lock from inside an iframe would be counted as an independent client.
 
+## A delete cannot slip past a client under construction — 2026-09-02, 20 runs per engine
+
+**Method.** `tests/browser/delete.test.ts`, kept: `createSQLiteClient` and `deleteDatabase` issued in
+**one synchronous task**, client first, no `await` between them. Twenty runs on Chromium 151 and
+twenty on Firefox 153, this devcontainer. **20/20 refused with `DATABASE_IN_USE` on each engine, no
+variation.**
+
+A client's connection lock is *requested* synchronously at construction but *granted* asynchronously,
+so the window is real in principle. The Web Locks queue being FIFO per name is what closes it: the
+client's request is processed first, and the delete's `ifAvailable` request meets it pending and is
+refused. **That was a reading of a specification until this measurement** — and it is the sixth claim
+of that shape on this branch, the first five of which turned out false when finally tested.
+
+The result rests on one property of the production code: `locks.hold` is called in
+`createSQLiteClient`'s own body, and `hold` calls `manager.request` synchronously inside its Promise
+executor. Move either behind an `await` and the window reopens without any test noticing.
+
+## CROSS-VFS — deleting through the "wrong" VFS destroys data, 2026-09-02, n=3 per case per engine
+
+**Method.** Throwaway `tests/browser/cross-vfs-probe.test.ts` (deleted). Create with VFS **A**, write a
+row, `close()`, `deleteDatabase(name, { vfs: B })`, reopen with **A**, check the row. `poolSize: 1`
+throughout. Chromium 151 / Firefox 153, this devcontainer. **Both engines agreed on every case, and
+`deleteDatabase` RESOLVED in all seven — it never reported anything.**
+
+| A | B | layouts | row survived |
+|---|---|---|---|
+| `OPFSAdaptiveVFS` | `OPFSCoopSyncVFS` | opfs-path → opfs-path | **destroyed** |
+| `OPFSAdaptiveVFS` | `OPFSAnyContextVFS` | opfs-path → opfs-path | **destroyed** |
+| `OPFSCoopSyncVFS` | `OPFSAdaptiveVFS` | opfs-path → opfs-path | **destroyed** |
+| `OPFSAdaptiveVFS` | `OPFSWriteAheadVFS` | opfs-path → opfs-path | **destroyed** |
+| `OPFSAdaptiveVFS` | `IDBBatchAtomicVFS` | opfs-path → idb-store | survived |
+| `OPFSAdaptiveVFS` | `AccessHandlePoolVFS` | opfs-path → opfs-pool | survived |
+| `IDBBatchAtomicVFS` | `IDBMirrorVFS` | idb-store → idb-store | survived |
+
+**So the README's reassurance — "deleting through the wrong one deletes nothing and reports success" —
+is true only ACROSS layout families and false WITHIN `opfs-path`, in the dangerous direction.** All
+four members of that family resolve one database name to the same OPFS file, which is why this
+library's lock names derive from `layout` and never from the VFS name. The doc and the lock keys had
+been saying opposite things.
+
+**Read-visibility, the sentence's other half, is not a clean yes or no.** Same family, no deletion:
+Adaptive→CoopSync visible, Adaptive→AnyContext visible, Adaptive→WriteAhead visible — but
+CoopSync→Adaptive **not** visible, 3/3 both engines, while the delete in that same direction still
+destroyed the data. The likely cause is the build rather than the VFS: `OPFSCoopSyncVFS` defaults to
+`sync` and `OPFSAdaptiveVFS` to `async`. **Deletion does not care** — it removes a file, it does not
+read one — which is exactly why "not visible" cannot be used to argue "deletes nothing".
+
+## EXISTS-PROBE — telling "this database is there" from "it is not", 2026-09-02, n=3 per cell per engine
+
+**Method.** Throwaway probe (deleted). Each persistent VFS in three states — never created, created and
+closed, created and closed then deleted — interrogated by two candidate signals. Chromium 151 /
+Firefox 153, this devcontainer. **Both engines identical on every cell, no variation.**
+
+### `jAccess` is NOT usable, and the reason matters more than the table
+
+Reliable on four of seven — `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `AccessHandlePoolVFS`,
+`IDBBatchAtomicVFS`. On the other three it returns 0 in **every** state, so an existing database and
+one that never existed are indistinguishable: `OPFSCoopSyncVFS` consults an in-memory `Set`,
+`OPFSWriteAheadVFS` and `IDBMirrorVFS` in-memory `Map`s, none of them seeded from storage at
+construction.
+
+**On `IDBMirrorVFS` it is deliberate** — the upstream source says SQLite never calls `xAccess` on a
+main database file, so the VFS skips the IndexedDB round trip. We would be reading a field whose
+contract explicitly excludes our use. **A signal that is right by luck on four of seven is worse than
+none:** right often enough that nobody notices when it is wrong.
+
+### `open_v2` without `SQLITE_OPEN_CREATE` is uniform on all seven
+
+| state | every one of the seven persistent VFS |
+|---|---|
+| never created | `SQLITE_CANTOPEN` (14) |
+| created and closed | **opens** |
+| created, closed, deleted | `SQLITE_CANTOPEN` (14) |
+
+One guard covers every VFS, no special cases, because it goes through `jOpen` — the VFS's real notion
+of existence, and what SQLite itself does.
+
+Three practical answers that make it usable and not merely correct:
+
+- **The probe handle is closed immediately.** On `AccessHandlePoolVFS` `jClose` leaves the handle
+  associated with the VFS *instance* rather than the file, and the delete worker runs the check and
+  `jDelete` on that same instance — so nothing is re-acquired and nothing is held against the delete.
+- **`CANTOPEN` (14) is distinguishable from the failures it must not swallow.** A corrupt file reaches
+  the header read and returns `SQLITE_CORRUPT` (11); a WASM or VFS start-up failure throws before
+  `open_v2` is reached at all.
+- **It consumes no `AccessHandlePoolVFS` slot.** `getSize()` went 0→0 absent, 1→1 present, 0→0 after
+  deletion.
+
 ## Numbers that are one observation, not a measurement
 
 - **Android 145 vs 151 differ by a factor 2.6** on bulk insert, same emulator. Regression
