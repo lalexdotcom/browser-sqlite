@@ -250,7 +250,12 @@ const open = (file: string, options: OpenOptions) => {
   // counter cannot interleave. Reset by the `query` case, read by its reply.
   let prepared = 0;
 
-  const cache = createStatementCache(options.statementCacheSize ?? 0);
+  const cache = createStatementCache({
+    maxEntries: options.statementCacheSize ?? 0,
+    // Task 2 replaces this with the plumbed budget. Until weights are real the
+    // total is 0, so no finite value here would change anything.
+    maxBytes: Number.POSITIVE_INFINITY,
+  });
 
   const query = async function* (
     sql: string,
@@ -329,7 +334,7 @@ const open = (file: string, options: OpenOptions) => {
         await sqlite.finalize(stmt);
         return;
       }
-      for (const handle of cache.set(sql, stmt)) {
+      for (const handle of cache.set(sql, stmt, 0)) {
         await sqlite.finalize(handle);
       }
     };
