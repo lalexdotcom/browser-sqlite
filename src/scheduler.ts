@@ -39,6 +39,12 @@ export type WriterPolicy = (index: number) => boolean;
  */
 export type InternalSQLiteClientOptions = CreateSQLiteClientOptions & {
   __unsafeTestWriterPolicy?: WriterPolicy;
+  /**
+   * TEST-ONLY, UNSUPPORTED. The byte bound has no falsifier without it: at a
+   * fixed default nothing in the suite can tell a working bound from one that
+   * never fires. Absent from the public options type on purpose.
+   */
+  __unsafeTestStatementCacheBytes?: number;
 };
 
 export type Scheduler<W> = {

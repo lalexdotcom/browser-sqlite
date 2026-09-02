@@ -49,6 +49,8 @@ export type ClientMessageData =
       pragmas?: Record<string, string>;
       /** Statements retained per worker; see `src/client.ts`. Internal. */
       statementCacheSize?: number;
+      /** Bytes retained per worker; see `src/client.ts`. Internal. */
+      statementCacheBytes?: number;
       wasm?: WasmLocation;
     }
   | {

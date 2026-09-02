@@ -70,45 +70,6 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
-### The statement cache's bound is in entries, and an entry can weigh megabytes (rc.5, user 2026-08-31)
-
-The design is in `docs/superpowers/specs/2026-08-27-statement-cache-design.md`
-and every number is in `mem:measurements`; neither is repeated here. What is open
-is the bound.
-
-`DEFAULT_STATEMENT_CACHE_SIZE = 32` (`client.ts`) counts **entries**. That number was picked
-before anything had been weighed. It has been weighed since: the two INSERT templates one
-`bulkWrite` retains come to **3.06 MB together**, and there is one cache per worker,
-multiplied by `poolSize`.
-
-**The case the measurement did not cover.** One `bulkWrite` is fine. An application writing to
-four tables produces four such pairs — eight templates.
-
-**Corrected 2026-09-02: this entry said 24 MB per worker and ~100 MB at `poolSize: 4`, and it was
-double.** It treated 3.06 MB as the weight of one template; 3.06 MB is the weight of the **pair**
-(2.43 MB full-batch plus 0.62 MB partial). Four pairs are **~12 MB per worker, ~49 MB at
-`poolSize: 4`**.
-
-**And treat even that as an order of magnitude, not a figure.** It multiplies one measured table —
-five columns — by four, while the entry's own premise is four tables of *different* widths, and
-`mem:measurements` states plainly that the bytes/char ratio is not stable and that no extrapolation
-rule is possible. The honest form is: one `bulkWrite` pair was measured at 3.06 MB per worker, and
-nobody has measured a multi-table workload at all.
-
-The whole-branch review called 32 entries safe and was right about the case in front of it; that
-case was one table. **The risk survives the correction** — tens of megabytes of statement cache is
-still a lot for a library whose reason to exist is not holding large structures in RAM — but the
-size of the risk is now the measured one.
-
-So moving the eviction criterion to a byte budget fed by `sqlite3_stmt_status(stmt, 99, 0)`
-is **not an optimisation, it is the answer to a memory risk**. The change is confined to the
-pure module — eviction is all it decides. Do not expect help from `_sqlite3_memory_used()`:
-this build sets `SQLITE_DEFAULT_MEMSTATUS=0` and it returns 0.
-
-**A smaller effect to know before touching this:** SQL generated per call fills the LRU with
-single-use entries. The bound stops the growth, not the churn, and every eviction is a
-`finalize` on the hot path. Nobody has profiled it.
-
 ### npm trusted publishing — it would remove the secret, but not all of it
 
 <https://docs.npmjs.com/trusted-publishers>. npm trusts GitHub Actions over OIDC
@@ -160,6 +121,25 @@ while its root was in all likelihood still dirty.
 Not worth a mechanism at this rate. If it is ever chased, note the prior question:
 `OPFSWriteAheadVFS` gives no concurrency on Safari (`mem:measurements`), so whether it
 should be recommended there at all comes first.
+
+### CACHE-BYTES — three things the byte bound was shipped without
+
+`DEFAULT_STATEMENT_CACHE_BYTES = 8 MB` (`client.ts`) is **derived, never run.** It follows from
+two measured facts — a template ceiling of 3.4 MB and the rule's `B > (N − 1) × MAX` condition
+— but no workload was ever executed at 8 MB to confirm the number it produces. A campaign at
+4 / 8 / 16 MB against the two-concurrent-`bulkWrite` workload would settle it, and
+`tests/browser/statement-cache.test.ts` already contains that workload.
+
+**The `× poolSize` multiplier was falsified at n=1.** All 32 INSERT batches landed on worker 0
+at `poolSize: 4` on both engines (`mem:measurements`), which is why 8 MB per worker is not
+32 MB in practice. One workload, one run, and four reads afterwards did not move the write
+designation — nothing says it cannot migrate over a long session.
+
+**The eviction churn is unprofiled.** SQL generated per call fills the LRU with single-use
+entries; the bound stops the growth, not the churn, and every eviction is a `finalize` on the
+hot path. This predates the byte bound and neither bound addresses it.
+
+Design: `docs/superpowers/specs/2026-09-02-statement-cache-byte-bound-design.md` §8.
 
 ### GATE-1 — what the readiness gate still rests on, after 2026-08-31
 

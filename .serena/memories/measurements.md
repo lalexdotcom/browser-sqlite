@@ -749,6 +749,92 @@ Firefox cache=32: WL1 sync [416, 417, 427] WL2 sync [260, 265, 259] WL3 sync [25
 Firefox cache=0: WL1 sync [487, 480, 501] WL2 sync [534, 531, 531] WL3 sync [520, 519,
 516] WL1 async [1189, 1289, 1277] WL2 async [744, 720, 722] WL3 async [685, 685, 698]
 
+## Statement-cache bound in BYTES — 2026-09-02, this container, Chromium 151 / Firefox 153
+
+Two throwaway probes, both deleted: `tests/browser/stmt-bytes-probe.test.ts` (main thread,
+MemoryVFS, both WASM builds, no `src/` instrumentation) and
+`tests/browser/cache-thrash-probe.test.ts` (a temporary `__unsafeTestStatementCacheSize`
+on `InternalSQLiteClientOptions`, reverted). Everything here supersedes the sizing
+guesses in `mem:follow-ups`; the 2026-08-28 footprint table above stands unchanged and
+is reproduced to within 3 bytes.
+
+### `MEMUSED` is constant over a statement's whole life
+
+`Module._sqlite3_stmt_status(stmt, 99, 0)` read at five points, `SQLITE_PREPARE_PERSISTENT`
+as the cache path uses:
+
+| statement | after prepare | after bind | after step | after reset+clear_bindings | 2nd cycle |
+|---|---|---|---|---|---|
+| `SELECT a FROM t WHERE a = ?` | 1 352 | 1 352 | 1 352 | 1 352 | 1 352 |
+| full-batch INSERT, 5 cols × 6 553 rows | 2 434 002 | 2 434 002 | 2 434 002 | 2 434 002 | 2 434 002 |
+
+Identical byte for byte on the `sync` and `async` builds — the 2026-08-28 claim that the
+builds agree is now shown, not asserted.
+
+**Three consequences for the design.** A byte budget fed by `MEMUSED` bounds what it
+claims to: the reading survives `reset`. The weight can be taken **once, right after
+`prepare`** rather than in `settle`, so the cost is known when the decision to retain is
+made. And binding 32 765 integers moves it by zero, so the spec's §8.3 worry about a
+cached template pinning its bound values does not show up here — **integers only; blobs
+and strings allocate elsewhere, and `clear_bindings` in `settle` is what releases them.**
+
+### The largest `bulkWrite` template is the NARROWEST table
+
+`bulk.ts` caps PARAMETERS at `maxVariables = 32766`, so `maxBufferSize = floor(32766 /
+columns)`. Part of the footprint follows VALUES **rows**, so one column buys five times the
+rows a five-column table gets:
+
+| columns | rows/batch | SQL chars | footprint | bytes/char |
+|---|---|---|---|---|
+| **1** | 32 766 | 131 097 | **3 530 930 (3,37 MB)** | 26.9 |
+| 2 | 16 383 | 98 336 | 2 453 689 (2,34 MB) | 25.0 |
+| 5 | 6 553 | 78 689 | 2 434 002 (2,32 MB) | 30.9 |
+| 10 | 3 276 | 72 151 | 2 427 264 (2,31 MB) | 33.6 |
+| 20 | 1 638 | 68 935 | 2 424 048 (2,31 MB) | 35.2 |
+| 50 | 655 | 67 129 | 2 421 842 (2,31 MB) | 36.1 |
+
+Flat at ~2,31 MB from two columns up; the peak is at one column. **So the library's own
+generated SQL has a structural ceiling: MAX_STATEMENT_SIZE ≈ 3,4 MB**, and `maxVariables`
+is an internal default no caller sets — it is not a consumer option. Consumer-written SQL
+has no such ceiling and never will.
+
+### The working set of two concurrent `bulkWrite`s is TWO templates, not four
+
+Batch order was recorded, not assumed: `abababab…` over all 32 batches, so the two writers
+do interleave. The two FULL templates alternate for 30 batches; the two partials arrive
+once each at `close()`. That is why `cache=2` does not thrash and `cache=1` does.
+
+Workload: two `bulkWrite`s of 100 000 rows, 5 columns, fed concurrently, `poolSize: 1`,
+`debug: true`, OPFSAdaptiveVFS / async build, 3 runs per cell, median.
+
+| cache entries | INSERT compilations | Chromium | Firefox |
+|---|---|---|---|
+| 32 | 4 / 32 | 745 ms | 819 ms |
+| 2 | 4 / 32 | 746 ms | 802 ms |
+| **1** | **32 / 32** | **888 ms** | **1 718 ms** |
+| 0 (control) | 32 / 32 | 874 ms | 1 722 ms |
+
+**`cache=0` is the control and it does two jobs**: it proves the size actually reached the
+worker — without it, "4 compiles in both arms" is indistinguishable from an option that
+never travelled — and it shows that **`cache=1` is indistinguishable from having no cache
+at all.** A budget that cannot hold both templates does not degrade the cache, it cancels
+it: **+19 % on Chromium, +110 % on Firefox.**
+
+Raw runs — Chromium: 32 [733.9, 732.6, 730.4] / [676.5, 765.2, 745.4] · 2 [745.7, 764.7,
+743.6] · 1 [880.3, 898, 887.8] · 0 [878, 874.3, 872.4]. Firefox: 32 [819, 807, 832] ·
+2 [811, 795, 802] · 1 [1718, 1746, 1703] · 0 [1720, 1722, 1727].
+
+### The large templates live on ONE worker, not `poolSize` of them
+
+Same workload at `poolSize: 4`, default cache, both engines: **all 32 INSERT batches served
+by worker 0**, 4 distinct SQL, the other three workers never seeing a template. Four reads
+issued afterwards did not move the designation. The scheduler designates one writer at a
+time and prefers `lastWriterIndex` (`scheduler.ts`), which is the mechanism.
+
+**This falsifies the `× poolSize` multiplier** `mem:follow-ups` used to size the risk.
+n=1 on the distribution, one workload, and nothing here says the designation cannot
+migrate over a long session — but it did not here, on either engine.
+
 ## The readiness gate, measured 2026-08-31 (Chromium 151 / Firefox 153, this container)
 
 Toggled by passing `poolSize: 0` to `createScheduler`, which leaves the gate open

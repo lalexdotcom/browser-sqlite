@@ -26,7 +26,15 @@
  * they were `any`, they existed only to type the hand-written `SQLiteAPI` this
  * file no longer carries, and upstream types both as the `number` they are.
  */
-type WASQLiteModule = {};
+type WASQLiteModule = {
+  /**
+   * `sqlite3_stmt_status`. Exported by all three builds; the JS façade does
+   * not wrap it, and it takes a pointer and returns a number, so `mapStmtToDB`
+   * — a JS-side guard only — is not involved. Declared here rather than cast
+   * at the call site: the twelve structural `any` in `src/` stay twelve.
+   */
+  _sqlite3_stmt_status: (stmt: number, op: number, resetFlag: number) => number;
+};
 
 /**
  * Emscripten's module argument. Only `locateFile` is used, and only when the
