@@ -81,10 +81,24 @@ before anything had been weighed. It has been weighed since: the two INSERT temp
 `bulkWrite` retains come to **3.06 MB together**, and there is one cache per worker,
 multiplied by `poolSize`.
 
-**The case the measurement did not cover.** One `bulkWrite` is fine. An application writing
-to four tables of different widths produces eight distinct templates — order of 24 MB per
-worker, ~100 MB at `poolSize: 4`. The whole-branch review called 32 entries safe and was
-right about the case in front of it; that case was one table.
+**The case the measurement did not cover.** One `bulkWrite` is fine. An application writing to
+four tables produces four such pairs — eight templates.
+
+**Corrected 2026-09-02: this entry said 24 MB per worker and ~100 MB at `poolSize: 4`, and it was
+double.** It treated 3.06 MB as the weight of one template; 3.06 MB is the weight of the **pair**
+(2.43 MB full-batch plus 0.62 MB partial). Four pairs are **~12 MB per worker, ~49 MB at
+`poolSize: 4`**.
+
+**And treat even that as an order of magnitude, not a figure.** It multiplies one measured table —
+five columns — by four, while the entry's own premise is four tables of *different* widths, and
+`mem:measurements` states plainly that the bytes/char ratio is not stable and that no extrapolation
+rule is possible. The honest form is: one `bulkWrite` pair was measured at 3.06 MB per worker, and
+nobody has measured a multi-table workload at all.
+
+The whole-branch review called 32 entries safe and was right about the case in front of it; that
+case was one table. **The risk survives the correction** — tens of megabytes of statement cache is
+still a lot for a library whose reason to exist is not holding large structures in RAM — but the
+size of the risk is now the measured one.
 
 So moving the eviction criterion to a byte budget fed by `sqlite3_stmt_status(stmt, 99, 0)`
 is **not an optimisation, it is the answer to a memory risk**. The change is confined to the
