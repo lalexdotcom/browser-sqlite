@@ -495,8 +495,8 @@ export const createSQLiteClient = (
   /**
    * A one-shot promise that settles as soon as the Web Locks API responds to
    * the connection lock request. Awaited at the top of `acquireInstrumented`
-   * so that the first use of any method surfaces the BUSY error legibly rather
-   * than appearing to work with a broken connection.
+   * so that the first use of any method surfaces the DATABASE_IN_USE error
+   * legibly rather than appearing to work with a broken connection.
    *
    * `undefined` when `capability.exclusiveConnection` is false.
    */
@@ -1100,9 +1100,10 @@ export const createSQLiteClient = (
   // defer spawning until after the lock settles. On Firefox, workers that open
   // OPFS handles while another client already holds them crash with
   // WORKER_CRASHED ("No modification allowed") before `acquireInstrumented`
-  // can surface a legible BUSY error. Deferring prevents that: workers never
-  // start when the lock is held elsewhere, and `failClient` sets `fatal` so
-  // any query on B surfaces BUSY via the `acquireInstrumented` guard.
+  // can surface a legible DATABASE_IN_USE error. Deferring prevents that:
+  // workers never start when the lock is held elsewhere, and `failClient` sets
+  // `fatal` so any query on B surfaces DATABASE_IN_USE via the
+  // `acquireInstrumented` guard.
   const startWorkers = () => {
     for (let index = 0; index < poolSize; index += 1) spawn(index);
   };
@@ -1110,9 +1111,15 @@ export const createSQLiteClient = (
     void connLockPromise.then(() => {
       if (connRelease === undefined) {
         // Lock was held elsewhere — fail the client now so workers never open
-        // the database. The BUSY error surfaced here matches the one thrown in
-        // `acquireInstrumented`, ensuring the first query on this client fails
-        // with a legible message rather than a WORKER_CRASHED stall.
+        // the database. The DATABASE_IN_USE error here matches the one thrown
+        // in `acquireInstrumented`, ensuring the first query on this client
+        // fails with a legible message rather than a WORKER_CRASHED stall.
+        //
+        // This code is not independently covered by any test: both sites fire
+        // on the same condition (connRelease === undefined after
+        // connLockPromise settles), and acquireInstrumented's throw wins on
+        // every method call because it runs before scheduler.acquire. A
+        // silent revert of this code stays green.
         failClient(
           new SQLiteError(
             'DATABASE_IN_USE',
