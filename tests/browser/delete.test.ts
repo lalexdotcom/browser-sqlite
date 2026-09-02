@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from '@rstest/core';
+import { afterEach, describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
+import { SQLiteError } from '../../src/errors';
 import { initLockName } from '../../src/locks';
 
 /**
@@ -133,6 +134,82 @@ describe('deleteDatabase', () => {
 
     await expect(
       deleteDatabase(file, { vfs: 'OPFSAdaptiveVFS' }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe('deleteDatabase under a live connection', () => {
+  const liveClient = (
+    vfs:
+      | 'OPFSAnyContextVFS'
+      | 'IDBBatchAtomicVFS'
+      | 'IDBMirrorVFS'
+      | 'OPFSAdaptiveVFS',
+  ) => {
+    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const db = createSQLiteClient(dbName, { vfs, poolSize: 1 });
+    onTestFinished(async () => {
+      try {
+        await db.close();
+      } catch {
+        /* a failed client has nothing to close */
+      }
+      try {
+        await deleteDatabase(dbName, { vfs });
+      } catch {
+        /* best-effort cleanup */
+      }
+    });
+    return { db, dbName };
+  };
+
+  for (const vfs of [
+    'OPFSAnyContextVFS',
+    'IDBBatchAtomicVFS',
+    'IDBMirrorVFS',
+    'OPFSAdaptiveVFS',
+  ] as const) {
+    // Falsifiable: remove the connection-lock acquisition in delete.ts and the
+    // first three go red by resolving (they delete the database today), while
+    // OPFSAdaptiveVFS goes red with WORKER_CRASHED instead of DATABASE_IN_USE.
+    it(`refuses with DATABASE_IN_USE on ${vfs}`, async () => {
+      const { db, dbName } = liveClient(vfs);
+      await db.write('CREATE TABLE t (n)');
+      await db.write('INSERT INTO t VALUES (1)');
+
+      const error = await deleteDatabase(dbName, { vfs }).then(
+        () => undefined,
+        (e) => e,
+      );
+      expect(error).toBeInstanceOf(SQLiteError);
+      expect((error as SQLiteError).code).toBe('DATABASE_IN_USE');
+
+      // The live client is untouched — this is the whole point.
+      const rows = await db.read<{ n: number }>('SELECT n FROM t');
+      expect(rows.map((r) => r.n)).toEqual([1]);
+    });
+
+    it(`deletes on ${vfs} once the client has closed`, async () => {
+      const { db, dbName } = liveClient(vfs);
+      await db.write('CREATE TABLE t (n)');
+      await db.close();
+      await expect(deleteDatabase(dbName, { vfs })).resolves.toBeUndefined();
+    });
+  }
+
+  it('still deletes on the memory VFS with a client open — nothing is shared there', async () => {
+    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const db = createSQLiteClient(dbName, { vfs: 'MemoryVFS', poolSize: 1 });
+    onTestFinished(async () => {
+      try {
+        await db.close();
+      } catch {
+        /* a failed client has nothing to close */
+      }
+    });
+    await db.write('CREATE TABLE t (n)');
+    await expect(
+      deleteDatabase(dbName, { vfs: 'MemoryVFS' }),
     ).resolves.toBeUndefined();
   });
 });

@@ -1,5 +1,5 @@
 import { SQLiteError } from './errors';
-import { createLocks, initLockName } from './locks';
+import { connectionLockName, createLocks, initLockName } from './locks';
 import { busyFromCode, spawnWorker } from './pool';
 import {
   defaultBuildFor,
@@ -81,15 +81,49 @@ export const deleteDatabase = async (
   const dbFile = normalizeDatabaseFile(file);
   const wasm = resolveWasmLocation(options.wasmUrl, build, location.href);
 
-  const ran = await createLocks().tryWithLock(initLockName(vfs, dbFile), () =>
-    runDelete({ file: dbFile, vfs, build, wasm }),
-  );
+  const locks = createLocks();
 
-  if (!ran) {
+  // The connection lock first: a live client is both the likelier refusal and
+  // the more actionable one, and it gets its own code so a caller can tell
+  // "close it, possibly in another tab" from "retry in a moment".
+  //
+  // `ifAvailable` on BOTH acquisitions is load-bearing. A client takes
+  // bsq:conn and then bsq:init; this function takes them the other way round.
+  // A request that never queues cannot deadlock — a blocking acquisition on
+  // either name reintroduces the cycle.
+  const connRelease = await locks.hold(connectionLockName(vfs, dbFile), {
+    mode: 'exclusive',
+    ifAvailable: true,
+  });
+
+  if (connRelease === undefined) {
     throw new SQLiteError(
-      'BUSY',
-      `${dbFile} is being opened or deleted elsewhere. Close every client on it, in every tab, and try again.`,
+      'DATABASE_IN_USE',
+      `${dbFile} is open. Close every client on it, in this tab and in any other, then delete it.`,
     );
+  }
+
+  try {
+    const ran = await locks.tryWithLock(initLockName(vfs, dbFile), () =>
+      runDelete({ file: dbFile, vfs, build, wasm }),
+    );
+
+    if (!ran) {
+      throw new SQLiteError(
+        'BUSY',
+        `${dbFile} is being opened or deleted elsewhere. Try again in a moment.`,
+      );
+    }
+  } finally {
+    connRelease();
+    // The Web Locks API releases a lock by queuing a global task (not a
+    // microtask). On Firefox the second `ifAvailable` request on this name
+    // fires before that task runs if we return immediately, making it look as
+    // if the lock is still held. One setTimeout(0) yields to the task queue
+    // so any subsequent call — including an immediate retry in tests — sees
+    // the lock as free. Chromium does not require this, but it is harmless
+    // there.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
 };
 
