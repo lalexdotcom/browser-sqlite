@@ -28,7 +28,7 @@ obligations and unmeasured ground.
 
 Not history: the numbers a regression is detected against.
 
-`tsc --noEmit` clean · `pnpm build` clean · **500 tests, 0 failed files** on the
+`tsc --noEmit` clean · `pnpm build` clean · **543 tests, 0 failed files** on the
 cross-tab branch (470 on `main`) · conformance **73 passed / 12 skipped on Chromium and
 the same on Firefox** · **consumer smoke 24/24** ·
 `scripts/bench/check.mjs chromium --all` OK, 22 pairs, zero `not-run` ·
@@ -56,31 +56,33 @@ still surface timing the campaign did not.
 **One: whether to merge the cross-tab branch**, which is finished and reviewed clean. Nothing
 else is outstanding.
 
-## rc.5's first item: built, reviewed, unmerged
+## rc.5 so far: three lots, built, reviewed clean, unmerged
 
-**Multi-client / multi-tab, both halves, delivered 2026-09-01.** Writes serialize across every
-client and tab in the origin; read-your-own-writes holds across tabs on every VFS but
-`IDBMirrorVFS`. Spec, plan and mechanism: `mem:architecture`'s cross-tab section and
-`docs/superpowers/specs/2026-08-31-cross-tab-coordination-design.md`. **Read the spec, not a
-summary** — it carries an amendment made during implementation.
+All on one feature branch (`git branch` names it), **unmerged and not pushed**. The user judged them
+three faces of one feature and kept them together deliberately, accepting that the whole-branch
+review runs over a larger diff. Baseline: **543 tests, 0 failed files**, both engines, conformance
+73/12, biome 13 warnings.
 
-The branch is **unmerged and not pushed**; `git branch` names it. Its baseline: **500 tests,
-0 failed files**, both engines, conformance 73/12, biome 13 warnings.
+**Read the specs, not a summary** — all three are in `docs/superpowers/specs/`, dated 2026-08-31 and
+2026-09-02, and two carry amendments made during implementation.
 
-**What it does NOT deliver, and the README says so:** reads still wait on the rotated
-exclusive OPFS handle wherever `readwrite-unsafe` is missing — serializing writers does not
-change which handle a VFS holds. `IDBMirrorVFS` gains nothing cross-tab and cannot.
-`OPFSCoopSyncVFS`'s stalls are untouched.
+1. **Cross-tab coordination.** Writes serialize across every client and tab; read-your-own-writes
+   holds across tabs on every VFS but `IDBMirrorVFS`. Mechanism and invariants: `mem:architecture`.
+2. **The connection lifetime lock.** Every client holds `bsq:conn:<ns>:<file>` for its life —
+   shared normally, exclusive where `exclusiveConnection` is declared, absent on the memory VFS.
+3. **`deleteDatabase` reports.** `DATABASE_IN_USE` when a client holds it, `DATABASE_NOT_FOUND` when
+   nothing is there. Two new public error codes.
 
-**Unverified, and worth knowing before promising anything:** nobody has checked whether two
-tabs can even *open* the same database on the VFS declared `multiConnection: false`
-(`AccessHandlePoolVFS`, `IDBMirrorVFS`). Serializing writers is moot if the second tab never
-opens.
+**Three consumer-visible behaviour changes, all in `CHANGELOG.md` under Breaking:** two clients
+writing at once no longer produce `BUSY` (the second waits); a refused deletion reports
+`DATABASE_IN_USE` where it reported `WORKER_CRASHED` or nothing; and **deletion is no longer
+idempotent**.
 
-**A behaviour change consumers can depend on:** two clients writing at once no longer produce
-`BUSY` — the second waits. Code that caught `BUSY` between a consumer's own clients and
-retried is now unreachable. It is in `CHANGELOG.md` under Breaking for that reason, even
-though nothing stops compiling.
+**What it does NOT deliver, and the README says so:** reads still wait on the rotated exclusive OPFS
+handle wherever `readwrite-unsafe` is missing. `IDBMirrorVFS` gains nothing cross-tab.
+`OPFSCoopSyncVFS`'s stalls are untouched. And deleting through the wrong VFS is still destructive
+within the `opfs-path` family — that family shares one file, which is measured and now carries a
+README warning.
 
 ## Pending, and not ours to move
 

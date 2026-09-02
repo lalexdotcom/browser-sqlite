@@ -74,11 +74,19 @@ leaks past the tab's life — the same property `stagingLockName` already relies
 an application that leaks clients is `close()`, and the `BUSY` message says so.
 
 **D2 · Both of `deleteDatabase`'s acquisitions are `ifAvailable`. Neither ever waits.**
-`deleteDatabase` will hold two locks: `bsq:init` (already) and now `bsq:conn`. A client acquires
-them in the opposite order — `bsq:conn` at construction, then `bsq:init` inside its worker's
-open. **That is a lock-ordering inversion, and `ifAvailable` is what makes it harmless**: a
-request that never queues cannot deadlock. This is an invariant, not an optimisation: a blocking
-acquisition on either name reintroduces the cycle.
+`deleteDatabase` will hold two locks: `bsq:init` (already) and now `bsq:conn`.
+
+**Corrected 2026-09-02, by the whole-branch review.** An earlier draft called this a lock-ordering
+inversion and justified `ifAvailable` as what makes the inversion harmless. **There is no
+inversion**: a client takes `bsq:conn` at construction and `bsq:init` inside its worker's open, and
+`deleteDatabase` takes them in that same order. No cycle can form, and `ifAvailable` is not what
+prevents one. Anyone hunting for the deadlock that sentence implied would have found nothing and
+might have concluded the guard was unnecessary.
+
+**`ifAvailable` is required for a different reason, and it is D4's:** a blocking acquisition on
+`bsq:conn` would make `deleteDatabase` wait for every client on that database to close, which is a
+wait bounded by the application's lifetime rather than by any queue. Fail fast is a product
+decision, not a deadlock defence.
 
 **D3 · A `shared` acquisition does not defer worker startup, and `bsq:init` is why that is safe.**
 The `AccessHandlePoolVFS` guard defers spawning until its lock settles, because on Firefox a
