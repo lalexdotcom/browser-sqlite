@@ -43,6 +43,12 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- The per-worker statement cache is now bounded in bytes (8 MB) as well as in
+  entries (32). This makes the worst case finite and stated; it does not reduce
+  the common footprint — one `bulkWrite` retained ~3 MB before and retains ~3 MB
+  now. What it bounds is an application whose workers accumulate many large
+  templates, where the entry bound alone allowed tens of megabytes. Internal:
+  no option changes.
 - **A write transaction holds the origin's write lock for the whole of its
   callback.** A callback that never returns now blocks every other writer in the
   origin, not only its own client.
