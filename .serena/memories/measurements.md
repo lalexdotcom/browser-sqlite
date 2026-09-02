@@ -432,6 +432,44 @@ client hanging on any subsequent read. `OPFSAnyContextVFS` at least errors immed
 **`AccessHandlePoolVFS`'s new `bsq:conn` guard plays no role here**: `deleteDatabase` contests
 `bsq:init` only.
 
+## `navigator.locks.query()` counts shared holders one by one — 2026-09-02, both engines
+
+**Method.** Throwaway `tests/browser/query-holders-probe.test.ts` (deleted). The same name held
+in `mode: 'shared'` from N contexts, then `query()`, counting entries carrying that name. Done
+both same-realm (N holds from the page) and cross-realm (N same-origin iframes, via
+`tests/browser/helpers/realm.ts`). Chromium 151 / Firefox 153, this devcontainer. **The two
+engines agree completely.**
+
+| N | same-realm entries | cross-realm entries |
+|---|---|---|
+| 1 | 1 | 1 |
+| 2 | 2 | 2 |
+| 4 | 4 | 4 |
+
+**So a per-client shared lifetime lock is countable**, which is what the DELETE-LIVE remedy
+rests on. The assumption held; it was checked rather than reasoned.
+
+**`LockInfo` carries exactly three keys on both engines** — no extras beyond the specification:
+
+```json
+{ "clientId": "94621D6D…", "mode": "shared", "name": "bsq:conn:opfs:app.db" }
+```
+
+**`clientId` is realm-scoped, not hold-scoped, and this is the part that matters for any API
+built on it.** N holds from one page produce N entries carrying **one** `clientId`; N holds
+from N iframes produce N entries with N distinct ones. So the two questions have two different
+answers from one query:
+
+- **how many clients** → `entries.length`, valid only if the design enforces exactly one hold
+  per client;
+- **how many tabs** → `new Set(entries.map(e => e.clientId)).size`.
+
+Using `clientId` for the client count would undercount several clients in one page. Using
+`entries.length` for the tab count would overcount them.
+
+**An iframe is a separate Web Locks client.** Anything in this library that ever requested a
+lock from inside an iframe would be counted as an independent client.
+
 ## Numbers that are one observation, not a measurement
 
 - **Android 145 vs 151 differ by a factor 2.6** on bulk insert, same emulator. Regression
