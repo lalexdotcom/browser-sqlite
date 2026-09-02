@@ -80,14 +80,31 @@ open. **That is a lock-ordering inversion, and `ifAvailable` is what makes it ha
 request that never queues cannot deadlock. This is an invariant, not an optimisation: a blocking
 acquisition on either name reintroduces the cycle.
 
-**D3 · A `shared` acquisition does not defer worker startup, and must not.**
+**D3 · A `shared` acquisition does not defer worker startup, and `bsq:init` is why that is safe.**
 The `AccessHandlePoolVFS` guard defers spawning until its lock settles, because on Firefox a
-worker that opens OPFS handles while another client holds them crashes before the `BUSY` check
-can fire. **That deferral stays confined to the exclusive mode.** Within one namespace the mode
-is uniform — every `opfs-path` VFS is non-exclusive and shares the `opfs` namespace, while
-`AccessHandlePoolVFS` has its own — so a `shared` request can only ever queue behind an exclusive
-one, and by D2 no exclusive request ever queues. A shared hold is therefore granted without
-waiting, and the startup path stays exactly as GATE-1 describes it for eight of nine VFS.
+worker that opens OPFS handles while another client holds them crashes before the guard can fire.
+**That deferral stays confined to the exclusive mode.**
+
+An earlier draft justified this by claiming a shared request never waits. **That was wrong.**
+`deleteDatabase` *holds* its exclusive lock for the whole deletion, so a client constructed during
+a delete does have its shared request queued behind it. `ifAvailable` stops delete from *queueing*;
+it does not stop delete from *holding*.
+
+What makes non-deferral safe is a different lock: **the delete holds `bsq:init` across
+`runDelete`, and a worker takes `bsq:init` — blocking — before `open_v2`.** So a client
+constructed mid-delete has its workers held at the open, by the mechanism that exists for exactly
+this, whatever its `bsq:conn` request is doing. The startup path stays as GATE-1 describes it for
+eight of nine VFS, and it stays correct for a reason that survives inspection.
+
+**D5 · The two refusals get two error codes, because the remedies differ.**
+`bsq:conn` refused means a client is open — possibly in another tab, possibly one the user must
+close — and the new code **`DATABASE_IN_USE`** says so. `bsq:init` refused means an open or another
+delete is in flight, which is transient, and keeps `BUSY`. The consumer's action differs
+("retry in a moment" against "close it, and you may need a human"), so a message they cannot
+branch on is not enough. Additive to the eleven existing codes, not breaking.
+
+**`bsq:conn` is checked first**, so the more actionable and more likely cause wins when both would
+refuse.
 
 **D4 · Deletion fails fast where a write waits, and the inconsistency is deliberate.**
 A second writer is doing work the caller wants done, and ordering it is a service. A delete under
@@ -138,9 +155,31 @@ Also required:
 - **The memory VFS take no lock**, asserted rather than assumed.
 - **No test may depend on a wall-clock race.** This branch lost a full cycle to one that did.
 
-## 7. Open, and not decided here
+## 7. Answered while writing this, and worth keeping
 
-- Whether `bsq:init` remains necessary once `bsq:conn` exists. It still covers the window where a
-  client is opening but has not yet reached its first query, so the presumption is yes — but
-  nobody has checked whether the two windows are actually distinct.
-- The client-count API of §5.
+**`bsq:init` is not redundant, and an earlier draft of this spec was wrong to suspect it might
+be.** Two jobs, neither substitutable:
+
+- `bsq:init` is a **mutex between openers**. Two workers of one pool must not open the same file
+  at once — without that serialization, two Firefox runs in three ended with one worker opened out
+  of four, permanently (`mem:measurements`, the readiness gate). A *shared* `bsq:conn` excludes
+  nothing between clients and cannot do this.
+- `bsq:conn` is a **marker of live connections**. `bsq:init` is released the moment an open
+  finishes, so it cannot do this.
+
+And for `deleteDatabase` specifically, `bsq:init` is what holds an in-flight open off during the
+deletion — which is the half of the README's existing sentence that was always true, and what D3
+now rests on.
+
+The remaining question is the narrow one: whether a delete can slip between a client's lock
+**request** and its **grant**. Reading the specification says no — the queue is FIFO per name, so
+a request issued first is processed first and delete's `ifAvailable` meets a pending request and
+is refused; and if delete's request came first there was no client to protect. **That is a reading
+of a specification, not a measurement, and this repository has paid five times for exactly that.
+It gets a test rather than a paragraph.**
+
+## 8. Open, and not decided here
+
+- **The client-count API of §5, together with the `debug` surface it belongs on** (user,
+  2026-09-02). Deferred to its own session: the numbers are already in `mem:measurements`, so it
+  can be picked up without re-measuring.

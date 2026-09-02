@@ -16,6 +16,23 @@ been work on nothing.
 
 ## Designs owed — rc.5 or later
 
+### Counting live clients on a database, and the `debug` surface it belongs on (user, 2026-09-02)
+
+**Deferred deliberately to its own session, with the measurement already banked.** Once every
+client holds `bsq:conn:<ns>:<file>` for its lifetime (see DELETE-LIVE below), the count falls out
+of `navigator.locks.query()` — measured 2026-09-02, both engines: **one entry per shared holder**,
+N holds give N entries. `mem:measurements` carries it, so this needs no re-measurement to start.
+
+**The trap is `clientId`.** It is realm-scoped, not hold-scoped: `entries.length` is the number of
+*clients*, the count of distinct `clientId` is the number of *tabs*, and swapping them undercounts
+or overcounts in silence.
+
+The user wants this to travel with the adaptation of the `debug` mode rather than alone. The
+product questions it opens: clients or tabs or both; on `db.debug` or a standalone function
+(counting clients on a database you have not opened cannot start from a client); and what is
+promised, given `query()` is a snapshot that is stale the instant it is read — observability, never
+a basis for a decision, since exclusion is the lock's job and not the count's.
+
 ### DELETE-LIVE — `deleteDatabase` destroys data under a live connection, on three VFS
 
 Measured 2026-09-02, n=3 per engine, identical on both; table in `mem:measurements`.
