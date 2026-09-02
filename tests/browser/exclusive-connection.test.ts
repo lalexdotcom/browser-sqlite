@@ -175,6 +175,60 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
     expect(rows[0].n).toBe(1);
   });
 
+  it('lets two clients coexist on a shared-mode VFS, and both hold the lock', async () => {
+    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const options = { vfs: 'OPFSAdaptiveVFS' as const, poolSize: 1 };
+    const a = createSQLiteClient(dbName, options);
+    const b = createSQLiteClient(dbName, options);
+    onTestFinished(async () => {
+      for (const client of [a, b]) {
+        try {
+          await client.close();
+        } catch {
+          /* a failed client has nothing to close */
+        }
+      }
+      try {
+        const root = await navigator.storage.getDirectory();
+        await root.removeEntry(dbName, { recursive: true });
+      } catch {
+        /* the entry may not exist if the test failed before creation */
+      }
+    });
+
+    await a.write('CREATE TABLE t (n)');
+    await b.write('INSERT INTO t VALUES (1)');
+
+    // Falsifiable: give the shared branch `ifAvailable: true` and one of these
+    // two clients starts throwing DATABASE_IN_USE.
+    const held = (await navigator.locks.query()).held ?? [];
+    const name = `bsq:conn:opfs:${dbName}`;
+    expect(held.filter((lock) => lock.name === name).length).toBe(2);
+    expect(
+      held
+        .filter((lock) => lock.name === name)
+        .every((l) => l.mode === 'shared'),
+    ).toBe(true);
+  });
+
+  it('takes no connection lock on the memory VFS', async () => {
+    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const db = createSQLiteClient(dbName, { vfs: 'MemoryVFS', poolSize: 1 });
+    onTestFinished(async () => {
+      try {
+        await db.close();
+      } catch {
+        /* a failed client has nothing to close */
+      }
+    });
+    await db.write('CREATE TABLE t (n)');
+
+    const held = (await navigator.locks.query()).held ?? [];
+    expect(held.some((lock) => (lock.name ?? '').startsWith('bsq:conn:'))).toBe(
+      false,
+    );
+  });
+
   // -------------------------------------------------------------------------
   // Control: the guard must not over-reach. OPFSAdaptiveVFS supports multiple
   // connections, so two clients on the same database must both work.

@@ -493,21 +493,32 @@ export const createSQLiteClient = (
   let connRelease: (() => void) | undefined;
 
   /**
-   * A one-shot promise that settles as soon as the Web Locks API responds to
-   * the connection lock request. Awaited at the top of `acquireInstrumented`
-   * so that the first use of any method surfaces the DATABASE_IN_USE error
-   * legibly rather than appearing to work with a broken connection.
+   * Settles as soon as the Web Locks API responds to the connection request.
    *
-   * `undefined` when `capability.exclusiveConnection` is false.
+   * The mode is the VFS's: `exclusive` where `exclusiveConnection` is declared,
+   * so a second client is refused; `shared` everywhere else, so any number of
+   * clients coexist while `deleteDatabase` — which asks for the same name
+   * exclusively — is still kept out.
+   *
+   * **`ifAvailable` is exclusive-only, and the asymmetry is deliberate.** A
+   * second client on an exclusive VFS must fail fast rather than wait for the
+   * first one to close. A shared client must WAIT: the only thing it can queue
+   * behind is a delete holding this name, and waiting that delete out is the
+   * correct behaviour. Its workers are separately held at `open_v2` by
+   * `bsq:init`, which the delete holds too.
+   *
+   * `undefined` on the memory VFS, where two clients are two databases.
    */
-  const connLockPromise: Promise<void> | undefined =
-    capability.exclusiveConnection
-      ? locks
-          .hold(connectionLockName(vfs, dbFile), { ifAvailable: true })
-          .then((release) => {
-            connRelease = release;
-          })
-      : undefined;
+  const connLockPromise: Promise<void> | undefined = sharesStorage(vfs)
+    ? (
+        locks.hold(connectionLockName(vfs, dbFile), {
+          mode: capability.exclusiveConnection ? 'exclusive' : 'shared',
+          ...(capability.exclusiveConnection ? { ifAvailable: true } : {}),
+        }) as Promise<(() => void) | undefined>
+      ).then((release) => {
+        connRelease = release;
+      })
+    : undefined;
   /**
    * The in-flight epoch publication, awaited before the write lock is handed
    * back. Task 6 assigns it; until then it is always already settled.
@@ -1107,7 +1118,7 @@ export const createSQLiteClient = (
   const startWorkers = () => {
     for (let index = 0; index < poolSize; index += 1) spawn(index);
   };
-  if (connLockPromise !== undefined) {
+  if (capability.exclusiveConnection && connLockPromise !== undefined) {
     void connLockPromise.then(() => {
       if (connRelease === undefined) {
         // Lock was held elsewhere — fail the client now so workers never open
