@@ -24,14 +24,34 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-verified 2026-08-31
+## The verification baseline — compare against these, re-measured 2026-09-02
 
-Not history: the numbers a regression is detected against.
+Not history: the numbers a regression is detected against. **Every figure below was read off
+a run on 2026-09-02 in this container, on `feat/statement-cache-byte-bound`** — none is
+carried forward from an earlier session, and none is arithmetic. That branch adds 7 unit tests
+and 5 browser tests; **if it is ever dropped rather than merged, this table is 12 too high and
+must be re-measured, not decremented.**
 
-`tsc --noEmit` clean · `pnpm build` clean · **543 tests, 0 failed files** · conformance **73 passed / 12 skipped on Chromium and
-the same on Firefox** · **consumer smoke 24/24** ·
-`scripts/bench/check.mjs chromium --all` OK, 22 pairs, zero `not-run` ·
-biome 13 warnings, none in recently touched files · `dependencies` empty.
+| command | result |
+|---|---|
+| `pnpm exec tsc --noEmit` | clean |
+| `pnpm build` | clean |
+| `pnpm test` | `status: pass`, **555 tests, 39 files, 0 failed files** |
+| `pnpm test:unit` | 354 tests, 17 files |
+| `pnpm test:browser` | 201 tests, 22 files |
+| `TEST_BROWSER=firefox pnpm test:browser` | **201 tests, 22 files — identical to Chromium** |
+| `pnpm test:conformance` | 85 tests, 2 files, **73 passed / 12 skipped** |
+| `TEST_BROWSER=firefox pnpm test:conformance` | **85 tests, 73 / 12 — identical to Chromium** |
+| `pnpm test:consumer` | 24/24 stages |
+| `node scripts/bench/check.mjs chromium --all` | OK, 22 declared pairs, zero `not-run` |
+| `pnpm lint` | 87 files, 13 warnings, 1 info |
+| `dependencies` in `package.json` | absent |
+
+**The per-project split is here on purpose.** A total alone cannot say which suite moved, and
+the totals are what rot: this file carried "the browser project is 158/158" from 2026-08-28
+until 2026-09-02, by which point the same command read 201 — three rc.5 lots plus this one had
+added browser tests and nobody re-read the line. **Re-measure the whole table when you touch it; do not patch one
+cell.**
 
 **Read four fields from a test report, not three.** `status` and `failedFiles`
 show an unhandled rejection escaping outside any test, which the per-test
@@ -39,16 +59,16 @@ counters cannot. That was reported green once — see `mem:lessons`.
 
 Firefox conformance was 57/19 until `OPFSWriteAheadVFS`'s declaration was corrected; the
 two engines agreeing is the current expectation, and a divergence means something skipped.
+As of 2026-09-02 they agree on **both** suites, test for test — conformance and the browser
+project alike.
 
-**Firefox is a CI gate since 2026-08-28, and its browser project is 158/158 like
-Chromium's.** It runs as its own step in `ci.yaml`, after `pnpm test`. The two
-flakes this file used to warn about are gone: `long-query :: does not block the
-pool` was never a pool defect (it timed the FILE — see `mem:follow-ups`), and
-`barrier` did not reproduce in 13 consecutive runs. **A failure on the Firefox
-step is signal, not noise** — it is the only step that drives the pool against a
-rotating exclusive OPFS handle, so it is where a reduced-mode regression lands
-first. The 13-run campaign was one machine and one build; slower CI hardware may
-still surface timing the campaign did not.
+**Firefox is a CI gate since 2026-08-28.** It runs as its own step in `ci.yaml`, after
+`pnpm test`. The two flakes this file used to warn about are gone: `long-query :: does not
+block the pool` was never a pool defect (it timed the FILE — see `mem:follow-ups`), and
+`barrier` did not reproduce in 13 consecutive runs. **A failure on the Firefox step is
+signal, not noise** — it is the only step that drives the pool against a rotating exclusive
+OPFS handle, so it is where a reduced-mode regression lands first. The 13-run campaign was
+one machine and one build; slower CI hardware may still surface timing the campaign did not.
 
 ## Decisions the user owes
 
@@ -59,8 +79,8 @@ None outstanding. **The next thing is rc.5's remaining scope, which is the user'
 
 Merged into `main` with `--no-ff` and verified on the merged result; the feature branch is deleted
 and no stale ref remains. The user judged the three lots three faces of one feature and kept them on
-one branch deliberately, accepting a larger whole-branch review for it. Baseline: **543 tests, 0
-failed files**, both engines, conformance 73/12, biome 13 warnings.
+one branch deliberately, accepting a larger whole-branch review for it. It was verified against
+the baseline table above — which is the only place that table lives.
 
 **Not pushed.** `main` sits ahead of `origin/main`, which is normal here.
 
