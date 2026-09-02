@@ -70,59 +70,6 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
-### The statement cache's bound moves from entries to bytes (rc.5, user 2026-08-31)
-
-The original design is in `docs/superpowers/specs/2026-08-27-statement-cache-design.md`,
-which deferred this in its §9. **Every number is in `mem:measurements`** — the footprint
-table of 2026-08-28 and the byte-bound campaign of 2026-09-02. Nothing is repeated here.
-
-`DEFAULT_STATEMENT_CACHE_SIZE = 32` (`client.ts`) counts **entries**, a number picked
-before anything had been weighed. The bound moves to bytes fed by
-`Module._sqlite3_stmt_status(stmt, 99, 0)`. **This is the answer to a memory risk, not an
-optimisation** — and it buys a ceiling, not a reduction: the common case (one `bulkWrite`,
-~3 MB on one worker) is untouched by any budget. What it bounds is the tail.
-
-**The fill rule, decided with the user 2026-09-02.** Insert when the total **before**
-insertion is under the budget; otherwise evict LRU until under it, then insert. Overshoot
-is deliberate, and it is what makes the rule good: there is no "this entry is bigger than
-the budget, refuse to cache it" branch, so no non-terminating eviction loop and no
-statement that is structurally uncacheable. **The peak is `B + largest statement`** — state
-it that way, never as a multiple of an assumed maximum, because consumer-written SQL has no
-ceiling.
-
-**B is not a memory figure, it is a count of concurrent `bulkWrite`s protected.** The
-insertion rule drops the key being re-set before it measures the total, so what must fit
-under the budget is the sum of the **other** retained entries. N alternating writers
-therefore require `B > (N − 1) × 3.4 MB`; a budget that cannot satisfy this **cancels
-the cache outright** rather than degrading it (+19 % Chromium, +110 % Firefox — measured).
-**The proposal on the table is 8 MB per worker**, peak ~11.4 MB, and it protects three
-concurrent writers. Four would need ~11 MB. Past that, the thrash is accepted on purpose.
-
-**Keep the entry bound alongside the byte bound.** Bytes alone let ~6000 small statements
-live; the entry cap is what still answers the churn noted below.
-
-**Internal, no consumer option.** Spec §3.2 stands: a consumer cannot pick a VDBE byte
-figure, and adding an option later is additive where removing one is breaking. If the
-footprint should be visible, it belongs on `db.debug` — with the `debug` adaptation already
-deferred above, not here.
-
-**Three implementation facts already established, so nobody re-derives them.** The weight
-can be read **once, right after `prepare`**, not in `settle` — `MEMUSED` does not move over
-the statement's life. `worker.ts` currently resolves `openedDB` to `{ sqlite, db }` and
-**drops the Emscripten `module`**, which has to be carried through for the status call; the
-JS façade does not wrap it, so it needs a cast. And `settle` calls `cache.set` on **every**
-successful exit, hit included — so re-setting an existing key must **replace** its weight,
-not add to it. That is where a silent accounting bug would live.
-
-**One thing measured only for integers:** binding 32 765 integer values does not move
-`MEMUSED`. Blobs and strings allocate elsewhere; `clear_bindings` in `settle` is what
-releases them, so the accounted value stays the right one — but do not write that bound
-values are free.
-
-**A smaller effect to know before touching this:** SQL generated per call fills the LRU with
-single-use entries. The bound stops the growth, not the churn, and every eviction is a
-`finalize` on the hot path. Nobody has profiled it.
-
 ### npm trusted publishing — it would remove the secret, but not all of it
 
 <https://docs.npmjs.com/trusted-publishers>. npm trusts GitHub Actions over OIDC
@@ -174,6 +121,25 @@ while its root was in all likelihood still dirty.
 Not worth a mechanism at this rate. If it is ever chased, note the prior question:
 `OPFSWriteAheadVFS` gives no concurrency on Safari (`mem:measurements`), so whether it
 should be recommended there at all comes first.
+
+### CACHE-BYTES — three things the byte bound was shipped without
+
+`DEFAULT_STATEMENT_CACHE_BYTES = 8 MB` (`client.ts`) is **derived, never run.** It follows from
+two measured facts — a template ceiling of 3.4 MB and the rule's `B > (N − 1) × MAX` condition
+— but no workload was ever executed at 8 MB to confirm the number it produces. A campaign at
+4 / 8 / 16 MB against the two-concurrent-`bulkWrite` workload would settle it, and
+`tests/browser/statement-cache.test.ts` already contains that workload.
+
+**The `× poolSize` multiplier was falsified at n=1.** All 32 INSERT batches landed on worker 0
+at `poolSize: 4` on both engines (`mem:measurements`), which is why 8 MB per worker is not
+32 MB in practice. One workload, one run, and four reads afterwards did not move the write
+designation — nothing says it cannot migrate over a long session.
+
+**The eviction churn is unprofiled.** SQL generated per call fills the LRU with single-use
+entries; the bound stops the growth, not the churn, and every eviction is a `finalize` on the
+hot path. This predates the byte bound and neither bound addresses it.
+
+Design: `docs/superpowers/specs/2026-09-02-statement-cache-byte-bound-design.md` §8.
 
 ### GATE-1 — what the readiness gate still rests on, after 2026-08-31
 

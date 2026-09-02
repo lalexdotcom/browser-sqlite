@@ -75,17 +75,17 @@ one machine and one build; slower CI hardware may still surface timing the campa
 None outstanding. **The next thing is rc.5's remaining scope, which is the user's to pick from
 `mem:follow-ups`.**
 
-## rc.5 so far: three lots, merged 2026-09-02
+## rc.5 so far: four lots, merged 2026-09-02
 
-Merged into `main` with `--no-ff` and verified on the merged result; the feature branch is deleted
-and no stale ref remains. The user judged the three lots three faces of one feature and kept them on
-one branch deliberately, accepting a larger whole-branch review for it. It was verified against
-the baseline table above — which is the only place that table lives.
+Two branches, each merged into `main` with `--no-ff` and verified on the merged result; both are
+deleted and no stale ref remains. Lots 1-3 rode one branch — the user judged them three faces of one
+feature and accepted a larger whole-branch review for it; lot 4 had its own. Both were verified
+against the baseline table above, which is the only place that table lives.
 
 **Not pushed.** `main` sits ahead of `origin/main`, which is normal here.
 
-**Read the specs, not a summary** — all three are in `docs/superpowers/specs/`, dated 2026-08-31 and
-2026-09-02, and two carry amendments made during implementation.
+**Read the specs, not a summary** — all four are in `docs/superpowers/specs/`, dated 2026-08-31 and
+2026-09-02, and three carry amendments made during implementation.
 
 1. **Cross-tab coordination.** Writes serialize across every client and tab; read-your-own-writes
    holds across tabs on every VFS but `IDBMirrorVFS`. Mechanism and invariants: `mem:architecture`.
@@ -93,8 +93,13 @@ the baseline table above — which is the only place that table lives.
    shared normally, exclusive where `exclusiveConnection` is declared, absent on the memory VFS.
 3. **`deleteDatabase` reports.** `DATABASE_IN_USE` when a client holds it, `DATABASE_NOT_FOUND` when
    nothing is there. Two new public error codes.
+4. **The statement cache is bounded in bytes**, 8 MB per worker, alongside the 32-entry bound it
+   keeps. Internal only — no option changed. **It buys a ceiling, not a saving**, and the CHANGELOG
+   says so in those words: one `bulkWrite` retained ~3 MB before and retains ~3 MB after. What was
+   unbounded is an application accumulating many large templates.
 
-**Three consumer-visible behaviour changes, all in `CHANGELOG.md` under Breaking:** two clients
+**Three consumer-visible behaviour changes, all from lots 1-3 and all in `CHANGELOG.md` under
+Breaking:** two clients
 writing at once no longer produce `BUSY` (the second waits); a refused deletion reports
 `DATABASE_IN_USE` where it reported `WORKER_CRASHED` or nothing; and **deletion is no longer
 idempotent**.
