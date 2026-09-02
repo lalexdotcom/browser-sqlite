@@ -54,12 +54,14 @@ In `src/errors.ts`, add to the `SQLiteErrorCode` union, after `'BUSY'`:
   | 'DATABASE_IN_USE'
 ```
 
-and extend the doc comment above `sqliteCode` — no, leave that alone. Instead document the new member where the union is declared, in the block comment at the top of the file, by appending one sentence:
+Then append one sentence to the block comment at the very top of the file — the one that begins "Every failure this library raises on its own behalf" — and change nothing else in that comment:
 
 ```
  * `DATABASE_IN_USE` is this library's own: a database that a live client holds,
  * as opposed to `BUSY`, which covers a transient conflict worth retrying.
 ```
+
+Leave the doc comment above `sqliteCode` untouched.
 
 - [ ] **Step 2: Switch the client guard to it**
 
