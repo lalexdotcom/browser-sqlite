@@ -212,4 +212,40 @@ describe('deleteDatabase under a live connection', () => {
       deleteDatabase(dbName, { vfs: 'MemoryVFS' }),
     ).resolves.toBeUndefined();
   });
+
+  it('refuses a delete issued in the same task as a client construction', async () => {
+    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const vfs = 'OPFSAdaptiveVFS' as const;
+
+    // Both requests are issued in this one task, client first. Per the Web Locks
+    // specification the queue is FIFO per name, so the client's shared request is
+    // processed first and the delete's ifAvailable request meets it pending.
+    const db = createSQLiteClient(dbName, { vfs, poolSize: 1 });
+    const attempt = deleteDatabase(dbName, { vfs }).then(
+      () => undefined,
+      (e) => e,
+    );
+
+    onTestFinished(async () => {
+      try {
+        await db.close();
+      } catch {
+        /* a failed client has nothing to close */
+      }
+      try {
+        await deleteDatabase(dbName, { vfs });
+      } catch {
+        /* best-effort cleanup */
+      }
+    });
+
+    const error = await attempt;
+    expect(error).toBeInstanceOf(SQLiteError);
+    expect((error as SQLiteError).code).toBe('DATABASE_IN_USE');
+
+    // And the client that won the race is usable.
+    await db.write('CREATE TABLE t (n)');
+    const rows = await db.read('SELECT n FROM t');
+    expect(rows).toEqual([]);
+  });
 });
