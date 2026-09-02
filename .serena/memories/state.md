@@ -28,8 +28,7 @@ obligations and unmeasured ground.
 
 Not history: the numbers a regression is detected against.
 
-`tsc --noEmit` clean · `pnpm build` clean · **543 tests, 0 failed files** on the
-cross-tab branch (470 on `main`) · conformance **73 passed / 12 skipped on Chromium and
+`tsc --noEmit` clean · `pnpm build` clean · **543 tests, 0 failed files** · conformance **73 passed / 12 skipped on Chromium and
 the same on Firefox** · **consumer smoke 24/24** ·
 `scripts/bench/check.mjs chromium --all` OK, 22 pairs, zero `not-run` ·
 biome 13 warnings, none in recently touched files · `dependencies` empty.
@@ -53,15 +52,17 @@ still surface timing the campaign did not.
 
 ## Decisions the user owes
 
-**One: whether to merge the cross-tab branch**, which is finished and reviewed clean. Nothing
-else is outstanding.
+None outstanding. **The next thing is rc.5's remaining scope, which is the user's to pick from
+`mem:follow-ups`.**
 
-## rc.5 so far: three lots, built, reviewed clean, unmerged
+## rc.5 so far: three lots, merged 2026-09-02
 
-All on one feature branch (`git branch` names it), **unmerged and not pushed**. The user judged them
-three faces of one feature and kept them together deliberately, accepting that the whole-branch
-review runs over a larger diff. Baseline: **543 tests, 0 failed files**, both engines, conformance
-73/12, biome 13 warnings.
+Merged into `main` with `--no-ff` and verified on the merged result; the feature branch is deleted
+and no stale ref remains. The user judged the three lots three faces of one feature and kept them on
+one branch deliberately, accepting a larger whole-branch review for it. Baseline: **543 tests, 0
+failed files**, both engines, conformance 73/12, biome 13 warnings.
+
+**Not pushed.** `main` sits ahead of `origin/main`, which is normal here.
 
 **Read the specs, not a summary** — all three are in `docs/superpowers/specs/`, dated 2026-08-31 and
 2026-09-02, and two carry amendments made during implementation.
