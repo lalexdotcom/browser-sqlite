@@ -49,6 +49,15 @@ pinning it. Both go. A caller that deletes speculatively must now catch — and 
 silence being removed is the silence that hides a wrong `vfs`. Stated to the user twice before
 building.
 
+**D1b · No `throwOnMissing` option, and no return value either.** Both were weighed with the user
+on 2026-09-02. A flag would suppress **one** of three error codes — `DATABASE_IN_USE` and `BUSY`
+would still throw — so a best-effort caller would need its `try/catch` anyway and would have an
+option to understand on top of it. `catch` does the whole job in one line and lets the caller tell
+the three cases apart, which a boolean collapses. A return value of `'deleted' | 'not-found'` is the
+textbook alternative and was rejected for the opposite reason: it is **ignorable**, and ignorable is
+how the present defect survived. This project already prefers loud over convenient — `vfs` is
+required rather than defaulted, and `RECOMMENDED_VFS` is deliberately not exported.
+
 **D2 · `DATABASE_NOT_FOUND` must not swallow other failures.** The guard fires on `SQLITE_CANTOPEN`
 (14) and on nothing else. A corrupt database reaches the header read and returns `SQLITE_CORRUPT`
 (11); a WASM or VFS start-up failure throws before `open_v2` is reached at all. Both keep the errors

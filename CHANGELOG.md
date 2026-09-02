@@ -16,6 +16,10 @@ All notable changes to this project are documented here.
 - **A write now waits where it used to fail, and the wait is unbounded.** It is
   first-come-first-served. **Pass a `signal` if you would rather fail than
   wait.**
+- **`deleteDatabase` is no longer idempotent: deleting a database that is not
+  there now throws `DATABASE_NOT_FOUND`.** It used to resolve, which is exactly
+  what deleting through the wrong `vfs` looked like. A caller that deletes
+  speculatively now needs a `catch`.
 - **`DATABASE_IN_USE` is a new error code, and it replaces what a refused
   deletion used to report.** `deleteDatabase` against a database a client still
   holds raised `WORKER_CRASHED` on four VFS and nothing at all on three; it now
