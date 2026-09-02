@@ -252,7 +252,7 @@ import { deleteDatabase } from 'browser-sqlite';
 await deleteDatabase('myapp.sqlite', { vfs: 'OPFSAdaptiveVFS' });
 ```
 
-**`vfs` is required and must be the VFS the database was created with. Passing the wrong one is not harmless.** `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` all resolve a database name to the same file, so deleting through any of them destroys a database created by any other — and reports success. Between those four and the rest, the mismatch is harmless: the delete finds nothing and reports success too, which is why success tells you nothing either way. `build` and `wasmUrl` are accepted with the same meaning as on `createSQLiteClient`.
+**`vfs` is required and must be the VFS the database was created with**, because the four OPFS path-based VFS share one file: deleting through any of them deletes the database the others created. `build` and `wasmUrl` are accepted with the same meaning as on `createSQLiteClient`.
 
 Deleting a database that does not exist is not an error.
 
@@ -262,7 +262,7 @@ Throws `SQLiteError` with code `DATABASE_IN_USE` when a client still holds the d
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `vfs` | `SQLiteVFS` | — (required) | The VFS the database was created with. The four OPFS path-based VFS share one file, so passing another of those deletes the database anyway; passing one from a different family deletes nothing. Both report success. |
+| `vfs` | `SQLiteVFS` | — (required) | The VFS the database was created with. The four OPFS path-based VFS share one file, so any of them deletes what the others created. |
 | `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite build to load. It does not affect where the database lives — only which builds can instantiate the VFS. |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Same meaning as on [`createSQLiteClient`](#options). A deployment that needs it to open a database needs it to delete one. |
 
