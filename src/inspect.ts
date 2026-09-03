@@ -1,6 +1,11 @@
 import { SQLiteError } from './errors';
 import type { LockEntries, Locks } from './locks';
-import { createLocks, parseClientMarker, sharesStorage } from './locks';
+import {
+  createLocks,
+  parseClientMarker,
+  sharesStorage,
+  writeLockName,
+} from './locks';
 import type { SQLiteVFS } from './types';
 import { VFS_CAPABILITIES } from './types';
 import { normalizeDatabaseFile } from './utils';
@@ -115,12 +120,22 @@ export const inspectWith = async (
     });
   }
 
+  const writeName = writeLockName(vfs, file);
+  const writer = snapshot.held.find((entry) => entry.name === writeName);
+  const waiting = snapshot.pending.filter(
+    (entry) => entry.name === writeName,
+  ).length;
+
   return {
     file,
     vfs,
     clients,
     tabs: new Set(clients.map((client) => client.tab)).size,
-    write: { tab: null, sameTab: false, waiting: 0 },
+    write: {
+      tab: writer?.clientId ?? null,
+      sameTab: writer !== undefined && writer.clientId === realm,
+      waiting,
+    },
   };
 };
 
