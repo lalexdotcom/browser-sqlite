@@ -60,52 +60,6 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
-### `IDBBatchAtomicVFS`'s batch-atomic mode is undocumented, and a memory claimed otherwise
-
-Upstream makes the cache size **a requirement for triggering batch atomic mode**, not a tuning
-knob: without a cache large enough to hold the journal the VFS silently takes its slower path.
-Measured 2026-09-02: the default `cache_size` does miss it on a 5000-page transaction, on both
-engines, and raising the bound costs **zero bytes** until a workload uses it.
-
-**Nothing in the README says any of this.** `mem:vfs` asserted it was "a documented
-recommendation" and that was simply false — the table mentions `PRAGMA cache_size` for every
-VFS as a footprint bound, and nowhere ties it to this VFS's mode.
-
-What it needs is one line for consumers, in the README's voice: on `IDBBatchAtomicVFS`, a
-`cache_size` large enough to hold a transaction's pages is what keeps it in batch-atomic mode.
-**Not a default** — the measurement found no time saved by raising it, so this is information,
-not a recommendation to act on blindly.
-
-### npm trusted publishing — it would remove the secret, but not all of it
-
-<https://docs.npmjs.com/trusted-publishers>. npm trusts GitHub Actions over OIDC
-instead of a stored secret: the runner gets a short-lived token signed for one
-named workflow, verified against a trusted publisher declared per package. **The
-motivation is not tidiness — it is that `NPM_TOKEN` expired unnoticed and failed
-the first rc.4 attempt**, after the GitHub Release had already been created.
-
-**What is already satisfied**, checked 2026-08-31: cloud-hosted runner
-(`ubuntu-latest`); npm ≥ 11.5.1 and Node ≥ 22.14.0 (the action takes
-`node-version: lts/*`); and `repository.url` matching the repository exactly,
-which npm requires. **Missing: `id-token: write`** — the `release` job declares
-only `contents: write`.
-
-**What blocks a clean adoption, and it is the whole question:** OIDC covers
-`npm publish` and nothing else. `npm dist-tag add` explicitly still needs
-traditional authentication, and the action runs it twice, for `latest` and for
-`next`. So trusted publishing shrinks the token here rather than removing it,
-unless the dist-tags are posted differently. Three shapes, and the choice is a
-product one: keep a granular token for the dist-tags alone; publish directly
-under the wanted tag and drop the triplet; or wait for a stable 1.0.0, after
-which the action stops adding `latest` to prereleases by itself — today's
-`rc`/`next`/`latest` triplet is an artefact of no stable existing yet.
-
-**One thing to verify rather than assume:** the docs record a validation
-mismatch for `workflow_call` reusable workflows. Our publish runs inside a
-**composite** action, which executes in the calling job, so the claim should
-carry `release-and-publish.yaml` — adjacent to a documented rough edge, not
-inside it.
-
 ## Evidence owed
 
 ### REOPEN-1 — `OPFSWriteAheadVFS/sync :: survives-reopen`, a flake at n=3

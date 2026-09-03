@@ -85,9 +85,16 @@ const DEFAULT_STATEMENT_CACHE_BYTES = 8 * 1024 * 1024;
  */
 export type CreateSQLiteClientOptions = {
   /**
-   * Database file name within the OPFS origin private file system.
-   * Each unique name maps to a distinct SQLite database file.
-   * @defaultValue `"SQLite"` prefix + auto-incremented client index
+   * A label for this client, never for the database — the database file is
+   * the FIRST argument to `createSQLiteClient`, and this option has no effect
+   * on what is opened or where.
+   *
+   * It is reported as `db.debug.name`, and prefixes the `debug` logger's
+   * console output as `"<name> <n>"`, where `n` counts the clients created in
+   * this tab. Neither form is unique across the origin: the counter is
+   * per-tab, so two tabs both produce `"SQLite 1"`.
+   *
+   * @defaultValue `"SQLite"`
    */
   name?: string;
 

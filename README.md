@@ -347,6 +347,16 @@ not from our own test runs. It covers where the VFS stores data; which **builds*
 are reachable on each engine is a separate question, answered under
 [Builds](#builds) — the `Builds` column links straight to the build it names.
 
+On **`IDBBatchAtomicVFS`** the **Memory** column is not the whole story:
+`PRAGMA cache_size` also decides whether a transaction runs in IndexedDB's
+batch-atomic mode. The VFS takes that path only when the cache can hold the
+transaction's pages, and falls back silently when it cannot — at SQLite's
+default of `-2000` a 5000-page transaction never enters it, on either engine.
+Raising the bound reserves nothing up front; the heap grows only as the workload
+uses it. **This library sets no default for it**, because raising it saved no
+time in either engine — so this is something to know about your own workload,
+not a knob to turn on principle.
+
 #### (*) Reduced mode
 
 The VFS runs on that engine, but without `readwrite-unsafe` access handles: one

@@ -167,8 +167,14 @@ failures established that no reading would have.
   `lalexdotcom/action-release-and-publish` would make a partial failure replayable;
   it is not written.
 - **`NPM_TOKEN` is a long-lived secret that expired unnoticed** and is what failed
-  the second attempt. `mem:follow-ups` carries trusted publishing as the rc.5
-  answer, with the reason it does not fully remove the token here.
+  the second attempt. **Trusted publishing was examined and closed by the user on
+  2026-09-03, without being adopted**: npm's OIDC covers `npm publish` only, and
+  `npm dist-tag add` — which the action runs twice, for `latest` and `next` — still
+  needs a token ([npm/cli#8547](https://github.com/npm/cli/issues/8547), open).
+  A token would survive the change, so the change was not worth its cost. **Do not
+  re-propose it while the `rc`/`next`/`latest` triplet stands**; the only thing that
+  would reopen the question is npm supporting dist-tags over OIDC. The remaining
+  guard against a silent expiry is watching the token's expiry date by hand.
 
 ## Unmeasured ground — what a claim here would be inventing
 
