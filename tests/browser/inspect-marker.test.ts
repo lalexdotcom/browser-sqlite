@@ -67,12 +67,43 @@ describe('the client liveness marker', () => {
       await deleteDatabase(file, { vfs: VFS }).catch(() => {});
     });
 
-    // Close immediately — no query, so the marker grant may not have landed
-    // in `markerRelease` yet when `close()` runs.
+    // Wrap navigator.locks.request to defer bsq:client: grants until signaled.
+    // This makes the race deterministic: close() runs and calls
+    // markerRelease?.() while the grant is still pending. Without the
+    // markerClosed flag, the grant lands afterwards and is never released —
+    // a phantom marker that persists for the realm's lifetime.
+    const originalRequest = (
+      navigator.locks.request as (...args: unknown[]) => unknown
+    ).bind(navigator.locks);
+    let triggerGrant: () => void = () => {};
+    const grantDeferred = new Promise<void>((resolve) => {
+      triggerGrant = resolve;
+    });
+    (navigator.locks as unknown as Record<string, unknown>).request = (
+      name: string,
+      ...args: unknown[]
+    ) => {
+      if (name.startsWith('bsq:client:')) {
+        return grantDeferred.then(() => originalRequest(name, ...args));
+      }
+      return originalRequest(name, ...args);
+    };
+    onTestFinished(() => {
+      (navigator.locks as unknown as Record<string, unknown>).request =
+        originalRequest;
+    });
+
     const db = createSQLiteClient(file, { vfs: VFS });
+    // No query — close() runs before the marker grant can land.
     await db.close();
 
-    // The grant that lands after close() must self-release, not leak.
+    // Release the deferred grant now. Without markerClosed, the .then() fires
+    // and sets markerRelease = release, but nobody ever calls release().
+    triggerGrant();
+    // Yield a turn for the grant to process and (with the fix) self-release.
+    await new Promise<void>((r) => setTimeout(r, 50));
+
+    // Without the fix: marker is leaked. With the fix: self-released.
     expect(await markersFor(file)).toHaveLength(0);
   });
 
