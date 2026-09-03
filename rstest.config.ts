@@ -56,34 +56,36 @@ export default defineConfig({
       // so anything approaching this bound is a deadlock, not slowness.
       testTimeout: 10000,
     },
+    // ONE browser project here, and a second engine in rstest.firefox.config.ts
+    // rather than beside this one. Not a preference: rstest 0.11.8 refuses two
+    // browser-enabled projects with different engines in a single run —
+    // "All browser-enabled projects in one run must share
+    // provider/browser/headless/providerOptions" — so a `projects` array
+    // holding both makes `pnpm test` fail before it runs anything. Two configs
+    // chained by the `test` script is what delivers the same coverage.
+    //
+    // What this replaced was TEST_BROWSER, one project whose engine came from
+    // the environment. That meant a local `pnpm test` covered Chromium while CI
+    // covered both — the exact path by which a Firefox-only failure reaches
+    // anyone late. `pnpm test` now runs both engines and CI needs no variable.
+    //
+    // Only Firefox joins Chromium: Playwright installs WebKit too, but the
+    // Linux build ships without OPFS, so every VFS this library uses is
+    // unavailable there and the suite would report a platform gap as a failure.
+    //
+    // The shared glob is NON-recursive on purpose. `tests/browser/**` would
+    // make this project pick up `tests/browser/firefox/`, which is the whole
+    // thing this layout exists to prevent.
     {
-      name: 'browser',
+      name: 'chromium',
       browser: {
         enabled: true,
         provider: 'playwright',
-        // Same shape as the conformance project's CONFORMANCE_BROWSER. Firefox
-        // and WebKit are both installed by Playwright here, but only Firefox is
-        // offered: the Linux WebKit build ships without OPFS, so every VFS this
-        // library actually uses is unavailable there and the suite would report
-        // a platform gap as a failure.
-        //
-        // Chromium stays the default for a local `pnpm test:browser`; Firefox
-        // is a CI gate as of 2026-08-28 and runs as its own step (ci.yaml).
-        // The two engines agree now: `lifecycle` was a calibration error and
-        // `long-query` timed the file rather than the pool — both fixed, both
-        // understood. Set TEST_BROWSER=firefox to reproduce a CI failure here.
-        //
-        // NOT named `BROWSER`: VS Code and devcontainers export that variable
-        // already (here, a helper script that opens URLs), so the project read
-        // it as a browser name and Playwright failed with
-        // "Cannot read properties of undefined (reading 'launch')".
-        browser: (process.env.TEST_BROWSER ?? 'chromium') as
-          | 'chromium'
-          | 'firefox',
+        browser: 'chromium',
         headless: true,
       },
       plugins: [pluginSilenceWorkerHmrLogs],
-      include: ['tests/browser/**/*.test.ts'],
+      include: ['tests/browser/*.test.ts', 'tests/browser/chromium/**/*.test.ts'],
       exclude: ['**/worktrees/**'],
       testTimeout: 30000,
     },

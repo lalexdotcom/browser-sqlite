@@ -962,6 +962,167 @@ level inherits), no sleep, up to 20 attempts allowed:
 something other than a handle transfer. The event is once per session, not once per round, so
 raising n means opening more sessions; more rounds would add nothing.
 
+## REOPEN-1 does not reproduce — device campaign, 2026-09-03 (user's hardware)
+
+**Method.** Seven exports in `.bench/`, taken from the published `/preview/` page — rc.5 code,
+badge reading `development build`. Three iPadOS Safari 27.0, two macOS Safari 27.0, two macOS
+Chrome 150. The user confirmed the provenance; the export itself could NOT say, which is a gap
+now in `mem:follow-ups`.
+
+**`survives-reopen` passes on every persistent VFS, in all seven runs**, `OPFSWriteAheadVFS/sync`
+included — on the two devices that produced the original timeouts, and including the first run
+of the day on the iPad, which was the condition the REOPEN-1 note singled out. The only
+non-pass cells are `MemoryVFS` / `MemoryAsyncVFS` marked `skipped`, which is their documented
+behaviour: they are volatile by construction.
+
+**That closes REOPEN-1.** It was opened on "reproduced on two devices", which was two devices
+at one run each; five Safari 27 runs on those same two devices now say otherwise. What it does
+NOT clear is rc.3 or rc.4 — these runs are rc.5 — and nobody needs it to.
+
+**A false lead recorded so nobody re-runs it.** Two of the three iPadOS runs failed at
+`IDBBatchAtomicVFS :: opens` with `Worker 1 did not become ready within 30000 ms`, all eight
+rows of the column falling to `not-run`. Against 20 rc.3 exports on iPadOS/iOS where `opens`
+passes every time — including back-to-back runs minutes apart — this read as an rc.5
+regression. **It is not.** The user had hit a hang on `cleaning…` and RELOADED the page; a
+reload never calls `close()`, so the previous page's IndexedDB connection was still held and
+the next opens waited out their 30 s. The 20 clean rc.3 runs never had a mid-session reload,
+so there was never a comparison. The hang is the real defect and is in `mem:follow-ups`.
+
+## CACHE-BYTES settled — 2026-09-03, Chromium / Firefox, this container
+
+**Method.** Throwaway `tests/browser/cache-bytes-probe.test.ts` (deleted). N concurrent
+`bulkWrite`s at `poolSize: 1`, each on its own table, counting statement COMPILATIONS across
+every INSERT batch — never a duration, per `mem:lessons`. Fresh database per arm
+(`createTestClient` mints a UUID name); budgets walked ascending in one pass and DESCENDING in
+the other, so position cannot pass for effect. The floor is 2 compilations per writer: one
+full template plus one partial.
+
+**Both engines returned byte-for-byte identical numbers.** Chromium and Firefox, every cell.
+That is itself the finding: the bound is a function of SQLite's statement memory, not of the
+engine.
+
+5 columns, 15 000 rows per writer (~2.4 MB per full template):
+
+| writers | floor | 4 MB | 8 MB | 16 MB |
+|---|---|---|---|---|
+| 2 | 4 | 4 | 4 | 4 |
+| 3 | 6 | **9** | 6 | 6 |
+| 4 | 8 | **12** | 8 | 8 |
+| 5 | 10 | **15** | **15** | 10 |
+
+1 column, 70 000 rows per writer — the WORST case, since `bulkWrite` flushes every
+`floor(32766 / columns)` rows and `mem:measurements` puts the template ceiling at 3.4 MB on the
+narrowest table:
+
+| writers | floor | 8 MB | 16 MB |
+|---|---|---|---|
+| 3 | 6 | 6 | 6 |
+| 4 | 8 | **12** | 8 |
+
+**The derivation was right, and it is now run rather than deduced.** `B > (N − 1) × MAX`
+predicts the break at every cell: at 2.4 MB templates 8 MB holds four writers and fails at
+five (needs > 9.6 MB); at 3.4 MB templates it holds three and fails at four (needs > 10.2 MB).
+Every prediction landed.
+
+**What the 8 MB default actually buys, in one sentence:** four concurrent `bulkWrite`s on a
+typical table, or three on the narrowest. Above that the cache is **cancelled, not degraded** —
+the count jumps straight to one compilation per batch (3N), which is the shape §3.1 of the
+byte-bound spec described and nobody had seen.
+
+## The eviction churn, priced — 2026-09-03, both engines
+
+**Method.** Throwaway `tests/browser/churn-probe.test.ts` (deleted). The sharp protocol:
+cycling K DISTINCT statements through the 32-entry LRU flips regime at K = 33, because the
+entry each call needs is the one the previous call evicted. One extra statement inverts the
+cache completely, so the delta is the churn and nothing else. 2000 reads per arm, n=3, arms
+alternated forward / reversed / forward.
+
+| arm | compilations | Chromium mean | Firefox mean |
+|---|---|---|---|
+| parameterised, 1 statement | **0 / 40** | 2306 ms | 1649 ms |
+| 32 distinct — fits | **0 / 40** | 2306 ms | 1646 ms |
+| 33 distinct — thrashes | **40 / 40** | 2437 ms | 1816 ms |
+
+**The counts are the finding; the durations are indicative.** 0 out of 40 against 40 out of
+40 is the whole mechanism, decisive on both engines. The time cost is ~6 % on Chromium and
+~8-10 % on Firefox — about 0.07-0.09 ms on a ~1 ms read, which is sub-millisecond and
+therefore exactly where `mem:lessons` says to count instead of time. A second Chromium timing
+pass was noisy enough that its `fits` arm read slower than its `parameterised` arm, which
+cannot be true; treat the percentage as an order of magnitude, not a measurement.
+
+**And the cache costs NOTHING when it fits.** Parameterised and 32-distinct are
+indistinguishable on both engines — holding 32 entries is not measurably worse than holding
+one. The churn is entirely the recompilation, not the bookkeeping.
+
+**Counting needed its own short pass.** `db.debug`'s histories are bounded at 50 requests per
+worker and 50 queries per request, so totals taken across a 2000-query loop come back
+NEGATIVE — the history shifts out from under them. The counts above are from a separate
+40-query arm where the history is intact. Anyone reading `prepared` over a long loop will hit
+this.
+
+## The write designation DOES migrate — 2026-09-03, both engines, identical
+
+**Method.** Throwaway `tests/browser/writer-migration-probe.test.ts` (deleted). `poolSize: 4`,
+counting the distinct worker indices that served an INSERT batch.
+
+| arm | workers that wrote |
+|---|---|
+| one `bulkWrite`, quiet pool | `[0]` |
+| one `bulkWrite`, 3 readers looping throughout | **`[0, 3]`** |
+| two `bulkWrite`s, 3 readers looping throughout | `[0, 3]` |
+
+**This corrects the claim this file used to carry.** "All 32 INSERT batches landed on worker 0,
+which is why 8 MB per worker is not 32 MB in practice" was measured on a quiet pool, and is
+true only there. Under read pressure the designation moves and a second worker accumulates
+heavy templates: the real ceiling at `poolSize: 4` is **2 × 8 MB, not 8 and not 32**. It did
+not spread further at two concurrent writers, on either engine.
+
+## The gate's cost is linear in `poolSize` — 2026-09-03, both engines
+
+**Method.** Throwaway `tests/browser/gate-cost-probe.test.ts` (deleted). Client creation to the
+FIRST query resolving — the open alone, not a read burst on top. n=3 per size, passes
+alternating ascending / descending / ascending.
+
+| `poolSize` | Chromium (ms) | Firefox (ms) |
+|---|---|---|
+| 1 | 84 / 73 / 71 — mean **76** | 77 / 64 / 62 — mean **68** |
+| 2 | 95 / 72 / 75 — mean **81** | 90 / 84 / 77 — mean **84** |
+| 4 | 98 / 87 / 93 — mean **93** | 124 / 121 / 132 — mean **126** |
+| 8 | 131 / 122 / 120 — mean **124** | 208 / 204 / 201 — mean **204** |
+
+**Linear, no cliff, and the constant is the engine's:** ~7 ms per extra worker on Chromium,
+~20 ms on Firefox — Firefox pays about three times as much. This settles GATE-1's second
+bullet: the shape above 4 is the same shape, so `bsq:init` serialising the opens costs the sum
+and nothing surprising happens at 8. Documented in the README's `poolSize` row, which had no
+number at all.
+
+## Handle starvation reproduces deterministically — 2026-09-03
+
+**Method.** Throwaway `tests/browser/starvation-probe.test.ts` (deleted). Client A on
+`OPFSAdaptiveVFS`, `poolSize: 1`, holding an OPEN write transaction; client B created on the
+same file with `openTimeout: 3000`; timing B's first query.
+
+| engine | outcome |
+|---|---|
+| Chromium | **opened after 47 ms** |
+| Firefox | **`TIMEOUT` after 3077 ms** |
+
+**This is the phenomenon GATE-1 says no test exercises**, and it reproduces on the first
+attempt with no timing tricks: the write transaction holds the one rotated exclusive OPFS
+handle, and the second client's `open_v2` never gets it. Chromium is unaffected because
+`readwrite-unsafe` gives each connection its own handle.
+
+**Why it is not a permanent test yet, and this is a decision rather than a difficulty.** The
+result is engine-conditional by nature, and `readwrite-unsafe` is in `UNPROBEABLE`
+(`capabilities.ts:37`), so a test cannot branch on it — WebIDL ignores the unknown option and
+answering yes is wrong. This repository has **no skip-by-engine idiom**: every browser test is
+written to pass on both, and where reduced mode changes the outcome the tests accommodate it
+(`long-query.test.ts:61`, `multi-client.test.ts:97`). Adding a Firefox-only test would
+introduce a convention this project has never taken, which is the user's call, not a
+reviewer's. The alternative is an assertion weak enough to hold on both — "opens, or reports
+TIMEOUT; never hangs and never silently shrinks the pool" — which pins the gate's contract
+rather than the starvation.
+
 ## The readiness gate, measured 2026-08-31 (Chromium 151 / Firefox 153, this container)
 
 Toggled by passing `poolSize: 0` to `createScheduler`, which leaves the gate open

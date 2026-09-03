@@ -91,6 +91,14 @@ Read queries are dispatched to any available worker, enabling concurrent reads.
 
 On `read()` this is transport only — it still resolves with the whole array.
 
+**Pass values as `?` parameters rather than building them into the SQL.** Each worker keeps a
+cache of 32 prepared statements, keyed on the exact SQL string. Interpolating a value makes
+every call a new key, so nothing is ever reused: measured at **40 recompilations in 40
+queries** once the distinct statements pass that bound, against **0** when they fit under it,
+costing roughly 6 % on Chromium and 9 % on Firefox over a read-heavy loop. Generated SQL is
+sometimes unavoidable — `IN (?, ?, ?)` changes shape with the list — and it still works; it
+simply cannot be cached.
+
 ### *client*.write
 
 ```typescript
@@ -266,6 +274,14 @@ Drains in-flight work, rejects queued work, closes each database connection, the
 
 **Stored data is not deleted.** `close()` releases workers and connections; it removes nothing. To remove the database itself, use [`deleteDatabase`](#deletedatabase).
 
+**A page reload is not a close, and some engines make you wait for it.** Navigating away or
+reloading discards the page without running `close()`, and the browser does not always release
+the underlying connection at once — observed on iPadOS Safari 27, where the database stayed
+held long enough for the next page's open to exhaust its full 30-second [`openTimeout`](#options)
+and report `TIMEOUT`. If your application reloads while a client is open, close it first:
+`window.addEventListener('pagehide', () => { void db.close(); })` is enough, and `pagehide`
+fires where `unload` no longer does.
+
 ### deleteDatabase
 
 Removes a database and the `-journal` / `-wal` files SQLite may have left beside it. The database must not be open, in this tab or any other.
@@ -336,13 +352,13 @@ It resolves with the normalized `file`, the `vfs`, `clients`, `tabs` — the num
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `poolSize` | `number` | `2` | Number of Web Workers spawned in the pool. A larger pool allows more concurrent reads but uses more memory. Must be `1` with `AccessHandlePoolVFS`. |
+| `poolSize` | `number` | `2` | Number of Web Workers spawned in the pool. A larger pool allows more concurrent reads but uses more memory. Must be `1` with `AccessHandlePoolVFS`. **It also delays your first query**: nothing is served until every worker has opened, and the opens are serialized origin-wide, so the wait grows linearly with the pool — measured at roughly 7 ms per worker on Chromium and 20 ms on Firefox in one container, meaning `poolSize: 8` reached its first result in ~124 ms and ~204 ms where `poolSize: 1` took ~76 ms and ~68 ms. Measure your own targets before raising it. |
 | `vfs` | `SQLiteVFS` | — (required) | VFS implementation for storage. See the [VFS Selection](#vfs-selection) table. |
 | `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite WebAssembly build to load: `'sync'`, `'async'`, or `'jspi'`. Throws `INVALID_OPTION` at construction if the VFS does not support it. See [Builds](#builds). |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Where the workers fetch their `.wasm`. Omit it and resolution is unchanged: the files are read from beside `worker.js`. A string is a directory resolved against the page — relative, absolute or a full URL, trailing slash optional. A callback receives the resolved `build` and names one file, for a bundler-emitted asset carrying a content hash. Called once, at construction. Throws `INVALID_OPTION` there if the value is not a URL. Another origin needs CORS and `Content-Type: application/wasm`. |
 | `pragmas` | `Record<string, string>` | `undefined` | SQLite PRAGMAs applied to each worker connection on open. |
 | `maxWorkerRestarts` | `number` | `1` | How many times a slot may be restarted after it dies. The counter resets once a replacement has actually served a request. A slot that fails to open is retried once, but only if another worker did open — when none did, the failure is a configuration error and the client fails immediately rather than retrying. |
-| `openTimeout` | `number` (ms) | `30_000` | How long a worker has to post `ready` after `open` is sent. On expiry the slot is failed — the most common cause is a database held under an exclusive lock by another tab. |
+| `openTimeout` | `number` (ms) | `30_000` | How long a worker has to post `ready` after `open` is sent. On expiry the slot is failed — the most common cause is a database held under an exclusive lock by another tab. **A pool that will never open takes up to twice this before your first query rejects**, because a slot that failed is retried once when another slot opens; at the default that is about a minute of waiting with nothing reported. Lower it if your application needs to fail faster than that. |
 | `drainTimeout` | `number` (ms) | `60_000` | How long the drain loop may run in the query generator's `finally` before the worker is presumed dead and the crash path is invoked. |
 | `debug` | `string \| boolean` | `undefined` | Enables lifecycle logging. A string value is used as the log prefix; `true` falls back to the client name (e.g. `"SQLite 1"`). Only lifecycle events are logged — worker created, ready, open-error, crash, restart, worker lost, close, and skipped staging sweep. No line per query. Off by default, with one exception: a permanently lost worker always warns, because a pool quietly smaller than `poolSize` is not something to discover later. When enabled, `db.debug` also exposes a live introspection state tree for query throughput and worker status. |
 | `onWorkerLost` | `(event: WorkerLostEvent) => void` | `undefined` | Called when a worker is lost for good, with the slot index, how many workers are left, the requested `poolSize`, and the error. Fires before the client fails if it was the last one. A throwing callback is caught and warned about; it cannot break the pool. |

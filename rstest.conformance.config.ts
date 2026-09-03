@@ -9,6 +9,13 @@ import { pluginSilenceWorkerHmrLogs } from './rstest.config';
  *
  * It holds invariants only. Measurements belong to the benchmark page, on the
  * machine of whoever opens it — CI runs tests, not benchmarks.
+ *
+ * The Chromium half. Firefox is in rstest.conformance.firefox.config.ts and
+ * `pnpm test:conformance` chains the two, because rstest 0.11.8 refuses two
+ * browser-enabled projects with different engines in one run. There is no
+ * per-engine directory here and there should not be: the whole value of this
+ * suite is the SAME invariants on both engines — a VFS sound on one and broken
+ * on the other is how HANDLE-1 was found.
  */
 export default defineConfig({
   extends: withRslibConfig(),
@@ -18,9 +25,7 @@ export default defineConfig({
       browser: {
         enabled: true,
         provider: 'playwright',
-        browser: (process.env.CONFORMANCE_BROWSER ?? 'chromium') as
-          | 'chromium'
-          | 'firefox',
+        browser: 'chromium',
         headless: true,
       },
       plugins: [pluginSilenceWorkerHmrLogs],

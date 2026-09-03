@@ -73,28 +73,25 @@ jobs:
       - name: Build
         run: pnpm build
 
-      # Unit (Node) + browser (Chromium) projects.
+      # Unit (Node), then the browser suite on BOTH engines — `pnpm test`
+      # chains the two configs, so Firefox needs no step and no environment
+      # variable of its own. It was a separate step until 2026-09-03, which
+      # meant a developer's local run covered Chromium alone while this file
+      # covered both: the exact path by which a Firefox-only failure arrived
+      # late. Firefox has been a gate since 2026-08-28 and still is — it is the
+      # only engine here that runs the pool against a rotating exclusive OPFS
+      # handle, so a reduced-mode regression lands there first and a single
+      # failure is signal, not noise.
       - name: Test
         run: pnpm test
 
-      # The browser project again, on Firefox. A gate since 2026-08-28, on the
-      # strength of 13 consecutive green runs after `long-query` was diagnosed
-      # (it timed the FILE, not the pool) and `barrier` stopped reproducing.
-      # Expect this to be the step that catches a reduced-mode regression: it
-      # is the only one that runs the pool against a rotating exclusive OPFS
-      # handle. A single failure here is signal, not noise — chase it.
-      - name: Browser project (Firefox)
-        run: TEST_BROWSER=firefox pnpm test:browser
-
-      # Conformance is a separate project and deliberately out of `pnpm test`:
-      # eight VFS through the invariants start workers and open real storage.
-      # It runs on both engines because a VFS can be sound on one and broken on
-      # the other — which is how HANDLE-1 was found.
-      - name: Conformance (Chromium)
+      # Conformance is deliberately out of `pnpm test`: eight VFS through the
+      # invariants start workers and open real storage, which is too slow for
+      # the suite a developer runs on every change. Like `pnpm test`, this one
+      # command covers both engines — a VFS can be sound on one and broken on
+      # the other, which is how HANDLE-1 was found.
+      - name: Conformance (both engines)
         run: pnpm test:conformance
-
-      - name: Conformance (Firefox)
-        run: CONFORMANCE_BROWSER=firefox pnpm test:conformance
 
   # Exercises the packed tarball across four consumption modes — Vite dev
   # server, Vite build+preview, rsbuild build+preview, and no bundler at all
