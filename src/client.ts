@@ -8,7 +8,9 @@ import {
 import { createClientDebug } from './debug';
 import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
 import { SQLiteError } from './errors';
+import { type ClientInspection, inspectWith } from './inspect';
 import {
+  clientMarkerName,
   connectionLockName,
   createLocks,
   sharesStorage,
@@ -191,7 +193,7 @@ export type CreateSQLiteClientOptions = {
   /**
    * Turns on the introspection subsystem exposed as `db.debug`, and the
    * lifecycle log. A string is used as the log prefix; `true` falls back to the
-   * client prefix (`"<name> <index>"`), which already names the workers.
+   * client name (`"<name> <index>"`), which already names the workers.
    *
    * @defaultValue undefined — no collection, no output, `db.debug` undefined.
    */
@@ -300,7 +302,10 @@ export const createSQLiteClient = (
 
   const clientIndex = ++clientCount;
 
-  const clientPrefix = `${clientOptions.name ?? 'SQLite'} ${clientIndex}`;
+  const clientName = `${clientOptions.name ?? 'SQLite'} ${clientIndex}`;
+  // Identity for the roster: `clientName` is a label two tabs can both produce,
+  // this is what tells two clients apart across the origin.
+  const clientUuid = crypto.randomUUID();
 
   const poolSize = clientOptions.poolSize ?? DEFAULT_POOL_SIZE;
   const pool: (PoolWorker | undefined)[] = [];
@@ -496,7 +501,7 @@ export const createSQLiteClient = (
   const debugOption = clientOptions.debug;
 
   const debugPrefix =
-    typeof debugOption === 'string' ? debugOption : clientPrefix;
+    typeof debugOption === 'string' ? debugOption : clientName;
 
   const logger = createLogger(debugPrefix, !!debugOption);
 
@@ -507,7 +512,7 @@ export const createSQLiteClient = (
         {
           vfs,
           pragmas,
-          name: clientOptions.name ?? 'SQLite',
+          name: clientName,
         },
         () => scheduler.stats(),
       )
@@ -557,6 +562,35 @@ export const createSQLiteClient = (
         connRelease = release;
       })
     : undefined;
+  /**
+   * The roster marker: a liveness lock nobody contends, released by the browser
+   * if this tab dies without closing. `undefined` on the memory VFS, on the
+   * same condition as `bsq:conn` — two clients there are two databases.
+   */
+  const markerName: string | undefined = sharesStorage(vfs)
+    ? clientMarkerName(vfs, dbFile, clientUuid, clientName)
+    : undefined;
+  let markerRelease: (() => void) | undefined;
+  // Unlike `connLockPromise`, this acquisition is NOT awaited in `close()` —
+  // the marker must never participate in the close path's timing. Instead, a
+  // flag lets a grant that lands after `close()` self-release immediately.
+  let markerClosed = false;
+  if (markerName !== undefined) {
+    void locks
+      .hold(markerName, { mode: 'shared' })
+      .then((release) => {
+        if (markerClosed) {
+          // `close()` already ran; release immediately so no phantom appears.
+          release();
+        } else {
+          markerRelease = release;
+        }
+      })
+      .catch(() => {
+        // A marker that cannot be taken costs observability, never correctness:
+        // occupancy is `bsq:conn`'s job. Never fail an open over it.
+      });
+  }
   /**
    * The in-flight epoch publication, awaited before the write lock is handed
    * back. Task 6 assigns it; until then it is always already settled.
@@ -1056,6 +1090,8 @@ export const createSQLiteClient = (
       // `close()` is called before the first query ever ran (lock in flight).
       if (connLockPromise !== undefined) await connLockPromise;
       connRelease?.();
+      markerClosed = true;
+      markerRelease?.();
       // Yield one event-loop turn so the browser's lock manager processes the
       // release before `close()` resolves. Without this, a new client
       // constructed immediately after `await a.close()` may try its
@@ -1109,7 +1145,7 @@ export const createSQLiteClient = (
     void createPoolWorker({
       index,
       pool,
-      clientPrefix,
+      clientName,
       file: dbFile,
       vfs,
       build,
@@ -1263,6 +1299,34 @@ export const createSQLiteClient = (
     startWorkers();
   }
 
+  /**
+   * The census, from this client's point of view.
+   *
+   * Throws `CLIENT_CLOSED` like every other method: a uniform contract on `db`
+   * is worth more than one method a consumer must read the docs to know
+   * survives. After closing, `inspectDatabase(file, { vfs })` answers the same
+   * question, and `db.file` / `db.vfs` are what make it reachable.
+   */
+  const inspect = async (): Promise<ClientInspection> => {
+    if (closing) {
+      throw new SQLiteError(
+        'CLIENT_CLOSED',
+        'The SQLite client has been closed.',
+      );
+    }
+    const { clients, ...base } = await inspectWith(
+      locks,
+      dbFile,
+      vfs,
+      markerName,
+    );
+    return {
+      ...base,
+      self: clients.find((client) => client.id === clientUuid) ?? null,
+      siblings: clients.filter((client) => client.id !== clientUuid),
+    };
+  };
+
   // Return the public API
   const api = {
     chunk,
@@ -1274,6 +1338,23 @@ export const createSQLiteClient = (
     bulkWrite,
     output,
     close,
+
+    get id() {
+      return clientUuid;
+    },
+    get name() {
+      return clientName;
+    },
+    get file() {
+      return dbFile;
+    },
+    get vfs() {
+      return vfs;
+    },
+    get build() {
+      return build;
+    },
+    inspect,
 
     debug,
   };

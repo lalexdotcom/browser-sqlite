@@ -6,6 +6,14 @@ export { detectFeatures, missingFeature } from './capabilities';
 export * from './client';
 export * from './delete';
 export * from './errors';
+export {
+  type ClientInspection,
+  type DatabaseClient,
+  type DatabaseInspection,
+  type InspectDatabaseOptions,
+  type InspectionBase,
+  inspectDatabase,
+} from './inspect';
 // Named rather than `export *`: the wire-protocol types in types.ts are
 // internal and must not reach the public surface.
 export {

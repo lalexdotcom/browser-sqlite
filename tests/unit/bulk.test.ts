@@ -205,6 +205,7 @@ describe('the staging sweep', () => {
           return false;
         },
         heldNames: async () => [],
+        entries: async () => ({ held: [], pending: [] }),
       },
     };
   };
@@ -239,6 +240,7 @@ describe('the staging sweep', () => {
         return true;
       },
       heldNames: async () => [],
+      entries: async () => ({ held: [], pending: [] }),
     };
     const { forTarget, deps } = recorder(locks);
 

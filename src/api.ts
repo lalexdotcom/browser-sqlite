@@ -10,6 +10,8 @@
  * caller passes to a query, and what comes back.
  */
 import type { ClientDebugState } from './debug';
+import type { ClientInspection } from './inspect';
+import type { SQLiteBuild, SQLiteVFS } from './types';
 
 /**
  * Marks an options type as carrying an abort signal.
@@ -415,6 +417,24 @@ export type SQLiteDB = SQLiteQueryAPI & {
    */
   close: () => Promise<void>;
 
+  /** This client's UUID, unique across the origin. */
+  readonly id: string;
+  /** This client's label, index included — what its log lines are prefixed with. */
+  readonly name: string;
+  /** The database file, normalized: the identity every lock name is built on. */
+  readonly file: string;
+  readonly vfs: SQLiteVFS;
+  /** The build actually loaded, resolved by `defaultBuildFor` when not passed. */
+  readonly build: SQLiteBuild;
+  /**
+   * Who else is live on this database, right now, in every tab of this origin.
+   *
+   * A snapshot, stale the instant it resolves: it informs a UI and never
+   * authorizes an action. Poll it if you want it to move — each call is a fresh
+   * census costing well under a tenth of a millisecond, and it takes no lock,
+   * so it cannot slow a query down.
+   */
+  inspect: () => Promise<ClientInspection>;
   /**
    * Internal diagnostic handle. Not part of the stable public API.
    * Shape is subject to change without notice.

@@ -28,6 +28,11 @@ All notable changes to this project are documented here.
   an open or another delete in flight, and SQLite's own lock conflicts — so the
   two now say different things: `DATABASE_IN_USE` means close it, `BUSY` means
   retry.
+- **`db.debug.name` now carries the client name with its index**, e.g.
+  `"SQLite 1"` where it used to report `"SQLite"`. The old value was the bare
+  `name` option, identical for every client that passed nothing, so it
+  identified nothing even within one tab. It is now the same string the `debug`
+  logger prefixes its lines with and the same one the roster reports.
 
 ### Added
 
@@ -40,6 +45,19 @@ All notable changes to this project are documented here.
   Previously the outcome depended on the browser: where each connection held its
   own OPFS access handle the second writer was refused, and where one exclusive
   handle was rotated it waited. There is one behaviour now.
+- **`inspectDatabase(file, { vfs })` and `db.inspect()` report who is live on a
+  database**, across every tab of the origin: one entry per client with its id,
+  name, tab and VFS, the number of distinct tabs, and the write lock's holder
+  with the number of writers queued behind it. `inspectDatabase` needs no open
+  client, which is the point — the question usually arrives from outside.
+  **It is observability, not a permission:** the answer is stale the instant it
+  resolves, and `deleteDatabase` remains the only authority on whether a
+  database can be removed.
+- **`db.id`, `db.name`, `db.file`, `db.vfs` and `db.build`** — readonly, and
+  available whether or not `debug` is on, so a module handed a client can
+  describe it without being handed its options too.
+- **`UNSUPPORTED` is a new error code**, raised where the Web Locks API is
+  unavailable.
 
 ### Changed
 

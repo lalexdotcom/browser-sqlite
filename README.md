@@ -36,7 +36,7 @@ The `.wasm` are read from beside `worker.js`. If a build separates them, or you 
 
 ## Usage
 
-[createSQLiteClient](#createsqliteclient) · [*client*.read](#clientread) · [*client*.write](#clientwrite) · [*client*.stream](#clientstream) · [*client*.chunk](#clientchunk) · [*client*.first](#clientfirst) · [*client*.transaction](#clienttransaction) · [*client*.bulkWrite](#clientbulkwrite) · [*client*.output](#clientoutput) · [*client*.close](#clientclose) · [deleteDatabase](#deletedatabase)
+[createSQLiteClient](#createsqliteclient) · [*client*.read](#clientread) · [*client*.write](#clientwrite) · [*client*.stream](#clientstream) · [*client*.chunk](#clientchunk) · [*client*.first](#clientfirst) · [*client*.transaction](#clienttransaction) · [*client*.bulkWrite](#clientbulkwrite) · [*client*.output](#clientoutput) · [*client*.inspect](#clientinspect) · [*client*.close](#clientclose) · [deleteDatabase](#deletedatabase) · [inspectDatabase](#inspectdatabase)
 
 ### createSQLiteClient
 
@@ -57,6 +57,18 @@ const db = createSQLiteClient('myapp.sqlite', {
 `createSQLiteClient` spawns `poolSize` Web Worker threads immediately. Workers reach READY state asynchronously — queries made before workers are ready are queued automatically.
 
 Every option is listed under [Options](#options). `vfs` is the one with no default — [VFS Selection](#vfs-selection) is how to choose it, and a database written through one VFS is not readable through another.
+
+The client describes itself through five readonly properties, available whether or not `debug` is on:
+
+| Property | Type | Description |
+|---|---|---|
+| `id` | `string` | A UUID minted for this client, unique across the origin. It is what tells two clients apart in [`inspectDatabase`](#inspectdatabase)'s roster. |
+| `name` | `string` | The `name` option followed by this client's index in its tab — `"SQLite 1"` by default. It is the same string the `debug` logger prefixes its lines with. Two tabs can produce the same one; `id` is what cannot collide. |
+| `file` | `string` | The database file, normalized. This is the identity every lock name is built on, and it may differ from the string you passed. |
+| `vfs` | `SQLiteVFS` | The VFS this client opened with. |
+| `build` | `SQLiteBuild` | The wa-sqlite build actually loaded — the VFS's first when `build` was not passed. |
+
+They exist so that a module handed a client can describe it without also being handed the options it was created with.
 
 ### *client*.read
 
@@ -232,6 +244,18 @@ did not exist appears only at `close()`. Single-use, like `bulkWrite`.
 
 **Inside a transaction, `output()` costs more than it looks.** On its own it loads rows outside any transaction and holds the write lock only for the final swap. Called on a `tx`, the entire load runs inside your transaction — every other write, in this tab and in others, waits for it to finish.
 
+### *client*.inspect
+
+```typescript
+const { self, siblings, tabs, write } = await db.inspect();
+```
+
+Reports who is live on this client's database, in every tab of the origin. It is the same census as [`inspectDatabase`](#inspectdatabase), where the semantics and the caveats are documented — the difference is only the split: `db.inspect()` separates `self`, this client's own entry, from `siblings`, everyone else, where `inspectDatabase` returns one `clients` list.
+
+`self` is `null` when this client's own marker is not in the snapshot.
+
+After `close()` it throws `CLIENT_CLOSED`, like every other method on the client. [`inspectDatabase`](#inspectdatabase) answers the same question afterwards — `inspectDatabase(db.file, { vfs: db.vfs })`, which is what those two properties are for.
+
 ### *client*.close
 
 ```typescript
@@ -268,6 +292,46 @@ Throws `SQLiteError` with code `DATABASE_IN_USE` when a client still holds the d
 | `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite build to load. It does not affect where the database lives — only which builds can instantiate the VFS. |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Same meaning as on [`createSQLiteClient`](#options). A deployment that needs it to open a database needs it to delete one. |
 
+### inspectDatabase
+
+Reports who is live on a database, in every tab of the origin, **without opening it** — which is the point: the question usually arrives from code that holds no client, and nobody opens a database to learn that they cannot close it.
+
+```typescript
+import { inspectDatabase } from 'browser-sqlite';
+
+const { clients, tabs, write } = await inspectDatabase('myapp.sqlite', {
+  vfs: 'OPFSAdaptiveVFS',
+});
+```
+
+`vfs` is required and must be the VFS the database was created with — four VFS share one file per database name, and the rest are separate stores, so the wrong one reports on a different database.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `vfs` | `SQLiteVFS` | — (required) | The VFS the database was created with. |
+
+It resolves with the normalized `file`, the `vfs`, `clients`, `tabs` — the number of distinct tabs among them — and `write`.
+
+| Field | Type | Description |
+|---|---|---|
+| `clients[].id` | `string` | The client's UUID, matching its own `db.id`. |
+| `clients[].name` | `string` | The client's label with its index, e.g. `"SQLite 1"`. Not unique across tabs. |
+| `clients[].tab` | `string` | The tab holding it. Every client in one tab reports the same value. |
+| `clients[].sameTab` | `boolean` | That tab is the caller's. |
+| `clients[].vfs` | `SQLiteVFS` | Which VFS it opened with — four of them share one file per database name. |
+| `tabs` | `number` | Distinct tabs among `clients`. Not the same as `clients.length`. |
+| `write.tab` | `string \| null` | The tab holding the write lock right now, or `null`. A tab, never a client: the lock's name is the mutex and carries no client identity. |
+| `write.sameTab` | `boolean` | Always `false` when `write.tab` is `null`. |
+| `write.waiting` | `number` | Writers queued behind it, across the whole origin. |
+
+**"Tab" means realm.** A same-origin iframe in your own page is a different tab here: it has its own identity, so `sameTab` is `false` for it.
+
+**A snapshot, never a permission.** It is stale the instant it resolves. An empty roster does not mean a database can be deleted — a tab may open between the two calls, and [`deleteDatabase`](#deletedatabase) raising `DATABASE_IN_USE` remains the only authority. An empty roster also does not distinguish a database nobody holds from one that does not exist; `DATABASE_NOT_FOUND` is what says that.
+
+**Polling is on the call.** Nothing is kept between two calls, and there is no event to subscribe to. A call costs well under a tenth of a millisecond and makes no worker round trip; the tab's identity is resolved and cached once, so subsequent calls take no lock. Polling therefore cannot slow a query down, and 300–500 ms is a comfortable cadence. Do not stack calls: a background tab has its timers throttled, and an interval that fires without awaiting the previous answer will queue them up.
+
+`MemoryVFS` and `MemoryAsyncVFS` throw `INVALID_OPTION`: their pages live in the worker that opened them, so two clients are two databases and there is nothing to share. Where the Web Locks API is missing, `inspectDatabase` and `db.inspect()` throw `UNSUPPORTED` rather than report zero.
+
 ## Options
 
 | Option | Type | Default | Description |
@@ -280,7 +344,7 @@ Throws `SQLiteError` with code `DATABASE_IN_USE` when a client still holds the d
 | `maxWorkerRestarts` | `number` | `1` | How many times a slot may be restarted after it dies. The counter resets once a replacement has actually served a request. A slot that fails to open is retried once, but only if another worker did open — when none did, the failure is a configuration error and the client fails immediately rather than retrying. |
 | `openTimeout` | `number` (ms) | `30_000` | How long a worker has to post `ready` after `open` is sent. On expiry the slot is failed — the most common cause is a database held under an exclusive lock by another tab. |
 | `drainTimeout` | `number` (ms) | `60_000` | How long the drain loop may run in the query generator's `finally` before the worker is presumed dead and the crash path is invoked. |
-| `debug` | `string \| boolean` | `undefined` | Enables lifecycle logging. A string value is used as the log prefix; `true` falls back to the client prefix (e.g. `"SQLite 1"`). Only lifecycle events are logged — worker created, ready, open-error, crash, restart, worker lost, close, and skipped staging sweep. No line per query. Off by default, with one exception: a permanently lost worker always warns, because a pool quietly smaller than `poolSize` is not something to discover later. When enabled, `db.debug` also exposes a live introspection state tree for query throughput and worker status. |
+| `debug` | `string \| boolean` | `undefined` | Enables lifecycle logging. A string value is used as the log prefix; `true` falls back to the client name (e.g. `"SQLite 1"`). Only lifecycle events are logged — worker created, ready, open-error, crash, restart, worker lost, close, and skipped staging sweep. No line per query. Off by default, with one exception: a permanently lost worker always warns, because a pool quietly smaller than `poolSize` is not something to discover later. When enabled, `db.debug` also exposes a live introspection state tree for query throughput and worker status. |
 | `onWorkerLost` | `(event: WorkerLostEvent) => void` | `undefined` | Called when a worker is lost for good, with the slot index, how many workers are left, the requested `poolSize`, and the error. Fires before the client fails if it was the last one. A throwing callback is caught and warned about; it cannot break the pool. |
 
 ## Browser support
@@ -442,6 +506,7 @@ Errors raised by this library are instances of `SQLiteError`, exported from the 
 | `BUSY` | A transient conflict, worth retrying. Either SQLite reported a lock conflict — `SQLITE_BUSY` or `SQLITE_LOCKED`, with the numeric code on `sqliteCode` — or a database was being opened or deleted elsewhere at that moment. **A read that SQLite reported busy is retried once for you**; if it reaches you, the retry failed too. Writes are never retried, and neither is a `BUSY` without a `sqliteCode`. |
 | `DATABASE_IN_USE` | A client still holds the database, in this tab or another. Retrying will not help: close every client on it first. Raised by `deleteDatabase`, and by any method on a second client where the VFS supports one connection at a time. |
 | `DATABASE_NOT_FOUND` | There is nothing at that name to delete. Raised by `deleteDatabase` alone — `createSQLiteClient` creates a database that is absent, so it has no such case. The likeliest cause is a `vfs` that is not the one the database was created with. |
+| `UNSUPPORTED` | The platform cannot answer. Raised by `inspectDatabase` and `db.inspect()` where the Web Locks API is unavailable — reporting zero clients there would be indistinguishable from a database nobody holds. |
 | `READ_ONLY_TRANSACTION` | raised when a write statement, `bulkWrite()` or `output()` is used inside a transaction opened with `readOnly: true`. |
 
 ```typescript

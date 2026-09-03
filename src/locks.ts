@@ -12,6 +12,9 @@
 import type { SQLiteVFS } from './types';
 import { VFS_CAPABILITIES } from './types';
 
+/** One entry in the lock registry as returned by `query()`. */
+type QueriedLock = { name?: string; mode?: string; clientId?: string };
+
 /** The slice of the Web Locks API this module uses. */
 type LockManager = {
   request: (
@@ -19,7 +22,7 @@ type LockManager = {
     optionsOrCallback: any,
     callback?: (lock: unknown) => Promise<unknown>,
   ) => Promise<unknown>;
-  query: () => Promise<{ held?: { name?: string }[] }>;
+  query: () => Promise<{ held?: QueriedLock[]; pending?: QueriedLock[] }>;
 };
 
 export type Locks = {
@@ -64,6 +67,26 @@ export type Locks = {
   tryWithLock: (name: string, fn: () => Promise<unknown>) => Promise<boolean>;
   /** Names currently held anywhere in this origin — every tab included. */
   heldNames: () => Promise<string[]>;
+  /**
+   * The origin's whole lock registry: held AND pending, each with the realm
+   * holding or awaiting it.
+   *
+   * `heldNames()` answers a different, cheaper question and keeps its own
+   * shape — `epochsFor` only ever needs names.
+   */
+  entries: () => Promise<LockEntries>;
+};
+
+/** One entry of the origin's lock registry, held or pending. */
+export type LockEntry = {
+  readonly name: string;
+  readonly mode: 'exclusive' | 'shared';
+  readonly clientId: string;
+};
+
+export type LockEntries = {
+  readonly held: readonly LockEntry[];
+  readonly pending: readonly LockEntry[];
 };
 
 const STAGING_PREFIX = '__bsq_staging_';
@@ -78,6 +101,70 @@ export const stagingLockName = (file: string, table: string) =>
   `bsq:staging:${file}:${table}`;
 
 export const sweepLockName = (file: string) => `bsq:sweep:${file}`;
+
+/**
+ * The marker a client holds to publish that it is alive on a database.
+ *
+ * Held in SHARED mode and contended by NOBODY: like `bsq:staging` this is a
+ * liveness marker, not mutual exclusion. `bsq:conn` stays the only occupancy
+ * detector `deleteDatabase` rests on — a second one would diverge from it.
+ *
+ * The label is `encodeURIComponent`d, which escapes `:` as `%3A`. That is what
+ * makes the tail split unambiguously into exactly three segments whatever the
+ * consumer names their client. The FILE may itself contain a colon, which is
+ * why the reader rebuilds the exact prefix instead of scanning for separators —
+ * the same trap `epochsFor` documents.
+ */
+export const clientMarkerName = (
+  vfs: SQLiteVFS,
+  file: string,
+  id: string,
+  clientName: string,
+): string =>
+  `bsq:client:${namespaceFor(vfs)}:${file}:${id}:${vfs}:${encodeURIComponent(clientName)}`;
+
+export type ClientMarker = {
+  readonly id: string;
+  readonly vfs: SQLiteVFS;
+  readonly name: string;
+};
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Reads one of our markers, or `undefined` for anything else.
+ *
+ * Every rejection below is deliberate: a marker this version does not
+ * understand — a future one carrying more segments, say — must be SKIPPED, not
+ * guessed at. Guessing is how a reader reports another database's state.
+ */
+export const parseClientMarker = (
+  lockName: string,
+  vfs: SQLiteVFS,
+  file: string,
+): ClientMarker | undefined => {
+  const prefix = `bsq:client:${namespaceFor(vfs)}:${file}:`;
+  if (!lockName.startsWith(prefix)) return undefined;
+
+  const parts = lockName.slice(prefix.length).split(':');
+  if (parts.length !== 3) return undefined;
+
+  const [id, markerVfs, encoded] = parts as [string, string, string];
+  if (!UUID_RE.test(id)) return undefined;
+  if (!Object.hasOwn(VFS_CAPABILITIES, markerVfs)) return undefined;
+
+  let name: string;
+  try {
+    name = decodeURIComponent(encoded);
+  } catch {
+    // Malformed percent-escapes throw URIError. An unreadable label is an
+    // unreadable marker: skip it rather than report a mangled name.
+    return undefined;
+  }
+
+  return { id, vfs: markerVfs as SQLiteVFS, name };
+};
 
 /**
  * The storage namespace a VFS writes into — derived from `layout`, NEVER from
@@ -161,6 +248,7 @@ export const noOpLocks: Locks = {
     return true;
   },
   heldNames: async () => [],
+  entries: async () => ({ held: [], pending: [] }),
 };
 
 export const createLocks = (
@@ -232,6 +320,28 @@ export const createLocks = (
       return (snapshot.held ?? [])
         .map((lock) => lock.name)
         .filter((name): name is string => typeof name === 'string');
+    },
+    entries: async () => {
+      const snapshot = await manager.query();
+      // An entry without a name or a clientId cannot be attributed, and a
+      // half-read entry is worse than a missing one: it would join the roster
+      // as an anonymous client nobody can close.
+      const read = (list: QueriedLock[] | undefined): LockEntry[] =>
+        (list ?? [])
+          .filter(
+            (lock): lock is QueriedLock & { name: string; clientId: string } =>
+              typeof lock.name === 'string' &&
+              typeof lock.clientId === 'string',
+          )
+          .map((lock) => ({
+            name: lock.name,
+            mode:
+              lock.mode === 'shared'
+                ? ('shared' as const)
+                : ('exclusive' as const),
+            clientId: lock.clientId,
+          }));
+      return { held: read(snapshot.held), pending: read(snapshot.pending) };
     },
   };
 };
