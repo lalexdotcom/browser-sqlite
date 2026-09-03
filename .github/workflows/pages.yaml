@@ -88,7 +88,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          RELEASE=$(gh release view --json tagName --jq .tagName)
+          # NOT `gh release view`, and not `/releases/latest`: GitHub's "latest
+          # release" EXCLUDES prereleases, and every release this project has
+          # ever cut is one — rc.3, rc.4, and every rc to come. Both forms
+          # return "release not found" here, which is how the first preview run
+          # failed. The list endpoint returns newest first and includes
+          # prereleases; drafts are filtered out explicitly because the
+          # workflow token can see them.
+          RELEASE=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=20" \
+            --jq '[.[] | select(.draft == false)][0].tag_name')
+          if [ -z "$RELEASE" ] || [ "$RELEASE" = "null" ]; then
+            echo "::error::no published release to build the site root from"
+            exit 1
+          fi
           echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
           echo "Root: $RELEASE"
 
