@@ -170,44 +170,37 @@ jobs:
       # `rmSync(target, { recursive: true, force: true })`, so assembling the
       # root after the preview would delete the preview that sits inside it.
       #
-      # GITHUB_REF_NAME and GITHUB_REF_TYPE are overridden deliberately.
-      # `assemble.mjs` reads them to decide whether the page may call itself a
-      # release build, and the runner's values describe the ref that TRIGGERED
-      # the run — which here is never the ref being built. Left alone, the root
-      # of the public site would label a genuine release "development build",
-      # in the one place the script's own comment says a stranger cannot check.
+      # The label is passed as an ARGUMENT, never through the environment.
+      # Actions reposes the `GITHUB_*` variables for every step and ignores a
+      # step-level `env:` that tries to override them — so a run building a ref
+      # other than the one that triggered it cannot describe itself that way.
+      # That was tried and shipped: both halves of the site came out labelled
+      # with the triggering tag and BOTH claimed to be the published package,
+      # `/preview/` included, in the one place the bench page's own comments say
+      # a stranger cannot check.
       - name: Build the root, from the release tag
         working-directory: release
-        env:
-          GITHUB_REF_NAME: ${{ steps.tags.outputs.release }}
-          GITHUB_REF_TYPE: tag
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
           pnpm build
-          node scripts/bench/assemble.mjs "$GITHUB_WORKSPACE/_site"
+          node scripts/bench/assemble.mjs "$GITHUB_WORKSPACE/_site" \
+            --ref "${{ steps.tags.outputs.release }}" --release
 
-      # THE PREVIEW, second, inside the root.
-      #
-      # All three GITHUB_* are set, and each for its own reason.
-      # REF_TYPE is forced to `branch` so the page cannot claim to be a
-      # release: `preview` IS a tag, and assemble.mjs takes any tag for a
-      # release tag. REF_NAME names the slot. And SHA must be the tag's commit
-      # — the runner's value is the ref that triggered the run, so left alone
-      # the page would print `preview @ <some other commit>` and name code it
-      # did not measure.
+      # THE PREVIEW, second, inside the root. No `--release`, which is the whole
+      # point: `preview` IS a tag, and without an explicit label assemble.mjs
+      # takes any tag for a release tag and hands the page an npm link for code
+      # that is not on npm.
       - name: Build the preview, from the preview tag
         if: steps.tags.outputs.preview == 'true'
         working-directory: preview
-        env:
-          GITHUB_REF_NAME: preview
-          GITHUB_REF_TYPE: branch
-          GITHUB_SHA: ${{ steps.tags.outputs.preview_sha }}
         run: |
           set -euo pipefail
+          SHORT=$(echo "${{ steps.tags.outputs.preview_sha }}" | cut -c1-7)
           pnpm install --frozen-lockfile
           pnpm build
-          node scripts/bench/assemble.mjs "$GITHUB_WORKSPACE/_site/preview"
+          node scripts/bench/assemble.mjs "$GITHUB_WORKSPACE/_site/preview" \
+            --ref "preview @ $SHORT"
           echo "Preview served at <page-url>/preview/"
 
       - uses: actions/upload-pages-artifact@v3

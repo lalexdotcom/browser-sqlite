@@ -20,11 +20,31 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
-const outDir = process.argv[2];
+const argv = process.argv.slice(2);
+const outDir = argv.find((a) => !a.startsWith('--'));
 if (!outDir) {
-  process.stderr.write('usage: assemble.mjs <outDir>\n');
+  process.stderr.write(
+    'usage: assemble.mjs <outDir> [--ref <label>] [--release]\n',
+  );
   process.exit(2);
 }
+
+/**
+ * An explicit label, and whether it may claim to be the release.
+ *
+ * These exist because THE ENVIRONMENT CANNOT BE MADE TO LIE HELPFULLY:
+ * GitHub Actions reposes the `GITHUB_*` variables for every step and ignores a
+ * step-level `env:` that tries to override them, so a workflow building a ref
+ * OTHER than the one that triggered it cannot describe what it is building by
+ * setting `GITHUB_REF_NAME`. It was tried; both halves of the site came out
+ * labelled with the triggering tag and both claimed to be the release.
+ *
+ * Passed explicitly, the caller states what it built and the script believes
+ * it. Absent, the env/git inference below still answers for local runs.
+ */
+const refFlag = argv.indexOf('--ref');
+const explicitRef = refFlag === -1 ? undefined : argv[refFlag + 1];
+const explicitRelease = argv.includes('--release');
 
 const target = resolve(root, outDir);
 const version = JSON.parse(
@@ -42,10 +62,18 @@ const version = JSON.parse(
  * version that exists on the registry. Labelling those "the npm version" would
  * be false in the one place a stranger has no way to check.
  *
- * GITHUB_REF_TYPE / GITHUB_REF_NAME are set by Actions; outside it we fall back
- * to the working copy, and a build with no git at all reads as a local build.
+ * `--ref <label>` and `--release` override everything below, and CI must use
+ * them: a workflow that builds a ref other than the one that triggered it
+ * cannot say so through the environment, because Actions reposes `GITHUB_*` for
+ * every step. Without them, GITHUB_REF_TYPE / GITHUB_REF_NAME are read as set
+ * by Actions; outside it we fall back to the working copy, and a build with no
+ * git at all reads as a local build.
  */
 const buildRef = () => {
+  if (explicitRef !== undefined) {
+    return { release: explicitRelease, label: explicitRef };
+  }
+
   const name = process.env.GITHUB_REF_NAME;
 
   // Two independent signals, because getting this wrong is silent and lands in
