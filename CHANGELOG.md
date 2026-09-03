@@ -109,6 +109,15 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **An `openTimeout` failure no longer blames another tab when there is none.**
+  The message said the database *may* be held under an exclusive lock by another
+  tab or another client, which misdirects in the case that happens most: a page
+  reloaded without `close()` leaves the previous context holding the database,
+  and there is no second tab to go looking for. The error now reads the origin's
+  client roster before it is raised and says either that other clients of this
+  library still hold the database, or that none does — in which case a reloaded
+  page, or a holder outside this library, is the likely cause. Where the roster
+  cannot be read at all, the previous wording stands.
 - **A read on `OPFSCoopSyncVFS` no longer fails with `BUSY` while the VFS moves
   its access handle between workers.** That VFS holds one exclusive OPFS handle
   and rotates it, and its lock call reports `SQLITE_BUSY` while a transfer is in

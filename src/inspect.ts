@@ -155,6 +155,55 @@ export const inspectWith = async (
   };
 };
 
+/**
+ * Whether any OTHER client of this library holds `file` on `vfs`.
+ *
+ * The discriminator behind the `openTimeout` message: a slot that never became
+ * ready is usually blamed on another tab, and that is often false — a page
+ * reloaded without `close()` leaves a dead context holding the database, and
+ * no live client to find. One `entries()` call tells the two apart.
+ *
+ * Deliberately NOT `inspectWith`: this runs while the pool is half-open, so it
+ * resolves no realm id (which would take a lock), touches nothing the client
+ * owns, and never throws. `undefined` is "could not be answered" — Web Locks
+ * missing, a VFS whose pages never leave their worker, a registry that rejects,
+ * or one that does not answer within `deadlineMs`. A caller that reads
+ * `undefined` as `false` would state the opposite of what was observed.
+ *
+ * `false` means no client of THIS library holds it — never that nobody does.
+ * Another library, another origin's tooling and native code are all invisible
+ * to the Web Locks registry.
+ */
+export const libraryClientsHold = async (
+  locks: Locks,
+  file: string,
+  vfs: SQLiteVFS,
+  ownId: string,
+  deadlineMs = 250,
+): Promise<boolean | undefined> => {
+  if (!locks.available || !sharesStorage(vfs)) return undefined;
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const snapshot = await Promise.race([
+      locks.entries(),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(resolve, deadlineMs, undefined);
+      }),
+    ]);
+    if (!snapshot) return undefined;
+
+    return snapshot.held.some((entry) => {
+      const marker = parseClientMarker(entry.name, vfs, file);
+      return marker !== undefined && marker.id !== ownId;
+    });
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 export type InspectDatabaseOptions = {
   /**
    * The VFS the database was created with. Required, and not defaulted: four

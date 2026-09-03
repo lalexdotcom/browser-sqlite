@@ -64,8 +64,14 @@ describe('handle starvation during open (reduced mode)', () => {
       openTimeout: 2000,
     });
 
+    // `holder` is live and holds its client marker on the same file, so the
+    // roster can answer and the message must name other clients of this
+    // library rather than hedge about a lock that may be held by anyone.
     await expect(starved.read('SELECT 1')).rejects.toMatchObject({
       code: 'TIMEOUT',
+      message: expect.stringContaining(
+        'Other clients of this library still hold the database.',
+      ),
     });
 
     leaveTransaction();
