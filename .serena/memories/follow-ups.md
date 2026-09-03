@@ -16,22 +16,26 @@ been work on nothing.
 
 ## Designs owed — rc.5 or later
 
-### Counting live clients on a database, and the `debug` surface it belongs on (user, 2026-09-02)
+### A real watcher on a database's clients — deferred by the user, 2026-09-03
 
-**Deferred deliberately to its own session, with the measurement already banked.** Once every
-client holds `bsq:conn:<ns>:<file>` for its lifetime (see DELETE-LIVE below), the count falls out
-of `navigator.locks.query()` — measured 2026-09-02, both engines: **one entry per shared holder**,
-N holds give N entries. `mem:measurements` carries it, so this needs no re-measurement to start.
+Database inspection ships as a one-shot snapshot the consumer polls. The user asked for a
+watcher during the brainstorm, then withdrew the word deliberately: *"ce sera une autre
+fonctionnalité"*. **The measurement that makes it cheap is already banked** —
+`navigator.locks.query()` is `≈ 0.032 ms + 0.00038 ms × n` on Chromium, so polling at
+300-500 ms costs 0.14-0.23 ms of main thread per second and takes no lock, no worker round
+trip and no queue.
 
-**The trap is `clientId`.** It is realm-scoped, not hold-scoped: `entries.length` is the number of
-*clients*, the count of distinct `clientId` is the number of *tabs*, and swapping them undercounts
-or overcounts in silence.
+**What it cannot be built on, and this is the whole design constraint:** Web Locks has NO
+change notification. An emitter fed from the registry can only poll internally — which
+moves the polling under the hood and makes it permanent, charging every client for an
+observability most never read. That is why the shipped API is on-demand. A genuine push
+mechanism needs a second channel (a `BroadcastChannel` hello/bye reconciled against
+`query()` for tabs that were killed without saying goodbye), and that channel is the cost
+to weigh, not the query.
 
-The user wants this to travel with the adaptation of the `debug` mode rather than alone. The
-product questions it opens: clients or tabs or both; on `db.debug` or a standalone function
-(counting clients on a database you have not opened cannot start from a client); and what is
-promised, given `query()` is a snapshot that is stale the instant it is read — observability, never
-a basis for a decision, since exclusion is the lock's job and not the count's.
+**Two smaller emitters may be the better shape than "watch the count"** — the question a
+consumer actually has is usually "a tab left" or "the database is free now", and the second
+is nearly free already: waiting on `bsq:conn` exclusively IS the event "nobody left".
 
 ### One compiled `WebAssembly.Module` for the pool — the premise it waited on is dead
 

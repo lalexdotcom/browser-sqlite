@@ -27,7 +27,8 @@ Stack, build output and test tooling: `mem:stack-and-build`. VFS: `mem:vfs`.
 | `epochs.ts` | — | The barrier's state. The realm-wide symbol registry (`Symbol.for('browser-sqlite.epochs.v1')`) is still there and every client in a tab shares it — but since rc.5 it is a **floor**, not the authority: `originMax()` reads `max(n)` over held `bsq:epoch:<ns>:<file>:<n>` lock names and `raiseTo` can only lift the cell. **`Symbol.for` is shared across realms; `globalThis` is not** — measured, and that is where the per-realm separation actually comes from, not from the symbol. `current`/`bump`/`raiseTo` are synchronous and must stay so; only `originMax`/`publish` are async. |
 | `debug.ts` | 238 | Instrumentation behind the `debug` option. Both histories bounded at 50; `queue` is getter-backed and reads through `scheduler.stats()`, so no counter can go stale. |
 | `logger.ts` | 30 | `createLogger(prefix, enabled, sink = console)`. **Lifecycle events only** — never per query. Disabled, it returns three no-op closures allocated once. |
-| `locks.ts` | — | Web Locks wrapper + the pure sweep decision + **every lock name this library takes**. `createLocks`, `noOpLocks` (use this in tests — `createLocks(undefined)` falls back to the real API and **Node 24 ships one**), `hold(name, { mode, signal })`, `namespaceFor`/`sharesStorage`, `initLockName(vfs, file)`/`writeLockName(vfs, file)`, `stagingTableName`/`stagingLockName`/`sweepLockName`, `staleStagingTables`. **`namespaceFor` derives from `VFS_CAPABILITIES.layout`, never from the VFS name** — four VFS resolve one database name to the same OPFS path, so a per-VFS key would let two clients write the same bytes unexcluded. Staging and sweep stay keyed on the file alone, deliberately: their uniqueness comes from the table's UUID. |
+| `locks.ts` | — | Web Locks wrapper + the pure sweep decision + **every lock name this library takes**. `createLocks`, `noOpLocks` (use this in tests — `createLocks(undefined)` falls back to the real API and **Node 24 ships one**), `hold(name, { mode, signal })`, `namespaceFor`/`sharesStorage`, `initLockName(vfs, file)`/`writeLockName(vfs, file)`, `stagingTableName`/`stagingLockName`/`sweepLockName`, `staleStagingTables`, and since 2026-09-03 `clientMarkerName`/`parseClientMarker` plus `entries()` (held AND pending, each with `mode` and `clientId` — `heldNames()` is untouched, `epochsFor` needs nothing else). **`namespaceFor` derives from `VFS_CAPABILITIES.layout`, never from the VFS name** — four VFS resolve one database name to the same OPFS path, so a per-VFS key would let two clients write the same bytes unexcluded. Staging and sweep stay keyed on the file alone, deliberately: their uniqueness comes from the table's UUID. |
+| `inspect.ts` | 218 | Database inspection: `inspectDatabase(file, { vfs })`, `db.inspect()`'s engine `inspectWith`, and `resolveRealmId`. **Nothing here sits on a query path.** One `locks.entries()` supplies the roster, the writing tab and the queue, so all three describe one instant — two calls would describe a state that never coexisted. `resolveRealmId` memoises the realm's own `clientId` at MODULE scope, not on `globalThis`: an iframe gets its own module instance and its own id, and that separation is the whole basis of `sameTab`. No API returns your own `clientId`, so it is read back by holding a uniquely named nonce and finding it in the registry — paid once per realm, ever, and not even once when a marker of ours is already in the snapshot. |
 | `utils.ts` | 205 | `isReadQuery`/`isWriteQuery` + `assertReadable` + `quoteIdent`/`renderPragmas` + `sqlParams`/`addParam`. |
 | `worker/worker.ts` | 700 | Worker thread: VFS bootstrap, `open`, statement execution, chunked streaming. Holds `VFSConfigs` and `WA_SQLITE_BUILDS`. **Constructs every VFS with `{ lockPolicy: 'shared' }` (`:159`).** `ready` only on success, `open-error` on failure; every `cause` structured-clone-probed; exhaustive message dispatch. |
 | `worker/statement-cache.ts` | 85 | **Pure** — a per-worker LRU of prepared statements keyed by the exact SQL string. Prepares nothing, finalises nothing, imports nothing: `set`/`markUncacheable` return the handles their insertion evicted and `worker.ts` finalises them, so no handle can be dropped by omission. Unit-tested in Node against plain integers. |
@@ -50,12 +51,23 @@ for it.
 `SQLiteQueryAPI` — `read` / `write` / `chunk` / `stream` / `first` / `bulkWrite` /
 `output` — is shared by **both** the client and a transaction, so a method cannot be
 added to one and forgotten on the other. `SQLiteDB` adds `transaction` / `close` /
-`debug`; `SQLiteTransactionDB` adds `commit` / `rollback`. `signal` on every method,
+`debug` / `inspect`, plus five readonly getters — `id` / `name` / `file` / `vfs` / `build`,
+which exist so a module handed a client can describe it without also being handed its options;
+`SQLiteTransactionDB` adds `commit` / `rollback`. `signal` on every method **except `inspect`**,
+a documented exception: `navigator.locks.query()` takes no lock and waits for nothing, so the
+parameter could only abort the `.then()`.
 and `chunkSize` on the three that stream. Client options: `name`, `poolSize`,
 **`vfs` (required)**, `build`, `pragmas`, `maxWorkerRestarts`, `openTimeout`,
 `drainTimeout`, `debug`. Exported besides: `SQLiteError`, `BulkWriteError`,
-`VFS_CAPABILITIES`, `defaultBuildFor`, `detectFeatures`, `missingFeature`, and the types
-`SQLiteVFS` / `SQLiteBuild` / `VFSCapability` / `VFSMemoryModel`.
+`VFS_CAPABILITIES`, `defaultBuildFor`, `detectFeatures`, `missingFeature`, `inspectDatabase`,
+and the types `SQLiteVFS` / `SQLiteBuild` / `VFSCapability` / `VFSMemoryModel` /
+`DatabaseClient` / `DatabaseInspection` / `ClientInspection` / `InspectionBase` /
+`InspectDatabaseOptions`.
+
+**Every root export names the database positionally** — `createSQLiteClient(file, options)`,
+`deleteDatabase(file, options)`, `inspectDatabase(file, options)`. `inspectDatabase` shipped on
+its branch taking one `{ file, vfs }` object and was changed before the merge; the spec carries
+the amendment. A missing `vfs` is refused by name, not reported back as `Unknown vfs 'undefined'`.
 
 ## Load-bearing invariants — weakening any of these reopens a closed bug
 

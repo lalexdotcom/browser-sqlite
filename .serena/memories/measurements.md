@@ -296,13 +296,21 @@ and 320 on Firefox.**
 
 **The decision it settled, and half the rule failed.** The rule was set before the run:
 the cross-tab epoch registry is viable if `query()` is ≤ 0.2 ms **and** flat. It is the
-first and not the second. Taken anyway, on this basis: our own contribution is ≤ 1 marker
+first and not the second. Taken anyway, on this basis: our own contribution was ≤ 1 marker
 per tab per database, so a plausible origin holds 60–120 and pays 0.06–0.08 ms — three to
 six times less than the ~0.2 ms worker round trip the registry avoids, and the registry
 also *skips* the barrier when nothing changed where the unconditional prelude cannot.
 **The residual exposure is that the count is not ours:** an application using Web Locks
 heavily makes us pay for its locks on every `query()`. A fallback to the unconditional
 prelude above a threshold is possible and was not built.
+
+**The budget sentence above is superseded, 2026-09-03: it is now ≤ 2 markers per CLIENT
+per database.** Database inspection added `bsq:client:<ns>:<file>:<uuid>:<vfs>:<label>`,
+held for every client's life on every persistent VFS. The arithmetic changes more than it
+looks: the epoch marker is one per tab, this one is one per client, and a tab with four
+clients on two databases now contributes eight rather than two. It stays far from the
+threshold — 450 held locks on Chromium, 320 on Firefox — but the figure to re-derive when
+someone next reasons about `query()`'s cost is this one, not the one above.
 
 **The 256 and 512 points exist because the first run only went to 64** and showed growth
 where flatness was expected. Extrapolating that slope was the obvious move and is exactly

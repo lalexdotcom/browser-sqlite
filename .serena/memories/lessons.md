@@ -359,6 +359,40 @@ handed to them and nothing can be checked against them.
 list. And before reopening anything, grep every memory, not the two that seem
 relevant — the decision that made the reopening wrong was one file away.
 
+## A plan written by the same head that wrote the spec inherits its blind spots — 2026-09-03
+
+Nine tasks, executed by fresh subagents. **Five defects were in the plan, not in the
+implementations**, and every one was caught by someone who did not write it:
+
+- a test asserting `db.debug.name === 'ledger 1'` where `clientIndex` is a per-realm module
+  counter, so the index depends on how many clients earlier tests created — the assertion
+  was simply unreachable, and the fix is an anchored regex;
+- a unit test calling `inspectWith` with no `ownMarkerName`, which routes into a nonce path
+  that cannot succeed against a stub — and which would nonetheless have passed whenever two
+  other tests ran first, because the realm id memoises at module scope;
+- a browser test returning a queued writer's promise from inside a transaction callback,
+  which **deadlocks**: the transaction holds the very lock the queued writer awaits;
+- "the unit project runs on Node, where `navigator.locks` is absent" — false, **Node 24
+  ships Web Locks**, so the degenerate-case test would have resolved instead of rejecting;
+- a README sentence describing behaviour the code did not have, left over from a design
+  decision the user had reversed two messages earlier.
+
+**The pattern is one thing, not five.** Every defect is a claim the plan asserted rather
+than checked, and the controller could not catch any of them, because the controller is
+what wrote them. The implementers caught four by running the code; the fifth was caught by
+a reviewer told to check every documented claim against the source.
+
+**So: state the assumption in the dispatch, in the words that make it checkable.** "The
+unit project runs on Node, where `navigator.locks` is absent" got corrected because it was
+written down as a fact an implementer could disprove. An unstated assumption reaches
+production as behaviour.
+
+**And a reviewer asked to verify documentation against the code will find things nobody
+else can.** The Critical of this branch — `db.inspect()` answering a memory VFS with an
+empty roster where `inspectDatabase` refuses — was found by a DOCUMENTATION review, because
+checking whether a sentence was true meant reading two entry points side by side. No
+task-scoped review had both in view.
+
 ## A regression test's shape can delete the race it was written to pin — 2026-09-03
 
 **What happened:** the CoopSync handle-transfer `BUSY` was reproduced by a probe issuing eight

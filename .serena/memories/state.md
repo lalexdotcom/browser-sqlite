@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-08-31.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-09-03.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one.
 
 **No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
@@ -24,25 +24,25 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-02
+## The verification baseline — compare against these, re-measured 2026-09-03
 
 Not history: the numbers a regression is detected against. **Every figure below was read off
-a run on 2026-09-02 in this container** — none is carried forward from an earlier session,
-and none is arithmetic.
+a run on 2026-09-03 in this container, on the MERGED result** — none is carried forward from
+an earlier session, and none is arithmetic. The one exception is flagged in its own row.
 
 | command | result |
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | `status: pass`, **565 tests, 41 files, 0 failed files** |
-| `pnpm test:unit` | 359 tests, 17 files |
-| `pnpm test:browser` | 206 tests, 24 files |
-| `TEST_BROWSER=firefox pnpm test:browser` | **206 tests — identical to Chromium** |
+| `pnpm test` | `status: pass`, **605 tests, 47 files, 0 failed files** |
+| `pnpm test:unit` | 381 tests, 18 files |
+| `pnpm test:browser` | 224 tests, 29 files |
+| `TEST_BROWSER=firefox pnpm test:browser` | **224 tests, 29 files — identical to Chromium** |
 | `pnpm test:conformance` | 85 tests, 2 files, **73 passed / 12 skipped** |
 | `TEST_BROWSER=firefox pnpm test:conformance` | **85 tests, 73 / 12 — identical to Chromium** |
 | `pnpm test:consumer` | 24/24 stages |
-| `node scripts/bench/check.mjs chromium --all` | OK, 22 declared pairs, zero `not-run` |
-| `pnpm lint` | 87 files, 13 warnings, 1 info |
+| `node scripts/bench/check.mjs chromium --all` | **not re-run on 2026-09-03** — last read 2026-09-02: OK, 22 declared pairs, zero `not-run` |
+| `pnpm lint` | 96 files, 13 warnings, 1 info |
 | `dependencies` in `package.json` | absent |
 
 **The per-project split is here on purpose.** A total alone cannot say which suite moved, and
@@ -57,7 +57,7 @@ counters cannot. That was reported green once — see `mem:lessons`.
 
 Firefox conformance was 57/19 until `OPFSWriteAheadVFS`'s declaration was corrected; the
 two engines agreeing is the current expectation, and a divergence means something skipped.
-As of 2026-09-02 they agree on **both** suites, test for test — conformance and the browser
+As of 2026-09-03 they agree on **both** suites, test for test — conformance and the browser
 project alike.
 
 **Firefox is a CI gate since 2026-08-28.** It runs as its own step in `ci.yaml`, after
@@ -73,20 +73,20 @@ one machine and one build; slower CI hardware may still surface timing the campa
 None outstanding. **The next thing is rc.5's remaining scope, which is the user's to pick from
 `mem:follow-ups`.**
 
-## rc.5 so far: six lots, merged 2026-09-02 and 2026-09-03
+## rc.5 so far: seven lots, merged 2026-09-02 and 2026-09-03
 
-Three branches, each merged into `main` with `--no-ff` and verified on the merged result; all are
+Four branches, each merged into `main` with `--no-ff` and verified on the merged result; all are
 deleted and no stale ref remains. Lots 1-3 rode one branch — the user judged them three faces of one
-feature and accepted a larger whole-branch review for it; lot 4 had its own, and lots 5 and 6 shared
-one. Each was verified
+feature and accepted a larger whole-branch review for it; lot 4 had its own, lots 5 and 6 shared
+one, and lot 7 had its own. Each was verified
 against the baseline table above, which is the only place that table lives.
 
 **Not pushed.** `main` sits ahead of `origin/main`, which is normal here.
 
-**Read the specs, not a summary** — lots 1-4 have one each in `docs/superpowers/specs/`, dated
-2026-08-31 and 2026-09-02, and three carry amendments made during implementation. **Lots 5 and 6 have no
+**Read the specs, not a summary** — lots 1-4 and 7 have one each in `docs/superpowers/specs/`, dated
+2026-08-31, 2026-09-02 and 2026-09-03, and four carry amendments made during implementation. **Lots 5 and 6 have no
 spec**: bounded, brainstormed in chat, and their whole case is the measurement campaigns in
-`mem:measurements`.
+`mem:measurements`. Lot 7 also has a plan in `docs/superpowers/plans/` — the only lot that does.
 
 1. **Cross-tab coordination.** Writes serialize across every client and tab; read-your-own-writes
    holds across tabs on every VFS but `IDBMirrorVFS`. Mechanism and invariants: `mem:architecture`.
@@ -108,12 +108,22 @@ spec**: bounded, brainstormed in chat, and their whole case is the measurement c
    one ordinary read per session, early, **on both engines at the default `poolSize`**. The
    discriminator is `sqliteCode`, not a VFS name, so a `BUSY` this library raises to mean
    "stop" still fails fast. `stream()` and `chunk()` retry only before a row has been delivered.
+7. **Database inspection.** `inspectDatabase(file, { vfs })` and `db.inspect()` report who is
+   live on a database across the origin — clients, tabs, and the write lock's holder with the
+   count of writers queued behind it — **without opening it**, which is the point: the question
+   arrives from code holding no client. Read on demand, never maintained; each client holds an
+   uncontended liveness marker `bsq:client:<ns>:<file>:<uuid>:<vfs>:<label>`. Plus five readonly
+   getters on the client (`id`, `name`, `file`, `vfs`, `build`) and `UNSUPPORTED`, a new public
+   error code. `db.debug.name` changed value — breaking.
 
 **Three consumer-visible behaviour changes, all from lots 1-3 and all in `CHANGELOG.md` under
 Breaking:** two clients
 writing at once no longer produce `BUSY` (the second waits); a refused deletion reports
 `DATABASE_IN_USE` where it reported `WORKER_CRASHED` or nothing; and **deletion is no longer
-idempotent**.
+idempotent**. **A fourth arrived with lot 7:** `db.debug.name` now carries the client name with
+its index (`"SQLite 1"`) where it carried the bare `name` option — a value identical for every
+client that passed nothing, so it identified nothing even inside one tab, and it had no reader
+anywhere in the repository.
 
 **What it does NOT deliver, and the README says so:** reads still wait on the rotated exclusive OPFS
 handle wherever `readwrite-unsafe` is missing. `IDBMirrorVFS` gains nothing cross-tab.
