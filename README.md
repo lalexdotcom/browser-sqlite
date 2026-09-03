@@ -36,7 +36,7 @@ The `.wasm` are read from beside `worker.js`. If a build separates them, or you 
 
 ## Usage
 
-[createSQLiteClient](#createsqliteclient) · [*client*.read](#clientread) · [*client*.write](#clientwrite) · [*client*.stream](#clientstream) · [*client*.chunk](#clientchunk) · [*client*.first](#clientfirst) · [*client*.transaction](#clienttransaction) · [*client*.bulkWrite](#clientbulkwrite) · [*client*.output](#clientoutput) · [*client*.close](#clientclose) · [deleteDatabase](#deletedatabase)
+[createSQLiteClient](#createsqliteclient) · [*client*.read](#clientread) · [*client*.write](#clientwrite) · [*client*.stream](#clientstream) · [*client*.chunk](#clientchunk) · [*client*.first](#clientfirst) · [*client*.transaction](#clienttransaction) · [*client*.bulkWrite](#clientbulkwrite) · [*client*.output](#clientoutput) · [*client*.inspect](#clientinspect) · [*client*.close](#clientclose) · [deleteDatabase](#deletedatabase) · [inspectDatabase](#inspectdatabase)
 
 ### createSQLiteClient
 
@@ -57,6 +57,18 @@ const db = createSQLiteClient('myapp.sqlite', {
 `createSQLiteClient` spawns `poolSize` Web Worker threads immediately. Workers reach READY state asynchronously — queries made before workers are ready are queued automatically.
 
 Every option is listed under [Options](#options). `vfs` is the one with no default — [VFS Selection](#vfs-selection) is how to choose it, and a database written through one VFS is not readable through another.
+
+The client describes itself through five readonly properties, available whether or not `debug` is on:
+
+| Property | Type | Description |
+|---|---|---|
+| `id` | `string` | A UUID minted for this client, unique across the origin. It is what tells two clients apart in [`inspectDatabase`](#inspectdatabase)'s roster. |
+| `name` | `string` | The `name` option followed by this client's index in its tab — `"SQLite 1"` by default. It is the same string the `debug` logger prefixes its lines with. Two tabs can produce the same one; `id` is what cannot collide. |
+| `file` | `string` | The database file, normalized. This is the identity every lock name is built on, and it may differ from the string you passed. |
+| `vfs` | `SQLiteVFS` | The VFS this client opened with. |
+| `build` | `SQLiteBuild` | The wa-sqlite build actually loaded — the VFS's first when `build` was not passed. |
+
+They exist so that a module handed a client can describe it without also being handed the options it was created with.
 
 ### *client*.read
 
@@ -232,6 +244,18 @@ did not exist appears only at `close()`. Single-use, like `bulkWrite`.
 
 **Inside a transaction, `output()` costs more than it looks.** On its own it loads rows outside any transaction and holds the write lock only for the final swap. Called on a `tx`, the entire load runs inside your transaction — every other write, in this tab and in others, waits for it to finish.
 
+### *client*.inspect
+
+```typescript
+const { self, siblings, tabs, write } = await db.inspect();
+```
+
+Reports who is live on this client's database, in every tab of the origin. It is the same census as [`inspectDatabase`](#inspectdatabase), where the semantics and the caveats are documented — the difference is only the split: `db.inspect()` separates `self`, this client's own entry, from `siblings`, everyone else, where `inspectDatabase` returns one `clients` list.
+
+`self` is `null` when this client's own marker is not in the snapshot.
+
+After `close()` it throws `CLIENT_CLOSED`, like every other method on the client. [`inspectDatabase`](#inspectdatabase) answers the same question afterwards — which is what `db.file` and `db.vfs` are for.
+
 ### *client*.close
 
 ```typescript
@@ -268,40 +292,40 @@ Throws `SQLiteError` with code `DATABASE_IN_USE` when a client still holds the d
 | `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite build to load. It does not affect where the database lives — only which builds can instantiate the VFS. |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Same meaning as on [`createSQLiteClient`](#options). A deployment that needs it to open a database needs it to delete one. |
 
-### Inspecting a database
+### inspectDatabase
 
-`inspectDatabase({ file, vfs })` reports who is live on a database **without
-opening it**, and `db.inspect()` answers the same from a client you already
-hold. Both resolve with the file, the VFS, the number of distinct tabs, the
-roster, and the state of the write lock.
+Reports who is live on a database, in every tab of the origin, **without opening it** — which is the point: the question usually arrives from code that holds no client, and nobody opens a database to learn that they cannot close it.
 
-`inspectDatabase` returns `clients`; `db.inspect()` splits the same list into
-`self` and `siblings`. `self` is `null` when this client's own marker is not in the snapshot. After `close()`, `db.inspect()` throws
-`CLIENT_CLOSED` like every other method on the client; `inspectDatabase({ file,
-vfs })` is the way to ask the same question afterwards, which is what `db.file`
-and `db.vfs` exist for.
+```typescript
+import { inspectDatabase } from 'browser-sqlite';
 
-**"Tab" means realm.** A same-origin iframe in your own page is a different
-tab here: it has its own `clientId`, so `sameTab` is `false` for it.
+const { clients, tabs, write } = await inspectDatabase({
+  file: 'myapp.sqlite',
+  vfs: 'OPFSAdaptiveVFS',
+});
+```
 
-**A snapshot, never a permission.** It is stale the instant it resolves. An
-empty roster does not mean a database can be deleted — a tab may open between
-the two calls, and `deleteDatabase` raising `DATABASE_IN_USE` remains the only
-authority. An empty roster also does not distinguish a database nobody holds
-from one that does not exist; `DATABASE_NOT_FOUND` is what says that.
+`vfs` is required and must be the VFS the database was created with. It resolves with the normalized `file`, the `vfs`, `clients`, `tabs` — the number of distinct tabs among them — and `write`.
 
-**Polling is on the call.** Nothing is kept between two calls, and there is no
-event to subscribe to. A call costs well under a tenth of a millisecond and makes no worker round
-trip; the realm's id is resolved and cached once per tab, so subsequent calls
-take no lock. So polling cannot slow a query down —
-300–500 ms is a comfortable cadence. Do not stack calls: a background tab has
-its timers throttled, and an interval that fires without awaiting the previous
-answer will queue them up.
+| Field | Type | Description |
+|---|---|---|
+| `clients[].id` | `string` | The client's UUID, matching its own `db.id`. |
+| `clients[].name` | `string` | The client's label with its index, e.g. `"SQLite 1"`. Not unique across tabs. |
+| `clients[].tab` | `string` | The tab holding it. Every client in one tab reports the same value. |
+| `clients[].sameTab` | `boolean` | That tab is the caller's. |
+| `clients[].vfs` | `SQLiteVFS` | Which VFS it opened with — four of them share one file per database name. |
+| `tabs` | `number` | Distinct tabs among `clients`. Not the same as `clients.length`. |
+| `write.tab` | `string \| null` | The tab holding the write lock right now, or `null`. A tab, never a client: the lock's name is the mutex and carries no client identity. |
+| `write.sameTab` | `boolean` | Always `false` when `write.tab` is `null`. |
+| `write.waiting` | `number` | Writers queued behind it, across the whole origin. |
 
-`MemoryVFS` and `MemoryAsyncVFS` throw `INVALID_OPTION`: their pages live in
-the worker that opened them, so two clients are two databases and there is
-nothing to share. Where the Web Locks API is missing, `inspectDatabase` and `db.inspect()` throw
-`UNSUPPORTED` rather than report zero.
+**"Tab" means realm.** A same-origin iframe in your own page is a different tab here: it has its own identity, so `sameTab` is `false` for it.
+
+**A snapshot, never a permission.** It is stale the instant it resolves. An empty roster does not mean a database can be deleted — a tab may open between the two calls, and [`deleteDatabase`](#deletedatabase) raising `DATABASE_IN_USE` remains the only authority. An empty roster also does not distinguish a database nobody holds from one that does not exist; `DATABASE_NOT_FOUND` is what says that.
+
+**Polling is on the call.** Nothing is kept between two calls, and there is no event to subscribe to. A call costs well under a tenth of a millisecond and makes no worker round trip; the tab's identity is resolved and cached once, so subsequent calls take no lock. Polling therefore cannot slow a query down, and 300–500 ms is a comfortable cadence. Do not stack calls: a background tab has its timers throttled, and an interval that fires without awaiting the previous answer will queue them up.
+
+`MemoryVFS` and `MemoryAsyncVFS` throw `INVALID_OPTION`: their pages live in the worker that opened them, so two clients are two databases and there is nothing to share. Where the Web Locks API is missing, `inspectDatabase` and `db.inspect()` throw `UNSUPPORTED` rather than report zero.
 
 ## Options
 
