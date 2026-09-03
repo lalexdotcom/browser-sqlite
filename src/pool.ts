@@ -125,7 +125,7 @@ export const spawnWorker = (name: string): Worker =>
 export const createPoolWorker = (deps: {
   index: number;
   pool: (PoolWorker | undefined)[];
-  clientPrefix: string;
+  clientName: string;
   file: string;
   vfs: SQLiteVFS;
   build: SQLiteBuild;
@@ -146,7 +146,7 @@ export const createPoolWorker = (deps: {
   const {
     index,
     pool,
-    clientPrefix,
+    clientName,
     file,
     vfs,
     build,
@@ -159,7 +159,7 @@ export const createPoolWorker = (deps: {
 
   const deferredInit = Promise.withResolvers<PoolWorker>();
 
-  const workerName = `${clientPrefix} / Worker ${index + 1}`;
+  const workerName = `${clientName} / Worker ${index + 1}`;
   const worker = Object.assign(spawnWorker(workerName) as PoolWorker, {
     index,
     status: 'NEW',

@@ -300,7 +300,7 @@ export const createSQLiteClient = (
 
   const clientIndex = ++clientCount;
 
-  const clientPrefix = `${clientOptions.name ?? 'SQLite'} ${clientIndex}`;
+  const clientName = `${clientOptions.name ?? 'SQLite'} ${clientIndex}`;
 
   const poolSize = clientOptions.poolSize ?? DEFAULT_POOL_SIZE;
   const pool: (PoolWorker | undefined)[] = [];
@@ -496,7 +496,7 @@ export const createSQLiteClient = (
   const debugOption = clientOptions.debug;
 
   const debugPrefix =
-    typeof debugOption === 'string' ? debugOption : clientPrefix;
+    typeof debugOption === 'string' ? debugOption : clientName;
 
   const logger = createLogger(debugPrefix, !!debugOption);
 
@@ -507,7 +507,7 @@ export const createSQLiteClient = (
         {
           vfs,
           pragmas,
-          name: clientOptions.name ?? 'SQLite',
+          name: clientName,
         },
         () => scheduler.stats(),
       )
@@ -1109,7 +1109,7 @@ export const createSQLiteClient = (
     void createPoolWorker({
       index,
       pool,
-      clientPrefix,
+      clientName,
       file: dbFile,
       vfs,
       build,

@@ -1,4 +1,5 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it, onTestFinished } from '@rstest/core';
+import { createSQLiteClient } from '../../src/client';
 import { createTestClient } from './helpers';
 
 describe('debug subsystem (B6)', () => {
@@ -46,5 +47,15 @@ describe('debug subsystem (B6)', () => {
     expect(db.debug!.queue.read).toBe(0);
     expect(db.debug!.queue.write).toBe(0);
     await db.close();
+  });
+
+  it('names the client the way its log lines are prefixed', async () => {
+    const db = createSQLiteClient('debug-name.db', {
+      vfs: 'IDBBatchAtomicVFS',
+      name: 'ledger',
+      debug: true,
+    });
+    onTestFinished(() => db.close());
+    expect(db.debug?.name).toMatch(/^ledger \d+$/);
   });
 });
