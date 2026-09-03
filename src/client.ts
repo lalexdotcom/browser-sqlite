@@ -1156,14 +1156,29 @@ export const createSQLiteClient = (
     // comes back, nothing restarts, nothing fails, and the pool is empty and
     // silent for the rest of the client's life.
     supervisor.report(index, 'spawned');
+    // The verdict is no longer decided in the same turn as the expiry: reading
+    // the roster puts up to `libraryClientsHold`'s bound between the timer
+    // firing and `handleDeath`, and a slot CAN settle inside that window. It
+    // was atomic before — `clearTimeout` in the `.finally` below could only
+    // lose the race by never running. Reporting the death of a worker that
+    // became ready meanwhile would terminate a live worker and leave the
+    // supervisor holding `ready` for a slot the pool no longer has; during
+    // startup it would also put the slot back into `startupLosses`, which
+    // `spawn`'s `.then` had just cleared, and `onGateOpen` would report it
+    // permanently lost.
+    //
+    // Nothing in the suite reproduces the window: it needs a worker that opens
+    // between `openTimeout` and `openTimeout + 250 ms`, which no test can time.
+    let settled = false;
     const timer = setTimeout(() => {
       // The roster is read BEFORE the death is reported, because the message is
       // all the consumer ever sees — a sentence appended afterwards would
       // arrive after the error had been thrown. `libraryClientsHold` takes no
       // lock, touches nothing this client owns, never throws and is bounded, so
       // the report is delayed by at most that bound after a wait of
-      // `openTimeout`. The death itself is already decided here.
+      // `openTimeout`.
       void libraryClientsHold(locks, dbFile, vfs, clientUuid).then((held) => {
+        if (settled) return;
         handleDeath(
           index,
           new SQLiteError(
@@ -1206,7 +1221,13 @@ export const createSQLiteClient = (
       .catch(() => {
         // The rejection is the death already reported through onDeath.
       })
-      .finally(() => clearTimeout(timer));
+      .finally(() => {
+        // Both outcomes settle the slot: a worker that opened is alive, and one
+        // that died has already been reported through `onDeath`. Either way the
+        // timer's verdict is stale.
+        settled = true;
+        clearTimeout(timer);
+      });
   };
 
   /**

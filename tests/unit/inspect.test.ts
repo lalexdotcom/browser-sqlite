@@ -147,6 +147,21 @@ describe('libraryClientsHold', () => {
     ).resolves.toBe(true);
   });
 
+  it('reports true across the opfs-path family, which shares one file', async () => {
+    // Four VFS collapse to the `opfs` namespace and therefore to one file. A
+    // client that opened it through another of them is a holder, and the
+    // timeout message would be wrong to say no client of this library has it.
+    const locks = stubLocks([
+      {
+        name: clientMarkerName('OPFSCoopSyncVFS', 'app.db', ID_B, 'SQLite 1'),
+        clientId: 'r2',
+      },
+    ]);
+    await expect(
+      libraryClientsHold(locks, 'app.db', 'OPFSAdaptiveVFS', ID_A),
+    ).resolves.toBe(true);
+  });
+
   it('reports false when the only marker held is our own', async () => {
     const locks = stubLocks([{ name: marker(ID_A), clientId: 'r1' }]);
     await expect(
