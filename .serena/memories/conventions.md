@@ -49,6 +49,16 @@ satisfies it belong to the same task, and a task that only adds tests must be on
 tests pass on arrival. `feat/bulk-backpressure`'s five tasks collapsed into two commits
 for this reason, which is a property of the repository, not of that plan.
 
+## `.superpowers/` artefacts are not a subject (user, 2026-09-03)
+
+**Do not log SDD scratch — ledgers, briefs, task and fix reports — as a backlog item, and do
+not raise it as a finding.** It is non-versioned working material; if a stray one was
+force-added past the ignore rule and is now tracked, that is not worth an entry either. The
+follow-up that tracked two such files on `main` was deleted on this instruction.
+
+The corollary: do not spend a session's attention proving how one got past `.gitignore`.
+Leave the files, leave the workspaces, say nothing.
+
 ## "On clôture la session" is a defined procedure (user, 2026-08-17)
 
 Not a figure of speech. It means the work continues in a *different* session, so nothing

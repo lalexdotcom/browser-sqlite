@@ -126,18 +126,6 @@ Three things the readiness gate rests on are reasoned rather than measured.
 - **The retry round multiplies the worst case**: up to two `openTimeout`,
   ~60 s by default, before the first query on a pool that will never open.
 
-### Two SDD scratch reports are tracked in the repository, and nobody meant them to be
-
-`.superpowers/` is in `.gitignore`, yet two `final-fix-report.md` files are committed on `main`:
-`.superpowers/sdd/2026-08-18-wave-1-pool-scheduler/` and
-`.superpowers/sdd/2026-08-31-cross-tab-coordination/`. Both are subagent process reports, not project
-documentation. An implementer force-added each; the first went unnoticed for two weeks and the second
-only surfaced in a merge diff.
-
-Removing them is `git rm --cached` plus a commit — **the user's call, since it deletes tracked files**.
-Worth doing at the same time: find out how they got past the ignore rule, because it has now happened
-twice and nothing catches it.
-
 ## Notes, with nothing to fix
 
 ### Twelve `any` remain in `src/`, and they are structural
