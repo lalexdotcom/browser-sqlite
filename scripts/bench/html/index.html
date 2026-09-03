@@ -633,6 +633,25 @@
       const ROW_TIMEOUT_MS = 30_000;
 
       /**
+       * Deliberately BELOW the row budget, and that gap is the whole point.
+       *
+       * A client's `openTimeout` defaults to 30 000 ms — the same as
+       * `ROW_TIMEOUT_MS`, and both clocks start together on the first query of
+       * a column. The page's `AbortSignal` therefore won the race and wrote
+       * `exceeded 30000 ms`, throwing away the sentence `src/client.ts` had
+       * just been taught to produce: which worker never became ready, and
+       * whether another client of this library holds the database.
+       *
+       * Observed on iPadOS Safari 27.0, 2026-09-04: both `IDBBatchAtomicVFS`
+       * columns died at `opens` and the export carried the page's wording, so
+       * the one diagnosis that would have explained them never reached it.
+       *
+       * Ten seconds is enough room for the client's own timer to fire, be
+       * caught, and be recorded as the row's reason.
+       */
+      const OPEN_TIMEOUT_MS = ROW_TIMEOUT_MS - 10_000;
+
+      /**
        * Thrown when a row could not be bounded without abandoning its column.
        * For a method that takes no AbortSignal the only bound available is a
        * race against a timer, which abandons the WAIT without stopping the
@@ -704,10 +723,23 @@
        * available instead of none. Worst case is the number of entries we own
        * times the budget, which on a real root is a handful.
        *
-       * The abandoned promise keeps running in the void. That is fine — it
-       * holds nothing we need back, and the tab outlives it either way.
+       * ABANDONING THE WAIT DOES NOT STOP THE WORK, and that is not free on
+       * both sides. An OPFS `removeEntry` we stop waiting for holds nothing we
+       * need back. An `indexedDB.deleteDatabase` does: the request stays queued
+       * against that database, and IndexedDB processes a database's requests in
+       * order — so a delete that never settles BLOCKS every later `open` of the
+       * same store. It is the same hazard `ColumnAbandoned` states below for
+       * `close()`, and the earlier version of this comment claimed the opposite.
+       *
+       * That is why the budget is split. Removing a directory entry is a local,
+       * fast operation and 2 s is already generous; deleting a database is
+       * heavier, and `blocked` is a legitimate transient rather than a fault,
+       * so waiting longer before giving up costs less than giving up early on a
+       * store the run is about to need. Neither budget makes the page hang,
+       * which is the property that matters.
        */
       const SWEEP_OP_MS = 2_000;
+      const SWEEP_IDB_MS = 5_000;
 
       const TIMED_OUT = Symbol('timed out');
 
@@ -742,8 +774,16 @@
        *
        * `listed` is `null` where there is no OPFS at all, which is neither a
        * success nor a failure to report.
+       *
+       * `idbAfter` is filled ONLY when the IndexedDB side left something, and
+       * it is the discriminator the next device run needs: a store that is gone
+       * from `indexedDB.databases()` was deleted slowly, one that is still
+       * there was not deleted at all. Without it, `timed out` cannot tell those
+       * apart, and iPadOS Safari 27.0 produced exactly that ambiguity on
+       * 2026-09-04. Not collected on a clean sweep — it costs an enumeration
+       * and answers nothing.
        */
-      const SWEEP = { partial: false, listed: null, left: [] };
+      const SWEEP = { partial: false, listed: null, left: [], idbAfter: null };
 
       const sweepLeft = (kind, name, why) => {
         SWEEP.partial = true;
@@ -895,10 +935,12 @@
         for (const { name } of now) {
           if (!name || idbBefore.has(name)) continue;
           remember('idb', name);
-          // `deleteIdb` resolves on `onblocked`, so it settles whenever any of
-          // the three events arrives — the case left is none of them arriving.
-          const done = await withDeadline(deleteIdb(name));
-          if (done !== TIMED_OUT) forget('idb', name);
+          // Forgotten only on a real deletion, for the reason the sweep gives:
+          // `blocked` leaves the store in place, and a name dropped from
+          // `owned` while its store still exists is a name no later sweep can
+          // see.
+          const outcome = await withDeadline(deleteIdb(name), SWEEP_IDB_MS);
+          if (outcome === 'success') forget('idb', name);
         }
       };
 
@@ -948,11 +990,22 @@
         }
       };
 
+      /**
+       * Resolves with WHICH event settled it, because the three do not mean
+       * the same thing and the caller has to tell them apart.
+       *
+       * `blocked` in particular is not a deletion: it fires while other
+       * connections are still open, and the delete may complete later, or
+       * never. Treating it as done — which this did, resolving bare — is how a
+       * store that was still there got forgotten and became invisible to every
+       * later sweep.
+       */
       const deleteIdb = (name) =>
         new Promise((resolve) => {
           const request = indexedDB.deleteDatabase(name);
-          request.onsuccess = request.onerror = request.onblocked = () =>
-            resolve();
+          request.onsuccess = () => resolve('success');
+          request.onerror = () => resolve('error');
+          request.onblocked = () => resolve('blocked');
         });
 
       /**
@@ -987,6 +1040,7 @@
         SWEEP.partial = false;
         SWEEP.listed = null;
         SWEEP.left = [];
+        SWEEP.idbAfter = null;
         const all = owned();
         if (HAS_OPFS) {
           try {
@@ -1029,13 +1083,35 @@
             SWEEP.partial = true;
           }
         }
+        let idbLeft = false;
         for (const name of new Set([
           ...(all.idb ?? []),
           ...vfsOwnedNames('indexeddb'),
         ])) {
-          const done = await withDeadline(deleteIdb(name));
-          if (done === TIMED_OUT) sweepLeft('idb', name, 'timed out');
-          else forget('idb', name);
+          const outcome = await withDeadline(deleteIdb(name), SWEEP_IDB_MS);
+          // Only `success` is a deletion. `blocked` means other connections
+          // are still open and the store is still there; `error` speaks for
+          // itself. Forgetting on either would drop the name from `owned` and
+          // hand it to the "already there, never touch it" rule for good.
+          if (outcome === 'success') {
+            forget('idb', name);
+            continue;
+          }
+          idbLeft = true;
+          sweepLeft('idb', name, outcome === TIMED_OUT ? 'timed out' : outcome);
+        }
+        // Only when something was left: the one fact that separates a slow
+        // deletion from one that never happened.
+        if (idbLeft && CAN_LIST_IDB) {
+          try {
+            const now = await withDeadline(indexedDB.databases());
+            SWEEP.idbAfter =
+              now === TIMED_OUT
+                ? null
+                : now.map((d) => d.name).filter(Boolean);
+          } catch {
+            // The listing is a diagnostic, never a step the run depends on.
+          }
         }
       };
 
@@ -1094,6 +1170,29 @@
 
       const setReason = (pairId, rowId, text) => {
         (RESULTS.reasons[pairId] ??= {})[rowId] = text;
+      };
+
+      /**
+       * A failure on a VFS whose OWN store the sweep could not remove is not an
+       * independent observation, and the export has to say so where the failure
+       * is read rather than leaving the reader to cross-check `sweep.left`.
+       *
+       * The case is real: on iPadOS Safari 27.0, 2026-09-04, the sweep left
+       * `idb:IDBBatchAtomicVFS` and both of that VFS's columns then died at
+       * `opens`. Nothing in those two cells connected them.
+       *
+       * Keyed on the VFS class name because that is what a VFS's own store is
+       * named — the same assumption `vfsOwnedNames` already makes.
+       */
+      const sweepCaveat = (pair) => {
+        const hit = SWEEP.left.find(
+          (entry) =>
+            entry.startsWith(`opfs:${pair.vfs} (`) ||
+            entry.startsWith(`idb:${pair.vfs} (`),
+        );
+        return hit
+          ? ` — and the pre-run sweep could not remove this VFS's own store (${hit}), so this column did not start from a clean floor`
+          : '';
       };
 
       /**
@@ -1158,6 +1257,7 @@
                 vfs: ctx.pair.vfs,
                 build: ctx.pair.build,
                 poolSize: poolFor(ctx.pair.cap),
+                openTimeout: OPEN_TIMEOUT_MS,
               });
               const rows = await ctx.db.read('SELECT a FROM inv2', undefined, {
                 signal,
@@ -1249,6 +1349,7 @@
                 vfs: ctx.pair.vfs,
                 build: ctx.pair.build,
                 poolSize: poolFor(ctx.pair.cap),
+                openTimeout: OPEN_TIMEOUT_MS,
               });
               return true;
             }),
@@ -1773,6 +1874,7 @@
                 vfs: ctx.pair.vfs,
                 build: ctx.pair.build,
                 poolSize: poolFor(ctx.pair.cap),
+                openTimeout: OPEN_TIMEOUT_MS,
               });
               let tables;
               try {
@@ -2063,6 +2165,7 @@
           vfs: pair.vfs,
           build: pair.build,
           poolSize: poolFor(pair.cap),
+          openTimeout: OPEN_TIMEOUT_MS,
         });
         const ctx = { db, file, pair, pool: poolFor(pair.cap) };
 
@@ -2155,12 +2258,20 @@
               setCell(pair, row.id, '⏱', 'fail');
             } else if (error instanceof RowTimeout) {
               RESULTS[kind][pair.id][row.id] = 'timeout';
-              setReason(pair.id, row.id, `exceeded ${ROW_TIMEOUT_MS} ms`);
+              setReason(
+                pair.id,
+                row.id,
+                `exceeded ${ROW_TIMEOUT_MS} ms${sweepCaveat(pair)}`,
+              );
               setCell(pair, row.id, '⏱', 'fail');
             } else {
               RESULTS[kind][pair.id][row.id] =
                 kind === 'conformance' ? 'fail' : null;
-              setReason(pair.id, row.id, String(error?.message ?? error));
+              setReason(
+                pair.id,
+                row.id,
+                `${String(error?.message ?? error)}${sweepCaveat(pair)}`,
+              );
               const td = cells.get(`${pair.id}|${row.id}`);
               if (td) td.title = RESULTS.reasons[pair.id][row.id];
               setCell(pair, row.id, '❌', 'fail');
