@@ -14,7 +14,12 @@ descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` clai
 shadow types that were never loaded, `W-types` a duplication already gone. Both would have
 been work on nothing.
 
-## Designs owed — rc.5 or later
+## Designs owed — ideas, not scheduled work (user, 2026-09-03)
+
+**The user has said explicitly that the three below are not planned for the short or medium
+term — they are ideas.** Keep them, do not present them as pending rc.5 scope, and do not
+propose them as "the next thing" the way this file's older framing invited.
+
 
 ### A real watcher on a database's clients — deferred by the user, 2026-09-03
 
