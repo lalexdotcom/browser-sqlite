@@ -393,6 +393,31 @@ empty roster where `inspectDatabase` refuses — was found by a DOCUMENTATION re
 checking whether a sentence was true meant reading two entry points side by side. No
 task-scoped review had both in view.
 
+## A test that waits for a TRANSIENT state must bound the wait — 2026-09-03
+
+`close.test.ts` polled for a worker holding a request it had not released, with
+`while (!predicate()) await sleep(0)`. A one-row INSERT can start and finish between two
+polls; after that the predicate is false for ever and the loop runs until the test itself
+gives up at 30 s, printing nothing about what it was waiting for. About one Firefox run in
+three.
+
+**Two things were wrong and fixing either alone would have been worse than useless.** The
+window was microseconds wide — widened to milliseconds with a recursive CTE, leaving every
+assertion after the wait untouched, because it was the PRECONDITION that could not be
+observed, not the behaviour under test. And the wait was unbounded — now 5 s, throwing with
+the thing it waited for named. Widening alone postpones the hang to the day the window closes
+again; bounding alone turns a mute timeout into a red test that still fails one run in three.
+
+**The general shape: a predicate over a state that can pass between two samples is not a
+wait, it is a bet.** Either make the state monotonic, or make the window wide enough that the
+bet cannot be lost, and bound the wait either way so a lost bet reports rather than hangs.
+
+**And it was invisible for weeks for a reason worth remembering.** `pnpm test` ran Chromium
+only, so the pre-commit hook never saw it; only CI did, once per push, where an occasional red
+reads as noise. Splitting the suite per engine put Firefox in the hook and the flake became a
+commit that fails one time in three — found while committing, five minutes later. **Coverage
+that runs where the work happens finds what coverage that runs elsewhere does not.**
+
 ## A regression test's shape can delete the race it was written to pin — 2026-09-03
 
 **What happened:** the CoopSync handle-transfer `BUSY` was reproduced by a probe issuing eight
