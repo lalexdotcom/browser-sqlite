@@ -19,7 +19,16 @@ import * as api from '../../src/index';
  * Falsifiable: add a querying member to SQLiteDB alone — _PinTxToClient fails.
  *              add a querying member to SQLiteTransactionDB alone — _PinClientToTx fails.
  */
-type _ClientExtras = 'transaction' | 'close' | 'debug';
+type _ClientExtras =
+  | 'transaction'
+  | 'close'
+  | 'debug'
+  | 'id'
+  | 'name'
+  | 'file'
+  | 'vfs'
+  | 'build'
+  | 'inspect';
 type _TransactionExtras = 'commit' | 'rollback';
 type _SharedOfClient = Omit<SQLiteDB, _ClientExtras>;
 type _SharedOfTransaction = Omit<SQLiteTransactionDB, _TransactionExtras>;

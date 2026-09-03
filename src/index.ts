@@ -7,6 +7,7 @@ export * from './client';
 export * from './delete';
 export * from './errors';
 export {
+  type ClientInspection,
   type DatabaseClient,
   type DatabaseInspection,
   type InspectionBase,

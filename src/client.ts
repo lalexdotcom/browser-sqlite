@@ -8,6 +8,7 @@ import {
 import { createClientDebug } from './debug';
 import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
 import { SQLiteError } from './errors';
+import { type ClientInspection, inspectWith } from './inspect';
 import {
   clientMarkerName,
   connectionLockName,
@@ -1298,6 +1299,34 @@ export const createSQLiteClient = (
     startWorkers();
   }
 
+  /**
+   * The census, from this client's point of view.
+   *
+   * Throws `CLIENT_CLOSED` like every other method: a uniform contract on `db`
+   * is worth more than one method a consumer must read the docs to know
+   * survives. After closing, `inspectDatabase({ file, vfs })` answers the same
+   * question, and `db.file` / `db.vfs` are what make it reachable.
+   */
+  const inspect = async (): Promise<ClientInspection> => {
+    if (closing) {
+      throw new SQLiteError(
+        'CLIENT_CLOSED',
+        'The SQLite client has been closed.',
+      );
+    }
+    const { clients, ...base } = await inspectWith(
+      locks,
+      dbFile,
+      vfs,
+      markerName,
+    );
+    return {
+      ...base,
+      self: clients.find((client) => client.id === clientUuid) ?? null,
+      siblings: clients.filter((client) => client.id !== clientUuid),
+    };
+  };
+
   // Return the public API
   const api = {
     chunk,
@@ -1309,6 +1338,23 @@ export const createSQLiteClient = (
     bulkWrite,
     output,
     close,
+
+    get id() {
+      return clientUuid;
+    },
+    get name() {
+      return clientName;
+    },
+    get file() {
+      return dbFile;
+    },
+    get vfs() {
+      return vfs;
+    },
+    get build() {
+      return build;
+    },
+    inspect,
 
     debug,
   };

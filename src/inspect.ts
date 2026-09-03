@@ -89,6 +89,12 @@ export type DatabaseInspection = InspectionBase & {
   readonly clients: readonly DatabaseClient[];
 };
 
+export type ClientInspection = InspectionBase & {
+  /** This client, or `null` once it has stopped holding its marker. */
+  readonly self: DatabaseClient | null;
+  readonly siblings: readonly DatabaseClient[];
+};
+
 /**
  * The census, given locks that are already known to work.
  *
