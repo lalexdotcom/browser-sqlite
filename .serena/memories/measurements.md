@@ -835,6 +835,125 @@ time and prefers `lastWriterIndex` (`scheduler.ts`), which is the mechanism.
 n=1 on the distribution, one workload, and nothing here says the designation cannot
 migrate over a long session — but it did not here, on either engine.
 
+## Per-VFS default PRAGMAs — 2026-09-02, this container, Chromium 151 / Firefox 153
+
+Three throwaway probes, all deleted: `tests/browser/cache-size-probe.test.ts`,
+`ahp-wal-probe.test.ts`, `ahp-capacity-probe.test.ts`. The first two ran on both engines.
+
+**The method lesson first, because it inverted a conclusion.** The `cache_size` probe's
+first run walked its arms once, in ascending `cache_size` order, and never deleted the
+IndexedDB database between them. Three IDENTICAL 100-page workloads came back at 15, 26 and
+63 ms — monotonic with *position* as much as with the variable. It would have been published
+as "batch-atomic is 2.4x slower". Adding one reversed pass and a per-arm database deletion
+reversed the finding. **An arm order that correlates with the variable is not a measurement.**
+
+### `cache_size` is a cap, not a reservation — and not worth defaulting
+
+`IDBBatchAtomicVFS`, async build, main thread, fresh WASM module per arm, heap read from
+`module.HEAPU8.length` (exact, and Emscripten never returns it). 3 passes, middle one
+reversed, IndexedDB database deleted per arm.
+
+| `cache_size` | pages dirtied | heap cost of the PRAGMA alone | heap cost of the workload | `BEGIN_ATOMIC_WRITE` |
+|---|---|---|---|---|
+| -2000 (SQLite default) | 100 | **0** | 0 | 1 / 1 / 1 |
+| -2000 | 5000 | **0** | 0 | **0 / 0 / 0** |
+| -32000 | 100 | **0** | 0 | 1 / 1 / 1 |
+| -32000 | 5000 | **0** | **7.38 MiB** | 1 / 1 / 1 |
+| -262144 (256 MiB) | 100 | **0** | 0 | 1 / 1 / 1 |
+
+**Zero in 30 runs of 30**, both engines, including a 256 MiB bound. Raising `cache_size`
+allocates nothing; the heap grows only as the workload uses it, and 7.38 MiB was identical
+byte for byte on both engines. Emscripten never gives it back, so what a raise buys is a
+higher permanent high-water mark, not an immediate cost.
+
+**Batch-atomic mode is real and the default misses it:** at `-2000` a 5000-page transaction
+never issues `BEGIN_ATOMIC_WRITE` on either engine; at `-32000` it always does.
+
+**But the gain is not there.** Chromium OFF 1190 / 2590 / 3382 ms against ON 1109 / 1067 /
+1069; Firefox OFF 1080 / 1194 / 1219 against ON 1141 / 1138 / 1113 — **Firefox shows no
+difference at all**, and Chromium's OFF arm degrades run over run, which reads like storage
+pressure rather than the mode. **So `cache_size` is not a default.** It fails the
+performance half of "more performance without less reliability", on measurement rather than
+on the assertion `mem:vfs` used to carry.
+
+### `AccessHandlePoolVFS` + `locking_mode=exclusive` + `journal_mode=wal` — the one default
+
+Through the library itself (`sync` build, `poolSize: 1`), 200 single-statement transactions,
+arms alternated `baseline / wal / wal / baseline / baseline / wal` so position cannot pass
+for effect.
+
+**The control first:** `journal_mode` reads back `wal` and `locking_mode` reads back
+`exclusive` in the WAL arm; `delete` / `normal` in the baseline. Without that readback every
+number below would be void.
+
+| | baseline (ms per write) | WAL + exclusive | gain |
+|---|---|---|---|
+| Chromium, run 1 | 4.164 / 4.694 / 4.739 | 0.885 / 0.903 / 0.966 | **~4.8x** |
+| Chromium, run 2 | 3.990 / 4.447 / 4.501 | 0.835 / 0.950 / 0.931 | **~4.7x** |
+| Firefox | 2.045 / 2.025 / 1.975 | 0.530 / 0.495 / 0.490 | **~4.0x** |
+
+Ranges do not come close to overlapping. Upstream called it "significantly reduce write
+transaction overhead"; it is a factor of four to five.
+
+**No reliability cost, measured.** Ten cycles of create → write → close → **reopen and read
+back** → delete: 10/10 on Chromium (twice) and 10/10 on Firefox, one row every time.
+
+**And the capacity fear was wrong.** The VFS holds a FIXED pool of six access handles for the
+whole origin — `addCapacity(6)` runs only when `getCapacity() === 0`, so it never grows — and
+a WAL database was reasoned to hold two slots permanently against one for a `delete`
+database, halving how many databases fit. Measured by creating databases one at a time until
+failure: **5 in `delete` mode and 5 in `wal` mode**, both stopping at "unable to open
+database file". SQLite removes the `-wal` on a clean close, so it costs no slot at rest.
+**Reasoned wrong, measured right.**
+
+That probe's own first run reported 0 for the WAL arm, because a client whose write failed
+was never closed and its worker kept the whole handle pool. A failed arm has to close its
+client before the next one opens.
+
+## COOPSYNC-BUSY — a protocol step reaching the consumer, 2026-09-03, both engines
+
+Throwaway spike `tests/browser/coopsync-busy-probe.test.ts`, deleted; its tightened form is
+`tests/browser/coopsync-retry.test.ts`. Workload: 15 rounds of 8 concurrent operations, one
+in three a write, through the public client.
+
+### The defect, and two clauses of `mem:vfs` it falsified
+
+| VFS | poolSize | Chromium | Firefox |
+|---|---|---|---|
+| `OPFSCoopSyncVFS` | 1 | 0 / 120 | 0 / 120 |
+| `OPFSCoopSyncVFS` | **2 (the default)** | 1 failure | 1 failure on one run, 0 on another |
+| `OPFSCoopSyncVFS` | 4 | 1 failure, every run | 1 failure, every run |
+| `OPFSAdaptiveVFS` | 2 and 4 | **0 / 120** | **0 / 120** |
+
+Always `SQLiteError` code `BUSY`, `sqliteCode: 5`, "database is locked". Always a **read**,
+always at index 2 of the batch, at round 1 or 2 — a trigger, not a race: the first read routed
+to a worker that does not hold the handle fails while the transfer is in flight, and the pool
+then settles.
+
+**`mem:vfs` said "OPFS + `poolSize > 1` outside Chromium — exactly the combination that
+fails". Both clauses are wrong:** Chromium fails identically, which is what HANDLE-1 in the
+same file already implied (CoopSync rotates one exclusive handle whatever the engine, so
+`readwrite-unsafe` buys it nothing), and it happens at the default `poolSize`. The row and
+HANDLE-1 had contradicted each other and nobody had noticed.
+
+**`OPFSAdaptiveVFS` is the control that makes this mean anything** — same workload, same pool
+sizes, zero failures. Without it, "our concurrency test is too aggressive" would be as good an
+explanation.
+
+### One immediate retry clears it — 7 of 7
+
+Re-issuing the same read through the public path (a fresh lease, which is what a fix at that
+level inherits), no sleep, up to 20 attempts allowed:
+
+| engine | recoveries | attempts needed | total elapsed, failure + retry |
+|---|---|---|---|
+| Chromium | 3 | 2, 2, 2 | 12.5 / 10.8 / 12.1 ms |
+| Firefox | 4 | 2, 2, 2, 2 | 17 / 16 / 15 / 15 ms |
+
+`stillFailed` was 0 in all 8 sessions. **So: once, and no backoff** — a second failure means
+something other than a handle transfer. The event is once per session, not once per round, so
+raising n means opening more sessions; more rounds would add nothing.
+
 ## The readiness gate, measured 2026-08-31 (Chromium 151 / Firefox 153, this container)
 
 Toggled by passing `poolSize: 0` to `createScheduler`, which leaves the gate open

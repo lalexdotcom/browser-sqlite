@@ -61,6 +61,19 @@ All notable changes to this project are documented here.
 
 ### Performance
 
+- **`AccessHandlePoolVFS` now opens in WAL mode by default**, with
+  `locking_mode=exclusive`. That VFS allows one connection per origin anyway,
+  which is what makes exclusive locking free — and exclusive locking is what
+  lets SQLite use its own write-ahead log without shared memory. Measured on
+  200 single-statement transactions, both engines: **about 4.7x faster**
+  (Chromium 4.2 to 0.9 ms per write, Firefox 2.0 to 0.5). The access-handle
+  pool holds the same number of databases either way. Pass
+  `pragmas: { journal_mode: 'delete' }` to opt out.
+- **PRAGMAs you pass are now merged with the VFS's defaults, not substituted
+  for them.** Setting `foreign_keys` no longer costs you the journal mode your
+  VFS declares. A key you set always wins, so naming a pragma is how you refuse
+  its default. The full per-VFS set is generated into the VFS table in the
+  README, so nothing is applied that you cannot see.
 - **Every lease acquisition costs exactly one `navigator.locks.query()`** — reads
   included — to read the origin's published epoch. Counted, on both engines. It
   measures ~0.03 ms on an idle origin and grows ~0.0004 ms per lock held anywhere
@@ -77,6 +90,16 @@ All notable changes to this project are documented here.
   served an incoherent snapshot*.
 
 ### Fixed
+
+- **A read on `OPFSCoopSyncVFS` no longer fails with `BUSY` while the VFS moves
+  its access handle between workers.** That VFS holds one exclusive OPFS handle
+  and rotates it, and its lock call reports `SQLITE_BUSY` while a transfer is in
+  flight — a step of its own protocol that expects the caller to retry. Nothing
+  retried, so one ordinary read per session failed, early, on both engines and
+  at the default `poolSize`. Reads reported busy by SQLite are now retried once;
+  measured, the first retry cleared it every time, in 10-17 ms. Writes are not
+  retried, and a `BUSY` this library raises to mean "stop" — a database in use,
+  a delete in flight — is untouched and still fails immediately.
 
 - **The documentation said deleting through the wrong VFS was harmless. It is not,
   and now it says so.** Measured on both engines: `OPFSAdaptiveVFS`,

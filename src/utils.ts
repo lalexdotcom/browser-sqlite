@@ -1,5 +1,10 @@
 import { SQLiteError } from './errors';
-import type { SQLiteBuild, WasmLocation } from './types';
+import {
+  type SQLiteBuild,
+  type SQLiteVFS,
+  VFS_CAPABILITIES,
+  type WasmLocation,
+} from './types';
 
 export const sqlParams = () => {
   // `unknown`, not `any`: these are SQL bind values and they are never
@@ -207,6 +212,26 @@ const PRAGMA_LITERAL = /^'([^']|'')*'$/;
  * `createSQLiteClient()` rather than inside an unrelated query, and by the
  * worker at open, which is the only place the statements actually run.
  */
+/**
+ * The PRAGMAs a client actually applies: the VFS's declared defaults with the
+ * consumer's own layered over them.
+ *
+ * **Merged, never replaced.** A consumer who passes one pragma is answering a
+ * question of their own — `foreign_keys` is the usual one — not declining the
+ * VFS's defaults, and replacing would silently drop every default the moment
+ * they set anything at all. A key they DO set always wins, which is how a
+ * default is refused: pass `journal_mode` yourself and yours is what runs.
+ *
+ * Order matters and is the whole function: spread the defaults first.
+ */
+export const resolvePragmas = (
+  vfs: SQLiteVFS,
+  pragmas: Record<string, string> | undefined,
+): Record<string, string> => ({
+  ...VFS_CAPABILITIES[vfs].defaultPragmas,
+  ...pragmas,
+});
+
 export const renderPragmas = (pragmas: Record<string, string>): string[] =>
   Object.entries(pragmas).map(([key, value]) => {
     if (!PRAGMA_NAME.test(key))

@@ -20,21 +20,56 @@ Numbers live in `mem:measurements`.
   upstream's recommendation in rhashimoto/wa-sqlite#302 for exactly our shape. It reaches
   `WebLocksMixin`. **`OPFSCoopSyncVFS` does not extend `WebLocksMixin`** — it implements
   `jLock`/`jUnlock` itself and silently ignores the option.
+- **Under `lockPolicy: 'shared'`, exactly one lock transition can return
+  `SQLITE_BUSY` (read from `WebLocksMixin`, 2026-09-03).** A reader taking SHARED
+  acquires `gate` then `access` **without `ifAvailable`**, and `lockTimeout` is left at its
+  default `Infinity` — so a reader meeting a writer **waits**; it never fails. A writer going
+  RESERVED → EXCLUSIVE also waits. The one polling acquisition is SHARED → RESERVED
+  (`POLL_EXCLUSIVE`), which returns `SQLITE_BUSY` when another connection already holds
+  RESERVED — two would-be writers, and upstream's comment there says the loser "must retry".
+  **rc.5's origin-wide write lock closes that path**: writers are serialized across every
+  client and tab, so two connections cannot both be in that transition. Hence **a default
+  `busy_timeout` has no path to act on for the eight VFS that use the mixin**, and it was
+  dropped for that reason rather than on taste. `OPFSCoopSyncVFS` does not extend the mixin
+  and none of this applies to it.
+
+  Upstream also exposes **`lockTimeout`** beside `lockPolicy` — it aborts the Web Lock request
+  through an `AbortController`, so the waiting happens at the locks layer, asynchronously,
+  instead of in SQLite's *sleeping* busy handler. We do not set it. It converts an indefinite
+  wait into an error, which is a different product question, adjacent to `openTimeout`.
+
 - **`poolSize` multiplies the footprint whatever the VFS**, since every worker holds its
   own page cache. Default `poolSize` is 2.
-- **Journal mode and durability are not ours to default (2026-08-31).** Upstream's own
-  table, `node_modules/wa-sqlite/src/examples/README.md`, gives write-ahead logging to
-  `OPFSWriteAheadVFS` alone — and there it is implemented *inside* the VFS, always on,
-  not reachable through `PRAGMA journal_mode`. `AccessHandlePoolVFS` accepts
-  `journal_mode=wal` only under `locking_mode=exclusive`, i.e. `poolSize: 1`.
-  `OPFSAdaptiveVFS` without multiple access handles allows only `delete`, `memory` and
-  `off`. No VFS shipped here implements `xShmMap`. Relaxed durability
-  (`synchronous=normal`) is declared by three: `IDBBatchAtomicVFS`, `IDBMirrorVFS`,
-  `OPFSWriteAheadVFS`. **So a universal default PRAGMA set of WAL + NORMAL was dropped**:
-  it would buy nothing on six VFS and trade durability in silence on three — the shape
-  DEFAULT-1 already rejected, arrived at from the other direction. The one sourced lever
-  left is `cache_size` on `IDBBatchAtomicVFS`, whose batch-atomic mode needs a cache large
-  enough to hold the journal; that is a documented recommendation, never a default.
+- **Journal mode and durability are not ours to default — with exactly one exception
+  (2026-08-31, amended 2026-09-02).** Upstream's own table,
+  `node_modules/wa-sqlite/src/examples/README.md`, gives write-ahead logging to
+  `OPFSWriteAheadVFS` alone — and there it is implemented *inside* the VFS, always on, not
+  reachable through `PRAGMA journal_mode`. `OPFSAdaptiveVFS` without multiple access handles
+  allows only `delete`, `memory` and `off`. **No VFS shipped here implements `xShmMap`**, so
+  SQLite's own WAL is unavailable except where `locking_mode=exclusive` lets it run without
+  shared memory. Relaxed durability (`synchronous=normal`) is declared by three:
+  `IDBBatchAtomicVFS`, `IDBMirrorVFS`, `OPFSWriteAheadVFS` — and it is never ours to set,
+  because it spends the consumer's data rather than their milliseconds. **So a universal
+  default set of WAL + NORMAL stays dropped**: it would buy nothing on six VFS and trade
+  durability in silence on three.
+
+  **The exception is `AccessHandlePoolVFS`, and it ships:** `locking_mode=exclusive` +
+  `journal_mode=wal`, declared in `VFS_CAPABILITIES.defaultPragmas` and applied by
+  `resolvePragmas`. That VFS is single-connection by construction, which is what makes
+  exclusive locking free and SQLite's WAL reachable. **~4.7x on write-transaction overhead,
+  measured on both engines, with no capacity or durability cost** — `mem:measurements`.
+
+- **`cache_size` is NOT the lever this file used to call it (measured 2026-09-02).** The
+  claim was that it is the one sourced per-VFS lever left, `IDBBatchAtomicVFS`'s batch-atomic
+  mode needing a cache large enough to hold the journal. The mode is real and SQLite's
+  default does miss it. But **raising the bound costs zero bytes** (it is a cap, not a
+  reservation, 30 runs of 30) **and buys no measurable time** — Firefox shows none at all.
+  It is a documented recommendation, never a default, and now for a measured reason.
+
+- **Defaults are merged under the consumer's `pragmas`, never substituted for them.** A
+  consumer setting `foreign_keys` is answering their own question, not declining the VFS's
+  defaults; replacing would silently drop them. Naming a key is how a default is refused.
+  The full per-VFS set is generated into the README's VFS table from the same declaration.
 
 ## Per-VFS, beyond the table
 
@@ -42,7 +77,7 @@ Numbers live in `mem:measurements`.
 |---|---|
 | **`OPFSAdaptiveVFS`** *(recommended)* | The one general-purpose choice. Detects `readwrite-unsafe` and degrades correctly without it — but degraded means one exclusive handle rotated between workers, i.e. HANDLE-1 below. Best where it shines, merely degraded elsewhere, never broken. |
 | **`OPFSWriteAheadVFS`** | It used to declare `requires: ['readwrite-unsafe']`, and this table used to state, as observed fact, that the pool breaks without it. **Both were inferred and never executed** — the declaration caused the conformance skip, and the skip kept the declaration from being falsified. Measured false on Firefox and on Safari 26.6 / 27.0 / iPadOS 27.0 (2026-08-27): it opens and passes every invariant, and **degrades exactly like `OPFSAdaptiveVFS` — read-burst ≈ 1.00, no concurrency at all**. So outside Chromium it earns nothing over the default. One real defect remains: `sync` cannot reopen on Safari 27 (REOPEN-1). |
-| **`OPFSCoopSyncVFS`** | Holds one *exclusive* handle and rotates it — so a pool buys no concurrency here. `SQLITE_BUSY` is its transfer protocol, not an error: `jLock` returns it while a handle request is in flight and expects a retry, and **we never retry** (no `busy_timeout` is applied anywhere). We turn a protocol step into a user-visible failure. Its only distinguishing combination is OPFS + `poolSize > 1` outside Chromium — which is exactly the combination that fails. |
+| **`OPFSCoopSyncVFS`** | Holds one *exclusive* handle and rotates it — so a pool buys no concurrency here, on **any** engine: `readwrite-unsafe` does nothing for it (HANDLE-1). Its `jLock` returns `SQLITE_BUSY` while a handle request is in flight — its transfer protocol, not an error — and **the library now retries a SQLite-reported busy read once**, which clears it (COOPSYNC-BUSY, `mem:measurements`). Before that fix one ordinary read per session failed, early, **on both engines and at the default `poolSize`** — this row used to say "outside Chromium", which was inferred and measured false. |
 | **`AccessHandlePoolVFS`** | `poolSize: 1`, guarded synchronously at construction. Stores **every** database in one OPFS directory named after the class, holding `DEFAULT_CAPACITY = 6` files with `Math.random()` names. `jDelete` is the only correct removal; deleting the file by name matches nothing and frees no slot. **Two clients on one database silently break at least one of them — see AHP-2TAB below.** |
 | **`IDBBatchAtomicVFS`** | **The only persistent multi-connection VFS working on all three desktop engines.** Escapes HANDLE-1 structurally — no handle at all. Its page cache has a floor: upstream notes the cache must be large enough to hold the journal. |
 | **`IDBMirrorVFS`** | Declared `multiConnection: false`, `maxPoolSize: 1` — **measured, not inferred**. **But `multiConnection: false` does not mean "isolated from other clients":** two clients on one database DO share data here, immediately, over the origin-wide `BroadcastChannel` (3/3 both engines, isolated runs, 2026-09-01). The flag marks concurrent-writer unsafety, which MIRROR-1 measures under load. Whole database in RAM per worker, commits propagated over `BroadcastChannel` asynchronously; the barrier cannot rescue it because there is nothing fresher on a connection whose mirror has not received the broadcast. Stores in one IndexedDB database named after the class. |

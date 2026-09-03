@@ -346,12 +346,19 @@ const rows = Object.entries(VFS_CAPABILITIES).map(([name, cap]) => {
   const compat = BROWSERS.map((b) => supportFor(cap, b))
     .filter((x): x is string => x !== null)
     .join('<br>');
-  return `| ${label} | ${builds} | ${compat} | ${pool} | ${shared} | ${durable} | ${MEMORY_LABEL[cap.memoryModel]} |`;
+  // Generated rather than transcribed, for the same reason as every other
+  // column: `VFS_CAPABILITIES` is the single source of truth, and a default
+  // the consumer cannot see is a default they cannot refuse.
+  const entries = Object.entries(cap.defaultPragmas);
+  const defaults = entries.length
+    ? entries.map(([key, value]) => `\`${key}=${value}\``).join('<br>')
+    : '—';
+  return `| ${label} | ${builds} | ${compat} | ${pool} | ${shared} | ${durable} | ${MEMORY_LABEL[cap.memoryModel]} | ${defaults} |`;
 });
 
 const table = [
-  '| VFS | Builds | Browser compatibility | Pool size | Shared between connections | Survives close | Memory |',
-  '|-----|--------|-----------------------|-----------|----------------------------|----------------|--------|',
+  '| VFS | Builds | Browser compatibility | Pool size | Shared between connections | Survives close | Memory | Default PRAGMAs |',
+  '|-----|--------|-----------------------|-----------|----------------------------|----------------|--------|-----------------|',
   ...rows,
 ].join('\n');
 

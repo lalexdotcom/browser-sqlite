@@ -5,6 +5,7 @@ import {
   isWriteQuery,
   mergeSignals,
   normalizeDatabaseFile,
+  resolvePragmas,
   resolveWasmLocation,
   sqlParams,
 } from '../../src/utils';
@@ -312,5 +313,51 @@ describe('mergeSignals', () => {
     first.abort(new Error('too late'));
 
     expect(signal?.aborted).toBe(false);
+  });
+});
+
+describe('resolvePragmas', () => {
+  it("returns the consumer's pragmas untouched on a VFS that declares none", () => {
+    // Falsifiability: give OPFSAdaptiveVFS a defaultPragmas entry and this
+    // gains a key.
+    expect(resolvePragmas('OPFSAdaptiveVFS', { foreign_keys: 'ON' })).toEqual({
+      foreign_keys: 'ON',
+    });
+  });
+
+  it('supplies the VFS defaults when the consumer passes none', () => {
+    // Falsifiability: empty AccessHandlePoolVFS's defaultPragmas and this is {}.
+    expect(resolvePragmas('AccessHandlePoolVFS', undefined)).toEqual({
+      locking_mode: 'exclusive',
+      journal_mode: 'wal',
+    });
+  });
+
+  it('keeps the defaults when the consumer sets an unrelated pragma', () => {
+    // THE decision this function exists for. `foreign_keys` is the pragma
+    // consumers actually set, and it says nothing about journalling.
+    // Falsifiability: return `pragmas ?? defaults` instead of merging and this
+    // is `{ foreign_keys: 'ON' }` — every default silently gone.
+    expect(
+      resolvePragmas('AccessHandlePoolVFS', { foreign_keys: 'ON' }),
+    ).toEqual({
+      locking_mode: 'exclusive',
+      journal_mode: 'wal',
+      foreign_keys: 'ON',
+    });
+  });
+
+  it('lets the consumer override a default by naming it', () => {
+    // How a default is refused: name the key. Falsifiability: spread the
+    // defaults LAST and this is 'wal'.
+    expect(
+      resolvePragmas('AccessHandlePoolVFS', { journal_mode: 'delete' }),
+    ).toEqual({ locking_mode: 'exclusive', journal_mode: 'delete' });
+  });
+
+  it('treats undefined and empty the same', () => {
+    expect(resolvePragmas('AccessHandlePoolVFS', {})).toEqual(
+      resolvePragmas('AccessHandlePoolVFS', undefined),
+    );
   });
 });

@@ -48,57 +48,6 @@ measured numbers are the whole case, and they do not justify adding a handshake 
 path — the path GATE-1 and three abort defects were paid for. Reviving it needs no new
 measurement, only that table.
 
-### No default PRAGMAs — the entry that fell between two closures
-
-**Verified against the source 2026-09-02, not inherited:** `client.ts` passes
-`pragmas: clientOptions.pragmas ?? {}`, so a consumer who does not copy the README example
-runs on `journal_mode=DELETE` + `synchronous=FULL`. The README shows `journal_mode: 'WAL'`
-in its example only; nothing applies it.
-
-Raised by the external assessment of 2026-08-17 in two separate places — *"Ship `WAL` +
-`NORMAL` (+ `busy_timeout`) as defaults"* under Performance, and *"No `busy_timeout` and no
-`SQLITE_BUSY` retry"* under Robustness. Its severity grading is not trusted
-(`mem:conventions`); the observation is, because the code says so.
-
-**How it was lost, which is worth as much as the item.** The ryow-barrier design routed "a
-default `busy_timeout`" to *the perf list* as a separate decision. The perf list was closed
-on 2026-08-31 by `feat/perf-measure`, which decided two items — the per-row object build and
-the shared `WebAssembly.Module` — and never touched this one. Nothing carried it here. **A
-subject routed to a list that is later closed by name is a subject nobody closed.**
-
-**rc.5 already answered half of it, by another mechanism.** Writes now serialize across every
-client and tab through an origin-wide Web Lock, so the writer-against-writer `BUSY` that
-motivated a busy handler is gone (`CHANGELOG.md`, Breaking). What survives is a **reader
-against a writer**, and only because `journal_mode=DELETE` makes a writer block readers.
-
-**So the order matters, and it is the opposite of the assessment's.** Decide the PRAGMA
-defaults first: WAL would remove most of those reader/writer collisions by itself, without a
-busy handler, without SQLite's handler sleeping, and without the deadlock risk the CoopSync
-entry below has to measure. A `busy_timeout` may have almost nothing left to do on the
-contention side once WAL is the default.
-
-**What has to be weighed, and none of it is measured here.** Changing a default is breaking
-for anyone relying on `DELETE`. WAL is not free or even available on every one of the nine
-VFS. And the assessment's "often an order of magnitude of write throughput on OPFS" is its
-claim, not a number this project owns — it does not enter `mem:measurements` as it stands.
-
-**Not the same subject as the entry below.** CoopSync's `SQLITE_BUSY` is a step of the VFS's
-own handle-transfer protocol, not a lock collision, and no PRAGMA default touches it.
-
-### CoopSync turns a protocol step into a failure — `busy_timeout` is option A
-
-`OPFSCoopSyncVFS`'s `jLock` returns `SQLITE_BUSY` while a handle request is in flight and
-expects a retry; no `busy_timeout` is applied anywhere, so the library surfaces a step of
-the VFS's own transfer protocol as a user-visible error (`mem:vfs`).
-
-**The risk to measure, not deduce:** SQLite's busy handler sleeps, and in a synchronous
-VFS inside a worker it may block the very thread that owes the handle release — turning a
-failure into a deadlock.
-
-**A `busy_timeout` reaches this and the PRAGMA-defaults entry above through the same
-setting, and they are not the same problem.** This `SQLITE_BUSY` is not a lock collision, so
-no default answers it and the entry above cannot close this one.
-
 ### A timed flush — out of rc.4 (user, 2026-08-27)
 
 Raised by the user during the back-pressure brainstorm and kept out of the spec, which

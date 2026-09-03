@@ -205,6 +205,25 @@ export type VFSCapability = {
    */
   readonly degradesWithout: readonly PlatformFeature[];
   /**
+   * PRAGMAs this library applies on open for this VFS.
+   *
+   * Merged UNDER the consumer's `pragmas`, so any key they set wins and they
+   * never lose a default by setting an unrelated one — `foreign_keys` is the
+   * common case, and replacing rather than merging would silently disable
+   * everything below it.
+   *
+   * The bar is deliberately high, and almost nothing clears it: **more
+   * performance without less reliability, sourced rather than guessed.** Three
+   * things were weighed and rejected. `journal_mode=wal` universally, because
+   * no VFS here implements `xShmMap` and upstream gives write-ahead logging to
+   * `OPFSWriteAheadVFS` alone, inside the VFS and unreachable by pragma.
+   * `synchronous=normal`, because relaxing durability spends the consumer's
+   * data, not their milliseconds. And `cache_size`, because raising it changes
+   * a mode without a measurable gain — Firefox showed none at all, and the
+   * heap it can then reach is never given back (measured 2026-09-02).
+   */
+  readonly defaultPragmas: Readonly<Record<string, string>>;
+  /**
    * Whether this VFS enforces an origin-wide exclusive connection lock for the
    * client's lifetime.
    *
@@ -257,6 +276,7 @@ export const VFS_CAPABILITIES = {
     requires: ['opfs'],
     degradesWithout: ['readwrite-unsafe'],
     exclusiveConnection: false,
+    defaultPragmas: {},
   },
   OPFSWriteAheadVFS: {
     builds: ['sync', 'async', 'jspi'],
@@ -275,6 +295,7 @@ export const VFS_CAPABILITIES = {
     requires: ['opfs'],
     degradesWithout: ['readwrite-unsafe'],
     exclusiveConnection: false,
+    defaultPragmas: {},
   },
   OPFSCoopSyncVFS: {
     builds: ['sync', 'async', 'jspi'],
@@ -288,6 +309,7 @@ export const VFS_CAPABILITIES = {
     requires: ['opfs'],
     degradesWithout: [],
     exclusiveConnection: false,
+    defaultPragmas: {},
   },
   AccessHandlePoolVFS: {
     builds: ['sync', 'async', 'jspi'],
@@ -305,6 +327,16 @@ export const VFS_CAPABILITIES = {
     // origin-wide connection lock ensures the second client fails fast with
     // BUSY instead of appearing healthy and being useless.
     exclusiveConnection: true,
+    // The one VFS that clears the bar for a default. Upstream: "there is no
+    // drawback to using PRAGMA locking_mode=exclusive" here, because this VFS
+    // does not allow multiple connections anyway — and exclusive locking is
+    // what lets SQLite use its own WAL without shared memory, which no VFS in
+    // this set provides. Measured 2026-09-02 on both engines: ~4.7x faster on
+    // 200 single-statement transactions (Chromium 4.2 -> 0.9 ms/write, Firefox
+    // 2.0 -> 0.5), with the access-handle pool holding the same five databases
+    // either way — SQLite removes the -wal on a clean close, so it costs no
+    // slot at rest. `mem:measurements`.
+    defaultPragmas: { locking_mode: 'exclusive', journal_mode: 'wal' },
   },
   IDBBatchAtomicVFS: {
     builds: ['async', 'jspi'],
@@ -318,6 +350,7 @@ export const VFS_CAPABILITIES = {
     requires: [],
     degradesWithout: [],
     exclusiveConnection: false,
+    defaultPragmas: {},
   },
   IDBMirrorVFS: {
     builds: ['async', 'jspi'],
@@ -350,6 +383,7 @@ export const VFS_CAPABILITIES = {
     // not isolation. Two clients share data over BroadcastChannel (measured
     // 2026-09-01, 3/3 both engines), so no exclusive lock is needed or correct.
     exclusiveConnection: false,
+    defaultPragmas: {},
   },
   OPFSAnyContextVFS: {
     builds: ['async', 'jspi'],
@@ -363,6 +397,7 @@ export const VFS_CAPABILITIES = {
     requires: ['opfs', 'writable-stream'],
     degradesWithout: [],
     exclusiveConnection: false,
+    defaultPragmas: {},
   },
   MemoryVFS: {
     builds: ['sync', 'async', 'jspi'],
@@ -377,6 +412,7 @@ export const VFS_CAPABILITIES = {
     requires: [],
     degradesWithout: [],
     exclusiveConnection: false,
+    defaultPragmas: {},
   },
   MemoryAsyncVFS: {
     builds: ['async', 'jspi'],
@@ -391,6 +427,7 @@ export const VFS_CAPABILITIES = {
     requires: [],
     degradesWithout: [],
     exclusiveConnection: false,
+    defaultPragmas: {},
   },
 } as const satisfies Record<string, VFSCapability>;
 
