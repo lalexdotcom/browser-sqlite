@@ -48,29 +48,6 @@ measured numbers are the whole case, and they do not justify adding a handshake 
 path — the path GATE-1 and three abort defects were paid for. Reviving it needs no new
 measurement, only that table.
 
-### CoopSync returns `SQLITE_BUSY` as a protocol step, and nobody retries it
-
-**Not a `busy_timeout` subject — that one is closed** (`mem:vfs`: under our lock policy the
-only BUSY-returning transition is already serialized by rc.5's write lock, and a busy handler
-would sleep in a synchronous VFS). The question here is narrower and it is ours:
-**should the library retry a `BUSY` from a VFS whose own author says the caller must retry?**
-
-`OPFSCoopSyncVFS.jLock` returns `SQLITE_BUSY` whenever `isRequestInProgress` — a handle
-transfer is in flight — and expects the caller to come back. It does **not** extend
-`WebLocksMixin`, so `lockPolicy` is silently ignored and `lockTimeout` cannot reach it either.
-Nothing in this library retries, so a step of the VFS's own transfer protocol arrives at the
-consumer as an error.
-
-**The reproducer is known and is in reach:** OPFS + `poolSize > 1` outside Chromium — which
-`mem:vfs` records as precisely the combination that fails, and Firefox is a CI gate here.
-**Reproduce it before designing anything**: this entry has never been observed, only read.
-
-**What a design has to answer.** Where a retry belongs (the worker's query loop sees the code;
-the scheduler sees the lease), how many times and for how long before it becomes a hang the
-consumer cannot see, and how it stays distinguishable from the `BUSY` that `deleteDatabase`
-and the `exclusiveConnection` guard raise deliberately — those two mean "stop", this one means
-"again".
-
 ### A timed flush — out of rc.4 (user, 2026-08-27)
 
 Raised by the user during the back-pressure brainstorm and kept out of the spec, which

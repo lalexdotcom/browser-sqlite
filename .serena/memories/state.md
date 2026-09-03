@@ -34,10 +34,10 @@ and none is arithmetic.
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | `status: pass`, **564 tests, 40 files, 0 failed files** |
+| `pnpm test` | `status: pass`, **565 tests, 41 files, 0 failed files** |
 | `pnpm test:unit` | 359 tests, 17 files |
-| `pnpm test:browser` | 205 tests, 23 files |
-| `TEST_BROWSER=firefox pnpm test:browser` | **205 tests — identical to Chromium** |
+| `pnpm test:browser` | 206 tests, 24 files |
+| `TEST_BROWSER=firefox pnpm test:browser` | **206 tests — identical to Chromium** |
 | `pnpm test:conformance` | 85 tests, 2 files, **73 passed / 12 skipped** |
 | `TEST_BROWSER=firefox pnpm test:conformance` | **85 tests, 73 / 12 — identical to Chromium** |
 | `pnpm test:consumer` | 24/24 stages |

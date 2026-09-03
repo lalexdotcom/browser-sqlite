@@ -358,3 +358,21 @@ handed to them and nothing can be checked against them.
 **The tell:** if closing a list would not surface the item, the item is not on the
 list. And before reopening anything, grep every memory, not the two that seem
 relevant — the decision that made the reopening wrong was one file away.
+
+## A regression test's shape can delete the race it was written to pin — 2026-09-03
+
+**What happened:** the CoopSync handle-transfer `BUSY` was reproduced by a probe issuing eight
+mixed read/write operations concurrently. The regression test written from it awaited the
+write first, *then* issued the reads — tidier, and reading almost the same. It passed. It also
+passed with the fix removed: sequencing the write had eliminated the contention, so it
+reproduced nothing and asserted nothing.
+
+**What caught it:** running the claimed falsifier. Nothing else would have — the test was
+green, the fix was real, and the suite would have carried a permanently vacuous test.
+
+**What to do instead:** when a test pins a race, keep the concurrent shape of the probe that
+found it, and treat any `await` you add between operations as removing a race until proven
+otherwise. Then run the falsifier before believing the test.
+
+**The tell:** a test for a concurrency defect that contains a sequential setup of the very
+operations that must overlap.

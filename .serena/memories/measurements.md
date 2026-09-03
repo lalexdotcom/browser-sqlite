@@ -910,6 +910,50 @@ That probe's own first run reported 0 for the WAL arm, because a client whose wr
 was never closed and its worker kept the whole handle pool. A failed arm has to close its
 client before the next one opens.
 
+## COOPSYNC-BUSY — a protocol step reaching the consumer, 2026-09-03, both engines
+
+Throwaway spike `tests/browser/coopsync-busy-probe.test.ts`, deleted; its tightened form is
+`tests/browser/coopsync-retry.test.ts`. Workload: 15 rounds of 8 concurrent operations, one
+in three a write, through the public client.
+
+### The defect, and two clauses of `mem:vfs` it falsified
+
+| VFS | poolSize | Chromium | Firefox |
+|---|---|---|---|
+| `OPFSCoopSyncVFS` | 1 | 0 / 120 | 0 / 120 |
+| `OPFSCoopSyncVFS` | **2 (the default)** | 1 failure | 1 failure on one run, 0 on another |
+| `OPFSCoopSyncVFS` | 4 | 1 failure, every run | 1 failure, every run |
+| `OPFSAdaptiveVFS` | 2 and 4 | **0 / 120** | **0 / 120** |
+
+Always `SQLiteError` code `BUSY`, `sqliteCode: 5`, "database is locked". Always a **read**,
+always at index 2 of the batch, at round 1 or 2 — a trigger, not a race: the first read routed
+to a worker that does not hold the handle fails while the transfer is in flight, and the pool
+then settles.
+
+**`mem:vfs` said "OPFS + `poolSize > 1` outside Chromium — exactly the combination that
+fails". Both clauses are wrong:** Chromium fails identically, which is what HANDLE-1 in the
+same file already implied (CoopSync rotates one exclusive handle whatever the engine, so
+`readwrite-unsafe` buys it nothing), and it happens at the default `poolSize`. The row and
+HANDLE-1 had contradicted each other and nobody had noticed.
+
+**`OPFSAdaptiveVFS` is the control that makes this mean anything** — same workload, same pool
+sizes, zero failures. Without it, "our concurrency test is too aggressive" would be as good an
+explanation.
+
+### One immediate retry clears it — 7 of 7
+
+Re-issuing the same read through the public path (a fresh lease, which is what a fix at that
+level inherits), no sleep, up to 20 attempts allowed:
+
+| engine | recoveries | attempts needed | total elapsed, failure + retry |
+|---|---|---|---|
+| Chromium | 3 | 2, 2, 2 | 12.5 / 10.8 / 12.1 ms |
+| Firefox | 4 | 2, 2, 2, 2 | 17 / 16 / 15 / 15 ms |
+
+`stillFailed` was 0 in all 8 sessions. **So: once, and no backoff** — a second failure means
+something other than a handle transfer. The event is once per session, not once per round, so
+raising n means opening more sessions; more rounds would add nothing.
+
 ## The readiness gate, measured 2026-08-31 (Chromium 151 / Firefox 153, this container)
 
 Toggled by passing `poolSize: 0` to `createScheduler`, which leaves the gate open

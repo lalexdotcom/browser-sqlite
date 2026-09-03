@@ -770,6 +770,106 @@ export const createSQLiteClient = (
   };
 
   /**
+   * A `BUSY` SQLite itself reported, as opposed to one this library minted to
+   * mean "stop and do something else".
+   *
+   * `pool.ts` attaches `sqliteCode` only for SQLITE_BUSY (5) and
+   * SQLITE_LOCKED (6). The `exclusiveConnection` guard above and
+   * `deleteDatabase` both mint their `BUSY` without one, deliberately: those
+   * say "close the other client", and retrying them would delay exactly the
+   * fast failure they exist to produce. The presence of a numeric code is what
+   * tells the two apart, and it is why this does not gate on a VFS name.
+   */
+  const isRetryableBusy = (error: unknown) =>
+    error instanceof SQLiteError &&
+    error.code === 'BUSY' &&
+    typeof (error as { sqliteCode?: unknown }).sqliteCode === 'number';
+
+  /** One read on a fresh lease, returned the moment the worker is idle. */
+  const onReadLease = async <R>(
+    signal: AbortSignal | undefined,
+    body: (worker: PoolWorker) => Promise<R>,
+  ): Promise<R> => {
+    const lease = await acquireInstrumented('read', signal);
+    try {
+      return await body(lease.worker);
+    } finally {
+      // The lease returns when the worker confirms it is idle, not when the
+      // caller leaves: a worker still inside step() must not be re-lent, and
+      // the caller must not wait for it.
+      void lease.worker.quiesce().then(
+        () => lease.release(),
+        () => lease.release(),
+      );
+    }
+  };
+
+  /**
+   * A read, retried once on a SQLite-reported `BUSY`.
+   *
+   * `OPFSCoopSyncVFS` rotates one exclusive OPFS access handle between
+   * workers, and its `jLock` returns `SQLITE_BUSY` while a transfer is in
+   * flight — a step of its own protocol, which upstream documents as
+   * requiring a retry the caller performs. Measured 2026-09-03 on both
+   * engines: exactly one read per session fails this way, early, at the
+   * default `poolSize`, and **the first immediate retry cleared it 7 times out
+   * of 7** in 10-17 ms. Hence once, and no backoff: a second failure means
+   * something other than a handle transfer.
+   *
+   * Re-issued through a fresh lease, which is what was measured — the retry
+   * may land on the worker that now holds the handle.
+   */
+  const readWithRetry = async <R>(
+    signal: AbortSignal | undefined,
+    body: (worker: PoolWorker) => Promise<R>,
+  ): Promise<R> => {
+    try {
+      return await onReadLease(signal, body);
+    } catch (error) {
+      if (!isRetryableBusy(error) || signal?.aborted) throw error;
+      return await onReadLease(signal, body);
+    }
+  };
+
+  /**
+   * The same retry for the streaming reads, with the one restriction that
+   * makes it safe: **only before a single row has been delivered.** Once the
+   * consumer has seen a chunk, re-running the query would repeat rows, so a
+   * `BUSY` after that point is raised like any other error. `read()` and
+   * `first()` buffer, so they never meet this case.
+   */
+  const streamWithRetry = async function* <Y>(
+    signal: AbortSignal | undefined,
+    body: (worker: PoolWorker) => AsyncGenerator<Y, void, unknown>,
+  ): AsyncGenerator<Y, void, unknown> {
+    for (let attempt = 1; ; attempt++) {
+      let delivered = false;
+      const lease = await acquireInstrumented('read', signal);
+      try {
+        for await (const item of body(lease.worker)) {
+          delivered = true;
+          yield item;
+        }
+        return;
+      } catch (error) {
+        if (
+          delivered ||
+          attempt > 1 ||
+          !isRetryableBusy(error) ||
+          signal?.aborted
+        ) {
+          throw error;
+        }
+      } finally {
+        void lease.worker.quiesce().then(
+          () => lease.release(),
+          () => lease.release(),
+        );
+      }
+    }
+  };
+
+  /**
    * Executes a read query and returns all results.
    * Automatically acquires and releases a worker from the pool.
    *
@@ -787,18 +887,9 @@ export const createSQLiteClient = (
     options?: OptionsWithSignal,
   ) => {
     assertReadable(sql, 'read');
-    const lease = await acquireInstrumented('read', options?.signal);
-    try {
-      return await readWorker<T>(lease.worker, sql, params, options);
-    } finally {
-      // The lease returns when the worker confirms it is idle, not when the
-      // caller leaves: a worker still inside step() must not be re-lent, and
-      // the caller must not wait for it.
-      void lease.worker.quiesce().then(
-        () => lease.release(),
-        () => lease.release(),
-      );
-    }
+    return readWithRetry(options?.signal, (worker) =>
+      readWorker<T>(worker, sql, params, options),
+    );
   };
 
   /**
@@ -813,18 +904,9 @@ export const createSQLiteClient = (
     T extends Record<string, unknown> = Record<string, unknown>,
   >(sql: string, params?: unknown[], options?: SQLiteChunkOptions) {
     assertReadable(sql, 'chunk');
-    const lease = await acquireInstrumented('read', options?.signal);
-    try {
-      yield* chunkWorker<T>(lease.worker, sql, params, options);
-    } finally {
-      // The lease returns when the worker confirms it is idle, not when the
-      // caller leaves: a worker still inside step() must not be re-lent, and
-      // the caller must not wait for it.
-      void lease.worker.quiesce().then(
-        () => lease.release(),
-        () => lease.release(),
-      );
-    }
+    yield* streamWithRetry(options?.signal, (worker) =>
+      chunkWorker<T>(worker, sql, params, options),
+    );
   };
 
   /**
@@ -838,18 +920,9 @@ export const createSQLiteClient = (
     T extends Record<string, unknown> = Record<string, unknown>,
   >(sql: string, params?: unknown[], options?: SQLiteChunkOptions) {
     assertReadable(sql, 'stream');
-    const lease = await acquireInstrumented('read', options?.signal);
-    try {
-      yield* streamRows<T>(lease.worker, sql, params, options);
-    } finally {
-      // The lease returns when the worker confirms it is idle, not when the
-      // caller leaves: a worker still inside step() must not be re-lent, and
-      // the caller must not wait for it.
-      void lease.worker.quiesce().then(
-        () => lease.release(),
-        () => lease.release(),
-      );
-    }
+    yield* streamWithRetry(options?.signal, (worker) =>
+      streamRows<T>(worker, sql, params, options),
+    );
   };
 
   /**
@@ -901,18 +974,9 @@ export const createSQLiteClient = (
     options?: OptionsWithSignal,
   ) => {
     assertReadable(sql, 'first');
-    const lease = await acquireInstrumented('read', options?.signal);
-    try {
-      return await firstWorker<T>(lease.worker, sql, params, options);
-    } finally {
-      // The lease returns when the worker confirms it is idle, not when the
-      // caller leaves: a worker still inside step() must not be re-lent, and
-      // the caller must not wait for it.
-      void lease.worker.quiesce().then(
-        () => lease.release(),
-        () => lease.release(),
-      );
-    }
+    return readWithRetry(options?.signal, (worker) =>
+      firstWorker<T>(worker, sql, params, options),
+    );
   };
 
   const bulkFor = createBulk({ file: dbFile, locks: createLocks(), logger });

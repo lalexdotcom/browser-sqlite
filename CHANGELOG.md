@@ -91,6 +91,16 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **A read on `OPFSCoopSyncVFS` no longer fails with `BUSY` while the VFS moves
+  its access handle between workers.** That VFS holds one exclusive OPFS handle
+  and rotates it, and its lock call reports `SQLITE_BUSY` while a transfer is in
+  flight — a step of its own protocol that expects the caller to retry. Nothing
+  retried, so one ordinary read per session failed, early, on both engines and
+  at the default `poolSize`. Reads reported busy by SQLite are now retried once;
+  measured, the first retry cleared it every time, in 10-17 ms. Writes are not
+  retried, and a `BUSY` this library raises to mean "stop" — a database in use,
+  a delete in flight — is untouched and still fails immediately.
+
 - **The documentation said deleting through the wrong VFS was harmless. It is not,
   and now it says so.** Measured on both engines: `OPFSAdaptiveVFS`,
   `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` all resolve a
