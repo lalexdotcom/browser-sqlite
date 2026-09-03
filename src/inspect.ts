@@ -90,7 +90,11 @@ export type DatabaseInspection = InspectionBase & {
 };
 
 export type ClientInspection = InspectionBase & {
-  /** This client, or `null` once it has stopped holding its marker. */
+  /**
+   * This client, or `null` when this client's own marker is not in the
+   * snapshot — the brief window before its Web Locks grant has landed, or when
+   * the grant could not be taken at all.
+   */
   readonly self: DatabaseClient | null;
   readonly siblings: readonly DatabaseClient[];
 };

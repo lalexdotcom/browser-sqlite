@@ -276,9 +276,7 @@ hold. Both resolve with the file, the VFS, the number of distinct tabs, the
 roster, and the state of the write lock.
 
 `inspectDatabase` returns `clients`; `db.inspect()` splits the same list into
-`self` and `siblings`. `self` is `null` when this client's own marker is not in
-the snapshot — the brief window before its Web Locks grant has landed, or when
-the grant could not be taken at all. After `close()`, `db.inspect()` throws
+`self` and `siblings`. `self` is `null` when this client's own marker is not in the snapshot. After `close()`, `db.inspect()` throws
 `CLIENT_CLOSED` like every other method on the client; `inspectDatabase({ file,
 vfs })` is the way to ask the same question afterwards, which is what `db.file`
 and `db.vfs` exist for.
@@ -293,15 +291,17 @@ authority. An empty roster also does not distinguish a database nobody holds
 from one that does not exist; `DATABASE_NOT_FOUND` is what says that.
 
 **Polling is on the call.** Nothing is kept between two calls, and there is no
-event to subscribe to. A call costs well under a tenth of a millisecond, takes
-no lock and makes no worker round trip, so polling cannot slow a query down —
+event to subscribe to. A call costs well under a tenth of a millisecond and makes no worker round
+trip; after the first call in a tab it takes no lock either — that one holds a
+shared lock momentarily to resolve this realm's id, then caches it for the
+tab's life. So polling cannot slow a query down —
 300–500 ms is a comfortable cadence. Do not stack calls: a background tab has
 its timers throttled, and an interval that fires without awaiting the previous
 answer will queue them up.
 
 `MemoryVFS` and `MemoryAsyncVFS` throw `INVALID_OPTION`: their pages live in
 the worker that opened them, so two clients are two databases and there is
-nothing to share. Where the Web Locks API is missing, both throw
+nothing to share. Where the Web Locks API is missing, `inspectDatabase` and `db.inspect()` throw
 `UNSUPPORTED` rather than report zero.
 
 ## Options
