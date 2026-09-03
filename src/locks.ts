@@ -80,6 +80,70 @@ export const stagingLockName = (file: string, table: string) =>
 export const sweepLockName = (file: string) => `bsq:sweep:${file}`;
 
 /**
+ * The marker a client holds to publish that it is alive on a database.
+ *
+ * Held in SHARED mode and contended by NOBODY: like `bsq:staging` this is a
+ * liveness marker, not mutual exclusion. `bsq:conn` stays the only occupancy
+ * detector `deleteDatabase` rests on — a second one would diverge from it.
+ *
+ * The label is `encodeURIComponent`d, which escapes `:` as `%3A`. That is what
+ * makes the tail split unambiguously into exactly three segments whatever the
+ * consumer names their client. The FILE may itself contain a colon, which is
+ * why the reader rebuilds the exact prefix instead of scanning for separators —
+ * the same trap `epochsFor` documents.
+ */
+export const clientMarkerName = (
+  vfs: SQLiteVFS,
+  file: string,
+  id: string,
+  clientName: string,
+): string =>
+  `bsq:client:${namespaceFor(vfs)}:${file}:${id}:${vfs}:${encodeURIComponent(clientName)}`;
+
+export type ClientMarker = {
+  readonly id: string;
+  readonly vfs: SQLiteVFS;
+  readonly name: string;
+};
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Reads one of our markers, or `undefined` for anything else.
+ *
+ * Every rejection below is deliberate: a marker this version does not
+ * understand — a future one carrying more segments, say — must be SKIPPED, not
+ * guessed at. Guessing is how a reader reports another database's state.
+ */
+export const parseClientMarker = (
+  lockName: string,
+  vfs: SQLiteVFS,
+  file: string,
+): ClientMarker | undefined => {
+  const prefix = `bsq:client:${namespaceFor(vfs)}:${file}:`;
+  if (!lockName.startsWith(prefix)) return undefined;
+
+  const parts = lockName.slice(prefix.length).split(':');
+  if (parts.length !== 3) return undefined;
+
+  const [id, markerVfs, encoded] = parts as [string, string, string];
+  if (!UUID_RE.test(id)) return undefined;
+  if (!Object.hasOwn(VFS_CAPABILITIES, markerVfs)) return undefined;
+
+  let name: string;
+  try {
+    name = decodeURIComponent(encoded);
+  } catch {
+    // Malformed percent-escapes throw URIError. An unreadable label is an
+    // unreadable marker: skip it rather than report a mangled name.
+    return undefined;
+  }
+
+  return { id, vfs: markerVfs as SQLiteVFS, name };
+};
+
+/**
  * The storage namespace a VFS writes into — derived from `layout`, NEVER from
  * the VFS name.
  *

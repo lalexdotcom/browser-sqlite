@@ -1,10 +1,12 @@
 import { describe, expect, it } from '@rstest/core';
 import {
+  clientMarkerName,
   connectionLockName,
   createLocks,
   initLockName,
   namespaceFor,
   noOpLocks,
+  parseClientMarker,
   sharesStorage,
   stagingLockName,
   staleStagingTables,
@@ -405,5 +407,116 @@ describe('connectionLockName', () => {
     expect(conn).not.toBe(writeLockName('AccessHandlePoolVFS', 'a.db'));
     expect(conn).not.toBe(sweepLockName('a.db'));
     expect(conn.startsWith('bsq:conn:')).toBe(true);
+  });
+});
+
+describe('clientMarkerName / parseClientMarker', () => {
+  const ID = '0189d4a2-4f3c-7b1e-9c8a-2f5b6d7e8a90';
+
+  it('round-trips a plain name', () => {
+    const lock = clientMarkerName('OPFSAdaptiveVFS', 'app.db', ID, 'SQLite 1');
+    expect(parseClientMarker(lock, 'OPFSAdaptiveVFS', 'app.db')).toEqual({
+      id: ID,
+      vfs: 'OPFSAdaptiveVFS',
+      name: 'SQLite 1',
+    });
+  });
+
+  it('round-trips a name containing a colon and a percent', () => {
+    const lock = clientMarkerName('OPFSAdaptiveVFS', 'app.db', ID, 'a:b 100%');
+    expect(parseClientMarker(lock, 'OPFSAdaptiveVFS', 'app.db')?.name).toBe(
+      'a:b 100%',
+    );
+  });
+
+  it('round-trips when the FILE contains a colon', () => {
+    const file = 'weird:name.db';
+    const lock = clientMarkerName('OPFSAdaptiveVFS', file, ID, 'SQLite 1');
+    expect(parseClientMarker(lock, 'OPFSAdaptiveVFS', file)?.id).toBe(ID);
+  });
+
+  it('sees a sibling opened through another VFS of the same namespace', () => {
+    const lock = clientMarkerName('OPFSCoopSyncVFS', 'app.db', ID, 'SQLite 1');
+    expect(parseClientMarker(lock, 'OPFSAdaptiveVFS', 'app.db')?.vfs).toBe(
+      'OPFSCoopSyncVFS',
+    );
+  });
+
+  it('ignores a marker from another namespace', () => {
+    const lock = clientMarkerName(
+      'IDBBatchAtomicVFS',
+      'app.db',
+      ID,
+      'SQLite 1',
+    );
+    expect(
+      parseClientMarker(lock, 'OPFSAdaptiveVFS', 'app.db'),
+    ).toBeUndefined();
+  });
+
+  it('ignores a marker for another file', () => {
+    const lock = clientMarkerName(
+      'OPFSAdaptiveVFS',
+      'other.db',
+      ID,
+      'SQLite 1',
+    );
+    expect(
+      parseClientMarker(lock, 'OPFSAdaptiveVFS', 'app.db'),
+    ).toBeUndefined();
+  });
+
+  it('ignores a foreign lock name under our prefix shape', () => {
+    expect(
+      parseClientMarker('bsq:write:opfs:app.db', 'OPFSAdaptiveVFS', 'app.db'),
+    ).toBeUndefined();
+  });
+
+  it('ignores a marker with too few or too many segments', () => {
+    const prefix = 'bsq:client:opfs:app.db:';
+    expect(
+      parseClientMarker(
+        `${prefix}${ID}:OPFSAdaptiveVFS`,
+        'OPFSAdaptiveVFS',
+        'app.db',
+      ),
+    ).toBeUndefined();
+    expect(
+      parseClientMarker(
+        `${prefix}${ID}:OPFSAdaptiveVFS:SQLite%201:extra`,
+        'OPFSAdaptiveVFS',
+        'app.db',
+      ),
+    ).toBeUndefined();
+  });
+
+  it('ignores a marker whose id is not a UUID', () => {
+    expect(
+      parseClientMarker(
+        'bsq:client:opfs:app.db:not-a-uuid:OPFSAdaptiveVFS:SQLite%201',
+        'OPFSAdaptiveVFS',
+        'app.db',
+      ),
+    ).toBeUndefined();
+  });
+
+  it('ignores a marker naming a VFS that does not exist', () => {
+    expect(
+      parseClientMarker(
+        `bsq:client:opfs:app.db:${ID}:NoSuchVFS:SQLite%201`,
+        'OPFSAdaptiveVFS',
+        'app.db',
+      ),
+    ).toBeUndefined();
+  });
+
+  it('ignores a marker whose encoding is malformed', () => {
+    expect(
+      parseClientMarker(
+        `bsq:client:opfs:app.db:${ID}:OPFSAdaptiveVFS:%E0%A4%A`,
+        'OPFSAdaptiveVFS',
+        'app.db',
+      ),
+    ).toBeUndefined();
   });
 });
