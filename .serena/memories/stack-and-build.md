@@ -221,7 +221,13 @@ instead.
   push of `preview`, and `delete`. **`push` does NOT fire for a deleted ref** — `delete` is
   the event for that, it carries no ref filter, hence a job-level guard.
 
-  Three things bite, all of them silent:
+  **Every release of this project is a GitHub PRERELEASE, and "latest release" excludes
+  those.** `gh release view` and `GET /releases/latest` both answer "release not found" here —
+  that is how the first preview run failed, on 2026-09-03. The root is resolved from
+  `GET /releases?per_page=20`, newest first, drafts filtered out. It stops being a trap the
+  day a stable version ships, and until then it is the whole reason the site has a root.
+
+  Four things bite, all of them silent:
   - **Order.** `assemble.mjs` opens with `rmSync(target, …)`, so the root must be assembled
     BEFORE the preview that sits inside it. The reverse deletes the preview.
   - **`GITHUB_REF_NAME` / `REF_TYPE` / `SHA` are overridden on both build steps.**
