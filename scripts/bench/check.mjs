@@ -130,13 +130,48 @@ try {
   }
 
   const EXPECTED_KEYS = [
-    'generatedAt', 'lib', 'agent', 'features', 'clockMs',
-    'longQueryIterations', 'conformance', 'measurements', 'reasons',
+    'generatedAt', 'lib', 'agent', 'features', 'clockMs', 'sweep',
+    'opfsRootAtStart', 'longQueryIterations', 'conformance', 'measurements',
+    'reasons',
   ];
   for (const k of EXPECTED_KEYS) {
     if (!(k in payload)) fail(`export missing key: ${k}`);
   }
   if (payload.lib === 'unknown') fail('export lib is "unknown"');
+
+  // `preview` is the one optional key, and its absence is what carries the
+  // meaning: `lib` alone cannot tell a preview build from the release, since
+  // both read package.json. So assert the equivalence, not the presence.
+  if ('preview' in payload === info.IS_RELEASE) {
+    fail(
+      `preview ${'preview' in payload ? 'present' : 'absent'} on a ` +
+        `${info.IS_RELEASE ? 'release' : 'development'} build`,
+    );
+  }
+  if (!info.IS_RELEASE && payload.preview !== info.BUILD_REF) {
+    fail(`preview "${payload.preview}" != build ref "${info.BUILD_REF}"`);
+  }
+
+  // A page that swept nothing measures a floor it did not establish. Not a
+  // failure of the page — but on this engine, in this container, it is
+  // unexpected enough to be worth printing rather than discovering later in
+  // an export nobody re-reads.
+  if (payload.sweep.partial) {
+    process.stdout.write(
+      `sweep PARTIAL — listed: ${payload.sweep.listed}, ` +
+        `left: ${payload.sweep.left.join(', ') || '(none named)'}\n`,
+    );
+  }
+
+  // The page and the export must not disagree about the floor: a partial sweep
+  // that only the JSON knows about is the silent case this note exists to end.
+  const noteShown = await page.$eval('#sweep-note', (el) => !el.hidden);
+  if (noteShown !== payload.sweep.partial) {
+    fail(
+      `sweep note ${noteShown ? 'shown' : 'hidden'} but export says ` +
+        `partial: ${payload.sweep.partial}`,
+    );
+  }
 
   if (Object.keys(payload.measurements).length === 0) {
     fail('export measurements is empty — no pairs ran');

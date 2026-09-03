@@ -54,6 +54,13 @@
       }
       #status { font-size: 0.85rem; }
       #stop { margin-left: auto; }
+      /* Sits between the control line and the table because it qualifies the
+         run below it and has to be readable WHILE that run is going. The
+         verdict box would be the other candidate and is the wrong one: it is
+         written once, at the end, and a run stopped early is exactly the case
+         where a floor that could not be established matters most. */
+      #sweep-note { margin: var(--gap) 0; font-size: 0.85rem; }
+      #sweep-note p { margin: 0; }
       #spinner {
         width: 1em; height: 1em; flex: none; border-radius: 50%;
         border: 2px solid var(--border); border-top-color: currentColor;
@@ -186,6 +193,10 @@
       <button type="button" id="stop" hidden>Stop</button>
     </div>
 
+    <!-- Filled the moment the sweep ends, cleared at every Start. Empty is the
+         normal state and says nothing; a partial sweep is not silent. -->
+    <div id="sweep-note" hidden></div>
+
     <div id="verdict" hidden>
       <div id="verdict-text"></div>
       <p><button type="button" id="download" disabled>Download JSON</button></p>
@@ -303,6 +314,27 @@
        * inline blob worker. Ported from tests/conformance/helpers.ts — see
        * BENCH-DRIFT in mem:follow-ups before changing either copy.
        */
+      /**
+       * Named once because it is used twice: the probe below creates it, and
+       * the sweep has to recognise it as ours. Two literals would drift, which
+       * is the failure BENCH-DRIFT already records for this file.
+       *
+       * The probe removes it in its own `finally`, and that removal is allowed
+       * to fail silently — but it also RACES the worker's own death: the main
+       * thread calls `worker.terminate()` the moment the probe's message
+       * arrives, while the `finally` is still awaiting `getDirectory()`.
+       * Termination wins often enough to matter — **4 of 6 Chromium loads left
+       * the file behind**, measured 2026-09-03 in this container, and a Safari
+       * 26.6.2 export carried it into `opfsRootAtStart` as well. It is not a
+       * WebKit quirk; one observation per engine said it was, which is what n=1
+       * is worth here.
+       *
+       * So the sweep owns the name outright rather than trusting the probe to
+       * have cleaned up. Closing the race at its source — postMessage after the
+       * cleanup instead of before — is a separate change and is not made here.
+       */
+      const UNSAFE_PROBE_FILE = '__probe_unsafe_handles';
+
       const probeUnsafeHandles = () =>
         new Promise((resolve) => {
           if (!HAS_OPFS) return resolve(false);
@@ -311,7 +343,7 @@
               let h1;
               try {
                 const root = await navigator.storage.getDirectory();
-                const fh = await root.getFileHandle('__probe_unsafe_handles', { create: true });
+                const fh = await root.getFileHandle('${UNSAFE_PROBE_FILE}', { create: true });
                 h1 = await fh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
                 const h2 = await fh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
                 h2.close();
@@ -322,7 +354,7 @@
                 try { h1?.close(); } catch {}
                 try {
                   const root = await navigator.storage.getDirectory();
-                  await root.removeEntry('__probe_unsafe_handles');
+                  await root.removeEntry('${UNSAFE_PROBE_FILE}');
                 } catch {}
               }
             };
@@ -651,6 +683,73 @@
       let idbBefore = null;
       let opfsBefore = null;
 
+      // ── Storage calls that may never settle ─────────────────────────────
+      /**
+       * Every OPFS and IndexedDB call in this section can do something worse
+       * than fail: it can hang for ever.
+       *
+       * On Safari, `removeEntry(name, { recursive: true })` against a file
+       * whose access handle is still live does not reject — it waits. So can
+       * `for await (const name of root.keys())`. And that is exactly the state
+       * of the OPFS root immediately after a run that exercised an OPFS VFS.
+       * Observed on iPadOS Safari 27.0: `Re-start` left the page on `cleaning…`
+       * for ever — no start, no report, no timeout, reload the only way out.
+       * The per-entry catches below are correct and defend against none of it;
+       * a promise that never settles is not an exception.
+       *
+       * The budget is PER CALL rather than one global one over the sweep. A
+       * single entry held by a dead context then costs its own budget and
+       * nothing else: the rest of the root, and the whole IndexedDB side, are
+       * still swept, so the floor this run starts from is the best one
+       * available instead of none. Worst case is the number of entries we own
+       * times the budget, which on a real root is a handful.
+       *
+       * The abandoned promise keeps running in the void. That is fine — it
+       * holds nothing we need back, and the tab outlives it either way.
+       */
+      const SWEEP_OP_MS = 2_000;
+
+      const TIMED_OUT = Symbol('timed out');
+
+      const withDeadline = (promise, ms = SWEEP_OP_MS) =>
+        Promise.race([
+          promise,
+          new Promise((resolve) => setTimeout(() => resolve(TIMED_OUT), ms)),
+        ]);
+
+      /**
+       * The root's entries as an array, so the enumeration can be raced —
+       * a `for await` cannot be handed to `Promise.race` as it stands.
+       */
+      const listOpfsRoot = async (root) => {
+        const names = [];
+        for await (const name of root.keys()) names.push(name);
+        return names;
+      };
+
+      /**
+       * What the pre-run sweep managed to establish. Reset at every Start.
+       *
+       * A partial sweep changes what every measurement in the run is worth, and
+       * a SILENT partial sweep is worse than the hang it replaces — the hang at
+       * least announced itself. So the page says it while the run goes and the
+       * export carries it afterwards.
+       *
+       * `partial` is set by a refusal as much as by an expiry. A `removeEntry`
+       * that rejects leaves exactly as much residue as one that never settles;
+       * "still held, a later run will try again" is a fair thing to do about it
+       * and not a reason to call this run's floor established.
+       *
+       * `listed` is `null` where there is no OPFS at all, which is neither a
+       * success nor a failure to report.
+       */
+      const SWEEP = { partial: false, listed: null, left: [] };
+
+      const sweepLeft = (kind, name, why) => {
+        SWEEP.partial = true;
+        SWEEP.left.push(`${kind}:${name} (${why})`);
+      };
+
       /**
        * The OPFS root as it stood before this page touched anything.
        *
@@ -672,9 +771,12 @@
         if (!HAS_OPFS) return null;
         try {
           const root = await navigator.storage.getDirectory();
-          const names = new Set();
-          for await (const name of root.keys()) names.add(name);
-          return names;
+          const names = await withDeadline(listOpfsRoot(root));
+          // An enumeration that does not finish in time leaves us with no floor
+          // to diff against, which is the same position as one that is not
+          // available at all: clean nothing rather than guess.
+          if (names === TIMED_OUT) return null;
+          return new Set(names);
         } catch {
           // No directory iteration here: clean nothing rather than guess.
           return null;
@@ -697,11 +799,56 @@
       /** Per column, so a long run does not carry 22 databases to the end. */
       const cleanupOpfs = async (file) => {
         if (!HAS_OPFS) return;
+        let root;
         try {
-          const root = await navigator.storage.getDirectory();
-          await root.removeEntry(file, { recursive: true });
+          root = await navigator.storage.getDirectory();
+          // Bounded for the same reason the sweep is: this runs at the end of
+          // every column, so a removal that never settles hangs the whole run
+          // rather than one cleanup.
+          await withDeadline(root.removeEntry(file, { recursive: true }));
         } catch {
-          // Never created, or this VFS does not use OPFS at all.
+          // Never created, or this VFS does not use OPFS at all. The claim
+          // below still has to happen: what a column created under a name of
+          // the VFS's own choosing is unrelated to whether OUR name was there.
+        }
+        if (root) await claimNewOpfsNames(root);
+      };
+
+      /**
+       * Claim whatever has appeared in the root since this run's floor was
+       * snapshotted — WITHOUT removing it. Removal stays the end-of-run job of
+       * `cleanupOpfsResidue`; this only records ownership, and records it
+       * EARLY, once per column.
+       *
+       * The hole it closes: `remember()` used to be reached only on the removal
+       * path, at the very end of a run. A run that never got there — tab
+       * closed, page reloaded, phone suspending the page — left everything it
+       * had created unrecorded, and the next run then inventoried that residue
+       * as pre-existing, where the "never touch what was already there" rule
+       * protects it for good.
+       *
+       * Not hypothetical. A Chromium export of 2026-09-03 opened with
+       * `opfsRootAtStart: ['.wa-sqlite']` — `OPFSWriteAheadVFS`'s own
+       * LIBRARY_FILES_ROOT, left by an earlier interrupted run and invisible to
+       * every sweep since: it carries neither the `bench-` prefix nor a VFS
+       * class name, and `layout` does not tell it from three other VFS.
+       *
+       * Recording the NAME rather than the VFS is what makes this general. The
+       * page needs to know nothing about any VFS's internal layout — the same
+       * rule the residue cleanup already follows, applied early enough to
+       * survive a run that does not finish.
+       */
+      const claimNewOpfsNames = async (root) => {
+        if (!opfsBefore) return;
+        try {
+          const now = await withDeadline(listOpfsRoot(root));
+          if (now === TIMED_OUT) return;
+          for (const name of now) {
+            if (!opfsBefore.has(name)) remember('opfs', name);
+          }
+        } catch {
+          // Iteration stopped working mid-run. The end-of-run cleanup is the
+          // remaining chance and makes the same attempt.
         }
       };
 
@@ -715,16 +862,23 @@
         if (!opfsBefore) return;
         try {
           const root = await navigator.storage.getDirectory();
-          const now = [];
-          for await (const name of root.keys()) now.push(name);
+          const now = await withDeadline(listOpfsRoot(root));
+          // Nothing safe left to do, and nothing worth waiting for: the run is
+          // over, and what is not removed here the next run's sweep will find.
+          if (now === TIMED_OUT) return;
           for (const name of now) {
             if (opfsBefore.has(name)) continue;
             // Recorded before the attempt: if the removal fails, or the tab
             // dies between these two lines, the next run still knows it is ours.
             remember('opfs', name);
             try {
-              await root.removeEntry(name, { recursive: true });
-              forget('opfs', name);
+              const done = await withDeadline(
+                root.removeEntry(name, { recursive: true }),
+              );
+              // Not forgotten on expiry: a removal that did not finish leaves
+              // the name ours, and the next run's sweep is where it gets
+              // another attempt.
+              if (done !== TIMED_OUT) forget('opfs', name);
             } catch {
               // Held open elsewhere; leave it rather than fight for it.
             }
@@ -736,12 +890,15 @@
 
       const cleanupIdb = async () => {
         if (!idbBefore) return;
-        const now = await indexedDB.databases();
+        const now = await withDeadline(indexedDB.databases());
+        if (now === TIMED_OUT) return;
         for (const { name } of now) {
           if (!name || idbBefore.has(name)) continue;
           remember('idb', name);
-          await deleteIdb(name);
-          forget('idb', name);
+          // `deleteIdb` resolves on `onblocked`, so it settles whenever any of
+          // the three events arrives — the case left is none of them arriving.
+          const done = await withDeadline(deleteIdb(name));
+          if (done !== TIMED_OUT) forget('idb', name);
         }
       };
 
@@ -818,44 +975,107 @@
       /**
        * Runs before a bench, so it starts from a floor it established itself —
        * chaining two runs must not measure the first one's leftovers. Removes
-       * four things and nothing else: our own `bench-` databases and their
+       * five things and nothing else: our own `bench-` databases and their
        * `-journal` / `-wal` siblings, whose prefix makes them unambiguously
-       * ours; anything a previous run of ours recorded as its own; the
-       * IndexedDB stores it recorded the same way; and the per-VFS stores
-       * above, which this page is about to exercise anyway.
+       * ours; the unsafe-handle probe's file, which this page created at load
+       * and does not always manage to remove itself; anything a previous run of
+       * ours recorded as its own; the IndexedDB stores it recorded the same
+       * way; and the per-VFS stores above, which this page is about to exercise
+       * anyway.
        */
       const sweepBeforeRun = async () => {
+        SWEEP.partial = false;
+        SWEEP.listed = null;
+        SWEEP.left = [];
         const all = owned();
         if (HAS_OPFS) {
           try {
             const root = await navigator.storage.getDirectory();
-            const names = [];
-            for await (const name of root.keys()) names.push(name);
-            const vfsOpfs = vfsOwnedNames('opfs');
-            for (const name of names) {
-              const isOurs =
-                name.startsWith('bench-') ||
-                (all.opfs ?? []).includes(name) ||
-                vfsOpfs.includes(name);
-              if (!isOurs) continue;
-              try {
-                await root.removeEntry(name, { recursive: true });
-                forget('opfs', name);
-              } catch {
-                // Still held; a later run will try again.
+            const names = await withDeadline(listOpfsRoot(root));
+            SWEEP.listed = names !== TIMED_OUT;
+            if (names === TIMED_OUT) {
+              // Nothing to sweep against, so nothing is removed and the whole
+              // OPFS side of the floor is unestablished. Reported, not waited
+              // for: the run is worth more than the wait.
+              SWEEP.partial = true;
+            } else {
+              const vfsOpfs = vfsOwnedNames('opfs');
+              for (const name of names) {
+                const isOurs =
+                  name.startsWith('bench-') ||
+                  name === UNSAFE_PROBE_FILE ||
+                  (all.opfs ?? []).includes(name) ||
+                  vfsOpfs.includes(name);
+                if (!isOurs) continue;
+                try {
+                  const done = await withDeadline(
+                    root.removeEntry(name, { recursive: true }),
+                  );
+                  if (done === TIMED_OUT) sweepLeft('opfs', name, 'timed out');
+                  else forget('opfs', name);
+                } catch {
+                  // Still held; a later run will try again. Recorded all the
+                  // same — leaving it is the right move, calling the floor
+                  // clean afterwards is not.
+                  sweepLeft('opfs', name, 'refused');
+                }
               }
             }
           } catch {
-            // No iteration: the prefix sweep is not available either.
+            // No iteration: the prefix sweep is not available either. The
+            // banner already says this browser will not list the root; the
+            // export needs to say it too, per run.
+            SWEEP.listed = false;
+            SWEEP.partial = true;
           }
         }
         for (const name of new Set([
           ...(all.idb ?? []),
           ...vfsOwnedNames('indexeddb'),
         ])) {
-          await deleteIdb(name);
-          forget('idb', name);
+          const done = await withDeadline(deleteIdb(name));
+          if (done === TIMED_OUT) sweepLeft('idb', name, 'timed out');
+          else forget('idb', name);
         }
+      };
+
+      /**
+       * The sweep's outcome, in the page, the moment it is known — so a visitor
+       * watching a run knows what its floor was before the numbers land.
+       *
+       * `.warn` rather than `.no`: this is not an absent capability to be
+       * dimmed, it is a qualification on everything below it.
+       */
+      const renderSweepNote = () => {
+        const box = document.getElementById('sweep-note');
+        if (!SWEEP.partial) {
+          box.replaceChildren();
+          box.hidden = true;
+          return;
+        }
+        const why =
+          SWEEP.listed === false ? ' The OPFS root could not be listed.' : '';
+        const left =
+          SWEEP.left.length > 0
+            ? ` Left in place: ${SWEEP.left.join(', ')}.`
+            : '';
+
+        // Built as nodes rather than innerHTML, and this is not ceremony:
+        // SWEEP.left carries OPFS entry NAMES, which are arbitrary strings from
+        // an origin this page shares with every other Pages project of the same
+        // account. Everywhere else the page interpolates ids it declared itself.
+        const p = document.createElement('p');
+        p.className = 'warn';
+        const label = document.createElement('b');
+        label.textContent = 'Cleanup incomplete';
+        p.append(
+          '⚠ ',
+          label,
+          ' — this run did not start from a floor it established itself, so its' +
+            ` numbers may carry a previous run's residue.${why}${left}`,
+        );
+        box.replaceChildren(p);
+        box.hidden = false;
       };
 
       /**
@@ -2024,6 +2244,19 @@
       const buildExport = () => ({
         generatedAt: new Date().toISOString(),
         lib: LIB_VERSION,
+        /**
+         * Absent on a release build, and that absence is the signal.
+         *
+         * `lib` is `package.json`'s version, which is identical on `/` and on
+         * `/preview/` for as long as no bump has happened — so until this
+         * field existed, an export taken from a branch preview could not be
+         * told from one taken from the release. That came up for real on
+         * 2026-09-03 and had to be answered from someone's memory.
+         *
+         * Carries the same label the banner shows: `branch @ sha`, or
+         * `local build` where the assembly found no git.
+         */
+        ...(IS_RELEASE ? {} : { preview: BUILD_REF }),
         agent: AGENT,
         features: {
           opfs: HAS_OPFS,
@@ -2031,6 +2264,19 @@
           jspi: HAS_JSPI,
         },
         clockMs: CLOCK_MS,
+        // What the pre-run sweep could and could not establish. A partial sweep
+        // changes what every number below is worth, so it travels with them.
+        sweep: SWEEP,
+        /**
+         * The floor this run actually started from: the OPFS root as it stood
+         * AFTER the sweep and before the first column. `null` where it could
+         * not be listed, which `sweep.listed` explains.
+         *
+         * Until this existed the page could not report whether the root was
+         * empty when a run started — the gap that let a hand-clearing be
+         * mistaken for evidence.
+         */
+        opfsRootAtStart: opfsBefore ? [...opfsBefore].sort() : null,
         // Iteration counts differ per column by design (calibrateLongQuery), so
         // pool-blocking is uninterpretable without them.
         longQueryIterations: Object.fromEntries(
@@ -2120,12 +2366,19 @@
         const verdictBox = document.getElementById('verdict');
         verdictBox.hidden = true;
         document.getElementById('verdict-text').replaceChildren();
+        // Cleared here rather than left to renderSweepNote(): between this
+        // click and the end of the sweep, the previous run's note would
+        // otherwise sit above a run it says nothing about.
+        const sweepBox = document.getElementById('sweep-note');
+        sweepBox.replaceChildren();
+        sweepBox.hidden = true;
 
         try {
           // A bench starts from a floor it established itself: chaining two
           // runs must not measure what the first one left behind.
           status.textContent = 'cleaning…';
           await sweepBeforeRun();
+          renderSweepNote();
           idbBefore = CAN_LIST_IDB
             ? new Set((await indexedDB.databases()).map((d) => d.name))
             : null;
@@ -2161,8 +2414,16 @@
         `${PAIRS.length} declared pairs, ` +
         `${PAIRS.filter((p) => !missingFor(p)).length} runnable here`;
 
-      // Read by scripts/bench/check.mjs.
-      window.__BENCH__ = { LIB_VERSION, AGENT, PAIRS: PAIRS.map((p) => p.id) };
+      // Read by scripts/bench/check.mjs. IS_RELEASE is exposed so the driver
+      // can assert the one thing `preview` promises: present exactly when this
+      // is not the released build.
+      window.__BENCH__ = {
+        LIB_VERSION,
+        IS_RELEASE,
+        BUILD_REF,
+        AGENT,
+        PAIRS: PAIRS.map((p) => p.id),
+      };
     </script>
   </body>
 </html>
