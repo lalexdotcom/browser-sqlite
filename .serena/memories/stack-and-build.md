@@ -230,11 +230,13 @@ instead.
   Five things bite, all of them silent:
   - **Order.** `assemble.mjs` opens with `rmSync(target, …)`, so the root must be assembled
     BEFORE the preview that sits inside it. The reverse deletes the preview.
-  - **`GITHUB_REF_NAME` / `REF_TYPE` / `SHA` are overridden on both build steps.**
-    `assemble.mjs` reads them to label the page, and the runner's values describe the
-    TRIGGERING ref, which is never what is being built. Unset, the root would call a genuine
-    release a "development build", and the preview would print a commit it did not measure.
-    `REF_TYPE` is forced to `branch` for the preview because `preview` IS a tag and the
+  - **The build label is passed to `assemble.mjs` as an ARGUMENT — `--ref` and `--release` —
+    never through the environment.** Actions reposes the `GITHUB_*` variables for every step
+    and IGNORES a step-level `env:` that tries to override them, so a run building a ref
+    other than its trigger cannot describe itself that way. Overriding them was tried and
+    shipped on 2026-09-03: both halves came out labelled with the triggering tag and BOTH
+    claimed to be the published package, `/preview/` included. The preview passes no
+    `--release`, which is the point — `preview` IS a tag, and without an explicit label the
     script takes any tag for a release tag.
   - **A `delete` run executes from the DEFAULT BRANCH**, so its deployment presents
     `refs/heads/main`. An environment restricted to tags refuses it, and a deleted tag then
