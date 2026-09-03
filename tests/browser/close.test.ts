@@ -4,10 +4,51 @@ import { createTestClient, interceptWorkers, sleep } from './helpers';
 /**
  * Polls until the predicate is true, yielding to the macrotask queue between
  * checks. Used to observe scheduler state without a fixed-duration sleep.
+ *
+ * BOUNDED, and it must be: the states below are transient, so a predicate that
+ * is never observed used to spin here until the test itself timed out at 30 s
+ * with no indication of what had been waited for. Failing at 5 s with the
+ * thing named is the difference between a diagnosis and a mystery.
  */
-const waitUntil = async (predicate: () => boolean): Promise<void> => {
-  while (!predicate()) await sleep(0);
+const waitUntil = async (
+  predicate: () => boolean,
+  what: string,
+  timeoutMs = 5000,
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out after ${timeoutMs} ms waiting for ${what}`);
+    }
+    await sleep(0);
+  }
 };
+
+/**
+ * A write slow enough to still be running when the next line looks at it.
+ *
+ * Both tests below have to catch a write IN FLIGHT, and the state they poll for
+ * is transient: a one-row INSERT can start and finish between two polls, after
+ * which the predicate is false for ever. That is not hypothetical — it failed
+ * about one Firefox run in three until 2026-09-03, as a mute 30-second timeout,
+ * and it only became visible when `pnpm test` started running Firefox too.
+ *
+ * The recursive CTE gives the window a floor measured in milliseconds rather
+ * than microseconds. It is the precondition that needed widening, not the
+ * behaviour under test: what is asserted after the wait is unchanged.
+ */
+const SLOW_INSERT_ROWS = 20_000;
+const SLOW_INSERT =
+  'INSERT INTO t (a) WITH RECURSIVE c(x) AS ' +
+  `(SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${SLOW_INSERT_ROWS}) ` +
+  'SELECT x FROM c';
+
+/** The worker is holding a request it has not released — i.e. a write is live. */
+const aRequestIsInFlight =
+  (db: Awaited<ReturnType<typeof createTestClient>>) => () =>
+    (db.debug?.workers ?? []).some(
+      (w) => w.currentRequest && !w.currentRequest.releaseTime,
+    );
 
 describe('close()', () => {
   // Falsifiable: drop the await on the 'closed' reply in pool.ts — 'terminate'
@@ -33,18 +74,16 @@ describe('close()', () => {
   it('lets an in-flight write finish', async () => {
     const db = await createTestClient({ poolSize: 1, debug: true });
     await db.write('CREATE TABLE t (a)');
-    const inFlight = db.write('INSERT INTO t (a) VALUES (1)');
+    const inFlight = db.write(SLOW_INSERT);
     // Wait until inFlight has crossed the web-lock threshold and holds the
     // scheduler lease. Before this point close()'s abort signal would cancel
     // inFlight's pending lock request; after it the lock is granted and the
     // Web Locks spec guarantees the signal cannot revoke it.
-    await waitUntil(() =>
-      (db.debug?.workers ?? []).some(
-        (w) => w.currentRequest && !w.currentRequest.releaseTime,
-      ),
-    );
+    await waitUntil(aRequestIsInFlight(db), 'the write to be in flight');
     const closing = db.close();
-    await expect(inFlight).resolves.toMatchObject({ affected: 1 });
+    await expect(inFlight).resolves.toMatchObject({
+      affected: SLOW_INSERT_ROWS,
+    });
     await closing;
   });
 
@@ -53,17 +92,13 @@ describe('close()', () => {
   it('rejects a queued request and every later call', async () => {
     const db = await createTestClient({ poolSize: 1, debug: true });
     await db.write('CREATE TABLE t (a)');
-    const inFlight = db.write('INSERT INTO t (a) VALUES (1)');
+    const inFlight = db.write(SLOW_INSERT);
     // Wait until inFlight holds the web lock and the scheduler lease. Starting
     // queued before this point would race: inFlight's lock might not be granted
     // yet and close() could abort both. After this point inFlight's lock is
     // irrevocable and queued is parked behind it — exactly where close() needs
     // to find it.
-    await waitUntil(() =>
-      (db.debug?.workers ?? []).some(
-        (w) => w.currentRequest && !w.currentRequest.releaseTime,
-      ),
-    );
+    await waitUntil(aRequestIsInFlight(db), 'the write to be in flight');
     const queued = db.write('INSERT INTO t (a) VALUES (2)');
     const closing = db.close();
     await expect(queued).rejects.toMatchObject({ code: 'CLIENT_CLOSED' });
