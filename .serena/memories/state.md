@@ -70,7 +70,15 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 ## Decisions the user owes
 
-None outstanding. **The next thing is rc.5's remaining scope, which is the user's to pick from
+None outstanding.
+
+**A bench-page lot is in flight and deliberately NOT merged (user, 2026-09-03)**, because one
+item of it is still open: reading wa-sqlite's own benchmark page
+(<https://rhashimoto.github.io/wa-sqlite/demo/benchmarks/>) for cases worth adopting into
+ours. The branch stays until that is settled; `git branch` names it. What it has shipped so
+far is in `mem:measurements` and, once merged, belongs in `mem:history`.
+
+Beyond that, **the next thing is rc.5's remaining scope, which is the user's to pick from
 `mem:follow-ups`.**
 
 ## rc.5 so far: seven lots, merged 2026-09-02 and 2026-09-03
@@ -204,18 +212,29 @@ failures established that no reading would have.
   citing a flip remains the rule. `no-read-inside-transaction` does
   **not** flip at n=3 per engine in this container — measured 2026-08-31, table in
   `mem:measurements`, which is also where the unreachable WebKit flip is recorded.
-- **The benchmark page cannot report whether the OPFS root was empty when a run started.**
-  That gap is what let a hand-clearing be mistaken for evidence; a run inventorying the
-  root in its export would close it. Nobody has done it.
+- **The bench page's floor is no longer unmeasured ground.** Its export carries
+  `opfsRootAtStart`, `sweep` and `preview` since 2026-09-03, so a run says what it started
+  from, what the sweep could not establish, and whether it is the released build. Numbers and
+  what they immediately caught: `mem:measurements`.
 
 ## Known live exposures
 
-- **One Pages site per repo, last deploy wins.** It currently carries the rc.4
-  release build, deployed by the release itself. A manual dispatch from any
-  `feat/*` branch replaces it. Kept deliberately (2026-08-26, user): dispatching
-  onto a real device without merging is worth the exposure — which is what makes
-  the page's "development build" banner load-bearing. `buildRef()` in
-  `scripts/bench/assemble.mjs` is not decoration.
+- **The Pages site is a pure function of TWO TAGS, and this file said otherwise until
+  2026-09-03.** `/` is built from the latest release tag, `/preview/` from the `preview` tag,
+  and the ref that TRIGGERED a run is never built. So `/` cannot drift to unreleased code and
+  a preview cannot survive as a mystery. The old wording here — "last deploy wins, a manual
+  dispatch from any `feat/*` branch replaces it" — is wrong on both halves: there is no manual
+  dispatch, and a preview does not replace the release page. Read the header of
+  `.github/workflows/pages.yaml`, which is authoritative.
+  - **Moving the tag is the whole gesture**, and re-pushing it unchanged is how you
+    republish: `git tag -f preview <sha> && git push -f origin preview`. Deleting the tag
+    takes the preview down. Both need `main` allowed in the `github-pages` environment,
+    because a `delete` run executes from the default branch.
+  - Exposure kept deliberately (2026-08-26, user): putting a branch on a real device without
+    merging is worth it — which is what makes the page's "development build" banner
+    load-bearing. `buildRef()` in `scripts/bench/assemble.mjs` is not decoration. The preview
+    half is assembled with `--ref "preview @ <sha>"` and no `--release`, so its exports carry
+    that label in `preview`.
 - **The pinned Vite 6 consumer fixture is the only thing verifying the README's one
   instruction.** `tests/consumer` resolves to the newest Vite, where `optimizeDeps.exclude`
   is a no-op. Delete `tests/consumer-vite6` and that line goes back to unverified prose.

@@ -71,51 +71,25 @@ trickle, and it is no longer a deduction.
 
 ## Defects to fix (2026-09-03)
 
-### BENCH-SWEEP — the page hangs on `cleaning…`, because the sweep has no deadline
+### BENCH-PROBE-RACE — the unsafe-handle probe outlives its own cleanup
 
-**Symptom, seen on iPadOS Safari 27.0.** Clicking `Re-start` after a completed run leaves the
-page on `cleaning…` for ever. It never starts, never reports, never times out. Reloading is
-the only way out — and that reload is what produced the second failure below.
+`probeUnsafeHandles()` in `scripts/bench/html/index.html` creates
+`__probe_unsafe_handles` in the OPFS root and removes it in the worker's `finally`. The main
+thread calls `worker.terminate()` the moment the probe's message arrives, while that
+`finally` is still awaiting `getDirectory()` — so the removal often never runs. 4 of 6
+Chromium loads left the file behind (`mem:measurements`).
 
-**Where.** `sweepBeforeRun()` in `scripts/bench/html/index.html`, awaited at the top of the
-run's `try`, right after `status.textContent = 'cleaning…'`.
+**The symptom is covered, the race is not.** The sweep now owns the name, so a run's floor is
+clean; a visitor who never clicks Start still leaves the file. Closing it at the source means
+posting the result AFTER the cleanup instead of before, inside the blob worker's source.
 
-**Why the guards that ARE there do not help.** The sweep anticipates exceptions and handles
-them well: the OPFS branch catches per entry (`removeEntry` → *"Still held; a later run will
-try again"*) and catches the whole iteration, and `deleteIdb` resolves on `onblocked` instead
-of waiting. **None of that defends against a promise that never settles.** On Safari,
-`root.removeEntry(name, { recursive: true })` against a file whose access handle is still live
-does not reject — it waits. `for await (const name of root.keys())` can do the same. And that
-is exactly the state of the OPFS root immediately after a run that exercised the OPFS VFS.
+### The `openTimeout` doc comment still names the cause the fix removed
 
-**What the hang then cost, which is why the whole chain is written here.** The reload never
-calls `close()`, so the previous page's IndexedDB connection was still held; the next two runs
-failed at `IDBBatchAtomicVFS :: opens` with `Worker 1 did not become ready within 30000 ms`
-and all eight rows of that column fell to `not-run`. Against 20 clean rc.3 exports this read
-as an rc.5 regression and **is not** — those 20 never had a mid-session reload. Do not re-open
-that hypothesis; `mem:measurements` records it as a closed false lead.
-
-**The fix, three parts, and the second is not optional.**
-
-1. **A deadline around the sweep**, OPFS side and IndexedDB side. On expiry, continue the run
-   instead of blocking it: a floor that could not be established is worth reporting, not worth
-   waiting for indefinitely.
-2. **Say that it was partial** — in the page and in the export. A partial sweep changes what
-   the measurements are worth, and a silent partial sweep is worse than the hang, which at
-   least announced itself. The page already has a badge of this kind for a neighbouring case
-   (*"OPFS cleanup limited — this browser will not …"*).
-3. **The export carries no build ref.** `lib` is `package.json`'s version, identical on `/`
-   and `/preview/` for as long as no bump has happened, so an export taken from a preview
-   cannot be told from one taken from the release. That came up for real on 2026-09-03 and had
-   to be answered from the user's memory. The page already computes `IS_RELEASE` and
-   `BUILD_REF`; two top-level fields close it.
-
-**Worth folding in while the file is open**, because it is the same page and the same session:
-the page cannot report whether the OPFS root was empty when a run started (`mem:state`,
-Unmeasured ground). A run that inventoried the root in its export would close that too — and it
-is the same inventory the sweep already walks.
-
-The user has said they want to retouch this page anyway; this is the list to bring.
+`src/client.ts` — the TSDoc on `openTimeout` in `CreateSQLiteClientOptions` says the most
+common cause is "a database held under an exclusive lock by another tab or client". That is
+the unconditional claim `feat/open-timeout-message` deleted from the runtime message on
+2026-09-03, because the case actually observed is a page reloaded without `close()`. The
+comment did not follow the fix. One sentence, public surface.
 
 ## Notes, with nothing to fix
 

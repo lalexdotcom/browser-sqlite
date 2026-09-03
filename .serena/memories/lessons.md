@@ -418,6 +418,29 @@ reads as noise. Splitting the suite per engine put Firefox in the hook and the f
 commit that fails one time in three — found while committing, five minutes later. **Coverage
 that runs where the work happens finds what coverage that runs elsewhere does not.**
 
+## A deadline belongs to an operation CLASS, and abandoning a wait is not free everywhere — 2026-09-04
+
+Two halves of the same mistake, both paid on the bench page's sweep.
+
+**One budget for "storage calls" was wrong.** 2 s was chosen from "these are local operations
+and 2 s is already generous", which is true of an OPFS `removeEntry` and false of an
+`indexedDB.deleteDatabase`: on iPadOS Safari 27.0 the latter takes more than 2 s and less than
+5 s after a completed run. The too-tight budget did not merely report a timeout — it made the
+page abandon a store the run was about to need, and two columns then died at `opens` with 14
+`not-run` cells behind them. **The standing hypothesis was that something held the store
+permanently; it was simply slow.** Split the budget per operation class, then; a single
+number covering two classes will be wrong for one of them.
+
+**And abandoning a wait does not stop the work.** This project already knew that for
+`close()` — `ColumnAbandoned` states it — but the consequence differs by API. An OPFS
+`removeEntry` you stop waiting for holds nothing. An `indexedDB.deleteDatabase` stays queued
+against that database, and IndexedDB processes a database's requests in order, so it BLOCKS
+every later `open` of the same store. A comment claiming the abandoned promise "holds nothing
+we need back" was written and shipped before this was noticed.
+
+The general rule: **before bounding a call, ask what the abandoned request keeps doing**, not
+just how long it usually takes.
+
 ## A regression test's shape can delete the race it was written to pin — 2026-09-03
 
 **What happened:** the CoopSync handle-transfer `BUSY` was reproduced by a probe issuing eight
