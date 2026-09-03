@@ -1,17 +1,37 @@
 name: pages
 
-# The published site tracks the released package and nothing else: a visitor
-# who lands here must be benchmarking code they can actually install. So the
-# only automatic caller is the release workflow, after it has published — see
-# release-and-publish.yaml, which calls this one with `needs: release`.
+# The ROOT of the published site tracks the released package and nothing else:
+# a visitor who lands there must be benchmarking code they can actually
+# install. That invariant is now structural rather than a rule to remember —
+# every run rebuilds `/` from the latest release tag, whatever ref triggered
+# it, so `/` cannot drift to unreleased code even by accident.
 #
-# workflow_dispatch stays as the escape hatch: republishing after a failed
-# deploy, without cutting a release to do it. Dev testing runs locally instead
-# (`pnpm bench:build && pnpm bench:serve` — http://localhost is already a
-# secure context, so OPFS works with no certificate).
+# A preview lands beside it, at `/preview/`, never at the root. One preview
+# lives at a time: `actions/deploy-pages` publishes an artifact that REPLACES
+# the whole site, so each run redefines it entirely and the previous preview
+# goes. That is a deliberate ceiling — keeping a history per commit would mean
+# serving Pages from a branch, which is a different mechanism, a write
+# permission this workflow does not have, and a retention policy nobody wants
+# to own.
+#
+# Three ways in:
+#   - workflow_call, from release-and-publish.yaml after it has published. The
+#     ref is the release tag, so there is no preview half at all.
+#   - push of the `preview` tag. Move it and push, and this deploys that
+#     commit — which is how a branch whose NAME the repository ruleset refuses
+#     still reaches a real device, since a tag is not a branch.
+#   - workflow_dispatch on any ref, as the escape hatch.
+#
+# Local testing still needs none of this: `pnpm bench:build && pnpm bench:serve`
+# on http://localhost, already a secure context, so OPFS works with no
+# certificate. The preview exists for the devices that cannot reach localhost —
+# an iPad against the machine that built it.
 on:
   workflow_call:
   workflow_dispatch:
+  push:
+    tags:
+      - preview
 
 permissions:
   contents: read
@@ -26,11 +46,34 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      # A release build is a run whose ref IS a version tag. Everything else —
+      # the `preview` tag included, which is a tag but not a version — puts its
+      # output under /preview/ and rebuilds the root from the released tag.
+      PREVIEW: ${{ github.ref_type != 'tag' || github.ref_name == 'preview' }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
+
+      - name: Resolve the released tag
+        if: env.PREVIEW == 'true'
+        id: released
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=$(gh release view --json tagName --jq .tagName)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Root will be rebuilt from $TAG"
+
+      - name: Check out the released tag
+        if: env.PREVIEW == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.released.outputs.tag }}
+          path: released
 
       - uses: pnpm/action-setup@v4
 
@@ -39,13 +82,47 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile
+      # THE ROOT, on a preview run: built from the released tag, in its own
+      # checkout, before anything else writes into _site.
+      #
+      # GITHUB_REF_NAME and GITHUB_REF_TYPE are overridden deliberately.
+      # `assemble.mjs` reads them to decide whether the page may call itself a
+      # release build, and the runner's values describe the ref that TRIGGERED
+      # the run — the preview one. Left alone, a genuine release build would
+      # label itself a development build at the root of the public site, which
+      # is the one place the script's own comment says a stranger cannot check.
+      - name: Build the released root
+        if: env.PREVIEW == 'true'
+        working-directory: released
+        env:
+          GITHUB_REF_NAME: ${{ steps.released.outputs.tag }}
+          GITHUB_REF_TYPE: tag
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm build
+          node scripts/bench/assemble.mjs "$GITHUB_WORKSPACE/_site"
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
 
       - name: Build the library
         run: pnpm build
 
+      # ORDER IS LOAD-BEARING. `assemble.mjs` starts with
+      # `rmSync(target, { recursive: true, force: true })`, so assembling the
+      # root AFTER the preview would delete the preview it sits above. The
+      # release path writes the root and stops; the preview path writes the
+      # root first (above) and then this, inside it.
       - name: Assemble the page
-        run: node scripts/bench/assemble.mjs _site
+        run: |
+          set -euo pipefail
+          if [ "$PREVIEW" = "true" ]; then
+            node scripts/bench/assemble.mjs "$GITHUB_WORKSPACE/_site/preview"
+            echo "Preview will be served at <page-url>/preview/"
+          else
+            node scripts/bench/assemble.mjs "$GITHUB_WORKSPACE/_site"
+          fi
 
       - uses: actions/upload-pages-artifact@v3
         with:

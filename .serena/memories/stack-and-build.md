@@ -200,11 +200,31 @@ instead.
   - `consumer-smoke` — `pnpm test:consumer`, 11/11 stages. Blocking since wave P.
 - `.github/workflows/release-and-publish.yaml` — on `v*` tags, build + publish, and it
   calls `pages.yaml` with `needs: release`.
-- `.github/workflows/pages.yaml` — `workflow_call` + `workflow_dispatch`. Publishing is
-  release-only by design; the `github-pages` environment allows `main`, `v*` and `feat/*`.
-  **A reusable workflow runs at the caller's ref**, which is what builds the tag. The
-  `workflow_dispatch` trigger is only offered for workflows present on the default branch —
-  that cost an hour to discover.
+- `.github/workflows/pages.yaml` — `workflow_call` + `workflow_dispatch` + push of the
+  `preview` tag. **A reusable workflow runs at the caller's ref**, which is what builds the
+  tag. The `workflow_dispatch` trigger is only offered for workflows present on the default
+  branch — that cost an hour to discover, and it means a change to this file must reach
+  `main` before it can be dispatched from anywhere.
+
+  **Since 2026-09-03 the root and a preview are published together.** `/` is ALWAYS rebuilt
+  from the latest release tag, whatever ref triggered the run, so it cannot drift to
+  unreleased code even by accident — the invariant that used to be a rule to remember is now
+  structural. A non-release run puts its own build at `/preview/`. One preview lives at a
+  time: `deploy-pages` publishes an artifact that REPLACES the whole site, so each run
+  redefines it.
+
+  Two things bite here. **Order is load-bearing** — `assemble.mjs` opens with
+  `rmSync(target, …)`, so the root must be assembled BEFORE the preview that sits inside it.
+  And the released half's build step **overrides `GITHUB_REF_NAME` / `GITHUB_REF_TYPE`**,
+  because `assemble.mjs` reads them to decide whether the page may call itself a release
+  build and the runner's values describe the ref that triggered the run — left alone, the
+  root of the public site would label a genuine release "development build".
+
+  **The `github-pages` environment allows `main`, `v*` and `feat/*` only.** So a `feat/*`
+  branch can be dispatched TODAY with no rule change, and that is the shortest path. The
+  `preview` tag trigger exists for branches whose NAME the ruleset refuses — a tag is not a
+  branch — but it needs `preview` added to the environment's allowed refs first, or the
+  deployment is blocked.
 - Local `pre-commit` (simple-git-hooks): `lint-staged` + `pnpm test` + `tsc --noEmit`.
   Heavy and bypassable with `--no-verify`; CI is the real gate.
 - `tsconfig.build.json` (`include: ["src"]`, `rootDir: "src"`) drives declaration
