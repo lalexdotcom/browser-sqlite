@@ -13,13 +13,16 @@ import type { SQLiteVFS } from './types';
 import { VFS_CAPABILITIES } from './types';
 
 /** The slice of the Web Locks API this module uses. */
+type QueriedLock = { name?: string; mode?: string; clientId?: string };
+
+/** The slice of the Web Locks API this module uses. */
 type LockManager = {
   request: (
     name: string,
     optionsOrCallback: any,
     callback?: (lock: unknown) => Promise<unknown>,
   ) => Promise<unknown>;
-  query: () => Promise<{ held?: { name?: string }[] }>;
+  query: () => Promise<{ held?: QueriedLock[]; pending?: QueriedLock[] }>;
 };
 
 export type Locks = {
@@ -64,6 +67,26 @@ export type Locks = {
   tryWithLock: (name: string, fn: () => Promise<unknown>) => Promise<boolean>;
   /** Names currently held anywhere in this origin — every tab included. */
   heldNames: () => Promise<string[]>;
+  /**
+   * The origin's whole lock registry: held AND pending, each with the realm
+   * holding or awaiting it.
+   *
+   * `heldNames()` answers a different, cheaper question and keeps its own
+   * shape — `epochsFor` only ever needs names.
+   */
+  entries: () => Promise<LockEntries>;
+};
+
+/** One entry of the origin's lock registry, held or pending. */
+export type LockEntry = {
+  readonly name: string;
+  readonly mode: 'exclusive' | 'shared';
+  readonly clientId: string;
+};
+
+export type LockEntries = {
+  readonly held: readonly LockEntry[];
+  readonly pending: readonly LockEntry[];
 };
 
 const STAGING_PREFIX = '__bsq_staging_';
@@ -225,6 +248,7 @@ export const noOpLocks: Locks = {
     return true;
   },
   heldNames: async () => [],
+  entries: async () => ({ held: [], pending: [] }),
 };
 
 export const createLocks = (
@@ -296,6 +320,28 @@ export const createLocks = (
       return (snapshot.held ?? [])
         .map((lock) => lock.name)
         .filter((name): name is string => typeof name === 'string');
+    },
+    entries: async () => {
+      const snapshot = await manager.query();
+      // An entry without a name or a clientId cannot be attributed, and a
+      // half-read entry is worse than a missing one: it would join the roster
+      // as an anonymous client nobody can close.
+      const read = (list: QueriedLock[] | undefined): LockEntry[] =>
+        (list ?? [])
+          .filter(
+            (lock): lock is QueriedLock & { name: string; clientId: string } =>
+              typeof lock.name === 'string' &&
+              typeof lock.clientId === 'string',
+          )
+          .map((lock) => ({
+            name: lock.name,
+            mode:
+              lock.mode === 'shared'
+                ? ('shared' as const)
+                : ('exclusive' as const),
+            clientId: lock.clientId,
+          }));
+      return { held: read(snapshot.held), pending: read(snapshot.pending) };
     },
   };
 };

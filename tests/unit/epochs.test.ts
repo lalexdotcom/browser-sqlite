@@ -145,6 +145,7 @@ describe('publish', () => {
       withLock: async <T>(_n: string, fn: () => Promise<T>) => fn(),
       tryWithLock: async () => true,
       heldNames: async () => [],
+      entries: async () => ({ held: [], pending: [] }),
     };
     const e = epochsFor('OPFSAdaptiveVFS', '/publish', locks);
     await e.publish(1);

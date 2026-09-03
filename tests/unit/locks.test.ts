@@ -520,3 +520,62 @@ describe('clientMarkerName / parseClientMarker', () => {
     ).toBeUndefined();
   });
 });
+
+describe('Locks.entries', () => {
+  const fakeManager = (snapshot: unknown) =>
+    ({
+      request: () => Promise.resolve(),
+      query: () => Promise.resolve(snapshot),
+    }) as never;
+
+  it('returns held and pending with mode and clientId', async () => {
+    const locks = createLocks(
+      fakeManager({
+        held: [
+          { name: 'bsq:write:opfs:app.db', mode: 'exclusive', clientId: 'r1' },
+        ],
+        pending: [
+          { name: 'bsq:write:opfs:app.db', mode: 'exclusive', clientId: 'r2' },
+        ],
+      }),
+    );
+    expect(await locks.entries()).toEqual({
+      held: [
+        { name: 'bsq:write:opfs:app.db', mode: 'exclusive', clientId: 'r1' },
+      ],
+      pending: [
+        { name: 'bsq:write:opfs:app.db', mode: 'exclusive', clientId: 'r2' },
+      ],
+    });
+  });
+
+  it('drops entries missing a name or a clientId', async () => {
+    const locks = createLocks(
+      fakeManager({
+        held: [
+          { mode: 'shared', clientId: 'r1' },
+          { name: 'bsq:conn:opfs:app.db', mode: 'shared' },
+          { name: 'bsq:conn:opfs:app.db', mode: 'shared', clientId: 'r1' },
+        ],
+      }),
+    );
+    const { held } = await locks.entries();
+    expect(held).toEqual([
+      { name: 'bsq:conn:opfs:app.db', mode: 'shared', clientId: 'r1' },
+    ]);
+  });
+
+  it('defaults a missing mode to exclusive and a missing list to empty', async () => {
+    const locks = createLocks(
+      fakeManager({ held: [{ name: 'x', clientId: 'r1' }] }),
+    );
+    expect(await locks.entries()).toEqual({
+      held: [{ name: 'x', mode: 'exclusive', clientId: 'r1' }],
+      pending: [],
+    });
+  });
+
+  it('answers empty when Web Locks is missing', async () => {
+    expect(await noOpLocks.entries()).toEqual({ held: [], pending: [] });
+  });
+});
