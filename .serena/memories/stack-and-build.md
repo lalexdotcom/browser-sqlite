@@ -200,11 +200,40 @@ instead.
   - `consumer-smoke` — `pnpm test:consumer`, 11/11 stages. Blocking since wave P.
 - `.github/workflows/release-and-publish.yaml` — on `v*` tags, build + publish, and it
   calls `pages.yaml` with `needs: release`.
-- `.github/workflows/pages.yaml` — `workflow_call` + `workflow_dispatch`. Publishing is
-  release-only by design; the `github-pages` environment allows `main`, `v*` and `feat/*`.
-  **A reusable workflow runs at the caller's ref**, which is what builds the tag. The
-  `workflow_dispatch` trigger is only offered for workflows present on the default branch —
-  that cost an hour to discover.
+- `.github/workflows/pages.yaml` — **the site is a pure function of two tags** since
+  2026-09-03: `/` is the latest release tag, `/preview/` is the `preview` tag when one
+  exists. **The ref that triggered a run is never built and never consulted**, so every
+  trigger produces the same site and re-running anything is idempotent. Want a preview:
+  `git tag -f preview && git push -f origin preview`. Want it gone: delete the tag.
+
+  Triggers: `workflow_call` (from release-and-publish), `workflow_dispatch` (republish),
+  push of `preview`, and `delete`. **`push` does NOT fire for a deleted ref** — `delete` is
+  the event for that, it carries no ref filter, hence a job-level guard.
+
+  Three things bite, all of them silent:
+  - **Order.** `assemble.mjs` opens with `rmSync(target, …)`, so the root must be assembled
+    BEFORE the preview that sits inside it. The reverse deletes the preview.
+  - **`GITHUB_REF_NAME` / `REF_TYPE` / `SHA` are overridden on both build steps.**
+    `assemble.mjs` reads them to label the page, and the runner's values describe the
+    TRIGGERING ref, which is never what is being built. Unset, the root would call a genuine
+    release a "development build", and the preview would print a commit it did not measure.
+    `REF_TYPE` is forced to `branch` for the preview because `preview` IS a tag and the
+    script takes any tag for a release tag.
+  - **A `delete` run executes from the DEFAULT BRANCH**, so its deployment presents
+    `refs/heads/main`. An environment restricted to tags refuses it, and a deleted tag then
+    leaves its preview up until the next release. `main` must stay allowed for deletion to
+    work.
+
+  **Which workflow FILE runs differs by trigger**, and it bites once: a `push` runs the file
+  as it exists at the pushed commit, so tagging a commit that predates a change to this file
+  fires nothing. `delete` reads the default branch; `workflow_call` runs at the caller's ref.
+  There is no `workflow_dispatch` — removed on the user's instruction, 2026-09-03, since
+  re-pushing the tag unchanged is already the republish.
+
+  **The `github-pages` environment allows `main`, the `v*` tags and the `preview` tag**
+  (user, 2026-09-03). `main` is there for one reason and it is not obvious: `delete` runs
+  from the default branch, so without it a deleted `preview` tag could not take its preview
+  down. `feat/*` was dropped — no branch deploys any more.
 - Local `pre-commit` (simple-git-hooks): `lint-staged` + `pnpm test` + `tsc --noEmit`.
   Heavy and bypassable with `--no-verify`; CI is the real gate.
 - `tsconfig.build.json` (`include: ["src"]`, `rootDir: "src"`) drives declaration
