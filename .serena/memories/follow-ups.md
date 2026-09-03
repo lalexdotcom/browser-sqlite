@@ -91,40 +91,50 @@ Not worth a mechanism at this rate. If it is ever chased, note the prior questio
 `OPFSWriteAheadVFS` gives no concurrency on Safari (`mem:measurements`), so whether it
 should be recommended there at all comes first.
 
-### CACHE-BYTES — three things the byte bound was shipped without
+### CACHE-BYTES — one thing left, the other two settled 2026-09-03
 
-`DEFAULT_STATEMENT_CACHE_BYTES = 8 MB` (`client.ts`) is **derived, never run.** It follows from
-two measured facts — a template ceiling of 3.4 MB and the rule's `B > (N − 1) × MAX` condition
-— but no workload was ever executed at 8 MB to confirm the number it produces. A campaign at
-4 / 8 / 16 MB against the two-concurrent-`bulkWrite` workload would settle it, and
-`tests/browser/statement-cache.test.ts` already contains that workload.
+**Settled: the 8 MB default is measured now, and the derivation was right.** The campaign is
+in `mem:measurements`, both engines byte-for-byte identical. What it buys, in one sentence:
+four concurrent `bulkWrite`s on a typical table, three on the narrowest. Above that the cache
+is CANCELLED, not degraded — compilations jump straight to one per batch.
 
-**The `× poolSize` multiplier was falsified at n=1.** All 32 INSERT batches landed on worker 0
-at `poolSize: 4` on both engines (`mem:measurements`), which is why 8 MB per worker is not
-32 MB in practice. One workload, one run, and four reads afterwards did not move the write
-designation — nothing says it cannot migrate over a long session.
+**Settled, and it corrected this file: the write designation DOES migrate.** "8 MB per worker
+is not 32 MB in practice" held only on a quiet pool. Under read pressure a second worker takes
+INSERT batches, so the real ceiling at `poolSize: 4` is 2 x 8 MB. Numbers in
+`mem:measurements`.
 
-**The eviction churn is unprofiled.** SQL generated per call fills the LRU with single-use
-entries; the bound stops the growth, not the churn, and every eviction is a `finalize` on the
-hot path. This predates the byte bound and neither bound addresses it.
+**Still open: the eviction churn is unprofiled.** SQL generated per call fills the LRU with
+single-use entries; the bound stops the growth, not the churn, and every eviction is a
+`finalize` on the hot path. This predates the byte bound and neither bound addresses it. It is
+the one part of the original entry no campaign has touched.
 
 Design: `docs/superpowers/specs/2026-09-02-statement-cache-byte-bound-design.md` §8.
 
-### GATE-1 — what the readiness gate still rests on, after 2026-08-31
+### GATE-1 — one thing left, the other two settled 2026-09-03
 
-Three things the readiness gate rests on are reasoned rather than measured.
+**Still open, but no longer for want of a repro — it needs a DECISION.** The four tests
+covering the retry round point a worker at a missing URL, which is a *load* failure; none
+exercises handle starvation, the actual cause. **The phenomenon itself is now reproduced
+deterministically** (`mem:measurements`, 2026-09-03): a held write transaction starves a
+second client's open, `TIMEOUT` at 3077 ms on Firefox against a clean 47 ms open on Chromium.
 
-- **The tests force the wrong kind of failure.** The four covering the retry
-  round point a worker at a missing URL, which is a *load* failure. None
-  exercises handle starvation, the actual cause. They pin the orchestration,
-  not the phenomenon.
-- **The gate costs the SUM of the opens, not the slowest**, and nobody has
-  measured `poolSize: 8`. `bsq:init:<file>` is exclusive and origin-wide
-  (`locks.ts`, `withLock`), held across `open_v2` *and* the PRAGMAs, so opens
-  serialise across every worker, client and tab on that file. 2 and 4 are
-  measured (`mem:measurements`); the shape above 4 is the open part.
-- **The retry round multiplies the worst case**: up to two `openTimeout`,
-  ~60 s by default, before the first query on a pool that will never open.
+What blocks the permanent test is that the result is engine-conditional and cannot be
+branched on — `readwrite-unsafe` is `UNPROBEABLE`, so no runtime check can ask. **This
+repository has no skip-by-engine idiom**: every browser test passes on both engines by
+construction. Two ways out, and choosing between them is the user's:
+introduce a Firefox-only test convention, or settle for an assertion weak enough to hold on
+both ("opens, or reports `TIMEOUT`; never hangs, never silently shrinks the pool"), which
+pins the gate's contract rather than the starvation.
+
+**Settled: the cost is linear in `poolSize`, with no cliff at 8.** ~7 ms per extra worker on
+Chromium, ~20 ms on Firefox — the sum, as reasoned, and nothing surprising above 4. Table in
+`mem:measurements`, and the README's `poolSize` row now carries the numbers, where it
+previously said only "uses more memory".
+
+**Settled by documenting rather than measuring: the retry round doubles the worst case.** Up
+to two `openTimeout`, about a minute at the default, before the first query rejects on a pool
+that will never open. The README's `openTimeout` row now says so and tells the reader to lower
+it if they need to fail faster.
 
 ## Notes, with nothing to fix
 
