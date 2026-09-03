@@ -64,7 +64,9 @@ Numbers live in `mem:measurements`.
   mode needing a cache large enough to hold the journal. The mode is real and SQLite's
   default does miss it. But **raising the bound costs zero bytes** (it is a cap, not a
   reservation, 30 runs of 30) **and buys no measurable time** — Firefox shows none at all.
-  It is a documented recommendation, never a default, and now for a measured reason.
+  It stays a recommendation rather than a default, and now for a measured reason — but
+  **it is NOT documented anywhere**: this file asserted for a week that it was, and the README
+  says nothing about batch-atomic mode or the cache size it needs. See `mem:follow-ups`.
 
 - **Defaults are merged under the consumer's `pragmas`, never substituted for them.** A
   consumer setting `foreign_keys` is answering their own question, not declining the VFS's

@@ -13,7 +13,7 @@ Stack, build output and test tooling: `mem:stack-and-build`. VFS: `mem:vfs`.
 | File | Lines | Role |
 |---|---|---|
 | `api.ts` | 318 | **The public type layer, and the only module `index.ts` re-exports wholesale.** `SQLiteQueryAPI` is the querying surface; `SQLiteDB` and `SQLiteTransactionDB` are it plus their own extras. Everything here is public by construction, which is what stops the leak that made `SQLiteQueryOptions` and `TransactionDB` unnameable — a name list in `types.ts` is what you forget to update. |
-| `client.ts` | 739 | **Assembly only**: options, validation, wiring, the public `SQLiteDB` surface, `close()`. Holds `DEFAULT_POOL_SIZE = 2` and `DEFAULT_STATEMENT_CACHE_SIZE = 32`, the vfs/build guard, `applyBarrier` (`:506`) and `acquireInstrumented` (`:562`) — **the single choke point through which every read, write, transaction and bulk acquires a lease**, which is what makes the barrier one wrapper rather than six. |
+| `client.ts` | ~1050 | **Assembly only**: options, validation, wiring, the public `SQLiteDB` surface, `close()`. Holds `DEFAULT_POOL_SIZE = 2`, `DEFAULT_STATEMENT_CACHE_SIZE = 32` and `DEFAULT_STATEMENT_CACHE_BYTES = 8 MiB`, the vfs/build guard, `applyBarrier` and `acquireInstrumented` — **the single choke point through which every read, write, transaction and bulk acquires a lease**, which is what makes the barrier one wrapper rather than six. **All four read entry points (`read`, `first`, `chunk`, `stream`) now go through `readWithRetry` / `streamWithRetry`**, which re-issue once on a `BUSY` that carries a `sqliteCode` — see below. Line numbers deliberately omitted: they rotted every time they were cited. |
 | `capabilities.ts` | 121 | `detectFeatures` / `missingFeature` / `describeMissing`, `BUILD_REQUIREMENTS`, `UNPROBEABLE`. Public: the first two only. |
 | `types.ts` | 368 | Wire protocol, `SQLiteQueryOptions`, and **`VFS_CAPABILITIES` — the single source of truth** the client guard, the conformance suite, the README generator and the benchmark page all read. `SQLiteVFS` derives from its keys. |
 | `errors.ts` | 61 | `SQLiteError extends Error` with `code` and `name` mirroring it, plus `SQLiteBulkWriteError`. Eleven codes: `NOT_A_READ_QUERY`, `CLIENT_CLOSED`, `WORKER_CRASHED`, `TIMEOUT`, `PROTOCOL_ERROR`, `INVALID_IDENTIFIER`, `INVALID_OPTION`, `INVALID_PRAGMA`, `BULK_WRITE_FAILED`, `BUSY`, `READ_ONLY_TRANSACTION`. |
@@ -32,6 +32,15 @@ Stack, build output and test tooling: `mem:stack-and-build`. VFS: `mem:vfs`.
 | `worker/worker.ts` | 700 | Worker thread: VFS bootstrap, `open`, statement execution, chunked streaming. Holds `VFSConfigs` and `WA_SQLITE_BUILDS`. **Constructs every VFS with `{ lockPolicy: 'shared' }` (`:159`).** `ready` only on success, `open-error` on failure; every `cause` structured-clone-probed; exhaustive message dispatch. |
 | `worker/statement-cache.ts` | 85 | **Pure** — a per-worker LRU of prepared statements keyed by the exact SQL string. Prepares nothing, finalises nothing, imports nothing: `set`/`markUncacheable` return the handles their insertion evicted and `worker.ts` finalises them, so no handle can be dropped by omission. Unit-tested in Node against plain integers. |
 | `index.ts` | 17 | Re-exports. `types.ts` is exported **by name**, never `export *` — the wire-protocol types are internal. |
+
+**The read path retries once, and the discriminator is `sqliteCode` (2026-09-03).** A `BUSY`
+that SQLite itself reported carries a numeric code; the ones this library mints to mean "stop"
+— the `exclusiveConnection` guard, `deleteDatabase` — carry none and must keep failing fast.
+That is why the retry gates on the code and not on a VFS name. `stream()` and `chunk()` retry
+only before a row has been delivered, since a later retry would repeat rows. It exists for
+`OPFSCoopSyncVFS`'s handle-transfer protocol (`mem:vfs`, COOPSYNC-BUSY in `mem:measurements`);
+anything else that reports a lock conflict simply gets one free retry.
+
 
 `src/orchestrator.ts` is **deleted** and with it every `SharedArrayBuffer`. Do not look
 for it.

@@ -60,6 +60,22 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
+### `IDBBatchAtomicVFS`'s batch-atomic mode is undocumented, and a memory claimed otherwise
+
+Upstream makes the cache size **a requirement for triggering batch atomic mode**, not a tuning
+knob: without a cache large enough to hold the journal the VFS silently takes its slower path.
+Measured 2026-09-02: the default `cache_size` does miss it on a 5000-page transaction, on both
+engines, and raising the bound costs **zero bytes** until a workload uses it.
+
+**Nothing in the README says any of this.** `mem:vfs` asserted it was "a documented
+recommendation" and that was simply false — the table mentions `PRAGMA cache_size` for every
+VFS as a footprint bound, and nowhere ties it to this VFS's mode.
+
+What it needs is one line for consumers, in the README's voice: on `IDBBatchAtomicVFS`, a
+`cache_size` large enough to hold a transaction's pages is what keeps it in batch-atomic mode.
+**Not a default** — the measurement found no time saved by raising it, so this is information,
+not a recommendation to act on blindly.
+
 ### npm trusted publishing — it would remove the secret, but not all of it
 
 <https://docs.npmjs.com/trusted-publishers>. npm trusts GitHub Actions over OIDC
