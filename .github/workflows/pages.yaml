@@ -178,10 +178,26 @@ jobs:
       # with the triggering tag and BOTH claimed to be the published package,
       # `/preview/` included, in the one place the bench page's own comments say
       # a stranger cannot check.
+      # THE ASSEMBLER COMES FROM HERE, THE CONTENT FROM THE RELEASE. Without
+      # the copy this step runs the released tag's OWN assemble.mjs, which
+      # predates `--ref`/`--release` and falls back to the environment — and the
+      # environment says `preview`, because that is what triggered the run. The
+      # root then labels itself from the trigger: harmless while `IS_RELEASE`
+      # happens to be true (the badge never prints the ref in that branch), and
+      # a lie the moment a `delete` run makes REF_TYPE `branch`, when the real
+      # published release would show "development build".
+      #
+      # Only the script is swapped. The page HTML and `dist/` stay the
+      # release's, which is the whole point of building the root from its tag.
+      # Verified compatible: rc.4's page carries exactly the three placeholders
+      # this script substitutes, and assembling it here leaves none behind.
+      # The copy stops mattering once a release ships a script that takes the
+      # flags — it degrades to a no-op, never to a wrong label.
       - name: Build the root, from the release tag
         working-directory: release
         run: |
           set -euo pipefail
+          cp "$GITHUB_WORKSPACE/scripts/bench/assemble.mjs" scripts/bench/assemble.mjs
           pnpm install --frozen-lockfile
           pnpm build
           node scripts/bench/assemble.mjs "$GITHUB_WORKSPACE/_site" \
