@@ -12,7 +12,7 @@
 import type { SQLiteVFS } from './types';
 import { VFS_CAPABILITIES } from './types';
 
-/** The slice of the Web Locks API this module uses. */
+/** One entry in the lock registry as returned by `query()`. */
 type QueriedLock = { name?: string; mode?: string; clientId?: string };
 
 /** The slice of the Web Locks API this module uses. */

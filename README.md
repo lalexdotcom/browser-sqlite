@@ -292,9 +292,8 @@ from one that does not exist; `DATABASE_NOT_FOUND` is what says that.
 
 **Polling is on the call.** Nothing is kept between two calls, and there is no
 event to subscribe to. A call costs well under a tenth of a millisecond and makes no worker round
-trip; after the first call in a tab it takes no lock either — that one holds a
-shared lock momentarily to resolve this realm's id, then caches it for the
-tab's life. So polling cannot slow a query down —
+trip; the realm's id is resolved and cached once per tab, so subsequent calls
+take no lock. So polling cannot slow a query down —
 300–500 ms is a comfortable cadence. Do not stack calls: a background tab has
 its timers throttled, and an interval that fires without awaiting the previous
 answer will queue them up.

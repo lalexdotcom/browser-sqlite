@@ -54,6 +54,6 @@ describe('inspectDatabase write', () => {
 
     expect(seen?.write.tab).not.toBeNull();
     expect(seen?.write.sameTab).toBe(true);
-    expect(seen?.write.waiting).toBeGreaterThanOrEqual(1);
+    expect(seen?.write.waiting).toBe(1);
   });
 });
