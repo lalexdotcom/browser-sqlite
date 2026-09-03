@@ -241,6 +241,14 @@ instead.
   Five things bite, all of them silent:
   - **Order.** `assemble.mjs` opens with `rmSync(target, …)`, so the root must be assembled
     BEFORE the preview that sits inside it. The reverse deletes the preview.
+  - **The root's ASSEMBLER is copied in from the triggering checkout; only its content comes
+    from the release tag.** Otherwise the step runs the released tag's own `assemble.mjs`,
+    frozen at whatever shipped, which predates the flags and falls back to the environment —
+    and the environment names the TRIGGER. On 2026-09-03 that made the root label itself
+    `preview`; harmless only because the badge does not print the ref when `IS_RELEASE` is
+    true, and a lie the moment a `delete` run sets REF_TYPE to `branch` and the real release
+    shows "development build". The copy degrades to a no-op once a release ships a script
+    that takes the flags.
   - **The build label is passed to `assemble.mjs` as an ARGUMENT — `--ref` and `--release` —
     never through the environment.** Actions reposes the `GITHUB_*` variables for every step
     and IGNORES a step-level `env:` that tries to override them, so a run building a ref
