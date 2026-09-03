@@ -276,7 +276,12 @@ hold. Both resolve with the file, the VFS, the number of distinct tabs, the
 roster, and the state of the write lock.
 
 `inspectDatabase` returns `clients`; `db.inspect()` splits the same list into
-`self` and `siblings`, and `self` is `null` once the client has been closed.
+`self` and `siblings`. `self` is `null` when this client's own marker is not in
+the snapshot — the brief window before its Web Locks grant has landed, or when
+the grant could not be taken at all. After `close()`, `db.inspect()` throws
+`CLIENT_CLOSED` like every other method on the client; `inspectDatabase({ file,
+vfs })` is the way to ask the same question afterwards, which is what `db.file`
+and `db.vfs` exist for.
 
 **"Tab" means realm.** A same-origin iframe in your own page is a different
 tab here: it has its own `clientId`, so `sameTab` is `false` for it.
