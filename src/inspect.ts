@@ -87,8 +87,11 @@ export type DatabaseInspection = InspectionBase & {
 /**
  * The census, given locks that are already known to work.
  *
- * ONE `entries()` call answers everything, so the roster, the writer and the
- * queue describe the same instant. Two calls would give three truths.
+ * One `entries()` call supplies the roster, the writer and the queue together,
+ * so those three always describe the same instant and cannot compose a state
+ * that never existed. The one exception: a realm whose id has never been
+ * resolved and that was given no marker pays one extra query to read its own
+ * `clientId` back — once, and never again for that realm's lifetime.
  */
 export const inspectWith = async (
   locks: Locks,
