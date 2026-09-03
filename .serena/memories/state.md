@@ -73,18 +73,19 @@ one machine and one build; slower CI hardware may still surface timing the campa
 None outstanding. **The next thing is rc.5's remaining scope, which is the user's to pick from
 `mem:follow-ups`.**
 
-## rc.5 so far: five lots, merged 2026-09-02
+## rc.5 so far: six lots, merged 2026-09-02 and 2026-09-03
 
 Three branches, each merged into `main` with `--no-ff` and verified on the merged result; all are
 deleted and no stale ref remains. Lots 1-3 rode one branch — the user judged them three faces of one
-feature and accepted a larger whole-branch review for it; lots 4 and 5 each had their own. Each was verified
+feature and accepted a larger whole-branch review for it; lot 4 had its own, and lots 5 and 6 shared
+one. Each was verified
 against the baseline table above, which is the only place that table lives.
 
 **Not pushed.** `main` sits ahead of `origin/main`, which is normal here.
 
 **Read the specs, not a summary** — lots 1-4 have one each in `docs/superpowers/specs/`, dated
-2026-08-31 and 2026-09-02, and three carry amendments made during implementation. **Lot 5 has no
-spec**: bounded, brainstormed in chat, and its whole case is the measurement campaign in
+2026-08-31 and 2026-09-02, and three carry amendments made during implementation. **Lots 5 and 6 have no
+spec**: bounded, brainstormed in chat, and their whole case is the measurement campaigns in
 `mem:measurements`.
 
 1. **Cross-tab coordination.** Writes serialize across every client and tab; read-your-own-writes
@@ -102,6 +103,11 @@ spec**: bounded, brainstormed in chat, and its whole case is the measurement cam
    `locking_mode=exclusive` + `journal_mode=wal`, ~4.7x on write-transaction overhead, measured.
    **Consumer pragmas are MERGED over the defaults, not substituted**, so setting `foreign_keys`
    no longer costs a default nobody knew was there; naming a key is how one is refused.
+6. **COOPSYNC-BUSY fixed.** A read reported busy by SQLite is retried once, closing a defect
+   where `OPFSCoopSyncVFS` surfaced a step of its own handle-transfer protocol as a failure —
+   one ordinary read per session, early, **on both engines at the default `poolSize`**. The
+   discriminator is `sqliteCode`, not a VFS name, so a `BUSY` this library raises to mean
+   "stop" still fails fast. `stream()` and `chunk()` retry only before a row has been delivered.
 
 **Three consumer-visible behaviour changes, all from lots 1-3 and all in `CHANGELOG.md` under
 Breaking:** two clients
