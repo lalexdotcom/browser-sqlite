@@ -570,11 +570,20 @@ export const createSQLiteClient = (
     ? clientMarkerName(vfs, dbFile, clientUuid, clientName)
     : undefined;
   let markerRelease: (() => void) | undefined;
+  // Unlike `connLockPromise`, this acquisition is NOT awaited in `close()` —
+  // the marker must never participate in the close path's timing. Instead, a
+  // flag lets a grant that lands after `close()` self-release immediately.
+  let markerClosed = false;
   if (markerName !== undefined) {
     void locks
       .hold(markerName, { mode: 'shared' })
       .then((release) => {
-        markerRelease = release;
+        if (markerClosed) {
+          // `close()` already ran; release immediately so no phantom appears.
+          release();
+        } else {
+          markerRelease = release;
+        }
       })
       .catch(() => {
         // A marker that cannot be taken costs observability, never correctness:
@@ -1080,6 +1089,7 @@ export const createSQLiteClient = (
       // `close()` is called before the first query ever ran (lock in flight).
       if (connLockPromise !== undefined) await connLockPromise;
       connRelease?.();
+      markerClosed = true;
       markerRelease?.();
       // Yield one event-loop turn so the browser's lock manager processes the
       // release before `close()` resolves. Without this, a new client

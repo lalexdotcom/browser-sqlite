@@ -61,6 +61,21 @@ describe('the client liveness marker', () => {
     expect(held.some((e) => e.name.startsWith('bsq:client:'))).toBe(false);
   });
 
+  it('releases the marker when close() races the acquisition', async () => {
+    const file = 'marker-race.db';
+    onTestFinished(async () => {
+      await deleteDatabase(file, { vfs: VFS }).catch(() => {});
+    });
+
+    // Close immediately — no query, so the marker grant may not have landed
+    // in `markerRelease` yet when `close()` runs.
+    const db = createSQLiteClient(file, { vfs: VFS });
+    await db.close();
+
+    // The grant that lands after close() must self-release, not leak.
+    expect(await markersFor(file)).toHaveLength(0);
+  });
+
   it('does not change what deleteDatabase reports', async () => {
     const file = 'marker-delete.db';
     const db = createSQLiteClient(file, { vfs: VFS });
