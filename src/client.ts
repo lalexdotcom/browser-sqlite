@@ -8,7 +8,11 @@ import {
 import { createClientDebug } from './debug';
 import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
 import { SQLiteError } from './errors';
-import { type ClientInspection, inspectWith } from './inspect';
+import {
+  type ClientInspection,
+  inspectWith,
+  libraryClientsHold,
+} from './inspect';
 import {
   clientMarkerName,
   connectionLockName,
@@ -81,6 +85,27 @@ const DEFAULT_STATEMENT_CACHE_SIZE = 32;
  * (+19 % Chromium, +110 % Firefox, measured 2026-09-02).
  */
 const DEFAULT_STATEMENT_CACHE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * The second sentence of an `openTimeout` failure, chosen by the roster.
+ *
+ * `undefined` — the roster could not be read — keeps the sentence this error
+ * has always carried: a guess, but the same guess as before, and never a claim
+ * about a registry nobody managed to query.
+ *
+ * `false` says no client of THIS library holds the database, which is not the
+ * same as nobody: a dead context, another library or native code hold nothing
+ * this registry can see. The message must not promise more than that.
+ */
+const openTimeoutCause = (held: boolean | undefined): string => {
+  if (held === undefined) {
+    return 'The database may be held under an exclusive lock by another tab or another client.';
+  }
+  if (held) {
+    return 'Other clients of this library still hold the database.';
+  }
+  return 'No client of this library holds it — a page reloaded without close(), or a holder outside this library, is the likely cause.';
+};
 
 /**
  * Configuration options for creating a SQLite client.
@@ -1131,15 +1156,38 @@ export const createSQLiteClient = (
     // comes back, nothing restarts, nothing fails, and the pool is empty and
     // silent for the rest of the client's life.
     supervisor.report(index, 'spawned');
+    // The verdict is no longer decided in the same turn as the expiry: reading
+    // the roster puts up to `libraryClientsHold`'s bound between the timer
+    // firing and `handleDeath`, and a slot CAN settle inside that window. It
+    // was atomic before — `clearTimeout` in the `.finally` below could only
+    // lose the race by never running. Reporting the death of a worker that
+    // became ready meanwhile would terminate a live worker and leave the
+    // supervisor holding `ready` for a slot the pool no longer has; during
+    // startup it would also put the slot back into `startupLosses`, which
+    // `spawn`'s `.then` had just cleared, and `onGateOpen` would report it
+    // permanently lost.
+    //
+    // Nothing in the suite reproduces the window: it needs a worker that opens
+    // between `openTimeout` and `openTimeout + 250 ms`, which no test can time.
+    let settled = false;
     const timer = setTimeout(() => {
-      handleDeath(
-        index,
-        new SQLiteError(
-          'TIMEOUT',
-          `Worker ${index + 1} did not become ready within ${openTimeout} ms. ` +
-            `The database may be held under an exclusive lock by another tab or another client.`,
-        ),
-      );
+      // The roster is read BEFORE the death is reported, because the message is
+      // all the consumer ever sees — a sentence appended afterwards would
+      // arrive after the error had been thrown. `libraryClientsHold` takes no
+      // lock, touches nothing this client owns, never throws and is bounded, so
+      // the report is delayed by at most that bound after a wait of
+      // `openTimeout`.
+      void libraryClientsHold(locks, dbFile, vfs, clientUuid).then((held) => {
+        if (settled) return;
+        handleDeath(
+          index,
+          new SQLiteError(
+            'TIMEOUT',
+            `Worker ${index + 1} did not become ready within ${openTimeout} ms. ` +
+              openTimeoutCause(held),
+          ),
+        );
+      });
     }, openTimeout);
 
     void createPoolWorker({
@@ -1173,7 +1221,13 @@ export const createSQLiteClient = (
       .catch(() => {
         // The rejection is the death already reported through onDeath.
       })
-      .finally(() => clearTimeout(timer));
+      .finally(() => {
+        // Both outcomes settle the slot: a worker that opened is alive, and one
+        // that died has already been reported through `onDeath`. Either way the
+        // timer's verdict is stale.
+        settled = true;
+        clearTimeout(timer);
+      });
   };
 
   /**

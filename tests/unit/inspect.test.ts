@@ -1,5 +1,9 @@
 import { describe, expect, it } from '@rstest/core';
-import { inspectDatabase, inspectWith } from '../../src/inspect';
+import {
+  inspectDatabase,
+  inspectWith,
+  libraryClientsHold,
+} from '../../src/inspect';
 import { clientMarkerName, type Locks, noOpLocks } from '../../src/locks';
 
 const ID_A = '0189d4a2-4f3c-7b1e-9c8a-2f5b6d7e8a90';
@@ -126,5 +130,88 @@ describe('inspectDatabase degenerate cases', () => {
         delete (nav as unknown as Record<string, unknown>).locks;
       }
     }
+  });
+});
+
+describe('libraryClientsHold', () => {
+  const marker = (id: string, file = 'app.db') =>
+    clientMarkerName('OPFSAdaptiveVFS', file, id, 'SQLite 1');
+
+  it('reports true when another client of this library holds the file', async () => {
+    const locks = stubLocks([
+      { name: marker(ID_A), clientId: 'r1' },
+      { name: marker(ID_B), clientId: 'r2' },
+    ]);
+    await expect(
+      libraryClientsHold(locks, 'app.db', 'OPFSAdaptiveVFS', ID_A),
+    ).resolves.toBe(true);
+  });
+
+  it('reports true across the opfs-path family, which shares one file', async () => {
+    // Four VFS collapse to the `opfs` namespace and therefore to one file. A
+    // client that opened it through another of them is a holder, and the
+    // timeout message would be wrong to say no client of this library has it.
+    const locks = stubLocks([
+      {
+        name: clientMarkerName('OPFSCoopSyncVFS', 'app.db', ID_B, 'SQLite 1'),
+        clientId: 'r2',
+      },
+    ]);
+    await expect(
+      libraryClientsHold(locks, 'app.db', 'OPFSAdaptiveVFS', ID_A),
+    ).resolves.toBe(true);
+  });
+
+  it('reports false when the only marker held is our own', async () => {
+    const locks = stubLocks([{ name: marker(ID_A), clientId: 'r1' }]);
+    await expect(
+      libraryClientsHold(locks, 'app.db', 'OPFSAdaptiveVFS', ID_A),
+    ).resolves.toBe(false);
+  });
+
+  it('reports false when the markers held name another database', async () => {
+    const locks = stubLocks([
+      { name: marker(ID_B, 'other.db'), clientId: 'r2' },
+    ]);
+    await expect(
+      libraryClientsHold(locks, 'app.db', 'OPFSAdaptiveVFS', ID_A),
+    ).resolves.toBe(false);
+  });
+
+  it('reports undefined where Web Locks is unavailable', async () => {
+    await expect(
+      libraryClientsHold(noOpLocks, 'app.db', 'OPFSAdaptiveVFS', ID_A),
+    ).resolves.toBeUndefined();
+  });
+
+  it('reports undefined for a VFS that keeps its pages in the worker', async () => {
+    const locks = stubLocks([{ name: marker(ID_B), clientId: 'r2' }]);
+    await expect(
+      libraryClientsHold(locks, 'app.db', 'MemoryVFS', ID_A),
+    ).resolves.toBeUndefined();
+  });
+
+  it('reports undefined when the registry rejects', async () => {
+    const locks = {
+      ...noOpLocks,
+      available: true,
+      entries: async () => {
+        throw new Error('registry unavailable');
+      },
+    } as Locks;
+    await expect(
+      libraryClientsHold(locks, 'app.db', 'OPFSAdaptiveVFS', ID_A),
+    ).resolves.toBeUndefined();
+  });
+
+  it('reports undefined when the registry never answers', async () => {
+    const locks = {
+      ...noOpLocks,
+      available: true,
+      entries: () => new Promise<never>(() => {}),
+    } as Locks;
+    await expect(
+      libraryClientsHold(locks, 'app.db', 'OPFSAdaptiveVFS', ID_A, 10),
+    ).resolves.toBeUndefined();
   });
 });
