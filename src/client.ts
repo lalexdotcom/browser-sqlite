@@ -9,6 +9,7 @@ import { createClientDebug } from './debug';
 import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
 import { SQLiteError } from './errors';
 import {
+  clientMarkerName,
   connectionLockName,
   createLocks,
   sharesStorage,
@@ -301,6 +302,9 @@ export const createSQLiteClient = (
   const clientIndex = ++clientCount;
 
   const clientName = `${clientOptions.name ?? 'SQLite'} ${clientIndex}`;
+  // Identity for the roster: `clientName` is a label two tabs can both produce,
+  // this is what tells two clients apart across the origin.
+  const clientUuid = crypto.randomUUID();
 
   const poolSize = clientOptions.poolSize ?? DEFAULT_POOL_SIZE;
   const pool: (PoolWorker | undefined)[] = [];
@@ -557,6 +561,26 @@ export const createSQLiteClient = (
         connRelease = release;
       })
     : undefined;
+  /**
+   * The roster marker: a liveness lock nobody contends, released by the browser
+   * if this tab dies without closing. `undefined` on the memory VFS, on the
+   * same condition as `bsq:conn` — two clients there are two databases.
+   */
+  const markerName: string | undefined = sharesStorage(vfs)
+    ? clientMarkerName(vfs, dbFile, clientUuid, clientName)
+    : undefined;
+  let markerRelease: (() => void) | undefined;
+  if (markerName !== undefined) {
+    void locks
+      .hold(markerName, { mode: 'shared' })
+      .then((release) => {
+        markerRelease = release;
+      })
+      .catch(() => {
+        // A marker that cannot be taken costs observability, never correctness:
+        // occupancy is `bsq:conn`'s job. Never fail an open over it.
+      });
+  }
   /**
    * The in-flight epoch publication, awaited before the write lock is handed
    * back. Task 6 assigns it; until then it is always already settled.
@@ -1056,6 +1080,7 @@ export const createSQLiteClient = (
       // `close()` is called before the first query ever ran (lock in flight).
       if (connLockPromise !== undefined) await connLockPromise;
       connRelease?.();
+      markerRelease?.();
       // Yield one event-loop turn so the browser's lock manager processes the
       // release before `close()` resolves. Without this, a new client
       // constructed immediately after `await a.close()` may try its
