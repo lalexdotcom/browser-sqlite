@@ -7,6 +7,9 @@
  * `DATABASE_NOT_FOUND` is raised only by `deleteDatabase`: there is nothing at
  * that name to delete. `createSQLiteClient` creates what is absent, so it has
  * no such case.
+ * `UNSUPPORTED` means the platform cannot answer the question — raised by
+ * `inspectDatabase` where Web Locks is missing, because reporting zero clients
+ * there would be indistinguishable from a database nobody holds.
  */
 export type SQLiteErrorCode =
   | 'NOT_A_READ_QUERY'
@@ -21,7 +24,8 @@ export type SQLiteErrorCode =
   | 'BUSY'
   | 'DATABASE_IN_USE'
   | 'DATABASE_NOT_FOUND'
-  | 'READ_ONLY_TRANSACTION';
+  | 'READ_ONLY_TRANSACTION'
+  | 'UNSUPPORTED';
 
 export class SQLiteError extends Error {
   readonly code: SQLiteErrorCode;
