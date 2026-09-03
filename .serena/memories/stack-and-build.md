@@ -224,13 +224,16 @@ instead.
     leaves its preview up until the next release. `main` must stay allowed for deletion to
     work.
 
-  **A reusable workflow runs at the caller's ref**, and `workflow_dispatch` is only offered
-  for workflows present on the default branch — that cost an hour to discover, and it means
-  a change to this file must reach `main` before any trigger can use it.
+  **Which workflow FILE runs differs by trigger**, and it bites once: a `push` runs the file
+  as it exists at the pushed commit, so tagging a commit that predates a change to this file
+  fires nothing. `delete` reads the default branch; `workflow_call` runs at the caller's ref.
+  There is no `workflow_dispatch` — removed on the user's instruction, 2026-09-03, since
+  re-pushing the tag unchanged is already the republish.
 
-  The `github-pages` environment's own ref list is what gates all of this; it allowed
-  `main`, `v*` and `feat/*` as of 2026-09-03 and the user was changing it. Check
-  *Settings → Environments → github-pages* rather than trusting this line.
+  **The `github-pages` environment allows `main`, the `v*` tags and the `preview` tag**
+  (user, 2026-09-03). `main` is there for one reason and it is not obvious: `delete` runs
+  from the default branch, so without it a deleted `preview` tag could not take its preview
+  down. `feat/*` was dropped — no branch deploys any more.
 - Local `pre-commit` (simple-git-hooks): `lint-staged` + `pnpm test` + `tsc --noEmit`.
   Heavy and bypassable with `--no-verify`; CI is the real gate.
 - `tsconfig.build.json` (`include: ["src"]`, `rootDir: "src"`) drives declaration

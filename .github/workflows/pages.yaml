@@ -15,7 +15,8 @@ name: pages
 #
 #   git tag -f preview && git push -f origin preview
 #
-# Want it gone? Delete the tag. Both republish the site.
+# Want it gone? Delete the tag. Both republish the site, and there is no manual
+# trigger: re-pushing the tag unchanged is the republish.
 #
 # `deploy-pages` publishes an artifact that REPLACES the whole site, which is
 # why both halves are rebuilt on every run rather than one being patched in.
@@ -33,9 +34,12 @@ on:
   # new tag, but that is not what makes the root correct: `gh release view`
   # already returns the release this run just created.
   workflow_call:
-  # Republish. It rebuilds from the same two tags, so it changes nothing unless
-  # a tag moved — which is exactly what makes it safe to press.
-  workflow_dispatch:
+  # Moving the tag is the whole gesture, and re-pushing it unchanged is also
+  # how you republish — there is no manual dispatch. WHICH WORKFLOW FILE RUNS
+  # DIFFERS BY TRIGGER, and it bites once: a `push` runs the file as it exists
+  # AT THE PUSHED COMMIT, so tagging a commit that predates this file fires
+  # nothing at all. `delete` and `workflow_call` read the default branch and
+  # the caller's ref respectively.
   push:
     tags:
       - preview
