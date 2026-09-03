@@ -210,11 +210,16 @@ instead.
   push of `preview`, and `delete`. **`push` does NOT fire for a deleted ref** — `delete` is
   the event for that, it carries no ref filter, hence a job-level guard.
 
-  **Every release of this project is a GitHub PRERELEASE, and "latest release" excludes
-  those.** `gh release view` and `GET /releases/latest` both answer "release not found" here —
-  that is how the first preview run failed, on 2026-09-03. The root is resolved from
-  `GET /releases?per_page=20`, newest first, drafts filtered out. It stops being a trap the
-  day a stable version ships, and until then it is the whole reason the site has a root.
+  **The root resolves `/releases/latest` FIRST and falls back to the list, and that order is
+  load-bearing.** `latest` is the release GitHub designates and the one npm's `latest`
+  dist-tag follows — which is what the page's badge claims the root to be. The list alone
+  would put the root on the newest rc once a stable version exists, while
+  `npm i browser-sqlite` still served the stable one, and the badge would be a lie.
+  But **every release cut so far is a PRERELEASE and `latest` excludes those**, so it answers
+  404 today: `gh release view` and `GET /releases/latest` both said "release not found", which
+  is how the first preview run failed on 2026-09-03. Hence the fallback to
+  `GET /releases?per_page=20`, newest first, drafts filtered out. The fallback stops being the
+  live path the day a stable version ships.
 
   Four things bite, all of them silent:
   - **Order.** `assemble.mjs` opens with `rmSync(target, …)`, so the root must be assembled

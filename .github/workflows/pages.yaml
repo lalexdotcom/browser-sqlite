@@ -88,15 +88,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # NOT `gh release view`, and not `/releases/latest`: GitHub's "latest
-          # release" EXCLUDES prereleases, and every release this project has
-          # ever cut is one — rc.3, rc.4, and every rc to come. Both forms
-          # return "release not found" here, which is how the first preview run
-          # failed. The list endpoint returns newest first and includes
-          # prereleases; drafts are filtered out explicitly because the
-          # workflow token can see them.
-          RELEASE=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=20" \
-            --jq '[.[] | select(.draft == false)][0].tag_name')
+          # `/releases/latest` FIRST, and the list only as a fallback — the two
+          # answer different questions and the order matters later.
+          #
+          # `latest` is the release GitHub designates, and it is what npm's
+          # `latest` dist-tag will follow. The page's badge claims the root IS
+          # "the published package", so that is the one to honour: once a stable
+          # 1.0.0 ships and an rc.6 follows it, the LIST would put the root on
+          # the rc while `npm i browser-sqlite` still gives the stable, and the
+          # badge would be a lie.
+          #
+          # But `latest` EXCLUDES prereleases, and every release this project
+          # has cut so far is one — rc.3, rc.4. It answers 404 today, which is
+          # how the first preview run failed with "release not found". So the
+          # fallback takes the newest published release whatever its kind,
+          # drafts filtered out because the workflow token can see them. The
+          # fallback stops being the live path the day a stable version ships.
+          RELEASE=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)
+          if [ -z "$RELEASE" ] || [ "$RELEASE" = "null" ]; then
+            RELEASE=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=20" \
+              --jq '[.[] | select(.draft == false)][0].tag_name')
+            echo "No designated latest release — falling back to the newest published"
+          fi
           if [ -z "$RELEASE" ] || [ "$RELEASE" = "null" ]; then
             echo "::error::no published release to build the site root from"
             exit 1
