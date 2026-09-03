@@ -193,7 +193,7 @@ export type CreateSQLiteClientOptions = {
   /**
    * Turns on the introspection subsystem exposed as `db.debug`, and the
    * lifecycle log. A string is used as the log prefix; `true` falls back to the
-   * client prefix (`"<name> <index>"`), which already names the workers.
+   * client name (`"<name> <index>"`), which already names the workers.
    *
    * @defaultValue undefined — no collection, no output, `db.debug` undefined.
    */

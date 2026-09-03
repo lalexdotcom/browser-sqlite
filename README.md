@@ -268,6 +268,37 @@ Throws `SQLiteError` with code `DATABASE_IN_USE` when a client still holds the d
 | `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite build to load. It does not affect where the database lives — only which builds can instantiate the VFS. |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Same meaning as on [`createSQLiteClient`](#options). A deployment that needs it to open a database needs it to delete one. |
 
+### Inspecting a database
+
+`inspectDatabase({ file, vfs })` reports who is live on a database **without
+opening it**, and `db.inspect()` answers the same from a client you already
+hold. Both resolve with the file, the VFS, the number of distinct tabs, the
+roster, and the state of the write lock.
+
+`inspectDatabase` returns `clients`; `db.inspect()` splits the same list into
+`self` and `siblings`, and `self` is `null` once the client has been closed.
+
+**"Tab" means realm.** A same-origin iframe in your own page is a different
+tab here: it has its own `clientId`, so `sameTab` is `false` for it.
+
+**A snapshot, never a permission.** It is stale the instant it resolves. An
+empty roster does not mean a database can be deleted — a tab may open between
+the two calls, and `deleteDatabase` raising `DATABASE_IN_USE` remains the only
+authority. An empty roster also does not distinguish a database nobody holds
+from one that does not exist; `DATABASE_NOT_FOUND` is what says that.
+
+**Polling is on the call.** Nothing is kept between two calls, and there is no
+event to subscribe to. A call costs well under a tenth of a millisecond, takes
+no lock and makes no worker round trip, so polling cannot slow a query down —
+300–500 ms is a comfortable cadence. Do not stack calls: a background tab has
+its timers throttled, and an interval that fires without awaiting the previous
+answer will queue them up.
+
+`MemoryVFS` and `MemoryAsyncVFS` throw `INVALID_OPTION`: their pages live in
+the worker that opened them, so two clients are two databases and there is
+nothing to share. Where the Web Locks API is missing, both throw
+`UNSUPPORTED` rather than report zero.
+
 ## Options
 
 | Option | Type | Default | Description |
@@ -280,7 +311,7 @@ Throws `SQLiteError` with code `DATABASE_IN_USE` when a client still holds the d
 | `maxWorkerRestarts` | `number` | `1` | How many times a slot may be restarted after it dies. The counter resets once a replacement has actually served a request. A slot that fails to open is retried once, but only if another worker did open — when none did, the failure is a configuration error and the client fails immediately rather than retrying. |
 | `openTimeout` | `number` (ms) | `30_000` | How long a worker has to post `ready` after `open` is sent. On expiry the slot is failed — the most common cause is a database held under an exclusive lock by another tab. |
 | `drainTimeout` | `number` (ms) | `60_000` | How long the drain loop may run in the query generator's `finally` before the worker is presumed dead and the crash path is invoked. |
-| `debug` | `string \| boolean` | `undefined` | Enables lifecycle logging. A string value is used as the log prefix; `true` falls back to the client prefix (e.g. `"SQLite 1"`). Only lifecycle events are logged — worker created, ready, open-error, crash, restart, worker lost, close, and skipped staging sweep. No line per query. Off by default, with one exception: a permanently lost worker always warns, because a pool quietly smaller than `poolSize` is not something to discover later. When enabled, `db.debug` also exposes a live introspection state tree for query throughput and worker status. |
+| `debug` | `string \| boolean` | `undefined` | Enables lifecycle logging. A string value is used as the log prefix; `true` falls back to the client name (e.g. `"SQLite 1"`). Only lifecycle events are logged — worker created, ready, open-error, crash, restart, worker lost, close, and skipped staging sweep. No line per query. Off by default, with one exception: a permanently lost worker always warns, because a pool quietly smaller than `poolSize` is not something to discover later. When enabled, `db.debug` also exposes a live introspection state tree for query throughput and worker status. |
 | `onWorkerLost` | `(event: WorkerLostEvent) => void` | `undefined` | Called when a worker is lost for good, with the slot index, how many workers are left, the requested `poolSize`, and the error. Fires before the client fails if it was the last one. A throwing callback is caught and warned about; it cannot break the pool. |
 
 ## Browser support
@@ -442,6 +473,7 @@ Errors raised by this library are instances of `SQLiteError`, exported from the 
 | `BUSY` | A transient conflict, worth retrying. Either SQLite reported a lock conflict — `SQLITE_BUSY` or `SQLITE_LOCKED`, with the numeric code on `sqliteCode` — or a database was being opened or deleted elsewhere at that moment. **A read that SQLite reported busy is retried once for you**; if it reaches you, the retry failed too. Writes are never retried, and neither is a `BUSY` without a `sqliteCode`. |
 | `DATABASE_IN_USE` | A client still holds the database, in this tab or another. Retrying will not help: close every client on it first. Raised by `deleteDatabase`, and by any method on a second client where the VFS supports one connection at a time. |
 | `DATABASE_NOT_FOUND` | There is nothing at that name to delete. Raised by `deleteDatabase` alone — `createSQLiteClient` creates a database that is absent, so it has no such case. The likeliest cause is a `vfs` that is not the one the database was created with. |
+| `UNSUPPORTED` | The platform cannot answer. Raised by `inspectDatabase` and `db.inspect()` where the Web Locks API is unavailable — reporting zero clients there would be indistinguishable from a database nobody holds. |
 | `READ_ONLY_TRANSACTION` | raised when a write statement, `bulkWrite()` or `output()` is used inside a transaction opened with `readOnly: true`. |
 
 ```typescript
