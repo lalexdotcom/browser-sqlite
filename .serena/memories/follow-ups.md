@@ -48,42 +48,28 @@ measured numbers are the whole case, and they do not justify adding a handshake 
 path — the path GATE-1 and three abort defects were paid for. Reviving it needs no new
 measurement, only that table.
 
-### A default `busy_timeout` — never decided, and now the only half left
+### CoopSync returns `SQLITE_BUSY` as a protocol step, and nobody retries it
 
-The PRAGMA-defaults half of this subject shipped on 2026-09-02 (`mem:vfs`, `mem:history`).
-`busy_timeout` did not, and it is not covered by that work: it is neither a journal nor a
-durability pragma, and no per-VFS default touches it.
+**Not a `busy_timeout` subject — that one is closed** (`mem:vfs`: under our lock policy the
+only BUSY-returning transition is already serialized by rc.5's write lock, and a busy handler
+would sleep in a synchronous VFS). The question here is narrower and it is ours:
+**should the library retry a `BUSY` from a VFS whose own author says the caller must retry?**
 
-**Where it came from.** The external assessment of 2026-08-17 raised it under Robustness —
-*"No `busy_timeout` and no `SQLITE_BUSY` retry. Each pool worker opens its own connection to
-the same file; legitimate lock collisions surface as raw errors."* The ryow-barrier design
-routed it to *the perf list* as a separate decision, and the perf list was closed by name in
-`feat/perf-measure` without touching it. **A subject routed to a list that is later closed by
-name is a subject nobody closed** — it took a session to notice.
+`OPFSCoopSyncVFS.jLock` returns `SQLITE_BUSY` whenever `isRequestInProgress` — a handle
+transfer is in flight — and expects the caller to come back. It does **not** extend
+`WebLocksMixin`, so `lockPolicy` is silently ignored and `lockTimeout` cannot reach it either.
+Nothing in this library retries, so a step of the VFS's own transfer protocol arrives at the
+consumer as an error.
 
-**rc.5 answered half of it by another mechanism.** Writes serialize across every client and
-tab through an origin-wide Web Lock, so the writer-against-writer `BUSY` is gone. What
-survives is a **reader against a writer**, and it is structural rather than fixable by a
-default: `journal_mode=DELETE` is permanent on almost every VFS here, because no VFS
-implements `xShmMap`. WAL is not the escape it would be on a filesystem.
+**The reproducer is known and is in reach:** OPFS + `poolSize > 1` outside Chromium — which
+`mem:vfs` records as precisely the combination that fails, and Firefox is a CI gate here.
+**Reproduce it before designing anything**: this entry has never been observed, only read.
 
-**Not the same subject as the entry below.** `OPFSCoopSyncVFS`'s `SQLITE_BUSY` is a step of
-the VFS's own handle-transfer protocol, not a lock collision. One setting reaches both; they
-fail for different reasons and the deadlock risk is only on that one.
-
-### CoopSync turns a protocol step into a failure — `busy_timeout` is option A
-
-`OPFSCoopSyncVFS`'s `jLock` returns `SQLITE_BUSY` while a handle request is in flight and
-expects a retry; no `busy_timeout` is applied anywhere, so the library surfaces a step of
-the VFS's own transfer protocol as a user-visible error (`mem:vfs`).
-
-**The risk to measure, not deduce:** SQLite's busy handler sleeps, and in a synchronous
-VFS inside a worker it may block the very thread that owes the handle release — turning a
-failure into a deadlock.
-
-**A `busy_timeout` reaches this and the PRAGMA-defaults entry above through the same
-setting, and they are not the same problem.** This `SQLITE_BUSY` is not a lock collision, so
-no default answers it and the entry above cannot close this one.
+**What a design has to answer.** Where a retry belongs (the worker's query loop sees the code;
+the scheduler sees the lease), how many times and for how long before it becomes a hang the
+consumer cannot see, and how it stays distinguishable from the `BUSY` that `deleteDatabase`
+and the `exclusiveConnection` guard raise deliberately — those two mean "stop", this one means
+"again".
 
 ### A timed flush — out of rc.4 (user, 2026-08-27)
 

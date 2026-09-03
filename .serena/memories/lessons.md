@@ -336,3 +336,25 @@ pipeline.
 **The tell:** if your poll cannot distinguish "not finished yet" from "will never
 happen", it is the wrong poll. A run's `conclusion` distinguishes them; a
 registry listing does not.
+
+## A subject routed to a list is a subject nobody owns — 2026-09-03
+
+**What happened:** the ryow-barrier design deferred "a default `busy_timeout`" by
+writing "perf list" in its out-of-scope table. Nothing was created. Ten days later
+`feat/perf-measure` closed *the performance backlog* by name, deciding two items it
+could see and never learning this one existed. On 2026-09-02 the subject was
+rediscovered from the original external assessment, reopened in `mem:follow-ups` as
+though it had been forgotten — and it had, but not by anyone who could have known.
+
+**Then it got worse before it got better.** The reopened entry was written without
+reading `mem:vfs`, which already held the decision on the PRAGMA half. So a closed
+decision was reopened, argued for a turn, and had to be closed again.
+
+**What to do instead:** a deferral names a destination that EXISTS. An entry in
+`mem:follow-ups`, or a line in a spec's own §Deferred that the closing branch will
+read. "The perf list", "the backlog", "later" are not destinations — nothing can be
+handed to them and nothing can be checked against them.
+
+**The tell:** if closing a list would not surface the item, the item is not on the
+list. And before reopening anything, grep every memory, not the two that seem
+relevant — the decision that made the reopening wrong was one file away.

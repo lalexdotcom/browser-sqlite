@@ -20,6 +20,24 @@ Numbers live in `mem:measurements`.
   upstream's recommendation in rhashimoto/wa-sqlite#302 for exactly our shape. It reaches
   `WebLocksMixin`. **`OPFSCoopSyncVFS` does not extend `WebLocksMixin`** — it implements
   `jLock`/`jUnlock` itself and silently ignores the option.
+- **Under `lockPolicy: 'shared'`, exactly one lock transition can return
+  `SQLITE_BUSY` (read from `WebLocksMixin`, 2026-09-03).** A reader taking SHARED
+  acquires `gate` then `access` **without `ifAvailable`**, and `lockTimeout` is left at its
+  default `Infinity` — so a reader meeting a writer **waits**; it never fails. A writer going
+  RESERVED → EXCLUSIVE also waits. The one polling acquisition is SHARED → RESERVED
+  (`POLL_EXCLUSIVE`), which returns `SQLITE_BUSY` when another connection already holds
+  RESERVED — two would-be writers, and upstream's comment there says the loser "must retry".
+  **rc.5's origin-wide write lock closes that path**: writers are serialized across every
+  client and tab, so two connections cannot both be in that transition. Hence **a default
+  `busy_timeout` has no path to act on for the eight VFS that use the mixin**, and it was
+  dropped for that reason rather than on taste. `OPFSCoopSyncVFS` does not extend the mixin
+  and none of this applies to it.
+
+  Upstream also exposes **`lockTimeout`** beside `lockPolicy` — it aborts the Web Lock request
+  through an `AbortController`, so the waiting happens at the locks layer, asynchronously,
+  instead of in SQLite's *sleeping* busy handler. We do not set it. It converts an indefinite
+  wait into an error, which is a different product question, adjacent to `openTimeout`.
+
 - **`poolSize` multiplies the footprint whatever the VFS**, since every worker holds its
   own page cache. Default `poolSize` is 2.
 - **Journal mode and durability are not ours to default — with exactly one exception
