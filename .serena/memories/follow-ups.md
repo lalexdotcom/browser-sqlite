@@ -69,7 +69,7 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
-## Defects to fix — the benchmark page (2026-09-03)
+## Defects to fix (2026-09-03)
 
 ### BENCH-SWEEP — the page hangs on `cleaning…`, because the sweep has no deadline
 
@@ -116,6 +116,40 @@ Unmeasured ground). A run that inventoried the root in its export would close th
 is the same inventory the sweep already walks.
 
 The user has said they want to retouch this page anyway; this is the list to bring.
+
+### OPEN-TIMEOUT names a cause that is often false, and the roster can now tell
+
+**The message.** `src/client.ts:1139` — on `openTimeout` expiry a slot fails with
+
+> `Worker N did not become ready within 30000 ms. The database may be held under an
+> exclusive lock by another tab or another client.`
+
+**It is misleading in the case that actually happens.** Observed 2026-09-03 on iPadOS Safari
+27: a page was RELOADED without `close()`, the previous context's IndexedDB connection was
+still held, and the next page's opens burned their full 30 s. No other tab, no other client —
+the holder was a dead context. A user reading that message goes looking for a second tab that
+does not exist. The README now documents the trap under `client.close`; the error still points
+the wrong way.
+
+**The discriminator exists since rc.5 and did not before.** Every live client holds
+`bsq:client:<ns>:<file>:…`, and `inspectWith` reads the roster from one
+`navigator.locks.query()`. So on a timeout: **clients in the roster → the current message is
+right**; **roster empty → no client of this library holds it, and a dead context is the likely
+cause.** One `entries()` call on a path that is already failing.
+
+**Three things to get right, and the third is the one that would make it a lie in turn.**
+
+1. It must not make the failure worse: no throw, no hang, and a fall back to today's message
+   if Web Locks is unavailable, if `sharesStorage` is false, or if the lookup fails at all.
+2. It runs while the pool is half-open. Whatever it does must not touch the pool or the init
+   lock.
+3. **An empty roster does NOT mean nobody holds the database.** It means no client of THIS
+   library does. Another library, another origin's tooling, or native code is invisible to
+   it — the README's Known Limitations already says so in those words. The message must say
+   "no client of this library", never "nobody".
+
+Small, self-contained, and it turns a 30-second wait that misdirects into one that names the
+likely cause.
 
 ## Notes, with nothing to fix
 
