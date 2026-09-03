@@ -197,8 +197,10 @@ failures established that no reading would have.
   always does, so the suite stayed green through three real abort defects. The
   benchmark page is the reproducer and a device campaign is the verification —
   `mem:lessons` records what that cost.
-- **`survives-reopen` flips between runs**; n≥3 per device before it is cited, and
-  `mem:follow-ups` carries the counts (REOPEN-1). `no-read-inside-transaction` does
+- **`survives-reopen` was believed to flip between runs, and no longer is.** REOPEN-1 was
+  closed on 2026-09-03: five Safari 27 runs on the two devices that produced the original
+  timeouts all pass, on rc.5 — `mem:measurements` carries the campaign. n≥3 per device before
+  citing a flip remains the rule. `no-read-inside-transaction` does
   **not** flip at n=3 per engine in this container — measured 2026-08-31, table in
   `mem:measurements`, which is also where the unreachable WebKit flip is recorded.
 - **The benchmark page cannot report whether the OPFS root was empty when a run started.**

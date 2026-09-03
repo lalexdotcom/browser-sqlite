@@ -274,6 +274,14 @@ Drains in-flight work, rejects queued work, closes each database connection, the
 
 **Stored data is not deleted.** `close()` releases workers and connections; it removes nothing. To remove the database itself, use [`deleteDatabase`](#deletedatabase).
 
+**A page reload is not a close, and some engines make you wait for it.** Navigating away or
+reloading discards the page without running `close()`, and the browser does not always release
+the underlying connection at once — observed on iPadOS Safari 27, where the database stayed
+held long enough for the next page's open to exhaust its full 30-second [`openTimeout`](#options)
+and report `TIMEOUT`. If your application reloads while a client is open, close it first:
+`window.addEventListener('pagehide', () => { void db.close(); })` is enough, and `pagehide`
+fires where `unload` no longer does.
+
 ### deleteDatabase
 
 Removes a database and the `-journal` / `-wal` files SQLite may have left beside it. The database must not be open, in this tab or any other.

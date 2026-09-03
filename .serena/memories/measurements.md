@@ -962,6 +962,32 @@ level inherits), no sleep, up to 20 attempts allowed:
 something other than a handle transfer. The event is once per session, not once per round, so
 raising n means opening more sessions; more rounds would add nothing.
 
+## REOPEN-1 does not reproduce — device campaign, 2026-09-03 (user's hardware)
+
+**Method.** Seven exports in `.bench/`, taken from the published `/preview/` page — rc.5 code,
+badge reading `development build`. Three iPadOS Safari 27.0, two macOS Safari 27.0, two macOS
+Chrome 150. The user confirmed the provenance; the export itself could NOT say, which is a gap
+now in `mem:follow-ups`.
+
+**`survives-reopen` passes on every persistent VFS, in all seven runs**, `OPFSWriteAheadVFS/sync`
+included — on the two devices that produced the original timeouts, and including the first run
+of the day on the iPad, which was the condition the REOPEN-1 note singled out. The only
+non-pass cells are `MemoryVFS` / `MemoryAsyncVFS` marked `skipped`, which is their documented
+behaviour: they are volatile by construction.
+
+**That closes REOPEN-1.** It was opened on "reproduced on two devices", which was two devices
+at one run each; five Safari 27 runs on those same two devices now say otherwise. What it does
+NOT clear is rc.3 or rc.4 — these runs are rc.5 — and nobody needs it to.
+
+**A false lead recorded so nobody re-runs it.** Two of the three iPadOS runs failed at
+`IDBBatchAtomicVFS :: opens` with `Worker 1 did not become ready within 30000 ms`, all eight
+rows of the column falling to `not-run`. Against 20 rc.3 exports on iPadOS/iOS where `opens`
+passes every time — including back-to-back runs minutes apart — this read as an rc.5
+regression. **It is not.** The user had hit a hang on `cleaning…` and RELOADED the page; a
+reload never calls `close()`, so the previous page's IndexedDB connection was still held and
+the next opens waited out their 30 s. The 20 clean rc.3 runs never had a mid-session reload,
+so there was never a comparison. The hang is the real defect and is in `mem:follow-ups`.
+
 ## CACHE-BYTES settled — 2026-09-03, Chromium / Firefox, this container
 
 **Method.** Throwaway `tests/browser/cache-bytes-probe.test.ts` (deleted). N concurrent

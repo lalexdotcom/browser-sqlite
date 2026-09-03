@@ -69,27 +69,53 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
-## Evidence owed
+## Defects to fix — the benchmark page (2026-09-03)
 
-### REOPEN-1 — `OPFSWriteAheadVFS/sync :: survives-reopen`, a flake at n=3
+### BENCH-SWEEP — the page hangs on `cleaning…`, because the sweep has no deadline
 
-| device | runs |
-|---|---|
-| macOS Safari 27.0 | `timeout` `pass` `pass` |
-| iPadOS Safari 27.0 | `timeout` `pass` `pass` |
-| macOS Safari 26.5.2 | `pass` `pass` |
-| iOS Safari 26.6 | `pass` `pass` `pass` |
-| macOS Chrome 150 | `pass` |
+**Symptom, seen on iPadOS Safari 27.0.** Clicking `Re-start` after a completed run leaves the
+page on `cleaning…` for ever. It never starts, never reports, never times out. Reloading is
+the only way out — and that reload is what produced the second failure below.
 
-One occurrence in three runs on each of the two devices that showed it, all 2026-08-27.
-**Opened as a defect on the strength of "reproduced on two devices", which was two devices
-at one run each and distinguishes nothing.** Both timeouts fell on the first run of the day
-on their device — recorded as an observation, not a hypothesis: macOS's second run passed
-while its root was in all likelihood still dirty.
+**Where.** `sweepBeforeRun()` in `scripts/bench/html/index.html`, awaited at the top of the
+run's `try`, right after `status.textContent = 'cleaning…'`.
 
-Not worth a mechanism at this rate. If it is ever chased, note the prior question:
-`OPFSWriteAheadVFS` gives no concurrency on Safari (`mem:measurements`), so whether it
-should be recommended there at all comes first.
+**Why the guards that ARE there do not help.** The sweep anticipates exceptions and handles
+them well: the OPFS branch catches per entry (`removeEntry` → *"Still held; a later run will
+try again"*) and catches the whole iteration, and `deleteIdb` resolves on `onblocked` instead
+of waiting. **None of that defends against a promise that never settles.** On Safari,
+`root.removeEntry(name, { recursive: true })` against a file whose access handle is still live
+does not reject — it waits. `for await (const name of root.keys())` can do the same. And that
+is exactly the state of the OPFS root immediately after a run that exercised the OPFS VFS.
+
+**What the hang then cost, which is why the whole chain is written here.** The reload never
+calls `close()`, so the previous page's IndexedDB connection was still held; the next two runs
+failed at `IDBBatchAtomicVFS :: opens` with `Worker 1 did not become ready within 30000 ms`
+and all eight rows of that column fell to `not-run`. Against 20 clean rc.3 exports this read
+as an rc.5 regression and **is not** — those 20 never had a mid-session reload. Do not re-open
+that hypothesis; `mem:measurements` records it as a closed false lead.
+
+**The fix, three parts, and the second is not optional.**
+
+1. **A deadline around the sweep**, OPFS side and IndexedDB side. On expiry, continue the run
+   instead of blocking it: a floor that could not be established is worth reporting, not worth
+   waiting for indefinitely.
+2. **Say that it was partial** — in the page and in the export. A partial sweep changes what
+   the measurements are worth, and a silent partial sweep is worse than the hang, which at
+   least announced itself. The page already has a badge of this kind for a neighbouring case
+   (*"OPFS cleanup limited — this browser will not …"*).
+3. **The export carries no build ref.** `lib` is `package.json`'s version, identical on `/`
+   and `/preview/` for as long as no bump has happened, so an export taken from a preview
+   cannot be told from one taken from the release. That came up for real on 2026-09-03 and had
+   to be answered from the user's memory. The page already computes `IS_RELEASE` and
+   `BUILD_REF`; two top-level fields close it.
+
+**Worth folding in while the file is open**, because it is the same page and the same session:
+the page cannot report whether the OPFS root was empty when a run started (`mem:state`,
+Unmeasured ground). A run that inventoried the root in its export would close that too — and it
+is the same inventory the sweep already walks.
+
+The user has said they want to retouch this page anyway; this is the list to bring.
 
 ## Notes, with nothing to fix
 
