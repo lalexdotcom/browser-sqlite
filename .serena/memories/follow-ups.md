@@ -91,25 +91,6 @@ Not worth a mechanism at this rate. If it is ever chased, note the prior questio
 `OPFSWriteAheadVFS` gives no concurrency on Safari (`mem:measurements`), so whether it
 should be recommended there at all comes first.
 
-### CACHE-BYTES — one thing left, the other two settled 2026-09-03
-
-**Settled: the 8 MB default is measured now, and the derivation was right.** The campaign is
-in `mem:measurements`, both engines byte-for-byte identical. What it buys, in one sentence:
-four concurrent `bulkWrite`s on a typical table, three on the narrowest. Above that the cache
-is CANCELLED, not degraded — compilations jump straight to one per batch.
-
-**Settled, and it corrected this file: the write designation DOES migrate.** "8 MB per worker
-is not 32 MB in practice" held only on a quiet pool. Under read pressure a second worker takes
-INSERT batches, so the real ceiling at `poolSize: 4` is 2 x 8 MB. Numbers in
-`mem:measurements`.
-
-**Still open: the eviction churn is unprofiled.** SQL generated per call fills the LRU with
-single-use entries; the bound stops the growth, not the churn, and every eviction is a
-`finalize` on the hot path. This predates the byte bound and neither bound addresses it. It is
-the one part of the original entry no campaign has touched.
-
-Design: `docs/superpowers/specs/2026-09-02-statement-cache-byte-bound-design.md` §8.
-
 ### GATE-1 — one thing left, the other two settled 2026-09-03
 
 **Still open, but no longer for want of a repro — it needs a DECISION.** The four tests

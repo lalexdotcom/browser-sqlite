@@ -1003,6 +1003,37 @@ typical table, or three on the narrowest. Above that the cache is **cancelled, n
 the count jumps straight to one compilation per batch (3N), which is the shape §3.1 of the
 byte-bound spec described and nobody had seen.
 
+## The eviction churn, priced — 2026-09-03, both engines
+
+**Method.** Throwaway `tests/browser/churn-probe.test.ts` (deleted). The sharp protocol:
+cycling K DISTINCT statements through the 32-entry LRU flips regime at K = 33, because the
+entry each call needs is the one the previous call evicted. One extra statement inverts the
+cache completely, so the delta is the churn and nothing else. 2000 reads per arm, n=3, arms
+alternated forward / reversed / forward.
+
+| arm | compilations | Chromium mean | Firefox mean |
+|---|---|---|---|
+| parameterised, 1 statement | **0 / 40** | 2306 ms | 1649 ms |
+| 32 distinct — fits | **0 / 40** | 2306 ms | 1646 ms |
+| 33 distinct — thrashes | **40 / 40** | 2437 ms | 1816 ms |
+
+**The counts are the finding; the durations are indicative.** 0 out of 40 against 40 out of
+40 is the whole mechanism, decisive on both engines. The time cost is ~6 % on Chromium and
+~8-10 % on Firefox — about 0.07-0.09 ms on a ~1 ms read, which is sub-millisecond and
+therefore exactly where `mem:lessons` says to count instead of time. A second Chromium timing
+pass was noisy enough that its `fits` arm read slower than its `parameterised` arm, which
+cannot be true; treat the percentage as an order of magnitude, not a measurement.
+
+**And the cache costs NOTHING when it fits.** Parameterised and 32-distinct are
+indistinguishable on both engines — holding 32 entries is not measurably worse than holding
+one. The churn is entirely the recompilation, not the bookkeeping.
+
+**Counting needed its own short pass.** `db.debug`'s histories are bounded at 50 requests per
+worker and 50 queries per request, so totals taken across a 2000-query loop come back
+NEGATIVE — the history shifts out from under them. The counts above are from a separate
+40-query arm where the history is intact. Anyone reading `prepared` over a long loop will hit
+this.
+
 ## The write designation DOES migrate — 2026-09-03, both engines, identical
 
 **Method.** Throwaway `tests/browser/writer-migration-probe.test.ts` (deleted). `poolSize: 4`,

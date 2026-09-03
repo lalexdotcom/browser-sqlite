@@ -91,6 +91,14 @@ Read queries are dispatched to any available worker, enabling concurrent reads.
 
 On `read()` this is transport only — it still resolves with the whole array.
 
+**Pass values as `?` parameters rather than building them into the SQL.** Each worker keeps a
+cache of 32 prepared statements, keyed on the exact SQL string. Interpolating a value makes
+every call a new key, so nothing is ever reused: measured at **40 recompilations in 40
+queries** once the distinct statements pass that bound, against **0** when they fit under it,
+costing roughly 6 % on Chromium and 9 % on Firefox over a read-heavy loop. Generated SQL is
+sometimes unavoidable — `IN (?, ?, ?)` changes shape with the list — and it still works; it
+simply cannot be cached.
+
 ### *client*.write
 
 ```typescript
