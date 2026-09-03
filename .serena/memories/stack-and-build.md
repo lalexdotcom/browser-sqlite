@@ -200,31 +200,37 @@ instead.
   - `consumer-smoke` — `pnpm test:consumer`, 11/11 stages. Blocking since wave P.
 - `.github/workflows/release-and-publish.yaml` — on `v*` tags, build + publish, and it
   calls `pages.yaml` with `needs: release`.
-- `.github/workflows/pages.yaml` — `workflow_call` + `workflow_dispatch` + push of the
-  `preview` tag. **A reusable workflow runs at the caller's ref**, which is what builds the
-  tag. The `workflow_dispatch` trigger is only offered for workflows present on the default
-  branch — that cost an hour to discover, and it means a change to this file must reach
-  `main` before it can be dispatched from anywhere.
+- `.github/workflows/pages.yaml` — **the site is a pure function of two tags** since
+  2026-09-03: `/` is the latest release tag, `/preview/` is the `preview` tag when one
+  exists. **The ref that triggered a run is never built and never consulted**, so every
+  trigger produces the same site and re-running anything is idempotent. Want a preview:
+  `git tag -f preview && git push -f origin preview`. Want it gone: delete the tag.
 
-  **Since 2026-09-03 the root and a preview are published together.** `/` is ALWAYS rebuilt
-  from the latest release tag, whatever ref triggered the run, so it cannot drift to
-  unreleased code even by accident — the invariant that used to be a rule to remember is now
-  structural. A non-release run puts its own build at `/preview/`. One preview lives at a
-  time: `deploy-pages` publishes an artifact that REPLACES the whole site, so each run
-  redefines it.
+  Triggers: `workflow_call` (from release-and-publish), `workflow_dispatch` (republish),
+  push of `preview`, and `delete`. **`push` does NOT fire for a deleted ref** — `delete` is
+  the event for that, it carries no ref filter, hence a job-level guard.
 
-  Two things bite here. **Order is load-bearing** — `assemble.mjs` opens with
-  `rmSync(target, …)`, so the root must be assembled BEFORE the preview that sits inside it.
-  And the released half's build step **overrides `GITHUB_REF_NAME` / `GITHUB_REF_TYPE`**,
-  because `assemble.mjs` reads them to decide whether the page may call itself a release
-  build and the runner's values describe the ref that triggered the run — left alone, the
-  root of the public site would label a genuine release "development build".
+  Three things bite, all of them silent:
+  - **Order.** `assemble.mjs` opens with `rmSync(target, …)`, so the root must be assembled
+    BEFORE the preview that sits inside it. The reverse deletes the preview.
+  - **`GITHUB_REF_NAME` / `REF_TYPE` / `SHA` are overridden on both build steps.**
+    `assemble.mjs` reads them to label the page, and the runner's values describe the
+    TRIGGERING ref, which is never what is being built. Unset, the root would call a genuine
+    release a "development build", and the preview would print a commit it did not measure.
+    `REF_TYPE` is forced to `branch` for the preview because `preview` IS a tag and the
+    script takes any tag for a release tag.
+  - **A `delete` run executes from the DEFAULT BRANCH**, so its deployment presents
+    `refs/heads/main`. An environment restricted to tags refuses it, and a deleted tag then
+    leaves its preview up until the next release. `main` must stay allowed for deletion to
+    work.
 
-  **The `github-pages` environment allows `main`, `v*` and `feat/*` only.** So a `feat/*`
-  branch can be dispatched TODAY with no rule change, and that is the shortest path. The
-  `preview` tag trigger exists for branches whose NAME the ruleset refuses — a tag is not a
-  branch — but it needs `preview` added to the environment's allowed refs first, or the
-  deployment is blocked.
+  **A reusable workflow runs at the caller's ref**, and `workflow_dispatch` is only offered
+  for workflows present on the default branch — that cost an hour to discover, and it means
+  a change to this file must reach `main` before any trigger can use it.
+
+  The `github-pages` environment's own ref list is what gates all of this; it allowed
+  `main`, `v*` and `feat/*` as of 2026-09-03 and the user was changing it. Check
+  *Settings → Environments → github-pages* rather than trusting this line.
 - Local `pre-commit` (simple-git-hooks): `lint-staged` + `pnpm test` + `tsc --noEmit`.
   Heavy and bypassable with `--no-verify`; CI is the real gate.
 - `tsconfig.build.json` (`include: ["src"]`, `rootDir: "src"`) drives declaration
