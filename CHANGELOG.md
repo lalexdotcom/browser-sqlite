@@ -45,7 +45,7 @@ All notable changes to this project are documented here.
   Previously the outcome depended on the browser: where each connection held its
   own OPFS access handle the second writer was refused, and where one exclusive
   handle was rotated it waited. There is one behaviour now.
-- **`inspectDatabase({ file, vfs })` and `db.inspect()` report who is live on a
+- **`inspectDatabase(file, { vfs })` and `db.inspect()` report who is live on a
   database**, across every tab of the origin: one entry per client with its id,
   name, tab and VFS, the number of distinct tabs, and the write lock's holder
   with the number of writers queued behind it. `inspectDatabase` needs no open

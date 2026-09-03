@@ -7,7 +7,7 @@ import {
   writeLockName,
 } from './locks';
 import type { SQLiteVFS } from './types';
-import { VFS_CAPABILITIES } from './types';
+import { RECOMMENDED_VFS, VFS_CAPABILITIES } from './types';
 import { normalizeDatabaseFile } from './utils';
 
 /**
@@ -155,17 +155,43 @@ export const inspectWith = async (
   };
 };
 
+export type InspectDatabaseOptions = {
+  /**
+   * The VFS the database was created with. Required, and not defaulted: four
+   * VFS share one underlying file, and the others are separate stores
+   * entirely, so guessing would report on a different database.
+   */
+  vfs: SQLiteVFS;
+};
+
 /**
  * Who is live on a database, without opening it.
  *
  * This is a snapshot, stale the instant it resolves. It informs a UI; it never
  * authorizes an action — `deleteDatabase` raising `DATABASE_IN_USE` is the only
  * authority on whether a database can be removed.
+ *
+ * Takes `file` positionally like `createSQLiteClient` and `deleteDatabase`:
+ * every root export of this library names the database the same way.
+ *
+ * @throws {SQLiteError} `INVALID_OPTION` when `vfs` is missing, unknown, or a
+ *   memory VFS, where two clients are two databases and the question has no
+ *   meaning.
+ * @throws {SQLiteError} `UNSUPPORTED` where the Web Locks API is unavailable.
+ *   Reporting zero there would be indistinguishable from a database nobody
+ *   holds.
  */
-export const inspectDatabase = async (options: {
-  file: string;
-  vfs: SQLiteVFS;
-}): Promise<DatabaseInspection> => {
+export const inspectDatabase = async (
+  file: string,
+  options: InspectDatabaseOptions,
+): Promise<DatabaseInspection> => {
+  if (!options?.vfs) {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      `vfs is required. Pass the VFS the database was created with — ${RECOMMENDED_VFS} is the recommended universal choice. Four VFS share one underlying file, and the rest are separate stores, so the wrong one reports on a different database.`,
+    );
+  }
+
   const { vfs } = options;
   if (!Object.hasOwn(VFS_CAPABILITIES, vfs)) {
     throw new SQLiteError(
@@ -188,5 +214,5 @@ export const inspectDatabase = async (options: {
     );
   }
 
-  return inspectWith(locks, normalizeDatabaseFile(options.file), vfs);
+  return inspectWith(locks, normalizeDatabaseFile(file), vfs);
 };

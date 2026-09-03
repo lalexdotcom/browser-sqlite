@@ -71,12 +71,23 @@ type ClientInspection = InspectionBase & {
 };
 
 export const inspectDatabase: (
-  options: { file: string; vfs: SQLiteVFS },
+  file: string,
+  options: { vfs: SQLiteVFS },
 ) => Promise<DatabaseInspection>;
 
 // on the client, ungated by `debug`:
 db.inspect(): Promise<ClientInspection>;
 ```
+
+**Amended during implementation, 2026-09-03 (user): `file` is positional.** The
+signature above was originally `inspectDatabase({ file, vfs })`, a single options
+object — which no other root export uses. `createSQLiteClient(file, options)` and
+`deleteDatabase(file, options)` both name the database first, and a third shape for
+the same argument is a difference a caller has to remember for no reason. It also
+brings the missing-`vfs` guard with it: `inspectDatabase` now refuses a missing
+option by name the way `deleteDatabase` does, rather than reporting `Unknown vfs
+'undefined'`. `InspectDatabaseOptions` is exported, mirroring
+`DeleteDatabaseOptions`.
 
 And five readonly getters, making a `db` self-describing for a module that receives one:
 

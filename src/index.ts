@@ -10,6 +10,7 @@ export {
   type ClientInspection,
   type DatabaseClient,
   type DatabaseInspection,
+  type InspectDatabaseOptions,
   type InspectionBase,
   inspectDatabase,
 } from './inspect';

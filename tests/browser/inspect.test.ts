@@ -9,7 +9,7 @@ const VFS = 'IDBBatchAtomicVFS' as const;
 
 describe('inspectDatabase', () => {
   it('reports nobody on a database nothing holds', async () => {
-    const result = await inspectDatabase({ file: 'nobody.db', vfs: VFS });
+    const result = await inspectDatabase('nobody.db', { vfs: VFS });
     expect(result.clients).toEqual([]);
     expect(result.tabs).toBe(0);
   });
@@ -21,7 +21,7 @@ describe('inspectDatabase', () => {
       await deleteDatabase('norm.db', { vfs: VFS }).catch(() => {});
     });
     await db.read('SELECT 1');
-    const viaDotSlash = await inspectDatabase({ file: './norm.db', vfs: VFS });
+    const viaDotSlash = await inspectDatabase('./norm.db', { vfs: VFS });
     expect(viaDotSlash.clients).toHaveLength(1);
   });
 
@@ -47,7 +47,7 @@ describe('inspectDatabase', () => {
     const release = await holdIn(realm, foreign, 'shared');
     onTestFinished(() => release());
 
-    const result = await inspectDatabase({ file, vfs: VFS });
+    const result = await inspectDatabase(file, { vfs: VFS });
     expect(result.clients).toHaveLength(2);
     expect(result.tabs).toBe(2);
     expect(result.clients.filter((c) => c.sameTab)).toHaveLength(1);
@@ -66,7 +66,7 @@ describe('inspectDatabase', () => {
     );
     const realm = await makeRealm();
     await holdIn(realm, foreign, 'shared');
-    expect((await inspectDatabase({ file, vfs: VFS })).clients).toHaveLength(1);
+    expect((await inspectDatabase(file, { vfs: VFS })).clients).toHaveLength(1);
 
     // No release() and no close(): the iframe simply goes, the way a tab does.
     // The browser reclaiming the lock is the whole reason this is a lock and
@@ -74,6 +74,6 @@ describe('inspectDatabase', () => {
     realm.frameElement?.remove();
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    expect((await inspectDatabase({ file, vfs: VFS })).clients).toHaveLength(0);
+    expect((await inspectDatabase(file, { vfs: VFS })).clients).toHaveLength(0);
   });
 });

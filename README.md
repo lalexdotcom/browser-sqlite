@@ -254,7 +254,7 @@ Reports who is live on this client's database, in every tab of the origin. It is
 
 `self` is `null` when this client's own marker is not in the snapshot.
 
-After `close()` it throws `CLIENT_CLOSED`, like every other method on the client. [`inspectDatabase`](#inspectdatabase) answers the same question afterwards — which is what `db.file` and `db.vfs` are for.
+After `close()` it throws `CLIENT_CLOSED`, like every other method on the client. [`inspectDatabase`](#inspectdatabase) answers the same question afterwards — `inspectDatabase(db.file, { vfs: db.vfs })`, which is what those two properties are for.
 
 ### *client*.close
 
@@ -299,13 +299,18 @@ Reports who is live on a database, in every tab of the origin, **without opening
 ```typescript
 import { inspectDatabase } from 'browser-sqlite';
 
-const { clients, tabs, write } = await inspectDatabase({
-  file: 'myapp.sqlite',
+const { clients, tabs, write } = await inspectDatabase('myapp.sqlite', {
   vfs: 'OPFSAdaptiveVFS',
 });
 ```
 
-`vfs` is required and must be the VFS the database was created with. It resolves with the normalized `file`, the `vfs`, `clients`, `tabs` — the number of distinct tabs among them — and `write`.
+`vfs` is required and must be the VFS the database was created with — four VFS share one file per database name, and the rest are separate stores, so the wrong one reports on a different database.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `vfs` | `SQLiteVFS` | — (required) | The VFS the database was created with. |
+
+It resolves with the normalized `file`, the `vfs`, `clients`, `tabs` — the number of distinct tabs among them — and `write`.
 
 | Field | Type | Description |
 |---|---|---|

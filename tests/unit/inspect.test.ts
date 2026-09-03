@@ -76,15 +76,26 @@ describe('inspectWith', () => {
 });
 
 describe('inspectDatabase degenerate cases', () => {
+  it('rejects a missing vfs by name, the way deleteDatabase does', async () => {
+    await expect(
+      inspectDatabase('app.db', undefined as never),
+    ).rejects.toMatchObject({ code: 'INVALID_OPTION' });
+    // Not "Unknown vfs 'undefined'": a caller who forgot the option is told to
+    // pass one, not shown their own mistake echoed back as a value.
+    await expect(inspectDatabase('app.db', {} as never)).rejects.toThrow(
+      /vfs is required/,
+    );
+  });
+
   it('rejects the memory VFS with INVALID_OPTION', async () => {
     await expect(
-      inspectDatabase({ file: 'app.db', vfs: 'MemoryVFS' }),
+      inspectDatabase('app.db', { vfs: 'MemoryVFS' }),
     ).rejects.toMatchObject({ code: 'INVALID_OPTION' });
   });
 
   it('rejects an unknown VFS with INVALID_OPTION', async () => {
     await expect(
-      inspectDatabase({ file: 'app.db', vfs: 'NoSuchVFS' as never }),
+      inspectDatabase('app.db', { vfs: 'NoSuchVFS' as never }),
     ).rejects.toMatchObject({ code: 'INVALID_OPTION' });
   });
 
@@ -102,7 +113,7 @@ describe('inspectDatabase degenerate cases', () => {
     });
     try {
       await expect(
-        inspectDatabase({ file: 'app.db', vfs: 'OPFSAdaptiveVFS' }),
+        inspectDatabase('app.db', { vfs: 'OPFSAdaptiveVFS' }),
       ).rejects.toMatchObject({ code: 'UNSUPPORTED' });
     } finally {
       if (hadLocks) {

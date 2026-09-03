@@ -1304,7 +1304,7 @@ export const createSQLiteClient = (
    *
    * Throws `CLIENT_CLOSED` like every other method: a uniform contract on `db`
    * is worth more than one method a consumer must read the docs to know
-   * survives. After closing, `inspectDatabase({ file, vfs })` answers the same
+   * survives. After closing, `inspectDatabase(file, { vfs })` answers the same
    * question, and `db.file` / `db.vfs` are what make it reachable.
    */
   const inspect = async (): Promise<ClientInspection> => {

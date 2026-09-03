@@ -7,7 +7,7 @@ const VFS = 'IDBBatchAtomicVFS' as const;
 
 describe('inspectDatabase write', () => {
   it('is empty when nobody writes', async () => {
-    const result = await inspectDatabase({ file: 'quiet.db', vfs: VFS });
+    const result = await inspectDatabase('quiet.db', { vfs: VFS });
     expect(result.write).toEqual({ tab: null, sameTab: false, waiting: 0 });
   });
 
@@ -39,7 +39,7 @@ describe('inspectDatabase write', () => {
       queued = b.write('INSERT INTO t VALUES (2)');
 
       for (let attempt = 0; attempt < 50; attempt++) {
-        seen = await inspectDatabase({ file, vfs: VFS });
+        seen = await inspectDatabase(file, { vfs: VFS });
         if (seen.write.waiting >= 1) break;
         await new Promise<void>((r) => setTimeout(r, 20));
       }
