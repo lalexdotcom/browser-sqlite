@@ -221,7 +221,13 @@ instead.
   `GET /releases?per_page=20`, newest first, drafts filtered out. The fallback stops being the
   live path the day a stable version ships.
 
-  Four things bite, all of them silent:
+  **`gh api` writes the response BODY to stdout when it fails**, and `--jq` does not filter
+  it. So `VAR=$(gh api … || true)` captures `{"message":"Not Found",…}` as if it were data —
+  it passed every emptiness test and died three steps later in `actions/checkout` with
+  `fatal: invalid refspec '+refs/heads/{"message":"Not Found"…'`. **Gate on the exit status**
+  — `if VAR=$(gh api …); then` — and shape-check anything that reaches a checkout.
+
+  Five things bite, all of them silent:
   - **Order.** `assemble.mjs` opens with `rmSync(target, …)`, so the root must be assembled
     BEFORE the preview that sits inside it. The reverse deletes the preview.
   - **`GITHUB_REF_NAME` / `REF_TYPE` / `SHA` are overridden on both build steps.**

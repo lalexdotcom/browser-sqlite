@@ -104,16 +104,34 @@ jobs:
           # fallback takes the newest published release whatever its kind,
           # drafts filtered out because the workflow token can see them. The
           # fallback stops being the live path the day a stable version ships.
-          RELEASE=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)
+          # THE EXIT STATUS MUST GATE THE ASSIGNMENT. `gh api` on a 404 writes
+          # the response BODY to stdout as well as failing, and `--jq` does not
+          # filter it — so `$(… || true)` captures `{"message":"Not Found",…}`
+          # as if it were data. That is not hypothetical: it reached
+          # actions/checkout as a ref and died on
+          # `fatal: invalid refspec '+refs/heads/{"message":"Not Found"…'`.
+          RELEASE=""
+          if LATEST=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null); then
+            RELEASE="$LATEST"
+          fi
+
           if [ -z "$RELEASE" ] || [ "$RELEASE" = "null" ]; then
             RELEASE=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=20" \
               --jq '[.[] | select(.draft == false)][0].tag_name')
             echo "No designated latest release — falling back to the newest published"
           fi
-          if [ -z "$RELEASE" ] || [ "$RELEASE" = "null" ]; then
-            echo "::error::no published release to build the site root from"
-            exit 1
-          fi
+
+          # A shape check, because the failure above was SILENT: garbage passed
+          # every emptiness test and only died three steps later, in a message
+          # about refspecs. Whatever goes to a checkout is named here or the
+          # run stops here.
+          case "$RELEASE" in
+            v[0-9]*) ;;
+            *)
+              echo "::error::resolved release tag is not a version tag: '$RELEASE'"
+              exit 1
+              ;;
+          esac
           echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
           echo "Root: $RELEASE"
 
