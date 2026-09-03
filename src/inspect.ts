@@ -110,6 +110,12 @@ export const inspectWith = async (
   vfs: SQLiteVFS,
   ownMarkerName?: string,
 ): Promise<DatabaseInspection> => {
+  if (!sharesStorage(vfs)) {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      `${vfs} keeps its pages in the worker that opened them, so two clients are two databases and there is nothing to inspect. Ask this of a persistent VFS.`,
+    );
+  }
   const snapshot = await locks.entries();
   const realm = await resolveRealmId(locks, snapshot, ownMarkerName);
 

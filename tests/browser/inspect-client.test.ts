@@ -22,6 +22,19 @@ describe('db identity getters', () => {
   });
 });
 
+describe('db.inspect on a memory VFS', () => {
+  it('throws INVALID_OPTION — two memory clients are two databases', async () => {
+    const db = createSQLiteClient('mem.db', { vfs: 'MemoryVFS', poolSize: 1 });
+    onTestFinished(async () => {
+      await db.close().catch(() => {});
+    });
+    await db.read('SELECT 1');
+    await expect(db.inspect()).rejects.toMatchObject({
+      code: 'INVALID_OPTION',
+    });
+  });
+});
+
 describe('db.inspect', () => {
   it('splits self from siblings', async () => {
     const file = 'siblings.db';
