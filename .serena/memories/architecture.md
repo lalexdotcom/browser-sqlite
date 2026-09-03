@@ -46,6 +46,33 @@ anything else that reports a lock conflict simply gets one free retry.
 `src/orchestrator.ts` is **deleted** and with it every `SharedArrayBuffer`. Do not look
 for it.
 
+## The browser suite runs on two engines, from two config files (2026-09-03)
+
+`tests/browser/*.test.ts` is the shared suite and runs on BOTH engines.
+`tests/browser/firefox/**` holds tests that assert Firefox's own behaviour and cannot pass on
+Chromium — today, handle starvation, which cannot occur where `readwrite-unsafe` gives each
+connection its own OPFS handle. A `chromium/` directory is declared in the include and does
+not exist yet; create it only when something needs it.
+
+**The shared glob is NON-recursive, and that is load-bearing.** `tests/browser/**` would make
+each project pick up the other's directory, which is the whole thing the layout prevents.
+
+**Two config files, and NOT by preference.** `rstest.config.ts` carries `unit` + `chromium`;
+`rstest.firefox.config.ts` carries `firefox`. rstest 0.11.8 **refuses two browser-enabled
+projects with different engines in one run** — *"All browser-enabled projects in one run must
+share provider/browser/headless/providerOptions"* — so putting both in one `projects` array
+makes `pnpm test` fail before it runs anything. Verified, not deduced. The `test` script
+chains the two configs, so one command still covers both engines.
+
+This replaced `TEST_BROWSER`, a single project whose engine came from the environment. Under
+it a local `pnpm test` covered Chromium while CI covered both, which is precisely how a
+Firefox-only failure reaches someone late. **`pnpm test` now prints TWO reports** — read both.
+
+**Conformance got the same treatment the same day**, in `rstest.conformance.config.ts` +
+`rstest.conformance.firefox.config.ts`, chained by `pnpm test:conformance`. No per-engine
+directory there and there should not be one: the value of that suite is the SAME invariants on
+both engines — a VFS sound on one and broken on the other is how HANDLE-1 was found.
+
 ## Public surface
 
 `SQLiteQueryAPI` — `read` / `write` / `chunk` / `stream` / `first` / `bulkWrite` /

@@ -34,12 +34,11 @@ an earlier session, and none is arithmetic. The one exception is flagged in its 
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | `status: pass`, **605 tests, 47 files, 0 failed files** |
+| `pnpm test` | **TWO reports since 2026-09-03** — it chains both engines. `status: pass` on each: **605 tests / 47 files** (unit + chromium), then **225 tests / 30 files** (firefox) |
 | `pnpm test:unit` | 381 tests, 18 files |
-| `pnpm test:browser` | 224 tests, 29 files |
-| `TEST_BROWSER=firefox pnpm test:browser` | **224 tests, 29 files — identical to Chromium** |
-| `pnpm test:conformance` | 85 tests, 2 files, **73 passed / 12 skipped** |
-| `TEST_BROWSER=firefox pnpm test:conformance` | **85 tests, 73 / 12 — identical to Chromium** |
+| `pnpm test:chromium` | 224 tests, 29 files |
+| `pnpm test:firefox` | 225 tests, 30 files — the 29 shared plus one Firefox-only |
+| `pnpm test:conformance` | **TWO reports** — it chains both engines. 85 tests / 2 files, **73 passed / 12 skipped**, on each: identical |
 | `pnpm test:consumer` | 24/24 stages |
 | `node scripts/bench/check.mjs chromium --all` | **not re-run on 2026-09-03** — last read 2026-09-02: OK, 22 declared pairs, zero `not-run` |
 | `pnpm lint` | 96 files, 13 warnings, 1 info |
@@ -60,8 +59,8 @@ two engines agreeing is the current expectation, and a divergence means somethin
 As of 2026-09-03 they agree on **both** suites, test for test — conformance and the browser
 project alike.
 
-**Firefox is a CI gate since 2026-08-28.** It runs as its own step in `ci.yaml`, after
-`pnpm test`. The two flakes this file used to warn about are gone: `long-query :: does not
+**Firefox is a CI gate since 2026-08-28, and since 2026-09-03 it is inside `pnpm test`**
+rather than a step of its own — `TEST_BROWSER` is gone, and a local run covers what CI covers. The two flakes this file used to warn about are gone: `long-query :: does not
 block the pool` was never a pool defect (it timed the FILE — see `mem:follow-ups`), and
 `barrier` did not reproduce in 13 consecutive runs. **A failure on the Firefox step is
 signal, not noise** — it is the only step that drives the pool against a rotating exclusive

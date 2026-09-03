@@ -91,32 +91,6 @@ Not worth a mechanism at this rate. If it is ever chased, note the prior questio
 `OPFSWriteAheadVFS` gives no concurrency on Safari (`mem:measurements`), so whether it
 should be recommended there at all comes first.
 
-### GATE-1 — one thing left, the other two settled 2026-09-03
-
-**Still open, but no longer for want of a repro — it needs a DECISION.** The four tests
-covering the retry round point a worker at a missing URL, which is a *load* failure; none
-exercises handle starvation, the actual cause. **The phenomenon itself is now reproduced
-deterministically** (`mem:measurements`, 2026-09-03): a held write transaction starves a
-second client's open, `TIMEOUT` at 3077 ms on Firefox against a clean 47 ms open on Chromium.
-
-What blocks the permanent test is that the result is engine-conditional and cannot be
-branched on — `readwrite-unsafe` is `UNPROBEABLE`, so no runtime check can ask. **This
-repository has no skip-by-engine idiom**: every browser test passes on both engines by
-construction. Two ways out, and choosing between them is the user's:
-introduce a Firefox-only test convention, or settle for an assertion weak enough to hold on
-both ("opens, or reports `TIMEOUT`; never hangs, never silently shrinks the pool"), which
-pins the gate's contract rather than the starvation.
-
-**Settled: the cost is linear in `poolSize`, with no cliff at 8.** ~7 ms per extra worker on
-Chromium, ~20 ms on Firefox — the sum, as reasoned, and nothing surprising above 4. Table in
-`mem:measurements`, and the README's `poolSize` row now carries the numbers, where it
-previously said only "uses more memory".
-
-**Settled by documenting rather than measuring: the retry round doubles the worst case.** Up
-to two `openTimeout`, about a minute at the default, before the first query rejects on a pool
-that will never open. The README's `openTimeout` row now says so and tells the reader to lower
-it if they need to fail faster.
-
 ## Notes, with nothing to fix
 
 ### Twelve `any` remain in `src/`, and they are structural
