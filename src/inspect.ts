@@ -1,5 +1,9 @@
 import { SQLiteError } from './errors';
 import type { LockEntries, Locks } from './locks';
+import { createLocks, parseClientMarker, sharesStorage } from './locks';
+import type { SQLiteVFS } from './types';
+import { VFS_CAPABILITIES } from './types';
+import { normalizeDatabaseFile } from './utils';
 
 /**
  * The Web Locks `clientId` of THIS realm.
@@ -47,4 +51,108 @@ export const resolveRealmId = async (
   } finally {
     release();
   }
+};
+
+/** One live client on a database. */
+export type DatabaseClient = {
+  readonly id: string;
+  readonly name: string;
+  /** The realm holding it. Every client in one tab reports the same value. */
+  readonly tab: string;
+  /** That realm is the caller's. A same-origin iframe is another tab here. */
+  readonly sameTab: boolean;
+  /** Four VFS share the `opfs` namespace, and therefore the file. */
+  readonly vfs: SQLiteVFS;
+};
+
+export type InspectionBase = {
+  readonly file: string;
+  readonly vfs: SQLiteVFS;
+  /** Distinct realms among the clients. */
+  readonly tabs: number;
+  readonly write: {
+    /** The realm writing now, never the client. `null` when nobody writes. */
+    readonly tab: string | null;
+    /** Always false when `tab` is null. */
+    readonly sameTab: boolean;
+    /** Writers queued behind it, across the whole origin. */
+    readonly waiting: number;
+  };
+};
+
+export type DatabaseInspection = InspectionBase & {
+  readonly clients: readonly DatabaseClient[];
+};
+
+/**
+ * The census, given locks that are already known to work.
+ *
+ * ONE `entries()` call answers everything, so the roster, the writer and the
+ * queue describe the same instant. Two calls would give three truths.
+ */
+export const inspectWith = async (
+  locks: Locks,
+  file: string,
+  vfs: SQLiteVFS,
+  ownMarkerName?: string,
+): Promise<DatabaseInspection> => {
+  const snapshot = await locks.entries();
+  const realm = await resolveRealmId(locks, snapshot, ownMarkerName);
+
+  const clients: DatabaseClient[] = [];
+  for (const entry of snapshot.held) {
+    const marker = parseClientMarker(entry.name, vfs, file);
+    if (!marker) continue;
+    clients.push({
+      id: marker.id,
+      name: marker.name,
+      tab: entry.clientId,
+      sameTab: entry.clientId === realm,
+      vfs: marker.vfs,
+    });
+  }
+
+  return {
+    file,
+    vfs,
+    clients,
+    tabs: new Set(clients.map((client) => client.tab)).size,
+    write: { tab: null, sameTab: false, waiting: 0 },
+  };
+};
+
+/**
+ * Who is live on a database, without opening it.
+ *
+ * This is a snapshot, stale the instant it resolves. It informs a UI; it never
+ * authorizes an action — `deleteDatabase` raising `DATABASE_IN_USE` is the only
+ * authority on whether a database can be removed.
+ */
+export const inspectDatabase = async (options: {
+  file: string;
+  vfs: SQLiteVFS;
+}): Promise<DatabaseInspection> => {
+  const { vfs } = options;
+  if (!Object.hasOwn(VFS_CAPABILITIES, vfs)) {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      `Unknown vfs '${String(vfs)}'. Supported: ${Object.keys(VFS_CAPABILITIES).join(', ')}.`,
+    );
+  }
+  if (!sharesStorage(vfs)) {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      `${vfs} keeps its pages in the worker that opened them, so two clients are two databases and there is nothing to inspect. Ask this of a persistent VFS.`,
+    );
+  }
+
+  const locks = createLocks();
+  if (!locks.available) {
+    throw new SQLiteError(
+      'UNSUPPORTED',
+      'The Web Locks API is unavailable, so clients on a database cannot be counted. Reporting zero would be indistinguishable from a database nobody holds.',
+    );
+  }
+
+  return inspectWith(locks, normalizeDatabaseFile(options.file), vfs);
 };
