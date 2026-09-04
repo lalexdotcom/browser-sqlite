@@ -184,6 +184,8 @@ type OpenOptions = {
   pragmas?: Record<string, string> | undefined;
   statementCacheSize?: number | undefined;
   statementCacheBytes?: number | undefined;
+  abortSlots?: SharedArrayBuffer | undefined;
+  abortIndex?: number | undefined;
 };
 
 /**
@@ -230,9 +232,14 @@ const open = (file: string, options: OpenOptions) => {
     throw new Error('DB already opened');
   }
 
-  const { vfs, wasm, pragmas = {} } = options;
+  const { vfs, wasm, pragmas = {}, abortSlots, abortIndex } = options;
   const build = options.build ?? defaultBuildFor(vfs);
   currentBuild = build;
+
+  const slot =
+    abortSlots && abortIndex !== undefined
+      ? new Int32Array(abortSlots)
+      : undefined;
 
   const vfsConfig = VFSConfigs[vfs];
 
@@ -312,6 +319,7 @@ const open = (file: string, options: OpenOptions) => {
   });
 
   const query = async function* (
+    callId: number,
     sql: string,
     params: unknown[],
     options?: SQLOptions,
@@ -428,7 +436,12 @@ const open = (file: string, options: OpenOptions) => {
     // nothing else can carry the signal into a running step().
     const wantsSignal = abortable === true;
     const canYield = currentBuild !== 'sync';
-    if (timeout !== undefined || (wantsSignal && canYield)) {
+    const abortedHere = () =>
+      slot !== undefined && Atomics.load(slot, abortIndex as number) === callId;
+    if (
+      timeout !== undefined ||
+      (wantsSignal && (canYield || slot !== undefined))
+    ) {
       const overBudget = () =>
         timeout !== undefined &&
         spent + (performance.now() - stepStart) > timeout;
@@ -441,7 +454,7 @@ const open = (file: string, options: OpenOptions) => {
               await gate.tick();
               return gate.isStopped() || overBudget() ? 1 : 0;
             }
-          : () => (overBudget() ? 1 : 0),
+          : () => (abortedHere() || overBudget() ? 1 : 0),
         null,
       );
     }
@@ -508,7 +521,10 @@ const open = (file: string, options: OpenOptions) => {
 
       yield sqlite.changes(db);
     } finally {
-      if (timeout !== undefined || (wantsSignal && canYield))
+      if (
+        timeout !== undefined ||
+        (wantsSignal && (canYield || slot !== undefined))
+      )
         sqlite.progress_handler(db, 0, () => 0, null);
     }
   };
@@ -526,7 +542,7 @@ const open = (file: string, options: OpenOptions) => {
           queryRunning = Promise.withResolvers<void>();
           let affected = 0;
 
-          for await (const chunk of query(sql, params, options)) {
+          for await (const chunk of query(callId, sql, params, options)) {
             if (typeof chunk === 'number') {
               affected = chunk;
               break;
@@ -801,6 +817,8 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         pragmas,
         statementCacheSize,
         statementCacheBytes,
+        abortSlots,
+        abortIndex,
       } = data;
       open(file, {
         vfs,
@@ -808,6 +826,8 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         pragmas,
         statementCacheSize,
         statementCacheBytes,
+        abortSlots,
+        abortIndex,
       });
       break;
     }

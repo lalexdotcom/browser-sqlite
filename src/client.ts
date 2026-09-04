@@ -337,6 +337,17 @@ export const createSQLiteClient = (
   const poolSize = clientOptions.poolSize ?? DEFAULT_POOL_SIZE;
   const pool: (PoolWorker | undefined)[] = [];
 
+  /**
+   * One Int32 per worker, holding the callId to abort. Allocated only in a
+   * cross-origin isolated context, because `SharedArrayBuffer` does not exist
+   * anywhere else — measured 2026-09-04 on both engines: absent, not
+   * restricted. Everywhere else this stays undefined and the whole channel is
+   * a branch not taken.
+   */
+  const abortSlots = detectFeatures().has('cross-origin-isolated')
+    ? new SharedArrayBuffer(4 * poolSize)
+    : undefined;
+
   const vfs = clientOptions.vfs;
   const build = clientOptions.build ?? defaultBuildFor(vfs);
 
@@ -1211,6 +1222,7 @@ export const createSQLiteClient = (
       createWorkerDebugState: clientDebug?.createWorkerDebugState,
       createQueryDebugState: clientDebug?.createQueryDebugState,
       logger,
+      abortSlots,
     })
       .then((worker) => {
         supervisor.report(index, 'ready');

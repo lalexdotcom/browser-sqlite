@@ -57,6 +57,10 @@ export type ClientMessageData =
       /** Bytes retained per worker; see `src/client.ts`. Internal. */
       statementCacheBytes?: number;
       wasm?: WasmLocation;
+      /** Shared abort slots, one Int32 per worker. Isolated contexts only. */
+      abortSlots?: SharedArrayBuffer;
+      /** This worker's index into `abortSlots`. */
+      abortIndex?: number;
     }
   | {
       type: 'query';

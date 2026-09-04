@@ -151,6 +151,7 @@ export const createPoolWorker = (deps: {
     | ((index: number, sql: string, params?: unknown[]) => any)
     | undefined;
   logger: Logger;
+  abortSlots?: SharedArrayBuffer | undefined;
 }): Promise<PoolWorker> => {
   const {
     index,
@@ -165,6 +166,7 @@ export const createPoolWorker = (deps: {
     statementCacheBytes,
   } = deps;
   const { createWorkerDebugState, createQueryDebugState, logger } = deps;
+  const { abortSlots } = deps;
 
   const deferredInit = Promise.withResolvers<PoolWorker>();
 
@@ -176,6 +178,10 @@ export const createPoolWorker = (deps: {
     epochTarget: 0,
   });
   pool[index] = worker;
+  // A restarted worker inherits this slot, and its callIds restart at 0 — so
+  // the predecessor's last abort would fire on the replacement's seventh call.
+  // Zeroing here is the whole guard, and it belongs where the worker is born.
+  if (abortSlots) new Int32Array(abortSlots)[index] = 0;
   logger.info(`worker ${index + 1} created`);
 
   const state = createWorkerDebugState?.(index, workerName);
@@ -593,6 +599,12 @@ export const createPoolWorker = (deps: {
     interrupt: () => {
       stopped = true;
       stopRequested?.resolve(STOP);
+      // Two channels, disjoint: the message wakes a worker parked on a credit,
+      // the slot reaches one that is computing inside step() and reads no
+      // messages until it yields — which the sync build never does.
+      if (abortSlots)
+        Atomics.store(new Int32Array(abortSlots), index, currentCallId);
+      worker.postMessage({ type: 'stop', callId: currentCallId });
     },
     quiesce: () => idle?.promise ?? Promise.resolve(),
     close: async () => {
@@ -615,6 +627,8 @@ export const createPoolWorker = (deps: {
     pragmas,
     statementCacheSize,
     statementCacheBytes,
+    abortSlots,
+    abortIndex: abortSlots ? index : undefined,
   });
 
   return deferredInit.promise;
