@@ -202,8 +202,10 @@ export type CreateSQLiteClientOptions = {
 
   /**
    * Milliseconds a worker has to post `ready` after its `open` message is sent.
-   * On expiry the slot is failed immediately — the most common cause is a
-   * database held under an exclusive lock by another tab or client.
+   * On expiry the slot is failed immediately, with a message naming the cause
+   * the client roster supports: another live client of this library holding
+   * the database, or a holder the roster cannot see — a page reloaded without
+   * `close()`, another library, native code.
    * @defaultValue `30_000`
    */
   openTimeout?: number;

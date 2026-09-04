@@ -117,7 +117,10 @@ All notable changes to this project are documented here.
   client roster before it is raised and says either that other clients of this
   library still hold the database, or that none does — in which case a reloaded
   page, or a holder outside this library, is the likely cause. Where the roster
-  cannot be read at all, the previous wording stands.
+  cannot be read at all, the previous wording stands. **The `openTimeout`
+  option's own TSDoc kept the claim the message had dropped** — it is the
+  comment your editor shows on the option — and now says the same thing the
+  error does.
 - **A read on `OPFSCoopSyncVFS` no longer fails with `BUSY` while the VFS moves
   its access handle between workers.** That VFS holds one exclusive OPFS handle
   and rotates it, and its lock call reports `SQLITE_BUSY` while a transfer is in

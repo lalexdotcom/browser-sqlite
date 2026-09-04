@@ -41,15 +41,20 @@ async function probeUnsafeHandles(): Promise<boolean> {
             const root = await navigator.storage.getDirectory();
             await root.removeEntry('__probe_unsafe_handles');
           } catch {}
+          self.close();
         }
       };
     `;
     const blob = new Blob([src], { type: 'application/javascript' });
     const url = URL.createObjectURL(blob);
     const worker = new Worker(url);
+    // The worker ends itself with `self.close()` once it has removed the probe
+    // file; terminating it here on the answer would race that cleanup and win
+    // often enough to leave `__probe_unsafe_handles` in the OPFS root (4 of 6
+    // Chromium loads, measured on the bench page's copy of this probe — see
+    // BENCH-DRIFT in mem:follow-ups). `onerror` means no cleanup will run.
     worker.onmessage = (e: MessageEvent<boolean>) => {
       resolve(e.data);
-      worker.terminate();
       URL.revokeObjectURL(url);
     };
     worker.onerror = () => {
