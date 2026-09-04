@@ -18,8 +18,9 @@ describe('the isolated project', () => {
         ),
       ),
     );
-    const seen = await new Promise((resolve) => {
+    const seen = await new Promise((resolve, reject) => {
       worker.onmessage = (e) => resolve(e.data);
+      worker.onerror = (e) => reject(e);
       worker.postMessage(new SharedArrayBuffer(8));
     });
     worker.terminate();

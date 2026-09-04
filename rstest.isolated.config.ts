@@ -1,3 +1,4 @@
+import { withRslibConfig } from '@rstest/adapter-rslib';
 import { defineConfig } from '@rstest/core';
 import { pluginSilenceWorkerHmrLogs } from './rstest.config';
 
@@ -55,6 +56,7 @@ const pluginCrossOriginIsolation = {
  * of the design has to be asserted somewhere.
  */
 export default defineConfig({
+  extends: withRslibConfig(),
   name: 'isolated',
   browser: {
     enabled: true,
