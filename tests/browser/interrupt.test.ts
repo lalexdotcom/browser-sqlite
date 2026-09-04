@@ -17,8 +17,12 @@ describe('aborting a running statement', () => {
       const started = performance.now();
       expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
       // Before this change the short read waited ~1.9 s for the abandoned
-      // statement. The threshold is an observation, not a specification:
-      // widen it if slower CI hardware proves it tight, never delete it.
+      // statement. In isolation the short read takes ~10-20 ms on both engines;
+      // the 1500 ms bound exists only to survive full-suite resource contention
+      // (observed: ~900 ms on Firefox when both browsers run in parallel).
+      // Anything over ~100 ms in isolation means a structural problem — likely
+      // two gate.tick() roundtrips instead of one — and should be investigated,
+      // not papered over by widening this bound further.
       expect(performance.now() - started).toBeLessThan(1500);
     } finally {
       await db.close();

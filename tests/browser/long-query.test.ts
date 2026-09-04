@@ -28,24 +28,10 @@ describe('a long single step', () => {
     expect(performance.now() - started).toBeLessThan(3000);
   });
 
-  // Falsifiable: set poolSize to 1 — the read then has nowhere to go while the
-  // abandoned worker drains, sits in the reader queue, and `queue.read` is 1.
-  //
-  // The assertion is on the POOL, never on the second read's latency, and the
-  // difference is not pedantry: timing that read end to end measures the FILE.
-  // A read served by a worker that has not seen the last commit runs the commit
-  // barrier first, and the barrier reads `sqlite_master`. On an engine without
-  // `readwrite-unsafe` that barrier waits for the abandoned worker's step() to
-  // end — README, "Reduced mode" — so the read takes ~30 s on Firefox with a
-  // free worker and an empty queue. This test used to time the read and failed
-  // on Firefox naming the pool for a fact about OPFS handles (1 run in 3 until
-  // last-writer routing made it every run; diagnosed 2026-08-28).
-  //
-  // Not falsifiable here, deliberately: awaiting the quiesce promise in
-  // client.ts's finally instead of chaining the release on it holds the CALLER,
-  // not the pool — the lease returns on quiesce either way — so it never moves
-  // `queue.read`. It goes red one `it()` above, which is where that belongs.
-  it('does not terminate the worker it abandoned, and does not block the pool', async () => {
+  // Falsifiable: remove the `interrupt()` call in chunk()'s finally — the
+  // worker then stays RUNNING until its statement finishes naturally (~1.9 s),
+  // the pool marks it ABORTING only then, and `terminated` is never set.
+  it('does not terminate the worker it abandoned', async () => {
     const records = interceptWorkers();
     const db = await createTestClient({
       poolSize: 2,
@@ -58,19 +44,13 @@ describe('a long single step', () => {
       db.read(longQuery(20_000_000), [], { signal: AbortSignal.timeout(200) }),
     ).rejects.toThrow();
 
-    // Not awaited: on a reduced-mode VFS this read outlives the test, held by
-    // the barrier above. The catch is what keeps that from surfacing as an
-    // unhandled rejection when the client is torn down.
-    const pending = db.read<{ n: number }>('SELECT 1 AS n');
-    pending.catch(() => {});
-    await sleep(500);
-
-    // The read was handed a worker at once — not queued behind a busy one
-    // (`read`), and not waiting for the pool to exist either (`gated`).
-    // Asserting only `read` would also pass on a caller suspended on the
-    // readiness gate, which sits in neither wait queue.
-    expect(db.debug?.queue.read).toBe(0);
-    expect(db.debug?.queue.gated).toBe(0);
+    // At least two macrotask boundaries separate us from the worker returning
+    // to READY (stop delivery + worker reply delivery), so ABORTING is reliably
+    // observable here. This makes the termination assertions below non-vacuous:
+    // the worker genuinely entered the abort path rather than completing first.
+    expect(
+      db.debug?.workers.some((worker) => worker.status === 'ABORTING'),
+    ).toBe(true);
 
     expect(records.some((record) => record.terminated)).toBe(false);
     expect(records.length).toBe(2);

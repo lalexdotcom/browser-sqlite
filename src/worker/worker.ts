@@ -172,6 +172,9 @@ const locks = createLocks();
 let queryRunning: PromiseWithResolvers<void> | undefined;
 const idleUntilQueryEnds = () => queryRunning?.promise ?? Promise.resolve();
 let closing = false;
+// Assigned in open() before any query can arrive: the worker posts `ready`
+// only after open() completes, and pool.ts does not dispatch a query until
+// the worker is READY. The default 'async' is never read.
 let currentBuild: SQLiteBuild = 'async';
 
 type OpenOptions = {
