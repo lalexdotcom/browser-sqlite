@@ -155,6 +155,9 @@
         td.measure.poor { --bar: #ef4444; }
       }
       td.measure.best { font-weight: 600; }
+      /* A figure past what its measurement can physically produce: kept, in
+         italics behind a ⚠, ranked at the bound rather than as a winner. */
+      td.measure.clamped { font-style: italic; }
       /* A capability, not a quantity. Same ✅/❌ as the conformance rows, on a
          tint, because a row that answers yes or no should not be read like the
          numbers above it — and a bar over a boolean is a bar over nothing. */
@@ -255,7 +258,10 @@
       <b>Reading the cells:</b> the bar behind a measurement is its rank in that
       row, not its size — <code>best ÷ value</code>, so a full bar is the row's
       winner. Green is within 20% of the best, amber within half, red below
-      half.
+      half. A cell in italics behind a ⚠ is past what its measurement can
+      physically produce — a concurrency gain above the pool that produced it —
+      so it is ranked at that bound instead of winning, while the figure shown
+      and the exported one stay what was actually read. Hover it for the detail.
       A browser clock is coarsened to 0.1 ms (Chromium) or 1 ms (Safari and
       Firefox), which is slower than the operations below it. So
       <code>point-read-p50</code> times its reads in groups of 20, and the
@@ -1185,6 +1191,22 @@
           SWEEP.left.length > 0
             ? ` Left in place: ${SWEEP.left.join(', ')}.`
             : '';
+        /**
+         * `blocked` has one established cause and it is not obvious, so the
+         * page names it rather than leaving the reader with a state and no
+         * move. `indexedDB.deleteDatabase` reports it while another connection
+         * to that database is open anywhere on the ORIGIN — and the released
+         * page at `/` is the same origin as `/preview/`, so a forgotten tab on
+         * either holds the same stores. The delete request then stays queued on
+         * that database and the run's own open queues behind it, which is how
+         * two IDBBatchAtomicVFS columns died at `opens` on macOS Safari,
+         * 2026-09-04. Quitting the browser cleared it; the next run was clean.
+         */
+        const cause = SWEEP.left.some((entry) => entry.endsWith('(blocked)'))
+          ? ' A store reported blocked is held by a live connection somewhere' +
+            ' on this origin — a forgotten tab on this site, the published page' +
+            ' included, is enough. Close it and re-run.'
+          : '';
 
         // Built as nodes rather than innerHTML, and this is not ceremony:
         // SWEEP.left carries OPFS entry NAMES, which are arbitrary strings from
@@ -1198,7 +1220,7 @@
           '⚠ ',
           label,
           ' — this run did not start from a floor it established itself, so its' +
-            ` numbers may carry a previous run's residue.${why}${left}`,
+            ` numbers may carry a previous run's residue.${why}${left}${cause}`,
         );
         box.replaceChildren(p);
         box.hidden = false;
@@ -1831,6 +1853,18 @@
           unit: '×',
           decimals: 2,
           better: 'high',
+          /**
+           * The gain cannot exceed the column's own pool: N workers cannot
+           * serve N+1 reads' worth of work in the time of one. So a value above
+           * it is measurement noise, and with `better: 'high'` the ranking would
+           * hand it the row — the same defect the old `pool-blocking` ratio had
+           * at the other end, where the noisiest column was crowned as best.
+           *
+           * The cap is per column because `poolFor` differs per VFS, hence a
+           * function rather than a constant. It bounds the RANKING only; the
+           * cell keeps what was measured, marked.
+           */
+          capBy: (pair) => poolFor(pair.cap),
           applies: () => true,
           /**
            * Median of 5 serial/parallel gain ratios. Alternates which runs
@@ -2667,22 +2701,51 @@
         if (entries.length === 0) return;
 
         const decimals = row.decimals ?? 1;
-        const values = entries.map(([, value]) => value);
+        /**
+         * A row may declare a bound its measurement cannot physically pass —
+         * `capBy` here, for a concurrency gain that cannot exceed the pool that
+         * produced it. It bounds the RANKING only. The cell keeps the figure
+         * that was actually read, marked, and the export keeps it untouched:
+         * how far a run overshot the bound is how much to distrust the row.
+         */
+        const capOf = (pairId) => {
+          if (!row.capBy) return null;
+          const pair = PAIRS.find((p) => p.id === pairId);
+          return pair ? row.capBy(pair) : null;
+        };
+        const bounded = (pairId, value) => {
+          const cap = capOf(pairId);
+          return cap !== null && value > cap ? cap : value;
+        };
+
+        const values = entries.map(([pairId, value]) => bounded(pairId, value));
         const best = row.better === 'high' ? Math.max(...values) : Math.min(...values);
         const worst = row.better === 'high' ? Math.min(...values) : Math.max(...values);
 
         for (const [pairId, value] of entries) {
           const td = cells.get(`${pairId}|${row.id}`);
           if (!td) continue;
+          const shown = bounded(pairId, value);
+          const capped = shown !== value;
           // Ratio to best, always in [0,1], whichever direction is better.
-          const ratio = row.better === 'high' ? value / best : best / value;
+          const ratio = row.better === 'high' ? shown / best : best / shown;
           // The user's bands: within 20% of the best, within half, and worse.
           const band = ratio >= 0.8 ? 'good' : ratio >= 0.5 ? 'mid' : 'poor';
+          // Never crowned: it reached that rank by overshooting a physical
+          // bound, and `best` would say the opposite of what the cap says.
           td.className =
-            `measure ${band}${value === best && worst !== best ? ' best' : ''}`;
-          td.title = '';
+            `measure ${band}` +
+            `${!capped && shown === best && worst !== best ? ' best' : ''}` +
+            `${capped ? ' clamped' : ''}`;
+          const fmt = (v) => `${v.toFixed(decimals)} ${row.unit}`;
+          td.title = capped
+            ? `${fmt(value)} is above ${fmt(shown)}, which this pool of` +
+              ` ${capOf(pairId)} cannot exceed — it is measurement noise, not a` +
+              ` better result. Ranked as ${fmt(shown)}; the value shown and the` +
+              ' downloaded JSON are what was actually read.'
+            : '';
           td.style.setProperty('--bar-w', `${Math.min(100, Math.max(2, ratio * 100))}%`);
-          td.textContent = `${value.toFixed(decimals)} ${row.unit}`;
+          td.textContent = capped ? `⚠ ${fmt(value)}` : fmt(value);
         }
       };
 
