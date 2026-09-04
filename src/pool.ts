@@ -15,6 +15,8 @@ export type PoolWorkerQueryOptions = {
   chunkSize?: number | undefined;
   credits?: number | undefined;
   timeout?: number | undefined;
+  /** Forwarded to the worker so it installs the async progress handler (§4 D2). */
+  abortable?: boolean | undefined;
   /**
    * When true, the query's completion does not call `deps.onServed`. Set for
    * the commit-propagation barrier: it is a synthetic probe, not user work, and
@@ -460,6 +462,7 @@ export const createPoolWorker = (deps: {
         credits = DEFAULT_CREDIT_WINDOW,
         noServed = false,
         timeout,
+        abortable,
       } = options ?? {};
       suppressServed = noServed;
 
@@ -483,7 +486,7 @@ export const createPoolWorker = (deps: {
         callId: ++currentCallId,
         sql,
         params,
-        options: { chunkSize, credits, timeout },
+        options: { chunkSize, credits, timeout, abortable },
       });
       worker.status = 'RUNNING';
 

@@ -43,6 +43,7 @@ type SQLOptions = {
   chunkSize?: number;
   signal?: AbortSignal;
   timeout?: number;
+  abortable?: boolean;
 };
 
 /**
@@ -171,6 +172,7 @@ const locks = createLocks();
 let queryRunning: PromiseWithResolvers<void> | undefined;
 const idleUntilQueryEnds = () => queryRunning?.promise ?? Promise.resolve();
 let closing = false;
+let currentBuild: SQLiteBuild = 'async';
 
 type OpenOptions = {
   vfs: SQLiteVFS;
@@ -227,6 +229,7 @@ const open = (file: string, options: OpenOptions) => {
 
   const { vfs, wasm, pragmas = {} } = options;
   const build = options.build ?? defaultBuildFor(vfs);
+  currentBuild = build;
 
   const vfsConfig = VFSConfigs[vfs];
 
@@ -380,8 +383,10 @@ const open = (file: string, options: OpenOptions) => {
      * `reset` ends the statement's implicit transaction, which is what keeps
      * a cached statement from holding a read transaction open and poisoning
      * the barrier; `clear_bindings` is the correctness condition of reuse.
-     * A statement that errored is finalised instead — `sqlite3_reset` returns
-     * the failed step's code, so resetting it throws.
+     * A statement that truly errored is finalised — `sqlite3_reset` returns the
+     * failed step's code, so resetting it throws. Exception: SQLITE_INTERRUPT
+     * from the abort-via-signal path also makes reset throw, but the statement
+     * is still reset to its initial state and can be cached.
      */
     const settle = async (stmt: number, failed: boolean) => {
       if (failed) {
@@ -392,10 +397,18 @@ const open = (file: string, options: OpenOptions) => {
       try {
         await sqlite.reset(stmt);
         sqlite.clear_bindings(stmt);
-      } catch {
-        cache.delete(sql);
-        await sqlite.finalize(stmt);
-        return;
+      } catch (e) {
+        // sqlite3_reset returns SQLITE_INTERRUPT when the statement was stopped
+        // mid-step by the progress handler (abort-via-signal path). Despite
+        // the non-OK return code, sqlite3_reset DOES reset the statement to
+        // its initial state and it is safe to cache. Any other error is a
+        // genuine failure: finalize and evict.
+        if ((e as { code?: number })?.code !== SQLITE_INTERRUPT) {
+          cache.delete(sql);
+          await sqlite.finalize(stmt);
+          return;
+        }
+        sqlite.clear_bindings(stmt);
       }
       for (const handle of cache.set(sql, stmt, stmtWeight(module, stmt))) {
         await sqlite.finalize(handle);
@@ -406,12 +419,26 @@ const open = (file: string, options: OpenOptions) => {
     // a slow consumer of stream() is never charged for its own pauses. The
     // handler runs inside step(), so it adds the current step's elapsed time to
     // what earlier steps of this call accumulated.
-    const { timeout } = options ?? {};
-    if (timeout !== undefined) {
+    const { timeout, abortable } = options ?? {};
+    // Three shapes, one handler. A `timeout` alone never needs to yield, and
+    // yielding is the only cost this design has — so it is spent exactly where
+    // nothing else can carry the signal into a running step().
+    const wantsSignal = abortable === true;
+    const canYield = currentBuild !== 'sync';
+    if (timeout !== undefined || (wantsSignal && canYield)) {
+      const overBudget = () =>
+        timeout !== undefined &&
+        spent + (performance.now() - stepStart) > timeout;
       sqlite.progress_handler(
         db,
         PROGRESS_OPS,
-        () => (spent + (performance.now() - stepStart) > timeout ? 1 : 0),
+        wantsSignal && canYield
+          ? async () => {
+              // The task turn is what lets a queued `stop` be delivered.
+              await gate.tick();
+              return gate.isStopped() || overBudget() ? 1 : 0;
+            }
+          : () => (overBudget() ? 1 : 0),
         null,
       );
     }
@@ -478,7 +505,8 @@ const open = (file: string, options: OpenOptions) => {
 
       yield sqlite.changes(db);
     } finally {
-      if (timeout !== undefined) sqlite.progress_handler(db, 0, () => 0, null);
+      if (timeout !== undefined || (wantsSignal && canYield))
+        sqlite.progress_handler(db, 0, () => 0, null);
     }
   };
 

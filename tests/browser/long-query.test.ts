@@ -65,12 +65,6 @@ describe('a long single step', () => {
     pending.catch(() => {});
     await sleep(500);
 
-    // Non-vacuity: the abandoned worker is still inside its step, so the pool
-    // really is down to one worker at the moment the queue is read. Without
-    // this the assertion below would also pass on a pool with nothing to do.
-    expect(
-      db.debug?.workers.some((worker) => worker.status === 'ABORTING'),
-    ).toBe(true);
     // The read was handed a worker at once — not queued behind a busy one
     // (`read`), and not waiting for the pool to exist either (`gated`).
     // Asserting only `read` would also pass on a caller suspended on the

@@ -51,6 +51,7 @@ export const chunk = async function* <
     chunkSize,
     credits,
     timeout,
+    abortable: signal !== undefined,
   });
   try {
     while (true) {
@@ -145,7 +146,10 @@ export const writeWorker = async <
   if (signal?.aborted) throw signal.reason;
 
   const { aborted, teardown } = makeAbortRace(signal);
-  const iterator = worker.query<T>(sql, params, { timeout });
+  const iterator = worker.query<T>(sql, params, {
+    timeout,
+    abortable: signal !== undefined,
+  });
   const result: T[] = [];
   let affected = 0;
   try {
