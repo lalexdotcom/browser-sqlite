@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-09-03.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-09-04.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one.
 
 **No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
@@ -27,8 +27,8 @@ obligations and unmeasured ground.
 ## The verification baseline — compare against these, re-measured 2026-09-03
 
 Not history: the numbers a regression is detected against. **Every figure below was read off
-a run on 2026-09-03 in this container, on the MERGED result** — none is carried forward from
-an earlier session, and none is arithmetic — every row was re-read after the OPEN-TIMEOUT
+a run on 2026-09-04 in this container, on the MERGED result** — none is carried forward from
+an earlier session, and none is arithmetic — every row was re-read after the bench-page
 merge, `check.mjs` included, so no row is now carried over.
 
 | command | result |
@@ -41,7 +41,7 @@ merge, `check.mjs` included, so no row is now carried over.
 | `pnpm test:firefox` | 225 tests, 30 files — the 29 shared plus one Firefox-only |
 | `pnpm test:conformance` | **TWO reports** — it chains both engines. 85 tests / 2 files, **73 passed / 12 skipped**, on each: identical |
 | `pnpm test:consumer` | 24/24 stages |
-| `node scripts/bench/check.mjs chromium --all` | OK, 22 declared pairs, 22 columns, zero `not-run` |
+| `node scripts/bench/check.mjs chromium --all` | OK, 22 declared pairs, 22 columns, zero `not-run`, **zero null cells**, ~160 s. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
 | `pnpm lint` | 97 files, 13 warnings, 1 info |
 | `dependencies` in `package.json` | absent |
 
