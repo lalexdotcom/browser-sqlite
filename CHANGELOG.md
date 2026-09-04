@@ -58,7 +58,6 @@ All notable changes to this project are documented here.
   describe it without being handed its options too.
 - **`UNSUPPORTED` is a new error code**, raised where the Web Locks API is
   unavailable.
-
 - **`timeout`, a per-query budget in milliseconds.** A query that spends more than it is
   stopped and rejected with the new `QUERY_TIMEOUT` code. It counts **SQLite execution
   time**, not elapsed time: the seconds your own code spends between two chunks of a

@@ -376,7 +376,7 @@ depends on the build behind your VFS:
 
 Where it does not, an aborted query keeps running to its end on its worker; the pool's other
 workers are unaffected. Two ways out, and you may want neither: serve your page cross-origin
-isolated (any of COOP+COEP or `Document-Isolation-Policy` does it), or pass
+isolated — COOP+COEP anywhere, or `Document-Isolation-Policy` on Chromium — or pass
 `build: 'async'`, which every one of those four VFS accepts.
 
 `timeout` needs none of that. It works on every build, and it counts SQLite execution time —
