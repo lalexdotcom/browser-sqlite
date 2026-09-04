@@ -1050,6 +1050,64 @@ so it reads as pre-existing and the "never touch what was already there" rule pr
 Clearing it is a manual act on that profile. It cost the runs nothing: 146 `pass` with it
 present.
 
+## HANDLE-1 measured per VFS — 2026-09-04, four platforms, `preview` on Pages
+
+**Method.** The bench page's `reads-during-long-query` row, which races a short read against
+a long statement holding one of the pool's workers: the read winning means it was served
+without waiting. No clock, no threshold. Ten exports across four platforms, `poolFor` = 4 for
+every VFS below, so "no other worker" is excluded.
+
+| engine | served | waited |
+|---|---|---|
+| Chromium 150 (has `readwrite-unsafe`) | Adaptive, WriteAhead, AnyContext | CoopSync, IDBBatchAtomic |
+| Safari 27 (no RWU, macOS + iPadOS) | AnyContext/jspi only | everything else |
+| Firefox 154 (accepts RWU, ignores it) | AnyContext only | everything else |
+
+**The partition follows `readwrite-unsafe` exactly** — the README's central limitation, until
+now stated in prose and inferred from `read-burst` ratios. The read-burst gains agree
+independently: 0.89-1.45 across twenty non-AnyContext columns on Safari and Firefox.
+
+**`OPFSAnyContextVFS` is the only OPFS VFS serving concurrent reads without RWU**, which makes
+it the one to suggest to a Safari or Firefox consumer who reads while working. It is also the
+worst writer measured here — 13-18 ms for a single INSERT against 0.2-0.6 ms, and 695-821 ms
+on the 500-UPDATE row against 32-125 — so it is a trade, never a winner.
+
+### `OPFSWriteAheadVFS` beats the default on Safari on every axis but concurrency
+
+macOS Safari 27, 2026-09-04, `sync` against the default `OPFSAdaptiveVFS/async`. **n=1.**
+
+| | default | WriteAhead/sync |
+|---|---|---|
+| write p50 | 2.00 ms | 0.60 |
+| write **p95** | 8.60 ms | **1.00** |
+| point read | 1.90 ms | 0.20 |
+| page of a list | 4.60 ms | 2.00 |
+| full scan | 16 ms | 10 |
+| transaction | 44 ms | 31 |
+
+This is what refuted `mem:vfs`'s "outside Chromium it earns nothing over the default", which
+had been generalised from a read-burst measurement about concurrency alone.
+
+### What the grouping recovered
+
+`point-read` was nulling 61 cells of 88 on iPadOS before being timed in groups of 20;
+`write-latency` 14 of 22 on both Safaris and 18 of 22 on Firefox, `list-page` 10 of 22 on
+Firefox, before groups of 5. After: **one null cell in a whole 22-column export**, and it is
+`reads-during-long-query` failing its 1.5-3 s calibration, which is the row declining to
+answer rather than guessing. The cause was always the clock — 0.1 ms on Chromium, 1 ms on
+Safari and Firefox — never the dataset.
+
+### A tab on the origin blocks two columns, reproducibly
+
+macOS Safari, 2026-09-04: `sweep.left: ["idb:IDBBatchAtomicVFS (blocked)"]` with
+`idbAfter: ["IDBBatchAtomicVFS"]` — so not a slow delete, a live connection elsewhere. Both
+`IDBBatchAtomicVFS` columns then failed `opens` at 20 s. The chain: another connection →
+`deleteDatabase` fires `blocked` → **the delete request stays queued on that database** → the
+run's own open queues behind it. **`/` and `/preview/` are the same origin**, so a tab on the
+released page holds the same stores. Quitting Safari cleared it and the next run was clean,
+22 columns, zero failures. Before 2026-09-04 `blocked` was counted as a successful deletion,
+so this was silent rather than absent.
+
 ## CACHE-BYTES settled — 2026-09-03, Chromium / Firefox, this container
 
 **Method.** Throwaway `tests/browser/cache-bytes-probe.test.ts` (deleted). N concurrent
