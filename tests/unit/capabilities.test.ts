@@ -54,7 +54,11 @@ import {
   KNOWN_FEATURES,
   missingFeature,
 } from '../../src/capabilities';
-import { BUILD_REQUIREMENTS, type PlatformFeature } from '../../src/types';
+import {
+  BUILD_DEGRADES_WITHOUT,
+  BUILD_REQUIREMENTS,
+  type PlatformFeature,
+} from '../../src/types';
 
 describe('platform requirements', () => {
   // Falsifiable: add a feature to any `requires` without adding a probe.
@@ -119,6 +123,21 @@ describe('platform requirements', () => {
 
   it('detects nothing in Node, where none of the globals exist', () => {
     expect(detectFeatures().has('opfs')).toBe(false);
+  });
+
+  it('probes cross-origin isolation, and reports the host it runs in', () => {
+    const features = detectFeatures();
+    // Node and the test host are not isolated; the probe must say so rather
+    // than throw or report the feature present.
+    expect(features.has('cross-origin-isolated')).toBe(
+      globalThis.crossOriginIsolated === true,
+    );
+  });
+
+  it('declares which build degrades without which feature', () => {
+    expect(BUILD_DEGRADES_WITHOUT.sync).toEqual(['cross-origin-isolated']);
+    expect(BUILD_DEGRADES_WITHOUT.async).toEqual([]);
+    expect(BUILD_DEGRADES_WITHOUT.jspi).toEqual([]);
   });
 });
 

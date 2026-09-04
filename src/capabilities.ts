@@ -23,6 +23,7 @@ const PROBES: Partial<Record<PlatformFeature, () => boolean>> = {
   'writable-stream': () =>
     typeof FileSystemFileHandle !== 'undefined' &&
     typeof FileSystemFileHandle.prototype.createWritable === 'function',
+  'cross-origin-isolated': () => globalThis.crossOriginIsolated === true,
 };
 
 /**
@@ -42,6 +43,7 @@ const FEATURE_LABEL: Record<PlatformFeature, string> = {
   jspi: 'JSPI',
   'writable-stream': 'FileSystemWritableFileStream',
   'readwrite-unsafe': 'readwrite-unsafe access handles',
+  'cross-origin-isolated': 'cross-origin isolation',
 };
 
 /**
