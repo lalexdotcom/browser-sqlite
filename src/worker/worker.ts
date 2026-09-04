@@ -9,7 +9,8 @@
  * maintained by `src/pool.ts`, not by this module. From this worker's perspective:
  * the database open is serialised by `navigator.locks` (`initLockName(file)`);
  * readiness is reported via the `ready` message; an abort arrives as a `stop`
- * message and is observed through the credit gate's stopped flag.
+ * message and is observed through the credit gate's stopped flag; on the `sync` build only,
+ * `interrupt()` also delivers the abort via a shared slot that the gate never sees.
  */
 import * as SQLite from 'wa-sqlite/src/sqlite-api.js';
 import {

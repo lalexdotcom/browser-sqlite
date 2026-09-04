@@ -28,9 +28,9 @@ describe('a long single step', () => {
     expect(performance.now() - started).toBeLessThan(3000);
   });
 
-  // Falsifiable: remove the `interrupt()` call in chunk()'s finally — the
-  // worker then stays RUNNING until its statement finishes naturally (~1.9 s),
-  // the pool marks it ABORTING only then, and `terminated` is never set.
+  // Falsifiable: remove the `interrupt()` call in chunk()'s finally — without
+  // it the worker transitions RUNNING → READY without passing through ABORTING,
+  // so the ABORTING status check fails.
   it('does not terminate the worker it abandoned', async () => {
     const records = interceptWorkers();
     const db = await createTestClient({
