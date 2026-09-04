@@ -45,7 +45,6 @@ export type OptionsWithSignal<T = unknown> = T & {
 };
 
 /** Options every query method accepts. */
-/** Options every query method accepts. */
 export type SQLiteQueryOptions = OptionsWithSignal<{
   /**
    * Milliseconds of SQLite EXECUTION this query may spend before it is stopped
