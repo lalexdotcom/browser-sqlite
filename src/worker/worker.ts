@@ -353,8 +353,14 @@ const open = (file: string, options: OpenOptions) => {
         } catch (e) {
           spent += performance.now() - stepStart;
           if ((e as { code?: number })?.code === SQLITE_INTERRUPT) {
-            // Two triggers can raise it, and only the worker knows which.
-            if (gate.isStopped()) break; // the client already rejected
+            // Three triggers can raise it, and only the worker knows which:
+            // (1) a `stop` message processed by gate.stop(); (2) the shared
+            // slot written by interrupt() on the sync build, which never
+            // yields so the message cannot reach it; (3) the budget. The
+            // first two mean the client already rejected — break so settle()
+            // sees a clean exit and keeps the statement cached. The third
+            // means the caller is still waiting — throw so they get an error.
+            if (gate.isStopped() || abortedHere()) break;
             throw new WorkerQueryTimeout(timeout as number);
           }
           throw e;
