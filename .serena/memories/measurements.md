@@ -1388,3 +1388,42 @@ loses nothing, since Firefox serialises those compiles anyway. **Dropped on the 
 not on the difficulty:** nothing on Chromium, 8 ms at the default `poolSize` on Firefox,
 and a handshake added to the open path — the path GATE-1 and three abort defects were paid
 for. Reviving it needs no new measurement, only this table.
+
+## The dropped chunk — 2026-09-04, Chromium 151 / Firefox 153, this container
+
+The defect: the pool's transport held ONE slot for an in-flight chunk while the credit
+window puts `credits` of them in flight. A chunk arriving while the generator was suspended
+at its `yield` resolved a promise nobody would ever await. Fixed by `3ef05cb`.
+
+**The law, from varying the credit window on one query** (1001 rows, `MemoryVFS`, consumer
+sleeping 50 ms per chunk). The consumer received only the chunks that arrived while it was
+waiting:
+
+| credits | delivered |
+|---|---|
+| 1 | 3 chunks, **1001 rows** |
+| 2 (default) | 2 chunks, **501 rows** |
+| 4 | 1 chunk, **500 rows** |
+
+**Per surface, five runs each, both engines, zero variance:**
+
+| surface | before | after |
+|---|---|---|
+| `chunk()` consumed without pausing | 1001 | 1001 |
+| `chunk()` with a 50 ms pause | **501** | 1001 |
+| `stream()` with `await setTimeout(0)` per row | **501** | 1001 |
+| `read()` | 1001 | 1001 |
+| `first()` | 1 | 1 |
+| `write(… RETURNING)` | 1001 | 1001 |
+
+The `setTimeout(0)` row is the one to quote: one turn of the event loop was the entire
+precondition, not slow work.
+
+**Present in the published release.** A worktree of the `v1.0.0-rc.4` tag, same probe, same
+numbers — 1001 without a pause, 501 with. rc.3 carries the same three lines in `client.ts`,
+before `pool.ts` was extracted. Probes: `.scratchpad/chunk-drop/` (throwaway).
+
+**A second measurement came out of the fix itself**, and is the reason the delivery loop
+consults its failure channels through flags: a loop that always has a queued chunk never
+awaits, so a `messageerror` raised mid-stream went unreported for the whole remaining query
+before the flag existed. Found by a test written for a different property.

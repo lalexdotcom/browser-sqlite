@@ -24,12 +24,14 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-04
+## The verification baseline — compare against these, re-measured 2026-09-04 after the dropped-chunk merge
 
 Not history: the numbers a regression is detected against. **Every figure below was read off
 a run on 2026-09-04 in this container, on the MERGED result** — none is carried forward from
-an earlier session, and none is arithmetic — every row was re-read after the bench-page
-merge, `check.mjs` included, so no row is now carried over.
+an earlier session, and none is arithmetic — every row was re-read after the dropped-chunk
+merge, `check.mjs` included, so no row is now carried over. The two browser rows moved by
+six tests each: that is `tests/browser/chunk-delivery.test.ts`, and it is the only thing
+that moved them.
 
 | command | result |
 |---|---|
@@ -37,8 +39,8 @@ merge, `check.mjs` included, so no row is now carried over.
 | `pnpm build` | clean |
 | `pnpm test` | **TWO reports since 2026-09-03** — it chains both engines. `status: pass` on each: **613 tests / 47 files** (unit + chromium), then **225 tests / 30 files** (firefox) |
 | `pnpm test:unit` | 389 tests, 18 files |
-| `pnpm test:chromium` | 224 tests, 29 files |
-| `pnpm test:firefox` | 225 tests, 30 files — the 29 shared plus one Firefox-only |
+| `pnpm test:chromium` | 230 tests, 30 files |
+| `pnpm test:firefox` | 231 tests, 31 files — the 30 shared plus one Firefox-only |
 | `pnpm test:conformance` | **TWO reports** — it chains both engines. 85 tests / 2 files, **73 passed / 12 skipped**, on each: identical |
 | `pnpm test:consumer` | 24/24 stages |
 | `node scripts/bench/check.mjs chromium --all` | OK, 22 declared pairs, 22 columns, zero `not-run`, **zero null cells**, ~160 s. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
@@ -72,8 +74,20 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 None outstanding.
 
-**The next thing is rc.5's remaining scope, which is the user's to pick from
-`mem:follow-ups`.**
+**The work in flight is `feat/query-interruption`** — INTERRUPT-1, brainstormed, specified
+and planned on 2026-09-04, with the user's decisions recorded in the spec's §5. The branch
+carries the spec (`d9df0da`), the six-task plan (`0f1e1db`) and task 1 (the `timeout`
+option, `QUERY_TIMEOUT`, and the progress handler that enforces it). Tasks 2-6 remain, and
+the SDD ledger for it lives in `.superpowers/sdd/2026-09-04-query-interruption/progress.md`
+— gitignored, so it does not survive a `git clean`; the plan and `git log` do.
+
+## The dropped chunk — fixed on `main` 2026-09-04, outside the rc.5 lots
+
+Found by the query-interruption lot's first task and fixed on its own branch from `main`,
+deliberately: a released data-loss defect should not ride inside a feature branch, and the
+user stopped the lot to take it first. `fix/dropped-chunk`, two commits, merge `e83d9b5`,
+reviewed on the whole branch before merging. What it was and what it measured:
+`mem:measurements`; what it teaches about testing a streaming API: `mem:lessons`.
 
 ## rc.5 so far: eight lots, merged 2026-09-02 to 2026-09-04
 
@@ -224,6 +238,14 @@ failures established that no reading would have.
   what they immediately caught: `mem:measurements`.
 
 ## Known live exposures
+
+- **`1.0.0-rc.4` is published under `latest` with a silent data-loss defect, and that is a
+  decision, not an oversight (user, 2026-09-04).** `stream()` and `chunk()` drop rows for
+  any consumer that awaits between chunks — 501 of 1001 at the default settings, measured
+  on the tag itself (`mem:measurements`). The fix is on `main` and **rides in rc.5, which
+  the user judged near enough not to hurry**: no emergency release, no note added to the
+  rc.4 GitHub release. Do not re-propose either without new information; what would be new
+  is a consumer reporting it, or rc.5 slipping far enough that "not far" stops being true.
 
 - **The Pages site is a pure function of TWO TAGS, and this file said otherwise until
   2026-09-03.** `/` is built from the latest release tag, `/preview/` from the `preview` tag,

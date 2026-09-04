@@ -458,3 +458,45 @@ otherwise. Then run the falsifier before believing the test.
 
 **The tell:** a test for a concurrency defect that contains a sequential setup of the very
 operations that must overlap.
+
+## A streaming API tested by a consumer that never pauses is not tested — 2026-09-04
+
+`stream()` and `chunk()` dropped rows for four releases and the suite never saw it. The
+transport held one slot for an in-flight chunk while the credit window puts two in flight,
+so a chunk arriving while the pool's generator was suspended at its `yield` resolved a
+promise nobody would ever await. The condition for loss is therefore *the consumer does
+something between chunks* — the nominal case for the API's whole purpose — and 501 of 1001
+rows came back, silently, on both engines.
+
+**Every test consumed at full speed.** `for await (const rows of …) result.push(...rows)`
+returns to the await inside the same microtask, so the generator was always the one waiting
+when a chunk landed. The suite exercised the transport's happy interleaving exclusively,
+and no amount of coverage on that shape could have found this.
+
+**The rule: a streaming test must `await` in its loop body**, and `await sleep(0)` is
+enough — one turn of the event loop was the entire precondition. The same applies to any
+API whose consumer holds a generator open: what is being tested is the suspension, not the
+data.
+
+**Its corollary, learned the same afternoon:** `read()`, `first()` and `write()` were
+immune for exactly the same reason, so a defect in the shared transport was invisible from
+three of the five surfaces that use it. Immunity by accident reads as correctness.
+
+## An install that "succeeded" can be missing an optional dependency — 2026-09-04
+
+`pnpm test:consumer` failed twice in a row at 21/24, with Parcel dying on
+`Cannot find module '@swc/core-linux-arm64-gnu'`. It looked exactly like a regression from
+the branch under test — it was not, and it was not even a change: **an optional dependency
+that fails to download does not fail `npm install`.** The scaffold stage reported success,
+and the absence only surfaced when Parcel tried to load its native binding.
+
+Two runs agreed, which is what made it convincing. What settled it: a clean-room `npm
+install` of the same fixture pulled the package fine, the two-install sequence the script
+uses reproduced nothing, and the next `pnpm test:consumer` was 24/24.
+
+**Before concluding that a consumer-smoke failure is yours: re-run it, and run it on
+`main`.** Both were done here — but both failing runs were minutes apart and shared the
+transient cause, so agreement between them proved nothing. Two observations of one flake
+are one observation. The fixtures pin floating ranges on purpose (they test the newest
+bundlers), so this failure mode stays possible and will return wearing another package's
+name.
