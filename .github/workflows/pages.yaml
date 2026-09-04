@@ -16,7 +16,12 @@ name: pages
 #   git tag -f preview && git push -f origin preview
 #
 # Want it gone? Delete the tag. Both republish the site, and there is no manual
-# trigger: re-pushing the tag unchanged is the republish.
+# trigger.
+#
+# To republish WITHOUT moving the tag, delete it on the remote and push it back:
+# `git push origin --delete preview && git push origin preview`. Pushing an
+# unchanged tag does nothing — git answers `Everything up-to-date` and emits no
+# event, so there is no run. This file used to claim the opposite.
 #
 # `deploy-pages` publishes an artifact that REPLACES the whole site, which is
 # why both halves are rebuilt on every run rather than one being patched in.
@@ -60,10 +65,26 @@ permissions:
   id-token: write
 
 # Never two deploys at once; a superseded run is cancelled rather than raced.
-# Safe by construction here: every run rebuilds the same two tags, so whichever
-# run wins publishes the same site the cancelled one would have.
+# Safe here because every run rebuilds the same two tags, so whichever run wins
+# publishes the same site the cancelled one would have — PROVIDED the winner
+# publishes at all.
+#
+# THAT IS WHY THE JOB'S GUARD IS REPEATED HERE. `concurrency` is evaluated
+# before any job runs, so a run that will be skipped still joins the group and,
+# with `cancel-in-progress`, kills the deploy that was running. It is not
+# hypothetical: on 2026-09-04 deleting a merged branch cancelled the preview
+# deploy pushed two seconds earlier and then skipped itself, leaving the site on
+# the previous build with nothing to say so. `delete` carries no ref filter, so
+# every branch deletion in this repository starts one of these.
+#
+# A run that will not deploy gets a group of its own and can cancel nothing.
+# THE TWO CONDITIONS MUST STAY IDENTICAL — there is no way to share one, since
+# `concurrency` cannot read `env`.
 concurrency:
-  group: pages
+  group: >-
+    ${{ (github.event_name != 'delete' || (github.event.ref_type == 'tag' &&
+    github.event.ref == 'preview')) && 'pages' ||
+    format('pages-noop-{0}', github.run_id) }}
   cancel-in-progress: true
 
 jobs:
