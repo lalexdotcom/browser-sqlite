@@ -109,6 +109,19 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **`stream()` and `chunk()` silently dropped rows whenever the consumer awaited
+  anything between chunks.** A consumer that did any asynchronous work — rendering
+  a row, awaiting a fetch, or merely yielding one turn of the event loop —
+  received a fraction of its result set, with no error and no short read to show
+  for it. Measured on the released code, identical on Chromium and Firefox and
+  deterministic across five runs: **501 of 1001 rows** at the default settings,
+  **500 of 1001** with a wider credit window. The larger the window, the more was
+  lost. `read()`, `first()` and `write()` were never affected — they accumulate
+  inside the library without handing control back between chunks, which is why
+  this survived four releases. **If you consume `stream()` or `chunk()`
+  asynchronously, treat every result set you have processed as incomplete.**
+  The transport now queues what the worker delivers instead of holding a single
+  slot for it.
 - **An `openTimeout` failure no longer blames another tab when there is none.**
   The message said the database *may* be held under an exclusive lock by another
   tab or another client, which misdirects in the case that happens most: a page

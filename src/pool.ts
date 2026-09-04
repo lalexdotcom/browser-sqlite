@@ -182,6 +182,47 @@ export const createPoolWorker = (deps: {
 
   // Deferred promise for streaming query results one chunk at a time
   let deferredChunk: PromiseWithResolvers<unknown[] | number> | undefined;
+
+  /**
+   * Everything the worker has delivered and the generator has not yielded yet.
+   *
+   * `deferredChunk` is ONE slot, and the credit window puts `credits` chunks in
+   * flight (2 by default). While the generator is suspended at its `yield` —
+   * which is every moment the consumer is doing something — an arriving chunk
+   * used to resolve a promise nobody would ever await, and the generator then
+   * waited on the replacement. The chunk was gone: no error, no short read,
+   * just fewer rows. Measured 2026-09-04, deterministic on both engines: 501 of
+   * 1001 rows for a consumer that awaited a `setTimeout(0)` between chunks, 500
+   * of 1001 at `credits: 4`. It reached `stream()` and `chunk()` and no other
+   * surface, because `read()`, `first()` and `write()` never hand control back
+   * between chunks — which is why four releases shipped with it.
+   *
+   * So the promise is now only a wake-up signal, and the VALUES live here. A
+   * resolution nobody observes costs nothing; a chunk that was never queued
+   * cannot be recovered.
+   */
+  let inbox: (unknown[] | number)[] = [];
+
+  /**
+   * Set by `interrupt()`. Without it, a stop arriving while the inbox holds
+   * chunks would be outrun by the drain: the loop would keep yielding buffered
+   * chunks and never look at `stopRequested` again. A stop must stop.
+   */
+  let stopped = false;
+
+  /**
+   * The transport's failure, captured the moment it happens rather than
+   * observed by awaiting.
+   *
+   * The delivery loop only awaits — and so only sees `lost` or a death — when
+   * the inbox runs dry, and against a steady producer it never does: the
+   * consumer takes a chunk, the credit brings the next one, and the queue is
+   * refilled before the loop looks up. Measured while building this fix: a
+   * `messageerror` raised mid-stream went unreported for the whole remaining
+   * query, where it used to reject at once. Failing fast on this flag is what
+   * keeps the two channels as urgent as they were.
+   */
+  let failure: unknown;
   // Set by the query generator when options.noServed is true; cleared in
   // case 'done' after (possibly) suppressing onServed, and in the generator's
   // finally so a query that fails before 'done' does not leave it set.
@@ -199,8 +240,11 @@ export const createPoolWorker = (deps: {
   let ready = false;
   const deathDeferred = Promise.withResolvers<never>();
   // Nothing awaits this until a query runs; without a sink an early death is an
-  // unhandled rejection.
-  deathDeferred.promise.catch(() => {});
+  // unhandled rejection. The sink is also where the delivery loop learns of a
+  // death it is not currently awaiting — see `failure`.
+  deathDeferred.promise.catch((error) => {
+    failure ??= error;
+  });
 
   // Per-query channel for a message that never arrived (onmessageerror). The
   // worker is alive, so the request rejects but the transport stays intact and
@@ -308,6 +352,9 @@ export const createPoolWorker = (deps: {
           if (state?.currentRequest?.currentQuery) {
             state.currentRequest.currentQuery.firstRowTime ??= Date.now();
           }
+          // Queue first, then wake. The resolution may reach nobody — that is
+          // the whole defect the inbox exists for — but the chunk is kept.
+          inbox.push(data.data);
           deferredChunk.resolve(data.data);
           deferredChunk = Promise.withResolvers<unknown[] | number>();
         }
@@ -323,6 +370,10 @@ export const createPoolWorker = (deps: {
             state.currentRequest.affectedRows += affected;
             state.currentRequest.currentQuery.endTime = Date.now();
           }
+          // The affected count is the last thing the generator yields, so it
+          // queues behind whatever chunks are still waiting — a `done` that
+          // jumped the queue would truncate them.
+          inbox.push(affected);
           deferredChunk.resolve(affected);
           deferredChunk = undefined;
           if (!suppressServed) deps.onServed?.(index);
@@ -339,6 +390,14 @@ export const createPoolWorker = (deps: {
             state.currentRequest.currentQuery.endTime = Date.now();
           }
           deferredChunk.reject(error);
+          // Deliberately NOT `failure = error`, which is what a `messageerror`
+          // and a death do. Those two mean the transport is broken, so nothing
+          // queued behind them can be trusted and the drain stops at once. A
+          // query error is the opposite: the worker produced those rows and
+          // then failed, so the consumer receives what SQLite actually returned
+          // and the error arrives after it. Setting the flag here would
+          // suppress rows that exist.
+          //
           // Do NOT null deferredChunk here. If the generator is suspended at
           // `yield` when the error arrives, nulling it would cause the while
           // loop to exit normally (silent truncation). Leaving the rejected
@@ -405,9 +464,16 @@ export const createPoolWorker = (deps: {
       suppressServed = noServed;
 
       // Prepare for streaming chunks
+      inbox = [];
+      stopped = false;
+      // A death is terminal for this worker, so its failure outlives the query
+      // that observed it; a transport failure belongs to one query only.
+      if (!dead) failure = undefined;
       deferredChunk = Promise.withResolvers<unknown[] | number>();
       lost = Promise.withResolvers<never>();
-      lost.promise.catch(() => {});
+      lost.promise.catch((error) => {
+        failure ??= error;
+      });
       idle = Promise.withResolvers<void>();
       stopRequested = Promise.withResolvers<typeof STOP>();
 
@@ -421,16 +487,34 @@ export const createPoolWorker = (deps: {
       });
       worker.status = 'RUNNING';
 
-      // Stream chunks until query completes
-      while (deferredChunk) {
-        const chunk = await Promise.race([
-          deferredChunk.promise,
-          stopRequested.promise,
-          lost.promise,
-          deathDeferred.promise,
-        ]);
-        if (chunk === STOP) break;
-        yield chunk as T[] | number;
+      // Stream chunks until the query completes AND the inbox is empty. The
+      // second half is not belt-and-braces: `done` clears `deferredChunk`, so a
+      // loop that watched only the flag would exit on the last message and
+      // drop whatever was still queued behind it.
+      while (deferredChunk || inbox.length > 0) {
+        if (inbox.length === 0) {
+          // Nothing queued: wait to be woken. The resolved VALUE is ignored —
+          // it is read from the inbox on the next turn, because a wake and a
+          // delivery are no longer the same event.
+          const waiting = deferredChunk;
+          if (!waiting) break;
+          const outcome = await Promise.race([
+            waiting.promise,
+            stopRequested.promise,
+            lost.promise,
+            deathDeferred.promise,
+          ]);
+          if (outcome === STOP) break;
+          continue;
+        }
+        // A stop that arrives with chunks still queued must win: otherwise the
+        // drain outruns it and the consumer keeps receiving rows it abandoned.
+        if (stopped) break;
+        // Same reasoning for the two failure channels, which the loop is no
+        // longer awaiting while it has something to deliver.
+        if (failure !== undefined) throw failure;
+        const chunk = inbox.shift() as T[] | number;
+        yield chunk;
         // Spec §3.3: the credit is issued once the CONSUMER has taken the
         // chunk. Crediting on arrival would let the worker run at full speed
         // and pile the chunks up in the message queue, which is the guarantee
@@ -482,6 +566,10 @@ export const createPoolWorker = (deps: {
       deferredChunk = undefined;
       lost = undefined;
       stopRequested = undefined;
+      // Chunks the consumer abandoned. Left in place they would be yielded to
+      // the NEXT query on this worker, which is the same defect wearing the
+      // opposite sign: rows delivered to a caller that never asked for them.
+      inbox = [];
       // Reset in case the query failed before 'done' arrived — prevents
       // leaking noServed=true into the next query on this worker.
       suppressServed = false;
@@ -500,6 +588,7 @@ export const createPoolWorker = (deps: {
      * finally instead of waiting behind a chunk that may be minutes away.
      */
     interrupt: () => {
+      stopped = true;
       stopRequested?.resolve(STOP);
     },
     quiesce: () => idle?.promise ?? Promise.resolve(),
