@@ -376,18 +376,23 @@
        * is the failure BENCH-DRIFT already records for this file.
        *
        * The probe removes it in its own `finally`, and that removal is allowed
-       * to fail silently — but it also RACES the worker's own death: the main
-       * thread calls `worker.terminate()` the moment the probe's message
-       * arrives, while the `finally` is still awaiting `getDirectory()`.
-       * Termination wins often enough to matter — **4 of 6 Chromium loads left
+       * to fail silently. It USED to race the worker's own death: the main
+       * thread called `worker.terminate()` the moment the probe's message
+       * arrived, while the `finally` was still awaiting `getDirectory()`.
+       * Termination won often enough to matter — **4 of 6 Chromium loads left
        * the file behind**, measured 2026-09-03 in this container, and a Safari
-       * 26.6.2 export carried it into `opfsRootAtStart` as well. It is not a
-       * WebKit quirk; one observation per engine said it was, which is what n=1
-       * is worth here.
+       * 26.6.2 export carried it into `opfsRootAtStart` as well. It was not a
+       * WebKit quirk; one observation per engine said it was, which is what
+       * n=1 is worth here.
        *
-       * So the sweep owns the name outright rather than trusting the probe to
-       * have cleaned up. Closing the race at its source — postMessage after the
-       * cleanup instead of before — is a separate change and is not made here.
+       * The worker now ends ITSELF with `self.close()` once the cleanup has
+       * run, and nothing on the main thread terminates it. Posting the result
+       * after the cleanup instead — the other way to close the race — would
+       * have made page start-up wait on an OPFS removal that can hang, for a
+       * capability answer that is already known.
+       *
+       * The sweep still owns the name, because a visitor's floor cannot depend
+       * on a probe having reached its `finally` at all.
        */
       const UNSAFE_PROBE_FILE = '__probe_unsafe_handles';
 
@@ -412,6 +417,7 @@
                   const root = await navigator.storage.getDirectory();
                   await root.removeEntry('${UNSAFE_PROBE_FILE}');
                 } catch {}
+                self.close();
               }
             };
           `;
@@ -421,11 +427,16 @@
           const worker = new Worker(url);
           const done = (value) => {
             resolve(value);
-            worker.terminate();
             URL.revokeObjectURL(url);
           };
+          // No `terminate()` on the answer path: the worker ends itself after
+          // its cleanup. `onerror` means that cleanup will never run, so that
+          // path still terminates.
           worker.onmessage = (e) => done(e.data);
-          worker.onerror = () => done(false);
+          worker.onerror = () => {
+            worker.terminate();
+            done(false);
+          };
           worker.postMessage(null);
         });
 
