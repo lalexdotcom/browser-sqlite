@@ -24,7 +24,7 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-03
+## The verification baseline — compare against these, re-measured 2026-09-04
 
 Not history: the numbers a regression is detected against. **Every figure below was read off
 a run on 2026-09-04 in this container, on the MERGED result** — none is carried forward from
