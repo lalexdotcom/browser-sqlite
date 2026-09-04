@@ -256,11 +256,14 @@
       row, not its size — <code>best ÷ value</code>, so a full bar is the row's
       winner. Green is within 20% of the best, amber within half, red below
       half.
-      <code>point-read-p50</code> and that race time their reads in groups of
-      20 and report the per-read figure: a browser clock is coarsened to 0.1 ms
-      (Chromium) or 1 ms (Safari), and a point read is faster than that at any
-      dataset size. The group is how the number was measured, not what it
-      means.
+      A browser clock is coarsened to 0.1 ms (Chromium) or 1 ms (Safari and
+      Firefox), which is slower than the operations below it. So
+      <code>point-read-p50</code> times its reads in groups of 20, and the
+      <code>single INSERT</code> pair and <code>one page of a list</code> in
+      groups of 5, all reporting the per-operation figure — the group is how the number was measured, not what
+      it means. The smaller group is deliberate: a group mean smears a stall
+      across its members, and catching stalls is what the p95 is for, so its
+      sensitivity is coarsened fivefold rather than twentyfold.
       <code>overwrite-throughput</code> is read against
       <code>transaction-throughput</code>: same count, same single transaction,
       but the writes dirty existing pages scattered through the file instead of
@@ -1581,6 +1584,33 @@
        */
       const READ_GROUP = 20;
 
+      /**
+       * Smaller than READ_GROUP, and the difference is the whole trade.
+       *
+       * A single autocommit INSERT is ~1 ms on Safari — exactly its clock's
+       * tick — so this row nulled 14 of 22 columns there and 18 of 22 on
+       * Firefox, on 2026-09-04, with the reason `1.00 ms is below 2× this
+       * device's clock resolution (1.00 ms)`. Raising DATASET_ROWS never
+       * touched it: the row writes into its own small `lat` table.
+       *
+       * Five is the SMALLEST group that clears a 1 ms clock at ~1 ms per
+       * insert, and small is what matters here. This row's p95 exists to catch
+       * stalls — a checkpoint, an fsync, a rotating handle — and a group mean
+       * smears one stall across its whole group, so every extra member costs
+       * sensitivity to the very thing being looked for. Twenty would have made
+       * the p95 nearly useless.
+       */
+      const WRITE_GROUP = 5;
+
+      /**
+       * One page of a list is ~3-6 ms on Chromium but fell under a 1 ms clock's
+       * floor on Firefox 154, where it nulled 10 of 22 columns on 2026-09-04.
+       * Five clears that with room, and unlike the write pair this row reports
+       * no p95, so nothing is lost by grouping — there is no stall sensitivity
+       * to trade away.
+       */
+      const PAGE_GROUP = 5;
+
       const timeGroup = async (fn, n = READ_GROUP) => {
         const total = await time(async () => {
           for (let i = 0; i < n; i++) await fn();
@@ -1692,6 +1722,7 @@
         {
           id: 'write-latency-p50',
           label: 'single INSERT — p50',
+          group: WRITE_GROUP,
           unit: 'ms',
           decimals: 2,
           better: 'low',
@@ -1701,11 +1732,18 @@
               await ensureDataset(ctx, signal);
               await ctx.db.write('CREATE TABLE lat (a INTEGER)', undefined, { signal });
               await ctx.db.write('INSERT INTO lat VALUES (0)', undefined, { signal }); // warmup
+              // Still 100 inserts; twenty samples of five rather than a
+              // hundred of one, so the clock has something it can resolve.
+              let n = 0;
               const samples = [];
-              for (let i = 1; i <= 100; i++) {
+              for (let g = 0; g < 100 / WRITE_GROUP; g++) {
                 samples.push(
-                  await time(() =>
-                    ctx.db.write('INSERT INTO lat VALUES (?)', [i], { signal }),
+                  await timeGroup(
+                    () =>
+                      ctx.db.write('INSERT INTO lat VALUES (?)', [++n], {
+                        signal,
+                      }),
+                    WRITE_GROUP,
                   ),
                 );
               }
@@ -1716,6 +1754,7 @@
         {
           id: 'write-latency-p95',
           label: 'single INSERT — p95',
+          group: WRITE_GROUP,
           unit: 'ms',
           decimals: 2,
           better: 'low',
@@ -1727,7 +1766,7 @@
         },
         {
           id: 'point-read-p50',
-          label: `point read by primary key — p50 (groups of ${READ_GROUP})`,
+          label: 'point read by primary key — p50',
           unit: 'ms',
           decimals: 2,
           better: 'low',
@@ -1754,6 +1793,7 @@
         {
           id: 'list-page-p50',
           label: 'one page of a list (LIMIT 50) — p50',
+          group: PAGE_GROUP,
           unit: 'ms',
           decimals: 2,
           better: 'low',
@@ -1772,10 +1812,14 @@
                   { signal },
                 );
               await page(0); // warmup
+              // Still 100 pages, as twenty samples of five.
               const samples = [];
-              for (let i = 0; i < 100; i++) {
+              for (let g = 0; g < 100 / PAGE_GROUP; g++) {
                 samples.push(
-                  await time(() => page(Math.floor(Math.random() * (DATASET_ROWS - 50)))),
+                  await timeGroup(
+                    () => page(Math.floor(Math.random() * (DATASET_ROWS - 50))),
+                    PAGE_GROUP,
+                  ),
                 );
               }
               return quantile(samples, 0.5);
@@ -1982,15 +2026,36 @@
            * takes the median of five, so a single read that waits out the whole
            * statement leaves no trace. The race asks the first read directly.
            *
-           * NOTE, and it was written for the ratio: this row used to record
-           * that Firefox does NOT reproduce the README's reduced-mode blocking
-           * claim, on the grounds that short reads completed throughout the
-           * long query even for VFS reporting `no-read-inside-transaction:
-           * blocked`. Given what the ratio has just been shown to miss, treat
-           * that as unverified until the race has run on Firefox. The
-           * distinction it drew still stands on its own terms — the README
-           * describes WRITE transactions taking an exclusive file lock, while a
-           * long READ holds only a shared one.
+           * **What four platforms say, 2026-09-04, cold run and Re-start each,
+           * 22 columns every time.** The partition follows `readwrite-unsafe`
+           * exactly, which is what the README claims in prose and what this row
+           * is the first per-VFS evidence for:
+           *
+           *   engine                      served                    waited
+           *   Chromium 150 (has RWU)      Adaptive, WriteAhead,     CoopSync,
+           *                               AnyContext                IDBBatchAtomic
+           *   Safari 27 (no RWU)          AnyContext/jspi           everything else
+           *   Firefox 154 (ignores RWU)   AnyContext                everything else
+           *
+           * Without `readwrite-unsafe` the OPFS VFS rotate one exclusive access
+           * handle, so reads serialise behind the long statement.
+           *
+           * **`OPFSAnyContextVFS` is the exception and it is worth a
+           * recommendation**: the only OPFS VFS serving concurrent reads
+           * without `readwrite-unsafe`, hence the only one to suggest to a
+           * Safari or Firefox consumer who reads while working. It is also the
+           * worst writer on this page — 17 ms for a single INSERT on Chromium
+           * against 0.9 ms for AccessHandlePoolVFS — so it is a trade, not a
+           * winner.
+           *
+           * **This row previously recorded the opposite about Firefox** — that
+           * short reads completed throughout the long query even for VFS
+           * reporting `no-read-inside-transaction: blocked`. That was the ratio
+           * talking, and the ratio could not see a read that waited. Firefox
+           * blocks. The distinction the old note drew is still true on its own
+           * terms and is not what this row measures: the README describes WRITE
+           * transactions taking an exclusive file lock, while a long READ holds
+           * only a shared one.
            */
           run: (ctx) =>
             abortableRow(async (signal) => {
