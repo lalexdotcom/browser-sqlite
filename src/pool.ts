@@ -383,6 +383,14 @@ export const createPoolWorker = (deps: {
             state.currentRequest.currentQuery.endTime = Date.now();
           }
           deferredChunk.reject(error);
+          // Deliberately NOT `failure = error`, which is what a `messageerror`
+          // and a death do. Those two mean the transport is broken, so nothing
+          // queued behind them can be trusted and the drain stops at once. A
+          // query error is the opposite: the worker produced those rows and
+          // then failed, so the consumer receives what SQLite actually returned
+          // and the error arrives after it. Setting the flag here would
+          // suppress rows that exist.
+          //
           // Do NOT null deferredChunk here. If the generator is suspended at
           // `yield` when the error arrives, nulling it would cause the while
           // loop to exit normally (silent truncation). Leaving the rejected

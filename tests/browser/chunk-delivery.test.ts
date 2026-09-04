@@ -104,6 +104,15 @@ describe('chunk delivery', () => {
    * the delivery loop changed, and the existing suite reaches none of these
    * paths from it: `lifecycle.test.ts` fires its `messageerror` at a query
    * that is still stepping and has produced no chunk at all.
+   *
+   * These three are GUARDS, not regression tests, and the distinction matters
+   * to whoever reads a failure here: they pass against the defective code too,
+   * because the three channels were never what broke. They exist because the
+   * fix moved them out of the race and behind flags — a delivery loop that
+   * drains a full inbox never awaits, so it would never look at them again.
+   * The first version of this fix did exactly that, and one of these tests is
+   * what found it. The regression tests for the defect itself are the three
+   * delivery tests above.
    */
   describe('while the consumer is suspended between chunks', () => {
     it('stops on an early break, and hands the worker back', async () => {
