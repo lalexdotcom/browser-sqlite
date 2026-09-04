@@ -1031,14 +1031,30 @@ right threshold is an observation; `mem:lessons` records the rule it cost.
 store immediately after that column returns `success` in **1 ms** and the database is gone
 (`.scratchpad/probe-idb-hold.mjs`, 2026-09-03).
 
-### The unsafe-handle probe leaks its own file, on both engines
+### The unsafe-handle probe leaked its own file, on both engines — closed 2026-09-04
 
-`__probe_unsafe_handles` outlives the probe worker's `finally`: the main thread calls
-`worker.terminate()` on the probe's message while the cleanup is still awaiting
+`__probe_unsafe_handles` outlived the probe worker's `finally`: the main thread called
+`worker.terminate()` on the probe's message while the cleanup was still awaiting
 `getDirectory()`. **4 of 6 Chromium loads left the file behind**, and a macOS Safari 26.6.2
 export carried it into `opfsRootAtStart`. One observation per engine had read as a WebKit
-quirk — n=1 again. The sweep now owns the name; the race itself is untouched
-(`mem:follow-ups`).
+quirk — n=1 again.
+
+**The fix was measured against the defect, not asserted.** A throwaway harness ran the old
+and the new probe side by side, six fresh contexts each, Playwright, this container
+(`.scratchpad/probe-race/`, gitignored):
+
+| engine | old probe | new probe |
+|---|---|---|
+| Chromium 151.0.7922.34 | **4/6** loads left the file | **0/6** |
+| Firefox 153.0 | **4/6** | **0/6** |
+
+The old column reproducing 4/6 on Chromium is what makes the new one worth reading: the
+harness sees the defect it claims to have removed, and Firefox turned out to leak identically
+— never measured before, because the original observation came from the bench page's own
+exports. The worker now ends itself with `self.close()` after its cleanup, so nothing races
+it. **Posting the result after the cleanup was rejected**, though it is what `mem:follow-ups`
+prescribed: it makes page start-up wait on an OPFS removal that can hang, for an answer
+already known. The sweep still owns the name regardless.
 
 ### `.wa-sqlite` — residue that predates the recording mechanism
 

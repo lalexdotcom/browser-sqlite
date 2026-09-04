@@ -104,26 +104,6 @@ detail.
 every query while installed, so it wants installing only for the duration of a query that
 actually carries an abortable signal. Nothing here is measured yet.
 
-### BENCH-PROBE-RACE — the unsafe-handle probe outlives its own cleanup
-
-`probeUnsafeHandles()` in `scripts/bench/html/index.html` creates
-`__probe_unsafe_handles` in the OPFS root and removes it in the worker's `finally`. The main
-thread calls `worker.terminate()` the moment the probe's message arrives, while that
-`finally` is still awaiting `getDirectory()` — so the removal often never runs. 4 of 6
-Chromium loads left the file behind (`mem:measurements`).
-
-**The symptom is covered, the race is not.** The sweep now owns the name, so a run's floor is
-clean; a visitor who never clicks Start still leaves the file. Closing it at the source means
-posting the result AFTER the cleanup instead of before, inside the blob worker's source.
-
-### The `openTimeout` doc comment still names the cause the fix removed
-
-`src/client.ts` — the TSDoc on `openTimeout` in `CreateSQLiteClientOptions` says the most
-common cause is "a database held under an exclusive lock by another tab or client". That is
-the unconditional claim `feat/open-timeout-message` deleted from the runtime message on
-2026-09-03, because the case actually observed is a page reloaded without `close()`. The
-comment did not follow the fix. One sentence, public surface.
-
 ## Notes, with nothing to fix
 
 ### Twelve `any` remain in `src/`, and they are structural
