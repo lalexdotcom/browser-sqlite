@@ -599,12 +599,12 @@ export const createPoolWorker = (deps: {
     interrupt: () => {
       stopped = true;
       stopRequested?.resolve(STOP);
-      // Two channels, disjoint: the message wakes a worker parked on a credit,
-      // the slot reaches one that is computing inside step() and reads no
-      // messages until it yields — which the sync build never does.
+      // The slot reaches a worker that is computing inside step() and reads no
+      // messages until it yields — which the sync build never does. The message
+      // that wakes a worker parked on a credit is sent by the query generator's
+      // finally block; interrupt() owns only the slot write.
       if (abortSlots)
         Atomics.store(new Int32Array(abortSlots), index, currentCallId);
-      worker.postMessage({ type: 'stop', callId: currentCallId });
     },
     quiesce: () => idle?.promise ?? Promise.resolve(),
     close: async () => {
