@@ -21,7 +21,13 @@ import playwright from 'playwright';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const engine = process.argv[2] ?? 'chromium';
 const all = process.argv.includes('--all');
-const PORT = 8099;
+/**
+ * 8099 is what `bench:serve` and `bench:dev` use, so the default collides with
+ * a page the developer is testing by hand — and this driver kills whatever
+ * holds the port. `BENCH_PORT=8199 node scripts/bench/check.mjs …` keeps the
+ * two out of each other's way.
+ */
+const PORT = Number(process.env.BENCH_PORT ?? 8099);
 
 const server = spawn(
   process.execPath,

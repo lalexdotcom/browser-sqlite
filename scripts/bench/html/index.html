@@ -133,8 +133,38 @@
       #verdict-text p:last-child { margin: 0; }
       #verdict ul { margin: 0 0 0.5rem; padding-left: 1.2rem; }
       #verdict .caveat { font-size: 0.85rem; opacity: 0.8; }
-      td.measure { text-align: right; font-variant-numeric: tabular-nums; background: linear-gradient(to right, color-mix(in srgb, currentColor 12%, transparent) var(--bar-w, 0%), transparent var(--bar-w, 0%)); }
+      /* The bar is a RANK, not a magnitude — `best / value`, so a full bar means
+         "the winner of this row" and nothing about the number's size. The colour
+         bands that same ratio: within 20% of the best is green, down to half is
+         amber, below half is red. Muted through color-mix rather than `opacity`
+         so the figure on top keeps full contrast against the fill.
+         `prefers-color-scheme` rather than `light-dark()`, per the note above. */
+      td.measure {
+        --bar: currentColor;
+        text-align: right; font-variant-numeric: tabular-nums;
+        background: linear-gradient(to right,
+          color-mix(in srgb, var(--bar) 16%, transparent) var(--bar-w, 0%),
+          transparent var(--bar-w, 0%));
+      }
+      td.measure.good { --bar: #16a34a; }
+      td.measure.mid  { --bar: #d97706; }
+      td.measure.poor { --bar: #dc2626; }
+      @media (prefers-color-scheme: dark) {
+        td.measure.good { --bar: #22c55e; }
+        td.measure.mid  { --bar: #f59e0b; }
+        td.measure.poor { --bar: #ef4444; }
+      }
       td.measure.best { font-weight: 600; }
+      /* A capability, not a quantity. Same ✅/❌ as the conformance rows, on a
+         tint, because a row that answers yes or no should not be read like the
+         numbers above it — and a bar over a boolean is a bar over nothing. */
+      td.flag { text-align: center; }
+      td.flag.yes { background: color-mix(in srgb, #16a34a 16%, transparent); }
+      td.flag.no  { background: color-mix(in srgb, #dc2626 16%, transparent); }
+      @media (prefers-color-scheme: dark) {
+        td.flag.yes { background: color-mix(in srgb, #22c55e 16%, transparent); }
+        td.flag.no  { background: color-mix(in srgb, #ef4444 16%, transparent); }
+      }
     </style>
   </head>
   <body>
@@ -217,9 +247,26 @@
       omitted when the median serial total falls below 4× the clock’s resolution —
       reads too fast to time reliably produce jitter, not a signal.
       A pool-1 VFS near 1.00× is declared behaviour, not a failure.
-      <code>pool-blocking</code> does not apply to pool-1 VFS (cell shows ⃠).
-      Where it does apply, ≈1 means the pool kept serving reads freely during
-      the long statement.
+      <code>can read during a long running query</code> answers yes or no, not
+      how much: a short read is raced against a long statement holding one of
+      the pool's workers. ✅ means the read was served without waiting for it,
+      ❌ means it only completed once that statement had finished. It does not
+      apply to pool-1 VFS (cell shows ⃠).
+      <b>Reading the cells:</b> the bar behind a measurement is its rank in that
+      row, not its size — <code>best ÷ value</code>, so a full bar is the row's
+      winner. Green is within 20% of the best, amber within half, red below
+      half.
+      <code>point-read-p50</code> and that race time their reads in groups of
+      20 and report the per-read figure: a browser clock is coarsened to 0.1 ms
+      (Chromium) or 1 ms (Safari), and a point read is faster than that at any
+      dataset size. The group is how the number was measured, not what it
+      means.
+      <code>overwrite-throughput</code> is read against
+      <code>transaction-throughput</code>: same count, same single transaction,
+      but the writes dirty existing pages scattered through the file instead of
+      appending at its end. The memory VFS are the control — they have no file,
+      so a ratio near 1 there is what says the difference elsewhere is storage
+      and not SQLite.
     </p>
     </div>
 
@@ -1424,7 +1471,43 @@
         },
       ];
 
-      const DATASET_ROWS = 10_000;
+      /**
+       * 100 000, raised from 10 000 on 2026-09-04, and the number is measured
+       * rather than chosen.
+       *
+       * **What 10 000 was hiding.** The database came to 69 pages × 4 096 B =
+       * 276 KB against SQLite's default 2 000 KB page cache — it fitted seven
+       * times over, so once the dataset was built a read could be served
+       * without a single `xRead` reaching the VFS. Several read rows were
+       * timing SQLite's cache, not the storage they exist to compare. The
+       * symptom was visible for weeks and read as a device problem: cells at
+       * `—` with *"below 2× this device's clock resolution"*.
+       *
+       * **What 100 000 costs, measured on Chromium over all 22 columns:** the
+       * whole run goes from 94 s to 137 s (+46 %), because most rows do not
+       * scale with the dataset. The build is ×3.4, not ×10 — `bulkWrite`
+       * amortises. Worst column 227 ms → 764 ms; extrapolated to the slowest
+       * iPadOS column ever recorded (1 542 ms at 10 000) that is ≈ 5 s against
+       * a 30 s row budget, a 6× margin.
+       *
+       * **What it buys, same run:** every `—` on Chromium disappears.
+       * `point-read` 3/22 → 0/22, and the long-query race 7/22 → 0/22 because its
+       * long-query calibration stopped saturating at `DATASET_ROWS²`
+       * (`__iterations` 10 000 → 1 891). `full-scan` 1.2 → 7.1 ms and
+       * `list-page` 0.5 → 3.4 ms are now above a 1 ms clock's floor, which is
+       * what Safari has.
+       *
+       * **Why not more.** `ROW_TIMEOUT_MS` is the ceiling: 10× again would put
+       * the slowest device's build past 30 s and cost the column. Raising the
+       * dataset further is not the lever anyway — a point read is O(log n) and
+       * stays sub-millisecond at any size.
+       *
+       * **This re-baselines every measurement.** Exports taken before
+       * 2026-09-04 are not comparable to those taken after, deliberately; the
+       * `bulk-insert-dataset` row was renamed from `bulk-insert-10k` so the
+       * change is visible in the export's own keys rather than silent.
+       */
+      const DATASET_ROWS = 100_000;
 
       /**
        * How many short reads the concurrency burst issues, per phase.
@@ -1476,6 +1559,35 @@
       };
 
       /** A short read: primary-key lookup, so the cost is round-trip, not SQLite. */
+      /**
+       * How many operations one timed sample covers, where the operation is
+       * faster than the clock that has to time it.
+       *
+       * `performance.now()` is coarsened against timing attacks: 0.1 ms on
+       * Chromium, **1 ms on Safari**, measured per run and reported as
+       * `clockMs`. A point read is O(log n) and stays around 0.3 ms whatever
+       * the dataset size — three ticks on Chromium, a third of one on Safari.
+       * That is why raising DATASET_ROWS cleared every other `—` and not this
+       * one: no dataset makes a B-tree descent slow.
+       *
+       * Twenty reads under one `performance.now()` pair is ~6 ms, which both
+       * engines resolve. The reported figure stays per-operation — the group is
+       * how it was measured, not what it means.
+       *
+       * Rows that do this declare `group`, because the guard further down has
+       * to test what the CLOCK timed, not what the cell prints. Without that,
+       * grouping buys nothing: the guard would still null a 0.3 ms per-read
+       * figure on a 1 ms clock, having never seen the 6 ms it came from.
+       */
+      const READ_GROUP = 20;
+
+      const timeGroup = async (fn, n = READ_GROUP) => {
+        const total = await time(async () => {
+          for (let i = 0; i < n; i++) await fn();
+        });
+        return total / n;
+      };
+
       const shortRead = (db, id, signal) =>
         db.first('SELECT id, label FROM bench WHERE id = ?', [id], { signal });
 
@@ -1512,7 +1624,7 @@
       };
 
       /**
-       * A cross-join query that reads every page of bench (10 000 rows) for
+       * A cross-join query that reads every page of bench (DATASET_ROWS rows) for
        * the entire duration of one sqlite3_step(). SQLite holds a shared read
        * lock on the database file from the moment the statement starts until
        * it finishes — which is what the original recursive CTE lacked: a
@@ -1536,7 +1648,7 @@
        * loop, one verification measurement confirms the chosen bound actually
        * costs 1–4 s. If it does not (the cross-join saturates at
        * DATASET_ROWS² and is still too fast on this device), null is stored
-       * and pool-blocking returns null rather than printing a meaningless 1.
+       * and the long-query race returns null rather than a meaningless verdict.
        */
       const calibrateLongQuery = async (ctx) => {
         if ('longIterations' in ctx) return ctx.longIterations;
@@ -1562,7 +1674,7 @@
       /** Measurement rows. Filled in Tasks 5 and 6. */
       const MEASUREMENT_ROWS = [
         {
-          id: 'bulk-insert-10k',
+          id: 'bulk-insert-dataset',
           label: `bulk insert + index build (${DATASET_ROWS.toLocaleString('en')} rows)`,
           unit: 'ms',
           decimals: 0,
@@ -1615,19 +1727,25 @@
         },
         {
           id: 'point-read-p50',
-          label: 'point read by primary key — p50',
+          label: `point read by primary key — p50 (groups of ${READ_GROUP})`,
           unit: 'ms',
           decimals: 2,
           better: 'low',
+          // Timed in groups, so the guard must weigh the group, not the cell.
+          group: READ_GROUP,
           applies: () => true,
+          // Still 200 reads and still a p50 — of ten group means rather than of
+          // 200 individual timings. The distribution survives, coarsened; what
+          // it stops doing is asking a 1 ms clock to resolve a 0.3 ms read,
+          // which is why this was the most-nulled row on every Safari export.
           run: (ctx) =>
             abortableRow(async (signal) => {
               await ensureDataset(ctx, signal);
               await shortRead(ctx.db, randomId(), signal); // warmup
               const samples = [];
-              for (let i = 0; i < 200; i++) {
+              for (let g = 0; g < 200 / READ_GROUP; g++) {
                 samples.push(
-                  await time(() => shortRead(ctx.db, randomId(), signal)),
+                  await timeGroup(() => shortRead(ctx.db, randomId(), signal)),
                 );
               }
               return quantile(samples, 0.5);
@@ -1708,7 +1826,7 @@
               }
 
               // If reads are too fast for the timer to distinguish serial from
-              // parallel, return null. CLOCK_MS × 4 matches pool-blocking's
+              // parallel, return null. CLOCK_MS × 4 matches the long-query race's
               // approach: a serial total under that threshold means any ratio
               // we compute reflects clock quantisation, not pool behaviour.
               if (quantile(serialTotals, 0.5) < CLOCK_MS * 4) return null;
@@ -1761,60 +1879,179 @@
             }),
         },
         {
-          id: 'pool-blocking',
-          label: 'short read during a long query (× idle)',
-          unit: '×',
-          decimals: 2,
+          id: 'overwrite-throughput',
+          label: '500 UPDATEs spread across the dataset, in one transaction',
+          unit: 'ms',
+          decimals: 0,
           better: 'low',
+          applies: () => true,
+          /**
+           * The shape this page never had: a write that DIRTIES existing pages
+           * instead of appending new ones.
+           *
+           * Every other write row here grows the database — `bulk-insert-dataset`,
+           * `write-latency`, `transaction-throughput` all append. Overwriting
+           * is a different path for a VFS: the page must be read before it is
+           * written, and the old image goes to the journal or the WAL. That is
+           * where `AccessHandlePoolVFS` under `locking_mode=exclusive` +
+           * `journal_mode=wal` — this project's one default PRAGMA set — stops
+           * resembling a rollback-journal VFS. A consumer updating rows had no
+           * number on this page to choose a VFS by. Taken from wa-sqlite's
+           * port of sqlite.org's speed comparison, tests 8-10, which is the one
+           * thing in those sixteen we did not already cover.
+           *
+           * Read it AGAINST `transaction-throughput`: same count, same single
+           * transaction. The pair is a contrast, not a controlled experiment,
+           * and two things differ on purpose — the writes overwrite rather than
+           * append, and they scatter over the whole file rather than landing at
+           * its end. Both are what an UPDATE workload actually does.
+           *
+           * `label` and not `n`, because `n` carries `bench_n`: updating it
+           * would add index maintenance and stop the pair from being readable.
+           * And rewritten with `substr` rather than a bound string so the value
+           * keeps its exact length — a longer one could overflow the row onto a
+           * new page, which is an append again, which is the thing this row
+           * exists not to measure.
+           */
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ensureDataset(ctx, signal);
+              // One row every DATASET_ROWS/500: 500 writes touching as much of the
+              // file as the dataset allows.
+              const stride = Math.floor(DATASET_ROWS / 500);
+              return time(() =>
+                ctx.db.transaction(async (tx) => {
+                  for (let i = 1; i <= 500; i++) {
+                    await tx.write(
+                      "UPDATE bench SET label = 'upd-' || substr(label, 5) WHERE id = ?",
+                      [i * stride],
+                    );
+                  }
+                }),
+              );
+            }),
+        },
+        {
+          id: 'reads-during-long-query',
+          label: 'can read during a long running query',
+          // Not a quantity. See the run body: the honest answer here is yes or
+          // no, and the ratio this row used to print could not say more.
+          kind: 'flag',
           applies: (cap) => cap.maxPoolSize !== 1,
           /**
-           * Measures whether a long file-reading statement on one worker
-           * delays short reads issued concurrently on the same pool. ≈1 means
-           * the other workers served the reads freely; ≫1 means the busy
-           * statement starved the pool.
+           * Does a long file-reading statement on one worker stop the pool from
+           * serving short reads on the others?
            *
-           * NOTE: On Firefox this row does NOT reproduce the README's
-           * reduced-mode blocking claim. Even for VFS that report
-           * no-read-inside-transaction: blocked, short reads complete in ≈1 ms
-           * throughout the long query. The blocking the README describes
-           * applies to WRITE transactions (exclusive file lock); a long READ
-           * holds only a shared lock, which does not prevent other workers
-           * from acquiring their own shared locks.
+           * **Answered without a clock, deliberately.** This was a ratio —
+           * a short read's latency during the long query over the same read at
+           * rest — and it was unreadable twice over. Nobody could say what a
+           * "1.08×" meant, and the number could not support the weight: both
+           * halves were a p50 over five sub-millisecond reads, so one Chromium
+           * run spread it from 0.73 to 1.33, values under 1 included, which
+           * would mean a read got FASTER while a worker was saturated. Grouping
+           * the timings cut the quantisation and left the spread — the noise was
+           * never the clock. A ±30% ratio cannot report PARTIAL blocking, so it
+           * only ever answered the binary question, badly.
+           *
+           * So the read races the long query. If the read resolves first it was
+           * served while the long statement held its worker — it did not wait.
+           * If the long query resolves first, the read waited for it. No timer,
+           * no threshold, nothing to calibrate away.
+           *
+           * Three reads rather than one: blocking is a property of the VFS, not
+           * a coin flip, and one lucky read is not evidence.
+           *
+           * **The one way this can lie**, stated rather than hidden behind a
+           * falsifier that does not exist: if the long query happened to finish
+           * in the microseconds a short read takes, the read would lose the race
+           * without having waited. The calibration targets 1.5-3 s and the reads
+           * are issued 50 ms in, so the window is ~0.3 ms against a second — but
+           * it is not zero, and nothing here detects it.
+           *
+           * **The ratio it replaces was not merely noisy, it was blind.** First
+           * Chromium run of the race, deterministic over two rounds and at
+           * `poolFor` = 4 for every VFS below, so "no other worker" is not the
+           * explanation:
+           *
+           *   OPFSWriteAheadVFS sync/async   ✅   OPFSCoopSyncVFS sync/async  ❌
+           *   OPFSAdaptiveVFS async          ✅   IDBBatchAtomicVFS async     ❌
+           *
+           * The ratio reported ≈0.9-1.0 for those same ❌ columns — "nothing
+           * blocked". It could not have seen otherwise: a p50 over five samples
+           * of twenty reads each divides one blocking wait by twenty and then
+           * takes the median of five, so a single read that waits out the whole
+           * statement leaves no trace. The race asks the first read directly.
+           *
+           * NOTE, and it was written for the ratio: this row used to record
+           * that Firefox does NOT reproduce the README's reduced-mode blocking
+           * claim, on the grounds that short reads completed throughout the
+           * long query even for VFS reporting `no-read-inside-transaction:
+           * blocked`. Given what the ratio has just been shown to miss, treat
+           * that as unverified until the race has run on Firefox. The
+           * distinction it drew still stands on its own terms — the README
+           * describes WRITE transactions taking an exclusive file lock, while a
+           * long READ holds only a shared one.
            */
           run: (ctx) =>
             abortableRow(async (signal) => {
               await ensureDataset(ctx, signal);
               const bound = await calibrateLongQuery(ctx);
-              // Null means the cross-join saturated at DATASET_ROWS² and the
-              // device is still faster than 1 s — no meaningful ratio possible.
+              // No long query could be built here, so there is no "during".
               if (bound == null) return null;
 
-              const idle = [];
-              for (let i = 0; i < 5; i++) {
-                idle.push(await time(() => shortRead(ctx.db, randomId(), signal)));
-              }
-              const idleP50 = quantile(idle, 0.5);
-              // If the idle baseline is below 2× the clock's granularity, any
-              // ratio we compute reflects the timer's quantisation, not the
-              // pool's behaviour. Return null so the cell shows — rather than
-              // a fabricated triple-digit number.
-              if (idleP50 < CLOCK_MS * 2) return null;
-
-              // Deliberately not awaited: the long query must still be running
-              // while the short reads are timed. Its rejection is swallowed —
-              // the row timeout is what bounds this, not the long query.
+              // Deliberately not awaited here: it has to still be running when
+              // the short reads are issued. Its rejection is swallowed — the
+              // row timeout is what bounds this, not the long query.
+              //
+              // **Do not try to cancel it once the verdict is in.** It was
+              // tried, on the reasoning that the answer arrives with the short
+              // read and the remaining 1.5-3 s of cross-join is waste. Aborting
+              // a read ABANDONS THE WAIT, NOT THE WORK — `src/client.ts` says
+              // so at `makeAbortRace`, there is no `sqlite3_interrupt` anywhere,
+              // and it is measured: with `poolSize: 1`, a 1 980 ms statement
+              // aborted 100 ms in settles its promise in 0 ms, and the very next
+              // short read then takes 1 889 ms waiting the cross-join out.
+              // The whole-run wall clock was unchanged (155 s → 153 s, inside
+              // run-to-run variance). All the cancellation achieved was moving
+              // an explicit wait into implicit contention with the rows after
+              // it. Waiting here is the honest version.
               const long = ctx.db.read(longQuery(bound), undefined, { signal });
               long.catch(() => {});
+              let longSettled = false;
+              const longRace = long.then(
+                () => {
+                  longSettled = true;
+                  return 'long';
+                },
+                () => {
+                  longSettled = true;
+                  return 'long';
+                },
+              );
 
+              // Let the long statement take a worker before asking anything.
               await new Promise((resolve) => setTimeout(resolve, 50));
+              // It should still be running — the calibration targets 1.5-3 s.
+              // Already finished means there is nothing to test against.
+              if (longSettled) return null;
 
-              const during = [];
-              for (let i = 0; i < 5; i++) {
-                during.push(await time(() => shortRead(ctx.db, randomId(), signal)));
+              try {
+                for (let i = 0; i < 3; i++) {
+                  // A rejected read is not a served read: let it reject the
+                  // race and be reported as the row's error, rather than
+                  // mapping it to a verdict it did not earn.
+                  const winner = await Promise.race([
+                    shortRead(ctx.db, randomId(), signal).then(() => 'read'),
+                    longRace,
+                  ]);
+                  if (winner !== 'read') return false;
+                }
+                return true;
+              } finally {
+                // On every path, including a read that threw: the next row must
+                // not start while this statement is still stepping.
+                await long.catch(() => {});
               }
-
-              await long.catch(() => {});
-              return quantile(during, 0.5) / idleP50;
             }),
         },
       ];
@@ -1828,7 +2065,7 @@
        *
        * Its own array rather than an entry at the end of CONFORMANCE_ROWS:
        * those all run before MEASUREMENT_ROWS, so deleting the database there
-       * would destroy the 10 000-row dataset every measurement needs.
+       * would destroy the shared dataset every measurement needs.
        *
        * The assertion is "no tables at all", not "the table some earlier row
        * created is gone". Which rows ran varies by VFS and by what was
@@ -1963,10 +2200,13 @@
           why: 'the pool serving several short reads at once',
         },
         {
-          id: 'bulk-insert-10k',
+          id: 'bulk-insert-dataset',
           label: 'bulk writes',
           better: 'low',
-          why: 'loading 10 000 rows',
+          // Derived, never transcribed: this text was left saying "10 000"
+          // when DATASET_ROWS moved to 100 000, and the verdict is the one
+          // place a visitor reads without opening the table.
+          why: `loading ${DATASET_ROWS.toLocaleString('en')} rows`,
         },
         {
           id: 'transaction-throughput',
@@ -2217,15 +2457,49 @@
               // an absolute `0.00 ms` was the same defect wearing a unit — real
               // Safari and Firefox runs reported 0.00 ms writes for five VFS,
               // which is the 1 ms tick, not the database.
+              //
+              // `row.group` is what a row declares when it timed N operations
+              // under one clock reading and divided. The test is on the
+              // MEASURED duration, not the printed one: a 0.30 ms per-read
+              // figure derived from a 6 ms group is resolvable, and nulling it
+              // for being under a 1 ms tick would discard a good measurement
+              // and undo the grouping entirely.
+              // A row that answers yes or no, not how much. It skips the clock
+              // guard and the bars entirely — neither has anything to say about
+              // a boolean — and renders like a conformance verdict on a tint.
+              const group = row.kind === 'flag' ? null : (row.group ?? 1);
+              if (group === null) {
+                RESULTS[kind][pair.id][row.id] = value;
+                const td = cells.get(`${pair.id}|${row.id}`);
+                if (value === null) {
+                  setReason(pair.id, row.id, nullMeasureTitle(row.id));
+                  setCell(pair, row.id, '—', 'measure');
+                  if (td) td.title = RESULTS.reasons[pair.id]?.[row.id] ?? '';
+                } else {
+                  setCell(
+                    pair,
+                    row.id,
+                    value ? '✅' : '❌',
+                    `flag ${value ? 'yes' : 'no'}`,
+                  );
+                  if (td) {
+                    td.title = value
+                      ? 'A short read was served while a long query held one of' +
+                        " the pool's workers — it did not wait for it."
+                      : 'A short read issued during a long query only completed' +
+                        ' once that query had finished — the pool made it wait.';
+                  }
+                }
+                continue;
+              }
+              const measured = typeof value === 'number' ? value * group : null;
               const unresolved =
-                typeof value === 'number' &&
-                row.unit === 'ms' &&
-                value < CLOCK_MS * 2;
+                measured !== null && row.unit === 'ms' && measured < CLOCK_MS * 2;
               if (unresolved) {
                 setReason(
                   pair.id,
                   row.id,
-                  `${value.toFixed(2)} ms is below 2× this device's clock resolution (${CLOCK_MS.toFixed(2)} ms) — too fast to time here`,
+                  `${measured.toFixed(2)} ms${group > 1 ? ` (${value.toFixed(2)} ms × ${group})` : ''} is below 2× this device's clock resolution (${CLOCK_MS.toFixed(2)} ms) — too fast to time here`,
                 );
               }
               const stored = unresolved ? null : value;
@@ -2304,12 +2578,12 @@
             'ratio would reflect scheduling jitter, not pool behaviour'
           );
         }
-        if (rowId === 'pool-blocking') {
+        if (rowId === 'reads-during-long-query') {
           return (
-            'reliable ratio unavailable: either the device clock is too coarse to ' +
-            'time the idle baseline, or the long-query calibration could not reach ' +
-            'its 1.5–3 s target on this device (common on Chromium when the ' +
-            'cross-join finishes in under 1 s)'
+            'no long-running query could be held open here: the cross-join ' +
+            'calibration could not reach its 1.5–3 s target, or the statement ' +
+            'had already finished by the time the reads were issued — so there ' +
+            'was nothing for a concurrent read to run against'
           );
         }
         return 'measurement could not be produced';
@@ -2327,6 +2601,7 @@
           .filter(([, value]) => typeof value === 'number');
         if (entries.length === 0) return;
 
+        const decimals = row.decimals ?? 1;
         const values = entries.map(([, value]) => value);
         const best = row.better === 'high' ? Math.max(...values) : Math.min(...values);
         const worst = row.better === 'high' ? Math.min(...values) : Math.max(...values);
@@ -2335,12 +2610,14 @@
           const td = cells.get(`${pairId}|${row.id}`);
           if (!td) continue;
           // Ratio to best, always in [0,1], whichever direction is better.
-          const ratio =
-            row.better === 'high' ? value / best : best / value;
-          td.className = `measure${value === best && worst !== best ? ' best' : ''}`;
+          const ratio = row.better === 'high' ? value / best : best / value;
+          // The user's bands: within 20% of the best, within half, and worse.
+          const band = ratio >= 0.8 ? 'good' : ratio >= 0.5 ? 'mid' : 'poor';
+          td.className =
+            `measure ${band}${value === best && worst !== best ? ' best' : ''}`;
           td.title = '';
           td.style.setProperty('--bar-w', `${Math.min(100, Math.max(2, ratio * 100))}%`);
-          td.textContent = `${value.toFixed(row.decimals ?? 1)} ${row.unit}`;
+          td.textContent = `${value.toFixed(decimals)} ${row.unit}`;
         }
       };
 
@@ -2389,7 +2666,7 @@
          */
         opfsRootAtStart: opfsBefore ? [...opfsBefore].sort() : null,
         // Iteration counts differ per column by design (calibrateLongQuery), so
-        // pool-blocking is uninterpretable without them.
+        // the long-query race is uninterpretable without them.
         longQueryIterations: Object.fromEntries(
           Object.entries(RESULTS.measurements).map(([pairId, rows]) => [
             pairId,
