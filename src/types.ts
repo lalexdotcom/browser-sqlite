@@ -1,3 +1,5 @@
+import type { SQLiteErrorCode } from './errors';
+
 export type SQLiteWorkerMessageData<_T = unknown> = {
   callId: number;
   terminate?: boolean;
@@ -22,6 +24,7 @@ type SQLOptions = {
   chunkSize?: number;
   /** Chunks the worker may send before waiting for a credit. Spec §3.2. */
   credits?: number;
+  timeout?: number;
 };
 
 /**
@@ -94,6 +97,8 @@ export type WorkerMessageData =
       cause?: unknown;
       /** SQLite's numeric result code, when the failure came from SQLite. */
       sqliteCode?: number;
+      /** A code this library minted, when the worker knows the cause. */
+      errorCode?: SQLiteErrorCode;
     }
   | { type: 'closed'; callId: number }
   | { type: 'deleted'; callId: number }

@@ -1,5 +1,5 @@
 import { DEFAULT_CREDIT_WINDOW } from './credits';
-import { SQLiteError } from './errors';
+import { SQLiteError, type SQLiteErrorCode } from './errors';
 import type { Logger } from './logger';
 import type {
   SQLiteBuild,
@@ -14,6 +14,7 @@ import type {
 export type PoolWorkerQueryOptions = {
   chunkSize?: number | undefined;
   credits?: number | undefined;
+  timeout?: number | undefined;
   /**
    * When true, the query's completion does not call `deps.onServed`. Set for
    * the commit-propagation barrier: it is a synthetic probe, not user work, and
@@ -94,7 +95,13 @@ const workerError = (data: {
   message: string;
   cause?: unknown;
   sqliteCode?: number;
-}) => busyFromCode(data) ?? new Error(data.message, { cause: data.cause });
+  errorCode?: SQLiteErrorCode;
+}) =>
+  (data.errorCode
+    ? new SQLiteError(data.errorCode, data.message, { cause: data.cause })
+    : undefined) ??
+  busyFromCode(data) ??
+  new Error(data.message, { cause: data.cause });
 
 /**
  * The single `new Worker(new URL(…))` expression in this package.
@@ -393,6 +400,7 @@ export const createPoolWorker = (deps: {
         chunkSize = 500,
         credits = DEFAULT_CREDIT_WINDOW,
         noServed = false,
+        timeout,
       } = options ?? {};
       suppressServed = noServed;
 
@@ -409,7 +417,7 @@ export const createPoolWorker = (deps: {
         callId: ++currentCallId,
         sql,
         params,
-        options: { chunkSize, credits },
+        options: { chunkSize, credits, timeout },
       });
       worker.status = 'RUNNING';
 

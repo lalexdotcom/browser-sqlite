@@ -1,4 +1,4 @@
-import type { OptionsWithSignal, SQLiteChunkOptions, SQLiteDB } from './api';
+import type { SQLiteChunkOptions, SQLiteDB, SQLiteQueryOptions } from './api';
 import { createBulk } from './bulk';
 import {
   describeMissing,
@@ -952,7 +952,7 @@ export const createSQLiteClient = (
   >(
     sql: string,
     params?: unknown[],
-    options?: OptionsWithSignal,
+    options?: SQLiteChunkOptions,
   ) => {
     assertReadable(sql, 'read');
     return readWithRetry(options?.signal, (worker) =>
@@ -1002,7 +1002,7 @@ export const createSQLiteClient = (
   >(
     sql: string,
     params?: unknown[],
-    options?: OptionsWithSignal,
+    options?: SQLiteQueryOptions,
   ) => {
     const lease = await acquireInstrumented('write', options?.signal);
     try {
@@ -1039,7 +1039,7 @@ export const createSQLiteClient = (
   >(
     sql: string,
     params?: unknown[],
-    options?: OptionsWithSignal,
+    options?: SQLiteQueryOptions,
   ) => {
     assertReadable(sql, 'first');
     return readWithRetry(options?.signal, (worker) =>
