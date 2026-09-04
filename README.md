@@ -363,6 +363,26 @@ It resolves with the normalized `file`, the `vfs`, `clients`, `tabs` — the num
 | `debug` | `string \| boolean` | `undefined` | Enables lifecycle logging. A string value is used as the log prefix; `true` falls back to the client name (e.g. `"SQLite 1"`). Only lifecycle events are logged — worker created, ready, open-error, crash, restart, worker lost, close, and skipped staging sweep. No line per query. Off by default, with one exception: a permanently lost worker always warns, because a pool quietly smaller than `poolSize` is not something to discover later. When enabled, `db.debug` also exposes a live introspection state tree for query throughput and worker status. |
 | `onWorkerLost` | `(event: WorkerLostEvent) => void` | `undefined` | Called when a worker is lost for good, with the slot index, how many workers are left, the requested `poolSize`, and the error. Fires before the client fails if it was the last one. A throwing callback is caught and warned about; it cannot break the pool. |
 
+## Interrupting a query
+
+`signal` always stops the *wait*: your promise rejects with `signal.reason` straight away,
+as `fetch()` does. Whether it also stops the *work* — the statement SQLite is executing —
+depends on the build behind your VFS:
+
+| build | your VFS | a `signal` stops a running statement |
+|---|---|---|
+| `async`, `jspi` | `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `IDBBatchAtomicVFS`, `IDBMirrorVFS`, `MemoryAsyncVFS` | yes |
+| `sync` | `OPFSWriteAheadVFS`, `OPFSCoopSyncVFS`, `AccessHandlePoolVFS`, `MemoryVFS` | only if your page is cross-origin isolated |
+
+Where it does not, an aborted query keeps running to its end on its worker; the pool's other
+workers are unaffected. Two ways out, and you may want neither: serve your page cross-origin
+isolated (any of COOP+COEP or `Document-Isolation-Policy` does it), or pass
+`build: 'async'`, which every one of those four VFS accepts.
+
+`timeout` needs none of that. It works on every build, and it counts SQLite execution time —
+time your own code spends between two chunks of a `stream()` is not charged to it. For a
+wall-clock deadline instead, pass `AbortSignal.timeout(ms)` as `signal`.
+
 ## Browser support
 
 | Chrome | Firefox | Safari |

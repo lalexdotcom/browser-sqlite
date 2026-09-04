@@ -40,6 +40,9 @@ export type OptionsWithSignal<T = unknown> = T & {
    * `bulkWrite()` leaves the batches already written in place; an aborted
    * `output()` is observationally a no-op, dropping its staging table and
    * touching nothing else.
+   *
+   * Whether it also stops the statement SQLite is already executing depends on
+   * your build and your page: see the README's Interrupting a query section.
    */
   signal?: AbortSignal | undefined;
 };
