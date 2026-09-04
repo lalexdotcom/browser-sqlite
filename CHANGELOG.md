@@ -159,6 +159,26 @@ All notable changes to this project are documented here.
   `readwrite-unsafe` is unavailable, a read in another tab still waits for the
   rotated exclusive handle while a writer holds it.
 
+### Documentation
+
+No code changed. These are corrections to what the README told you to do.
+
+- **A long-running *read* serializes other reads exactly as a write transaction
+  does.** The README said it did not. Where one exclusive access handle is
+  rotated between workers, the worker running the long statement holds it until
+  the statement ends, whatever the statement is doing.
+- **`OPFSWriteAheadVFS` is worth choosing outside Chromium after all**, where it
+  was documented as buying nothing. It still serves no concurrent reads there —
+  but it is faster than `OPFSAdaptiveVFS` on single writes, point reads, list
+  pages, scans and transactions on both Firefox and Safari. Prefer it for a
+  latency-bound workload, and `OPFSAdaptiveVFS` where reads must run alongside a
+  long query. **Its reported failure to reopen a database on Safari 27 is
+  withdrawn** — it did not reproduce.
+- **`IDBBatchAtomicVFS` does not serve a read while a long query runs**, on any
+  engine, though it remains the right answer for the two cases the VFS table's
+  *Concurrent reads* column actually covers. `OPFSAnyContextVFS` is the only VFS
+  here that serves one on every engine.
+
 ## 1.0.0-rc.4 — 2026-08-31
 
 Everything below lands between rc.3 (2026-03-26) and rc.4. The library was

@@ -54,6 +54,13 @@
       }
       #status { font-size: 0.85rem; }
       #stop { margin-left: auto; }
+      /* Sits between the control line and the table because it qualifies the
+         run below it and has to be readable WHILE that run is going. The
+         verdict box would be the other candidate and is the wrong one: it is
+         written once, at the end, and a run stopped early is exactly the case
+         where a floor that could not be established matters most. */
+      #sweep-note { margin: var(--gap) 0; font-size: 0.85rem; }
+      #sweep-note p { margin: 0; }
       #spinner {
         width: 1em; height: 1em; flex: none; border-radius: 50%;
         border: 2px solid var(--border); border-top-color: currentColor;
@@ -126,8 +133,41 @@
       #verdict-text p:last-child { margin: 0; }
       #verdict ul { margin: 0 0 0.5rem; padding-left: 1.2rem; }
       #verdict .caveat { font-size: 0.85rem; opacity: 0.8; }
-      td.measure { text-align: right; font-variant-numeric: tabular-nums; background: linear-gradient(to right, color-mix(in srgb, currentColor 12%, transparent) var(--bar-w, 0%), transparent var(--bar-w, 0%)); }
+      /* The bar is a RANK, not a magnitude — `best / value`, so a full bar means
+         "the winner of this row" and nothing about the number's size. The colour
+         bands that same ratio: within 20% of the best is green, down to half is
+         amber, below half is red. Muted through color-mix rather than `opacity`
+         so the figure on top keeps full contrast against the fill.
+         `prefers-color-scheme` rather than `light-dark()`, per the note above. */
+      td.measure {
+        --bar: currentColor;
+        text-align: right; font-variant-numeric: tabular-nums;
+        background: linear-gradient(to right,
+          color-mix(in srgb, var(--bar) 16%, transparent) var(--bar-w, 0%),
+          transparent var(--bar-w, 0%));
+      }
+      td.measure.good { --bar: #16a34a; }
+      td.measure.mid  { --bar: #d97706; }
+      td.measure.poor { --bar: #dc2626; }
+      @media (prefers-color-scheme: dark) {
+        td.measure.good { --bar: #22c55e; }
+        td.measure.mid  { --bar: #f59e0b; }
+        td.measure.poor { --bar: #ef4444; }
+      }
       td.measure.best { font-weight: 600; }
+      /* A figure past what its measurement can physically produce: kept, in
+         italics behind a ⚠, ranked at the bound rather than as a winner. */
+      td.measure.clamped { font-style: italic; }
+      /* A capability, not a quantity. Same ✅/❌ as the conformance rows, on a
+         tint, because a row that answers yes or no should not be read like the
+         numbers above it — and a bar over a boolean is a bar over nothing. */
+      td.flag { text-align: center; }
+      td.flag.yes { background: color-mix(in srgb, #16a34a 16%, transparent); }
+      td.flag.no  { background: color-mix(in srgb, #dc2626 16%, transparent); }
+      @media (prefers-color-scheme: dark) {
+        td.flag.yes { background: color-mix(in srgb, #22c55e 16%, transparent); }
+        td.flag.no  { background: color-mix(in srgb, #ef4444 16%, transparent); }
+      }
     </style>
   </head>
   <body>
@@ -186,6 +226,10 @@
       <button type="button" id="stop" hidden>Stop</button>
     </div>
 
+    <!-- Filled the moment the sweep ends, cleared at every Start. Empty is the
+         normal state and says nothing; a partial sweep is not silent. -->
+    <div id="sweep-note" hidden></div>
+
     <div id="verdict" hidden>
       <div id="verdict-text"></div>
       <p><button type="button" id="download" disabled>Download JSON</button></p>
@@ -206,9 +250,32 @@
       omitted when the median serial total falls below 4× the clock’s resolution —
       reads too fast to time reliably produce jitter, not a signal.
       A pool-1 VFS near 1.00× is declared behaviour, not a failure.
-      <code>pool-blocking</code> does not apply to pool-1 VFS (cell shows ⃠).
-      Where it does apply, ≈1 means the pool kept serving reads freely during
-      the long statement.
+      <code>can read during a long running query</code> answers yes or no, not
+      how much: a short read is raced against a long statement holding one of
+      the pool's workers. ✅ means the read was served without waiting for it,
+      ❌ means it only completed once that statement had finished. It does not
+      apply to pool-1 VFS (cell shows ⃠).
+      <b>Reading the cells:</b> the bar behind a measurement is its rank in that
+      row, not its size — <code>best ÷ value</code>, so a full bar is the row's
+      winner. Green is within 20% of the best, amber within half, red below
+      half. A cell in italics behind a ⚠ is past what its measurement can
+      physically produce — a concurrency gain above the pool that produced it —
+      so it is ranked at that bound instead of winning, while the figure shown
+      and the exported one stay what was actually read. Hover it for the detail.
+      A browser clock is coarsened to 0.1 ms (Chromium) or 1 ms (Safari and
+      Firefox), which is slower than the operations below it. So
+      <code>point-read-p50</code> times its reads in groups of 20, and the
+      <code>single INSERT</code> pair and <code>one page of a list</code> in
+      groups of 5, all reporting the per-operation figure — the group is how the number was measured, not what
+      it means. The smaller group is deliberate: a group mean smears a stall
+      across its members, and catching stalls is what the p95 is for, so its
+      sensitivity is coarsened fivefold rather than twentyfold.
+      <code>overwrite-throughput</code> is read against
+      <code>transaction-throughput</code>: same count, same single transaction,
+      but the writes dirty existing pages scattered through the file instead of
+      appending at its end. The memory VFS are the control — they have no file,
+      so a ratio near 1 there is what says the difference elsewhere is storage
+      and not SQLite.
     </p>
     </div>
 
@@ -303,6 +370,27 @@
        * inline blob worker. Ported from tests/conformance/helpers.ts — see
        * BENCH-DRIFT in mem:follow-ups before changing either copy.
        */
+      /**
+       * Named once because it is used twice: the probe below creates it, and
+       * the sweep has to recognise it as ours. Two literals would drift, which
+       * is the failure BENCH-DRIFT already records for this file.
+       *
+       * The probe removes it in its own `finally`, and that removal is allowed
+       * to fail silently — but it also RACES the worker's own death: the main
+       * thread calls `worker.terminate()` the moment the probe's message
+       * arrives, while the `finally` is still awaiting `getDirectory()`.
+       * Termination wins often enough to matter — **4 of 6 Chromium loads left
+       * the file behind**, measured 2026-09-03 in this container, and a Safari
+       * 26.6.2 export carried it into `opfsRootAtStart` as well. It is not a
+       * WebKit quirk; one observation per engine said it was, which is what n=1
+       * is worth here.
+       *
+       * So the sweep owns the name outright rather than trusting the probe to
+       * have cleaned up. Closing the race at its source — postMessage after the
+       * cleanup instead of before — is a separate change and is not made here.
+       */
+      const UNSAFE_PROBE_FILE = '__probe_unsafe_handles';
+
       const probeUnsafeHandles = () =>
         new Promise((resolve) => {
           if (!HAS_OPFS) return resolve(false);
@@ -311,7 +399,7 @@
               let h1;
               try {
                 const root = await navigator.storage.getDirectory();
-                const fh = await root.getFileHandle('__probe_unsafe_handles', { create: true });
+                const fh = await root.getFileHandle('${UNSAFE_PROBE_FILE}', { create: true });
                 h1 = await fh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
                 const h2 = await fh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
                 h2.close();
@@ -322,7 +410,7 @@
                 try { h1?.close(); } catch {}
                 try {
                   const root = await navigator.storage.getDirectory();
-                  await root.removeEntry('__probe_unsafe_handles');
+                  await root.removeEntry('${UNSAFE_PROBE_FILE}');
                 } catch {}
               }
             };
@@ -601,6 +689,25 @@
       const ROW_TIMEOUT_MS = 30_000;
 
       /**
+       * Deliberately BELOW the row budget, and that gap is the whole point.
+       *
+       * A client's `openTimeout` defaults to 30 000 ms — the same as
+       * `ROW_TIMEOUT_MS`, and both clocks start together on the first query of
+       * a column. The page's `AbortSignal` therefore won the race and wrote
+       * `exceeded 30000 ms`, throwing away the sentence `src/client.ts` had
+       * just been taught to produce: which worker never became ready, and
+       * whether another client of this library holds the database.
+       *
+       * Observed on iPadOS Safari 27.0, 2026-09-04: both `IDBBatchAtomicVFS`
+       * columns died at `opens` and the export carried the page's wording, so
+       * the one diagnosis that would have explained them never reached it.
+       *
+       * Ten seconds is enough room for the client's own timer to fire, be
+       * caught, and be recorded as the row's reason.
+       */
+      const OPEN_TIMEOUT_MS = ROW_TIMEOUT_MS - 10_000;
+
+      /**
        * Thrown when a row could not be bounded without abandoning its column.
        * For a method that takes no AbortSignal the only bound available is a
        * race against a timer, which abandons the WAIT without stopping the
@@ -651,6 +758,94 @@
       let idbBefore = null;
       let opfsBefore = null;
 
+      // ── Storage calls that may never settle ─────────────────────────────
+      /**
+       * Every OPFS and IndexedDB call in this section can do something worse
+       * than fail: it can hang for ever.
+       *
+       * On Safari, `removeEntry(name, { recursive: true })` against a file
+       * whose access handle is still live does not reject — it waits. So can
+       * `for await (const name of root.keys())`. And that is exactly the state
+       * of the OPFS root immediately after a run that exercised an OPFS VFS.
+       * Observed on iPadOS Safari 27.0: `Re-start` left the page on `cleaning…`
+       * for ever — no start, no report, no timeout, reload the only way out.
+       * The per-entry catches below are correct and defend against none of it;
+       * a promise that never settles is not an exception.
+       *
+       * The budget is PER CALL rather than one global one over the sweep. A
+       * single entry held by a dead context then costs its own budget and
+       * nothing else: the rest of the root, and the whole IndexedDB side, are
+       * still swept, so the floor this run starts from is the best one
+       * available instead of none. Worst case is the number of entries we own
+       * times the budget, which on a real root is a handful.
+       *
+       * ABANDONING THE WAIT DOES NOT STOP THE WORK, and that is not free on
+       * both sides. An OPFS `removeEntry` we stop waiting for holds nothing we
+       * need back. An `indexedDB.deleteDatabase` does: the request stays queued
+       * against that database, and IndexedDB processes a database's requests in
+       * order — so a delete that never settles BLOCKS every later `open` of the
+       * same store. It is the same hazard `ColumnAbandoned` states below for
+       * `close()`, and the earlier version of this comment claimed the opposite.
+       *
+       * That is why the budget is split. Removing a directory entry is a local,
+       * fast operation and 2 s is already generous; deleting a database is
+       * heavier, and `blocked` is a legitimate transient rather than a fault,
+       * so waiting longer before giving up costs less than giving up early on a
+       * store the run is about to need. Neither budget makes the page hang,
+       * which is the property that matters.
+       */
+      const SWEEP_OP_MS = 2_000;
+      const SWEEP_IDB_MS = 5_000;
+
+      const TIMED_OUT = Symbol('timed out');
+
+      const withDeadline = (promise, ms = SWEEP_OP_MS) =>
+        Promise.race([
+          promise,
+          new Promise((resolve) => setTimeout(() => resolve(TIMED_OUT), ms)),
+        ]);
+
+      /**
+       * The root's entries as an array, so the enumeration can be raced —
+       * a `for await` cannot be handed to `Promise.race` as it stands.
+       */
+      const listOpfsRoot = async (root) => {
+        const names = [];
+        for await (const name of root.keys()) names.push(name);
+        return names;
+      };
+
+      /**
+       * What the pre-run sweep managed to establish. Reset at every Start.
+       *
+       * A partial sweep changes what every measurement in the run is worth, and
+       * a SILENT partial sweep is worse than the hang it replaces — the hang at
+       * least announced itself. So the page says it while the run goes and the
+       * export carries it afterwards.
+       *
+       * `partial` is set by a refusal as much as by an expiry. A `removeEntry`
+       * that rejects leaves exactly as much residue as one that never settles;
+       * "still held, a later run will try again" is a fair thing to do about it
+       * and not a reason to call this run's floor established.
+       *
+       * `listed` is `null` where there is no OPFS at all, which is neither a
+       * success nor a failure to report.
+       *
+       * `idbAfter` is filled ONLY when the IndexedDB side left something, and
+       * it is the discriminator the next device run needs: a store that is gone
+       * from `indexedDB.databases()` was deleted slowly, one that is still
+       * there was not deleted at all. Without it, `timed out` cannot tell those
+       * apart, and iPadOS Safari 27.0 produced exactly that ambiguity on
+       * 2026-09-04. Not collected on a clean sweep — it costs an enumeration
+       * and answers nothing.
+       */
+      const SWEEP = { partial: false, listed: null, left: [], idbAfter: null };
+
+      const sweepLeft = (kind, name, why) => {
+        SWEEP.partial = true;
+        SWEEP.left.push(`${kind}:${name} (${why})`);
+      };
+
       /**
        * The OPFS root as it stood before this page touched anything.
        *
@@ -672,9 +867,12 @@
         if (!HAS_OPFS) return null;
         try {
           const root = await navigator.storage.getDirectory();
-          const names = new Set();
-          for await (const name of root.keys()) names.add(name);
-          return names;
+          const names = await withDeadline(listOpfsRoot(root));
+          // An enumeration that does not finish in time leaves us with no floor
+          // to diff against, which is the same position as one that is not
+          // available at all: clean nothing rather than guess.
+          if (names === TIMED_OUT) return null;
+          return new Set(names);
         } catch {
           // No directory iteration here: clean nothing rather than guess.
           return null;
@@ -697,11 +895,56 @@
       /** Per column, so a long run does not carry 22 databases to the end. */
       const cleanupOpfs = async (file) => {
         if (!HAS_OPFS) return;
+        let root;
         try {
-          const root = await navigator.storage.getDirectory();
-          await root.removeEntry(file, { recursive: true });
+          root = await navigator.storage.getDirectory();
+          // Bounded for the same reason the sweep is: this runs at the end of
+          // every column, so a removal that never settles hangs the whole run
+          // rather than one cleanup.
+          await withDeadline(root.removeEntry(file, { recursive: true }));
         } catch {
-          // Never created, or this VFS does not use OPFS at all.
+          // Never created, or this VFS does not use OPFS at all. The claim
+          // below still has to happen: what a column created under a name of
+          // the VFS's own choosing is unrelated to whether OUR name was there.
+        }
+        if (root) await claimNewOpfsNames(root);
+      };
+
+      /**
+       * Claim whatever has appeared in the root since this run's floor was
+       * snapshotted — WITHOUT removing it. Removal stays the end-of-run job of
+       * `cleanupOpfsResidue`; this only records ownership, and records it
+       * EARLY, once per column.
+       *
+       * The hole it closes: `remember()` used to be reached only on the removal
+       * path, at the very end of a run. A run that never got there — tab
+       * closed, page reloaded, phone suspending the page — left everything it
+       * had created unrecorded, and the next run then inventoried that residue
+       * as pre-existing, where the "never touch what was already there" rule
+       * protects it for good.
+       *
+       * Not hypothetical. A Chromium export of 2026-09-03 opened with
+       * `opfsRootAtStart: ['.wa-sqlite']` — `OPFSWriteAheadVFS`'s own
+       * LIBRARY_FILES_ROOT, left by an earlier interrupted run and invisible to
+       * every sweep since: it carries neither the `bench-` prefix nor a VFS
+       * class name, and `layout` does not tell it from three other VFS.
+       *
+       * Recording the NAME rather than the VFS is what makes this general. The
+       * page needs to know nothing about any VFS's internal layout — the same
+       * rule the residue cleanup already follows, applied early enough to
+       * survive a run that does not finish.
+       */
+      const claimNewOpfsNames = async (root) => {
+        if (!opfsBefore) return;
+        try {
+          const now = await withDeadline(listOpfsRoot(root));
+          if (now === TIMED_OUT) return;
+          for (const name of now) {
+            if (!opfsBefore.has(name)) remember('opfs', name);
+          }
+        } catch {
+          // Iteration stopped working mid-run. The end-of-run cleanup is the
+          // remaining chance and makes the same attempt.
         }
       };
 
@@ -715,16 +958,23 @@
         if (!opfsBefore) return;
         try {
           const root = await navigator.storage.getDirectory();
-          const now = [];
-          for await (const name of root.keys()) now.push(name);
+          const now = await withDeadline(listOpfsRoot(root));
+          // Nothing safe left to do, and nothing worth waiting for: the run is
+          // over, and what is not removed here the next run's sweep will find.
+          if (now === TIMED_OUT) return;
           for (const name of now) {
             if (opfsBefore.has(name)) continue;
             // Recorded before the attempt: if the removal fails, or the tab
             // dies between these two lines, the next run still knows it is ours.
             remember('opfs', name);
             try {
-              await root.removeEntry(name, { recursive: true });
-              forget('opfs', name);
+              const done = await withDeadline(
+                root.removeEntry(name, { recursive: true }),
+              );
+              // Not forgotten on expiry: a removal that did not finish leaves
+              // the name ours, and the next run's sweep is where it gets
+              // another attempt.
+              if (done !== TIMED_OUT) forget('opfs', name);
             } catch {
               // Held open elsewhere; leave it rather than fight for it.
             }
@@ -736,12 +986,17 @@
 
       const cleanupIdb = async () => {
         if (!idbBefore) return;
-        const now = await indexedDB.databases();
+        const now = await withDeadline(indexedDB.databases());
+        if (now === TIMED_OUT) return;
         for (const { name } of now) {
           if (!name || idbBefore.has(name)) continue;
           remember('idb', name);
-          await deleteIdb(name);
-          forget('idb', name);
+          // Forgotten only on a real deletion, for the reason the sweep gives:
+          // `blocked` leaves the store in place, and a name dropped from
+          // `owned` while its store still exists is a name no later sweep can
+          // see.
+          const outcome = await withDeadline(deleteIdb(name), SWEEP_IDB_MS);
+          if (outcome === 'success') forget('idb', name);
         }
       };
 
@@ -791,11 +1046,22 @@
         }
       };
 
+      /**
+       * Resolves with WHICH event settled it, because the three do not mean
+       * the same thing and the caller has to tell them apart.
+       *
+       * `blocked` in particular is not a deletion: it fires while other
+       * connections are still open, and the delete may complete later, or
+       * never. Treating it as done — which this did, resolving bare — is how a
+       * store that was still there got forgotten and became invisible to every
+       * later sweep.
+       */
       const deleteIdb = (name) =>
         new Promise((resolve) => {
           const request = indexedDB.deleteDatabase(name);
-          request.onsuccess = request.onerror = request.onblocked = () =>
-            resolve();
+          request.onsuccess = () => resolve('success');
+          request.onerror = () => resolve('error');
+          request.onblocked = () => resolve('blocked');
         });
 
       /**
@@ -818,44 +1084,146 @@
       /**
        * Runs before a bench, so it starts from a floor it established itself —
        * chaining two runs must not measure the first one's leftovers. Removes
-       * four things and nothing else: our own `bench-` databases and their
+       * five things and nothing else: our own `bench-` databases and their
        * `-journal` / `-wal` siblings, whose prefix makes them unambiguously
-       * ours; anything a previous run of ours recorded as its own; the
-       * IndexedDB stores it recorded the same way; and the per-VFS stores
-       * above, which this page is about to exercise anyway.
+       * ours; the unsafe-handle probe's file, which this page created at load
+       * and does not always manage to remove itself; anything a previous run of
+       * ours recorded as its own; the IndexedDB stores it recorded the same
+       * way; and the per-VFS stores above, which this page is about to exercise
+       * anyway.
        */
       const sweepBeforeRun = async () => {
+        SWEEP.partial = false;
+        SWEEP.listed = null;
+        SWEEP.left = [];
+        SWEEP.idbAfter = null;
         const all = owned();
         if (HAS_OPFS) {
           try {
             const root = await navigator.storage.getDirectory();
-            const names = [];
-            for await (const name of root.keys()) names.push(name);
-            const vfsOpfs = vfsOwnedNames('opfs');
-            for (const name of names) {
-              const isOurs =
-                name.startsWith('bench-') ||
-                (all.opfs ?? []).includes(name) ||
-                vfsOpfs.includes(name);
-              if (!isOurs) continue;
-              try {
-                await root.removeEntry(name, { recursive: true });
-                forget('opfs', name);
-              } catch {
-                // Still held; a later run will try again.
+            const names = await withDeadline(listOpfsRoot(root));
+            SWEEP.listed = names !== TIMED_OUT;
+            if (names === TIMED_OUT) {
+              // Nothing to sweep against, so nothing is removed and the whole
+              // OPFS side of the floor is unestablished. Reported, not waited
+              // for: the run is worth more than the wait.
+              SWEEP.partial = true;
+            } else {
+              const vfsOpfs = vfsOwnedNames('opfs');
+              for (const name of names) {
+                const isOurs =
+                  name.startsWith('bench-') ||
+                  name === UNSAFE_PROBE_FILE ||
+                  (all.opfs ?? []).includes(name) ||
+                  vfsOpfs.includes(name);
+                if (!isOurs) continue;
+                try {
+                  const done = await withDeadline(
+                    root.removeEntry(name, { recursive: true }),
+                  );
+                  if (done === TIMED_OUT) sweepLeft('opfs', name, 'timed out');
+                  else forget('opfs', name);
+                } catch {
+                  // Still held; a later run will try again. Recorded all the
+                  // same — leaving it is the right move, calling the floor
+                  // clean afterwards is not.
+                  sweepLeft('opfs', name, 'refused');
+                }
               }
             }
           } catch {
-            // No iteration: the prefix sweep is not available either.
+            // No iteration: the prefix sweep is not available either. The
+            // banner already says this browser will not list the root; the
+            // export needs to say it too, per run.
+            SWEEP.listed = false;
+            SWEEP.partial = true;
           }
         }
+        let idbLeft = false;
         for (const name of new Set([
           ...(all.idb ?? []),
           ...vfsOwnedNames('indexeddb'),
         ])) {
-          await deleteIdb(name);
-          forget('idb', name);
+          const outcome = await withDeadline(deleteIdb(name), SWEEP_IDB_MS);
+          // Only `success` is a deletion. `blocked` means other connections
+          // are still open and the store is still there; `error` speaks for
+          // itself. Forgetting on either would drop the name from `owned` and
+          // hand it to the "already there, never touch it" rule for good.
+          if (outcome === 'success') {
+            forget('idb', name);
+            continue;
+          }
+          idbLeft = true;
+          sweepLeft('idb', name, outcome === TIMED_OUT ? 'timed out' : outcome);
         }
+        // Only when something was left: the one fact that separates a slow
+        // deletion from one that never happened.
+        if (idbLeft && CAN_LIST_IDB) {
+          try {
+            const now = await withDeadline(indexedDB.databases());
+            SWEEP.idbAfter =
+              now === TIMED_OUT
+                ? null
+                : now.map((d) => d.name).filter(Boolean);
+          } catch {
+            // The listing is a diagnostic, never a step the run depends on.
+          }
+        }
+      };
+
+      /**
+       * The sweep's outcome, in the page, the moment it is known — so a visitor
+       * watching a run knows what its floor was before the numbers land.
+       *
+       * `.warn` rather than `.no`: this is not an absent capability to be
+       * dimmed, it is a qualification on everything below it.
+       */
+      const renderSweepNote = () => {
+        const box = document.getElementById('sweep-note');
+        if (!SWEEP.partial) {
+          box.replaceChildren();
+          box.hidden = true;
+          return;
+        }
+        const why =
+          SWEEP.listed === false ? ' The OPFS root could not be listed.' : '';
+        const left =
+          SWEEP.left.length > 0
+            ? ` Left in place: ${SWEEP.left.join(', ')}.`
+            : '';
+        /**
+         * `blocked` has one established cause and it is not obvious, so the
+         * page names it rather than leaving the reader with a state and no
+         * move. `indexedDB.deleteDatabase` reports it while another connection
+         * to that database is open anywhere on the ORIGIN — and the released
+         * page at `/` is the same origin as `/preview/`, so a forgotten tab on
+         * either holds the same stores. The delete request then stays queued on
+         * that database and the run's own open queues behind it, which is how
+         * two IDBBatchAtomicVFS columns died at `opens` on macOS Safari,
+         * 2026-09-04. Quitting the browser cleared it; the next run was clean.
+         */
+        const cause = SWEEP.left.some((entry) => entry.endsWith('(blocked)'))
+          ? ' A store reported blocked is held by a live connection somewhere' +
+            ' on this origin — a forgotten tab on this site, the published page' +
+            ' included, is enough. Close it and re-run.'
+          : '';
+
+        // Built as nodes rather than innerHTML, and this is not ceremony:
+        // SWEEP.left carries OPFS entry NAMES, which are arbitrary strings from
+        // an origin this page shares with every other Pages project of the same
+        // account. Everywhere else the page interpolates ids it declared itself.
+        const p = document.createElement('p');
+        p.className = 'warn';
+        const label = document.createElement('b');
+        label.textContent = 'Cleanup incomplete';
+        p.append(
+          '⚠ ',
+          label,
+          ' — this run did not start from a floor it established itself, so its' +
+            ` numbers may carry a previous run's residue.${why}${left}${cause}`,
+        );
+        box.replaceChildren(p);
+        box.hidden = false;
       };
 
       /**
@@ -874,6 +1242,29 @@
 
       const setReason = (pairId, rowId, text) => {
         (RESULTS.reasons[pairId] ??= {})[rowId] = text;
+      };
+
+      /**
+       * A failure on a VFS whose OWN store the sweep could not remove is not an
+       * independent observation, and the export has to say so where the failure
+       * is read rather than leaving the reader to cross-check `sweep.left`.
+       *
+       * The case is real: on iPadOS Safari 27.0, 2026-09-04, the sweep left
+       * `idb:IDBBatchAtomicVFS` and both of that VFS's columns then died at
+       * `opens`. Nothing in those two cells connected them.
+       *
+       * Keyed on the VFS class name because that is what a VFS's own store is
+       * named — the same assumption `vfsOwnedNames` already makes.
+       */
+      const sweepCaveat = (pair) => {
+        const hit = SWEEP.left.find(
+          (entry) =>
+            entry.startsWith(`opfs:${pair.vfs} (`) ||
+            entry.startsWith(`idb:${pair.vfs} (`),
+        );
+        return hit
+          ? ` — and the pre-run sweep could not remove this VFS's own store (${hit}), so this column did not start from a clean floor`
+          : '';
       };
 
       /**
@@ -938,6 +1329,7 @@
                 vfs: ctx.pair.vfs,
                 build: ctx.pair.build,
                 poolSize: poolFor(ctx.pair.cap),
+                openTimeout: OPEN_TIMEOUT_MS,
               });
               const rows = await ctx.db.read('SELECT a FROM inv2', undefined, {
                 signal,
@@ -1029,6 +1421,7 @@
                 vfs: ctx.pair.vfs,
                 build: ctx.pair.build,
                 poolSize: poolFor(ctx.pair.cap),
+                openTimeout: OPEN_TIMEOUT_MS,
               });
               return true;
             }),
@@ -1103,7 +1496,43 @@
         },
       ];
 
-      const DATASET_ROWS = 10_000;
+      /**
+       * 100 000, raised from 10 000 on 2026-09-04, and the number is measured
+       * rather than chosen.
+       *
+       * **What 10 000 was hiding.** The database came to 69 pages × 4 096 B =
+       * 276 KB against SQLite's default 2 000 KB page cache — it fitted seven
+       * times over, so once the dataset was built a read could be served
+       * without a single `xRead` reaching the VFS. Several read rows were
+       * timing SQLite's cache, not the storage they exist to compare. The
+       * symptom was visible for weeks and read as a device problem: cells at
+       * `—` with *"below 2× this device's clock resolution"*.
+       *
+       * **What 100 000 costs, measured on Chromium over all 22 columns:** the
+       * whole run goes from 94 s to 137 s (+46 %), because most rows do not
+       * scale with the dataset. The build is ×3.4, not ×10 — `bulkWrite`
+       * amortises. Worst column 227 ms → 764 ms; extrapolated to the slowest
+       * iPadOS column ever recorded (1 542 ms at 10 000) that is ≈ 5 s against
+       * a 30 s row budget, a 6× margin.
+       *
+       * **What it buys, same run:** every `—` on Chromium disappears.
+       * `point-read` 3/22 → 0/22, and the long-query race 7/22 → 0/22 because its
+       * long-query calibration stopped saturating at `DATASET_ROWS²`
+       * (`__iterations` 10 000 → 1 891). `full-scan` 1.2 → 7.1 ms and
+       * `list-page` 0.5 → 3.4 ms are now above a 1 ms clock's floor, which is
+       * what Safari has.
+       *
+       * **Why not more.** `ROW_TIMEOUT_MS` is the ceiling: 10× again would put
+       * the slowest device's build past 30 s and cost the column. Raising the
+       * dataset further is not the lever anyway — a point read is O(log n) and
+       * stays sub-millisecond at any size.
+       *
+       * **This re-baselines every measurement.** Exports taken before
+       * 2026-09-04 are not comparable to those taken after, deliberately; the
+       * `bulk-insert-dataset` row was renamed from `bulk-insert-10k` so the
+       * change is visible in the export's own keys rather than silent.
+       */
+      const DATASET_ROWS = 100_000;
 
       /**
        * How many short reads the concurrency burst issues, per phase.
@@ -1155,6 +1584,62 @@
       };
 
       /** A short read: primary-key lookup, so the cost is round-trip, not SQLite. */
+      /**
+       * How many operations one timed sample covers, where the operation is
+       * faster than the clock that has to time it.
+       *
+       * `performance.now()` is coarsened against timing attacks: 0.1 ms on
+       * Chromium, **1 ms on Safari**, measured per run and reported as
+       * `clockMs`. A point read is O(log n) and stays around 0.3 ms whatever
+       * the dataset size — three ticks on Chromium, a third of one on Safari.
+       * That is why raising DATASET_ROWS cleared every other `—` and not this
+       * one: no dataset makes a B-tree descent slow.
+       *
+       * Twenty reads under one `performance.now()` pair is ~6 ms, which both
+       * engines resolve. The reported figure stays per-operation — the group is
+       * how it was measured, not what it means.
+       *
+       * Rows that do this declare `group`, because the guard further down has
+       * to test what the CLOCK timed, not what the cell prints. Without that,
+       * grouping buys nothing: the guard would still null a 0.3 ms per-read
+       * figure on a 1 ms clock, having never seen the 6 ms it came from.
+       */
+      const READ_GROUP = 20;
+
+      /**
+       * Smaller than READ_GROUP, and the difference is the whole trade.
+       *
+       * A single autocommit INSERT is ~1 ms on Safari — exactly its clock's
+       * tick — so this row nulled 14 of 22 columns there and 18 of 22 on
+       * Firefox, on 2026-09-04, with the reason `1.00 ms is below 2× this
+       * device's clock resolution (1.00 ms)`. Raising DATASET_ROWS never
+       * touched it: the row writes into its own small `lat` table.
+       *
+       * Five is the SMALLEST group that clears a 1 ms clock at ~1 ms per
+       * insert, and small is what matters here. This row's p95 exists to catch
+       * stalls — a checkpoint, an fsync, a rotating handle — and a group mean
+       * smears one stall across its whole group, so every extra member costs
+       * sensitivity to the very thing being looked for. Twenty would have made
+       * the p95 nearly useless.
+       */
+      const WRITE_GROUP = 5;
+
+      /**
+       * One page of a list is ~3-6 ms on Chromium but fell under a 1 ms clock's
+       * floor on Firefox 154, where it nulled 10 of 22 columns on 2026-09-04.
+       * Five clears that with room, and unlike the write pair this row reports
+       * no p95, so nothing is lost by grouping — there is no stall sensitivity
+       * to trade away.
+       */
+      const PAGE_GROUP = 5;
+
+      const timeGroup = async (fn, n = READ_GROUP) => {
+        const total = await time(async () => {
+          for (let i = 0; i < n; i++) await fn();
+        });
+        return total / n;
+      };
+
       const shortRead = (db, id, signal) =>
         db.first('SELECT id, label FROM bench WHERE id = ?', [id], { signal });
 
@@ -1191,7 +1676,7 @@
       };
 
       /**
-       * A cross-join query that reads every page of bench (10 000 rows) for
+       * A cross-join query that reads every page of bench (DATASET_ROWS rows) for
        * the entire duration of one sqlite3_step(). SQLite holds a shared read
        * lock on the database file from the moment the statement starts until
        * it finishes — which is what the original recursive CTE lacked: a
@@ -1215,7 +1700,7 @@
        * loop, one verification measurement confirms the chosen bound actually
        * costs 1–4 s. If it does not (the cross-join saturates at
        * DATASET_ROWS² and is still too fast on this device), null is stored
-       * and pool-blocking returns null rather than printing a meaningless 1.
+       * and the long-query race returns null rather than a meaningless verdict.
        */
       const calibrateLongQuery = async (ctx) => {
         if ('longIterations' in ctx) return ctx.longIterations;
@@ -1241,7 +1726,7 @@
       /** Measurement rows. Filled in Tasks 5 and 6. */
       const MEASUREMENT_ROWS = [
         {
-          id: 'bulk-insert-10k',
+          id: 'bulk-insert-dataset',
           label: `bulk insert + index build (${DATASET_ROWS.toLocaleString('en')} rows)`,
           unit: 'ms',
           decimals: 0,
@@ -1259,6 +1744,7 @@
         {
           id: 'write-latency-p50',
           label: 'single INSERT — p50',
+          group: WRITE_GROUP,
           unit: 'ms',
           decimals: 2,
           better: 'low',
@@ -1268,11 +1754,18 @@
               await ensureDataset(ctx, signal);
               await ctx.db.write('CREATE TABLE lat (a INTEGER)', undefined, { signal });
               await ctx.db.write('INSERT INTO lat VALUES (0)', undefined, { signal }); // warmup
+              // Still 100 inserts; twenty samples of five rather than a
+              // hundred of one, so the clock has something it can resolve.
+              let n = 0;
               const samples = [];
-              for (let i = 1; i <= 100; i++) {
+              for (let g = 0; g < 100 / WRITE_GROUP; g++) {
                 samples.push(
-                  await time(() =>
-                    ctx.db.write('INSERT INTO lat VALUES (?)', [i], { signal }),
+                  await timeGroup(
+                    () =>
+                      ctx.db.write('INSERT INTO lat VALUES (?)', [++n], {
+                        signal,
+                      }),
+                    WRITE_GROUP,
                   ),
                 );
               }
@@ -1283,6 +1776,7 @@
         {
           id: 'write-latency-p95',
           label: 'single INSERT — p95',
+          group: WRITE_GROUP,
           unit: 'ms',
           decimals: 2,
           better: 'low',
@@ -1298,15 +1792,21 @@
           unit: 'ms',
           decimals: 2,
           better: 'low',
+          // Timed in groups, so the guard must weigh the group, not the cell.
+          group: READ_GROUP,
           applies: () => true,
+          // Still 200 reads and still a p50 — of ten group means rather than of
+          // 200 individual timings. The distribution survives, coarsened; what
+          // it stops doing is asking a 1 ms clock to resolve a 0.3 ms read,
+          // which is why this was the most-nulled row on every Safari export.
           run: (ctx) =>
             abortableRow(async (signal) => {
               await ensureDataset(ctx, signal);
               await shortRead(ctx.db, randomId(), signal); // warmup
               const samples = [];
-              for (let i = 0; i < 200; i++) {
+              for (let g = 0; g < 200 / READ_GROUP; g++) {
                 samples.push(
-                  await time(() => shortRead(ctx.db, randomId(), signal)),
+                  await timeGroup(() => shortRead(ctx.db, randomId(), signal)),
                 );
               }
               return quantile(samples, 0.5);
@@ -1315,6 +1815,7 @@
         {
           id: 'list-page-p50',
           label: 'one page of a list (LIMIT 50) — p50',
+          group: PAGE_GROUP,
           unit: 'ms',
           decimals: 2,
           better: 'low',
@@ -1333,10 +1834,14 @@
                   { signal },
                 );
               await page(0); // warmup
+              // Still 100 pages, as twenty samples of five.
               const samples = [];
-              for (let i = 0; i < 100; i++) {
+              for (let g = 0; g < 100 / PAGE_GROUP; g++) {
                 samples.push(
-                  await time(() => page(Math.floor(Math.random() * (DATASET_ROWS - 50)))),
+                  await timeGroup(
+                    () => page(Math.floor(Math.random() * (DATASET_ROWS - 50))),
+                    PAGE_GROUP,
+                  ),
                 );
               }
               return quantile(samples, 0.5);
@@ -1348,6 +1853,18 @@
           unit: '×',
           decimals: 2,
           better: 'high',
+          /**
+           * The gain cannot exceed the column's own pool: N workers cannot
+           * serve N+1 reads' worth of work in the time of one. So a value above
+           * it is measurement noise, and with `better: 'high'` the ranking would
+           * hand it the row — the same defect the old `pool-blocking` ratio had
+           * at the other end, where the noisiest column was crowned as best.
+           *
+           * The cap is per column because `poolFor` differs per VFS, hence a
+           * function rather than a constant. It bounds the RANKING only; the
+           * cell keeps what was measured, marked.
+           */
+          capBy: (pair) => poolFor(pair.cap),
           applies: () => true,
           /**
            * Median of 5 serial/parallel gain ratios. Alternates which runs
@@ -1387,7 +1904,7 @@
               }
 
               // If reads are too fast for the timer to distinguish serial from
-              // parallel, return null. CLOCK_MS × 4 matches pool-blocking's
+              // parallel, return null. CLOCK_MS × 4 matches the long-query race's
               // approach: a serial total under that threshold means any ratio
               // we compute reflects clock quantisation, not pool behaviour.
               if (quantile(serialTotals, 0.5) < CLOCK_MS * 4) return null;
@@ -1440,60 +1957,200 @@
             }),
         },
         {
-          id: 'pool-blocking',
-          label: 'short read during a long query (× idle)',
-          unit: '×',
-          decimals: 2,
+          id: 'overwrite-throughput',
+          label: '500 UPDATEs spread across the dataset, in one transaction',
+          unit: 'ms',
+          decimals: 0,
           better: 'low',
+          applies: () => true,
+          /**
+           * The shape this page never had: a write that DIRTIES existing pages
+           * instead of appending new ones.
+           *
+           * Every other write row here grows the database — `bulk-insert-dataset`,
+           * `write-latency`, `transaction-throughput` all append. Overwriting
+           * is a different path for a VFS: the page must be read before it is
+           * written, and the old image goes to the journal or the WAL. That is
+           * where `AccessHandlePoolVFS` under `locking_mode=exclusive` +
+           * `journal_mode=wal` — this project's one default PRAGMA set — stops
+           * resembling a rollback-journal VFS. A consumer updating rows had no
+           * number on this page to choose a VFS by. Taken from wa-sqlite's
+           * port of sqlite.org's speed comparison, tests 8-10, which is the one
+           * thing in those sixteen we did not already cover.
+           *
+           * Read it AGAINST `transaction-throughput`: same count, same single
+           * transaction. The pair is a contrast, not a controlled experiment,
+           * and two things differ on purpose — the writes overwrite rather than
+           * append, and they scatter over the whole file rather than landing at
+           * its end. Both are what an UPDATE workload actually does.
+           *
+           * `label` and not `n`, because `n` carries `bench_n`: updating it
+           * would add index maintenance and stop the pair from being readable.
+           * And rewritten with `substr` rather than a bound string so the value
+           * keeps its exact length — a longer one could overflow the row onto a
+           * new page, which is an append again, which is the thing this row
+           * exists not to measure.
+           */
+          run: (ctx) =>
+            abortableRow(async (signal) => {
+              await ensureDataset(ctx, signal);
+              // One row every DATASET_ROWS/500: 500 writes touching as much of the
+              // file as the dataset allows.
+              const stride = Math.floor(DATASET_ROWS / 500);
+              return time(() =>
+                ctx.db.transaction(async (tx) => {
+                  for (let i = 1; i <= 500; i++) {
+                    await tx.write(
+                      "UPDATE bench SET label = 'upd-' || substr(label, 5) WHERE id = ?",
+                      [i * stride],
+                    );
+                  }
+                }),
+              );
+            }),
+        },
+        {
+          id: 'reads-during-long-query',
+          label: 'can read during a long running query',
+          // Not a quantity. See the run body: the honest answer here is yes or
+          // no, and the ratio this row used to print could not say more.
+          kind: 'flag',
           applies: (cap) => cap.maxPoolSize !== 1,
           /**
-           * Measures whether a long file-reading statement on one worker
-           * delays short reads issued concurrently on the same pool. ≈1 means
-           * the other workers served the reads freely; ≫1 means the busy
-           * statement starved the pool.
+           * Does a long file-reading statement on one worker stop the pool from
+           * serving short reads on the others?
            *
-           * NOTE: On Firefox this row does NOT reproduce the README's
-           * reduced-mode blocking claim. Even for VFS that report
-           * no-read-inside-transaction: blocked, short reads complete in ≈1 ms
-           * throughout the long query. The blocking the README describes
-           * applies to WRITE transactions (exclusive file lock); a long READ
-           * holds only a shared lock, which does not prevent other workers
-           * from acquiring their own shared locks.
+           * **Answered without a clock, deliberately.** This was a ratio —
+           * a short read's latency during the long query over the same read at
+           * rest — and it was unreadable twice over. Nobody could say what a
+           * "1.08×" meant, and the number could not support the weight: both
+           * halves were a p50 over five sub-millisecond reads, so one Chromium
+           * run spread it from 0.73 to 1.33, values under 1 included, which
+           * would mean a read got FASTER while a worker was saturated. Grouping
+           * the timings cut the quantisation and left the spread — the noise was
+           * never the clock. A ±30% ratio cannot report PARTIAL blocking, so it
+           * only ever answered the binary question, badly.
+           *
+           * So the read races the long query. If the read resolves first it was
+           * served while the long statement held its worker — it did not wait.
+           * If the long query resolves first, the read waited for it. No timer,
+           * no threshold, nothing to calibrate away.
+           *
+           * Three reads rather than one: blocking is a property of the VFS, not
+           * a coin flip, and one lucky read is not evidence.
+           *
+           * **The one way this can lie**, stated rather than hidden behind a
+           * falsifier that does not exist: if the long query happened to finish
+           * in the microseconds a short read takes, the read would lose the race
+           * without having waited. The calibration targets 1.5-3 s and the reads
+           * are issued 50 ms in, so the window is ~0.3 ms against a second — but
+           * it is not zero, and nothing here detects it.
+           *
+           * **The ratio it replaces was not merely noisy, it was blind.** First
+           * Chromium run of the race, deterministic over two rounds and at
+           * `poolFor` = 4 for every VFS below, so "no other worker" is not the
+           * explanation:
+           *
+           *   OPFSWriteAheadVFS sync/async   ✅   OPFSCoopSyncVFS sync/async  ❌
+           *   OPFSAdaptiveVFS async          ✅   IDBBatchAtomicVFS async     ❌
+           *
+           * The ratio reported ≈0.9-1.0 for those same ❌ columns — "nothing
+           * blocked". It could not have seen otherwise: a p50 over five samples
+           * of twenty reads each divides one blocking wait by twenty and then
+           * takes the median of five, so a single read that waits out the whole
+           * statement leaves no trace. The race asks the first read directly.
+           *
+           * **What four platforms say, 2026-09-04, cold run and Re-start each,
+           * 22 columns every time.** The partition follows `readwrite-unsafe`
+           * exactly, which is what the README claims in prose and what this row
+           * is the first per-VFS evidence for:
+           *
+           *   engine                      served                    waited
+           *   Chromium 150 (has RWU)      Adaptive, WriteAhead,     CoopSync,
+           *                               AnyContext                IDBBatchAtomic
+           *   Safari 27 (no RWU)          AnyContext/jspi           everything else
+           *   Firefox 154 (ignores RWU)   AnyContext                everything else
+           *
+           * Without `readwrite-unsafe` the OPFS VFS rotate one exclusive access
+           * handle, so reads serialise behind the long statement.
+           *
+           * **`OPFSAnyContextVFS` is the exception and it is worth a
+           * recommendation**: the only OPFS VFS serving concurrent reads
+           * without `readwrite-unsafe`, hence the only one to suggest to a
+           * Safari or Firefox consumer who reads while working. It is also the
+           * worst writer on this page — 17 ms for a single INSERT on Chromium
+           * against 0.9 ms for AccessHandlePoolVFS — so it is a trade, not a
+           * winner.
+           *
+           * **This row previously recorded the opposite about Firefox** — that
+           * short reads completed throughout the long query even for VFS
+           * reporting `no-read-inside-transaction: blocked`. That was the ratio
+           * talking, and the ratio could not see a read that waited. Firefox
+           * blocks. The distinction the old note drew is still true on its own
+           * terms and is not what this row measures: the README describes WRITE
+           * transactions taking an exclusive file lock, while a long READ holds
+           * only a shared one.
            */
           run: (ctx) =>
             abortableRow(async (signal) => {
               await ensureDataset(ctx, signal);
               const bound = await calibrateLongQuery(ctx);
-              // Null means the cross-join saturated at DATASET_ROWS² and the
-              // device is still faster than 1 s — no meaningful ratio possible.
+              // No long query could be built here, so there is no "during".
               if (bound == null) return null;
 
-              const idle = [];
-              for (let i = 0; i < 5; i++) {
-                idle.push(await time(() => shortRead(ctx.db, randomId(), signal)));
-              }
-              const idleP50 = quantile(idle, 0.5);
-              // If the idle baseline is below 2× the clock's granularity, any
-              // ratio we compute reflects the timer's quantisation, not the
-              // pool's behaviour. Return null so the cell shows — rather than
-              // a fabricated triple-digit number.
-              if (idleP50 < CLOCK_MS * 2) return null;
-
-              // Deliberately not awaited: the long query must still be running
-              // while the short reads are timed. Its rejection is swallowed —
-              // the row timeout is what bounds this, not the long query.
+              // Deliberately not awaited here: it has to still be running when
+              // the short reads are issued. Its rejection is swallowed — the
+              // row timeout is what bounds this, not the long query.
+              //
+              // **Do not try to cancel it once the verdict is in.** It was
+              // tried, on the reasoning that the answer arrives with the short
+              // read and the remaining 1.5-3 s of cross-join is waste. Aborting
+              // a read ABANDONS THE WAIT, NOT THE WORK — `src/client.ts` says
+              // so at `makeAbortRace`, there is no `sqlite3_interrupt` anywhere,
+              // and it is measured: with `poolSize: 1`, a 1 980 ms statement
+              // aborted 100 ms in settles its promise in 0 ms, and the very next
+              // short read then takes 1 889 ms waiting the cross-join out.
+              // The whole-run wall clock was unchanged (155 s → 153 s, inside
+              // run-to-run variance). All the cancellation achieved was moving
+              // an explicit wait into implicit contention with the rows after
+              // it. Waiting here is the honest version.
               const long = ctx.db.read(longQuery(bound), undefined, { signal });
               long.catch(() => {});
+              let longSettled = false;
+              const longRace = long.then(
+                () => {
+                  longSettled = true;
+                  return 'long';
+                },
+                () => {
+                  longSettled = true;
+                  return 'long';
+                },
+              );
 
+              // Let the long statement take a worker before asking anything.
               await new Promise((resolve) => setTimeout(resolve, 50));
+              // It should still be running — the calibration targets 1.5-3 s.
+              // Already finished means there is nothing to test against.
+              if (longSettled) return null;
 
-              const during = [];
-              for (let i = 0; i < 5; i++) {
-                during.push(await time(() => shortRead(ctx.db, randomId(), signal)));
+              try {
+                for (let i = 0; i < 3; i++) {
+                  // A rejected read is not a served read: let it reject the
+                  // race and be reported as the row's error, rather than
+                  // mapping it to a verdict it did not earn.
+                  const winner = await Promise.race([
+                    shortRead(ctx.db, randomId(), signal).then(() => 'read'),
+                    longRace,
+                  ]);
+                  if (winner !== 'read') return false;
+                }
+                return true;
+              } finally {
+                // On every path, including a read that threw: the next row must
+                // not start while this statement is still stepping.
+                await long.catch(() => {});
               }
-
-              await long.catch(() => {});
-              return quantile(during, 0.5) / idleP50;
             }),
         },
       ];
@@ -1507,7 +2164,7 @@
        *
        * Its own array rather than an entry at the end of CONFORMANCE_ROWS:
        * those all run before MEASUREMENT_ROWS, so deleting the database there
-       * would destroy the 10 000-row dataset every measurement needs.
+       * would destroy the shared dataset every measurement needs.
        *
        * The assertion is "no tables at all", not "the table some earlier row
        * created is gone". Which rows ran varies by VFS and by what was
@@ -1553,6 +2210,7 @@
                 vfs: ctx.pair.vfs,
                 build: ctx.pair.build,
                 poolSize: poolFor(ctx.pair.cap),
+                openTimeout: OPEN_TIMEOUT_MS,
               });
               let tables;
               try {
@@ -1641,10 +2299,13 @@
           why: 'the pool serving several short reads at once',
         },
         {
-          id: 'bulk-insert-10k',
+          id: 'bulk-insert-dataset',
           label: 'bulk writes',
           better: 'low',
-          why: 'loading 10 000 rows',
+          // Derived, never transcribed: this text was left saying "10 000"
+          // when DATASET_ROWS moved to 100 000, and the verdict is the one
+          // place a visitor reads without opening the table.
+          why: `loading ${DATASET_ROWS.toLocaleString('en')} rows`,
         },
         {
           id: 'transaction-throughput',
@@ -1843,6 +2504,7 @@
           vfs: pair.vfs,
           build: pair.build,
           poolSize: poolFor(pair.cap),
+          openTimeout: OPEN_TIMEOUT_MS,
         });
         const ctx = { db, file, pair, pool: poolFor(pair.cap) };
 
@@ -1894,15 +2556,49 @@
               // an absolute `0.00 ms` was the same defect wearing a unit — real
               // Safari and Firefox runs reported 0.00 ms writes for five VFS,
               // which is the 1 ms tick, not the database.
+              //
+              // `row.group` is what a row declares when it timed N operations
+              // under one clock reading and divided. The test is on the
+              // MEASURED duration, not the printed one: a 0.30 ms per-read
+              // figure derived from a 6 ms group is resolvable, and nulling it
+              // for being under a 1 ms tick would discard a good measurement
+              // and undo the grouping entirely.
+              // A row that answers yes or no, not how much. It skips the clock
+              // guard and the bars entirely — neither has anything to say about
+              // a boolean — and renders like a conformance verdict on a tint.
+              const group = row.kind === 'flag' ? null : (row.group ?? 1);
+              if (group === null) {
+                RESULTS[kind][pair.id][row.id] = value;
+                const td = cells.get(`${pair.id}|${row.id}`);
+                if (value === null) {
+                  setReason(pair.id, row.id, nullMeasureTitle(row.id));
+                  setCell(pair, row.id, '—', 'measure');
+                  if (td) td.title = RESULTS.reasons[pair.id]?.[row.id] ?? '';
+                } else {
+                  setCell(
+                    pair,
+                    row.id,
+                    value ? '✅' : '❌',
+                    `flag ${value ? 'yes' : 'no'}`,
+                  );
+                  if (td) {
+                    td.title = value
+                      ? 'A short read was served while a long query held one of' +
+                        " the pool's workers — it did not wait for it."
+                      : 'A short read issued during a long query only completed' +
+                        ' once that query had finished — the pool made it wait.';
+                  }
+                }
+                continue;
+              }
+              const measured = typeof value === 'number' ? value * group : null;
               const unresolved =
-                typeof value === 'number' &&
-                row.unit === 'ms' &&
-                value < CLOCK_MS * 2;
+                measured !== null && row.unit === 'ms' && measured < CLOCK_MS * 2;
               if (unresolved) {
                 setReason(
                   pair.id,
                   row.id,
-                  `${value.toFixed(2)} ms is below 2× this device's clock resolution (${CLOCK_MS.toFixed(2)} ms) — too fast to time here`,
+                  `${measured.toFixed(2)} ms${group > 1 ? ` (${value.toFixed(2)} ms × ${group})` : ''} is below 2× this device's clock resolution (${CLOCK_MS.toFixed(2)} ms) — too fast to time here`,
                 );
               }
               const stored = unresolved ? null : value;
@@ -1935,12 +2631,20 @@
               setCell(pair, row.id, '⏱', 'fail');
             } else if (error instanceof RowTimeout) {
               RESULTS[kind][pair.id][row.id] = 'timeout';
-              setReason(pair.id, row.id, `exceeded ${ROW_TIMEOUT_MS} ms`);
+              setReason(
+                pair.id,
+                row.id,
+                `exceeded ${ROW_TIMEOUT_MS} ms${sweepCaveat(pair)}`,
+              );
               setCell(pair, row.id, '⏱', 'fail');
             } else {
               RESULTS[kind][pair.id][row.id] =
                 kind === 'conformance' ? 'fail' : null;
-              setReason(pair.id, row.id, String(error?.message ?? error));
+              setReason(
+                pair.id,
+                row.id,
+                `${String(error?.message ?? error)}${sweepCaveat(pair)}`,
+              );
               const td = cells.get(`${pair.id}|${row.id}`);
               if (td) td.title = RESULTS.reasons[pair.id][row.id];
               setCell(pair, row.id, '❌', 'fail');
@@ -1973,12 +2677,12 @@
             'ratio would reflect scheduling jitter, not pool behaviour'
           );
         }
-        if (rowId === 'pool-blocking') {
+        if (rowId === 'reads-during-long-query') {
           return (
-            'reliable ratio unavailable: either the device clock is too coarse to ' +
-            'time the idle baseline, or the long-query calibration could not reach ' +
-            'its 1.5–3 s target on this device (common on Chromium when the ' +
-            'cross-join finishes in under 1 s)'
+            'no long-running query could be held open here: the cross-join ' +
+            'calibration could not reach its 1.5–3 s target, or the statement ' +
+            'had already finished by the time the reads were issued — so there ' +
+            'was nothing for a concurrent read to run against'
           );
         }
         return 'measurement could not be produced';
@@ -1996,20 +2700,52 @@
           .filter(([, value]) => typeof value === 'number');
         if (entries.length === 0) return;
 
-        const values = entries.map(([, value]) => value);
+        const decimals = row.decimals ?? 1;
+        /**
+         * A row may declare a bound its measurement cannot physically pass —
+         * `capBy` here, for a concurrency gain that cannot exceed the pool that
+         * produced it. It bounds the RANKING only. The cell keeps the figure
+         * that was actually read, marked, and the export keeps it untouched:
+         * how far a run overshot the bound is how much to distrust the row.
+         */
+        const capOf = (pairId) => {
+          if (!row.capBy) return null;
+          const pair = PAIRS.find((p) => p.id === pairId);
+          return pair ? row.capBy(pair) : null;
+        };
+        const bounded = (pairId, value) => {
+          const cap = capOf(pairId);
+          return cap !== null && value > cap ? cap : value;
+        };
+
+        const values = entries.map(([pairId, value]) => bounded(pairId, value));
         const best = row.better === 'high' ? Math.max(...values) : Math.min(...values);
         const worst = row.better === 'high' ? Math.min(...values) : Math.max(...values);
 
         for (const [pairId, value] of entries) {
           const td = cells.get(`${pairId}|${row.id}`);
           if (!td) continue;
+          const shown = bounded(pairId, value);
+          const capped = shown !== value;
           // Ratio to best, always in [0,1], whichever direction is better.
-          const ratio =
-            row.better === 'high' ? value / best : best / value;
-          td.className = `measure${value === best && worst !== best ? ' best' : ''}`;
-          td.title = '';
+          const ratio = row.better === 'high' ? shown / best : best / shown;
+          // The user's bands: within 20% of the best, within half, and worse.
+          const band = ratio >= 0.8 ? 'good' : ratio >= 0.5 ? 'mid' : 'poor';
+          // Never crowned: it reached that rank by overshooting a physical
+          // bound, and `best` would say the opposite of what the cap says.
+          td.className =
+            `measure ${band}` +
+            `${!capped && shown === best && worst !== best ? ' best' : ''}` +
+            `${capped ? ' clamped' : ''}`;
+          const fmt = (v) => `${v.toFixed(decimals)} ${row.unit}`;
+          td.title = capped
+            ? `${fmt(value)} is above ${fmt(shown)}, which this pool of` +
+              ` ${capOf(pairId)} cannot exceed — it is measurement noise, not a` +
+              ` better result. Ranked as ${fmt(shown)}; the value shown and the` +
+              ' downloaded JSON are what was actually read.'
+            : '';
           td.style.setProperty('--bar-w', `${Math.min(100, Math.max(2, ratio * 100))}%`);
-          td.textContent = `${value.toFixed(row.decimals ?? 1)} ${row.unit}`;
+          td.textContent = capped ? `⚠ ${fmt(value)}` : fmt(value);
         }
       };
 
@@ -2024,6 +2760,19 @@
       const buildExport = () => ({
         generatedAt: new Date().toISOString(),
         lib: LIB_VERSION,
+        /**
+         * Absent on a release build, and that absence is the signal.
+         *
+         * `lib` is `package.json`'s version, which is identical on `/` and on
+         * `/preview/` for as long as no bump has happened — so until this
+         * field existed, an export taken from a branch preview could not be
+         * told from one taken from the release. That came up for real on
+         * 2026-09-03 and had to be answered from someone's memory.
+         *
+         * Carries the same label the banner shows: `branch @ sha`, or
+         * `local build` where the assembly found no git.
+         */
+        ...(IS_RELEASE ? {} : { preview: BUILD_REF }),
         agent: AGENT,
         features: {
           opfs: HAS_OPFS,
@@ -2031,8 +2780,21 @@
           jspi: HAS_JSPI,
         },
         clockMs: CLOCK_MS,
+        // What the pre-run sweep could and could not establish. A partial sweep
+        // changes what every number below is worth, so it travels with them.
+        sweep: SWEEP,
+        /**
+         * The floor this run actually started from: the OPFS root as it stood
+         * AFTER the sweep and before the first column. `null` where it could
+         * not be listed, which `sweep.listed` explains.
+         *
+         * Until this existed the page could not report whether the root was
+         * empty when a run started — the gap that let a hand-clearing be
+         * mistaken for evidence.
+         */
+        opfsRootAtStart: opfsBefore ? [...opfsBefore].sort() : null,
         // Iteration counts differ per column by design (calibrateLongQuery), so
-        // pool-blocking is uninterpretable without them.
+        // the long-query race is uninterpretable without them.
         longQueryIterations: Object.fromEntries(
           Object.entries(RESULTS.measurements).map(([pairId, rows]) => [
             pairId,
@@ -2120,12 +2882,19 @@
         const verdictBox = document.getElementById('verdict');
         verdictBox.hidden = true;
         document.getElementById('verdict-text').replaceChildren();
+        // Cleared here rather than left to renderSweepNote(): between this
+        // click and the end of the sweep, the previous run's note would
+        // otherwise sit above a run it says nothing about.
+        const sweepBox = document.getElementById('sweep-note');
+        sweepBox.replaceChildren();
+        sweepBox.hidden = true;
 
         try {
           // A bench starts from a floor it established itself: chaining two
           // runs must not measure what the first one left behind.
           status.textContent = 'cleaning…';
           await sweepBeforeRun();
+          renderSweepNote();
           idbBefore = CAN_LIST_IDB
             ? new Set((await indexedDB.databases()).map((d) => d.name))
             : null;
@@ -2161,8 +2930,16 @@
         `${PAIRS.length} declared pairs, ` +
         `${PAIRS.filter((p) => !missingFor(p)).length} runnable here`;
 
-      // Read by scripts/bench/check.mjs.
-      window.__BENCH__ = { LIB_VERSION, AGENT, PAIRS: PAIRS.map((p) => p.id) };
+      // Read by scripts/bench/check.mjs. IS_RELEASE is exposed so the driver
+      // can assert the one thing `preview` promises: present exactly when this
+      // is not the released build.
+      window.__BENCH__ = {
+        LIB_VERSION,
+        IS_RELEASE,
+        BUILD_REF,
+        AGENT,
+        PAIRS: PAIRS.map((p) => p.id),
+      };
     </script>
   </body>
 </html>
