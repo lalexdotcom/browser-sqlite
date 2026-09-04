@@ -71,6 +71,39 @@ trickle, and it is no longer a deduction.
 
 ## Defects to fix (2026-09-03)
 
+### INTERRUPT-1 — a running `step()` cannot be stopped, and the primitive to stop it is already there
+
+**What the signal does and does not do.** It cancels a query still queued for a lease
+(`scheduler.acquire` honours it while waiting), stops `bulkWrite` between batches (ABORT-1),
+and stops `stream()`/`chunk()` pulling rows. What it cannot do is stop a single
+`sqlite3_step()` already running: `makeAbortRace` in `src/client.ts` abandons the WAIT, the
+worker steps on, and `quiesce()` returns the lease only once it is genuinely idle — which is
+correct and deliberate, and the code says so where it happens.
+
+**Measured, 2026-09-04, Chromium, `poolSize: 1`:** a 1 980 ms statement aborted 100 ms in
+settles its promise in **0 ms**, and the very next short read then takes **1 889 ms** waiting
+the statement out. So a runaway query holds a worker to the end, and `close()` pays its
+`drainTimeout` (60 s default) behind it.
+
+**The mechanism exists and is reachable.** `sqlite3_interrupt` is not usable — it must be
+called from another thread while `step()` runs, and the worker's thread is inside that call.
+But wa-sqlite exposes `sqlite3.progress_handler(db, nProgressOps, handler, userData)`
+(`src/sqlite-api.js:507`, typed at `src/types/index.d.ts:622`; all three `.mjs` builds export
+`sqlite3_progress_handler`). SQLite calls it every N VM instructions **on the worker's own
+thread, inside `step()`**, and a non-zero return ends the statement with `SQLITE_INTERRUPT`.
+
+**It splits by build, and this half is reasoning about the execution model, not a
+measurement.** On `async`/`jspi` the handler may be `async` — wa-sqlite's own typing allows
+it — so yielding lets the worker's message queue turn and an "abort" `postMessage` arrive:
+**no SharedArrayBuffer**. On `sync` the worker never yields inside the WASM call, so the flag
+must be readable without the event loop: `SharedArrayBuffer` + `Atomics`, hence
+cross-origin isolation (COOP/COEP) on the consumer's site — a deployment constraint, not a
+detail.
+
+**Cost to weigh before picking N:** the handler fires every N instructions and is paid by
+every query while installed, so it wants installing only for the duration of a query that
+actually carries an abortable signal. Nothing here is measured yet.
+
 ### BENCH-PROBE-RACE — the unsafe-handle probe outlives its own cleanup
 
 `probeUnsafeHandles()` in `scripts/bench/html/index.html` creates
