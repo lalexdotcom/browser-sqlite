@@ -1092,10 +1092,19 @@ had been generalised from a read-burst measurement about concurrency alone.
 
 `point-read` was nulling 61 cells of 88 on iPadOS before being timed in groups of 20;
 `write-latency` 14 of 22 on both Safaris and 18 of 22 on Firefox, `list-page` 10 of 22 on
-Firefox, before groups of 5. After: **one null cell in a whole 22-column export**, and it is
-`reads-during-long-query` failing its 1.5-3 s calibration, which is the row declining to
-answer rather than guessing. The cause was always the clock — 0.1 ms on Chromium, 1 ms on
+Firefox, before groups of 5. The cause was always the clock — 0.1 ms on Chromium, 1 ms on
 Safari and Firefox — never the dataset.
+
+After, and it is not uniform:
+
+- **Chromium and both Safaris: clean.** One null cell in a whole 22-column export, and it is
+  `reads-during-long-query` failing its 1.5-3 s calibration — the row declining to answer
+  rather than guessing. iPadOS shows one to three of those, `/async` builds only.
+- **Firefox 154 still nulls 8 of 22 on `write-latency-p50`** and 3 on the p95, on the
+  fastest columns: `AccessHandlePoolVFS` and the two memory VFS run at 0.1-0.4 ms per
+  insert, so even ×5 stays under the 2 ms floor a 1 ms clock imposes. Predicted before the
+  device run and confirmed by it. Raising the group would fix it and cost p95 sensitivity —
+  the reason five was chosen — so it stands as a known gap, not an oversight.
 
 ### A tab on the origin blocks two columns, reproducibly
 

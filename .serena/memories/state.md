@@ -232,10 +232,22 @@ failures established that no reading would have.
   dispatch from any `feat/*` branch replaces it" — is wrong on both halves: there is no manual
   dispatch, and a preview does not replace the release page. Read the header of
   `.github/workflows/pages.yaml`, which is authoritative.
-  - **Moving the tag is the whole gesture**, and re-pushing it unchanged is how you
-    republish: `git tag -f preview <sha> && git push -f origin preview`. Deleting the tag
-    takes the preview down. Both need `main` allowed in the `github-pages` environment,
-    because a `delete` run executes from the default branch.
+  - **Moving the tag is the whole gesture**: `git tag -f preview <sha> && git push -f origin
+    preview`. Deleting the tag takes the preview down. Both need `main` allowed in the
+    `github-pages` environment, because a `delete` run executes from the default branch.
+  - **Re-pushing the tag UNCHANGED does nothing** — git answers `Everything up-to-date` and
+    emits no event, so no run starts. This file and the workflow both claimed otherwise
+    until 2026-09-04. To republish without moving it: `git push origin --delete preview &&
+    git push origin preview`, which briefly takes the preview down.
+  - **A run that publishes nothing could cancel one that does, and did.** `pages.yaml` has
+    `cancel-in-progress` on a shared group, `concurrency` is evaluated before any job runs,
+    and `delete` carries no ref filter — so deleting a merged branch on 2026-09-04 killed the
+    preview deploy pushed two seconds earlier, then skipped itself, leaving the site on the
+    previous build with nothing to say so. Fixed by repeating the job's guard in the group
+    expression, so a skipping run gets `pages-noop-<run_id>` and contends with nobody. **The
+    two conditions must stay identical; `concurrency` cannot read `env`.** The expression was
+    verified valid on GitHub (a bad one fails the run at startup, and a scratch branch
+    deletion came back `skipped`); the cancellation itself was never staged.
   - Exposure kept deliberately (2026-08-26, user): putting a branch on a real device without
     merging is worth it — which is what makes the page's "development build" banner
     load-bearing. `buildRef()` in `scripts/bench/assemble.mjs` is not decoration. The preview
