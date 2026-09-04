@@ -72,18 +72,12 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 None outstanding.
 
-**A bench-page lot is in flight and deliberately NOT merged (user, 2026-09-03)**, because one
-item of it is still open: reading wa-sqlite's own benchmark page
-(<https://rhashimoto.github.io/wa-sqlite/demo/benchmarks/>) for cases worth adopting into
-ours. The branch stays until that is settled; `git branch` names it. What it has shipped so
-far is in `mem:measurements` and, once merged, belongs in `mem:history`.
-
-Beyond that, **the next thing is rc.5's remaining scope, which is the user's to pick from
+**The next thing is rc.5's remaining scope, which is the user's to pick from
 `mem:follow-ups`.**
 
-## rc.5 so far: seven lots, merged 2026-09-02 and 2026-09-03
+## rc.5 so far: eight lots, merged 2026-09-02 to 2026-09-04
 
-Four branches, each merged into `main` with `--no-ff` and verified on the merged result; all are
+Five branches, each merged into `main` with `--no-ff` and verified on the merged result; all are
 deleted and no stale ref remains. Lots 1-3 rode one branch — the user judged them three faces of one
 feature and accepted a larger whole-branch review for it; lot 4 had its own, lots 5 and 6 shared
 one, and lot 7 had its own. Each was verified
@@ -123,6 +117,18 @@ spec**: bounded, brainstormed in chat, and their whole case is the measurement c
    uncontended liveness marker `bsq:client:<ns>:<file>:<uuid>:<vfs>:<label>`. Plus five readonly
    getters on the client (`id`, `name`, `file`, `vfs`, `build`) and `UNSUPPORTED`, a new public
    error code. `db.debug.name` changed value — breaking.
+
+8. **The benchmark page measures the VFS, and says what it could not establish.** Its dataset
+   fitted seven times inside SQLite's page cache, so several read rows were timing the cache
+   rather than storage; at 100 000 rows they reach the VFS, and every `—` cell went away
+   (the cause was the clock, not the dataset — reads are now timed in groups). The pre-run
+   sweep is bounded per operation and reports what it could not remove, in the page and in
+   the export, which added `sweep`, `opfsRootAtStart` and `preview`. Two rows are new: an
+   overwrite workload, the one shape every other write row here was missing, and
+   `reads-during-long-query`, a verdict rather than a ratio — **it is the first per-VFS
+   evidence for HANDLE-1**, and it immediately falsified three README claims
+   (`CHANGELOG.md`, Documentation). Numbers and the four-platform campaign:
+   `mem:measurements`. **No `src/` change.**
 
 **Three consumer-visible behaviour changes, all from lots 1-3 and all in `CHANGELOG.md` under
 Breaking:** two clients
