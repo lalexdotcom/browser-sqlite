@@ -17,10 +17,15 @@ describe('aborting a running statement', () => {
       });
       long.catch(() => {});
       await waitUntil(aWorkerIsRunning(db), 'the query to be running');
+      // `started` is before the abort so the timer captures abort → worker drain
+      // → SELECT 1. On the working path the async progress handler yields via
+      // gate.tick() and checks gate.isStopped(), interrupting the step quickly;
+      // the full unaborted step takes ~4 343 ms (measured). A broken interrupt
+      // channel lets the step run to completion, pushing the total well past the
+      // 1 500 ms bound.
+      const started = performance.now();
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
-
-      const started = performance.now();
       expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
       // Before this change the short read waited ~1.9 s for the abandoned
       // statement. In isolation the short read takes ~10-20 ms on both engines;

@@ -16,16 +16,29 @@ describe('the sync build, isolated', () => {
       debug: true,
     });
     try {
+      // Prime the statement cache. Without this, the first call goes through
+      // sqlite.statements() which has a macrotask boundary that delivers 'stop'
+      // before the step starts, making the abort land on the pre-step path
+      // rather than mid-step — the slot channel never fires and the mutation
+      // test gives a false GREEN. The prime ensures the abort run takes the
+      // direct run(cached) path, which has no macrotask before the step.
+      // Unaborted step time: ~4 343 ms (measured 2026-09-04, sync MemoryVFS).
+      await db.read(longQuery(20_000_000));
+
       const controller = new AbortController();
       const long = db.read(longQuery(20_000_000), [], {
         signal: controller.signal,
       });
       long.catch(() => {});
       await waitUntil(aWorkerIsRunning(db), 'the query to be running');
+      // `started` is before the abort so the timer captures abort → drain →
+      // SELECT 1. On the working path the SAB slot interrupts the step within
+      // the first progress-handler call (~100 K VDBE ops); the full unaborted
+      // step takes ~4 343 ms (measured). A broken interrupt channel lets the
+      // step run to completion, pushing the total well past the 500 ms bound.
+      const started = performance.now();
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
-
-      const started = performance.now();
       expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
       expect(performance.now() - started).toBeLessThan(500);
     } finally {
