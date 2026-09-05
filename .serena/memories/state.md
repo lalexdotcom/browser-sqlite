@@ -247,7 +247,12 @@ failures established that no reading would have.
   A token would survive the change, so the change was not worth its cost. **Do not
   re-propose it while the `rc`/`next`/`latest` triplet stands**; the only thing that
   would reopen the question is npm supporting dist-tags over OIDC. The remaining
-  guard against a silent expiry is watching the token's expiry date by hand.
+  guard against a silent expiry is watching the token's expiry date by hand —
+  **and it was renewed for 90 days at rc.4's release, so it runs out around
+  2026-11-29** (user, 2026-09-05; the date is derived from that renewal, not read
+  off npm). rc.5 is comfortably inside it. A release planned after that window
+  checks the token FIRST: this is the failure that cost rc.4 its second attempt,
+  and it announces itself only at `npm publish`, after the GitHub Release exists.
 
 ## Unmeasured ground — what a claim here would be inventing
 
