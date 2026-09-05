@@ -24,14 +24,16 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-04 after the dropped-chunk merge
+## The verification baseline — compare against these, re-measured 2026-09-05 after the query-interruption merge
 
 Not history: the numbers a regression is detected against. **Every figure below was read off
 a run on 2026-09-04 in this container, on the MERGED result** — none is carried forward from
 an earlier session, and none is arithmetic — every row was re-read after the dropped-chunk
-merge, `check.mjs` included, so no row is now carried over. The two browser rows moved by
-six tests each: that is `tests/browser/chunk-delivery.test.ts`, and it is the only thing
-that moved them.
+merge, `check.mjs` included, so no row is now carried over.
+
+**`pnpm test` now chains THREE configs**, not two: chromium, firefox, and the isolated
+project. A green `pnpm test` therefore covers what CI covers, as it did before — but a
+commit costs a third suite, which is what the pre-commit hook pays on every commit.
 
 | command | result |
 |---|---|
@@ -39,8 +41,10 @@ that moved them.
 | `pnpm build` | clean |
 | `pnpm test` | **TWO reports since 2026-09-03** — it chains both engines. `status: pass` on each: **613 tests / 47 files** (unit + chromium), then **225 tests / 30 files** (firefox) |
 | `pnpm test:unit` | 389 tests, 18 files |
-| `pnpm test:chromium` | 230 tests, 30 files |
-| `pnpm test:firefox` | 231 tests, 31 files — the 30 shared plus one Firefox-only |
+| `pnpm test:chromium` | 237 tests, 32 files |
+| `pnpm test:firefox` | 238 tests, 33 files — the 32 shared plus one Firefox-only |
+| `pnpm test:isolated` | 5 tests, 2 files — the ONLY cross-origin isolated project |
+| `pnpm exec rstest --project unit run` | 391 tests, 18 files |
 | `pnpm test:conformance` | **TWO reports** — it chains both engines. 85 tests / 2 files, **73 passed / 12 skipped**, on each: identical |
 | `pnpm test:consumer` | 24/24 stages |
 | `node scripts/bench/check.mjs chromium --all` | OK, 22 declared pairs, 22 columns, zero `not-run`, **zero null cells**, ~160 s. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
@@ -74,12 +78,36 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 None outstanding.
 
-**The work in flight is `feat/query-interruption`** — INTERRUPT-1, brainstormed, specified
-and planned on 2026-09-04, with the user's decisions recorded in the spec's §5. The branch
-carries the spec (`d9df0da`), the six-task plan (`0f1e1db`) and task 1 (the `timeout`
-option, `QUERY_TIMEOUT`, and the progress handler that enforces it). Tasks 2-6 remain, and
-the SDD ledger for it lives in `.superpowers/sdd/2026-09-04-query-interruption/progress.md`
-— gitignored, so it does not survive a `git clean`; the plan and `git log` do.
+**Nothing is in flight.** The query-interruption lot merged on 2026-09-05 (§ below), and
+`mem:follow-ups` holds what is left — none of it scheduled.
+
+## Lot 9 — query interruption, merged 2026-09-05
+
+`INTERRUPT-1` is closed. `timeout` is a per-query budget of SQLite EXECUTION time, on every
+build with no isolation; `signal` now stops the statement itself, not only the wait. Design
+and its decisions: `docs/superpowers/specs/2026-09-04-query-interruption-design.md` §5.
+Numbers: `mem:measurements`. Merge `a06c349`, 20 commits.
+
+**Three things about it that the code cannot tell you:**
+
+- **The capability is detected as `cross-origin-isolated`, never as COOP/COEP.** Any header
+  that grants isolation works, including `Document-Isolation-Policy`, which is Chromium-only
+  and which a consumer may adopt without this library ever learning its name. Do not
+  "clarify" the probe by naming a mechanism.
+- **`SharedArrayBuffer` and `Atomics` must stay OUT of the API list `LIB_FLOOR` reads in
+  `scripts/render-vfs-matrix.ts`.** They are used only behind that probe. Listing them raises
+  the published floor for an optional capability — the `structuredClone` trap, which would
+  have cost Chrome 92 → 98 for an error *cause*.
+- **A fourth rstest project now exists and it is deliberately the only isolated one.** The
+  ordinary projects stay un-isolated because that is what consumers deploy, and one test
+  asserts the degraded `sync` behaviour there. `server.headers` in an rstest config is
+  silently ignored; the isolation comes from a `modifyRsbuildConfig` plugin, beside the one
+  that already existed for the same reason.
+
+**What it does NOT deliver:** on the `sync` build without isolation — `OPFSWriteAheadVFS`,
+`OPFSCoopSyncVFS`, `AccessHandlePoolVFS`, `MemoryVFS` by default — a `signal` still stops
+the wait and not the work. Those four accept `build: 'async'`, which is the escape hatch
+that costs no hosting change. The README says all of this in one table.
 
 ## The dropped chunk — fixed on `main` 2026-09-04, outside the rc.5 lots
 
@@ -89,7 +117,7 @@ user stopped the lot to take it first. `fix/dropped-chunk`, two commits, merge `
 reviewed on the whole branch before merging. What it was and what it measured:
 `mem:measurements`; what it teaches about testing a streaming API: `mem:lessons`.
 
-## rc.5 so far: eight lots, merged 2026-09-02 to 2026-09-04
+## rc.5 so far: nine lots, merged 2026-09-02 to 2026-09-05
 
 Five branches, each merged into `main` with `--no-ff` and verified on the merged result; all are
 deleted and no stale ref remains. Lots 1-3 rode one branch — the user judged them three faces of one

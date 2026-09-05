@@ -1427,3 +1427,44 @@ before `pool.ts` was extracted. Probes: `.scratchpad/chunk-drop/` (throwaway).
 consults its failure channels through flags: a loop that always has a queued chunk never
 awaits, so a `messageerror` raised mid-stream went unreported for the whole remaining query
 before the flag existed. Found by a test written for a different property.
+
+## Query interruption — 2026-09-04/05, Chromium 151 / Firefox 153, this container
+
+Full tables and their method are in the design,
+`docs/superpowers/specs/2026-09-04-query-interruption-design.md` §4.3 — it is the only place
+they are written out, and it was written from these runs. What follows is what a later
+session needs without opening it. Probes: `.scratchpad/interrupt-1/` (throwaway).
+
+**The mechanism, established before any code was written.** A non-zero return from
+`sqlite3_progress_handler` ends a running `step()` with `SQLITE_INTERRUPT` on all three
+builds and both engines, and the connection serves the next query immediately after. The
+`sync` build REFUSES an async handler outright — "Synchronous WebAssembly cannot call async
+function" — which is what splits the design in two.
+
+**`SharedArrayBuffer` is ABSENT without cross-origin isolation, not merely restricted.**
+Both engines: `crossOriginIsolated === false` ⇒ `typeof SharedArrayBuffer !== 'function'`.
+So the `sync` build's caller-driven abort has a deployment condition, and it is the
+consumer's to satisfy.
+
+**`Document-Isolation-Policy: isolate-and-require-corp` alone**, no COOP, no COEP: page AND
+dedicated worker both isolated on Chromium 151 — `SharedArrayBuffer` constructible, `Atomics`
+working, `postMessage(SAB)` accepted. Firefox 153 ignores the header entirely. This is why
+the library detects `cross-origin-isolated` and never a mechanism.
+
+**GitHub Pages sends no `Cross-Origin-*` header and offers no way to add one** (measured on
+the live site). The benchmark page is therefore permanently in the degraded row.
+
+**Cost of the installed handler at N = 100 000**, five repetitions round-robin, two shapes
+each calibrated to ~500 ms: the synchronous handler is free within noise at every N, and on a
+query that RETURNS ROWS nothing is measurable at all — row marshalling dominates. The only
+real cost is the async yield on pure computation: ~2-5 % at 10⁵, ~0-2 % at 10⁶. Abort
+overshoot: 1-6 ms at 10⁵ on both engines; up to 87 ms at 10⁶ on Firefox/async, which is what
+settled N.
+
+**Durations the TESTS depend on** — if a test starts flaking, re-measure these first:
+- `longQuery(10_000_000)`, async build, Chromium: **~2 082 ms** to completion; the test bound
+  is 1 500 ms. Same query on Firefox: **~15 s**, which is why that test carries a 90 s
+  timeout.
+- `longQuery(20_000_000)`, sync build, MemoryVFS: **~4 343 ms** to completion; ~2 463 ms
+  observed as the failure value under the feature-neutralising mutation, against a 500 ms
+  bound.

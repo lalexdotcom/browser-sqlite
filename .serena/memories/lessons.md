@@ -500,3 +500,47 @@ transient cause, so agreement between them proved nothing. Two observations of o
 are one observation. The fixtures pin floating ranges on purpose (they test the newest
 bundlers), so this failure mode stays possible and will return wearing another package's
 name.
+
+## A test that measures the END of a query cannot pin an INTERRUPT — 2026-09-05
+
+Three tests in the query-interruption lot were written to prove that an abort stops a
+running statement. All three passed against an implementation with the feature REMOVED. They
+were caught one at a time, the last of them after the whole-branch review had said ship.
+
+**The shape of the mistake is the same every time: they asserted that the query ENDED
+quickly, and a query always ends.** The bound they asserted was simply larger than the time
+the statement took to run to completion on its own — 500 ms against ~400 ms, 1 500 ms
+against a step that finished by itself. Nothing in the test discriminated "was interrupted"
+from "was short".
+
+**Two mechanisms made it worse, and both are worth knowing on their own:**
+
+- **The first run of any SQL goes through `sqlite.statements()`, whose async generator
+  carries a macrotask boundary before the first step.** A `stop` posted during that window is
+  delivered BEFORE the step begins, so the loop's between-steps check breaks it and the abort
+  never reaches the progress handler at all. A test that aborts a cold query is testing the
+  pre-existing between-steps stop, not mid-step interruption. The fix is a warm-up run so the
+  measured run takes the cached path.
+- **Where the clock starts decides what is measured.** Taking the timestamp after
+  `await expect(promise).rejects` measures only the query that follows, because the promise
+  rejects immediately by contract. The drain being measured happens after that line.
+
+**The discipline that would have caught all three on day one: neutralise the FEATURE and
+watch the test go red — not a helper near it.** Removing `worker.interrupt()` proved nothing
+because the `stop` message still arrived by another path; only killing the progress-handler
+installation, or the `Atomics` read itself, tests what the test claims. And a mutation is
+worth running even when the review says ship, because a green suite is evidence about the
+tests, not about the code.
+
+**A test that cannot discriminate should say so in its own comment.** Three tests in that
+lot now do: they name what they pin — the immediate-rejection contract, the connection state,
+the degraded behaviour — and say plainly that they do not pin the feature. That is worth more
+than a test quietly believed to cover something it does not.
+
+## A timeout budget can reintroduce the failure a helper was written to prevent — 2026-09-05
+
+Making the interrupt tests discriminate required a warm-up run that costs ~15 s on Firefox,
+against a 30 s project default. A machine half the speed exceeds it — and **a test that
+exceeds its timeout does not fail, it expires without naming what it was waiting for**, which
+is precisely the failure `waitUntil` exists to prevent. The budget would have reintroduced it
+from the other side. That test carries its own 90 s timeout and a comment saying why.
