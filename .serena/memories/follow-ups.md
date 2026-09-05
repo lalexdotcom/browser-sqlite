@@ -69,6 +69,37 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
+## Owed before rc.5 (user, 2026-09-05)
+
+### The README is too dense — split it
+
+**This gates the release.** The user's judgement, 2026-09-05: the README has grown past what
+one page should carry, and it is to be reworked before rc.5 is tagged. Not a defect and not
+a rewrite of what it says — a question of shape.
+
+What makes it dense is worth knowing before touching it, because most of it was added
+deliberately and each piece has a reason on record:
+
+- **Two of its tables are GENERATED** — the VFS matrix from `VFS_CAPABILITIES` and the
+  browser floors computed from `@mdn/browser-compat-data` in `scripts/render-vfs-matrix.ts`.
+  Whatever the new shape is, those regions stay generated and their generator must follow
+  them. A split that leaves the generator writing into a file that no longer has that
+  section breaks the build silently.
+- **The register is settled and is not what needs changing** (`mem:conventions`): state the
+  constraint and what it costs the consumer; mechanism, evidence and investigation live
+  elsewhere. Passages have been cut to one sentence for exactly this. Density is not verbosity
+  here — it is coverage.
+- **One instruction in it is verified by a fixture and one field is kept alive by another**:
+  `tests/consumer-vite6` is the only thing checking the `optimizeDeps.exclude` line, and the
+  Parcel fixture is why `main` still exists in `package.json`. Moving that prose does not move
+  those tests; if a section leaves the README, say where it went so the fixture's comment
+  still points at something.
+- **The newest section, Interrupting a query**, was written after the interruption lot and
+  carries a matrix of what a `signal` stops per build. It is the freshest example of the
+  density problem AND of the register working.
+
+Nothing here says HOW to split it — that is the design conversation, not this entry.
+
 ## Notes, with nothing to fix
 
 ### An abort through the shared slot reports `done`, not `error` — and that is right

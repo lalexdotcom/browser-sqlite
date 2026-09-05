@@ -78,6 +78,13 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 None outstanding.
 
+**rc.5 is gated on two things, and the user set both on 2026-09-05.** CI must go green on the
+pushed `main` — everything in the nine lots was verified in this container only, and the
+interruption lot's tests carry bounds calibrated on this machine, so slower CI hardware is
+where a surprise would land. And the README must be reworked before the tag: it is too
+dense and is to be split, `mem:follow-ups`. When both hold, the user judges the release
+ready — the bump itself remains an instructed act, never an inferred one.
+
 **Nothing is in flight.** The query-interruption lot merged on 2026-09-05 (§ below), and
 `mem:follow-ups` holds what is left — none of it scheduled.
 
