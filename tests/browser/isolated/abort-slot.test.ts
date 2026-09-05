@@ -1,5 +1,11 @@
 import { describe, expect, it } from '@rstest/core';
-import { createTestClient, interceptWorkers, longQuery } from '../helpers';
+import {
+  aWorkerIsRunning,
+  createTestClient,
+  interceptWorkers,
+  longQuery,
+  waitUntil,
+} from '../helpers';
 
 describe('the sync build, isolated', () => {
   it('stops a running statement on abort', async () => {
@@ -7,6 +13,7 @@ describe('the sync build, isolated', () => {
       vfs: 'MemoryVFS',
       build: 'sync',
       poolSize: 1,
+      debug: true,
     });
     try {
       const controller = new AbortController();
@@ -14,7 +21,8 @@ describe('the sync build, isolated', () => {
         signal: controller.signal,
       });
       long.catch(() => {});
-      setTimeout(() => controller.abort(new Error('cancelled')), 100);
+      await waitUntil(aWorkerIsRunning(db), 'the query to be running');
+      controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
 
       const started = performance.now();
@@ -37,6 +45,7 @@ describe('the sync build, isolated', () => {
       build: 'sync',
       poolSize: 1,
       maxWorkerRestarts: 1,
+      debug: true,
     });
     try {
       const controller = new AbortController();
@@ -44,7 +53,8 @@ describe('the sync build, isolated', () => {
         signal: controller.signal,
       });
       long.catch(() => {});
-      setTimeout(() => controller.abort(new Error('cancelled')), 100);
+      await waitUntil(aWorkerIsRunning(db), 'the query to be running');
+      controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
       const abortedCallId = records[0]?.posted.filter(
         (t) => t === 'query',
@@ -109,7 +119,8 @@ describe('statement cache, sync build isolated', () => {
       const controller = new AbortController();
       const aborting = db.read(sql, [], { signal: controller.signal });
       aborting.catch(() => {});
-      setTimeout(() => controller.abort(new Error('cancelled')), 100);
+      await waitUntil(aWorkerIsRunning(db), 'the query to be running');
+      controller.abort(new Error('cancelled'));
       await expect(aborting).rejects.toThrow('cancelled');
 
       // The statement must still be in the cache: prepared=0 on this run.

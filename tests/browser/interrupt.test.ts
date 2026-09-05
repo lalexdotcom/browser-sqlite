@@ -1,17 +1,23 @@
 import { describe, expect, it } from '@rstest/core';
-import { createTestClient, longQuery } from './helpers';
+import {
+  aWorkerIsRunning,
+  createTestClient,
+  longQuery,
+  waitUntil,
+} from './helpers';
 
 describe('aborting a running statement', () => {
   it('frees the worker, so the next query does not wait it out', async () => {
     // poolSize 1: the next query MUST land on the worker that was interrupted.
-    const db = await createTestClient({ poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1, debug: true });
     try {
       const controller = new AbortController();
       const long = db.read(longQuery(20_000_000), [], {
         signal: controller.signal,
       });
       long.catch(() => {});
-      setTimeout(() => controller.abort(new Error('cancelled')), 100);
+      await waitUntil(aWorkerIsRunning(db), 'the query to be running');
+      controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
 
       const started = performance.now();
@@ -30,15 +36,16 @@ describe('aborting a running statement', () => {
   });
 
   it('still rejects immediately, without waiting for the worker', async () => {
-    const db = await createTestClient({ poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1, debug: true });
     try {
       const controller = new AbortController();
       const long = db.read(longQuery(20_000_000), [], {
         signal: controller.signal,
       });
       long.catch(() => {});
+      await waitUntil(aWorkerIsRunning(db), 'the query to be running');
       const asked = performance.now();
-      setTimeout(() => controller.abort(new Error('cancelled')), 50);
+      controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
       expect(performance.now() - asked).toBeLessThan(200);
     } finally {
@@ -47,7 +54,7 @@ describe('aborting a running statement', () => {
   });
 
   it('leaves nothing broken behind', async () => {
-    const db = await createTestClient({ poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1, debug: true });
     try {
       await db.write('CREATE TABLE t (a INTEGER)');
       const controller = new AbortController();
@@ -55,7 +62,8 @@ describe('aborting a running statement', () => {
         signal: controller.signal,
       });
       long.catch(() => {});
-      setTimeout(() => controller.abort(new Error('cancelled')), 100);
+      await waitUntil(aWorkerIsRunning(db), 'the query to be running');
+      controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
       // The same SQL runs again: the statement the abort left behind is
       // reusable, not poisoned, and it holds no read transaction open.
@@ -76,6 +84,7 @@ describe('aborting a running statement', () => {
       vfs: 'MemoryVFS',
       build: 'sync',
       poolSize: 1,
+      debug: true,
     });
     try {
       const controller = new AbortController();
@@ -83,7 +92,8 @@ describe('aborting a running statement', () => {
         signal: controller.signal,
       });
       long.catch(() => {});
-      setTimeout(() => controller.abort(new Error('cancelled')), 100);
+      await waitUntil(aWorkerIsRunning(db), 'the query to be running');
+      controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
       // A timeout DOES interrupt the same build — the asymmetry the design
       // turns on.
