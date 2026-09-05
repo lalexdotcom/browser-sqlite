@@ -444,7 +444,7 @@ const open = (file: string, options: OpenOptions) => {
     const wantsSignal = abortable === true;
     const canYield = currentBuild !== 'sync';
     const abortedHere = () =>
-      slot !== undefined && Atomics.load(slot, abortIndex as number) === callId; // MUTATION: SAB channel disabled
+      slot !== undefined && Atomics.load(slot, abortIndex as number) === callId;
     if (
       timeout !== undefined ||
       (wantsSignal && (canYield || slot !== undefined))
