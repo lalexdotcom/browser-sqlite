@@ -17,8 +17,9 @@ describe('aborting a running statement', () => {
       // N=10_000_000 chosen so that: (a) the full step takes ~2 082 ms on
       // Chromium (measured 2026-09-05 under the feature-neutralising mutation),
       // well above the 1 500 ms bound; (b) the prime completes in ~15 s on
-      // Firefox, within the 30 s test timeout. The abort interrupts mid-step
-      // quickly regardless of N when the feature works.
+      // Firefox, which is why this test carries its own timeout below. The
+      // abort interrupts mid-step quickly regardless of N when the feature
+      // works, so only the broken case pays for a large N.
       await db.read(longQuery(10_000_000));
 
       const controller = new AbortController();
@@ -49,7 +50,12 @@ describe('aborting a running statement', () => {
     } finally {
       await db.close();
     }
-  });
+    // 90 s, against the project's 30 s default. The prime alone is ~15 s on
+    // Firefox, so a machine half this speed would blow the default budget —
+    // and a test that exceeds its timeout does not fail, it expires mutely
+    // without naming what it was waiting for. That is the failure mode
+    // `waitUntil` exists to prevent; the budget must not reintroduce it.
+  }, 90_000);
 
   it('still rejects immediately, without waiting for the worker', async () => {
     const db = await createTestClient({ poolSize: 1, debug: true });
