@@ -58,6 +58,16 @@ All notable changes to this project are documented here.
   describe it without being handed its options too.
 - **`UNSUPPORTED` is a new error code**, raised where the Web Locks API is
   unavailable.
+- **`timeout`, a per-query budget in milliseconds.** A query that spends more than it is
+  stopped and rejected with the new `QUERY_TIMEOUT` code. It counts **SQLite execution
+  time**, not elapsed time: the seconds your own code spends between two chunks of a
+  `stream()` are not charged to it, so a slow consumer never kills its own query. For a
+  wall-clock deadline instead, pass `AbortSignal.timeout(ms)` as `signal` — it always
+  worked and still does. Available on the query methods only: a budget for a whole
+  `transaction()`, `bulkWrite()` or `output()` would be a different feature.
+- **`QUERY_TIMEOUT`, a new error code.** Deliberately distinct from `TIMEOUT`, which means a
+  deadline this library imposed on itself — a worker that never became ready, a deletion
+  that did not complete. The new one means the budget you set is spent.
 
 ### Changed
 
@@ -76,6 +86,14 @@ All notable changes to this project are documented here.
   need all or nothing.
 - **A write waiting on the origin lock when `close()` is called is rejected with
   `CLIENT_CLOSED`**, the same contract a request queued in the pool already had.
+- **An aborted query now stops the statement, not only the wait.** `signal` behaves exactly
+  as before from the caller's side — the promise still rejects with `signal.reason`
+  immediately, as `fetch()` does — but the worker no longer runs the abandoned statement to
+  its end. Measured: a short query issued right after an abort on the same worker waited
+  **1 889 ms** and now returns in milliseconds. This holds on the `async` and `jspi` builds
+  everywhere, and on the `sync` build when your page is cross-origin isolated. Where neither
+  holds, behaviour is unchanged; the README's new *Interrupting a query* section says which
+  case you are in and what it costs to change it.
 
 ### Performance
 

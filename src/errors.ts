@@ -10,6 +10,9 @@
  * `UNSUPPORTED` means the platform cannot answer the question — raised by
  * `inspectDatabase` where Web Locks is missing, because reporting zero clients
  * there would be indistinguishable from a database nobody holds.
+ * `QUERY_TIMEOUT` is the `timeout` a caller set on a query being spent. It is
+ * deliberately not `TIMEOUT`, which means a deadline this library imposed on
+ * itself — a worker that never became ready, a deletion that did not complete.
  */
 export type SQLiteErrorCode =
   | 'NOT_A_READ_QUERY'
@@ -25,7 +28,8 @@ export type SQLiteErrorCode =
   | 'DATABASE_IN_USE'
   | 'DATABASE_NOT_FOUND'
   | 'READ_ONLY_TRANSACTION'
-  | 'UNSUPPORTED';
+  | 'UNSUPPORTED'
+  | 'QUERY_TIMEOUT';
 
 export class SQLiteError extends Error {
   readonly code: SQLiteErrorCode;

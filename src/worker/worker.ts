@@ -9,11 +9,13 @@
  * maintained by `src/pool.ts`, not by this module. From this worker's perspective:
  * the database open is serialised by `navigator.locks` (`initLockName(file)`);
  * readiness is reported via the `ready` message; an abort arrives as a `stop`
- * message and is observed through the credit gate's stopped flag.
+ * message and is observed through the credit gate's stopped flag; on the `sync` build only,
+ * `interrupt()` also delivers the abort via a shared slot that the gate never sees.
  */
 import * as SQLite from 'wa-sqlite/src/sqlite-api.js';
 import {
   SQLITE_CANTOPEN,
+  SQLITE_INTERRUPT,
   SQLITE_OPEN_READWRITE,
   SQLITE_PREPARE_PERSISTENT,
   SQLITE_ROW,
@@ -23,6 +25,7 @@ import {
   createMessageChannelTick,
   DEFAULT_CREDIT_WINDOW,
 } from '../credits';
+import type { SQLiteErrorCode } from '../errors';
 import { createLocks, initLockName } from '../locks';
 import {
   type ClientMessageData,
@@ -37,7 +40,34 @@ import { renderPragmas } from '../utils';
 import { cloneable } from './cloneable';
 import { createStatementCache } from './statement-cache';
 
-type SQLOptions = { chunkSize?: number; signal?: AbortSignal };
+type SQLOptions = {
+  chunkSize?: number;
+  signal?: AbortSignal;
+  timeout?: number;
+  abortable?: boolean;
+};
+
+/**
+ * VM instructions between two progress-handler calls. Measured 2026-09-04 on
+ * Chromium 151 and Firefox 153: at this value the handler is free within noise
+ * on every shape, and an abort overshoots by 1-6 ms. 10x coarser saves 2-4
+ * points on pure computation and costs up to 87 ms on Firefox/async — the wrong
+ * side of the trade. See the design's §4.3.
+ */
+const PROGRESS_OPS = 100_000;
+
+/**
+ * Carries the code across the postMessage boundary. The worker cannot import
+ * SQLiteError — `src/errors.ts` is the consumer's surface and the worker bundle
+ * does not need it — so the code travels as a field and `workerError` in
+ * `src/pool.ts` mints the real error on the other side.
+ */
+class WorkerQueryTimeout extends Error {
+  readonly errorCode = 'QUERY_TIMEOUT' as const;
+  constructor(budget: number) {
+    super(`Query exceeded its timeout of ${budget} ms of execution.`);
+  }
+}
 
 const WA_SQLITE_BUILDS = {
   sync: () =>
@@ -143,6 +173,10 @@ const locks = createLocks();
 let queryRunning: PromiseWithResolvers<void> | undefined;
 const idleUntilQueryEnds = () => queryRunning?.promise ?? Promise.resolve();
 let closing = false;
+// Assigned in open() before any query can arrive: the worker posts `ready`
+// only after open() completes, and pool.ts does not dispatch a query until
+// the worker is READY. The default 'async' is never read.
+let currentBuild: SQLiteBuild = 'async';
 
 type OpenOptions = {
   vfs: SQLiteVFS;
@@ -151,6 +185,8 @@ type OpenOptions = {
   pragmas?: Record<string, string> | undefined;
   statementCacheSize?: number | undefined;
   statementCacheBytes?: number | undefined;
+  abortSlots?: SharedArrayBuffer | undefined;
+  abortIndex?: number | undefined;
 };
 
 /**
@@ -197,8 +233,14 @@ const open = (file: string, options: OpenOptions) => {
     throw new Error('DB already opened');
   }
 
-  const { vfs, wasm, pragmas = {} } = options;
+  const { vfs, wasm, pragmas = {}, abortSlots, abortIndex } = options;
   const build = options.build ?? defaultBuildFor(vfs);
+  currentBuild = build;
+
+  const slot =
+    abortSlots && abortIndex !== undefined
+      ? new Int32Array(abortSlots)
+      : undefined;
 
   const vfsConfig = VFSConfigs[vfs];
 
@@ -278,6 +320,7 @@ const open = (file: string, options: OpenOptions) => {
   });
 
   const query = async function* (
+    callId: number,
     sql: string,
     params: unknown[],
     options?: SQLOptions,
@@ -286,6 +329,8 @@ const open = (file: string, options: OpenOptions) => {
 
     const { sqlite, db, module } = await openedDB;
     const { chunkSize = 1 } = options ?? {};
+    let spent = 0;
+    let stepStart = 0;
 
     const buffer: Record<string, unknown>[] = [];
 
@@ -302,7 +347,26 @@ const open = (file: string, options: OpenOptions) => {
       while (true) {
         if (gate.isStopped()) break;
 
-        const result = await sqlite.step(stmt);
+        stepStart = performance.now();
+        let result: number;
+        try {
+          result = await sqlite.step(stmt);
+        } catch (e) {
+          spent += performance.now() - stepStart;
+          if ((e as { code?: number })?.code === SQLITE_INTERRUPT) {
+            // Three triggers can raise it, and only the worker knows which:
+            // (1) a `stop` message processed by gate.stop(); (2) the shared
+            // slot written by interrupt() on the sync build, which never
+            // yields so the message cannot reach it; (3) the budget. The
+            // first two mean the client already rejected — break so settle()
+            // sees a clean exit and keeps the statement cached. The third
+            // means the caller is still waiting — throw so they get an error.
+            if (gate.isStopped() || abortedHere()) break;
+            throw new WorkerQueryTimeout(timeout as number);
+          }
+          throw e;
+        }
+        spent += performance.now() - stepStart;
         if (gate.isStopped()) break;
 
         if (result === SQLITE_ROW) {
@@ -337,8 +401,10 @@ const open = (file: string, options: OpenOptions) => {
      * `reset` ends the statement's implicit transaction, which is what keeps
      * a cached statement from holding a read transaction open and poisoning
      * the barrier; `clear_bindings` is the correctness condition of reuse.
-     * A statement that errored is finalised instead — `sqlite3_reset` returns
-     * the failed step's code, so resetting it throws.
+     * A statement that truly errored is finalised — `sqlite3_reset` returns the
+     * failed step's code, so resetting it throws. Exception: SQLITE_INTERRUPT
+     * from the abort-via-signal path also makes reset throw, but the statement
+     * is still reset to its initial state and can be cached.
      */
     const settle = async (stmt: number, failed: boolean) => {
       if (failed) {
@@ -349,77 +415,125 @@ const open = (file: string, options: OpenOptions) => {
       try {
         await sqlite.reset(stmt);
         sqlite.clear_bindings(stmt);
-      } catch {
-        cache.delete(sql);
-        await sqlite.finalize(stmt);
-        return;
+      } catch (e) {
+        // sqlite3_reset returns SQLITE_INTERRUPT when the statement was stopped
+        // mid-step by the progress handler (abort-via-signal path). Despite
+        // the non-OK return code, sqlite3_reset DOES reset the statement to
+        // its initial state and it is safe to cache. Any other error is a
+        // genuine failure: finalize and evict.
+        if ((e as { code?: number })?.code !== SQLITE_INTERRUPT) {
+          cache.delete(sql);
+          await sqlite.finalize(stmt);
+          return;
+        }
+        sqlite.clear_bindings(stmt);
       }
       for (const handle of cache.set(sql, stmt, stmtWeight(module, stmt))) {
         await sqlite.finalize(handle);
       }
     };
 
-    const cached = cache.get(sql);
-
-    if (typeof cached === 'number') {
-      let failed = false;
-      try {
-        yield* run(cached);
-      } catch (e) {
-        failed = true;
-        throw e;
-      } finally {
-        await settle(cached, failed);
-      }
-    } else if (cached === 'uncacheable') {
-      // Today's path, untouched: the generator finalises what it yields.
-      for await (const stmt of sqlite.statements(db, sql)) {
-        prepared++;
-        yield* run(stmt);
-      }
-    } else {
-      let keep: number | undefined;
-      let live: number | undefined;
-      let single: boolean | undefined;
-      let failed = false;
-      try {
-        for await (const stmt of sqlite.statements(db, sql, {
-          unscoped: true,
-          flags: SQLITE_PREPARE_PERSISTENT,
-        })) {
-          prepared++;
-          single ??= isSingleStatement(sql, sqlite.sql(stmt));
-          // Assigned BEFORE the rows are streamed: first() breaks out of the
-          // loop, and an assignment after `yield*` would never run.
-          if (single) keep = stmt;
-          else live = stmt;
-
-          yield* run(stmt);
-
-          if (!single) {
-            await sqlite.finalize(stmt);
-            live = undefined;
-          }
-        }
-      } catch (e) {
-        failed = true;
-        throw e;
-      } finally {
-        if (keep !== undefined) {
-          await settle(keep, failed);
-        } else if (live !== undefined) {
-          // An early exit from a multi-statement string.
-          await sqlite.finalize(live);
-        }
-        if (single === false) {
-          for (const handle of cache.markUncacheable(sql)) {
-            await sqlite.finalize(handle);
-          }
-        }
-      }
+    // The budget is EXECUTION time: only what is spent inside step() counts, so
+    // a slow consumer of stream() is never charged for its own pauses. The
+    // handler runs inside step(), so it adds the current step's elapsed time to
+    // what earlier steps of this call accumulated.
+    const { timeout, abortable } = options ?? {};
+    // Three shapes, one handler. A `timeout` alone never needs to yield, and
+    // yielding is the only cost this design has — so it is spent exactly where
+    // nothing else can carry the signal into a running step().
+    const wantsSignal = abortable === true;
+    const canYield = currentBuild !== 'sync';
+    const abortedHere = () =>
+      slot !== undefined && Atomics.load(slot, abortIndex as number) === callId;
+    if (
+      timeout !== undefined ||
+      (wantsSignal && (canYield || slot !== undefined))
+    ) {
+      const overBudget = () =>
+        timeout !== undefined &&
+        spent + (performance.now() - stepStart) > timeout;
+      sqlite.progress_handler(
+        db,
+        PROGRESS_OPS,
+        wantsSignal && canYield
+          ? async () => {
+              // The task turn is what lets a queued `stop` be delivered.
+              await gate.tick();
+              return gate.isStopped() || overBudget() ? 1 : 0;
+            }
+          : () => (abortedHere() || overBudget() ? 1 : 0),
+        null,
+      );
     }
+    try {
+      const cached = cache.get(sql);
 
-    yield sqlite.changes(db);
+      if (typeof cached === 'number') {
+        let failed = false;
+        try {
+          yield* run(cached);
+        } catch (e) {
+          failed = true;
+          throw e;
+        } finally {
+          await settle(cached, failed);
+        }
+      } else if (cached === 'uncacheable') {
+        // Today's path, untouched: the generator finalises what it yields.
+        for await (const stmt of sqlite.statements(db, sql)) {
+          prepared++;
+          yield* run(stmt);
+        }
+      } else {
+        let keep: number | undefined;
+        let live: number | undefined;
+        let single: boolean | undefined;
+        let failed = false;
+        try {
+          for await (const stmt of sqlite.statements(db, sql, {
+            unscoped: true,
+            flags: SQLITE_PREPARE_PERSISTENT,
+          })) {
+            prepared++;
+            single ??= isSingleStatement(sql, sqlite.sql(stmt));
+            // Assigned BEFORE the rows are streamed: first() breaks out of the
+            // loop, and an assignment after `yield*` would never run.
+            if (single) keep = stmt;
+            else live = stmt;
+
+            yield* run(stmt);
+
+            if (!single) {
+              await sqlite.finalize(stmt);
+              live = undefined;
+            }
+          }
+        } catch (e) {
+          failed = true;
+          throw e;
+        } finally {
+          if (keep !== undefined) {
+            await settle(keep, failed);
+          } else if (live !== undefined) {
+            // An early exit from a multi-statement string.
+            await sqlite.finalize(live);
+          }
+          if (single === false) {
+            for (const handle of cache.markUncacheable(sql)) {
+              await sqlite.finalize(handle);
+            }
+          }
+        }
+      }
+
+      yield sqlite.changes(db);
+    } finally {
+      if (
+        timeout !== undefined ||
+        (wantsSignal && (canYield || slot !== undefined))
+      )
+        sqlite.progress_handler(db, 0, () => 0, null);
+    }
   };
 
   self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
@@ -435,7 +549,7 @@ const open = (file: string, options: OpenOptions) => {
           queryRunning = Promise.withResolvers<void>();
           let affected = 0;
 
-          for await (const chunk of query(sql, params, options)) {
+          for await (const chunk of query(callId, sql, params, options)) {
             if (typeof chunk === 'number') {
               affected = chunk;
               break;
@@ -467,6 +581,9 @@ const open = (file: string, options: OpenOptions) => {
             // boundary and the client can only string-match the message.
             ...(typeof (e as { code?: unknown })?.code === 'number'
               ? { sqliteCode: (e as { code: number }).code }
+              : {}),
+            ...(typeof (e as { errorCode?: unknown })?.errorCode === 'string'
+              ? { errorCode: (e as { errorCode: SQLiteErrorCode }).errorCode }
               : {}),
           });
         } finally {
@@ -707,6 +824,8 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         pragmas,
         statementCacheSize,
         statementCacheBytes,
+        abortSlots,
+        abortIndex,
       } = data;
       open(file, {
         vfs,
@@ -714,6 +833,8 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         pragmas,
         statementCacheSize,
         statementCacheBytes,
+        abortSlots,
+        abortIndex,
       });
       break;
     }

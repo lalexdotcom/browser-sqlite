@@ -1,5 +1,5 @@
 import { DEFAULT_CREDIT_WINDOW } from './credits';
-import { SQLiteError } from './errors';
+import { SQLiteError, type SQLiteErrorCode } from './errors';
 import type { Logger } from './logger';
 import type {
   SQLiteBuild,
@@ -14,6 +14,9 @@ import type {
 export type PoolWorkerQueryOptions = {
   chunkSize?: number | undefined;
   credits?: number | undefined;
+  timeout?: number | undefined;
+  /** Forwarded to the worker so it installs the async progress handler (§4 D2). */
+  abortable?: boolean | undefined;
   /**
    * When true, the query's completion does not call `deps.onServed`. Set for
    * the commit-propagation barrier: it is a synthetic probe, not user work, and
@@ -94,7 +97,13 @@ const workerError = (data: {
   message: string;
   cause?: unknown;
   sqliteCode?: number;
-}) => busyFromCode(data) ?? new Error(data.message, { cause: data.cause });
+  errorCode?: SQLiteErrorCode;
+}) =>
+  (data.errorCode
+    ? new SQLiteError(data.errorCode, data.message, { cause: data.cause })
+    : undefined) ??
+  busyFromCode(data) ??
+  new Error(data.message, { cause: data.cause });
 
 /**
  * The single `new Worker(new URL(…))` expression in this package.
@@ -142,6 +151,7 @@ export const createPoolWorker = (deps: {
     | ((index: number, sql: string, params?: unknown[]) => any)
     | undefined;
   logger: Logger;
+  abortSlots?: SharedArrayBuffer | undefined;
 }): Promise<PoolWorker> => {
   const {
     index,
@@ -156,6 +166,7 @@ export const createPoolWorker = (deps: {
     statementCacheBytes,
   } = deps;
   const { createWorkerDebugState, createQueryDebugState, logger } = deps;
+  const { abortSlots } = deps;
 
   const deferredInit = Promise.withResolvers<PoolWorker>();
 
@@ -167,6 +178,10 @@ export const createPoolWorker = (deps: {
     epochTarget: 0,
   });
   pool[index] = worker;
+  // A restarted worker inherits this slot, and its callIds restart at 0 — so
+  // the predecessor's last abort would fire on the replacement's seventh call.
+  // Zeroing here is the whole guard, and it belongs where the worker is born.
+  if (abortSlots) new Int32Array(abortSlots)[index] = 0;
   logger.info(`worker ${index + 1} created`);
 
   const state = createWorkerDebugState?.(index, workerName);
@@ -452,6 +467,8 @@ export const createPoolWorker = (deps: {
         chunkSize = 500,
         credits = DEFAULT_CREDIT_WINDOW,
         noServed = false,
+        timeout,
+        abortable,
       } = options ?? {};
       suppressServed = noServed;
 
@@ -475,7 +492,7 @@ export const createPoolWorker = (deps: {
         callId: ++currentCallId,
         sql,
         params,
-        options: { chunkSize, credits },
+        options: { chunkSize, credits, timeout, abortable },
       });
       worker.status = 'RUNNING';
 
@@ -582,6 +599,12 @@ export const createPoolWorker = (deps: {
     interrupt: () => {
       stopped = true;
       stopRequested?.resolve(STOP);
+      // The slot reaches a worker that is computing inside step() and reads no
+      // messages until it yields — which the sync build never does. The message
+      // that wakes a worker parked on a credit is sent by the query generator's
+      // finally block; interrupt() owns only the slot write.
+      if (abortSlots)
+        Atomics.store(new Int32Array(abortSlots), index, currentCallId);
     },
     quiesce: () => idle?.promise ?? Promise.resolve(),
     close: async () => {
@@ -604,6 +627,8 @@ export const createPoolWorker = (deps: {
     pragmas,
     statementCacheSize,
     statementCacheBytes,
+    abortSlots,
+    abortIndex: abortSlots ? index : undefined,
   });
 
   return deferredInit.promise;

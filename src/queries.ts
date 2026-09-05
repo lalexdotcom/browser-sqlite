@@ -1,4 +1,4 @@
-import type { OptionsWithSignal, SQLiteChunkOptions } from './api';
+import type { SQLiteChunkOptions, SQLiteQueryOptions } from './api';
 import type { PoolWorker } from './pool';
 
 /**
@@ -41,13 +41,18 @@ export const chunk = async function* <
   params?: unknown[],
   options?: SQLiteChunkOptions & { credits?: number },
 ): AsyncGenerator<T[]> {
-  const { signal, chunkSize, credits } = options ?? {};
+  const { signal, chunkSize, credits, timeout } = options ?? {};
 
   // B9: addEventListener never fires for a signal that is already aborted.
   if (signal?.aborted) throw signal.reason;
 
   const { aborted, teardown } = makeAbortRace(signal);
-  const iterator = worker.query<T>(sql, params, { chunkSize, credits });
+  const iterator = worker.query<T>(sql, params, {
+    chunkSize,
+    credits,
+    timeout,
+    abortable: signal !== undefined,
+  });
   try {
     while (true) {
       // Racing the pending chunk, not testing a flag after it: an ORDER BY
@@ -112,7 +117,7 @@ export const firstWorker = async <
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  options?: OptionsWithSignal,
+  options?: SQLiteQueryOptions,
 ): Promise<T | undefined> => {
   for await (const rows of chunk<T>(worker, sql, params, {
     ...options,
@@ -133,15 +138,18 @@ export const writeWorker = async <
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  options?: OptionsWithSignal,
+  options?: SQLiteQueryOptions,
 ): Promise<{ result: T[]; affected: number }> => {
-  const { signal } = options ?? {};
+  const { signal, timeout } = options ?? {};
 
   // B9: addEventListener never fires for a signal that is already aborted.
   if (signal?.aborted) throw signal.reason;
 
   const { aborted, teardown } = makeAbortRace(signal);
-  const iterator = worker.query<T>(sql, params, {});
+  const iterator = worker.query<T>(sql, params, {
+    timeout,
+    abortable: signal !== undefined,
+  });
   const result: T[] = [];
   let affected = 0;
   try {

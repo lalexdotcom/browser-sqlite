@@ -1,3 +1,5 @@
+import type { SQLiteErrorCode } from './errors';
+
 export type SQLiteWorkerMessageData<_T = unknown> = {
   callId: number;
   terminate?: boolean;
@@ -22,6 +24,9 @@ type SQLOptions = {
   chunkSize?: number;
   /** Chunks the worker may send before waiting for a credit. Spec §3.2. */
   credits?: number;
+  timeout?: number;
+  /** When true, the worker installs an async progress handler so an AbortSignal can stop a running step(). */
+  abortable?: boolean;
 };
 
 /**
@@ -52,6 +57,10 @@ export type ClientMessageData =
       /** Bytes retained per worker; see `src/client.ts`. Internal. */
       statementCacheBytes?: number;
       wasm?: WasmLocation;
+      /** Shared abort slots, one Int32 per worker. Isolated contexts only. */
+      abortSlots?: SharedArrayBuffer;
+      /** This worker's index into `abortSlots`. */
+      abortIndex?: number;
     }
   | {
       type: 'query';
@@ -94,6 +103,8 @@ export type WorkerMessageData =
       cause?: unknown;
       /** SQLite's numeric result code, when the failure came from SQLite. */
       sqliteCode?: number;
+      /** A code this library minted, when the worker knows the cause. */
+      errorCode?: SQLiteErrorCode;
     }
   | { type: 'closed'; callId: number }
   | { type: 'deleted'; callId: number }
@@ -129,6 +140,22 @@ export const BUILD_REQUIREMENTS = {
 } as const satisfies Record<SQLiteBuild, readonly PlatformFeature[]>;
 
 /**
+ * Platform features a build USES when present and works without, at a cost —
+ * the symmetric of `degradesWithout` on a VFS, at the level where this one
+ * actually lives. The `sync` build cannot carry an abort into a running
+ * `step()` without a `SharedArrayBuffer`, and there is no SharedArrayBuffer
+ * outside a cross-origin isolated context: measured 2026-09-04, it is not
+ * restricted there, it is absent. Nothing here names COOP/COEP or
+ * Document-Isolation-Policy: any of them satisfies the probe, and one of them
+ * is Chrome-only.
+ */
+export const BUILD_DEGRADES_WITHOUT = {
+  sync: ['cross-origin-isolated'],
+  async: [],
+  jspi: [],
+} as const satisfies Record<SQLiteBuild, readonly PlatformFeature[]>;
+
+/**
  * A platform feature a VFS may need. Which browser versions ship each one is
  * documentation data, not runtime data, so it lives in the README generator
  * (`scripts/render-vfs-matrix.ts`) with its sources — not here, where it would
@@ -138,7 +165,8 @@ export type PlatformFeature =
   | 'opfs'
   | 'readwrite-unsafe'
   | 'jspi'
-  | 'writable-stream';
+  | 'writable-stream'
+  | 'cross-origin-isolated';
 
 /** Where a VFS keeps the database. */
 export type VFSStorage = 'opfs' | 'indexeddb' | 'memory';

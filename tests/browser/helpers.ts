@@ -108,6 +108,34 @@ export const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
+ * Polls until the predicate is true, yielding to the macrotask queue between
+ * checks. Used to observe scheduler state without a fixed-duration sleep.
+ *
+ * BOUNDED, and it must be: the states below are transient, so a predicate that
+ * is never observed used to spin here until the test itself timed out at 30 s
+ * with no indication of what had been waited for. Failing at 5 s with the
+ * thing named is the difference between a diagnosis and a mystery.
+ */
+export const waitUntil = async (
+  predicate: () => boolean,
+  what: string,
+  timeoutMs = 5000,
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out after ${timeoutMs} ms waiting for ${what}`);
+    }
+    await sleep(0);
+  }
+};
+
+/** The worker has received the query and is executing it — i.e. status is RUNNING. */
+export const aWorkerIsRunning =
+  (db: Awaited<ReturnType<typeof createTestClient>>) => (): boolean =>
+    (db.debug?.workers ?? []).some((w) => w.status === 'RUNNING');
+
+/**
  * A single very long `sqlite.step()` with no table to populate: SQLite must run
  * the whole recursion before the first row of `count(*)` exists.
  */

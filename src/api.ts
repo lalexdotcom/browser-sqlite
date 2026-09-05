@@ -40,12 +40,24 @@ export type OptionsWithSignal<T = unknown> = T & {
    * `bulkWrite()` leaves the batches already written in place; an aborted
    * `output()` is observationally a no-op, dropping its staging table and
    * touching nothing else.
+   *
+   * Whether it also stops the statement SQLite is already executing depends on
+   * your build and your page: see the README's Interrupting a query section.
    */
   signal?: AbortSignal | undefined;
 };
 
 /** Options every query method accepts. */
-export type SQLiteQueryOptions = OptionsWithSignal;
+export type SQLiteQueryOptions = OptionsWithSignal<{
+  /**
+   * Milliseconds of SQLite EXECUTION this query may spend before it is stopped
+   * and rejected with `QUERY_TIMEOUT`. Time the caller spends between two
+   * chunks of a `stream()` is not charged to it — for a wall-clock deadline,
+   * pass `AbortSignal.timeout(ms)` as `signal` instead. See the README's
+   * Interrupting a query section.
+   */
+  timeout?: number;
+}>;
 
 /**
  * Options for the methods that cross the worker boundary in chunks.
@@ -58,6 +70,14 @@ export type SQLiteQueryOptions = OptionsWithSignal;
 export type SQLiteChunkOptions = OptionsWithSignal<{
   /** Rows per chunk. Defaults to 500. */
   chunkSize?: number;
+  /**
+   * Milliseconds of SQLite EXECUTION this query may spend before it is stopped
+   * and rejected with `QUERY_TIMEOUT`. Time the caller spends between two
+   * chunks of a `stream()` is not charged to it — for a wall-clock deadline,
+   * pass `AbortSignal.timeout(ms)` as `signal` instead. See the README's
+   * Interrupting a query section.
+   */
+  timeout?: number;
 }>;
 
 export type SQLiteWriteResult<T extends Record<string, unknown>> = {
@@ -223,7 +243,7 @@ export type SQLiteQueryAPI = {
   write: <T extends Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    options?: OptionsWithSignal,
+    options?: SQLiteQueryOptions,
   ) => Promise<SQLiteWriteResult<T>>;
 
   /**
@@ -291,7 +311,7 @@ export type SQLiteQueryAPI = {
   first: <T extends Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    options?: OptionsWithSignal,
+    options?: SQLiteQueryOptions,
   ) => Promise<T | undefined>;
 
   /**
