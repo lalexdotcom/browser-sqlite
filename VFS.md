@@ -142,16 +142,13 @@ JavaScript Promise Integration — the same asynchrony handled by the engine rat
 
 ### `OPFSWriteAheadVFS`
 
-**`OPFSWriteAheadVFS` serves no concurrent reads outside Chromium — but it is faster there than the default.** It opens access handles with `mode: 'readwrite-unsafe'`, which Firefox and Safari ignore rather than reject, so it works and falls back to the same reduced mode as `OPFSAdaptiveVFS`. What it keeps is speed: on both Firefox and Safari its `sync` build beats `OPFSAdaptiveVFS` on single-write latency, point reads, list pages, scans and transactions. Prefer it where your workload is latency-bound, and `OPFSAdaptiveVFS` where you need reads to run alongside a long query.
+**`OPFSWriteAheadVFS` serves no concurrent reads outside Chromium — but it is faster there than the default.** It opens access handles with `mode: 'readwrite-unsafe'`, which only Chromium 121+ implements; Firefox and Safari ignore the option rather than reject it, so it still works and falls back to the same reduced mode as `OPFSAdaptiveVFS`. What it keeps is speed: on both Firefox and Safari its `sync` build beats `OPFSAdaptiveVFS` on single-write latency, point reads, list pages, scans and transactions. Prefer it where your workload is latency-bound, and `OPFSAdaptiveVFS` where you need reads to run alongside a long query.
 
-**`deleteDatabase` can time out outside Chromium**, on `OPFSWriteAheadVFS` and `OPFSCoopSyncVFS` — an observation rather than a measured rate. The call fails to settle rather than reporting an error; it has never reported success without deleting. Both VFS rotate a single exclusive OPFS access handle where `readwrite-unsafe` is unavailable, the same shape as the reduced mode described above.
+**Targeting Chromium, it is the most balanced choice on the benchmark page.** It is rarely first on a single row — `OPFSCoopSyncVFS` edges it on scans, `AccessHandlePoolVFS` on write latency — but it is near the front of every one, it leads bulk loading, and it is the only VFS that keeps concurrent reads there while still running the faster `sync` build. That combination is what no other VFS offers on Chromium. Read the numbers on the [benchmark page](https://lalexdotcom.github.io/browser-sqlite/) rather than trusting this sentence a year from now.
 
 ### `OPFSCoopSyncVFS`
 
 **`OPFSCoopSyncVFS` does not read concurrently, and stalls unpredictably under a pool.** Unlike the other OPFS VFS it implements its own locking and silently ignores the `lockPolicy: 'shared'` this library constructs every VFS with, holding one *exclusive* access handle and rotating it between workers instead of one per connection. A read issued while a write transaction is open is **never served** — the pool acquisition blocks before any `AbortSignal` is consulted — where `IDBBatchAtomicVFS`, `IDBMirrorVFS` and `OPFSAnyContextVFS` serve it every time. A bulk insert either finishes promptly or **exceeds 30 seconds**, with no middle ground and no consistency across runs. None of this depends on `readwrite-unsafe`: unlike the reduced mode described above, it happens on Chromium too.
-
-It can also fail to settle on `deleteDatabase` outside Chromium — see
-[`OPFSWriteAheadVFS`](#opfswriteaheadvfs) above.
 
 ### `AccessHandlePoolVFS`
 

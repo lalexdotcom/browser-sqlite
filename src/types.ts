@@ -24,7 +24,6 @@ type SQLOptions = {
   chunkSize?: number;
   /** Chunks the worker may send before waiting for a credit. Spec §3.2. */
   credits?: number;
-  timeout?: number;
   /** When true, the worker installs an async progress handler so an AbortSignal can stop a running step(). */
   abortable?: boolean;
 };
@@ -103,7 +102,18 @@ export type WorkerMessageData =
       cause?: unknown;
       /** SQLite's numeric result code, when the failure came from SQLite. */
       sqliteCode?: number;
-      /** A code this library minted, when the worker knows the cause. */
+      /**
+       * A code this library minted, when the worker knows the cause. The
+       * generic path by which a worker-side error keeps its code across the
+       * boundary — `worker.ts` copies it off any thrown error carrying one, so
+       * this is a structural contract and not a hook for one class.
+       *
+       * **Nothing sets it today.** `WorkerQueryTimeout` was its only producer
+       * and it went with the execution budget when `timeout` became a
+       * client-side wall-clock deadline. Kept rather than deleted: it is the
+       * twin of `sqliteCode` above, which is load-bearing, and rebuilding it
+       * would cost the same three sites it occupies.
+       */
       errorCode?: SQLiteErrorCode;
     }
   | { type: 'closed'; callId: number }

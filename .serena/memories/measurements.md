@@ -1468,3 +1468,97 @@ settled N.
 - `longQuery(20_000_000)`, sync build, MemoryVFS: **~4 343 ms** to completion; ~2 463 ms
   observed as the failure value under the feature-neutralising mutation, against a 500 ms
   bound.
+
+## The `sync` build against the `async` build — 2026-09-07, read off `.bench/`
+
+**Not a new campaign: a reading of exports already in the repository.** Three files, all
+labelled `preview @ 45e67fa` — a commit that is on `main`, so this is near-current code and
+NOT released rc.4, whatever the `lib` field says. `20260904124315-macos-chrome-150`,
+`20260904135152-macos-safari-27.0`, `20260904152056-macos-firefox-154.0`. **n=1 per cell**:
+a bench export is one run. iPadOS Safari 27.0 (`20260904124014`) carries the same build and
+is used for the per-platform reading below.
+
+**Read the units before the names.** `full-scan`, `list-page-p50`, `transaction-throughput`
+and `overwrite-throughput` all declare `unit: 'ms'` in `scripts/bench/html/index.html`
+despite what two of those names suggest — **lower is better on every one of them**. Only
+`read-burst-concurrency` is `better: 'high'`.
+
+**Same VFS, both builds — the ratio async ÷ sync.** Four VFS declare `['sync','async','jspi']`
+and so can be compared against themselves: `OPFSWriteAheadVFS`, `OPFSCoopSyncVFS`,
+`AccessHandlePoolVFS`, `MemoryVFS`.
+
+| metric | Chrome 150 | Safari 27 | Firefox 154 |
+|---|---|---|---|
+| `full-scan` | 1.58–2.16× | 1.50× on all four | 2.29–2.67× |
+| `list-page-p50` | 1.65–2.41× | 1.60–1.70× | 2.33–3.20× |
+| `bulk-insert-dataset` | 1.16–1.43× | 1.25–1.32× | 1.17–1.35× |
+| `point-read-p50`, `write-latency-p50` | ~1.00× | 1.00–1.63× | ~1.00× |
+
+Twelve cells, three engines, all in the same direction. **No `async` cell is faster than any
+`sync` cell on `full-scan`, on any of the three engines** — on Firefox the sync cells sit at
+6–7 ms while every async cell, all VFS included, sits at 15–16 ms.
+
+**The async build buys interruptibility and nothing else.** `read-burst-concurrency` is
+unchanged between the two builds of the same VFS (`OPFSWriteAheadVFS` on Chromium: 2.91 sync
+against 3.10 async, inside the noise at n=1), and `reads-during-long-query` does not move —
+`false` stays `false` on `OPFSWriteAheadVFS` and `OPFSCoopSyncVFS`.
+
+**What this does NOT license.** The page measures one client's throughput on one dataset. It
+says nothing about open time, cross-tab behaviour, or the Safari hazards that the VFS
+recommendation partly rests on. The interruption lot merged the day after these exports were
+taken; its progress handler is installed only when a `signal` or `timeout` is passed, which
+these rows do not pass, so the ratios are expected to hold — **expected, not re-measured**.
+
+The README cites this reading in `Known Limitations` → `Aborting a call`, deliberately
+without figures: "may take significantly longer, on the order of twice as long in this
+project's own measurements and more than that on some engines".
+
+## `deleteDatabase` hangs — the whole corpus, split by era, 2026-09-07
+
+**This supersedes the "six deletion timeouts sit on two VFS" reading above**, which was one
+campaign on one build. Every export in `.bench/` carries a `deleted-is-gone` row per
+`(vfs, build)` pair in its `conformance` block — **86 files, 1 225 pair-rows**. Counted, not
+sampled.
+
+**The corpus must be split at 2026-09-02, and a first reading that did not split it was
+wrong.** `src/delete.ts` was rewritten that day — `refuse to delete a database a client still
+holds`, `report a database that is not there`, `correct INVALID_OPTION message` — on top of
+`key lock names on the storage namespace, not the VFS` the day before. Exports before that
+date exercise a different deletion path. The user caught this; the un-split table had been
+committed and had to be corrected.
+
+**Every timeout in the corpus is pre-rewrite. There is not one after it.**
+
+| era | files | `OPFSWriteAheadVFS` timeouts |
+|---|---|---|
+| before 2026-09-02 | 50 | Firefox 154 **7/24** (3 `async`, 2 `jspi`, 2 `sync`), macOS Safari 26.5.2 **3/4**, iPadOS 27.0 **2/5** (`jspi`), iOS 26.6 **1/5** |
+| 2026-09-02 onwards | 36 | **none, on any engine** — Firefox 15 runs over three builds, Chromium 24, macOS Safari 27.0 24, iPadOS 33, macOS Safari 26.6.2 6, iOS 26.6.1 2 |
+
+`OPFSCoopSyncVFS` shows the same shape and the same split: 1/8 Firefox `async` and 1/12 macOS
+Safari 27.0 `async`, both pre-rewrite, nothing after. `OPFSAdaptiveVFS` never hung in either
+era.
+
+**What the post-rewrite runs are worth.** Firefox is the arm that carries the weight: the
+pre-rate there was ~29 %, so 15 consecutive clean runs is not a small sample against it. The
+gap is **macOS Safari 26.5.2**, which produced 3 hangs in 4 and has not been re-run since —
+the 26.x device in the post-rewrite set is 26.6.2.
+
+**CLOSED 2026-09-07, on a mechanism and not only on absence.** `DELETE-TIMEOUT-1` was deleted
+from `mem:follow-ups` the same day. `8a5a649` says in its own message that the surviving VFS
+"survived by accident, on OPFS handle exclusivity this library never arranged" — HANDLE-1 — and
+replaces that with a non-queuing acquisition carrying the comment *"A request that never queues
+cannot deadlock"*. The same commit adds a `setTimeout(0)` before returning, because the Web
+Locks API releases a lock by queuing a global task, so an immediate return made a freed lock
+look held — and it notes **Chromium does not require this**, which matches Firefox being the
+worst arm by far. The user closed it on 2026-09-07 with the argument that macOS users track
+patch releases, so a caveat about a superseded 26.5.2 buys a consumer nothing; two further runs
+on 26.6 were offered and declined as uninformative — that arm never failed. The fix is recorded
+for consumers in `CHANGELOG.md` under Fixed, because **rc.4 is published with the old path**.
+
+**The `readwrite-unsafe` attribution is now doubly unsupported.** It was already only a
+correlation — the mode is Chrome/Android 121+ and `null` everywhere else, so "Chromium" and
+"has the mode" name the same engines in every export we hold. And the era split says the
+defect tracked OUR deletion path, not the engine's handle mode. **A Chrome 120 campaign was
+proposed to separate the two on 2026-09-07 and is no longer worth running for this purpose**:
+it would be testing an engine hypothesis for a defect the evidence attributes to a library
+path that has since changed.

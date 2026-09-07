@@ -18,6 +18,7 @@ import {
   assertColumnType,
   assertGeneratedExpression,
   quoteIdent,
+  withDeadline,
 } from './utils';
 
 // Structural, and deliberately narrower than SQLiteQueryAPI: bulk needs only
@@ -125,7 +126,10 @@ export const createBulk = (shared: {
       /** Internal: awaited before the first batch. `output()` passes its staging DDL. */
       before?: Promise<unknown>,
     ) => {
-      const signal = options?.signal;
+      const { signal, release: releaseDeadline } = withDeadline(
+        options,
+        'bulkWrite',
+      );
       const maxBufferSize = Math.floor(maxVariables / keys.length);
       // Two batches' worth by default: the batch is the unit that gets queued,
       // so anything smaller than one is meaningless and two is the smallest
@@ -270,6 +274,7 @@ export const createBulk = (shared: {
             return affected;
           } finally {
             signal?.removeEventListener('abort', releaseRoom);
+            releaseDeadline();
           }
         },
       };
@@ -370,6 +375,10 @@ export const createBulk = (shared: {
       schema: SCHEMA,
       options?: SQLiteOutputOptions<SCHEMA>,
     ) => {
+      const { signal, release: releaseDeadline } = withDeadline(
+        options,
+        'output',
+      );
       const staging = stagingTableName(crypto.randomUUID());
 
       const normalizedSchema = Object.entries(schema).map(([k, v]) => {
@@ -405,7 +414,7 @@ export const createBulk = (shared: {
         Object.keys(schema).filter(
           (col) => typeof schema[col] !== 'object' || !schema[col].generated,
         ),
-        { signal: options?.signal, queueSize: options?.queueSize },
+        { signal, queueSize: options?.queueSize },
         createStaging,
       );
 
@@ -435,37 +444,41 @@ export const createBulk = (shared: {
         enqueue: (data: SQLiteOutputRow<SCHEMA>) => enqueue(data as any),
 
         close: async () => {
-          let affected: number;
           try {
-            // Ensure the staging table exists even when no rows were enqueued —
-            // bulkWrite.close() only awaits createStaging via flush(), and flush()
-            // is skipped when the buffer is empty.
-            await createStaging;
-            affected = await close();
-          } catch (error) {
-            await dropStaging();
-            await releaseLock();
-            throw error;
-          }
+            let affected: number;
+            try {
+              // Ensure the staging table exists even when no rows were enqueued —
+              // bulkWrite.close() only awaits createStaging via flush(), and flush()
+              // is skipped when the buffer is empty.
+              await createStaging;
+              affected = await close();
+            } catch (error) {
+              await dropStaging();
+              await releaseLock();
+              throw error;
+            }
 
-          try {
-            await transaction(async (tx) => {
-              await tx.write(`DROP TABLE IF EXISTS ${quoteIdent(table)}`);
-              await tx.write(
-                `ALTER TABLE ${quoteIdent(staging)} RENAME TO ${quoteIdent(table)}`,
-              );
-              for (const statement of indexStatements(table, options)) {
-                await tx.write(statement);
-              }
-            });
-          } catch (error) {
-            await dropStaging();
-            throw error;
+            try {
+              await transaction(async (tx) => {
+                await tx.write(`DROP TABLE IF EXISTS ${quoteIdent(table)}`);
+                await tx.write(
+                  `ALTER TABLE ${quoteIdent(staging)} RENAME TO ${quoteIdent(table)}`,
+                );
+                for (const statement of indexStatements(table, options)) {
+                  await tx.write(statement);
+                }
+              });
+            } catch (error) {
+              await dropStaging();
+              throw error;
+            } finally {
+              await releaseLock();
+            }
+
+            return affected;
           } finally {
-            await releaseLock();
+            releaseDeadline();
           }
-
-          return affected;
         },
       };
     };

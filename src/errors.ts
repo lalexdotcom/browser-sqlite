@@ -10,7 +10,7 @@
  * `UNSUPPORTED` means the platform cannot answer the question — raised by
  * `inspectDatabase` where Web Locks is missing, because reporting zero clients
  * there would be indistinguishable from a database nobody holds.
- * `QUERY_TIMEOUT` is the `timeout` a caller set on a query being spent. It is
+ * `OPERATION_TIMEOUT` is the `timeout` a caller set on a call being spent. It is
  * deliberately not `TIMEOUT`, which means a deadline this library imposed on
  * itself — a worker that never became ready, a deletion that did not complete.
  */
@@ -29,7 +29,7 @@ export type SQLiteErrorCode =
   | 'DATABASE_NOT_FOUND'
   | 'READ_ONLY_TRANSACTION'
   | 'UNSUPPORTED'
-  | 'QUERY_TIMEOUT';
+  | 'OPERATION_TIMEOUT';
 
 export class SQLiteError extends Error {
   readonly code: SQLiteErrorCode;
@@ -39,16 +39,22 @@ export class SQLiteError extends Error {
    * and SQLITE_LOCKED (6); this is how a caller tells them apart.
    */
   readonly sqliteCode?: number;
+  /**
+   * The `timeout` that was exceeded, in milliseconds. Present only on
+   * `OPERATION_TIMEOUT`, so a log need not parse the message for it.
+   */
+  readonly timeout?: number;
 
   constructor(
     code: SQLiteErrorCode,
     message: string,
-    options?: { cause?: unknown; sqliteCode?: number },
+    options?: { cause?: unknown; sqliteCode?: number; timeout?: number },
   ) {
     super(message, options);
     this.code = code;
     this.name = code;
     if (options?.sqliteCode !== undefined) this.sqliteCode = options.sqliteCode;
+    if (options?.timeout !== undefined) this.timeout = options.timeout;
   }
 }
 

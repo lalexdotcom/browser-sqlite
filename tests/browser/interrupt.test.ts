@@ -153,11 +153,6 @@ describe('aborting a running statement', () => {
       await waitUntil(aWorkerIsRunning(db), 'the query to be running');
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
-      // A timeout DOES interrupt the same build — the asymmetry the design
-      // turns on.
-      await expect(
-        db.read(longQuery(20_000_000), [], { timeout: 200 }),
-      ).rejects.toMatchObject({ code: 'QUERY_TIMEOUT' });
     } finally {
       await db.close();
     }

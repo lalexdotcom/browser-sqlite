@@ -51,3 +51,22 @@ describe('SQLiteError — SQLite result codes', () => {
     ).toBeUndefined();
   });
 });
+
+describe('SQLiteError — timeout', () => {
+  it('carries the timeout that was exceeded', () => {
+    const err = new SQLiteError(
+      'OPERATION_TIMEOUT',
+      'read() exceeded its timeout of 200 ms.',
+      {
+        timeout: 200,
+      },
+    );
+    expect(err.code).toBe('OPERATION_TIMEOUT');
+    expect(err.name).toBe('OPERATION_TIMEOUT');
+    expect(err.timeout).toBe(200);
+  });
+
+  it('leaves timeout undefined when none was given', () => {
+    expect(new SQLiteError('BUSY', 'busy').timeout).toBeUndefined();
+  });
+});

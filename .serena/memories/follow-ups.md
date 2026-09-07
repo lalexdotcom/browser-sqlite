@@ -69,30 +69,60 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
-## Owed before rc.5 (user, 2026-09-05)
+## Open questions with evidence
 
-### `signal` and `timeout` travel together — `OptionsWithSignal` becomes `Interruptible`
+### Should `RECOMMENDED_VFS` move to `OPFSWriteAheadVFS`? — answer this FIRST, next session
 
-**This gates rc.5. The user's decision, 2026-09-07.** Every method that accepts a `signal`
-must accept a `timeout`. The type in `src/api.ts` that today adds only `signal` is renamed
-`Interruptible` and carries both, so the pairing is structural rather than repeated per
-options type.
+**The user's instruction, 2026-09-07: settle this with a firm answer immediately after the
+`feat/uniform-timeout` merge, before anything else.** It is not an idea on the pile.
 
-Three methods have `signal` and no `timeout`: **`transaction()`**
-(`SQLiteTransactionOptions`), **`bulkWrite()`** (`SQLiteBulkWriteOptions`) and **`output()`**
-(`SQLiteOutputOptions`). `read`, `write`, `stream`, `chunk` and `first` already have both,
-through `SQLiteQueryOptions` and `SQLiteChunkOptions`, which is where `timeout` lives today.
+**What the recommendation is.** `RECOMMENDED_VFS` in `src/types.ts` is `OPFSAdaptiveVFS`. It
+is deliberately not exported and not a default — `vfs` is required — but the generator marks
+its row `(recommended)` in `VFS.md` and it is what a consumer with no reason to choose will
+write.
 
-**The open question is what `timeout` MEANS on the three, and it is not the same question
-as on a query.** On a statement it is a budget of SQLite EXECUTION time, enforced by the
-worker's progress handler, and time the caller spends between two chunks is deliberately
-not charged to it (`docs/superpowers/specs/2026-09-04-query-interruption-design.md` §5).
-None of the three is one statement: a transaction spans caller code between its statements,
-and `bulkWrite`/`output` span many batches with the producer's own time in between. A
-budget that charges only SQLite execution may never fire on a callback that hangs, and a
-wall-clock budget is a different guarantee from the one `timeout` names elsewhere. Decide
-this before implementing, not during — `mem:lessons` on deadlines belonging to an operation
-CLASS is the entry that applies.
+**The case FOR moving.** On the bench exports labelled `preview @ 45e67fa` and
+`preview @ 0b63bf3` — both commits on `main` — `OPFSWriteAheadVFS/sync` beats
+`OPFSAdaptiveVFS/async` on essentially every row, on **six platform cells**: Chromium 150,
+Firefox 154, macOS Safari 26.6.2 and 27.0, iPadOS Safari 27.0, iOS Safari 26.6.1. Widest on
+iPadOS: full scan 11 ms against 30, paged read 2.2 against 6.4, point read 0.3 against 1.5,
+bulk load 230 against 391. Numbers and method: `mem:measurements`.
+
+**Two objections died on 2026-09-07 and must not be revived.**
+
+- *"It hangs on `deleteDatabase` off Chromium."* That was OUR deletion path, rewritten on
+  2026-09-02, and every occurrence in the corpus predates it. Closed with a named mechanism —
+  see `mem:measurements`.
+- *"It gives up concurrency."* It does not. Chromium: 2.91 against 3.06 with
+  `reads-during-long-query: true` on both. Everywhere else both sit at ≈1.0 and `false`.
+  Concurrency does not separate them anywhere.
+
+And the whole conformance grid was counted over the 36 post-rewrite exports: **all eight
+invariants, 36/36, for `OPFSAdaptiveVFS/async`, `OPFSWriteAheadVFS/sync` and
+`OPFSWriteAheadVFS/async` alike.** No robustness differentiator remains in what is measured.
+
+**What genuinely remains against it — three things, and only the first is work.**
+
+1. **n = 1 per cell on the performance rows.** The conformance rows were counted across the
+   corpus; the `measurements` block was not. **This is a script, not a device campaign**: take
+   the median per `(vfs, build)` per platform over the exports dated **2026-09-02 or later**
+   (36 files, 8–11 per platform), the same era split the deletion count needed and for the same
+   reason. That reaches n≥3, which `mem:lessons` sets as the floor for a verdict.
+2. **`OPFSAdaptiveVFS` adapts, and its name is the argument.** It picks a strategy per
+   platform; `OPFSWriteAheadVFS` has one and degrades where `readwrite-unsafe` is missing. On a
+   browser nobody has tested, "adapts" is a better bet than "degrades in a way we believe is
+   fine". Unmeasurable, and a real reason to stay conservative.
+3. **Moving it makes the recommended setup non-interruptible off Chromium.**
+   `OPFSAdaptiveVFS` cannot run `sync` at all, so following the recommendation today gives the
+   `async` build, where a `signal` or `timeout` stops a running statement everywhere.
+   `OPFSWriteAheadVFS` has `sync` at `builds[0]`, so the recommended setup would inherit the
+   limitation that `README.md` → *Known Limitations* → *Aborting a call* documents. This is the
+   mirror image of the speed gain and it must be decided together with it, not after.
+
+**If it moves, five things change together:** `RECOMMENDED_VFS` in `src/types.ts`; the
+`(recommended)` marker the generator emits into `VFS.md`; the order of every VFS list, which the
+user asked to have led by the recommended one; the README sentence on what a consumer gets by
+default; and the interruptibility trade above, stated where the recommendation is.
 
 ## Notes, with nothing to fix
 
