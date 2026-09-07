@@ -26,6 +26,13 @@ obligations and unmeasured ground.
 
 ## The verification baseline — compare against these, re-measured 2026-09-05 after the query-interruption merge
 
+> **STALE as of 2026-09-07 and deliberately not patched.** `feat/uniform-timeout` added
+> tests: the three suites now read **635 / 50 files**, **243 / 33** and **5 / 2**, against the
+> 613/47 and 225/30 below. The rest of the table — conformance, consumer smoke, `check.mjs`,
+> lint — has NOT been re-read since. This file's own rule is to re-measure the whole table
+> rather than patch one cell, so the correction waits for that pass; until then treat every
+> row below as carried from 2026-09-05.
+
 Not history: the numbers a regression is detected against. **Every figure below was read off
 a run on 2026-09-04 in this container, on the MERGED result** — none is carried forward from
 an earlier session, and none is arithmetic — every row was re-read after the dropped-chunk
@@ -78,14 +85,13 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 None outstanding.
 
-**rc.5 is gated on two things, and neither has been touched.** First, CI must go green on the
-pushed `main` (user, 2026-09-05) — everything in the nine lots was verified in this container
-only, and the interruption lot's tests carry bounds calibrated on this machine, so slower CI
-hardware is where a surprise would land. `main` has not been pushed since, so this has still
-never run. Second, every method that takes a `signal` must take a `timeout` (user,
-2026-09-07): `OptionsWithSignal` becomes `Interruptible` and carries both, which leaves
-`transaction()`, `bulkWrite()` and `output()` to do — and one design question to settle
-first, `mem:follow-ups`. When both hold, the user judges the release ready — the bump itself
+**rc.5 was gated on two things; one is done and one has still never run.** The `Interruptible`
+work is complete on `feat/uniform-timeout` (§ below) — **written, reviewed and green, but NOT
+yet merged into `main` as of 2026-09-07**. What remains is CI going green on a pushed `main`
+(user, 2026-09-05): everything from the nine lots and from this branch was verified in this
+container only, and the interruption lot's tests carry bounds calibrated on this machine, so
+slower CI hardware is where a surprise would land. `main` has not been pushed since, so this
+has still never run. When it holds, the user judges the release ready — the bump itself
 remains an instructed act, never an inferred one.
 
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
@@ -93,6 +99,50 @@ the 2026-09-05 entry in `mem:follow-ups` called for.
 
 **Nothing is in flight**, but one thing is now scheduled: the `Interruptible` work above is
 the next lot and has no branch yet. Everything else in `mem:follow-ups` remains unscheduled.
+
+## Lot 10 — one `timeout`, eight methods — complete on `feat/uniform-timeout`, NOT merged
+
+Design: `docs/superpowers/specs/2026-09-07-uniform-timeout-design.md`. Plan:
+`docs/superpowers/plans/2026-09-07-uniform-timeout.md`. Eleven commits, five implementation
+tasks, each reviewed; whole-branch review clean.
+
+**It reverses D4 of the interruption design.** `timeout` was a budget of SQLite EXECUTION
+time enforced inside the worker; it is now a **wall-clock deadline counted from the call**,
+and it applies to eight methods rather than five. The generalization is what exposed the
+problem: an execution budget does not extend to `transaction()`, `bulkWrite()` and
+`output()` — none is one statement — and on the five it already had, a consumer writing
+`timeout: 5000` had bounded nothing they could predict, since the clock only ran while
+SQLite had the floor. Neither `timeout` nor `QUERY_TIMEOUT` had ever been released, so the
+reversal cost no consumer anything.
+
+**Four things the code will not tell you:**
+
+- **The mechanism is that the abort REASON is the error.** `withDeadline` in `src/utils.ts`
+  owns an `AbortController` and a `setTimeout` that aborts with the `SQLiteError` itself;
+  `mergeSignals` relays a reason verbatim and every abort path already rejects with
+  `signal.reason`, so there is no translation layer and nothing asks which signal fired.
+  `AbortSignal.timeout()` is not used because it cannot carry a reason.
+- **An external `signal` still rejects with `signal.reason`, verbatim — there is no
+  `OPERATION_ABORT`, deliberately.** The rule is who owns the signal: a caller who supplies
+  one already owns the rejection value, and the platform guarantees it comes back untouched.
+  When the library creates the signal there is no caller reason to preserve. The asymmetry
+  is that rule applied twice, not an inconsistency.
+- **`timeout` and `signal` now share one limitation, by the user's decision (D6).** On the
+  `sync` build without cross-origin isolation, `timeout` used to stop a running statement —
+  a budget needs no channel, the worker reads its own clock — and now stops only the wait.
+  That capability was removed knowingly; it was never released. It bought one table in
+  `API.md` covering both options instead of a table plus an exception.
+- **`errorCode` on the worker→client protocol lost its only producer** when
+  `WorkerQueryTimeout` went. It is KEPT, with a comment saying so: the worker's check is
+  structural, so it is the generic path by which a worker-minted code crosses the boundary,
+  and it is the twin of the load-bearing `sqliteCode` branch beside it.
+
+**One thing that happened and did not reproduce:** a `pnpm test` run hung on the Firefox
+config for about two hours during task 2, then never recurred in any later run of the
+branch. No report was emitted at all, which is itself the discriminator — an rstest timeout
+produces a failure report, so a two-hour silence points at browser launch or the harness,
+not at a test. Unresolved; the repository's own bar for closing this shape is a repeat-run
+campaign, as the `barrier` flake got in 13 consecutive runs.
 
 ## Lot 9 — query interruption, merged 2026-09-05
 

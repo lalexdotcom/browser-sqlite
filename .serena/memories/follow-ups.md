@@ -69,30 +69,52 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
-## Owed before rc.5 (user, 2026-09-05)
+## Open questions with evidence
 
-### `signal` and `timeout` travel together — `OptionsWithSignal` becomes `Interruptible`
+### Is `OPFSAdaptiveVFS` still the right recommendation? — opened 2026-09-07
 
-**This gates rc.5. The user's decision, 2026-09-07.** Every method that accepts a `signal`
-must accept a `timeout`. The type in `src/api.ts` that today adds only `signal` is renamed
-`Interruptible` and carries both, so the pairing is structural rather than repeated per
-options type.
+The exports in `.bench/` labelled `preview @ 45e67fa` — a commit that is on `main`, so
+near-current code and not released rc.4 — put `OPFSWriteAheadVFS/sync` ahead of the
+recommended `OPFSAdaptiveVFS/async` on **every** column of that page, on Chromium 150,
+macOS Safari 27.0 and iPadOS Safari 27.0. iPadOS is where the gap is widest: full scan
+11 ms against 30, paged read 2.2 against 6.4, point read 0.3 against 1.5, bulk load 230
+against 391. Nothing compensates it in concurrency there — `reads-during-long-query` is
+`false` and `read-burst-concurrency` ≈ 1.0 for both.
 
-Three methods have `signal` and no `timeout`: **`transaction()`**
-(`SQLiteTransactionOptions`), **`bulkWrite()`** (`SQLiteBulkWriteOptions`) and **`output()`**
-(`SQLiteOutputOptions`). `read`, `write`, `stream`, `chunk` and `first` already have both,
-through `SQLiteQueryOptions` and `SQLiteChunkOptions`, which is where `timeout` lives today.
+**This concludes nothing and must not be quoted as if it did.** n=1 per cell, one device
+per platform, and the page measures single-client throughput on one dataset: it says
+nothing about open time, cross-tab behaviour, or the Safari hazards (`deleteDatabase`
+timeouts, `survives-reopen`) that the recommendation partly rests on. `OPFSAdaptiveVFS`
+cannot run the `sync` build at all, so much of what is measured here is Asyncify overhead
+rather than the VFS itself.
 
-**The open question is what `timeout` MEANS on the three, and it is not the same question
-as on a query.** On a statement it is a budget of SQLite EXECUTION time, enforced by the
-worker's progress handler, and time the caller spends between two chunks is deliberately
-not charged to it (`docs/superpowers/specs/2026-09-04-query-interruption-design.md` §5).
-None of the three is one statement: a transaction spans caller code between its statements,
-and `bulkWrite`/`output` span many batches with the producer's own time in between. A
-budget that charges only SQLite execution may never fire on a callback that hangs, and a
-wall-clock budget is a different guarantee from the one `timeout` names elsewhere. Decide
-this before implementing, not during — `mem:lessons` on deadlines belonging to an operation
-CLASS is the entry that applies.
+What would settle it is a real campaign — several runs per cell, several devices, and the
+axes the bench page does not cover. Until then the recommendation stands. Numbers:
+`mem:measurements`, "The `sync` build against the `async` build".
+
+### DELETE-TIMEOUT-1 — `deleteDatabase` fails to settle outside Chromium
+
+**Restored 2026-09-07: `mem:measurements` had been pointing at this entry while it existed
+nowhere.** A dangling pointer, the shape `mem:lessons` warns about — a deferral must name a
+destination that exists. The subject was never closed.
+
+`deleteDatabase` neither resolves nor rejects on `OPFSWriteAheadVFS` and, less often,
+`OPFSCoopSyncVFS`. It has never reported success without deleting, so nothing is lost — the
+caller hangs. Rates over the whole `.bench/` corpus are in `mem:measurements`, "`deleteDatabase`
+hangs — the whole corpus": **0/36 on Chromium against 7/24 on Firefox 154 and 3/4 on macOS
+Safari 26.5.2**, with macOS Safari 26.6.2 and 27.0 clean.
+
+**Two things are established and one is not.** The missing `readwrite-unsafe` handle mode is a
+*necessary* condition, not a sufficient one — three Safari versions lack it and only the oldest
+hangs. And `OPFSAdaptiveVFS` never hangs, which is why the VFS recommendation did not move when
+throughput argued for it. What is NOT established is whether the missing mode causes the hang at
+all: in every export we hold, "Chromium" and "has the mode" name the same engines, so the data
+cannot separate them.
+
+**The experiment that would: Chrome 120** — the last version before the mode shipped in 121 —
+three bench series, which produce `deleted-is-gone` with no special harness. The user offered to
+run it on 2026-09-07. A hang there attributes the defect to the missing mode; a clean run
+refutes it and sends the `VFS.md` paragraph back for rewriting.
 
 ## Notes, with nothing to fix
 

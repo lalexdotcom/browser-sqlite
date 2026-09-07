@@ -1468,3 +1468,83 @@ settled N.
 - `longQuery(20_000_000)`, sync build, MemoryVFS: **~4 343 ms** to completion; ~2 463 ms
   observed as the failure value under the feature-neutralising mutation, against a 500 ms
   bound.
+
+## The `sync` build against the `async` build — 2026-09-07, read off `.bench/`
+
+**Not a new campaign: a reading of exports already in the repository.** Three files, all
+labelled `preview @ 45e67fa` — a commit that is on `main`, so this is near-current code and
+NOT released rc.4, whatever the `lib` field says. `20260904124315-macos-chrome-150`,
+`20260904135152-macos-safari-27.0`, `20260904152056-macos-firefox-154.0`. **n=1 per cell**:
+a bench export is one run. iPadOS Safari 27.0 (`20260904124014`) carries the same build and
+is used for the per-platform reading below.
+
+**Read the units before the names.** `full-scan`, `list-page-p50`, `transaction-throughput`
+and `overwrite-throughput` all declare `unit: 'ms'` in `scripts/bench/html/index.html`
+despite what two of those names suggest — **lower is better on every one of them**. Only
+`read-burst-concurrency` is `better: 'high'`.
+
+**Same VFS, both builds — the ratio async ÷ sync.** Four VFS declare `['sync','async','jspi']`
+and so can be compared against themselves: `OPFSWriteAheadVFS`, `OPFSCoopSyncVFS`,
+`AccessHandlePoolVFS`, `MemoryVFS`.
+
+| metric | Chrome 150 | Safari 27 | Firefox 154 |
+|---|---|---|---|
+| `full-scan` | 1.58–2.16× | 1.50× on all four | 2.29–2.67× |
+| `list-page-p50` | 1.65–2.41× | 1.60–1.70× | 2.33–3.20× |
+| `bulk-insert-dataset` | 1.16–1.43× | 1.25–1.32× | 1.17–1.35× |
+| `point-read-p50`, `write-latency-p50` | ~1.00× | 1.00–1.63× | ~1.00× |
+
+Twelve cells, three engines, all in the same direction. **No `async` cell is faster than any
+`sync` cell on `full-scan`, on any of the three engines** — on Firefox the sync cells sit at
+6–7 ms while every async cell, all VFS included, sits at 15–16 ms.
+
+**The async build buys interruptibility and nothing else.** `read-burst-concurrency` is
+unchanged between the two builds of the same VFS (`OPFSWriteAheadVFS` on Chromium: 2.91 sync
+against 3.10 async, inside the noise at n=1), and `reads-during-long-query` does not move —
+`false` stays `false` on `OPFSWriteAheadVFS` and `OPFSCoopSyncVFS`.
+
+**What this does NOT license.** The page measures one client's throughput on one dataset. It
+says nothing about open time, cross-tab behaviour, or the Safari hazards that the VFS
+recommendation partly rests on. The interruption lot merged the day after these exports were
+taken; its progress handler is installed only when a `signal` or `timeout` is passed, which
+these rows do not pass, so the ratios are expected to hold — **expected, not re-measured**.
+
+The README cites this reading in `Known Limitations` → `Aborting a call`, deliberately
+without figures: "may take significantly longer, on the order of twice as long in this
+project's own measurements and more than that on some engines".
+
+## `deleteDatabase` hangs — the whole corpus, 2026-09-07
+
+**This supersedes the "six deletion timeouts sit on two VFS" reading above**, which was one
+campaign. Every export in `.bench/` carries a `deleted-is-gone` row per `(vfs, build)` pair
+in its `conformance` block — **86 files, 1 225 pair-rows**. Counted, not sampled.
+
+`OPFSWriteAheadVFS`, timeouts / runs:
+
+| platform | timeouts / runs |
+|---|---|
+| macOS Chrome 150 | **0 / 36** (12 per build, three builds) |
+| macOS Firefox 154 | **7 / 24** — 3 `async`, 2 `jspi`, 2 `sync` |
+| macOS Safari 26.5.2 | **3 / 4** |
+| macOS Safari 26.6.2 | 0 / 6 |
+| macOS Safari 27.0 | 0 / 36 |
+| iPadOS Safari 27.0 | 2 / 16, `jspi` only |
+| iOS Safari 26.6 | 1 / 5 |
+
+`OPFSCoopSyncVFS` shows the same shape, lower: 1/8 on Firefox `async`, 1/12 on macOS Safari
+27.0 `async`, zero elsewhere. **`OPFSAdaptiveVFS` has never hung: 0 in ~93 runs across every
+engine.** That asymmetry is why the recommendation did not move when the throughput numbers
+argued for it (`mem:follow-ups`).
+
+**The missing `readwrite-unsafe` is necessary, not sufficient — and this corpus is what
+proves it.** macOS Safari 26.6.2 and 27.0 lack the handle mode exactly as 26.5.2 does, and
+are clean over 6 and 36 runs where 26.5.2 hung 3 times in 4. So something in the engine
+decides whether the failure fires; the missing mode only makes it possible. Firefox is the
+only reliable reproducer left.
+
+**The experiment that would separate "Chromium" from "has `readwrite-unsafe`" has not been
+run.** They name the same set of engines in every export we hold — the mode is Chrome/Android
+121+ and `null` everywhere else — so no amount of further Safari or Firefox running can tell
+them apart. What would: **Chrome 120**, the last version without the mode, three bench series.
+The user offered to run it on 2026-09-07. A hang there attributes the defect to the missing
+mode; a clean run refutes it and sends the paragraph in `VFS.md` back for rewriting.

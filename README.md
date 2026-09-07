@@ -150,10 +150,11 @@ statement. Two header sets do it, and each costs something:
   this document rather than to everything around it.
 
 Where neither is worth it, `build: 'async'` buys the same interruption on all four VFS and
-needs no hosting change — but it is slower wherever a query walks rows: full scans and paged
-reads take roughly twice as long, from half again on Safari to nearly three times on Firefox,
-and bulk inserts about a quarter longer. Point reads, write latency and read concurrency are
-unaffected. See [Interrupting a call](API.md#interrupting-a-call).
+needs no hosting change — but it is slower wherever a query walks rows. Full scans and paged
+reads may take significantly longer, on the order of twice as long in this project's own
+measurements and more than that on some engines; bulk loading is affected too, less sharply.
+Point reads, write latency and read concurrency are unaffected. See
+[Interrupting a call](API.md#interrupting-a-call).
 
 ### Deleting a database
 

@@ -865,7 +865,19 @@ export const createSQLiteClient = (
     error.code === 'BUSY' &&
     typeof (error as { sqliteCode?: unknown }).sqliteCode === 'number';
 
-  /** One read on a fresh lease, returned the moment the worker is idle. */
+  /**
+   * One read on a fresh lease, returned the moment the worker is idle.
+   *
+   * **`acquireInstrumented` sits outside the `try` on purpose**: a failed
+   * acquisition yields no lease, so there is nothing for a `finally` to
+   * release. What that leaves uncovered here — the `timeout` deadline behind
+   * `signal`, whose `release()` clears a timer and detaches the listeners
+   * `mergeSignals` put on the caller's own signal — is owned one level up, by
+   * the `try/finally` each public read method wraps around its call to this.
+   * So an acquisition that throws still clears the timer; it is just not this
+   * function that does it. `write()` had the same shape and got it wrong once,
+   * releasing the deadline only on paths that reached its inner `finally`.
+   */
   const onReadLease = async <R>(
     signal: AbortSignal | undefined,
     body: (worker: PoolWorker) => Promise<R>,
