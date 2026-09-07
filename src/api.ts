@@ -16,20 +16,20 @@ import type { SQLiteBuild, SQLiteVFS } from './types';
 /**
  * Marks an options type as carrying an abort signal.
  *
- * The name is the point. `options?: OptionsWithSignal<…>` says at the signature
+ * The name is the point. `options?: Interruptible<…>` says at the signature
  * that the method can be abandoned, where a bare alias would make a reader open
  * the type to find out. Every abortable option type in this file is built from
  * it, so `signal` is documented once and cannot drift between them.
  *
  * Not the bare `Abortable` that `@types/node` uses: this reads as an options
  * bag augmented with one member — `PropsWithChildren`, not an adjective — which
- * is what it is both wrapped, `OptionsWithSignal<{ chunkSize?: number }>`, and
- * alone, `options?: OptionsWithSignal`.
+ * is what it is both wrapped, `Interruptible<{ chunkSize?: number }>`, and
+ * alone, `options?: Interruptible`.
  *
  * `T = unknown` rather than `Record<string, never>`: intersecting with the
  * latter collapses `signal` to `never` and makes it unassignable.
  */
-export type OptionsWithSignal<T = unknown> = T & {
+export type Interruptible<T = unknown> = T & {
   /**
    * Aborts the work. Rejects with `signal.reason` — your reason, not an error
    * of this library's making.
@@ -48,7 +48,7 @@ export type OptionsWithSignal<T = unknown> = T & {
 };
 
 /** Options every query method accepts. */
-export type SQLiteQueryOptions = OptionsWithSignal<{
+export type SQLiteQueryOptions = Interruptible<{
   /**
    * Milliseconds of SQLite EXECUTION this query may spend before it is stopped
    * and rejected with `QUERY_TIMEOUT`. Time the caller spends between two
@@ -67,7 +67,7 @@ export type SQLiteQueryOptions = OptionsWithSignal<{
  * ahead of the consumer. On `stream()` that is the only lever on how many rows
  * are in flight.
  */
-export type SQLiteChunkOptions = OptionsWithSignal<{
+export type SQLiteChunkOptions = Interruptible<{
   /** Rows per chunk. Defaults to 500. */
   chunkSize?: number;
   /**
@@ -109,7 +109,7 @@ export type SQLiteWriteResult<T extends Record<string, unknown>> = {
  * waits for whichever client holds the file, and your signal cannot shorten
  * that wait. See the reduced mode described under VFS Selection.
  */
-export type SQLiteTransactionOptions = OptionsWithSignal<{
+export type SQLiteTransactionOptions = Interruptible<{
   /** Rejects write statements with `READ_ONLY_TRANSACTION`. Defaults to false. */
   readOnly?: boolean;
   /** Commits when the callback resolves. Defaults to true. */
@@ -131,7 +131,7 @@ export type Index<SCHEMA extends Schema> =
       | { columns: (keyof SCHEMA)[] }
     ));
 
-export type SQLiteOutputOptions<SCHEMA extends Schema> = OptionsWithSignal<{
+export type SQLiteOutputOptions<SCHEMA extends Schema> = Interruptible<{
   indexes?: Index<SCHEMA>[];
   /** Rows queued for writing above which `enqueue()` defers. See `SQLiteBulkWriteOptions`. */
   queueSize?: number | undefined;
@@ -156,7 +156,7 @@ export type SQLiteOutputOptions<SCHEMA extends Schema> = OptionsWithSignal<{
  * 1 is raised to 1: a batch always holds at least one row, so a lower cap could
  * never be satisfied.
  */
-export type SQLiteBulkWriteOptions = OptionsWithSignal<{
+export type SQLiteBulkWriteOptions = Interruptible<{
   /** Rows queued for writing above which `enqueue()` defers. */
   queueSize?: number | undefined;
 }>;

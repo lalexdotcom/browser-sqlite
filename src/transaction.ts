@@ -1,5 +1,5 @@
 import type {
-  OptionsWithSignal,
+  Interruptible,
   SQLiteChunkOptions,
   SQLiteQueryAPI,
   SQLiteTransactionDB,
@@ -161,7 +161,7 @@ export const createTransaction =
       write: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        given?: OptionsWithSignal,
+        given?: Interruptible,
       ) => {
         const query = checksql(sql);
         const { options, release } = withSignal(given);
@@ -197,7 +197,7 @@ export const createTransaction =
       first: <T extends Record<string, unknown>>(
         sql: string,
         params?: unknown[],
-        given?: OptionsWithSignal,
+        given?: Interruptible,
       ) => {
         const query = checksql(sql);
         const { options, release } = withSignal(given);

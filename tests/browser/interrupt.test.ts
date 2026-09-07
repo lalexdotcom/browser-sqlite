@@ -157,7 +157,7 @@ describe('aborting a running statement', () => {
       // turns on.
       await expect(
         db.read(longQuery(20_000_000), [], { timeout: 200 }),
-      ).rejects.toMatchObject({ code: 'QUERY_TIMEOUT' });
+      ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
     } finally {
       await db.close();
     }

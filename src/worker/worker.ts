@@ -63,7 +63,7 @@ const PROGRESS_OPS = 100_000;
  * `src/pool.ts` mints the real error on the other side.
  */
 class WorkerQueryTimeout extends Error {
-  readonly errorCode = 'QUERY_TIMEOUT' as const;
+  readonly errorCode = 'OPERATION_TIMEOUT' as const;
   constructor(budget: number) {
     super(`Query exceeded its timeout of ${budget} ms of execution.`);
   }

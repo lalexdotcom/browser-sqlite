@@ -2,13 +2,13 @@ import { describe, expect, it } from '@rstest/core';
 import { createTestClient, longQuery } from './helpers';
 
 describe('query timeout', () => {
-  it('rejects with QUERY_TIMEOUT and leaves the client usable', async () => {
+  it('rejects with OPERATION_TIMEOUT and leaves the client usable', async () => {
     const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
     try {
       const started = performance.now();
       await expect(
         db.read(longQuery(20_000_000), [], { timeout: 200 }),
-      ).rejects.toMatchObject({ code: 'QUERY_TIMEOUT' });
+      ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
       // The statement really stopped: nowhere near the seconds it would run.
       expect(performance.now() - started).toBeLessThan(1500);
       // And the connection still works.
@@ -25,7 +25,7 @@ describe('query timeout', () => {
       const half = `${longQuery(8_000_000)};`;
       await expect(
         db.write(`${half} ${half}`, [], { timeout: 400 }),
-      ).rejects.toMatchObject({ code: 'QUERY_TIMEOUT' });
+      ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
     } finally {
       await db.close();
     }
@@ -42,7 +42,7 @@ describe('query timeout', () => {
       );
       // Falsifier: if timeout counted wall-clock time, the 150 ms sleep between
       // each chunk delivery would exceed the 100 ms budget and throw
-      // QUERY_TIMEOUT. Because the timer counts only time inside sqlite.step(),
+      // OPERATION_TIMEOUT. Because the timer counts only time inside sqlite.step(),
       // the consumer pauses never appear in the budget and no rejection is
       // thrown no matter how long those pauses are.
       //
