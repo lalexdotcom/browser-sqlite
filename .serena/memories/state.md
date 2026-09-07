@@ -24,38 +24,28 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-05 after the query-interruption merge
+## The verification baseline — compare against these, re-measured 2026-09-07 on the merged result of `feat/uniform-timeout`
 
-> **STALE as of 2026-09-07 and deliberately not patched.** `feat/uniform-timeout` added
-> tests: the three suites now read **635 / 50 files**, **243 / 33** and **5 / 2**, against the
-> 613/47 and 225/30 below. The rest of the table — conformance, consumer smoke, `check.mjs`,
-> lint — has NOT been re-read since. This file's own rule is to re-measure the whole table
-> rather than patch one cell, so the correction waits for that pass; until then treat every
-> row below as carried from 2026-09-05.
+Not history: the numbers a regression is detected against. **Every figure below was read off a
+run in this container on 2026-09-07, on `main` after the lot-10 merge** — none is carried
+forward, none is arithmetic. The whole table was re-read in one pass, which is what its own
+rule demands.
 
-Not history: the numbers a regression is detected against. **Every figure below was read off
-a run on 2026-09-04 in this container, on the MERGED result** — none is carried forward from
-an earlier session, and none is arithmetic — every row was re-read after the dropped-chunk
-merge, `check.mjs` included, so no row is now carried over.
-
-**`pnpm test` now chains THREE configs**, not two: chromium, firefox, and the isolated
-project. A green `pnpm test` therefore covers what CI covers, as it did before — but a
-commit costs a third suite, which is what the pre-commit hook pays on every commit.
+**`pnpm test` chains THREE configs** — chromium+unit, firefox, and the isolated project — so a
+green `pnpm test` covers what CI covers, and a commit pays all three through the pre-commit
+hook.
 
 | command | result |
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **TWO reports since 2026-09-03** — it chains both engines. `status: pass` on each: **613 tests / 47 files** (unit + chromium), then **225 tests / 30 files** (firefox) |
-| `pnpm test:unit` | 389 tests, 18 files |
-| `pnpm test:chromium` | 237 tests, 32 files |
-| `pnpm test:firefox` | 238 tests, 33 files — the 32 shared plus one Firefox-only |
-| `pnpm test:isolated` | 5 tests, 2 files — the ONLY cross-origin isolated project |
-| `pnpm exec rstest --project unit run` | 391 tests, 18 files |
-| `pnpm test:conformance` | **TWO reports** — it chains both engines. 85 tests / 2 files, **73 passed / 12 skipped**, on each: identical |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **635 tests / 50 files** (unit + chromium), **243 / 33** (firefox), **5 / 2** (isolated) |
+| `pnpm exec rstest --project unit run` | 393 tests, 18 files |
+| `pnpm exec rstest --project chromium run` | 242 tests, 32 files |
+| `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each, **73 passed / 12 skipped**, identical on both engines |
 | `pnpm test:consumer` | 24/24 stages |
-| `node scripts/bench/check.mjs chromium --all` | OK, 22 declared pairs, 22 columns, zero `not-run`, **zero null cells**, ~160 s. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 97 files, 13 warnings, 1 info |
+| `BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
+| `pnpm lint` | 102 files, 13 warnings, 1 info |
 | `dependencies` in `package.json` | absent |
 
 **The per-project split is here on purpose.** A total alone cannot say which suite moved, and
