@@ -51,7 +51,7 @@ export type Interruptible<T = unknown> = T & {
 export type SQLiteQueryOptions = Interruptible<{
   /**
    * Milliseconds of SQLite EXECUTION this query may spend before it is stopped
-   * and rejected with `QUERY_TIMEOUT`. Time the caller spends between two
+   * and rejected with `OPERATION_TIMEOUT`. Time the caller spends between two
    * chunks of a `stream()` is not charged to it — for a wall-clock deadline,
    * pass `AbortSignal.timeout(ms)` as `signal` instead. See the Interrupting a
    * query section of API.md.
@@ -72,7 +72,7 @@ export type SQLiteChunkOptions = Interruptible<{
   chunkSize?: number;
   /**
    * Milliseconds of SQLite EXECUTION this query may spend before it is stopped
-   * and rejected with `QUERY_TIMEOUT`. Time the caller spends between two
+   * and rejected with `OPERATION_TIMEOUT`. Time the caller spends between two
    * chunks of a `stream()` is not charged to it — for a wall-clock deadline,
    * pass `AbortSignal.timeout(ms)` as `signal` instead. See the Interrupting a
    * query section of API.md.
