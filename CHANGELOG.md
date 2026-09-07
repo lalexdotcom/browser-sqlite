@@ -65,7 +65,7 @@ All notable changes to this project are documented here.
   the call is aborted and rejected with `OPERATION_TIMEOUT`. It is wall clock: time your own
   code spends — between two chunks of a `stream()`, inside a `transaction()` callback, between
   two `enqueue()` calls — counts against it, as does time spent waiting for a pool worker or
-  for another tab's write lock. Available on all seven methods that take options: `read`,
+  for another tab's write lock. Available on all eight methods that take options: `read`,
   `write`, `stream`, `chunk`, `first`, `transaction`, `bulkWrite` and `output`.
 - **`OPERATION_TIMEOUT`, a new error code.** Deliberately distinct from `TIMEOUT`, which means
   a deadline this library imposed on itself — a worker that never became ready, a deletion that
@@ -208,7 +208,7 @@ that had grown past what one page should carry. No behaviour changed.
   `VFS.md`, which is also where the generated tables are written from now on.
   Links that pointed at a README anchor point at the page that holds it, the
   pointer inside the `vfs is required` error message included.
-- **`timeout` is documented.** It is accepted by all seven call-taking methods and
+- **`timeout` is documented.** It is accepted by all eight call-taking methods and
   appeared in no option table. The statement that "the library adds no per-request
   timeout" is withdrawn — it has been false since query interruption shipped.
 - **Five error codes were missing from the table**: `OPERATION_TIMEOUT`,

@@ -45,7 +45,7 @@ never killed for time another tab's write lock made it wait. See §6.
 ## 2. The decision
 
 **`timeout` is a wall-clock budget in milliseconds, counted from the call**, on every
-method that accepts a `signal`. One sentence, one meaning, seven methods.
+method that accepts a `signal`. One sentence, one meaning, eight methods.
 
 It is sugar over an `AbortSignal` this library owns, whose abort reason is a typed
 `SQLiteError`. That ownership is the whole design, and §4 is short because of it.
@@ -72,7 +72,7 @@ The rename is visible in the published `.d.ts`. `OptionsWithSignal` is exported 
 names the type, and goes in `CHANGELOG.md` under Breaking. No alias is kept: one name, or
 the pairing this design exists for stops being visible.
 
-**`QUERY_TIMEOUT` becomes `OPERATION_TIMEOUT`.** It is raised by seven methods now, only
+**`QUERY_TIMEOUT` becomes `OPERATION_TIMEOUT`.** It is raised by eight methods now, only
 five of which run a query. `TIMEOUT` is not reused: it is published, and it means a deadline
 on the library's own lifecycle work — a worker that never became `ready`
 ([`src/client.ts`](../../../src/client.ts)), a `deleteDatabase` that did not complete

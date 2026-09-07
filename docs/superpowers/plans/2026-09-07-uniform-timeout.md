@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make `timeout` a wall-clock budget counted from the call, on every one of the seven methods that accept a `signal`.
+**Goal:** Make `timeout` a wall-clock budget counted from the call, on every one of the eight methods that accept a `signal`.
 
 **Architecture:** `timeout` stops being enforced in the worker and becomes an `AbortController` this library owns, aborted by a `setTimeout` whose abort *reason* is the `SQLiteError` itself. `mergeSignals` relays a reason verbatim and every abort path in the library already rejects with `signal.reason`, so the typed error reaches the caller with no translation layer anywhere. The worker's execution-budget machinery is deleted.
 
@@ -134,7 +134,7 @@ git add -A
 git commit -F - <<'EOF'
 refactor(errors)!: OPERATION_TIMEOUT, and an error that carries its budget
 
-`timeout` is about to apply to seven methods, of which five run a query, so
+`timeout` is about to apply to eight methods, of which five run a query, so
 `QUERY_TIMEOUT` stops being true of its own subject. `TIMEOUT` is not reusable:
 it is published and it means a deadline the library imposed on its own lifecycle
 work. `SQLiteError` gains an optional `timeout` beside `sqliteCode`, so a log
