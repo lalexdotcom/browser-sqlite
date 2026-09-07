@@ -92,29 +92,29 @@ What would settle it is a real campaign — several runs per cell, several devic
 axes the bench page does not cover. Until then the recommendation stands. Numbers:
 `mem:measurements`, "The `sync` build against the `async` build".
 
-### DELETE-TIMEOUT-1 — `deleteDatabase` fails to settle outside Chromium
+### DELETE-TIMEOUT-1 — believed fixed by the 2026-09-02 deletion rewrite, one device unverified
 
 **Restored 2026-09-07: `mem:measurements` had been pointing at this entry while it existed
 nowhere.** A dangling pointer, the shape `mem:lessons` warns about — a deferral must name a
-destination that exists. The subject was never closed.
+destination that exists.
 
-`deleteDatabase` neither resolves nor rejects on `OPFSWriteAheadVFS` and, less often,
-`OPFSCoopSyncVFS`. It has never reported success without deleting, so nothing is lost — the
-caller hangs. Rates over the whole `.bench/` corpus are in `mem:measurements`, "`deleteDatabase`
-hangs — the whole corpus": **0/36 on Chromium against 7/24 on Firefox 154 and 3/4 on macOS
-Safari 26.5.2**, with macOS Safari 26.6.2 and 27.0 clean.
+`deleteDatabase` neither resolved nor rejected on `OPFSWriteAheadVFS` and, less often,
+`OPFSCoopSyncVFS`. It never reported success without deleting, so nothing was lost — the
+caller hung.
 
-**Two things are established and one is not.** The missing `readwrite-unsafe` handle mode is a
-*necessary* condition, not a sufficient one — three Safari versions lack it and only the oldest
-hangs. And `OPFSAdaptiveVFS` never hangs, which is why the VFS recommendation did not move when
-throughput argued for it. What is NOT established is whether the missing mode causes the hang at
-all: in every export we hold, "Chromium" and "has the mode" name the same engines, so the data
-cannot separate them.
+**Every occurrence in the `.bench/` corpus predates the rewrite of `src/delete.ts` on
+2026-09-02**, and 36 exports since carry none, on any engine — including 15 Firefox runs of
+`OPFSWriteAheadVFS` where roughly one deletion in four used to hang. Table and method:
+`mem:measurements`, "`deleteDatabase` hangs — the whole corpus, split by era".
 
-**The experiment that would: Chrome 120** — the last version before the mode shipped in 121 —
-three bench series, which produce `deleted-is-gone` with no special harness. The user offered to
-run it on 2026-09-07. A hang there attributes the defect to the missing mode; a clean run
-refutes it and sends the `VFS.md` paragraph back for rewriting.
+**Why it stays open anyway:** the device that produced it most reliably, **macOS Safari
+26.5.2**, has not been re-run since. Three hangs in four attempts there, and the post-rewrite
+26.x arm is 26.6.2. One run on 26.5.2 closes this entry or reopens it properly.
+
+**Do not chase the `readwrite-unsafe` explanation.** It was a correlation that no export can
+test — the mode is Chrome/Android 121+ and `null` elsewhere, so "Chromium" and "has the mode"
+name the same engines — and the era split points at our own deletion path instead. A Chrome
+120 campaign was proposed for it on 2026-09-07 and dropped for that reason.
 
 ## Notes, with nothing to fix
 

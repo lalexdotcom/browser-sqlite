@@ -1513,38 +1513,40 @@ The README cites this reading in `Known Limitations` → `Aborting a call`, deli
 without figures: "may take significantly longer, on the order of twice as long in this
 project's own measurements and more than that on some engines".
 
-## `deleteDatabase` hangs — the whole corpus, 2026-09-07
+## `deleteDatabase` hangs — the whole corpus, split by era, 2026-09-07
 
 **This supersedes the "six deletion timeouts sit on two VFS" reading above**, which was one
-campaign. Every export in `.bench/` carries a `deleted-is-gone` row per `(vfs, build)` pair
-in its `conformance` block — **86 files, 1 225 pair-rows**. Counted, not sampled.
+campaign on one build. Every export in `.bench/` carries a `deleted-is-gone` row per
+`(vfs, build)` pair in its `conformance` block — **86 files, 1 225 pair-rows**. Counted, not
+sampled.
 
-`OPFSWriteAheadVFS`, timeouts / runs:
+**The corpus must be split at 2026-09-02, and a first reading that did not split it was
+wrong.** `src/delete.ts` was rewritten that day — `refuse to delete a database a client still
+holds`, `report a database that is not there`, `correct INVALID_OPTION message` — on top of
+`key lock names on the storage namespace, not the VFS` the day before. Exports before that
+date exercise a different deletion path. The user caught this; the un-split table had been
+committed and had to be corrected.
 
-| platform | timeouts / runs |
-|---|---|
-| macOS Chrome 150 | **0 / 36** (12 per build, three builds) |
-| macOS Firefox 154 | **7 / 24** — 3 `async`, 2 `jspi`, 2 `sync` |
-| macOS Safari 26.5.2 | **3 / 4** |
-| macOS Safari 26.6.2 | 0 / 6 |
-| macOS Safari 27.0 | 0 / 36 |
-| iPadOS Safari 27.0 | 2 / 16, `jspi` only |
-| iOS Safari 26.6 | 1 / 5 |
+**Every timeout in the corpus is pre-rewrite. There is not one after it.**
 
-`OPFSCoopSyncVFS` shows the same shape, lower: 1/8 on Firefox `async`, 1/12 on macOS Safari
-27.0 `async`, zero elsewhere. **`OPFSAdaptiveVFS` has never hung: 0 in ~93 runs across every
-engine.** That asymmetry is why the recommendation did not move when the throughput numbers
-argued for it (`mem:follow-ups`).
+| era | files | `OPFSWriteAheadVFS` timeouts |
+|---|---|---|
+| before 2026-09-02 | 50 | Firefox 154 **7/24** (3 `async`, 2 `jspi`, 2 `sync`), macOS Safari 26.5.2 **3/4**, iPadOS 27.0 **2/5** (`jspi`), iOS 26.6 **1/5** |
+| 2026-09-02 onwards | 36 | **none, on any engine** — Firefox 15 runs over three builds, Chromium 24, macOS Safari 27.0 24, iPadOS 33, macOS Safari 26.6.2 6, iOS 26.6.1 2 |
 
-**The missing `readwrite-unsafe` is necessary, not sufficient — and this corpus is what
-proves it.** macOS Safari 26.6.2 and 27.0 lack the handle mode exactly as 26.5.2 does, and
-are clean over 6 and 36 runs where 26.5.2 hung 3 times in 4. So something in the engine
-decides whether the failure fires; the missing mode only makes it possible. Firefox is the
-only reliable reproducer left.
+`OPFSCoopSyncVFS` shows the same shape and the same split: 1/8 Firefox `async` and 1/12 macOS
+Safari 27.0 `async`, both pre-rewrite, nothing after. `OPFSAdaptiveVFS` never hung in either
+era.
 
-**The experiment that would separate "Chromium" from "has `readwrite-unsafe`" has not been
-run.** They name the same set of engines in every export we hold — the mode is Chrome/Android
-121+ and `null` everywhere else — so no amount of further Safari or Firefox running can tell
-them apart. What would: **Chrome 120**, the last version without the mode, three bench series.
-The user offered to run it on 2026-09-07. A hang there attributes the defect to the missing
-mode; a clean run refutes it and sends the paragraph in `VFS.md` back for rewriting.
+**What the post-rewrite runs are worth.** Firefox is the arm that carries the weight: the
+pre-rate there was ~29 %, so 15 consecutive clean runs is not a small sample against it. The
+gap is **macOS Safari 26.5.2**, which produced 3 hangs in 4 and has not been re-run since —
+the 26.x device in the post-rewrite set is 26.6.2.
+
+**The `readwrite-unsafe` attribution is now doubly unsupported.** It was already only a
+correlation — the mode is Chrome/Android 121+ and `null` everywhere else, so "Chromium" and
+"has the mode" name the same engines in every export we hold. And the era split says the
+defect tracked OUR deletion path, not the engine's handle mode. **A Chrome 120 campaign was
+proposed to separate the two on 2026-09-07 and is no longer worth running for this purpose**:
+it would be testing an engine hypothesis for a defect the evidence attributes to a library
+path that has since changed.

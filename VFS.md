@@ -146,9 +146,9 @@ JavaScript Promise Integration — the same asynchrony handled by the engine rat
 
 **Targeting Chromium, it is the most balanced choice on the benchmark page.** It is rarely first on a single row — `OPFSCoopSyncVFS` edges it on scans, `AccessHandlePoolVFS` on write latency — but it is near the front of every one, it leads bulk loading, and it is the only VFS that keeps concurrent reads there while still running the faster `sync` build. That combination is what no other VFS offers on Chromium. Read the numbers on the [benchmark page](https://lalexdotcom.github.io/browser-sqlite/) rather than trusting this sentence a year from now.
 
-**`deleteDatabase` can fail to settle outside Chromium**, on `OPFSWriteAheadVFS` and `OPFSCoopSyncVFS`. The call neither resolves nor reports an error; it has never reported success without deleting. Rates for this VFS across every export this project holds: **none on Chromium**, 36 runs over its three builds — against 7 hangs in 24 runs on Firefox 154, 3 in 4 on macOS Safari 26.5.2, 2 in 16 on iPadOS Safari 27.0 (`jspi` only) and 1 in 5 on iOS Safari 26.6. `OPFSAdaptiveVFS` has never hung in ~93 runs.
+**`deleteDatabase` used to fail to settle outside Chromium**, on `OPFSWriteAheadVFS` and `OPFSCoopSyncVFS` — the call neither resolved nor reported an error, though it never reported success without deleting. **It has not been observed since this library's deletion path was rewritten**, and the one platform that showed it most often is now clean: 36 benchmark runs across every engine since, with none on Firefox, where roughly one deletion in four used to hang.
 
-Both VFS rotate a single exclusive OPFS access handle where `readwrite-unsafe` is unavailable, the same shape as the reduced mode described above — but that cannot be the whole cause. macOS Safari **26.6.2 and 27.0 lack `readwrite-unsafe` too and are clean**, over 6 and 36 runs, where 26.5.2 hung 3 times in 4. Something in the engine decides whether the failure fires; the missing handle mode only makes it possible.
+One device that produced it has not been re-tested since — macOS Safari 26.5.2. Treat the case as fixed rather than as proven fixed, and report it if you meet it.
 
 ### `OPFSCoopSyncVFS`
 
