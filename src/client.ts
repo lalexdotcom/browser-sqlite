@@ -1032,29 +1032,32 @@ export const createSQLiteClient = (
     options?: SQLiteQueryOptions,
   ) => {
     const { signal, release } = withDeadline(options, 'write');
-    const lease = await acquireInstrumented('write', signal);
     try {
-      return await writeWorker<T>(lease.worker, sql, params, {
-        ...options,
-        signal,
-      });
+      const lease = await acquireInstrumented('write', signal);
+      try {
+        return await writeWorker<T>(lease.worker, sql, params, {
+          ...options,
+          signal,
+        });
+      } finally {
+        // Before the await: afterWrite bumps the epoch synchronously so that a
+        // read chained after write() sees the new epoch and runs the barrier. In
+        // `finally`, so a failed write bumps too: that costs a barrier statement,
+        // never a wrong read.
+        // Wait for the marker transition (new epoch acquired, previous released)
+        // before write() resolves. A caller that queries held lock names
+        // immediately after write() must see exactly one marker — the new one.
+        await afterWrite(lease.worker);
+        // The lease returns when the worker confirms it is idle, not when the
+        // caller leaves: a worker still inside step() must not be re-lent, and
+        // the caller must not wait for it.
+        void lease.worker.quiesce().then(
+          () => lease.release(),
+          () => lease.release(),
+        );
+      }
     } finally {
       release();
-      // Before the await: afterWrite bumps the epoch synchronously so that a
-      // read chained after write() sees the new epoch and runs the barrier. In
-      // `finally`, so a failed write bumps too: that costs a barrier statement,
-      // never a wrong read.
-      // Wait for the marker transition (new epoch acquired, previous released)
-      // before write() resolves. A caller that queries held lock names
-      // immediately after write() must see exactly one marker — the new one.
-      await afterWrite(lease.worker);
-      // The lease returns when the worker confirms it is idle, not when the
-      // caller leaves: a worker still inside step() must not be re-lent, and
-      // the caller must not wait for it.
-      void lease.worker.quiesce().then(
-        () => lease.release(),
-        () => lease.release(),
-      );
     }
   };
 

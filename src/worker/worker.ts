@@ -43,7 +43,6 @@ import { createStatementCache } from './statement-cache';
 type SQLOptions = {
   chunkSize?: number;
   signal?: AbortSignal;
-  timeout?: number;
   abortable?: boolean;
 };
 
