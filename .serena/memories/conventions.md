@@ -138,15 +138,19 @@ Design: `docs/superpowers/specs/2026-08-31-release-notes-from-changelog-design.m
 
 ## Writing for the consumer
 
+**Since 2026-09-07 the consumer documentation is three files** — `README.md`, `API.md` and
+`VFS.md` (`mem:state`). Both rules below were written about the README and apply to all
+three.
+
 - **The README is for the consumer.** State the constraint and what it costs them; the
   mechanism, the evidence and the investigation go to code comments, these memories, or a
   PR description. A fifteen-line Known Limitations entry about a WebKit bug was cut to one
   sentence plus `26+` in the generated table.
 - **Do not explain compatibility in prose.** Version numbers in the tables are enough. A
   Requirements subsection arguing *why* each API mattered was cut for exactly this reason.
-- **The README is edited iteratively — do not commit each pass.** Several round trips are
-  normal; committing after every one forces the user to brake. Make the edit, show what
-  changed, wait.
+- **Consumer documentation is edited iteratively — do not commit each pass.** Several round
+  trips are normal; committing after every one forces the user to brake. Make the edit, show
+  what changed, wait.
 
 ## Working with the user
 

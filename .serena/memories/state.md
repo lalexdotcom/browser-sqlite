@@ -78,15 +78,21 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 None outstanding.
 
-**rc.5 is gated on two things, and the user set both on 2026-09-05.** CI must go green on the
-pushed `main` — everything in the nine lots was verified in this container only, and the
-interruption lot's tests carry bounds calibrated on this machine, so slower CI hardware is
-where a surprise would land. And the README must be reworked before the tag: it is too
-dense and is to be split, `mem:follow-ups`. When both hold, the user judges the release
-ready — the bump itself remains an instructed act, never an inferred one.
+**rc.5 is gated on two things, and neither has been touched.** First, CI must go green on the
+pushed `main` (user, 2026-09-05) — everything in the nine lots was verified in this container
+only, and the interruption lot's tests carry bounds calibrated on this machine, so slower CI
+hardware is where a surprise would land. `main` has not been pushed since, so this has still
+never run. Second, every method that takes a `signal` must take a `timeout` (user,
+2026-09-07): `OptionsWithSignal` becomes `Interruptible` and carries both, which leaves
+`transaction()`, `bulkWrite()` and `output()` to do — and one design question to settle
+first, `mem:follow-ups`. When both hold, the user judges the release ready — the bump itself
+remains an instructed act, never an inferred one.
 
-**Nothing is in flight.** The query-interruption lot merged on 2026-09-05 (§ below), and
-`mem:follow-ups` holds what is left — none of it scheduled.
+**A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
+the 2026-09-05 entry in `mem:follow-ups` called for.
+
+**Nothing is in flight**, but one thing is now scheduled: the `Interruptible` work above is
+the next lot and has no branch yet. Everything else in `mem:follow-ups` remains unscheduled.
 
 ## Lot 9 — query interruption, merged 2026-09-05
 
@@ -115,6 +121,26 @@ Numbers: `mem:measurements`. Merge `a06c349`, 20 commits.
 `OPFSCoopSyncVFS`, `AccessHandlePoolVFS`, `MemoryVFS` by default — a `signal` still stops
 the wait and not the work. Those four accept `build: 'async'`, which is the escape hatch
 that costs no hosting change. The README says all of this in one table.
+
+## The documentation is three pages since 2026-09-07
+
+`README.md`, `API.md` and `VFS.md`, on `main` and not a lot — the README went from 664
+lines to 135. Three things about it the files do not say:
+
+- **The generator both writes VFS.md and reads it.** `scripts/render-vfs-matrix.ts` links a
+  VFS name in the table to its own `### \`Name\`` heading under *Per-VFS notes* when that
+  heading exists. So renaming or deleting one of those headings changes generated output,
+  and CI's `git diff --exit-code VFS.md` is what reports it — not the editor.
+- **The Known Limitations triage has a rule.** What holds on every VFS stayed in the README;
+  what belongs to one VFS went to that VFS's section. `Guarantees` was created from the
+  three consumer-facing promises that were duplicated between the README and Error handling
+  — read concurrency, read-your-own-writes, serialized writes — so those now have one home.
+- **The split surfaced three false claims, and a question found them, not a review.** Asking
+  whether `transaction()` took a `timeout` exposed that `timeout` was in no option table,
+  that "the library adds no per-request timeout" had been false since the interruption lot,
+  and that five members of `SQLiteErrorCode` were undocumented. All three are fixed. **The
+  error table is kept true by nothing** — it was compared to `SQLiteErrorCode` by hand, and
+  a member added later will not be noticed.
 
 ## The dropped chunk — fixed on `main` 2026-09-04, outside the rc.5 lots
 

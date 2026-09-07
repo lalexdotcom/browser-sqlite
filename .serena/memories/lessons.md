@@ -544,3 +544,24 @@ against a 30 s project default. A machine half the speed exceeds it — and **a 
 exceeds its timeout does not fail, it expires without naming what it was waiting for**, which
 is precisely the failure `waitUntil` exists to prevent. The budget would have reintroduced it
 from the other side. That test carries its own 90 s timeout and a comment saying why.
+
+## A documentation heading can be asserted by a test — 2026-09-07
+
+Renaming the README's *Bundler Configuration* section to lowercase `configuration` while
+splitting the documentation broke nothing visible, so the same rename was carried into the
+error message `pool.ts` raises when the worker URL 404s. That message is asserted at the
+character level: `tests/browser/lifecycle.test.ts` expects
+`stringContaining('Bundler Configuration')`. The suite would have caught it at commit — the
+pre-commit hook runs all three configs — but only after several minutes, and the diagnosis
+from a browser test failing on a string is not obvious.
+
+**Before renaming a documentation heading, grep the repository for its exact text.** Two
+kinds of things cite one: an error message that tells a consumer where to read, and a test
+pinning that message. Here the fix was to restore the original casing on both sides rather
+than to edit the test — the section had that name first, and the string is what a consumer
+sees.
+
+The general form: prose in `src/` is not free of coupling. The same split left seven
+comments and one error message pointing at README sections that had moved to `API.md` and
+`VFS.md`; nothing failed, and nothing would have. `grep -rn README src/` is the sweep, and
+it is worth running whenever a documentation file is reorganised.

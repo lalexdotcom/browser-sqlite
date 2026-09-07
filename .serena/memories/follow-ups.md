@@ -71,34 +71,28 @@ trickle, and it is no longer a deduction.
 
 ## Owed before rc.5 (user, 2026-09-05)
 
-### The README is too dense — split it
+### `signal` and `timeout` travel together — `OptionsWithSignal` becomes `Interruptible`
 
-**This gates the release.** The user's judgement, 2026-09-05: the README has grown past what
-one page should carry, and it is to be reworked before rc.5 is tagged. Not a defect and not
-a rewrite of what it says — a question of shape.
+**This gates rc.5. The user's decision, 2026-09-07.** Every method that accepts a `signal`
+must accept a `timeout`. The type in `src/api.ts` that today adds only `signal` is renamed
+`Interruptible` and carries both, so the pairing is structural rather than repeated per
+options type.
 
-What makes it dense is worth knowing before touching it, because most of it was added
-deliberately and each piece has a reason on record:
+Three methods have `signal` and no `timeout`: **`transaction()`**
+(`SQLiteTransactionOptions`), **`bulkWrite()`** (`SQLiteBulkWriteOptions`) and **`output()`**
+(`SQLiteOutputOptions`). `read`, `write`, `stream`, `chunk` and `first` already have both,
+through `SQLiteQueryOptions` and `SQLiteChunkOptions`, which is where `timeout` lives today.
 
-- **Two of its tables are GENERATED** — the VFS matrix from `VFS_CAPABILITIES` and the
-  browser floors computed from `@mdn/browser-compat-data` in `scripts/render-vfs-matrix.ts`.
-  Whatever the new shape is, those regions stay generated and their generator must follow
-  them. A split that leaves the generator writing into a file that no longer has that
-  section breaks the build silently.
-- **The register is settled and is not what needs changing** (`mem:conventions`): state the
-  constraint and what it costs the consumer; mechanism, evidence and investigation live
-  elsewhere. Passages have been cut to one sentence for exactly this. Density is not verbosity
-  here — it is coverage.
-- **One instruction in it is verified by a fixture and one field is kept alive by another**:
-  `tests/consumer-vite6` is the only thing checking the `optimizeDeps.exclude` line, and the
-  Parcel fixture is why `main` still exists in `package.json`. Moving that prose does not move
-  those tests; if a section leaves the README, say where it went so the fixture's comment
-  still points at something.
-- **The newest section, Interrupting a query**, was written after the interruption lot and
-  carries a matrix of what a `signal` stops per build. It is the freshest example of the
-  density problem AND of the register working.
-
-Nothing here says HOW to split it — that is the design conversation, not this entry.
+**The open question is what `timeout` MEANS on the three, and it is not the same question
+as on a query.** On a statement it is a budget of SQLite EXECUTION time, enforced by the
+worker's progress handler, and time the caller spends between two chunks is deliberately
+not charged to it (`docs/superpowers/specs/2026-09-04-query-interruption-design.md` §5).
+None of the three is one statement: a transaction spans caller code between its statements,
+and `bulkWrite`/`output` span many batches with the producer's own time in between. A
+budget that charges only SQLite execution may never fire on a callback that hangs, and a
+wall-clock budget is a different guarantee from the one `timeout` names elsewhere. Decide
+this before implementing, not during — `mem:lessons` on deadlines belonging to an operation
+CLASS is the entry that applies.
 
 ## Notes, with nothing to fix
 
