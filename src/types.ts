@@ -24,7 +24,6 @@ type SQLOptions = {
   chunkSize?: number;
   /** Chunks the worker may send before waiting for a credit. Spec §3.2. */
   credits?: number;
-  timeout?: number;
   /** When true, the worker installs an async progress handler so an AbortSignal can stop a running step(). */
   abortable?: boolean;
 };

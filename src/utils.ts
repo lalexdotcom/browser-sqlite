@@ -115,6 +115,49 @@ export const mergeSignals = (
 };
 
 /**
+ * The `timeout` option: a wall-clock budget in milliseconds, counted from the
+ * call. Returns the signal the call should actually use — the caller's own,
+ * merged with one this library owns and aborts when the budget is spent.
+ *
+ * The abort reason IS the error the caller receives. Every abort path in this
+ * library rejects with `signal.reason`, and `mergeSignals` relays a reason
+ * verbatim, so nothing downstream has to ask which signal fired. That is why
+ * this is an AbortController and a setTimeout rather than
+ * `AbortSignal.timeout()`, which offers no way to set the reason.
+ *
+ * `release()` is owed exactly once, however the call ends.
+ */
+export const withDeadline = (
+  options:
+    | { signal?: AbortSignal | undefined; timeout?: number | undefined }
+    | undefined,
+  method: string,
+): { signal: AbortSignal | undefined; release: () => void } => {
+  const budget = options?.timeout;
+  if (budget === undefined)
+    return { signal: options?.signal, release: () => {} };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(
+      new SQLiteError(
+        'OPERATION_TIMEOUT',
+        `${method}() exceeded its timeout of ${budget} ms.`,
+        { timeout: budget },
+      ),
+    );
+  }, budget);
+  const { signal, release } = mergeSignals(options?.signal, controller.signal);
+  return {
+    signal,
+    release: () => {
+      clearTimeout(timer);
+      release();
+    },
+  };
+};
+
+/**
  * Routing guard for the read-shaped methods (`read`, `chunk`, `stream`, `first`).
  * Throws before a lease is taken, so a rejected statement costs no pool capacity.
  *

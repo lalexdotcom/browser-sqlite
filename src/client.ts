@@ -51,6 +51,7 @@ import {
   renderPragmas,
   resolvePragmas,
   resolveWasmLocation,
+  withDeadline,
 } from './utils';
 
 /**
@@ -966,9 +967,14 @@ export const createSQLiteClient = (
     options?: SQLiteChunkOptions,
   ) => {
     assertReadable(sql, 'read');
-    return readWithRetry(options?.signal, (worker) =>
-      readWorker<T>(worker, sql, params, options),
-    );
+    const { signal, release } = withDeadline(options, 'read');
+    try {
+      return await readWithRetry(signal, (worker) =>
+        readWorker<T>(worker, sql, params, { ...options, signal }),
+      );
+    } finally {
+      release();
+    }
   };
 
   /**
@@ -983,9 +989,14 @@ export const createSQLiteClient = (
     T extends Record<string, unknown> = Record<string, unknown>,
   >(sql: string, params?: unknown[], options?: SQLiteChunkOptions) {
     assertReadable(sql, 'chunk');
-    yield* streamWithRetry(options?.signal, (worker) =>
-      chunkWorker<T>(worker, sql, params, options),
-    );
+    const { signal, release } = withDeadline(options, 'chunk');
+    try {
+      yield* streamWithRetry(signal, (worker) =>
+        chunkWorker<T>(worker, sql, params, { ...options, signal }),
+      );
+    } finally {
+      release();
+    }
   };
 
   /**
@@ -999,9 +1010,14 @@ export const createSQLiteClient = (
     T extends Record<string, unknown> = Record<string, unknown>,
   >(sql: string, params?: unknown[], options?: SQLiteChunkOptions) {
     assertReadable(sql, 'stream');
-    yield* streamWithRetry(options?.signal, (worker) =>
-      streamRows<T>(worker, sql, params, options),
-    );
+    const { signal, release } = withDeadline(options, 'stream');
+    try {
+      yield* streamWithRetry(signal, (worker) =>
+        streamRows<T>(worker, sql, params, { ...options, signal }),
+      );
+    } finally {
+      release();
+    }
   };
 
   /**
@@ -1015,10 +1031,15 @@ export const createSQLiteClient = (
     params?: unknown[],
     options?: SQLiteQueryOptions,
   ) => {
-    const lease = await acquireInstrumented('write', options?.signal);
+    const { signal, release } = withDeadline(options, 'write');
+    const lease = await acquireInstrumented('write', signal);
     try {
-      return await writeWorker<T>(lease.worker, sql, params, options);
+      return await writeWorker<T>(lease.worker, sql, params, {
+        ...options,
+        signal,
+      });
     } finally {
+      release();
       // Before the await: afterWrite bumps the epoch synchronously so that a
       // read chained after write() sees the new epoch and runs the barrier. In
       // `finally`, so a failed write bumps too: that costs a barrier statement,
@@ -1053,9 +1074,14 @@ export const createSQLiteClient = (
     options?: SQLiteQueryOptions,
   ) => {
     assertReadable(sql, 'first');
-    return readWithRetry(options?.signal, (worker) =>
-      firstWorker<T>(worker, sql, params, options),
-    );
+    const { signal, release } = withDeadline(options, 'first');
+    try {
+      return await readWithRetry(signal, (worker) =>
+        firstWorker<T>(worker, sql, params, { ...options, signal }),
+      );
+    } finally {
+      release();
+    }
   };
 
   const bulkFor = createBulk({ file: dbFile, locks: createLocks(), logger });

@@ -41,7 +41,7 @@ export const chunk = async function* <
   params?: unknown[],
   options?: SQLiteChunkOptions & { credits?: number },
 ): AsyncGenerator<T[]> {
-  const { signal, chunkSize, credits, timeout } = options ?? {};
+  const { signal, chunkSize, credits } = options ?? {};
 
   // B9: addEventListener never fires for a signal that is already aborted.
   if (signal?.aborted) throw signal.reason;
@@ -50,7 +50,6 @@ export const chunk = async function* <
   const iterator = worker.query<T>(sql, params, {
     chunkSize,
     credits,
-    timeout,
     abortable: signal !== undefined,
   });
   try {
@@ -140,14 +139,13 @@ export const writeWorker = async <
   params?: unknown[],
   options?: SQLiteQueryOptions,
 ): Promise<{ result: T[]; affected: number }> => {
-  const { signal, timeout } = options ?? {};
+  const { signal } = options ?? {};
 
   // B9: addEventListener never fires for a signal that is already aborted.
   if (signal?.aborted) throw signal.reason;
 
   const { aborted, teardown } = makeAbortRace(signal);
   const iterator = worker.query<T>(sql, params, {
-    timeout,
     abortable: signal !== undefined,
   });
   const result: T[] = [];

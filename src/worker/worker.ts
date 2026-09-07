@@ -56,19 +56,6 @@ type SQLOptions = {
  */
 const PROGRESS_OPS = 100_000;
 
-/**
- * Carries the code across the postMessage boundary. The worker cannot import
- * SQLiteError — `src/errors.ts` is the consumer's surface and the worker bundle
- * does not need it — so the code travels as a field and `workerError` in
- * `src/pool.ts` mints the real error on the other side.
- */
-class WorkerQueryTimeout extends Error {
-  readonly errorCode = 'OPERATION_TIMEOUT' as const;
-  constructor(budget: number) {
-    super(`Query exceeded its timeout of ${budget} ms of execution.`);
-  }
-}
-
 const WA_SQLITE_BUILDS = {
   sync: () =>
     import(/* webpackChunkName: "wa-sqlite" */ 'wa-sqlite/dist/wa-sqlite.mjs'),
@@ -329,8 +316,6 @@ const open = (file: string, options: OpenOptions) => {
 
     const { sqlite, db, module } = await openedDB;
     const { chunkSize = 1 } = options ?? {};
-    let spent = 0;
-    let stepStart = 0;
 
     const buffer: Record<string, unknown>[] = [];
 
@@ -347,26 +332,20 @@ const open = (file: string, options: OpenOptions) => {
       while (true) {
         if (gate.isStopped()) break;
 
-        stepStart = performance.now();
         let result: number;
         try {
           result = await sqlite.step(stmt);
         } catch (e) {
-          spent += performance.now() - stepStart;
           if ((e as { code?: number })?.code === SQLITE_INTERRUPT) {
-            // Three triggers can raise it, and only the worker knows which:
-            // (1) a `stop` message processed by gate.stop(); (2) the shared
-            // slot written by interrupt() on the sync build, which never
-            // yields so the message cannot reach it; (3) the budget. The
-            // first two mean the client already rejected — break so settle()
-            // sees a clean exit and keeps the statement cached. The third
-            // means the caller is still waiting — throw so they get an error.
-            if (gate.isStopped() || abortedHere()) break;
-            throw new WorkerQueryTimeout(timeout as number);
+            // Two triggers, and both mean the client has already rejected:
+            // a `stop` message processed by gate.stop(), or the shared slot
+            // written by interrupt() on the sync build, which never yields so
+            // the message cannot reach it. Break, so settle() sees a clean
+            // exit and keeps the statement cached.
+            break;
           }
           throw e;
         }
-        spent += performance.now() - stepStart;
         if (gate.isStopped()) break;
 
         if (result === SQLITE_ROW) {
@@ -433,25 +412,12 @@ const open = (file: string, options: OpenOptions) => {
       }
     };
 
-    // The budget is EXECUTION time: only what is spent inside step() counts, so
-    // a slow consumer of stream() is never charged for its own pauses. The
-    // handler runs inside step(), so it adds the current step's elapsed time to
-    // what earlier steps of this call accumulated.
-    const { timeout, abortable } = options ?? {};
-    // Three shapes, one handler. A `timeout` alone never needs to yield, and
-    // yielding is the only cost this design has — so it is spent exactly where
-    // nothing else can carry the signal into a running step().
+    const { abortable } = options ?? {};
     const wantsSignal = abortable === true;
     const canYield = currentBuild !== 'sync';
     const abortedHere = () =>
       slot !== undefined && Atomics.load(slot, abortIndex as number) === callId;
-    if (
-      timeout !== undefined ||
-      (wantsSignal && (canYield || slot !== undefined))
-    ) {
-      const overBudget = () =>
-        timeout !== undefined &&
-        spent + (performance.now() - stepStart) > timeout;
+    if (wantsSignal && (canYield || slot !== undefined)) {
       sqlite.progress_handler(
         db,
         PROGRESS_OPS,
@@ -459,9 +425,9 @@ const open = (file: string, options: OpenOptions) => {
           ? async () => {
               // The task turn is what lets a queued `stop` be delivered.
               await gate.tick();
-              return gate.isStopped() || overBudget() ? 1 : 0;
+              return gate.isStopped() ? 1 : 0;
             }
-          : () => (abortedHere() || overBudget() ? 1 : 0),
+          : () => (abortedHere() ? 1 : 0),
         null,
       );
     }
@@ -528,10 +494,7 @@ const open = (file: string, options: OpenOptions) => {
 
       yield sqlite.changes(db);
     } finally {
-      if (
-        timeout !== undefined ||
-        (wantsSignal && (canYield || slot !== undefined))
-      )
+      if (wantsSignal && (canYield || slot !== undefined))
         sqlite.progress_handler(db, 0, () => 0, null);
     }
   };
