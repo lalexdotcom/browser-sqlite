@@ -42,7 +42,7 @@ export type OptionsWithSignal<T = unknown> = T & {
    * touching nothing else.
    *
    * Whether it also stops the statement SQLite is already executing depends on
-   * your build and your page: see the README's Interrupting a query section.
+   * your build and your page: see the Interrupting a query section of API.md.
    */
   signal?: AbortSignal | undefined;
 };
@@ -53,8 +53,8 @@ export type SQLiteQueryOptions = OptionsWithSignal<{
    * Milliseconds of SQLite EXECUTION this query may spend before it is stopped
    * and rejected with `QUERY_TIMEOUT`. Time the caller spends between two
    * chunks of a `stream()` is not charged to it — for a wall-clock deadline,
-   * pass `AbortSignal.timeout(ms)` as `signal` instead. See the README's
-   * Interrupting a query section.
+   * pass `AbortSignal.timeout(ms)` as `signal` instead. See the Interrupting a
+   * query section of API.md.
    */
   timeout?: number;
 }>;
@@ -74,8 +74,8 @@ export type SQLiteChunkOptions = OptionsWithSignal<{
    * Milliseconds of SQLite EXECUTION this query may spend before it is stopped
    * and rejected with `QUERY_TIMEOUT`. Time the caller spends between two
    * chunks of a `stream()` is not charged to it — for a wall-clock deadline,
-   * pass `AbortSignal.timeout(ms)` as `signal` instead. See the README's
-   * Interrupting a query section.
+   * pass `AbortSignal.timeout(ms)` as `signal` instead. See the Interrupting a
+   * query section of API.md.
    */
   timeout?: number;
 }>;

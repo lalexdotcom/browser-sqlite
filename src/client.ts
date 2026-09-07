@@ -137,14 +137,14 @@ export type CreateSQLiteClientOptions = {
   /**
    * Which VFS stores the database. Required: a VFS decides *where* the bytes
    * live, and a database written through one VFS is not visible through
-   * another. See the README's VFS Selection guide.
+   * another. See the VFS Selection guide in VFS.md.
    */
   vfs: SQLiteVFS;
   /**
    * Which wa-sqlite WebAssembly build to load. Defaults to the first entry of
    * `VFS_CAPABILITIES[vfs]` — `sync` where the VFS supports it, since it is both the
    * fastest and the most portable, otherwise `async`. `jspi` needs engine
-   * support; see the README's Builds section for versions.
+   * support; see the Builds section of VFS.md for versions.
    *
    * @throws at construction when the build is not one the chosen VFS supports.
    */
@@ -323,7 +323,7 @@ export const createSQLiteClient = (
   if (!clientOptions?.vfs) {
     throw new SQLiteError(
       'INVALID_OPTION',
-      `vfs is required. ${RECOMMENDED_VFS} is the recommended universal choice and was the previous default — pass it to keep reading a database created before this version. Compare VFS in the README's VFS Selection guide, and measure your own targets at https://lalexdotcom.github.io/browser-sqlite/`,
+      `vfs is required. ${RECOMMENDED_VFS} is the recommended universal choice and was the previous default — pass it to keep reading a database created before this version. Compare VFS in VFS.md, and measure your own targets at https://lalexdotcom.github.io/browser-sqlite/`,
     );
   }
 

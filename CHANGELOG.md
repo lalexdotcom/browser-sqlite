@@ -195,8 +195,25 @@ All notable changes to this project are documented here.
 
 ### Documentation
 
-No code changed. These are corrections to what the README told you to do.
+Corrections to what the documentation told you to do, and the split of a README
+that had grown past what one page should carry. No behaviour changed.
 
+- **The README is split into three pages.** `README.md` keeps the introduction,
+  installation, browser support, a usage example, the guarantees and the
+  limitations that hold on every VFS. Every method, property, option and error
+  code is now in `API.md`; VFS selection, builds and the per-VFS notes are in
+  `VFS.md`, which is also where the generated tables are written from now on.
+  Links that pointed at a README anchor point at the page that holds it, the
+  pointer inside the `vfs is required` error message included.
+- **`timeout` is documented.** It is accepted by `read()`, `write()`,
+  `stream()`, `chunk()` and `first()`, and it appeared in no option table. The
+  statement that "the library adds no per-request timeout" is withdrawn — it has
+  been false since query interruption shipped.
+- **Five error codes were missing from the table**: `QUERY_TIMEOUT`,
+  `INVALID_OPTION`, `INVALID_PRAGMA`, `INVALID_IDENTIFIER` and
+  `BULK_WRITE_FAILED`. Every member of `SQLiteErrorCode` is now listed.
+- **The per-build browser tables for `sync` and `async` are gone.** Every cell
+  in them read `Any`; the note beside each build says the same in fewer words.
 - **A long-running *read* serializes other reads exactly as a write transaction
   does.** The README said it did not. Where one exclusive access handle is
   rotated between workers, the worker running the long statement holds it until

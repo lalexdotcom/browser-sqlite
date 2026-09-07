@@ -82,7 +82,7 @@ export const isWriteQuery = (sql: string) => !isReadQuery(sql);
  *
  * NOT `AbortSignal.any()`. That is Chrome 116 / Firefox 124 / Safari 17.4, far
  * above this library's floor (Chrome 92 / Firefox 95 / Safari 15.4), and
- * adopting it would raise every row of the generated README matrix for every
+ * adopting it would raise every row of the generated VFS.md matrix for every
  * consumer.
  *
  * The common case allocates nothing: with one side absent, or one side already

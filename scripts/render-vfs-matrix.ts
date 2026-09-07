@@ -296,21 +296,20 @@ const RULE = `|${BROWSERS.map(() => '---').join('|')}|`;
  */
 const buildTable = BUILDS.flatMap((build) => {
   const features = BUILD_REQUIREMENTS[build];
-  const cells = BROWSERS.map((b) =>
-    features.length === 0 ? 'Any' : versionCell(floorOf(features, b)),
-  );
+  // A build that requires no feature runs wherever the library does, so its row
+  // would read `Any` in every column: the note says that in fewer characters.
+  const table =
+    features.length === 0
+      ? []
+      : [
+          HEADER,
+          RULE,
+          `| ${BROWSERS.map((b) => versionCell(floorOf(features, b))).join(' | ')} |`,
+          '',
+        ];
   // Table first: a reader following a link from the VFS table came for the
   // versions, not for the prose.
-  return [
-    `#### Build \`${build}\``,
-    '',
-    HEADER,
-    RULE,
-    `| ${cells.join(' | ')} |`,
-    '',
-    BUILD_NOTE[build],
-    '',
-  ];
+  return [`### Build \`${build}\``, '', ...table, BUILD_NOTE[build], ''];
 }).join('\n');
 
 const BEGIN =
@@ -322,11 +321,24 @@ const MEMORY_LABEL = {
   'whole-database': '**Whole database in RAM**, multiplied by `poolSize`',
 } as const satisfies Record<VFSMemoryModel, string>;
 
+const path = new URL('../VFS.md', import.meta.url);
+const source = readFileSync(path, 'utf8');
+
+/**
+ * The VFS that carry a section of their own under Per-VFS notes, read off the
+ * page itself: adding one makes the table link to it, removing one unlinks it,
+ * with nothing here to keep in step.
+ */
+const documented = new Set(
+  [...source.matchAll(/^### `(\w+)`$/gm)].map((m) => m[1]),
+);
+
 const rows = Object.entries(VFS_CAPABILITIES).map(([name, cap]) => {
+  const named = documented.has(name)
+    ? `[\`${name}\`](#${name.toLowerCase()})`
+    : `\`${name}\``;
   const label =
-    name === RECOMMENDED_VFS
-      ? `\`${name}\` **(recommended)**`
-      : `\`${name}\``;
+    name === RECOMMENDED_VFS ? `${named} **(recommended)**` : named;
   const builds = cap.builds
     .map((b) => `[\`${b}\`](#build-${b})`)
     .join(', ');
@@ -377,21 +389,19 @@ const splice = (
   const stop = source.indexOf(end);
   if (start === -1 || stop === -1) {
     throw new Error(
-      `README markers not found (${begin.slice(0, 40)}…) — see scripts/render-vfs-matrix.ts`,
+      `VFS.md markers not found (${begin.slice(0, 40)}…) — see scripts/render-vfs-matrix.ts`,
     );
   }
   if (stop < start) {
-    throw new Error('README END marker precedes its BEGIN marker');
+    throw new Error('VFS.md END marker precedes its BEGIN marker');
   }
   return source.slice(0, start + begin.length) + '\n\n' + body + '\n\n' + source.slice(stop);
 };
 
-const path = new URL('../README.md', import.meta.url);
-let readme = readFileSync(path, 'utf8');
-readme = splice(readme, BEGIN, END, table);
-readme = splice(readme, BUILD_BEGIN, BUILD_END, buildTable);
-writeFileSync(path, readme);
+let doc = splice(source, BEGIN, END, table);
+doc = splice(doc, BUILD_BEGIN, BUILD_END, buildTable);
+writeFileSync(path, doc);
 
 console.log(
-  `Rendered ${rows.length} VFS rows and ${BUILDS.length} build sections into README.md`,
+  `Rendered ${rows.length} VFS rows and ${BUILDS.length} build sections into VFS.md`,
 );

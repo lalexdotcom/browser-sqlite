@@ -157,7 +157,7 @@ export const BUILD_DEGRADES_WITHOUT = {
 
 /**
  * A platform feature a VFS may need. Which browser versions ship each one is
- * documentation data, not runtime data, so it lives in the README generator
+ * documentation data, not runtime data, so it lives in the VFS.md generator
  * (`scripts/render-vfs-matrix.ts`) with its sources — not here, where it would
  * ship to every consumer for nothing.
  */
@@ -272,7 +272,7 @@ export type VFSCapability = {
    * nothing to exclude.
    *
    * `VFS_CAPABILITIES` is the single source of truth the client guard, the
-   * conformance suite, the README generator and the benchmark page all read.
+   * conformance suite, the VFS.md generator and the benchmark page all read.
    * The gate is by this declaration, not by VFS name.
    */
   readonly exclusiveConnection: boolean;
@@ -282,7 +282,7 @@ export type VFSCapability = {
  * The single source of truth for VFS selection. `SQLiteVFS` is derived from its
  * keys, `worker/worker.ts` must supply a loader for every key, the guards in
  * `client.ts` read it, the conformance suite gates its scenarios on it, and the
- * README table is generated from it. Nothing may hold a second copy.
+ * VFS.md table is generated from it. Nothing may hold a second copy.
  *
  * Build order is a decision per VFS, not a rule: `sync` is both the fastest and
  * the most portable build, so it leads wherever supported; `OPFSAdaptiveVFS`
@@ -470,7 +470,7 @@ export const defaultBuildFor = (vfs: SQLiteVFS): SQLiteBuild =>
  * another. It is NOT a default — `vfs` is required, precisely so that the name
  * lives in the consumer's own source and cannot move underneath their data.
  *
- * It lives here, beside the table, because the README generator marks this row
+ * It lives here, beside the table, because the VFS.md generator marks this row
  * `(recommended)` and would otherwise hold a second copy. It is deliberately
  * not exported: a consumer writing `vfs: RECOMMENDED_VFS` would be exposed to
  * the same displacement the day the recommendation changes.
