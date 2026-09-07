@@ -141,6 +141,12 @@ export type SQLiteOutputOptions<SCHEMA extends Schema> = Interruptible<{
   indexes?: Index<SCHEMA>[];
   /** Rows queued for writing above which `enqueue()` defers. See `SQLiteBulkWriteOptions`. */
   queueSize?: number | undefined;
+  /**
+   * Milliseconds from the call — not from `close()` — within which the load
+   * must finish. Your producer's own time counts. On expiry the load stops
+   * between batches and `close()` rejects with `OPERATION_TIMEOUT`.
+   */
+  timeout?: number;
 }>;
 
 /**
@@ -165,6 +171,12 @@ export type SQLiteOutputOptions<SCHEMA extends Schema> = Interruptible<{
 export type SQLiteBulkWriteOptions = Interruptible<{
   /** Rows queued for writing above which `enqueue()` defers. */
   queueSize?: number | undefined;
+  /**
+   * Milliseconds from the call — not from `close()` — within which the load
+   * must finish. Your producer's own time counts. On expiry the load stops
+   * between batches and `close()` rejects with `OPERATION_TIMEOUT`.
+   */
+  timeout?: number;
 }>;
 
 /** A row for `output()`: generated columns are computed, never supplied. */

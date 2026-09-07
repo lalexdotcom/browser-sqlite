@@ -128,4 +128,43 @@ describe('query timeout', () => {
       await db.close();
     }
   });
+
+  it('bounds a bulkWrite from the call, not from close()', async () => {
+    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    try {
+      await db.write('CREATE TABLE t (a INTEGER)');
+      const { enqueue, close } = db.bulkWrite('t', ['a'], { timeout: 200 });
+      await enqueue({ a: 1 });
+      // The producer is slow, which is the whole case: nothing is executing in
+      // SQLite while it sleeps. Falsifier: remove the withDeadline composition
+      // in bulk.ts and close() resolves.
+      await new Promise((r) => setTimeout(r, 600));
+      await expect(close()).rejects.toMatchObject({
+        code: 'OPERATION_TIMEOUT',
+        timeout: 200,
+      });
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('bounds an output() the same way, leaving the target untouched', async () => {
+    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    try {
+      const { enqueue, close } = db.output(
+        'dest',
+        { a: 'INTEGER' },
+        { timeout: 200 },
+      );
+      await enqueue({ a: 1 });
+      await new Promise((r) => setTimeout(r, 600));
+      await expect(close()).rejects.toMatchObject({
+        code: 'OPERATION_TIMEOUT',
+      });
+      // Observationally a no-op: the target was never created.
+      await expect(db.read('SELECT a FROM dest')).rejects.toThrow();
+    } finally {
+      await db.close();
+    }
+  });
 });
