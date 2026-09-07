@@ -151,18 +151,21 @@ describe('query timeout', () => {
   it('bounds an output() the same way, leaving the target untouched', async () => {
     const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
     try {
+      await db.write('CREATE TABLE dest (a INTEGER)');
+      await db.write('INSERT INTO dest VALUES (42)');
       const { enqueue, close } = db.output(
         'dest',
         { a: 'INTEGER' },
         { timeout: 200 },
       );
-      await enqueue({ a: 1 });
+      await enqueue({ a: 99 });
       await new Promise((r) => setTimeout(r, 600));
       await expect(close()).rejects.toMatchObject({
         code: 'OPERATION_TIMEOUT',
       });
-      // Observationally a no-op: the target was never created.
-      await expect(db.read('SELECT a FROM dest')).rejects.toThrow();
+      // An aborted output() is observationally a no-op: the previous target
+      // stays intact and fully populated.
+      expect(await db.read('SELECT a FROM dest')).toEqual([{ a: 42 }]);
     } finally {
       await db.close();
     }
