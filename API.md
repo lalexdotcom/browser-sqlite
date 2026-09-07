@@ -77,8 +77,8 @@ Read queries are dispatched to any available worker, enabling concurrent reads.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. |
-| `timeout` | `number` (ms) | — | Milliseconds from the call before it is aborted and rejected with `OPERATION_TIMEOUT`. Wall clock — your own pauses between chunks count. See [Interrupting a call](#interrupting-a-call). |
+| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. See [Interrupting a call](#interrupting-a-call). |
+| `timeout` | `number` (ms) | — | Milliseconds from the call before it is aborted and rejected with `OPERATION_TIMEOUT`. See [Interrupting a call](#interrupting-a-call). |
 | `chunkSize` | `number` | `500` | Rows per chunk crossing the worker boundary. Back-pressure grants credits per chunk with a window of 2, so the worker may run up to `2 × chunkSize` rows ahead of the consumer. |
 
 On `read()` this is transport only — it still resolves with the whole array.
@@ -105,8 +105,8 @@ Write queries are serialized through a dedicated writer worker — only one writ
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. |
-| `timeout` | `number` (ms) | — | Milliseconds from the call before it is aborted and rejected with `OPERATION_TIMEOUT`. Wall clock. See [Interrupting a call](#interrupting-a-call). |
+| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. See [Interrupting a call](#interrupting-a-call). |
+| `timeout` | `number` (ms) | — | Milliseconds from the call before it is aborted and rejected with `OPERATION_TIMEOUT`. See [Interrupting a call](#interrupting-a-call). |
 
 ## *client*.stream
 
@@ -122,8 +122,8 @@ Use `chunk()` to iterate in batches: `for await (const rows of db.chunk(...))`.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. |
-| `timeout` | `number` (ms) | — | Milliseconds from the call before it is aborted and rejected with `OPERATION_TIMEOUT`. Wall clock — your own pauses between rows count. See [Interrupting a call](#interrupting-a-call). |
+| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. See [Interrupting a call](#interrupting-a-call). |
+| `timeout` | `number` (ms) | — | Milliseconds from the call before it is aborted and rejected with `OPERATION_TIMEOUT`. See [Interrupting a call](#interrupting-a-call). |
 | `chunkSize` | `number` | `500` | Rows per chunk crossing the worker boundary. Back-pressure grants credits per chunk with a window of 2, so the worker may run up to `2 × chunkSize` rows ahead of the consumer. |
 
 On `stream()`, `chunkSize` is the only lever on how many rows are in flight.
@@ -142,8 +142,8 @@ is per-batch — one `INSERT` per chunk rather than per row.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. |
-| `timeout` | `number` (ms) | — | Milliseconds from the call before it is aborted and rejected with `OPERATION_TIMEOUT`. Wall clock — your own pauses between chunks count. See [Interrupting a call](#interrupting-a-call). |
+| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. See [Interrupting a call](#interrupting-a-call). |
+| `timeout` | `number` (ms) | — | Milliseconds from the call before it is aborted and rejected with `OPERATION_TIMEOUT`. See [Interrupting a call](#interrupting-a-call). |
 | `chunkSize` | `number` | `500` | Rows per chunk crossing the worker boundary. Back-pressure grants credits per chunk with a window of 2, so the worker may run up to `2 × chunkSize` rows ahead of the consumer. |
 
 Here `chunkSize` is the batch size the consumer sees, not only a transport detail.
@@ -162,8 +162,8 @@ const user = await db.first<User>(
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. |
-| `timeout` | `number` (ms) | — | Milliseconds from the call before it is aborted and rejected with `OPERATION_TIMEOUT`. Wall clock. See [Interrupting a call](#interrupting-a-call). |
+| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. See [Interrupting a call](#interrupting-a-call). |
+| `timeout` | `number` (ms) | — | Milliseconds from the call before it is aborted and rejected with `OPERATION_TIMEOUT`. See [Interrupting a call](#interrupting-a-call). |
 
 `first()` stops the query after one row instead of draining the result set.
 
@@ -191,8 +191,8 @@ rejects write statements; `{ autoCommit: false }` leaves the commit to you.
 |---|---|---|---|
 | `readOnly` | `boolean` | `false` | Rejects write statements with `READ_ONLY_TRANSACTION`, at the call rather than at the first flush. |
 | `autoCommit` | `boolean` | `true` | Commits when the callback resolves. Set it false to commit or roll back yourself. |
-| `signal` | `AbortSignal` | — | Abandons the transaction. Rolls back and rejects with `signal.reason`; never commits. |
-| `timeout` | `number` (ms) | — | Milliseconds from the call before the transaction is abandoned. Rolls back and rejects with `OPERATION_TIMEOUT`. Wall clock — callback time between statements counts. See [Interrupting a call](#interrupting-a-call). |
+| `signal` | `AbortSignal` | — | Abandons the transaction. Rolls back and rejects with `signal.reason`; never commits. See [Interrupting a call](#interrupting-a-call). |
+| `timeout` | `number` (ms) | — | Milliseconds from the call before the transaction is abandoned. Rolls back and rejects with `OPERATION_TIMEOUT`. See [Interrupting a call](#interrupting-a-call). |
 
 ## *client*.bulkWrite
 
@@ -218,8 +218,8 @@ Await `enqueue()` to be slowed to the speed of the database. It resolves immedia
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `signal` | `AbortSignal` | — | Aborts the load between batches. `close()` rejects with `signal.reason`. |
-| `timeout` | `number` (ms) | — | Milliseconds from the call before the load is aborted. `close()` rejects with `OPERATION_TIMEOUT`. Wall clock — producer time between `enqueue()` calls counts. See [Interrupting a call](#interrupting-a-call). |
+| `signal` | `AbortSignal` | — | Aborts the load between batches. `close()` rejects with `signal.reason`. See [Interrupting a call](#interrupting-a-call). |
+| `timeout` | `number` (ms) | — | Milliseconds from the call before the load is aborted. `close()` rejects with `OPERATION_TIMEOUT`. See [Interrupting a call](#interrupting-a-call). |
 | `queueSize` | `number` | 2 batches | Rows queued for writing above which `enqueue()` defers. A batch is `floor(32766 / columns)` rows. |
 
 ## *client*.output
@@ -245,8 +245,8 @@ did not exist appears only at `close()`. Single-use, like `bulkWrite`.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `indexes` | `Index[]` | — | Indexes built after the swap, under their final names. A column name, an array of them, or `{ columns, unique }`. |
-| `signal` | `AbortSignal` | — | Aborts the load between batches. `close()` rejects with `signal.reason` and the target is untouched. |
-| `timeout` | `number` (ms) | — | Milliseconds from the call before the load is aborted. `close()` rejects with `OPERATION_TIMEOUT`; the target is untouched. Wall clock — producer time between `enqueue()` calls counts. See [Interrupting a call](#interrupting-a-call). |
+| `signal` | `AbortSignal` | — | Aborts the load between batches. `close()` rejects with `signal.reason` and the target is untouched. See [Interrupting a call](#interrupting-a-call). |
+| `timeout` | `number` (ms) | — | Milliseconds from the call before the load is aborted. `close()` rejects with `OPERATION_TIMEOUT`; the target is untouched. See [Interrupting a call](#interrupting-a-call). |
 | `queueSize` | `number` | 2 batches | Rows queued for writing above which `enqueue()` defers. A batch is `floor(32766 / columns)` rows. |
 
 **Inside a transaction, `output()` costs more than it looks.** On its own it loads rows outside any transaction and holds the write lock only for the final swap. Called on a `tx`, the entire load runs inside your transaction — every other write, in this tab and in others, waits for it to finish.
@@ -359,6 +359,11 @@ SQLite is executing — depends on the build behind your VFS:
 |---|---|---|
 | `async`, `jspi` | `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `IDBBatchAtomicVFS`, `IDBMirrorVFS`, `MemoryAsyncVFS` | yes |
 | `sync` | `OPFSWriteAheadVFS`, `OPFSCoopSyncVFS`, `AccessHandlePoolVFS`, `MemoryVFS` | only if your page is cross-origin isolated |
+
+`timeout` counts wall clock from the call, and your own time counts against it: the wait for a free
+pool worker, the wait for another tab's write lock, and every pause you take yourself — between two
+chunks of a `stream()`, inside a `transaction()` callback, between two `enqueue()` calls on a
+`bulkWrite()`.
 
 `timeout` aborts through the same path a `signal` does, so the same limit applies. Where it does
 not stop the running statement, an aborted call keeps running to its end on its worker; the pool's
