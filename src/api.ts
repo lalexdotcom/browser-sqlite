@@ -114,6 +114,12 @@ export type SQLiteTransactionOptions = Interruptible<{
   readOnly?: boolean;
   /** Commits when the callback resolves. Defaults to true. */
   autoCommit?: boolean;
+  /**
+   * Milliseconds from the call within which the transaction must finish. The
+   * callback's own time counts. On expiry it rolls back and rejects with
+   * `OPERATION_TIMEOUT`.
+   */
+  timeout?: number;
 }>;
 
 /** Column definitions for `output()`. */

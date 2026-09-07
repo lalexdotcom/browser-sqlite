@@ -103,4 +103,29 @@ describe('query timeout', () => {
       await db.close();
     }
   });
+
+  it('bounds a transaction, including the callback between its statements', async () => {
+    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    try {
+      await db.write('CREATE TABLE t (a INTEGER)');
+      // The callback runs no long statement: it sleeps. Only a wall-clock
+      // deadline can end this, which is what the test pins. Falsifier: remove
+      // the withDeadline composition in transaction.ts and the promise
+      // resolves after the sleep instead of rejecting.
+      await expect(
+        db.transaction(
+          async (tx) => {
+            await tx.write('INSERT INTO t VALUES (1)');
+            await new Promise((r) => setTimeout(r, 600));
+            await tx.write('INSERT INTO t VALUES (2)');
+          },
+          { timeout: 200 },
+        ),
+      ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 200 });
+      // It rolled back: neither row survived.
+      expect(await db.read('SELECT a FROM t')).toEqual([]);
+    } finally {
+      await db.close();
+    }
+  });
 });
