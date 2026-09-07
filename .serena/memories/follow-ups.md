@@ -92,30 +92,6 @@ What would settle it is a real campaign — several runs per cell, several devic
 axes the bench page does not cover. Until then the recommendation stands. Numbers:
 `mem:measurements`, "The `sync` build against the `async` build".
 
-### DELETE-TIMEOUT-1 — believed fixed by the 2026-09-02 deletion rewrite, one device unverified
-
-**Restored 2026-09-07: `mem:measurements` had been pointing at this entry while it existed
-nowhere.** A dangling pointer, the shape `mem:lessons` warns about — a deferral must name a
-destination that exists.
-
-`deleteDatabase` neither resolved nor rejected on `OPFSWriteAheadVFS` and, less often,
-`OPFSCoopSyncVFS`. It never reported success without deleting, so nothing was lost — the
-caller hung.
-
-**Every occurrence in the `.bench/` corpus predates the rewrite of `src/delete.ts` on
-2026-09-02**, and 36 exports since carry none, on any engine — including 15 Firefox runs of
-`OPFSWriteAheadVFS` where roughly one deletion in four used to hang. Table and method:
-`mem:measurements`, "`deleteDatabase` hangs — the whole corpus, split by era".
-
-**Why it stays open anyway:** the device that produced it most reliably, **macOS Safari
-26.5.2**, has not been re-run since. Three hangs in four attempts there, and the post-rewrite
-26.x arm is 26.6.2. One run on 26.5.2 closes this entry or reopens it properly.
-
-**Do not chase the `readwrite-unsafe` explanation.** It was a correlation that no export can
-test — the mode is Chrome/Android 121+ and `null` elsewhere, so "Chromium" and "has the mode"
-name the same engines — and the era split points at our own deletion path instead. A Chrome
-120 campaign was proposed for it on 2026-09-07 and dropped for that reason.
-
 ## Notes, with nothing to fix
 
 ### An abort through the shared slot reports `done`, not `error` — and that is right

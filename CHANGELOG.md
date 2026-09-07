@@ -180,6 +180,14 @@ All notable changes to this project are documented here.
   that survived survived by accident, on an OPFS constraint this library never
   arranged, and reported `WORKER_CRASHED`. Every client now holds a lock for its
   lifetime and `deleteDatabase` refuses while any client holds it.
+- **`deleteDatabase` no longer hangs on `OPFSWriteAheadVFS` or `OPFSCoopSyncVFS`
+  outside Chromium.** The call used to neither resolve nor reject. Nothing was
+  lost — it never reported success without deleting — but the caller waited for
+  ever, and a `signal` was the only way out. Roughly one deletion in four hung on
+  Firefox. It has not recurred in the 36 benchmark runs taken across every engine
+  since the deletion path was rewritten, and one of those changes is a yield that
+  Firefox needs and Chromium does not: the Web Locks API releases a lock by
+  queuing a task, so returning immediately made a freed lock still look held.
 - **A second client on an `AccessHandlePoolVFS` database no longer opens and then
   silently fails to read anything.** Measured on both engines: it used to resolve
   `SELECT 1` and return `no such table` for every real table, and which of the two

@@ -146,16 +146,9 @@ JavaScript Promise Integration — the same asynchrony handled by the engine rat
 
 **Targeting Chromium, it is the most balanced choice on the benchmark page.** It is rarely first on a single row — `OPFSCoopSyncVFS` edges it on scans, `AccessHandlePoolVFS` on write latency — but it is near the front of every one, it leads bulk loading, and it is the only VFS that keeps concurrent reads there while still running the faster `sync` build. That combination is what no other VFS offers on Chromium. Read the numbers on the [benchmark page](https://lalexdotcom.github.io/browser-sqlite/) rather than trusting this sentence a year from now.
 
-**`deleteDatabase` used to fail to settle outside Chromium**, on `OPFSWriteAheadVFS` and `OPFSCoopSyncVFS` — the call neither resolved nor reported an error, though it never reported success without deleting. **It has not been observed since this library's deletion path was rewritten**, and the one platform that showed it most often is now clean: 36 benchmark runs across every engine since, with none on Firefox, where roughly one deletion in four used to hang.
-
-One device that produced it has not been re-tested since — macOS Safari 26.5.2. Treat the case as fixed rather than as proven fixed, and report it if you meet it.
-
 ### `OPFSCoopSyncVFS`
 
 **`OPFSCoopSyncVFS` does not read concurrently, and stalls unpredictably under a pool.** Unlike the other OPFS VFS it implements its own locking and silently ignores the `lockPolicy: 'shared'` this library constructs every VFS with, holding one *exclusive* access handle and rotating it between workers instead of one per connection. A read issued while a write transaction is open is **never served** — the pool acquisition blocks before any `AbortSignal` is consulted — where `IDBBatchAtomicVFS`, `IDBMirrorVFS` and `OPFSAnyContextVFS` serve it every time. A bulk insert either finishes promptly or **exceeds 30 seconds**, with no middle ground and no consistency across runs. None of this depends on `readwrite-unsafe`: unlike the reduced mode described above, it happens on Chromium too.
-
-It can also fail to settle on `deleteDatabase` outside Chromium — see
-[`OPFSWriteAheadVFS`](#opfswriteaheadvfs) above.
 
 ### `AccessHandlePoolVFS`
 

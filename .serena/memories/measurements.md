@@ -1543,6 +1543,18 @@ pre-rate there was ~29 %, so 15 consecutive clean runs is not a small sample aga
 gap is **macOS Safari 26.5.2**, which produced 3 hangs in 4 and has not been re-run since —
 the 26.x device in the post-rewrite set is 26.6.2.
 
+**CLOSED 2026-09-07, on a mechanism and not only on absence.** `DELETE-TIMEOUT-1` was deleted
+from `mem:follow-ups` the same day. `8a5a649` says in its own message that the surviving VFS
+"survived by accident, on OPFS handle exclusivity this library never arranged" — HANDLE-1 — and
+replaces that with a non-queuing acquisition carrying the comment *"A request that never queues
+cannot deadlock"*. The same commit adds a `setTimeout(0)` before returning, because the Web
+Locks API releases a lock by queuing a global task, so an immediate return made a freed lock
+look held — and it notes **Chromium does not require this**, which matches Firefox being the
+worst arm by far. The user closed it on 2026-09-07 with the argument that macOS users track
+patch releases, so a caveat about a superseded 26.5.2 buys a consumer nothing; two further runs
+on 26.6 were offered and declined as uninformative — that arm never failed. The fix is recorded
+for consumers in `CHANGELOG.md` under Fixed, because **rc.4 is published with the old path**.
+
 **The `readwrite-unsafe` attribution is now doubly unsupported.** It was already only a
 correlation — the mode is Chrome/Android 121+ and `null` everywhere else, so "Chromium" and
 "has the mode" name the same engines in every export we hold. And the era split says the
