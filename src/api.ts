@@ -42,22 +42,25 @@ export type Interruptible<T = unknown> = T & {
    * touching nothing else.
    *
    * Whether it also stops the statement SQLite is already executing depends on
-   * your build and your page: see the Interrupting a query section of API.md.
+   * your build and your page: see the Interrupting a call section of API.md.
    */
   signal?: AbortSignal | undefined;
+  /**
+   * Milliseconds from the call within which it must finish, after which it is
+   * aborted and rejected with `OPERATION_TIMEOUT`. It is wall clock: time your
+   * own code spends — between two chunks of a `stream()`, inside a
+   * `transaction()` callback, between two `enqueue()` calls — counts against
+   * it, as does time spent waiting for a pool worker or for another tab's
+   * write lock.
+   *
+   * It aborts through the same path a `signal` does, so the same limit applies:
+   * see the Interrupting a call section of API.md.
+   */
+  timeout?: number | undefined;
 };
 
 /** Options every query method accepts. */
-export type SQLiteQueryOptions = Interruptible<{
-  /**
-   * Milliseconds of SQLite EXECUTION this query may spend before it is stopped
-   * and rejected with `OPERATION_TIMEOUT`. Time the caller spends between two
-   * chunks of a `stream()` is not charged to it — for a wall-clock deadline,
-   * pass `AbortSignal.timeout(ms)` as `signal` instead. See the Interrupting a
-   * query section of API.md.
-   */
-  timeout?: number;
-}>;
+export type SQLiteQueryOptions = Interruptible;
 
 /**
  * Options for the methods that cross the worker boundary in chunks.
@@ -70,14 +73,6 @@ export type SQLiteQueryOptions = Interruptible<{
 export type SQLiteChunkOptions = Interruptible<{
   /** Rows per chunk. Defaults to 500. */
   chunkSize?: number;
-  /**
-   * Milliseconds of SQLite EXECUTION this query may spend before it is stopped
-   * and rejected with `OPERATION_TIMEOUT`. Time the caller spends between two
-   * chunks of a `stream()` is not charged to it — for a wall-clock deadline,
-   * pass `AbortSignal.timeout(ms)` as `signal` instead. See the Interrupting a
-   * query section of API.md.
-   */
-  timeout?: number;
 }>;
 
 export type SQLiteWriteResult<T extends Record<string, unknown>> = {
@@ -114,12 +109,6 @@ export type SQLiteTransactionOptions = Interruptible<{
   readOnly?: boolean;
   /** Commits when the callback resolves. Defaults to true. */
   autoCommit?: boolean;
-  /**
-   * Milliseconds from the call within which the transaction must finish. The
-   * callback's own time counts. On expiry it rolls back and rejects with
-   * `OPERATION_TIMEOUT`.
-   */
-  timeout?: number;
 }>;
 
 /** Column definitions for `output()`. */
@@ -141,12 +130,6 @@ export type SQLiteOutputOptions<SCHEMA extends Schema> = Interruptible<{
   indexes?: Index<SCHEMA>[];
   /** Rows queued for writing above which `enqueue()` defers. See `SQLiteBulkWriteOptions`. */
   queueSize?: number | undefined;
-  /**
-   * Milliseconds from the call — not from `close()` — within which the load
-   * must finish. Your producer's own time counts. On expiry the load stops
-   * between batches and `close()` rejects with `OPERATION_TIMEOUT`.
-   */
-  timeout?: number;
 }>;
 
 /**
@@ -171,12 +154,6 @@ export type SQLiteOutputOptions<SCHEMA extends Schema> = Interruptible<{
 export type SQLiteBulkWriteOptions = Interruptible<{
   /** Rows queued for writing above which `enqueue()` defers. */
   queueSize?: number | undefined;
-  /**
-   * Milliseconds from the call — not from `close()` — within which the load
-   * must finish. Your producer's own time counts. On expiry the load stops
-   * between batches and `close()` rejects with `OPERATION_TIMEOUT`.
-   */
-  timeout?: number;
 }>;
 
 /** A row for `output()`: generated columns are computed, never supplied. */

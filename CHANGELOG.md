@@ -6,6 +6,9 @@ All notable changes to this project are documented here.
 
 ### Breaking
 
+- **`OptionsWithSignal` is renamed `Interruptible`** and now carries `timeout` as well as
+  `signal`. A consumer who imported or named `OptionsWithSignal` must rename it; the type was
+  published in rc.4.
 - **Two clients writing at once no longer produce `BUSY`.** Writes are now
   serialized across every client and tab in the origin, so a second writer waits
   and then goes through instead of being refused. Nothing stops compiling and no
@@ -58,16 +61,16 @@ All notable changes to this project are documented here.
   describe it without being handed its options too.
 - **`UNSUPPORTED` is a new error code**, raised where the Web Locks API is
   unavailable.
-- **`timeout`, a per-query budget in milliseconds.** A query that spends more than it is
-  stopped and rejected with the new `QUERY_TIMEOUT` code. It counts **SQLite execution
-  time**, not elapsed time: the seconds your own code spends between two chunks of a
-  `stream()` are not charged to it, so a slow consumer never kills its own query. For a
-  wall-clock deadline instead, pass `AbortSignal.timeout(ms)` as `signal` — it always
-  worked and still does. Available on the query methods only: a budget for a whole
-  `transaction()`, `bulkWrite()` or `output()` would be a different feature.
-- **`QUERY_TIMEOUT`, a new error code.** Deliberately distinct from `TIMEOUT`, which means a
-  deadline this library imposed on itself — a worker that never became ready, a deletion
-  that did not complete. The new one means the budget you set is spent.
+- **`timeout`, a wall-clock deadline in milliseconds, counted from the call.** When spent,
+  the call is aborted and rejected with `OPERATION_TIMEOUT`. It is wall clock: time your own
+  code spends — between two chunks of a `stream()`, inside a `transaction()` callback, between
+  two `enqueue()` calls — counts against it, as does time spent waiting for a pool worker or
+  for another tab's write lock. Available on all seven methods that take options: `read`,
+  `write`, `stream`, `chunk`, `first`, `transaction`, `bulkWrite` and `output`.
+- **`OPERATION_TIMEOUT`, a new error code.** Deliberately distinct from `TIMEOUT`, which means
+  a deadline this library imposed on itself — a worker that never became ready, a deletion that
+  did not complete. The new one means the `timeout` you set was spent. The error carries the
+  timeout value as `error.timeout`.
 
 ### Changed
 
@@ -92,7 +95,7 @@ All notable changes to this project are documented here.
   its end. Measured: a short query issued right after an abort on the same worker waited
   **1 889 ms** and now returns in milliseconds. This holds on the `async` and `jspi` builds
   everywhere, and on the `sync` build when your page is cross-origin isolated. Where neither
-  holds, behaviour is unchanged; the README's new *Interrupting a query* section says which
+  holds, behaviour is unchanged; the *Interrupting a call* section of API.md says which
   case you are in and what it costs to change it.
 
 ### Performance
@@ -205,11 +208,10 @@ that had grown past what one page should carry. No behaviour changed.
   `VFS.md`, which is also where the generated tables are written from now on.
   Links that pointed at a README anchor point at the page that holds it, the
   pointer inside the `vfs is required` error message included.
-- **`timeout` is documented.** It is accepted by `read()`, `write()`,
-  `stream()`, `chunk()` and `first()`, and it appeared in no option table. The
-  statement that "the library adds no per-request timeout" is withdrawn — it has
-  been false since query interruption shipped.
-- **Five error codes were missing from the table**: `QUERY_TIMEOUT`,
+- **`timeout` is documented.** It is accepted by all seven call-taking methods and
+  appeared in no option table. The statement that "the library adds no per-request
+  timeout" is withdrawn — it has been false since query interruption shipped.
+- **Five error codes were missing from the table**: `OPERATION_TIMEOUT`,
   `INVALID_OPTION`, `INVALID_PRAGMA`, `INVALID_IDENTIFIER` and
   `BULK_WRITE_FAILED`. Every member of `SQLiteErrorCode` is now listed.
 - **The per-build browser tables for `sync` and `async` are gone.** Every cell

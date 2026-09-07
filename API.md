@@ -78,7 +78,7 @@ Read queries are dispatched to any available worker, enabling concurrent reads.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. |
-| `timeout` | `number` (ms) | — | Milliseconds of SQLite execution this query may spend before it is stopped and rejected with `QUERY_TIMEOUT`. Time your own code spends between two chunks is not charged to it. For a wall-clock deadline, pass `AbortSignal.timeout(ms)` as `signal` instead. See [Interrupting a query](#interrupting-a-query). |
+| `timeout` | `number` (ms) | — | Milliseconds from the call before it is aborted and rejected with `OPERATION_TIMEOUT`. Wall clock — your own pauses between chunks count. See [Interrupting a call](#interrupting-a-call). |
 | `chunkSize` | `number` | `500` | Rows per chunk crossing the worker boundary. Back-pressure grants credits per chunk with a window of 2, so the worker may run up to `2 × chunkSize` rows ahead of the consumer. |
 
 On `read()` this is transport only — it still resolves with the whole array.
@@ -106,7 +106,7 @@ Write queries are serialized through a dedicated writer worker — only one writ
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. |
-| `timeout` | `number` (ms) | — | Milliseconds of SQLite execution this query may spend before it is stopped and rejected with `QUERY_TIMEOUT`. For a wall-clock deadline, pass `AbortSignal.timeout(ms)` as `signal` instead. See [Interrupting a query](#interrupting-a-query). |
+| `timeout` | `number` (ms) | — | Milliseconds from the call before it is aborted and rejected with `OPERATION_TIMEOUT`. Wall clock. See [Interrupting a call](#interrupting-a-call). |
 
 ## *client*.stream
 
@@ -123,7 +123,7 @@ Use `chunk()` to iterate in batches: `for await (const rows of db.chunk(...))`.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. |
-| `timeout` | `number` (ms) | — | Milliseconds of SQLite execution this query may spend before it is stopped and rejected with `QUERY_TIMEOUT`. Time your own code spends between two chunks is not charged to it. For a wall-clock deadline, pass `AbortSignal.timeout(ms)` as `signal` instead. See [Interrupting a query](#interrupting-a-query). |
+| `timeout` | `number` (ms) | — | Milliseconds from the call before it is aborted and rejected with `OPERATION_TIMEOUT`. Wall clock — your own pauses between rows count. See [Interrupting a call](#interrupting-a-call). |
 | `chunkSize` | `number` | `500` | Rows per chunk crossing the worker boundary. Back-pressure grants credits per chunk with a window of 2, so the worker may run up to `2 × chunkSize` rows ahead of the consumer. |
 
 On `stream()`, `chunkSize` is the only lever on how many rows are in flight.
@@ -143,7 +143,7 @@ is per-batch — one `INSERT` per chunk rather than per row.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. |
-| `timeout` | `number` (ms) | — | Milliseconds of SQLite execution this query may spend before it is stopped and rejected with `QUERY_TIMEOUT`. Time your own code spends between two chunks is not charged to it. For a wall-clock deadline, pass `AbortSignal.timeout(ms)` as `signal` instead. See [Interrupting a query](#interrupting-a-query). |
+| `timeout` | `number` (ms) | — | Milliseconds from the call before it is aborted and rejected with `OPERATION_TIMEOUT`. Wall clock — your own pauses between chunks count. See [Interrupting a call](#interrupting-a-call). |
 | `chunkSize` | `number` | `500` | Rows per chunk crossing the worker boundary. Back-pressure grants credits per chunk with a window of 2, so the worker may run up to `2 × chunkSize` rows ahead of the consumer. |
 
 Here `chunkSize` is the batch size the consumer sees, not only a transport detail.
@@ -163,7 +163,7 @@ const user = await db.first<User>(
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`. |
-| `timeout` | `number` (ms) | — | Milliseconds of SQLite execution this query may spend before it is stopped and rejected with `QUERY_TIMEOUT`. For a wall-clock deadline, pass `AbortSignal.timeout(ms)` as `signal` instead. See [Interrupting a query](#interrupting-a-query). |
+| `timeout` | `number` (ms) | — | Milliseconds from the call before it is aborted and rejected with `OPERATION_TIMEOUT`. Wall clock. See [Interrupting a call](#interrupting-a-call). |
 
 `first()` stops the query after one row instead of draining the result set.
 
@@ -192,6 +192,7 @@ rejects write statements; `{ autoCommit: false }` leaves the commit to you.
 | `readOnly` | `boolean` | `false` | Rejects write statements with `READ_ONLY_TRANSACTION`, at the call rather than at the first flush. |
 | `autoCommit` | `boolean` | `true` | Commits when the callback resolves. Set it false to commit or roll back yourself. |
 | `signal` | `AbortSignal` | — | Abandons the transaction. Rolls back and rejects with `signal.reason`; never commits. |
+| `timeout` | `number` (ms) | — | Milliseconds from the call before the transaction is abandoned. Rolls back and rejects with `OPERATION_TIMEOUT`. Wall clock — callback time between statements counts. See [Interrupting a call](#interrupting-a-call). |
 
 ## *client*.bulkWrite
 
@@ -218,6 +219,7 @@ Await `enqueue()` to be slowed to the speed of the database. It resolves immedia
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `signal` | `AbortSignal` | — | Aborts the load between batches. `close()` rejects with `signal.reason`. |
+| `timeout` | `number` (ms) | — | Milliseconds from the call before the load is aborted. `close()` rejects with `OPERATION_TIMEOUT`. Wall clock — producer time between `enqueue()` calls counts. See [Interrupting a call](#interrupting-a-call). |
 | `queueSize` | `number` | 2 batches | Rows queued for writing above which `enqueue()` defers. A batch is `floor(32766 / columns)` rows. |
 
 ## *client*.output
@@ -244,6 +246,7 @@ did not exist appears only at `close()`. Single-use, like `bulkWrite`.
 |---|---|---|---|
 | `indexes` | `Index[]` | — | Indexes built after the swap, under their final names. A column name, an array of them, or `{ columns, unique }`. |
 | `signal` | `AbortSignal` | — | Aborts the load between batches. `close()` rejects with `signal.reason` and the target is untouched. |
+| `timeout` | `number` (ms) | — | Milliseconds from the call before the load is aborted. `close()` rejects with `OPERATION_TIMEOUT`; the target is untouched. Wall clock — producer time between `enqueue()` calls counts. See [Interrupting a call](#interrupting-a-call). |
 | `queueSize` | `number` | 2 batches | Rows queued for writing above which `enqueue()` defers. A batch is `floor(32766 / columns)` rows. |
 
 **Inside a transaction, `output()` costs more than it looks.** On its own it loads rows outside any transaction and holds the write lock only for the final swap. Called on a `tx`, the entire load runs inside your transaction — every other write, in this tab and in others, waits for it to finish.
@@ -346,32 +349,32 @@ It resolves with the normalized `file`, the `vfs`, `clients`, `tabs` — the num
 
 `MemoryVFS` and `MemoryAsyncVFS` throw `INVALID_OPTION`: their pages live in the worker that opened them, so two clients are two databases and there is nothing to share. Where the Web Locks API is missing, `inspectDatabase` and `db.inspect()` throw `UNSUPPORTED` rather than report zero.
 
-## Interrupting a query
+## Interrupting a call
 
-`signal` always stops the *wait*: your promise rejects with `signal.reason` straight away,
-as `fetch()` does. Whether it also stops the *work* — the statement SQLite is executing —
-depends on the build behind your VFS:
+`signal` and `timeout` both stop the *wait* immediately: `signal` rejects with `signal.reason`,
+`timeout` rejects with `OPERATION_TIMEOUT`. Whether either also stops the *work* — the statement
+SQLite is executing — depends on the build behind your VFS:
 
-| build | your VFS | a `signal` stops a running statement |
+| build | your VFS | stops a running statement |
 |---|---|---|
 | `async`, `jspi` | `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `IDBBatchAtomicVFS`, `IDBMirrorVFS`, `MemoryAsyncVFS` | yes |
 | `sync` | `OPFSWriteAheadVFS`, `OPFSCoopSyncVFS`, `AccessHandlePoolVFS`, `MemoryVFS` | only if your page is cross-origin isolated |
 
-Where it does not, an aborted query keeps running to its end on its worker; the pool's other
-workers are unaffected. Two ways out, and you may want neither: serve your page cross-origin
+`timeout` aborts through the same path a `signal` does, so the same limit applies. Where it does
+not stop the running statement, an aborted call keeps running to its end on its worker; the pool's
+other workers are unaffected. Two ways out, and you may want neither: serve your page cross-origin
 isolated — COOP+COEP anywhere, or `Document-Isolation-Policy` on Chromium — or pass
 `build: 'async'`, which every one of those four VFS accepts.
 
-`timeout` needs none of that. It works on every build, and it counts SQLite execution time —
-time your own code spends between two chunks of a `stream()` is not charged to it. It rejects
-with `QUERY_TIMEOUT`. For a wall-clock deadline instead, pass `AbortSignal.timeout(ms)` as
-`signal`, which rejects with the signal's reason.
+The deadline is a browser timer, so a background tab that throttles `setTimeout` may fire it late.
+`AbortSignal.timeout()` behaves identically — it is not a cost of the `timeout` option, but
+documented because "wall clock from the call" invites the assumption that it is exact.
 
 ```typescript
-// 5 s of SQLite execution, however long the caller takes between chunks.
+// 5 s of wall clock. Rejects with OPERATION_TIMEOUT.
 const rows = await db.read('SELECT * FROM large_table', [], { timeout: 5_000 });
 
-// 5 s of wall clock, whoever spent it.
+// 5 s of wall clock. Rejects with the signal's reason (a DOMException TimeoutError).
 const rows = await db.read('SELECT * FROM large_table', [], {
   signal: AbortSignal.timeout(5_000),
 });
@@ -387,7 +390,7 @@ Errors raised by this library are instances of `SQLiteError`, exported from the 
 | `CLIENT_CLOSED` | A query was queued after `close()` was called. |
 | `WORKER_CRASHED` | A pool worker died and the supervisor decided not to restart it. All queued and in-flight work on that slot is rejected. |
 | `TIMEOUT` | A worker did not post `ready` within `openTimeout` milliseconds. The most common cause is a database held under an exclusive lock by another tab or client. |
-| `QUERY_TIMEOUT` | The `timeout` set on a query was spent, and the statement was stopped. Deliberately not `TIMEOUT`, which means a deadline this library imposed on itself — a worker that never became ready, a deletion that did not complete. |
+| `OPERATION_TIMEOUT` | The `timeout` set on a call was spent. The error carries it as `error.timeout`. Deliberately not `TIMEOUT`, which means a deadline this library imposed on itself — a worker that never became ready, a deletion that did not complete. |
 | `PROTOCOL_ERROR` | A message was received from a worker that could not be deserialized (`messageerror`). The worker survives; only the in-flight request is rejected. |
 | `BUSY` | A transient conflict, worth retrying. Either SQLite reported a lock conflict — `SQLITE_BUSY` or `SQLITE_LOCKED`, with the numeric code on `sqliteCode` — or a database was being opened or deleted elsewhere at that moment. **A read that SQLite reported busy is retried once for you**; if it reaches you, the retry failed too. Writes are never retried, and neither is a `BUSY` without a `sqliteCode`. |
 | `INVALID_OPTION` | An option was refused at the call, before any worker ran: `vfs` missing or unknown, a `(vfs, build)` pair the VFS does not support, a `poolSize` above what the VFS allows, a `wasmUrl` that is not a URL, or `inspectDatabase` on a memory VFS. The message names the option and what it accepts. |
