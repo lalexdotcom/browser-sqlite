@@ -86,8 +86,7 @@ one machine and one build; slower CI hardware may still surface timing the campa
 None outstanding.
 
 **rc.5 was gated on two things; one is done and one has still never run.** The `Interruptible`
-work is complete on `feat/uniform-timeout` (§ below) — **written, reviewed and green, but NOT
-yet merged into `main` as of 2026-09-07**. What remains is CI going green on a pushed `main`
+work is merged (§ below). What remains is CI going green on a pushed `main`
 (user, 2026-09-05): everything from the nine lots and from this branch was verified in this
 container only, and the interruption lot's tests carry bounds calibrated on this machine, so
 slower CI hardware is where a surprise would land. `main` has not been pushed since, so this
@@ -97,10 +96,19 @@ remains an instructed act, never an inferred one.
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
 the 2026-09-05 entry in `mem:follow-ups` called for.
 
-**Nothing is in flight**, but one thing is now scheduled: the `Interruptible` work above is
-the next lot and has no branch yet. Everything else in `mem:follow-ups` remains unscheduled.
+**Nothing is in flight.** Two things are scheduled and the user fixed their order on
+2026-09-07: **first**, a firm answer on whether `RECOMMENDED_VFS` moves to
+`OPFSWriteAheadVFS` — `mem:follow-ups` carries the whole file on it, including the one piece
+of work it needs (median the `measurements` block over the post-2026-09-02 exports; a script,
+not a device campaign). **Then** the abandoned-generator residue, minor 4 of the lot-10 review:
+a `mergeSignals` listener that survives a `chunk()`/`stream()` generator abandoned without
+`break` or `.return()`, when the caller passed both `signal` and `timeout`. Bounded and
+unobservable on its own — **and it rides on a much older one, which is the real subject: that
+same abandonment never returns the pool lease**, because `streamWithRetry`'s `finally` around
+the `yield` does not run either. That predates lot 10. **Then** the Firefox hang below.
+Everything else in `mem:follow-ups` remains unscheduled.
 
-## Lot 10 — one `timeout`, eight methods — complete on `feat/uniform-timeout`, NOT merged
+## Lot 10 — one `timeout`, eight methods — merged 2026-09-07
 
 Design: `docs/superpowers/specs/2026-09-07-uniform-timeout-design.md`. Plan:
 `docs/superpowers/plans/2026-09-07-uniform-timeout.md`. Eleven commits, five implementation
@@ -141,8 +149,12 @@ reversal cost no consumer anything.
 config for about two hours during task 2, then never recurred in any later run of the
 branch. No report was emitted at all, which is itself the discriminator — an rstest timeout
 produces a failure report, so a two-hour silence points at browser launch or the harness,
-not at a test. Unresolved; the repository's own bar for closing this shape is a repeat-run
-campaign, as the `barrier` flake got in 13 consecutive runs.
+not at a test. Unresolved, and third in the queue above. The plan agreed on 2026-09-07:
+`pnpm test:firefox` in a loop, wall-clock recorded per run, unattended — the normal band is
+50-70 s, so 13 runs is about a quarter of an hour, and 13 is this repository's own bar, the
+number that closed the `barrier` flake. All inside the band means a non-reproducing event and
+this paragraph is the record. A recurrence gets captured with `DEBUG=pw:browser` to tell a
+launch hang from a mid-suite one.
 
 ## Lot 9 — query interruption, merged 2026-09-05
 
