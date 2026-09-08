@@ -130,6 +130,14 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **Selecting a single-connection VFS no longer throws on a `poolSize` you never
+  passed.** `poolSize` defaulted to 2 unconditionally, so
+  `createSQLiteClient(name, { vfs: 'MemoryVFS' })` — with no other option — failed at
+  construction with `INVALID_OPTION`. It now defaults to the VFS's own maximum where
+  that is lower, which is 1 on `AccessHandlePoolVFS`, `IDBMirrorVFS`, `MemoryVFS` and
+  `MemoryAsyncVFS`. Passing a size the VFS cannot take still throws: only the default
+  changed, not the guard.
+
 - **`stream()` and `chunk()` silently dropped rows whenever the consumer awaited
   anything between chunks.** A consumer that did any asynchronous work — rendering
   a row, awaiting a fetch, or merely yielding one turn of the event loop —

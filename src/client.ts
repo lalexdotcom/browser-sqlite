@@ -130,8 +130,10 @@ export type CreateSQLiteClientOptions = {
    * Number of Web Workers spawned in the pool at initialization.
    * A larger pool allows more concurrent read operations but increases
    * memory consumption and OPFS file handle usage.
-   * Must be `1` when using `AccessHandlePoolVFS` — any larger value throws at construction time.
-   * @defaultValue `2`
+   * A VFS that holds a single connection caps this at `1`, and passing more
+   * throws at construction time. Omitting it never throws: the default is
+   * capped to what the VFS allows.
+   * @defaultValue `2`, or the VFS's maximum when it is lower
    */
   poolSize?: number;
 
@@ -335,7 +337,20 @@ export const createSQLiteClient = (
   // this is what tells two clients apart across the origin.
   const clientUuid = crypto.randomUUID();
 
-  const poolSize = clientOptions.poolSize ?? DEFAULT_POOL_SIZE;
+  const vfs = clientOptions.vfs;
+  const build = clientOptions.build ?? defaultBuildFor(vfs);
+
+  const capability = VFS_CAPABILITIES[vfs];
+
+  /**
+   * Explicit wins, and is validated below — passing a size the VFS cannot take
+   * is a mistake worth reporting. Omitted, the default is capped to what the
+   * VFS allows: four VFS hold one connection, and defaulting them to 2 made
+   * `{ vfs: 'MemoryVFS' }` alone throw on a number the caller never chose.
+   */
+  const poolSize =
+    clientOptions.poolSize ??
+    Math.min(DEFAULT_POOL_SIZE, capability.maxPoolSize ?? DEFAULT_POOL_SIZE);
   const pool: (PoolWorker | undefined)[] = [];
 
   /**
@@ -348,11 +363,6 @@ export const createSQLiteClient = (
   const abortSlots = detectFeatures().has('cross-origin-isolated')
     ? new SharedArrayBuffer(4 * poolSize)
     : undefined;
-
-  const vfs = clientOptions.vfs;
-  const build = clientOptions.build ?? defaultBuildFor(vfs);
-
-  const capability = VFS_CAPABILITIES[vfs];
 
   // Synchronous: an unsupported combination must fail here and name itself,
   // not surface later as an opaque open-error from a worker that could not
