@@ -72,6 +72,13 @@ All notable changes to this project are documented here.
   did not complete. The new one means the `timeout` you set was spent. The error carries the
   timeout value as `error.timeout`.
 
+- **`GENERATOR_ABANDONED` is a new error code.** It is raised when a statement is
+  issued on a worker that still has a query in flight. Statements on one worker
+  must not overlap, and inside a `transaction()` they all run on the same worker,
+  so that is where a consumer meets it. The usual cause is a `chunk()` or
+  `stream()` generator left open. It replaces a bare `Error` whose message named
+  an internal invariant.
+
 ### Changed
 
 - The per-worker statement cache is now bounded in bytes (8 MB) as well as in
@@ -97,6 +104,11 @@ All notable changes to this project are documented here.
   everywhere, and on the `sync` build when your page is cross-origin isolated. Where neither
   holds, behaviour is unchanged; the *Interrupting a call* section of API.md says which
   case you are in and what it costs to change it.
+
+- **An abandoned generator inside a `transaction()` now costs that worker.** The
+  transaction fails, and the connection — which really does hold an open
+  transaction with a query in flight — is evicted and its slot restarted instead
+  of going back to the pool. Recovery is automatic.
 
 ### Performance
 
@@ -206,6 +218,15 @@ All notable changes to this project are documented here.
   **The error a second client receives changed** from `WORKER_CRASHED` or `TIMEOUT`
   to `BUSY`, and it now arrives immediately rather than after a stall.
 
+- **A `chunk()` or `stream()` generator you drop no longer holds its worker for
+  the life of the page.** A generator that is neither exhausted nor closed with
+  `break` or `.return()` never runs its cleanup, so its worker stayed leased and
+  parked mid-query, its read transaction open, until the page went away. At the
+  default `poolSize` two of them were enough to wedge a client permanently, with
+  nothing logged and nothing thrown. The worker is now reclaimed when the engine
+  collects the generator — **best effort, on no schedule you can rely on**. For a
+  bound you can rely on, pass a `timeout` or a `signal`.
+
 ### Known limitation, unchanged and now more visible
 
 - **Serializing writers does not change which access handle a VFS holds.** Where
@@ -259,6 +280,10 @@ themselves and the text of one error message.
   engine, though it remains the right answer for the two cases the VFS table's
   *Concurrent reads* column actually covers. `OPFSAnyContextVFS` is the only VFS
   here that serves one on every engine.
+- The generator lifetime paragraph now names `.return()` beside "exhaust it or
+  `break`", and records that `await using` works wherever your engine has the
+  syntax, with nothing to install. The transaction section says where `tx`'s
+  querying surface stops matching the client's.
 
 ## 1.0.0-rc.4 — 2026-08-31
 

@@ -212,7 +212,7 @@ const orders = await db.transaction(async (tx) => {
 > wait with it — not only the ones on this client. Keep the callback to the
 > statements it needs.
 
-**One worker serves the whole callback**, so the transaction is genuinely isolated rather than merely wrapped in `BEGIN`. `tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit` and `rollback`. One difference: a `chunk()` or `stream()` generator abandoned inside the callback usually fails the transaction with `GENERATOR_ABANDONED` rather than being recovered quietly, because the next statement lands on the worker the generator still holds. Usually, not always — a generator whose query had already delivered its last row holds nothing, and the transaction then commits as if it had never been opened.
+**One worker serves the whole callback**, so the transaction is genuinely isolated rather than merely wrapped in `BEGIN`. `tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit` and `rollback`.<br>One difference: a `chunk()` or `stream()` generator abandoned inside the callback usually fails the transaction with `GENERATOR_ABANDONED` rather than being recovered quietly. Usually, not always — a generator whose query had already delivered its last row holds nothing, and the transaction then commits as if it had never been opened.
 
 **Rows land only on a `COMMIT` that succeeds.** Everything else rolls back: a callback that throws, an abort, a `COMMIT` that fails, and — under `autoCommit: false` — a callback that returns without calling `tx.commit()`. Catching your own statement's rejection does not let you commit around an abort. If the rollback itself fails the worker is evicted, rather than returned to the pool holding an open transaction.
 
@@ -399,7 +399,7 @@ Read queries are dispatched to any available worker, so several run at once.
 
 Write queries are serialized per database across the whole origin — one at a time, across every client and every tab, not only within the client that issued them.
 
-**A generator holds its worker for its whole lifetime.** [`stream()`](#clientstream) and [`chunk()`](#clientchunk) keep the worker that serves them until the loop ends, so always exhaust the generator, `break` out of it, or call its `return()`. `await using` does the same where your engine supports the syntax, with nothing to install. A generator you simply drop is recovered when the engine collects it, which is not a schedule you can rely on — a `timeout` or a `signal` gives it a deadline; a generator dropped with neither has none. Prefer `chunk()` where the work is per-batch — one `INSERT` per chunk rather than per row.
+**A generator holds its worker for its whole lifetime.** [`stream()`](#clientstream) and [`chunk()`](#clientchunk) keep the worker that serves them until the loop ends, so always exhaust the generator, `break` out of it, or call its `return()` — `await using` does the same where your engine has the syntax. One you simply drop is recovered only when the engine collects it, which is no schedule to rely on; a `timeout` or a `signal` is what gives it a deadline. Prefer `chunk()` where the work is per-batch — one `INSERT` per chunk rather than per row.
 
 ## Interrupting a call
 
