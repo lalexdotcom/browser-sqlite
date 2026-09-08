@@ -152,7 +152,7 @@ JavaScript Promise Integration — the same asynchrony handled by the engine rat
 
 ### `AccessHandlePoolVFS`
 
-**`AccessHandlePoolVFS` requires `poolSize: 1`.** Passing `poolSize > 1` with this VFS throws synchronously at client creation time.
+**`AccessHandlePoolVFS` runs a pool of one.** You do not have to say so — omitting `poolSize` gives you 1 here rather than the usual 2. Passing anything above 1 throws synchronously at client creation time.
 
 **`AccessHandlePoolVFS` allows one connection per origin, not one per tab.** A second client on the same database — in this tab or another — fails its first query with `BUSY`, immediately. Close the first client and the next one opens. This is the one VFS where two tabs cannot share a database at all, so choose another if your application expects to be open twice.
 

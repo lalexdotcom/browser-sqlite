@@ -20,13 +20,20 @@ describe('AccessHandlePoolVFS pool guard', () => {
     ).toThrow(/pool sizes greater than 1/);
   });
 
-  it('throws with the default poolSize, which is 2', () => {
-    // Footgun: selecting this VFS without also setting poolSize: 1 fails.
-    expect(() =>
-      createSQLiteClient(`browser-sqlite-test-${crypto.randomUUID()}`, {
-        vfs: 'AccessHandlePoolVFS',
-      }),
-    ).toThrow(/pool sizes greater than 1/);
+  // Falsifiable: restore `clientOptions.poolSize ?? DEFAULT_POOL_SIZE` in
+  // client.ts. Selecting a single-connection VFS and nothing else used to
+  // throw on a pool size the caller never chose.
+  it('defaults to the VFS cap rather than throwing when poolSize is omitted', async () => {
+    const db = createSQLiteClient(
+      `browser-sqlite-test-${crypto.randomUUID()}`,
+      { vfs: 'AccessHandlePoolVFS' },
+    );
+    try {
+      await db.write('CREATE TABLE t (id INTEGER PRIMARY KEY)');
+      expect(await db.read('SELECT id FROM t')).toEqual([]);
+    } finally {
+      await db.close();
+    }
   });
 
   // Falsifiable: revert the pool guard in client.ts to `throw new Error(...)`.
