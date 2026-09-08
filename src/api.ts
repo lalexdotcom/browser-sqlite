@@ -102,7 +102,7 @@ export type SQLiteWriteResult<T extends Record<string, unknown>> = {
  * That window is short on a VFS holding one access handle per connection, and
  * it is not on a VFS rotating a single exclusive one: there such a statement
  * waits for whichever client holds the file, and your signal cannot shorten
- * that wait. See the reduced mode described under VFS Selection.
+ * that wait. See the reduced mode described in VFS.md.
  */
 export type SQLiteTransactionOptions = Interruptible<{
   /** Rejects write statements with `READ_ONLY_TRANSACTION`. Defaults to false. */

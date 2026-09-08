@@ -7,7 +7,7 @@ import {
   writeLockName,
 } from './locks';
 import type { SQLiteVFS } from './types';
-import { RECOMMENDED_VFS, VFS_CAPABILITIES } from './types';
+import { VFS_CAPABILITIES } from './types';
 import { normalizeDatabaseFile } from './utils';
 
 /**
@@ -237,7 +237,7 @@ export const inspectDatabase = async (
   if (!options?.vfs) {
     throw new SQLiteError(
       'INVALID_OPTION',
-      `vfs is required. Pass the VFS the database was created with — ${RECOMMENDED_VFS} is the recommended universal choice. Four VFS share one underlying file, and the rest are separate stores, so the wrong one reports on a different database.`,
+      `vfs is required. Pass the VFS the database was created with — VFS.md compares them. Four VFS share one underlying file, and the rest are separate stores, so the wrong one reports on a different database.`,
     );
   }
 

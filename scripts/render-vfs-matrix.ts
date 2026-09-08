@@ -2,13 +2,38 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import bcd from '@mdn/browser-compat-data' with { type: 'json' };
 import {
-  RECOMMENDED_VFS,
   BUILD_REQUIREMENTS,
   type PlatformFeature,
   type SQLiteBuild,
+  type SQLiteVFS,
   VFS_CAPABILITIES,
+  type VFSCapability,
   type VFSMemoryModel,
 } from '../src/types.ts';
+
+/**
+ * The VFS this project recommends when a caller has no reason to choose
+ * another. It is documentation, not code: it lives in the generator so that
+ * nothing shipped to a consumer carries it.
+ *
+ * It is NOT a default — `vfs` is required, precisely so that the name lives in
+ * the consumer's own source and cannot move underneath their data. Each VFS
+ * has its own store, so a recommendation that moved while it was reachable
+ * from the library would displace a database rather than merely change advice.
+ *
+ * There are two, and they are not interchangeable: `OPFSAdaptiveVFS` defaults
+ * to the `async` build and stays interruptible on every engine, while
+ * `OPFSWriteAheadVFS` is faster but defaults to `sync`, which only interrupts a
+ * running statement under cross-origin isolation. `README.md` states that trade
+ * where it recommends them; this list only marks the rows.
+ *
+ * Changing it changes one marker per row of `VFS.md` and nothing else. The
+ * README prose is written by hand and does not read this.
+ */
+const RECOMMENDED_VFS: readonly SQLiteVFS[] = [
+  'OPFSWriteAheadVFS',
+  'OPFSAdaptiveVFS',
+];
 
 /**
  * Minimum browser version shipping each platform feature, or `null` where the
@@ -244,7 +269,11 @@ const supportFor = (
   const reduced = cap.degradesWithout.some(
     (f) => FEATURE_SUPPORT[f][browser] === null,
   );
-  const marker = reduced ? ' [(*)](#-reduced-mode)' : '';
+  // Superscript, like the footnote calls: it hangs off the version pair rather
+  // than sitting in the run of numbers, so a line of five stays scannable.
+  const marker = reduced
+    ? '<sup><a href="#reduced-mode">[reduced]</a></sup>'
+    : '';
   // `0` rather than a blank: the pair is always two positions, and an engine
   // with no floor at all reads as 0 instead of leaving the reader to guess
   // whether a number went missing.
@@ -277,7 +306,7 @@ const supportFor = (
 const BUILD_NOTE: Record<SQLiteBuild, string> = {
   sync: 'Plain synchronous WebAssembly. Needs nothing beyond baseline WASM, so it runs anywhere — but only VFS whose file operations are all synchronous can offer it.',
   async:
-    'Asyncify: the WASM stack is unwound and rewound around asynchronous file operations. Also needs nothing beyond baseline WASM. This is the default, and every VFS here can run on it.',
+    'Asyncify: the WASM stack is unwound and rewound around asynchronous file operations. Also needs nothing beyond baseline WASM. Every VFS here can run on it.',
   jspi: 'JavaScript Promise Integration — the same asynchrony handled by the engine rather than by Asyncify. Opt-in, and no default uses it, so its narrower availability constrains nobody who does not ask for it.',
 };
 
@@ -321,6 +350,200 @@ const MEMORY_LABEL = {
   'whole-database': '**Whole database in RAM**, multiplied by `poolSize`',
 } as const satisfies Record<VFSMemoryModel, string>;
 
+/**
+ * What a per-VFS header shows on its `RAM:` line. The full sentence goes to a
+ * footnote instead, so the line stays scannable across nine fiches — and the
+ * footnote text IS `MEMORY_LABEL`, so the short form can never say something
+ * the long form does not.
+ */
+const MEMORY_SHORT = {
+  'page-cache': 'Page cache',
+  'whole-database': 'Whole database',
+} as const satisfies Record<VFSMemoryModel, string>;
+
+/**
+ * Every footnote the per-VFS headers refer to, in the order they are numbered.
+ *
+ * Plain HTML rather than GFM footnotes: GFM renders a shared note's call sites
+ * as `1`, `1:2`, `1:3` …, which is correct — the suffix is what lets its return
+ * arrows find the right one — but it reads as a defect on a page where three
+ * notes are shared nine, six and three times. No return link is emitted either:
+ * following an in-page anchor pushes a history entry, so Back already goes
+ * where the arrow would.
+ *
+ * The definition line is markdown, and the anchor above it is a block of its
+ * own — GitHub does not parse markdown inside a block-level HTML element, so
+ * wrapping these in `<ol><li>` would print the backticks literally.
+ *
+ * All of them are generated, `browsers` included: the numbering is positional,
+ * so a hand-written note among them would renumber the rest the day it moved.
+ */
+const FOOTNOTES: readonly { readonly id: string; readonly text: string }[] = [
+  {
+    id: 'browsers',
+    text:
+      'Derived from documented platform support, not from our own test runs.' +
+      ' These versions cover where the VFS stores its data; which builds are' +
+      ' reachable on each engine is a separate question, answered under' +
+      ' [Builds reference](#builds-reference) — the **Builds** line links' +
+      ' straight to the build it names.',
+  },
+  ...Object.keys(MEMORY_SHORT).map((m) => ({
+    id: `ram-${m}`,
+    text: `${MEMORY_LABEL[m as VFSMemoryModel]}.`,
+  })),
+  ...Object.entries(VFS_CAPABILITIES)
+    .filter(([, cap]) => cap.maxPoolSize !== null)
+    .map(([name, cap]) => ({
+      id: `pool-${name}`,
+      text: `Pool size: ${cap.maxPoolSize} max — ${cap.poolLimitReason}.`,
+    })),
+];
+
+/**
+ * Numbering, with notes that say the same thing folded into one.
+ *
+ * `MemoryVFS` and `MemoryAsyncVFS` cap their pool for the same reason and so
+ * carry the same sentence; printed twice under two numbers, a reader takes the
+ * second for a nuance they missed. Folding is on the TEXT, not on the id, so
+ * the day one of them gets its own reason it splits back apart on its own.
+ */
+const NOTE_TEXTS: string[] = [];
+const NOTE_NUMBER = new Map<string, number>();
+for (const { id, text } of FOOTNOTES) {
+  const seen = NOTE_TEXTS.indexOf(text);
+  if (seen === -1) NOTE_TEXTS.push(text);
+  NOTE_NUMBER.set(id, (seen === -1 ? NOTE_TEXTS.length : seen + 1));
+}
+
+/** The superscript call site. Throws rather than emitting a dangling link. */
+const noteRef = (id: string): string => {
+  const n = NOTE_NUMBER.get(id);
+  if (n === undefined) throw new Error(`no footnote declared for "${id}"`);
+  return `<sup><a href="#fn-${n}">[${n}]</a></sup>`;
+};
+
+/**
+ * Laid out like the GFM footnote section it replaces: a rule, then the notes in
+ * small type, with no visible heading — GFM's own "Footnotes" heading is
+ * `sr-only`, so a sighted reader sees the rule and nothing else.
+ *
+ * The muted grey is the one thing that cannot be reproduced. GitHub strips
+ * `style` and custom `class` from rendered markdown, so `.footnotes { color }`
+ * has no equivalent here; `<sub>` gives the size, and nothing gives the colour.
+ * Inline markdown still renders inside `<sub>` because it is an inline element.
+ */
+const footnotes = [
+  '---',
+  ...NOTE_TEXTS.map(
+    (text, i) => `<a id="fn-${i + 1}"></a>\n<sub>**${i + 1}.** ${text}</sub>`,
+  ),
+].join('\n\n');
+
+/**
+ * The header rendered under each VFS's own heading in the VFS reference.
+ *
+ * Same source as the table above it — `VFS_CAPABILITIES` — so the two cannot
+ * disagree. Only the header is generated: the prose a reader finds below it is
+ * hand-written and never touched, which is why each block carries its own
+ * BEGIN/END pair rather than the section being rewritten wholesale.
+ */
+const detailFor = (name: string, cap: VFSCapability): string => {
+  const builds = cap.builds.map((b) => `[\`${b}\`](#build-${b})`).join(', ');
+  const compat = BROWSERS.map((b) => supportFor(cap, b, '(reduced)'))
+    .filter((x): x is string => x !== null)
+    .join(', ');
+  // The cap's reason goes to a footnote of its own: it is a full sentence, it
+  // differs per VFS, and inlining four of them made the fact line unreadable.
+  // One reference each, so they number cleanly rather than repeating one note.
+  const pool =
+    cap.maxPoolSize === null
+      ? 'Any'
+      : `**${cap.maxPoolSize}**${noteRef(`pool-${name}`)}`;
+  // No `Shared` line: an unbounded pool and sharing between connections are the
+  // same fact here, because a pool worker IS a connection. They are separate
+  // fields in `VFS_CAPABILITIES` and nothing in the type forces them together,
+  // so this asserts rather than assumes — a VFS that ever caps its pool for a
+  // reason unrelated to sharing would otherwise be described wrongly, silently.
+  if ((cap.maxPoolSize === null) !== cap.multiConnection) {
+    throw new Error(
+      'maxPoolSize and multiConnection have diverged: the per-VFS header drops' +
+        ' `Shared` because they agree. Render it again — see this guard.',
+    );
+  }
+  const facts = [
+    `**Pool size:** ${pool}`,
+    `**RAM:** ${MEMORY_SHORT[cap.memoryModel]}${noteRef(`ram-${cap.memoryModel}`)}`,
+  ];
+  // Shown only when there are any: an empty "Default PRAGMAs: —" on six of the
+  // nine VFS is a line the reader learns to skip, which costs the three that
+  // do carry one.
+  const pragmas = Object.entries(cap.defaultPragmas);
+  if (pragmas.length) {
+    facts.push(
+      `**Default PRAGMAs:** ${pragmas.map(([k, v]) => `\`${k}=${v}\``).join(', ')}`,
+    );
+  }
+  return [
+    `**Builds:** ${builds}`,
+    // The footnote marker rides the label, not the versions: GFM collects one
+    // definition for all nine references and backlinks each, so the caveat is
+    // written once at the foot of the file. Its `[^browsers]` definition is
+    // hand-written there — do not delete it, the references would render raw.
+    `**Browsers:**${noteRef('browsers')} ${compat}`,
+    facts.join(' · '),
+  ].join('\n\n');
+};
+
+/**
+ * GitHub's heading slug: lowercased, everything but letters, digits, spaces and
+ * hyphens dropped, spaces to hyphens. Backticks and parentheses go, which is
+ * why `### Build \`sync\`` lands on `#build-sync`.
+ */
+const slug = (heading: string): string =>
+  heading
+    .toLowerCase()
+    .replace(/[^a-z0-9 -]/g, '')
+    .trim()
+    .replace(/ +/g, '-');
+
+/**
+ * Shorter labels for the contents line, where the heading itself is too long or
+ * repeats its parent. Keyed on the heading, so a rename breaks the override
+ * loudly — the entry stops matching and the full heading appears instead.
+ */
+const TOC_HEADING = 'Contents';
+
+const TOC_LABEL: Record<string, string> = {
+  'If you can guarantee a browser': 'Per browser',
+};
+
+/**
+ * The contents, built from the headings actually present rather than from a
+ * list kept beside them: renaming a section moves its entry, and adding a VFS
+ * adds one, with nothing here to remember.
+ */
+const tableOfContents = (doc: string): string => {
+  const lines: string[] = [];
+  let current: { title: string; children: string[] } | null = null;
+  const label = (h: string) =>
+    TOC_LABEL[h] ?? h.replace(/`/g, '').replace(/^Build /, '');
+  const flush = () => {
+    if (current) lines.push(`- ${current.title}${current.children.join(' · ')}`);
+  };
+  for (const [, hashes, heading] of doc.matchAll(/^(#{2,3}) (.+)$/gm)) {
+    // The contents heading is not one of the sections it lists.
+    if (heading === TOC_HEADING) continue;
+    const link = `[${label(heading)}](#${slug(heading)})`;
+    if (hashes === '##') {
+      flush();
+      current = { title: `**${link}**: `, children: [] };
+    } else current?.children.push(link);
+  }
+  flush();
+  return lines.join('\n');
+};
+
 const path = new URL('../VFS.md', import.meta.url);
 const source = readFileSync(path, 'utf8');
 
@@ -333,44 +556,32 @@ const documented = new Set(
   [...source.matchAll(/^### `(\w+)`$/gm)].map((m) => m[1]),
 );
 
+/**
+ * The grid: one row per VFS, one tick per capability. Everything that needs a
+ * sentence — browser floors, why a pool is capped, which PRAGMAs are applied —
+ * lives in that VFS's own header under `## VFS reference`, so this stays
+ * scannable and answers one question: what can this VFS do at all.
+ */
+const yes = (ok: boolean): string => (ok ? '✅' : '❌');
+
 const rows = Object.entries(VFS_CAPABILITIES).map(([name, cap]) => {
   const named = documented.has(name)
     ? `[\`${name}\`](#${name.toLowerCase()})`
     : `\`${name}\``;
-  const label =
-    name === RECOMMENDED_VFS ? `${named} **(recommended)**` : named;
-  const builds = cap.builds
-    .map((b) => `[\`${b}\`](#build-${b})`)
-    .join(', ');
-  const pool =
-    cap.maxPoolSize === null
-      ? 'Any'
-      : `**${cap.maxPoolSize}** — ${cap.poolLimitReason}`;
-  const shared = cap.multiConnection ? 'Yes' : 'No';
-  const durable = cap.persistent ? 'Yes' : '**No — volatile**';
-  // One line: the build dimension moved to its own grid, so what is left here
-  // is only the storage floor, which is short enough to read at a glance.
-  // No 'Any browser' shortcut: a VFS with no storage requirement can still be
-  // barred from `jspi` on an engine, and hiding that behind two words would
-  // make this column mean something different from row to row.
-  // One line per browser: a middot between five version pairs read as one
-  // run-on string, and the numbers stopped being scannable.
-  const compat = BROWSERS.map((b) => supportFor(cap, b))
-    .filter((x): x is string => x !== null)
-    .join('<br>');
-  // Generated rather than transcribed, for the same reason as every other
-  // column: `VFS_CAPABILITIES` is the single source of truth, and a default
-  // the consumer cannot see is a default they cannot refuse.
-  const entries = Object.entries(cap.defaultPragmas);
-  const defaults = entries.length
-    ? entries.map(([key, value]) => `\`${key}=${value}\``).join('<br>')
-    : '—';
-  return `| ${label} | ${builds} | ${compat} | ${pool} | ${shared} | ${durable} | ${MEMORY_LABEL[cap.memoryModel]} | ${defaults} |`;
+  const label = RECOMMENDED_VFS.some((v) => v === name)
+    ? `${named}<br>**(recommended)**`
+    : named;
+  const builds = BUILDS.map((b) => yes(cap.builds.includes(b))).join(' | ');
+  // `degradesWithout` is the right field, not `requires`: the question is
+  // whether the VFS TAKES the mode when the engine offers it. No VFS here
+  // requires it — one that did would be unusable off Chromium entirely.
+  const unsafe = yes(cap.degradesWithout.includes('readwrite-unsafe'));
+  return `| ${label} | ${builds} | ${yes(cap.maxPoolSize === null)} | ${yes(cap.persistent)} | ${unsafe} |`;
 });
 
 const table = [
-  '| VFS | Builds | Browser compatibility | Pool size | Shared between connections | Survives close | Memory | Default PRAGMAs |',
-  '|-----|--------|-----------------------|-----------|----------------------------|----------------|--------|-----------------|',
+  `| VFS | ${BUILDS.map((b) => `[\`${b}\`](#build-${b})`).join(' | ')} | Pool | Persistent | \`readwrite-unsafe\` |`,
+  `|---|${BUILDS.map(() => '---').join('|')}|---|---|---|`,
   ...rows,
 ].join('\n');
 
@@ -400,8 +611,29 @@ const splice = (
 
 let doc = splice(source, BEGIN, END, table);
 doc = splice(doc, BUILD_BEGIN, BUILD_END, buildTable);
+for (const [name, cap] of Object.entries(VFS_CAPABILITIES)) {
+  doc = splice(
+    doc,
+    `<!-- BEGIN GENERATED ${name} -->`,
+    `<!-- END GENERATED ${name} -->`,
+    detailFor(name, cap),
+  );
+}
+doc = splice(
+  doc,
+  '<!-- BEGIN GENERATED FOOTNOTES — edit scripts/render-vfs-matrix.ts -->',
+  '<!-- END GENERATED FOOTNOTES -->',
+  footnotes,
+);
+// Last: the headings it reads are the ones every splice above has settled.
+doc = splice(
+  doc,
+  '<!-- BEGIN GENERATED TOC — headings are the source; run `pnpm docs:vfs` -->',
+  '<!-- END GENERATED TOC -->',
+  tableOfContents(doc),
+);
 writeFileSync(path, doc);
 
 console.log(
-  `Rendered ${rows.length} VFS rows and ${BUILDS.length} build sections into VFS.md`,
+  `Rendered ${rows.length} VFS rows, ${rows.length} VFS headers and ${BUILDS.length} build sections into VFS.md`,
 );

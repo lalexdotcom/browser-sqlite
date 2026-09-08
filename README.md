@@ -2,10 +2,9 @@
 
 A persistent SQLite database that lives in your browser — yes, for real. Powered by [wa-sqlite](https://github.com/rhashimoto/wa-sqlite) (WebAssembly), built for (read) concurrency.
 
-**▶ [Run the benchmarks in your own browser](https://lalexdotcom.github.io/browser-sqlite/)** — every
-VFS this library ships, put through the same conformance checks and measurements, on your device.
-It is the honest way to choose one: which VFS wins depends on the engine, and it changes often —
-a single browser release can move the answer.
+A client stores its data through a wa-sqlite VFS, which decides where that data lives.
+**[Read the VFS page](VFS.md)** to compare them, then
+**[run the benchmarks in your own browser](https://lalexdotcom.github.io/browser-sqlite/)**.
 
 ## Install
 
@@ -42,17 +41,13 @@ The `.wasm` are read from beside `worker.js`. If a build separates them, or you 
 |---|---|---|
 | 92+ | 95+ | 15.4+ |
 
-browser-sqlite requires no special HTTP headers. OPFS access handles work in a plain
-worker context, and every VFS runs on a page served without cross-origin isolation. The
-default build needs no browser opt-in either; only `build: 'jspi'` does, and that is a
-browser constraint rather than a header requirement.
-
 Cross-origin isolation is worth adding where you control your headers: it is what lets an
-aborted call stop the statement SQLite is already running, on the VFS that default to the
-`sync` build. It is an option rather than a requirement, and it has a cost of its own —
-both are set out under [Aborting a call](#aborting-a-call).
+aborted call stop a running statement when using a VFS with `sync` build. See
+[Aborting a call](#aborting-a-call).
 
 ## Usage
+
+Read the [detailed API documentation](API.md) for the full description.
 
 ```typescript
 import { createSQLiteClient } from 'browser-sqlite';
@@ -71,25 +66,19 @@ for await (const row of db.stream<{ id: number; name: string }>('SELECT * FROM u
 await db.close();
 ```
 
-Nothing is deleted by `close()` — [`deleteDatabase`](API.md#deletedatabase) is what removes
-a database.
-
-Every method, property and option is in
-[the detailed API documentation](API.md) — transactions, bulk loading, aborting a query and
-the error codes.
-
 [*client*.id](API.md#clientid) · [*client*.name](API.md#clientname) · [*client*.file](API.md#clientfile) · [*client*.vfs](API.md#clientvfs) · [*client*.build](API.md#clientbuild)
 
 [createSQLiteClient()](API.md#createsqliteclient) · [*client*.read()](API.md#clientread) · [*client*.write()](API.md#clientwrite) · [*client*.stream()](API.md#clientstream) · [*client*.chunk()](API.md#clientchunk) · [*client*.first()](API.md#clientfirst) · [*client*.transaction()](API.md#clienttransaction) · [*client*.bulkWrite()](API.md#clientbulkwrite) · [*client*.output()](API.md#clientoutput) · [*client*.inspect()](API.md#clientinspect) · [*client*.close()](API.md#clientclose) · [deleteDatabase()](API.md#deletedatabase) · [inspectDatabase()](API.md#inspectdatabase)
 
 ## Storage
 
-The VFS decides *where* your database is written, and it is required at client creation.
-Pass `OPFSAdaptiveVFS` unless you have a reason not to — it is the only one that opened and
-passed every conformance check on every engine we could test.
-
+The VFS decides *where* your database is written.
 [See every available VFS on the dedicated page](VFS.md), with their pros, their cons, their
 limitations and their browser compatibility.
+
+`OPFSWriteAheadVFS` and `OPFSAdaptiveVFS` are the recommended options.
+
+[`OPFSWriteAheadVFS`](VFS.md#opfswriteaheadvfs) · [`OPFSAdaptiveVFS`](VFS.md#opfsadaptivevfs) · [`OPFSCoopSyncVFS`](VFS.md#opfscoopsyncvfs) · [`AccessHandlePoolVFS`](VFS.md#accesshandlepoolvfs) · [`IDBBatchAtomicVFS`](VFS.md#idbbatchatomicvfs) · [`IDBMirrorVFS`](VFS.md#idbmirrorvfs) · [`OPFSAnyContextVFS`](VFS.md#opfsanycontextvfs) · [`MemoryVFS`](VFS.md#memoryvfs) · [`MemoryAsyncVFS`](VFS.md#memoryasyncvfs)
 
 ## Guarantees
 
@@ -129,42 +118,17 @@ What follows holds on all of them.
 
 ### Aborting a call
 
-An abort does not always stop the work, and your hosting decides. On the `sync` build — the
-default behind `OPFSWriteAheadVFS`, `OPFSCoopSyncVFS`, `AccessHandlePoolVFS` and
-`MemoryVFS` — a `signal` or a `timeout` rejects your promise straight away, but the
-statement runs to its end on its worker, which stays unavailable until it does.
+An abort does not always stop the work, and your hosting decides. On the `sync` build, a
+`signal` or a `timeout` rejects your promise straight away, but the statement runs to its
+end on its worker, which stays unavailable until it does.
 
-Serving the page **cross-origin isolated** is what lets an abort reach the running
-statement. Two header sets do it, and each costs something:
-
-- **`Cross-Origin-Opener-Policy: same-origin` together with
-  `Cross-Origin-Embedder-Policy: require-corp`** — works in every engine. Every cross-origin
-  subresource must then opt in through `Cross-Origin-Resource-Policy` or CORS, so
-  third-party images, fonts, scripts and iframes stop loading unless they cooperate; and
-  `same-origin` severs the opener link with cross-origin popups, which breaks sign-in and
-  payment windows that depend on it.
-- **`Document-Isolation-Policy: isolate-and-require-corp`** — Chromium only; Firefox ignores
-  it, so it cannot be your only measure on a cross-browser deployment. Cross-origin
-  subresources still need `Cross-Origin-Resource-Policy`, but no `Cross-Origin-Opener-Policy`
-  is involved, so popups and opener relationships keep working and the isolation applies to
-  this document rather than to everything around it.
-
-Where neither is worth it, `build: 'async'` buys the same interruption on all four VFS and
-needs no hosting change — but it is slower wherever a query walks rows. Full scans and paged
-reads may take significantly longer, on the order of twice as long in this project's own
-measurements and more than that on some engines; bulk loading is affected too, less sharply.
-Point reads, write latency and read concurrency are unaffected. See
-[Interrupting a call](API.md#interrupting-a-call).
+Two ways out — serving the page cross-origin isolated, or `build: 'async'` — and what each
+one costs are under [Interrupting a call](API.md#interrupting-a-call).
 
 ### Deleting a database
 
 A database that any client still holds cannot be deleted, in this tab or another, on every
-VFS. `deleteDatabase` reports `DATABASE_IN_USE` immediately rather than deleting under a live
-connection, and reports `BUSY` when an open or another delete is merely in flight — the first
-means close it, the second means retry. **Closing every client on the database is what
-releases it**, so a client your application has stopped using but never closed keeps blocking
-until its tab goes. This library cannot revoke a connection it did not open: another library
-or native code on the same origin is invisible to it.
+VFS. More on the dedicated [`deleteDatabase`](API.md#deletedatabase) API entry.
 
 ## Development
 

@@ -1,121 +1,277 @@
 # VFS
 
-Where [browser-sqlite](README.md) writes your database, and which WebAssembly build runs
-behind it.
-
-**▶ [Run the benchmarks in your own browser](https://lalexdotcom.github.io/browser-sqlite/)** —
-which VFS wins depends on the engine, and a single browser release can move the answer.
-
-## VFS Selection
-
-browser-sqlite delegates storage to a
+[browser-sqlite](README.md) delegates storage to a
 [wa-sqlite Virtual File System](https://github.com/rhashimoto/wa-sqlite/tree/master/src/examples#readme)
 (VFS).
 
-**`vfs` is required — there is no default.** A VFS decides *where* your database
-is written, so a default that moved between versions would leave you reading an
-empty database while your bytes sat in a store nothing queries.
-
-**Pass `OPFSAdaptiveVFS` unless you have a reason not to.** Across every engine we
-could test — Chrome, Firefox and Safari, desktop and mobile — it opened and passed
-every conformance check without exception. It is the only VFS here of which that is
-true.
+**[Run the benchmarks in your own browser](https://lalexdotcom.github.io/browser-sqlite/)** —
+which VFS wins depends on the engine, and a single browser release can move the answer.
 
 > **Each VFS is a separate store.** A database written through one VFS is not
 > visible through another — the bytes are still there, but nothing reads them.
 > Changing `vfs` later does not migrate anything.
 
+## Contents
+
+<!-- BEGIN GENERATED TOC — headings are the source; run `pnpm docs:vfs` -->
+
+- **[Browser compatibility](#browser-compatibility)**: [Recommendations](#recommendations) · [Per browser](#if-you-can-guarantee-a-browser)
+- **[VFS reference](#vfs-reference)**: [OPFSWriteAheadVFS](#opfswriteaheadvfs) · [OPFSAdaptiveVFS](#opfsadaptivevfs) · [OPFSCoopSyncVFS](#opfscoopsyncvfs) · [AccessHandlePoolVFS](#accesshandlepoolvfs) · [IDBBatchAtomicVFS](#idbbatchatomicvfs) · [IDBMirrorVFS](#idbmirrorvfs) · [OPFSAnyContextVFS](#opfsanycontextvfs) · [MemoryVFS](#memoryvfs) · [MemoryAsyncVFS](#memoryasyncvfs)
+- **[Builds reference](#builds-reference)**: [sync](#build-sync) · [async](#build-async) · [jspi](#build-jspi)
+- **[Concurrency](#concurrency)**: [Concurrent reads](#concurrent-reads) · [Reduced mode](#reduced-mode)
+
+<!-- END GENERATED TOC -->
+
+## Browser compatibility
+
+### Recommendations
+
+**`OPFSWriteAheadVFS` and `OPFSAdaptiveVFS` are both safe and universal
+recommendations**, and what separates them is speed and interruptibility, not
+correctness.
+
+- **`OPFSWriteAheadVFS`** — faster on every engine we measured, on bulk loads, scans
+  and reads alike. Its `sync` build (the default) only stops a running statement when
+  your page is cross-origin isolated: without it, an aborted call rejects straight away
+  but the statement runs to its end on its worker. `build: 'async'` buys that back
+  without touching your hosting, at the cost of the speed it is chosen for.
+- **`OPFSAdaptiveVFS`** — it picks its strategy per engine, and its `async` build (the
+  default) stops the running statement on every browser, with no headers to set.
+
+### If you can guarantee a browser
+
 You would leave that choice when you control which browser runs your code — an
 Electron app, a kiosk, a managed fleet — and need something it cannot give you:
 
-| Browser you can guarantee | Concurrent reads | Write-heavy workloads |
+| Browser you can guarantee | [Concurrent reads](#concurrent-reads) | Write-heavy workloads |
 |---|---|---|
-| None — the open web | `OPFSAnyContextVFS` if you can require Safari 26+; otherwise `IDBBatchAtomicVFS` | stay on `OPFSAdaptiveVFS` |
-| Chromium 121+ | already the case | `OPFSWriteAheadVFS` |
-| Firefox 111+ | `OPFSAnyContextVFS` | stay |
-| Safari 26+ / iPadOS 26+ | `OPFSAnyContextVFS` | stay |
-| iOS (iPhone) | none measured to help | stay |
+| Chromium 121+ (Chrome, Edge, Electron…)<br>desktop and mobile | [`OPFSWriteAheadVFS`](#opfswriteaheadvfs) | [`OPFSWriteAheadVFS`](#opfswriteaheadvfs) |
+| Firefox 111+ | [`OPFSAnyContextVFS`](#opfsanycontextvfs) | [`OPFSWriteAheadVFS`](#opfswriteaheadvfs) |
+| Safari 26+<br>desktop and mobile | [`OPFSAnyContextVFS`](#opfsanycontextvfs) | [`OPFSWriteAheadVFS`](#opfswriteaheadvfs) |
 
-**Concurrent reads** covers three things, and they do not move together. The
-column above answers the first two — serving a read while a **write transaction**
-is open, and running **several reads at once** under a pool: a VFS holding one
-exclusive access handle can do neither, because it is the same handle a second
-worker never gets. Serving a read while a **long query** runs is stricter, and
-off Chromium only `OPFSAnyContextVFS` does it — not `IDBBatchAtomicVFS`, which
-the column recommends for the other two. [Reads during a long query](#reads-during-a-long-query)
-gives that one per VFS. For how much any of this is worth on your own targets,
-run [the benchmark page](https://lalexdotcom.github.io/browser-sqlite/) — no
-timings appear in this file.
+**Where you can guarantee nothing, stay on the recommendation.**
+[`IDBBatchAtomicVFS`](#idbbatchatomicvfs) is the only VFS that gains from running
+several reads at once on *every* engine, where both recommendations are flat off
+Chromium — but it pays an order of magnitude for that on writes. It earns its
+place in a read-mostly workload that must run anywhere, and nowhere else.
+
+## VFS reference
+
+What each VFS can do at all. Follow its name for the browser versions it needs
+and the rest of its detail; wa-sqlite describes the implementations themselves
+on its [VFS page](https://github.com/rhashimoto/wa-sqlite/tree/master/src/examples#readme).
 
 <!-- BEGIN GENERATED VFS TABLE — edit VFS_CAPABILITIES in src/types.ts, then run `pnpm docs:vfs` -->
 
-| VFS | Builds | Browser compatibility | Pool size | Shared between connections | Survives close | Memory | Default PRAGMAs |
-|-----|--------|-----------------------|-----------|----------------------------|----------------|--------|-----------------|
-| `OPFSAdaptiveVFS` **(recommended)** | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 111+/153+ [(*)](#-reduced-mode)<br>Safari 15.4+/27+ [(*)](#-reduced-mode)<br>Android 109+/?<br>iOS 15.4+/27+ [(*)](#-reduced-mode) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` | — |
-| [`OPFSWriteAheadVFS`](#opfswriteaheadvfs) | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 111+/153+ [(*)](#-reduced-mode)<br>Safari 15.4+/27+ [(*)](#-reduced-mode)<br>Android 109+/?<br>iOS 15.4+/27+ [(*)](#-reduced-mode) | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` | — |
-| [`OPFSCoopSyncVFS`](#opfscoopsyncvfs) | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 111+/153+<br>Safari 15.4+/27+<br>Android 109+/?<br>iOS 15.4+/27+ | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` | — |
-| [`AccessHandlePoolVFS`](#accesshandlepoolvfs) | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 111+/153+<br>Safari 15.4+/27+<br>Android 109+/?<br>iOS 15.4+/27+ | **1** — it cannot share access handles between connections | No | Yes | Page cache only, bounded by `PRAGMA cache_size` | `locking_mode=exclusive`<br>`journal_mode=wal` |
-| [`IDBBatchAtomicVFS`](#idbbatchatomicvfs) | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 95+/153+<br>Safari 15.4+/27+<br>Android 92+/?<br>iOS 15.4+/27+ | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` | — |
-| [`IDBMirrorVFS`](#idbmirrorvfs) | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 95+/153+<br>Safari 15.4+/27+<br>Android 92+/?<br>iOS 15.4+/27+ | **1** — its pages are mirrored per worker and commits propagate asynchronously, so a larger pool reads stale data or fails outright | No | Yes | **Whole database in RAM**, multiplied by `poolSize` | — |
-| [`OPFSAnyContextVFS`](#opfsanycontextvfs) | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 111+/153+<br>Safari 26+/27+<br>Android 109+/?<br>iOS 26+/27+ | Any | Yes | Yes | Page cache only, bounded by `PRAGMA cache_size` | — |
-| `MemoryVFS` | [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 95+/153+<br>Safari 15.4+/27+<br>Android 92+/?<br>iOS 15.4+/27+ | **1** — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently | No | **No — volatile** | **Whole database in RAM**, multiplied by `poolSize` | — |
-| `MemoryAsyncVFS` | [`async`](#build-async), [`jspi`](#build-jspi) | Chrome 92+/137+<br>Firefox 95+/153+<br>Safari 15.4+/27+<br>Android 92+/?<br>iOS 15.4+/27+ | **1** — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently | No | **No — volatile** | **Whole database in RAM**, multiplied by `poolSize` | — |
+| VFS | [`sync`](#build-sync) | [`async`](#build-async) | [`jspi`](#build-jspi) | Pool | Persistent | `readwrite-unsafe` |
+|---|---|---|---|---|---|---|
+| [`OPFSWriteAheadVFS`](#opfswriteaheadvfs)<br>**(recommended)** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| [`OPFSAdaptiveVFS`](#opfsadaptivevfs)<br>**(recommended)** | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| [`OPFSCoopSyncVFS`](#opfscoopsyncvfs) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| [`AccessHandlePoolVFS`](#accesshandlepoolvfs) | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
+| [`IDBBatchAtomicVFS`](#idbbatchatomicvfs) | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| [`IDBMirrorVFS`](#idbmirrorvfs) | ❌ | ✅ | ✅ | ❌ | ✅ | ❌ |
+| [`OPFSAnyContextVFS`](#opfsanycontextvfs) | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| [`MemoryVFS`](#memoryvfs) | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| [`MemoryAsyncVFS`](#memoryasyncvfs) | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ |
 
 <!-- END GENERATED VFS TABLE -->
 
-The **Browser compatibility** column is derived from documented platform support,
-not from our own test runs. It covers where the VFS stores data; which **builds**
-are reachable on each engine is a separate question, answered under
-[Builds](#builds) — the `Builds` column links straight to the build it names.
+### `OPFSWriteAheadVFS`
 
-### (*) Reduced mode
+<!-- BEGIN GENERATED OPFSWriteAheadVFS -->
 
-The VFS runs on that engine, but without `readwrite-unsafe` access handles: one
-exclusive handle rotated between workers instead of one held per connection. It
-is not a partial failure — `OPFSAdaptiveVFS` passes 102 of 104 browser tests on
-Firefox in exactly that mode.
+**Builds:** [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi)
 
-What it costs is pool concurrency whenever one worker holds that handle for a
-long time. **On an engine without `readwrite-unsafe`, a VFS that rotates a single
-exclusive OPFS access handle cannot serve any other worker while one of them
-holds it** — the holder does not give it back before its statement ends, and the
-next acquisition blocks in the scheduler, before an `AbortSignal` is ever
-consulted. That covers `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` in reduced mode.
+**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+<sup><a href="#reduced-mode">[reduced]</a></sup>, Safari 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>, Android 109+/?, iOS 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>
 
-**A long *read* does this as much as a write transaction.** A worker inside a
-single long statement cannot answer a hand-over request, so a query that runs for
-seconds serializes every other read for its whole duration. This file said the
-opposite until it was measured per VFS.
+**Pool size:** Any · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
 
-`IDBMirrorVFS`, `OPFSAnyContextVFS` and `IDBBatchAtomicVFS` hold no such handle,
-so reduced mode does not apply to them. That is not the same as never making a
-read wait — `IDBBatchAtomicVFS` does, on every engine, for a reason of its own.
-See [`IDBBatchAtomicVFS`](#idbbatchatomicvfs).
+<!-- END GENERATED OPFSWriteAheadVFS -->
 
-`OPFSCoopSyncVFS` has the same symptom for a different reason, and it is **not**
-conditional on the engine — it never uses `readwrite-unsafe`, so it is never in
-reduced mode. See [`OPFSCoopSyncVFS`](#opfscoopsyncvfs).
+Stores the database as one file in OPFS and keeps its own write-ahead log,
+implemented inside the VFS rather than through SQLite's own WAL. It is
+synchronous, and it wants the `readwrite-unsafe` access-handle mode to run
+several connections at speed.
 
-**Reads still wait on the file where your browser gives you one access handle.** Serializing writers does not change which handle a VFS holds. Where `readwrite-unsafe` is unavailable, a read in another tab still waits for the rotated exclusive handle while a writer holds it.
+**It takes `readwrite-unsafe` where the engine offers it — Chromium 121+, for now.** There it holds one access handle per connection, and serves a read while a long query runs, on its `sync` build.
 
-### Reads during a long query
+**Everywhere else it opens the handle exclusively and rotates it between workers.** A browser without `readwrite-unsafe` ignores the `mode` option rather than rejecting it, so the VFS still works and falls into [reduced mode](#reduced-mode): no read is served while another worker holds the handle, for as long as its statement runs.
 
-Off Chromium, none of them — `OPFSAnyContextVFS` is the only exception, and it is the exception on every engine. On Chromium, `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` serve it; `OPFSCoopSyncVFS` and `IDBBatchAtomicVFS` do not. The [benchmark page](https://lalexdotcom.github.io/browser-sqlite/) reports this per VFS on the browser you run it in.
+Bulk loading is what it is fastest at, on every engine measured.
 
-## Builds
+### `OPFSAdaptiveVFS`
+
+<!-- BEGIN GENERATED OPFSAdaptiveVFS -->
+
+**Builds:** [`async`](#build-async), [`jspi`](#build-jspi)
+
+**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+<sup><a href="#reduced-mode">[reduced]</a></sup>, Safari 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>, Android 109+/?, iOS 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>
+
+**Pool size:** Any · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
+
+<!-- END GENERATED OPFSAdaptiveVFS -->
+
+Stores the database as one file in OPFS, reached through synchronous access
+handles. Only one access handle may be open on a file at a time, so it closes
+and reopens lazily to let a second connection in; where the browser allows
+several handles at once it takes that path instead, which is what it adapts to.
+
+### `OPFSCoopSyncVFS`
+
+<!-- BEGIN GENERATED OPFSCoopSyncVFS -->
+
+**Builds:** [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi)
+
+**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+, Safari 15.4+/27+, Android 109+/?, iOS 15.4+/27+
+
+**Pool size:** Any · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
+
+<!-- END GENERATED OPFSCoopSyncVFS -->
+
+Stores the database as one file in OPFS, synchronously, and stays filesystem
+transparent. It holds a pool of access handles for everything but the main
+database and its journal, and closes those two lazily so several connections
+can take turns on them.
+
+**It does not read concurrently, and stalls unpredictably under a pool.** It implements its own locking and silently ignores the `lockPolicy: 'shared'` this library constructs every VFS with, holding one *exclusive* access handle and rotating it between workers instead of one per connection. A read issued while a write transaction is open is **never served**: the pool acquisition blocks before any `AbortSignal` is consulted. A bulk insert either finishes promptly or **exceeds 30 seconds**, with no middle ground and no consistency across runs. None of this depends on `readwrite-unsafe`, so it happens on Chromium too.
+
+### `AccessHandlePoolVFS`
+
+<!-- BEGIN GENERATED AccessHandlePoolVFS -->
+
+**Builds:** [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi)
+
+**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+, Safari 15.4+/27+, Android 109+/?, iOS 15.4+/27+
+
+**Pool size:** **1**<sup><a href="#fn-4">[4]</a></sup> · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup> · **Default PRAGMAs:** `locking_mode=exclusive`, `journal_mode=wal`
+
+<!-- END GENERATED AccessHandlePoolVFS -->
+
+Stores the database in OPFS behind a pool of access handles opened up front,
+with every method synchronous. Its files are not filesystem transparent — they
+cannot be imported or exported directly — which is what buys it
+`locking_mode=exclusive` and `journal_mode=wal`.
+
+**`AccessHandlePoolVFS` runs a pool of one.** You do not have to say so — omitting `poolSize` gives you 1 here rather than the usual 2. Passing anything above 1 throws synchronously at client creation time.
+
+**`AccessHandlePoolVFS` allows one connection per origin, not one per tab.** A second client on the same database — in this tab or another — fails its first query with `BUSY`, immediately. Close the first client and the next one opens. An application that expects to be open in two tabs cannot run on it.
+
+### `IDBBatchAtomicVFS`
+
+<!-- BEGIN GENERATED IDBBatchAtomicVFS -->
+
+**Builds:** [`async`](#build-async), [`jspi`](#build-jspi)
+
+**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
+
+**Pool size:** Any · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
+
+<!-- END GENERATED IDBBatchAtomicVFS -->
+
+Stores database pages in IndexedDB, which every context implements, so it is
+the general-purpose choice where OPFS is not available. It uses SQLite's
+batch-atomic write mode, which needs no separate journal file when the page
+cache is large enough to hold the journal.
+
+The **RAM** line above is not the whole story: `PRAGMA cache_size` also decides whether a transaction runs in IndexedDB's
+batch-atomic mode. The VFS takes that path only when the cache can hold the
+transaction's pages, and falls back silently when it cannot — at SQLite's
+default of `-2000` a 5000-page transaction never enters it, on either engine.
+Raising the bound reserves nothing up front; the heap grows only as the workload
+uses it. **This library sets no default for it**, because raising it saved no
+time in either engine — so this is something to know about your own workload,
+not a knob to turn on principle.
+
+It holds no exclusive access handle, so [reduced mode](#reduced-mode) does not
+apply to it — but it still does not serve a read while a long query runs, on any
+engine. See [Concurrent reads](#concurrent-reads).
+
+### `IDBMirrorVFS`
+
+<!-- BEGIN GENERATED IDBMirrorVFS -->
+
+**Builds:** [`async`](#build-async), [`jspi`](#build-jspi)
+
+**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
+
+**Pool size:** **1**<sup><a href="#fn-5">[5]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
+
+<!-- END GENERATED IDBMirrorVFS -->
+
+Keeps every file in memory and persists the database to IndexedDB, so it runs
+in any context. It only takes databases that fit in available memory, counted
+per worker rather than per origin.
+
+Read-your-own-writes does not hold across tabs here: it mirrors the whole
+database in memory per worker and propagates commits asynchronously. See
+[Guarantees](README.md#guarantees).
+
+### `OPFSAnyContextVFS`
+
+<!-- BEGIN GENERATED OPFSAnyContextVFS -->
+
+**Builds:** [`async`](#build-async), [`jspi`](#build-jspi)
+
+**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+, Safari 26+/27+, Android 109+/?, iOS 26+/27+
+
+**Pool size:** Any · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
+
+<!-- END GENERATED OPFSAnyContextVFS -->
+
+Stores the database in OPFS through the `File` and `FileSystemWritableFileStream`
+APIs rather than synchronous access handles, which is what lets it run in any
+context instead of a dedicated worker only. Writes get worse as the file grows,
+so it suits read-only or nearly read-only databases.
+
+> **This VFS needs a patched wa-sqlite to work on Safari.** browser-sqlite ships
+> that patch inside its own worker bundle — there is nothing for you to install
+> or configure.
+
+### `MemoryVFS`
+
+<!-- BEGIN GENERATED MemoryVFS -->
+
+**Builds:** [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi)
+
+**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
+
+**Pool size:** **1**<sup><a href="#fn-6">[6]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
+
+<!-- END GENERATED MemoryVFS -->
+
+Keeps the database in RAM and nothing outlives the connection. wa-sqlite ships
+it as a minimal reference implementation and as a baseline for behaviour and
+performance, not as storage.
+
+### `MemoryAsyncVFS`
+
+<!-- BEGIN GENERATED MemoryAsyncVFS -->
+
+**Builds:** [`async`](#build-async), [`jspi`](#build-jspi)
+
+**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
+
+**Pool size:** **1**<sup><a href="#fn-6">[6]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
+
+<!-- END GENERATED MemoryAsyncVFS -->
+
+Keeps the database in RAM, reached through the asynchronous VFS interface rather
+than the synchronous one. Like `MemoryVFS`, a reference implementation and a
+baseline rather than storage.
+
+## Builds reference
 
 Each VFS runs on one or more wa-sqlite WebAssembly builds. The `build` option
-selects one; omitted, the first build the VFS declares is used — `async` for the
-default VFS. A pair the VFS does not support throws a `SQLiteError` with code
-`INVALID_OPTION` at construction, naming the builds it does support. The pairing
-is declared in one place, `VFS_CAPABILITIES`, which is also what the `SQLiteVFS`
-type is derived from.
+selects one; omitted, the first build the VFS declares is used — the `Builds`
+line of its entry lists them in that order. A pair the VFS does not support
+throws a `SQLiteError` with code `INVALID_OPTION` at construction, naming the
+builds it does support. The pairing is declared in one place,
+`VFS_CAPABILITIES`, which is also what the `SQLiteVFS` type is derived from.
 
 A build carries its own engine requirement, independent of where the VFS stores
 data — so a VFS can be reachable in `sync` on an old browser and in `jspi` only
 on a much newer one.
-
-**`build: 'jspi'` is not available everywhere.** The [`jspi` build table](#build-jspi) carries the per-engine versions; it is generated, so it is the one place that stays current. The build is opt-in and no default uses it, so this constrains nobody who does not ask for it.
 
 <!-- BEGIN GENERATED BUILD TABLE — edit FEATURE_SUPPORT in scripts/render-vfs-matrix.ts -->
 
@@ -125,7 +281,7 @@ Plain synchronous WebAssembly. Needs nothing beyond baseline WASM, so it runs an
 
 ### Build `async`
 
-Asyncify: the WASM stack is unwound and rewound around asynchronous file operations. Also needs nothing beyond baseline WASM. This is the default, and every VFS here can run on it.
+Asyncify: the WASM stack is unwound and rewound around asynchronous file operations. Also needs nothing beyond baseline WASM. Every VFS here can run on it.
 
 ### Build `jspi`
 
@@ -138,48 +294,63 @@ JavaScript Promise Integration — the same asynchrony handled by the engine rat
 
 <!-- END GENERATED BUILD TABLE -->
 
-## Per-VFS notes
+## Concurrency
 
-### `OPFSWriteAheadVFS`
+### Concurrent reads
 
-**`OPFSWriteAheadVFS` serves no concurrent reads outside Chromium — but it is faster there than the default.** It opens access handles with `mode: 'readwrite-unsafe'`, which only Chromium 121+ implements; Firefox and Safari ignore the option rather than reject it, so it still works and falls back to the same reduced mode as `OPFSAdaptiveVFS`. What it keeps is speed: on both Firefox and Safari its `sync` build beats `OPFSAdaptiveVFS` on single-write latency, point reads, list pages, scans and transactions. Prefer it where your workload is latency-bound, and `OPFSAdaptiveVFS` where you need reads to run alongside a long query.
+**Serving a read while a write transaction is open** and **running several reads
+at once under a pool** are the same mechanism. A VFS holding one exclusive access
+handle can do neither, because it is the same handle a second worker never gets.
 
-**Targeting Chromium, it is the most balanced choice on the benchmark page.** It is rarely first on a single row — `OPFSCoopSyncVFS` edges it on scans, `AccessHandlePoolVFS` on write latency — but it is near the front of every one, it leads bulk loading, and it is the only VFS that keeps concurrent reads there while still running the faster `sync` build. That combination is what no other VFS offers on Chromium. Read the numbers on the [benchmark page](https://lalexdotcom.github.io/browser-sqlite/) rather than trusting this sentence a year from now.
+Off Chromium, **reading during a long query** is served by `OPFSAnyContextVFS`
+and by nothing else — and it is the exception on every engine. On Chromium,
+`OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` serve it too; `OPFSCoopSyncVFS` and
+`IDBBatchAtomicVFS` do not.<br>
+The [benchmark page](https://lalexdotcom.github.io/browser-sqlite/) reports this
+per VFS on the browser you run it in.
 
-### `OPFSCoopSyncVFS`
+### Reduced mode
 
-**`OPFSCoopSyncVFS` does not read concurrently, and stalls unpredictably under a pool.** Unlike the other OPFS VFS it implements its own locking and silently ignores the `lockPolicy: 'shared'` this library constructs every VFS with, holding one *exclusive* access handle and rotating it between workers instead of one per connection. A read issued while a write transaction is open is **never served** — the pool acquisition blocks before any `AbortSignal` is consulted — where `IDBBatchAtomicVFS`, `IDBMirrorVFS` and `OPFSAnyContextVFS` serve it every time. A bulk insert either finishes promptly or **exceeds 30 seconds**, with no middle ground and no consistency across runs. None of this depends on `readwrite-unsafe`: unlike the reduced mode described above, it happens on Chromium too.
+A VFS marked `[reduced]` for an engine runs there, but without
+`readwrite-unsafe` access handles: one exclusive handle rotated between workers
+instead of one held per connection. Chromium 121+ is, for now, the only engine
+that implements `readwrite-unsafe`, so every other one runs these VFS this way.<br>
+**It is not a partial failure**: everything a VFS does, it still does correctly,
+and what degrades is concurrency alone.
 
-### `AccessHandlePoolVFS`
+What it costs is pool concurrency whenever one worker holds that handle for a
+long time. **On an engine without `readwrite-unsafe`, a VFS that rotates a single
+exclusive OPFS access handle cannot serve any other worker while one of them
+holds it** — the holder does not give it back before its statement ends, and the
+next acquisition blocks in the scheduler, before an `AbortSignal` is ever
+consulted. That covers `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` in reduced
+mode, and it reaches into other tabs: serializing writers changes who writes
+when, not which handle the VFS holds.
 
-**`AccessHandlePoolVFS` runs a pool of one.** You do not have to say so — omitting `poolSize` gives you 1 here rather than the usual 2. Passing anything above 1 throws synchronously at client creation time.
+**A long *read* does this as much as a write transaction.** A worker inside a
+single long statement cannot answer a hand-over request, so a query that runs for
+seconds serializes every other read for its whole duration.
 
-**`AccessHandlePoolVFS` allows one connection per origin, not one per tab.** A second client on the same database — in this tab or another — fails its first query with `BUSY`, immediately. Close the first client and the next one opens. This is the one VFS where two tabs cannot share a database at all, so choose another if your application expects to be open twice.
+<!-- BEGIN GENERATED FOOTNOTES — edit scripts/render-vfs-matrix.ts -->
 
-### `IDBBatchAtomicVFS`
+---
 
-On **`IDBBatchAtomicVFS`** the **Memory** column is not the whole story:
-`PRAGMA cache_size` also decides whether a transaction runs in IndexedDB's
-batch-atomic mode. The VFS takes that path only when the cache can hold the
-transaction's pages, and falls back silently when it cannot — at SQLite's
-default of `-2000` a 5000-page transaction never enters it, on either engine.
-Raising the bound reserves nothing up front; the heap grows only as the workload
-uses it. **This library sets no default for it**, because raising it saved no
-time in either engine — so this is something to know about your own workload,
-not a knob to turn on principle.
+<a id="fn-1"></a>
+<sub>**1.** Derived from documented platform support, not from our own test runs. These versions cover where the VFS stores its data; which builds are reachable on each engine is a separate question, answered under [Builds reference](#builds-reference) — the **Builds** line links straight to the build it names.</sub>
 
-It holds no exclusive access handle, so [reduced mode](#-reduced-mode) does not
-apply to it — but it still does not serve a read while a long query runs, on any
-engine. See [Reads during a long query](#reads-during-a-long-query).
+<a id="fn-2"></a>
+<sub>**2.** Page cache only, bounded by `PRAGMA cache_size`.</sub>
 
-### `IDBMirrorVFS`
+<a id="fn-3"></a>
+<sub>**3.** **Whole database in RAM**, multiplied by `poolSize`.</sub>
 
-It is the one VFS where read-your-own-writes does not hold across tabs: it mirrors
-the whole database in memory per worker and propagates commits asynchronously. See
-[Guarantees](README.md#guarantees).
+<a id="fn-4"></a>
+<sub>**4.** Pool size: 1 max — it cannot share access handles between connections.</sub>
 
-### `OPFSAnyContextVFS`
+<a id="fn-5"></a>
+<sub>**5.** Pool size: 1 max — its pages are mirrored per worker and commits propagate asynchronously, so a larger pool reads stale data or fails outright.</sub>
 
-This VFS needs a patched wa-sqlite to work on Safari. browser-sqlite ships that
-patch inside its own worker bundle — there is nothing for you to install or
-configure.
+<a id="fn-6"></a>
+<sub>**6.** Pool size: 1 max — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently.</sub>
+
+<!-- END GENERATED FOOTNOTES -->

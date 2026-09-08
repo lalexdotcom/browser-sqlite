@@ -234,9 +234,10 @@ export type VFSCapability = {
    *
    * `OPFSAdaptiveVFS` is the case this field exists for. Without
    * `readwrite-unsafe` it rotates a single exclusive access handle between
-   * connections instead of holding one each. That works — 102 of 104 browser
-   * tests pass on Firefox — but it serializes the whole pool for the duration
-   * of a long uninterruptible statement.
+   * connections instead of holding one each. That works — Firefox is the engine
+   * the browser suite exercises it on, and that suite is a CI gate — but it
+   * serializes the whole pool for the duration of a long uninterruptible
+   * statement.
    *
    * Without this distinction, a support table derived from browser specs would
    * mark that VFS broken everywhere outside Chromium, when it merely degrades.
@@ -302,20 +303,6 @@ export type VFSCapability = {
  * wa-sqlite v1.1.2, never copied from upstream's table.
  */
 export const VFS_CAPABILITIES = {
-  OPFSAdaptiveVFS: {
-    builds: ['async', 'jspi'],
-    maxPoolSize: null,
-    poolLimitReason: null,
-    multiConnection: true,
-    persistent: true,
-    memoryModel: 'page-cache',
-    storage: 'opfs',
-    layout: 'opfs-path',
-    requires: ['opfs'],
-    degradesWithout: ['readwrite-unsafe'],
-    exclusiveConnection: false,
-    defaultPragmas: {},
-  },
   OPFSWriteAheadVFS: {
     builds: ['sync', 'async', 'jspi'],
     maxPoolSize: null,
@@ -330,6 +317,20 @@ export const VFS_CAPABILITIES = {
     // poolSize 1, 2 and 4. `requires` used to name readwrite-unsafe, which made
     // the conformance suite skip the very pairs that would have falsified it.
     // Safari is still unmeasured for this VFS — see `mem:follow-ups`.
+    requires: ['opfs'],
+    degradesWithout: ['readwrite-unsafe'],
+    exclusiveConnection: false,
+    defaultPragmas: {},
+  },
+  OPFSAdaptiveVFS: {
+    builds: ['async', 'jspi'],
+    maxPoolSize: null,
+    poolLimitReason: null,
+    multiConnection: true,
+    persistent: true,
+    memoryModel: 'page-cache',
+    storage: 'opfs',
+    layout: 'opfs-path',
     requires: ['opfs'],
     degradesWithout: ['readwrite-unsafe'],
     exclusiveConnection: false,
@@ -474,15 +475,3 @@ export type SQLiteVFS = keyof typeof VFS_CAPABILITIES;
 /** The build used when the caller does not name one. */
 export const defaultBuildFor = (vfs: SQLiteVFS): SQLiteBuild =>
   VFS_CAPABILITIES[vfs].builds[0];
-
-/**
- * The VFS this project recommends when a caller has no reason to choose
- * another. It is NOT a default — `vfs` is required, precisely so that the name
- * lives in the consumer's own source and cannot move underneath their data.
- *
- * It lives here, beside the table, because the VFS.md generator marks this row
- * `(recommended)` and would otherwise hold a second copy. It is deliberately
- * not exported: a consumer writing `vfs: RECOMMENDED_VFS` would be exposed to
- * the same displacement the day the recommendation changes.
- */
-export const RECOMMENDED_VFS: SQLiteVFS = 'OPFSAdaptiveVFS';

@@ -3,7 +3,6 @@ import { connectionLockName, createLocks, initLockName } from './locks';
 import { busyFromCode, spawnWorker } from './pool';
 import {
   defaultBuildFor,
-  RECOMMENDED_VFS,
   type SQLiteBuild,
   type SQLiteVFS,
   VFS_CAPABILITIES,
@@ -59,7 +58,7 @@ export const deleteDatabase = async (
   if (!options?.vfs) {
     throw new SQLiteError(
       'INVALID_OPTION',
-      `vfs is required. Pass the VFS the database was created with — ${RECOMMENDED_VFS} is the recommended universal choice. Four VFS share one underlying file: passing the wrong one deletes a real database without reporting anything.`,
+      `vfs is required. Pass the VFS the database was created with — VFS.md compares them. Four VFS share one underlying file: passing the wrong one deletes a real database without reporting anything.`,
     );
   }
 

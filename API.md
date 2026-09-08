@@ -13,7 +13,7 @@ import { createSQLiteClient } from 'browser-sqlite';
 
 const db = createSQLiteClient('myapp.sqlite', {
   poolSize: 2,                    // number of worker threads (default: 2)
-  vfs: 'OPFSAdaptiveVFS',         // required — see VFS Selection
+  vfs: 'OPFSAdaptiveVFS',         // required — see Browser compatibility
   build: 'async',                 // wa-sqlite build (default: the VFS's first)
   pragmas: {                      // SQLite PRAGMAs applied on open
     journal_mode: 'WAL',
@@ -24,15 +24,15 @@ const db = createSQLiteClient('myapp.sqlite', {
 
 `createSQLiteClient` spawns `poolSize` Web Worker threads immediately. Workers reach READY state asynchronously — queries made before workers are ready are queued automatically.
 
-`vfs` is the only option with no default — [VFS Selection](VFS.md#vfs-selection) is how to choose it, and a database written through one VFS is not readable through another.
+`vfs` is the only option with no default — [Recommendations](VFS.md#recommendations) is how to choose it, and a database written through one VFS is not readable through another.
 
 ### Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `poolSize` | `number` | `2`, or the VFS's maximum when it is lower | Number of Web Workers spawned in the pool. A larger pool allows more concurrent reads but uses more memory. A VFS that holds a single connection caps it at `1` and throws if you pass more; omitting it never throws, because the default is capped to what the VFS allows. **It also delays your first query**: nothing is served until every worker has opened, and the opens are serialized origin-wide, so the wait grows linearly with the pool — measured at roughly 7 ms per worker on Chromium and 20 ms on Firefox in one container, meaning `poolSize: 8` reached its first result in ~124 ms and ~204 ms where `poolSize: 1` took ~76 ms and ~68 ms. Measure your own targets before raising it. |
-| `vfs` | `SQLiteVFS` | — (required) | VFS implementation for storage. See the [VFS Selection](VFS.md#vfs-selection) table. |
-| `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite WebAssembly build to load: `'sync'`, `'async'`, or `'jspi'`. Throws `INVALID_OPTION` at construction if the VFS does not support it. See [Builds](VFS.md#builds). |
+| `vfs` | `SQLiteVFS` | — (required) | VFS implementation for storage. See [Recommendations](VFS.md#recommendations). |
+| `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite WebAssembly build to load: `'sync'`, `'async'`, or `'jspi'`. Throws `INVALID_OPTION` at construction if the VFS does not support it. See [Builds reference](VFS.md#builds-reference). |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Where the workers fetch their `.wasm`. Omit it and resolution is unchanged: the files are read from beside `worker.js`. A string is a directory resolved against the page — relative, absolute or a full URL, trailing slash optional. A callback receives the resolved `build` and names one file, for a bundler-emitted asset carrying a content hash. Called once, at construction. Throws `INVALID_OPTION` there if the value is not a URL. Another origin needs CORS and `Content-Type: application/wasm`. |
 | `pragmas` | `Record<string, string>` | `undefined` | SQLite PRAGMAs applied to each worker connection on open. |
 | `maxWorkerRestarts` | `number` | `1` | How many times a slot may be restarted after it dies. The counter resets once a replacement has actually served a request. A slot that fails to open is retried once, but only if another worker did open — when none did, the failure is a configuration error and the client fails immediately rather than retrying. |
@@ -301,7 +301,7 @@ What a VFS keeps for itself is left alone — the IndexedDB store shared by ever
 
 > **Warning:** `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` share one file per database name, so deleting through any of them deletes what the others created.
 
-Throws `SQLiteError` with code `DATABASE_IN_USE` when a client still holds the database, in this tab or any other — retrying will not help, close every client on it first. `DATABASE_NOT_FOUND` means there was nothing at that name. `BUSY` is the transient case: another open or another delete was in flight at that moment, and retrying is the remedy. `TIMEOUT` means the VFS could not answer within 30 seconds; `OPFSWriteAheadVFS` and `OPFSCoopSyncVFS` have been seen doing that outside Chromium even with nothing open.
+Throws `SQLiteError` with code `DATABASE_IN_USE` when a client still holds the database, in this tab or any other — retrying will not help, close every client on it first. **Closing every client is what releases it**, so a client your application has stopped using but never closed keeps blocking until its tab goes; and this library cannot revoke a connection it did not open — another library or native code on the same origin is invisible to it. `DATABASE_NOT_FOUND` means there was nothing at that name. `BUSY` is the transient case: another open or another delete was in flight at that moment, and retrying is the remedy. `TIMEOUT` means the VFS could not answer within 30 seconds; `OPFSWriteAheadVFS` and `OPFSCoopSyncVFS` have been seen doing that outside Chromium even with nothing open.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
@@ -366,10 +366,30 @@ chunks of a `stream()`, inside a `transaction()` callback, between two `enqueue(
 `bulkWrite()`.
 
 `timeout` aborts through the same path a `signal` does, so the same limit applies. Where it does
-not stop the running statement, an aborted call keeps running to its end on its worker; the pool's
-other workers are unaffected. Two ways out, and you may want neither: serve your page cross-origin
-isolated — COOP+COEP anywhere, or `Document-Isolation-Policy` on Chromium — or pass
-`build: 'async'`, which every one of those four VFS accepts.
+not stop the running statement, an aborted call keeps running to its end on its worker, which
+stays unavailable until it does; the pool's other workers are unaffected. Two ways out, and you
+may want neither.
+
+Serving the page **cross-origin isolated** is what lets an abort reach the running statement.
+Two header sets do it, and each costs something:
+
+- **`Cross-Origin-Opener-Policy: same-origin` together with
+  `Cross-Origin-Embedder-Policy: require-corp`** — works in every engine. Every cross-origin
+  subresource must then opt in through `Cross-Origin-Resource-Policy` or CORS, so
+  third-party images, fonts, scripts and iframes stop loading unless they cooperate; and
+  `same-origin` severs the opener link with cross-origin popups, which breaks sign-in and
+  payment windows that depend on it.
+- **`Document-Isolation-Policy: isolate-and-require-corp`** — Chromium only; Firefox ignores
+  it, so it cannot be your only measure on a cross-browser deployment. Cross-origin
+  subresources still need `Cross-Origin-Resource-Policy`, but no `Cross-Origin-Opener-Policy`
+  is involved, so popups and opener relationships keep working and the isolation applies to
+  this document rather than to everything around it.
+
+Where neither is worth it, `build: 'async'` buys the same interruption on all four VFS and
+needs no hosting change — but it is slower wherever a query walks rows. Full scans and paged
+reads may take significantly longer, on the order of twice as long in this project's own
+measurements and more than that on some engines; bulk loading is affected too, less sharply.
+Point reads, write latency and read concurrency are unaffected.
 
 The deadline is a browser timer, so a background tab that throttles `setTimeout` may fire it late.
 `AbortSignal.timeout()` behaves identically — it is not a cost of the `timeout` option, but

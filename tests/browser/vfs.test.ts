@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { SQLiteError } from '../../src/errors';
+import { VFS_CAPABILITIES } from '../../src/types';
 import { createTestClient } from './helpers';
 
 /**
@@ -197,7 +198,8 @@ describe('vfs is required', () => {
     ).toThrow(/vfs is required/);
   });
 
-  it('names the recommended VFS and the benchmark page', () => {
+  // Falsifiable: name any VFS in the message `client.ts` throws here.
+  it('points at the benchmark page and names no VFS', () => {
     let caught: unknown;
     try {
       // @ts-expect-error — see above.
@@ -207,9 +209,14 @@ describe('vfs is required', () => {
     }
     expect(caught).toBeInstanceOf(SQLiteError);
     expect((caught as SQLiteError).code).toBe('INVALID_OPTION');
-    expect((caught as SQLiteError).message).toContain('OPFSAdaptiveVFS');
     expect((caught as SQLiteError).message).toContain(
       'lalexdotcom.github.io/browser-sqlite',
     );
+    // The recommendation is documentation, not code. A VFS named here would
+    // travel in a string a consumer copies, and each VFS is its own store, so
+    // the day the recommendation moves that name points at another database.
+    for (const vfs of Object.keys(VFS_CAPABILITIES)) {
+      expect((caught as SQLiteError).message).not.toContain(vfs);
+    }
   });
 });
