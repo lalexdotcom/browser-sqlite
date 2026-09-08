@@ -8,6 +8,11 @@ only what `AGENTS.md` does not say.**
 ## Where things live
 
 - These memories live in `.serena/memories/`, which is **not** gitignored — commit them.
+  **Serena owns them: `read_memory`, `write_memory`, `edit_memory`.** They are `.md`, so
+  `AGENTS.md` would allow Read/Edit — but a dedicated tool exists and hand-editing them with
+  a shell one-liner is drift, caught by the user on 2026-09-08. The same holds for the three
+  consumer pages: `replace_content` fails loudly on no match and on an ambiguous one, which
+  is the only thing a scripted `assert` was buying.
 - Specs and plans: `docs/superpowers/specs/` and `docs/superpowers/plans/`. Read the spec,
   not a summary of it, when picking up designed-but-unbuilt work.
 - The agent framework is **superpowers**. A `.planning/` directory from a previous
