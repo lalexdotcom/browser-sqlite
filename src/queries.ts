@@ -1,7 +1,9 @@
 import {
+  type Abandoned,
   type AbandonRegistry,
   type AbandonState,
   abandonRegistry,
+  reclaim,
 } from './abandon';
 import type { SQLiteChunkOptions, SQLiteQueryOptions } from './api';
 import type { PoolWorker } from './pool';
@@ -78,8 +80,38 @@ export const chunk = <
   });
   const state: AbandonState = { started: false };
   const token = {};
-  const gen = drain<T>(iterator, worker, signal, state, registry, token);
-  registry.watch(gen, { worker, iterator, state, release: onAbandon }, token);
+  const held: Abandoned = { worker, iterator, state, release: onAbandon };
+
+  /**
+   * D7: an abort must reclaim, not merely reject. `makeAbortRace` inside the
+   * generator rejects a promise that an abandoned consumer is no longer
+   * awaiting, and that rejection is swallowed — so without this listener a
+   * `timeout` buys an abandoned generator nothing at all.
+   *
+   * This closure captures the factory's scope and never the generator object,
+   * so a signal the caller keeps alive does not prevent the collection the
+   * registry depends on.
+   */
+  let detach = () => {};
+  if (signal) {
+    const onAbort = () => {
+      registry.forget(token);
+      reclaim(held);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    detach = () => signal.removeEventListener('abort', onAbort);
+  }
+
+  const gen = drain<T>(
+    iterator,
+    worker,
+    signal,
+    state,
+    registry,
+    token,
+    detach,
+  );
+  registry.watch(gen, held, token);
   return gen;
 };
 
@@ -90,6 +122,7 @@ const drain = async function* <T extends Record<string, unknown>>(
   state: AbandonState,
   registry: AbandonRegistry,
   token: object,
+  detach: () => void,
 ): AsyncGenerator<T[]> {
   // B9: addEventListener never fires for a signal that is already aborted.
   // D2: this stays HERE and not in the factory above. Lifted, it would throw
@@ -98,6 +131,7 @@ const drain = async function* <T extends Record<string, unknown>>(
   // This path throws BEFORE the try, so the finally below never runs: it owes
   // its teardown itself.
   if (signal?.aborted) {
+    detach();
     registry.forget(token);
     throw signal.reason;
   }
@@ -109,16 +143,21 @@ const drain = async function* <T extends Record<string, unknown>>(
       // Racing the pending chunk, not testing a flag after it: an ORDER BY
       // sorts entirely inside the first step(), so waiting for a chunk before
       // noticing the abort makes AbortSignal.timeout(n) return minutes late.
+      // `aborted` first: D7's reclaim() may already have completed `iterator`
+      // by the time this races again, so with both promises pre-settled,
+      // array order breaks the tie. Putting `aborted` first keeps the abort
+      // observed even though `iterator.next()` also resolves immediately.
       const next = aborted
-        ? await Promise.race([iterator.next(), aborted])
+        ? await Promise.race([aborted, iterator.next()])
         : await iterator.next();
       if (next.done) break;
       // FLK-1: chunks already queued are not delivered once the signal fired.
       if (typeof next.value !== 'number') yield next.value;
     }
   } finally {
-    // First, so that no collection of this generator can run the cleanup a
-    // second time on a worker that has already been given back.
+    // First, so that neither a later abort nor a collection can run the
+    // cleanup a second time on a worker already given back.
+    detach();
     registry.forget(token);
     teardown();
     // Start the stop-and-drain, never await it. The caller must not wait for a
