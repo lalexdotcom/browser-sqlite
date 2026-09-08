@@ -107,10 +107,11 @@ release?.();   // the owner's part
 
 ## 4. Decisions
 
-**D1 · The repair is best-effort, and the documentation says so in those words.** A
+**D1 · The registry half is best-effort, and the documentation says so in those words.** A
 `FinalizationRegistry` callback fires at a time the engine chooses, or never — an inactive tab
-may not collect at all. This design turns "wedged for the life of the page" into "wedged until
-the next collection". It is not a guarantee and must not be described as one.
+may not collect at all. On its own this design turns "wedged for the life of the page" into
+"wedged until the next collection". It is not a guarantee and must not be described as one.
+**D7 is the half that is deterministic**, and it is what the tests are built on.
 
 **D2 · `if (signal?.aborted) throw signal.reason` stays inside the inner generator**
 (`src/queries.ts:47`). Lifted into the factory it would throw at call time instead of at the
@@ -148,7 +149,20 @@ reachable producer is an abandoned streaming generator, and the message says so 
 `break` / `.return()`. This mirrors how lot 10 kept `errorCode` on the worker protocol: a
 structural check, documented as such.
 
-**D7 · `FinalizationRegistry` joins `LIB_REQUIRES`** in `scripts/render-vfs-matrix.ts`. It sits
+**D7 · An abort reclaims, it does not merely reject.** Today a `signal` or a `timeout` firing
+on an abandoned generator does nothing at all: `makeAbortRace` rejects `aborted`, the generator
+is suspended at a `yield` rather than on the race, and `aborted.catch(() => {})`
+(`src/queries.ts:23`) swallows it. So `reclaim` is also invoked from the abort path. This is
+not a new promise — since lot 10 `timeout` is a wall-clock deadline counted from the call, so a
+generator still suspended at the deadline is already expired by contract; that contract is
+honoured today for a live generator, whose next `.next()` rejects with `OPERATION_TIMEOUT`, and
+silently broken for an abandoned one. D9 makes the two agree. The double teardown is inert:
+`iterator.return()` twice is a no-op and `lease.release()` is idempotent
+(`src/scheduler.ts:310-323`). **It carries no consumer documentation** (user, 2026-09-08): the
+case is too narrow to earn a line in `API.md`, and advising a `timeout` as leak protection
+would invert what the option is for.
+
+**D8 · `FinalizationRegistry` joins `LIB_REQUIRES`** in `scripts/render-vfs-matrix.ts`. It sits
 below the current floor (~Chrome 92, from `crypto.randomUUID` and `Array.prototype.at`), so no
 published number should move — **which is verified by re-rendering the tables and diffing, not
 by this paragraph.** The list exists to state what the bundle actually uses; the
@@ -158,6 +172,15 @@ does not.
 ## 5. What this promises, and what it does not
 
 - **No time bound.** See D1.
+- **A generator abandoned while a `next()` is in flight is unreachable by the registry, and
+  that state is transient.** Measured 2026-09-08 on Node 24 under `--expose-gc`, not reasoned:
+  suspended at a `yield` it is collected; with a `next()` still in flight it is **retained**,
+  because the transport's pending promise chain runs from the worker down to its resumption;
+  and **the moment that `next()` settles it is collected**. The two states are complementary,
+  which is why this costs nothing: while the `next()` is in flight the worker is busy on the
+  consumer's behalf and there is nothing leaked to reclaim. The leak begins only once a chunk
+  has been delivered and nobody takes the next one — which is exactly the state where the
+  generator is collectable. D7 covers the in-flight window anyway, and deterministically.
 - **On the transaction path it repairs the permanent case and not the loud one.** The `reclaim`
   fires at collection; the callback's next statement — and at the latest the auto-COMMIT, which
   reaches `worker.query` through `exec` → `readWorker` — almost always arrives first, trips the
@@ -199,6 +222,12 @@ worker `READY`; the same through `[Symbol.asyncDispose]()`, behind a feature tes
 literally the same path. This pins the two doors `API.md` is about to name — the answer to
 *a documented instruction that nothing exercises will drift*.
 
+**Browser, deterministic — the D9 path, which is the important one.** An abandoned generator
+with a short `timeout` must give its worker back at the deadline: the lease returns, the worker
+reports `READY`, and a later query is served by it. This exercises the whole repair —
+`interrupt`, `return`, the owner's `release` — end to end, on both engines, with no GC and no
+flag. **It is the test the design should be judged on**; the one below is a bonus.
+
 **Browser, real GC — one Chromium test, and it may not survive.** Launched with
 `--expose-gc`, skipped when `gc` is absent, with a bounded retry loop rather than a single
 collection. It is to be run **13 times** before being believed, this repository's own bar from
@@ -216,6 +245,15 @@ must not reintroduce that shape.
   nothing to install, and say that an abandoned generator is recovered only at collection —
   best-effort, not immediate.
 - **`GENERATOR_ABANDONED`** joins the error-code table.
+- **The two paths stop being interchangeable, and `API.md` says today that they are.**
+  `API.md:215` states that `tx` carries "the same querying surface as the client". After this
+  change an abandoned generator is recovered silently on the client path and, on the
+  transaction path, kills the worker and fails the transaction with `GENERATOR_ABANDONED`.
+  One sentence, in *How they run* or in the transaction section, must say so.
+- **`VFS.md` and the generated tables are part of the verification, not of the prose.** D8
+  feeds `LIB_FLOOR`, which caps every VFS cell and the build table across the fourteen
+  generated zones of `VFS.md`. Run `pnpm docs:vfs` and diff: **the expected diff is empty, and
+  a non-empty one is a finding, not a rubber stamp.**
 - **No measurements in the three consumer pages** (user, 2026-09-08).
 - **`CHANGELOG.md`.** A new public error code and a fixed leak are both consumer-visible.
   Opening an unreleased section is the user's instruction and is not inferred here
