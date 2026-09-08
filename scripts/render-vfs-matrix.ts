@@ -156,6 +156,7 @@ const BCD_KEY: Record<Browser, string> = {
 const LIB_REQUIRES: Record<string, { __compat?: { support: object } }> = {
   'Array.prototype.at': bcd.javascript.builtins.Array.at,
   'crypto.randomUUID': bcd.api.Crypto.randomUUID,
+  FinalizationRegistry: bcd.javascript.builtins.FinalizationRegistry,
   MessageChannel: bcd.api.MessageChannel,
 };
 
