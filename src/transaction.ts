@@ -190,7 +190,13 @@ export const createTransaction =
           const query = checksql(sql);
           const { options, release } = withSignal(given);
           return releasing(
-            chunkWorker<T>(worker, query, params, options),
+            // No lease work here: the transaction owns the lease, and
+            // iterator.return() resolves `idle`, which settles the
+            // quiesce().then(release) already pending in its own finally.
+            chunkWorker<T>(worker, query, params, {
+              ...options,
+              onAbandon: release,
+            }),
             release,
           );
         },
@@ -203,7 +209,13 @@ export const createTransaction =
           const query = checksql(sql);
           const { options, release } = withSignal(given);
           return releasing(
-            streamRows<T>(worker, query, params, options),
+            // No lease work here: the transaction owns the lease, and
+            // iterator.return() resolves `idle`, which settles the
+            // quiesce().then(release) already pending in its own finally.
+            streamRows<T>(worker, query, params, {
+              ...options,
+              onAbandon: release,
+            }),
             release,
           );
         },

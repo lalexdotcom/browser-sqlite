@@ -453,8 +453,17 @@ export const createPoolWorker = (deps: {
   ): AsyncGenerator<T[] | number> {
     try {
       if (deferredChunk) {
-        console.error(`Previous query not finished on worker ${index + 1}`);
-        throw new Error('Worker is already processing a query');
+        // Structural: this fires on "a query is already in flight on this
+        // worker", not on a diagnosis. But the only way a consumer reaches it
+        // is a chunk()/stream() generator abandoned inside a transaction,
+        // whose next statement lands on the worker the generator still holds —
+        // so the message names that, and what to do about it.
+        throw new SQLiteError(
+          'GENERATOR_ABANDONED',
+          `Worker ${index + 1} is still serving a chunk()/stream() generator. ` +
+            'Exhaust it, break out of it, or call its return() before issuing ' +
+            'another statement on the same transaction.',
+        );
       }
 
       if (state?.currentRequest) {
