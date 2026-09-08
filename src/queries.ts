@@ -175,7 +175,7 @@ export const streamRows = async function* <
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  options?: SQLiteChunkOptions,
+  options?: InternalChunkOptions,
 ): AsyncGenerator<T> {
   for await (const rows of chunk<T>(worker, sql, params, options)) {
     for (const row of rows) yield row;
