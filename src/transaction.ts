@@ -304,6 +304,18 @@ export const createTransaction =
             // now hold an open transaction, and a read inside one reads that
             // transaction's snapshot — the barrier would refresh nothing and
             // report success. Evict instead of hoping.
+            //
+            // **The ordinary way to get here is an abandoned generator**, and it
+            // is worth knowing before someone reads a restart as a defect. A
+            // `chunk()`/`stream()` generator dropped inside the callback leaves
+            // a query in flight; the next statement trips pool.ts's guard, the
+            // ROLLBACK above trips it in turn, and the slot is evicted and
+            // restarted. That is correct — the connection genuinely holds an
+            // open transaction with a query in flight — and it recovers even on
+            // the worst-case VFS (`mem:measurements`, ABANDON-RESTART). What it
+            // costs is one restart out of a FINITE budget, so a consumer
+            // abandoning generators in a loop will exhaust it. Nothing in the
+            // suite exercises this at `poolSize: 1`.
             deps.onPoisoned(
               worker.index,
               new SQLiteError(

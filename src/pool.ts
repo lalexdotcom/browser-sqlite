@@ -59,11 +59,14 @@ export type PoolWorker = Worker & {
    * is what lets the consumer's queued `return()` reach the generator's
    * finally instead of waiting behind a chunk that may be minutes away.
    *
-   * Pass the transport iterator being stopped: the call is then a no-op unless
-   * the worker is still serving it, which is what keeps a late stop off an
-   * unrelated query. Omit it only from a caller that owns the worker outright.
+   * `on` is the transport iterator being stopped, and it is REQUIRED: the call
+   * is a no-op unless the worker is still serving that transport, which is what
+   * keeps a late stop off an unrelated query. It was briefly optional, and an
+   * omitted argument meant "stop whatever is running" — the exact semantics that
+   * let an abandoned generator's late cleanup truncate a healthy query. Nothing
+   * needs that form, so nothing may ask for it.
    */
-  interrupt: (on?: object) => void;
+  interrupt: (on: object) => void;
   /** Resolves when no query is in flight on this worker. */
   quiesce: () => Promise<void>;
   /** Posts `close`, awaits the `closed` reply, then the caller must terminate. */
@@ -433,7 +436,10 @@ export const createPoolWorker = (deps: {
           // promise in place ensures the generator throws on its next
           // `await Promise.race([deferredChunk.promise, ...])` call, which
           // propagates the error to the consumer. The generator's `finally`
-          // clears deferredChunk unconditionally.
+          // clears deferredChunk while it still owns the worker — which it does
+          // here, an errored query being the one the worker is serving. That
+          // `finally` became conditional when a stale transport was stopped from
+          // resetting a live query's state; this path is not the stale case.
           // Attach a no-op handler to suppress unhandled-rejection warnings:
           // the consumer may be suspended (e.g. in sleep()) when the error
           // arrives, and `await Promise.race` only attaches its handler on
@@ -674,15 +680,15 @@ export const createPoolWorker = (deps: {
      * is what lets the consumer's queued `return()` reach the generator's
      * finally instead of waiting behind a chunk that may be minutes away.
      *
-     * `on` is the transport the caller is stopping. It acts on whatever query
-     * the worker is running now, so a caller that no longer owns the worker
-     * would break a healthy, unrelated statement — and its consumer would see
-     * a short result with no error at all. Passing the transport makes the call
-     * a no-op in exactly that case. Omitting it means "stop whatever is
-     * running", which only a caller that owns the worker may ask for.
+     * `on` is the transport the caller is stopping, and it is required. Without
+     * it this acts on whatever query the worker is running now, so a caller that
+     * no longer owns the worker breaks a healthy, unrelated statement — and its
+     * consumer sees a short result with no error at all. That is not
+     * hypothetical: it is the defect this parameter was added to close, found by
+     * a whole-branch review and reproduced at 100 rows of 4000.
      */
-    interrupt: (on?: object) => {
-      if (on !== undefined && on !== servingQuery) return;
+    interrupt: (on: object) => {
+      if (on !== servingQuery) return;
       stopped = true;
       stopRequested?.resolve(STOP);
       // The slot reaches a worker that is computing inside step() and reads no
