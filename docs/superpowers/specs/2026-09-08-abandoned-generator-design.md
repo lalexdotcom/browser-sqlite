@@ -89,10 +89,19 @@ already gives** — `interrupt()` first, so the queued `return()` is not parked 
 that will not settle:
 
 ```ts
-worker.interrupt();
+if (state.started) worker.interrupt();
 void iterator.return(undefined).catch(() => {});
 release?.();   // the owner's part
 ```
+
+**`interrupt()` is guarded, and the guard is not a precaution.** It acts on whatever query
+the worker is running *now* and cannot know which query asked for it. A generator created and
+dropped without ever being started holds no query — and on the transaction path that worker is
+meanwhile serving the rest of the callback, so interrupting on its behalf would abort a
+healthy, unrelated statement. `state` is a plain `{ started: boolean }` the generator sets and
+the held value reads; it points nowhere upward, so it does not defeat collection.
+`iterator.return()` needs no guard: on a generator whose body never ran it is a no-op, the body
+having never entered its `try`. Found while writing the plan, not while designing.
 
 **`onAbandon` composes by layer**, the pattern `withSignal`/`releasing` already use in
 `src/transaction.ts`: each level wraps the callback it received with the resource it owns.
