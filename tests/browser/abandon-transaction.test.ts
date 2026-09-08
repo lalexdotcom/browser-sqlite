@@ -9,10 +9,27 @@ const SEED =
 
 describe('an abandoned generator inside a transaction', () => {
   it('fails the transaction with GENERATOR_ABANDONED, not a bare Error', async () => {
-    // NOT MemoryVFS at poolSize 1. This test's last assertion is that the
-    // client survives, and the guard's failure path evicts the worker: with
-    // one worker the supervisor's verdict is fail-client, not restart. The
-    // default VFS takes a pool of two, so the slot restarts beside a live one.
+    // NOT MemoryVFS. The pool size here is incidental — the reason is the VFS.
+    //
+    // (Retraction: an earlier draft of this comment argued for a pool of two
+    // on the grounds that a single worker would make the supervisor's verdict
+    // fail-client rather than restart. That is false: src/supervisor.ts's
+    // 'died' handler restarts a first death of a slot that has already served
+    // queries — `if (slot.everReady && slot.restarts < maxWorkerRestarts)
+    // return 'restart'` — without consulting the live worker count at all;
+    // the count only decides between 'lost' and 'fail-client' further down,
+    // once the restart budget is spent. So poolSize: 1 would also restart.
+    // Kept here rather than silently deleted, per this repository's
+    // convention of keeping refutations.)
+    //
+    // The real reason: MemoryVFS is volatile and single-connection, so a
+    // worker evicted and restarted after GENERATOR_ABANDONED comes back with
+    // an EMPTY database. This test's closing assertion — that the client
+    // still serves — reads `SELECT 1 AS ok`, which touches no table data, so
+    // against MemoryVFS it would pass vacuously even if the restarted
+    // connection had lost everything. The default (persistent) VFS makes the
+    // restarted slot reopen the same database file, so the assertion means
+    // what it appears to mean.
     const db = await createTestClient({ poolSize: 2 });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
