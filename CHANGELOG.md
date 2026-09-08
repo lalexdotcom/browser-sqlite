@@ -215,7 +215,19 @@ All notable changes to this project are documented here.
 ### Documentation
 
 Corrections to what the documentation told you to do, and the split of a README
-that had grown past what one page should carry. No behaviour changed.
+that had grown past what one page should carry. Nothing changed but the pages
+themselves and the text of one error message.
+
+- **The three pages are reworked, and the recommendation is now two VFS.**
+  `OPFSWriteAheadVFS` joins `OPFSAdaptiveVFS`: on every engine measured it is the
+  faster of the two, and both pass every conformance check everywhere, so what
+  separates them is speed and interruptibility rather than correctness. The claim
+  that one VFS alone passed every check was false and is gone. `VFS.md` gains an
+  entry per VFS whose header — builds, browser floors, pool, RAM, default PRAGMAs —
+  is generated from `VFS_CAPABILITIES`, and `API.md` gains a `Queries` section and
+  an options table that no longer carries measurements. **The `INVALID_OPTION`
+  message raised when `vfs` is missing no longer names a VFS**: the recommendation
+  is documentation, and a VFS name in a string a consumer copies points at a store.
 
 - **The README is split into three pages.** `README.md` keeps the introduction,
   installation, browser support, a usage example, the guarantees and the

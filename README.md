@@ -113,7 +113,7 @@ nothing.
 
 ## Known Limitations
 
-Some VFS have limitations of their own — see [the detailed VFS page](VFS.md#per-vfs-notes).
+Some VFS have limitations of their own — see [the detailed VFS page](VFS.md#vfs-reference).
 What follows holds on all of them.
 
 ### Aborting a call

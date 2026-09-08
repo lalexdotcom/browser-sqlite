@@ -544,6 +544,29 @@ const tableOfContents = (doc: string): string => {
   return lines.join('\n');
 };
 
+/**
+ * The VFS that share one file per database name, for the callout in `VFS.md`.
+ *
+ * `layout` is not documentation data: `locks.ts` derives the storage namespace
+ * from it — `opfs-path` collapses to one namespace, everything else keys on the
+ * VFS name — and `worker.ts` gates its staging sweep on it. So the VFS sharing a
+ * file are exactly those declaring `opfs-path`, and listing them by hand would
+ * be a second copy of a fact the runtime already owns.
+ *
+ * Only the list is generated. The sentence around it is hand-written in
+ * `VFS.md` and says nothing that depends on how many there are, so it stays
+ * true whatever this returns.
+ */
+const sharedStoreVfs = (): string => {
+  const shared = Object.entries(VFS_CAPABILITIES)
+    .filter(([, cap]) => cap.layout === 'opfs-path')
+    .map(([name]) => `\`${name}\``);
+  const last = shared.pop();
+  // Carries its own quote prefixes: the `> ` before the END marker sits inside
+  // the replaced span, so the body has to put it back.
+  return `\n> ${shared.join(', ')} and ${last}.\n> `;
+};
+
 const path = new URL('../VFS.md', import.meta.url);
 const source = readFileSync(path, 'utf8');
 
@@ -595,6 +618,9 @@ const splice = (
   begin: string,
   end: string,
   body: string,
+  // A body inside a blockquote cannot be padded with blank lines: they would
+  // end the quote and split one callout into two.
+  gap = '\n\n',
 ): string => {
   const start = source.indexOf(begin);
   const stop = source.indexOf(end);
@@ -606,7 +632,7 @@ const splice = (
   if (stop < start) {
     throw new Error('VFS.md END marker precedes its BEGIN marker');
   }
-  return source.slice(0, start + begin.length) + '\n\n' + body + '\n\n' + source.slice(stop);
+  return source.slice(0, start + begin.length) + gap + body + gap + source.slice(stop);
 };
 
 let doc = splice(source, BEGIN, END, table);
@@ -624,6 +650,13 @@ doc = splice(
   '<!-- BEGIN GENERATED FOOTNOTES — edit scripts/render-vfs-matrix.ts -->',
   '<!-- END GENERATED FOOTNOTES -->',
   footnotes,
+);
+doc = splice(
+  doc,
+  '<!-- BEGIN GENERATED SHARED VFS — edit `layout` in src/types.ts -->',
+  '<!-- END GENERATED SHARED VFS -->',
+  sharedStoreVfs(),
+  '',
 );
 // Last: the headings it reads are the ones every splice above has settled.
 doc = splice(

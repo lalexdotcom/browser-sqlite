@@ -7,9 +7,14 @@
 **[Run the benchmarks in your own browser](https://lalexdotcom.github.io/browser-sqlite/)** —
 which VFS wins depends on the engine, and a single browser release can move the answer.
 
-> **Each VFS is a separate store.** A database written through one VFS is not
-> visible through another — the bytes are still there, but nothing reads them.
-> Changing `vfs` later does not migrate anything.
+> [!IMPORTANT]
+> **A database belongs to the VFS that wrote it.** It is not visible through
+> another — the bytes are still there, but nothing reads them, and changing
+> `vfs` migrates nothing.<br>
+> The exception is the OPFS VFS that address files by path, which are one store
+> between them: <!-- BEGIN GENERATED SHARED VFS — edit `layout` in src/types.ts -->
+> `OPFSWriteAheadVFS`, `OPFSAdaptiveVFS`, `OPFSCoopSyncVFS` and `OPFSAnyContextVFS`.
+> <!-- END GENERATED SHARED VFS -->
 
 ## Contents
 
@@ -224,6 +229,7 @@ APIs rather than synchronous access handles, which is what lets it run in any
 context instead of a dedicated worker only. Writes get worse as the file grows,
 so it suits read-only or nearly read-only databases.
 
+> [!NOTE]
 > **This VFS needs a patched wa-sqlite to work on Safari.** browser-sqlite ships
 > that patch inside its own worker bundle — there is nothing for you to install
 > or configure.
