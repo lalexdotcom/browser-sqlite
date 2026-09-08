@@ -76,8 +76,9 @@ trickle, and it is no longer a deduction.
 `chunk()` and `stream()` hand back an async generator. A consumer who neither exhausts it
 nor calls `break` / `.return()` abandons it, and **two things then never happen**.
 
-- **The pool lease is never returned.** `streamWithRetry`'s `finally` around the `yield`
-  does not run on an abandoned generator, so the worker stays leased for the life of the
+- **The pool lease is never returned.** `streamWithRetry` in `src/client.ts` — `chunk()` and
+  `stream()` both delegate to it — releases its lease in a `finally` around the `yield`, and
+  that `finally` does not run on an abandoned generator, so the worker stays leased for the life of the
   page. This is the older and much the worse of the two, and it predates lot 10.
 - **A `mergeSignals` listener survives**, when the caller passed both `signal` and
   `timeout`. Bounded and unobservable on its own; it was minor 4 of the lot-10 review.
