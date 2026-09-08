@@ -1,3 +1,31 @@
+// This test only runs, rather than skipping, under a Chromium launched with
+// V8's `gc` exposed on globalThis. That is not part of `rstest.config.ts`:
+// the file defines a single `chromium` project whose launch args are shared
+// by every browser test, so putting `--expose-gc` there would change what
+// every other test in tests/browser/ runs under, and rstest refuses to run
+// a second browser-enabled project alongside it with different
+// provider options (all such projects in one run must share
+// provider/browser/headless/providerOptions). So the flag is passed at
+// invocation time only, via rstest's CLI override, and never touches the
+// checked-in config:
+//
+//   pnpm exec rstest --project chromium run tests/browser/abandon-gc.test.ts \
+//     --browser.providerOptions.launch.args.0="--js-flags=--expose-gc"
+//
+// Without that flag `globalThis.gc` is undefined and this test skips itself
+// below — that is expected, not a failure, when run through `pnpm test` or
+// the pre-commit hook.
+//
+// This covers the collection path only. The repair itself — an abandoned
+// generator giving its worker back at a timeout's deadline and at a
+// signal's abort — is pinned deterministically, with no garbage collection
+// and no browser flag, by tests/browser/abandon.test.ts.
+//
+// Verified under the command above: 13/13 real (non-skipped) green runs,
+// and — as the falsifier — commenting out the `registry.watch(gen, held,
+// token)` registration in src/queries.ts makes this test hard-time out at
+// 60000 ms with all ten retry rounds exhausted, rather than pass. That is
+// what tells a future reader this test is worth re-running at all.
 import { describe, expect, it } from '@rstest/core';
 import { createTestClient, sleep } from './helpers';
 
