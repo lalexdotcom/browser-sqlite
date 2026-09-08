@@ -296,3 +296,71 @@ must not reintroduce that shape.
 - **`CHANGELOG.md`.** A new public error code and a fixed leak are both consumer-visible.
   Opening an unreleased section is the user's instruction and is not inferred here
   (`mem:state`, `mem:conventions`).
+
+---
+
+## Amendments made during implementation — 2026-09-08
+
+The original decisions above are left as written. Two of them were wrong, and this section
+says how, because a spec that quietly edits its own mistakes teaches nothing.
+
+### A1 · §3's reasoning about the transaction path was wrong, and it cost a Critical
+
+§3 argued that the transaction path needs no lease work because "the transaction owns the
+lease", and D7 attached an abort listener on the strength of it. Both assumed the transaction
+is still holding the worker when a cleanup fires. **It is not, in the branch that matters.**
+`done` clears `deferredChunk` while `drain` is still suspended at its `yield`, so the reuse
+guard never trips, the transaction commits normally, and the worker goes back to the pool
+with a stale transport suspended and the D7 listener still armed on a signal **the caller
+still owns**. When that caller later aborts its own controller, the cleanup fires against a
+worker serving somebody else: `interrupt()` breaks the live query's loop and its consumer
+receives `done` with short rows and no error, while `iterator.return()` resumes the stale
+transport, whose `finally` then resets the live query's `deferredChunk`, `inbox`, `idle` and
+status.
+
+**It was a new silent row-loss regression** — 100 rows of 4000 — of exactly the class this
+design exists to remove. Found by the whole-branch review, bisected against `main`, and
+reproduced without a garbage collection or a browser flag.
+
+**What the code does now.** The pool records **which transport generator it is serving**;
+`interrupt(on)` is inert unless the worker still serves `on`; the transport's own `finally`
+runs only while it owns the worker; and the cleanup carries its own `detach` and runs at most
+once. `state.started` is gone — it answered "did this generator ever run", which was never
+the question. The question is "is this still the query the worker is serving", and identity
+answers it without a new channel between the pool and `abandon.ts`, because the transport
+object is already in the cleanup's hand as the `iterator` D3 requires.
+
+**A consequence, measured rather than assumed:** an abandoned generator inside a transaction
+now costs a worker restart where it previously did not, because the `ROLLBACK` trips the
+guard in turn and `onPoisoned` evicts the slot. That is correct — the connection genuinely
+holds an open transaction with a query in flight — and it recovers on the worst-case VFS:
+`AccessHandlePoolVFS` at `poolSize: 1`, where the exclusive OPFS handle must be released
+before the replacement can open, comes back in 43 ms on Chromium and 57 ms on Firefox.
+
+### A2 · D6's premise was false, and the repository already said so
+
+D6 asserted that the only reachable producer of the reuse guard is an abandoned streaming
+generator, and let the message state that as a diagnosis. **Any two overlapping statements on
+a transaction's worker trip the guard** — `Promise.all([tx.read(…), tx.read(…)])` reproduces
+it with no generator anywhere. Worse, `tests/browser/multi-client.test.ts` already recorded a
+second producer, a `bulkWrite` batch in flight, "caught under load after passing in
+isolation". The evidence predated the decision by weeks.
+
+The code name stays. The message now leads with the structural fact — the worker already has
+a query in flight, and a transaction's statements must not overlap — and names the generator
+only as the usual cause. `API.md`'s row matches.
+
+### A3 · `API.md` had dropped §5's hedge
+
+§5 says the loud trajectory "almost always" arrives first. `API.md` promised it
+unconditionally, which told readers the dangerous case was loud when it is the silent one.
+The hedge is restored and is true of the code as built.
+
+### A4 · `Promise.race` ties resolve by array position
+
+`drain` races the pending chunk against the abort. Once the cleanup's `iterator.return()`
+completes the transport synchronously, both inputs are already settled on the next turn, and
+`Promise.race` then resolves in **array order** rather than by settlement time — so the chunk
+won, the loop saw `done`, and the abort was lost outright rather than delayed. The order is
+now `[aborted, iterator.next()]`. `writeWorker` carries the same shape and is safe as it
+stands: nothing external can complete its transport while its own race is outstanding.
