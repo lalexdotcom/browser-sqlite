@@ -447,6 +447,9 @@ const drain = async function* <T extends Record<string, unknown>>(
   // B9: addEventListener never fires for a signal that is already aborted.
   // D2: this stays HERE and not in the factory above. Lifted, it would throw
   // at call time instead of on the first next(), which every caller feels.
+  //
+  // This path throws BEFORE the try, so the finally below never runs: it owes
+  // its teardown itself.
   if (signal?.aborted) {
     registry.forget(token);
     throw signal.reason;
@@ -654,7 +657,15 @@ export const chunk = <
 };
 ```
 
-and in `drain`, take `detach` as the last parameter and call it first in the `finally`:
+and in `drain`, take `detach` as the last parameter. **Two places gain it, not one** — the already-aborted branch throws before the `try`, so the `finally` never runs there and it owes its own teardown. The listener matters even on an already-aborted signal, which can never fire it: the caller may hold that signal far longer than this call.
+
+```ts
+  if (signal?.aborted) {
+    detach();
+    registry.forget(token);
+    throw signal.reason;
+  }
+```
 
 ```ts
   } finally {
@@ -950,7 +961,11 @@ const SEED =
 
 describe('an abandoned generator inside a transaction', () => {
   it('fails the transaction with GENERATOR_ABANDONED, not a bare Error', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    // NOT MemoryVFS at poolSize 1. This test's last assertion is that the
+    // client survives, and the guard's failure path evicts the worker: with
+    // one worker the supervisor's verdict is fail-client, not restart. The
+    // default VFS takes a pool of two, so the slot restarts beside a live one.
+    const db = await createTestClient({ poolSize: 2 });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -984,7 +999,7 @@ describe('an abandoned generator inside a transaction', () => {
   }, 30_000);
 
   it('leaves a correct transaction untouched', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    const db = await createTestClient({ poolSize: 2 });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
