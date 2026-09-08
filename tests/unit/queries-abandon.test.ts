@@ -20,11 +20,15 @@ const fakeRegistry = () => {
 /** A worker that yields `chunks` and records the calls that matter. */
 const fakeWorker = (chunks: Record<string, unknown>[][]) => {
   const calls: string[] = [];
+  /** What each interrupt() named, so that a stale stop can be told apart. */
+  const stopped: unknown[] = [];
   return {
     calls,
+    stopped,
     index: 0,
-    interrupt: () => {
+    interrupt: (on?: object) => {
       calls.push('interrupt');
+      stopped.push(on);
     },
     quiesce: async () => {},
     query: async function* () {
@@ -44,16 +48,32 @@ describe('chunk() and abandonment', () => {
     const worker = fakeWorker([[{ a: 1 }]]);
     chunk(worker as never, 'SELECT 1', undefined, { registry });
     expect(watched).toHaveLength(1);
-    // Not started yet, so the cleanup must not interrupt.
-    expect(watched[0]?.held.state.started).toBe(false);
+    // Registered and armed, with nothing asked of the transport yet.
+    expect(watched[0]?.held.state.done).toBe(false);
+    expect(worker.calls).not.toContain('query');
   });
 
-  it('marks the query started once the generator runs', async () => {
+  it('holds the transport it registered, and not the generator', () => {
+    // D3: a held value that reaches its own target keeps the target alive and
+    // the callback never fires — a failure no green test can report. What is
+    // checkable here is the positive half: the held value is the transport.
     const { registry, watched } = fakeRegistry();
     const worker = fakeWorker([[{ a: 1 }]]);
     const gen = chunk(worker as never, 'SELECT 1', undefined, { registry });
-    await gen.next();
-    expect(watched[0]?.held.state.started).toBe(true);
+    const held = watched[0]?.held;
+    expect(held?.iterator).not.toBe(gen);
+    expect(Object.values(held ?? {})).not.toContain(gen);
+  });
+
+  it('closes the cleanup for good when the generator ends', async () => {
+    const { registry, watched } = fakeRegistry();
+    const worker = fakeWorker([[{ a: 1 }]]);
+    const gen = chunk(worker as never, 'SELECT 1', undefined, { registry });
+    for await (const _rows of gen) {
+      // A streaming test must await in its loop body.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(watched[0]?.held.state.done).toBe(true);
   });
 
   it('forgets the token when the consumer exhausts the generator', async () => {
@@ -127,17 +147,41 @@ describe('an abort reclaims rather than only rejecting', () => {
     expect(forgotten).toEqual([watched[0]?.token]);
   });
 
-  it('does not interrupt when the signal fires before the generator started', async () => {
-    const { registry } = fakeRegistry();
-    const worker = fakeWorker([[{ a: 1 }]]);
+  it('names the transport when it stops the worker', async () => {
+    // The abort may land long after this query ended, on a signal the caller
+    // owns and keeps. An unnamed stop would then break whatever the worker had
+    // moved on to, and that consumer would see a short result with no error.
+    const { registry, watched } = fakeRegistry();
+    const worker = fakeWorker([[{ a: 1 }], [{ a: 2 }]]);
     const controller = new AbortController();
-    chunk(worker as never, 'SELECT 1', undefined, {
+    const gen = chunk(worker as never, 'SELECT 1', undefined, {
       registry,
       signal: controller.signal,
     });
+    await gen.next();
     controller.abort(new Error('deadline'));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(worker.calls).not.toContain('interrupt');
+    expect(worker.stopped).toEqual([watched[0]?.held.iterator]);
+  });
+
+  it('runs the cleanup once, however many times the abort is repeated', async () => {
+    const { registry } = fakeRegistry();
+    const worker = fakeWorker([[{ a: 1 }], [{ a: 2 }]]);
+    const controller = new AbortController();
+    const released: string[] = [];
+    const gen = chunk(worker as never, 'SELECT 1', undefined, {
+      registry,
+      signal: controller.signal,
+      onAbandon: () => released.push('released'),
+    });
+    await gen.next();
+    controller.abort(new Error('deadline'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The consumer comes back and the generator's own finally runs too: the
+    // three routes to the cleanup must add up to one run.
+    await expect(gen.next()).rejects.toThrow('deadline');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(released).toEqual(['released']);
   });
 
   it('still rejects the consumer that comes back for another chunk', async () => {

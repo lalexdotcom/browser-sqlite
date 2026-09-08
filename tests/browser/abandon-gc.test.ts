@@ -21,9 +21,9 @@
 // signal's abort — is pinned deterministically, with no garbage collection
 // and no browser flag, by tests/browser/abandon.test.ts.
 //
-// Verified under the command above: 13/13 real (non-skipped) green runs,
-// and — as the falsifier — commenting out the `registry.watch(gen, held,
-// token)` registration in src/queries.ts makes this test hard-time out at
+// Verified under the command above, both cases: 13/13 real (non-skipped) green
+// runs, and — as the falsifier — commenting out the `registry.watch(gen, held,
+// token)` registration in src/queries.ts makes BOTH tests hard-time out at
 // 60000 ms with all ten retry rounds exhausted, rather than pass. That is
 // what tells a future reader this test is worth re-running at all.
 import { describe, expect, it } from '@rstest/core';
@@ -63,6 +63,50 @@ describe('an abandoned generator is recovered at collection', () => {
           served = await Promise.race([read, sleep(200).then(() => false)]);
         }
         expect(served).toBe(true);
+      } finally {
+        await db.close();
+      }
+    }, 60_000);
+
+    it('gives the worker back with a signal the caller keeps alive', async () => {
+      // The other case is the easy one: with neither a `timeout` nor a
+      // `signal`, chunk() attaches no listener and nothing outside the
+      // generator refers to its scope at all.
+      //
+      // This is the half that can go wrong. A `signal` makes chunk() attach an
+      // abort listener, the CALLER's controller holds that listener, and the
+      // listener holds the cleanup's held value — so if anything on that chain
+      // reached the generator, the generator would never be collected, the
+      // registry would never fire, and the whole repair would do nothing while
+      // every test in this repository stayed green. D3 is the rule that keeps
+      // it from reaching; this is the test that would notice if it did.
+      const controller = new AbortController();
+      const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+      try {
+        await db.write('CREATE TABLE t (n INTEGER)');
+        await db.write(SEED);
+
+        await (async () => {
+          const rows = db.chunk('SELECT n FROM t', [], {
+            chunkSize: 10,
+            signal: controller.signal,
+          });
+          await rows.next();
+          await sleep(0);
+        })();
+
+        let served = false;
+        for (let round = 0; round < 10 && !served; round++) {
+          forceGC();
+          await sleep(100);
+          const read = db.read('SELECT 1 AS ok').then(() => true);
+          read.catch(() => {});
+          served = await Promise.race([read, sleep(200).then(() => false)]);
+        }
+        expect(served).toBe(true);
+        // And it was the collection that did it, not the D7 abort path: the
+        // controller is still held, right here, and was never aborted.
+        expect(controller.signal.aborted).toBe(false);
       } finally {
         await db.close();
       }

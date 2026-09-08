@@ -96,3 +96,57 @@ describe('an abandoned generator gives its worker back', () => {
     }
   }, 30_000);
 });
+
+describe('a reclaim that arrives late', () => {
+  /**
+   * The mirror image of this file's other tests, and a regression: a cleanup
+   * that fires after the worker has moved on must touch nothing.
+   *
+   * The transaction below abandons a generator whose query has already sent
+   * `done`, so `deferredChunk` is clear and the reuse guard is NOT tripped:
+   * the next statement runs, the transaction commits, and the lease goes back
+   * to the pool with a stale transport still suspended at its `yield` and the
+   * caller's abort listener still armed. When the caller later tidies up its
+   * own controller, the cleanup that fires belongs to a query that ended long
+   * ago — and the worker is serving somebody else.
+   *
+   * Before the fix the abort reached the live query: `interrupt()` broke its
+   * loop and the consumer received `done` with 100 of 4000 rows and no error.
+   */
+  it('does not truncate the query the worker has moved on to', async () => {
+    const controller = new AbortController();
+    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    try {
+      await seed(db);
+
+      await db.transaction(async (tx) => {
+        const rows = tx.chunk('SELECT n FROM t LIMIT 1', [], {
+          chunkSize: 10,
+          signal: controller.signal,
+        });
+        // One chunk, then the generator is dropped. `done` has already
+        // cleared deferredChunk while the drain sits at its yield.
+        await rows.next();
+        await sleep(50);
+        // The guard is not tripped, and this is the point: the transaction
+        // ends normally, which is what leaves the stale transport behind.
+        const ok = await tx.read<{ ok: number }>('SELECT 1 AS ok');
+        expect(ok[0]?.ok).toBe(1);
+      });
+
+      let seen = 0;
+      for await (const rows of db.chunk<{ n: number }>('SELECT n FROM t', [], {
+        chunkSize: 10,
+      })) {
+        seen += rows.length;
+        // A streaming test must await in its loop body.
+        await sleep(1);
+        if (seen === 100)
+          controller.abort(new Error('the caller tidies up its controller'));
+      }
+      expect(seen).toBe(ROWS);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
+});

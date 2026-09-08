@@ -208,8 +208,12 @@ describe('two clients writing at once', () => {
         // could not be issued here: a batch of this writer is in flight on the
         // transaction's own worker, and a second query on that worker breaks
         // the one-query-per-lease invariant the statement cache rests on —
-        // caught as "Previous query not finished on worker N" under load, after
-        // passing in isolation. With the queue bounded at one, `enqueue`
+        // caught under load, after passing in isolation, on the reuse guard in
+        // src/pool.ts (which now raises GENERATOR_ABANDONED; the message it
+        // carried at the time, "Previous query not finished on worker N", is
+        // gone). A batch in flight is the second producer of that guard, and
+        // the reason its message names the generator as a likely cause rather
+        // than as the diagnosis. With the queue bounded at one, `enqueue`
         // resolves past the bound only once a batch has SETTLED, so awaiting
         // the last of 2 x batch rows proves a flush happened inside the
         // transaction, with nothing running concurrently.

@@ -58,8 +58,12 @@ export type PoolWorker = Worker & {
    * Ask the worker to stop. Also settles a `next()` already in flight, which
    * is what lets the consumer's queued `return()` reach the generator's
    * finally instead of waiting behind a chunk that may be minutes away.
+   *
+   * Pass the transport iterator being stopped: the call is then a no-op unless
+   * the worker is still serving it, which is what keeps a late stop off an
+   * unrelated query. Omit it only from a caller that owns the worker outright.
    */
-  interrupt: () => void;
+  interrupt: (on?: object) => void;
   /** Resolves when no query is in flight on this worker. */
   quiesce: () => Promise<void>;
   /** Posts `close`, awaits the `closed` reply, then the caller must terminate. */
@@ -217,6 +221,23 @@ export const createPoolWorker = (deps: {
    * chunks and never look at `stopRequested` again. A stop must stop.
    */
   let stopped = false;
+
+  /**
+   * The transport generator whose query the worker is serving right now, or
+   * `undefined` when it is idle.
+   *
+   * Identity, not a counter, and it answers one question the rest of this
+   * closure cannot: *is this generator still the one this worker belongs to?*
+   * Every other piece of per-query state here — `deferredChunk`, `inbox`,
+   * `idle`, `currentCallId` — is overwritten by the next query, so a transport
+   * that outlives its own query reads the LIVE query's state and cannot tell.
+   * And one does outlive it: `done` clears `deferredChunk` from the message
+   * handler while the generator is still suspended at its `yield`, so the reuse
+   * guard lets the next query through and the stale generator stays parked
+   * there until somebody calls `return()` on it — which is exactly what the
+   * abandonment cleanup does, arbitrarily late.
+   */
+  let servingQuery: object | undefined;
 
   /**
    * The transport's failure, captured the moment it happens rather than
@@ -444,9 +465,10 @@ export const createPoolWorker = (deps: {
    * Generator function that executes a query and streams results.
    * Manages the deferredChunk protocol and abort signals.
    */
-  const query = async function* <
+  const runQuery = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
   >(
+    self: { gen?: AsyncGenerator<T[] | number> },
     sql: string,
     params?: unknown[],
     options?: PoolWorkerQueryOptions,
@@ -454,15 +476,20 @@ export const createPoolWorker = (deps: {
     try {
       if (deferredChunk) {
         // Structural: this fires on "a query is already in flight on this
-        // worker", not on a diagnosis. But the only way a consumer reaches it
-        // is a chunk()/stream() generator abandoned inside a transaction,
-        // whose next statement lands on the worker the generator still holds —
-        // so the message names that, and what to do about it.
+        // worker", not on a diagnosis — so the message leads with that and
+        // names the generator only as the likely cause. An earlier draft
+        // asserted the abandoned generator outright, and it was wrong: two
+        // overlapping `tx.read()`s reach here with no generator anywhere, and
+        // so does a `tx.bulkWrite` batch still in flight
+        // (tests/browser/multi-client.test.ts). The CODE stays as it is —
+        // renaming a public error code is a separate decision.
         throw new SQLiteError(
           'GENERATOR_ABANDONED',
-          `Worker ${index + 1} is still serving a chunk()/stream() generator. ` +
-            'Exhaust it, break out of it, or call its return() before issuing ' +
-            'another statement on the same transaction.',
+          `Worker ${index + 1} already has a query in flight; statements on ` +
+            'one worker must not overlap, and inside a transaction they all ' +
+            'run on the same worker. The usual cause is a chunk()/stream() ' +
+            'generator left open — exhaust it, break out of it, or call its ' +
+            'return().',
         );
       }
 
@@ -484,6 +511,9 @@ export const createPoolWorker = (deps: {
       // Prepare for streaming chunks
       inbox = [];
       stopped = false;
+      // Claim the worker. Whatever was serving it before this line is stale
+      // from here on, and the `finally` below is what enforces that.
+      servingQuery = self.gen;
       // A death is terminal for this worker, so its failure outlives the query
       // that observed it; a transport failure belongs to one query only.
       if (!dead) failure = undefined;
@@ -542,59 +572,98 @@ export const createPoolWorker = (deps: {
         }
       }
     } finally {
-      // If the consumer left early (break / return / throw) the worker is still
-      // stepping rows. Tell it to stop, then wait for the reply it always sends,
-      // so the worker is genuinely idle before the lease goes back to the pool.
-      // Without this wait, the second half of B1 stands: a released worker still
-      // inside sqlite.step().
-      if (deferredChunk && !dead) {
-        worker.status = 'ABORTING';
-        // Spec §5.1: the worker may be parked waiting for a credit that this
-        // unwinding client will never send. The flag above cannot reach it
-        // there — only a message can.
-        worker.postMessage({ type: 'stop', callId: currentCallId });
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const expiry = new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () =>
-              reject(
-                new SQLiteError(
-                  'WORKER_CRASHED',
-                  `Worker ${index + 1} did not answer the stop request within ${deps.drainTimeout} ms; presumed dead.`,
+      // Only the transport the worker is actually serving may run this
+      // teardown. Every name it touches — `deferredChunk`, `currentCallId`,
+      // `inbox`, `idle`, `status` — belongs to whatever query is in flight NOW,
+      // so a stale transport running it would post a `stop` under someone
+      // else's call id, drop their queued chunks and hand their worker back
+      // mid-query. Two transports reach here without owning the worker: one
+      // that never claimed it (the reuse guard above threw) and one whose query
+      // ended while it stayed suspended at a `yield`, resumed arbitrarily later
+      // by the abandonment cleanup's `return()`. Both owe nothing: they hold no
+      // state of their own, all of it having been per-worker and reassigned.
+      //
+      // NOTE: an `if`, and never an early `return` — a `return` in a `finally`
+      // discards the pending throw, which here is the reuse guard's own error.
+      if (servingQuery === self.gen) {
+        // If the consumer left early (break / return / throw) the worker is still
+        // stepping rows. Tell it to stop, then wait for the reply it always sends,
+        // so the worker is genuinely idle before the lease goes back to the pool.
+        // Without this wait, the second half of B1 stands: a released worker still
+        // inside sqlite.step().
+        if (deferredChunk && !dead) {
+          worker.status = 'ABORTING';
+          // Spec §5.1: the worker may be parked waiting for a credit that this
+          // unwinding client will never send. The flag above cannot reach it
+          // there — only a message can.
+          worker.postMessage({ type: 'stop', callId: currentCallId });
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const expiry = new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () =>
+                reject(
+                  new SQLiteError(
+                    'WORKER_CRASHED',
+                    `Worker ${index + 1} did not answer the stop request within ${deps.drainTimeout} ms; presumed dead.`,
+                  ),
                 ),
-              ),
-            deps.drainTimeout,
-          );
-        });
-        try {
-          while (deferredChunk) {
-            await Promise.race([deferredChunk.promise, expiry]);
+              deps.drainTimeout,
+            );
+          });
+          try {
+            while (deferredChunk) {
+              await Promise.race([deferredChunk.promise, expiry]);
+            }
+          } catch (error) {
+            // A timeout is our own verdict and must be acted on. Any other error
+            // is the worker reporting a failure while winding down; the caller is
+            // already unwinding and surfacing it here would mask their reason.
+            if (
+              error instanceof SQLiteError &&
+              error.code === 'WORKER_CRASHED'
+            ) {
+              die(error);
+            }
+          } finally {
+            clearTimeout(timer);
           }
-        } catch (error) {
-          // A timeout is our own verdict and must be acted on. Any other error
-          // is the worker reporting a failure while winding down; the caller is
-          // already unwinding and surfacing it here would mask their reason.
-          if (error instanceof SQLiteError && error.code === 'WORKER_CRASHED') {
-            die(error);
-          }
-        } finally {
-          clearTimeout(timer);
         }
+        deferredChunk = undefined;
+        lost = undefined;
+        stopRequested = undefined;
+        // Chunks the consumer abandoned. Left in place they would be yielded to
+        // the NEXT query on this worker, which is the same defect wearing the
+        // opposite sign: rows delivered to a caller that never asked for them.
+        inbox = [];
+        // Reset in case the query failed before 'done' arrived — prevents
+        // leaking noServed=true into the next query on this worker.
+        suppressServed = false;
+        worker.status = dead ? 'DEAD' : 'READY';
+        idle?.resolve();
+        idle = undefined;
+        servingQuery = undefined;
       }
-      deferredChunk = undefined;
-      lost = undefined;
-      stopRequested = undefined;
-      // Chunks the consumer abandoned. Left in place they would be yielded to
-      // the NEXT query on this worker, which is the same defect wearing the
-      // opposite sign: rows delivered to a caller that never asked for them.
-      inbox = [];
-      // Reset in case the query failed before 'done' arrived — prevents
-      // leaking noServed=true into the next query on this worker.
-      suppressServed = false;
-      worker.status = dead ? 'DEAD' : 'READY';
-      idle?.resolve();
-      idle = undefined;
     }
+  };
+
+  /**
+   * The transport generator, created so that it can identify itself.
+   *
+   * A factory rather than the generator function directly, because the body
+   * needs a reference to the object the caller holds: that identity is the only
+   * thing that distinguishes the query this worker is serving from one it has
+   * moved on from. Nothing runs here — an async generator's body starts on its
+   * first `next()` — so the query message and the reuse guard still happen when
+   * the consumer first pulls.
+   */
+  const query = <T extends Record<string, unknown> = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+    options?: PoolWorkerQueryOptions,
+  ): AsyncGenerator<T[] | number> => {
+    const self: { gen?: AsyncGenerator<T[] | number> } = {};
+    self.gen = runQuery<T>(self, sql, params, options);
+    return self.gen;
   };
 
   // Attach query method to worker
@@ -604,8 +673,16 @@ export const createPoolWorker = (deps: {
      * Ask the worker to stop. Also settles a `next()` already in flight, which
      * is what lets the consumer's queued `return()` reach the generator's
      * finally instead of waiting behind a chunk that may be minutes away.
+     *
+     * `on` is the transport the caller is stopping. It acts on whatever query
+     * the worker is running now, so a caller that no longer owns the worker
+     * would break a healthy, unrelated statement — and its consumer would see
+     * a short result with no error at all. Passing the transport makes the call
+     * a no-op in exactly that case. Omitting it means "stop whatever is
+     * running", which only a caller that owns the worker may ask for.
      */
-    interrupt: () => {
+    interrupt: (on?: object) => {
+      if (on !== undefined && on !== servingQuery) return;
       stopped = true;
       stopRequested?.resolve(STOP);
       // The slot reaches a worker that is computing inside step() and reads no

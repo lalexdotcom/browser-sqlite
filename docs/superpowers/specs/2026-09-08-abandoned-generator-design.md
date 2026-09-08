@@ -178,6 +178,35 @@ by this paragraph.** The list exists to state what the bundle actually uses; the
 `structuredClone` trap in `mem:follow-ups` is about APIs that *raise* the floor, and this one
 does not.
 
+## 4b. Retraction, 2026-09-08, from the whole-branch review
+
+Two arguments above did not survive the build. They are corrected here rather than
+deleted, per this repository's convention of keeping refutations.
+
+**§3's guard is wrong, and so is the question it asks.** `state.started` answers *did
+this generator ever run*; the question the cleanup must ask is *is the worker still
+serving this query*. The two differ because `done` clears `deferredChunk` from the
+message handler while the transport generator is still suspended at its `yield`: the
+reuse guard then lets the next statement through, the transaction commits normally —
+so §3's "no lease work here, the transaction still holds the worker" does not hold —
+and the lease goes back to the pool with a stale transport parked on it and the
+caller's abort listener still armed on a signal the caller owns. A later abort then
+reached a live, unrelated query: `interrupt()` broke its loop and its consumer
+received 100 of 4000 rows with no error, the same defect this design exists to fix,
+in mirror image. Bisected against `main`.
+
+What ships instead: the pool records **which** transport generator it is serving,
+`interrupt()` is named with the transport being stopped and is a no-op otherwise, the
+transport's own `finally` runs only while it still owns the worker, and the cleanup
+carries its own `detach` and runs at most once by any route. Pinned by
+`tests/browser/abandon.test.ts` → *a reclaim that arrives late*.
+
+**D6's "the only reachable producer is an abandoned streaming generator" is false.**
+Two overlapping `tx.read()`s reach the guard with no generator anywhere, and so does a
+`tx.bulkWrite` batch still in flight (`tests/browser/multi-client.test.ts`). The
+message now leads with the structural fact and names the generator as the usual cause.
+The error **code** is unchanged: renaming a public code is a separate decision.
+
 ## 5. What this promises, and what it does not
 
 - **No time bound.** See D1.

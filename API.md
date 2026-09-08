@@ -212,7 +212,7 @@ const orders = await db.transaction(async (tx) => {
 > wait with it — not only the ones on this client. Keep the callback to the
 > statements it needs.
 
-**One worker serves the whole callback**, so the transaction is genuinely isolated rather than merely wrapped in `BEGIN`. `tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit` and `rollback`. One difference: a `chunk()` or `stream()` generator abandoned inside the callback fails the transaction with `GENERATOR_ABANDONED` rather than being recovered quietly, because the next statement lands on the worker the generator still holds.
+**One worker serves the whole callback**, so the transaction is genuinely isolated rather than merely wrapped in `BEGIN`. `tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit` and `rollback`. One difference: a `chunk()` or `stream()` generator abandoned inside the callback usually fails the transaction with `GENERATOR_ABANDONED` rather than being recovered quietly, because the next statement lands on the worker the generator still holds. Usually, not always — a generator whose query had already delivered its last row holds nothing, and the transaction then commits as if it had never been opened.
 
 **Rows land only on a `COMMIT` that succeeds.** Everything else rolls back: a callback that throws, an abort, a `COMMIT` that fails, and — under `autoCommit: false` — a callback that returns without calling `tx.commit()`. Catching your own statement's rejection does not let you commit around an abort. If the rollback itself fails the worker is evicted, rather than returned to the pool holding an open transaction.
 
@@ -399,7 +399,7 @@ Read queries are dispatched to any available worker, so several run at once.
 
 Write queries are serialized per database across the whole origin — one at a time, across every client and every tab, not only within the client that issued them.
 
-**A generator holds its worker for its whole lifetime.** [`stream()`](#clientstream) and [`chunk()`](#clientchunk) keep the worker that serves them until the loop ends, so always exhaust the generator, `break` out of it, or call its `return()`. `await using` does the same where your engine supports the syntax, with nothing to install. A generator you simply drop is recovered when the engine collects it, which is not a schedule you can rely on — a `timeout` or a `signal` bounds it, an abandoned one does not. Prefer `chunk()` where the work is per-batch — one `INSERT` per chunk rather than per row.
+**A generator holds its worker for its whole lifetime.** [`stream()`](#clientstream) and [`chunk()`](#clientchunk) keep the worker that serves them until the loop ends, so always exhaust the generator, `break` out of it, or call its `return()`. `await using` does the same where your engine supports the syntax, with nothing to install. A generator you simply drop is recovered when the engine collects it, which is not a schedule you can rely on — a `timeout` or a `signal` gives it a deadline; a generator dropped with neither has none. Prefer `chunk()` where the work is per-batch — one `INSERT` per chunk rather than per row.
 
 ## Interrupting a call
 
@@ -476,7 +476,7 @@ Errors raised by this library are instances of `SQLiteError`, exported from the 
 | `DATABASE_IN_USE` | A client still holds the database, in this tab or another. Retrying will not help: close every client on it first. Raised by `deleteDatabase`, and by any method on a second client where the VFS supports one connection at a time. |
 | `DATABASE_NOT_FOUND` | There is nothing at that name to delete. Raised by `deleteDatabase` alone — `createSQLiteClient` creates a database that is absent, so it has no such case. The likeliest cause is a `vfs` that is not the one the database was created with. |
 | `UNSUPPORTED` | The platform cannot answer. Raised by `inspectDatabase` and `db.inspect()` where the Web Locks API is unavailable — reporting zero clients there would be indistinguishable from a database nobody holds. |
-| `GENERATOR_ABANDONED` | A `chunk()` or `stream()` generator was left open on a worker another statement then needed. Reachable inside a `transaction()`, whose statements all share one worker. Exhaust the generator, `break` out of it, or call its `return()`. |
+| `GENERATOR_ABANDONED` | A statement was issued on a worker that still had a query in flight. Statements on one worker must not overlap, and inside a `transaction()` they all share one worker. The usual cause is a `chunk()` or `stream()` generator left open — exhaust it, `break` out of it, or call its `return()`. |
 | `READ_ONLY_TRANSACTION` | raised when a write statement, `bulkWrite()` or `output()` is used inside a transaction opened with `readOnly: true`. |
 
 Discriminate on `error.code` or `error.name` — they carry the same value, so `err.name` reads the way `'AbortError'` does on a DOM `AbortError`.

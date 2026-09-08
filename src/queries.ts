@@ -78,9 +78,15 @@ export const chunk = <
     credits,
     abortable: signal !== undefined,
   });
-  const state: AbandonState = { started: false };
+  const state: AbandonState = { done: false };
   const token = {};
-  const held: Abandoned = { worker, iterator, state, release: onAbandon };
+  const held: Abandoned = {
+    worker,
+    iterator,
+    state,
+    detach: () => {},
+    release: onAbandon,
+  };
 
   /**
    * D7: an abort must reclaim, not merely reject. `makeAbortRace` inside the
@@ -90,27 +96,21 @@ export const chunk = <
    *
    * This closure captures the factory's scope and never the generator object,
    * so a signal the caller keeps alive does not prevent the collection the
-   * registry depends on.
+   * registry depends on. `detach` lives on the held value for the same reason
+   * it exists at all: the signal belongs to the CALLER and outlives this query,
+   * so whichever route reaches the cleanup first must take the listener with
+   * it — see `reclaim`.
    */
-  let detach = () => {};
   if (signal) {
     const onAbort = () => {
       registry.forget(token);
       reclaim(held);
     };
     signal.addEventListener('abort', onAbort, { once: true });
-    detach = () => signal.removeEventListener('abort', onAbort);
+    held.detach = () => signal.removeEventListener('abort', onAbort);
   }
 
-  const gen = drain<T>(
-    iterator,
-    worker,
-    signal,
-    state,
-    registry,
-    token,
-    detach,
-  );
+  const gen = drain<T>(iterator, worker, signal, held, registry, token);
   registry.watch(gen, held, token);
   return gen;
 };
@@ -119,10 +119,9 @@ const drain = async function* <T extends Record<string, unknown>>(
   iterator: AsyncGenerator<T[] | number>,
   worker: PoolWorker,
   signal: AbortSignal | undefined,
-  state: AbandonState,
+  held: Abandoned,
   registry: AbandonRegistry,
   token: object,
-  detach: () => void,
 ): AsyncGenerator<T[]> {
   // B9: addEventListener never fires for a signal that is already aborted.
   // D2: this stays HERE and not in the factory above. Lifted, it would throw
@@ -131,13 +130,13 @@ const drain = async function* <T extends Record<string, unknown>>(
   // This path throws BEFORE the try, so the finally below never runs: it owes
   // its teardown itself.
   if (signal?.aborted) {
-    detach();
+    held.state.done = true;
+    held.detach();
     registry.forget(token);
     throw signal.reason;
   }
 
   const { aborted, teardown } = makeAbortRace(signal);
-  state.started = true;
   try {
     while (true) {
       // Racing the pending chunk, not testing a flag after it: an ORDER BY
@@ -156,15 +155,20 @@ const drain = async function* <T extends Record<string, unknown>>(
     }
   } finally {
     // First, so that neither a later abort nor a collection can run the
-    // cleanup a second time on a worker already given back.
-    detach();
+    // cleanup a second time on a worker already given back. `done` closes the
+    // door that `forget` cannot: the abort listener is not the registry's.
+    held.state.done = true;
+    held.detach();
     registry.forget(token);
     teardown();
     // Start the stop-and-drain, never await it. The caller must not wait for a
     // sort that may still have minutes to run; the lease returns through
     // quiesce() instead. interrupt() first, so the queued return() is not
     // parked behind a next() that will not settle.
-    worker.interrupt();
+    //
+    // Named, like reclaim's: a consumer that comes back to an already-reclaimed
+    // generator reaches this finally with the worker long since re-lent.
+    worker.interrupt(iterator);
     void iterator.return(undefined).catch(() => {});
   }
 };
@@ -260,8 +264,9 @@ export const writeWorker = async <
     }
   } finally {
     teardown();
-    // Start the stop-and-drain, never await it. Same pattern as chunk().
-    worker.interrupt();
+    // Start the stop-and-drain, never await it. Same pattern as chunk(),
+    // transport named for the same reason.
+    worker.interrupt(iterator);
     void iterator.return(undefined).catch(() => {});
   }
   return { result, affected };
