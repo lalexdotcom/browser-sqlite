@@ -1,4 +1,7 @@
 import { describe, expect, it } from '@rstest/core';
+import { createLogger } from '../../src/logger';
+import { createPoolWorker, type PoolWorker } from '../../src/pool';
+import { defaultBuildFor } from '../../src/types';
 import { createTestClient, sleep } from './helpers';
 
 const ROWS = 4000;
@@ -149,4 +152,68 @@ describe('a reclaim that arrives late', () => {
       await db.close();
     }
   }, 60_000);
+});
+
+describe("interrupt() ignores a transport the worker isn't serving", () => {
+  /**
+   * A1's own scenario, without transaction(), chunk(), AbortController or the
+   * seeded table above: this pins `src/pool.ts`'s identity check — the fix
+   * itself — directly, rather than only as one of several things that has to
+   * work for "a reclaim that arrives late" to pass.
+   *
+   * There is no Node-unit route to this: `createPoolWorker` spawns a real
+   * `Worker`, so the rule can only be exercised where one exists. But
+   * `createPoolWorker` is already exported for `src/client.ts`'s own use, so
+   * reaching it directly needs no change to `src/pool.ts` and no test-only
+   * seam — it is the same constructor `client.ts` calls, called once instead
+   * of through the whole pool/scheduler/client stack.
+   *
+   * The scenario: run one query to its own completion — the `done` message
+   * clears `deferredChunk`, satisfying the reuse guard — while never resuming
+   * its transport past the affected-count `yield`. A second query then claims
+   * the worker. `interrupt()` named at the FIRST (stale) transport must not
+   * touch the SECOND (live) one — the exact shape A1 found inside a
+   * transaction, reproduced here with none of it.
+   */
+  it('does not stop the live query when named the stale one', async () => {
+    const pool: (PoolWorker | undefined)[] = [];
+    const worker = await createPoolWorker({
+      index: 0,
+      pool,
+      clientName: 'pool-interrupt-direct',
+      // Short on purpose: sqlite3_open_v2 checks nPathname + 8 > mxPathname
+      // (64, wa-sqlite/src/VFS.js:10), so a name near that budget fails
+      // open() for a reason that has nothing to do with this test.
+      file: `pid-${Date.now().toString(36)}`,
+      vfs: 'MemoryVFS',
+      build: defaultBuildFor('MemoryVFS'),
+      drainTimeout: 5000,
+      logger: createLogger('test', false),
+    });
+    try {
+      // Drain the stale transport to its own "done" — the affected count —
+      // and stop there, never calling next() again. The WORKER now considers
+      // the query finished (deferredChunk is clear); the TRANSPORT does not.
+      const stale = worker.query('SELECT 1');
+      let affected: unknown;
+      do {
+        ({ value: affected } = await stale.next());
+      } while (typeof affected !== 'number');
+      expect(affected).toBe(0);
+
+      // The reuse guard admits a second query on the same worker, which
+      // claims `servingQuery` on ITS OWN first next().
+      const live = worker.query<{ n: number }>('SELECT 1 AS n');
+      expect((await live.next()).value).toEqual([{ n: 1 }]);
+
+      // Named at the stale transport, as if from a reclaim() arriving late.
+      worker.interrupt(stale);
+
+      // The live query is unaffected: it still runs to its own completion.
+      const second = await live.next();
+      expect(typeof second.value).toBe('number');
+    } finally {
+      await worker.close();
+    }
+  });
 });

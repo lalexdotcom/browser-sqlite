@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@rstest/core';
 import type { Abandoned, AbandonRegistry } from '../../src/abandon';
+import { reclaim } from '../../src/abandon';
 import { chunk } from '../../src/queries';
 
 /** Records what was watched and forgotten, and can run the cleanup on demand. */
@@ -17,27 +18,64 @@ const fakeRegistry = () => {
   return { registry, watched, forgotten };
 };
 
-/** A worker that yields `chunks` and records the calls that matter. */
+/**
+ * A worker that yields `chunks` and records the calls that matter.
+ *
+ * Models the identity check `src/pool.ts` makes rather than acting as a bare
+ * spy: `servingQuery` names the transport the worker is currently serving —
+ * set only once a transport's body actually starts running, exactly as
+ * `runQuery` sets it on the pool — and `interrupt(on)` is a no-op unless `on`
+ * is that transport, exactly as the real one is. `query()` may be called more
+ * than once on the same worker, the way a transaction reuses one worker for
+ * several statements, so a test can hold a stale transport past the point
+ * where the worker has moved on to a live one.
+ */
 const fakeWorker = (chunks: Record<string, unknown>[][]) => {
   const calls: string[] = [];
   /** What each interrupt() named, so that a stale stop can be told apart. */
   const stopped: unknown[] = [];
+  /** Every interrupt() that actually landed, i.e. named the transport the
+   * worker was serving at the time — the effect a bare spy cannot tell apart
+   * from a no-op. */
+  const interrupted: unknown[] = [];
+  let servingQuery: object | undefined;
   return {
     calls,
     stopped,
+    interrupted,
     index: 0,
     interrupt: (on?: object) => {
       calls.push('interrupt');
       stopped.push(on);
+      // src/pool.ts: interrupt(on) acts on whatever query the worker is
+      // running now and cannot know which query asked for it, so it is a
+      // no-op unless the worker still serves `on`.
+      if (on !== servingQuery) return;
+      interrupted.push(on);
     },
     quiesce: async () => {},
-    query: async function* () {
-      calls.push('query');
-      try {
-        for (const c of chunks) yield c;
-      } finally {
-        calls.push('transport-finally');
-      }
+    query: (): AsyncGenerator<Record<string, unknown>[]> => {
+      const self: { gen?: AsyncGenerator<Record<string, unknown>[]> } = {};
+      self.gen = (async function* () {
+        calls.push('query');
+        // Claim the worker, the way runQuery's `servingQuery = self.gen` does.
+        // Nothing runs before the first next(), so an unstarted transport
+        // never reaches this line.
+        servingQuery = self.gen;
+        try {
+          for (const c of chunks) yield c;
+        } finally {
+          // Only the transport the worker is actually serving may run this
+          // teardown — src/pool.ts's own comment on the same guard. A stale
+          // transport resumed by a late reclaim() must not clobber the query
+          // the worker has since moved on to.
+          if (servingQuery === self.gen) {
+            calls.push('transport-finally');
+            servingQuery = undefined;
+          }
+        }
+      })();
+      return self.gen;
     },
   };
 };
@@ -124,6 +162,32 @@ describe('chunk() and abandonment', () => {
 });
 
 describe('an abort reclaims rather than only rejecting', () => {
+  it('does not stop the worker on behalf of a generator that never started', async () => {
+    // This used to be `state.started`'s job in `reclaim` itself: a generator
+    // whose next() was never called owns no query, so a cleanup must not stop
+    // the worker on its behalf. `state.started` is gone (A1) because it
+    // answered the wrong question; the rule survives, but it is now the
+    // WORKER's rule, not reclaim's — reclaim calls interrupt() unconditionally
+    // and leaves the decision to whatever the worker is actually serving.
+    const { registry } = fakeRegistry();
+    const worker = fakeWorker([[{ a: 1 }]]);
+    const controller = new AbortController();
+    chunk(worker as never, 'SELECT 1', undefined, {
+      registry,
+      signal: controller.signal,
+    });
+    controller.abort(new Error('deadline'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // interrupt() is still called...
+    expect(worker.calls).toContain('interrupt');
+    // ...but the never-started transport was never the worker's current
+    // query, so the call never actually stopped anything.
+    expect(worker.interrupted).toEqual([]);
+    // And the transport's own body never ran: return() on a generator still
+    // at "suspended start" completes it without ever entering the try.
+    expect(worker.calls).not.toContain('query');
+  });
+
   it('runs the cleanup when the signal fires on a suspended generator', async () => {
     const { registry, watched, forgotten } = fakeRegistry();
     const worker = fakeWorker([[{ a: 1 }], [{ a: 2 }]]);
@@ -216,5 +280,40 @@ describe('an abort reclaims rather than only rejecting', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     // The generator is finished; its abandonment cleanup must not run.
     expect(released).toEqual([]);
+  });
+});
+
+describe('a cleanup naming a transport the worker has moved on from', () => {
+  it('does not stop the live query it is not the transport of', async () => {
+    // A1: `done` can clear a query's state while its own transport is still
+    // suspended at its `yield`, so the reuse guard lets the WORKER move on to
+    // a new query before the stale transport's cleanup ever runs. A cleanup
+    // that named "the worker", rather than the specific transport, would then
+    // stop whatever the worker is serving now — a live, unrelated query. That
+    // was a real regression, bisected against `main` and reproduced at 100
+    // rows of 4000.
+    const worker = fakeWorker([[{ a: 1 }], [{ a: 2 }]]);
+
+    const { registry: staleRegistry, watched: staleWatched } = fakeRegistry();
+    const stale = chunk(worker as never, 'SELECT 1', undefined, {
+      registry: staleRegistry,
+    });
+    await stale.next(); // Starts the stale transport; the worker serves it.
+    const [{ held: staleHeld }] = staleWatched;
+
+    const { registry: liveRegistry } = fakeRegistry();
+    const live = chunk(worker as never, 'SELECT 2', undefined, {
+      registry: liveRegistry,
+    });
+    await live.next(); // The worker moves on: it now serves the live one.
+
+    // The stale generator's cleanup arrives late, naming its OWN transport —
+    // never the worker's current one.
+    reclaim(staleHeld);
+
+    expect(worker.interrupted).toEqual([]);
+    // The live query is unaffected: it still has its second chunk to give.
+    const outcome = await live.next();
+    expect(outcome).toEqual({ value: [{ a: 2 }], done: false });
   });
 });
