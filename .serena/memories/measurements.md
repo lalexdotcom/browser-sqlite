@@ -525,6 +525,59 @@ destroyed the data. The likely cause is the build rather than the VFS: `OPFSCoop
 `sync` and `OPFSAdaptiveVFS` to `async`. **Deletion does not care** — it removes a file, it does not
 read one — which is exactly why "not visible" cannot be used to argue "deletes nothing".
 
+## VFS-MEDIAN — what settled the recommendation, 2026-09-08, n≥3 per cell
+
+**Method, and the two traps it had to avoid.** Medians per `(vfs, build)` per platform over
+the bench exports of the CURRENT metric schema, computed by `.scratchpad/vfs-medians.mjs`
+and `.scratchpad/vfs-table.mjs` (kept: they are what re-derives this).
+
+- **The corpus is split by SCHEMA, not only by date.** `mem:follow-ups` asked for the exports
+  dated 2026-09-02 or later — that split was chosen for the deletion rewrite. It does not
+  align with the bench's own change: `DATASET_ROWS` moved 10 000 → 100 000, renaming
+  `bulk-insert-10k` to `bulk-insert-dataset` and replacing `pool-blocking` with
+  `overwrite-throughput` + `reads-during-long-query`. Every dataset-sized row measures a
+  different thing on either side of it. **The two eras are not poolable**, and pooling them
+  is what would have produced a verdict on n=8 that was really n=4 of each.
+- **A measurement is a number, `null`, OR one of `"not-run"` / `"timeout"` / `"skipped"`.**
+  `null` means below 2× the device clock — too FAST to time, so dropping nulls biases
+  against the quicker VFS. The three strings are outcomes and must never reach a numeric
+  sort; feeding them to one produced `NaN` medians before the guard existed. Neither pair
+  compared below carries any string, so the verdict is clean.
+
+**Platform cells, current schema:** iOS+iPadOS n=5 (one platform, user 2026-09-08), Safari
+macOS n=5, Firefox 154 n=5, Chrome macOS 150 n=3, Chrome Android 145 n=3.
+
+**`OPFSWriteAheadVFS/sync` against `OPFSAdaptiveVFS/async`**, bulk-insert 100k / overwrite,
+in ms:
+
+| platform | WriteAhead | Adaptive |
+|---|---|---|
+| Chrome macOS | **155 / 32** | 245 / 33 |
+| Chrome Android | **259 / 117** | 490 / 140 |
+| Firefox | 184 / 124 | 229 / **92** |
+| Safari macOS | **167 / 58** | 224 / 55 |
+| iOS + iPadOS | **230 / 48** | 391 / 102 |
+
+WriteAhead also leads write latency, point reads, paged reads and scans on every cell. Its
+nulls cluster on `write-latency` (2 of 4 runs on three cells) — it is often too fast to
+time, so its medians there are computed only from the runs where it was slow enough, and
+**the bias runs against it**.
+
+**Concurrency does not separate them, confirmed at n≥3.** `reads-during-long-query` is true
+on Chromium for both and false everywhere else for both. Parallel-read gain: Adaptive keeps
+a modest edge on Chromium (3.06 vs 2.64 desktop, 2.90 vs 2.67 Android) and none elsewhere
+(~1.0 both). On Android that edge costs 1.85× on bulk — a small gain at a large price.
+
+**Two claims in the docs were false and were removed on this evidence.** `OPFSCoopSyncVFS`
+never edges WriteAhead on scans — `AccessHandlePoolVFS` does, and only on mobile (7.2 vs 8.0;
+on desktop WriteAhead leads at 5.3 vs 5.4). And the `deleteDatabase` TIMEOUT warning against
+`OPFSWriteAheadVFS` / `OPFSCoopSyncVFS` has no support: `deleted-is-gone` passes **78/78**
+across both VFS since 2026-09-02.
+
+**No Chrome Android data existed in the current schema until the user re-ran it on
+2026-09-08.** The two older Android exports are legacy-schema, dated 2026-08-25. Android
+ranks identically to desktop Chromium, rank for rank; only absolute values differ (~1.7×).
+
 ## EXISTS-PROBE — telling "this database is there" from "it is not", 2026-09-02, n=3 per cell per engine
 
 **Method.** Throwaway probe (deleted). Each persistent VFS in three states — never created, created and

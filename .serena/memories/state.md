@@ -86,17 +86,16 @@ remains an instructed act, never an inferred one.
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
 the 2026-09-05 entry in `mem:follow-ups` called for.
 
-**Nothing is in flight.** Two things are scheduled and the user fixed their order on
-2026-09-07: **first**, a firm answer on whether `RECOMMENDED_VFS` moves to
-`OPFSWriteAheadVFS` — `mem:follow-ups` carries the whole file on it, including the one piece
-of work it needs (median the `measurements` block over the post-2026-09-02 exports; a script,
-not a device campaign). **Then** the abandoned-generator residue, minor 4 of the lot-10 review:
-a `mergeSignals` listener that survives a `chunk()`/`stream()` generator abandoned without
-`break` or `.return()`, when the caller passed both `signal` and `timeout`. Bounded and
-unobservable on its own — **and it rides on a much older one, which is the real subject: that
-same abandonment never returns the pool lease**, because `streamWithRetry`'s `finally` around
-the `yield` does not run either. That predates lot 10. **Then** the Firefox hang below.
-Everything else in `mem:follow-ups` remains unscheduled.
+**Nothing is in flight, and one thing is scheduled.** The abandoned-generator leak, which
+`mem:follow-ups` now carries in full: a `chunk()`/`stream()` generator abandoned without
+`break` or `.return()` never returns its pool lease, and also strands a `mergeSignals`
+listener. The user's plan, 2026-09-08: a session of its own, and **rc.5 is ready after it**.
+Everything else in `mem:follow-ups` is unscheduled.
+
+**The `RECOMMENDED_VFS` question is settled and must not be reopened.** It was answered on
+2026-09-08 by medianing the bench corpus at n≥3 per platform (`mem:measurements`,
+VFS-MEDIAN). The answer was not "move it": there are now **two** recommendations,
+`OPFSWriteAheadVFS` and `OPFSAdaptiveVFS`, and the constant itself left `src/` — see § below.
 
 ## Lot 10 — one `timeout`, eight methods — merged 2026-09-07
 
@@ -174,25 +173,59 @@ Numbers: `mem:measurements`. Merge `a06c349`, 20 commits.
 the wait and not the work. Those four accept `build: 'async'`, which is the escape hatch
 that costs no hosting change. The README says all of this in one table.
 
-## The documentation is three pages since 2026-09-07
+## The documentation — three pages, reworked in full on 2026-09-08
 
-`README.md`, `API.md` and `VFS.md`, on `main` and not a lot — the README went from 664
-lines to 135. Three things about it the files do not say:
+`README.md`, `API.md` and `VFS.md`, on `main`. The split happened 2026-09-07; the whole
+rework of the three pages happened 2026-09-08, in two commits plus a merge. **Six things the
+files do not say about themselves:**
 
-- **The generator both writes VFS.md and reads it.** `scripts/render-vfs-matrix.ts` links a
-  VFS name in the table to its own `### \`Name\`` heading under *Per-VFS notes* when that
-  heading exists. So renaming or deleting one of those headings changes generated output,
-  and CI's `git diff --exit-code VFS.md` is what reports it — not the editor.
-- **The Known Limitations triage has a rule.** What holds on every VFS stayed in the README;
-  what belongs to one VFS went to that VFS's section. `Guarantees` was created from the
-  three consumer-facing promises that were duplicated between the README and Error handling
-  — read concurrency, read-your-own-writes, serialized writes — so those now have one home.
-- **The split surfaced three false claims, and a question found them, not a review.** Asking
-  whether `transaction()` took a `timeout` exposed that `timeout` was in no option table,
-  that "the library adds no per-request timeout" had been false since the interruption lot,
-  and that five members of `SQLiteErrorCode` were undocumented. All three are fixed. **The
-  error table is kept true by nothing** — it was compared to `SQLiteErrorCode` by hand, and
-  a member added later will not be noticed.
+- **The recommendation is documentation and no longer lives in `src/`.** `RECOMMENDED_VFS`
+  was an unexported constant in `src/types.ts`; it is now a two-element list in
+  `scripts/render-vfs-matrix.ts`. Three `INVALID_OPTION` messages used to ship a VFS name to
+  consumers in a string — they now point at `VFS.md` and the bench page and name none. A test
+  pins that: the message must contain no key of `VFS_CAPABILITIES`.
+- **`VFS.md` has ELEVEN generated zones, not two.** The VFS table, the build table, one
+  BEGIN/END pair per VFS for its header block, the footnotes, the shared-store list inside a
+  blockquote, and the contents list. `pnpm docs:vfs` fails loudly if a marker pair is missing.
+  The contents list is built from the headings present, so renaming a section moves its entry.
+- **Two footnote systems, deliberately.** GFM footnotes were dropped for plain HTML
+  (`<sup><a href="#fn-N">[N]</a></sup>` + `<sub>`) because GFM renders a note shared nine
+  times as `1`, `1:2`, `1:3`. Identical note texts are folded on their TEXT, so the two Memory
+  VFS share one. The muted grey of GFM's footnote block **cannot** be reproduced — GitHub
+  strips `style` and custom `class` — and the generator says so; do not go looking again.
+- **`VFS.md` entries carry no comparison between VFS (user, 2026-09-08).** An entry describes
+  its VFS, its characteristics and its limits. Ranking belongs to *Recommendations* and to
+  the *If you can guarantee a browser* table, and duplicating it per entry could only diverge.
+  The word "upstream" is banned; say "wa-sqlite".
+- **No measurements in the three pages (user, 2026-09-08).** Repeatedly enforced: the
+  `poolSize` startup numbers, the statement-cache percentages, the `build: 'async'` factor,
+  "102 of 104 browser tests on Firefox" — all removed. Constants of the code are not
+  measurements and stay: `DELETE_TIMEOUT = 30_000`, the 32-statement cache, `SQLITE_MAX_VARS`.
+- **Method sections share one shape:** presentation sentence, example, options table, prose.
+  The table says what an option IS; effects go below it. `createSQLiteClient` is the one
+  exception, with a sentence before its table explaining why `vfs` has no default.
+
+**Cross-references were verified on 2026-09-08**: 205 links across the three files, markdown
+and HTML, all resolving. Nothing keeps them that way — there is no link checker in CI.
+
+## `poolSize` defaulted to a number the caller never chose — fixed 2026-09-08
+
+`feat/pool-size-default`, one commit plus merge `add17b9`, outside the rc.5 lots. `poolSize`
+resolved to `DEFAULT_POOL_SIZE` (2) unconditionally while the guard below rejected anything
+above the VFS's cap, so `createSQLiteClient(name, { vfs: 'MemoryVFS' })` — with no other
+option — threw `INVALID_OPTION` at construction, on the four single-connection VFS. A test
+pinned that behaviour and its own comment called it a footgun.
+
+The default is now `Math.min(DEFAULT_POOL_SIZE, capability.maxPoolSize ?? DEFAULT_POOL_SIZE)`.
+**Only the default moved**: an explicit oversize still throws, and still names the size to
+set. Resolution of `vfs`/`capability` had to move above the pool block, since `abortSlots`
+sizes its `SharedArrayBuffer` from `poolSize`.
+
+**The two lots of 2026-09-08 were not separable at hunk level**, and that is worth knowing
+before attempting the same split again: the doc lot removed `RECOMMENDED_VFS` from
+`src/types.ts`, which the pre-fix `src/client.ts` still imports, so a fix-only commit did not
+typecheck until `types.ts` was also at HEAD. The way through was backing the five files up,
+resetting to HEAD, re-applying the four fix edits, committing, restoring. Nothing was stashed.
 
 ## The dropped chunk — fixed on `main` 2026-09-04, outside the rc.5 lots
 

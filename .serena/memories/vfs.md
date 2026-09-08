@@ -10,8 +10,12 @@ Numbers live in `mem:measurements`.
 
 ## The rules that shape the table
 
-- **`vfs` is required, and `RECOMMENDED_VFS` (`OPFSAdaptiveVFS`) is deliberately not
-  exported.** The name must live in the consumer's own source. Rationale in `mem:state`.
+- **`vfs` is required, and no recommendation lives in `src/` at all** (2026-09-08). The name
+  must live in the consumer's own source, so nothing shipped can move a database underneath
+  it. `RECOMMENDED_VFS` used to be an unexported constant in `src/types.ts`; it is now a
+  two-element list — `OPFSWriteAheadVFS`, `OPFSAdaptiveVFS` — in
+  `scripts/render-vfs-matrix.ts`, and the error messages name no VFS. Rationale in
+  `mem:state`, evidence in `mem:measurements` (VFS-MEDIAN).
 - **Every declared (vfs, build) pair is executed, never trusted.** `tests/conformance/`
   runs all of them plus six invariants. Declaring a combination that does not work is the
   failure that suite exists to catch — `IDBMirrorVFS` was the row most at risk, its builds

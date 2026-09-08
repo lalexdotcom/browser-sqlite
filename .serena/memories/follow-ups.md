@@ -69,60 +69,32 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
-## Open questions with evidence
+## Scheduled — the next session's work (user, 2026-09-08)
 
-### Should `RECOMMENDED_VFS` move to `OPFSWriteAheadVFS`? — answer this FIRST, next session
+### An abandoned generator returns nothing — not its lease, not its listener
 
-**The user's instruction, 2026-09-07: settle this with a firm answer immediately after the
-`feat/uniform-timeout` merge, before anything else.** It is not an idea on the pile.
+`chunk()` and `stream()` hand back an async generator. A consumer who neither exhausts it
+nor calls `break` / `.return()` abandons it, and **two things then never happen**.
 
-**What the recommendation is.** `RECOMMENDED_VFS` in `src/types.ts` is `OPFSAdaptiveVFS`. It
-is deliberately not exported and not a default — `vfs` is required — but the generator marks
-its row `(recommended)` in `VFS.md` and it is what a consumer with no reason to choose will
-write.
+- **The pool lease is never returned.** `streamWithRetry`'s `finally` around the `yield`
+  does not run on an abandoned generator, so the worker stays leased for the life of the
+  page. This is the older and much the worse of the two, and it predates lot 10.
+- **A `mergeSignals` listener survives**, when the caller passed both `signal` and
+  `timeout`. Bounded and unobservable on its own; it was minor 4 of the lot-10 review.
 
-**The case FOR moving.** On the bench exports labelled `preview @ 45e67fa` and
-`preview @ 0b63bf3` — both commits on `main` — `OPFSWriteAheadVFS/sync` beats
-`OPFSAdaptiveVFS/async` on essentially every row, on **six platform cells**: Chromium 150,
-Firefox 154, macOS Safari 26.6.2 and 27.0, iPadOS Safari 27.0, iOS Safari 26.6.1. Widest on
-iPadOS: full scan 11 ms against 30, paged read 2.2 against 6.4, point read 0.3 against 1.5,
-bulk load 230 against 391. Numbers and method: `mem:measurements`.
+Documented as a consumer obligation since 2026-09-08 — `API.md` → *Queries* → *How they
+run* says to exhaust or `break` — but the library still leaks when they do not. **The
+documentation is not the fix and must not be mistaken for one.**
 
-**Two objections died on 2026-09-07 and must not be revived.**
+The user's plan, 2026-09-08: settle this in a session of its own, and rc.5 is then ready.
 
-- *"It hangs on `deleteDatabase` off Chromium."* That was OUR deletion path, rewritten on
-  2026-09-02, and every occurrence in the corpus predates it. Closed with a named mechanism —
-  see `mem:measurements`.
-- *"It gives up concurrency."* It does not. Chromium: 2.91 against 3.06 with
-  `reads-during-long-query: true` on both. Everywhere else both sit at ≈1.0 and `false`.
-  Concurrency does not separate them anywhere.
+### `API.md` names four VFS by hand where `VFS.md` derives them
 
-And the whole conformance grid was counted over the 36 post-rewrite exports: **all eight
-invariants, 36/36, for `OPFSAdaptiveVFS/async`, `OPFSWriteAheadVFS/sync` and
-`OPFSWriteAheadVFS/async` alike.** No robustness differentiator remains in what is measured.
-
-**What genuinely remains against it — three things, and only the first is work.**
-
-1. **n = 1 per cell on the performance rows.** The conformance rows were counted across the
-   corpus; the `measurements` block was not. **This is a script, not a device campaign**: take
-   the median per `(vfs, build)` per platform over the exports dated **2026-09-02 or later**
-   (36 files, 8–11 per platform), the same era split the deletion count needed and for the same
-   reason. That reaches n≥3, which `mem:lessons` sets as the floor for a verdict.
-2. **`OPFSAdaptiveVFS` adapts, and its name is the argument.** It picks a strategy per
-   platform; `OPFSWriteAheadVFS` has one and degrades where `readwrite-unsafe` is missing. On a
-   browser nobody has tested, "adapts" is a better bet than "degrades in a way we believe is
-   fine". Unmeasurable, and a real reason to stay conservative.
-3. **Moving it makes the recommended setup non-interruptible off Chromium.**
-   `OPFSAdaptiveVFS` cannot run `sync` at all, so following the recommendation today gives the
-   `async` build, where a `signal` or `timeout` stops a running statement everywhere.
-   `OPFSWriteAheadVFS` has `sync` at `builds[0]`, so the recommended setup would inherit the
-   limitation that `README.md` → *Known Limitations* → *Aborting a call* documents. This is the
-   mirror image of the speed gain and it must be decided together with it, not after.
-
-**If it moves, five things change together:** `RECOMMENDED_VFS` in `src/types.ts`; the
-`(recommended)` marker the generator emits into `VFS.md`; the order of every VFS list, which the
-user asked to have led by the recommended one; the README sentence on what a consumer gets by
-default; and the interruptibility trade above, stated where the recommendation is.
+`clients[].vfs` in the `inspectDatabase` result table says "four of them share one file per
+database name", and the `deleteDatabase` warning lists them. Both are transcriptions of
+`layout: 'opfs-path'`, which `VFS.md` now generates and which `locks.ts` and `worker.ts`
+read at runtime. `API.md` has no generator, so a fifth `opfs-path` VFS would leave those two
+sentences wrong with nothing to report it. Small, and real.
 
 ## Notes, with nothing to fix
 
