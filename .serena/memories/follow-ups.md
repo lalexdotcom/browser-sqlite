@@ -88,14 +88,6 @@ documentation is not the fix and must not be mistaken for one.**
 
 The user's plan, 2026-09-08: settle this in a session of its own, and rc.5 is then ready.
 
-### `API.md` names four VFS by hand where `VFS.md` derives them
-
-`clients[].vfs` in the `inspectDatabase` result table says "four of them share one file per
-database name", and the `deleteDatabase` warning lists them. Both are transcriptions of
-`layout: 'opfs-path'`, which `VFS.md` now generates and which `locks.ts` and `worker.ts`
-read at runtime. `API.md` has no generator, so a fifth `opfs-path` VFS would leave those two
-sentences wrong with nothing to report it. Small, and real.
-
 ## Notes, with nothing to fix
 
 ### An abort through the shared slot reports `done`, not `error` — and that is right

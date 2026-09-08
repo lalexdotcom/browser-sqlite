@@ -667,6 +667,24 @@ doc = splice(
 );
 writeFileSync(path, doc);
 
+/**
+ * `API.md` too, for one block: the VFS that share a file, which its
+ * `deleteDatabase` warning used to transcribe. It has no generator of its own,
+ * so this script owns that one span rather than leaving a fourth hand-written
+ * copy of `layout` — the third was found by auditing links, not by a check.
+ */
+const apiPath = new URL('../API.md', import.meta.url);
+writeFileSync(
+  apiPath,
+  splice(
+    readFileSync(apiPath, 'utf8'),
+    '<!-- BEGIN GENERATED SHARED VFS — edit `layout` in src/types.ts -->',
+    '<!-- END GENERATED SHARED VFS -->',
+    sharedStoreVfs(),
+    '',
+  ),
+);
+
 console.log(
-  `Rendered ${rows.length} VFS rows, ${rows.length} VFS headers and ${BUILDS.length} build sections into VFS.md`,
+  `Rendered ${rows.length} VFS rows, ${rows.length} VFS headers and ${BUILDS.length} build sections into VFS.md, and the shared-store list into both pages`,
 );

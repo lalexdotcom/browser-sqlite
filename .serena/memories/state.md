@@ -184,6 +184,9 @@ files do not say about themselves:**
   `scripts/render-vfs-matrix.ts`. Three `INVALID_OPTION` messages used to ship a VFS name to
   consumers in a string — they now point at `VFS.md` and the bench page and name none. A test
   pins that: the message must contain no key of `VFS_CAPABILITIES`.
+- **The generator writes BOTH pages.** `scripts/render-vfs-matrix.ts` owns eleven spans in
+  `VFS.md` and one in `API.md` — the shared-store list in `deleteDatabase`'s warning. Its
+  name says `vfs-matrix`; it has not been only that since 2026-09-08.
 - **`VFS.md` has ELEVEN generated zones, not two.** The VFS table, the build table, one
   BEGIN/END pair per VFS for its header block, the footnotes, the shared-store list inside a
   blockquote, and the contents list. `pnpm docs:vfs` fails loudly if a marker pair is missing.

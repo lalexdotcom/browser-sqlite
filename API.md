@@ -333,7 +333,10 @@ Deleting a database that is not there throws — most often because `vfs` is not
 What a VFS keeps for itself is left alone — the IndexedDB store shared by every database that VFS holds on this origin, and the `AccessHandlePoolVFS` directory whose files are its reusable capacity. The deleted database's own bytes are freed in both cases.
 
 > [!WARNING]
-> `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` share one file per database name, so deleting through any of them deletes what the others created.
+> Some VFS share one file per database name, so deleting through any of them deletes what
+> the others created: <!-- BEGIN GENERATED SHARED VFS — edit `layout` in src/types.ts -->
+> `OPFSWriteAheadVFS`, `OPFSAdaptiveVFS`, `OPFSCoopSyncVFS` and `OPFSAnyContextVFS`.
+> <!-- END GENERATED SHARED VFS -->
 
 **The database must not be open, in this tab or any other.** `DATABASE_IN_USE` says a client still holds it, and retrying will not help — closing every client on it is what releases it. A client your application stopped using but never closed keeps blocking until its tab goes, and this library cannot revoke a connection it did not open: another library or native code on the same origin is invisible to it.
 
@@ -356,7 +359,7 @@ const { clients, tabs, write } = await inspectDatabase('myapp.sqlite', {
 |---|---|---|---|
 | `vfs` | `SQLiteVFS` | — (required) | The VFS the database was created with. |
 
-It answers from code that holds no client — opening one to learn who holds the database would defeat the question. Pass the VFS the database was created with: four VFS share one file per database name and the rest are separate stores, so the wrong one reports on a different database.
+It answers from code that holds no client — opening one to learn who holds the database would defeat the question.
 
 | Field | Type | Description |
 |---|---|---|
@@ -366,7 +369,7 @@ It answers from code that holds no client — opening one to learn who holds the
 | `clients[].name` | `string` | The client's label with its index, e.g. `"SQLite 1"`. Not unique across tabs. |
 | `clients[].tab` | `string` | The tab holding it. Every client in one tab reports the same value. |
 | `clients[].sameTab` | `boolean` | That tab is the caller's. |
-| `clients[].vfs` | `SQLiteVFS` | Which VFS it opened with — four of them share one file per database name. |
+| `clients[].vfs` | `SQLiteVFS` | Which VFS it opened with. |
 | `tabs` | `number` | Distinct tabs among `clients`. Not the same as `clients.length`. |
 | `write.tab` | `string \| null` | The tab holding the write lock right now, or `null`. A tab, never a client: the lock's name is the mutex and carries no client identity. |
 | `write.sameTab` | `boolean` | Always `false` when `write.tab` is `null`. |
