@@ -1746,6 +1746,8 @@ holder also owns wa-sqlite's `ahp:<path>` Web Lock and a `retryOps` state machin
 carry their own. This measures the engine and nothing above it — which is what it was for: the
 engine is exonerated, so HANDLE-2's permanence lives in the hand-over protocol or in our pool.
 
+Probes: `.scratchpad/handle-2/` (throwaway), with a README mapping each to what it answered.
+
 Method note: the browser console is not forwarded by the rstest reporter, so the probe carried
 its values out through deliberate assertion failures. Anything measured this way must collect
 its results and emit them ONCE per test — the first failing `expect` ends the test, which cost
@@ -1811,6 +1813,9 @@ handed to the timing helper, so every rejection came back as `ok` and a whole ru
 ## HANDLE-2 does not reproduce — 2026-09-09, ~70 attempts on `main`, 40 at the pre-fix commit
 
 Written because a negative that cost this much must not be re-paid. See `mem:vfs`, HANDLE-2.
+Probes: `.scratchpad/handle-2/` (throwaway) — the six shapes below are the files there, and
+its README says which answered what. The pre-fix runs used a git worktree at `94bfaac` with
+`node_modules` symlinked from the main checkout, which is enough to run one browser config.
 
 On `main`, six shapes, Firefox, `OPFSCoopSyncVFS`, under sixteen busy loops, all with the OPFS
 resource and the lock table checked at the moment of interest: holder killed while idle; holder
