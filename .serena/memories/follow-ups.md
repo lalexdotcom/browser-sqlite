@@ -106,6 +106,47 @@ repairing.
 **`API.md` lists `first` among "the same querying surface as the client"**, so a consumer has no
 warning. The cheapest honest step is a sentence; the fix is a separate decision.
 
+### The fix, worked out 2026-09-09 but not written
+
+**Make the TRANSACTION wait, not `firstWorker`.** In `transaction.ts`'s `first`, `await
+worker.quiesce()` after `firstWorker` resolves — the same thing `closeOpenStatements()` already
+does at the boundary.
+
+**It costs nothing when there is nothing to wait for.** `quiesce()` returns
+`idle?.promise ?? Promise.resolve()`, and `idle` is cleared by the transport's own `finally`, so
+a query that finished by itself — a single-row result — waits not at all. The task round trip is
+paid only when the worker really is still parked. That is what makes this acceptable on a hot
+path, and it is the reason to prefer it.
+
+**The two alternatives, and why they lose.** Making `firstWorker` await its `iterator.return()`
+would fix the transaction by degrading the client path, where not awaiting is deliberate and
+`queries.ts`'s comment says so: `db.first()` has no reason to wait for a drain, its lease handles
+it. And tracking the transport in `open` does nothing, because `closeOpenStatements()` runs at
+the end of the callback while this defect lives *between* two statements inside it.
+
+**Three things to establish before writing a line:**
+
+1. **Is the failure deterministic?** The worker's stop reply needs a task and the following
+   `await tx.read(…)` is a microtask away, so it should be 100 % rather than a race. Everything
+   else depends on this: if it is deterministic the regression test needs no CPU load and no
+   flake budget.
+2. **Do `tx.read()` and `tx.write()` need the same?** They go through `readWorker`/`writeWorker`,
+   which exhaust their transport to `done`, so `deferredChunk` clears by itself. **Verify it,
+   do not infer it** — three claims in the session that produced this entry were written by
+   reasoning from neighbouring code instead of reading the code concerned, and all three were
+   wrong.
+3. **`tx.bulkWrite()` and `tx.output()`** were established immune by review: they only use the
+   `read`/`write` the transaction hands them. That conclusion stands or falls with point 2.
+
+**The risk it inherits.** Same trade as `closeOpenStatements()`: an unresponsive worker means
+waiting up to `drainTimeout` with the origin's write lock held. `API.md`'s transaction warning
+already states that cost for abandoned generators — decide whether it must name `first()` too.
+
+**And the question worth asking before the third one arrives.** This would be the second
+transaction method needing a wait because it short-circuits a generator — `chunk`/`stream` at the
+boundary, `first` between statements. At the third it stops being a point fix and becomes an
+invariant the transaction should hold on its own.
+
 ## Notes, with nothing to fix
 
 ### An abort through the shared slot reports `done`, not `error` — and that is right

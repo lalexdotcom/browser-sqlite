@@ -157,6 +157,15 @@ three.
   trips are normal; committing after every one forces the user to brake. Make the edit, show
   what changed, wait.
 
+## The harness cannot honour half of the model policy (2026-09-09)
+
+`AGENTS.md` says never to dispatch a subagent without an explicit `model` **and** to always pass
+`effort` too. **The `Agent` tool in this harness exposes no `effort` parameter** — only
+`model`, `subagent_type`, `prompt`, `isolation` and `run_in_background`. So the pairing is
+honoured on the model half alone, and a subagent inherits the session's effort level whatever
+tier it was dispatched at. Recorded rather than worked around; if `effort` appears later, the
+policy becomes applicable as written.
+
 ## Working with the user
 
 - **Batch diagnostic probes.** When the user has to run probes by hand, send a whole
