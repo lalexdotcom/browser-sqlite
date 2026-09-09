@@ -82,8 +82,22 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 None outstanding.
 
-**rc.5's remaining gate is CI going green on a pushed `main`, and it has still never run**
-(user, 2026-09-05). The `Interruptible` work and the abandoned-generator work are both merged.
+**rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said in response to the
+closing summary of the abandoned-generator session, which named two: **HANDLE-2** — on Firefox,
+killing a worker that holds the rotated exclusive OPFS handle wedges the pool for good, on one
+of the two recommended VFS (`mem:vfs`) — and **`tx.first()` followed by another statement in the
+same callback raising `GENERATOR_ABANDONED`** (`mem:follow-ups`, where the fix is worked out but
+not written). The user's words were general — *"on ne sort pas la RC5 avec ce genre de sujets
+pas réglés"* — so **treat this list as the two that were in front of them, not as proven
+exhaustive**: confirm the scope before planning the release.
+
+**The reason, and it is a triage rule rather than a list (user, 2026-09-09): rc.5 must be as
+close to stable as possible, and stability and reliability are rc.5's job.** One feature
+addition is planned for rc.6, which the user will come back to. So the question to ask of
+anything discovered from here is not "is it on the list" but "is it reliability" — if it is, it
+belongs in rc.5, and a feature does not.
+
+**The CI gate stands as well, and it has still never run** (user, 2026-09-05). The `Interruptible` work and the abandoned-generator work are both merged.
 Everything from the lots and from both branches was verified **in this container only**, and
 several tests carry bounds calibrated on this machine, so slower CI hardware is where a
 surprise would land. `main` has not been pushed since rc.4, so this has still never run. When
