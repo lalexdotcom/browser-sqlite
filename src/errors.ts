@@ -29,6 +29,7 @@ export type SQLiteErrorCode =
   | 'DATABASE_NOT_FOUND'
   | 'READ_ONLY_TRANSACTION'
   | 'UNSUPPORTED'
+  | 'GENERATOR_ABANDONED'
   | 'OPERATION_TIMEOUT';
 
 export class SQLiteError extends Error {

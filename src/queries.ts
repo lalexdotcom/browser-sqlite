@@ -1,3 +1,10 @@
+import {
+  type Abandoned,
+  type AbandonRegistry,
+  type AbandonState,
+  abandonRegistry,
+  reclaim,
+} from './abandon';
 import type { SQLiteChunkOptions, SQLiteQueryOptions } from './api';
 import type { PoolWorker } from './pool';
 
@@ -30,47 +37,153 @@ export const makeAbortRace = (
 };
 
 /**
+ * `SQLiteChunkOptions` plus what only this library passes. `registry` is
+ * TEST-ONLY and unsupported; it exists so the abandonment path can be driven
+ * without a garbage collection.
+ */
+export type InternalChunkOptions = SQLiteChunkOptions & {
+  credits?: number;
+  /** The owning layer's teardown, run if the generator is abandoned. */
+  onAbandon?: (() => void) | undefined;
+  /**
+   * Handed the transport iterator, synchronously, before the factory returns.
+   *
+   * An owner that must close this generator from the outside needs it: a
+   * method call on an async generator queues behind a `next()` already in
+   * flight, so `return()` alone parks until a chunk arrives — which on an
+   * `ORDER BY` is the whole sort. `worker.interrupt(transport)` is what
+   * settles that `next()`, and it is a no-op unless the worker still serves
+   * that transport, so only its true owner can be handed it. `src/transaction.ts`
+   * is the only caller; the client path drops its generator instead of
+   * closing it and needs nothing here.
+   */
+  onTransport?: ((iterator: AsyncGenerator<unknown>) => void) | undefined;
+  registry?: AbandonRegistry;
+};
+
+/**
  * The single query primitive. Every other read path is a thin derivation, and
  * abort is implemented here exactly once.
+ *
+ * **A factory, not a generator function**, so that the transport iterator
+ * exists before the generator does and can be handed to the abandonment
+ * registry. Building it early costs nothing: `worker.query()` runs no code
+ * until its first `next()`, so the query message and the reuse guard still
+ * happen when the consumer first pulls.
  */
-export const chunk = async function* <
+export const chunk = <
   T extends Record<string, unknown> = Record<string, unknown>,
 >(
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  options?: SQLiteChunkOptions & { credits?: number },
-): AsyncGenerator<T[]> {
-  const { signal, chunkSize, credits } = options ?? {};
-
-  // B9: addEventListener never fires for a signal that is already aborted.
-  if (signal?.aborted) throw signal.reason;
-
-  const { aborted, teardown } = makeAbortRace(signal);
+  options?: InternalChunkOptions,
+): AsyncGenerator<T[]> => {
+  const {
+    signal,
+    chunkSize,
+    credits,
+    onAbandon,
+    onTransport,
+    registry = abandonRegistry,
+  } = options ?? {};
   const iterator = worker.query<T>(sql, params, {
     chunkSize,
     credits,
     abortable: signal !== undefined,
   });
+  onTransport?.(iterator);
+  const state: AbandonState = { done: false };
+  const token = {};
+  const held: Abandoned = {
+    worker,
+    iterator,
+    state,
+    detach: () => {},
+    release: onAbandon,
+  };
+
+  /**
+   * D7: an abort must reclaim, not merely reject. `makeAbortRace` inside the
+   * generator rejects a promise that an abandoned consumer is no longer
+   * awaiting, and that rejection is swallowed — so without this listener a
+   * `timeout` buys an abandoned generator nothing at all.
+   *
+   * This closure captures the factory's scope and never the generator object,
+   * so a signal the caller keeps alive does not prevent the collection the
+   * registry depends on. `detach` lives on the held value for the same reason
+   * it exists at all: the signal belongs to the CALLER and outlives this query,
+   * so whichever route reaches the cleanup first must take the listener with
+   * it — see `reclaim`.
+   */
+  if (signal) {
+    const onAbort = () => {
+      registry.forget(token);
+      reclaim(held);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    held.detach = () => signal.removeEventListener('abort', onAbort);
+  }
+
+  const gen = drain<T>(iterator, worker, signal, held, registry, token);
+  registry.watch(gen, held, token);
+  return gen;
+};
+
+const drain = async function* <T extends Record<string, unknown>>(
+  iterator: AsyncGenerator<T[] | number>,
+  worker: PoolWorker,
+  signal: AbortSignal | undefined,
+  held: Abandoned,
+  registry: AbandonRegistry,
+  token: object,
+): AsyncGenerator<T[]> {
+  // B9: addEventListener never fires for a signal that is already aborted.
+  // D2: this stays HERE and not in the factory above. Lifted, it would throw
+  // at call time instead of on the first next(), which every caller feels.
+  //
+  // This path throws BEFORE the try, so the finally below never runs: it owes
+  // its teardown itself.
+  if (signal?.aborted) {
+    held.state.done = true;
+    held.detach();
+    registry.forget(token);
+    throw signal.reason;
+  }
+
+  const { aborted, teardown } = makeAbortRace(signal);
   try {
     while (true) {
       // Racing the pending chunk, not testing a flag after it: an ORDER BY
       // sorts entirely inside the first step(), so waiting for a chunk before
       // noticing the abort makes AbortSignal.timeout(n) return minutes late.
+      // `aborted` first: D7's reclaim() may already have completed `iterator`
+      // by the time this races again, so with both promises pre-settled,
+      // array order breaks the tie. Putting `aborted` first keeps the abort
+      // observed even though `iterator.next()` also resolves immediately.
       const next = aborted
-        ? await Promise.race([iterator.next(), aborted])
+        ? await Promise.race([aborted, iterator.next()])
         : await iterator.next();
       if (next.done) break;
       // FLK-1: chunks already queued are not delivered once the signal fired.
       if (typeof next.value !== 'number') yield next.value;
     }
   } finally {
+    // First, so that neither a later abort nor a collection can run the
+    // cleanup a second time on a worker already given back. `done` closes the
+    // door that `forget` cannot: the abort listener is not the registry's.
+    held.state.done = true;
+    held.detach();
+    registry.forget(token);
     teardown();
     // Start the stop-and-drain, never await it. The caller must not wait for a
     // sort that may still have minutes to run; the lease returns through
     // quiesce() instead. interrupt() first, so the queued return() is not
     // parked behind a next() that will not settle.
-    worker.interrupt();
+    //
+    // Named, like reclaim's: a consumer that comes back to an already-reclaimed
+    // generator reaches this finally with the worker long since re-lent.
+    worker.interrupt(iterator);
     void iterator.return(undefined).catch(() => {});
   }
 };
@@ -81,7 +194,7 @@ export const streamRows = async function* <
   worker: PoolWorker,
   sql: string,
   params?: unknown[],
-  options?: SQLiteChunkOptions,
+  options?: InternalChunkOptions,
 ): AsyncGenerator<T> {
   for await (const rows of chunk<T>(worker, sql, params, options)) {
     for (const row of rows) yield row;
@@ -166,8 +279,9 @@ export const writeWorker = async <
     }
   } finally {
     teardown();
-    // Start the stop-and-drain, never await it. Same pattern as chunk().
-    worker.interrupt();
+    // Start the stop-and-drain, never await it. Same pattern as chunk(),
+    // transport named for the same reason.
+    worker.interrupt(iterator);
     void iterator.return(undefined).catch(() => {});
   }
   return { result, affected };

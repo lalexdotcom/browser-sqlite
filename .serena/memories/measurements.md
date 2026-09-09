@@ -1615,3 +1615,58 @@ defect tracked OUR deletion path, not the engine's handle mode. **A Chrome 120 c
 proposed to separate the two on 2026-09-07 and is no longer worth running for this purpose**:
 it would be testing an engine hypothesis for a defect the evidence attributes to a library
 path that has since changed.
+
+## ABANDON-RESTART — what an abandoned generator costs a transaction, 2026-09-08, both engines
+
+> **SUPERSEDED by `5df3c03` (2026-09-08), and the numbers below are kept because they are
+> what made the fix necessary.** The restart this section prices no longer happens. The
+> transaction now closes what the callback abandoned before it commits or rolls back —
+> `closeOpenStatements()` in `src/transaction.ts` interrupts the transport, awaits the
+> generator's `return()` and then `worker.quiesce()` — so the ROLLBACK meets an idle
+> connection, trips no guard, and evicts nothing. Measured after the fix by
+> `tests/browser/abandon-transaction.test.ts` → *commits, and evicts no worker*:
+> `terminated=0 created=2`, and the transaction COMMITS rather than failing at all, so the
+> `GENERATOR_ABANDONED` column below no longer has a value. The `AccessHandlePoolVFS`
+> recovery figures (43 ms / 57 ms) now price a path an abandoned generator does not take.
+>
+> What survives: the restart is still what happens when a ROLLBACK genuinely fails for some
+> other reason, and the stale-lease paragraph at the end is unaffected.
+>
+> Read on for the state before the fix.
+
+Measured on `fix/abandoned-generator` during the final fix wave's re-review, with an
+`interceptWorkers()` probe: abandon a `tx.chunk()` inside a `transaction()`, then count the
+workers terminated and created. Default VFS, `poolSize: 2`, unless stated.
+
+| | error code | workers terminated | workers created | later `SELECT 1` |
+|---|---|---|---|---|
+| before the fix (`94bfaac`) | `GENERATOR_ABANDONED` | **0** | 2 | ok |
+| after the fix (`842f6dc`) | `GENERATOR_ABANDONED` | **1** | 3 | ok |
+
+**The restart is new, and it is correct.** Before, the reuse guard's own `finally` stopped the
+abandoned query, so the `ROLLBACK` that followed found a clean worker and succeeded — no
+eviction. That `finally` had to become conditional, because it was resetting a LIVE query's
+state when the transport was stale (`mem:lessons`, and the design's amendment A1). So the
+`ROLLBACK` now trips the guard in turn, fails, and `onPoisoned` evicts the slot. The connection
+genuinely holds an open transaction with a query in flight, which is the state eviction exists
+for.
+
+**Recovery measured on the worst case**, `AccessHandlePoolVFS` at `poolSize: 1` — the
+configuration where the terminated worker's exclusive OPFS handle must be released before the
+replacement can open: **Chromium 43 ms, Firefox 57 ms**, `terminated=1 created=2 ok=1` on both.
+At `94bfaac` the same probe reads `terminated=0 created=1`.
+
+**Two things this does not say.** The restart budget is finite, so a consumer abandoning
+generators in a loop inside transactions will exhaust it where it previously would not —
+unmeasured, and nothing in the suite exercises this path at `poolSize: 1`
+(`abandon-transaction.test.ts` runs at 2, for an unrelated documented reason). And the stale
+lease is harmless rather than merely untested: `scheduler.remove()` bumps a per-index
+generation and a stale `release()` is a no-op, so the never-settling `quiesce()` cannot
+republish the restarted worker.
+
+The prose half of this used to live at the eviction site in `src/transaction.ts`. `5df3c03`
+replaced that comment: the same `catch` now says that an abandoned generator no longer reaches
+it, because `closeOpenStatements()` drained the generator before the ROLLBACK was attempted,
+and that what remains there is a connection broken for some other reason. So the pointer is to
+`closeOpenStatements()` and to that `catch` together — one explains why the eviction is gone,
+the other what still reaches it.

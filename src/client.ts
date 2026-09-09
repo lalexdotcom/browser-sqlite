@@ -941,13 +941,26 @@ export const createSQLiteClient = (
    */
   const streamWithRetry = async function* <Y>(
     signal: AbortSignal | undefined,
-    body: (worker: PoolWorker) => AsyncGenerator<Y, void, unknown>,
+    body: (
+      worker: PoolWorker,
+      onAbandon: () => void,
+    ) => AsyncGenerator<Y, void, unknown>,
   ): AsyncGenerator<Y, void, unknown> {
     for (let attempt = 1; ; attempt++) {
       let delivered = false;
       const lease = await acquireInstrumented('read', signal);
+      // The lease returns when the worker confirms it is idle, not when the
+      // caller leaves: a worker still inside step() must not be re-lent. This
+      // is the same teardown the finally below runs, and it is idempotent, so
+      // an abandoned generator reaching it first costs nothing.
+      const giveBack = () => {
+        void lease.worker.quiesce().then(
+          () => lease.release(),
+          () => lease.release(),
+        );
+      };
       try {
-        for await (const item of body(lease.worker)) {
+        for await (const item of body(lease.worker, giveBack)) {
           delivered = true;
           yield item;
         }
@@ -962,10 +975,7 @@ export const createSQLiteClient = (
           throw error;
         }
       } finally {
-        void lease.worker.quiesce().then(
-          () => lease.release(),
-          () => lease.release(),
-        );
+        giveBack();
       }
     }
   };
@@ -1012,8 +1022,15 @@ export const createSQLiteClient = (
     assertReadable(sql, 'chunk');
     const { signal, release } = withDeadline(options, 'chunk');
     try {
-      yield* streamWithRetry(signal, (worker) =>
-        chunkWorker<T>(worker, sql, params, { ...options, signal }),
+      yield* streamWithRetry(signal, (worker, onAbandon) =>
+        chunkWorker<T>(worker, sql, params, {
+          ...options,
+          signal,
+          onAbandon: () => {
+            onAbandon();
+            release();
+          },
+        }),
       );
     } finally {
       release();
@@ -1033,8 +1050,15 @@ export const createSQLiteClient = (
     assertReadable(sql, 'stream');
     const { signal, release } = withDeadline(options, 'stream');
     try {
-      yield* streamWithRetry(signal, (worker) =>
-        streamRows<T>(worker, sql, params, { ...options, signal }),
+      yield* streamWithRetry(signal, (worker, onAbandon) =>
+        streamRows<T>(worker, sql, params, {
+          ...options,
+          signal,
+          onAbandon: () => {
+            onAbandon();
+            release();
+          },
+        }),
       );
     } finally {
       release();

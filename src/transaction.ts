@@ -26,6 +26,29 @@ const exec = async (worker: PoolWorker, sql: string): Promise<void> => {
 };
 
 /**
+ * A statement generator the callback still holds, paired with the transport it
+ * drains.
+ *
+ * Both halves are needed to close it from the outside. `gen.return()` alone is
+ * queued behind a `next()` the callback left in flight and does not settle
+ * until that `next()` does; `worker.interrupt(transport)` is what settles it,
+ * and it names the transport because the pool refuses a stop from anyone but
+ * the query's current owner.
+ *
+ * Both fields are filled after the entry exists, which is why both are
+ * optional. `gen` is set before the entry ever reaches `open`. `transport`
+ * arrives with `onTransport`, which for `chunk()` fires synchronously inside
+ * the factory and for `stream()` fires on the first `next()` — `streamRows` is
+ * itself a generator, so it does not reach `chunk()` until then. An entry with
+ * no transport yet has no query on the worker either, and there is nothing for
+ * `interrupt()` to stop.
+ */
+type OpenStatement = {
+  gen?: AsyncGenerator<unknown>;
+  transport?: AsyncGenerator<unknown>;
+};
+
+/**
  * Returns the `transaction()` method for a SQLiteDB instance.
  *
  * The returned function acquires exactly one lease for the full lifetime of
@@ -110,16 +133,92 @@ export const createTransaction =
         return { options: { ...given, signal: merged } as O, release };
       };
 
+      /**
+       * Every statement generator this transaction has handed out and that has not
+       * finished. The transaction closes what the callback left open before it
+       * commits: an open generator holds a query on the transaction's worker, and
+       * the next statement — the auto-COMMIT if nothing else — would trip pool.ts's
+       * reuse guard, fail the ROLLBACK in turn and get the worker evicted. On
+       * Firefox that eviction strands the rotated exclusive OPFS handle and wedges
+       * the pool for good, which is the defect this exists to prevent.
+       */
+      const open = new Set<OpenStatement>();
+
       /** Runs `release` when the consumer stops reading, however it stops. */
-      const releasing = async function* <R>(
+      const releasing = <R>(
         source: AsyncGenerator<R>,
         release: () => void,
-      ): AsyncGenerator<R> {
-        try {
-          yield* source;
-        } finally {
-          release();
+        entry: OpenStatement,
+      ): AsyncGenerator<R> => {
+        // The entry is the box the generator's own `finally` needs: it must
+        // remove itself from `open` and cannot name a generator that does not
+        // exist until the expression below has returned. The same indirection
+        // `src/pool.ts`'s `query` factory uses, for the same reason, and it is
+        // also where the transport lands, whenever the factory gets to it.
+        const gen = (async function* () {
+          try {
+            yield* source;
+          } finally {
+            open.delete(entry);
+            release();
+          }
+        })();
+        entry.gen = gen;
+        open.add(entry);
+        return gen;
+      };
+
+      /**
+       * Close what the callback abandoned. `return()` sends the worker the stop
+       * request and starts the drain, but queries.ts's `drain()` fires that off
+       * without awaiting it — deliberately, for the registry-driven abandonment
+       * path this also serves, where nobody is left waiting. Here somebody is:
+       * the next thing this transaction does is talk to the same worker
+       * directly, with no scheduler lease gate in between. `worker.quiesce()`
+       * is the actual wait — it resolves when the worker's own finally clears
+       * `deferredChunk`, which is the pool.ts state the reuse guard reads — so
+       * the connection is genuinely idle before COMMIT rather than merely
+       * believed to be.
+       *
+       * `interrupt()` comes first, for the reason `queries.ts`'s own finally
+       * gives: a method call on an async generator is queued behind a `next()`
+       * already in flight, so a callback that left one outstanding — `void
+       * g.next()`, or a `Promise.race` that lost — would park this `return()`
+       * for the whole of a sort that may never end. BEGIN, COMMIT and ROLLBACK
+       * carry no signal, so nothing else would cut it and the transaction would
+       * neither reject nor give its worker back.
+       *
+       * **What this can cost.** `interrupt()` only cuts the wait short when the
+       * statement was abortable; a transaction carrying no `signal` and no
+       * `timeout` passes `abortable: false` (queries.ts), so worker.ts installs
+       * no progress handler at all and has nothing to answer the stop with. On
+       * that path — the ordinary one, not an edge case — the worker cannot be
+       * interrupted, and the wait runs until the statement ends by itself or
+       * `drainTimeout` in pool.ts elapses — 60 s by default — after which the
+       * worker is declared dead, `quiesce()` settles, and the slot is evicted.
+       * `drainTimeout` is that bound already; stacking a second one on top of
+       * it is one more thing to get wrong, not more safety. The origin-wide
+       * write lock is held for the whole of it.
+       *
+       * **What this does not fix.** The eviction still happens — measured on
+       * `drainTimeout: 2000` as `workers=3 terminated=2`, and on Firefox, where
+       * a rotating exclusive OPFS handle turns it into the amendment A5 puts at
+       * 9/40. That is strictly better than the leak this replaces, where the
+       * same callback hung forever and never gave the write lock back — a
+       * bounded wait and a clean eviction instead of no bound at all — but it
+       * is a limit carried forward, not a regression to apologize for.
+       */
+      const closeOpenStatements = async () => {
+        for (const { gen, transport } of [...open]) {
+          try {
+            if (transport) worker.interrupt(transport);
+            await gen?.return(undefined);
+          } catch {
+            // A generator that throws on the way out must not replace the
+            // caller's own error, and must not stop the others from closing.
+          }
         }
+        await worker.quiesce();
       };
 
       // Guarded at the call, not at the first flush. bulkWrite buffers, so the
@@ -189,10 +288,18 @@ export const createTransaction =
         ) => {
           const query = checksql(sql);
           const { options, release } = withSignal(given);
-          return releasing(
-            chunkWorker<T>(worker, query, params, options),
-            release,
-          );
+          const entry: OpenStatement = {};
+          // No lease work here: the transaction owns the lease, and
+          // iterator.return() resolves `idle`, which settles the
+          // quiesce().then(release) already pending in its own finally.
+          const source = chunkWorker<T>(worker, query, params, {
+            ...options,
+            onAbandon: release,
+            onTransport: (iterator) => {
+              entry.transport = iterator;
+            },
+          });
+          return releasing(source, release, entry);
         },
 
         stream: <T extends Record<string, unknown>>(
@@ -202,10 +309,21 @@ export const createTransaction =
         ) => {
           const query = checksql(sql);
           const { options, release } = withSignal(given);
-          return releasing(
-            streamRows<T>(worker, query, params, options),
-            release,
-          );
+          // streamRows forwards its options straight to chunk(), but it is a
+          // generator itself: the transport lands in `entry` on the first
+          // next(), not here.
+          const entry: OpenStatement = {};
+          // No lease work here: the transaction owns the lease, and
+          // iterator.return() resolves `idle`, which settles the
+          // quiesce().then(release) already pending in its own finally.
+          const source = streamRows<T>(worker, query, params, {
+            ...options,
+            onAbandon: release,
+            onTransport: (iterator) => {
+              entry.transport = iterator;
+            },
+          });
+          return releasing(source, release, entry);
         },
 
         first: <T extends Record<string, unknown>>(
@@ -271,6 +389,8 @@ export const createTransaction =
           ? await Promise.race([running, aborted])
           : await running;
 
+        await closeOpenStatements();
+
         if (!done) {
           if (autoCommit) {
             await db.commit();
@@ -283,6 +403,8 @@ export const createTransaction =
         // Only roll back if the transaction is still open. `done` is set after the
         // statement succeeds, so a COMMIT that failed leaves it false and the
         // transaction still active — that case must still roll back.
+        await closeOpenStatements();
+
         if (begun && !done) {
           try {
             await db.rollback();
@@ -292,6 +414,13 @@ export const createTransaction =
             // now hold an open transaction, and a read inside one reads that
             // transaction's snapshot — the barrier would refresh nothing and
             // report success. Evict instead of hoping.
+            //
+            // An abandoned `chunk()`/`stream()` generator no longer gets here:
+            // closeOpenStatements() above drains it before this ROLLBACK is even
+            // attempted, so the guard it used to trip never trips. What remains
+            // is a connection broken for some other reason — a crashed worker, a
+            // transport failure — where the ROLLBACK itself cannot be trusted to
+            // have run, and eviction is the only sound response.
             deps.onPoisoned(
               worker.index,
               new SQLiteError(
