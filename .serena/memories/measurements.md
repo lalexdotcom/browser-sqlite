@@ -1709,3 +1709,121 @@ above should be read with that in mind.
 handle ownership. The inference was wrong and only the measurement said so.
 
 Behaviour and consequences: `mem:vfs`, HANDLE-2.
+
+## HANDLE-ORPHAN — Firefox DOES release a terminated worker's sync handle, 2026-09-09
+
+**This measurement contradicts the explanation HANDLE-2 carried until today**, which said
+Firefox does not release the handle. At the ENGINE level it does. See `mem:vfs`, HANDLE-2,
+which was corrected the same day.
+
+Raw OPFS only — no wa-sqlite, no VFS, no client. A blob-URL worker creates a
+`FileSystemSyncAccessHandle` on a fresh OPFS file, writes four bytes, flushes, reports, and is
+then `terminate()`d by the page. A second worker polls `createSyncAccessHandle()` on the same
+file every 100 ms for up to 10 s. Run twice: unloaded, and under the sixteen busy-loop workers
+ABANDON-WEDGE validated as the load that makes the real defect reproducible. Firefox, this
+container.
+
+| probe | unloaded | under 16 busy loops |
+|---|---|---|
+| control — holder closed the handle, then killed | opens, 1 attempt, 1 ms | opens, 1 attempt, 6 ms |
+| holder killed while **idle**, holding | opens, 1 attempt, 1 ms | opens, 1 attempt, **2 ms** |
+| holder killed while **spinning**, holding | opens, 1 attempt, 1 ms | opens, 1 attempt, **5 ms** |
+| `removeEntry()` issued immediately after the kill | `removed` | **`NoModificationAllowedError`** |
+| `getFile()` read after the kill | — | 4 bytes, intact |
+
+**A worker killed mid-synchronous-loop releases its handle exactly like an idle one** — which
+is the case that mattered, since the real holder is inside `sqlite3_step()` and cannot answer
+anything.
+
+**The release is prompt but NOT instantaneous, and that is the whole nuance.** The
+`removeEntry` row is the same operation as the others except that it runs microseconds after
+`terminate()` rather than after a worker spawn: under load it still meets
+`NoModificationAllowedError` — the very name ABANDON-WEDGE captured once. So that error names a
+window of a few milliseconds, not a stable state.
+
+**What it does not cover.** The probe's holder is a plain worker holding a raw handle. The real
+holder also owns wa-sqlite's `ahp:<path>` Web Lock and a `retryOps` state machine, and its peers
+carry their own. This measures the engine and nothing above it — which is what it was for: the
+engine is exonerated, so HANDLE-2's permanence lives in the hand-over protocol or in our pool.
+
+Method note: the browser console is not forwarded by the rstest reporter, so the probe carried
+its values out through deliberate assertion failures. Anything measured this way must collect
+its results and emit them ONCE per test — the first failing `expect` ends the test, which cost
+one run's worth of P4.
+
+## WRITELOCK-STUCK — a stuck transaction callback blocks every write on the origin, 2026-09-09
+
+**Deterministic, both engines, on the recommended VFS. This is not HANDLE-2 and has nothing to
+do with OPFS handles**; it was found while trying to reproduce HANDLE-2 and reproduces where
+HANDLE-2 does not.
+
+A `transaction()` whose callback awaits something that never settles — user code, a fetch, a
+prompt — holds `bsq:write:<ns>:<file>` for the origin. Every write in every tab then blocks
+**for ever**, silently; reads are unaffected. Firefox/`OPFSCoopSyncVFS`, 8 iterations per form
+under sixteen busy loops:
+
+| form | transaction | `bsq:write` | other client's write | `close()` | lock after `close()` |
+|---|---|---|---|---|---|
+| crash while a statement is IN FLIGHT | `WORKER_CRASHED` | released | ok | ok | released |
+| crash BETWEEN two statements | `WORKER_CRASHED` | released | ok | ok | released |
+| control, no crash, normal callback | ok | released | ok | ok | released |
+| **stuck callback + worker crash** | **never settles** | **held** | **blocked** | **`ok`** | **held** |
+| **stuck callback, no crash** | **never settles** | **held** | **blocked** | **> 8 s budget** | **held** |
+| stuck callback + `timeout: 3000` | `OPERATION_TIMEOUT` | released | ok | ok | released |
+
+**The crash is not the cause — it is what makes `close()` LIE.** With the worker alive `close()`
+outlasts the 8 s budget, which at least shows; it is bounded by `drainTimeout` in code
+(`client.ts`, whose comment anticipates exactly a callback that never returns), so it does
+settle — the completion was not measured. With the worker dead it returns `ok` in under a
+second. **Either way it never releases the write lock**, which is the defect: the consumer's
+only escape reports success and changes nothing.
+
+**Confirmed engine- and VFS-independent**, on `OPFSAdaptiveVFS` (recommended), chained on both
+configs — Chromium and Firefox produce identical lines. And permanent: the lock is still held at
+10 s, 40 s and 70 s, past the 60 s default `drainTimeout`, and a write issued then still hangs.
+
+**`timeout` (and `signal`) is a complete mitigation**, exactly as `API.md` documents. What
+`API.md` does NOT say is that the hold is unbounded — its warning reads "for as long as its
+callback runs", which a consumer takes as "as long as my slow thing takes" — nor that `close()`
+does not reclaim it.
+
+**Closing the offending TAB does fix the origin** — measured the same day with a same-origin
+iframe standing in for a tab, since a test page cannot open one: the iframe takes a lock, is
+removed from the document, and the lock reads `before=true after=false`, with a second holder
+acquiring it immediately (`reacquired=true`). So the blockage is bounded by the life of the tab
+that caused it, not by the life of the origin. It is the tab that stays open and stuck that has
+no way out.
+
+Method: `interceptWorkers()` for the worker handle, an `ErrorEvent` dispatched on it for the
+crash (`spawned`/`terminated` counted to prove the crash landed), `navigator.locks.query()` for
+the lock.
+
+**A probe mistake worth not repeating.** The transaction promise was `.catch()`-ed before being
+handed to the timing helper, so every rejection came back as `ok` and a whole run read
+`tx:ok` — the opposite of what happened. Let the helper own the catch.
+
+## HANDLE-2 does not reproduce — 2026-09-09, ~70 attempts on `main`, 40 at the pre-fix commit
+
+Written because a negative that cost this much must not be re-paid. See `mem:vfs`, HANDLE-2.
+
+On `main`, six shapes, Firefox, `OPFSCoopSyncVFS`, under sixteen busy loops, all with the OPFS
+resource and the lock table checked at the moment of interest: holder killed while idle; holder
+killed mid-`step()`; crash through `handleDeath` with a second client contending for the handle
+(10); crash inside an open transaction (16 across four forms); an abandoned generator with a
+`next()` outstanding, `drainTimeout` lowered (10). **No wedge attributable to the handle in any
+of them**, and every recovery path behaved: the `ahp:` lock is released on termination, a raw
+third-party `createSyncAccessHandle()` succeeds, a replacement worker spawns and serves.
+
+At the pre-fix commit `94bfaac`, where ABANDON-WEDGE recorded **9/40 (22 %)** on
+`OPFSCoopSyncVFS`: `abandon-transaction.test.ts` forced onto that VFS and run 20 times under
+sixteen SHELL busy loops, 12 times under sixteen IN-PAGE busy loops, plus 8 runs on the default
+VFS — **0/40**. At 22 % a null of 0/20 alone has probability 0.6 %.
+
+**What this does and does not license.** It does not prove the original observation was invented
+— the load profile of a container hours apart is not controllable, and the recorded run had the
+full `pnpm test` chain around it, which none of these did. It does mean **nobody has a
+reproduction of HANDLE-2 today, on `main` or before the fix**, and that the only symptom anyone
+has described — a permanent, silent, origin-wide wedge — is produced deterministically by
+WRITELOCK-STUCK above, whose shape the pre-fix branch is independently recorded as having hit
+(`mem:history`: "an `await gen.return()` parked behind an in-flight `next()` that held the
+origin's write lock indefinitely").

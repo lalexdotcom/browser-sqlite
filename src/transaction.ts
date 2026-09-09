@@ -68,6 +68,17 @@ export const createTransaction =
      */
     onPoisoned: (index: number, error: SQLiteError) => void;
     /**
+     * Aborted when the client closes, with `CLIENT_CLOSED`.
+     *
+     * Merged into the transaction's own signal so that closing ABANDONS a
+     * running transaction the way a caller's `signal` does — the callback is
+     * not interrupted, it simply can no longer reach the database. Without it
+     * the caller of a transaction whose callback sits on an `await` that is not
+     * a statement waited for ever: nothing else in the transaction observes the
+     * client going away.
+     */
+    closeSignal: AbortSignal;
+    /**
      * The client's bulk factory. Called per transaction with the transaction's
      * own read/write and a pass-through `transaction`, so output()'s swap runs
      * on the caller's transaction instead of opening a BEGIN SQLite does not
@@ -90,9 +101,16 @@ export const createTransaction =
     // The deadline is the transaction's own signal from here on: it reaches
     // the lease acquisition, every inner statement through withSignal, and the
     // race against the callback itself.
-    const { signal, release: releaseDeadline } = withDeadline(
+    const { signal: deadline, release: releaseDeadline } = withDeadline(
       options,
       'transaction',
+    );
+    // The close signal joins the caller's own here, at the single place the
+    // transaction's signal is built, so it reaches everything the comment above
+    // lists without any of them being told about it.
+    const { signal, release: releaseClose } = mergeSignals(
+      deadline,
+      deps.closeSignal,
     );
     try {
       // The signal aborts the wait too: without it a transaction could not be
@@ -447,6 +465,7 @@ export const createTransaction =
         );
       }
     } finally {
+      releaseClose();
       releaseDeadline();
     }
   };

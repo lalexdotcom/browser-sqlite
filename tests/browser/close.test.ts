@@ -106,10 +106,85 @@ describe('close()', () => {
   it('is bounded when a transaction never finishes', async () => {
     const db = await createTestClient({ poolSize: 1, drainTimeout: 500 });
     await db.write('CREATE TABLE t (a)');
-    void db.transaction(async () => {
+    // Caught, and it did not have to be until close() started settling this
+    // transaction rather than leaving it pending for ever: an abandoned
+    // rejection escapes the test file and fails the RUN while every test in it
+    // passes.
+    db.transaction(async () => {
       await new Promise(() => {}); // never settles
-    });
+    }).catch(() => {});
     await sleep(100);
     await db.close(); // must settle, not hang
+  });
+
+  /**
+   * Bounding `close()` was never the whole obligation: the CALLER of the
+   * transaction was left waiting for ever too, because nothing told it the
+   * client had gone. Measured before this was written — the transaction
+   * promise never settled, and the first statement the callback issued after
+   * `close()` HUNG rather than rejecting, since `PoolWorker` is the native
+   * `Worker` and `terminate()` says nothing to our transport.
+   */
+  it('settles a transaction whose callback is still running', async () => {
+    const db = await createTestClient({ poolSize: 1, drainTimeout: 500 });
+    await db.write('CREATE TABLE t (a)');
+
+    let entered!: () => void;
+    const inside = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const transaction = db.transaction(async (tx) => {
+      await tx.write('INSERT INTO t VALUES (1)');
+      entered();
+      await new Promise(() => {}); // user code that never comes back
+    });
+    await inside;
+
+    // The handler must be attached BEFORE close(): the rejection lands inside
+    // close(), and `expect(...).rejects` would subscribe a turn too late.
+    const settled = transaction.then(
+      () => 'resolved',
+      (error: { code?: string }) => error.code ?? 'unknown',
+    );
+    await db.close();
+    await expect(settled).resolves.toBe('CLIENT_CLOSED');
+  });
+
+  it('rejects — never hangs — a statement the callback issues after close()', async () => {
+    const db = await createTestClient({ poolSize: 1, drainTimeout: 500 });
+    await db.write('CREATE TABLE t (a)');
+
+    let entered!: () => void;
+    const inside = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let resume!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    // Settled by the callback with whatever its post-close statement did, so a
+    // hang shows up as this test's own timeout rather than as a pass.
+    let report!: (outcome: string) => void;
+    const outcome = new Promise<string>((resolve) => {
+      report = resolve;
+    });
+
+    const transaction = db.transaction(async (tx) => {
+      await tx.write('INSERT INTO t VALUES (1)');
+      entered();
+      await gate;
+      report(
+        await tx.write('INSERT INTO t VALUES (2)').then(
+          () => 'resolved',
+          (error: { code?: string }) => error.code ?? 'unknown',
+        ),
+      );
+    });
+    transaction.catch(() => {});
+    await inside;
+
+    await db.close();
+    resume();
+    await expect(outcome).resolves.toBe('CLIENT_CLOSED');
   });
 });

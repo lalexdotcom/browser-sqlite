@@ -10,6 +10,7 @@ import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
 import { SQLiteError } from './errors';
 import {
   type ClientInspection,
+  type DatabaseInspection,
   inspectWith,
   libraryClientsHold,
 } from './inspect';
@@ -105,6 +106,28 @@ const openTimeoutCause = (held: boolean | undefined): string => {
     return 'Other clients of this library still hold the database.';
   }
   return 'No client of this library holds it — a page reloaded without close(), or a holder outside this library, is the likely cause.';
+};
+
+/**
+ * Why a write spent its `timeout` waiting for the origin's write lock.
+ *
+ * Three states, like `openTimeoutCause` above and for the same reason: the
+ * snapshot is taken AFTER the deadline landed, so the lock may already be free
+ * by the time anyone looks. Saying that is information; guessing is not.
+ *
+ * It names a TAB and never a client — the lock's name is the mutex and carries
+ * no client identity. The message must not promise more than that.
+ */
+const writeLockCause = (write: DatabaseInspection['write']): string => {
+  if (write.tab === null)
+    return " The origin's write lock was already free when this was checked, so the wait was contention between writers rather than one holder that never let go.";
+  if (write.sameTab)
+    return " The origin's write lock is held by this tab — a transaction here has not returned.";
+  return ` The origin's write lock is held by another tab${
+    write.waiting > 0
+      ? `, with ${write.waiting} writer(s) queued behind it`
+      : ''
+  }.`;
 };
 
 /**
@@ -576,6 +599,19 @@ export const createSQLiteClient = (
   const writeLock = sharesStorage(vfs) ? writeLockName(vfs, dbFile) : undefined;
 
   /**
+   * Every origin write lock this client holds right now, by its releaser.
+   *
+   * A lease's `release()` takes its own entry out. The registry exists for the
+   * one case that never reaches it: a `transaction()` whose callback never
+   * returns holds its lease for ever, so nothing releases the lock and every
+   * write in the ORIGIN blocks — silently, in every tab, past `drainTimeout`
+   * and past `close()`. `close()` drains this; until it did, the only escape a
+   * consumer had reported success and changed nothing
+   * (`mem:measurements`, WRITELOCK-STUCK).
+   */
+  const heldWriteLocks = new Set<() => void>();
+
+  /**
    * The release function for the origin-wide exclusive connection lock, held
    * for this client's lifetime when `capability.exclusiveConnection` is true.
    * `undefined` when the lock was unavailable (another client holds it) or
@@ -729,6 +765,36 @@ export const createSQLiteClient = (
   };
 
   /**
+   * Turns a bare `OPERATION_TIMEOUT` spent on the write lock into one that says
+   * who was holding it.
+   *
+   * ONLY the deadline this library minted is enriched. A caller who supplied a
+   * `signal` owns its rejection value and gets it back verbatim — that is lot
+   * 10's ownership rule, and widening this would weaken it.
+   *
+   * One `locks.query()`, on the failure path only. If the snapshot cannot be
+   * taken the original error is returned untouched: the cause is a courtesy and
+   * must never replace the timeout the caller needs to see.
+   */
+  const explainWriteLockTimeout = async (error: unknown): Promise<unknown> => {
+    if (!(error instanceof SQLiteError) || error.code !== 'OPERATION_TIMEOUT')
+      return error;
+    let cause: string;
+    try {
+      const inspection = await inspectWith(locks, dbFile, vfs, markerName);
+      cause = writeLockCause(inspection.write);
+    } catch {
+      return error;
+    }
+    return new SQLiteError('OPERATION_TIMEOUT', `${error.message}${cause}`, {
+      cause: error,
+      // Spread rather than assigned: `exactOptionalPropertyTypes` refuses an
+      // explicit `undefined` where the property is merely optional.
+      ...(error.timeout !== undefined ? { timeout: error.timeout } : {}),
+    });
+  };
+
+  /**
    * The single owner of the request level of the debug tree.
    *
    * There are six acquisition sites; instrumenting each is six chances to
@@ -789,12 +855,20 @@ export const createSQLiteClient = (
       } catch (error) {
         releaseMerge();
         // Surface CLIENT_CLOSED when the close signal caused the abort.
-        // If the caller's signal fired first, rethrow the original error.
+        // If the caller's signal fired first, rethrow the original error —
+        // enriched with the holder when the deadline was this library's own.
         if (closeAbort.signal.aborted) throw closeAbort.signal.reason;
-        throw error;
+        throw await explainWriteLockTimeout(error);
       }
       releaseMerge();
-      releaseWrite = webRelease;
+      heldWriteLocks.add(webRelease);
+      // Idempotent both ways: `close()` must not release a lock a lease has
+      // already handed back, and a lease must not release one `close()` has
+      // already reclaimed.
+      releaseWrite = () => {
+        if (!heldWriteLocks.delete(webRelease)) return;
+        webRelease();
+      };
     }
 
     let lease: Awaited<ReturnType<typeof scheduler.acquire>>;
@@ -1140,6 +1214,7 @@ export const createSQLiteClient = (
     // Wrapped, not passed by reference: handleDeath is declared further down
     // and would be in its temporal dead zone here.
     onPoisoned: (index, error) => handleDeath(index, error),
+    closeSignal: closeAbort.signal,
     bulkFor,
   });
 
@@ -1191,10 +1266,22 @@ export const createSQLiteClient = (
         pool.map(async (worker) => {
           if (!worker) return;
           await bounded(worker.close(), drainTimeout);
-          worker.terminate();
+          // The reason in-flight and later requests reject with. Without it a
+          // transaction's callback met a silent hang instead of an error.
+          worker.terminate(closingError);
         }),
       );
       pool.length = 0;
+
+      // Only here: the workers are gone, so SQLite holds nothing of its own
+      // and releasing lies about nothing — the condition acquireInstrumented's
+      // comment sets on ever doing this at all. What is left in the registry is
+      // a lock whose lease was never returned, which means a transaction whose
+      // callback has not come back. Without this the origin stays unwritable
+      // for every tab until this one is closed, and `close()` says `ok` on the
+      // way out.
+      for (const release of [...heldWriteLocks]) release();
+      heldWriteLocks.clear();
 
       // Release the exclusive connection lock after workers are gone, so no
       // incoming client can grab the database while our OPFS handles are still
@@ -1233,7 +1320,7 @@ export const createSQLiteClient = (
   const failClient = (error: SQLiteError) => {
     fatal ??= error;
     void scheduler.shutdown(fatal);
-    for (const dying of pool) dying?.terminate();
+    for (const dying of pool) dying?.terminate(fatal);
   };
 
   const spawn = (index: number) => {
@@ -1364,7 +1451,7 @@ export const createSQLiteClient = (
     // Terminate and clear BEFORE scheduler.remove() so that emitWorkerLost
     // (called from onGateOpen / post-startup path, both inside or after remove)
     // computes the correct live count from pool.
-    pool[index]?.terminate();
+    pool[index]?.terminate(error);
     pool[index] = undefined;
 
     scheduler.remove(index); // may synchronously trigger onFirstSettle/onGateOpen

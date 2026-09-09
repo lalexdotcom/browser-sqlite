@@ -6,6 +6,15 @@ All notable changes to this project are documented here.
 
 ### Breaking
 
+- **A transaction that outlives `close()` now rejects instead of never
+  settling.** Closing the client abandons a running transaction the way a
+  `signal` does — it rejects with `CLIENT_CLOSED`, and the callback, which is
+  never interrupted, simply can no longer reach the database. Previously that
+  promise stayed pending for the life of the page. Nothing can have depended on
+  hanging, but the rejection is now real: a `db.transaction(...)` left
+  unawaited, or awaited only later, surfaces an **unhandled rejection** where it
+  used to produce silence. Attach a handler or await it. This repository's own
+  test suite had to.
 - **`OptionsWithSignal` is renamed `Interruptible`** and now carries `timeout` as well as
   `signal`. A consumer who imported or named `OptionsWithSignal` must rename it; the type was
   published in rc.4.
@@ -136,6 +145,36 @@ All notable changes to this project are documented here.
   served an incoherent snapshot*.
 
 ### Fixed
+
+- **A statement issued after `close()` now rejects instead of hanging for
+  ever.** `PoolWorker` is the native `Worker`, so terminating it stopped the
+  thread and told this library's transport nothing: a request posted afterwards
+  waited for a reply that could never arrive. That is what a transaction's
+  callback met when it spoke again after a close — and what its own fallback
+  `ROLLBACK` met, which carries no signal and so could not even be aborted. The
+  second and third statements then failed with `GENERATOR_ABANDONED`, which was
+  never the diagnosis: it was the reuse guard reacting to the first one still
+  being stuck. Terminating a worker now kills its transport with it.
+  Statements issued outside a transaction were already refused, by the
+  scheduler.
+- **`close()` now releases the origin's write lock, instead of reporting success
+  while still holding it.** A `transaction()` holds that lock for the whole of
+  its callback — documented, and the price of serializing writers across every
+  tab. But a callback that never returns holds it *for ever*: its lease is never
+  released, so nothing released the lock, and **every write in every tab blocked
+  silently**, with no error anywhere. `close()` was the only escape a consumer
+  had, and it terminated the workers, resolved, and left the lock held. It now
+  reclaims what its own leases never gave back, once the workers are gone and
+  SQLite therefore holds nothing of its own. Closing the tab always worked and
+  still does; what had no way out was the tab that stayed open.
+- **A write that spends its `timeout` waiting for the write lock now says who
+  was holding it.** The message names *this tab* — a transaction in your own
+  page that has not returned — or *another tab*, with the number of writers
+  queued behind it. Three states, since the lock may have been released between
+  the deadline and the snapshot, and that is said rather than guessed. It names
+  a tab and never a client: the lock's name is the mutex and carries no client
+  identity. A `signal` you supplied still rejects with your own reason,
+  untouched.
 
 - **Selecting a single-connection VFS no longer throws on a `poolSize` you never
   passed.** `poolSize` defaulted to 2 unconditionally, so
