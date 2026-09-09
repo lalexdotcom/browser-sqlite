@@ -1,5 +1,10 @@
 import { describe, expect, it } from '@rstest/core';
-import { createTestClient, interceptWorkers, sleep } from './helpers';
+import {
+  createTestClient,
+  interceptWorkers,
+  longQuery,
+  sleep,
+} from './helpers';
 
 const SEED =
   'INSERT INTO t (n) WITH RECURSIVE c(x) AS ' +
@@ -21,6 +26,10 @@ describe('an abandoned generator inside a transaction', () => {
       await db.write(SEED);
 
       await db.transaction(async (tx) => {
+        // Written INSIDE the transaction, so the count below can tell a
+        // COMMIT from a ROLLBACK. Reading only the seed would leave the two
+        // outcomes indistinguishable, and this test is named for the commit.
+        await tx.write('INSERT INTO t (n) VALUES (99999)');
         const rows = tx.chunk('SELECT n FROM t', [], { chunkSize: 10 });
         await rows.next();
         await sleep(0);
@@ -33,10 +42,10 @@ describe('an abandoned generator inside a transaction', () => {
       expect(records.some((record) => record.terminated)).toBe(false);
       expect(records.length).toBe(2);
 
-      // The client still serves, and the seeded rows are intact — a real
-      // read of table data, not a vacuous `SELECT 1`.
+      // The client still serves, and the transaction's own row landed — 2001,
+      // not the 2000 a silent ROLLBACK would leave.
       const rows = await db.read<{ n: number }>('SELECT count(*) AS n FROM t');
-      expect(rows[0]?.n).toBe(2000);
+      expect(rows[0]?.n).toBe(2001);
     } finally {
       await db.close();
     }
@@ -56,6 +65,42 @@ describe('an abandoned generator inside a transaction', () => {
         return count;
       });
       expect(seen).toBe(2000);
+    } finally {
+      await db.close();
+    }
+  }, 30_000);
+
+  // C1. Falsifiable: delete `worker.interrupt(transport)` from
+  // closeOpenStatements() in src/transaction.ts. A method call on an async
+  // generator is QUEUED behind a next() already in flight, so without the
+  // interrupt the close-out's `return()` waits for a chunk that this query
+  // will not produce for minutes. BEGIN, COMMIT and ROLLBACK carry no signal
+  // and no timeout is passed here, so nothing else cuts it: the transaction
+  // never rejects, the lease never goes back, and the origin-wide write lock
+  // is held throughout. This times out instead of finishing in seconds.
+  it('rejects when the callback leaves a next() in flight', async () => {
+    // Short on purpose: the worker is inside one uninterruptible step() and
+    // will answer no stop, so drainTimeout is what bounds the wait. That
+    // bound is the whole point — see closeOpenStatements()'s JSDoc.
+    const db = await createTestClient({ poolSize: 2, drainTimeout: 2000 });
+    try {
+      const started = performance.now();
+      await expect(
+        db.transaction(async (tx) => {
+          // Nothing abortable anywhere: no signal on the transaction, none on
+          // the statement, no timeout. The only thing that can settle the
+          // next() below is the worker being told to stop.
+          const rows = tx.chunk(longQuery(200_000_000));
+          // In flight and never awaited — the shape a `Promise.race` that
+          // lost its own timer leaves behind.
+          void rows.next().catch(() => {});
+          await sleep(0);
+          throw new Error('boom');
+        }),
+      ).rejects.toThrow('boom');
+      // Bounded by drainTimeout, not by the query: 200 million iterations of
+      // that CTE run far longer than this budget.
+      expect(performance.now() - started).toBeLessThan(15_000);
     } finally {
       await db.close();
     }

@@ -364,3 +364,52 @@ completes the transport synchronously, both inputs are already settled on the ne
 won, the loop saw `done`, and the abort was lost outright rather than delayed. The order is
 now `[aborted, iterator.next()]`. `writeWorker` carries the same shape and is safe as it
 stands: nothing external can complete its transport while its own race is outstanding.
+
+### A5 · Four claims above are retracted, and the Firefox measurement is why
+
+Retracted rather than edited, per this section's own rule. All four rest on one false
+premise, and it is the premise that hid the wedge.
+
+**§5, lines 229-231 — "A worker killed on the transaction path releases its OPFS handle and
+its read transaction, because the thread dies. The parked-handle exposure is therefore a
+client-path concern only."** False. A terminated worker does **not** reliably release a
+rotated exclusive OPFS sync access handle on Firefox, and the pool then wedges: the
+replacement cannot open the file. Measured, not reasoned — and the measurement is the reason
+this branch's last commits exist.
+
+| VFS | Chromium | Firefox |
+|---|---|---|
+| `OPFSCoopSyncVFS` — rotates the handle always | 0/40 | **9/40 (22 %)** |
+| `OPFSAdaptiveVFS` — rotates it in degraded mode | 0 (suite always green) | ~3 % (3 in ~36 chain runs; 1/8 and 1/50 under load) |
+| `OPFSWriteAheadVFS` | — | **0/160** |
+| `IDBBatchAtomicVFS` — no handle at all | — | 0/40 |
+
+`main` measured 0/40 against this branch's 5/40 on the same probe; one failure surfaced
+`No modification allowed`, which names the handle directly.
+
+**`OPFSWriteAheadVFS` was predicted affected and measured not to be**, and the prediction is
+worth keeping because of how it failed. It was inferred from `mem:vfs`'s "degrades exactly
+like `OPFSAdaptiveVFS`" on Firefox — read as a statement about **handle ownership** when it is
+a statement about **concurrency**. "No concurrency" and "one exclusive handle rotated between
+connections" are different properties, and collapsing them cost a cell that was then measured
+at 0/160 (P(0/160) at Adaptive's ~3 % is 0.7 %). The mechanism is therefore *"VFS that rotate
+a single exclusive sync access handle between connections"* — CoopSync always, Adaptive in
+degraded mode — and never *"VFS without concurrency"*. Of the two recommended VFS, exactly one
+is exposed.
+
+**§5, lines 222-228 — "That trajectory remains. What D6 changes is the quality of the failure,
+not the failure."** No longer true. `5df3c03` closes what the callback abandoned before the
+transaction commits or rolls back, so the guard is not tripped, the ROLLBACK does not fail, and
+`onPoisoned` evicts nothing. The trajectory is gone, not merely relabelled.
+
+**§8, lines 287-290 — the mandated documentation sentence, that the transaction path "kills
+the worker and fails the transaction with `GENERATOR_ABANDONED`".** `API.md` now says the
+opposite, and correctly: the generator is closed at the transaction's boundary and the
+transaction commits. What still meets `GENERATOR_ABANDONED` is a statement issued **after** the
+abandonment inside the same callback — the boundary is the guarantee, not the whole callback.
+
+**A1's closing measurement — "it recovers on the worst-case VFS… 43 ms Chromium, 57 ms
+Firefox".** It recovers where it was measured, and the measurement was taken on a VFS and an
+engine pair that does not strand the handle. On Firefox with a rotated handle it does not
+recover at all, which is the whole content of the table above. `mem:measurements` →
+ABANDON-RESTART carries the same supersession.

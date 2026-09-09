@@ -196,7 +196,16 @@ describe("interrupt() ignores a transport the worker isn't serving", () => {
       // the query finished (deferredChunk is clear); the TRANSPORT does not.
       const stale = worker.query('SELECT 1');
       let affected: unknown;
+      // Bounded: a transport that ends without ever yielding its affected
+      // count would otherwise spin here for the whole test timeout and report
+      // nothing. `SELECT 1` yields one chunk and one count, so 10 turns is
+      // already an order of magnitude of slack.
+      let turns = 0;
       do {
+        if (turns++ > 10)
+          throw new Error(
+            `the transport never yielded an affected count (last value: ${String(affected)})`,
+          );
         ({ value: affected } = await stale.next());
       } while (typeof affected !== 'number');
       expect(affected).toBe(0);
@@ -213,7 +222,12 @@ describe("interrupt() ignores a transport the worker isn't serving", () => {
       const second = await live.next();
       expect(typeof second.value).toBe('number');
     } finally {
+      // close() posts `close` and waits for the reply; terminating is the
+      // caller's own job (src/pool.ts's PoolWorker). Nothing else owns this
+      // worker — it was built here rather than by a client — so without the
+      // terminate every run of this suite leaks one Worker.
       await worker.close();
+      worker.terminate();
     }
   });
 });

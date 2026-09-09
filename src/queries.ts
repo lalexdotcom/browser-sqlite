@@ -45,6 +45,19 @@ export type InternalChunkOptions = SQLiteChunkOptions & {
   credits?: number;
   /** The owning layer's teardown, run if the generator is abandoned. */
   onAbandon?: (() => void) | undefined;
+  /**
+   * Handed the transport iterator, synchronously, before the factory returns.
+   *
+   * An owner that must close this generator from the outside needs it: a
+   * method call on an async generator queues behind a `next()` already in
+   * flight, so `return()` alone parks until a chunk arrives — which on an
+   * `ORDER BY` is the whole sort. `worker.interrupt(transport)` is what
+   * settles that `next()`, and it is a no-op unless the worker still serves
+   * that transport, so only its true owner can be handed it. `src/transaction.ts`
+   * is the only caller; the client path drops its generator instead of
+   * closing it and needs nothing here.
+   */
+  onTransport?: ((iterator: AsyncGenerator<unknown>) => void) | undefined;
   registry?: AbandonRegistry;
 };
 
@@ -71,6 +84,7 @@ export const chunk = <
     chunkSize,
     credits,
     onAbandon,
+    onTransport,
     registry = abandonRegistry,
   } = options ?? {};
   const iterator = worker.query<T>(sql, params, {
@@ -78,6 +92,7 @@ export const chunk = <
     credits,
     abortable: signal !== undefined,
   });
+  onTransport?.(iterator);
   const state: AbandonState = { done: false };
   const token = {};
   const held: Abandoned = {

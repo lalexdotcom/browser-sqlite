@@ -44,7 +44,9 @@ const fakeWorker = (chunks: Record<string, unknown>[][]) => {
     stopped,
     interrupted,
     index: 0,
-    interrupt: (on?: object) => {
+    // Required, exactly as on PoolWorker: a double permissive enough to accept
+    // an omitted transport would admit the very call c695c6c forbade.
+    interrupt: (on: object) => {
       calls.push('interrupt');
       stopped.push(on);
       // src/pool.ts: interrupt(on) acts on whatever query the worker is

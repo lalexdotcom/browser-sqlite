@@ -212,7 +212,7 @@ const orders = await db.transaction(async (tx) => {
 > wait with it — not only the ones on this client. Keep the callback to the
 > statements it needs.
 
-**One worker serves the whole callback**, so the transaction is genuinely isolated rather than merely wrapped in `BEGIN`. `tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit` and `rollback`. A `chunk()` or `stream()` generator abandoned inside the callback is closed before the transaction commits or rolls back, the same as anywhere else — see [How they run](#how-they-run).
+**One worker serves the whole callback**, so the transaction is genuinely isolated rather than merely wrapped in `BEGIN`. `tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit` and `rollback`. A `chunk()` or `stream()` generator abandoned inside the callback is closed before the transaction commits or rolls back. That is the boundary and nothing earlier: a statement issued after the abandonment, in the same callback — including an explicit `tx.commit()` — still meets `GENERATOR_ABANDONED`. See [How they run](#how-they-run).
 
 **Rows land only on a `COMMIT` that succeeds.** Everything else rolls back: a callback that throws, an abort, a `COMMIT` that fails, and — under `autoCommit: false` — a callback that returns without calling `tx.commit()`. Catching your own statement's rejection does not let you commit around an abort. If the rollback itself fails the worker is evicted, rather than returned to the pool holding an open transaction.
 

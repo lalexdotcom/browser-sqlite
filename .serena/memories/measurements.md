@@ -1618,6 +1618,22 @@ path that has since changed.
 
 ## ABANDON-RESTART — what an abandoned generator costs a transaction, 2026-09-08, both engines
 
+> **SUPERSEDED by `5df3c03` (2026-09-08), and the numbers below are kept because they are
+> what made the fix necessary.** The restart this section prices no longer happens. The
+> transaction now closes what the callback abandoned before it commits or rolls back —
+> `closeOpenStatements()` in `src/transaction.ts` interrupts the transport, awaits the
+> generator's `return()` and then `worker.quiesce()` — so the ROLLBACK meets an idle
+> connection, trips no guard, and evicts nothing. Measured after the fix by
+> `tests/browser/abandon-transaction.test.ts` → *commits, and evicts no worker*:
+> `terminated=0 created=2`, and the transaction COMMITS rather than failing at all, so the
+> `GENERATOR_ABANDONED` column below no longer has a value. The `AccessHandlePoolVFS`
+> recovery figures (43 ms / 57 ms) now price a path an abandoned generator does not take.
+>
+> What survives: the restart is still what happens when a ROLLBACK genuinely fails for some
+> other reason, and the stale-lease paragraph at the end is unaffected.
+>
+> Read on for the state before the fix.
+
 Measured on `fix/abandoned-generator` during the final fix wave's re-review, with an
 `interceptWorkers()` probe: abandon a `tx.chunk()` inside a `transaction()`, then count the
 workers terminated and created. Default VFS, `poolSize: 2`, unless stated.
@@ -1648,5 +1664,9 @@ lease is harmless rather than merely untested: `scheduler.remove()` bumps a per-
 generation and a stale `release()` is a no-op, so the never-settling `quiesce()` cannot
 republish the restarted worker.
 
-The prose half of this lives at the eviction site in `src/transaction.ts`, where someone
-reading a restart as a defect will meet it.
+The prose half of this used to live at the eviction site in `src/transaction.ts`. `5df3c03`
+replaced that comment: the same `catch` now says that an abandoned generator no longer reaches
+it, because `closeOpenStatements()` drained the generator before the ROLLBACK was attempted,
+and that what remains there is a connection broken for some other reason. So the pointer is to
+`closeOpenStatements()` and to that `catch` together — one explains why the eviction is gone,
+the other what still reaches it.
