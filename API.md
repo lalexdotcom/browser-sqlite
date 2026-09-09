@@ -6,7 +6,7 @@ Every method, property and option of [browser-sqlite](README.md).
 
 [createSQLiteClient()](#createsqliteclient) · [*client*.read()](#clientread) · [*client*.write()](#clientwrite) · [*client*.stream()](#clientstream) · [*client*.chunk()](#clientchunk) · [*client*.first()](#clientfirst) · [*client*.transaction()](#clienttransaction) · [*client*.bulkWrite()](#clientbulkwrite) · [*client*.output()](#clientoutput) · [*client*.inspect()](#clientinspect) · [*client*.close()](#clientclose) · [deleteDatabase()](#deletedatabase) · [inspectDatabase()](#inspectdatabase)
 
-**[Queries](#queries)**: [Writing queries](#writing-queries) · [How they run](#how-they-run)
+**[Queries](#queries)**: [Writing queries](#writing-queries) · [How they run](#how-they-run) · [Inside a transaction](#inside-a-transaction)
 
 **[Interrupting a call](#interrupting-a-call)** · **[Error handling](#error-handling)**
 
@@ -205,23 +205,16 @@ const orders = await db.transaction(async (tx) => {
 | `signal` | `AbortSignal` | — | Abandons the transaction. Rolls back and rejects with `signal.reason`; never commits.<br>See [Interrupting a call](#interrupting-a-call). |
 | `timeout` | `number` (ms) | — | Milliseconds before the transaction is abandoned. Rolls back and rejects with `OPERATION_TIMEOUT`.<br>See [Interrupting a call](#interrupting-a-call). |
 
+**One worker serves the whole callback**, so the transaction is genuinely isolated rather than merely wrapped in `BEGIN`. `tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit` and `rollback`.
+
 > [!WARNING]
 > **A write transaction holds the only writing slot in the origin for as long as
 > its callback runs.** Writes are serialized across every client and every tab, so
 > a callback that waits on something slow makes every other writer in the origin
 > wait with it — not only the ones on this client. Keep the callback to the
-> statements it needs. If the callback abandons a `chunk()`/`stream()` with a
-> `next()` still outstanding and the statement carries no `signal` or `timeout`,
-> closing it waits for the worker to answer the stop — up to `drainTimeout`,
-> 60 s by default — with the write lock still held.
+> statements it needs.
 
-**One worker serves the whole callback**, so the transaction is genuinely isolated rather than merely wrapped in `BEGIN`. `tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit` and `rollback`. A `chunk()` or `stream()` generator abandoned inside the callback is closed before the transaction commits or rolls back. That is the boundary and nothing earlier: a statement issued after the abandonment, in the same callback — including an explicit `tx.commit()` — still meets `GENERATOR_ABANDONED`. See [How they run](#how-they-run).
-
-**Rows land only on a `COMMIT` that succeeds.** Everything else rolls back: a callback that throws, an abort, a `COMMIT` that fails, and — under `autoCommit: false` — a callback that returns without calling `tx.commit()`. Catching your own statement's rejection does not let you commit around an abort. If the rollback itself fails the worker is evicted, rather than returned to the pool holding an open transaction.
-
-**An abort reaches further than a statement.** `signal` and `timeout` abandon the transaction at any point. The callback is not interrupted — it runs on — but every statement it issues afterwards rejects. `BEGIN`, `COMMIT` and `ROLLBACK` are the exception: they carry no signal, so an abort raised while one is in flight lands when it settles.
-
-See [Writing queries](#writing-queries).
+See [Queries: Inside a transaction](#inside-a-transaction).
 
 ## *client*.bulkWrite
 
@@ -403,6 +396,24 @@ Read queries are dispatched to any available worker, so several run at once.
 Write queries are serialized per database across the whole origin — one at a time, across every client and every tab, not only within the client that issued them.
 
 **A generator holds its worker for its whole lifetime.** [`stream()`](#clientstream) and [`chunk()`](#clientchunk) keep the worker that serves them until the loop ends, so always exhaust the generator, `break` out of it, or call its `return()` — `await using` does the same where your engine has the syntax. One you simply drop is recovered only when the engine collects it, which is no schedule to rely on; a `timeout` or a `signal` is what gives it a deadline. Prefer `chunk()` where the work is per-batch — one `INSERT` per chunk rather than per row.
+
+### Inside a transaction
+
+When using [*client*.transaction()](#clienttransaction), the rules below apply to the callback and to every statement it issues.
+
+**Rows land only on a `COMMIT` that succeeds.** Everything else rolls back: a callback that throws, an abort, a `COMMIT` that fails, and — under `autoCommit: false` — a callback that returns without calling `tx.commit()`. Catching your own statement's rejection does not let you commit around an abort. If the rollback itself fails the worker is evicted, rather than returned to the pool holding an open transaction.
+
+**An abort reaches further than a statement.** `signal` and `timeout` abandon the transaction at any point. The callback is not interrupted — it runs on — but every statement it issues afterwards rejects. `BEGIN`, `COMMIT` and `ROLLBACK` are the exception: they carry no signal, so an abort raised while one is in flight lands when it settles.
+
+**A `chunk()` or `stream()` generator abandoned inside the callback is closed before the transaction commits or rolls back.** That is the boundary and nothing earlier: a statement issued after the abandonment, in the same callback — including an explicit `tx.commit()` — still meets `GENERATOR_ABANDONED`.
+
+> [!WARNING]
+> If the callback abandons a `chunk()`/`stream()` with a `next()` still
+> outstanding and the statement carries no `signal` or `timeout`, closing it
+> waits for the worker to answer the stop — up to `drainTimeout`, 60 s by
+> default — with the write lock still held.
+
+See [Queries: How they run](#how-they-run).
 
 ## Interrupting a call
 
