@@ -168,6 +168,48 @@ The three that escape structurally are `IDBBatchAtomicVFS`, `IDBMirrorVFS` and
 It is a race, not a certainty, and a genuine Heisenbug: instrumenting it can shift the
 race and turn the failure green. Trust the unperturbed run.
 
+## HANDLE-2 — a worker killed while it holds the handle STRANDS it, on Firefox
+
+**Measured 2026-09-09, and pre-existing: nothing in the abandoned-generator work created it.**
+It is the consequence of HANDLE-1 that nobody had written down.
+
+Terminating a worker that holds the rotated exclusive OPFS sync access handle does not release
+that handle on Firefox. Every other connection then blocks **for good**: the surviving worker's
+read never returns, and a replacement worker cannot open the file at all — it dies at
+`openTimeout` and the supervisor declares the slot `lost`. The pool is wedged permanently, with
+no error. One run surfaced the resource by name: `NoModificationAllowedError`, which the
+capability table in `mem:measurements` already records as Firefox's answer to a second sync
+access handle on one file.
+
+**The engine is the discriminator, not the VFS.** Same VFS, same code, same test, under CPU
+load — numbers and method in `mem:measurements`, ABANDON-WEDGE:
+
+| VFS | Chromium | Firefox |
+|---|---|---|
+| `OPFSCoopSyncVFS` — rotates always | 0/40 | **9/40** |
+| `OPFSAdaptiveVFS` — rotates in degraded mode | 0 | ~3% |
+| `OPFSWriteAheadVFS` | — | 0/160 |
+| `IDBBatchAtomicVFS` — no handle | — | 0/40 |
+
+So Chromium survives killing the holder even on a VFS that rotates there too; Firefox does not.
+
+**`OPFSWriteAheadVFS` was predicted affected and measured not to be**, which is worth keeping
+as a warning about this file's own wording: the row above says it "degrades exactly like
+`OPFSAdaptiveVFS`" on Firefox, and that sentence is about **concurrency**, not about how the
+handle is owned. Reading it as the latter produced a false prediction. 0/160 refutes it at any
+rate comparable to Adaptive's.
+
+**What reaches it:** any path that terminates a worker mid-query — `handleDeath` from a crash, a
+failed rollback through `onPoisoned`, a drain that times out. `close()` is safe, it asks the
+worker first. The abandoned-generator work briefly made an ordinary consumer gesture reach it
+and then removed that path; the mechanism is untouched and still reachable by the others.
+
+**Not attempted, and each is a real question rather than an oversight:** asking the worker to
+hand the handle back before terminating it (it is mid-statement, and `terminate()` is the only
+reliable stop); upstream's `lockTimeout`, which converts the indefinite wait into an error but
+leaves the database unopenable; and declaring the holder dead over the `BroadcastChannel`, which
+is the hand-over protocol's missing liveness detection and belongs upstream.
+
 ## ANYCONTEXT-1 — closed 2026-08-25, and the cause is worth carrying
 
 WebKit's `FileSystemWritableFileStream.write()` **ignores a typed array view's

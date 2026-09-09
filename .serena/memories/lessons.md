@@ -565,3 +565,57 @@ The general form: prose in `src/` is not free of coupling. The same split left s
 comments and one error message pointing at README sections that had moved to `API.md` and
 `VFS.md`; nothing failed, and nothing would have. `grep -rn README src/` is the sweep, and
 it is worth running whenever a documentation file is reorganised.
+
+## `Promise.race` breaks ties among already-settled inputs by ARRAY ORDER — 2026-09-08
+
+`drain` races the pending chunk against the abort. Once a cleanup's `iterator.return()`
+completes the transport **synchronously**, the next loop turn enters the race with **both**
+inputs already settled — and `Promise.race` then resolves in array position, not by settlement
+time. The chunk won, the loop saw `done`, and **the abort was lost outright rather than
+delayed**. So with two inputs that can both be pre-settled, the array order *is* a priority
+declaration.
+
+**The reachability condition is narrower than "two things settle at once", and the difference
+is the whole lesson.** An async generator's `yield` performs an implicit `Await`, so
+`iterator.next()` is never *pre*-settled merely because data is queued. It takes an **external,
+synchronous `.return()`** completing the iterator while a live loop sits between turns. That is
+why the defect is reachable on `chunk()` and not on `writeWorker`, whose callers all await it
+immediately — and the controller's first analysis, which said `writeWorker` had a milder version
+of the same bug, was wrong for exactly this reason.
+
+Found because an implementer refused to work around a test that would not go green and built a
+standalone Node reproduction before touching the source. It cost one red test to find and would
+have cost a silent data loss to miss.
+
+## A branch can produce the defect it exists to remove, three times — 2026-09-09
+
+The abandoned-generator branch fixed a generator that stranded its pool worker. Along the way it
+introduced, and had to fix, **three defects of that same class**:
+
+1. a `Promise.race` tie that silently dropped 3900 of 4000 rows (above), bisected against `main`;
+2. a permanent pool wedge on Firefox — evicting a worker stranded the rotated exclusive OPFS
+   handle, and nothing could open the database again (`mem:vfs`, HANDLE-2);
+3. an `await gen.return()` parked behind an in-flight `next()`, so a transaction never rejected,
+   never returned its lease, and held the origin's write lock indefinitely.
+
+**None was found by re-reading the plan.** Each was found by a whole-branch review or by an
+implementer who would not work around a red test. The controller wrote all three, reviewed them,
+and passed over them.
+
+Two things follow. **A fix in this area is not more trustworthy for being a fix** — it is code in
+the same place, written under the same assumptions, and it earns the same review as the defect
+it replaces. And **the whole-branch review is the only step that caught two of the three**: task
+reviews saw diffs, and the defects lived in the interaction between a change and the untouched
+code beside it.
+
+## A pre-merge verification is not ceremony — 2026-09-09
+
+The session's closure was stopped by `pnpm test` going red on the merged-to-be tree, on a
+one-in-eighteen flake, after every task review had passed and a whole-branch review had said
+ready. The user's own challenge — *"on clôture ne bypass pas la revue de branche normalement"* —
+was right on a second count: four commits had landed after the last whole-branch review and none
+had been reviewed at that level.
+
+**A red suite at closure is the cheapest place to find a defect, and the last one.** What
+followed was a full systematic-debugging session that turned a flake into HANDLE-2. Had the
+merge gone through on a green-looking summary, the wedge would have shipped in rc.5.

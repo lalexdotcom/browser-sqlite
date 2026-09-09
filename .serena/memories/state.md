@@ -24,29 +24,36 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-07 on the merged result of `feat/uniform-timeout`
+## The verification baseline — compare against these, re-measured 2026-09-09 on the merged result of `fix/abandoned-generator`
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a
-run in this container on 2026-09-07, on `main` after the lot-10 merge** — none is carried
-forward, none is arithmetic. The whole table was re-read in one pass, which is what its own
-rule demands.
+run in this container on 2026-09-09, on `main` after the abandoned-generator merge** — none is
+carried forward, none is arithmetic. The whole table was re-read in one pass, which is what its
+own rule demands. The merged tree was proven byte-identical to the branch tip's, so the table
+measured on the branch transfers rather than being assumed to.
 
 **`pnpm test` chains THREE configs** — chromium+unit, firefox, and the isolated project — so a
-green `pnpm test` covers what CI covers, and a commit pays all three through the pre-commit
-hook.
+green `pnpm test` covers what CI covers, and a commit pays all three through the pre-commit hook.
 
 | command | result |
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **635 tests / 50 files** (unit + chromium), **243 / 33** (firefox), **5 / 2** (isolated) |
-| `pnpm exec rstest --project unit run` | 393 tests, 18 files |
-| `pnpm exec rstest --project chromium run` | 242 tests, 32 files |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **667 tests / 55 files** (unit + chromium, **1 skipped**), **252 / 36** (firefox, **1 skipped**), **5 / 2** (isolated) |
+| `pnpm exec rstest --project unit run` | 416 tests, 20 files |
+| `pnpm exec rstest --project chromium run` | 251 tests, 35 files |
 | `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each, **73 passed / 12 skipped**, identical on both engines |
 | `pnpm test:consumer` | 24/24 stages |
 | `BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 102 files, 13 warnings, 1 info |
+| `pnpm lint` | 108 files, 13 warnings, 1 info |
 | `dependencies` in `package.json` | absent |
+
+**The two skipped browser tests are one test, and they are the first this repository has had.**
+`tests/browser/abandon-gc.test.ts` pins the `FinalizationRegistry` path and needs
+`--expose-gc`, which cannot go into `rstest.config.ts` without changing the launch arguments
+every other browser test runs under. It therefore skips under `pnpm test` and in CI, and the
+file's own header carries the CLI override that runs it. **A skip count of 1 on each browser
+config is the expected state, not a regression** — a count above 1 is something to look at.
 
 **The per-project split is here on purpose.** A total alone cannot say which suite moved, and
 the totals are what rot: this file carried "the browser project is 158/158" from 2026-08-28
@@ -75,27 +82,73 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 None outstanding.
 
-**rc.5 was gated on two things; one is done and one has still never run.** The `Interruptible`
-work is merged (§ below). What remains is CI going green on a pushed `main`
-(user, 2026-09-05): everything from the nine lots and from this branch was verified in this
-container only, and the interruption lot's tests carry bounds calibrated on this machine, so
-slower CI hardware is where a surprise would land. `main` has not been pushed since, so this
-has still never run. When it holds, the user judges the release ready — the bump itself
-remains an instructed act, never an inferred one.
+**rc.5's remaining gate is CI going green on a pushed `main`, and it has still never run**
+(user, 2026-09-05). The `Interruptible` work and the abandoned-generator work are both merged.
+Everything from the lots and from both branches was verified **in this container only**, and
+several tests carry bounds calibrated on this machine, so slower CI hardware is where a
+surprise would land. `main` has not been pushed since rc.4, so this has still never run. When
+it holds, the user judges the release ready — the bump itself remains an instructed act, never
+an inferred one.
+
+**One thing to expect on that first CI run, and it is not a defect.** The abandoned-generator
+work found a defect that reproduces about once in eighteen runs of `pnpm test` and **never**
+in isolation — it needed the full chain, and it turned out to be load-sensitive. It is fixed,
+but the shape is the warning: **a Firefox browser test that fails once on CI and passes on a
+re-run is not automatically noise here**, and the cheap way to tell is sixteen busy loops
+around a single-file Firefox run, which cut time-to-failure twentyfold (`mem:measurements`,
+ABANDON-WEDGE).
 
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
 the 2026-09-05 entry in `mem:follow-ups` called for.
 
-**Nothing is in flight, and one thing is scheduled.** The abandoned-generator leak, which
-`mem:follow-ups` now carries in full: a `chunk()`/`stream()` generator abandoned without
-`break` or `.return()` never returns its pool lease, and also strands a `mergeSignals`
-listener. The user's plan, 2026-09-08: a session of its own, and **rc.5 is ready after it**.
-Everything else in `mem:follow-ups` is unscheduled.
+**Nothing is in flight, and nothing is scheduled.** The abandoned-generator leak — the last
+thing rc.5 was waiting on — merged on 2026-09-09 (§ below). Everything in `mem:follow-ups` is
+unscheduled.
+
+**What that work uncovered is NOT closed, and it is bigger than the leak was.** On Firefox,
+terminating a worker that holds the rotated exclusive OPFS access handle **strands it**: nothing
+can open the database again, and the pool wedges permanently with no error. `mem:vfs`, HANDLE-2;
+numbers in `mem:measurements`, ABANDON-WEDGE. It is **pre-existing and untouched** — the
+eviction machinery is byte-identical to what it was — and reachable by any path that kills a
+worker mid-query: a crash, a failed rollback through `onPoisoned`, a drain that times out. It
+affects `OPFSCoopSyncVFS` and, in its degraded mode, `OPFSAdaptiveVFS` — one of the two
+recommended VFS. Nothing about it is scheduled, and the three candidate remedies are named in
+`mem:vfs` with why none is obvious.
 
 **The `RECOMMENDED_VFS` question is settled and must not be reopened.** It was answered on
 2026-09-08 by medianing the bench corpus at n≥3 per platform (`mem:measurements`,
 VFS-MEDIAN). The answer was not "move it": there are now **two** recommendations,
 `OPFSWriteAheadVFS` and `OPFSAdaptiveVFS`, and the constant itself left `src/` — see § below.
+
+## The abandoned generator — merged 2026-09-09, `ddd8270`
+
+Design and its amendments A1-A5: `docs/superpowers/specs/2026-09-08-abandoned-generator-design.md`.
+Plan: `docs/superpowers/plans/2026-09-08-abandoned-generator.md`. 25 commits, seven tasks, each
+reviewed; two whole-branch reviews, three fix rounds. **Read the spec's amendments before the
+spec** — two of its decisions were disproved by implementation.
+
+**Four things the code will not tell you:**
+
+- **The deterministic half is the one that matters.** The `FinalizationRegistry` is best effort
+  and the documentation says so in those words; what makes the repair testable and bounded is
+  that a `signal` or a `timeout` now runs the same teardown **at the abort**, not at the
+  consumer's next pull. Every regression test is built on that half. D1 and D7.
+- **`interrupt()` takes the transport it is stopping, and the argument is required.** Without it
+  a late cleanup stops whatever the worker is running now — which silently truncated an
+  unrelated query, 100 rows of 4000, bisected against `main`. Any new call site must name its
+  transport; the type no longer lets it not.
+- **A transaction closes the generators its callback left open**, interrupting the transport
+  before returning them, because a method call on an async generator queues behind an in-flight
+  `next()`. Getting that order wrong held the origin's write lock indefinitely.
+- **`GENERATOR_ABANDONED`'s guard is structural.** It fires on "a query is already in flight on
+  this worker", and its message leads with that rather than with a diagnosis — the premise that
+  an abandoned generator is its only producer was checked and is false.
+
+**What it does NOT deliver.** A generator abandoned while a `next()` is in flight is unreachable
+by the registry until that `next()` settles — transient, and complementary to the leak, since a
+worker with a request in flight is busy rather than stranded. And on the transaction path, a
+generator abandoned with a `next()` outstanding and no `signal`/`timeout` costs up to
+`drainTimeout` with the write lock held, then evicts the worker; that is written in `API.md`.
 
 ## Lot 10 — one `timeout`, eight methods — merged 2026-09-07
 

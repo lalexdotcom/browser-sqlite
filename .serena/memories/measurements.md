@@ -1670,3 +1670,42 @@ it, because `closeOpenStatements()` drained the generator before the ROLLBACK wa
 and that what remains there is a connection broken for some other reason. So the pointer is to
 `closeOpenStatements()` and to that `catch` together — one explains why the eviction is gone,
 the other what still reaches it.
+
+## ABANDON-WEDGE — killing the handle's holder wedges the pool, 2026-09-09, both engines
+
+**Method, because it is what made this measurable at all.** The defect appears about once in
+eighteen runs of `pnpm test` and **never** on the Firefox config alone or on the one file alone
+— the reproducing context was the full chain, at 80 s a run. Adding sixteen busy loops around a
+single-file Firefox run reproduces it in 4-5 s instead, a twentyfold cut in time-to-failure, and
+that is what turned a statistical argument into controlled cells. The defect is load-sensitive;
+that is the handle to grab.
+
+Scenario: an abandoned `chunk()` inside a `transaction()` on the pre-fix code, which evicts the
+worker holding the rotated exclusive OPFS handle. Each cell is 40 runs under that load unless
+stated.
+
+| VFS | Chromium | Firefox |
+|---|---|---|
+| `OPFSCoopSyncVFS` — rotates always | 0/40 | **9/40 (22 %)** |
+| `OPFSAdaptiveVFS` — rotates in degraded mode | 0 (suite always green) | 3 in ~36 chain runs; 1/8 and 1/50 loaded |
+| `OPFSWriteAheadVFS` | — | **0/160** |
+| `IDBBatchAtomicVFS` — no handle | — | 0/40 |
+
+**Two controlled comparisons, one variable each.** Same VFS across engines: 0 against 9. Same
+engine across VFS: 9 against 0. The factor is Firefox combined with a rotated exclusive handle,
+and nothing else.
+
+**A third, for the code:** the same validated probe, same VFS and engine, gives `main` 0/40
+against the pre-fix branch 5/40 — the branch created the reachability, not the mechanism.
+`handleDeath`, `terminate`, `spawn` and `onPoisoned` are byte-identical to `main`.
+
+**What 0/160 buys and what it does not.** At Adaptive's ~3 %, 0/40 would still happen 30 % of
+the time — which is why `OPFSWriteAheadVFS` was extended to 160, where the same null has a
+probability of 0.7 %. **0/40 is not evidence of absence for a 3 % defect**, and the 40-run cells
+above should be read with that in mind.
+
+**A failed prediction, kept.** `OPFSWriteAheadVFS` was expected to be affected, inferred from
+`mem:vfs`'s "degrades exactly like `OPFSAdaptiveVFS`". That sentence is about concurrency, not
+handle ownership. The inference was wrong and only the measurement said so.
+
+Behaviour and consequences: `mem:vfs`, HANDLE-2.

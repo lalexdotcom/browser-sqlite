@@ -69,25 +69,35 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
-## Scheduled — the next session's work (user, 2026-09-08)
+## A statement after `tx.first()` in the same callback throws `GENERATOR_ABANDONED`
 
-### An abandoned generator returns nothing — not its lease, not its listener
+`firstWorker` leaves its `for await` by `return`, and `drain`'s `finally` fires
+`iterator.return()` **without awaiting it**. So when `await tx.first(…)` resolves the transport
+has only posted `stop`: `deferredChunk` is still set, and it can only clear on a message from
+the worker — a task, not a microtask. A second statement in the same callback therefore meets
+the reuse guard:
 
-`chunk()` and `stream()` hand back an async generator. A consumer who neither exhausts it
-nor calls `break` / `.return()` abandons it, and **two things then never happen**.
+```js
+await db.transaction(async (tx) => {
+  await tx.first('SELECT n FROM t');   // 2000 rows: the worker parks on a credit
+  await tx.read('SELECT 1');           // → GENERATOR_ABANDONED
+});
+```
 
-- **The pool lease is never returned.** `streamWithRetry` in `src/client.ts` — `chunk()` and
-  `stream()` both delegate to it — releases its lease in a `finally` around the `yield`, and
-  that `finally` does not run on an abandoned generator, so the worker stays leased for the life of the
-  page. This is the older and much the worse of the two, and it predates lot 10.
-- **A `mergeSignals` listener survives**, when the caller passed both `signal` and
-  `timeout`. Bounded and unobservable on its own; it was minor 4 of the lot-10 review.
+**Reproduced on `main` as well as on the merged result** (2026-09-09), with the same failure
+and only the message differing — `main` raises the bare `Error`, the merged code raises the
+named code. So this is **pre-existing**, it was not introduced by the abandoned-generator work,
+and that work did not worsen it: `closeOpenStatements()`'s `quiesce()` incidentally repairs the
+end-of-callback boundary case, leaving only the intra-callback one.
 
-Documented as a consumer obligation since 2026-09-08 — `API.md` → *Queries* → *How they
-run* says to exhaust or `break` — but the library still leaks when they do not. **The
-documentation is not the fix and must not be mistaken for one.**
+Why it was left alone rather than fixed with everything else: fixing it means making
+`firstWorker` await its `iterator.return()`, which is exactly what `queries.ts`'s comment
+refuses for the collection path, where nobody is waiting. That is a real design question and it
+did not belong in a branch that had already produced three defects of the class it was
+repairing.
 
-The user's plan, 2026-09-08: settle this in a session of its own, and rc.5 is then ready.
+**`API.md` lists `first` among "the same querying surface as the client"**, so a consumer has no
+warning. The cheapest honest step is a sentence; the fix is a separate decision.
 
 ## Notes, with nothing to fix
 
