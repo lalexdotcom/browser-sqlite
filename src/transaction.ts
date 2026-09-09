@@ -110,16 +110,63 @@ export const createTransaction =
         return { options: { ...given, signal: merged } as O, release };
       };
 
+      /**
+       * Every statement generator this transaction has handed out and that has not
+       * finished. The transaction closes what the callback left open before it
+       * commits: an open generator holds a query on the transaction's worker, and
+       * the next statement — the auto-COMMIT if nothing else — would trip pool.ts's
+       * reuse guard, fail the ROLLBACK in turn and get the worker evicted. On
+       * Firefox that eviction strands the rotated exclusive OPFS handle and wedges
+       * the pool for good, which is the defect this exists to prevent.
+       */
+      const open = new Set<AsyncGenerator<unknown>>();
+
       /** Runs `release` when the consumer stops reading, however it stops. */
-      const releasing = async function* <R>(
+      const releasing = <R>(
         source: AsyncGenerator<R>,
         release: () => void,
-      ): AsyncGenerator<R> {
-        try {
-          yield* source;
-        } finally {
-          release();
+      ): AsyncGenerator<R> => {
+        // Definite assignment assertion, not a non-null one: `gen` is read
+        // only from inside the generator body below, which cannot run before
+        // the assignment on the next line completes — an async generator's
+        // body does not start until its first `next()`. TypeScript's flow
+        // analysis does not know that and flags the plain declaration as used
+        // before being assigned.
+        let gen!: AsyncGenerator<R>;
+        gen = (async function* () {
+          try {
+            yield* source;
+          } finally {
+            open.delete(gen);
+            release();
+          }
+        })();
+        open.add(gen);
+        return gen;
+      };
+
+      /**
+       * Close what the callback abandoned. `return()` sends the worker the stop
+       * request and starts the drain, but queries.ts's `drain()` fires that off
+       * without awaiting it — deliberately, for the registry-driven abandonment
+       * path this also serves, where nobody is left waiting. Here somebody is:
+       * the next thing this transaction does is talk to the same worker
+       * directly, with no scheduler lease gate in between. `worker.quiesce()`
+       * is the actual wait — it resolves when the worker's own finally clears
+       * `deferredChunk`, which is the pool.ts state the reuse guard reads — so
+       * the connection is genuinely idle before COMMIT rather than merely
+       * believed to be.
+       */
+      const closeOpenStatements = async () => {
+        for (const gen of [...open]) {
+          try {
+            await gen.return(undefined);
+          } catch {
+            // A generator that throws on the way out must not replace the
+            // caller's own error, and must not stop the others from closing.
+          }
         }
+        await worker.quiesce();
       };
 
       // Guarded at the call, not at the first flush. bulkWrite buffers, so the
@@ -283,6 +330,8 @@ export const createTransaction =
           ? await Promise.race([running, aborted])
           : await running;
 
+        await closeOpenStatements();
+
         if (!done) {
           if (autoCommit) {
             await db.commit();
@@ -295,6 +344,8 @@ export const createTransaction =
         // Only roll back if the transaction is still open. `done` is set after the
         // statement succeeds, so a COMMIT that failed leaves it false and the
         // transaction still active — that case must still roll back.
+        await closeOpenStatements();
+
         if (begun && !done) {
           try {
             await db.rollback();
@@ -305,17 +356,12 @@ export const createTransaction =
             // transaction's snapshot — the barrier would refresh nothing and
             // report success. Evict instead of hoping.
             //
-            // **The ordinary way to get here is an abandoned generator**, and it
-            // is worth knowing before someone reads a restart as a defect. A
-            // `chunk()`/`stream()` generator dropped inside the callback leaves
-            // a query in flight; the next statement trips pool.ts's guard, the
-            // ROLLBACK above trips it in turn, and the slot is evicted and
-            // restarted. That is correct — the connection genuinely holds an
-            // open transaction with a query in flight — and it recovers even on
-            // the worst-case VFS (`mem:measurements`, ABANDON-RESTART). What it
-            // costs is one restart out of a FINITE budget, so a consumer
-            // abandoning generators in a loop will exhaust it. Nothing in the
-            // suite exercises this at `poolSize: 1`.
+            // An abandoned `chunk()`/`stream()` generator no longer gets here:
+            // closeOpenStatements() above drains it before this ROLLBACK is even
+            // attempted, so the guard it used to trip never trips. What remains
+            // is a connection broken for some other reason — a crashed worker, a
+            // transport failure — where the ROLLBACK itself cannot be trusted to
+            // have run, and eviction is the only sound response.
             deps.onPoisoned(
               worker.index,
               new SQLiteError(

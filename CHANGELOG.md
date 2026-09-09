@@ -105,11 +105,6 @@ All notable changes to this project are documented here.
   holds, behaviour is unchanged; the *Interrupting a call* section of API.md says which
   case you are in and what it costs to change it.
 
-- **An abandoned generator inside a `transaction()` now costs that worker.** The
-  transaction fails, and the connection — which really does hold an open
-  transaction with a query in flight — is evicted and its slot restarted instead
-  of going back to the pool. Recovery is automatic.
-
 ### Performance
 
 - **`AccessHandlePoolVFS` now opens in WAL mode by default**, with

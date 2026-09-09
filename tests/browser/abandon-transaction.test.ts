@@ -1,6 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
-import { SQLiteError } from '../../src/errors';
-import { createTestClient, sleep } from './helpers';
+import { createTestClient, interceptWorkers, sleep } from './helpers';
 
 const SEED =
   'INSERT INTO t (n) WITH RECURSIVE c(x) AS ' +
@@ -8,56 +7,36 @@ const SEED =
   'SELECT x FROM c';
 
 describe('an abandoned generator inside a transaction', () => {
-  it('fails the transaction with GENERATOR_ABANDONED, not a bare Error', async () => {
-    // NOT MemoryVFS. The pool size here is incidental — the reason is the VFS.
-    //
-    // (Retraction: an earlier draft of this comment argued for a pool of two
-    // on the grounds that a single worker would make the supervisor's verdict
-    // fail-client rather than restart. That is false: src/supervisor.ts's
-    // 'died' handler restarts a first death of a slot that has already served
-    // queries — `if (slot.everReady && slot.restarts < maxWorkerRestarts)
-    // return 'restart'` — without consulting the live worker count at all;
-    // the count only decides between 'lost' and 'fail-client' further down,
-    // once the restart budget is spent. So poolSize: 1 would also restart.
-    // Kept here rather than silently deleted, per this repository's
-    // convention of keeping refutations.)
-    //
-    // The real reason: MemoryVFS is volatile and single-connection, so a
-    // worker evicted and restarted after GENERATOR_ABANDONED comes back with
-    // an EMPTY database. This test's closing assertion — that the client
-    // still serves — reads `SELECT 1 AS ok`, which touches no table data, so
-    // against MemoryVFS it would pass vacuously even if the restarted
-    // connection had lost everything. The default (persistent) VFS makes the
-    // restarted slot reopen the same database file, so the assertion means
-    // what it appears to mean.
+  // Falsifiable: revert closeOpenStatements()'s two call sites in
+  // src/transaction.ts. Without them the abandoned generator is still open
+  // when the auto-COMMIT runs, which trips pool.ts's reuse guard, fails the
+  // ROLLBACK in turn, and gets the worker evicted — turning every assertion
+  // below red. No CPU load and no flake needed: the trip is deterministic on
+  // the current code, and its absence is deterministic with the fix.
+  it('commits, and evicts no worker', async () => {
+    const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 2 });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
 
-      const failure = await db
-        .transaction(async (tx) => {
-          const rows = tx.chunk('SELECT n FROM t', [], { chunkSize: 10 });
-          await rows.next();
-          await sleep(0);
-          // The generator is abandoned here. The auto-COMMIT is itself a
-          // statement on the same worker, so it trips the reuse guard long
-          // before any collection could run — which is the ordinary
-          // trajectory, and the one this assertion pins.
-        })
-        .then(
-          () => undefined,
-          (error: unknown) => error,
-        );
+      await db.transaction(async (tx) => {
+        const rows = tx.chunk('SELECT n FROM t', [], { chunkSize: 10 });
+        await rows.next();
+        await sleep(0);
+        // The generator is abandoned here. The transaction closes it before
+        // COMMIT, so the auto-COMMIT never meets an in-flight query and the
+        // transaction commits normally instead of failing.
+      });
 
-      expect(failure).toBeInstanceOf(SQLiteError);
-      expect((failure as SQLiteError).code).toBe('GENERATOR_ABANDONED');
-      // The message must tell the consumer what to do, not name an invariant.
-      expect((failure as SQLiteError).message).toContain('break');
+      // No worker was terminated, and none was spawned to replace one.
+      expect(records.some((record) => record.terminated)).toBe(false);
+      expect(records.length).toBe(2);
 
-      // The client survives: the worker was evicted and the slot restarted.
-      const rows = await db.read<{ ok: number }>('SELECT 1 AS ok');
-      expect(rows[0]?.ok).toBe(1);
+      // The client still serves, and the seeded rows are intact — a real
+      // read of table data, not a vacuous `SELECT 1`.
+      const rows = await db.read<{ n: number }>('SELECT count(*) AS n FROM t');
+      expect(rows[0]?.n).toBe(2000);
     } finally {
       await db.close();
     }
