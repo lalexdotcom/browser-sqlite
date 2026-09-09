@@ -79,10 +79,17 @@ the reuse guard:
 
 ```js
 await db.transaction(async (tx) => {
-  await tx.first('SELECT n FROM t');   // 2000 rows: the worker parks on a credit
+  await tx.first('SELECT n FROM t');   // more than one row left to produce
   await tx.read('SELECT 1');           // → GENERATOR_ABANDONED
 });
 ```
+
+**The row count is not what matters, and an earlier draft of this entry said it was.**
+`firstWorker` passes `chunkSize: 1` and `credits: 1`, so the worker sends exactly one row, then
+takes its next credit, finds none, and parks **holding the second row**. The condition is simply
+that the query has more than one row left to produce: with a single-row result the query ends by
+itself, `done` arrives, `deferredChunk` clears and nothing breaks. So `tx.first()` on a table of
+one row is safe, and on anything larger it is not — which is the ordinary use of the method.
 
 **Reproduced on `main` as well as on the merged result** (2026-09-09), with the same failure
 and only the message differing — `main` raises the bare `Error`, the merged code raises the
