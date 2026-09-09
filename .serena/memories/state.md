@@ -24,10 +24,10 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-09 on the merged result of `fix/abandoned-generator`
+## The verification baseline — compare against these, re-measured 2026-09-09 after the write-lock merge
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a
-run in this container on 2026-09-09, on `main` after the abandoned-generator merge** — none is
+run in this container on 2026-09-09, on `main` after the write-lock work merged** — none is
 carried forward, none is arithmetic. The whole table was re-read in one pass, which is what its
 own rule demands. The merged tree was proven byte-identical to the branch tip's, so the table
 measured on the branch transfers rather than being assumed to.
@@ -39,13 +39,13 @@ green `pnpm test` covers what CI covers, and a commit pays all three through the
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **667 tests / 55 files** (unit + chromium, **1 skipped**), **252 / 36** (firefox, **1 skipped**), **5 / 2** (isolated) |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **672 tests / 56 files** (unit + chromium, **1 skipped**), **257 / 37** (firefox, **1 skipped**), **5 / 2** (isolated) |
 | `pnpm exec rstest --project unit run` | 416 tests, 20 files |
-| `pnpm exec rstest --project chromium run` | 251 tests, 35 files |
+| `pnpm exec rstest --project chromium run` | 256 tests, 36 files |
 | `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each, **73 passed / 12 skipped**, identical on both engines |
 | `pnpm test:consumer` | 24/24 stages |
 | `BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 108 files, 13 warnings, 1 info |
+| `pnpm lint` | 109 files, 13 warnings, 1 info |
 | `dependencies` in `package.json` | absent |
 
 **The two skipped browser tests are one test, and they are the first this repository has had.**
@@ -82,14 +82,21 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 None outstanding.
 
-**rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said in response to the
-closing summary of the abandoned-generator session, which named two: **HANDLE-2** — on Firefox,
-killing a worker that holds the rotated exclusive OPFS handle wedges the pool for good, on one
-of the two recommended VFS (`mem:vfs`) — and **`tx.first()` followed by another statement in the
-same callback raising `GENERATOR_ABANDONED`** (`mem:follow-ups`, where the fix is worked out but
-not written). The user's words were general — *"on ne sort pas la RC5 avec ce genre de sujets
-pas réglés"* — so **treat this list as the two that were in front of them, not as proven
-exhaustive**: confirm the scope before planning the release.
+**rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
+and only one of them is still open.
+
+- **HANDLE-2 was investigated the same day and came apart** — its stated cause is measured
+  false and the wedge does not reproduce anywhere, on `main` or before the fix (§ below).
+  What produced its symptom was a write-lock defect, now fixed and merged.
+- **`tx.first()` followed by another statement in the same callback raises
+  `GENERATOR_ABANDONED`.** STILL OPEN, untouched, and pre-existing. `mem:follow-ups` carries
+  the fix worked out but not written. `API.md` lists `first` among the ordinary querying
+  surface, so a consumer has no warning.
+
+The user's words were general — *"on ne sort pas la RC5 avec ce genre de sujets pas réglés"* —
+so **treat this as the subjects that were in front of them, not as proven exhaustive**: confirm
+the scope before planning the release. The write-lock defect is itself the proof, since it was
+found only by going looking.
 
 **The reason, and it is a triage rule rather than a list (user, 2026-09-09): rc.5 must be as
 close to stable as possible, and stability and reliability are rc.5's job.** One feature
@@ -115,29 +122,67 @@ ABANDON-WEDGE).
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
 the 2026-09-05 entry in `mem:follow-ups` called for.
 
-**Nothing is in flight, and nothing is scheduled.** The abandoned-generator leak — the last
-thing rc.5 was waiting on — merged on 2026-09-09 (§ below). Everything in `mem:follow-ups` is
+**Nothing is in flight, and nothing is scheduled.** Everything in `mem:follow-ups` is
 unscheduled.
 
 **HANDLE-2 was investigated on 2026-09-09 and came apart under measurement.** Its stated cause
 is false — Firefox releases a killed worker's sync access handle in 1-6 ms (HANDLE-ORPHAN) — and
 the wedge itself does not reproduce: ~70 attempts on `main` in six shapes, and **0/40 at the
-pre-fix commit on the very VFS where 9/40 was recorded**. What DOES reproduce, every time and on
-both engines, is a different defect with the same symptom: a `transaction()` whose callback never
-settles holds the origin's write lock for ever and `close()` cannot reclaim it
-(`mem:measurements`, WRITELOCK-STUCK; `mem:follow-ups`). **The verdict on the HANDLE-2 entry is
-the user's and has not been given.** What follows below is what the entry said before that
-investigation. It is **pre-existing and untouched** — the
-eviction machinery is byte-identical to what it was — and reachable by any path that kills a
-worker mid-query: a crash, a failed rollback through `onPoisoned`, a drain that times out. It
-affects `OPFSCoopSyncVFS` and, in its degraded mode, `OPFSAdaptiveVFS` — one of the two
-recommended VFS. Nothing about it is scheduled, and the three candidate remedies are named in
-`mem:vfs` with why none is obvious.
+pre-fix commit on the very VFS where 9/40 was recorded**. Details and the failed reproductions:
+`mem:vfs`, HANDLE-2; `mem:measurements`, "HANDLE-2 does not reproduce".
+
+**The verdict on the entry is the user's and has NOT been given.** Do not close it, and do not
+present it as a live defect either. Two things are established and neither of them is a verdict:
+the engine is not the cause, and nobody holds a reproduction. What produced its symptom —
+permanent, silent, origin-wide — was found and fixed the same day (§ below).
 
 **The `RECOMMENDED_VFS` question is settled and must not be reopened.** It was answered on
 2026-09-08 by medianing the bench corpus at n≥3 per platform (`mem:measurements`,
 VFS-MEDIAN). The answer was not "move it": there are now **two** recommendations,
 `OPFSWriteAheadVFS` and `OPFSAdaptiveVFS`, and the constant itself left `src/` — see § below.
+
+## The origin write lock — merged 2026-09-09
+
+No spec and no plan: the design was settled in chat, in four steps the user validated one at a
+time. Found by going looking for HANDLE-2 and finding something else.
+
+**What it was.** A `transaction()` holds `bsq:write` for the whole of its callback — documented,
+and the price of serializing writers across the origin. A callback that never returns held it
+**for ever**: its lease is never released, so nothing released the lock, and every write in every
+tab blocked with no error. `close()`, the only escape, terminated the workers, resolved, and left
+the lock held. Deterministic, both engines, both VFS families. `mem:measurements`,
+WRITELOCK-STUCK.
+
+**Four things the code will not tell you:**
+
+- **`PoolWorker.terminate()` is no longer the browser's method.** It poisons the transport
+  first — see `mem:architecture`, which also carries the test-seam consequence. This is what
+  turned "a statement after `close()` hangs for ever" into a rejection, and it is what let the
+  transaction's fallback `ROLLBACK` fail instead of parking: that statement carries no signal by
+  design, so nothing else could have reached it.
+- **The asymmetry at `close()` is deliberate and the rule is durability, not transactions.**
+  An ordinary write in flight is DRAINED, because each is its own commit and rejecting it would
+  report failure for a row that landed — and on the `sync` build without isolation an abort
+  stops the wait, not the work, so that lie would be routine. Nothing inside a transaction is
+  durable before its `COMMIT`, so abandoning one misreports nothing. Stated in `API.md` under
+  *Inside a transaction*.
+- **Bounding the HOLDER was proposed and refused, and this is the only place that reasoning
+  now lives.** A watchdog that abandons a transaction whose callback has gone quiet cannot
+  work: a callback awaiting a slow but legitimate producer — an `output()` fed one row per
+  `fetch` — and a callback stuck for ever are the same state seen from outside, and a single
+  long statement is the mirror case. Any such bound kills sound work or misses dead work. The
+  wait therefore stays unbounded by default and `timeout` on the waiting write remains the
+  consumer's own choice. **Do not re-propose a default `transaction()` timeout: it caps exactly
+  the long legitimate callback this refusal protects.**
+- **A transaction left unawaited now surfaces an unhandled rejection** where it used to produce
+  silence — it is in `CHANGELOG.md` under Breaking, and this repository's own suite had to be
+  fixed for it. That is also how it was caught: `status` and `failedFiles` went red while every
+  test passed, exactly as the baseline table warns.
+
+**What it does NOT deliver.** Nothing bounds a stuck callback in a tab that stays open and never
+closes. The victim's own `timeout` bounds the wait, closing the tab releases everything
+(measured), and the timeout message now names whether this tab or another holds the lock — but
+the holder is not policed, by decision.
 
 ## The abandoned generator — merged 2026-09-09, `ddd8270`
 

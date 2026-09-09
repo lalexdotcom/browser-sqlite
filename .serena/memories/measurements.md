@@ -1753,6 +1753,12 @@ one run's worth of P4.
 
 ## WRITELOCK-STUCK — a stuck transaction callback blocks every write on the origin, 2026-09-09
 
+> **PARTLY SUPERSEDED the same day, and the numbers are kept because they are what made the fix
+> necessary.** The `close()` column no longer has those values: `close()` reclaims the write
+> lock, and a statement issued after it rejects instead of hanging (`mem:state`, § the origin
+> write lock). **What still stands is the first half** — a callback that never returns holds the
+> lock for as long as its tab lives, and that was refused deliberately rather than left undone.
+
 **Deterministic, both engines, on the recommended VFS. This is not HANDLE-2 and has nothing to
 do with OPFS handles**; it was found while trying to reproduce HANDLE-2 and reproduces where
 HANDLE-2 does not.

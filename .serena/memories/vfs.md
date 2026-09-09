@@ -208,6 +208,11 @@ indefinitely"). **The likeliest reading is that HANDLE-2 was that defect, misatt
 handle because one log line carried `NoModificationAllowedError`** — likeliest, not proven, and
 the verdict on the entry is the user's.
 
+**That other defect was fixed and merged the same day** (`mem:state`, § the origin write lock),
+so its half of the symptom is gone: `close()` reclaims the lock, and a statement issued after a
+close rejects instead of hanging. What is NOT fixed is a stuck callback in a tab that stays
+open — refused deliberately, with the reasoning in `mem:state`.
+
 **The engine is the discriminator, not the VFS.** Same VFS, same code, same test, under CPU
 load — numbers and method in `mem:measurements`, ABANDON-WEDGE:
 
