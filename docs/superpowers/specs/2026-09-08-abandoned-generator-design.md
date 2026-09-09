@@ -413,3 +413,12 @@ Firefox".** It recovers where it was measured, and the measurement was taken on 
 engine pair that does not strand the handle. On Firefox with a rotated handle it does not
 recover at all, which is the whole content of the table above. `mem:measurements` →
 ABANDON-RESTART carries the same supersession.
+
+The sentence the measurement qualified is retracted with it, not only its number. A1 also
+said "an abandoned generator inside a transaction now costs a worker restart where it
+previously did not, because the `ROLLBACK` trips the guard in turn and `onPoisoned` evicts
+the slot." That is the same trajectory the "trajectory remains" paragraph above was retracted
+for: once the transaction closes what the callback abandoned before it commits or rolls back,
+the guard is not tripped and the `ROLLBACK` does not fail on that account. A worker restart is
+still possible on this path — `closeOpenStatements()` in `transaction.ts` documents the wait
+and the eviction that can follow it — but not for the reason A1 gave, and not as a certainty.

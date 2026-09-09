@@ -188,15 +188,25 @@ export const createTransaction =
        * carry no signal, so nothing else would cut it and the transaction would
        * neither reject nor give its worker back.
        *
-       * **What this can cost.** The wait is bounded by the worker answering the
-       * stop, and a worker that never answers is caught by `drainTimeout` in
-       * pool.ts — 60 s by default — after which it is declared dead and
-       * `quiesce()` settles. So a genuinely unresponsive worker delays the
-       * ROLLBACK, and the eviction that follows it, by up to that budget, with
-       * the origin-wide write lock still held. No second bound is layered on
-       * top: `drainTimeout` is exactly the backstop for a worker that has
-       * stopped answering, and two deadlines on one wait is one more thing to
-       * get wrong.
+       * **What this can cost.** `interrupt()` only cuts the wait short when the
+       * statement was abortable; a transaction carrying no `signal` and no
+       * `timeout` passes `abortable: false` (queries.ts), so worker.ts installs
+       * no progress handler at all and has nothing to answer the stop with. On
+       * that path — the ordinary one, not an edge case — the worker cannot be
+       * interrupted, and the wait runs until the statement ends by itself or
+       * `drainTimeout` in pool.ts elapses — 60 s by default — after which the
+       * worker is declared dead, `quiesce()` settles, and the slot is evicted.
+       * `drainTimeout` is that bound already; stacking a second one on top of
+       * it is one more thing to get wrong, not more safety. The origin-wide
+       * write lock is held for the whole of it.
+       *
+       * **What this does not fix.** The eviction still happens — measured on
+       * `drainTimeout: 2000` as `workers=3 terminated=2`, and on Firefox, where
+       * a rotating exclusive OPFS handle turns it into the amendment A5 puts at
+       * 9/40. That is strictly better than the leak this replaces, where the
+       * same callback hung forever and never gave the write lock back — a
+       * bounded wait and a clean eviction instead of no bound at all — but it
+       * is a limit carried forward, not a regression to apologize for.
        */
       const closeOpenStatements = async () => {
         for (const { gen, transport } of [...open]) {

@@ -210,7 +210,10 @@ const orders = await db.transaction(async (tx) => {
 > its callback runs.** Writes are serialized across every client and every tab, so
 > a callback that waits on something slow makes every other writer in the origin
 > wait with it — not only the ones on this client. Keep the callback to the
-> statements it needs.
+> statements it needs. If the callback abandons a `chunk()`/`stream()` with a
+> `next()` still outstanding and the statement carries no `signal` or `timeout`,
+> closing it waits for the worker to answer the stop — up to `drainTimeout`,
+> 60 s by default — with the write lock still held.
 
 **One worker serves the whole callback**, so the transaction is genuinely isolated rather than merely wrapped in `BEGIN`. `tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit` and `rollback`. A `chunk()` or `stream()` generator abandoned inside the callback is closed before the transaction commits or rolls back. That is the boundary and nothing earlier: a statement issued after the abandonment, in the same callback — including an explicit `tx.commit()` — still meets `GENERATOR_ABANDONED`. See [How they run](#how-they-run).
 
