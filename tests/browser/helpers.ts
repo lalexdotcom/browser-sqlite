@@ -104,6 +104,23 @@ export function interceptWorkers(options?: { url?: string }): WorkerRecord[] {
   return records;
 }
 
+/**
+ * The engine's own terminate, captured before any interception replaces it.
+ *
+ * `PoolWorker.terminate()` is no longer the browser's method: it poisons the
+ * transport first, deliberately, so that a termination WE decide produces an
+ * error instead of a silent hang. A test that wants to simulate the ENGINE
+ * killing a worker — the thread stops and nothing tells the library — has to
+ * reach past that, which is what this is for. Using `worker.terminate()` for
+ * that purpose no longer simulates anything.
+ */
+const NativeWorker = globalThis.Worker;
+
+/** Stops the thread and tells the library nothing, as an engine kill does. */
+export const killSilently = (worker: Worker): void => {
+  NativeWorker.prototype.terminate.call(worker);
+};
+
 export const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 

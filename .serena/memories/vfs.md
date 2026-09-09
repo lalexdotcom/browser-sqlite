@@ -168,18 +168,45 @@ The three that escape structurally are `IDBBatchAtomicVFS`, `IDBMirrorVFS` and
 It is a race, not a certainty, and a genuine Heisenbug: instrumenting it can shift the
 race and turn the failure green. Trust the unperturbed run.
 
-## HANDLE-2 — a worker killed while it holds the handle STRANDS it, on Firefox
+## HANDLE-2 — killing a worker that holds the handle wedges the pool, on Firefox
 
 **Measured 2026-09-09, and pre-existing: nothing in the abandoned-generator work created it.**
 It is the consequence of HANDLE-1 that nobody had written down.
 
-Terminating a worker that holds the rotated exclusive OPFS sync access handle does not release
-that handle on Firefox. Every other connection then blocks **for good**: the surviving worker's
-read never returns, and a replacement worker cannot open the file at all — it dies at
-`openTimeout` and the supervisor declares the slot `lost`. The pool is wedged permanently, with
-no error. One run surfaced the resource by name: `NoModificationAllowedError`, which the
-capability table in `mem:measurements` already records as Firefox's answer to a second sync
-access handle on one file.
+**The symptom.** Terminate a worker holding the rotated exclusive OPFS sync access handle and
+every other connection blocks **for good**: the surviving worker's read never returns, and a
+replacement worker cannot open the file at all — it dies at `openTimeout` and the supervisor
+declares the slot `lost`. The pool is wedged permanently, with no error.
+
+**The cause is NOT the engine, and this entry said it was until 2026-09-09.** The original
+wording — "Firefox does not release that handle" — was measured false the same day:
+`mem:measurements`, HANDLE-ORPHAN. On raw OPFS, Firefox closes a terminated worker's sync
+access handle within **1-6 ms**, idle or killed mid-synchronous-loop, unloaded or under the
+sixteen busy loops that make this defect reproducible. `NoModificationAllowedError` — the name
+one run surfaced, and the reason the old explanation looked right — is reproducible, but it
+names a window of a few milliseconds after `terminate()`, not a stable state.
+
+So the permanence lives ABOVE the engine: in wa-sqlite's hand-over protocol, or in our pool.
+Which of the two is not established. **One candidate, read from source and not yet confronted
+with the failing scenario:** `OPFSCoopSyncVFS.jLock` installs
+`handleRequestChannel.onmessage` as a **single-shot** listener — it nulls itself after firing —
+and reinstalls it only on a `jLock` that finds `handleLockReleaser` null. A connection that
+consumed its listener without releasing the handle is never notified again.
+
+**And then it did not reproduce at all** — `mem:measurements`, "HANDLE-2 does not reproduce".
+Six shapes on `main` under the validated load, ~70 attempts, no wedge; and at the pre-fix commit
+`94bfaac`, on the VFS where 9/40 was recorded, **0/40**. Nobody holds a reproduction of HANDLE-2
+today.
+
+**The symptom has another owner, and that one reproduces every time.** A `transaction()` whose
+callback never settles holds `bsq:write` for the origin permanently — every write in every tab
+blocked, silently, no error, `close()` unable to reclaim it. Deterministic, both engines, both
+VFS families, nothing to do with OPFS handles: `mem:measurements`, WRITELOCK-STUCK. The pre-fix
+branch is independently recorded as having hit exactly that shape (`mem:history`, "an `await
+gen.return()` parked behind an in-flight `next()` that held the origin's write lock
+indefinitely"). **The likeliest reading is that HANDLE-2 was that defect, misattributed to the
+handle because one log line carried `NoModificationAllowedError`** — likeliest, not proven, and
+the verdict on the entry is the user's.
 
 **The engine is the discriminator, not the VFS.** Same VFS, same code, same test, under CPU
 load — numbers and method in `mem:measurements`, ABANDON-WEDGE:
@@ -204,11 +231,13 @@ failed rollback through `onPoisoned`, a drain that times out. `close()` is safe,
 worker first. The abandoned-generator work briefly made an ordinary consumer gesture reach it
 and then removed that path; the mechanism is untouched and still reachable by the others.
 
-**Not attempted, and each is a real question rather than an oversight:** asking the worker to
-hand the handle back before terminating it (it is mid-statement, and `terminate()` is the only
-reliable stop); upstream's `lockTimeout`, which converts the indefinite wait into an error but
-leaves the database unopenable; and declaring the holder dead over the `BroadcastChannel`, which
-is the hand-over protocol's missing liveness detection and belongs upstream.
+**Three remedies were named before the cause was known, and HANDLE-ORPHAN moved two of them.**
+Asking the worker to hand the handle back before terminating it stands as written — it is
+mid-statement, and `terminate()` is the only reliable stop. But upstream's `lockTimeout` and a
+liveness declaration over the `BroadcastChannel` both act on the **Web Lock**, and a Web Lock is
+released by the platform when its holder is terminated, exactly as the handle now turns out to
+be. Neither can address a wedge whose held resource is not held. Do not schedule either on the
+strength of this file's older wording.
 
 ## ANYCONTEXT-1 — closed 2026-08-25, and the cause is worth carrying
 

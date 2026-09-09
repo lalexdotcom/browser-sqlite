@@ -69,6 +69,40 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
+## A stuck transaction callback blocks every write on the origin, for ever
+
+`transaction()` holds `bsq:write:<ns>:<file>` for the whole callback — documented, and the cost
+is stated in `API.md`. What is not stated is that the hold is **unbounded**: a callback awaiting
+something that never settles blocks every write in every tab permanently, with no error, and
+`close()` does not reclaim the lock. With the worker also dead, `close()` returns **`ok`** while
+the lock stays held, so the consumer's only escape reports success and changes nothing.
+
+Deterministic, both engines, on the recommended VFS; the lock is still held past the 60 s
+`drainTimeout`. Numbers, forms and method: `mem:measurements`, WRITELOCK-STUCK.
+
+**`timeout` and `signal` are a complete mitigation** and behave exactly as documented — a
+transaction carrying either recovers the origin.
+
+**Scope settled by the user, 2026-09-09.** Four things are being fixed: `close()` reclaims the
+write lock its own leases never gave back; a write that spends its `timeout` on that lock says
+whether *this* tab or *another* holds it; terminating a worker poisons its transport, so a
+statement issued after a close rejects instead of hanging; and the client's close signal joins
+the transaction's own, so a transaction whose callback sits on a non-database `await` rejects
+with `CLIENT_CLOSED` instead of never settling. The last two were found by the user asking what
+the callback meets after a close. Delete this entry once that merges.
+
+**A third was considered and REFUSED, and the reason should survive the entry.** Bounding the
+holder — a watchdog that abandons a transaction whose callback has gone quiet — cannot work: a
+callback awaiting a slow but legitimate producer (an `output()` fed one row per `fetch`) and a
+callback stuck for ever are the same state seen from outside, and a single long statement is the
+mirror case. Any such bound kills sound work or misses dead work. **The wait therefore stays
+unbounded by default**, and `timeout` on the waiting write remains the consumer's own choice.
+Do not re-propose a default transaction timeout: it caps exactly the long legitimate callback
+this refusal protects.
+
+**Found while trying to reproduce HANDLE-2, and it is the better candidate for what HANDLE-2
+described** (`mem:vfs`).
+
 ## A statement after `tx.first()` in the same callback throws `GENERATOR_ABANDONED`
 
 `firstWorker` leaves its `for await` by `return`, and `drain`'s `finally` fires

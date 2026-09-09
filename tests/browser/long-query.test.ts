@@ -2,6 +2,7 @@ import { describe, expect, it } from '@rstest/core';
 import {
   createTestClient,
   interceptWorkers,
+  killSilently,
   longQuery,
   sleep,
 } from './helpers';
@@ -71,7 +72,7 @@ describe('a worker killed silently', () => {
       signal: AbortSignal.timeout(200),
     });
     await sleep(100);
-    records[0].worker.terminate(); // silent death: no event of any kind
+    killSilently(records[0].worker); // silent death: no event of any kind
 
     await expect(running).rejects.toThrow();
     await sleep(2000); // drainTimeout, then the replacement's boot

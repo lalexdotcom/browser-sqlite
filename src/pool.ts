@@ -71,6 +71,23 @@ export type PoolWorker = Worker & {
   quiesce: () => Promise<void>;
   /** Posts `close`, awaits the `closed` reply, then the caller must terminate. */
   close: () => Promise<void>;
+  /**
+   * Stops the thread AND the transport — never the browser's `terminate()`
+   * alone.
+   *
+   * `PoolWorker` IS the native `Worker`, so this used to be the engine's own
+   * method: it killed the thread and told the transport nothing. A request
+   * posted afterwards waited for a reply that could never come — a
+   * transaction's next statement, and its fallback `ROLLBACK`, which carries no
+   * signal by design and so could not even be aborted. Overriding the method,
+   * rather than adding one beside it, is deliberate: there are several
+   * terminate sites and one added later must not be able to forget this.
+   *
+   * `reason` is what in-flight and later requests reject with. It reports
+   * nothing to the client: whoever terminates has already decided this worker's
+   * fate, and going through `onDeath` here would re-enter that decision.
+   */
+  terminate: (reason?: SQLiteError) => void;
 };
 
 const STOP = Symbol('stop');
@@ -283,12 +300,23 @@ export const createPoolWorker = (deps: {
   // the generator's finally still stops and drains it.
   let lost: PromiseWithResolvers<never> | undefined;
 
-  const die = (error: SQLiteError) => {
-    if (dead) return;
+  /**
+   * Kills the TRANSPORT: whatever is in flight rejects, and so does every later
+   * request, because `failure` survives on a dead worker. Reports nothing to
+   * the client — `die` below is what reports. Returns false if already dead, so
+   * neither path fires twice.
+   */
+  const poison = (error: SQLiteError) => {
+    if (dead) return false;
     dead = true;
     worker.status = 'DEAD';
     deathDeferred.reject(error);
     deferredInit.reject(error); // no-op once resolved
+    return true;
+  };
+
+  const die = (error: SQLiteError) => {
+    if (!poison(error)) return;
     deps.onDeath?.(index, error);
   };
 
@@ -672,9 +700,23 @@ export const createPoolWorker = (deps: {
     return self.gen;
   };
 
+  // Captured before the override below replaces it: this is the only reference
+  // to the engine's own terminate left in the module.
+  const nativeTerminate = worker.terminate.bind(worker);
+
   // Attach query method to worker
   Object.assign(worker, {
     query,
+    terminate: (reason?: SQLiteError) => {
+      poison(
+        reason ??
+          new SQLiteError(
+            'WORKER_CRASHED',
+            `Worker ${index + 1} was terminated.`,
+          ),
+      );
+      nativeTerminate();
+    },
     /**
      * Ask the worker to stop. Also settles a `next()` already in flight, which
      * is what lets the consumer's queued `return()` reach the generator's

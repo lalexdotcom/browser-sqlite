@@ -405,6 +405,10 @@ When using [*client*.transaction()](#clienttransaction), the rules below apply t
 
 **An abort reaches further than a statement.** `signal` and `timeout` abandon the transaction at any point. The callback is not interrupted — it runs on — but every statement it issues afterwards rejects. `BEGIN`, `COMMIT` and `ROLLBACK` are the exception: they carry no signal, so an abort raised while one is in flight lands when it settles.
 
+**[`close()`](#clientclose) abandons the transaction the same way.** It rejects with `CLIENT_CLOSED`, the callback runs on but can no longer reach the database, and the origin's write lock the transaction was holding is given back — otherwise a callback waiting on something that never arrives keeps every other writer in the origin waiting with it, in this tab and in others. **Attach a handler to a transaction you do not await**, or closing while one runs surfaces an unhandled rejection.
+
+**A statement in flight inside a transaction is abandoned; one outside is not.** `close()` drains an ordinary write, because each is its own commit and rejecting it would report failure for a row that landed. Nothing inside a transaction is durable until its `COMMIT`, so there is nothing to misreport.
+
 **A `chunk()` or `stream()` generator abandoned inside the callback is closed before the transaction commits or rolls back.** That is the boundary and nothing earlier: a statement issued after the abandonment, in the same callback — including an explicit `tx.commit()` — still meets `GENERATOR_ABANDONED`.
 
 > [!WARNING]

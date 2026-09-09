@@ -1,5 +1,10 @@
 import { describe, expect, it } from '@rstest/core';
-import { createTestClient, interceptWorkers, sleep } from './helpers';
+import {
+  createTestClient,
+  interceptWorkers,
+  killSilently,
+  sleep,
+} from './helpers';
 
 /** 5000 rows, one column — enough chunks that running ahead is obvious. */
 const seed = async (db: Awaited<ReturnType<typeof createTestClient>>) => {
@@ -82,7 +87,7 @@ describe('back-pressure', () => {
     })();
 
     await sleep(100);
-    records[0].worker.terminate(); // silent death: no event of any kind
+    killSilently(records[0].worker); // silent death: no event of any kind
 
     await expect(consuming).rejects.toThrow();
     await sleep(1500); // past drainTimeout (500 ms), plus a replacement's boot

@@ -119,10 +119,15 @@ the 2026-09-05 entry in `mem:follow-ups` called for.
 thing rc.5 was waiting on — merged on 2026-09-09 (§ below). Everything in `mem:follow-ups` is
 unscheduled.
 
-**What that work uncovered is NOT closed, and it is bigger than the leak was.** On Firefox,
-terminating a worker that holds the rotated exclusive OPFS access handle **strands it**: nothing
-can open the database again, and the pool wedges permanently with no error. `mem:vfs`, HANDLE-2;
-numbers in `mem:measurements`, ABANDON-WEDGE. It is **pre-existing and untouched** — the
+**HANDLE-2 was investigated on 2026-09-09 and came apart under measurement.** Its stated cause
+is false — Firefox releases a killed worker's sync access handle in 1-6 ms (HANDLE-ORPHAN) — and
+the wedge itself does not reproduce: ~70 attempts on `main` in six shapes, and **0/40 at the
+pre-fix commit on the very VFS where 9/40 was recorded**. What DOES reproduce, every time and on
+both engines, is a different defect with the same symptom: a `transaction()` whose callback never
+settles holds the origin's write lock for ever and `close()` cannot reclaim it
+(`mem:measurements`, WRITELOCK-STUCK; `mem:follow-ups`). **The verdict on the HANDLE-2 entry is
+the user's and has not been given.** What follows below is what the entry said before that
+investigation. It is **pre-existing and untouched** — the
 eviction machinery is byte-identical to what it was — and reachable by any path that kills a
 worker mid-query: a crash, a failed rollback through `onPoisoned`, a drain that times out. It
 affects `OPFSCoopSyncVFS` and, in its degraded mode, `OPFSAdaptiveVFS` — one of the two

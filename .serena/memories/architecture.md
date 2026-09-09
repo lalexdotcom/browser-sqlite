@@ -117,6 +117,19 @@ finalise a handle that query still holds — a use-after-free on a `sqlite3_stmt
 Before the cache this was merely confusing. The consequence is written where someone would
 break it, on the `available` declaration in `scheduler.ts`, not only in the worker.
 
+**`PoolWorker.terminate()` is NOT the browser's method any more — it poisons the
+transport first.** `PoolWorker` is the native `Worker` (`Object.assign` in `pool.ts`), so
+terminating used to stop the thread and tell the transport nothing: a request posted
+afterwards waited for a reply that could never come. It now calls `poison()` — the half of
+`die()` that rejects without reporting to the client — then the engine's terminate. It takes
+an optional reason, and `close()`, `handleDeath` and `failClient` each pass their own.
+
+Two consequences to know before writing anything near it. **A test that simulates the ENGINE
+killing a worker must use `killSilently()` from `tests/browser/helpers.ts`**, which reaches the
+native method past the override; `worker.terminate()` no longer simulates a silent death, and
+two tests went red proving it. And **the method was overridden rather than added beside**
+deliberately: there are several terminate sites and a new one must not be able to forget.
+
 **The lease returns on quiesce, not on the caller's exit.** After a read method's `try`
 block finishes, the `finally` calls `lease.worker.quiesce()` and releases only once the
 worker confirms it is idle. The caller does not wait — it already has its result. So a

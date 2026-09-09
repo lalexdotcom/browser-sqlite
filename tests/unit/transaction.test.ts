@@ -43,6 +43,9 @@ const harness = (worker: ReturnType<typeof fakeWorker>) => {
     scheduler: scheduler as never,
     afterWrite: () => Promise.resolve(),
     onPoisoned: (index: number) => poisoned.push(index),
+    // Never aborted here: these tests are about the caller's own signal, and a
+    // client that never closes is the state they all assume.
+    closeSignal: new AbortController().signal,
     bulkFor: () => ({
       bulkWrite: () => ({ enqueue: async () => {}, close: async () => 0 }),
       output: () => ({ enqueue: async () => {}, close: async () => 0 }),
