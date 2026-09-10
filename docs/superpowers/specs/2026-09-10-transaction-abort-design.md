@@ -80,6 +80,12 @@ the library decides the same thing on purpose. A rejection then always means *no
 **A transaction handle is closed once its transaction has ended, however it ended** — commit,
 rollback, or death. Nothing a closed handle does reaches the worker.
 
+**The callback can stop its own work: `tx.signal`.** The library stops an abandoned callback
+only at its next database call; a `fetch`, a timer or a loop of its own runs on for a
+transaction that is gone. `tx.signal` is what the callback hands to that work — the pattern of
+TanStack Query's `queryFn`, which receives a `signal` from the library that owns the lifetime
+(user, 2026-09-10).
+
 **The alternative to the first was designed and refused:** never cut a write inside a
 transaction, let it finish, and undo it with a savepoint, so the transaction survives. It keeps
 what preceded the write, and pays for it with the purpose of `timeout`: an abandoned write would
@@ -173,6 +179,24 @@ callback continue and commit, as step 1 established. **Premise to measure first*
 SQLite's `sqlite3VdbeHalt` rolls back on `SQLITE_INTERRUPT` only for a statement that is not
 read-only. If the measurement contradicts it, this design is amended before any code.
 
+**R8 — `tx.signal` aborts when the transaction dies, and only then.** A read-only
+`AbortSignal` on `SQLiteTransactionDB`, beside `commit()` and `rollback()` — not on
+`SQLiteQueryAPI`, which the client shares. **Its reason is the cause of death**, the very value
+`db.transaction()` rejects with (R2), so a `fetch` cut by it rejects with `OPERATION_TIMEOUT`
+or the consumer's own reason, not with a third value. **A normal end does not abort it**: with
+`autoCommit: false`, a callback that committed explicitly may legitimately go on working — call
+a service, say — and cutting that would be a regression; once the callback has returned there
+is nothing left to cut. Passing it to a statement of the same transaction is redundant and
+harmless, since every statement already carries it.
+
+```ts
+await db.transaction(async (tx) => {
+  const rows = await tx.read('SELECT …');
+  const priced = await fetch(url, { signal: tx.signal }); // cut if the transaction dies
+  await tx.write('INSERT …', [priced]);
+});
+```
+
 ## 4. The mechanism
 
 **The worker reports the connection's state on every query reply.** `done` and `error` gain
@@ -196,6 +220,12 @@ the transaction's `finally`, so no path out of `transaction()` can leave a handl
 cause as its reason. That is how the new causes join the existing machinery: the race against
 the callback rejects the transaction with the cause (R2), and a statement in flight rejects
 with it (R3). The three existing causes set `died` from the same signal's `abort` event.
+
+**`tx.signal` is that merged signal, exposed as it is.** It already aborts on every cause of
+death with the cause as reason, and on nothing else: the transaction's `finally` releases the
+merge's listeners without aborting it, so a normal end leaves it un-aborted for good, and a
+`close()` after the end cannot reach it. The internal controller itself is never exposed — the
+consumer can listen, not abort.
 
 **Where the new causes of death are detected:**
 
@@ -234,6 +264,15 @@ open, so it is unaffected; `commit()`'s `throwIfAborted()` is subsumed by the en
 - **D8 — `rollback()` on a closed handle resolves; after a commit it also warns,
   unconditionally** (R4, user, 2026-09-10).
 - **D9 — Breaking, and said so** in `CHANGELOG.md` (user, 2026-09-10).
+- **D10 — `tx.signal`, not a second callback parameter** (user, 2026-09-10). A context object
+  as the callback's second argument — `(tx, { signal })` — keeps `tx` a pure surface of
+  methods, and was weighed. It loses on the consumer's side: `tx` is what gets handed to the
+  consumer's own helpers (`saveOrder(tx, order)`), and with a second parameter each of them
+  must also take and forward the signal, an omission that is silent — the database stays
+  correct, only the helper's own `fetch` runs on. The signal describes the transaction's
+  lifetime, and `tx` is the object that carries it (R3, R4). TanStack's `queryFn` context is
+  the analogue of `tx`, not of a second parameter.
+- **D11 — `tx.signal` aborts on death only, with the cause as reason** (R8).
 
 ## 6. What this promises, and what it does not
 
@@ -244,8 +283,8 @@ rejected write never has an effect, and an interrupted write no longer costs a w
 **It does not interrupt the callback.** JavaScript cannot stop a running function from
 outside: synchronous code and awaits on anything but the database run on. The callback is
 detached — every statement it issues rejects — and ends at its next uncaught rejection.
-Exposing a `tx.signal` for the consumer to hand to a `fetch` would reach those awaits; it is
-not part of this design.
+`tx.signal` reaches the awaits the consumer hands it to, and only those: work that ignores it
+runs on.
 
 **It does not make a memory VFS survive an eviction.** It removes the evictions these defects
 caused; an eviction for any other reason — a crashed worker — still loses a memory database,
@@ -253,7 +292,6 @@ as it always has.
 
 ## 7. Out of scope
 
-- `tx.signal` (§6).
 - Any change to the client path: outside a transaction each statement is its own commit, and
   none of this applies.
 - The dropped-generator limit of `mem:state`, which is unrelated and unchanged.
@@ -291,6 +329,11 @@ it red):
    `tx.write()` rejects with `TRANSACTION_CLOSED` without `cause`, and its row is nowhere.
 10. `autoCommit: false`: a statement after an explicit `tx.commit()` rejects with
     `TRANSACTION_CLOSED`; so does one after an explicit `tx.rollback()`.
+11. `tx.signal`: aborted, with the write's reason, when an abandoned write kills the
+    transaction; aborted with `OPERATION_TIMEOUT` when the transaction's own `timeout` expires
+    while the callback awaits something that is not a statement; NOT aborted after a normal
+    end, including after an explicit `tx.commit()` under `autoCommit: false` and after a later
+    `close()`.
 
 **Unit tests** (`tests/unit/transaction.test.ts`, fake worker):
 
@@ -320,10 +363,12 @@ is a finding.
   statement error "changes nothing", which is false for a write — with R1-R4 in consumer
   terms: a write that is abandoned abandons the transaction; a read does not; what the
   transaction and later statements reject with; a handle is closed once its transaction has
-  ended; what `commit()` and `rollback()` do then.
+  ended; what `commit()` and `rollback()` do then; `tx.signal`, with the example of R8.
+- **`API.md`, *client*.transaction:** `tx.signal` beside `commit()` and `rollback()` wherever
+  the transaction object's members are listed.
 - **`API.md`, *Error handling*:** a `TRANSACTION_CLOSED` row.
 - **`CHANGELOG.md`, `## Unreleased`:** *Breaking* (statements after an abandoned transaction
-  report `TRANSACTION_CLOSED`), *Added* (the code), *Fixed* (§1.1's four defects and §1.2's
+  report `TRANSACTION_CLOSED`), *Added* (the code, and `tx.signal`), *Fixed* (§1.1's four defects and §1.2's
   handle, in consumer terms — §1.2 is a released defect).
 - **Step 1's leftover:** the header of `tests/browser/tx-timeout.test.ts` points at
   "AGENTS.md / the task brief" for why writes are excluded — neither says so — and says
