@@ -1,6 +1,7 @@
 # A transaction ends once, and its handle knows it — design
 
-**Status:** approved in chat 2026-09-10, not yet planned.
+**Status:** approved in chat 2026-09-10; planned in
+`docs/superpowers/plans/2026-09-10-transaction-abort.md` and implemented on this branch.
 **Branch:** `fix/tx-statement-timeout`, as its second step. The first step — a per-statement
 `timeout` inside `transaction()`, which used to be silently ignored — is already committed on
 the branch; this design is what restoring it exposed, and what checking one of its own claims
@@ -210,8 +211,9 @@ schedules on it, and the field's comment must say so where someone would reach f
 rule in `mem:architecture` that forbids an availability flag on the worker object is about
 the scheduler, and this must not read as a breach of it, nor become one.
 
-**The transaction owns one piece of state, how it ended**, set exactly once: `committed`,
-`rolled-back`, or `died` with its cause. Every public method of `tx` reads it at its entry,
+**The transaction owns one piece of state, how it ended**, set once — except that a COMMIT
+that succeeds records `committed` over a death that landed while it was in flight, since the
+handle reports what happened to the data: `committed`, `rolled-back`, or `died` with its cause. Every public method of `tx` reads it at its entry,
 before anything else, and applies R3/R4. It is set by `commit()`/`rollback()` once their
 statement succeeds (where `done = true` is set today), by a death, and — as a last resort — in
 the transaction's `finally`, so no path out of `transaction()` can leave a handle open.
