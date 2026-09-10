@@ -624,6 +624,10 @@ export const createTransaction =
           }
           await rollbackNow();
         },
+        // The merged signal itself (spec §4): it aborts on every cause of death with the cause as
+        // reason, and the outer finally only detaches it, so a normal end leaves it un-aborted for good.
+        // The death controller is never exposed — the consumer can listen, not abort.
+        signal,
       };
 
       const { aborted, teardown } = makeAbortRace(signal);

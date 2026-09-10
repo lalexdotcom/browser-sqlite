@@ -461,4 +461,12 @@ export type SQLiteDB = SQLiteQueryAPI & {
 export type SQLiteTransactionDB = SQLiteQueryAPI & {
   commit: () => Promise<void>;
   rollback: () => Promise<void>;
+  /**
+   * Aborted when this transaction is abandoned — by its own `signal` or
+   * `timeout`, by `close()`, or because a write in it was abandoned — with the
+   * reason `transaction()` rejects with. Never aborted by a normal end. Hand
+   * it to work of your own the callback awaits, such as a `fetch`, so that
+   * work stops with the transaction.
+   */
+  readonly signal: AbortSignal;
 };

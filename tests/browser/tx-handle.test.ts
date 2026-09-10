@@ -161,3 +161,81 @@ describe('a statement after an explicit end, inside the callback', () => {
     },
   );
 });
+
+describe('tx.signal', () => {
+  // Falsifiable: expose `outer` instead of the merged signal; the death
+  // controller never reaches it and this stays un-aborted.
+  it('aborts with the write reason when an abandoned write kills the transaction', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    try {
+      await db.write('CREATE TABLE t (a INTEGER)');
+      const reason = new Error('abandon the write');
+      const ctl = new AbortController();
+      ctl.abort(reason);
+      let seen!: AbortSignal;
+      await expect(
+        db.transaction(async (tx) => {
+          seen = tx.signal;
+          await tx
+            .write('INSERT INTO t VALUES (1)', [], { signal: ctl.signal })
+            .catch(() => {});
+        }),
+      ).rejects.toBe(reason);
+      expect(seen.aborted).toBe(true);
+      expect(seen.reason).toBe(reason);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('aborts with OPERATION_TIMEOUT when the transaction outlives its timeout', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    try {
+      let seen!: AbortSignal;
+      await expect(
+        db.transaction(
+          async (tx) => {
+            seen = tx.signal;
+            // Work that is not a statement, stopped by the signal it was handed.
+            await new Promise<void>((resolve) =>
+              tx.signal.addEventListener('abort', () => resolve(), {
+                once: true,
+              }),
+            );
+          },
+          { timeout: 1000 },
+        ),
+      ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
+      // The precondition: the callback ran before the deadline. If this fails, the deadline expired during lease + BEGIN.
+      expect(seen).toBeDefined();
+      expect(seen.aborted).toBe(true);
+      expect(seen.reason).toMatchObject({ code: 'OPERATION_TIMEOUT' });
+    } finally {
+      await db.close();
+    }
+  });
+
+  // Falsifiable: drop `releaseDeath()` from transaction.ts's outer finally; the
+  // later close() then aborts a signal whose transaction ended long ago. (Not
+  // `releaseClose()`: with no transaction signal or timeout, mergeSignals
+  // returns closeSignal itself and that release is a no-op.)
+  it('is not aborted by a normal end, an explicit commit, or a later close()', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    await db.write('CREATE TABLE t (a INTEGER)');
+    let seen!: AbortSignal;
+    let afterCommit: boolean | undefined;
+    await db.transaction(
+      async (tx) => {
+        seen = tx.signal;
+        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.commit();
+        afterCommit = tx.signal.aborted;
+      },
+      { autoCommit: false },
+    );
+    expect(afterCommit).toBe(false);
+    expect(seen.aborted).toBe(false);
+    await db.close();
+    expect(seen.aborted).toBe(false);
+  });
+});
