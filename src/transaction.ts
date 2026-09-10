@@ -138,10 +138,11 @@ export const createTransaction =
     // Never undefined, since death.signal is not — mergeSignals cannot say so.
     const signal = merged ?? death.signal;
     /**
-     * How this transaction ended, set exactly once (spec §4). Every public
-     * method of the handle reads it at its entry: once it is set, nothing the
-     * handle does reaches the worker, which by then may be serving someone
-     * else (spec §1.2).
+     * How this transaction ended, set once — except that a COMMIT that
+     * succeeds records `committed` over a death that landed while it was in
+     * flight (spec §4). Every public method of the handle reads it at its
+     * entry: once it is set, nothing the handle does reaches the worker,
+     * which by then may be serving someone else (spec §1.2).
      */
     type Ending =
       | { kind: 'committed' }

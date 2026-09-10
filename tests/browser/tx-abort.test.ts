@@ -166,7 +166,9 @@ describe('a write abandoned inside a transaction', () => {
   it('abandons the transaction for a write abandoned by its own timeout', async () => {
     const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
     try {
+      const before = workerIdentity(db);
       let caught: unknown;
+      let later: unknown;
       const finished = deferred();
       const outcome = await db
         .transaction(async (tx) => {
@@ -174,6 +176,7 @@ describe('a write abandoned inside a transaction', () => {
           caught = await tx
             .write(BIG_INSERT, [], { timeout: 30 })
             .catch((e) => e);
+          later = await tx.read('SELECT a FROM t').catch((e) => e);
           finished.resolve();
         })
         .catch((e) => e);
@@ -181,7 +184,10 @@ describe('a write abandoned inside a transaction', () => {
 
       expect(caught).toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 30 });
       expect(outcome).toBe(caught);
+      expect(later).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+      expect((later as Error).cause).toBe(caught);
       expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
+      expect(workerIdentity(db)).toBe(before);
     } finally {
       await db.close();
     }

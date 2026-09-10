@@ -788,8 +788,9 @@ const deleteDatabaseFiles = async (data: {
  * way to learn it. `undefined` when no connection is open.
  */
 const connectionInTransaction = async (): Promise<boolean | undefined> => {
+  if (!openedDB) return undefined;
   try {
-    const { sqlite, db } = await openedDB!;
+    const { sqlite, db } = await openedDB;
     return sqlite.get_autocommit(db) === 0;
   } catch {
     return undefined;

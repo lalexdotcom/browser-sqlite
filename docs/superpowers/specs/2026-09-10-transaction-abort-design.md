@@ -13,6 +13,21 @@ exposed next (§1.2).
 changes of this design either fix a released defect (§1.2 is in rc.4) or touch options that have
 never been released (`timeout`, the transaction's abandonment by `close()`).
 
+**Amended 2026-09-10, after the final whole-branch review (user's decisions).** Two rules this
+design first drew have changed; the history stays visible at each amended paragraph below
+rather than being rewritten silently.
+
+- **D4 reversed** (R1's first bullet, §5). A write whose own signal was already aborted AT THE
+  CALL never reached the worker, so it had no effect — continuing after it costs nothing, and
+  the `try/catch` around it must behave as for any other caught error, letting the callback go
+  on. Only a write abandoned WHILE IT RUNS still kills the transaction. The same now holds for
+  `tx.bulkWrite()`/`tx.output()` created with a signal already aborted.
+- **R8/D11 widened.** `tx.signal` aborts whenever `transaction()` REJECTS, for whatever reason —
+  including an ordinary error the callback lets escape uncaught, not only the narrower set of
+  causes this design first listed — with the very value it rejects with. It still never aborts
+  when `transaction()` resolves, and an outside abort landing after an explicit `commit()`
+  still abandons the call while the commit itself stands.
+
 ## 1. The problem, measured
 
 Two defects, found one after the other, both measured on 2026-09-10 in this container, three
@@ -102,15 +117,20 @@ explicit, or the one the transaction issues itself when the callback returns or 
 **death**. Three causes of death exist and are unchanged: its own `signal`, its own `timeout`,
 `close()`. Three are new:
 
-- **A write statement is abandoned**: any statement issued through the transaction whose SQL
-  `isWriteQuery()` classifies as a write, rejected by its OWN `signal` or `timeout` — whichever
-  method issued it (`tx.read()`, `tx.first()`, `tx.chunk()` and `tx.stream()` do not refuse a
-  write, so the method cannot be the discriminator). **This includes a signal already aborted
-  at the call**, where the statement never reached the worker: the rule stays one sentence
-  instead of depending on when the abort landed. `isWriteQuery()` errs toward the writer,
-  which here errs toward dying — the safe direction.
-- **`tx.bulkWrite()` or `tx.output()` is abandoned** by its own `signal` or `timeout`. Their
-  abort lands between batches and cuts no step, but they are writes and follow the rule.
+- **A write statement is abandoned WHILE IT RUNS**: any statement issued through the
+  transaction whose SQL `isWriteQuery()` classifies as a write, rejected by its OWN `signal` or
+  `timeout` — whichever method issued it (`tx.read()`, `tx.first()`, `tx.chunk()` and
+  `tx.stream()` do not refuse a write, so the method cannot be the discriminator).
+  `isWriteQuery()` errs toward the writer, which here errs toward dying — the safe direction.
+  **Amended 2026-09-10 (user, D4 reversed):** this excludes a signal already aborted AT THE
+  CALL — that write never reached the worker, so it has no effect, rejects alone, and the
+  callback may continue exactly as for any other caught error. The original text here read "a
+  signal already aborted at the call counts", for a one-sentence rule; the user judged that
+  the wrong trade, since a statement that never touched the database is safe to continue past.
+- **`tx.bulkWrite()` or `tx.output()` is abandoned WHILE LOADING** by its own `signal` or
+  `timeout`. Their abort lands between batches and cuts no step, but they are writes and follow
+  the rule. **Amended 2026-09-10, same reversal**: one created with a signal already aborted
+  writes nothing and rejects alone.
 - **The connection left the transaction by itself**, as the worker reports after any
   statement (§4) — `SQLITE_FULL`, `SQLITE_IOERR`, `SQLITE_NOMEM`, or anything else that ends
   it.
@@ -180,15 +200,24 @@ callback continue and commit, as step 1 established. **Premise to measure first*
 SQLite's `sqlite3VdbeHalt` rolls back on `SQLITE_INTERRUPT` only for a statement that is not
 read-only. If the measurement contradicts it, this design is amended before any code.
 
-**R8 — `tx.signal` aborts when the transaction dies, and only then.** A read-only
-`AbortSignal` on `SQLiteTransactionDB`, beside `commit()` and `rollback()` — not on
-`SQLiteQueryAPI`, which the client shares. **Its reason is the cause of death**, the very value
-`db.transaction()` rejects with (R2), so a `fetch` cut by it rejects with `OPERATION_TIMEOUT`
-or the consumer's own reason, not with a third value. **A normal end does not abort it**: with
-`autoCommit: false`, a callback that committed explicitly may legitimately go on working — call
-a service, say — and cutting that would be a regression; once the callback has returned there
-is nothing left to cut. Passing it to a statement of the same transaction is redundant and
-harmless, since every statement already carries it.
+**R8 — `tx.signal` aborts whenever `transaction()` rejects, and only then** (amended
+2026-09-10, user's decision after the final review — see the note at the top of this design).
+A read-only `AbortSignal` on `SQLiteTransactionDB`, beside `commit()` and `rollback()` — not on
+`SQLiteQueryAPI`, which the client shares. **Its reason is the value `transaction()` rejects
+with**, so a `fetch` cut by it rejects with that exact value — `OPERATION_TIMEOUT`, the
+consumer's own reason, or an ordinary error the callback let escape uncaught. **It never
+aborts when `transaction()` resolves**: with `autoCommit: false`, a callback that committed
+explicitly may legitimately go on working — call a service, say — and cutting that would be a
+regression; once the callback has returned there is nothing left to cut. An outside abort
+landing AFTER an explicit `commit()` still abandons the call and aborts `tx.signal` with it —
+the commit itself stands, unaffected. Passing it to a statement of the same transaction is
+redundant and harmless, since every statement already carries it.
+
+Originally drawn narrower, as *aborts when the transaction dies, and only then*: "dies" then
+meant only the five causes R1 lists — its own signal or timeout, `close()`, an abandoned
+write, the connection leaving. It now also covers a callback that lets an ordinary error
+escape uncaught, since that too makes `transaction()` reject and the same reasoning — handing
+the callback's own work a signal that stops with it — applies just as well.
 
 ```ts
 await db.transaction(async (tx) => {
@@ -213,10 +242,11 @@ the scheduler, and this must not read as a breach of it, nor become one.
 
 **The transaction owns one piece of state, how it ended**, set once — except that a COMMIT
 that succeeds records `committed` over a death that landed while it was in flight, since the
-handle reports what happened to the data: `committed`, `rolled-back`, or `died` with its cause. Every public method of `tx` reads it at its entry,
-before anything else, and applies R3/R4. It is set by `commit()`/`rollback()` once their
-statement succeeds (where `done = true` is set today), by a death, and — as a last resort — in
-the transaction's `finally`, so no path out of `transaction()` can leave a handle open.
+handle reports what happened to the data: `committed`, `rolled-back`, or `died` with its
+cause. Every public method of `tx` reads it at its entry, before anything else, and applies
+R3/R4. It is set by `commit()`/`rollback()` once their statement succeeds (where `done = true`
+is set today), by a death, and — as a last resort — in the transaction's `finally`, so no path
+out of `transaction()` can leave a handle open.
 
 **A death aborts an internal `AbortController` merged into the transaction's signal**, with the
 cause as its reason. That is how the new causes join the existing machinery: the race against
@@ -258,7 +288,12 @@ open, so it is unaffected; `commit()`'s `throwIfAborted()` is subsumed by the en
   transaction after a statement that succeeded.
 - **D3 — Inside, one code for every cause** (R3). The alternative left a callback that caught
   an error testing four codes, one of them the consumer's own reason, which can be anything.
-- **D4 — A pre-aborted write kills too** (R1), for a one-sentence rule.
+- **D4 — REVERSED 2026-09-10 (user, after the final review).** Originally: a pre-aborted write
+  kills too (R1), for a one-sentence rule. Now: a write whose own signal was already aborted at
+  the call never reached the worker and had no effect, so it rejects alone and the callback may
+  continue — a statement that never touched the database is safe to continue past, and a
+  `try/catch` around it must behave as for any other caught error. Only a write abandoned WHILE
+  IT RUNS still kills the transaction (R1).
 - **D5 — The discriminator is the SQL, not the method** (R1).
 - **D6 — The connection's own report is a cause of death** (R1), because the same autocommit
   escape follows a caught `SQLITE_FULL` and no abort is involved.
@@ -274,7 +309,11 @@ open, so it is unaffected; `commit()`'s `throwIfAborted()` is subsumed by the en
   correct, only the helper's own `fetch` runs on. The signal describes the transaction's
   lifetime, and `tx` is the object that carries it (R3, R4). TanStack's `queryFn` context is
   the analogue of `tx`, not of a second parameter.
-- **D11 — `tx.signal` aborts on death only, with the cause as reason** (R8).
+- **D11 — WIDENED 2026-09-10 (user, after the final review).** Originally: `tx.signal` aborts
+  on death only, with the cause as reason (R8). Now: it aborts whenever `transaction()`
+  rejects, with the rejection value as reason — a superset of "death" as R1 first defined it,
+  since an ordinary error the callback lets escape uncaught also makes `transaction()` reject
+  and deserves the same signal (R8).
 
 ## 6. What this promises, and what it does not
 
@@ -297,6 +336,10 @@ as it always has.
 - Any change to the client path: outside a transaction each statement is its own commit, and
   none of this applies.
 - The dropped-generator limit of `mem:state`, which is unrelated and unchanged.
+- **The savepoint variant** (§2's refused alternative): a STATEMENT-level abort does not cut the
+  write, and a savepoint undoes it, leaving the transaction alive; a TRANSACTION-level abort
+  still cuts. Deferred to its own design, owed to the user's three use cases — this design
+  covers only the transaction-level rule (D1).
 
 ## 8. Tests and measurements
 
@@ -327,23 +370,37 @@ it red):
    before the transaction still exists, no eviction.
 3. `sync` without isolation, `MemoryVFS`, a write abandoned and caught: the transaction
    rejects and the write's rows are absent — they used to be committed.
-4. A write whose signal is already aborted at the call: the transaction dies.
+4. **Amended 2026-09-10 (D4 reversed):** originally "a write whose signal is already aborted at
+   the call: the transaction dies." Now the opposite: a write whose signal is already aborted
+   at the call rejects alone, the callback catches it and continues, and the transaction goes
+   on to commit.
 5. A write abandoned by its own `timeout`: as 1, with `OPERATION_TIMEOUT`.
 6. `async`, a read cut mid-step and caught: the transaction continues and commits (M1 made
    permanent).
-7. A write issued through `tx.first()` (`INSERT … RETURNING`), abandoned: the transaction dies.
+7. **Amended 2026-09-10:** originally a PRE-ABORTED write issued through `tx.first()`
+   (`INSERT … RETURNING`); D4's reversal makes that write reject alone instead, so the test is
+   now an IN-FLIGHT abort: a write issued through `tx.first()`, cut mid-step by its own signal,
+   abandoned: the transaction dies.
 8. `tx.bulkWrite()` abandoned inside a transaction: the transaction dies; `tx.output()`
-   abandoned: dies, and no staging table remains.
+   abandoned: dies, and no staging table remains. **Added 2026-09-10 (D4 reversed):** a
+   `tx.bulkWrite()` created with a signal already aborted writes nothing and rejects alone; the
+   transaction goes on.
 9. §1.2 made permanent, `poolSize: 1`, the next transaction paused between two statements:
    an abandoned transaction's `tx.rollback()` resolves and the next transaction commits both
    its rows; a committed transaction's `tx.rollback()` the same; a committed transaction's
    `tx.write()` rejects with `TRANSACTION_CLOSED` without `cause`, and its row is nowhere.
 10. `autoCommit: false`: a statement after an explicit `tx.commit()` rejects with
     `TRANSACTION_CLOSED`; so does one after an explicit `tx.rollback()`.
-11. `tx.signal`: aborted, with the write's reason, when an abandoned write kills the
-    transaction; aborted with `OPERATION_TIMEOUT` when the transaction's own `timeout` expires
-    while the callback awaits something that is not a statement; NOT aborted after a normal
-    end, including after an explicit `tx.commit()` under `autoCommit: false` and after a later
+11. **Amended 2026-09-10 (R8/D11 widened):** originally "`tx.signal`: aborted, with the write's
+    reason, when an abandoned write kills the transaction; aborted with `OPERATION_TIMEOUT`
+    when the transaction's own `timeout` expires while the callback awaits something that is
+    not a statement; NOT aborted after a normal end, including after an explicit `tx.commit()`
+    under `autoCommit: false` and after a later `close()`." Now: `tx.signal` aborts, with the
+    write's reason, when an abandoned write kills the transaction (in flight, not pre-aborted —
+    see 4 and 7 above); aborted with `OPERATION_TIMEOUT` when the transaction's own `timeout`
+    expires while the callback awaits something that is not a statement; aborted with the error
+    itself when the callback lets one escape uncaught; still NOT aborted after a normal end,
+    including after an explicit `tx.commit()` under `autoCommit: false` and after a later
     `close()`.
 
 **Unit tests** (`tests/unit/transaction.test.ts`, fake worker):
