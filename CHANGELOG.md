@@ -146,6 +146,21 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **A statement following a short-circuited statement in the same
+  `transaction()` callback no longer fails with `GENERATOR_ABANDONED`.**
+  Statements in a transaction all run on one connection, and one that ends
+  before its result does left that connection still finishing: the next
+  statement in the same callback met the reuse guard a moment too early and
+  rejected. It reached `first()` on any query with more than one row to
+  produce — its ordinary use — a `chunk()` or `stream()` the callback `break`s
+  out of between two statements, and a `read()`, `write()`, `bulkWrite()` or
+  `output()` cut short by its own `signal` and caught by the callback. Every
+  statement now waits for the connection before it resolves, which costs
+  nothing where there is nothing to wait for. A generator the callback simply
+  drops — never closed, never exhausted — still holds the connection and still
+  meets `GENERATOR_ABANDONED`; that is what closing a generator is for, and
+  `API.md` says so under *Inside a transaction*.
+
 - **A statement issued after `close()` now rejects instead of hanging for
   ever.** `PoolWorker` is the native `Worker`, so terminating it stopped the
   thread and told this library's transport nothing: a request posted afterwards

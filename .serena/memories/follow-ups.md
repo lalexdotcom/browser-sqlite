@@ -69,83 +69,25 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
-## A statement after `tx.first()` in the same callback throws `GENERATOR_ABANDONED`
+## A per-statement `timeout` inside `transaction()` is silently ignored
 
-`firstWorker` leaves its `for await` by `return`, and `drain`'s `finally` fires
-`iterator.return()` **without awaiting it**. So when `await tx.first(…)` resolves the transport
-has only posted `stop`: `deferredChunk` is still set, and it can only clear on a message from
-the worker — a task, not a microtask. A second statement in the same callback therefore meets
-the reuse guard:
+`Interruptible` carries `timeout` on all eight methods, but `transaction.ts` calls `withDeadline`
+only for the transaction's OWN options; `withSignal` propagates `signal` alone, and neither
+`chunk()` nor `writeWorker` forwards `timeout` to `worker.query`. So `tx.read(sql, p, { timeout:
+5000 })` type-checks and bounds nothing. Confirmed by reading, 2026-09-09; the user called it *"un
+trou dans la raquette, à combler"*.
 
-```js
-await db.transaction(async (tx) => {
-  await tx.first('SELECT n FROM t');   // more than one row left to produce
-  await tx.read('SELECT 1');           // → GENERATOR_ABANDONED
-});
-```
+**The constraint that used to sit here is lifted.** This was held behind the quiesce fix,
+because restoring the per-statement `timeout` creates abort paths on `read`/`write`/`bulkWrite`
+that could not occur before it. That fix is merged (2026-09-10), so this is now free-standing —
+and it takes its own branch, not a shared one: two distinct defects with two distinct test sets.
 
-**The row count is not what matters, and an earlier draft of this entry said it was.**
-`firstWorker` passes `chunkSize: 1` and `credits: 1`, so the worker sends exactly one row, then
-takes its next credit, finds none, and parks **holding the second row**. The condition is simply
-that the query has more than one row left to produce: with a single-row result the query ends by
-itself, `done` arrives, `deferredChunk` clears and nothing breaks. So `tx.first()` on a table of
-one row is safe, and on anything larger it is not — which is the ordinary use of the method.
-
-**Reproduced on `main` as well as on the merged result** (2026-09-09), with the same failure
-and only the message differing — `main` raises the bare `Error`, the merged code raises the
-named code. So this is **pre-existing**, it was not introduced by the abandoned-generator work,
-and that work did not worsen it: `closeOpenStatements()`'s `quiesce()` incidentally repairs the
-end-of-callback boundary case, leaving only the intra-callback one.
-
-Why it was left alone rather than fixed with everything else: fixing it means making
-`firstWorker` await its `iterator.return()`, which is exactly what `queries.ts`'s comment
-refuses for the collection path, where nobody is waiting. That is a real design question and it
-did not belong in a branch that had already produced three defects of the class it was
-repairing.
-
-**`API.md` lists `first` among "the same querying surface as the client"**, so a consumer has no
-warning. The cheapest honest step is a sentence; the fix is a separate decision.
-
-### The fix, worked out 2026-09-09 but not written
-
-**Make the TRANSACTION wait, not `firstWorker`.** In `transaction.ts`'s `first`, `await
-worker.quiesce()` after `firstWorker` resolves — the same thing `closeOpenStatements()` already
-does at the boundary.
-
-**It costs nothing when there is nothing to wait for.** `quiesce()` returns
-`idle?.promise ?? Promise.resolve()`, and `idle` is cleared by the transport's own `finally`, so
-a query that finished by itself — a single-row result — waits not at all. The task round trip is
-paid only when the worker really is still parked. That is what makes this acceptable on a hot
-path, and it is the reason to prefer it.
-
-**The two alternatives, and why they lose.** Making `firstWorker` await its `iterator.return()`
-would fix the transaction by degrading the client path, where not awaiting is deliberate and
-`queries.ts`'s comment says so: `db.first()` has no reason to wait for a drain, its lease handles
-it. And tracking the transport in `open` does nothing, because `closeOpenStatements()` runs at
-the end of the callback while this defect lives *between* two statements inside it.
-
-**Three things to establish before writing a line:**
-
-1. **Is the failure deterministic?** The worker's stop reply needs a task and the following
-   `await tx.read(…)` is a microtask away, so it should be 100 % rather than a race. Everything
-   else depends on this: if it is deterministic the regression test needs no CPU load and no
-   flake budget.
-2. **Do `tx.read()` and `tx.write()` need the same?** They go through `readWorker`/`writeWorker`,
-   which exhaust their transport to `done`, so `deferredChunk` clears by itself. **Verify it,
-   do not infer it** — three claims in the session that produced this entry were written by
-   reasoning from neighbouring code instead of reading the code concerned, and all three were
-   wrong.
-3. **`tx.bulkWrite()` and `tx.output()`** were established immune by review: they only use the
-   `read`/`write` the transaction hands them. That conclusion stands or falls with point 2.
-
-**The risk it inherits.** Same trade as `closeOpenStatements()`: an unresponsive worker means
-waiting up to `drainTimeout` with the origin's write lock held. `API.md`'s transaction warning
-already states that cost for abandoned generators — decide whether it must name `first()` too.
-
-**And the question worth asking before the third one arrives.** This would be the second
-transaction method needing a wait because it short-circuits a generator — `chunk`/`stream` at the
-boundary, `first` between statements. At the third it stops being a point fix and becomes an
-invariant the transaction should hold on its own.
+**One thing measured while closing that fix, and it changes what this entry has to check.** A
+statement inside a transaction ALWAYS carries a signal — `withSignal` merges the transaction's
+own, `mergeSignals` returns the surviving side when one is absent, and `closeSignal` is always
+defined. So `abortable` is already true on every transaction statement, and restoring `timeout`
+adds a deadline, not an interruption capability. Do not write a design premised on the
+statement becoming abortable: it already is. `mem:measurements`, TX-QUIESCE.
 
 ## Notes, with nothing to fix
 

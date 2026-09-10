@@ -608,6 +608,47 @@ it replaces. And **the whole-branch review is the only step that caught two of t
 reviews saw diffs, and the defects lived in the interaction between a change and the untouched
 code beside it.
 
+## A wait you add must be owed by the statement that pays it — 2026-09-10
+
+The transaction quiesce fix made every statement wait for its worker before resolving. Correct
+for a statement that ran; **catastrophic for one that never started.** A statement refused by
+`pool.ts`'s reuse guard has claimed nothing, so waiting for the worker parks its rejection
+behind somebody else's query — and where that query is a generator the callback dropped, only
+`closeOpenStatements()` will close it, at the end of the callback, which is exactly where the
+rejection was heading. The two waited for each other and the test timed out at 30 s.
+
+**It was found by a test written to pin a LIMIT, not to prove the fix.** The fix's own three
+regression tests were green. What surfaced the deadlock was writing down "here is what A does
+not cover" and asserting it — the boundary case, which nobody asks for and which is the only
+thing that exercised the refused path.
+
+**Two rules out of it.** When adding a wait to a shared resource, ask what the waiter has
+actually acquired — a post-condition on work you did not do is a deadlock waiting for a
+scheduler. And **pin the boundary of a fix, not only its subject**: the assertion "this case is
+still broken, and cleanly" is where the second defect lives.
+
+## A comment can outlive the premise of the branch beside it — 2026-09-10
+
+Two merges landed the same day, 2026-09-09: the abandoned-generator work and the origin
+write-lock work. The first left a comment in `closeOpenStatements()` saying a transaction with
+no `signal` and no `timeout` passes `abortable: false`. The second added `closeSignal`, merged
+into every statement's signal — which made that sentence false the moment it merged. `API.md`
+carried a `[!WARNING]` resting on the same premise. Both survived a whole-branch review and
+four weeks of reading, including mine: I reasoned from that comment twice in one session and
+told the user something wrong on the strength of it.
+
+**Measurement is what caught it**, not reading: `first()` on a query whose second row costs a
+3 M-row recursion returns in 2.4 ms inside a transaction and 683 ms on the client path. A
+comment cannot be that wrong about an interruptible statement.
+
+**The rule: when two branches merge in the same window, each one's comments describe the
+other's pre-state.** Grep the merged files for claims about the mechanism the sibling changed.
+Here one `grep -n 'abortable' src/` would have done it.
+
+**And the general tell:** a comment that asserts a value a function COMPUTES — `abortable:
+false`, `signal === undefined` — is a claim with an expiry date. Prefer naming the condition
+("whether the build can interrupt a running step") over transcribing the value.
+
 ## A pre-merge verification is not ceremony — 2026-09-09
 
 The session's closure was stopped by `pnpm test` going red on the merged-to-be tree, on a

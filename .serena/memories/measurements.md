@@ -4,6 +4,65 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## TX-QUIESCE — what the per-statement wait costs, 2026-09-10, this container, Chromium
+
+**Method.** Probe `.scratchpad/tx-quiesce-probe.test.ts`, run as a browser test on the
+`chromium` project (NOT cross-origin isolated). Every arm runs the SAME shape — one
+`db.transaction()` per iteration — so BEGIN/COMMIT, the lease and the client are constant
+across arms and the difference between them IS the wait `settled` adds. Two warm-up
+iterations discarded per arm; medians below, n=15 except where stated. Table `t` holds 2000
+rows. Branch `fix/tx-statement-quiesce`.
+
+| arm | VFS / build | n | median | p90 |
+|---|---|---|---|---|
+| `tx.first()`, single-row result | OPFSAdaptiveVFS / async | 15 | **2.1 ms** | 2.8 |
+| `tx.first()`, 2000-row result (worker parked holding row 2) | OPFSAdaptiveVFS / async | 15 | **1.7 ms** | 2.1 |
+| `tx.read()`, 2000 rows | OPFSAdaptiveVFS / async | 15 | 3.7 ms | 4.5 |
+| `tx.write()`, one row | OPFSAdaptiveVFS / async | 15 | 2.5 ms | 3.4 |
+| `tx.first()`, cheap row 1 then a 3 M-row recursion for row 2 | OPFSAdaptiveVFS / async | 5 | **2.4 ms** | 2.x |
+| `db.first()`, same query — CLIENT path, no signal | OPFSAdaptiveVFS / async | 5 | **683.6 ms** | — |
+| `tx.first()`, 2000-row result | OPFSCoopSyncVFS / **sync** | 15 | **0.8 ms** | 1.1 |
+| `tx.first()`, cheap row 1 then the recursion | OPFSCoopSyncVFS / **sync** | 5 | **360.5 ms** | — |
+
+**Three things this establishes, and one it destroyed.**
+
+1. **The wait is free on the ordinary path, and the "many rows" arm is not slower than the
+   "single row" one** — 1.7 ms against 2.1 ms, i.e. inside the noise. The claim that
+   `quiesce()` costs nothing where nothing is pending is measured, not reasoned.
+
+2. **It destroyed the premise that a transaction's statements are not abortable.**
+   `src/transaction.ts` carried a comment saying a transaction with no `signal` and no
+   `timeout` passes `abortable: false`; `API.md` carried a `[!WARNING]` resting on the same
+   premise. Both were false, and both predate this branch. `withSignal` merges the
+   transaction's signal into every statement, `mergeSignals(a, b)` returns the surviving side
+   when one is absent, and `closeSignal` is ALWAYS defined — so a statement inside a
+   transaction always carries a signal and worker.ts always installs its progress handler.
+   The 2.4 ms against 683.6 ms on the same query is the proof: the transaction cuts the
+   expensive step. Had it not, `settled` would have waited for the recursion and the arm
+   would read ~683 ms like the control.
+
+   **Where the client path's 683.6 ms actually lands, because the number is misleading
+   otherwise:** not inside `db.first()`, which returns as soon as row 1 arrives. The lease
+   goes back through `void quiesce().then(release)`, so the drain is paid by the NEXT call's
+   `acquire()` — with `poolSize: 2` the first two iterations are fast and the rest wait on a
+   worker still finishing the previous recursion. It is a clean illustration of the argument
+   that refused option B: a wait attached to the wrong statement shows up on the innocent
+   one.
+
+3. **What decides the cost is the BUILD, not the options.** On the `sync` build without
+   cross-origin isolation worker.ts installs no progress handler at all (no yield to read the
+   stop, no abort slot to poll), so the wait is the rest of the running `step()`: 360.5 ms on
+   the pathological query, and `drainTimeout` in the worst case. That, and only that, is what
+   the `API.md` warning now says.
+
+**The pathological query, so it can be re-run:** `SELECT 1 AS n UNION ALL SELECT (WITH
+RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 3000000) SELECT count(*)
+FROM c)` — row 1 is immediate, row 2 costs the whole recursion inside one `step()`, which is
+exactly the shape `first()` leaves behind with `chunkSize: 1` / `credits: 1`.
+
+**Not measured:** Firefox, and any engine off this container. The sync/async split is the
+axis that matters here and it is covered on Chromium only.
+
 ## Engine capabilities — 2026-08-24, dedicated worker on secure `http://localhost`
 
 Playwright's own builds: Chromium 151, Firefox 153, WebKit 26.5, all arm64/Linux.
