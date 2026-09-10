@@ -7,6 +7,7 @@ import type {
 } from './api';
 import type { ReadFn, TransactionFn, WriteFn } from './bulk';
 import { SQLiteError } from './errors';
+import type { Logger } from './logger';
 import type { PoolWorker } from './pool';
 import {
   chunk as chunkWorker,
@@ -92,6 +93,12 @@ export const createTransaction =
       bulkWrite: SQLiteQueryAPI['bulkWrite'];
       output: SQLiteQueryAPI['output'];
     };
+    /**
+     * Reached only through `always`: `rollback()` on a transaction that has
+     * already committed warns whatever the `debug` option says (spec R4) — a
+     * warning visible only under debug would be the same as silence.
+     */
+    logger: Pick<Logger, 'always'>;
   }) =>
   async <T = void>(
     callback: (db: SQLiteTransactionDB) => Promise<T>,
@@ -112,6 +119,32 @@ export const createTransaction =
       deadline,
       deps.closeSignal,
     );
+    /**
+     * How this transaction ended, set exactly once (spec §4). Every public
+     * method of the handle reads it at its entry: once it is set, nothing the
+     * handle does reaches the worker, which by then may be serving someone
+     * else (spec §1.2).
+     */
+    type Ending =
+      | { kind: 'committed' }
+      | { kind: 'rolled-back' }
+      | { kind: 'died'; cause: unknown };
+    let ending: Ending | undefined;
+    // The existing causes of death — the caller's signal, the timeout,
+    // close() — all abort `signal`; this is where they become an ending.
+    const onAbort = () => {
+      ending ??= { kind: 'died', cause: signal?.reason };
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+
+    const closedError = (end: Ending): SQLiteError =>
+      new SQLiteError(
+        'TRANSACTION_CLOSED',
+        end.kind === 'died'
+          ? 'This transaction was abandoned; nothing more can run in it.'
+          : `This transaction has already ${end.kind === 'committed' ? 'committed' : 'rolled back'}; nothing more can run in it.`,
+        end.kind === 'died' ? { cause: end.cause } : undefined,
+      );
     try {
       // The signal aborts the wait too: without it a transaction could not be
       // abandoned while the pool has nothing to lend, which is a state a VFS
@@ -136,6 +169,20 @@ export const createTransaction =
       // opened no transaction fails, and that failure would lose a healthy
       // worker through onPoisoned.
       let begun = false;
+
+      // The SQL ends, for the transaction's own use. `??=` keeps a death that
+      // landed while the statement was in flight: BEGIN, COMMIT and ROLLBACK
+      // carry no signal, so an abort can arrive during one.
+      const commitNow = async () => {
+        await exec(worker, 'COMMIT');
+        done = true;
+        ending ??= { kind: 'committed' };
+      };
+      const rollbackNow = async () => {
+        await exec(worker, 'ROLLBACK');
+        done = true;
+        ending ??= { kind: 'rolled-back' };
+      };
 
       /**
        * Whether a statement that ended in `error` owes the wait below.
@@ -259,6 +306,7 @@ export const createTransaction =
         const gen = (async function* () {
           let refused = false;
           try {
+            if (ending) throw closedError(ending);
             yield* source;
           } catch (error) {
             refused = !owesWait(error);
@@ -361,11 +409,13 @@ export const createTransaction =
           }
         : deps.bulkFor({
             read: (sql, params, given) => {
+              if (ending) return Promise.reject(closedError(ending));
               const query = checksql(sql);
               const { options, settled } = withSignal(given, 'read');
               return settled(readWorker(worker, query, params, options));
             },
             write: (sql, params, given) => {
+              if (ending) return Promise.reject(closedError(ending));
               const query = checksql(sql);
               const { options, settled } = withSignal(given, 'write');
               return settled(writeWorker(worker, query, params, options));
@@ -383,6 +433,7 @@ export const createTransaction =
           params?: unknown[],
           given?: SQLiteChunkOptions,
         ) => {
+          if (ending) return Promise.reject(closedError(ending));
           const query = checksql(sql);
           const { options, settled } = withSignal(given, 'read');
           return settled(readWorker<T>(worker, query, params, options));
@@ -393,6 +444,7 @@ export const createTransaction =
           params?: unknown[],
           given?: Interruptible,
         ) => {
+          if (ending) return Promise.reject(closedError(ending));
           const query = checksql(sql);
           const { options, settled } = withSignal(given, 'write');
           return settled(writeWorker<T>(worker, query, params, options));
@@ -448,27 +500,44 @@ export const createTransaction =
           params?: unknown[],
           given?: Interruptible,
         ) => {
+          if (ending) return Promise.reject(closedError(ending));
           const query = checksql(sql);
           const { options, settled } = withSignal(given, 'first');
           return settled(firstWorker<T>(worker, query, params, options));
         },
 
-        bulkWrite: bulk.bulkWrite,
-        output: bulk.output,
+        bulkWrite: ((...args: Parameters<SQLiteQueryAPI['bulkWrite']>) => {
+          if (ending) throw closedError(ending);
+          return bulk.bulkWrite(...args);
+        }) as SQLiteQueryAPI['bulkWrite'],
+        output: ((...args: Parameters<SQLiteQueryAPI['output']>) => {
+          if (ending) throw closedError(ending);
+          return bulk.output(...args);
+        }) as SQLiteQueryAPI['output'],
 
         commit: async () => {
           // The only place a COMMIT is refused, and it covers both callers: the
           // explicit tx.commit() and the auto-commit below. Without it a callback
           // that swallowed its statement's rejection could still commit, and the
-          // transaction's own rejection would arrive after the data landed.
-          signal?.throwIfAborted();
-          await exec(worker, 'COMMIT');
-          done = true;
+          // transaction's own rejection would arrive after the data landed. The
+          // listener sets `ending` synchronously when the signal aborts, so this
+          // guard covers what `throwIfAborted()` did.
+          if (ending) {
+            if (ending.kind === 'committed') return;
+            throw closedError(ending);
+          }
+          await commitNow();
         },
 
         rollback: async () => {
-          await exec(worker, 'ROLLBACK');
-          done = true;
+          if (ending) {
+            if (ending.kind === 'committed')
+              deps.logger.always.warn(
+                'rollback() was called on a transaction that has already committed; nothing was rolled back.',
+              );
+            return;
+          }
+          await rollbackNow();
         },
       };
 
@@ -507,11 +576,13 @@ export const createTransaction =
         await closeOpenStatements();
 
         if (!done) {
-          if (autoCommit) {
-            await db.commit();
-          } else {
-            await db.rollback();
-          }
+          // An abort that landed after the callback returned — during
+          // closeOpenStatements() — still refuses the COMMIT, and with the
+          // cause rather than TRANSACTION_CLOSED: this is the transaction's own
+          // outcome (spec R2), not a late statement.
+          signal?.throwIfAborted();
+          if (autoCommit) await commitNow();
+          else await rollbackNow();
         }
         return result;
       } catch (e) {
@@ -527,7 +598,7 @@ export const createTransaction =
         // only cost a ROLLBACK that fails, never skip one that was owed.
         if (begun && !done && worker.inTransaction !== false) {
           try {
-            await db.rollback();
+            await rollbackNow();
           } catch {
             // A failed rollback must not replace the caller's error, which is the
             // one that explains what actually went wrong. But the connection may
@@ -553,6 +624,8 @@ export const createTransaction =
         }
         throw e;
       } finally {
+        // No path out of transaction() may leave the handle open (spec §4).
+        ending ??= { kind: 'rolled-back' };
         teardown();
         // Same reasoning as write(): before the void, because release is
         // asynchronous. A read-only transaction commits nothing and must not
@@ -567,6 +640,7 @@ export const createTransaction =
         );
       }
     } finally {
+      signal?.removeEventListener('abort', onAbort);
       releaseClose();
       releaseDeadline();
     }

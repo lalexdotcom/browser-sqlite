@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
+import type { SQLiteTransactionDB } from '../../src/api';
 import { SQLiteError } from '../../src/errors';
 import { createTransaction } from '../../src/transaction';
 
@@ -47,6 +48,7 @@ const fakeWorker = (
 
 const harness = (worker: ReturnType<typeof fakeWorker>) => {
   const poisoned: number[] = [];
+  const warnings: string[] = [];
   const scheduler = {
     // Mirrors the real scheduler: the signal aborts the WAIT, rejecting with
     // `signal.reason` while the request is still queued.
@@ -66,8 +68,9 @@ const harness = (worker: ReturnType<typeof fakeWorker>) => {
       bulkWrite: () => ({ enqueue: async () => {}, close: async () => 0 }),
       output: () => ({ enqueue: async () => {}, close: async () => 0 }),
     }),
+    logger: { always: { warn: (message: string) => warnings.push(message) } },
   });
-  return { transaction, poisoned };
+  return { transaction, poisoned, warnings };
 };
 
 describe('transaction — a poisoned connection is never re-lent', () => {
@@ -284,7 +287,10 @@ describe('transaction — the caller may abandon it', () => {
     ).rejects.toBe(reason);
 
     await finished.promise;
-    expect(commitError).toBe(reason);
+    // The breaking change of spec R3: a statement on a transaction that is over
+    // reports TRANSACTION_CLOSED, carrying why it is over.
+    expect(commitError).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+    expect((commitError as Error).cause).toBe(reason);
     expect(worker.executed).not.toContain('COMMIT');
   });
 
@@ -354,5 +360,88 @@ describe('transaction — the caller may abandon it', () => {
       'INSERT INTO t VALUES (1)',
       'ROLLBACK',
     ]);
+  });
+});
+
+describe('transaction — a closed handle never reaches the worker (spec R3, R4)', () => {
+  // Falsifiable, all three: remove the `if (ending)` guard from commit(),
+  // rollback() or write() in src/transaction.ts and `executed` grows.
+  it('after a commit: commit() resolves, rollback() resolves and warns, a statement is refused', async () => {
+    const worker = fakeWorker([]);
+    const { transaction, warnings } = harness(worker);
+    let kept!: SQLiteTransactionDB;
+    await transaction(async (tx) => {
+      kept = tx;
+      await tx.write('INSERT INTO t VALUES (1)');
+    });
+    const executed = [...worker.executed];
+
+    await expect(kept.commit()).resolves.toBeUndefined();
+    expect(warnings).toEqual([]);
+    await expect(kept.rollback()).resolves.toBeUndefined();
+    expect(warnings).toHaveLength(1);
+    const refused = await kept
+      .write('INSERT INTO t VALUES (2)')
+      .catch((e) => e);
+    expect(refused).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+    expect((refused as Error).cause).toBeUndefined();
+    expect(worker.executed).toEqual(executed);
+  });
+
+  it('after a rollback: commit() is refused, rollback() resolves silently', async () => {
+    const worker = fakeWorker([]);
+    const { transaction, warnings } = harness(worker);
+    let kept!: SQLiteTransactionDB;
+    await transaction(
+      async (tx) => {
+        kept = tx;
+        await tx.write('INSERT INTO t VALUES (1)');
+      },
+      { autoCommit: false },
+    );
+    const executed = [...worker.executed];
+    expect(executed.at(-1)).toBe('ROLLBACK');
+
+    const refused = await kept.commit().catch((e) => e);
+    expect(refused).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+    expect((refused as Error).cause).toBeUndefined();
+    await expect(kept.rollback()).resolves.toBeUndefined();
+    expect(warnings).toEqual([]);
+    expect(worker.executed).toEqual(executed);
+  });
+
+  it('after a death: commit() is refused with the cause, rollback() resolves silently', async () => {
+    const worker = fakeWorker([]);
+    const { transaction, warnings } = harness(worker);
+    const ctl = new AbortController();
+    const reason = new Error('abandoned');
+    let kept!: SQLiteTransactionDB;
+    const entered = deferred();
+    const finished = deferred();
+    const running = transaction(
+      async (tx) => {
+        kept = tx;
+        entered.resolve();
+        await finished.promise;
+      },
+      { signal: ctl.signal },
+    );
+    // Abort only once the callback runs: aborting earlier refuses the BEGIN and
+    // the callback — and `kept` — never exist.
+    await entered.promise;
+    ctl.abort(reason);
+    await expect(running).rejects.toBe(reason);
+    finished.resolve();
+    const executed = [...worker.executed];
+
+    const refused = await kept.commit().catch((e) => e);
+    expect(refused).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+    expect((refused as Error).cause).toBe(reason);
+    await expect(kept.rollback()).resolves.toBeUndefined();
+    const statement = await kept.read('SELECT 1').catch((e) => e);
+    expect(statement).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+    expect((statement as Error).cause).toBe(reason);
+    expect(warnings).toEqual([]);
+    expect(worker.executed).toEqual(executed);
   });
 });

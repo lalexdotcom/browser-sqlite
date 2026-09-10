@@ -30,7 +30,8 @@ export type SQLiteErrorCode =
   | 'READ_ONLY_TRANSACTION'
   | 'UNSUPPORTED'
   | 'GENERATOR_ABANDONED'
-  | 'OPERATION_TIMEOUT';
+  | 'OPERATION_TIMEOUT'
+  | 'TRANSACTION_CLOSED';
 
 export class SQLiteError extends Error {
   readonly code: SQLiteErrorCode;

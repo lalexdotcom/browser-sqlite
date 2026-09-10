@@ -1216,6 +1216,7 @@ export const createSQLiteClient = (
     onPoisoned: (index, error) => handleDeath(index, error),
     closeSignal: closeAbort.signal,
     bulkFor,
+    logger,
   });
 
   const { bulkWrite, output } = bulkFor({ read, write, transaction });
