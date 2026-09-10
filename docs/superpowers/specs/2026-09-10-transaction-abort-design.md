@@ -305,6 +305,15 @@ max_page_count` does to a caught `INSERT` that hits `SQLITE_FULL` — whether SQ
 transaction there is the case D6 exists for, and the answer decides whether a browser test of
 it is possible or a unit test must stand alone.
 
+**M1 done, 2026-09-10, three runs per case on both engines, all identical.** The read premise
+holds: a read cut after ~35 ms (the full query takes seconds) on `OPFSAdaptiveVFS` and
+`MemoryVFS`, `async`, left the transaction open — it committed both rows and no worker was
+replaced. `SQLITE_FULL` from `max_page_count` (`OPFSAdaptiveVFS` `async`, `MemoryVFS` `sync`)
+undid the statement alone and the transaction committed, so D6 cannot be provoked that way in a
+browser and **its test is a unit test only**. Noted in passing, out of scope: that
+`SQLITE_FULL` reached the client with neither `code` nor `sqliteCode` set. Probe:
+`.scratchpad/probe-autocommit/m1.test.ts`.
+
 **Browser tests** (both engines; the build named per test; each with the mutation that turns
 it red):
 
