@@ -444,4 +444,34 @@ describe('transaction — a closed handle never reaches the worker (spec R3, R4)
     expect(warnings).toEqual([]);
     expect(worker.executed).toEqual(executed);
   });
+
+  // Falsifiable: restore `ending ??= { kind: 'committed' }` in commitNow() and
+  // this goes red — a death that lands while the COMMIT is in flight must not
+  // out-race a COMMIT that then succeeds.
+  it('a death landing during the auto COMMIT still reports committed', async () => {
+    const ctl = new AbortController();
+    const reason = new Error('late');
+    const worker = fakeWorker([], { COMMIT: () => ctl.abort(reason) });
+    const { transaction, warnings } = harness(worker);
+    let kept!: SQLiteTransactionDB;
+
+    await expect(
+      transaction(
+        async (tx) => {
+          kept = tx;
+          await tx.write('INSERT INTO t VALUES (1)');
+        },
+        { signal: ctl.signal },
+      ),
+    ).resolves.toBeUndefined();
+
+    await expect(kept.commit()).resolves.toBeUndefined();
+    await expect(kept.rollback()).resolves.toBeUndefined();
+    expect(warnings).toHaveLength(1);
+    expect(worker.executed).toEqual([
+      'BEGIN',
+      'INSERT INTO t VALUES (1)',
+      'COMMIT',
+    ]);
+  });
 });

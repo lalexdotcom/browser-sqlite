@@ -170,17 +170,20 @@ export const createTransaction =
       // worker through onPoisoned.
       let begun = false;
 
-      // The SQL ends, for the transaction's own use. `??=` keeps a death that
-      // landed while the statement was in flight: BEGIN, COMMIT and ROLLBACK
-      // carry no signal, so an abort can arrive during one.
+      // The SQL ends, for the transaction's own use. BEGIN, COMMIT and
+      // ROLLBACK carry no signal, so a death can land while one is in flight.
       const commitNow = async () => {
         await exec(worker, 'COMMIT');
         done = true;
-        ending ??= { kind: 'committed' };
+        // A COMMIT that succeeded is what happened to the data, whatever died
+        // meanwhile: overwrite, never keep an earlier death.
+        ending = { kind: 'committed' };
       };
       const rollbackNow = async () => {
         await exec(worker, 'ROLLBACK');
         done = true;
+        // A rollback and a death both mean no effect, so a death that landed
+        // first is kept, cause and all.
         ending ??= { kind: 'rolled-back' };
       };
 
