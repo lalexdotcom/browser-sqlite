@@ -92,8 +92,8 @@ All notable changes to this project are documented here.
   `stream()` generator left open. It replaces a bare `Error` whose message named
   an internal invariant.
 - **`TRANSACTION_CLOSED`**, the error a transaction object raises once its transaction is over.
-- **`tx.signal`**, aborted when the transaction is abandoned, for the callback to hand to work
-  of its own.
+- **`SQLiteTransactionDB` provides a `signal`**, aborted when the transaction fails or is
+  abandoned, for the callback to hand to work of its own.
 
 ### Changed
 
@@ -292,14 +292,16 @@ All notable changes to this project are documented here.
   statement can be interrupted, SQLite rolls the whole transaction back when a write is
   interrupted, and the callback went on in autocommit: statements that followed were committed
   one by one while the transaction reported failure. Where it cannot, the abandoned write ran
-  to its end and was committed although its caller received a rejection. An abandoned write now
-  abandons its transaction on every build, and a rejected write never has an effect.
+  to its end and was committed although its caller received a rejection. A write abandoned
+  while it runs now abandons its transaction on every build, and a rejected write never has an
+  effect.
 - **Interrupting a write inside a transaction no longer costs a worker** — nor, on a memory
   VFS, the whole database, which the replacement worker opened empty.
 - **A transaction object used after its transaction ended could reach another transaction.**
   A late `rollback()` rolled back whatever transaction ran next on the same connection, and a
-  late write joined it. Such calls now reject with `TRANSACTION_CLOSED` — or, for
-  `rollback()`, resolve without doing anything — and never reach the database.
+  late write joined it. Such calls now never reach the database: a statement is refused with
+  `TRANSACTION_CLOSED`, `rollback()` resolves, and `commit()` resolves only if the transaction
+  had committed.
 
 ### Known limitation, unchanged and now more visible
 
