@@ -24,13 +24,14 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-09 after the write-lock merge
+## The verification baseline — compare against these, re-measured 2026-09-10 after the quiesce merge
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a
-run in this container on 2026-09-09, on `main` after the write-lock work merged** — none is
-carried forward, none is arithmetic. The whole table was re-read in one pass, which is what its
-own rule demands. The merged tree was proven byte-identical to the branch tip's, so the table
-measured on the branch transfers rather than being assumed to.
+run in this container on 2026-09-10, on `main` after `fix/tx-statement-quiesce` merged** — none
+is carried forward, none is arithmetic. The whole table was re-read in one pass, which is what
+its own rule demands. The merged tree was proven byte-identical to the branch tip's
+(`git diff main <branch>` empty), so the branch's own verification transfers rather than being
+assumed to.
 
 **`pnpm test` chains THREE configs** — chromium+unit, firefox, and the isolated project — so a
 green `pnpm test` covers what CI covers, and a commit pays all three through the pre-commit hook.
@@ -39,13 +40,13 @@ green `pnpm test` covers what CI covers, and a commit pays all three through the
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **672 tests / 56 files** (unit + chromium, **1 skipped**), **257 / 37** (firefox, **1 skipped**), **5 / 2** (isolated) |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **678 tests / 57 files** (unit + chromium, **1 skipped**), **263 / 38** (firefox, **1 skipped**), **5 / 2** (isolated) |
 | `pnpm exec rstest --project unit run` | 416 tests, 20 files |
-| `pnpm exec rstest --project chromium run` | 256 tests, 36 files |
+| `pnpm exec rstest --project chromium run` | 262 tests, 37 files |
 | `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each, **73 passed / 12 skipped**, identical on both engines |
 | `pnpm test:consumer` | 24/24 stages |
 | `BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 109 files, 13 warnings, 1 info |
+| `pnpm lint` | 110 files, 13 warnings, 1 info |
 | `dependencies` in `package.json` | absent |
 
 **The two skipped browser tests are one test, and they are the first this repository has had.**
