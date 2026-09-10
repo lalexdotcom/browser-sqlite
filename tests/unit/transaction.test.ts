@@ -7,26 +7,42 @@ import { createTransaction } from '../../src/transaction';
  * can be suspended — `hooks` runs before the statement yields, keyed by SQL
  * prefix, which is how a test gets a statement to still be in flight when the
  * signal fires.
+ *
+ * Like the real worker it reports whether its connection is in a transaction
+ * once a statement ends: open after BEGIN, closed after a COMMIT or ROLLBACK
+ * that succeeded, and closed after any statement named in `leaveOn` — which is
+ * how a test makes SQLite leave the transaction by itself.
  */
 const fakeWorker = (
   failOn: string[],
   hooks: Record<string, () => Promise<void> | void> = {},
+  leaveOn: string[] = [],
 ) => {
   const executed: string[] = [];
-  return {
+  const worker = {
     index: 3,
     executed,
+    inTransaction: undefined as boolean | undefined,
     query: async function* (sql: string) {
       executed.push(sql);
-      for (const [needle, hook] of Object.entries(hooks))
-        if (sql.startsWith(needle)) await hook();
-      if (failOn.some((needle) => sql.startsWith(needle)))
-        throw new SQLiteError('BUSY', `database is locked (${sql})`);
-      yield [] as Record<string, unknown>[];
+      const fails = failOn.some((needle) => sql.startsWith(needle));
+      try {
+        for (const [needle, hook] of Object.entries(hooks))
+          if (sql.startsWith(needle)) await hook();
+        if (fails) throw new SQLiteError('BUSY', `database is locked (${sql})`);
+        yield [] as Record<string, unknown>[];
+      } finally {
+        if (!fails && sql.startsWith('BEGIN')) worker.inTransaction = true;
+        else if (!fails && /^(COMMIT|ROLLBACK)/.test(sql))
+          worker.inTransaction = false;
+        if (leaveOn.some((needle) => sql.startsWith(needle)))
+          worker.inTransaction = false;
+      }
     },
     interrupt: () => {},
     quiesce: async () => {},
   };
+  return worker;
 };
 
 const harness = (worker: ReturnType<typeof fakeWorker>) => {
@@ -90,6 +106,40 @@ describe('transaction — a poisoned connection is never re-lent', () => {
       await tx.write('INSERT INTO t VALUES (1)');
     });
     expect(poisoned).toEqual([]);
+  });
+
+  // Falsifiable: drop the `worker.inTransaction !== false` condition around the
+  // fallback ROLLBACK in src/transaction.ts and a ROLLBACK is sent — which the
+  // real SQLite refuses, and refusing it evicts a healthy worker (spec §1.1).
+  it('sends no ROLLBACK, and loses no worker, when the connection already left', async () => {
+    const worker = fakeWorker(['INSERT'], {}, ['INSERT']);
+    const { transaction, poisoned } = harness(worker);
+
+    await expect(
+      transaction(async (tx) => {
+        await tx.write('INSERT INTO t VALUES (1)');
+      }),
+    ).rejects.toBeInstanceOf(SQLiteError);
+
+    expect(worker.executed).toEqual(['BEGIN', 'INSERT INTO t VALUES (1)']);
+    expect(poisoned).toEqual([]);
+  });
+
+  it('still rolls back a connection that reports its transaction open', async () => {
+    const worker = fakeWorker(['INSERT']);
+    const { transaction } = harness(worker);
+
+    await expect(
+      transaction(async (tx) => {
+        await tx.write('INSERT INTO t VALUES (1)');
+      }),
+    ).rejects.toBeInstanceOf(SQLiteError);
+
+    expect(worker.executed).toEqual([
+      'BEGIN',
+      'INSERT INTO t VALUES (1)',
+      'ROLLBACK',
+    ]);
   });
 });
 

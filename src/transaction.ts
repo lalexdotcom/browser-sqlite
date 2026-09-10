@@ -520,7 +520,12 @@ export const createTransaction =
         // transaction still active — that case must still roll back.
         await closeOpenStatements();
 
-        if (begun && !done) {
+        // SQLite may already have left the transaction by itself — an
+        // interrupted write rolls the whole transaction back. A ROLLBACK then
+        // fails, and failing it evicted a healthy worker (spec §1.1, R6). A
+        // worker that has reported nothing yet counts as open: the default can
+        // only cost a ROLLBACK that fails, never skip one that was owed.
+        if (begun && !done && worker.inTransaction !== false) {
           try {
             await db.rollback();
           } catch {

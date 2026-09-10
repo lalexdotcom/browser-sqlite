@@ -94,6 +94,13 @@ export type WorkerMessageData =
        * "for a sub-millisecond effect, count the round trips").
        */
       prepared: number;
+      /**
+       * Whether the connection is inside a transaction once this query has
+       * ended — `sqlite3_get_autocommit() === 0`. SQLite can leave a
+       * transaction by itself: an interrupted INSERT/UPDATE/DELETE rolls the
+       * whole transaction back. Absent when the worker could not read it.
+       */
+      inTransaction?: boolean | undefined;
     }
   | {
       type: 'error';
@@ -115,6 +122,13 @@ export type WorkerMessageData =
        * would cost the same three sites it occupies.
        */
       errorCode?: SQLiteErrorCode;
+      /**
+       * Whether the connection is inside a transaction once this query has
+       * ended — `sqlite3_get_autocommit() === 0`. SQLite can leave a
+       * transaction by itself: an interrupted INSERT/UPDATE/DELETE rolls the
+       * whole transaction back. Absent when the worker could not read it.
+       */
+      inTransaction?: boolean | undefined;
     }
   | { type: 'closed'; callId: number }
   | { type: 'deleted'; callId: number }

@@ -525,9 +525,16 @@ const open = (file: string, options: OpenOptions) => {
               type: 'error',
               callId,
               message: 'The SQLite client has been closed.',
+              inTransaction: await connectionInTransaction(),
             });
           } else {
-            reply({ type: 'done', callId, affected, prepared });
+            reply({
+              type: 'done',
+              callId,
+              affected,
+              prepared,
+              inTransaction: await connectionInTransaction(),
+            });
           }
         } catch (e) {
           reply({
@@ -547,6 +554,7 @@ const open = (file: string, options: OpenOptions) => {
             ...(typeof (e as { errorCode?: unknown })?.errorCode === 'string'
               ? { errorCode: (e as { errorCode: SQLiteErrorCode }).errorCode }
               : {}),
+            inTransaction: await connectionInTransaction(),
           });
         } finally {
           queryRunning?.resolve();
@@ -770,6 +778,22 @@ const deleteDatabaseFiles = async (data: {
   }
 
   return true;
+};
+
+/**
+ * Whether the connection is inside a transaction right now. Read after every
+ * query and sent with its reply, because SQLite can leave a transaction by
+ * itself — an interrupted write rolls the whole transaction back
+ * (https://www.sqlite.org/c3ref/interrupt.html) — and the client has no other
+ * way to learn it. `undefined` when no connection is open.
+ */
+const connectionInTransaction = async (): Promise<boolean | undefined> => {
+  try {
+    const { sqlite, db } = await openedDB!;
+    return sqlite.get_autocommit(db) === 0;
+  } catch {
+    return undefined;
+  }
 };
 
 // Top-level message handler: processes only 'open' messages.
