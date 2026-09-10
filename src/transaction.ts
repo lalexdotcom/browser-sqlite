@@ -89,6 +89,13 @@ export const createTransaction =
       read: ReadFn;
       write: WriteFn;
       transaction: TransactionFn;
+      /**
+       * Called when a bulkWrite() or output() made on this target is abandoned
+       * by its own signal or timeout. A transaction passes one, because an
+       * abandoned write abandons the transaction (spec 2026-09-10, R1) and this
+       * signal exists only in here; the client path passes none.
+       */
+      onAbandoned?: (cause: unknown) => void;
     }) => {
       bulkWrite: SQLiteQueryAPI['bulkWrite'];
       output: SQLiteQueryAPI['output'];
@@ -502,6 +509,7 @@ export const createTransaction =
             // only runs when output().close() fires, by which point db is assigned.
             // Moving `bulk` below `const db` breaks the literal that consumes it.
             transaction: (fn) => fn(db),
+            onAbandoned: (cause: unknown) => die(cause),
           });
 
       const db: SQLiteTransactionDB = {

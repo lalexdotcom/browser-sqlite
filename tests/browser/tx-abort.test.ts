@@ -237,4 +237,66 @@ describe('a write abandoned inside a transaction', () => {
       await db.close();
     }
   });
+
+  // Falsifiable, both: remove the onAbandoned registration in bulk.ts's
+  // bulkWrite; the callback goes on and the transaction commits row 1.
+  it('abandons the transaction when a tx.bulkWrite is abandoned between batches', async () => {
+    const db = await setUp({ vfs: 'MemoryVFS' });
+    try {
+      const reason = new Error('stop loading');
+      const ctl = new AbortController();
+      let later: unknown;
+      const finished = deferred();
+      await expect(
+        db.transaction(async (tx) => {
+          await tx.write('INSERT INTO t VALUES (1)');
+          const writer = tx.bulkWrite('t', ['a'], { signal: ctl.signal });
+          await writer.enqueue({ a: 2 });
+          ctl.abort(reason);
+          await writer.close().catch(() => {});
+          later = await tx.read('SELECT a FROM t').catch((e) => e);
+          finished.resolve();
+        }),
+      ).rejects.toBe(reason);
+      await finished.promise;
+
+      expect(later).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('abandons the transaction, and leaves no staging table, when a tx.output is abandoned', async () => {
+    const db = await setUp({ vfs: 'MemoryVFS' });
+    try {
+      const reason = new Error('stop loading');
+      const ctl = new AbortController();
+      const finished = deferred();
+      await expect(
+        db.transaction(async (tx) => {
+          await tx.write('INSERT INTO t VALUES (1)');
+          const out = tx.output(
+            'target',
+            { a: 'INTEGER' },
+            { signal: ctl.signal },
+          );
+          await out.enqueue({ a: 2 });
+          ctl.abort(reason);
+          await out.close().catch(() => {});
+          finished.resolve();
+        }),
+      ).rejects.toBe(reason);
+      await finished.promise;
+
+      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
+      expect(
+        await db.read(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND (name = 'target' OR name LIKE '__bsq_staging_%')",
+        ),
+      ).toEqual([]);
+    } finally {
+      await db.close();
+    }
+  });
 });
