@@ -1,5 +1,13 @@
 import { describe, expect, it } from '@rstest/core';
-import { createTestClient } from './helpers';
+import { createTestClient, longQuery } from './helpers';
+
+const deferred = () => {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+};
 
 /**
  * One INSERT whose single step() runs for hundreds of milliseconds (Chromium)
@@ -62,4 +70,171 @@ describe('a write abandoned inside a transaction', () => {
       await db.close();
     }
   }, 30_000);
+
+  // Falsifiable for 1, 3, 4, 5: remove the isAbandonedWrite() → die() line
+  // from `settled` in transaction.ts.
+  it('abandons the transaction when the callback catches it (async)', async () => {
+    const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
+    try {
+      const before = workerIdentity(db);
+      const reason = new Error('abandon the write');
+      let caught: unknown;
+      let later: unknown;
+      const finished = deferred();
+      await expect(
+        db.transaction(async (tx) => {
+          await tx.write('INSERT INTO t VALUES (1)');
+          caught = await tx
+            .write(BIG_INSERT, [], { signal: abortAfter(30, reason) })
+            .catch((e) => e);
+          later = await tx.read('SELECT a FROM t').catch((e) => e);
+          finished.resolve();
+        }),
+      ).rejects.toBe(reason);
+      await finished.promise;
+
+      expect(caught).toBe(reason);
+      expect(later).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+      expect((later as Error).cause).toBe(reason);
+      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
+      expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
+        { n: 0 },
+      ]);
+      expect(workerIdentity(db)).toBe(before);
+    } finally {
+      await db.close();
+    }
+  }, 30_000);
+
+  // Spec §1.1, last row: nothing could cut the step, the write completed, and
+  // its rows used to commit although the caller got a rejection.
+  it('keeps none of a write that ran to its end on the sync build (R5)', async () => {
+    const db = await setUp({ vfs: 'MemoryVFS' });
+    try {
+      const reason = new Error('abandon the write');
+      const finished = deferred();
+      await expect(
+        db.transaction(async (tx) => {
+          await tx
+            .write(BIG_INSERT, [], { signal: abortAfter(30, reason) })
+            .catch(() => {});
+          await tx.write('INSERT INTO t VALUES (2)').catch(() => {});
+          finished.resolve();
+        }),
+      ).rejects.toBe(reason);
+      await finished.promise;
+
+      expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
+        { n: 0 },
+      ]);
+      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
+
+  it('abandons the transaction for a write whose signal was already aborted (D4)', async () => {
+    const db = await setUp({ vfs: 'MemoryVFS' });
+    try {
+      const reason = new Error('never started');
+      const ctl = new AbortController();
+      ctl.abort(reason);
+      let later: unknown;
+      const finished = deferred();
+      await expect(
+        db.transaction(async (tx) => {
+          await tx.write('INSERT INTO t VALUES (1)');
+          await tx
+            .write('INSERT INTO t VALUES (2)', [], { signal: ctl.signal })
+            .catch(() => {});
+          later = await tx.write('INSERT INTO t VALUES (3)').catch((e) => e);
+          finished.resolve();
+        }),
+      ).rejects.toBe(reason);
+      await finished.promise;
+
+      expect(later).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('abandons the transaction for a write abandoned by its own timeout', async () => {
+    const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
+    try {
+      let caught: unknown;
+      const finished = deferred();
+      const outcome = await db
+        .transaction(async (tx) => {
+          await tx.write('INSERT INTO t VALUES (1)');
+          caught = await tx
+            .write(BIG_INSERT, [], { timeout: 30 })
+            .catch((e) => e);
+          finished.resolve();
+        })
+        .catch((e) => e);
+      await finished.promise;
+
+      expect(caught).toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 30 });
+      expect(outcome).toBe(caught);
+      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
+    } finally {
+      await db.close();
+    }
+  }, 30_000);
+
+  // Falsifiable: make isAbandonedWrite() ignore the SQL (`isWriteQuery(sql)` →
+  // `true`); the transaction dies and this goes red.
+  it('does not abandon the transaction for an abandoned read (R7)', async () => {
+    const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
+    try {
+      const slow = longQuery(20_000_000);
+      // Prepare and cache the exact statement first, so the measured run takes
+      // the cached path and the abort lands inside step() (mem:lessons, 2026-09-05).
+      await db.read(slow, [], { timeout: 50 }).catch(() => {});
+      await db.transaction(async (tx) => {
+        await tx.write('INSERT INTO t VALUES (1)');
+        await tx
+          .read(slow, [], {
+            signal: abortAfter(30, new Error('this read only')),
+          })
+          .catch(() => {});
+        await tx.write('INSERT INTO t VALUES (2)');
+      });
+      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+        { a: 0 },
+        { a: 1 },
+        { a: 2 },
+      ]);
+    } finally {
+      await db.close();
+    }
+  }, 30_000);
+
+  // Falsifiable: as for the read above — the SQL is the discriminator (D5).
+  it('abandons the transaction for a write issued through tx.first()', async () => {
+    const db = await setUp({ vfs: 'MemoryVFS' });
+    try {
+      const reason = new Error('never started');
+      const ctl = new AbortController();
+      ctl.abort(reason);
+      const finished = deferred();
+      await expect(
+        db.transaction(async (tx) => {
+          await tx
+            .first('INSERT INTO t VALUES (9) RETURNING a', [], {
+              signal: ctl.signal,
+            })
+            .catch(() => {});
+          await tx.write('INSERT INTO t VALUES (2)').catch(() => {});
+          finished.resolve();
+        }),
+      ).rejects.toBe(reason);
+      await finished.promise;
+      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
+    } finally {
+      await db.close();
+    }
+  });
 });

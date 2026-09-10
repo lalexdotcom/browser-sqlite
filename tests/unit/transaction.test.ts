@@ -475,3 +475,76 @@ describe('transaction — a closed handle never reaches the worker (spec R3, R4)
     ]);
   });
 });
+
+describe('transaction — what else kills it (spec R1)', () => {
+  // Falsifiable: remove the dieIfConnectionLeft() call from `settled` in
+  // src/transaction.ts; the SELECT runs in what is now autocommit.
+  it('dies when the connection reports it left the transaction', async () => {
+    const worker = fakeWorker(['INSERT'], {}, ['INSERT']);
+    const { transaction, poisoned } = harness(worker);
+    let first: unknown;
+    let later: unknown;
+    const finished = deferred();
+    const running = transaction(async (tx) => {
+      first = await tx.write('INSERT INTO t VALUES (1)').catch((e) => e);
+      later = await tx.read('SELECT 1').catch((e) => e);
+      finished.resolve();
+    });
+    // Captured, not `rejects.toBe(first)`: that would read `first` before the
+    // callback has assigned it.
+    const outcome = await running.catch((e) => e);
+    await finished.promise;
+    expect(first).toBeInstanceOf(SQLiteError);
+    expect(outcome).toBe(first);
+    expect(later).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+    expect((later as Error).cause).toBe(first);
+    expect(worker.executed).toEqual(['BEGIN', 'INSERT INTO t VALUES (1)']);
+    expect(poisoned).toEqual([]);
+  });
+
+  // Falsifiable: remove the isAbandonedWrite() → die() line from `settled`;
+  // the callback's next statement runs and the transaction commits.
+  it('dies when a write is abandoned by its own signal, and rolls back what is open (R5)', async () => {
+    const worker = fakeWorker([], { 'INSERT INTO t VALUES (1)': never });
+    const { transaction } = harness(worker);
+    const own = new AbortController();
+    const reason = new Error('this write only');
+    let later: unknown;
+    const finished = deferred();
+    const running = transaction(async (tx) => {
+      const pending = tx.write('INSERT INTO t VALUES (1)', [], {
+        signal: own.signal,
+      });
+      own.abort(reason);
+      await pending.catch(() => {});
+      later = await tx.write('INSERT INTO t VALUES (2)').catch((e) => e);
+      finished.resolve();
+    });
+    await expect(running).rejects.toBe(reason);
+    await finished.promise;
+    expect(later).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+    expect(worker.executed).toEqual([
+      'BEGIN',
+      'INSERT INTO t VALUES (1)',
+      'ROLLBACK',
+    ]);
+  });
+
+  it('does not die when a read is abandoned by its own signal (R7)', async () => {
+    const worker = fakeWorker([], { 'SELECT slow': never });
+    const { transaction } = harness(worker);
+    const own = new AbortController();
+    await transaction(async (tx) => {
+      const pending = tx.read('SELECT slow', [], { signal: own.signal });
+      own.abort(new Error('this read only'));
+      await pending.catch(() => {});
+      await tx.write('INSERT INTO t VALUES (2)');
+    });
+    expect(worker.executed).toEqual([
+      'BEGIN',
+      'SELECT slow',
+      'INSERT INTO t VALUES (2)',
+      'COMMIT',
+    ]);
+  });
+});

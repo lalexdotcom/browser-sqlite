@@ -5,11 +5,11 @@ import { createTestClient, longQuery, sleep } from './helpers';
  * A statement's own `timeout` inside a transaction, bounding it exactly like a
  * per-statement `signal` does: the statement rejects alone, uncaught it rolls
  * the transaction back, caught it lets the callback continue to COMMIT. Reads
- * only — see AGENTS.md / the task brief for why writes are deliberately out of
- * scope here.
+ * only: a write abandoned by its own timeout abandons the whole transaction,
+ * which tests/browser/tx-abort.test.ts pins.
  *
  * `longQuery` is a single-row aggregate: on the `sync` build with no
- * cross-origin isolation (both engines, in this suite) SQLite installs no
+ * cross-origin isolation (both engines, in this suite) worker.ts installs no
  * progress handler at all, so the recursive CTE runs to completion in one
  * uninterruptible step() regardless of the timeout. The size below (2 000 000)
  * is chosen so that natural completion is comfortably above the 200 ms budget

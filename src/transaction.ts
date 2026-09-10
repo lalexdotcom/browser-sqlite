@@ -115,10 +115,21 @@ export const createTransaction =
     // The close signal joins the caller's own here, at the single place the
     // transaction's signal is built, so it reaches everything the comment above
     // lists without any of them being told about it.
-    const { signal, release: releaseClose } = mergeSignals(
+    const { signal: outer, release: releaseClose } = mergeSignals(
       deadline,
       deps.closeSignal,
     );
+    // The causes of death decided inside the transaction (spec R1) — an
+    // abandoned write, a connection that left — join the three that come from
+    // outside by aborting this, so the race, the statements in flight and the
+    // handle's ending all see them the same way.
+    const death = new AbortController();
+    const { signal: merged, release: releaseDeath } = mergeSignals(
+      outer,
+      death.signal,
+    );
+    // Never undefined, since death.signal is not — mergeSignals cannot say so.
+    const signal = merged ?? death.signal;
     /**
      * How this transaction ended, set exactly once (spec §4). Every public
      * method of the handle reads it at its entry: once it is set, nothing the
@@ -145,6 +156,11 @@ export const createTransaction =
           : `This transaction has already ${end.kind === 'committed' ? 'committed' : 'rolled back'}; nothing more can run in it.`,
         end.kind === 'died' ? { cause: end.cause } : undefined,
       );
+
+    /** Kills the transaction with `cause` (spec R1). Nothing once it has ended. */
+    const die = (cause: unknown) => {
+      if (!ending) death.abort(cause);
+    };
     try {
       // The signal aborts the wait too: without it a transaction could not be
       // abandoned while the pool has nothing to lend, which is a state a VFS
@@ -207,6 +223,40 @@ export const createTransaction =
         !(error instanceof SQLiteError && error.code === 'GENERATOR_ABANDONED');
 
       /**
+       * Whether `error` is a WRITE abandoned by its own signal or timeout
+       * (spec R1). The SQL decides, not the method — read(), first(), chunk()
+       * and stream() accept a write too — and a signal already aborted at the
+       * call counts (D4).
+       */
+      const isAbandonedWrite = (
+        error: unknown,
+        own: AbortSignal | undefined,
+        sql: string,
+      ) => own?.aborted === true && error === own.reason && isWriteQuery(sql);
+
+      /**
+       * Kills the transaction when the connection reports it is no longer in
+       * one (spec R1, D6) — read after quiesce(), once the worker's reply has
+       * been processed. The cause is the statement's own error, or, when it
+       * succeeded, a TRANSACTION_CLOSED naming it (spec R2).
+       */
+      const dieIfConnectionLeft = (
+        failed: boolean,
+        error: unknown,
+        method: string,
+      ) => {
+        if (!begun || ending || worker.inTransaction !== false) return;
+        die(
+          failed
+            ? error
+            : new SQLiteError(
+                'TRANSACTION_CLOSED',
+                `The connection left the transaction after ${method}().`,
+              ),
+        );
+      };
+
+      /**
        * The options a statement runs with: the transaction's signal, merged with
        * the caller's own when they gave one, so either may abort the statement
        * and the reason is always the source's. `release` is owed once the
@@ -254,10 +304,12 @@ export const createTransaction =
       >(
         given: O | undefined,
         method: string,
+        sql: string,
       ): {
         options: O;
         release: () => void;
         settled: <R>(promise: Promise<R>) => Promise<R>;
+        own: AbortSignal | undefined;
       } => {
         const own = withDeadline(given, method);
         const merged = mergeSignals(signal, own.signal);
@@ -267,20 +319,31 @@ export const createTransaction =
         };
         const settled = async <R>(promise: Promise<R>): Promise<R> => {
           let refused = false;
+          let failed = false;
+          let error: unknown;
           try {
             return await promise;
-          } catch (error) {
-            refused = !owesWait(error);
-            throw error;
+          } catch (e) {
+            failed = true;
+            error = e;
+            refused = !owesWait(e);
+            // Before the wait, so the transaction — and tx.signal — die at
+            // once rather than when the worker is idle again.
+            if (isAbandonedWrite(e, own.signal, sql)) die(e);
+            throw e;
           } finally {
             release();
-            if (!refused) await worker.quiesce();
+            if (!refused) {
+              await worker.quiesce();
+              dieIfConnectionLeft(failed, error, method);
+            }
           }
         };
         return {
           options: { ...given, signal: merged.signal } as O,
           release,
           settled,
+          own: own.signal,
         };
       };
 
@@ -300,6 +363,9 @@ export const createTransaction =
         source: AsyncGenerator<R>,
         release: () => void,
         entry: OpenStatement,
+        own: AbortSignal | undefined,
+        sql: string,
+        method: string,
       ): AsyncGenerator<R> => {
         // The entry is the box the generator's own `finally` needs: it must
         // remove itself from `open` and cannot name a generator that does not
@@ -308,12 +374,17 @@ export const createTransaction =
         // also where the transport lands, whenever the factory gets to it.
         const gen = (async function* () {
           let refused = false;
+          let failed = false;
+          let error: unknown;
           try {
             if (ending) throw closedError(ending);
             yield* source;
-          } catch (error) {
-            refused = !owesWait(error);
-            throw error;
+          } catch (e) {
+            failed = true;
+            error = e;
+            refused = !owesWait(e);
+            if (isAbandonedWrite(e, own, sql)) die(e);
+            throw e;
           } finally {
             open.delete(entry);
             release();
@@ -324,7 +395,10 @@ export const createTransaction =
             // since that runs once the callback is over. `drain`'s own finally
             // has already gone out with the interrupt by the time this runs,
             // because `yield*` forwards `return()` to the source and awaits it.
-            if (!refused) await worker.quiesce();
+            if (!refused) {
+              await worker.quiesce();
+              dieIfConnectionLeft(failed, error, method);
+            }
           }
         })();
         entry.gen = gen;
@@ -414,13 +488,13 @@ export const createTransaction =
             read: (sql, params, given) => {
               if (ending) return Promise.reject(closedError(ending));
               const query = checksql(sql);
-              const { options, settled } = withSignal(given, 'read');
+              const { options, settled } = withSignal(given, 'read', query);
               return settled(readWorker(worker, query, params, options));
             },
             write: (sql, params, given) => {
               if (ending) return Promise.reject(closedError(ending));
               const query = checksql(sql);
-              const { options, settled } = withSignal(given, 'write');
+              const { options, settled } = withSignal(given, 'write', query);
               return settled(writeWorker(worker, query, params, options));
             },
             // The caller's transaction is already open. No BEGIN, no COMMIT.
@@ -438,7 +512,7 @@ export const createTransaction =
         ) => {
           if (ending) return Promise.reject(closedError(ending));
           const query = checksql(sql);
-          const { options, settled } = withSignal(given, 'read');
+          const { options, settled } = withSignal(given, 'read', query);
           return settled(readWorker<T>(worker, query, params, options));
         },
 
@@ -449,7 +523,7 @@ export const createTransaction =
         ) => {
           if (ending) return Promise.reject(closedError(ending));
           const query = checksql(sql);
-          const { options, settled } = withSignal(given, 'write');
+          const { options, settled } = withSignal(given, 'write', query);
           return settled(writeWorker<T>(worker, query, params, options));
         },
 
@@ -459,7 +533,7 @@ export const createTransaction =
           given?: SQLiteChunkOptions,
         ) => {
           const query = checksql(sql);
-          const { options, release } = withSignal(given, 'chunk');
+          const { options, release, own } = withSignal(given, 'chunk', query);
           const entry: OpenStatement = {};
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
@@ -471,7 +545,7 @@ export const createTransaction =
               entry.transport = iterator;
             },
           });
-          return releasing(source, release, entry);
+          return releasing(source, release, entry, own, query, 'chunk');
         },
 
         stream: <T extends Record<string, unknown>>(
@@ -480,7 +554,7 @@ export const createTransaction =
           given?: SQLiteChunkOptions,
         ) => {
           const query = checksql(sql);
-          const { options, release } = withSignal(given, 'stream');
+          const { options, release, own } = withSignal(given, 'stream', query);
           // streamRows forwards its options straight to chunk(), but it is a
           // generator itself: the transport lands in `entry` on the first
           // next(), not here.
@@ -495,7 +569,7 @@ export const createTransaction =
               entry.transport = iterator;
             },
           });
-          return releasing(source, release, entry);
+          return releasing(source, release, entry, own, query, 'stream');
         },
 
         first: <T extends Record<string, unknown>>(
@@ -505,7 +579,7 @@ export const createTransaction =
         ) => {
           if (ending) return Promise.reject(closedError(ending));
           const query = checksql(sql);
-          const { options, settled } = withSignal(given, 'first');
+          const { options, settled } = withSignal(given, 'first', query);
           return settled(firstWorker<T>(worker, query, params, options));
         },
 
@@ -644,6 +718,7 @@ export const createTransaction =
       }
     } finally {
       signal?.removeEventListener('abort', onAbort);
+      releaseDeath();
       releaseClose();
       releaseDeadline();
     }
