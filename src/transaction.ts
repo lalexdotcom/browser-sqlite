@@ -189,15 +189,32 @@ export const createTransaction =
        * next method added to `SQLiteTransactionDB`. Generator-returning
        * statements take `release` instead and wait in `releasing`'s finally,
        * which is the same rule at the only other place a statement can end.
+       *
+       * It also owns the statement's own `timeout`: `withDeadline` turns
+       * `given.timeout` into a signal exactly like the client path does, and
+       * that signal is merged in here alongside the transaction's own —
+       * without this a per-statement `timeout` type-checked and bounded
+       * nothing.
        */
-      const withSignal = <O extends { signal?: AbortSignal | undefined }>(
+      const withSignal = <
+        O extends {
+          signal?: AbortSignal | undefined;
+          timeout?: number | undefined;
+        },
+      >(
         given: O | undefined,
+        method: string,
       ): {
         options: O;
         release: () => void;
         settled: <R>(promise: Promise<R>) => Promise<R>;
       } => {
-        const { signal: merged, release } = mergeSignals(signal, given?.signal);
+        const own = withDeadline(given, method);
+        const merged = mergeSignals(signal, own.signal);
+        const release = () => {
+          merged.release();
+          own.release();
+        };
         const settled = async <R>(promise: Promise<R>): Promise<R> => {
           let refused = false;
           try {
@@ -210,7 +227,11 @@ export const createTransaction =
             if (!refused) await worker.quiesce();
           }
         };
-        return { options: { ...given, signal: merged } as O, release, settled };
+        return {
+          options: { ...given, signal: merged.signal } as O,
+          release,
+          settled,
+        };
       };
 
       /**
@@ -341,12 +362,12 @@ export const createTransaction =
         : deps.bulkFor({
             read: (sql, params, given) => {
               const query = checksql(sql);
-              const { options, settled } = withSignal(given);
+              const { options, settled } = withSignal(given, 'read');
               return settled(readWorker(worker, query, params, options));
             },
             write: (sql, params, given) => {
               const query = checksql(sql);
-              const { options, settled } = withSignal(given);
+              const { options, settled } = withSignal(given, 'write');
               return settled(writeWorker(worker, query, params, options));
             },
             // The caller's transaction is already open. No BEGIN, no COMMIT.
@@ -363,7 +384,7 @@ export const createTransaction =
           given?: SQLiteChunkOptions,
         ) => {
           const query = checksql(sql);
-          const { options, settled } = withSignal(given);
+          const { options, settled } = withSignal(given, 'read');
           return settled(readWorker<T>(worker, query, params, options));
         },
 
@@ -373,7 +394,7 @@ export const createTransaction =
           given?: Interruptible,
         ) => {
           const query = checksql(sql);
-          const { options, settled } = withSignal(given);
+          const { options, settled } = withSignal(given, 'write');
           return settled(writeWorker<T>(worker, query, params, options));
         },
 
@@ -383,7 +404,7 @@ export const createTransaction =
           given?: SQLiteChunkOptions,
         ) => {
           const query = checksql(sql);
-          const { options, release } = withSignal(given);
+          const { options, release } = withSignal(given, 'chunk');
           const entry: OpenStatement = {};
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
@@ -404,7 +425,7 @@ export const createTransaction =
           given?: SQLiteChunkOptions,
         ) => {
           const query = checksql(sql);
-          const { options, release } = withSignal(given);
+          const { options, release } = withSignal(given, 'stream');
           // streamRows forwards its options straight to chunk(), but it is a
           // generator itself: the transport lands in `entry` on the first
           // next(), not here.
@@ -428,7 +449,7 @@ export const createTransaction =
           given?: Interruptible,
         ) => {
           const query = checksql(sql);
-          const { options, settled } = withSignal(given);
+          const { options, settled } = withSignal(given, 'first');
           return settled(firstWorker<T>(worker, query, params, options));
         },
 

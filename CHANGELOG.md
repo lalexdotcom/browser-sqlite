@@ -275,6 +275,13 @@ All notable changes to this project are documented here.
   nothing logged and nothing thrown. The worker is now reclaimed when the engine
   collects the generator — **best effort, on no schedule you can rely on**. For a
   bound you can rely on, pass a `timeout` or a `signal`.
+- **A statement's own `timeout` inside a `transaction()` now bounds it.**
+  `read()`, `chunk()`, `stream()`, `write()` and `first()` accepted `timeout`
+  there too, but it was silently ignored — only the transaction's own
+  `timeout` and `signal` ever aborted anything. A per-statement `timeout` now
+  rejects that statement alone with `OPERATION_TIMEOUT`, exactly like a
+  per-statement `signal` already did: uncaught it rolls the transaction back,
+  caught the callback continues. `bulkWrite()` and `output()` were unaffected.
 
 ### Known limitation, unchanged and now more visible
 
