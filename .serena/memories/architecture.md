@@ -117,6 +117,34 @@ finalise a handle that query still holds — a use-after-free on a `sqlite3_stmt
 Before the cache this was merely confusing. The consequence is written where someone would
 break it, on the `available` declaration in `scheduler.ts`, not only in the worker.
 
+**A transaction statement does not resolve until the worker is idle again, and that rule is
+held by DISCIPLINE, not by structure.** Statements inside `transaction()` share one worker
+with no scheduler lease between them, so one that leaves its transport without reaching
+`done` — `first()` on any query with a row left to produce, a generator `break`-ed out of, a
+statement cut short by an abort — leaves `pool.ts`'s `deferredChunk` set and the NEXT
+statement in the same callback meets the reuse guard. `queries.ts` fires `iterator.return()`
+without awaiting it deliberately, for the client path, where a lease does the waiting; the
+transaction has no lease between statements, so it must wait for itself.
+
+The rule, and the thing to check when a seventh method is added to `SQLiteTransactionDB`:
+
+- **A promise-returning statement returns through `withSignal`'s `settled`.** The pairing is
+  the whole defence — a method gets its merged signal there or not at all, so one that skips
+  the helper is visibly wrong rather than quietly missing its wait.
+- **A generator-returning statement waits in `releasing`'s `finally`**, which is the only
+  other place a statement can end.
+- **Neither waits when `pool.ts`'s reuse guard refused the statement** (`owesWait`). A
+  refused statement never claimed the worker, so the query in flight is somebody else's;
+  waiting for it parks the rejection behind a generator that only `closeOpenStatements()`
+  will close, at the end of the callback — where the rejection was heading. That deadlocks,
+  and it is how the first version of this fix failed.
+
+**A statement inside a transaction is ALWAYS abortable**, because `withSignal` merges the
+transaction's signal into every statement and `closeSignal` is always defined. Comments
+claiming otherwise were false and were corrected on 2026-09-10; what decides whether a
+running `step()` can actually be cut is the BUILD — the `sync` build without cross-origin
+isolation installs no progress handler at all. Numbers: `mem:measurements`, TX-QUIESCE.
+
 **`PoolWorker.terminate()` is NOT the browser's method any more — it poisons the
 transport first.** `PoolWorker` is the native `Worker` (`Object.assign` in `pool.ts`), so
 terminating used to stop the thread and tell the transport nothing: a request posted

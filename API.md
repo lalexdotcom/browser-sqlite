@@ -409,13 +409,18 @@ When using [*client*.transaction()](#clienttransaction), the rules below apply t
 
 **A statement in flight inside a transaction is abandoned; one outside is not.** `close()` drains an ordinary write, because each is its own commit and rejecting it would report failure for a row that landed. Nothing inside a transaction is durable until its `COMMIT`, so there is nothing to misreport.
 
-**A `chunk()` or `stream()` generator abandoned inside the callback is closed before the transaction commits or rolls back.** That is the boundary and nothing earlier: a statement issued after the abandonment, in the same callback — including an explicit `tx.commit()` — still meets `GENERATOR_ABANDONED`.
+**A statement waits for the connection before it resolves.** Every statement in a transaction runs on the same connection, and one that ends early leaves it finishing behind: [`first()`](#clientfirst) stops at the first row, a [`chunk()`](#clientchunk) or [`stream()`](#clientstream) you `break` out of stops mid-result, an abort cuts a statement short. Each one waits for the connection to be free, so the next statement in the same callback runs normally. Any generator the callback leaves open is closed before the transaction commits or rolls back.
+
+**A generator you simply drop is the exception.** Closing one is what the transaction can wait for — exhaust it, `break` out of it, call its `return()`, or use `await using`. One that is neither closed nor exhausted still holds the connection, and the next statement in the same callback meets `GENERATOR_ABANDONED` — including an explicit `tx.commit()`.
 
 > [!WARNING]
-> If the callback abandons a `chunk()`/`stream()` with a `next()` still
-> outstanding and the statement carries no `signal` or `timeout`, closing it
-> waits for the worker to answer the stop — up to `drainTimeout`, 60 s by
-> default — with the write lock still held.
+> On the `sync` build without cross-origin isolation, a statement already
+> running cannot be stopped — see [Interrupting a call](#interrupting-a-call).
+> Waiting for it is then the whole of what a statement ending early costs:
+> `first()`, a `break`, or the end of the callback waits for the statement to
+> finish on its own, up to `drainTimeout`, 60 s by default, with the write lock
+> still held. On every other build the statement is stopped and the wait is
+> negligible.
 
 See [Queries: How they run](#how-they-run).
 

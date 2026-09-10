@@ -138,17 +138,79 @@ export const createTransaction =
       let begun = false;
 
       /**
+       * Whether a statement that ended in `error` owes the wait below.
+       *
+       * It does not when `pool.ts`'s reuse guard refused it: that rejection
+       * means the statement never claimed the worker, so the query in flight
+       * belongs to somebody else and waiting for it would be wrong twice over.
+       * It would park a rejection that has somewhere to be — the callback, or
+       * the transaction's own unwinding — behind a query this statement has no
+       * business serializing with. Two statements issued at once are one way to
+       * reach the guard; the other is a generator the callback simply DROPPED,
+       * and there nothing has closed that query at all — `idle` resolves only
+       * when `closeOpenStatements()` returns the generator at the end of the
+       * callback, which is precisely where the rejection was heading. Waiting
+       * here deadlocks the two against each other, and that was found by the
+       * test that pins the boundary, not by review.
+       */
+      const owesWait = (error: unknown): boolean =>
+        !(error instanceof SQLiteError && error.code === 'GENERATOR_ABANDONED');
+
+      /**
        * The options a statement runs with: the transaction's signal, merged with
        * the caller's own when they gave one, so either may abort the statement
        * and the reason is always the source's. `release` is owed once the
        * statement has settled — the merge is the only thing here that subscribes
        * to a signal the caller may keep alive far longer than this transaction.
+       *
+       * `settled` is the second half, and every promise-returning statement must
+       * return through it: **a statement does not resolve until the worker is
+       * idle again.** Inside a transaction the statements share one worker with
+       * no scheduler lease between them, so a statement that leaves its
+       * transport without reaching `done` — `first()` on any query with a row
+       * left to produce, a `read()`/`write()` cut short by an abort — leaves
+       * `pool.ts`'s `deferredChunk` set: `queries.ts` posts the stop and fires
+       * `iterator.return()` WITHOUT awaiting it, deliberately, because the
+       * client path has a lease to do the waiting and no reason to block. Here
+       * nobody does, so the next statement in the same callback meets the reuse
+       * guard a microtask later and throws `GENERATOR_ABANDONED`.
+       *
+       * **It costs nothing when there is nothing to wait for.** `quiesce()` is
+       * `idle?.promise ?? Promise.resolve()`, and on a query that ended by
+       * itself `pool.ts`'s transport finally has already resolved `idle` before
+       * `done` is observable here — so the round trip is paid only where the
+       * worker really is parked. And it adds no wait that was not already
+       * running: that same finally performs the whole stop-and-drain bounded by
+       * `drainTimeout`; awaiting `quiesce()` only OBSERVES it.
+       *
+       * The pairing is the point. A statement gets its signal here or not at
+       * all, so a method that skips this helper is visibly wrong rather than
+       * quietly missing its wait — which is what carries the invariant for the
+       * next method added to `SQLiteTransactionDB`. Generator-returning
+       * statements take `release` instead and wait in `releasing`'s finally,
+       * which is the same rule at the only other place a statement can end.
        */
       const withSignal = <O extends { signal?: AbortSignal | undefined }>(
         given: O | undefined,
-      ): { options: O; release: () => void } => {
+      ): {
+        options: O;
+        release: () => void;
+        settled: <R>(promise: Promise<R>) => Promise<R>;
+      } => {
         const { signal: merged, release } = mergeSignals(signal, given?.signal);
-        return { options: { ...given, signal: merged } as O, release };
+        const settled = async <R>(promise: Promise<R>): Promise<R> => {
+          let refused = false;
+          try {
+            return await promise;
+          } catch (error) {
+            refused = !owesWait(error);
+            throw error;
+          } finally {
+            release();
+            if (!refused) await worker.quiesce();
+          }
+        };
+        return { options: { ...given, signal: merged } as O, release, settled };
       };
 
       /**
@@ -174,11 +236,23 @@ export const createTransaction =
         // `src/pool.ts`'s `query` factory uses, for the same reason, and it is
         // also where the transport lands, whenever the factory gets to it.
         const gen = (async function* () {
+          let refused = false;
           try {
             yield* source;
+          } catch (error) {
+            refused = !owesWait(error);
+            throw error;
           } finally {
             open.delete(entry);
             release();
+            // The generator half of `settled`'s invariant, and the reason it
+            // belongs HERE rather than at the callback's boundary: a generator
+            // abandoned BETWEEN two statements — `break` out of a `for await`,
+            // an explicit `return()` — is not what closeOpenStatements() sees,
+            // since that runs once the callback is over. `drain`'s own finally
+            // has already gone out with the interrupt by the time this runs,
+            // because `yield*` forwards `return()` to the source and awaits it.
+            if (!refused) await worker.quiesce();
           }
         })();
         entry.gen = gen;
@@ -206,12 +280,22 @@ export const createTransaction =
        * carry no signal, so nothing else would cut it and the transaction would
        * neither reject nor give its worker back.
        *
-       * **What this can cost.** `interrupt()` only cuts the wait short when the
-       * statement was abortable; a transaction carrying no `signal` and no
-       * `timeout` passes `abortable: false` (queries.ts), so worker.ts installs
-       * no progress handler at all and has nothing to answer the stop with. On
-       * that path — the ordinary one, not an edge case — the worker cannot be
-       * interrupted, and the wait runs until the statement ends by itself or
+       * **What this can cost, and what decides it is the BUILD.** An earlier
+       * version of this comment said a transaction carrying no `signal` and no
+       * `timeout` passes `abortable: false`. That is wrong: `withSignal` merges
+       * the transaction's signal into every statement, `mergeSignals` returns
+       * the surviving side when one is absent, and `closeSignal` is always
+       * defined — so a statement inside a transaction is ALWAYS abortable, and
+       * worker.ts always installs its progress handler. Measured on 2026-09-10:
+       * `first()` on a query whose second row costs a 3 M-row recursion returns
+       * in 2.4 ms on the async build, against 683 ms for the same query on the
+       * client path, which passes no signal and is genuinely not abortable.
+       *
+       * What is left is the case worker.ts cannot serve: on the `sync` build
+       * WITHOUT cross-origin isolation it installs no progress handler at all —
+       * no yield to read the stop, no abort slot to poll — so a worker inside
+       * `step()` runs to the end of that statement. The same query measures
+       * 360 ms there. The wait then runs until the statement ends by itself or
        * `drainTimeout` in pool.ts elapses — 60 s by default — after which the
        * worker is declared dead, `quiesce()` settles, and the slot is evicted.
        * `drainTimeout` is that bound already; stacking a second one on top of
@@ -257,17 +341,13 @@ export const createTransaction =
         : deps.bulkFor({
             read: (sql, params, given) => {
               const query = checksql(sql);
-              const { options, release } = withSignal(given);
-              return readWorker(worker, query, params, options).finally(
-                release,
-              );
+              const { options, settled } = withSignal(given);
+              return settled(readWorker(worker, query, params, options));
             },
             write: (sql, params, given) => {
               const query = checksql(sql);
-              const { options, release } = withSignal(given);
-              return writeWorker(worker, query, params, options).finally(
-                release,
-              );
+              const { options, settled } = withSignal(given);
+              return settled(writeWorker(worker, query, params, options));
             },
             // The caller's transaction is already open. No BEGIN, no COMMIT.
             // db is referenced before its const declaration, deliberately: this arrow
@@ -283,8 +363,8 @@ export const createTransaction =
           given?: SQLiteChunkOptions,
         ) => {
           const query = checksql(sql);
-          const { options, release } = withSignal(given);
-          return readWorker<T>(worker, query, params, options).finally(release);
+          const { options, settled } = withSignal(given);
+          return settled(readWorker<T>(worker, query, params, options));
         },
 
         write: <T extends Record<string, unknown>>(
@@ -293,10 +373,8 @@ export const createTransaction =
           given?: Interruptible,
         ) => {
           const query = checksql(sql);
-          const { options, release } = withSignal(given);
-          return writeWorker<T>(worker, query, params, options).finally(
-            release,
-          );
+          const { options, settled } = withSignal(given);
+          return settled(writeWorker<T>(worker, query, params, options));
         },
 
         chunk: <T extends Record<string, unknown>>(
@@ -350,10 +428,8 @@ export const createTransaction =
           given?: Interruptible,
         ) => {
           const query = checksql(sql);
-          const { options, release } = withSignal(given);
-          return firstWorker<T>(worker, query, params, options).finally(
-            release,
-          );
+          const { options, settled } = withSignal(given);
+          return settled(firstWorker<T>(worker, query, params, options));
         },
 
         bulkWrite: bulk.bulkWrite,

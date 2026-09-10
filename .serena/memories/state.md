@@ -88,10 +88,13 @@ and only one of them is still open.
 - **HANDLE-2 was investigated the same day and came apart** — its stated cause is measured
   false and the wedge does not reproduce anywhere, on `main` or before the fix (§ below).
   What produced its symptom was a write-lock defect, now fixed and merged.
-- **`tx.first()` followed by another statement in the same callback raises
-  `GENERATOR_ABANDONED`.** STILL OPEN, untouched, and pre-existing. `mem:follow-ups` carries
-  the fix worked out but not written. `API.md` lists `first` among the ordinary querying
-  surface, so a consumer has no warning.
+- **The short-circuited-statement defect is FIXED and merged** (2026-09-10, § below). What was
+  described here as a `tx.first()` defect was four faces of one mechanism.
+- **One subject is open and it is the next one: a per-statement `timeout` inside
+  `transaction()` is silently ignored.** Found while scoping the fix above, confirmed by
+  reading, and the user called it *"un trou dans la raquette, à combler"*. `mem:follow-ups`
+  carries it. **The user asked to restart cold on it** (2026-09-10) — do not carry this
+  session's framing into it.
 
 The user's words were general — *"on ne sort pas la RC5 avec ce genre de sujets pas réglés"* —
 so **treat this as the subjects that were in front of them, not as proven exhaustive**: confirm
@@ -140,6 +143,51 @@ permanent, silent, origin-wide — was found and fixed the same day (§ below).
 2026-09-08 by medianing the bench corpus at n≥3 per platform (`mem:measurements`,
 VFS-MEDIAN). The answer was not "move it": there are now **two** recommendations,
 `OPFSWriteAheadVFS` and `OPFSAdaptiveVFS`, and the constant itself left `src/` — see § below.
+
+## The transaction's per-statement wait — merged 2026-09-10
+
+No spec and no plan: brainstormed in chat, the user validating each step, like the write-lock
+work below. Branch `fix/tx-statement-quiesce`. The invariant itself now lives in
+`mem:architecture`; the numbers in `mem:measurements`, TX-QUIESCE.
+
+**What it was.** A statement in a `transaction()` callback that ended before its result did
+left the shared worker still finishing, and the next statement in the same callback met
+`pool.ts`'s reuse guard. Four faces, one mechanism: `first()` on any query with a row left to
+produce — its ordinary use — a `chunk()`/`stream()` `break`-ed out of BETWEEN two statements,
+and `read`/`write`/`bulkWrite`/`output` cut short by a per-statement abort the callback caught.
+Pre-existing, deterministic, both engines.
+
+**Five things the code will not tell you:**
+
+- **The scope was wrong in the backlog and reading the code is what fixed it.** The entry
+  described a `tx.first()` defect for a week. `read`/`write` are immune on the normal path
+  because they loop to `next.done` — that had to be READ, not inferred, and the entry said so.
+- **Option B was designed and refused.** Making `pool.ts`'s reuse guard wait when
+  `deferredChunk && stopped` would have covered the same four faces in one place, and cannot be
+  forgotten by a seventh method. It loses on three counts: the discriminator holds only by an
+  execution order established three layers away; the wait would be attributed to the innocent
+  next statement rather than the culprit; and it sits before `runQuery` destructures its
+  options, so the caller's own `signal` could not cut it. **Do not re-propose it without
+  answering those three.**
+- **The first version of the fix deadlocked, and only a boundary test found it.** Waiting
+  unconditionally parks a statement the guard REFUSED behind a query it never claimed — which,
+  for a generator the callback dropped, only `closeOpenStatements()` will ever close. Hence
+  `owesWait`.
+- **A generator the callback merely DROPS is not covered and cannot be.** Nothing signals a
+  drop; from outside it is indistinguishable from a consumer who means to come back to it. It
+  still raises `GENERATOR_ABANDONED`, and that is now the only remaining trigger inside a
+  transaction along with a deliberate overlap — which keeps the error reachable and its message
+  true. The failure is clean and pinned: no eviction, rollback intact, client still serving.
+- **Two comments in the repository were false and the measurement is what caught them.**
+  `closeOpenStatements()` and `API.md` both said a transaction carrying no `signal`/`timeout`
+  passes `abortable: false`. A transaction statement is ALWAYS abortable. What decides whether
+  a running `step()` can be cut is the BUILD: the `sync` build without cross-origin isolation
+  installs no progress handler at all. Both were corrected with the numbers.
+
+**What it does NOT deliver.** The dropped generator above. And on the `sync` build without
+isolation, a statement ending early waits for the current `step()` to finish — 360 ms on a
+deliberately pathological query, `drainTimeout` at worst, with the write lock held. `API.md`
+says exactly that, and no longer says anything about `signal`.
 
 ## The origin write lock — merged 2026-09-09
 
