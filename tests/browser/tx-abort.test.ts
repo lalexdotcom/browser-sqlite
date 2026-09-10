@@ -133,28 +133,31 @@ describe('a write abandoned inside a transaction', () => {
     }
   }, 60_000);
 
-  it('abandons the transaction for a write whose signal was already aborted (D4)', async () => {
+  // Spec 2026-09-10, D4 reversed: a write whose own signal is already
+  // aborted at the call never reaches the worker, so it rejects alone — the
+  // callback catches it exactly as for any other error, and the transaction
+  // goes on to commit both other rows.
+  it('rejects a write whose signal was already aborted, and the transaction goes on', async () => {
     const db = await setUp({ vfs: 'MemoryVFS' });
     try {
       const reason = new Error('never started');
       const ctl = new AbortController();
       ctl.abort(reason);
-      let later: unknown;
-      const finished = deferred();
-      await expect(
-        db.transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
-          await tx
-            .write('INSERT INTO t VALUES (2)', [], { signal: ctl.signal })
-            .catch(() => {});
-          later = await tx.write('INSERT INTO t VALUES (3)').catch((e) => e);
-          finished.resolve();
-        }),
-      ).rejects.toBe(reason);
-      await finished.promise;
+      let refused: unknown;
+      await db.transaction(async (tx) => {
+        await tx.write('INSERT INTO t VALUES (1)');
+        refused = await tx
+          .write('INSERT INTO t VALUES (2)', [], { signal: ctl.signal })
+          .catch((e) => e);
+        await tx.write('INSERT INTO t VALUES (3)');
+      });
 
-      expect(later).toMatchObject({ code: 'TRANSACTION_CLOSED' });
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
+      expect(refused).toBe(reason);
+      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+        { a: 0 },
+        { a: 1 },
+        { a: 3 },
+      ]);
     } finally {
       await db.close();
     }
@@ -213,30 +216,38 @@ describe('a write abandoned inside a transaction', () => {
   }, 30_000);
 
   // Falsifiable: as for the read above — the SQL is the discriminator (D5).
+  // In-flight, not pre-aborted (D5): the pre-aborted version's falsifier
+  // (discriminate on the method instead of the SQL) did not flip it, since a
+  // pre-aborted write never reaches withSignal's catch at all. This cuts a
+  // running step instead, on OPFSAdaptiveVFS's async build.
+  // Falsifiable: make isAbandonedWrite() discriminate on the METHOD instead
+  // of the SQL (e.g. `method === 'write'` in place of `isWriteQuery(sql)`).
   it('abandons the transaction for a write issued through tx.first()', async () => {
-    const db = await setUp({ vfs: 'MemoryVFS' });
+    const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
     try {
-      const reason = new Error('never started');
-      const ctl = new AbortController();
-      ctl.abort(reason);
+      const reason = new Error('cut mid-step');
+      let caught: unknown;
       const finished = deferred();
       await expect(
         db.transaction(async (tx) => {
-          await tx
-            .first('INSERT INTO t VALUES (9) RETURNING a', [], {
-              signal: ctl.signal,
+          caught = await tx
+            .first(`${BIG_INSERT} RETURNING x`, [], {
+              signal: abortAfter(30, reason),
             })
-            .catch(() => {});
-          await tx.write('INSERT INTO t VALUES (2)').catch(() => {});
+            .catch((e) => e);
           finished.resolve();
         }),
       ).rejects.toBe(reason);
       await finished.promise;
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
+
+      expect(caught).toBe(reason);
+      expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
+        { n: 0 },
+      ]);
     } finally {
       await db.close();
     }
-  });
+  }, 30_000);
 
   // Falsifiable, both: remove the onAbandoned registration in bulk.ts's
   // bulkWrite; the callback goes on and the transaction commits row 1.
@@ -262,6 +273,41 @@ describe('a write abandoned inside a transaction', () => {
 
       expect(later).toMatchObject({ code: 'TRANSACTION_CLOSED' });
       expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  // Spec 2026-09-10, D4 reversed: a bulkWrite created with a signal already
+  // aborted writes nothing and rejects alone — no `abandon` listener is even
+  // registered for it (src/bulk.ts) — so the transaction goes on.
+  // Falsifiable: register the `abandon` listener unconditionally in
+  // src/bulk.ts's bulkWrite, as before — the transaction dies instead.
+  it('rejects a tx.bulkWrite created with an aborted signal, and the transaction goes on', async () => {
+    const db = await setUp({ vfs: 'MemoryVFS' });
+    try {
+      const reason = new Error('never started');
+      const ctl = new AbortController();
+      ctl.abort(reason);
+      let refused: unknown;
+
+      await db.transaction(async (tx) => {
+        await tx.write('INSERT INTO t VALUES (1)');
+        const writer = tx.bulkWrite('t', ['a'], { signal: ctl.signal });
+        try {
+          writer.enqueue({ a: 2 });
+        } catch (e) {
+          refused = e;
+        }
+        await tx.write('INSERT INTO t VALUES (3)');
+      });
+
+      expect(refused).toBe(reason);
+      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+        { a: 0 },
+        { a: 1 },
+        { a: 3 },
+      ]);
     } finally {
       await db.close();
     }

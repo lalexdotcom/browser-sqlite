@@ -175,14 +175,16 @@ export const createBulk = (shared: {
       // caller keeps does not collect one listener per writer.
       signal?.addEventListener('abort', releaseRoom, { once: true });
 
-      // A transaction's bulkWrite is one of its writes: abandoning it abandons
-      // the transaction, even between batches, where no statement is in flight
-      // to say so. A signal already aborted never fires `abort`, hence the
-      // direct call. output() is covered too: it hands its signal to this.
+      // A transaction's bulkWrite is one of its writes: a load abandoned
+      // AFTER creation abandons the transaction, even between batches, where
+      // no statement is in flight to say so. One created with a signal
+      // already aborted writes nothing — enqueue()/close() reject with it
+      // below, via throwIfAborted() — and rejects alone (spec 2026-09-10, D4
+      // reversed): the transaction goes on. output() is covered too: it
+      // hands its signal to this.
       const abandon = () => onAbandoned?.(signal?.reason);
-      if (onAbandoned && signal) {
-        if (signal.aborted) abandon();
-        else signal.addEventListener('abort', abandon, { once: true });
+      if (onAbandoned && signal && !signal.aborted) {
+        signal.addEventListener('abort', abandon, { once: true });
       }
 
       const fail = (): SQLiteBulkWriteError =>

@@ -230,16 +230,23 @@ export const createTransaction =
         !(error instanceof SQLiteError && error.code === 'GENERATOR_ABANDONED');
 
       /**
-       * Whether `error` is a WRITE abandoned by its own signal or timeout
-       * (spec R1). The SQL decides, not the method — read(), first(), chunk()
-       * and stream() accept a write too — and a signal already aborted at the
-       * call counts (D4).
+       * Whether `error` is a WRITE abandoned WHILE IT RAN, by its own signal
+       * or timeout (spec 2026-09-10, D4 reversed). The SQL decides, not the
+       * method — read(), first(), chunk() and stream() accept a write too —
+       * but a signal already aborted AT THE CALL does not count: that write
+       * never reached the worker, so it rejects alone and the callback may
+       * continue, exactly as for any other caught error.
        */
       const isAbandonedWrite = (
         error: unknown,
         own: AbortSignal | undefined,
         sql: string,
-      ) => own?.aborted === true && error === own.reason && isWriteQuery(sql);
+        abortedAtCall: boolean,
+      ) =>
+        !abortedAtCall &&
+        own?.aborted === true &&
+        error === own.reason &&
+        isWriteQuery(sql);
 
       /**
        * Kills the transaction when the connection reports it is no longer in
@@ -317,8 +324,13 @@ export const createTransaction =
         release: () => void;
         settled: <R>(promise: Promise<R>) => Promise<R>;
         own: AbortSignal | undefined;
+        abortedAtCall: boolean;
       } => {
         const own = withDeadline(given, method);
+        // At the call, before anything can settle: D4 reversed decides on
+        // this snapshot, not on whatever `own.signal.aborted` reads once the
+        // statement has already rejected.
+        const abortedAtCall = own.signal?.aborted === true;
         const merged = mergeSignals(signal, own.signal);
         const release = () => {
           merged.release();
@@ -336,7 +348,7 @@ export const createTransaction =
             refused = !owesWait(e);
             // Before the wait, so the transaction — and tx.signal — die at
             // once rather than when the worker is idle again.
-            if (isAbandonedWrite(e, own.signal, sql)) die(e);
+            if (isAbandonedWrite(e, own.signal, sql, abortedAtCall)) die(e);
             throw e;
           } finally {
             release();
@@ -351,6 +363,7 @@ export const createTransaction =
           release,
           settled,
           own: own.signal,
+          abortedAtCall,
         };
       };
 
@@ -373,6 +386,7 @@ export const createTransaction =
         own: AbortSignal | undefined,
         sql: string,
         method: string,
+        abortedAtCall: boolean,
       ): AsyncGenerator<R> => {
         // The entry is the box the generator's own `finally` needs: it must
         // remove itself from `open` and cannot name a generator that does not
@@ -399,7 +413,7 @@ export const createTransaction =
             failed = true;
             error = e;
             refused = !owesWait(e);
-            if (isAbandonedWrite(e, own, sql)) die(e);
+            if (isAbandonedWrite(e, own, sql, abortedAtCall)) die(e);
             throw e;
           } finally {
             open.delete(entry);
@@ -550,7 +564,11 @@ export const createTransaction =
           given?: SQLiteChunkOptions,
         ) => {
           const query = checksql(sql);
-          const { options, release, own } = withSignal(given, 'chunk', query);
+          const { options, release, own, abortedAtCall } = withSignal(
+            given,
+            'chunk',
+            query,
+          );
           const entry: OpenStatement = {};
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
@@ -562,7 +580,15 @@ export const createTransaction =
               entry.transport = iterator;
             },
           });
-          return releasing(source, release, entry, own, query, 'chunk');
+          return releasing(
+            source,
+            release,
+            entry,
+            own,
+            query,
+            'chunk',
+            abortedAtCall,
+          );
         },
 
         stream: <T extends Record<string, unknown>>(
@@ -571,7 +597,11 @@ export const createTransaction =
           given?: SQLiteChunkOptions,
         ) => {
           const query = checksql(sql);
-          const { options, release, own } = withSignal(given, 'stream', query);
+          const { options, release, own, abortedAtCall } = withSignal(
+            given,
+            'stream',
+            query,
+          );
           // streamRows forwards its options straight to chunk(), but it is a
           // generator itself: the transport lands in `entry` on the first
           // next(), not here.
@@ -586,7 +616,15 @@ export const createTransaction =
               entry.transport = iterator;
             },
           });
-          return releasing(source, release, entry, own, query, 'stream');
+          return releasing(
+            source,
+            release,
+            entry,
+            own,
+            query,
+            'stream',
+            abortedAtCall,
+          );
         },
 
         first: <T extends Record<string, unknown>>(

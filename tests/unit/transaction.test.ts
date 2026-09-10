@@ -706,3 +706,31 @@ describe('tx.signal — aborts whenever transaction() rejects (spec 2026-09-10, 
     expect(seen.aborted).toBe(false);
   });
 });
+
+describe('transaction — a write whose own signal was already aborted at the call (spec 2026-09-10, D4 reversed)', () => {
+  // Falsifiable: drop `abortedAtCall` from isAbandonedWrite's condition in
+  // src/transaction.ts — the caught write then kills the transaction and
+  // 'INSERT INTO t VALUES (2)' never runs, so `executed` stops at 'BEGIN'.
+  it('rejects the write alone, and the transaction goes on to COMMIT', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    const ctl = new AbortController();
+    const reason = new Error('gone before this write');
+    ctl.abort(reason);
+    let refused: unknown;
+
+    await transaction(async (tx) => {
+      refused = await tx
+        .write('INSERT INTO t VALUES (1)', [], { signal: ctl.signal })
+        .catch((e) => e);
+      await tx.write('INSERT INTO t VALUES (2)');
+    });
+
+    expect(refused).toBe(reason);
+    expect(worker.executed).toEqual([
+      'BEGIN',
+      'INSERT INTO t VALUES (2)',
+      'COMMIT',
+    ]);
+  });
+});
