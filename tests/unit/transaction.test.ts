@@ -46,7 +46,15 @@ const fakeWorker = (
   return worker;
 };
 
-const harness = (worker: ReturnType<typeof fakeWorker>) => {
+const harness = (
+  worker: ReturnType<typeof fakeWorker>,
+  overrides: {
+    /** Default resolves at once. Override to observe the afterWrite window. */
+    afterWrite?: () => Promise<unknown>;
+    /** Default never aborts: these tests are about the caller's own signal. */
+    closeSignal?: AbortSignal;
+  } = {},
+) => {
   const poisoned: number[] = [];
   const warnings: string[] = [];
   const scheduler = {
@@ -59,11 +67,9 @@ const harness = (worker: ReturnType<typeof fakeWorker>) => {
   };
   const transaction = createTransaction({
     scheduler: scheduler as never,
-    afterWrite: () => Promise.resolve(),
+    afterWrite: overrides.afterWrite ?? (() => Promise.resolve()),
     onPoisoned: (index: number) => poisoned.push(index),
-    // Never aborted here: these tests are about the caller's own signal, and a
-    // client that never closes is the state they all assume.
-    closeSignal: new AbortController().signal,
+    closeSignal: overrides.closeSignal ?? new AbortController().signal,
     bulkFor: () => ({
       bulkWrite: () => ({ enqueue: async () => {}, close: async () => 0 }),
       output: () => ({ enqueue: async () => {}, close: async () => 0 }),
@@ -653,5 +659,50 @@ describe('transaction — closed handle: chunk()/stream() do not wait on the wor
 
     expect(chunkResult).toMatchObject({ code: 'TRANSACTION_CLOSED' });
     expect(streamResult).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+  });
+});
+
+describe('tx.signal — aborts whenever transaction() rejects (spec 2026-09-10, R8 amended)', () => {
+  // Falsifiable: remove `die(e)` from the catch in src/transaction.ts — this
+  // and the "throws" browser test in tests/browser/tx-handle.test.ts both go
+  // red.
+  it('aborts with the same error a failing auto-COMMIT rejects with', async () => {
+    const worker = fakeWorker(['COMMIT']);
+    const { transaction } = harness(worker);
+    let seen!: AbortSignal;
+
+    const outcome = await transaction(async (tx) => {
+      seen = tx.signal;
+      await tx.write('INSERT INTO t VALUES (1)');
+    }).catch((e) => e);
+
+    expect(outcome).toBeInstanceOf(SQLiteError);
+    expect(seen.aborted).toBe(true);
+    expect(seen.reason).toBe(outcome);
+  });
+
+  // Falsifiable: move the releaseDeath()/removeEventListener detach in
+  // src/transaction.ts's inner finally back to after `await
+  // deps.afterWrite(worker)` — this then goes red, since close() would abort
+  // tx.signal on a transaction that already resolved as committed.
+  it('does not abort tx.signal when close() lands during afterWrite, on a transaction that resolved', async () => {
+    const worker = fakeWorker([]);
+    const closeCtl = new AbortController();
+    const { transaction } = harness(worker, {
+      afterWrite: async () => {
+        closeCtl.abort(new Error('closed during afterWrite'));
+      },
+      closeSignal: closeCtl.signal,
+    });
+    let seen!: AbortSignal;
+
+    await expect(
+      transaction(async (tx) => {
+        seen = tx.signal;
+        await tx.write('INSERT INTO t VALUES (1)');
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(seen.aborted).toBe(false);
   });
 });

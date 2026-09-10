@@ -14,6 +14,28 @@ const gate = () => {
   return { promise, open };
 };
 
+const deferred = () => {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+};
+
+/**
+ * One INSERT whose single step() runs for hundreds of milliseconds (Chromium)
+ * to seconds (Firefox), so an abort at 30 ms lands inside it on a build that
+ * can cut a running step. Copied from tests/browser/tx-abort.test.ts.
+ */
+const BIG_INSERT =
+  'INSERT INTO big WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 1000000) SELECT x FROM c';
+
+const abortAfter = (ms: number, reason: unknown) => {
+  const ctl = new AbortController();
+  setTimeout(() => ctl.abort(reason), ms);
+  return ctl.signal;
+};
+
 /**
  * Transaction B on a `poolSize: 1` client — so on the worker the previous
  * transaction used — paused between its two statements while the test does
@@ -165,24 +187,61 @@ describe('a statement after an explicit end, inside the callback', () => {
 describe('tx.signal', () => {
   // Falsifiable: expose `outer` instead of the merged signal; the death
   // controller never reaches it and this stays un-aborted.
+  //
+  // An in-flight abort, not a pre-aborted one (spec 2026-09-10, D4 reversed):
+  // a write whose own signal is already aborted at the call now rejects
+  // alone and no longer kills the transaction, so this test needs a write the
+  // signal cuts WHILE IT RUNS. createTestClient()'s default VFS,
+  // OPFSAdaptiveVFS, is on the async build, which can cut a running step.
   it('aborts with the write reason when an abandoned write kills the transaction', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
       await db.write('CREATE TABLE t (a INTEGER)');
+      await db.write('CREATE TABLE big (x INTEGER)');
       const reason = new Error('abandon the write');
-      const ctl = new AbortController();
-      ctl.abort(reason);
       let seen!: AbortSignal;
+      const finished = deferred();
+
+      const outcome = await db
+        .transaction(async (tx) => {
+          seen = tx.signal;
+          await tx
+            .write(BIG_INSERT, [], { signal: abortAfter(30, reason) })
+            .catch(() => {});
+          finished.resolve();
+        })
+        .catch((e) => e);
+      await finished.promise;
+
+      expect(outcome).toBe(reason);
+      expect(seen.aborted).toBe(true);
+      expect(seen.reason).toBe(reason);
+    } finally {
+      await db.close();
+    }
+  }, 30_000);
+
+  // Falsifiable: remove `die(e)` from the catch in src/transaction.ts's
+  // createTransaction — transaction() still rejects with `boom`, but
+  // tx.signal stays un-aborted.
+  it('aborts with the error the callback throws', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    try {
+      await db.write('CREATE TABLE t (a INTEGER)');
+      const boom = new Error('boom');
+      let seen!: AbortSignal;
+
       await expect(
         db.transaction(async (tx) => {
           seen = tx.signal;
-          await tx
-            .write('INSERT INTO t VALUES (1)', [], { signal: ctl.signal })
-            .catch(() => {});
+          await tx.write('INSERT INTO t VALUES (1)');
+          throw boom;
         }),
-      ).rejects.toBe(reason);
+      ).rejects.toBe(boom);
+
       expect(seen.aborted).toBe(true);
-      expect(seen.reason).toBe(reason);
+      expect(seen.reason).toBe(boom);
+      expect(await db.read('SELECT a FROM t')).toEqual([]);
     } finally {
       await db.close();
     }
@@ -221,21 +280,25 @@ describe('tx.signal', () => {
   // returns closeSignal itself and that release is a no-op.)
   it('is not aborted by a normal end, an explicit commit, or a later close()', async () => {
     const db = await createTestClient({ poolSize: 1 });
-    await db.write('CREATE TABLE t (a INTEGER)');
-    let seen!: AbortSignal;
-    let afterCommit: boolean | undefined;
-    await db.transaction(
-      async (tx) => {
-        seen = tx.signal;
-        await tx.write('INSERT INTO t VALUES (1)');
-        await tx.commit();
-        afterCommit = tx.signal.aborted;
-      },
-      { autoCommit: false },
-    );
-    expect(afterCommit).toBe(false);
-    expect(seen.aborted).toBe(false);
-    await db.close();
-    expect(seen.aborted).toBe(false);
+    try {
+      await db.write('CREATE TABLE t (a INTEGER)');
+      let seen!: AbortSignal;
+      let afterCommit: boolean | undefined;
+      await db.transaction(
+        async (tx) => {
+          seen = tx.signal;
+          await tx.write('INSERT INTO t VALUES (1)');
+          await tx.commit();
+          afterCommit = tx.signal.aborted;
+        },
+        { autoCommit: false },
+      );
+      expect(afterCommit).toBe(false);
+      expect(seen.aborted).toBe(false);
+      await db.close();
+      expect(seen.aborted).toBe(false);
+    } finally {
+      await db.close();
+    }
   });
 });

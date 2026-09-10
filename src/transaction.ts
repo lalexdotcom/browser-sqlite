@@ -684,6 +684,13 @@ export const createTransaction =
         }
         return result;
       } catch (e) {
+        // First: tx.signal aborts whenever transaction() rejects, whatever the
+        // reason (spec 2026-09-10, R8 amended). die() is a no-op once the
+        // transaction has already ended or died, so a death that caused this
+        // rejection keeps its own cause; otherwise the handle becomes `died`
+        // with cause `e` here, before anything else runs.
+        die(e);
+
         // Only roll back if the transaction is still open. `done` is set after the
         // statement succeeds, so a COMMIT that failed leaves it false and the
         // transaction still active — that case must still roll back.
@@ -724,6 +731,14 @@ export const createTransaction =
       } finally {
         // No path out of transaction() may leave the handle open (spec §4).
         ending ??= { kind: 'rolled-back' };
+        // Detached here, before afterWrite() publishes the commit epoch — not
+        // after it — so a close() or a timeout landing during afterWrite
+        // cannot abort tx.signal on a transaction that has already resolved
+        // as committed (spec 2026-09-10, R8 amended). Kept in the outer
+        // finally too (idempotent): it covers a failed lease acquisition,
+        // which never reaches this inner finally at all.
+        releaseDeath();
+        signal?.removeEventListener('abort', onAbort);
         teardown();
         // Same reasoning as write(): before the void, because release is
         // asynchronous. A read-only transaction commits nothing and must not
