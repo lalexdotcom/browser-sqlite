@@ -547,4 +547,111 @@ describe('transaction — what else kills it (spec R1)', () => {
       'COMMIT',
     ]);
   });
+
+  // The generator half of the same rules (review I3, T3): settled() and
+  // releasing() are two places a statement can end, and each needs its own
+  // test — a fake worker exercised only through read()/write() cannot tell
+  // them apart.
+
+  // Falsifiable: remove the isAbandonedWrite() → die() line from `releasing`
+  // in src/transaction.ts; the callback goes on and the transaction commits.
+  it('dies when a write issued through tx.chunk() is abandoned by its own signal', async () => {
+    const worker = fakeWorker([], {
+      'INSERT INTO t VALUES (1) RETURNING a': never,
+    });
+    const { transaction } = harness(worker);
+    const own = new AbortController();
+    const reason = new Error('this chunk only');
+
+    const running = transaction(async (tx) => {
+      const gen = tx.chunk('INSERT INTO t VALUES (1) RETURNING a', [], {
+        signal: own.signal,
+      });
+      const pending = gen.next();
+      own.abort(reason);
+      await pending.catch(() => {});
+    });
+
+    await expect(running).rejects.toBe(reason);
+    expect(worker.executed).toEqual([
+      'BEGIN',
+      'INSERT INTO t VALUES (1) RETURNING a',
+      'ROLLBACK',
+    ]);
+  });
+
+  // Falsifiable: remove the dieIfConnectionLeft() call from `releasing` in
+  // src/transaction.ts; the for-await loop finishes and the transaction
+  // commits instead of dying.
+  it('dies when the connection leaves the transaction after a tx.chunk() statement', async () => {
+    const worker = fakeWorker([], {}, ['SELECT 1']);
+    const { transaction } = harness(worker);
+
+    const running = transaction(async (tx) => {
+      for await (const _rows of tx.chunk('SELECT 1')) {
+        // drain it
+      }
+    });
+
+    const outcome = await running.catch((e) => e);
+    expect(outcome).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+    expect(worker.executed).toEqual(['BEGIN', 'SELECT 1']);
+  });
+
+  // dieIfConnectionLeft's SUCCESS branch: the statement itself succeeded, so
+  // there is no error to keep — the transaction dies with a fresh
+  // TRANSACTION_CLOSED naming the method that made SQLite leave.
+  it('dies with a TRANSACTION_CLOSED naming read() when the connection reports no transaction after it succeeds', async () => {
+    const worker = fakeWorker([], {}, ['SELECT']);
+    const { transaction } = harness(worker);
+
+    const outcome = await transaction(async (tx) => {
+      await tx.read('SELECT 1');
+    }).catch((e) => e);
+
+    expect(outcome).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+    expect((outcome as Error).message).toContain('read()');
+  });
+});
+
+describe('transaction — closed handle: chunk()/stream() do not wait on the worker (review I2)', () => {
+  // Falsifiable: move the `if (ending)` check in `releasing` back inside the
+  // try — the finally then awaits worker.quiesce(), which here never
+  // resolves, so the bounded race times out instead of rejecting with
+  // TRANSACTION_CLOSED.
+  it('rejects at once, without awaiting quiesce(), once the transaction has ended', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    let kept!: SQLiteTransactionDB;
+    await transaction(async (tx) => {
+      kept = tx;
+      await tx.write('INSERT INTO t VALUES (1)');
+    });
+    // A worker whose current query never lets go — the reuse guard's
+    // unbounded wait this fix must not take.
+    worker.quiesce = () => new Promise<void>(() => {});
+
+    const bounded = <T>(promise: Promise<T>, what: string): Promise<T> =>
+      Promise.race([
+        promise,
+        new Promise<T>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`timed out waiting on ${what}`)),
+            500,
+          ),
+        ),
+      ]);
+
+    const chunkResult = await bounded(
+      kept.chunk('SELECT 1').next(),
+      'chunk().next()',
+    ).catch((e) => e);
+    const streamResult = await bounded(
+      kept.stream('SELECT 1').next(),
+      'stream().next()',
+    ).catch((e) => e);
+
+    expect(chunkResult).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+    expect(streamResult).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+  });
 });

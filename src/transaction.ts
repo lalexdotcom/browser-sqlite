@@ -380,11 +380,20 @@ export const createTransaction =
         // `src/pool.ts`'s `query` factory uses, for the same reason, and it is
         // also where the transport lands, whenever the factory gets to it.
         const gen = (async function* () {
+          // Checked before the try, not inside it (review I2): a closed
+          // handle throws here at once, without the finally below waiting on
+          // `worker.quiesce()` for a statement that never claimed the
+          // worker — the `owesWait` rule applied on this, the generator half
+          // of the same path `settled` guards with `refused`.
+          if (ending) {
+            open.delete(entry);
+            release();
+            throw closedError(ending);
+          }
           let refused = false;
           let failed = false;
           let error: unknown;
           try {
-            if (ending) throw closedError(ending);
             yield* source;
           } catch (e) {
             failed = true;
