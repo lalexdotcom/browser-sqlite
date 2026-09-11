@@ -14,7 +14,7 @@
 //
 // Without that flag `globalThis.gc` is undefined and this test skips itself
 // below — that is expected, not a failure, when run through `pnpm test` or
-// the pre-commit hook.
+// a git hook.
 //
 // This covers the collection path only. The repair itself — an abandoned
 // generator giving its worker back at a timeout's deadline and at a

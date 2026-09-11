@@ -46,13 +46,19 @@ travels with that work and lands at the merge. Two spec commits went straight to
 before the correction and were left there rather than rewritten, so the history carries
 the exception once.
 
-**A plan's per-task commits do not survive this repository's pre-commit hook.** The hook
-runs the whole suite and refuses a red tree, so a plan written as "task N: write the
-failing test / commit" cannot be executed as written — the commit after a RED step is
-refused. Write plans whose every commit lands on green: the failing test and the code that
-satisfies it belong to the same task, and a task that only adds tests must be one whose
-tests pass on arrival. `feat/bulk-backpressure`'s five tasks collapsed into two commits
-for this reason, which is a property of the repository, not of that plan.
+**Every commit of a plan lands on green — a rule of the work, no longer only of the hook.**
+Until 2026-09-11 the pre-commit hook ran the whole suite and refused a red tree, so a plan
+written as "task N: write the failing test / commit" could not be executed as written;
+`feat/bulk-backpressure`'s five tasks collapsed into two commits for that reason. Since then
+`pre-commit` runs only `tsc`, lint and the unit project, so a red BROWSER test no longer stops
+a commit — it stops the merge, where `pre-merge-commit` runs `pnpm test`. The rule stands
+anyway: a red commit breaks bisection, and the branch cannot merge while it is red. The
+failing test and the code that satisfies it belong to the same task.
+
+**The full verification at delivery is the agent's job, not the hooks' (user, 2026-09-11).**
+Before reporting a task, a branch or a session as done: `pnpm test` AND
+`pnpm exec tsc --noEmit`, all three reports read. The hooks are braces on the belt; a green
+commit proves the unit project and nothing more.
 
 ## What every implementer prompt forbids (2026-09-11)
 

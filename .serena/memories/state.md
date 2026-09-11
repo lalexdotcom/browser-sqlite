@@ -34,7 +34,8 @@ was proven byte-identical to the branch tip's (`git diff main <branch>` empty), 
 branch's own verification transfers rather than being assumed to.
 
 **`pnpm test` chains THREE configs** — chromium+unit, firefox, and the isolated project — so a
-green `pnpm test` covers what CI covers, and a commit pays all three through the pre-commit hook.
+green `pnpm test` covers what CI covers. Since 2026-09-11 a commit pays only the unit project; a merge or a push pays all three
+(`mem:follow-ups`, the pre-commit hook entry).
 **A green `pnpm test` is not a green tree: run `pnpm exec tsc --noEmit` beside it** — a commit
 on the last branch landed with a failing typecheck that no test run could show (`mem:lessons`).
 
@@ -87,8 +88,6 @@ one machine and one build; slower CI hardware may still surface timing the campa
   a new brainstorm on a new branch (`mem:follow-ups`, Savepoints); the timing was left to
   them. It is usability rather than reliability — nothing is corrupted without it — so the
   triage rule below does not settle it by itself.
-- **The pre-commit hook's full-suite cost.** The user asked to talk about it on 2026-09-10
-  (`mem:follow-ups`); nothing is decided.
 
 **rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
 and both are now closed — the second by merge `eeabe06` on 2026-09-11.

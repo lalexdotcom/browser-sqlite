@@ -272,8 +272,11 @@ instead.
   (user, 2026-09-03). `main` is there for one reason and it is not obvious: `delete` runs
   from the default branch, so without it a deleted `preview` tag could not take its preview
   down. `feat/*` was dropped — no branch deploys any more.
-- Local `pre-commit` (simple-git-hooks): `lint-staged` + `pnpm test` + `tsc --noEmit`.
-  Heavy and bypassable with `--no-verify`; CI is the real gate.
+- Local hooks (simple-git-hooks), three since 2026-09-11: `pre-commit` runs `tsc`,
+  `lint-staged` and the unit project (~1.5 s), or `pnpm test` while concluding a conflicted
+  merge; `pre-merge-commit` and `pre-push` run `tsc`, `biome ci .` and `pnpm test`. All
+  bypassable with `--no-verify`. The agent's own verification at delivery is the gate (user),
+  CI the independent one. Details: `mem:follow-ups`, the pre-commit hook entry.
 - `tsconfig.build.json` (`include: ["src"]`, `rootDir: "src"`) drives declaration
   generation via `source.tsconfigPath`. Without it the root tsconfig pushes the common
   source root to the repo root: declarations would land in `dist/src/` while

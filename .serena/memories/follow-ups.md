@@ -104,14 +104,34 @@ numeric code through `busyFromCode`; other SQLite result codes may not reach the
 `SQLiteError` at all. Not investigated — read `workerError` in `src/pool.ts` before
 scheduling anything.
 
-## The pre-commit hook runs the whole suite — to discuss (user, 2026-09-10)
+## The pre-commit hook — three hooks since 2026-09-11 (user)
 
-The hook (`simple-git-hooks` in `package.json`) is `npx lint-staged && pnpm test && pnpm exec
-tsc --noEmit`: three configs, several minutes per commit, and every task of a plan pays it at
-least once. The user finds the commits too long and wants to talk about it. **Not decided —
-this entry is the agenda, not a verdict.**
+Decided and installed on 2026-09-11, in `package.json` under `simple-git-hooks`:
 
-What to bring to that conversation, all already established:
+- `pre-commit` — `tsc`, then `lint-staged`, then the unit project: ~1.5 s. **While concluding a
+  merge that stopped on a conflict** (`MERGE_HEAD` exists) it runs `pnpm test` instead of the
+  unit project, because the commit that concludes such a merge fires `pre-commit` and never
+  `pre-merge-commit`.
+- `pre-merge-commit` — `tsc`, `biome ci .`, `pnpm test`. Every merge here is `--no-ff`, so
+  every merge into `main` pays the full suite.
+- `pre-push` — the same, as the backstop for commits made directly on `main` before anything
+  reaches CI.
+
+Verified in a scratch repository: an ordinary commit, a clean `--no-ff` merge, a conflicted
+merge concluded by `git commit` and by `git merge --continue`, and a push each fire the
+expected hook and only it.
+
+**The user's principle: the agent runs the full verification when it delivers; the hooks are
+braces on the belt, not the gate** (`mem:conventions`). The full suite cost ~80 s per commit —
+chromium+unit 19 s, firefox 49 s, isolated 12.5 s, measured 2026-09-11 — against under 2 s for
+`tsc`, biome and the unit project together.
+
+What the change gives up, knowingly: a browser-only regression on a feature branch surfaces
+at the merge, not at the commit that caused it; a flake is sampled once per merge rather than
+once per commit; a direct commit on `main` can sit red locally until the next push. And every
+hook still checks the working tree, not the staged tree.
+
+What the entry established before the decision, kept for its evidence:
 
 - **What it has caught.** A one-in-eighteen Firefox flake at a closure, after every task
   review had passed (`mem:lessons`, "A pre-merge verification is not ceremony"); and a
@@ -139,12 +159,6 @@ What to bring to that conversation, all already established:
   packs). A changed mtime on that file is not evidence of tampering: on 2026-09-10 at 15:02:52
   it was a subagent's unasked `pnpm store prune && pnpm install`; on 2026-09-11 it was the
   consumer smoke.
-- **The ordering is backwards for cost:** `tsc` — seconds — runs after the suite — minutes —
-  so a type error is reported last.
-
-Directions to weigh, none chosen: `tsc` and lint first; unit tests in pre-commit and the
-browser configs in a pre-push hook; the full suite only in CI (which has still never run on
-rc.5 work — `mem:state`); or keeping it and making plans commit less often.
 
 ## Notes, with nothing to fix
 
