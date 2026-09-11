@@ -587,30 +587,42 @@ describe('transaction — what else kills it (spec R1)', () => {
   // test — a fake worker exercised only through read()/write() cannot tell
   // them apart.
 
-  // Falsifiable: remove the isAbandonedWrite() → die() line from `releasing`
-  // in src/transaction.ts; the callback goes on and the transaction commits.
-  it('dies when a write issued through tx.chunk() is abandoned by its own signal', async () => {
+  // Spec 2026-09-11, R1, the generator half. Falsifiable: in `releasing`, drop
+  // the abandon(…) call — the next message then releases the write instead of
+  // rolling it back.
+  it('rolls back a write issued through tx.chunk() abandoned by its own signal, and goes on', async () => {
+    const reached = deferred();
+    const gate = deferred();
     const worker = fakeWorker([], {
-      'INSERT INTO t VALUES (1) RETURNING a': never,
+      'INSERT INTO t VALUES (1) RETURNING a': async () => {
+        reached.resolve();
+        await gate.promise;
+      },
     });
     const { transaction } = harness(worker);
     const own = new AbortController();
     const reason = new Error('this chunk only');
-
-    const running = transaction(async (tx) => {
+    let caught: unknown;
+    await transaction(async (tx) => {
       const gen = tx.chunk('INSERT INTO t VALUES (1) RETURNING a', [], {
         signal: own.signal,
       });
-      const pending = gen.next();
+      const next = gen.next();
+      await reached.promise;
       own.abort(reason);
-      await pending.catch(() => {});
+      caught = await next.catch((e) => e);
+      gate.resolve();
+      await tx.write('INSERT INTO t VALUES (2)');
     });
-
-    await expect(running).rejects.toBe(reason);
+    expect(caught).toBe(reason);
     expect(worker.executed).toEqual([
       'BEGIN',
+      'SAVEPOINT __bsq_sp',
       'INSERT INTO t VALUES (1) RETURNING a',
-      'ROLLBACK',
+      'ROLLBACK TO __bsq_sp',
+      'RELEASE __bsq_sp',
+      'INSERT INTO t VALUES (2)',
+      'COMMIT',
     ]);
   });
 

@@ -255,3 +255,37 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
     }
   }, 120_000);
 });
+
+describe('a write issued through a generator (spec 2026-09-11, §4)', () => {
+  for (const vfs of ['OPFSAdaptiveVFS', 'MemoryVFS'] as const) {
+    // Falsifiable: in `releasing`, drop the abandon(…) call — the write is
+    // then closed like any generator: cut where a step can be cut (the
+    // transaction dies), committed where it cannot.
+    it(`undoes a caught write issued through tx.chunk(), and goes on (${vfs})`, async () => {
+      const db = await setUp({ vfs });
+      try {
+        let caught: unknown;
+        await db.transaction(async (tx) => {
+          await tx.write('INSERT INTO t VALUES (1)');
+          caught = await (async () => {
+            for await (const _rows of tx.chunk(
+              `${BIG_INSERT} RETURNING x`,
+              [],
+              {
+                timeout: 30,
+              },
+            )) {
+              // The first chunk comes only after the whole DML.
+            }
+          })().catch((e) => e);
+          await tx.write('INSERT INTO t VALUES (2)');
+        });
+        expect(caught).toMatchObject({ code: 'OPERATION_TIMEOUT' });
+        expect(await rowsOf(db)).toEqual([0, 1, 2]);
+        expect(await bigCount(db)).toBe(0);
+      } finally {
+        await db.close();
+      }
+    }, 60_000);
+  }
+});

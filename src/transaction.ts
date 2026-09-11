@@ -316,6 +316,19 @@ export const createTransaction =
       };
 
       /**
+       * Consumes an abandoned generator write to its end, discarding its rows,
+       * so the worker's credits keep flowing and the write can finish (spec
+       * 2026-09-11, §4). A `next()` still pending from the lost race is queued
+       * ahead of this one, as async generators do.
+       */
+      const drainToEnd = async (source: AsyncGenerator<unknown>) => {
+        for (;;) {
+          const next = await source.next();
+          if (next.done) return;
+        }
+      };
+
+      /**
        * Whether a statement runs inside the library's savepoint (spec
        * 2026-09-11, R1): a write the caller may abandon alone — it carries its
        * own signal or timeout, not already aborted at the call. Only those pay
@@ -326,27 +339,6 @@ export const createTransaction =
         own: AbortSignal | undefined,
         abortedAtCall: boolean,
       ) => own !== undefined && !abortedAtCall && isWriteQuery(sql);
-
-      /**
-       * Whether `error` is a WRITE abandoned WHILE IT RAN, by its own signal
-       * or timeout (spec 2026-09-10, D4 reversed). The SQL decides, not the
-       * method — read(), first(), chunk() and stream() accept a write too —
-       * but a signal already aborted AT THE CALL does not count: that write
-       * never reached the worker, so it rejects alone and the callback may
-       * continue, exactly as for any other caught error.
-       *
-       * Generator statements only, until spec 2026-09-11 §4 reaches `releasing`.
-       */
-      const isAbandonedWrite = (
-        error: unknown,
-        own: AbortSignal | undefined,
-        sql: string,
-        abortedAtCall: boolean,
-      ) =>
-        !abortedAtCall &&
-        own?.aborted === true &&
-        error === own.reason &&
-        isWriteQuery(sql);
 
       /**
        * Kills the transaction when the connection reports it is no longer in
@@ -525,6 +517,7 @@ export const createTransaction =
           release: () => void;
           own: AbortSignal | undefined;
           abortedAtCall: boolean;
+          savepointed: boolean;
           mark: { posted: boolean };
           options: { signal?: AbortSignal | undefined };
         },
@@ -544,13 +537,45 @@ export const createTransaction =
           }
           let failed = false;
           let error: unknown;
+          // As in `settled`: set when the consumer was rejected by the
+          // statement's own signal while the write ran on.
+          let left = false;
           try {
             if (abandoned) await entryWait(st.options.signal);
-            yield* source;
+            if (!st.savepointed) {
+              yield* source;
+              return;
+            }
+            st.own?.throwIfAborted();
+            const { aborted, teardown } = makeAbortRace(st.own);
+            try {
+              while (true) {
+                const next = aborted
+                  ? await Promise.race([source.next(), aborted])
+                  : await source.next();
+                if (next.done) return;
+                yield next.value;
+              }
+            } catch (e) {
+              if (
+                st.mark.posted &&
+                st.own?.aborted === true &&
+                e === st.own.reason
+              ) {
+                left = true;
+                abandon(drainToEnd(source), method);
+              }
+              throw e;
+            } finally {
+              teardown();
+              // What `yield*` did for the other branch: the consumer's break or
+              // return() reaches the query. Not for an abandoned write, which
+              // drainToEnd now owns.
+              if (!left) await source.return(undefined);
+            }
           } catch (e) {
             failed = true;
             error = e;
-            if (isAbandonedWrite(e, st.own, sql, st.abortedAtCall)) die(e);
             throw e;
           } finally {
             open.delete(entry);
@@ -562,7 +587,9 @@ export const createTransaction =
             // since that runs once the callback is over. `drain`'s own finally
             // has already gone out with the interrupt by the time this runs,
             // because `yield*` forwards `return()` to the source and awaits it.
-            if (st.mark.posted) {
+            // Not owed by an abandoned write either: drainToEnd now owns its
+            // wait, and judging it is abandon()'s job, not this finally's.
+            if (st.mark.posted && !left) {
               await worker.quiesce();
               dieIfConnectionLeft(failed, error, method);
             }
@@ -714,13 +741,18 @@ export const createTransaction =
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
           // quiesce().then(release) already pending in its own finally.
-          const source = chunkWorker<T>(via(false, st.mark), query, params, {
-            ...st.options,
-            onAbandon: st.release,
-            onTransport: (iterator) => {
-              entry.transport = iterator;
+          const source = chunkWorker<T>(
+            via(st.savepointed, st.mark),
+            query,
+            params,
+            {
+              ...(st.savepointed ? st.driving : st.options),
+              onAbandon: st.release,
+              onTransport: (iterator) => {
+                entry.transport = iterator;
+              },
             },
-          });
+          );
           return releasing(source, entry, st, query, 'chunk');
         },
 
@@ -738,13 +770,18 @@ export const createTransaction =
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
           // quiesce().then(release) already pending in its own finally.
-          const source = streamRows<T>(via(false, st.mark), query, params, {
-            ...st.options,
-            onAbandon: st.release,
-            onTransport: (iterator) => {
-              entry.transport = iterator;
+          const source = streamRows<T>(
+            via(st.savepointed, st.mark),
+            query,
+            params,
+            {
+              ...(st.savepointed ? st.driving : st.options),
+              onAbandon: st.release,
+              onTransport: (iterator) => {
+                entry.transport = iterator;
+              },
             },
-          });
+          );
           return releasing(source, entry, st, query, 'stream');
         },
 
