@@ -71,8 +71,18 @@ trickle, and it is no longer a deduction.
 
 ## Savepoints — a caught statement abort should let the callback go on (user, 2026-09-10)
 
-Deferred by the user to a new brainstorm and a new branch; **whether it must precede rc.5 is
-the user's call and has not been made.** The requirements are the user's three use cases:
+**In rc.5 (user, 2026-09-11): "je catch une erreur et je continue" is normal behaviour.**
+Designed on 2026-09-11, branch `fix/tx-savepoint`: spec
+`docs/superpowers/specs/2026-09-11-tx-savepoint-design.md` — read it, not this summary. Settled so far: **SQLite's statement-level model, not
+PostgreSQL's** — a caught rejected write has no effect, the writes before it stand, exactly as
+for a caught constraint violation today; and **approach B** — the savepoint executed by
+the worker inside the write's own message, no extra round trip. A (client-driven via `exec`) was
+recommended for stability and **the user chose B after the measurement** (`mem:measurements`,
+TX-SAVEPOINT: B saves 0.11-0.15 ms per opted-in write, 56-92% of A's cost). A caught abandoned
+write leaves the transaction whole: the writes before it stand, the next statement waits for
+it (bounded only by the transaction's and that statement's own `signal`/`timeout`, user's
+choice A of 2026-09-11). The requirements are the user's three use
+cases:
 
 1. The transaction is interrupted by `transaction()`'s own `signal`/`timeout`: everything
    stops, `tx.signal` fires.
@@ -95,6 +105,14 @@ pay nothing; `bulkWrite`/`output` need one around the whole load. The price: aft
 write abort the next statement waits for the abandoned write to finish, with the write lock
 held. **This is the answer the spec's refusal of "option 2" (§2) asked for** — that version
 never cut, so a timeout bought nothing; this one cuts whenever the caller does not catch.
+
+## `tx.savepoint()` returning a rollback callback — for rc.6 (user, 2026-09-11)
+
+A feature, so rc.6 by the triage rule. Raised while settling rc.5's savepoint rule: three writes
+in one `try`, the third times out — rc.5 keeps the first two, as SQLite does for any statement
+error. A consumer who wants the three all-or-nothing without abandoning the whole transaction
+needs a nested block; the user's shape is a `tx.savepoint()` that returns a callback rolling
+back to it. Not designed. It will sit on the savepoint machinery rc.5 adds to `transaction.ts`.
 
 ## `SQLITE_FULL` reaches the client with neither `code` nor `sqliteCode` (2026-09-10)
 
