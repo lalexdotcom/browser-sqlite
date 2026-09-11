@@ -20,12 +20,23 @@ export const SharedArrayTypes = {
   OBJECT: 2,
 };
 
+/**
+ * The savepoint a transaction asks the worker to handle around one query
+ * (spec 2026-09-11, D4/D5). `conclude` settles the savepoint the previous
+ * savepointed write left open — `release` keeps that write, `undo` rolls it
+ * back first — and `open` starts one for this query's own statement. Both run
+ * before the statement, conclusion first. Internal: no consumer sets it.
+ */
+export type SavepointOp = { conclude?: 'release' | 'undo'; open?: true };
+
 type SQLOptions = {
   chunkSize?: number;
   /** Chunks the worker may send before waiting for a credit. Spec §3.2. */
   credits?: number;
   /** When true, the worker installs an async progress handler so an AbortSignal can stop a running step(). */
   abortable?: boolean;
+  /** See `SavepointOp`. */
+  savepoint?: SavepointOp;
 };
 
 /**

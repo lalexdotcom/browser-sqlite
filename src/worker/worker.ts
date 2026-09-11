@@ -55,6 +55,14 @@ type SQLOptions = {
  */
 const PROGRESS_OPS = 100_000;
 
+/**
+ * The one savepoint this library opens inside a transaction (spec 2026-09-11,
+ * D7). One at a time — the next message concludes it before anything else —
+ * so a fixed name suffices, and its three statements stay in the statement
+ * cache. A consumer's own savepoints never sit above it.
+ */
+const LIBRARY_SAVEPOINT = '__bsq_sp';
+
 const WA_SQLITE_BUILDS = {
   sync: () =>
     import(/* webpackChunkName: "wa-sqlite" */ 'wa-sqlite/dist/wa-sqlite.mjs'),
@@ -510,6 +518,27 @@ const open = (file: string, options: OpenOptions) => {
           prepared = 0;
           queryRunning = Promise.withResolvers<void>();
           let affected = 0;
+
+          // Spec 2026-09-11, D5: conclude the savepoint the previous
+          // savepointed write left open, then open this statement's own —
+          // before the statement, in that order. Through `query` itself so they
+          // take the statement cache; `prepared` is reset after them so the
+          // reply describes the caller's statement alone. A failure here is this
+          // query's `error`, reported below like any other.
+          const savepoint = options?.savepoint;
+          if (savepoint) {
+            const control = async (statement: string) => {
+              for await (const _ of query(callId, statement, [])) {
+                // Savepoint statements return no rows.
+              }
+            };
+            if (savepoint.conclude === 'undo')
+              await control(`ROLLBACK TO ${LIBRARY_SAVEPOINT}`);
+            if (savepoint.conclude)
+              await control(`RELEASE ${LIBRARY_SAVEPOINT}`);
+            if (savepoint.open) await control(`SAVEPOINT ${LIBRARY_SAVEPOINT}`);
+            prepared = 0;
+          }
 
           for await (const chunk of query(callId, sql, params, options)) {
             if (typeof chunk === 'number') {
