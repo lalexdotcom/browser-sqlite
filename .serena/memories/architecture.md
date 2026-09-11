@@ -178,8 +178,8 @@ after a commit. What must hold:
   now undone by the library's own savepoint (`__bsq_sp`, spec 2026-09-11) and the transaction
   goes on. An abandoned READ does not kill it either, and never did.
 - **A closed handle's `chunk()`/`stream()` throw before `releasing`'s `try`**, so they never
-  wait on `quiesce()` — the idle wait is owed only by a POSTED statement (`mark.posted`), and
-  the final review found that rule applied on one of the two paths only.
+  wait on `quiesce()` — the `mark.posted` rule above, and the final review found that rule
+  applied on one of the two paths only.
 
 **Every message a transaction sends goes through `via`, except the teardown ROLLBACK.**
 `via(open, mark?)` is the facade whose `query` hands the pool a thunk read at post time and
