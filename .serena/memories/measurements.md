@@ -83,6 +83,35 @@ attribution is not confirmed. Never on Chromium. It cannot move these figures, s
 transaction runs on one worker. The closure baseline cannot say whether the normal Firefox
 suite does the same: `.scratchpad/closure-baseline/test.txt` captured no console output.
 
+**M3 — the real B's cost, 2026-09-11, this container, both engines.** Method: probe
+`.scratchpad/savepoint-probe/probe-m3.test.ts`, copied to `tests/browser/zz-m3.test.ts` for
+the run and deleted; six logs `m3-*.log` beside the others. Two arms only, same K=200, 15
+iterations after 2 warm-ups, three runs per engine as probe-b: `base` (`tx.write(INS)`) and
+`real` (`tx.write(INS, [], { timeout: 60_000 })` — a real timeout, so every write carries a
+signal the worker must guard against and takes the actual approach B path, opening
+`__bsq_sp` inside the write's own message; the 60 s timeout never fires). Per-write cost =
+(median(real) − median(base)) / 200, median of the three runs — no proxy, no multi-statement
+string, the production code path measured directly.
+
+| Engine | VFS (build) | real B, ms/write | proxy B nominal (same VFS, above) |
+|---|---|---|---|
+| Chromium | `OPFSAdaptiveVFS` (async) | 0.0185 | 0.020 |
+| Chromium | `OPFSWriteAheadVFS` (sync) | 0.0155 | 0.013 |
+| Chromium | `MemoryVFS` (sync) | 0.0160 | 0.010 |
+| Firefox | `OPFSAdaptiveVFS` (async) | 0.085 | 0.115 |
+| Firefox | `OPFSWriteAheadVFS` (sync) | 0.085 | 0.095 |
+| Firefox | `MemoryVFS` (sync) | 0.085 | 0.095 |
+
+**Reading.** On Firefox the real cost sits below the whole proxy range (0.085 vs
+0.095-0.115), consistent with the proxy's own caveat above — the uncacheable multi-statement
+string overstates B's cost there. On Chromium the picture is mixed, not uniformly lower:
+`OPFSAdaptiveVFS` comes in under the proxy (0.0185 vs 0.020) but `OPFSWriteAheadVFS` and
+`MemoryVFS` come in slightly OVER it (0.0155 vs 0.013, 0.0160 vs 0.010) — a few thousandths
+of a ms, inside the noise this probe already showed (spread 0.060-0.140 on the nominal path
+in the first table), but reported as measured rather than smoothed over. M3 is the number to
+cite for what approach B actually costs a write; the proxy above stays for how the earlier,
+faster estimate was derived and why it was expected to be an overstatement.
+
 ## TX-AUTOCOMMIT — an interrupted write inside a transaction, 2026-09-10, this container, both engines
 
 **Method.** Throwaway probes `.scratchpad/probe-autocommit/persistent.test.ts` (chromium and
