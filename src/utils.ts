@@ -77,6 +77,15 @@ export const isReadQuery = (sql: string) =>
 export const isWriteQuery = (sql: string) => !isReadQuery(sql);
 
 /**
+ * Whether `sql` manages the transaction or its savepoints rather than data
+ * (spec 2026-09-11, D8). Never wrapped in the library's savepoint: there is
+ * nothing to undo, and a `RELEASE u` run inside it would pop it along with
+ * `u`. The leading keyword decides: these statements are never compound.
+ */
+export const isTransactionControl = (sql: string) =>
+  /^\s*(SAVEPOINT|RELEASE|ROLLBACK|BEGIN|COMMIT|END)\b/i.test(sql);
+
+/**
  * Combines two abort signals into one that fires with the reason of whichever
  * source aborted first, plus the `release()` that unsubscribes it.
  *

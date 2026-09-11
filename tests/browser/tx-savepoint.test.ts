@@ -329,3 +329,27 @@ describe('a load the callback abandons (spec 2026-09-11, R4, D6)', () => {
     }
   }, 60_000);
 });
+
+describe("a consumer's own savepoints (spec 2026-09-11, D7, D8)", () => {
+  // Falsifiable: drop `!isTransactionControl(sql)` from opensSavepoint() — the
+  // timed RELEASE u then runs inside __bsq_sp and pops it, and the COMMIT's
+  // RELEASE __bsq_sp fails.
+  it('undoes to the consumer savepoint across a caught abandoned write (T8)', async () => {
+    const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
+    try {
+      await db.transaction(async (tx) => {
+        await tx.write('SAVEPOINT u');
+        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+        await tx.write('INSERT INTO t VALUES (2)');
+        await tx.write('ROLLBACK TO u');
+        await tx.write('INSERT INTO t VALUES (3)');
+        await tx.write('RELEASE u', [], { timeout: 5_000 });
+      });
+      expect(await rowsOf(db)).toEqual([0, 3]);
+      expect(await bigCount(db)).toBe(0);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
+});

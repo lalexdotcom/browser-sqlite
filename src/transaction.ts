@@ -18,7 +18,12 @@ import {
   writeWorker,
 } from './queries';
 import type { Scheduler } from './scheduler';
-import { isWriteQuery, mergeSignals, withDeadline } from './utils';
+import {
+  isTransactionControl,
+  isWriteQuery,
+  mergeSignals,
+  withDeadline,
+} from './utils';
 
 // Drains a statement that returns no rows (BEGIN, COMMIT, ROLLBACK) without
 // the chunkSize-1 + break overhead of firstWorker.
@@ -325,13 +330,17 @@ export const createTransaction =
        * Whether a statement runs inside the library's savepoint (spec
        * 2026-09-11, R1): a write the caller may abandon alone — it carries its
        * own signal or timeout, not already aborted at the call. Only those pay
-       * (D4).
+       * (D4). Never a transaction-control statement (D8).
        */
       const opensSavepoint = (
         sql: string,
         own: AbortSignal | undefined,
         abortedAtCall: boolean,
-      ) => own !== undefined && !abortedAtCall && isWriteQuery(sql);
+      ) =>
+        own !== undefined &&
+        !abortedAtCall &&
+        isWriteQuery(sql) &&
+        !isTransactionControl(sql);
 
       /**
        * Kills the transaction when the connection reports it is no longer in
@@ -514,7 +523,6 @@ export const createTransaction =
           mark: { posted: boolean };
           options: { signal?: AbortSignal | undefined };
         },
-        sql: string,
         method: string,
       ): AsyncGenerator<R> => {
         // The entry is the box the generator's own `finally` needs: it must
@@ -745,7 +753,7 @@ export const createTransaction =
               },
             },
           );
-          return releasing(source, entry, st, query, 'chunk');
+          return releasing(source, entry, st, 'chunk');
         },
 
         stream: <T extends Record<string, unknown>>(
@@ -774,7 +782,7 @@ export const createTransaction =
               },
             },
           );
-          return releasing(source, entry, st, query, 'stream');
+          return releasing(source, entry, st, 'stream');
         },
 
         first: <T extends Record<string, unknown>>(
