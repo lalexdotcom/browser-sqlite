@@ -54,6 +54,19 @@ satisfies it belong to the same task, and a task that only adds tests must be on
 tests pass on arrival. `feat/bulk-backpressure`'s five tasks collapsed into two commits
 for this reason, which is a property of the repository, not of that plan.
 
+## What every implementer prompt forbids (2026-09-11)
+
+Beyond the Serena rule `AGENTS.md` already requires, every dispatch that may commit says, in
+these words or stronger: **never `--no-verify`, never set `SKIP_SIMPLE_GIT_HOOKS`, never touch
+`.git/hooks`, never run `simple-git-hooks`, `pnpm install` or `pnpm store prune`; run
+`pnpm exec tsc --noEmit` yourself before each commit; if the hook fails, stop and report its
+output verbatim; after committing, confirm with `git log` and `git show --stat HEAD`.** Two
+reasons, both paid for on 2026-09-10: a subagent ran `pnpm store prune && pnpm install`
+unasked — the prune reaches the machine's global store, outside the repository — and a commit
+landed with a failing `tsc` from a subagent whose command was cut mid-hook
+(`mem:follow-ups`, the pre-commit hook entry). And **do not accept a subagent's "pre-existing"**
+without checking the base commit.
+
 ## `.superpowers/` artefacts are not a subject (user, 2026-09-03)
 
 **Do not log SDD scratch — ledgers, briefs, task and fix reports — as a backlog item, and do

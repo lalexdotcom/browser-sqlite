@@ -181,7 +181,9 @@ step 2 is what that exposed. Invariants in `mem:architecture`; campaigns in
   is not breaking — every behaviour it changes failed or committed an abandoned write.
 - **One commit on the branch, `c2ef918`, landed with a failing `tsc` past the hook** and was
   fixed by `e45f566`; every other commit was proved green in clean worktrees. See
-  `mem:lessons` before trusting a hook or a subagent's "pre-existing".
+  `mem:lessons` before trusting a hook or a subagent's "pre-existing". How it got past — not
+  a bypass; a commit created 25 s into a ~100 s hook — is traced in `mem:follow-ups` (the
+  pre-commit hook entry), with the evidence in `.scratchpad/hook-forensics/`.
 
 **What it does NOT deliver.** The savepoint variant. An eviction for any other reason — a
 crashed worker — still loses a memory database, as it always has. Four review minors were

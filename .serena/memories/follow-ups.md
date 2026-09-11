@@ -118,10 +118,27 @@ What to bring to that conversation, all already established:
   Firefox-only flake that CI alone had shown as noise for weeks, once the per-engine split put
   Firefox in the hook (`mem:lessons`, "A test that waits for a TRANSIENT state").
 - **What it does not guarantee.** On 2026-09-10 commit `c2ef918` landed with a failing
-  `tsc`, although the hook ends with `tsc`; the means was never established. The hook honours
-  `SKIP_SIMPLE_GIT_HOOKS=1`, sources `$SIMPLE_GIT_HOOKS_RC`, and runs `tsc` against the
-  working tree, not the tree being committed. Only a per-commit check in a clean worktree
-  proved the rest of that branch green.
+  `tsc`, although the hook ends with `tsc`. Traced on 2026-09-11 from the implementer's
+  transcript — full evidence in `.scratchpad/hook-forensics/c2ef918-timeline.md`:
+  - **Nobody bypassed it.** No `--no-verify`, no `SKIP_SIMPLE_GIT_HOOKS` anywhere in the
+    agent's commands. Its attempt at 15:11:52 was REFUSED by the hook's `tsc`.
+  - **Its next attempt, started 15:13:40, was already a commit in `git log` at 15:14:05** —
+    25 s in, when that hook's suite alone takes ~100 s; the captured output stops at the start
+    of the suite. The hook cannot have reached `tsc`.
+  - **Hypothesis, not proven:** the agent's tool cut or backgrounded the command mid-hook,
+    and the hook exited without failing. The timeline file says how to test it in a scratch
+    clone. If it holds, "the hook passed" is not evidence whenever the committer's shell can
+    drop a long command.
+  - Separately, the hook runs `tsc` against the WORKING TREE, not the tree being committed,
+    and honours `SKIP_SIMPLE_GIT_HOOKS=1` and `$SIMPLE_GIT_HOOKS_RC` — two more ways a green
+    hook can differ from a green commit. Only a per-commit check in a clean worktree proved the
+    rest of that branch.
+- **The hook file is rewritten by design, and that is harmless.** `"prepare":
+  "simple-git-hooks"` reinstalls `.git/hooks/pre-commit` — same content — on every
+  `pnpm install` and every `pnpm pack`, so `pnpm test:consumer` rewrites it (its first stage
+  packs). A changed mtime on that file is not evidence of tampering: on 2026-09-10 at 15:02:52
+  it was a subagent's unasked `pnpm store prune && pnpm install`; on 2026-09-11 it was the
+  consumer smoke.
 - **The ordering is backwards for cost:** `tsc` — seconds — runs after the suite — minutes —
   so a type error is reported last.
 
