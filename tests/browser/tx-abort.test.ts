@@ -267,10 +267,11 @@ describe('a write abandoned inside a transaction', () => {
   });
 
   // Spec 2026-09-10, D4 reversed: a bulkWrite created with a signal already
-  // aborted writes nothing and rejects alone — no `abandon` listener is even
-  // registered for it (src/bulk.ts) — so the transaction goes on.
-  // Falsifiable: register the `abandon` listener unconditionally in
-  // src/bulk.ts's bulkWrite, as before — the transaction dies instead.
+  // aborted writes nothing and rejects alone, before enqueue() ever reaches
+  // the buffer — so the transaction goes on. Falsifiable: drop
+  // `signal?.throwIfAborted()` from bulkWrite's `enqueue()` in src/bulk.ts —
+  // the row is buffered instead, `refused` stays undefined, and the
+  // assertion below fails.
   it('rejects a tx.bulkWrite created with an aborted signal, and the transaction goes on', async () => {
     const db = await setUp({ vfs: 'MemoryVFS' });
     try {
