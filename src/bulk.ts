@@ -102,8 +102,15 @@ export const createBulk = (shared: {
     read: ReadFn;
     write: WriteFn;
     transaction: TransactionFn;
+    /**
+     * Called when a bulkWrite() or output() made on this target is abandoned
+     * by its own signal or timeout. A transaction passes one, because an
+     * abandoned write abandons the transaction (spec 2026-09-10, R1) and this
+     * signal exists only in here; the client path passes none.
+     */
+    onAbandoned?: (cause: unknown) => void;
   }) => {
-    const { read, write, transaction } = target;
+    const { read, write, transaction, onAbandoned } = target;
 
     // bulkWrite, sweepOnce, indexStatements and output move in here VERBATIM.
     // Not one character of their bodies changes: they already read `read`,
@@ -167,6 +174,18 @@ export const createBulk = (shared: {
       // enqueue() throw signal.reason. Removed by close(), so a signal the
       // caller keeps does not collect one listener per writer.
       signal?.addEventListener('abort', releaseRoom, { once: true });
+
+      // A transaction's bulkWrite is one of its writes: a load abandoned
+      // AFTER creation abandons the transaction, even between batches, where
+      // no statement is in flight to say so. One created with a signal
+      // already aborted writes nothing — enqueue()/close() reject with it
+      // below, via throwIfAborted() — and rejects alone (spec 2026-09-10, D4
+      // reversed): the transaction goes on. output() is covered too: it
+      // hands its signal to this.
+      const abandon = () => onAbandoned?.(signal?.reason);
+      if (onAbandoned && signal && !signal.aborted) {
+        signal.addEventListener('abort', abandon, { once: true });
+      }
 
       const fail = (): SQLiteBulkWriteError =>
         new SQLiteBulkWriteError(
@@ -274,6 +293,7 @@ export const createBulk = (shared: {
             return affected;
           } finally {
             signal?.removeEventListener('abort', releaseRoom);
+            signal?.removeEventListener('abort', abandon);
             releaseDeadline();
           }
         },

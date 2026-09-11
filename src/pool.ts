@@ -49,6 +49,18 @@ export type PoolWorker = Worker & {
   seen: number;
   /** The epoch captured when the current lease was granted. */
   epochTarget: number;
+  /**
+   * Whether the connection was inside a transaction when its last query
+   * ended, as the worker read it (`sqlite3_get_autocommit`). `undefined` until
+   * a query has reported it.
+   *
+   * CONNECTION state, not availability: nothing schedules on it and nothing
+   * may. Availability lives in `scheduler.ts` alone — see the `available`
+   * declaration there — and a flag on this object that the pool consulted would
+   * reopen B1. Its one reader is `transaction.ts`, which asks it whether a
+   * ROLLBACK is still owed and whether its transaction is still alive.
+   */
+  inTransaction?: boolean | undefined;
   query: <T extends Record<string, unknown> = Record<string, unknown>>(
     sql: string,
     params?: unknown[],
@@ -423,6 +435,7 @@ export const createPoolWorker = (deps: {
       case 'done': {
         const { callId } = data;
         if (deferredChunk && callId === currentCallId) {
+          worker.inTransaction = data.inTransaction;
           const affected = data.affected;
           if (state?.currentRequest?.currentQuery) {
             state.currentRequest.currentQuery.affectedRows = affected;
@@ -444,6 +457,7 @@ export const createPoolWorker = (deps: {
       case 'error': {
         const { callId } = data;
         if (deferredChunk && callId === currentCallId) {
+          worker.inTransaction = data.inTransaction;
           const error = workerError(data);
           if (state?.currentRequest?.currentQuery) {
             state.currentRequest.currentQuery.error = error;

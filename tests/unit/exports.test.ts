@@ -13,7 +13,7 @@ import * as api from '../../src/index';
  *
  * ClientExtras are the members legitimately unique to SQLiteDB today
  * (bulkWrite and output move to the base in Task 5; transaction, close, debug
- * stay on SQLiteDB forever). TransactionExtras are unique to SQLiteTransactionDB.
+ * stay on SQLiteDB forever). TransactionExtras are unique to SQLiteTransactionDB: commit, rollback, and the transaction's signal.
  * What remains on both sides after the Omit must be identical.
  *
  * Falsifiable: add a querying member to SQLiteDB alone — _PinTxToClient fails.
@@ -29,7 +29,7 @@ type _ClientExtras =
   | 'vfs'
   | 'build'
   | 'inspect';
-type _TransactionExtras = 'commit' | 'rollback';
+type _TransactionExtras = 'commit' | 'rollback' | 'signal';
 type _SharedOfClient = Omit<SQLiteDB, _ClientExtras>;
 type _SharedOfTransaction = Omit<SQLiteTransactionDB, _TransactionExtras>;
 // If either direction fails, tsc reports: "Type 'false' does not satisfy the constraint 'true'."

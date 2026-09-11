@@ -185,6 +185,8 @@ describe('close()', () => {
 
     await db.close();
     resume();
-    await expect(outcome).resolves.toBe('CLIENT_CLOSED');
+    // Spec R3: the statement reports the closed handle; the transaction itself
+    // still rejects with CLIENT_CLOSED (the test above).
+    await expect(outcome).resolves.toBe('TRANSACTION_CLOSED');
   });
 });

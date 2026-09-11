@@ -205,7 +205,7 @@ const orders = await db.transaction(async (tx) => {
 | `signal` | `AbortSignal` | — | Abandons the transaction. Rolls back and rejects with `signal.reason`; never commits.<br>See [Interrupting a call](#interrupting-a-call). |
 | `timeout` | `number` (ms) | — | Milliseconds before the transaction is abandoned. Rolls back and rejects with `OPERATION_TIMEOUT`.<br>See [Interrupting a call](#interrupting-a-call). |
 
-**One worker serves the whole callback**, so the transaction is genuinely isolated rather than merely wrapped in `BEGIN`. `tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit` and `rollback`.
+**One worker serves the whole callback**, so the transaction is genuinely isolated rather than merely wrapped in `BEGIN`. `tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit`, `rollback`, and `signal`. `signal` aborts whenever `transaction()` rejects; see [Inside a transaction](#inside-a-transaction).
 
 > [!WARNING]
 > **A write transaction holds the only writing slot in the origin for as long as
@@ -401,9 +401,23 @@ Write queries are serialized per database across the whole origin — one at a t
 
 When using [*client*.transaction()](#clienttransaction), the rules below apply to the callback and to every statement it issues.
 
-**Rows land only on a `COMMIT` that succeeds.** Everything else rolls back: a callback that throws, an abort, a `COMMIT` that fails, and — under `autoCommit: false` — a callback that returns without calling `tx.commit()`. Catching your own statement's rejection does not let you commit around an abort. If the rollback itself fails the worker is evicted, rather than returned to the pool holding an open transaction.
+**Rows land only on a `COMMIT` that succeeds.** Everything else rolls back: a callback that throws, an abort, a `COMMIT` that fails, and — under `autoCommit: false` — a callback that returns without calling `tx.commit()`. Catching your own statement's rejection does not let you commit around an abort. The one exception is an explicit `tx.commit()` that has already succeeded: an abort landing after it still ends the call, but the commit itself stands — nothing is undone. If the rollback itself fails the worker is evicted, rather than returned to the pool holding an open transaction.
 
-**An abort reaches further than a statement.** `signal` and `timeout` abandon the transaction at any point. The callback is not interrupted — it runs on — but every statement it issues afterwards rejects. `BEGIN`, `COMMIT` and `ROLLBACK` are the exception: they carry no signal, so an abort raised while one is in flight lands when it settles.
+**An abort reaches further than a statement.** `signal` and `timeout` abandon the transaction at any point. The callback is not interrupted — it runs on — but every statement it issues afterwards rejects with `TRANSACTION_CLOSED`. `BEGIN`, `COMMIT` and `ROLLBACK` are the exception: they carry no signal, so they complete regardless — an abort raised while an explicit `commit()` is in flight still rejects `transaction()`, although the commit itself stands.
+
+**A write abandoned while it runs abandons its transaction; an abandoned read does not.** A statement's own `signal` or `timeout` rejects that statement with its own reason. If the statement only reads, that is all: caught, the callback continues and can still commit. If it writes — `write()`, `bulkWrite()`, `output()`, or any statement that is not a plain read — and the abort cuts it **while it runs**, the whole transaction is abandoned with it, even when the callback catches the rejection: `transaction()` rejects with that same reason and nothing the transaction wrote is kept. A write whose signal was already aborted when it is issued never reaches the database: it is simply rejected, like any other error your callback may catch, and the transaction goes on.
+
+**A transaction object is closed once its transaction is over** — committed, rolled back or abandoned. Any statement issued on it afterwards rejects — or, for `bulkWrite()` and `output()`, throws — with `TRANSACTION_CLOSED` without reaching the database; its `cause` is the reason the transaction was abandoned, and is absent after a commit or a rollback. `commit()` resolves if the transaction committed and rejects otherwise. `rollback()` always resolves, and warns in the console when the transaction had already committed.
+
+**`tx.signal` stops your own work with the transaction.** It aborts whenever `transaction()` rejects, with the value it rejects with, and never when it resolves. Hand it to anything the callback awaits that is not a statement:
+
+```typescript
+await db.transaction(async (tx) => {
+  const rows = await tx.read('SELECT …');
+  const priced = await fetch(url, { signal: tx.signal });
+  await tx.write('INSERT …', [priced]);
+});
+```
 
 **[`close()`](#clientclose) abandons the transaction the same way.** It rejects with `CLIENT_CLOSED`, the callback runs on but can no longer reach the database, and the origin's write lock the transaction was holding is given back — otherwise a callback waiting on something that never arrives keeps every other writer in the origin waiting with it, in this tab and in others. **Attach a handler to a transaction you do not await**, or closing while one runs surfaces an unhandled rejection.
 
@@ -501,6 +515,7 @@ Errors raised by this library are instances of `SQLiteError`, exported from the 
 | `UNSUPPORTED` | The platform cannot answer. Raised by `inspectDatabase` and `db.inspect()` where the Web Locks API is unavailable — reporting zero clients there would be indistinguishable from a database nobody holds. |
 | `GENERATOR_ABANDONED` | A statement was issued on a worker that still had a query in flight. Statements on one worker must not overlap, and inside a `transaction()` they all share one worker. The usual cause is a `chunk()` or `stream()` generator left open — exhaust it, `break` out of it, or call its `return()`. |
 | `READ_ONLY_TRANSACTION` | raised when a write statement, `bulkWrite()` or `output()` is used inside a transaction opened with `readOnly: true`. |
+| `TRANSACTION_CLOSED` | A statement, `commit()`, `bulkWrite()` or `output()` was used on a transaction object whose transaction is over. `error.cause` is the reason the transaction was abandoned; it is absent when the transaction committed or rolled back. |
 
 Discriminate on `error.code` or `error.name` — they carry the same value, so `err.name` reads the way `'AbortError'` does on a DOM `AbortError`.
 
