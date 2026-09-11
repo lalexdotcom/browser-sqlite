@@ -4,6 +4,25 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## TX-M1M2 — a write stopped after its first row, and the savepoint premise, 2026-09-11, all three configurations
+
+**Method.** Throwaway probe `.scratchpad/savepoint-probe/m1m2.test.ts`, copied into
+`tests/browser/` (chromium project, firefox config) and `tests/browser/isolated/` (isolated
+project) for the run and deleted; logs `m1m2-*.log` beside it. `main` after `9479f4a`. Three
+runs per configuration: `OPFSAdaptiveVFS` `async` and `MemoryVFS` `sync` not isolated on both
+engines, `MemoryVFS` `sync` isolated on Chromium. 50 000-row write from a recursive CTE.
+**All 45 results identical to their arm across runs, engines and builds.**
+
+- **M1 — a write stopped after its first row does NOT take the transaction with it.** Inside
+  one transaction: `INSERT (1)`; `tx.first()` on `WITH … INSERT INTO s SELECT … RETURNING n`
+  (and, second arm, a `break` out of `tx.chunk()` on it after 10 rows); `INSERT (2)`. Resolved;
+  `t=[1,2]`; all 50 000 rows of `s` kept; no worker replaced. Consistent with SQLite running the
+  whole DML of a `RETURNING` statement in the first `step()`. Asked by the savepoint spec §7
+  before any code; no defect.
+- **M2 — a savepoint undoes a write run to its end, and only it.** `INSERT (1)`; `SAVEPOINT sp`;
+  the 50 000-row insert; `ROLLBACK TO sp`; `RELEASE sp`; commit: `t=[1]`, `s=0`, every
+  configuration. The premise of the savepoint spec.
+
 ## TX-SAVEPOINT — what approach A's savepoint round trips cost a write, 2026-09-11, this container, both engines
 
 **Method.** Throwaway probe `.scratchpad/savepoint-probe/probe.test.ts`, copied into

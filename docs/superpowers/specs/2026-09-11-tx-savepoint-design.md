@@ -229,6 +229,15 @@ does not change what an ordinary write without its own `signal`/`timeout` costs:
   `ROLLBACK TO`; `RELEASE`; `COMMIT`: row 1 present, the write's rows absent. On `async`,
   `sync` isolated and `sync` not isolated.
 
+**M1 and M2 done, 2026-09-11, before any code** (`mem:measurements`, TX-M1M2; three runs on
+each of five configurations — both engines on `async` and `sync` not isolated, plus `sync`
+isolated — every result identical). **M1: no defect.** Stopping an `INSERT … RETURNING` after
+its first row, through `tx.first()` or a `break` out of `tx.chunk()`, left the transaction whole:
+it committed, all 50 000 rows kept, no worker replaced — SQLite runs a `RETURNING` statement's
+whole DML in its first `step()`. This design needs no amendment for it and nothing is split off.
+**M2: the premise holds** — the write run to its end is gone after `ROLLBACK TO`, the row before
+the savepoint stays, on every configuration.
+
 **After the code — M3.** TX-SAVEPOINT re-run with the real B in place of the proxy.
 
 ## 8. Tests
