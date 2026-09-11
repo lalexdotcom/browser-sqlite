@@ -178,8 +178,8 @@ after a commit. What must hold:
   now undone by the library's own savepoint (`__bsq_sp`, spec 2026-09-11) and the transaction
   goes on. An abandoned READ does not kill it either, and never did.
 - **A closed handle's `chunk()`/`stream()` throw before `releasing`'s `try`**, so they never
-  wait on `quiesce()` — the `owesWait` rule, which the final review found applied on one of
-  the two paths only.
+  wait on `quiesce()` — the idle wait is owed only by a POSTED statement (`mark.posted`), and
+  the final review found that rule applied on one of the two paths only.
 
 **Every message a transaction sends goes through `via`, except the teardown ROLLBACK.**
 `via(open, mark?)` is the facade whose `query` hands the pool a thunk read at post time and
@@ -190,6 +190,17 @@ there is nothing left for `via` to conclude. A new statement method that calls a
 helper with the raw worker instead of `via(…)` breaks the undo silently — its first message
 carries no pending conclusion, so a savepoint opened by an earlier abandoned write is never
 resolved. `tests/unit/transaction.test.ts` T7 is parameterised over the methods to catch it.
+
+**Transaction-control statements are never wrapped in a savepoint** (`isTransactionControl`,
+spec D8) — `opensSavepoint` in `transaction.ts` excludes them. A consumer's own `RELEASE u`
+running with its own timeout would otherwise pop `__bsq_sp` along with `u`, undoing more
+than the abandoned write it was meant to guard.
+
+**A load's batches are savepointed individually, not the load as a whole.** `bulk.ts`'s
+`runBatch` issues one `tx.write()` per batch, each independently savepointed by `withSignal`
+— never one savepoint spanning the whole `bulkWrite`/`output`. A load-wide savepoint would
+silently undo writes the callback itself ran BETWEEN two batches when a later batch is
+abandoned (spec D6).
 
 **`PoolWorker.inTransaction` is connection state, NOT availability.** Written only in
 `pool.ts`'s `onmessage` (the `done`/`error` of the current callId), which runs before `idle`
