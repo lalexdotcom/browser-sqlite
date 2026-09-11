@@ -186,8 +186,9 @@ describe('a write abandoned inside a transaction', () => {
     }
   }, 30_000);
 
-  // Falsifiable: make isAbandonedWrite() ignore the SQL (`isWriteQuery(sql)` →
-  // `true`); the transaction dies and this goes red.
+  // Falsifiable: in `settled`'s outer catch (src/transaction.ts), call die(e)
+  // whenever a statement is rejected by its own signal, not only a
+  // savepointed write — the abandoned read then kills the transaction too.
   it('does not abandon the transaction for an abandoned read (R7)', async () => {
     const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
     try {

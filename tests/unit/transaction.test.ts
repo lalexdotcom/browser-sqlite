@@ -748,9 +748,9 @@ describe('tx.signal — aborts whenever transaction() rejects (spec 2026-09-10, 
 });
 
 describe('transaction — a write whose own signal was already aborted at the call (spec 2026-09-10, D4 reversed)', () => {
-  // Falsifiable: drop `abortedAtCall` from isAbandonedWrite's condition in
-  // src/transaction.ts — the caught write then kills the transaction and
-  // 'INSERT INTO t VALUES (2)' never runs, so `executed` stops at 'BEGIN'.
+  // Falsifiable: remove writeWorker's pre-aborted guard (`if (signal?.aborted)
+  // throw signal.reason;`, src/queries.ts) — the write then reaches the fake
+  // worker and resolves instead of rejecting with `reason`.
   it('rejects the write alone, and the transaction goes on to COMMIT', async () => {
     const worker = fakeWorker([]);
     const { transaction } = harness(worker);
