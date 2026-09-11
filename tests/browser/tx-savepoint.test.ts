@@ -289,3 +289,43 @@ describe('a write issued through a generator (spec 2026-09-11, §4)', () => {
     }, 60_000);
   }
 });
+
+describe('a load the callback abandons (spec 2026-09-11, R4, D6)', () => {
+  // One savepoint per batch: a load abandoned after its first batch keeps
+  // that batch. Deterministic: with `queueSize` one batch, the enqueue that
+  // completes batch 1 parks until batch 1 has settled. Falsifiable: restore
+  // the `onAbandoned` hook in src/bulk.ts — the transaction then dies and
+  // nothing is kept.
+  it('keeps the batches an abandoned tx.bulkWrite completed (T9)', async () => {
+    const db = await setUp({ vfs: 'MemoryVFS' });
+    try {
+      // src/bulk.ts: maxVariables (32766) / one key.
+      const batch = 32766;
+      const reason = new Error('stop loading');
+      const ctl = new AbortController();
+      let closed: unknown;
+      await db.transaction(async (tx) => {
+        const writer = tx.bulkWrite('t', ['a'], {
+          signal: ctl.signal,
+          queueSize: batch,
+        });
+        for (let i = 0; i < batch; i++) await writer.enqueue({ a: 1 });
+        await writer.enqueue({ a: 2 });
+        ctl.abort(reason);
+        closed = await writer.close().catch((e) => e);
+        await tx.write('INSERT INTO t VALUES (3)');
+      });
+      expect(closed).toBe(reason);
+      const counts = await db.read<{ a: number; n: number }>(
+        'SELECT a, count(*) AS n FROM t GROUP BY a ORDER BY a',
+      );
+      expect(counts).toEqual([
+        { a: 0, n: 1 },
+        { a: 1, n: batch },
+        { a: 3, n: 1 },
+      ]);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
+});
