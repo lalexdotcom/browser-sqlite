@@ -14,14 +14,6 @@ const gate = () => {
   return { promise, open };
 };
 
-const deferred = () => {
-  let resolve!: () => void;
-  const promise = new Promise<void>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-};
-
 /**
  * One INSERT whose single step() runs for hundreds of milliseconds (Chromium)
  * to seconds (Firefox), so an abort at 30 ms lands inside it on a build that
@@ -188,34 +180,57 @@ describe('tx.signal', () => {
   // Falsifiable: expose `outer` instead of the merged signal; the death
   // controller never reaches it and this stays un-aborted.
   //
-  // An in-flight abort, not a pre-aborted one (spec 2026-09-10, D4 reversed):
-  // a write whose own signal is already aborted at the call now rejects
-  // alone and no longer kills the transaction, so this test needs a write the
-  // signal cuts WHILE IT RUNS. createTestClient()'s default VFS,
-  // OPFSAdaptiveVFS, is on the async build, which can cut a running step.
-  it('aborts with the write reason when an abandoned write kills the transaction', async () => {
+  // An in-flight abort whose rejection ESCAPES the callback (spec 2026-09-11,
+  // case 2): a caught one no longer kills the transaction — see the next test.
+  // createTestClient()'s default VFS, OPFSAdaptiveVFS, is on the async build.
+  it('aborts with the write reason when an abandoned write escapes the callback', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
       await db.write('CREATE TABLE t (a INTEGER)');
       await db.write('CREATE TABLE big (x INTEGER)');
       const reason = new Error('abandon the write');
       let seen!: AbortSignal;
-      const finished = deferred();
 
       const outcome = await db
         .transaction(async (tx) => {
           seen = tx.signal;
-          await tx
-            .write(BIG_INSERT, [], { signal: abortAfter(30, reason) })
-            .catch(() => {});
-          finished.resolve();
+          await tx.write(BIG_INSERT, [], { signal: abortAfter(30, reason) });
         })
         .catch((e) => e);
-      await finished.promise;
 
       expect(outcome).toBe(reason);
       expect(seen.aborted).toBe(true);
       expect(seen.reason).toBe(reason);
+    } finally {
+      await db.close();
+    }
+  }, 30_000);
+
+  // Spec 2026-09-11, §3: a caught abandoned write leaves the transaction whole,
+  // so transaction() resolves and tx.signal never fires. Falsifiable: call
+  // die(e) inside `abandon` in src/transaction.ts — the transaction then dies
+  // and tx.signal aborts.
+  it('does not abort when the callback catches an abandoned write', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    try {
+      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.write('CREATE TABLE big (x INTEGER)');
+      const reason = new Error('abandon the write');
+      let seen!: AbortSignal;
+
+      await db.transaction(async (tx) => {
+        seen = tx.signal;
+        await tx
+          .write(BIG_INSERT, [], { signal: abortAfter(30, reason) })
+          .catch(() => {});
+        await tx.write('INSERT INTO t VALUES (1)');
+      });
+
+      expect(seen.aborted).toBe(false);
+      expect(await db.read('SELECT a FROM t')).toEqual([{ a: 1 }]);
+      expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
+        { n: 0 },
+      ]);
     } finally {
       await db.close();
     }

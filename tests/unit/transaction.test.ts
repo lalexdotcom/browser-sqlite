@@ -12,7 +12,9 @@ import { createTransaction } from '../../src/transaction';
  * Like the real worker it reports whether its connection is in a transaction
  * once a statement ends: open after BEGIN, closed after a COMMIT or ROLLBACK
  * that succeeded, and closed after any statement named in `leaveOn` — which is
- * how a test makes SQLite leave the transaction by itself.
+ * how a test makes SQLite leave the transaction by itself. It honours
+ * `options.savepoint` the way the real worker does, recording the savepoint
+ * statements in `executed`.
  */
 const fakeWorker = (
   failOn: string[],
@@ -24,7 +26,22 @@ const fakeWorker = (
     index: 3,
     executed,
     inTransaction: undefined as boolean | undefined,
-    query: async function* (sql: string) {
+    query: async function* (
+      sql: string,
+      _params?: unknown[],
+      options?: {
+        savepoint?: () =>
+          | { conclude?: 'release' | 'undo'; open?: true }
+          | undefined;
+      },
+    ) {
+      // As the real worker (spec 2026-09-11, §4): the conclusion, then the
+      // open, then the statement — all recorded, so `executed` is every
+      // statement the connection ran.
+      const savepoint = options?.savepoint?.();
+      if (savepoint?.conclude === 'undo') executed.push('ROLLBACK TO __bsq_sp');
+      if (savepoint?.conclude) executed.push('RELEASE __bsq_sp');
+      if (savepoint?.open) executed.push('SAVEPOINT __bsq_sp');
       executed.push(sql);
       const fails = failOn.some((needle) => sql.startsWith(needle));
       try {
@@ -363,6 +380,7 @@ describe('transaction — the caller may abandon it', () => {
     await expect(running).rejects.toBe(reason);
     expect(worker.executed).toEqual([
       'BEGIN',
+      'SAVEPOINT __bsq_sp',
       'INSERT INTO t VALUES (1)',
       'ROLLBACK',
     ]);
@@ -508,31 +526,41 @@ describe('transaction — what else kills it (spec R1)', () => {
     expect(poisoned).toEqual([]);
   });
 
-  // Falsifiable: remove the isAbandonedWrite() → die() line from `settled`;
-  // the callback's next statement runs and the transaction commits.
-  it('dies when a write is abandoned by its own signal, and rolls back what is open (R5)', async () => {
-    const worker = fakeWorker([], { 'INSERT INTO t VALUES (1)': never });
+  // Spec 2026-09-11, R1. Falsifiable: in src/transaction.ts's `abandon`, drop
+  // `pending = 'undo'` — the next message then releases the abandoned write
+  // instead of rolling it back.
+  it('rolls back a write abandoned by its own signal, and the transaction goes on', async () => {
+    const reached = deferred();
+    const gate = deferred();
+    const worker = fakeWorker([], {
+      'INSERT INTO t VALUES (1)': async () => {
+        reached.resolve();
+        await gate.promise;
+      },
+    });
     const { transaction } = harness(worker);
     const own = new AbortController();
     const reason = new Error('this write only');
-    let later: unknown;
-    const finished = deferred();
-    const running = transaction(async (tx) => {
+    let caught: unknown;
+    await transaction(async (tx) => {
       const pending = tx.write('INSERT INTO t VALUES (1)', [], {
         signal: own.signal,
       });
+      await reached.promise;
       own.abort(reason);
-      await pending.catch(() => {});
-      later = await tx.write('INSERT INTO t VALUES (2)').catch((e) => e);
-      finished.resolve();
+      caught = await pending.catch((e) => e);
+      gate.resolve();
+      await tx.write('INSERT INTO t VALUES (2)');
     });
-    await expect(running).rejects.toBe(reason);
-    await finished.promise;
-    expect(later).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+    expect(caught).toBe(reason);
     expect(worker.executed).toEqual([
       'BEGIN',
+      'SAVEPOINT __bsq_sp',
       'INSERT INTO t VALUES (1)',
-      'ROLLBACK',
+      'ROLLBACK TO __bsq_sp',
+      'RELEASE __bsq_sp',
+      'INSERT INTO t VALUES (2)',
+      'COMMIT',
     ]);
   });
 
@@ -731,6 +759,194 @@ describe('transaction — a write whose own signal was already aborted at the ca
       'BEGIN',
       'INSERT INTO t VALUES (2)',
       'COMMIT',
+    ]);
+  });
+});
+
+describe('transaction — a savepointed write, and the message after it (spec 2026-09-11)', () => {
+  /** A write abandoned by its own signal, then `entry`: the statements run. */
+  const abandonedThen = async (
+    entry: (tx: SQLiteTransactionDB) => Promise<unknown>,
+  ) => {
+    const reached = deferred();
+    const gate = deferred();
+    const worker = fakeWorker([], {
+      'INSERT INTO t VALUES (1)': async () => {
+        reached.resolve();
+        await gate.promise;
+      },
+    });
+    const { transaction } = harness(worker);
+    const own = new AbortController();
+    const reason = new Error('this write only');
+    let caught: unknown;
+    await transaction(async (tx) => {
+      const write = tx.write('INSERT INTO t VALUES (1)', [], {
+        signal: own.signal,
+      });
+      await reached.promise;
+      own.abort(reason);
+      caught = await write.catch((e) => e);
+      gate.resolve();
+      await entry(tx);
+    });
+    expect(caught).toBe(reason);
+    return worker.executed;
+  };
+
+  // T7. Falsifiable, each: have that one method call its query helper with the
+  // raw `worker` instead of `via(…)` — its first message then carries no
+  // conclusion, and the abandoned write would be committed.
+  const entries: [
+    string,
+    (tx: SQLiteTransactionDB) => Promise<unknown>,
+    string,
+  ][] = [
+    ['read', (tx) => tx.read('SELECT 2'), 'SELECT 2'],
+    [
+      'write',
+      (tx) => tx.write('INSERT INTO t VALUES (2)'),
+      'INSERT INTO t VALUES (2)',
+    ],
+    ['first', (tx) => tx.first('SELECT 2'), 'SELECT 2'],
+    [
+      'chunk',
+      async (tx) => {
+        for await (const _rows of tx.chunk('SELECT 2')) {
+          // drain it
+        }
+      },
+      'SELECT 2',
+    ],
+    [
+      'stream',
+      async (tx) => {
+        for await (const _row of tx.stream('SELECT 2')) {
+          // drain it
+        }
+      },
+      'SELECT 2',
+    ],
+    ['commit', (tx) => tx.commit(), 'COMMIT'],
+  ];
+  for (const [name, entry, sql] of entries) {
+    it(`${name}() concludes the abandoned write's savepoint, with an undo, first`, async () => {
+      const executed = await abandonedThen(entry);
+      expect(executed.slice(0, 6)).toEqual([
+        'BEGIN',
+        'SAVEPOINT __bsq_sp',
+        'INSERT INTO t VALUES (1)',
+        'ROLLBACK TO __bsq_sp',
+        'RELEASE __bsq_sp',
+        sql,
+      ]);
+    });
+  }
+
+  // Falsifiable: send rollbackNow()'s ROLLBACK through `via(false)` — it then
+  // carries the undo, and ROLLBACK TO precedes it.
+  it('rollback() concludes nothing: a full ROLLBACK discards every savepoint', async () => {
+    const executed = await abandonedThen((tx) => tx.rollback());
+    expect(executed).toEqual([
+      'BEGIN',
+      'SAVEPOINT __bsq_sp',
+      'INSERT INTO t VALUES (1)',
+      'ROLLBACK',
+    ]);
+  });
+
+  // Falsifiable: in `via`, set `pending = undefined` when a query opens a
+  // savepoint — the savepoint is then never released.
+  it('releases a savepointed write that completed, with the next message', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    await transaction(async (tx) => {
+      await tx.write('INSERT INTO t VALUES (1)', [], { timeout: 60_000 });
+      await tx.write('INSERT INTO t VALUES (2)');
+    });
+    expect(worker.executed).toEqual([
+      'BEGIN',
+      'SAVEPOINT __bsq_sp',
+      'INSERT INTO t VALUES (1)',
+      'RELEASE __bsq_sp',
+      'INSERT INTO t VALUES (2)',
+      'COMMIT',
+    ]);
+  });
+
+  // R2. Falsifiable: in `entryWait`, await `abandoned` without racing the
+  // waiting statement's signal — the second write then waits for the gate,
+  // runs and resolves.
+  it('rejects a statement whose own signal fires while it waits, alone', async () => {
+    const reached = deferred();
+    const gate = deferred();
+    const worker = fakeWorker([], {
+      'INSERT INTO t VALUES (1)': async () => {
+        reached.resolve();
+        await gate.promise;
+      },
+    });
+    const { transaction } = harness(worker);
+    const own = new AbortController();
+    const second = new AbortController();
+    const reason = new Error('the second write only');
+    let refused: unknown;
+    await transaction(async (tx) => {
+      const write = tx.write('INSERT INTO t VALUES (1)', [], {
+        signal: own.signal,
+      });
+      await reached.promise;
+      own.abort(new Error('the first write only'));
+      await write.catch(() => {});
+      const waiting = tx.write('INSERT INTO t VALUES (2)', [], {
+        signal: second.signal,
+      });
+      second.abort(reason);
+      setTimeout(() => gate.resolve(), 50);
+      refused = await waiting.catch((e) => e);
+      await tx.write('INSERT INTO t VALUES (3)');
+    });
+    expect(refused).toBe(reason);
+    expect(worker.executed).toEqual([
+      'BEGIN',
+      'SAVEPOINT __bsq_sp',
+      'INSERT INTO t VALUES (1)',
+      'ROLLBACK TO __bsq_sp',
+      'RELEASE __bsq_sp',
+      'INSERT INTO t VALUES (3)',
+      'COMMIT',
+    ]);
+  });
+
+  // Falsifiable: send the teardown's ROLLBACK through `via(false)` — it then
+  // carries the pending undo.
+  it('sends the teardown ROLLBACK with no conclusion', async () => {
+    const reached = deferred();
+    const worker = fakeWorker([], {
+      'INSERT INTO t VALUES (1)': async () => {
+        reached.resolve();
+        await never();
+      },
+    });
+    const { transaction } = harness(worker);
+    const own = new AbortController();
+    const failure = new Error('give up');
+    await expect(
+      transaction(async (tx) => {
+        const write = tx.write('INSERT INTO t VALUES (1)', [], {
+          signal: own.signal,
+        });
+        await reached.promise;
+        own.abort(new Error('this write only'));
+        await write.catch(() => {});
+        throw failure;
+      }),
+    ).rejects.toBe(failure);
+    expect(worker.executed).toEqual([
+      'BEGIN',
+      'SAVEPOINT __bsq_sp',
+      'INSERT INTO t VALUES (1)',
+      'ROLLBACK',
     ]);
   });
 });

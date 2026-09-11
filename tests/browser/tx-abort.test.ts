@@ -71,32 +71,28 @@ describe('a write abandoned inside a transaction', () => {
     }
   }, 30_000);
 
-  // Falsifiable for 1, 3, 4, 5: remove the isAbandonedWrite() → die() line
-  // from `settled` in transaction.ts.
-  it('abandons the transaction when the callback catches it (async)', async () => {
+  // Spec 2026-09-11, R1. Falsifiable: in src/transaction.ts's `abandon`, drop
+  // `pending = 'undo'` — the million rows are then committed.
+  it('undoes a caught abandoned write, and the transaction goes on (async)', async () => {
     const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
     try {
       const before = workerIdentity(db);
       const reason = new Error('abandon the write');
       let caught: unknown;
-      let later: unknown;
-      const finished = deferred();
-      await expect(
-        db.transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
-          caught = await tx
-            .write(BIG_INSERT, [], { signal: abortAfter(30, reason) })
-            .catch((e) => e);
-          later = await tx.read('SELECT a FROM t').catch((e) => e);
-          finished.resolve();
-        }),
-      ).rejects.toBe(reason);
-      await finished.promise;
+      await db.transaction(async (tx) => {
+        await tx.write('INSERT INTO t VALUES (1)');
+        caught = await tx
+          .write(BIG_INSERT, [], { signal: abortAfter(30, reason) })
+          .catch((e) => e);
+        await tx.write('INSERT INTO t VALUES (2)');
+      });
 
       expect(caught).toBe(reason);
-      expect(later).toMatchObject({ code: 'TRANSACTION_CLOSED' });
-      expect((later as Error).cause).toBe(reason);
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
+      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+        { a: 0 },
+        { a: 1 },
+        { a: 2 },
+      ]);
       expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
         { n: 0 },
       ]);
@@ -106,28 +102,26 @@ describe('a write abandoned inside a transaction', () => {
     }
   }, 30_000);
 
-  // Spec §1.1, last row: nothing could cut the step, the write completed, and
-  // its rows used to commit although the caller got a rejection.
-  it('keeps none of a write that ran to its end on the sync build (R5)', async () => {
+  // Spec 2026-09-11, R3: nothing can cut the step on this build, and the
+  // outcome is now the same as where something can. Falsifiable: as above.
+  it('undoes a caught abandoned write on the sync build too, and goes on (R3)', async () => {
     const db = await setUp({ vfs: 'MemoryVFS' });
     try {
       const reason = new Error('abandon the write');
-      const finished = deferred();
-      await expect(
-        db.transaction(async (tx) => {
-          await tx
-            .write(BIG_INSERT, [], { signal: abortAfter(30, reason) })
-            .catch(() => {});
-          await tx.write('INSERT INTO t VALUES (2)').catch(() => {});
-          finished.resolve();
-        }),
-      ).rejects.toBe(reason);
-      await finished.promise;
+      await db.transaction(async (tx) => {
+        await tx
+          .write(BIG_INSERT, [], { signal: abortAfter(30, reason) })
+          .catch(() => {});
+        await tx.write('INSERT INTO t VALUES (2)');
+      });
 
       expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
         { n: 0 },
       ]);
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
+      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+        { a: 0 },
+        { a: 2 },
+      ]);
     } finally {
       await db.close();
     }
@@ -163,30 +157,29 @@ describe('a write abandoned inside a transaction', () => {
     }
   });
 
-  it('abandons the transaction for a write abandoned by its own timeout', async () => {
+  // Falsifiable: as for the signal above.
+  it('undoes a write abandoned by its own timeout, and goes on', async () => {
     const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
     try {
       const before = workerIdentity(db);
       let caught: unknown;
-      let later: unknown;
-      const finished = deferred();
-      const outcome = await db
-        .transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
-          caught = await tx
-            .write(BIG_INSERT, [], { timeout: 30 })
-            .catch((e) => e);
-          later = await tx.read('SELECT a FROM t').catch((e) => e);
-          finished.resolve();
-        })
-        .catch((e) => e);
-      await finished.promise;
+      await db.transaction(async (tx) => {
+        await tx.write('INSERT INTO t VALUES (1)');
+        caught = await tx
+          .write(BIG_INSERT, [], { timeout: 30 })
+          .catch((e) => e);
+        await tx.write('INSERT INTO t VALUES (2)');
+      });
 
       expect(caught).toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 30 });
-      expect(outcome).toBe(caught);
-      expect(later).toMatchObject({ code: 'TRANSACTION_CLOSED' });
-      expect((later as Error).cause).toBe(caught);
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
+      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+        { a: 0 },
+        { a: 1 },
+        { a: 2 },
+      ]);
+      expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
+        { n: 0 },
+      ]);
       expect(workerIdentity(db)).toBe(before);
     } finally {
       await db.close();
@@ -221,34 +214,31 @@ describe('a write abandoned inside a transaction', () => {
     }
   }, 30_000);
 
-  // Falsifiable: as for the read above — the SQL is the discriminator (D5).
-  // In-flight, not pre-aborted (D5): the pre-aborted version's falsifier
-  // (discriminate on the method instead of the SQL) did not flip it, since a
-  // pre-aborted write never reaches withSignal's catch at all. This cuts a
-  // running step instead, on OPFSAdaptiveVFS's async build.
-  // Falsifiable: make isAbandonedWrite() discriminate on the METHOD instead
-  // of the SQL (e.g. `method === 'write'` in place of `isWriteQuery(sql)`).
-  it('abandons the transaction for a write issued through tx.first()', async () => {
+  // The SQL decides, not the method (spec 2026-09-10, D5): a write through
+  // first() is savepointed like any other. Falsifiable: make opensSavepoint()
+  // return false — the write is then cut mid-step and SQLite takes the
+  // transaction with it.
+  it('undoes a caught write issued through tx.first(), and goes on', async () => {
     const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
     try {
       const reason = new Error('cut mid-step');
       let caught: unknown;
-      const finished = deferred();
-      await expect(
-        db.transaction(async (tx) => {
-          caught = await tx
-            .first(`${BIG_INSERT} RETURNING x`, [], {
-              signal: abortAfter(30, reason),
-            })
-            .catch((e) => e);
-          finished.resolve();
-        }),
-      ).rejects.toBe(reason);
-      await finished.promise;
+      await db.transaction(async (tx) => {
+        caught = await tx
+          .first(`${BIG_INSERT} RETURNING x`, [], {
+            signal: abortAfter(30, reason),
+          })
+          .catch((e) => e);
+        await tx.write('INSERT INTO t VALUES (1)');
+      });
 
       expect(caught).toBe(reason);
       expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
         { n: 0 },
+      ]);
+      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+        { a: 0 },
+        { a: 1 },
       ]);
     } finally {
       await db.close();

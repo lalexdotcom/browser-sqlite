@@ -8,7 +8,7 @@ import type {
 import type { ReadFn, TransactionFn, WriteFn } from './bulk';
 import { SQLiteError } from './errors';
 import type { Logger } from './logger';
-import type { PoolWorker } from './pool';
+import type { PoolWorker, PoolWorkerQueryOptions } from './pool';
 import {
   chunk as chunkWorker,
   firstWorker,
@@ -193,17 +193,37 @@ export const createTransaction =
       // opened no transaction fails, and that failure would lose a healthy
       // worker through onPoisoned.
       let begun = false;
+      /**
+       * The conclusion owed to the savepoint the last savepointed write left
+       * open (spec 2026-09-11, D5). The next message the transaction sends
+       * carries it, and the worker runs it before anything else: `release`
+       * keeps that write, `undo` rolls it back because its own signal abandoned
+       * it. Undefined when no library savepoint is open.
+       */
+      let pending: 'release' | 'undo' | undefined;
+      /**
+       * Settles once a write abandoned by its own signal has ended on the
+       * worker and been judged (spec 2026-09-11, R2). Every entry point waits
+       * for it: nothing may reach the worker while that write still runs.
+       * Never rejects.
+       */
+      let abandoned: Promise<void> | undefined;
 
       // The SQL ends, for the transaction's own use. BEGIN, COMMIT and
       // ROLLBACK carry no signal, so a death can land while one is in flight.
       const commitNow = async () => {
-        await exec(worker, 'COMMIT');
+        await exec(via(false), 'COMMIT');
         done = true;
         // A COMMIT that succeeded is what happened to the data, whatever died
         // meanwhile: overwrite, never keep an earlier death.
         ending = { kind: 'committed' };
       };
       const rollbackNow = async () => {
+        // Straight to the worker, never through `via`: a full ROLLBACK
+        // discards every savepoint, so there is nothing to conclude — and a
+        // RELEASE sent to a connection that already left its transaction would
+        // fail and evict a healthy worker (spec 2026-09-11, §4).
+        pending = undefined;
         await exec(worker, 'ROLLBACK');
         done = true;
         // A rollback and a death both mean no effect, so a death that landed
@@ -212,23 +232,100 @@ export const createTransaction =
       };
 
       /**
-       * Whether a statement that ended in `error` owes the wait below.
-       *
-       * It does not when `pool.ts`'s reuse guard refused it: that rejection
-       * means the statement never claimed the worker, so the query in flight
-       * belongs to somebody else and waiting for it would be wrong twice over.
-       * It would park a rejection that has somewhere to be — the callback, or
-       * the transaction's own unwinding — behind a query this statement has no
-       * business serializing with. Two statements issued at once are one way to
-       * reach the guard; the other is a generator the callback simply DROPPED,
-       * and there nothing has closed that query at all — `idle` resolves only
-       * when `closeOpenStatements()` returns the generator at the end of the
-       * callback, which is precisely where the rejection was heading. Waiting
-       * here deadlocks the two against each other, and that was found by the
-       * test that pins the boundary, not by review.
+       * The worker as one statement sees it (spec 2026-09-11, D9). Its `query`
+       * hands the pool a thunk the pool reads only when it POSTS the query —
+       * below the reuse guard — so a refused statement neither consumes the
+       * pending conclusion nor claims a savepoint; and `mark` learns that the
+       * statement reached the worker, which is what owes the idle wait (it
+       * replaces `owesWait`: a statement the guard refused was never posted).
+       * Everything else is the worker itself, through the prototype: the query
+       * helpers call `query` and `interrupt`, and `interrupt` compares
+       * transports by identity, which this leaves untouched.
        */
-      const owesWait = (error: unknown): boolean =>
-        !(error instanceof SQLiteError && error.code === 'GENERATOR_ABANDONED');
+      const via = (open: boolean, mark?: { posted: boolean }): PoolWorker => {
+        const facade: PoolWorker = Object.create(worker);
+        facade.query = ((
+          sql: string,
+          params?: unknown[],
+          options?: PoolWorkerQueryOptions,
+        ) =>
+          worker.query(sql, params, {
+            ...options,
+            savepoint: () => {
+              if (mark) mark.posted = true;
+              const conclude = pending;
+              pending = open ? 'release' : undefined;
+              if (!conclude && !open) return undefined;
+              return {
+                ...(conclude ? { conclude } : {}),
+                ...(open ? { open: true as const } : {}),
+              };
+            },
+          })) as PoolWorker['query'];
+        return facade;
+      };
+
+      /**
+       * R2 (spec 2026-09-11): a statement issued after a write abandoned by its
+       * own signal waits until that write has ended and been judged. `waiting`
+       * is the statement's merged signal: its own abort rejects it alone — it
+       * has not reached the database — and the transaction's rejects it with
+       * the cause. Call it only when `abandoned` is set, so that the common
+       * path posts synchronously, as it always has.
+       */
+      const entryWait = async (waiting: AbortSignal | undefined) => {
+        const current = abandoned;
+        if (!current) return;
+        // B9: addEventListener never fires for a signal already aborted.
+        waiting?.throwIfAborted();
+        const { aborted, teardown } = makeAbortRace(waiting);
+        try {
+          await (aborted ? Promise.race([current, aborted]) : current);
+        } finally {
+          teardown();
+        }
+        if (ending) throw closedError(ending);
+      };
+
+      /**
+       * The write was abandoned by its own signal while it ran (spec
+       * 2026-09-11, R1). It runs on, driven by the transaction's signal alone;
+       * the next message rolls it back, and every entry point waits for it. If
+       * the connection left the transaction meanwhile, the transaction dies as
+       * after any statement (spec 2026-09-10, D6).
+       */
+      const abandon = (running: Promise<unknown>, method: string) => {
+        pending = 'undo';
+        const judged: Promise<void> = running
+          .then(
+            () => ({ failed: false, error: undefined as unknown }),
+            (error: unknown) => ({ failed: true, error }),
+          )
+          .then(async ({ failed, error }) => {
+            await worker.quiesce();
+            dieIfConnectionLeft(failed, error, method);
+          })
+          .catch(() => {
+            // Judging must never reject: every entry point awaits this, and
+            // the caller already has its rejection.
+          })
+          .finally(() => {
+            if (abandoned === judged) abandoned = undefined;
+          });
+        abandoned = judged;
+      };
+
+      /**
+       * Whether a statement runs inside the library's savepoint (spec
+       * 2026-09-11, R1): a write the caller may abandon alone — it carries its
+       * own signal or timeout, not already aborted at the call. Only those pay
+       * (D4).
+       */
+      const opensSavepoint = (
+        sql: string,
+        own: AbortSignal | undefined,
+        abortedAtCall: boolean,
+      ) => own !== undefined && !abortedAtCall && isWriteQuery(sql);
 
       /**
        * Whether `error` is a WRITE abandoned WHILE IT RAN, by its own signal
@@ -237,6 +334,8 @@ export const createTransaction =
        * but a signal already aborted AT THE CALL does not count: that write
        * never reached the worker, so it rejects alone and the callback may
        * continue, exactly as for any other caught error.
+       *
+       * Generator statements only, until spec 2026-09-11 §4 reaches `releasing`.
        */
       const isAbandonedWrite = (
         error: unknown,
@@ -298,18 +397,19 @@ export const createTransaction =
        * running: that same finally performs the whole stop-and-drain bounded by
        * `drainTimeout`; awaiting `quiesce()` only OBSERVES it.
        *
-       * The pairing is the point. A statement gets its signal here or not at
-       * all, so a method that skips this helper is visibly wrong rather than
-       * quietly missing its wait — which is what carries the invariant for the
-       * next method added to `SQLiteTransactionDB`. Generator-returning
-       * statements take `release` instead and wait in `releasing`'s finally,
-       * which is the same rule at the only other place a statement can end.
-       *
        * It also owns the statement's own `timeout`: `withDeadline` turns
        * `given.timeout` into a signal exactly like the client path does, and
        * that signal is merged in here alongside the transaction's own —
        * without this a per-statement `timeout` type-checked and bounded
        * nothing.
+       *
+       * `settled` takes the query helper as a function of the worker facade and
+       * the options, so it chooses both. **One exception to the idle wait, by
+       * design (spec 2026-09-11, R1/R2):** a savepointed write rejected by its
+       * own signal resolves its caller at once and runs on; the wait moves to
+       * `abandoned`, which the next entry point awaits. The wait is owed only
+       * by a statement that was posted (`mark.posted`) — a statement the reuse
+       * guard refused never was.
        */
       const withSignal = <
         O extends {
@@ -322,10 +422,15 @@ export const createTransaction =
         sql: string,
       ): {
         options: O;
+        driving: O;
         release: () => void;
-        settled: <R>(promise: Promise<R>) => Promise<R>;
+        settled: <R>(
+          start: (target: PoolWorker, options: O) => Promise<R>,
+        ) => Promise<R>;
         own: AbortSignal | undefined;
         abortedAtCall: boolean;
+        savepointed: boolean;
+        mark: { posted: boolean };
       } => {
         const own = withDeadline(given, method);
         // At the call, before anything can settle: D4 reversed decides on
@@ -337,34 +442,67 @@ export const createTransaction =
           merged.release();
           own.release();
         };
-        const settled = async <R>(promise: Promise<R>): Promise<R> => {
-          let refused = false;
+        const savepointed = opensSavepoint(sql, own.signal, abortedAtCall);
+        const mark = { posted: false };
+        const options = { ...given, signal: merged.signal } as O;
+        // A savepointed write's QUERY runs with the transaction's signal alone,
+        // so that only a death cuts it: SQLite closes every savepoint when it
+        // interrupts a write (spec 2026-09-11, §1).
+        const driving = savepointed ? ({ ...given, signal } as O) : options;
+        const settled = async <R>(
+          start: (target: PoolWorker, options: O) => Promise<R>,
+        ): Promise<R> => {
           let failed = false;
           let error: unknown;
+          // Set when the caller was rejected by its own signal while the write
+          // ran on: from then on the wait belongs to `abandoned`.
+          let left = false;
           try {
-            return await promise;
+            if (abandoned) await entryWait(options.signal);
+            if (!savepointed) return await start(via(false, mark), options);
+            // Its own signal may have fired during the wait: then it never
+            // reached the worker, and rejects alone.
+            own.signal?.throwIfAborted();
+            const running = start(via(true, mark), driving);
+            const { aborted, teardown } = makeAbortRace(own.signal);
+            try {
+              return await (aborted
+                ? Promise.race([running, aborted])
+                : running);
+            } catch (e) {
+              if (
+                mark.posted &&
+                own.signal?.aborted === true &&
+                e === own.signal.reason
+              ) {
+                left = true;
+                abandon(running, method);
+              }
+              throw e;
+            } finally {
+              teardown();
+            }
           } catch (e) {
             failed = true;
             error = e;
-            refused = !owesWait(e);
-            // Before the wait, so the transaction — and tx.signal — die at
-            // once rather than when the worker is idle again.
-            if (isAbandonedWrite(e, own.signal, sql, abortedAtCall)) die(e);
             throw e;
           } finally {
             release();
-            if (!refused) {
+            if (mark.posted && !left) {
               await worker.quiesce();
               dieIfConnectionLeft(failed, error, method);
             }
           }
         };
         return {
-          options: { ...given, signal: merged.signal } as O,
+          options,
+          driving,
           release,
           settled,
           own: own.signal,
           abortedAtCall,
+          savepointed,
+          mark,
         };
       };
 
@@ -382,12 +520,16 @@ export const createTransaction =
       /** Runs `release` when the consumer stops reading, however it stops. */
       const releasing = <R>(
         source: AsyncGenerator<R>,
-        release: () => void,
         entry: OpenStatement,
-        own: AbortSignal | undefined,
+        st: {
+          release: () => void;
+          own: AbortSignal | undefined;
+          abortedAtCall: boolean;
+          mark: { posted: boolean };
+          options: { signal?: AbortSignal | undefined };
+        },
         sql: string,
         method: string,
-        abortedAtCall: boolean,
       ): AsyncGenerator<R> => {
         // The entry is the box the generator's own `finally` needs: it must
         // remove itself from `open` and cannot name a generator that does not
@@ -395,30 +537,24 @@ export const createTransaction =
         // `src/pool.ts`'s `query` factory uses, for the same reason, and it is
         // also where the transport lands, whenever the factory gets to it.
         const gen = (async function* () {
-          // Checked before the try, not inside it (review I2): a closed
-          // handle throws here at once, without the finally below waiting on
-          // `worker.quiesce()` for a statement that never claimed the
-          // worker — the `owesWait` rule applied on this, the generator half
-          // of the same path `settled` guards with `refused`.
           if (ending) {
             open.delete(entry);
-            release();
+            st.release();
             throw closedError(ending);
           }
-          let refused = false;
           let failed = false;
           let error: unknown;
           try {
+            if (abandoned) await entryWait(st.options.signal);
             yield* source;
           } catch (e) {
             failed = true;
             error = e;
-            refused = !owesWait(e);
-            if (isAbandonedWrite(e, own, sql, abortedAtCall)) die(e);
+            if (isAbandonedWrite(e, st.own, sql, st.abortedAtCall)) die(e);
             throw e;
           } finally {
             open.delete(entry);
-            release();
+            st.release();
             // The generator half of `settled`'s invariant, and the reason it
             // belongs HERE rather than at the callback's boundary: a generator
             // abandoned BETWEEN two statements — `break` out of a `for await`,
@@ -426,7 +562,7 @@ export const createTransaction =
             // since that runs once the callback is over. `drain`'s own finally
             // has already gone out with the interrupt by the time this runs,
             // because `yield*` forwards `return()` to the source and awaits it.
-            if (!refused) {
+            if (st.mark.posted) {
               await worker.quiesce();
               dieIfConnectionLeft(failed, error, method);
             }
@@ -519,14 +655,18 @@ export const createTransaction =
             read: (sql, params, given) => {
               if (ending) return Promise.reject(closedError(ending));
               const query = checksql(sql);
-              const { options, settled } = withSignal(given, 'read', query);
-              return settled(readWorker(worker, query, params, options));
+              const { settled } = withSignal(given, 'read', query);
+              return settled((target, options) =>
+                readWorker(target, query, params, options),
+              );
             },
             write: (sql, params, given) => {
               if (ending) return Promise.reject(closedError(ending));
               const query = checksql(sql);
-              const { options, settled } = withSignal(given, 'write', query);
-              return settled(writeWorker(worker, query, params, options));
+              const { settled } = withSignal(given, 'write', query);
+              return settled((target, options) =>
+                writeWorker(target, query, params, options),
+              );
             },
             // The caller's transaction is already open. No BEGIN, no COMMIT.
             // db is referenced before its const declaration, deliberately: this arrow
@@ -544,8 +684,10 @@ export const createTransaction =
         ) => {
           if (ending) return Promise.reject(closedError(ending));
           const query = checksql(sql);
-          const { options, settled } = withSignal(given, 'read', query);
-          return settled(readWorker<T>(worker, query, params, options));
+          const { settled } = withSignal(given, 'read', query);
+          return settled((target, options) =>
+            readWorker<T>(target, query, params, options),
+          );
         },
 
         write: <T extends Record<string, unknown>>(
@@ -555,8 +697,10 @@ export const createTransaction =
         ) => {
           if (ending) return Promise.reject(closedError(ending));
           const query = checksql(sql);
-          const { options, settled } = withSignal(given, 'write', query);
-          return settled(writeWorker<T>(worker, query, params, options));
+          const { settled } = withSignal(given, 'write', query);
+          return settled((target, options) =>
+            writeWorker<T>(target, query, params, options),
+          );
         },
 
         chunk: <T extends Record<string, unknown>>(
@@ -565,31 +709,19 @@ export const createTransaction =
           given?: SQLiteChunkOptions,
         ) => {
           const query = checksql(sql);
-          const { options, release, own, abortedAtCall } = withSignal(
-            given,
-            'chunk',
-            query,
-          );
+          const st = withSignal(given, 'chunk', query);
           const entry: OpenStatement = {};
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
           // quiesce().then(release) already pending in its own finally.
-          const source = chunkWorker<T>(worker, query, params, {
-            ...options,
-            onAbandon: release,
+          const source = chunkWorker<T>(via(false, st.mark), query, params, {
+            ...st.options,
+            onAbandon: st.release,
             onTransport: (iterator) => {
               entry.transport = iterator;
             },
           });
-          return releasing(
-            source,
-            release,
-            entry,
-            own,
-            query,
-            'chunk',
-            abortedAtCall,
-          );
+          return releasing(source, entry, st, query, 'chunk');
         },
 
         stream: <T extends Record<string, unknown>>(
@@ -598,11 +730,7 @@ export const createTransaction =
           given?: SQLiteChunkOptions,
         ) => {
           const query = checksql(sql);
-          const { options, release, own, abortedAtCall } = withSignal(
-            given,
-            'stream',
-            query,
-          );
+          const st = withSignal(given, 'stream', query);
           // streamRows forwards its options straight to chunk(), but it is a
           // generator itself: the transport lands in `entry` on the first
           // next(), not here.
@@ -610,22 +738,14 @@ export const createTransaction =
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
           // quiesce().then(release) already pending in its own finally.
-          const source = streamRows<T>(worker, query, params, {
-            ...options,
-            onAbandon: release,
+          const source = streamRows<T>(via(false, st.mark), query, params, {
+            ...st.options,
+            onAbandon: st.release,
             onTransport: (iterator) => {
               entry.transport = iterator;
             },
           });
-          return releasing(
-            source,
-            release,
-            entry,
-            own,
-            query,
-            'stream',
-            abortedAtCall,
-          );
+          return releasing(source, entry, st, query, 'stream');
         },
 
         first: <T extends Record<string, unknown>>(
@@ -635,8 +755,10 @@ export const createTransaction =
         ) => {
           if (ending) return Promise.reject(closedError(ending));
           const query = checksql(sql);
-          const { options, settled } = withSignal(given, 'first', query);
-          return settled(firstWorker<T>(worker, query, params, options));
+          const { settled } = withSignal(given, 'first', query);
+          return settled((target, options) =>
+            firstWorker<T>(target, query, params, options),
+          );
         },
 
         bulkWrite: ((...args: Parameters<SQLiteQueryAPI['bulkWrite']>) => {
@@ -659,6 +781,7 @@ export const createTransaction =
             if (ending.kind === 'committed') return;
             throw closedError(ending);
           }
+          if (abandoned) await entryWait(signal);
           await commitNow();
         },
 
@@ -670,6 +793,7 @@ export const createTransaction =
               );
             return;
           }
+          if (abandoned) await entryWait(signal);
           await rollbackNow();
         },
         // The merged signal itself (spec §4): it aborts on every cause of death with the cause as
@@ -689,7 +813,7 @@ export const createTransaction =
         // exists to prevent. The cost is a window — while BEGIN is in flight the
         // transaction cannot be abandoned, and on a VFS rotating one exclusive
         // handle that wait can be long. The abort lands the moment BEGIN settles.
-        await exec(worker, 'BEGIN');
+        await exec(via(false), 'BEGIN');
         begun = true;
         // That window, closed: the signal may have fired while BEGIN was in
         // flight, and the transaction is open now. The callback never runs.
@@ -718,6 +842,9 @@ export const createTransaction =
           // cause rather than TRANSACTION_CLOSED: this is the transaction's own
           // outcome (spec R2), not a late statement.
           signal?.throwIfAborted();
+          // Spec 2026-09-11, R2: the COMMIT waits for a write abandoned by its
+          // own signal, and carries its undo.
+          if (abandoned) await entryWait(signal);
           if (autoCommit) await commitNow();
           else await rollbackNow();
         }
