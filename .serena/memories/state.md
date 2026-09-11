@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-09-04.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-09-11.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one.
 
 **No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
@@ -24,29 +24,31 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-10 after the quiesce merge
+## The verification baseline — compare against these, re-measured 2026-09-11 after the transaction-closure merge
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a
-run in this container on 2026-09-10, on `main` after `fix/tx-statement-quiesce` merged** — none
-is carried forward, none is arithmetic. The whole table was re-read in one pass, which is what
-its own rule demands. The merged tree was proven byte-identical to the branch tip's
-(`git diff main <branch>` empty), so the branch's own verification transfers rather than being
-assumed to.
+run in this container on 2026-09-11, on `main` at merge `eeabe06` (`fix/tx-statement-timeout`)**
+— none is carried forward, none is arithmetic. The whole table was re-read in one pass, which
+is what its own rule demands; raw outputs in `.scratchpad/closure-baseline/`. The merged tree
+was proven byte-identical to the branch tip's (`git diff main <branch>` empty), so the
+branch's own verification transfers rather than being assumed to.
 
 **`pnpm test` chains THREE configs** — chromium+unit, firefox, and the isolated project — so a
 green `pnpm test` covers what CI covers, and a commit pays all three through the pre-commit hook.
+**A green `pnpm test` is not a green tree: run `pnpm exec tsc --noEmit` beside it** — a commit
+on the last branch landed with a failing typecheck that no test run could show (`mem:lessons`).
 
 | command | result |
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **678 tests / 57 files** (unit + chromium, **1 skipped**), **263 / 38** (firefox, **1 skipped**), **5 / 2** (isolated) |
-| `pnpm exec rstest --project unit run` | 416 tests, 20 files |
-| `pnpm exec rstest --project chromium run` | 262 tests, 37 files |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **716 tests / 60 files** (unit + chromium, **1 skipped**), **285 / 41** (firefox, **1 skipped**), **5 / 2** (isolated) |
+| `pnpm exec rstest --project unit run` | 432 tests, 20 files |
+| `pnpm exec rstest --project chromium run` | 284 tests, 40 files, 1 skipped |
 | `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each, **73 passed / 12 skipped**, identical on both engines |
 | `pnpm test:consumer` | 24/24 stages |
 | `BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 110 files, 13 warnings, 1 info |
+| `pnpm lint` | 113 files, 13 warnings, 1 info |
 | `dependencies` in `package.json` | absent |
 
 **The two skipped browser tests are one test, and they are the first this repository has had.**
@@ -81,21 +83,24 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 ## Decisions the user owes
 
-None outstanding.
+- **Whether the savepoint variant must precede rc.5.** Deferred by the user on 2026-09-10 to
+  a new brainstorm on a new branch (`mem:follow-ups`, Savepoints); the timing was left to
+  them. It is usability rather than reliability — nothing is corrupted without it — so the
+  triage rule below does not settle it by itself.
+- **The pre-commit hook's full-suite cost.** The user asked to talk about it on 2026-09-10
+  (`mem:follow-ups`); nothing is decided.
 
 **rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
-and only one of them is still open.
+and both are now closed — the second by merge `eeabe06` on 2026-09-11.
 
 - **HANDLE-2 was investigated the same day and came apart** — its stated cause is measured
   false and the wedge does not reproduce anywhere, on `main` or before the fix (§ below).
   What produced its symptom was a write-lock defect, now fixed and merged.
 - **The short-circuited-statement defect is FIXED and merged** (2026-09-10, § below). What was
   described here as a `tx.first()` defect was four faces of one mechanism.
-- **One subject is open and it is the next one: a per-statement `timeout` inside
-  `transaction()` is silently ignored.** Found while scoping the fix above, confirmed by
-  reading, and the user called it *"un trou dans la raquette, à combler"*. `mem:follow-ups`
-  carries it. **The user asked to restart cold on it** (2026-09-10) — do not carry this
-  session's framing into it.
+- **The per-statement `timeout` inside `transaction()` is fixed and merged** (2026-09-11,
+  merge `eeabe06`, § below). What it exposed — an interrupted write inside a transaction,
+  and a `tx` handle outliving its transaction — was fixed on the same branch.
 
 The user's words were general — *"on ne sort pas la RC5 avec ce genre de sujets pas réglés"* —
 so **treat this as the subjects that were in front of them, not as proven exhaustive**: confirm
@@ -144,6 +149,44 @@ permanent, silent, origin-wide — was found and fixed the same day (§ below).
 2026-09-08 by medianing the bench corpus at n≥3 per platform (`mem:measurements`,
 VFS-MEDIAN). The answer was not "move it": there are now **two** recommendations,
 `OPFSWriteAheadVFS` and `OPFSAdaptiveVFS`, and the constant itself left `src/` — see § below.
+
+## The transaction closure — merged 2026-09-11
+
+Spec `docs/superpowers/specs/2026-09-10-transaction-abort-design.md` (read its dated
+amendments), plan `docs/superpowers/plans/2026-09-10-transaction-abort.md`. Branch
+`fix/tx-statement-timeout`: step 1 honoured a per-statement `timeout` inside `transaction()`;
+step 2 is what that exposed. Invariants in `mem:architecture`; campaigns in
+`mem:measurements` (TX-AUTOCOMMIT, TX-HANDLE, TX-M1). Merge `eeabe06`.
+
+**Five things the code will not tell you:**
+
+- **The rule was chosen as a mechanism and corrected by the user's use cases.** "An abandoned
+  write abandons its transaction" shipped through spec, plan, six tasks and a whole-branch
+  review before the user wrote down what a consumer expects: a caught error goes on, an
+  uncaught one stops everything. Two decisions followed, both recorded in the spec: D4
+  reversed — a write whose own signal was already aborted at the call is simply rejected and
+  the callback may go on — and `tx.signal` aborts on EVERY rejection of `transaction()`,
+  not only an abort. The one case still off the user's model, a caught write abort while it
+  runs, is the savepoint follow-up.
+- **The savepoint option was refused once, and the refusal was right for what it was.** The
+  version refused never cut a write, so a `timeout` bought nothing. The deferred variant cuts
+  on a transaction-level abort and only spares a write the CALLER caught. Do not merge the two
+  in memory.
+- **`tx.signal` means "the transaction was interrupted", never "the callback stops"** (user,
+  2026-09-10). Work the callback did not await outlives a successful transaction by design —
+  the closed handle is what keeps it off the database. An abort after an explicit `commit()`
+  still abandons the call: `transaction()` rejects, `tx.signal` fires, the commit stands.
+- **Breaking, once:** a statement issued after the transaction's own `signal` fired reports
+  `TRANSACTION_CLOSED` where rc.4 reported `signal.reason`. With D4 reversed, the write rule
+  is not breaking — every behaviour it changes failed or committed an abandoned write.
+- **One commit on the branch, `c2ef918`, landed with a failing `tsc` past the hook** and was
+  fixed by `e45f566`; every other commit was proved green in clean worktrees. See
+  `mem:lessons` before trusting a hook or a subagent's "pre-existing".
+
+**What it does NOT deliver.** The savepoint variant. An eviction for any other reason — a
+crashed worker — still loses a memory database, as it always has. Four review minors were
+left by decision: the label of a poisoned rollback, the `settled`/`releasing` duplication, the
+reused name `own`, and the `abandon` listener's lifetime on a caller-owned signal.
 
 ## The transaction's per-statement wait — merged 2026-09-10
 

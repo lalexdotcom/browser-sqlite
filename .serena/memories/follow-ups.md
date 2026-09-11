@@ -69,25 +69,65 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
-## A per-statement `timeout` inside `transaction()` is silently ignored
+## Savepoints — a caught statement abort should let the callback go on (user, 2026-09-10)
 
-`Interruptible` carries `timeout` on all eight methods, but `transaction.ts` calls `withDeadline`
-only for the transaction's OWN options; `withSignal` propagates `signal` alone, and neither
-`chunk()` nor `writeWorker` forwards `timeout` to `worker.query`. So `tx.read(sql, p, { timeout:
-5000 })` type-checks and bounds nothing. Confirmed by reading, 2026-09-09; the user called it *"un
-trou dans la raquette, à combler"*.
+Deferred by the user to a new brainstorm and a new branch; **whether it must precede rc.5 is
+the user's call and has not been made.** The requirements are the user's three use cases:
 
-**The constraint that used to sit here is lifted.** This was held behind the quiesce fix,
-because restoring the per-statement `timeout` creates abort paths on `read`/`write`/`bulkWrite`
-that could not occur before it. That fix is merged (2026-09-10), so this is now free-standing —
-and it takes its own branch, not a shared one: two distinct defects with two distinct test sets.
+1. The transaction is interrupted by `transaction()`'s own `signal`/`timeout`: everything
+   stops, `tx.signal` fires.
+2. An error escapes the callback — any `throw`, a statement's own `signal`/`timeout`, an
+   error from a `tx` method: everything stops, `tx.signal` fires.
+3. A `tx` method's error that the callback CATCHES — its own `signal`/`timeout` included: the
+   callback goes on, still inside the transaction.
 
-**One thing measured while closing that fix, and it changes what this entry has to check.** A
-statement inside a transaction ALWAYS carries a signal — `withSignal` merges the transaction's
-own, `mergeSignals` returns the surviving side when one is absent, and `closeSignal` is always
-defined. So `abortable` is already true on every transaction statement, and restoring `timeout`
-adds a deadline, not an interruption capability. Do not write a design premised on the
-statement becoming abortable: it already is. `mem:measurements`, TX-QUIESCE.
+What merge `eeabe06` ships meets all three **except one case of 3**: a WRITE abandoned by its
+own `signal`/`timeout` WHILE IT RUNS kills the transaction even when caught. On a build that
+can cut a step SQLite has already rolled the whole transaction back when the write is
+interrupted (`mem:measurements`, TX-AUTOCOMMIT), so once the step is cut, continuing is
+impossible.
+
+**The sketch to start from:** do not cut a write on a STATEMENT-level abort — its promise
+rejects at once, the write runs to its end, a savepoint undoes it, the transaction goes on;
+DO cut on a TRANSACTION-level abort (cases 1 and 2), where losing the transaction costs
+nothing. A savepoint only for writes carrying their own `signal`/`timeout`, so ordinary writes
+pay nothing; `bulkWrite`/`output` need one around the whole load. The price: after a caught
+write abort the next statement waits for the abandoned write to finish, with the write lock
+held. **This is the answer the spec's refusal of "option 2" (§2) asked for** — that version
+never cut, so a timeout bought nothing; this one cuts whenever the caller does not catch.
+
+## `SQLITE_FULL` reaches the client with neither `code` nor `sqliteCode` (2026-09-10)
+
+Seen in TX-M1 (`mem:measurements`): a caught INSERT failing with *database or disk is full*
+arrived as an error whose `code` and `sqliteCode` were both undefined. `BUSY` keeps its
+numeric code through `busyFromCode`; other SQLite result codes may not reach the client as a
+`SQLiteError` at all. Not investigated — read `workerError` in `src/pool.ts` before
+scheduling anything.
+
+## The pre-commit hook runs the whole suite — to discuss (user, 2026-09-10)
+
+The hook (`simple-git-hooks` in `package.json`) is `npx lint-staged && pnpm test && pnpm exec
+tsc --noEmit`: three configs, several minutes per commit, and every task of a plan pays it at
+least once. The user finds the commits too long and wants to talk about it. **Not decided —
+this entry is the agenda, not a verdict.**
+
+What to bring to that conversation, all already established:
+
+- **What it has caught.** A one-in-eighteen Firefox flake at a closure, after every task
+  review had passed (`mem:lessons`, "A pre-merge verification is not ceremony"); and a
+  Firefox-only flake that CI alone had shown as noise for weeks, once the per-engine split put
+  Firefox in the hook (`mem:lessons`, "A test that waits for a TRANSIENT state").
+- **What it does not guarantee.** On 2026-09-10 commit `c2ef918` landed with a failing
+  `tsc`, although the hook ends with `tsc`; the means was never established. The hook honours
+  `SKIP_SIMPLE_GIT_HOOKS=1`, sources `$SIMPLE_GIT_HOOKS_RC`, and runs `tsc` against the
+  working tree, not the tree being committed. Only a per-commit check in a clean worktree
+  proved the rest of that branch green.
+- **The ordering is backwards for cost:** `tsc` — seconds — runs after the suite — minutes —
+  so a type error is reported last.
+
+Directions to weigh, none chosen: `tsc` and lint first; unit tests in pre-commit and the
+browser configs in a pre-push hook; the full suite only in CI (which has still never run on
+rc.5 work — `mem:state`); or keeping it and making plans commit less often.
 
 ## Notes, with nothing to fix
 

@@ -4,6 +4,70 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## TX-AUTOCOMMIT — an interrupted write inside a transaction, 2026-09-10, this container, both engines
+
+**Method.** Throwaway probes `.scratchpad/probe-autocommit/persistent.test.ts` (chromium and
+firefox projects) and `memory-isolated.test.ts` (the isolated project), run on
+`fix/tx-statement-timeout` BEFORE its fix — the code of `main` at the time. `poolSize: 1`,
+`debug: true`, a worker's replacement detected by a changed `creationTime`. Inside one
+`db.transaction()`: `INSERT (1)`; an `INSERT … SELECT` of 1 000 000 rows from a recursive CTE
+carrying its own `signal`, aborted after 30 ms; `INSERT (2)`. Three runs per case, **every
+case identical across runs and engines** — deterministic.
+
+| Build (VFS) | Callback | Observed | Evicted |
+|---|---|---|---|
+| `async` (`OPFSAdaptiveVFS`, `OPFSWriteAheadVFS`, `MemoryVFS`); `sync` isolated (`MemoryVFS`) | catches | the write rejects in 31-44 ms; `INSERT (1)` is gone INSIDE the callback (SQLite rolled back); `INSERT (2)` lands in autocommit; `COMMIT` fails *cannot commit - no transaction is active*; row 2 durable | yes, every run |
+| same | does not catch | rejects with the reason; data correct; the fallback `ROLLBACK` fails the same way | yes, every run |
+| `sync` not isolated (`OPFSWriteAheadVFS`, `MemoryVFS`) | catches | the write runs to its end (1.5-1.6 s Chromium, 2.2-2.3 s Firefox on OPFSWriteAheadVFS) and its 1 000 000 rows COMMIT although the caller got a rejection | no |
+| same | does not catch | clean rollback | no |
+
+**On a memory VFS the eviction wipes the database**: the next read failed with `no such
+table: t` for a table committed before the transaction — the respawned worker opens an empty
+memory database. Natural duration of the insert outside any transaction, for scale:
+356-430 ms Chromium, 1.8-2.5 s Firefox (`MemoryVFS`).
+
+**Status:** fixed by merge `eeabe06`; pinned by `tests/browser/tx-abort.test.ts`. Design:
+`docs/superpowers/specs/2026-09-10-transaction-abort-design.md` §1.1.
+
+## TX-HANDLE — a `tx` handle used after its transaction ended, 2026-09-10, both engines
+
+**Method.** Throwaway probes `.scratchpad/probe-autocommit/rollback.test.ts` and
+`afterend.test.ts`, default `OPFSAdaptiveVFS`/`async`, `poolSize: 1` so the next transaction
+lands on the same worker; transaction A ends, B writes `b1` and pauses between two
+statements, A's handle is used, B writes `b2` and commits. Three runs per arm, plus a control
+arm with no late call; identical across runs and engines.
+
+| How A ended | Late call on A's `tx` | B | Evicted |
+|---|---|---|---|
+| abandoned by its signal | `rollback()` resolves | destroyed: rows `['b2']`, B's COMMIT fails | yes |
+| committed | `rollback()` resolves | destroyed the same way (`['a1','b2']`) | yes |
+| committed | `write('late')` resolves | contaminated: `late` commits with B | no |
+| control | — | commits `b1`, `b2` | no |
+
+**Present in `1.0.0-rc.4`** — `rollback()` there is the same unguarded `exec(worker,
+'ROLLBACK')`, read from the tag. Found because the user asked to verify a claim the design
+had marked "read from the code, not measured". **Status:** fixed by merge `eeabe06`; pinned by
+`tests/browser/tx-handle.test.ts`.
+
+## TX-M1 — an interrupted READ, and `SQLITE_FULL`, inside a transaction, 2026-09-10, both engines
+
+**Method.** Throwaway probe `.scratchpad/probe-autocommit/m1.test.ts`, three runs per case.
+**Read:** `longQuery(20_000_000)` (seconds to complete) cut by its own signal at 30 ms, after
+warming a different statement; `OPFSAdaptiveVFS` and `MemoryVFS`, `async`. The read rejected
+in 32-39 ms and the transaction **survived**: it committed `[1, 2]`, no eviction. This is the
+premise of R7 — an interrupted read-only statement does not roll the transaction back.
+**`SQLITE_FULL`:** `PRAGMA max_page_count = page_count + 3`, then an INSERT of 20 000 rows
+of 500 characters, caught; `OPFSAdaptiveVFS` `async` and `MemoryVFS` `sync`. SQLite undid
+the statement alone and the transaction committed `[1, 2]` — so the "connection left the
+transaction" trigger cannot be provoked this way in a browser, and its test is unit-only.
+**Noted in passing:** that error reached the client with neither `code` nor `sqliteCode`
+(`mem:follow-ups`).
+
+**One number NOT measured by the controller:** the Task 5 implementer reported that under the
+full suite, lease acquisition plus `BEGIN` took 150-170 ms — enough to spend a 100 ms
+transaction `timeout` before the callback ran. Not re-measured; it is why that test's budget
+is 1 000 ms, and it is a story until someone times it.
+
 ## TX-QUIESCE — what the per-statement wait costs, 2026-09-10, this container, Chromium
 
 **Method.** Probe `.scratchpad/tx-quiesce-probe.test.ts`, run as a browser test on the

@@ -660,3 +660,48 @@ had been reviewed at that level.
 **A red suite at closure is the cheapest place to find a defect, and the last one.** What
 followed was a full systematic-debugging session that turned a flake into HANDLE-2. Had the
 merge gone through on a green-looking summary, the wedge would have shipped in rc.5.
+
+
+## A hook that ends with `tsc` is not proof that a commit typechecks — 2026-09-10
+
+Commit `c2ef918` landed with `tsc` failing, although the pre-commit hook ends with
+`pnpm exec tsc --noEmit`. The means was never established — the hook honours
+`SKIP_SIMPLE_GIT_HOOKS`, sources `$SIMPLE_GIT_HOOKS_RC`, and checks the working tree rather
+than the tree being committed. Three checks passed over it: the implementer's report called
+the error "pre-existing, not related to this task" twice; the task reviewer ran lint only;
+the controller's own verification ran `pnpm test` only. It surfaced when the NEXT commit, a
+documentation-only one, was refused.
+
+**Two rules out of it.** A verification run is `pnpm test` AND `pnpm exec tsc --noEmit`,
+never the suite alone. A subagent's "pre-existing" is a claim about the base commit: check it
+there before accepting it. What proved the rest of the branch was a per-commit check in
+clean worktrees — `git worktree add /tmp/rev-<sha> <sha>`, symlink `node_modules`, run `tsc`
+and the linter, remove the worktree — and it is the only proof that does not trust a hook.
+
+## A design's "read from the code, not measured" is a hypothesis — measuring one found a released defect — 2026-09-10
+
+The transaction-closure spec justified one rule with an aside: `tx.rollback()` carries no
+guard, so an abandoned callback "could" roll back a connection serving someone else. The
+user asked for it to be verified. The probe did not only confirm it — its generalization
+found that a handle used after a NORMAL commit rolled back, or silently joined, the next
+transaction on the same worker, a defect present in rc.4. **When a design leans on a hazard
+read from the code, probe it before planning**; the probe is cheap, and what it finds next to
+the claim is usually the larger thing.
+
+## Put a design to the consumer's use cases before its mechanism — 2026-09-10
+
+"An abandoned write abandons its transaction" was chosen, specified, planned, implemented,
+task-reviewed and whole-branch-reviewed as a mechanism. The gap showed only when the user
+wrote down their three use cases — caught errors go on, uncaught ones stop everything —
+because a caught WRITE abort did not go on. It cost a reversed decision (D4), a changed
+`tx.signal` rule and a deferred design. **Ask what the consumer's `try/catch` and uncaught
+paths should do before choosing a mechanism**; a consumer states in three lines what an
+option table hides.
+
+## A deadline "counted from the call" includes everything before the callback — 2026-09-10
+
+A plan's test gave a transaction `timeout: 100` and waited on `tx.signal` inside the
+callback. Green alone, red in the full suite: the deadline counts from the call, so the lease
+and `BEGIN` spent it before the callback ran and the captured signal was never assigned. A
+test around a wall-clock deadline must budget for what precedes the code it observes, and
+assert its precondition — `expect(seen).toBeDefined()` — so a lost setup reports itself.

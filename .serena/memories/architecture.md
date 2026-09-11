@@ -145,6 +145,42 @@ claiming otherwise were false and were corrected on 2026-09-10; what decides whe
 running `step()` can actually be cut is the BUILD — the `sync` build without cross-origin
 isolation installs no progress handler at all. Numbers: `mem:measurements`, TX-QUIESCE.
 
+**A transaction ends once, and its handle knows it (merge `eeabe06`, 2026-09-11).** Design:
+`docs/superpowers/specs/2026-09-10-transaction-abort-design.md` — read its dated amendments,
+two decisions changed after the final review. `createTransaction` records `ending` —
+`committed`, `rolled-back`, or `died` with a cause — and every public method of `tx` reads it
+FIRST: once it is set nothing the handle does reaches the worker, which may be serving
+another lease by then. Statements reject (`bulkWrite`/`output` throw) `TRANSACTION_CLOSED`
+with `cause` = the cause of death, absent after a normal end; `commit()` resolves only if the
+transaction committed; `rollback()` always resolves and warns through `logger.always.warn`
+after a commit. What must hold:
+
+- **The teardown uses `commitNow()`/`rollbackNow()`, never the public `commit()`/`rollback()`**
+  — those return early on a closed handle, so a teardown calling them would leave SQLite's
+  transaction open on a pooled connection.
+- **A COMMIT that succeeds records `committed` unconditionally; a ROLLBACK keeps an earlier
+  death** (`??=`). The handle reports what happened to the data.
+- **Every cause of death goes through one signal.** An internal `death` AbortController is
+  merged into the transaction's signal; `die(cause)` is a no-op once ended. The race against
+  the callback, statements in flight, `ending` and `tx.signal` therefore all see a death the
+  same way. The inner `catch` calls `die(e)` first, which is what makes `tx.signal` abort
+  whenever `transaction()` rejects; `releaseDeath()` and the `onAbort` removal run BEFORE
+  `await afterWrite`, so nothing aborts it once the transaction has resolved.
+- **What kills a transaction:** a WRITE — decided by `isWriteQuery(sql)`, never by the method,
+  since `read`/`first`/`chunk`/`stream` accept a write — rejected by its OWN signal or timeout
+  WHILE IT RUNS (not when that signal was already aborted at the call: `abortedAtCall`, the
+  user reversed D4); `bulkWrite`/`output` abandoned after creation, via the `onAbandoned`
+  hook; and the connection reporting it left the transaction (`worker.inTransaction ===
+  false` after `quiesce()`). An abandoned READ does not.
+- **A closed handle's `chunk()`/`stream()` throw before `releasing`'s `try`**, so they never
+  wait on `quiesce()` — the `owesWait` rule, which the final review found applied on one of
+  the two paths only.
+
+**`PoolWorker.inTransaction` is connection state, NOT availability.** Written only in
+`pool.ts`'s `onmessage` (the `done`/`error` of the current callId), which runs before `idle`
+resolves — so it is fresh once `quiesce()` returns; read only by `transaction.ts`. Nothing
+schedules on it, and a scheduler read of it would reopen B1's shape.
+
 **`PoolWorker.terminate()` is NOT the browser's method any more — it poisons the
 transport first.** `PoolWorker` is the native `Worker` (`Object.assign` in `pool.ts`), so
 terminating used to stop the thread and tell the transport nothing: a request posted
