@@ -532,12 +532,33 @@ const open = (file: string, options: OpenOptions) => {
                 // Savepoint statements return no rows.
               }
             };
-            if (savepoint.conclude === 'undo')
-              await control(`ROLLBACK TO ${LIBRARY_SAVEPOINT}`);
-            if (savepoint.conclude)
-              await control(`RELEASE ${LIBRARY_SAVEPOINT}`);
-            if (savepoint.open) await control(`SAVEPOINT ${LIBRARY_SAVEPOINT}`);
-            prepared = 0;
+            try {
+              if (savepoint.conclude === 'undo')
+                await control(`ROLLBACK TO ${LIBRARY_SAVEPOINT}`);
+              if (savepoint.conclude)
+                await control(`RELEASE ${LIBRARY_SAVEPOINT}`);
+              if (savepoint.open)
+                await control(`SAVEPOINT ${LIBRARY_SAVEPOINT}`);
+            } catch (e) {
+              // Amended 2026-09-11 (final review): the worker makes that
+              // death happen — on any failure in step 1 or 2 it issues a full
+              // ROLLBACK before replying, so the reply reports
+              // `inTransaction: false` and the transaction dies through D6
+              // with that error as cause. A failure of the ROLLBACK itself is
+              // swallowed: the reply below reports whatever `inTransaction`
+              // actually reads, and the caller's error is this one, not that
+              // one. Found by the final review: `tx.write('…; RELEASE u',
+              // …)` abandoned pops `__bsq_sp` with `u`, and the next
+              // conclusion fails.
+              try {
+                await control('ROLLBACK');
+              } catch {
+                // Best effort — see above.
+              }
+              throw e;
+            } finally {
+              prepared = 0;
+            }
           }
 
           for await (const chunk of query(callId, sql, params, options)) {

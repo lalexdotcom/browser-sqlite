@@ -352,4 +352,48 @@ describe("a consumer's own savepoints (spec 2026-09-11, D7, D8)", () => {
       await db.close();
     }
   }, 60_000);
+
+  // F2 (2026-09-11 final review): the reachable scenario the controller
+  // ruling names. D8 checks only the LEADING keyword of the whole
+  // statement, so this abandoned write — `BIG_INSERT; RELEASE u` — still
+  // counts as savepointed; run to its end (R1), its trailing `RELEASE u`
+  // pops __bsq_sp along with `u` (RELEASE releases every savepoint opened
+  // after the named one too), so the next message's `ROLLBACK TO __bsq_sp`
+  // fails with "no such savepoint". Before this fix only that one statement
+  // rejected and the callback's own catch swallowed it, so COMMIT kept the
+  // abandoned rows; the worker's own ROLLBACK now takes the whole
+  // transaction down through D6 instead. Falsifiable: remove the worker's
+  // ROLLBACK from the conclude/open catch in src/worker/worker.ts — the
+  // transaction then resolves and the abandoned rows are committed.
+  it('dies when an abandoned write pops a consumer savepoint along with __bsq_sp', async () => {
+    const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
+    try {
+      const before = workerIdentity(db);
+      let firstCaught: unknown;
+      let secondCaught: unknown;
+      const outcome = await db
+        .transaction(async (tx) => {
+          await tx.write('SAVEPOINT u');
+          await tx.write('INSERT INTO t VALUES (1)');
+          firstCaught = await tx
+            .write(`${BIG_INSERT}; RELEASE u`, [], { timeout: 30 })
+            .catch((e) => e);
+          secondCaught = await tx
+            .write('INSERT INTO t VALUES (2)')
+            .catch((e) => e);
+        })
+        .catch((e) => e);
+      expect(firstCaught).toMatchObject({
+        code: 'OPERATION_TIMEOUT',
+        timeout: 30,
+      });
+      expect((secondCaught as Error).message).toMatch(/no such savepoint/);
+      expect(outcome).toBe(secondCaught);
+      expect(await bigCount(db)).toBe(0);
+      expect(await rowsOf(db)).toEqual([0]);
+      expect(workerIdentity(db)).toBe(before);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
 });

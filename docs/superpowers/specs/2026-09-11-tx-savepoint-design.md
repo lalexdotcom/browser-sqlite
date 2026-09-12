@@ -151,6 +151,12 @@ A failure in step 1 or 2 is the query's `error`, reported like any other, with
 `inTransaction`. The client treats a failed conclusion as the transaction's death, cause that
 error: it can no longer promise that a rejected write had no effect.
 
+**Amended 2026-09-11 (final review):** the worker makes that death happen — on any failure
+in step 1 or 2 it issues a full `ROLLBACK` before replying, so the reply reports
+`inTransaction: false` and the transaction dies through D6 with that error as cause. Found by
+the final review: `tx.write('…; RELEASE u', …)` abandoned pops `__bsq_sp` with `u`, and the
+next conclusion fails.
+
 **The facade (D9).** `createTransaction` stops handing its `PoolWorker` to `readWorker`,
 `writeWorker`, `firstWorker`, `chunkWorker`, `streamRows` and `exec`. It hands them a facade
 whose `query()` attaches `{ conclude }` from the transaction's single pending-conclusion slot,

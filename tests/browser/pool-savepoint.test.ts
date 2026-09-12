@@ -124,4 +124,40 @@ describe('the worker concludes, then opens, a savepoint before the statement', (
       worker.terminate();
     }
   });
+
+  // Spec 2026-09-11 §4, amended (F2, final review): a failed conclude/open
+  // must not leave the connection sitting inside a transaction whose
+  // __bsq_sp fate is now undecided — the pending conclusion was already
+  // consumed on the client and nothing will retry it. Falsifiable: remove
+  // the worker's synthetic ROLLBACK from the catch around the conclude/open
+  // block in src/worker/worker.ts — row 1 then survives and a fresh
+  // BEGIN below fails, the connection still being inside the old one.
+  it('rolls the connection out of its transaction when a conclusion fails', async () => {
+    const worker = await spawn();
+    try {
+      await run(worker, 'CREATE TABLE t (a INTEGER)');
+      await run(worker, 'BEGIN');
+      await run(worker, 'INSERT INTO t VALUES (1)');
+      // No __bsq_sp is open: the conclusion fails, with no statement of its
+      // own ever reaching SQLite.
+      const rejected = await run(worker, 'INSERT INTO t VALUES (2)', {
+        savepoint: () => ({ conclude: 'undo' }),
+      }).catch((e) => e);
+      expect((rejected as Error).message).toMatch(/no such savepoint/);
+      // The worker's own ROLLBACK already ended the transaction: row 1 is
+      // gone with it.
+      expect(await run(worker, 'SELECT count(*) AS n FROM t')).toEqual([
+        { n: 0 },
+      ]);
+      // And the connection is free to open a new one, proving it is not
+      // stuck inside the old transaction.
+      await run(worker, 'BEGIN');
+      await run(worker, 'INSERT INTO t VALUES (3)');
+      await run(worker, 'COMMIT');
+      expect(await run(worker, 'SELECT a FROM t')).toEqual([{ a: 3 }]);
+    } finally {
+      await worker.close();
+      worker.terminate();
+    }
+  });
 });
