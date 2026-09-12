@@ -108,7 +108,7 @@ All notable changes to this project are documented here.
   origin, not only its own client.
 - **`bulkWrite` takes the lock per batch**, matching the per-batch commit it
   already did. Another client's write can still land between two batches, and an
-  abandoned load is still partial rather than failed. Use `tx.bulkWrite` where you
+  abandoned load is still partial rather than failed. Use a transaction where you
   need all or nothing.
 - **A write waiting on the origin lock when `close()` is called is rejected with
   `CLIENT_CLOSED`**, the same contract a request queued in the pool already had.
@@ -293,8 +293,8 @@ All notable changes to this project are documented here.
   interrupted, and the callback went on in autocommit: statements that followed were committed
   one by one while the transaction reported failure. Where it cannot, the abandoned write ran
   to its end and was committed although its caller received a rejection. A write abandoned
-  while it runs now abandons its transaction on every build, and a rejected write never has an
-  effect.
+  while it runs now has no effect, on every build: caught, the transaction goes on without it;
+  uncaught, the transaction is abandoned.
 - **Interrupting a write inside a transaction no longer costs a worker** — nor, on a memory
   VFS, the whole database, which the replacement worker opened empty.
 - **A transaction object used after its transaction ended could reach another transaction.**

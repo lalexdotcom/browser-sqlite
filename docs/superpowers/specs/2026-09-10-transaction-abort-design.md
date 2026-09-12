@@ -28,6 +28,13 @@ rather than being rewritten silently.
   when `transaction()` resolves, and an outside abort landing after an explicit `commit()`
   still abandons the call while the commit itself stands.
 
+**Amended 2026-09-11 — superseded in part by
+`docs/superpowers/specs/2026-09-11-tx-savepoint-design.md`.** R1's first two bullets (a write,
+or a load, abandoned while it runs kills the transaction), R5 (the `sync` build without
+isolation killed it too, for uniformity) and D1 (option 1, not the savepoint) no longer hold: a
+caught abandoned write is undone by a savepoint and the transaction goes on. The rest of this
+design stands.
+
 ## 1. The problem, measured
 
 Two defects, found one after the other, both measured on 2026-09-10 in this container, three
