@@ -708,3 +708,41 @@ callback. Green alone, red in the full suite: the deadline counts from the call,
 and `BEGIN` spent it before the callback ran and the captured signal was never assigned. A
 test around a wall-clock deadline must budget for what precedes the code it observes, and
 assert its precondition — `expect(seen).toBeDefined()` — so a lost setup reports itself.
+
+## A plan's list of tests to invert is a guess until the tests are grepped — 2026-09-11
+
+The savepoint spec and plan listed the tests the new rule would invert, from memory of the
+previous branch. They missed one: `tests/browser/tx-handle.test.ts` pinned the superseded rule
+through `tx.signal` — a caught abandoned write aborted it. The core task's implementer stopped
+BLOCKED with the suite red on a file outside its brief, which cost a round trip and a ruling.
+**Before planning a rule change, grep the tests for what the old rule makes observable** — here
+`TRANSACTION_CLOSED` after an abandoned write, and `tx.signal.aborted` — and list every hit, not
+the ones remembered.
+
+## Deleting a function orphans every Falsifiable comment that names it — 2026-09-11
+
+Twice on one branch: removing `isAbandonedWrite` left two tests whose comments told the reader to
+mutate it, and removing the `abandon` listener left a third. Each cost a fix round. The comments
+were right when written; the deletion made them name code that no longer existed, and a test
+whose only documented falsifier is gone has none. **The task that deletes a symbol greps
+`tests/` for its name and rewrites every falsifier that cites it, running each.**
+
+## A falsifier also stays green when a second guard produces the same outcome — 2026-09-12
+
+R2's two tests — a statement whose own signal fires while it waits behind an abandoned write
+rejects alone — named "remove the race in `entryWait`" as their falsifier. The final
+whole-branch review ran it: both stayed green, because after the wait `throwIfAborted()` still
+rejected the statement alone, so the mutation only cost latency. Three reviews had accepted the
+comments on reading. **Where the code has belt-and-braces guards, mutating one of them proves
+nothing; assert what only that guard buys** — here timing: the rejection must arrive before the
+abandoned write ends, or the test must deadlock without the race. It is "a reasoned claim of
+falsifiability is worth nothing" again, in a shape it had not taken yet.
+
+## A spec rule with no line in its own test list does not get built — 2026-09-12
+
+The savepoint spec's §4 said, in one sentence, that a failed savepoint conclusion kills the
+transaction. Its §8 listed no test for it. Eight tasks, their reviews and the implementers all
+passed over it; the final review found it unbuilt, and found the path that made it matter — a
+consumer's `…; RELEASE u` carrying its own timeout, abandoned, pops the library's savepoint with
+`u`, and the rejected write was committed. **Every consequence a spec's mechanism states needs a
+line in its own test list**, or the plan — which argues from the test list — silently drops it.

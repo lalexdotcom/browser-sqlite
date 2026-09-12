@@ -69,58 +69,37 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
-## Savepoints — a caught statement abort should let the callback go on (user, 2026-09-10)
-
-**In rc.5 (user, 2026-09-11): "je catch une erreur et je continue" is normal behaviour.**
-Designed on 2026-09-11, branch `fix/tx-savepoint`: spec
-`docs/superpowers/specs/2026-09-11-tx-savepoint-design.md` — read it, not this summary. Settled so far: **SQLite's statement-level model, not
-PostgreSQL's** — a caught rejected write has no effect, the writes before it stand, exactly as
-for a caught constraint violation today; and **approach B** — the savepoint executed by
-the worker inside the write's own message, no extra round trip. A (client-driven via `exec`) was
-recommended for stability and **the user chose B after the measurement** (`mem:measurements`,
-TX-SAVEPOINT: B saves 0.11-0.15 ms per opted-in write, 56-92% of A's cost). A caught abandoned
-write leaves the transaction whole: the writes before it stand, the next statement waits for
-it (bounded only by the transaction's and that statement's own `signal`/`timeout`, user's
-choice A of 2026-09-11). The requirements are the user's three use
-cases:
-
-1. The transaction is interrupted by `transaction()`'s own `signal`/`timeout`: everything
-   stops, `tx.signal` fires.
-2. An error escapes the callback — any `throw`, a statement's own `signal`/`timeout`, an
-   error from a `tx` method: everything stops, `tx.signal` fires.
-3. A `tx` method's error that the callback CATCHES — its own `signal`/`timeout` included: the
-   callback goes on, still inside the transaction.
-
-What merge `eeabe06` ships meets all three **except one case of 3**: a WRITE abandoned by its
-own `signal`/`timeout` WHILE IT RUNS kills the transaction even when caught. On a build that
-can cut a step SQLite has already rolled the whole transaction back when the write is
-interrupted (`mem:measurements`, TX-AUTOCOMMIT), so once the step is cut, continuing is
-impossible.
-
-**The sketch to start from:** do not cut a write on a STATEMENT-level abort — its promise
-rejects at once, the write runs to its end, a savepoint undoes it, the transaction goes on;
-DO cut on a TRANSACTION-level abort (cases 1 and 2), where losing the transaction costs
-nothing. A savepoint only for writes carrying their own `signal`/`timeout`, so ordinary writes
-pay nothing; `bulkWrite`/`output` need one around the whole load. The price: after a caught
-write abort the next statement waits for the abandoned write to finish, with the write lock
-held. **This is the answer the spec's refusal of "option 2" (§2) asked for** — that version
-never cut, so a timeout bought nothing; this one cuts whenever the caller does not catch.
-
 ## `tx.savepoint()` returning a rollback callback — for rc.6 (user, 2026-09-11)
 
 A feature, so rc.6 by the triage rule. Raised while settling rc.5's savepoint rule: three writes
 in one `try`, the third times out — rc.5 keeps the first two, as SQLite does for any statement
 error. A consumer who wants the three all-or-nothing without abandoning the whole transaction
 needs a nested block; the user's shape is a `tx.savepoint()` that returns a callback rolling
-back to it. Not designed. It will sit on the savepoint machinery rc.5 adds to `transaction.ts`.
+back to it. Not designed. It will sit on the savepoint machinery merged on 2026-09-12 (`via`, `__bsq_sp`,
+`mem:architecture`): a new entry point must go through the facade, which concludes the library's
+savepoint before opening its own.
+
+## `worker 1 lost; pool is now 1 of 2` on every Firefox run of a probe (2026-09-11)
+
+Logged by every Firefox run of the TX-SAVEPOINT probe — three runs, three VFS
+(`mem:measurements`, TX-SAVEPOINT) — and never on Chromium; the client logging it was the file's
+second client. It could not move those figures (a transaction uses one worker) and nobody looked
+further. **Reliability by the triage rule, so an rc.5 candidate; the user has not scheduled it.**
+First step: re-run the probe with `debug: true` and `onWorkerLost`'s `cause` captured, and check
+whether `pnpm test`'s Firefox config logs it too — the closure baselines capture no console
+output, so nothing says yet.
 
 ## `SQLITE_FULL` reaches the client with neither `code` nor `sqliteCode` (2026-09-10)
 
 Seen in TX-M1 (`mem:measurements`): a caught INSERT failing with *database or disk is full*
 arrived as an error whose `code` and `sqliteCode` were both undefined. `BUSY` keeps its
 numeric code through `busyFromCode`; other SQLite result codes may not reach the client as a
-`SQLiteError` at all. Not investigated — read `workerError` in `src/pool.ts` before
-scheduling anything.
+`SQLiteError` at all. Verified from the code on 2026-09-11, and broader than the title: the worker sends
+`sqliteCode` for every SQLite error (the query case of `src/worker/worker.ts`), but `workerError`
+in `src/pool.ts` keeps it only for `BUSY`/`LOCKED` — a constraint violation, `FULL`, `IOERR`,
+`READONLY` all reach the consumer as a plain `Error`, told apart only by the message. **Reliability
+by the triage rule, so an rc.5 candidate; not scheduled.** The shape discussed and not decided: a
+`SQLiteError` with a new public code carrying `sqliteCode`.
 
 ## The pre-commit hook — three hooks since 2026-09-11 (user)
 

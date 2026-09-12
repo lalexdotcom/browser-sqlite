@@ -24,14 +24,14 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-11 after the transaction-closure merge
+## The verification baseline — compare against these, re-measured 2026-09-12 after the caught-write-abort merge
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a
-run in this container on 2026-09-11, on `main` at merge `eeabe06` (`fix/tx-statement-timeout`)**
-— none is carried forward, none is arithmetic. The whole table was re-read in one pass, which
-is what its own rule demands; raw outputs in `.scratchpad/closure-baseline/`. The merged tree
-was proven byte-identical to the branch tip's (`git diff main <branch>` empty), so the
-branch's own verification transfers rather than being assumed to.
+run in this container on 2026-09-12, on `main` at merge `65a40d3` (`fix/tx-savepoint`)** — none
+is carried forward, none is arithmetic. The whole table was re-read in one pass, which is what
+its own rule demands; raw outputs in `.scratchpad/closure-baseline-2026-09-12/`. The merge's
+pre-merge-commit hook had already run `pnpm test` on the merged tree and read the same three
+counts.
 
 **`pnpm test` chains THREE configs** — chromium+unit, firefox, and the isolated project — so a
 green `pnpm test` covers what CI covers. Since 2026-09-11 a commit pays only the unit project; a merge or a push pays all three
@@ -43,13 +43,13 @@ on the last branch landed with a failing typecheck that no test run could show (
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **716 tests / 60 files** (unit + chromium, **1 skipped**), **285 / 41** (firefox, **1 skipped**), **5 / 2** (isolated) |
-| `pnpm exec rstest --project unit run` | 432 tests, 20 files |
-| `pnpm exec rstest --project chromium run` | 284 tests, 40 files, 1 skipped |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **750 tests / 62 files** (unit + chromium, **1 skipped**), **305 / 43** (firefox, **1 skipped**), **7 / 3** (isolated) |
+| `pnpm exec rstest --project unit run` | 446 tests, 20 files |
+| `pnpm exec rstest --project chromium run` | 304 tests, 42 files, 1 skipped |
 | `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each, **73 passed / 12 skipped**, identical on both engines |
 | `pnpm test:consumer` | 24/24 stages |
 | `BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 113 files, 13 warnings, 1 info |
+| `pnpm lint` | 116 files, 13 warnings, 1 info |
 | `dependencies` in `package.json` | absent |
 
 **The two skipped browser tests are one test, and they are the first this repository has had.**
@@ -84,8 +84,10 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 ## Decisions the user owes
 
-- **None open.** The savepoint variant goes into rc.5 (user, 2026-09-11) — see
-  `mem:follow-ups`, Savepoints, for what is settled.
+- **Whether two open subjects precede rc.5.** Both are reliability by the triage rule below, and
+  neither is scheduled: the SQL error code lost at the worker boundary, and the Firefox
+  `worker 1 lost` observation (`mem:follow-ups`, both). The savepoint rule, the last subject
+  the user named for rc.5, merged on 2026-09-12.
 
 **rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
 and both are now closed — the second by merge `eeabe06` on 2026-09-11.
@@ -128,8 +130,8 @@ ABANDON-WEDGE).
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
 the 2026-09-05 entry in `mem:follow-ups` called for.
 
-**In flight: the savepoint rule for rc.5**, brainstormed on 2026-09-11 (`mem:follow-ups`,
-Savepoints). Everything else in `mem:follow-ups` is unscheduled.
+**Nothing is in flight.** The savepoint rule merged on 2026-09-12 (§ below). Everything in
+`mem:follow-ups` is unscheduled.
 
 **HANDLE-2 was investigated on 2026-09-09 and came apart under measurement.** Its stated cause
 is false — Firefox releases a killed worker's sync access handle in 1-6 ms (HANDLE-ORPHAN) — and
@@ -146,6 +148,39 @@ permanent, silent, origin-wide — was found and fixed the same day (§ below).
 2026-09-08 by medianing the bench corpus at n≥3 per platform (`mem:measurements`,
 VFS-MEDIAN). The answer was not "move it": there are now **two** recommendations,
 `OPFSWriteAheadVFS` and `OPFSAdaptiveVFS`, and the constant itself left `src/` — see § below.
+
+## The caught write abort — merged 2026-09-12
+
+Spec `docs/superpowers/specs/2026-09-11-tx-savepoint-design.md` (read its dated amendment in §4),
+plan `docs/superpowers/plans/2026-09-11-tx-savepoint.md`. Branch `fix/tx-savepoint`, merge
+`65a40d3`. Invariants in `mem:architecture`; numbers in `mem:measurements` (TX-SAVEPOINT,
+TX-M1M2).
+
+**Five things the code will not tell you:**
+
+- **The rule is the user's, stated as use cases.** *"Je catch une erreur et je continue"* is
+  normal: a statement abandoned by its own `signal`/`timeout` has no effect, and a callback that
+  catches it goes on — SQLite's statement-level model, chosen over PostgreSQL's
+  poison-until-rollback. All or nothing is what a transaction is for: the docs say "use a
+  transaction", never "use `tx.bulkWrite`"; inside one, a caught error followed by a commit keeps
+  what was written, `bulkWrite`'s completed batches included.
+- **Approach B was the user's choice against the recommendation.** A — the transaction sending
+  `SAVEPOINT`/`RELEASE` itself — was recommended for stability; the user chose B, the worker
+  opening the savepoint inside the write's own message, after both were measured, holding that
+  stability is what tests guarantee. Real B costs 0.016-0.019 ms per opted-in write on Chromium
+  and 0.085 ms on Firefox. **Do not re-propose A on stability grounds without new evidence.**
+- **The wait after a caught abort is unbounded by design (user, D3).** The next statement or the
+  commit waits for the abandoned write to run to its end, with the write lock held; only the
+  transaction's own `signal`/`timeout` and the waiting statement's own bound it. A `drainTimeout`
+  bound and a fail-fast error code were both refused.
+- **A failed savepoint conclusion rolls the whole transaction back in the WORKER**, which the
+  final review added: the spec stated the rule, its test list did not, and nothing built it — a
+  consumer's `…; RELEASE u` abandoned could commit a rejected write. The client learns of it
+  through the existing D6 path (`inTransaction: false`).
+- **What it does not deliver.** The isolated-build test does not pin that the step is actually
+  CUT on a transaction death — redundant safeties keep it green under every single-cause mutation
+  tried; only a timing bound would. T9 never has a batch in flight, so R4's in-flight undo is
+  covered by construction only. `tx.savepoint()` is rc.6 (`mem:follow-ups`).
 
 ## The transaction closure — merged 2026-09-11
 
@@ -215,7 +250,8 @@ Pre-existing, deterministic, both engines.
 - **The first version of the fix deadlocked, and only a boundary test found it.** Waiting
   unconditionally parks a statement the guard REFUSED behind a query it never claimed — which,
   for a generator the callback dropped, only `closeOpenStatements()` will ever close. Hence
-  `owesWait`.
+  `owesWait` — replaced on 2026-09-12 by `mark.posted`, which states the same rule as "only a
+  statement that was posted owes the wait" (`mem:architecture`).
 - **A generator the callback merely DROPS is not covered and cannot be.** Nothing signals a
   drop; from outside it is indistinguishable from a consumer who means to come back to it. It
   still raises `GENERATOR_ABANDONED`, and that is now the only remaining trigger inside a
