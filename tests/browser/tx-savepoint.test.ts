@@ -146,24 +146,35 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
       }
     }, 60_000);
 
-    // Falsifiable: in `entryWait`, await `abandoned` without the race — the
-    // waiting write then lands, and its row 9 is committed.
+    // Falsifiable: in `entryWait`, await `abandoned` without racing the
+    // waiting statement's own signal — the rejection still arrives (`own`'s
+    // pre-checked `throwIfAborted()` catches it once the wait ends), but only
+    // once the abandoned write itself has finished: `rejectedAfter` then costs
+    // the whole remaining run and `nextWaited` costs nothing, so the timing
+    // assertion below inverts instead of the outcome silently staying green.
     it(`rejects a statement that times out behind an abandoned write, alone (T5, ${vfs})`, async () => {
       const db = await setUp({ vfs });
       try {
         let second: unknown;
+        let rejectedAfter = 0;
+        let nextWaited = 0;
         await db.transaction(async (tx) => {
           await tx.write('INSERT INTO t VALUES (1)');
           await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+          const t0 = performance.now();
           second = await tx
             .write('INSERT INTO t VALUES (9)', [], { timeout: 20 })
             .catch((e) => e);
+          const t1 = performance.now();
+          rejectedAfter = t1 - t0;
           await tx.write('INSERT INTO t VALUES (2)');
+          nextWaited = performance.now() - t1;
         });
         expect(second).toMatchObject({
           code: 'OPERATION_TIMEOUT',
           timeout: 20,
         });
+        expect(rejectedAfter).toBeLessThan(nextWaited);
         expect(await rowsOf(db)).toEqual([0, 1, 2]);
         expect(await bigCount(db)).toBe(0);
       } finally {

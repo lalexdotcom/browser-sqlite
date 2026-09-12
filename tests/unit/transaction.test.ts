@@ -855,6 +855,31 @@ describe('transaction — a savepointed write, and the message after it (spec 20
     });
   }
 
+  // F3: `entries` above is a hand-written list, so it only catches a seventh
+  // method the day someone remembers to add it here too. This pins the list
+  // itself against the handle's actual shape: it must name every
+  // function-valued member of `tx` except `rollback` (its own test, just
+  // below — a full ROLLBACK concludes nothing, so it has no T7 case to
+  // share) and `bulkWrite`/`output` (they issue no query of their own; each
+  // batch is a `tx.write()` under the hood, so they run through the very
+  // `settled`/`via` this file already exercises via `write`). A new entry
+  // point that skips `entries` — and so skips its own T7 case — fails this
+  // instead of going unnoticed.
+  it('the parameterised list above names every method T7 must cover', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    let methodNames: string[] = [];
+    await transaction(async (tx) => {
+      methodNames = Object.entries(tx)
+        .filter(([, value]) => typeof value === 'function')
+        .map(([key]) => key);
+    });
+    const excluded = ['rollback', 'bulkWrite', 'output'];
+    expect(methodNames.sort()).toEqual(
+      [...entries.map(([entryName]) => entryName), ...excluded].sort(),
+    );
+  });
+
   // Falsifiable: send rollbackNow()'s ROLLBACK through `via(false)` — it then
   // carries the undo, and ROLLBACK TO precedes it.
   it('rollback() concludes nothing: a full ROLLBACK discards every savepoint', async () => {
@@ -887,8 +912,11 @@ describe('transaction — a savepointed write, and the message after it (spec 20
   });
 
   // R2. Falsifiable: in `entryWait`, await `abandoned` without racing the
-  // waiting statement's signal — the second write then waits for the gate,
-  // runs and resolves.
+  // waiting statement's signal. `gate` is deliberately resolved only AFTER
+  // `refused` has settled: without the race, `entryWait` can only observe
+  // the abandoned write ending once `gate` resolves, and `gate` can only
+  // resolve once this test has observed the rejection — a deadlock, which
+  // this test's own short timeout turns red promptly instead of hanging.
   it('rejects a statement whose own signal fires while it waits, alone', async () => {
     const reached = deferred();
     const gate = deferred();
@@ -914,8 +942,8 @@ describe('transaction — a savepointed write, and the message after it (spec 20
         signal: second.signal,
       });
       second.abort(reason);
-      setTimeout(() => gate.resolve(), 50);
       refused = await waiting.catch((e) => e);
+      gate.resolve();
       await tx.write('INSERT INTO t VALUES (3)');
     });
     expect(refused).toBe(reason);
@@ -928,7 +956,7 @@ describe('transaction — a savepointed write, and the message after it (spec 20
       'INSERT INTO t VALUES (3)',
       'COMMIT',
     ]);
-  });
+  }, 5000);
 
   // Falsifiable: send the teardown's ROLLBACK through `via(false)` — it then
   // carries the pending undo.

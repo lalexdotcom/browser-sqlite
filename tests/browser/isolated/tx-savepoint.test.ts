@@ -44,6 +44,10 @@ describe('a savepointed write on the sync isolated build (spec 2026-09-11)', () 
     }
   }, 60_000);
 
+  // Falsifiable: in `settled`, stop racing `running` against the own-abort
+  // signal (`return await running;` unconditionally) — `tx.write` then waits
+  // for BIG_INSERT to finish instead of rejecting at 30 ms, nothing ever
+  // escapes the callback, and the transaction commits every abandoned row.
   it('keeps nothing when the rejection escapes', async () => {
     const db = await setUp();
     try {

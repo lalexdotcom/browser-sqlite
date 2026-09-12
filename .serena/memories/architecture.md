@@ -185,10 +185,12 @@ after a commit. What must hold:
 `via(open, mark?)` is the facade whose `query` hands the pool a thunk read at post time and
 carries the pending conclusion of `__bsq_sp` — the savepoint a self-abandoned write leaves
 open for the transaction's next message to resolve. The teardown ROLLBACK (`rollbackNow`)
-goes to the raw worker, never through `via`: by then the transaction is already ending and
-there is nothing left for `via` to conclude. A new statement method that calls a query
-helper with the raw worker instead of `via(…)` breaks the undo silently — its first message
-carries no pending conclusion, so a savepoint opened by an earlier abandoned write is never
+goes to the raw worker, never through `via`: a full ROLLBACK discards every savepoint, so
+there is nothing to conclude, and a RELEASE sent to a connection that already left its
+transaction would fail and evict a healthy worker through `onPoisoned`. A new statement
+method that calls a query helper with the raw worker instead of `via(…)` breaks the undo
+silently — its first message carries no pending conclusion, so a savepoint opened by an
+earlier abandoned write is never
 resolved. `tests/unit/transaction.test.ts` T7 is parameterised over the methods to catch it.
 
 **Transaction-control statements are never wrapped in a savepoint** (`isTransactionControl`,
