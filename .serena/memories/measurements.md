@@ -4,6 +4,114 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## TX-M1M2 — a write stopped after its first row, and the savepoint premise, 2026-09-11, all three configurations
+
+**Method.** Throwaway probe `.scratchpad/savepoint-probe/m1m2.test.ts`, copied into
+`tests/browser/` (chromium project, firefox config) and `tests/browser/isolated/` (isolated
+project) for the run and deleted; logs `m1m2-*.log` beside it. `main` after `9479f4a`. Three
+runs per configuration: `OPFSAdaptiveVFS` `async` and `MemoryVFS` `sync` not isolated on both
+engines, `MemoryVFS` `sync` isolated on Chromium. 50 000-row write from a recursive CTE.
+**All 45 results identical to their arm across runs, engines and builds.**
+
+- **M1 — a write stopped after its first row does NOT take the transaction with it.** Inside
+  one transaction: `INSERT (1)`; `tx.first()` on `WITH … INSERT INTO s SELECT … RETURNING n`
+  (and, second arm, a `break` out of `tx.chunk()` on it after 10 rows); `INSERT (2)`. Resolved;
+  `t=[1,2]`; all 50 000 rows of `s` kept; no worker replaced. Consistent with SQLite running the
+  whole DML of a `RETURNING` statement in the first `step()`. Asked by the savepoint spec §7
+  before any code; no defect.
+- **M2 — a savepoint undoes a write run to its end, and only it.** `INSERT (1)`; `SAVEPOINT sp`;
+  the 50 000-row insert; `ROLLBACK TO sp`; `RELEASE sp`; commit: `t=[1]`, `s=0`, every
+  configuration. The premise of the savepoint spec.
+
+## TX-SAVEPOINT — what approach A's savepoint round trips cost a write, 2026-09-11, this container, both engines
+
+**Method.** Throwaway probe `.scratchpad/savepoint-probe/probe.test.ts`, copied into
+`tests/browser/` for the run and deleted; the six logs sit beside it. `main` after `9479f4a`,
+chromium project and firefox config, **three runs each**. Every arm is ONE `db.transaction()`
+of K=20 writes, so BEGIN/COMMIT and the lease are constant; arms interleaved inside each of 15
+iterations after 2 warm-ups; per-write cost = (median(arm) − median(base)) / 20. The savepoint
+statements go through `tx.write()`, so the figures are an **upper bound** for the internal
+`exec()` approach A would use. Default build per VFS. **Firefox's `performance.now()` is
+1 ms-grained here** (not isolated), so its per-write figures move in steps of 0.05 ms.
+
+Median of the three runs, ms per write:
+
+| Engine | VFS (build) | bare write | + SAVEPOINT, RELEASE | + SAVEPOINT, ROLLBACK TO, RELEASE | + two `SELECT 1` (control) |
+|---|---|---|---|---|---|
+| Chromium | `OPFSAdaptiveVFS` (async) | 0.415 | 0.065 | 0.185 | 0.140 |
+| Chromium | `OPFSWriteAheadVFS` (sync) | 0.215 | 0.115 | 0.165 | 0.165 |
+| Chromium | `MemoryVFS` (sync) | 0.090 | 0.075 | 0.160 | 0.160 |
+| Firefox | `OPFSAdaptiveVFS` (async) | 0.400 | 0.300 | 0.500 | 0.500 |
+| Firefox | `OPFSWriteAheadVFS` (sync) | 0.200 | 0.300 | 0.500 | 0.450 |
+| Firefox | `MemoryVFS` (sync) | 0.200 | 0.300 | 0.450 | 0.450 |
+
+Spread of the nominal path across runs: 0.060-0.140 Chromium, 0.200-0.350 Firefox.
+
+**Reading.** The savepoint pair costs no more than two bare round trips: the price is the
+round trips, not SQLite's savepoint. It is paid only by a write carrying its own
+`signal`/`timeout`.
+
+**A against a proxy of B, same day, same machine.** Probe `probe-b.test.ts` beside the first,
+logs `b-*.log`; **K=200** writes per transaction so the gap is visible and Firefox's 1 ms clock
+negligible; 15 iterations after 2 warm-ups, three runs per engine, median of the three. Every
+arm uses one constant INSERT with inline values. B is approximated by one multi-statement
+string (`"SAVEPOINT bsq; INSERT …; RELEASE bsq"`, one round trip); **worker.ts marks such a
+string `uncacheable` and re-prepares it on every call**, which a real B would not do — so the
+proxy OVERSTATES B's cost, and the A−B gap is a floor on what B saves. Abandoned path: A is
+four round trips, the B proxy two (`"SAVEPOINT; INSERT"` then `"ROLLBACK TO; RELEASE"`).
+
+Added ms per write over a bare write (bare write = its per-transaction median / 200):
+
+| Engine | VFS | bare | A nominal | B nominal | A−B | B saves | A abandoned | B abandoned | A−B |
+|---|---|---|---|---|---|---|---|---|---|
+| Chromium | `OPFSAdaptiveVFS` async | 0.102 | 0.128 | 0.020 | 0.108 | 84% | 0.193 | 0.078 | 0.115 |
+| Chromium | `OPFSWriteAheadVFS` sync | 0.084 | 0.130 | 0.013 | 0.117 | 90% | 0.180 | 0.085 | 0.095 |
+| Chromium | `MemoryVFS` sync | 0.068 | 0.123 | 0.010 | 0.113 | 92% | 0.190 | 0.081 | 0.110 |
+| Firefox | `OPFSAdaptiveVFS` async | 0.135 | 0.260 | 0.115 | 0.145 | 56% | 0.420 | 0.290 | 0.130 |
+| Firefox | `OPFSWriteAheadVFS` sync | 0.120 | 0.245 | 0.095 | 0.150 | 61% | 0.395 | 0.265 | 0.130 |
+| Firefox | `MemoryVFS` sync | 0.105 | 0.240 | 0.095 | 0.145 | 60% | 0.385 | 0.275 | 0.110 |
+
+Whole transaction of 200 opted-in writes, nominal path, A → B proxy: Chromium 45.9 → 24.3 ms
+(Adaptive), 42.7 → 19.3 (WriteAhead), 38.2 → 15.7 (Memory); Firefox 79 → 50, 73 → 43,
+69 → 40. The "bare" column here is lower than the first table's because K=200 amortizes
+BEGIN/COMMIT over ten times more writes.
+
+**Observed, not investigated:** every Firefox run logged `worker 1 lost; pool is now 1 of 2`,
+from client `SQLite 2` — the file's second client, which is the `OPFSWriteAheadVFS` arm if
+clients number in test order; the console block is repeated under each failing test, so the
+attribution is not confirmed. Never on Chromium. It cannot move these figures, since a
+transaction runs on one worker. The closure baseline cannot say whether the normal Firefox
+suite does the same: `.scratchpad/closure-baseline/test.txt` captured no console output.
+
+**M3 — the real B's cost, 2026-09-11, this container, both engines.** Method: probe
+`.scratchpad/savepoint-probe/probe-m3.test.ts`, copied to `tests/browser/zz-m3.test.ts` for
+the run and deleted; six logs `m3-*.log` beside the others. Two arms only, same K=200, 15
+iterations after 2 warm-ups, three runs per engine as probe-b: `base` (`tx.write(INS)`) and
+`real` (`tx.write(INS, [], { timeout: 60_000 })` — a real timeout, so every write carries a
+signal the worker must guard against and takes the actual approach B path, opening
+`__bsq_sp` inside the write's own message; the 60 s timeout never fires). Per-write cost =
+(median(real) − median(base)) / 200, median of the three runs — no proxy, no multi-statement
+string, the production code path measured directly.
+
+| Engine | VFS (build) | real B, ms/write | proxy B nominal (same VFS, above) |
+|---|---|---|---|
+| Chromium | `OPFSAdaptiveVFS` (async) | 0.0185 | 0.020 |
+| Chromium | `OPFSWriteAheadVFS` (sync) | 0.0155 | 0.013 |
+| Chromium | `MemoryVFS` (sync) | 0.0160 | 0.010 |
+| Firefox | `OPFSAdaptiveVFS` (async) | 0.085 | 0.115 |
+| Firefox | `OPFSWriteAheadVFS` (sync) | 0.085 | 0.095 |
+| Firefox | `MemoryVFS` (sync) | 0.085 | 0.095 |
+
+**Reading.** On Firefox the real cost sits below the whole proxy range (0.085 vs
+0.095-0.115), consistent with the proxy's own caveat above — the uncacheable multi-statement
+string overstates B's cost there. On Chromium the picture is mixed, not uniformly lower:
+`OPFSAdaptiveVFS` comes in under the proxy (0.0185 vs 0.020) but `OPFSWriteAheadVFS` and
+`MemoryVFS` come in slightly OVER it (0.0155 vs 0.013, 0.0160 vs 0.010) — a few thousandths
+of a ms, inside the noise this probe already showed (spread 0.060-0.140 on the nominal path
+in the first table), but reported as measured rather than smoothed over. M3 is the number to
+cite for what approach B actually costs a write; the proxy above stays for how the earlier,
+faster estimate was derived and why it was expected to be an overstatement.
+
 ## TX-AUTOCOMMIT — an interrupted write inside a transaction, 2026-09-10, this container, both engines
 
 **Method.** Throwaway probes `.scratchpad/probe-autocommit/persistent.test.ts` (chromium and

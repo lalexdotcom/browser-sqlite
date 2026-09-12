@@ -84,10 +84,8 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 ## Decisions the user owes
 
-- **Whether the savepoint variant must precede rc.5.** Deferred by the user on 2026-09-10 to
-  a new brainstorm on a new branch (`mem:follow-ups`, Savepoints); the timing was left to
-  them. It is usability rather than reliability — nothing is corrupted without it — so the
-  triage rule below does not settle it by itself.
+- **None open.** The savepoint variant goes into rc.5 (user, 2026-09-11) — see
+  `mem:follow-ups`, Savepoints, for what is settled.
 
 **rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
 and both are now closed — the second by merge `eeabe06` on 2026-09-11.
@@ -130,8 +128,8 @@ ABANDON-WEDGE).
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
 the 2026-09-05 entry in `mem:follow-ups` called for.
 
-**Nothing is in flight, and nothing is scheduled.** Everything in `mem:follow-ups` is
-unscheduled.
+**In flight: the savepoint rule for rc.5**, brainstormed on 2026-09-11 (`mem:follow-ups`,
+Savepoints). Everything else in `mem:follow-ups` is unscheduled.
 
 **HANDLE-2 was investigated on 2026-09-09 and came apart under measurement.** Its stated cause
 is false — Firefox releases a killed worker's sync access handle in 1-6 ms (HANDLE-ORPHAN) — and

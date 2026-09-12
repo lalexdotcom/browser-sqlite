@@ -2,6 +2,7 @@ import { describe, expect, it } from '@rstest/core';
 import { SQLiteError } from '../../src/errors';
 import type { SQLiteBuild } from '../../src/types';
 import {
+  isTransactionControl,
   isWriteQuery,
   mergeSignals,
   normalizeDatabaseFile,
@@ -359,5 +360,31 @@ describe('resolvePragmas', () => {
     expect(resolvePragmas('AccessHandlePoolVFS', {})).toEqual(
       resolvePragmas('AccessHandlePoolVFS', undefined),
     );
+  });
+});
+
+describe('isTransactionControl', () => {
+  it('recognises the statements that manage a transaction or its savepoints', () => {
+    for (const sql of [
+      'SAVEPOINT u',
+      'release u',
+      '  ROLLBACK TO u',
+      'ROLLBACK',
+      'BEGIN IMMEDIATE',
+      'COMMIT',
+      'END',
+    ])
+      expect(isTransactionControl(sql)).toBe(true);
+  });
+
+  it('refuses everything else', () => {
+    for (const sql of [
+      'INSERT INTO t VALUES (1)',
+      'UPDATE t SET a = 1',
+      'WITH c AS (SELECT 1) INSERT INTO t SELECT * FROM c',
+      'SELECT 1',
+      'RELEASED',
+    ])
+      expect(isTransactionControl(sql)).toBe(false);
   });
 });

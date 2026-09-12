@@ -118,7 +118,12 @@ Before the cache this was merely confusing. The consequence is written where som
 break it, on the `available` declaration in `scheduler.ts`, not only in the worker.
 
 **A transaction statement does not resolve until the worker is idle again, and that rule is
-held by DISCIPLINE, not by structure.** Statements inside `transaction()` share one worker
+held by DISCIPLINE, not by structure.** `settled` (inside `withSignal`) now takes the query
+helper as a function of the worker facade and the options; the idle wait is owed only by a
+statement that was POSTED (`mark.posted`, which replaced `owesWait`). The one exception: a
+savepointed write rejected by its OWN signal moves its wait to `abandoned`, awaited instead
+by every entry point through `entryWait` (spec 2026-09-11) rather than at the statement's own
+`settled`/`releasing`. Statements inside `transaction()` share one worker
 with no scheduler lease between them, so one that leaves its transport without reaching
 `done` — `first()` on any query with a row left to produce, a generator `break`-ed out of, a
 statement cut short by an abort — leaves `pool.ts`'s `deferredChunk` set and the NEXT
@@ -133,8 +138,8 @@ The rule, and the thing to check when a seventh method is added to `SQLiteTransa
   the helper is visibly wrong rather than quietly missing its wait.
 - **A generator-returning statement waits in `releasing`'s `finally`**, which is the only
   other place a statement can end.
-- **Neither waits when `pool.ts`'s reuse guard refused the statement** (`owesWait`). A
-  refused statement never claimed the worker, so the query in flight is somebody else's;
+- **Neither waits when `pool.ts`'s reuse guard refused the statement** (`mark.posted` stays
+  false — the name `owesWait` is gone). A refused statement never claimed the worker, so the query in flight is somebody else's;
   waiting for it parks the rejection behind a generator that only `closeOpenStatements()`
   will close, at the end of the callback — where the rejection was heading. That deadlocks,
   and it is how the first version of this fix failed.
@@ -166,15 +171,38 @@ after a commit. What must hold:
   same way. The inner `catch` calls `die(e)` first, which is what makes `tx.signal` abort
   whenever `transaction()` rejects; `releaseDeath()` and the `onAbort` removal run BEFORE
   `await afterWrite`, so nothing aborts it once the transaction has resolved.
-- **What kills a transaction:** a WRITE — decided by `isWriteQuery(sql)`, never by the method,
-  since `read`/`first`/`chunk`/`stream` accept a write — rejected by its OWN signal or timeout
-  WHILE IT RUNS (not when that signal was already aborted at the call: `abortedAtCall`, the
-  user reversed D4); `bulkWrite`/`output` abandoned after creation, via the `onAbandoned`
-  hook; and the connection reporting it left the transaction (`worker.inTransaction ===
-  false` after `quiesce()`). An abandoned READ does not.
+- **What kills a transaction:** the three outside causes (its own `signal`, its own
+  `timeout`, `close()`); an error escaping the callback; and the connection reporting it left
+  the transaction (`worker.inTransaction === false` after `quiesce()`). A write or a load
+  abandoned by its OWN signal/timeout while it ran is NO LONGER one of them: that write is
+  now undone by the library's own savepoint (`__bsq_sp`, spec 2026-09-11) and the transaction
+  goes on. An abandoned READ does not kill it either, and never did.
 - **A closed handle's `chunk()`/`stream()` throw before `releasing`'s `try`**, so they never
-  wait on `quiesce()` — the `owesWait` rule, which the final review found applied on one of
-  the two paths only.
+  wait on `quiesce()` — the `mark.posted` rule above, and the final review found that rule
+  applied on one of the two paths only.
+
+**Every message a transaction sends goes through `via`, except the teardown ROLLBACK.**
+`via(open, mark?)` is the facade whose `query` hands the pool a thunk read at post time and
+carries the pending conclusion of `__bsq_sp` — the savepoint a self-abandoned write leaves
+open for the transaction's next message to resolve. The teardown ROLLBACK (`rollbackNow`)
+goes to the raw worker, never through `via`: a full ROLLBACK discards every savepoint, so
+there is nothing to conclude, and a RELEASE sent to a connection that already left its
+transaction would fail and evict a healthy worker through `onPoisoned`. A new statement
+method that calls a query helper with the raw worker instead of `via(…)` breaks the undo
+silently — its first message carries no pending conclusion, so a savepoint opened by an
+earlier abandoned write is never
+resolved. `tests/unit/transaction.test.ts` T7 is parameterised over the methods to catch it.
+
+**Transaction-control statements are never wrapped in a savepoint** (`isTransactionControl`,
+spec D8) — `opensSavepoint` in `transaction.ts` excludes them. A consumer's own `RELEASE u`
+running with its own timeout would otherwise pop `__bsq_sp` along with `u`, undoing more
+than the abandoned write it was meant to guard.
+
+**A load's batches are savepointed individually, not the load as a whole.** `bulk.ts`'s
+`runBatch` issues one `tx.write()` per batch, each independently savepointed by `withSignal`
+— never one savepoint spanning the whole `bulkWrite`/`output`. A load-wide savepoint would
+silently undo writes the callback itself ran BETWEEN two batches when a later batch is
+abandoned (spec D6).
 
 **`PoolWorker.inTransaction` is connection state, NOT availability.** Written only in
 `pool.ts`'s `onmessage` (the `done`/`error` of the current callId), which runs before `idle`

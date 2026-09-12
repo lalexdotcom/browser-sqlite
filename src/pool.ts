@@ -2,6 +2,7 @@ import { DEFAULT_CREDIT_WINDOW } from './credits';
 import { SQLiteError, type SQLiteErrorCode } from './errors';
 import type { Logger } from './logger';
 import type {
+  SavepointOp,
   SQLiteBuild,
   SQLiteVFS,
   WasmLocation,
@@ -26,6 +27,13 @@ export type PoolWorkerQueryOptions = {
    * to prove the barrier stays conditional.
    */
   noServed?: boolean;
+  /**
+   * Read exactly once, when the query is POSTED — below the reuse guard,
+   * never when the query is created. A transaction hands its pending savepoint
+   * conclusion over in here, so a query the guard refuses must not consume it
+   * (spec 2026-09-11, §4).
+   */
+  savepoint?: (() => SavepointOp | undefined) | undefined;
 };
 
 /**
@@ -553,6 +561,7 @@ export const createPoolWorker = (deps: {
         noServed = false,
         timeout,
         abortable,
+        savepoint,
       } = options ?? {};
       suppressServed = noServed;
 
@@ -574,12 +583,22 @@ export const createPoolWorker = (deps: {
       stopRequested = Promise.withResolvers<typeof STOP>();
 
       // Send query to worker with options
+      // Read here and nowhere earlier: the reuse guard above has admitted this
+      // query, so a transaction's pending conclusion leaves only with a message
+      // that is actually sent (spec 2026-09-11, §4).
+      const op = savepoint?.();
       worker.postMessage({
         type: 'query',
         callId: ++currentCallId,
         sql,
         params,
-        options: { chunkSize, credits, timeout, abortable },
+        options: {
+          chunkSize,
+          credits,
+          timeout,
+          abortable,
+          ...(op ? { savepoint: op } : {}),
+        },
       });
       worker.status = 'RUNNING';
 
