@@ -249,9 +249,10 @@ export type VFSCapability = {
    *
    * `readwrite-unsafe` is the one that bites: WebIDL ignores the unknown
    * dictionary member on engines that do not implement it, so the handle
-   * silently opens exclusive and the second connection hangs rather than
-   * failing. Declaring it is what lets the conformance suite probe for it and
-   * skip, instead of leaving it to surface as a 60-second timeout.
+   * silently opens exclusive, and a second connection then waits or fails
+   * depending on the VFS — see `degradesWithout` and `singleConnectionWithout`.
+   * Declaring it is what lets the conformance suite probe for it and skip,
+   * instead of leaving it to surface as a 60-second timeout.
    */
   readonly requires: readonly PlatformFeature[];
   /**
@@ -268,6 +269,19 @@ export type VFSCapability = {
    * mark that VFS broken everywhere outside Chromium, when it merely degrades.
    */
   readonly degradesWithout: readonly PlatformFeature[];
+  /**
+   * Platform features without which this VFS holds its database file
+   * exclusively for a connection's whole life, so exactly ONE worker of a pool
+   * can open — the others fail at `xOpen` rather than wait.
+   *
+   * Not `degradesWithout`: `OPFSAdaptiveVFS` lacks `readwrite-unsafe` off
+   * Chromium too, but hands its handle over between connections and opens its
+   * whole pool. `OPFSWriteAheadVFS` keeps its main and write-ahead handles
+   * until close. Every feature listed here needs a worker-side probe in
+   * `src/worker/probes.ts`: the pool's surplus workers probe it before loading
+   * anything and decline instead of failing (spec 2026-09-13).
+   */
+  readonly singleConnectionWithout: readonly PlatformFeature[];
   /**
    * PRAGMAs this library applies on open for this VFS.
    *
@@ -338,12 +352,15 @@ export const VFS_CAPABILITIES = {
     storage: 'opfs',
     layout: 'opfs-path',
     // Measured on Firefox 2026-08-27, HAS_UNSAFE_HANDLES false: all three
-    // build pairs and all six invariants pass, concurrent writes included, at
-    // poolSize 1, 2 and 4. `requires` used to name readwrite-unsafe, which made
+    // build pairs and all six invariants pass. That campaign ran at an
+    // EFFECTIVE pool of one: without readwrite-unsafe every worker but the
+    // first failed to open, and conformance did not count live workers
+    // (spec 2026-09-13). `requires` used to name readwrite-unsafe, which made
     // the conformance suite skip the very pairs that would have falsified it.
-    // Safari is still unmeasured for this VFS — see `mem:follow-ups`.
+    // Safari behaves as Firefox — observed 2026-09-13, InvalidStateError.
     requires: ['opfs'],
     degradesWithout: ['readwrite-unsafe'],
+    singleConnectionWithout: ['readwrite-unsafe'],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -358,6 +375,7 @@ export const VFS_CAPABILITIES = {
     layout: 'opfs-path',
     requires: ['opfs'],
     degradesWithout: ['readwrite-unsafe'],
+    singleConnectionWithout: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -372,6 +390,7 @@ export const VFS_CAPABILITIES = {
     layout: 'opfs-path',
     requires: ['opfs'],
     degradesWithout: [],
+    singleConnectionWithout: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -386,6 +405,7 @@ export const VFS_CAPABILITIES = {
     layout: 'opfs-pool',
     requires: ['opfs'],
     degradesWithout: [],
+    singleConnectionWithout: [],
     // Two clients on one database break each other silently (AHP-2TAB,
     // 2026-09-01): the second resolves SELECT 1 but cannot read any table. An
     // origin-wide connection lock ensures the second client fails fast with
@@ -413,6 +433,7 @@ export const VFS_CAPABILITIES = {
     layout: 'idb-store',
     requires: [],
     degradesWithout: [],
+    singleConnectionWithout: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -443,6 +464,7 @@ export const VFS_CAPABILITIES = {
     layout: 'idb-store',
     requires: [],
     degradesWithout: [],
+    singleConnectionWithout: [],
     // `multiConnection: false` marks concurrent-writer unsafety (MIRROR-1),
     // not isolation. Two clients share data over BroadcastChannel (measured
     // 2026-09-01, 3/3 both engines), so no exclusive lock is needed or correct.
@@ -460,6 +482,7 @@ export const VFS_CAPABILITIES = {
     layout: 'opfs-path',
     requires: ['opfs', 'writable-stream'],
     degradesWithout: [],
+    singleConnectionWithout: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -475,6 +498,7 @@ export const VFS_CAPABILITIES = {
     layout: 'memory',
     requires: [],
     degradesWithout: [],
+    singleConnectionWithout: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -490,6 +514,7 @@ export const VFS_CAPABILITIES = {
     layout: 'memory',
     requires: [],
     degradesWithout: [],
+    singleConnectionWithout: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },

@@ -90,7 +90,7 @@ on its [VFS page](https://github.com/rhashimoto/wa-sqlite/tree/master/src/exampl
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+<sup><a href="#reduced-mode">[reduced]</a></sup>, Safari 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>, Android 109+/?, iOS 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>
 
-**Pool size:** Any · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
+**Pool size:** Any, 1 without `readwrite-unsafe` · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
 
 <!-- END GENERATED OPFSWriteAheadVFS -->
 

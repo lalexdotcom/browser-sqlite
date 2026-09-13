@@ -59,6 +59,7 @@ import {
   BUILD_REQUIREMENTS,
   type PlatformFeature,
 } from '../../src/types';
+import { WORKER_PROBES } from '../../src/worker/probes';
 
 describe('platform requirements', () => {
   // Falsifiable: add a feature to any `requires` without adding a probe.
@@ -69,6 +70,7 @@ describe('platform requirements', () => {
     for (const cap of Object.values(VFS_CAPABILITIES)) {
       for (const f of cap.requires) declared.add(f);
       for (const f of cap.degradesWithout) declared.add(f);
+      for (const f of cap.singleConnectionWithout) declared.add(f);
     }
     for (const reqs of Object.values(BUILD_REQUIREMENTS)) {
       for (const f of reqs) declared.add(f);
@@ -200,5 +202,26 @@ describe('exclusiveConnection', () => {
     for (const vfs of names) {
       expect(typeof VFS_CAPABILITIES[vfs].exclusiveConnection).toBe('boolean');
     }
+  });
+});
+
+describe('singleConnectionWithout', () => {
+  // Falsifiable: declare `singleConnectionWithout: ['opfs']` on any VFS — the
+  // worker has no probe for it, so the declaration would never cap anything.
+  it('names only features a worker can probe', () => {
+    for (const cap of Object.values(VFS_CAPABILITIES)) {
+      for (const feature of cap.singleConnectionWithout) {
+        expect(feature in WORKER_PROBES).toBe(true);
+      }
+    }
+  });
+
+  // Falsifiable: declare it on OPFSAdaptiveVFS — that VFS rotates its handle
+  // and opens its whole pool without readwrite-unsafe (spec 2026-09-13, §6).
+  it('caps OPFSWriteAheadVFS and nothing else', () => {
+    const capped = Object.entries(VFS_CAPABILITIES)
+      .filter(([, cap]) => cap.singleConnectionWithout.length > 0)
+      .map(([name]) => name);
+    expect(capped).toEqual(['OPFSWriteAheadVFS']);
   });
 });

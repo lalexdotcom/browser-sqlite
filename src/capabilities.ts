@@ -27,13 +27,15 @@ const PROBES: Partial<Record<PlatformFeature, () => boolean>> = {
 };
 
 /**
- * Features with no synchronous probe. Declared, never merely omitted.
+ * Features with no synchronous probe FROM THE PAGE. Declared, never merely
+ * omitted.
  *
- * WebIDL ignores an unknown dictionary member, so asking whether
- * `readwrite-unsafe` is supported answers yes and is wrong. Detecting it means
- * opening two access handles on one file inside a dedicated worker — which the
- * benchmark page does, asynchronously. A feature in neither table is a mistake,
- * and `tests/unit/capabilities.test.ts` says so.
+ * WebIDL ignores an unknown dictionary member, so passing `readwrite-unsafe`
+ * and seeing no error proves nothing. `FileSystemSyncAccessHandle`, whose
+ * `mode` attribute would tell, is exposed to dedicated workers only — so the
+ * pool's own workers probe it (`src/worker/probes.ts`), and the benchmark page
+ * opens two handles in a worker of its own. A feature in neither table is a
+ * mistake, and `tests/unit/capabilities.test.ts` says so.
  */
 const UNPROBEABLE = new Set<PlatformFeature>(['readwrite-unsafe']);
 

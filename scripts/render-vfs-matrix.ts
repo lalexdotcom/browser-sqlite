@@ -459,7 +459,9 @@ const detailFor = (name: string, cap: VFSCapability): string => {
   // One reference each, so they number cleanly rather than repeating one note.
   const pool =
     cap.maxPoolSize === null
-      ? 'Any'
+      ? cap.singleConnectionWithout.length === 0
+        ? 'Any'
+        : `Any, 1 without ${cap.singleConnectionWithout.map((f) => `\`${f}\``).join(', ')}`
       : `**${cap.maxPoolSize}**${noteRef(`pool-${name}`)}`;
   // No `Shared` line: an unbounded pool and sharing between connections are the
   // same fact here, because a pool worker IS a connection. They are separate
