@@ -1407,6 +1407,11 @@ export const createSQLiteClient = (
     })
       .then((result) => {
         if ('declined' in result) {
+          // Same reason as the ready branch below: this slot may have failed
+          // in a prior round and be recorded in startupLosses, and declining
+          // in the retry is not a loss — it must not be reported permanently
+          // lost in onGateOpen.
+          startupLosses.delete(index);
           retireSlot(index, result.declined);
           return;
         }

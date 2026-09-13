@@ -193,4 +193,72 @@ describe('a pool capped by its environment', () => {
     expect(performance.now() - t0).toBeLessThan(5000);
     expect(warnings.filter((w) => w.includes('pool capped'))).toEqual([]);
   }, 15000);
+
+  // Finding 2: a surplus slot that times out in round 1 and then declines in
+  // the retry round must not be announced lost — spawn's `declined` branch
+  // used to return before clearing `startupLosses`, so the entry round 1 left
+  // behind for this slot survived into onGateOpen and was reported permanently
+  // lost. Falsifier: removing `startupLosses.delete(index)` from the
+  // `declined` branch reintroduces the loss.
+  (CAPPED ? it : it.skip)(
+    'a surplus slot that times out, then declines in the retry round, is not announced lost',
+    async () => {
+      const Original = globalThis.Worker;
+      let created = 0;
+      // Workers are constructed in slot-index order at startup, so the
+      // second Worker ever created is slot 1's round-1 worker. Its 'open' is
+      // held back past openTimeout below, so round 1 gives up on it; the
+      // retry round constructs a THIRD worker for slot 1, left untouched
+      // here, so it opens (and declines) immediately.
+      class DelayingSlot1Open extends Original {
+        constructor(url: string | URL, opts?: WorkerOptions) {
+          super(url, opts);
+          const n = created++;
+          if (n === 1) {
+            const post = this.postMessage.bind(this) as (m: unknown) => void;
+            this.postMessage = ((m: { type?: string }) => {
+              if (m?.type === 'open') {
+                // Well past openTimeout below, so it never affects the
+                // outcome — by the time it would fire, this worker is dead.
+                setTimeout(() => {
+                  try {
+                    post(m);
+                  } catch {}
+                }, 3000);
+                return;
+              }
+              post(m);
+            }) as Worker['postMessage'];
+          }
+        }
+      }
+      globalThis.Worker = DelayingSlot1Open as unknown as typeof Worker;
+      onTestFinished(() => {
+        globalThis.Worker = Original;
+      });
+
+      const file = `pool-cap-retry-${crypto.randomUUID()}`;
+      onTestFinished(async () => {
+        const root = await navigator.storage.getDirectory();
+        await root.removeEntry(file, { recursive: true }).catch(() => {});
+      });
+
+      const warnings = captureWarnings();
+      const lost: unknown[] = [];
+      const db = createSQLiteClient(file, {
+        vfs: 'OPFSWriteAheadVFS',
+        poolSize: 2,
+        // Short enough that round 1 gives up on slot 1 well before the
+        // delayed 'open' above (3000 ms) would ever be delivered.
+        openTimeout: 600,
+        onWorkerLost: (e) => lost.push(e),
+      });
+      await db.write('CREATE TABLE t (a)');
+      expect(lost).toEqual([]);
+      expect(db.poolSize).toBe(1);
+      expect(warnings.some((w) => w.includes(' lost;'))).toBe(false);
+      await db.close();
+    },
+    15000,
+  );
 });
