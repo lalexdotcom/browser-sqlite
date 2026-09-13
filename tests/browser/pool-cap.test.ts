@@ -7,6 +7,7 @@
  * tests follow it.
  */
 import { describe, expect, it, onTestFinished } from '@rstest/core';
+import { createSQLiteClient } from '../../src/client';
 import { HAS_UNSAFE_HANDLES } from '../conformance/helpers';
 import { createTestClient, interceptWorkers } from './helpers';
 
@@ -103,4 +104,65 @@ describe('a pool capped by its environment', () => {
       await db.close();
     },
   );
+
+  // T5. Falsifiable: ignore `lastError` in the worker's final catch — the
+  // cause then says `sqlite3_open_v2` and nothing else.
+  it('reports the storage error behind a failed open', async () => {
+    const file = `pool-cap-held-${crypto.randomUUID()}`;
+    // A third party holds the file exclusively, then tries the VFS's own call
+    // shape once: the error it gets is the oracle, measured on this engine.
+    const src = `
+      let held;
+      self.onmessage = async (e) => {
+        if (e.data === 'release') { held?.close(); self.postMessage('released'); return; }
+        const root = await navigator.storage.getDirectory();
+        const fh = await root.getFileHandle(e.data, { create: true });
+        held = await fh.createSyncAccessHandle();
+        try {
+          const again = await fh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
+          again.close();
+          self.postMessage(null);
+        } catch (err) {
+          self.postMessage(err.name);
+        }
+      };`;
+    const holder = new Worker(
+      URL.createObjectURL(new Blob([src], { type: 'text/javascript' })),
+    );
+    const ask = (message: string) =>
+      new Promise<unknown>((resolve) => {
+        holder.onmessage = (e) => resolve(e.data);
+        holder.postMessage(message);
+      });
+    const oracle = (await ask(file)) as string | null;
+    onTestFinished(async () => {
+      await ask('release');
+      holder.terminate();
+      const root = await navigator.storage.getDirectory();
+      await root.removeEntry(file).catch(() => {});
+    });
+    // An engine where the VFS's call shape coexists with an exclusive handle
+    // gives this test nothing to observe.
+    expect(oracle).not.toBeNull();
+
+    const warnings = captureWarnings();
+    const causes: Error[] = [];
+    const db = createSQLiteClient(file, {
+      vfs: 'OPFSWriteAheadVFS',
+      poolSize: 1,
+      onWorkerLost: ({ cause }) => causes.push(cause),
+    });
+    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+      code: 'WORKER_CRASHED',
+    });
+    expect(causes).toHaveLength(1);
+    expect(causes[0]?.message).toContain(`sqlite3_open_v2: ${oracle}:`);
+    expect((causes[0]?.cause as { name?: string } | undefined)?.name).toBe(
+      oracle,
+    );
+    expect(
+      warnings.some((w) => w.includes(` lost;`) && w.includes(`${oracle}:`)),
+    ).toBe(true);
+    await db.close();
+  });
 });

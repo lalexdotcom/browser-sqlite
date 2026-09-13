@@ -254,6 +254,12 @@ const open = (file: string, options: OpenOptions) => {
 
   const vfsConfig = VFSConfigs[vfs];
 
+  // Hoisted for the final `catch`. For `sqlite3_open_v2` wa-sqlite has no
+  // connection to ask `sqlite3_errmsg`, so its error names only the function;
+  // the VFS keeps the real one in `lastError` (spec 2026-09-13, §3.4). A fresh
+  // instance per open() means the value cannot be stale.
+  let vfsInstanceSeen: { lastError?: unknown } | undefined;
+
   openedDB = WA_SQLITE_BUILDS[build]()
     .then(({ default: factory }) => factory(wasmModuleArg(wasm)))
     .then((module) => {
@@ -268,6 +274,7 @@ const open = (file: string, options: OpenOptions) => {
       return (
         vfsModule.create(vfs, module, { lockPolicy: 'shared' }) as Promise<any>
       ).then((vfsInstance: any) => {
+        vfsInstanceSeen = vfsInstance;
         sqlite.vfs_register(vfsInstance, true);
         // One lock for open + pragmas. withLock releases on throw too, which
         // is what the explicit unlock() in the old .catch existed to do.
@@ -296,12 +303,18 @@ const open = (file: string, options: OpenOptions) => {
       return opened;
     })
     .catch((error: unknown) => {
+      const base =
+        error instanceof Error ? error.message : `Failed to open ${file}`;
+      const vfsError = vfsInstanceSeen?.lastError;
+      const detail =
+        vfsError instanceof Error
+          ? `${vfsError.name}: ${vfsError.message}`
+          : undefined;
       self.postMessage({
         type: 'open-error',
         callId: 0,
-        message:
-          error instanceof Error ? error.message : `Failed to open ${file}`,
-        cause: cloneable(error),
+        message: detail ? `${base}: ${detail}` : base,
+        cause: cloneable(detail ? vfsError : error),
         // wa-sqlite raises SQLiteError(message, code) with SQLite's numeric
         // result code. Carry it across the postMessage boundary so pool.ts
         // can mint SQLiteError('BUSY') rather than SQLiteError('WORKER_CRASHED').

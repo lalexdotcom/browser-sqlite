@@ -1438,7 +1438,7 @@ export const createSQLiteClient = (
     // pool[index] is already undefined here (cleared by handleDeath or startup).
     const live = pool.filter(Boolean).length;
     logger.always.warn(
-      `worker ${index + 1} lost; pool is now ${live} of ${effectivePoolSize}`,
+      `worker ${index + 1} lost; pool is now ${live} of ${effectivePoolSize} (${error.message})`,
     );
     const cb = clientOptions.onWorkerLost;
     if (cb) {
