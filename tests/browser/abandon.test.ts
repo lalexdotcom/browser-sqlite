@@ -177,7 +177,7 @@ describe("interrupt() ignores a transport the worker isn't serving", () => {
    */
   it('does not stop the live query when named the stale one', async () => {
     const pool: (PoolWorker | undefined)[] = [];
-    const worker = await createPoolWorker({
+    const opened = await createPoolWorker({
       index: 0,
       pool,
       clientName: 'pool-interrupt-direct',
@@ -190,6 +190,11 @@ describe("interrupt() ignores a transport the worker isn't serving", () => {
       drainTimeout: 5000,
       logger: createLogger('test', false),
     });
+    // No declineWithout is passed above, so a decline here means the harness
+    // itself is broken, not the scenario under test.
+    if ('declined' in opened)
+      throw new Error(`worker declined to open: no ${opened.declined}`);
+    const worker = opened;
     try {
       // Drain the stale transport to its own "done" — the affected count —
       // and stop there, never calling next() again. The WORKER now considers

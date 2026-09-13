@@ -1,6 +1,15 @@
-import { describe, expect, it } from '@rstest/core';
+import { afterEach, describe, expect, it } from '@rstest/core';
 import { VFS_CAPABILITIES } from '../../src/types';
-import { ALL_VFS, conformanceClient, missingHere } from './helpers';
+import {
+  ALL_VFS,
+  conformanceClient,
+  expectNoWorkerLost,
+  missingHere,
+} from './helpers';
+
+// Falsifiable: remove this line — Firefox "passes" OPFSWriteAheadVFS on a
+// pool that lost every worker but one, as it did on 2026-08-27.
+afterEach(expectNoWorkerLost);
 
 /**
  * Every declared (vfs, build) pair is executed, never trusted. Declaring a

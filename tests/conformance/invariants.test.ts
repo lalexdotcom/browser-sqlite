@@ -1,12 +1,17 @@
-import { describe, expect, it } from '@rstest/core';
+import { afterEach, describe, expect, it } from '@rstest/core';
 import { deleteDatabase } from '../../src/delete';
 import { VFS_CAPABILITIES } from '../../src/types';
 import {
   ALL_VFS,
   conformanceClient,
   createReopened,
+  expectNoWorkerLost,
   missingHere,
 } from './helpers';
+
+// Falsifiable: remove this line — Firefox "passes" OPFSWriteAheadVFS on a
+// pool that lost every worker but one, as it did on 2026-08-27.
+afterEach(expectNoWorkerLost);
 
 /**
  * What every VFS owes, whatever the browser. These fail the build: a VFS that

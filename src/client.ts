@@ -40,6 +40,7 @@ import { createSupervisor } from './supervisor';
 import { createTransaction } from './transaction';
 import {
   defaultBuildFor,
+  type PlatformFeature,
   type SQLiteBuild,
   type SQLiteVFS,
   VFS_CAPABILITIES,
@@ -155,6 +156,10 @@ export type CreateSQLiteClientOptions = {
    * A VFS that holds a single connection caps this at `1`, and passing more
    * throws at construction time. Omitting it never throws: the default is
    * capped to what the VFS allows.
+   * The environment can cap it too: `OPFSWriteAheadVFS` runs on one worker
+   * wherever `readwrite-unsafe` is missing, with no error, and warns once only
+   * when this option was passed. `db.poolSize` reports the size the pool runs
+   * at.
    * @defaultValue `2`, or the VFS's maximum when it is lower
    */
   poolSize?: number;
@@ -253,8 +258,8 @@ export type CreateSQLiteClientOptions = {
 
   /**
    * Called whenever a worker slot is permanently lost. Receives the slot index,
-   * the number of workers still alive after the loss, the requested pool size,
-   * and the error that killed the slot.
+   * the number of workers still alive after the loss, the pool's size
+   * (`db.poolSize`), and the error that killed the slot.
    *
    * Guaranteed to be called **before** the client is failed when the last slot
    * is lost. Wrapped in try/catch — a throwing callback is reported through
@@ -275,7 +280,7 @@ export type WorkerLostEvent = {
   index: number;
   /** Number of workers still alive after this loss. */
   live: number;
-  /** The requested pool size (`poolSize` option). */
+  /** The number of workers the pool runs — `db.poolSize`, not the `poolSize` option: the two differ where the environment caps the pool. */
   size: number;
   /** The error that killed the worker. */
   cause: SQLiteError;
@@ -374,6 +379,15 @@ export const createSQLiteClient = (
     clientOptions.poolSize ??
     Math.min(DEFAULT_POOL_SIZE, capability.maxPoolSize ?? DEFAULT_POOL_SIZE);
   const pool: (PoolWorker | undefined)[] = [];
+
+  /**
+   * The size the pool actually runs at: `poolSize` minus the slots whose worker
+   * declined because the environment caps the pool (spec 2026-09-13). What the
+   * `poolSize` getter and `onWorkerLost`'s `size` report. Losses do not change
+   * it — they are reported with `live`.
+   */
+  let effectivePoolSize = poolSize;
+  let capAnnounced = false;
 
   /**
    * One Int32 per worker, holding the callId to abort. Allocated only in a
@@ -1385,14 +1399,23 @@ export const createSQLiteClient = (
       createQueryDebugState: clientDebug?.createQueryDebugState,
       logger,
       abortSlots,
+      // Slot 0 never probes and always opens; only surplus workers may decline.
+      declineWithout:
+        index > 0 && capability.singleConnectionWithout.length > 0
+          ? capability.singleConnectionWithout
+          : undefined,
     })
-      .then((worker) => {
+      .then((result) => {
+        if ('declined' in result) {
+          retireSlot(index, result.declined);
+          return;
+        }
         supervisor.report(index, 'ready');
         // If this slot was recorded in startupLosses (it failed in a prior
         // round and is now recovering in the retry), remove the record so it
         // is not reported as permanently lost in onGateOpen.
         startupLosses.delete(index);
-        scheduler.add(worker);
+        scheduler.add(result);
       })
       .catch(() => {
         // The rejection is the death already reported through onDeath.
@@ -1415,18 +1438,38 @@ export const createSQLiteClient = (
     // pool[index] is already undefined here (cleared by handleDeath or startup).
     const live = pool.filter(Boolean).length;
     logger.always.warn(
-      `worker ${index + 1} lost; pool is now ${live} of ${poolSize}`,
+      `worker ${index + 1} lost; pool is now ${live} of ${effectivePoolSize}`,
     );
     const cb = clientOptions.onWorkerLost;
     if (cb) {
       try {
-        cb({ index, live, size: poolSize, cause: error });
+        cb({ index, live, size: effectivePoolSize, cause: error });
       } catch (cbError) {
         logger.always.warn(
           `onWorkerLost callback threw: ${cbError instanceof Error ? cbError.message : String(cbError)}`,
         );
       }
     }
+  };
+
+  /**
+   * A slot whose worker declined to open: the environment caps the pool
+   * (spec 2026-09-13, D1). Not a loss — no `onWorkerLost`, no restart — and
+   * announced once, as a warning only when the consumer asked for a pool size
+   * (D2). The supervisor hears of it BEFORE the scheduler, because retire()
+   * may open the gate synchronously and onGateOpen reads liveCount.
+   */
+  const retireSlot = (index: number, missing: PlatformFeature) => {
+    pool[index]?.terminate();
+    pool[index] = undefined;
+    effectivePoolSize -= 1;
+    supervisor.report(index, 'retired');
+    scheduler.retire(index);
+    if (capAnnounced) return;
+    capAnnounced = true;
+    const message = `${vfs} holds its database file exclusively without ${missing}: pool capped at 1 of ${poolSize}`;
+    if (clientOptions.poolSize !== undefined) logger.always.warn(message);
+    else logger.info(message);
   };
 
   const handleDeath = (index: number, error: SQLiteError) => {
@@ -1583,6 +1626,9 @@ export const createSQLiteClient = (
     },
     get build() {
       return build;
+    },
+    get poolSize() {
+      return effectivePoolSize;
     },
     inspect,
 

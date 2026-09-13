@@ -71,6 +71,12 @@ export type ClientMessageData =
       abortSlots?: SharedArrayBuffer;
       /** This worker's index into `abortSlots`. */
       abortIndex?: number;
+      /**
+       * Features this worker must find before opening; it declines instead of
+       * opening when one is missing (spec 2026-09-13). Sent to slots of index
+       * ≥ 1 only, and only by a VFS that declares `singleConnectionWithout`.
+       */
+      declineWithout?: readonly PlatformFeature[];
     }
   | {
       type: 'query';
@@ -93,6 +99,11 @@ export type ClientMessageData =
 
 export type WorkerMessageData =
   | { type: 'ready'; callId: number }
+  /**
+   * The worker found a feature of `declineWithout` missing and opened nothing:
+   * the environment caps the pool (spec 2026-09-13).
+   */
+  | { type: 'declined'; callId: number; missing: PlatformFeature }
   | { type: 'chunk'; callId: number; data: unknown[] }
   | {
       type: 'done';

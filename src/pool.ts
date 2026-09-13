@@ -2,6 +2,7 @@ import { DEFAULT_CREDIT_WINDOW } from './credits';
 import { SQLiteError, type SQLiteErrorCode } from './errors';
 import type { Logger } from './logger';
 import type {
+  PlatformFeature,
   SavepointOp,
   SQLiteBuild,
   SQLiteVFS,
@@ -110,6 +111,9 @@ export type PoolWorker = Worker & {
   terminate: (reason?: SQLiteError) => void;
 };
 
+/** What `createPoolWorker` settles with when its worker declined to open. */
+export type DeclinedWorker = { declined: PlatformFeature };
+
 const STOP = Symbol('stop');
 
 /** SQLITE_BUSY and SQLITE_LOCKED — the two ways a lock conflict reports. */
@@ -196,7 +200,8 @@ export const createPoolWorker = (deps: {
     | undefined;
   logger: Logger;
   abortSlots?: SharedArrayBuffer | undefined;
-}): Promise<PoolWorker> => {
+  declineWithout?: readonly PlatformFeature[] | undefined;
+}): Promise<PoolWorker | DeclinedWorker> => {
   const {
     index,
     pool,
@@ -211,8 +216,9 @@ export const createPoolWorker = (deps: {
   } = deps;
   const { createWorkerDebugState, createQueryDebugState, logger } = deps;
   const { abortSlots } = deps;
+  const { declineWithout } = deps;
 
-  const deferredInit = Promise.withResolvers<PoolWorker>();
+  const deferredInit = Promise.withResolvers<PoolWorker | DeclinedWorker>();
 
   const workerName = `${clientName} / Worker ${index + 1}`;
   const worker = Object.assign(spawnWorker(workerName) as PoolWorker, {
@@ -414,6 +420,16 @@ export const createPoolWorker = (deps: {
                 cause: data.cause,
               }),
           );
+        }
+        break;
+      }
+      case 'declined': {
+        // Not a death: this worker opened nothing and never will. It settles
+        // init WITHOUT `die`, so no `onDeath`; the client retires the slot and
+        // terminates the thread (spec 2026-09-13).
+        if (data.callId === 0) {
+          logger.info(`worker ${index + 1} declined: no ${data.missing}`);
+          deferredInit.resolve({ declined: data.missing });
         }
         break;
       }
@@ -796,6 +812,7 @@ export const createPoolWorker = (deps: {
     statementCacheBytes,
     abortSlots,
     abortIndex: abortSlots ? index : undefined,
+    declineWithout,
   });
 
   return deferredInit.promise;

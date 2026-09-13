@@ -30,6 +30,7 @@ import { createLocks, initLockName } from '../locks';
 import {
   type ClientMessageData,
   defaultBuildFor,
+  type PlatformFeature,
   type SQLiteBuild,
   type SQLiteVFS,
   VFS_CAPABILITIES,
@@ -38,6 +39,7 @@ import {
 } from '../types';
 import { renderPragmas } from '../utils';
 import { cloneable } from './cloneable';
+import { firstMissing } from './probes';
 import { createStatementCache } from './statement-cache';
 
 type SQLOptions = {
@@ -181,6 +183,7 @@ type OpenOptions = {
   statementCacheBytes?: number | undefined;
   abortSlots?: SharedArrayBuffer | undefined;
   abortIndex?: number | undefined;
+  declineWithout?: readonly PlatformFeature[] | undefined;
 };
 
 /**
@@ -225,6 +228,19 @@ const wasmModuleArg = (wasm: WasmLocation | undefined) =>
 const open = (file: string, options: OpenOptions) => {
   if (openedDB) {
     throw new Error('DB already opened');
+  }
+
+  // Spec 2026-09-13: before anything is loaded. A surplus worker of a pool the
+  // environment caps opens nothing — no wasm, no VFS, no file — and says so,
+  // so nothing fails and wa-sqlite prints nothing. The client terminates it.
+  const missing = firstMissing(options.declineWithout ?? []);
+  if (missing !== null) {
+    self.postMessage({
+      type: 'declined',
+      callId: 0,
+      missing,
+    } satisfies WorkerMessageData);
+    return;
   }
 
   const { vfs, wasm, pragmas = {}, abortSlots, abortIndex } = options;
@@ -863,6 +879,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         statementCacheBytes,
         abortSlots,
         abortIndex,
+        declineWithout,
       } = data;
       open(file, {
         vfs,
@@ -872,6 +889,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         statementCacheBytes,
         abortSlots,
         abortIndex,
+        declineWithout,
       });
       break;
     }
