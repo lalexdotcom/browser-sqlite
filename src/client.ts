@@ -1461,11 +1461,16 @@ export const createSQLiteClient = (
    */
   const retireSlot = (index: number, missing: PlatformFeature) => {
     pool[index]?.terminate();
-    pool[index] = undefined;
-    effectivePoolSize -= 1;
+    // Once the client is closing, effectivePoolSize and the cap no longer
+    // matter, and pool[index] must not be written: close() truncates pool
+    // with `pool.length = 0`, and a write here would re-extend it.
+    if (!closing) {
+      pool[index] = undefined;
+      effectivePoolSize -= 1;
+    }
     supervisor.report(index, 'retired');
     scheduler.retire(index);
-    if (capAnnounced) return;
+    if (closing || capAnnounced) return;
     capAnnounced = true;
     const message = `${vfs} holds its database file exclusively without ${missing}: pool capped at 1 of ${poolSize}`;
     if (clientOptions.poolSize !== undefined) logger.always.warn(message);

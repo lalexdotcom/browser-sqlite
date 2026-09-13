@@ -165,4 +165,32 @@ describe('a pool capped by its environment', () => {
     ).toBe(true);
     await db.close();
   });
+
+  // Finding 1: close() during startup of a capped pool must not stall for the
+  // full drainTimeout. A surplus worker still booting is told to decline; by
+  // the time it does, retireSlot terminates it in the same checkpoint that
+  // close()'s own worker.close() is awaiting a 'closed' reply the now-dead
+  // worker can never send. Runs on both engines: on the uncapped engine
+  // nothing declines, and close() should still be prompt and warning-free.
+  // Falsifiers (checked once each while building this fix): removing
+  // `deferredClose?.resolve()` from pool.ts's `poison` makes this take ~10 s
+  // on Firefox; removing the `closing` guard in client.ts's `retireSlot`
+  // makes Firefox capture a `pool capped` warning here.
+  it('close() during startup of a capped pool returns promptly and does not warn', async () => {
+    const warnings = captureWarnings();
+    const file = `pool-cap-close-${crypto.randomUUID()}`;
+    onTestFinished(async () => {
+      const root = await navigator.storage.getDirectory();
+      await root.removeEntry(file, { recursive: true }).catch(() => {});
+    });
+    const db = createSQLiteClient(file, {
+      vfs: 'OPFSWriteAheadVFS',
+      poolSize: 2,
+      drainTimeout: 10_000,
+    });
+    const t0 = performance.now();
+    await db.close();
+    expect(performance.now() - t0).toBeLessThan(5000);
+    expect(warnings.filter((w) => w.includes('pool capped'))).toEqual([]);
+  }, 15000);
 });

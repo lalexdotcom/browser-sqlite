@@ -338,6 +338,12 @@ export const createPoolWorker = (deps: {
     worker.status = 'DEAD';
     deathDeferred.reject(error);
     deferredInit.reject(error); // no-op once resolved
+    // A dead worker can never send the 'closed' reply close() is awaiting —
+    // it either never received the 'close' message or is gone before it could
+    // reply. Resolving (not rejecting) here is what lets close() return
+    // promptly instead of running out its drainTimeout for a reply that will
+    // never come.
+    deferredClose?.resolve();
     return true;
   };
 
@@ -791,6 +797,11 @@ export const createPoolWorker = (deps: {
     },
     quiesce: () => idle?.promise ?? Promise.resolve(),
     close: async () => {
+      // A dead worker will never reply 'closed' — posting to it would just
+      // wait out deferredClose with nobody left to resolve it. `poison`
+      // resolves an in-flight deferredClose when the worker dies mid-wait;
+      // this is the other half, for a close() call that arrives afterwards.
+      if (dead) return;
       if (!deferredClose) {
         deferredClose = Promise.withResolvers<void>();
         worker.postMessage({ type: 'close', callId: 0 });
