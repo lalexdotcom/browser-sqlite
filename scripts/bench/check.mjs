@@ -137,8 +137,8 @@ try {
 
   const EXPECTED_KEYS = [
     'generatedAt', 'lib', 'agent', 'features', 'clockMs', 'sweep',
-    'opfsRootAtStart', 'longQueryIterations', 'conformance', 'measurements',
-    'reasons',
+    'opfsRootAtStart', 'poolSize', 'longQueryIterations', 'conformance',
+    'measurements', 'reasons',
   ];
   for (const k of EXPECTED_KEYS) {
     if (!(k in payload)) fail(`export missing key: ${k}`);
