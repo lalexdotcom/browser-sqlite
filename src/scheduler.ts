@@ -67,6 +67,14 @@ export type Scheduler<W> = {
    */
   remove: (index: number) => void;
   /**
+   * Takes a slot out of the pool for good because its worker DECLINED to open:
+   * the environment caps the pool below its requested size (spec 2026-09-13).
+   * Unlike `remove()`, the slot settles the readiness gate as neither opened
+   * nor failed, so it never appears in `onFirstSettle`'s `failedIndices` and
+   * never enters the startup retry round.
+   */
+  retire: (index: number) => void;
+  /**
    * Closes the front door. Queued waiters reject with `reason`, later
    * acquisitions reject the same way, and the returned promise settles when the
    * last outstanding lease has come back.
@@ -189,20 +197,28 @@ export const createScheduler = <W extends { index: number }>(
   const firstSettleOpened = new Set<number>();
   let firstSettleFired = false;
 
+  // Slots that settled via retire(): neither opened nor failed, so
+  // onFirstSettle must not report them as failures.
+  const declinedSlots = new Set<number>();
+
   // Callers currently suspended on the gate. See `stats().gated`.
   let gatedWaiters = 0;
 
-  const settleGateSlot = (index: number, kind: 'opened' | 'failed') => {
+  const settleGateSlot = (
+    index: number,
+    kind: 'opened' | 'failed' | 'declined',
+  ) => {
     if (gateOpen || settledSlots.has(index)) return;
     settledSlots.add(index);
     if (kind === 'opened') firstSettleOpened.add(index);
+    if (kind === 'declined') declinedSlots.add(index);
     if (settledSlots.size < (opts.poolSize ?? 0)) return;
 
     // All slots have now settled (first round or retry round).
     if (opts.onFirstSettle && !firstSettleFired) {
       firstSettleFired = true;
       const failedIndices = [...settledSlots].filter(
-        (i) => !firstSettleOpened.has(i),
+        (i) => !firstSettleOpened.has(i) && !declinedSlots.has(i),
       );
       opts.onFirstSettle({
         openedCount: firstSettleOpened.size,
@@ -371,6 +387,22 @@ export const createScheduler = <W extends { index: number }>(
     return found;
   };
 
+  /** What `remove()` and `retire()` both do once the gate has been told. */
+  const takeOut = (index: number) => {
+    dead.add(index);
+    available.delete(index);
+    leased.delete(index);
+    workers[index] = undefined;
+    // Bump the generation so any outstanding lease on this index knows it is
+    // stale when its release() eventually fires.
+    generations.set(index, gen(index) + 1);
+    if (currentWriterIndex === index) currentWriterIndex = -1;
+    // A respawned slot is a different connection with a fresh epoch, so the
+    // freshness hint this index carried is void.
+    if (lastWriterIndex === index) lastWriterIndex = -1;
+    checkShutdown();
+  };
+
   return {
     add: (worker) => {
       // Settle this slot in the gate (first call per index only; restarts are
@@ -395,19 +427,12 @@ export const createScheduler = <W extends { index: number }>(
       // Settle this slot in the gate — a dead slot counts. First call per
       // index only; a restart after the gate is open is a no-op here.
       settleGateSlot(index, 'failed');
+      takeOut(index);
+    },
 
-      dead.add(index);
-      available.delete(index);
-      leased.delete(index);
-      workers[index] = undefined;
-      // Bump the generation so any outstanding lease on this index knows it is
-      // stale when its release() eventually fires.
-      generations.set(index, gen(index) + 1);
-      if (currentWriterIndex === index) currentWriterIndex = -1;
-      // A respawned slot is a different connection with a fresh epoch, so the
-      // freshness hint this index carried is void.
-      if (lastWriterIndex === index) lastWriterIndex = -1;
-      checkShutdown();
+    retire: (index) => {
+      settleGateSlot(index, 'declined');
+      takeOut(index);
     },
 
     shutdown: (reason) => {
