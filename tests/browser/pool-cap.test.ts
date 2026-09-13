@@ -26,6 +26,48 @@ const captureWarnings = () => {
   return warnings;
 };
 
+/**
+ * Holds `file` open with an exclusive OPFS sync access handle from a second
+ * worker — the way a real second client of the same database would — then
+ * probes whether this engine's readwrite-unsafe call shape can coexist with
+ * that exclusive handle. Returns the engine's own error name for that probe
+ * (the oracle used to assert on the cause below), or null where it doesn't
+ * conflict. Registers its own release/cleanup via onTestFinished.
+ */
+const holdFileExclusively = async (file: string): Promise<string | null> => {
+  const src = `
+      let held;
+      self.onmessage = async (e) => {
+        if (e.data === 'release') { held?.close(); self.postMessage('released'); return; }
+        const root = await navigator.storage.getDirectory();
+        const fh = await root.getFileHandle(e.data, { create: true });
+        held = await fh.createSyncAccessHandle();
+        try {
+          const again = await fh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
+          again.close();
+          self.postMessage(null);
+        } catch (err) {
+          self.postMessage(err.name);
+        }
+      };`;
+  const holder = new Worker(
+    URL.createObjectURL(new Blob([src], { type: 'text/javascript' })),
+  );
+  const ask = (message: string) =>
+    new Promise<unknown>((resolve) => {
+      holder.onmessage = (e) => resolve(e.data);
+      holder.postMessage(message);
+    });
+  const oracle = (await ask(file)) as string | null;
+  onTestFinished(async () => {
+    await ask('release');
+    holder.terminate();
+    const root = await navigator.storage.getDirectory();
+    await root.removeEntry(file).catch(() => {});
+  });
+  return oracle;
+};
+
 describe('a pool capped by its environment', () => {
   // T1. Falsifiable, three ways: a probe that always passes (Firefox then loses
   // three workers); a probe that always fails (Chromium then runs on one); the
@@ -101,6 +143,11 @@ describe('a pool capped by its environment', () => {
         new ErrorEvent('error', { message: 'simulated worker failure' }),
       );
       expect(events).toEqual([{ size: 1, live: 0 }]);
+      // The loss above must actually fail the client — the last worker is
+      // gone, so a query issued afterwards has nothing left to run on.
+      await expect(db.read('SELECT 1')).rejects.toMatchObject({
+        code: 'WORKER_CRASHED',
+      });
       await db.close();
     },
   );
@@ -111,36 +158,7 @@ describe('a pool capped by its environment', () => {
     const file = `pool-cap-held-${crypto.randomUUID()}`;
     // A third party holds the file exclusively, then tries the VFS's own call
     // shape once: the error it gets is the oracle, measured on this engine.
-    const src = `
-      let held;
-      self.onmessage = async (e) => {
-        if (e.data === 'release') { held?.close(); self.postMessage('released'); return; }
-        const root = await navigator.storage.getDirectory();
-        const fh = await root.getFileHandle(e.data, { create: true });
-        held = await fh.createSyncAccessHandle();
-        try {
-          const again = await fh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
-          again.close();
-          self.postMessage(null);
-        } catch (err) {
-          self.postMessage(err.name);
-        }
-      };`;
-    const holder = new Worker(
-      URL.createObjectURL(new Blob([src], { type: 'text/javascript' })),
-    );
-    const ask = (message: string) =>
-      new Promise<unknown>((resolve) => {
-        holder.onmessage = (e) => resolve(e.data);
-        holder.postMessage(message);
-      });
-    const oracle = (await ask(file)) as string | null;
-    onTestFinished(async () => {
-      await ask('release');
-      holder.terminate();
-      const root = await navigator.storage.getDirectory();
-      await root.removeEntry(file).catch(() => {});
-    });
+    const oracle = await holdFileExclusively(file);
     // An engine where the VFS's call shape coexists with an exclusive handle
     // gives this test nothing to observe.
     expect(oracle).not.toBeNull();
@@ -260,5 +278,45 @@ describe('a pool capped by its environment', () => {
       await db.close();
     },
     15000,
+  );
+
+  // Minor 5: the capped total-failure path had no browser coverage. Slot 0's
+  // open genuinely fails (the file held exclusively, as in the test above)
+  // while slots 1-3 decline (the environment cap) — the scheduler's gate only
+  // opens once all four have settled, at which point openedCount is 0 and
+  // this is a total startup failure with exactly one real loss: slot 0.
+  // Falsifier (checked while building this fix): moving `effectivePoolSize -=
+  // 1` in retireSlot to after `scheduler.retire(index)` does NOT turn this
+  // red. Slot 0's own real open failure is what settles the gate last here
+  // (it is slower than the three probe-and-decline round trips), so by the
+  // time it fires, all three decline decrements have already run regardless
+  // of where the line sits inside retireSlot. What DOES turn this red:
+  // removing the decrement from retireSlot altogether — `size` then reports
+  // 4, not 1.
+  (CAPPED ? it : it.skip)(
+    'reports exactly one loss, for slot 0, when the capped pool fails to open at all',
+    async () => {
+      const file = `pool-cap-total-${crypto.randomUUID()}`;
+      const oracle = await holdFileExclusively(file);
+      expect(oracle).not.toBeNull();
+
+      const events: { index: number; size: number; live: number }[] = [];
+      const causes: Error[] = [];
+      const db = createSQLiteClient(file, {
+        vfs: 'OPFSWriteAheadVFS',
+        poolSize: 4,
+        onWorkerLost: ({ index, size, live, cause }) => {
+          events.push({ index, size, live });
+          causes.push(cause);
+        },
+      });
+      await expect(db.read('SELECT 1')).rejects.toMatchObject({
+        code: 'WORKER_CRASHED',
+      });
+      expect(events).toEqual([{ index: 0, size: 1, live: 0 }]);
+      expect(causes).toHaveLength(1);
+      expect(causes[0]?.message).toContain(`sqlite3_open_v2: ${oracle}:`);
+      await db.close();
+    },
   );
 });
