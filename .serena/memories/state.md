@@ -24,13 +24,14 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-14 after the pool-cap merge
+## The verification baseline — compare against these, re-measured 2026-09-14 after the long-read merge
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a
-run in this container on 2026-09-14, on `main` at merge `121b0f6` (`fix/pool-environment-cap`)** —
-none is carried forward, none is arithmetic. The whole table was re-read in one pass, which is what
-its own rule demands; raw outputs in `.scratchpad/closure-baseline-2026-09-14/`. The merge's
-pre-merge-commit hook had already run `pnpm test` on the merged tree and read the same three counts.
+run in this container on 2026-09-14, on `main` right after the merge that made
+`IDBBatchAtomicVFS` serve reads during a long statement** — none is carried forward, none is
+arithmetic. The whole table was re-read in one pass, which is what its own rule demands; raw
+outputs in `.scratchpad/closure-baseline-2026-09-14-idb/`. The `pnpm test` row is the merge's
+pre-merge-commit hook, run on the merged tree.
 
 **`pnpm test` chains THREE configs** — chromium+unit, firefox, and the isolated project — so a
 green `pnpm test` covers what CI covers. Since 2026-09-11 a commit pays only the unit project; a merge or a push pays all three
@@ -42,13 +43,13 @@ on the last branch landed with a failing typecheck that no test run could show (
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **783 tests / 64 files** (unit + chromium, **4 skipped**), **322 / 44** (firefox, **1 skipped**), **7 / 3** (isolated) |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **785 tests / 65 files** (unit + chromium, **4 skipped**), **324 / 45** (firefox, **1 skipped**), **7 / 3** (isolated) |
 | `pnpm exec rstest --project unit run` | 462 tests, 21 files |
-| `pnpm exec rstest --project chromium run` | 321 tests, 43 files, 4 skipped |
+| `pnpm exec rstest --project chromium run` | 323 tests, 44 files, 4 skipped |
 | `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each: **Chromium 71 passed / 14 skipped, Firefox 67 / 18** — they differ by design since 2026-09-14 |
 | `pnpm test:consumer` | 24/24 stages |
-| `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`, `poolSize` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 119 files, 13 warnings, 1 info |
+| `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
+| `pnpm lint` | 120 files, 13 warnings, 1 info |
 | `dependencies` in `package.json` | absent |
 
 **The browser skips are expected: 4 on Chromium, 1 on Firefox.** One, on both, is
@@ -132,10 +133,8 @@ ABANDON-WEDGE).
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
 the 2026-09-05 entry in `mem:follow-ups` called for.
 
-**In flight, not merged:** `IDBBatchAtomicVFS` serving reads during a long statement, signal or
-not — the fix and the bench row committed on their branch, `preview` on it, the
-`VFS.md`/`CHANGELOG.md` edits awaiting the user's word (`mem:follow-ups`). Everything else in
-`mem:follow-ups` is unscheduled.
+**Nothing is in flight.** The long-read work merged on 2026-09-14 (§ below). Everything in
+`mem:follow-ups` is unscheduled but one entry: the default build, scheduled for rc.6.
 
 **HANDLE-2 was investigated on 2026-09-09 and came apart under measurement.** Its stated cause
 is false — Firefox releases a killed worker's sync access handle in 1-6 ms (HANDLE-ORPHAN) — and
@@ -152,6 +151,31 @@ permanent, silent, origin-wide — was found and fixed the same day (§ below).
 2026-09-08 by medianing the bench corpus at n≥3 per platform (`mem:measurements`,
 VFS-MEDIAN). The answer was not "move it": there are now **two** recommendations,
 `OPFSWriteAheadVFS` and `OPFSAdaptiveVFS`, and the constant itself left `src/` — see § below.
+
+## `IDBBatchAtomicVFS` during a long statement — merged 2026-09-14
+
+No spec: a bounded fix, designed in chat and approved. Numbers in `mem:measurements` (IDB-SIGNAL);
+the VFS fact in `mem:vfs`; what is left in `mem:follow-ups`.
+
+**Five things the code will not tell you:**
+
+- **The bench measured the library's option, not the VFS.** Its long query carried the row's
+  signal; when a signal started reaching the worker (`f4b3fd7`), the verdict flipped with no change
+  to the row. It now issues the long query bare (`mem:lessons`).
+- **`yieldsDuringStatements` is about IndexedDB, not about the handle.** `jLock` opens a readwrite
+  IndexedDB transaction per statement, which commits only when the worker returns to its event loop.
+  The yield runs on every statement of that VFS and stops one only when it is abortable.
+- **The calibration verifies only a bound it did not time.** Re-running a timed bound ran Safari's
+  `async` build down its slowdown and voided the IDB column; `longQueryCalibration` exports every
+  timing, so a `null` explains itself.
+- **On Safari the `async` build degrades and stays slow; `jspi` escapes it on 27.** `VFS.md` says
+  so under *Build `async`*; the default build moves to the first supported one in rc.6.
+- **Measure Safari from the container.** The user opens `localhost:8099`, served from `_site`
+  (`mem:conventions`); Playwright's Linux WebKit cannot stand in, its workers do not even load.
+
+**What it does NOT deliver.** Safari 26 has no way around the slowdown for a VFS without a `sync`
+build. The bench's `async` columns stay `null` on Safari whenever the slowdown has set in — honest,
+not fixed. `OPFSAdaptiveVFS` on `jspi` was never measured on Safari 27.
 
 ## The pool capped by its environment — merged 2026-09-14
 

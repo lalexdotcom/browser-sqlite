@@ -190,6 +190,13 @@ policy becomes applicable as written.
 - **Batch diagnostic probes.** When the user has to run probes by hand, send a whole
   battery in one paste, each written for the case where the previous came back clean. Four
   round trips were burned on one-hypothesis-at-a-time before they called it.
+- **For Safari, serve the bench from the container (user, 2026-09-14).** `node
+  scripts/static-server.mjs _site 8099` (after `pnpm bench:build` if the page changed) and the user
+  opens `http://localhost:8099/`: VS Code forwards the port to their Mac, localhost is a secure
+  context, and the origin is apart from `lalexdotcom.github.io`, whose tabs can block IndexedDB.
+  Moving `preview` costs a pre-push `pnpm test` and a Pages deploy per iteration; do it only for a
+  device that cannot reach the container, or when asked. Playwright's Linux WebKit is no stand-in
+  for Safari — it lacks `FileSystemSyncAccessHandle` and loads no worker at all.
 - **Always give a verdict when offering options.** A menu without a recommendation is not
   an answer.
 - **That rule runs one way only (user, 2026-08-27).** When *you* offer options, decide and
