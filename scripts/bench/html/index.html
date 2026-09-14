@@ -542,8 +542,27 @@
         return null;
       };
 
-      /** Effective pool size: the declared cap, or 4 where unbounded. */
+      /**
+       * The pool size the page asks for: the declared cap, or 4 where unbounded.
+       * The environment can cap it lower — the export's `poolSize` says what ran.
+       */
       const poolFor = (cap) => Math.min(4, cap.maxPoolSize ?? 4);
+
+      /**
+       * True when this VFS runs a single worker in this browser: declared
+       * (`maxPoolSize: 1`), or capped because a `singleConnectionWithout`
+       * feature is missing here. Mirrors `oneWorkerHere` in
+       * tests/conformance/helpers.ts (BENCH-DRIFT, `mem:follow-ups`): a
+       * two-worker row is skipped there, never "passed" on one worker. Only
+       * `readwrite-unsafe` is probed on this page; any other feature counts as
+       * present, as the worker's own probe treats one it cannot probe. `?? []`
+       * keeps a release build that predates the field working.
+       */
+      const oneWorkerHere = (cap) =>
+        cap.maxPoolSize === 1 ||
+        (cap.singleConnectionWithout ?? []).some(
+          (feature) => feature === 'readwrite-unsafe' && !HAS_UNSAFE_HANDLES,
+        );
 
       // ── SELECTION UI — Task 2 ───────────────────────────────────────────
       const list = document.getElementById('picker-list');
@@ -1354,7 +1373,7 @@
         {
           id: 'concurrent-writes-lose-nothing',
           label: 'concurrent writes lose nothing',
-          applies: (cap) => cap.maxPoolSize !== 1,
+          applies: (cap) => !oneWorkerHere(cap),
           run: (ctx) =>
             abortableRow(async (signal) => {
               await ctx.db.write('CREATE TABLE inv3 (a INTEGER)', undefined, {
@@ -1440,7 +1459,7 @@
         {
           id: 'no-read-inside-transaction',
           label: 'no read runs inside an open transaction',
-          applies: (cap) => cap.maxPoolSize !== 1,
+          applies: (cap) => !oneWorkerHere(cap),
           /**
            * B1 isolation. Exercising it needs a second worker served while the
            * transaction holds — which HANDLE-1 prevents on any VFS rotating a
@@ -2026,7 +2045,7 @@
           // Not a quantity. See the run body: the honest answer here is yes or
           // no, and the ratio this row used to print could not say more.
           kind: 'flag',
-          applies: (cap) => cap.maxPoolSize !== 1,
+          applies: (cap) => !oneWorkerHere(cap),
           /**
            * Does a long file-reading statement on one worker stop the pool from
            * serving short reads on the others?

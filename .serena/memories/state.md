@@ -90,10 +90,6 @@ one machine and one build; slower CI hardware may still surface timing the campa
   lost at the worker boundary, and `OPFSCoopSyncVFS` writes taking the handle-transfer BUSY between
   clients — logged on the recommendation, the user not having ruled on it (`mem:follow-ups`, both).
   The Firefox `worker 1 lost` observation became the pool-cap work, merged on 2026-09-14 (§ below).
-- **The Safari check of the pool caps.** The preview tag was moved to `5db2c8b` (the merged
-  work) and pushed on 2026-09-14, at the user's word. What is owed is the user's run on Safari:
-  `OPFSAdaptiveVFS`, `OPFSWriteAheadVFS` and `OPFSCoopSyncVFS` should each export `poolSize: 1`,
-  with no `lost` line and no wa-sqlite error pair in the console.
 
 **rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
 and both are now closed — the second by merge `eeabe06` on 2026-09-11.
@@ -185,8 +181,8 @@ POOL-SIZE, DELETE-WA); VFS facts in `mem:vfs`.
 - **The bench still shows the declared pool** in its column header and burst normalisation; the
   export records `db.poolSize`. The header waits for `db.ready` (user, `mem:follow-ups`).
 
-**What it does NOT deliver.** Safari was seen by console only, before Tasks 10-11 (§ decisions
-owed). CoopSync writes can still take the transfer BUSY between clients; `barrier.test.ts` does
+**What it does NOT deliver.** Safari is checked at n=1 (SAFARI-CAP, `mem:measurements`): every
+cap holds there, one Mac, one run. CoopSync writes can still take the transfer BUSY between clients; `barrier.test.ts` does
 not guard the barrier; D-09 has no falsifier by construction (`mem:follow-ups`). Orphan
 `-wa0`/`-wa1` files left by deletions before the fix stay — harmless, by decision.
 

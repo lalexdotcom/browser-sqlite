@@ -4,6 +4,18 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## SAFARI-CAP — the pool caps hold on Safari, 2026-09-14, the user's Mac
+
+Bench export `.bench/browser-sqlite-20260914142953-macos-safari-26.6.2-1.0.0-rc.4.json`, preview
+`5db2c8b`, Safari 26.6.2 macOS, `readwriteUnsafe: false`, n=1. `poolSize` **1** on all five pairs —
+`OPFSWriteAheadVFS` sync and async, `OPFSAdaptiveVFS` async, `OPFSCoopSyncVFS` sync and async;
+`reasons` empty; conformance all pass, CoopSync skipping its two two-worker rows. The console (the
+user's screenshot) showed only the cap warnings — eight for WriteAhead, four for Adaptive, one per
+bench client since the page passes `poolSize: 4`, none for CoopSync — and no `lost` line, no
+wa-sqlite error pair, no `jDelete` error. The export also showed the page still "passing" the two
+two-worker rows on WriteAhead and Adaptive at one worker: the BENCH-DRIFT copy had not followed
+conformance's `oneWorkerHere`, fixed the same day.
+
 ## WORKER-LOST — why `OPFSWriteAheadVFS` lost workers off Chromium, 2026-09-13/14, this container + the user's devices
 
 Method and full tables: spec `docs/superpowers/specs/2026-09-13-pool-environment-cap-design.md`
