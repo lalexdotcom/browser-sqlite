@@ -487,6 +487,13 @@ const detailFor = (name: string, cap: VFSCapability): string => {
       `**Default PRAGMAs:** ${pragmas.map(([k, v]) => `\`${k}=${v}\``).join(', ')}`,
     );
   }
+  // Same rule, and the same declaration deleteDatabase reads: the files a VFS
+  // keeps beside the database, beyond the -journal / -wal every one may have.
+  if (cap.extraFileSuffixes.length) {
+    facts.push(
+      `**Extra files:** ${cap.extraFileSuffixes.map((s) => `\`${s}\``).join(', ')}`,
+    );
+  }
   return [
     `**Builds:** ${builds}`,
     // The footnote marker rides the label, not the versions: GFM collects one

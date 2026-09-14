@@ -314,7 +314,7 @@ window.addEventListener('pagehide', () => {
 
 ## deleteDatabase
 
-Removes a database and the `-journal` / `-wal` files SQLite may have left beside it.
+Removes a database and every file kept beside it — the `-journal` / `-wal` files SQLite may leave, and any the VFS keeps of its own (see its entry in the [VFS reference](VFS.md#vfs-reference)).
 
 ```typescript
 import { deleteDatabase } from 'browser-sqlite';

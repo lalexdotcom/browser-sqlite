@@ -318,6 +318,9 @@ All notable changes to this project are documented here.
   allowed`, for instance — where they said only `sqlite3_open_v2`.
 - **`close()` no longer waits for `drainTimeout` when a worker dies while it closes.** A worker
   that died with a close pending could never answer it, so `close()` sat out the whole timeout.
+- **`deleteDatabase` removes `OPFSWriteAheadVFS`'s write-ahead files.** It left the database's
+  `-wa0` and `-wa1` files behind on every deletion, and made the VFS print three console errors
+  each time. Files left by earlier deletions stay where they are.
 
 ### Known limitation, unchanged and now more visible
 
