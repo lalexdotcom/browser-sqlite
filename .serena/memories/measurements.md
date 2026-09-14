@@ -100,6 +100,11 @@ the user's Safari 26.6.2 (`.scratchpad/idb-safari-yield-2026-09-14/safari-paste-
   reaching IndexedDB after the first, **1 909, 1 759, 4 401, 38 113 ms**. And a full scan served
   from that cache went from 12/11 ms before the long reads to 80/78 ms after — the worker's own
   execution slows, not its reads. A larger cache is no workaround.
+- **The bench answers on Safari since `5052d4f`.** Served from the container's `_site` on
+  `localhost:8099`, Safari 26.6.2, IDBBatchAtomicVFS/async at `poolSize` 4:
+  `reads-during-long-query` **true**, calibration 200 → 430 ms and 930 → 1 591 ms, no verification
+  run, `reasons` empty (`.bench/browser-sqlite-20260914181700-…`). Its label reads `a85c273`: the
+  page was built before `5052d4f` was committed, from the same tree.
 
 ## SAFARI-CAP — the pool caps hold on Safari and Firefox, 2026-09-14, the user's Mac + this container
 
