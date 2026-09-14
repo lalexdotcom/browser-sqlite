@@ -194,8 +194,8 @@ time in either engine — so this is something to know about your own workload,
 not a knob to turn on principle.
 
 It holds no exclusive access handle, so [reduced mode](#reduced-mode) does not
-apply to it — but it still does not serve a read while a long query runs, on any
-engine. See [Concurrent reads](#concurrent-reads).
+apply to it, and it serves a read while a long query runs, on every engine. See
+[Concurrent reads](#concurrent-reads).
 
 ### `IDBMirrorVFS`
 
@@ -294,6 +294,8 @@ Plain synchronous WebAssembly. Needs nothing beyond baseline WASM, so it runs an
 
 Asyncify: the WASM stack is unwound and rewound around asynchronous file operations. Also needs nothing beyond baseline WASM. Every VFS here can run on it.
 
+**On Safari it slows down as it works.** After a few statements of a second or more, a worker on this build runs several times slower — up to twenty times on Safari 26 — and stays slow; Chromium and Firefox do not. The [`jspi`](#build-jspi) build avoids it on Safari 27+. Safari 26 has no JSPI, so there a VFS without a `sync` build has no way around it.
+
 ### Build `jspi`
 
 | Chrome / Edge | Firefox | Safari | Chrome Android | Safari iOS |
@@ -313,10 +315,9 @@ JavaScript Promise Integration — the same asynchrony handled by the engine rat
 at once under a pool** are the same mechanism. A VFS holding one exclusive access
 handle can do neither, because it is the same handle a second worker never gets.
 
-Off Chromium, **reading during a long query** is served by `OPFSAnyContextVFS`
-and by nothing else — and it is the exception on every engine. On Chromium,
-`OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` serve it too; `OPFSCoopSyncVFS` and
-`IDBBatchAtomicVFS` do not.<br>
+**Reading during a long query** is served by `OPFSAnyContextVFS` and
+`IDBBatchAtomicVFS` on every engine. On Chromium, `OPFSAdaptiveVFS` and
+`OPFSWriteAheadVFS` serve it too; `OPFSCoopSyncVFS` does not.<br>
 The [benchmark page](https://lalexdotcom.github.io/browser-sqlite/) reports this
 per VFS on the browser you run it in.
 

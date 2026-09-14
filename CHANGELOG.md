@@ -168,6 +168,12 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **`IDBBatchAtomicVFS` serves reads while a long query runs.** A long statement
+  on one worker made every other connection's read wait until it finished, as
+  if the VFS held one exclusive handle — which it does not. Every statement on
+  this VFS now lets the others through, on every engine and at no measured
+  cost. `VFS_CAPABILITIES` declares it as `yieldsDuringStatements`.
+
 - **A statement following a short-circuited statement in the same
   `transaction()` callback no longer fails with `GENERATOR_ABANDONED`.**
   Statements in a transaction all run on one connection, and one that ends
@@ -337,6 +343,9 @@ All notable changes to this project are documented here.
 - **Serializing writers does not change which access handle a VFS holds.** Where
   `readwrite-unsafe` is unavailable, a read in another tab still waits for the
   rotated exclusive handle while a writer holds it.
+- **On Safari, the `async` build slows down after a few long statements, and stays
+  slow** — several times, up to twenty on Safari 26; Chromium and Firefox do not.
+  `build: 'jspi'` avoids it on Safari 27+. `VFS.md` says so under *Build `async`*.
 
 ### Documentation
 
