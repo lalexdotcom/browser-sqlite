@@ -94,6 +94,12 @@ the user's Safari 26.6.2 (`.scratchpad/idb-safari-yield-2026-09-14/safari-paste-
   not a wait; pool 1 matches pool 4, so not routing. The bench's calibration met it on its third
   long statement (attempt 200, attempt ~935, verification); it now skips a verification the search
   already timed, which makes the race the third.
+- **Not the IndexedDB request path** (v9, preview, same Safari, pool 1, after the same writes). At
+  the default cache the four long reads ran 1 642, 1 629, 1 555, **22 660 ms**; at
+  `cache_size = -32000`, where the whole table stays in SQLite's page cache and the long reads stop
+  reaching IndexedDB after the first, **1 909, 1 759, 4 401, 38 113 ms**. And a full scan served
+  from that cache went from 12/11 ms before the long reads to 80/78 ms after — the worker's own
+  execution slows, not its reads. A larger cache is no workaround.
 
 ## SAFARI-CAP — the pool caps hold on Safari and Firefox, 2026-09-14, the user's Mac + this container
 

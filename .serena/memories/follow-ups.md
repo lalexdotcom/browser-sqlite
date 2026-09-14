@@ -128,7 +128,10 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   text or not, with point reads between them unaffected (IDB-SIGNAL, `mem:measurements`). On the
   rc.4 page too, so pre-existing; Chromium and Firefox never showed it. Cause unknown — what grows
   with each long statement is the question. A consumer would meet it as long reads that suddenly
-  take tens of seconds. Not scheduled.
+  take tens of seconds. Not scheduled. **Not the IndexedDB request path**: at a 32 MB page cache,
+  where the long reads no longer reach IndexedDB, they degrade the same, and a cached full scan runs
+  7× slower afterwards — the worker's execution itself slows. Whether it is IDB-specific at all is
+  unmeasured: no other VFS has run four ~1.6 s statements in a row on Safari.
 - **Whether a yielding statement lets a rotated OPFS handle move between clients.** HANDLE-1 says a
   long statement never returns to its event loop; an abortable one on `async`/`jspi` now does,
   every 100 000 VM ops. Unmeasured.
@@ -141,6 +144,16 @@ with `TypeError: undefined is not an object (evaluating
 'globalThis.FileSystemSyncAccessHandle.prototype')`. Safari on macOS has the interface, and
 Playwright's Linux WebKit was set aside earlier for limits of this kind (user). Unmeasured whether
 a consumer environment lacks it; an insecure context is the candidate. Pre-existing, not scheduled.
+
+## A timed-out read on Firefox can leave the next query meeting `GENERATOR_ABANDONED`, under load (2026-09-14)
+
+`query-timeout.test.ts :: rejects with OPERATION_TIMEOUT and leaves the client usable` —
+`MemoryVFS`, `poolSize` 1, a `timeout: 200` read — failed once in a pre-push `pnpm test`, with
+"Worker 1 already has a query in flight": the follow-up query reached the worker before the
+interrupted one had finished. The machine was loaded by a Chromium probe running beside it; 10
+isolated runs of the file then passed. The code path is untouched by the branch it failed on.
+Load-sensitive, like the defect ABANDON-WEDGE describes (`mem:measurements`); the busy-loop method
+there is how to make it reproduce. Reliability by the triage rule; not scheduled.
 
 ## `SQLITE_FULL` reaches the client with neither `code` nor `sqliteCode` (2026-09-10)
 
