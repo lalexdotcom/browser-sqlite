@@ -128,8 +128,9 @@ user's, and the last waits on the first:
 
 - **The library.** Only an abortable statement yields, so on this VFS one long unsignalled read
   makes every other connection's read wait it out, and the same read with a `signal` does not.
-  Installing the yielding progress handler on every statement for IndexedDB-backed VFS would make
-  the second behaviour the default; its cost — a task turn per 100 000 VM ops — is unmeasured.
+  Installing the yielding progress handler on every `IDBBatchAtomicVFS` statement would make the
+  second behaviour the default; its cost measured nil within noise on both engines and both builds
+  (IDB-SIGNAL). `IDBMirrorVFS` is not concerned.
 - **The bench row.** `reads-during-long-query` passes its row `signal` to the long query, so it
   has answered for the signalled path since `f4b3fd7` and for the unsignalled one before — its
   verdict flipped with no change to the row. Either drop the signal from the long query, or report

@@ -38,9 +38,27 @@ commits. The bench row has passed its row `signal` to the long query since it wa
 measured the unsignalled path until `f4b3fd7` and the signalled one since.
 
 **What it changes.** HANDLE-1's "IDBBatchAtomic waited" holds for a statement with neither `signal`
-nor `timeout`, and is false for one with either. **Not measured:** the yield's own cost; any other
-VFS under a yielding statement — in particular whether `OPFSAdaptiveVFS` can hand its rotated
-handle over mid-statement between clients. Decisions owed: `mem:follow-ups`.
+nor `timeout`, and is false for one with either. `IDBMirrorVFS` is not concerned: its SHARED lock
+opens no IndexedDB transaction, and it runs one worker.
+
+**The yield costs nothing measurable.** Probe `.scratchpad/idb-yield-cost-2026-09-14/probe.test.ts`,
+same day, `IDBBatchAtomicVFS` at `poolSize` 1, `async` and `jspi` builds, each workload with and
+without a never-aborted `signal`, order alternated, 1 warm-up + 5 measured, medians. Ratio
+signal / none:
+
+| workload | Firefox async | Firefox jspi | Chromium async | Chromium jspi |
+|---|---|---|---|---|
+| CPU self-join, 3 000 rows cached | 0.99 | 1.03 | 1.03 | 1.04 |
+| scan of 100 000 rows, beyond the page cache | 1.02 | 1.02 | 1.02 | 1.00 |
+| 50 000-row insert, one statement | 1.01 | 0.95 | 0.93 | 1.00 |
+| 200 point reads | 0.99 | 1.01 | 1.01 | 1.08 |
+| 100 single inserts | 1.01 | 0.96 | 0.97 | 0.99 |
+
+Every ratio inside the run-to-run spread of its own samples (the 1.08: 198-212 ms against
+191-242). The signalled 50 000-row insert kept all its rows, every time. **Not measured:** the
+same under concurrent connections; any other VFS under a yielding statement — in particular whether
+`OPFSAdaptiveVFS` can hand its rotated handle over mid-statement between clients. Decisions owed:
+`mem:follow-ups`.
 
 ## SAFARI-CAP — the pool caps hold on Safari and Firefox, 2026-09-14, the user's Mac + this container
 
