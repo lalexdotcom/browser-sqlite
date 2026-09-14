@@ -95,6 +95,27 @@ Once it exists, `db.poolSize`'s contract becomes "exact once `db.ready` resolves
 Firefox and Safari, which run 1. Once `db.ready` exists the header shows the requested `poolSize`
 → the effective `db.poolSize`, when they differ. The export already records `db.poolSize`.
 
+## Default to the first build the environment supports — `jspi` before `async`, for rc.6 (user, 2026-09-14)
+
+A behaviour change, so rc.6. `defaultBuildFor` returns `builds[0]` whatever the engine, and the
+client then refuses a build the engine lacks (`missingFeature`, `src/client.ts`) — so merely
+listing `jspi` first would break every engine without JSPI, Safari 26 included. The agreed shape:
+list `jspi` before `async` for the five `async`-first VFS (`OPFSAdaptiveVFS`,
+`IDBBatchAtomicVFS`, `IDBMirrorVFS`, `OPFSAnyContextVFS`, `MemoryAsyncVFS`) and resolve the default
+as the first declared build whose `BUILD_REQUIREMENTS` `detectFeatures()` meets; `async` stays the
+fallback. The `sync`-first VFS do not move.
+
+**Why:** Safari's Asyncify slowdown (IDB-SIGNAL, `mem:measurements`), which `jspi` escapes on
+Safari 27. On Chromium and Firefox the bench corpus says `jspi` is equal or faster — full scan
+×0.41-0.66, list page ×0.40-0.86, bulk insert ×0.72-1.04 — except two Chromium IDBBatchAtomicVFS
+rows: single write ×1.18 (3.0 → 3.55 ms) and 500 UPDATEs ×1.13 (median of 10 exports each).
+
+**To do:** the resolution everywhere `defaultBuildFor` is called (client, worker, `deleteDatabase`);
+a test of the no-JSPI fallback; the stale JSDoc at `src/client.ts` ("JSPI is Chromium-only" — VFS.md
+says Firefox 153+, Safari 27+); `VFS.md`; a CHANGELOG entry, the default changing. **Check first:** a
+consumer who passes one `.wasm` URL without `build`. **Measure first:** `OPFSAdaptiveVFS` on `jspi`
+on Safari 27, the pair whose default would change for the most consumers.
+
 ## `OPFSCoopSyncVFS` writes can fail with the handle-transfer BUSY between clients (2026-09-14)
 
 Found while rewriting `coopsync-retry.test.ts` for the one-worker cap (`fix/pool-environment-cap`,
@@ -134,8 +155,8 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   The library defaults to a VFS's first declared build (`defaultBuildFor`), which is `async` for
   `OPFSAdaptiveVFS` — a recommended VFS — `IDBBatchAtomicVFS`, `IDBMirrorVFS`,
   `OPFSAnyContextVFS` and `MemoryAsyncVFS`; `OPFSAdaptiveVFS` itself was not probed.
-  Decisions, the user's: prefer `jspi` by default where JSPI exists; say it in `VFS.md`; report it
-  upstream (wa-sqlite or WebKit). None taken; not scheduled.
+  The default build is decided for rc.6 (the entry "Default to the first build the environment
+  supports"). Still open: saying it in `VFS.md`, and an upstream report (wa-sqlite or WebKit).
 - **Whether a yielding statement lets a rotated OPFS handle move between clients.** HANDLE-1 says a
   long statement never returns to its event loop; an abortable one on `async`/`jspi` now does,
   every 100 000 VM ops. Unmeasured.
