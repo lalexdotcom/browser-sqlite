@@ -70,9 +70,21 @@ could not open `IDBBatchAtomicVFS` at all — `create` and `deleteDatabase` hung
 tab where an earlier probe had left a client stuck: the blocked-origin case ("A tab on the origin
 blocks two columns", below), not the fix.
 
-**Still unexplained:** the bench's `reads-during-long-query` on that Safari at `4340da6` returned
-`null` for `IDBBatchAtomicVFS/async` — no long query held, so the calibration missed its range or
-the statement was over at 50 ms. Not re-run in a clean Safari.
+**The bench's `null` on Safari, traced — an intermittent stall, not the fix.** Console probes on
+the user's Safari 26.6.2 (`.scratchpad/idb-safari-yield-2026-09-14/safari-paste-v4..v7.js`):
+- **The yield costs Safari nothing.** The bench's own cross-join at bounds 25/50/100, preview
+  (yields) against the rc.4 page (never yields): IDBBatchAtomicVFS 52/97/190 against 49/95/194 ms,
+  MemoryAsyncVFS the same, signal or not — ~1.9 ms per bound unit, as on Chromium.
+- **The calibration succeeds at `poolSize` 4** — bound 1 208, verified in 1 937 ms — **until one
+  sample stalls.** After the bench's earlier writes (single inserts, reads, a scan, 500 inserts and
+  500 UPDATEs in transactions), bound 1026 cost 1 642 ms and the very next run of the same statement
+  **38 013 ms**. On the rc.4 page, so it predates the fix.
+- **Not reproduced in 48 further runs**: eight point+long pairs after the writes, in three shapes —
+  pool 4 and pool 1 after 500 UPDATEs, pool 4 after 500 INSERTs — every long read 313-402 ms.
+
+One such sample on the verification is enough to make the row `null`; the bench now retries it
+three times and exports every timing (`longQueryCalibration`). The stall itself is logged in
+`mem:follow-ups`.
 
 ## SAFARI-CAP — the pool caps hold on Safari and Firefox, 2026-09-14, the user's Mac + this container
 

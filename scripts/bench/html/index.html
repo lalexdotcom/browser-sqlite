@@ -1727,16 +1727,30 @@
        *
        * The inner LIMIT cannot return more than DATASET_ROWS rows, so bound
        * is clamped there — growing past it adds no cost. After the search
-       * loop, one verification measurement confirms the chosen bound actually
+       * loop, a verification measurement confirms the chosen bound actually
        * costs 1–4 s. If it does not (the cross-join saturates at
        * DATASET_ROWS² and is still too fast on this device), null is stored
        * and the long-query race returns null rather than a meaningless verdict.
+       *
+       * **The verification is tried up to three times**, because one sample
+       * can stall. Measured 2026-09-14 on Safari 26.6.2, IDBBatchAtomicVFS at
+       * `poolSize` 4, on the rc.4 page: bound 1026 cost 1 642 ms, and the very
+       * next run of the same statement 38 013 ms — while 48 more runs, in
+       * three shapes, did not stall once. A sample like that turned the
+       * IDBBatchAtomicVFS column `null` on two Safari runs. A bound genuinely
+       * wrong for the device misses all three tries; a stall misses one.
+       *
+       * Every timing is kept in `__calibration` and exported as
+       * `longQueryCalibration`, so a `null` carries its own evidence.
        */
       const calibrateLongQuery = async (ctx) => {
         if ('longIterations' in ctx) return ctx.longIterations;
+        const calibration = { attempts: [], verify: [] };
+        RESULTS.measurements[ctx.pair.id].__calibration = calibration;
         let bound = 200;
         for (let attempt = 0; attempt < 6; attempt++) {
           const ms = await time(() => ctx.db.read(longQuery(bound)));
+          calibration.attempts.push({ bound, ms: Math.round(ms) });
           if (ms >= 1500 && ms <= 3000) break;
           if (ms > 3000) {
             bound = Math.max(1, Math.round(bound / 2));
@@ -1747,8 +1761,15 @@
             Math.round(bound * Math.max(2, 2000 / Math.max(ms, 1))),
           );
         }
-        const verify = await time(() => ctx.db.read(longQuery(bound)));
-        ctx.longIterations = verify >= 1000 && verify <= 4000 ? bound : null;
+        ctx.longIterations = null;
+        for (let tries = 0; tries < 3; tries++) {
+          const verify = await time(() => ctx.db.read(longQuery(bound)));
+          calibration.verify.push({ bound, ms: Math.round(verify) });
+          if (verify >= 1000 && verify <= 4000) {
+            ctx.longIterations = bound;
+            break;
+          }
+        }
         RESULTS.measurements[ctx.pair.id].__iterations = ctx.longIterations;
         return ctx.longIterations;
       };
@@ -2723,7 +2744,8 @@
             'no long-running query could be held open here: the cross-join ' +
             'calibration could not reach its 1.5–3 s target, or the statement ' +
             'had already finished by the time the reads were issued — so there ' +
-            'was nothing for a concurrent read to run against'
+            'was nothing for a concurrent read to run against. Every calibration ' +
+            'timing is in the export, under longQueryCalibration'
           );
         }
         return 'measurement could not be produced';
@@ -2844,6 +2866,14 @@
           Object.entries(RESULTS.measurements).map(([pairId, rows]) => [
             pairId,
             rows.__iterations ?? null,
+          ]),
+        ),
+        // Every timing behind longQueryIterations — the search's attempts and
+        // up to three verifications. A null count is read from here.
+        longQueryCalibration: Object.fromEntries(
+          Object.entries(RESULTS.measurements).map(([pairId, rows]) => [
+            pairId,
+            rows.__calibration ?? null,
           ]),
         ),
         conformance: RESULTS.conformance,

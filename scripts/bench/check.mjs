@@ -137,7 +137,7 @@ try {
 
   const EXPECTED_KEYS = [
     'generatedAt', 'lib', 'agent', 'features', 'clockMs', 'sweep',
-    'opfsRootAtStart', 'poolSize', 'longQueryIterations', 'conformance',
+    'opfsRootAtStart', 'poolSize', 'longQueryIterations', 'longQueryCalibration', 'conformance',
     'measurements', 'reasons',
   ];
   for (const k of EXPECTED_KEYS) {
