@@ -225,3 +225,16 @@ describe('singleConnectionWithout', () => {
     expect(capped).toEqual(['OPFSWriteAheadVFS']);
   });
 });
+
+describe('extraFileSuffixes', () => {
+  // Falsifiable: remove '-wa0'/'-wa1' from OPFSWriteAheadVFS, or declare a suffix on
+  // another VFS without a measurement behind it.
+  it('declares extra files on OPFSWriteAheadVFS and nothing else', () => {
+    const declared = Object.fromEntries(
+      Object.entries(VFS_CAPABILITIES)
+        .filter(([, cap]) => cap.extraFileSuffixes.length > 0)
+        .map(([name, cap]) => [name, cap.extraFileSuffixes]),
+    );
+    expect(declared).toEqual({ OPFSWriteAheadVFS: ['-wa0', '-wa1'] });
+  });
+});

@@ -158,6 +158,24 @@ describe('deleteDatabase', () => {
         );
         expect((error as SQLiteError).code).toBe('DATABASE_NOT_FOUND');
       });
+
+      // Falsifiable: drop `...VFS_CAPABILITIES[vfs].extraFileSuffixes` from the opfs-path
+      // pass in deleteDatabaseFiles — OPFSWriteAheadVFS leaves `-wa0` and `-wa1`.
+      it(`leaves no OPFS root entry named after the database on ${vfs}`, async () => {
+        const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+        const db = createSQLiteClient(dbName, { vfs, poolSize: 1 });
+        await db.write('CREATE TABLE t (n)');
+        await db.close();
+
+        await expect(deleteDatabase(dbName, { vfs })).resolves.toBeUndefined();
+
+        const root = await navigator.storage.getDirectory();
+        const remaining: string[] = [];
+        for await (const name of (root as any).keys()) {
+          if (name.startsWith(dbName)) remaining.push(name);
+        }
+        expect(remaining).toEqual([]);
+      });
     }
 
     it('still resolves on the memory VFS, which persists nothing', async () => {

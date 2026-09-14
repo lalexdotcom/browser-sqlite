@@ -294,6 +294,16 @@ export type VFSCapability = {
    */
   readonly singleConnectionWithout: readonly PlatformFeature[];
   /**
+   * Files this VFS keeps beside the database, by suffix, beyond the three every
+   * layout may have (`''`, `-journal`, `-wal`). `deleteDatabase` removes them
+   * with the rest; a file missing from this list outlives its database.
+   *
+   * `OPFSWriteAheadVFS` keeps its write-ahead log in two files of its own,
+   * `-wa0` and `-wa1` (wa-sqlite's `#getWriteAheadNameFromDbName`) — measured
+   * left behind by every deletion until 2026-09-14.
+   */
+  readonly extraFileSuffixes: readonly string[];
+  /**
    * PRAGMAs this library applies on open for this VFS.
    *
    * Merged UNDER the consumer's `pragmas`, so any key they set wins and they
@@ -372,6 +382,7 @@ export const VFS_CAPABILITIES = {
     requires: ['opfs'],
     degradesWithout: ['readwrite-unsafe'],
     singleConnectionWithout: ['readwrite-unsafe'],
+    extraFileSuffixes: ['-wa0', '-wa1'],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -387,6 +398,7 @@ export const VFS_CAPABILITIES = {
     requires: ['opfs'],
     degradesWithout: ['readwrite-unsafe'],
     singleConnectionWithout: [],
+    extraFileSuffixes: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -402,6 +414,7 @@ export const VFS_CAPABILITIES = {
     requires: ['opfs'],
     degradesWithout: [],
     singleConnectionWithout: [],
+    extraFileSuffixes: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -417,6 +430,7 @@ export const VFS_CAPABILITIES = {
     requires: ['opfs'],
     degradesWithout: [],
     singleConnectionWithout: [],
+    extraFileSuffixes: [],
     // Two clients on one database break each other silently (AHP-2TAB,
     // 2026-09-01): the second resolves SELECT 1 but cannot read any table. An
     // origin-wide connection lock ensures the second client fails fast with
@@ -445,6 +459,7 @@ export const VFS_CAPABILITIES = {
     requires: [],
     degradesWithout: [],
     singleConnectionWithout: [],
+    extraFileSuffixes: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -476,6 +491,7 @@ export const VFS_CAPABILITIES = {
     requires: [],
     degradesWithout: [],
     singleConnectionWithout: [],
+    extraFileSuffixes: [],
     // `multiConnection: false` marks concurrent-writer unsafety (MIRROR-1),
     // not isolation. Two clients share data over BroadcastChannel (measured
     // 2026-09-01, 3/3 both engines), so no exclusive lock is needed or correct.
@@ -494,6 +510,7 @@ export const VFS_CAPABILITIES = {
     requires: ['opfs', 'writable-stream'],
     degradesWithout: [],
     singleConnectionWithout: [],
+    extraFileSuffixes: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -510,6 +527,7 @@ export const VFS_CAPABILITIES = {
     requires: [],
     degradesWithout: [],
     singleConnectionWithout: [],
+    extraFileSuffixes: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -526,6 +544,7 @@ export const VFS_CAPABILITIES = {
     requires: [],
     degradesWithout: [],
     singleConnectionWithout: [],
+    extraFileSuffixes: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },

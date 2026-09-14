@@ -804,15 +804,24 @@ const deleteDatabaseFiles = async (data: {
     throw error;
   }
 
+  const layout = VFS_CAPABILITIES[vfs].layout;
+
   try {
-    for (const suffix of DB_RELATED_SUFFIXES) {
-      // Pass syncDir=1, not 0. IDBBatchAtomicVFS.jDelete (wa-sqlite
-      // IDBBatchAtomicVFS.js:119-133) only awaits its IndexedDB transaction
-      // when syncDir is truthy — with 0 the delete is queued on #chain but
-      // the worker exits before it commits, leaving the data intact.
-      // OPFSAdaptiveVFS, OPFSAnyContextVFS and IDBMirrorVFS honour the same
-      // flag with `if (syncDir) await result`; the remaining VFS ignore it.
-      await vfsInstance.jDelete(`${file}${suffix}`, 1);
+    // Not on the opfs-path layout: the OPFS pass below removes every file there,
+    // after the VFS has closed, so jDelete adds nothing there — and OPFSWriteAheadVFS's
+    // refuses anything but its own temporary files, logging an error per call
+    // (three per deletion, on every engine; 2026-09-14). No test can see that
+    // console: it belongs to the delete worker.
+    if (layout !== 'opfs-path') {
+      for (const suffix of DB_RELATED_SUFFIXES) {
+        // Pass syncDir=1, not 0. IDBBatchAtomicVFS.jDelete (wa-sqlite
+        // IDBBatchAtomicVFS.js:119-133) only awaits its IndexedDB transaction
+        // when syncDir is truthy — with 0 the delete is queued on #chain but
+        // the worker exits before it commits, leaving the data intact.
+        // OPFSAdaptiveVFS, OPFSAnyContextVFS and IDBMirrorVFS honour the same
+        // flag with `if (syncDir) await result`; the remaining VFS ignore it.
+        await vfsInstance.jDelete(`${file}${suffix}`, 1);
+      }
     }
 
     // Commit barrier for idb-store VFS. This call is a barrier, not a check —
@@ -842,7 +851,7 @@ const deleteDatabaseFiles = async (data: {
     // VFS_CAPABILITIES and never special-cased by name. A future idb-store VFS
     // inherits the barrier, which is either needed (like IDBBatchAtomicVFS) or
     // inert (like IDBMirrorVFS).
-    if (VFS_CAPABILITIES[vfs].layout === 'idb-store') {
+    if (layout === 'idb-store') {
       const pResOut = new DataView(new ArrayBuffer(4));
       await vfsInstance.jAccess(`${file}`, 0, pResOut);
     }
@@ -850,8 +859,11 @@ const deleteDatabaseFiles = async (data: {
     await vfsInstance.close?.();
   }
 
-  if (VFS_CAPABILITIES[vfs].layout === 'opfs-path') {
-    for (const suffix of DB_RELATED_SUFFIXES) {
+  if (layout === 'opfs-path') {
+    for (const suffix of [
+      ...DB_RELATED_SUFFIXES,
+      ...VFS_CAPABILITIES[vfs].extraFileSuffixes,
+    ]) {
       await removeOpfsEntry(`${file}${suffix}`);
     }
   }
