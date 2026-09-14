@@ -210,6 +210,9 @@ describe('worker lifecycle — onWorkerLost callback', () => {
     const records = interceptWorkers();
     const events: number[] = [];
     const db = await createTestClient({
+      // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS
+      // runs one worker without readwrite-unsafe (spec 2026-09-13, §10).
+      vfs: 'OPFSAnyContextVFS',
       poolSize: 2,
       maxWorkerRestarts: 0,
       onWorkerLost: ({ index }) => events.push(index),
@@ -444,6 +447,9 @@ describe('worker lifecycle — startup readiness gate', () => {
     failWorkerAtIndex(1);
     const lostIndices: number[] = [];
     const db = await createTestClient({
+      // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS
+      // runs one worker without readwrite-unsafe (spec 2026-09-13, §10).
+      vfs: 'OPFSAnyContextVFS',
       poolSize: 2,
       onWorkerLost: ({ index }) => lostIndices.push(index),
     });

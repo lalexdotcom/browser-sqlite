@@ -31,18 +31,17 @@ import { createSQLiteClient } from '../../src/client';
  * clients race to open the same file's cooperative handle from cold, and
  * `write()` has no retry (only `read()` and `first()` do). That reproduced
  * on both engines, non-deterministically (roughly half the runs), always at
- * the same spot (round 0's third write). It is a real gap — a cold-open race
- * between clients that the read-only retry does not cover — but it is a
- * different failure from the one this test exists for, and out of this
- * task's scope to fix in `src/`. Reported as a concern rather than silently
- * worked around. Creating `dbB` only after `dbA`'s `CREATE TABLE` settles —
- * as a second tab opening an already-running database would — removes that
- * race and lets the test target the transfer BUSY it was written for.
+ * the same spot (round 0's third write). **Two `OPFSCoopSyncVFS` clients
+ * opened together can fail a WRITE with the handle-transfer BUSY — the retry
+ * above covers reads only.** This test opens `dbB` only after `dbA`'s first
+ * write (`CREATE TABLE`) settles, as a second tab opening an already-running
+ * database would, on purpose, so it does not watch that race and instead
+ * targets the transfer BUSY it was written for.
  *
  * **Falsifier, verified 2026-09-14, with clients opened in that order:**
  * dropping the catch from `readWithRetry` in `src/client.ts` — so it just
- * awaits `onReadLease` once, with no retry — turns this red on Firefox 4 of
- * 5 runs, always the same shape (a `read()` rejecting with `BUSY`,
+ * awaits `onReadLease` once, with no retry — turns this red on Firefox 3-4
+ * of 5 runs, always the same shape (a `read()` rejecting with `BUSY`,
  * `sqliteCode` 5). Chromium stayed green across the same 5 runs, as it did
  * before this rewrite. The transfer BUSY this test was written for
  * (measured 2026-09-03 at `poolSize: 4`, one client) still reproduces once
