@@ -139,6 +139,9 @@ the user's Safari 26.6.2 (`.scratchpad/idb-safari-yield-2026-09-14/safari-paste-
   per-unit cost climbed during the calibration itself — IDB 200 → 631, 634 → 4 425, verified 317 →
   14 538 ms; AnyContext 200 → 8 430, verified 100 → 4 128 ms. The earlier rows had already set the
   slowdown off. The `null` is honest there: that build cannot hold a statement's cost steady.
+- **Safari only.** The same v10 on Firefox 153, this container: four long reads per column at
+  1 520-1 608 ms on all four VFS/builds, and a full scan after them 149-157 ms once on the two I/O
+  VFS, back to 57-58 ms on the second — Chromium's shape. MemoryVFS `sync` 41 → 43 ms.
 
 ## SAFARI-CAP — the pool caps hold on Safari and Firefox, 2026-09-14, the user's Mac + this container
 
