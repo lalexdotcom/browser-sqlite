@@ -90,9 +90,6 @@ one machine and one build; slower CI hardware may still surface timing the campa
   lost at the worker boundary, and `OPFSCoopSyncVFS` writes taking the handle-transfer BUSY between
   clients — logged on the recommendation, the user not having ruled on it (`mem:follow-ups`, both).
   The Firefox `worker 1 lost` observation became the pool-cap work, merged on 2026-09-14 (§ below).
-- **What `IDBBatchAtomicVFS` does during a long statement.** A read is served only if that
-  statement carries a `signal` or a `timeout` (IDB-SIGNAL, `mem:measurements`). Three decisions, in
-  order: the library default, the bench row, `VFS.md`'s wording (`mem:follow-ups`).
 
 **rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
 and both are now closed — the second by merge `eeabe06` on 2026-09-11.
@@ -135,7 +132,9 @@ ABANDON-WEDGE).
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
 the 2026-09-05 entry in `mem:follow-ups` called for.
 
-**Nothing is in flight.** The pool-cap work merged on 2026-09-14 (§ below). Everything in
+**In flight, not merged:** `IDBBatchAtomicVFS` serving reads during a long statement, signal or
+not — the fix and the bench row committed on their branch, `preview` on it, the
+`VFS.md`/`CHANGELOG.md` edits awaiting the user's word (`mem:follow-ups`). Everything else in
 `mem:follow-ups` is unscheduled.
 
 **HANDLE-2 was investigated on 2026-09-09 and came apart under measurement.** Its stated cause
@@ -183,7 +182,7 @@ POOL-SIZE, DELETE-WA); VFS facts in `mem:vfs`.
   Firefox two invariants skip `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS`, which run one worker there.
 - **The bench still shows the declared pool** in its column header and burst normalisation; the
   export records `db.poolSize`. The header waits for `db.ready` (user, `mem:follow-ups`). Since
-  `29fbc71` it skips **three** rows on a one-worker column, not the two its message names:
+  2026-09-14 it skips **three** rows on a one-worker column, not the two its commit message names:
   `reads-during-long-query` too — whether the other workers serve during a long query has no
   subject on one worker. So the bench no longer shows HANDLE-1 within a client off Chromium.
 

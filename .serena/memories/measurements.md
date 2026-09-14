@@ -57,8 +57,22 @@ signal / none:
 Every ratio inside the run-to-run spread of its own samples (the 1.08: 198-212 ms against
 191-242). The signalled 50 000-row insert kept all its rows, every time. **Not measured:** the
 same under concurrent connections; any other VFS under a yielding statement — in particular whether
-`OPFSAdaptiveVFS` can hand its rotated handle over mid-statement between clients. Decisions owed:
-`mem:follow-ups`.
+`OPFSAdaptiveVFS` can hand its rotated handle over mid-statement between clients.
+
+**Fixed on `fix/idb-long-read` (`133d51a`), 2026-09-14.** `yieldsDuringStatements`, true for this
+VFS only, makes the worker yield on every statement there. `tests/browser/idb-long-read.test.ts`
+failed before it on both engines and both builds, and passes after. **Safari 26.6.2 macOS, the
+user's console probe on preview `4340da6`** (`.scratchpad/idb-safari-yield-2026-09-14/safari-paste-v3.js`):
+a read issued 50 ms into an unsignalled self-join won 3/3, 2-3 ms against 343-355 ms. The worker
+tick costs 0.05 ms there (0.002-0.005 on Chromium and Firefox), and a signal adds nothing
+measurable to MemoryAsyncVFS (19-21 against 20-22 ms). Before a Safari restart the same probe
+could not open `IDBBatchAtomicVFS` at all — `create` and `deleteDatabase` hung past 20 s — in a
+tab where an earlier probe had left a client stuck: the blocked-origin case ("A tab on the origin
+blocks two columns", below), not the fix.
+
+**Still unexplained:** the bench's `reads-during-long-query` on that Safari at `4340da6` returned
+`null` for `IDBBatchAtomicVFS/async` — no long query held, so the calibration missed its range or
+the statement was over at 50 ms. Not re-run in a clean Safari.
 
 ## SAFARI-CAP — the pool caps hold on Safari and Firefox, 2026-09-14, the user's Mac + this container
 
