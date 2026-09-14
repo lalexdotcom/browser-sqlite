@@ -128,9 +128,14 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   ~1.5 s reads, `IDBBatchAtomicVFS` and `OPFSAnyContextVFS` ran their fourth at 11-30 s, and every
   `async` column's cached full scan ran 8-17× slower afterwards; `MemoryVFS` on the `sync` build did
   not move. Not IndexedDB (a 32 MB cache changes nothing), not the library's yield (no signal in the
-  probe, and rc.4 shows it). Pre-existing; Chromium and Firefox never showed it. Next measurement:
-  the same probe on the `jspi` build, which has no Asyncify, on a Safari 27 device. Then an upstream
-  report — wa-sqlite or WebKit — if it holds. Not scheduled.
+  probe, and rc.4 shows it). Pre-existing; Chromium and Firefox never showed it. **The `jspi`
+  build escapes it** (Safari 27.0, flat long reads and a cached scan back at baseline), and on
+  that Safari the bench's two `jspi` columns answer `true` where both `async` ones stay `null`.
+  The library defaults to a VFS's first declared build (`defaultBuildFor`), which is `async` for
+  `OPFSAdaptiveVFS` — a recommended VFS — `IDBBatchAtomicVFS`, `IDBMirrorVFS`,
+  `OPFSAnyContextVFS` and `MemoryAsyncVFS`; `OPFSAdaptiveVFS` itself was not probed.
+  Decisions, the user's: prefer `jspi` by default where JSPI exists; say it in `VFS.md`; report it
+  upstream (wa-sqlite or WebKit). None taken; not scheduled.
 - **Whether a yielding statement lets a rotated OPFS handle move between clients.** HANDLE-1 says a
   long statement never returns to its event loop; an abortable one on `async`/`jspi` now does,
   every 100 000 VM ops. Unmeasured.

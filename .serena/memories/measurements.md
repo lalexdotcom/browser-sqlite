@@ -120,6 +120,25 @@ the user's Safari 26.6.2 (`.scratchpad/idb-safari-yield-2026-09-14/safari-paste-
   the VFS does real asynchronous I/O inside the statement. Chromium ran the same probe flat. A guess,
   not a finding: JavaScriptCore moving the Asyncify module to a slower tier or bounds-checking mode.
   Untested: the `jspi` build, which has no Asyncify — Safari 27 has JSPI, 26.6 does not.
+- **`jspi` escapes it — Safari 27.0 macOS, the user's second Mac, preview `5052d4f`** (v11,
+  `.scratchpad/idb-safari-yield-2026-09-14/safari-paste-v11.js`, same shape, pool 1):
+
+  | VFS / build | long reads, ms | scan before → after, ms |
+  |---|---|---|
+  | IDBBatchAtomicVFS `async` | 1 264 / 1 283 / 1 281 / **2 394** | 13 → 179 / **95** |
+  | IDBBatchAtomicVFS `jspi` | 1 327 / 1 328 / 1 321 / 1 310 | 8 → 80 / **8** |
+  | OPFSAnyContextVFS `async` | 1 238 / 1 240 / 1 240 / 1 241 | 14 → 310 / **92** |
+  | OPFSAnyContextVFS `jspi` | 1 307 / 1 311 / 1 308 / 1 307 | 9 → 200 / **11** |
+  | MemoryVFS `sync` | 1 587 / 1 567 / 1 570 / 1 569 | 7 → 7 |
+
+  Milder than on 26.6.2, same shape: the `async` builds stay slow afterwards, the `jspi` builds'
+  second scan is back at baseline — as on Chromium, whose first scan after long reads is also slow
+  once. **The bench on that Safari 27** (`.bench/browser-sqlite-20260914182334-…`):
+  `reads-during-long-query` **true** on IDBBatchAtomicVFS/jspi (200 → 587, 681 → 1 612 ms) and
+  OPFSAnyContextVFS/jspi (200 → 579, 691 → 1 619 ms); **null** on both `async` columns, whose
+  per-unit cost climbed during the calibration itself — IDB 200 → 631, 634 → 4 425, verified 317 →
+  14 538 ms; AnyContext 200 → 8 430, verified 100 → 4 128 ms. The earlier rows had already set the
+  slowdown off. The `null` is honest there: that build cannot hold a statement's cost steady.
 
 ## SAFARI-CAP — the pool caps hold on Safari and Firefox, 2026-09-14, the user's Mac + this container
 
