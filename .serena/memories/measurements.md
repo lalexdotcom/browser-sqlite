@@ -105,6 +105,21 @@ the user's Safari 26.6.2 (`.scratchpad/idb-safari-yield-2026-09-14/safari-paste-
   `reads-during-long-query` **true**, calibration 200 → 430 ms and 930 → 1 591 ms, no verification
   run, `reasons` empty (`.bench/browser-sqlite-20260914181700-…`). Its label reads `a85c273`: the
   page was built before `5052d4f` was committed, from the same tree.
+- **It is the `async` build, not IndexedDB and not the library** (v10, `localhost:8099`, same
+  Safari, pool 1, after the same writes, no signal anywhere, so no yield from us). Four ~1.5 s long
+  reads, then a full scan before → after them:
+
+  | VFS / build | long reads, ms | scan before → after, ms |
+  |---|---|---|
+  | MemoryVFS `sync` | 1 477 / 1 463 / 1 433 / 1 458 | 5 → 5 |
+  | MemoryAsyncVFS `async` | 1 575 / 1 585 / 1 575 / 1 580 | 8 → 76 |
+  | OPFSAnyContextVFS `async` | 1 363 / 1 389 / 1 363 / **29 684** | 10 → 175 |
+  | IDBBatchAtomicVFS `async` | 1 327 / 1 352 / 1 348 / **11 191** | 9 → 119 |
+
+  The `sync` build is untouched; every Asyncify build degrades and stays degraded, worst where
+  the VFS does real asynchronous I/O inside the statement. Chromium ran the same probe flat. A guess,
+  not a finding: JavaScriptCore moving the Asyncify module to a slower tier or bounds-checking mode.
+  Untested: the `jspi` build, which has no Asyncify — Safari 27 has JSPI, 26.6 does not.
 
 ## SAFARI-CAP — the pool caps hold on Safari and Firefox, 2026-09-14, the user's Mac + this container
 

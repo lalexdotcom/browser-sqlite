@@ -123,15 +123,14 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
 
 ## What the `IDBBatchAtomicVFS` long-statement fix left open (2026-09-14)
 
-- **On Safari, `IDBBatchAtomicVFS` long reads slow down run after run, after writes.** ~1.6 s
-  cross-joins ran 1.6, 1.6, 3.7-10, then 33-35 s in succession, at `poolSize` 1 as at 4, new SQL
-  text or not, with point reads between them unaffected (IDB-SIGNAL, `mem:measurements`). On the
-  rc.4 page too, so pre-existing; Chromium and Firefox never showed it. Cause unknown — what grows
-  with each long statement is the question. A consumer would meet it as long reads that suddenly
-  take tens of seconds. Not scheduled. **Not the IndexedDB request path**: at a 32 MB page cache,
-  where the long reads no longer reach IndexedDB, they degrade the same, and a cached full scan runs
-  7× slower afterwards — the worker's execution itself slows. Whether it is IDB-specific at all is
-  unmeasured: no other VFS has run four ~1.6 s statements in a row on Safari.
+- **On Safari, wa-sqlite's `async` (Asyncify) build slows down after a few long statements, and
+  stays slow.** Measured 2026-09-14 on Safari 26.6.2 (IDB-SIGNAL, `mem:measurements`): after four
+  ~1.5 s reads, `IDBBatchAtomicVFS` and `OPFSAnyContextVFS` ran their fourth at 11-30 s, and every
+  `async` column's cached full scan ran 8-17× slower afterwards; `MemoryVFS` on the `sync` build did
+  not move. Not IndexedDB (a 32 MB cache changes nothing), not the library's yield (no signal in the
+  probe, and rc.4 shows it). Pre-existing; Chromium and Firefox never showed it. Next measurement:
+  the same probe on the `jspi` build, which has no Asyncify, on a Safari 27 device. Then an upstream
+  report — wa-sqlite or WebKit — if it holds. Not scheduled.
 - **Whether a yielding statement lets a rotated OPFS handle move between clients.** HANDLE-1 says a
   long statement never returns to its event loop; an abortable one on `async`/`jspi` now does,
   every 100 000 VM ops. Unmeasured.
