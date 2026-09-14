@@ -14,8 +14,8 @@ import { defaultBuildFor } from '../../src/types';
  * no transaction.ts is involved, so what is pinned is the worker's order of
  * operations and the moment the pool reads the thunk, nothing above.
  */
-const spawn = () =>
-  createPoolWorker({
+const spawn = async (): Promise<PoolWorker> => {
+  const opened = await createPoolWorker({
     index: 0,
     pool: [] as (PoolWorker | undefined)[],
     clientName: 'pool-savepoint',
@@ -26,6 +26,12 @@ const spawn = () =>
     drainTimeout: 5000,
     logger: createLogger('test', false),
   });
+  // No declineWithout is passed above, so a decline here means the harness
+  // itself is broken, not the scenario under test.
+  if ('declined' in opened)
+    throw new Error(`worker declined to open: no ${opened.declined}`);
+  return opened;
+};
 
 const run = async (
   worker: PoolWorker,

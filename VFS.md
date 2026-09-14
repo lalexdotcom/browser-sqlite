@@ -72,7 +72,7 @@ on its [VFS page](https://github.com/rhashimoto/wa-sqlite/tree/master/src/exampl
 |---|---|---|---|---|---|---|
 | [`OPFSWriteAheadVFS`](#opfswriteaheadvfs)<br>**(recommended)** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | [`OPFSAdaptiveVFS`](#opfsadaptivevfs)<br>**(recommended)** | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| [`OPFSCoopSyncVFS`](#opfscoopsyncvfs) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| [`OPFSCoopSyncVFS`](#opfscoopsyncvfs) | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
 | [`AccessHandlePoolVFS`](#accesshandlepoolvfs) | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
 | [`IDBBatchAtomicVFS`](#idbbatchatomicvfs) | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | [`IDBMirrorVFS`](#idbmirrorvfs) | ❌ | ✅ | ✅ | ❌ | ✅ | ❌ |
@@ -90,7 +90,7 @@ on its [VFS page](https://github.com/rhashimoto/wa-sqlite/tree/master/src/exampl
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+<sup><a href="#reduced-mode">[reduced]</a></sup>, Safari 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>, Android 109+/?, iOS 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>
 
-**Pool size:** Any · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
+**Pool size:** Any, 1 without `readwrite-unsafe` · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup> · **Extra files:** `-wa0`, `-wa1`
 
 <!-- END GENERATED OPFSWriteAheadVFS -->
 
@@ -101,7 +101,7 @@ several connections at speed.
 
 **It takes `readwrite-unsafe` where the engine offers it — Chromium 121+, for now.** There it holds one access handle per connection, and serves a read while a long query runs, on its `sync` build.
 
-**Everywhere else it opens the handle exclusively and rotates it between workers.** A browser without `readwrite-unsafe` ignores the `mode` option rather than rejecting it, so the VFS still works and falls into [reduced mode](#reduced-mode): no read is served while another worker holds the handle, for as long as its statement runs.
+**Everywhere else it runs on a single worker.** A browser without `readwrite-unsafe` ignores the `mode` option rather than rejecting it, so the handle opens exclusively — and this VFS keeps it for the connection's whole life instead of handing it over. Only one connection can open, so the pool is capped at `1` there, which is [reduced mode](#reduced-mode) at its narrowest: no read is served while a statement runs.
 
 Bulk loading is what it is fastest at, on every engine measured.
 
@@ -113,7 +113,7 @@ Bulk loading is what it is fastest at, on every engine measured.
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+<sup><a href="#reduced-mode">[reduced]</a></sup>, Safari 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>, Android 109+/?, iOS 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>
 
-**Pool size:** Any · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
+**Pool size:** Any, 1 without `readwrite-unsafe` · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
 
 <!-- END GENERATED OPFSAdaptiveVFS -->
 
@@ -121,6 +121,11 @@ Stores the database as one file in OPFS, reached through synchronous access
 handles. Only one access handle may be open on a file at a time, so it closes
 and reopens lazily to let a second connection in; where the browser allows
 several handles at once it takes that path instead, which is what it adapts to.
+
+**Without `readwrite-unsafe` it runs on a single worker per client.** Its handle
+is exclusive there and a second worker would only wait for it to be handed over,
+so the pool is capped at `1`. The handle still changes hands between clients and
+tabs, which is what the lazy close and reopen is for.
 
 ### `OPFSCoopSyncVFS`
 
@@ -130,7 +135,7 @@ several handles at once it takes that path instead, which is what it adapts to.
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+, Safari 15.4+/27+, Android 109+/?, iOS 15.4+/27+
 
-**Pool size:** Any · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
+**Pool size:** **1**<sup><a href="#fn-4">[4]</a></sup> · **Shared:** yes · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
 
 <!-- END GENERATED OPFSCoopSyncVFS -->
 
@@ -139,7 +144,7 @@ transparent. It holds a pool of access handles for everything but the main
 database and its journal, and closes those two lazily so several connections
 can take turns on them.
 
-**It does not read concurrently, and stalls unpredictably under a pool.** It implements its own locking and silently ignores the `lockPolicy: 'shared'` this library constructs every VFS with, holding one *exclusive* access handle and rotating it between workers instead of one per connection. A read issued while a write transaction is open is **never served**: the pool acquisition blocks before any `AbortSignal` is consulted. A bulk insert either finishes promptly or **exceeds 30 seconds**, with no middle ground and no consistency across runs. None of this depends on `readwrite-unsafe`, so it happens on Chromium too.
+**It does not read concurrently, and runs a pool of one.** It implements its own locking and silently ignores the `lockPolicy: 'shared'` this library constructs every VFS with, holding one *exclusive* access handle and handing it from connection to connection instead of one per connection. A second worker only waits its turn — under a pool, a read issued while a write transaction was open was **never served**, and a bulk insert either finished promptly or **exceeded 30 seconds** — so a client runs one worker, and passing a larger `poolSize` throws. The handle still changes hands between clients and tabs, and a read there waits for whoever holds it. None of this depends on `readwrite-unsafe`, so it happens on Chromium too.
 
 ### `AccessHandlePoolVFS`
 
@@ -149,7 +154,7 @@ can take turns on them.
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+, Safari 15.4+/27+, Android 109+/?, iOS 15.4+/27+
 
-**Pool size:** **1**<sup><a href="#fn-4">[4]</a></sup> · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup> · **Default PRAGMAs:** `locking_mode=exclusive`, `journal_mode=wal`
+**Pool size:** **1**<sup><a href="#fn-5">[5]</a></sup> · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup> · **Default PRAGMAs:** `locking_mode=exclusive`, `journal_mode=wal`
 
 <!-- END GENERATED AccessHandlePoolVFS -->
 
@@ -200,7 +205,7 @@ engine. See [Concurrent reads](#concurrent-reads).
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
-**Pool size:** **1**<sup><a href="#fn-5">[5]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
+**Pool size:** **1**<sup><a href="#fn-6">[6]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
 
 <!-- END GENERATED IDBMirrorVFS -->
 
@@ -242,7 +247,7 @@ so it suits read-only or nearly read-only databases.
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
-**Pool size:** **1**<sup><a href="#fn-6">[6]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
+**Pool size:** **1**<sup><a href="#fn-7">[7]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
 
 <!-- END GENERATED MemoryVFS -->
 
@@ -258,7 +263,7 @@ performance, not as storage.
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
-**Pool size:** **1**<sup><a href="#fn-6">[6]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
+**Pool size:** **1**<sup><a href="#fn-7">[7]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
 
 <!-- END GENERATED MemoryAsyncVFS -->
 
@@ -318,24 +323,24 @@ per VFS on the browser you run it in.
 ### Reduced mode
 
 A VFS marked `[reduced]` for an engine runs there, but without
-`readwrite-unsafe` access handles: one exclusive handle rotated between workers
-instead of one held per connection. Chromium 121+ is, for now, the only engine
-that implements `readwrite-unsafe`, so every other one runs these VFS this way.<br>
+`readwrite-unsafe` access handles: one exclusive handle instead of one per
+connection. A second worker of the same client would only wait for that handle,
+so there these VFS run a pool of one — `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS`
+alike. Chromium 121+ is, for now, the only engine that implements
+`readwrite-unsafe`, so every other one runs these VFS this way.<br>
 **It is not a partial failure**: everything a VFS does, it still does correctly,
 and what degrades is concurrency alone.
 
-What it costs is pool concurrency whenever one worker holds that handle for a
-long time. **On an engine without `readwrite-unsafe`, a VFS that rotates a single
-exclusive OPFS access handle cannot serve any other worker while one of them
-holds it** — the holder does not give it back before its statement ends, and the
-next acquisition blocks in the scheduler, before an `AbortSignal` is ever
-consulted. That covers `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` in reduced
-mode, and it reaches into other tabs: serializing writers changes who writes
-when, not which handle the VFS holds.
+What it costs is concurrency whenever one connection holds that handle for a
+long time. **On an engine without `readwrite-unsafe`, no other connection to the
+database is served while one holds it** — in this client's single worker, in
+another client, in another tab — the holder does not give it back before its
+statement ends, and the others wait until it does. Serializing writers changes
+who writes when, not which handle the VFS holds.
 
-**A long *read* does this as much as a write transaction.** A worker inside a
+**A long *read* does this as much as a write transaction.** A connection inside a
 single long statement cannot answer a hand-over request, so a query that runs for
-seconds serializes every other read for its whole duration.
+seconds serializes every other connection's reads for its whole duration.
 
 <!-- BEGIN GENERATED FOOTNOTES — edit scripts/render-vfs-matrix.ts -->
 
@@ -351,12 +356,15 @@ seconds serializes every other read for its whole duration.
 <sub>**3.** **Whole database in RAM**, multiplied by `poolSize`.</sub>
 
 <a id="fn-4"></a>
-<sub>**4.** Pool size: 1 max — it cannot share access handles between connections.</sub>
+<sub>**4.** Pool size: 1 max — it rotates one exclusive access handle between connections, so another worker only waits its turn.</sub>
 
 <a id="fn-5"></a>
-<sub>**5.** Pool size: 1 max — its pages are mirrored per worker and commits propagate asynchronously, so a larger pool reads stale data or fails outright.</sub>
+<sub>**5.** Pool size: 1 max — it cannot share access handles between connections.</sub>
 
 <a id="fn-6"></a>
-<sub>**6.** Pool size: 1 max — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently.</sub>
+<sub>**6.** Pool size: 1 max — its pages are mirrored per worker and commits propagate asynchronously, so a larger pool reads stale data or fails outright.</sub>
+
+<a id="fn-7"></a>
+<sub>**7.** Pool size: 1 max — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently.</sub>
 
 <!-- END GENERATED FOOTNOTES -->

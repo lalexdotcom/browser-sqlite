@@ -79,6 +79,17 @@ back to it. Not designed. It will sit on the savepoint machinery merged on 2026-
 `mem:architecture`): a new entry point must go through the facade, which concludes the library's
 savepoint before opening its own.
 
+## `db.ready` — a promise for the pool's startup, for rc.6 (user, 2026-09-13)
+
+A feature, so rc.6 by the triage rule. Raised while designing the environment pool cap:
+`db.poolSize` is exact once every worker has opened or declined, and nothing public signals that
+moment — only a query that went through the scheduler's startup gate. Shape agreed in chat, not
+designed further: a property `db.ready: Promise<void>`, not an `onReady` option — it resolves
+when the gate opens, rejects with `failClient`'s error on a total startup failure and with
+`CLIENT_CLOSED` on a `close()` before it, and carries an internal `.catch` so a consumer who never
+reads it sees no unhandled rejection. It derives from the scheduler's `gateDeferred.promise`.
+Once it exists, `db.poolSize`'s contract becomes "exact once `db.ready` resolves".
+
 ## `worker 1 lost; pool is now 1 of 2` on every Firefox run of a probe (2026-09-11)
 
 Logged by every Firefox run of the TX-SAVEPOINT probe — three runs, three VFS

@@ -210,6 +210,9 @@ describe('worker lifecycle — onWorkerLost callback', () => {
     const records = interceptWorkers();
     const events: number[] = [];
     const db = await createTestClient({
+      // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS
+      // runs one worker without readwrite-unsafe (spec 2026-09-13, §10).
+      vfs: 'OPFSAnyContextVFS',
       poolSize: 2,
       maxWorkerRestarts: 0,
       onWorkerLost: ({ index }) => events.push(index),
@@ -255,6 +258,9 @@ describe('worker lifecycle — onWorkerLost callback', () => {
   it('a throwing callback does not break the pool', async () => {
     const records = interceptWorkers();
     const db = await createTestClient({
+      // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS
+      // runs one worker without readwrite-unsafe (spec 2026-09-13, §10).
+      vfs: 'OPFSAnyContextVFS',
       poolSize: 2,
       maxWorkerRestarts: 0,
       onWorkerLost: () => {
@@ -335,6 +341,9 @@ describe('worker lifecycle — startup readiness gate', () => {
     const created = failWorkerAtIndex(1);
     const lostIndices: number[] = [];
     const db = await createTestClient({
+      // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS
+      // runs one worker without readwrite-unsafe (spec 2026-09-13, §10).
+      vfs: 'OPFSAnyContextVFS',
       poolSize: 2,
       onWorkerLost: ({ index }) => lostIndices.push(index),
     });
@@ -438,6 +447,9 @@ describe('worker lifecycle — startup readiness gate', () => {
     failWorkerAtIndex(1);
     const lostIndices: number[] = [];
     const db = await createTestClient({
+      // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS
+      // runs one worker without readwrite-unsafe (spec 2026-09-13, §10).
+      vfs: 'OPFSAnyContextVFS',
       poolSize: 2,
       onWorkerLost: ({ index }) => lostIndices.push(index),
     });

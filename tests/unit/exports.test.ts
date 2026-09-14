@@ -28,6 +28,7 @@ type _ClientExtras =
   | 'file'
   | 'vfs'
   | 'build'
+  | 'poolSize'
   | 'inspect';
 type _TransactionExtras = 'commit' | 'rollback' | 'signal';
 type _SharedOfClient = Omit<SQLiteDB, _ClientExtras>;

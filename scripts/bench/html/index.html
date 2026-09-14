@@ -1249,7 +1249,7 @@
        * every cell that is not a plain pass or a number: errors, states the
        * clock could not support, prerequisites that never ran.
        */
-      const RESULTS = { conformance: {}, measurements: {}, reasons: {} };
+      const RESULTS = { conformance: {}, measurements: {}, reasons: {}, poolSize: {} };
 
       const setReason = (pairId, rowId, text) => {
         (RESULTS.reasons[pairId] ??= {})[rowId] = text;
@@ -2666,6 +2666,11 @@
           }
         }
 
+        // The pool this column actually ran on. Until 2026-09-13 every export
+        // of OPFSWriteAheadVFS off Chromium ran on ONE worker of four with
+        // nothing to say so (spec 2026-09-13). `ctx.db`, not `db`: a reopen
+        // row replaces the column's client.
+        RESULTS.poolSize[pair.id] = ctx.db.poolSize ?? null;
 
         try {
           await closeWithTimeout(ctx.db);
@@ -2804,6 +2809,10 @@
          * mistaken for evidence.
          */
         opfsRootAtStart: opfsBefore ? [...opfsBefore].sort() : null,
+        // Per pair, the workers the pool ran on — `db.poolSize`, which the
+        // environment can cap below `poolFor`. `null` from a build that
+        // predates the getter.
+        poolSize: RESULTS.poolSize,
         // Iteration counts differ per column by design (calibrateLongQuery), so
         // the long-query race is uninterpretable without them.
         longQueryIterations: Object.fromEntries(
@@ -2890,6 +2899,7 @@
         RESULTS.conformance = {};
         RESULTS.measurements = {};
         RESULTS.reasons = {};
+        RESULTS.poolSize = {};
         const verdictBox = document.getElementById('verdict');
         verdictBox.hidden = true;
         document.getElementById('verdict-text').replaceChildren();

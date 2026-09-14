@@ -1,12 +1,18 @@
-import { describe, expect, it } from '@rstest/core';
+import { afterEach, describe, expect, it } from '@rstest/core';
 import { deleteDatabase } from '../../src/delete';
 import { VFS_CAPABILITIES } from '../../src/types';
 import {
   ALL_VFS,
   conformanceClient,
   createReopened,
+  expectNoWorkerLost,
   missingHere,
+  oneWorkerHere,
 } from './helpers';
+
+// Falsifiable: remove this line — Firefox "passes" OPFSWriteAheadVFS on a
+// pool that lost every worker but one, as it did on 2026-08-27.
+afterEach(expectNoWorkerLost);
 
 /**
  * What every VFS owes, whatever the browser. These fail the build: a VFS that
@@ -67,8 +73,8 @@ describe('invariant 3 — concurrent writes lose nothing', () => {
       it.skip(`${vfs} — skipped, no ${missing} in this browser`, () => {});
       continue;
     }
-    if (VFS_CAPABILITIES[vfs].maxPoolSize === 1) {
-      it.skip(`${vfs} — skipped, capped at one worker`, () => {});
+    if (oneWorkerHere(vfs)) {
+      it.skip(`${vfs} — skipped, runs one worker in this browser`, () => {});
       continue;
     }
     it(`${vfs}`, async () => {
@@ -155,8 +161,8 @@ describe('invariant 6 — no read runs inside an open transaction', () => {
       it.skip(`${vfs} — skipped, no ${missing} in this browser`, () => {});
       continue;
     }
-    if (VFS_CAPABILITIES[vfs].maxPoolSize === 1) {
-      it.skip(`${vfs} — skipped, capped at one worker`, () => {});
+    if (oneWorkerHere(vfs)) {
+      it.skip(`${vfs} — skipped, runs one worker in this browser`, () => {});
       continue;
     }
     it(`${vfs}`, async () => {

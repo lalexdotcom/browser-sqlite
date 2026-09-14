@@ -12,7 +12,7 @@ export type SupervisorDecision = 'restart' | 'lost' | 'fail-client';
 export type Supervisor = {
   report: (
     index: number,
-    event: 'spawned' | 'ready' | 'served' | 'died' | 'lost',
+    event: 'spawned' | 'ready' | 'served' | 'died' | 'lost' | 'retired',
   ) => SupervisorDecision | undefined;
 };
 
@@ -72,6 +72,18 @@ export const createSupervisor = (options: {
         // it reset restarts then, it would silently refill the spent budget.
         if (!slot.alive) return undefined;
         slot.restarts = 0;
+        return undefined;
+      }
+
+      if (event === 'retired') {
+        // A slot the environment refuses (spec 2026-09-13): its worker declined
+        // to open and never will. Not a loss, so no decision — but it must
+        // leave liveCount, or the last real worker's death would not fail the
+        // client, and `lost` is what keeps a late 'spawned'/'ready' from
+        // reviving it. Same duplicate-signal guard as the branches below.
+        if (!slot.alive) return undefined;
+        slot.alive = false;
+        slot.lost = true;
         return undefined;
       }
 

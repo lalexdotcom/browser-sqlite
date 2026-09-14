@@ -49,6 +49,11 @@ All notable changes to this project are documented here.
   the transaction's `signal` fired, a statement its callback issued rejected with
   `signal.reason`; it now rejects with `TRANSACTION_CLOSED`, carrying that reason as `cause`.
   `transaction()` itself still rejects with `signal.reason`.
+- **`OPFSCoopSyncVFS` runs a pool of one, and refuses a `poolSize` above 1 with
+  `INVALID_OPTION`.** It hands one access handle from connection to connection, so a second
+  worker only waited its turn: measured on Chromium and Firefox, a pool of one started faster
+  and served bursts of reads faster, and was equal everywhere else. Omitting `poolSize` never
+  throws.
 
 ### Added
 
@@ -94,6 +99,8 @@ All notable changes to this project are documented here.
 - **`TRANSACTION_CLOSED`**, the error a transaction object raises once its transaction is over.
 - **`SQLiteTransactionDB` provides a `signal`**, aborted when the transaction fails or is
   abandoned, for the callback to hand to work of its own.
+- **`db.poolSize`**, the number of workers the pool runs: the `poolSize` option, capped by the
+  VFS and by the environment.
 
 ### Changed
 
@@ -120,6 +127,14 @@ All notable changes to this project are documented here.
   everywhere, and on the `sync` build when your page is cross-origin isolated. Where neither
   holds, behaviour is unchanged; the *Interrupting a call* section of API.md says which
   case you are in and what it costs to change it.
+- **`WorkerLostEvent.size` is the pool's size, `db.poolSize`, rather than the `poolSize`
+  option.** The two differ only where the environment caps the pool, which is new. The
+  lost-worker warning now ends with the error that killed the worker.
+- **`OPFSAdaptiveVFS` runs on one worker wherever `readwrite-unsafe` is missing** — every
+  engine but Chromium, for now — for the same reason: its handle is exclusive there and a
+  second worker only waited for it. Silently with the default `poolSize`; one warning if you
+  passed one, which now reads `… gains nothing from more than one worker without
+  readwrite-unsafe: pool capped at 1 of N`.
 
 ### Performance
 
@@ -302,6 +317,20 @@ All notable changes to this project are documented here.
   late write joined it. Such calls now never reach the database: a statement is refused with
   `TRANSACTION_CLOSED`, `rollback()` resolves, and `commit()` resolves only if the transaction
   had committed.
+- **`OPFSWriteAheadVFS` no longer loses its workers on Firefox and Safari.** Without
+  `readwrite-unsafe` it keeps its database file open exclusively, so only one worker can open
+  it; the others failed at startup, each reported through `onWorkerLost` and a warning, with two
+  console errors apiece. The pool is now capped at one worker there — silently, unless you
+  passed `poolSize`, in which case it warns once. Where `readwrite-unsafe` exists nothing
+  changes.
+- **A worker that fails to open says why.** The error, `onWorkerLost`'s `cause` and the warning
+  now carry the storage error behind it — `NoModificationAllowedError: No modification
+  allowed`, for instance — where they said only `sqlite3_open_v2`.
+- **`close()` no longer waits for `drainTimeout` when a worker dies while it closes.** A worker
+  that died with a close pending could never answer it, so `close()` sat out the whole timeout.
+- **`deleteDatabase` removes `OPFSWriteAheadVFS`'s write-ahead files.** It left the database's
+  `-wa0` and `-wa1` files behind on every deletion, and made the VFS print three console errors
+  each time. Files left by earlier deletions stay where they are.
 
 ### Known limitation, unchanged and now more visible
 

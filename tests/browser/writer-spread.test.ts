@@ -38,7 +38,12 @@ describe('writer spread', () => {
   // (src/scheduler.ts) and every write queues behind the first designated
   // worker — the set collapses to one index and this goes red.
   it('sends a write to a free worker while a read holds the preferred one', async () => {
-    const db = await createTestClient({ debug: true });
+    // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS runs
+    // one worker without readwrite-unsafe (spec 2026-09-13, §10).
+    const db = await createTestClient({
+      debug: true,
+      vfs: 'OPFSAnyContextVFS',
+    });
     await poolReady(db, 2);
 
     await db.write('CREATE TABLE spread (id INTEGER PRIMARY KEY, v TEXT)');
@@ -71,7 +76,12 @@ describe('writer spread', () => {
   // spread over connections while other connections read, which is where a
   // missing barrier surfaces as `no such table` or a stale row set.
   it('keeps results correct under writes and reads issued together', async () => {
-    const db = await createTestClient({ debug: true });
+    // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS runs
+    // one worker without readwrite-unsafe (spec 2026-09-13, §10).
+    const db = await createTestClient({
+      debug: true,
+      vfs: 'OPFSAnyContextVFS',
+    });
     await poolReady(db, 2);
 
     await db.write('CREATE TABLE mixed (id INTEGER PRIMARY KEY, v INTEGER)');

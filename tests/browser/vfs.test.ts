@@ -76,6 +76,34 @@ describe('AccessHandlePoolVFS pool guard', () => {
   });
 });
 
+describe('OPFSCoopSyncVFS pool guard', () => {
+  // Falsifiable: revert OPFSCoopSyncVFS.maxPoolSize to null.
+  it('throws when combined with an explicit poolSize > 1', () => {
+    expect(() =>
+      createSQLiteClient(`browser-sqlite-test-${crypto.randomUUID()}`, {
+        vfs: 'OPFSCoopSyncVFS',
+        poolSize: 2,
+      }),
+    ).toThrow(/pool sizes greater than 1/);
+  });
+
+  // Falsifiable: revert OPFSCoopSyncVFS.maxPoolSize to null — db.poolSize is
+  // then 2, not 1.
+  it('defaults to the VFS cap rather than throwing when poolSize is omitted', async () => {
+    const db = createSQLiteClient(
+      `browser-sqlite-test-${crypto.randomUUID()}`,
+      { vfs: 'OPFSCoopSyncVFS' },
+    );
+    try {
+      await db.write('CREATE TABLE t (id INTEGER PRIMARY KEY)');
+      expect(await db.read('SELECT id FROM t')).toEqual([]);
+      expect(db.poolSize).toBe(1);
+    } finally {
+      await db.close();
+    }
+  });
+});
+
 /**
  * Characterization tests for the `vfs` + `build` combination guard.
  *

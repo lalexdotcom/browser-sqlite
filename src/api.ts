@@ -442,6 +442,13 @@ export type SQLiteDB = SQLiteQueryAPI & {
   /** The build actually loaded, resolved by `defaultBuildFor` when not passed. */
   readonly build: SQLiteBuild;
   /**
+   * The number of workers the pool runs: `poolSize` as requested, capped by
+   * the VFS and by the environment. Exact once every worker has opened or
+   * declined; every query waits for that, so it is settled by the time any
+   * query returns.
+   */
+  readonly poolSize: number;
+  /**
    * Who else is live on this database, right now, in every tab of this origin.
    *
    * A snapshot, stale the instant it resolves: it informs a UI and never

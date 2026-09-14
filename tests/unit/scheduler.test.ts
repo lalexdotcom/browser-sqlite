@@ -1118,3 +1118,50 @@ describe('scheduler — callers waiting on the readiness gate are counted', () =
     expect(scheduler.stats().gated).toBe(0);
   });
 });
+
+describe('scheduler — retire(): a slot that declined to open', () => {
+  // Falsifiable: settle a retired slot as 'failed' inside retire() — it then
+  // appears in failedIndices and the client would retry a worker the
+  // environment refuses.
+  it('settles the gate without counting the slot as failed', () => {
+    let result: { openedCount: number; failedIndices: number[] } | undefined;
+    const scheduler = createScheduler<TestWorker>({
+      poolSize: 4,
+      onFirstSettle: (r) => {
+        result = r;
+      },
+    });
+    scheduler.add({ index: 0 });
+    scheduler.retire(1);
+    scheduler.retire(2);
+    scheduler.retire(3);
+    expect(result).toEqual({ openedCount: 1, failedIndices: [] });
+  });
+
+  // Falsifiable: settle a retired slot as 'opened' — openedCount becomes 1 and
+  // the client keeps a pool with no worker instead of failing.
+  it('reports openedCount 0 when slot 0 fails and every other slot declined', () => {
+    let result: { openedCount: number; failedIndices: number[] } | undefined;
+    const scheduler = createScheduler<TestWorker>({
+      poolSize: 2,
+      onFirstSettle: (r) => {
+        result = r;
+      },
+    });
+    scheduler.retire(1);
+    scheduler.remove(0);
+    expect(result).toEqual({ openedCount: 0, failedIndices: [0] });
+  });
+
+  // Falsifiable: do not settle the gate in retire() — the acquire never
+  // resolves and the test times out.
+  it('opens the gate and serves from the worker that opened', async () => {
+    const scheduler = createScheduler<TestWorker>({ poolSize: 2 });
+    const pending = scheduler.acquire('read');
+    scheduler.add({ index: 0 });
+    scheduler.retire(1);
+    const lease = await pending;
+    expect(lease.worker.index).toBe(0);
+    lease.release();
+  });
+});

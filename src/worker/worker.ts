@@ -30,6 +30,7 @@ import { createLocks, initLockName } from '../locks';
 import {
   type ClientMessageData,
   defaultBuildFor,
+  type PlatformFeature,
   type SQLiteBuild,
   type SQLiteVFS,
   VFS_CAPABILITIES,
@@ -38,6 +39,7 @@ import {
 } from '../types';
 import { renderPragmas } from '../utils';
 import { cloneable } from './cloneable';
+import { firstMissing } from './probes';
 import { createStatementCache } from './statement-cache';
 
 type SQLOptions = {
@@ -181,6 +183,7 @@ type OpenOptions = {
   statementCacheBytes?: number | undefined;
   abortSlots?: SharedArrayBuffer | undefined;
   abortIndex?: number | undefined;
+  declineWithout?: readonly PlatformFeature[] | undefined;
 };
 
 /**
@@ -227,6 +230,19 @@ const open = (file: string, options: OpenOptions) => {
     throw new Error('DB already opened');
   }
 
+  // Spec 2026-09-13: before anything is loaded. A surplus worker of a pool the
+  // environment caps opens nothing — no wasm, no VFS, no file — and says so,
+  // so nothing fails and wa-sqlite prints nothing. The client terminates it.
+  const missing = firstMissing(options.declineWithout ?? []);
+  if (missing !== null) {
+    self.postMessage({
+      type: 'declined',
+      callId: 0,
+      missing,
+    } satisfies WorkerMessageData);
+    return;
+  }
+
   const { vfs, wasm, pragmas = {}, abortSlots, abortIndex } = options;
   const build = options.build ?? defaultBuildFor(vfs);
   currentBuild = build;
@@ -237,6 +253,12 @@ const open = (file: string, options: OpenOptions) => {
       : undefined;
 
   const vfsConfig = VFSConfigs[vfs];
+
+  // Hoisted for the final `catch`. For `sqlite3_open_v2` wa-sqlite has no
+  // connection to ask `sqlite3_errmsg`, so its error names only the function;
+  // the VFS keeps the real one in `lastError` (spec 2026-09-13, §3.4). A fresh
+  // instance per open() means the value cannot be stale.
+  let vfsInstanceSeen: { lastError?: unknown } | undefined;
 
   openedDB = WA_SQLITE_BUILDS[build]()
     .then(({ default: factory }) => factory(wasmModuleArg(wasm)))
@@ -252,6 +274,7 @@ const open = (file: string, options: OpenOptions) => {
       return (
         vfsModule.create(vfs, module, { lockPolicy: 'shared' }) as Promise<any>
       ).then((vfsInstance: any) => {
+        vfsInstanceSeen = vfsInstance;
         sqlite.vfs_register(vfsInstance, true);
         // One lock for open + pragmas. withLock releases on throw too, which
         // is what the explicit unlock() in the old .catch existed to do.
@@ -280,12 +303,18 @@ const open = (file: string, options: OpenOptions) => {
       return opened;
     })
     .catch((error: unknown) => {
+      const base =
+        error instanceof Error ? error.message : `Failed to open ${file}`;
+      const vfsError = vfsInstanceSeen?.lastError;
+      const detail =
+        vfsError instanceof Error
+          ? `${vfsError.name}: ${vfsError.message}`
+          : undefined;
       self.postMessage({
         type: 'open-error',
         callId: 0,
-        message:
-          error instanceof Error ? error.message : `Failed to open ${file}`,
-        cause: cloneable(error),
+        message: detail ? `${base}: ${detail}` : base,
+        cause: cloneable(detail ? vfsError : error),
         // wa-sqlite raises SQLiteError(message, code) with SQLite's numeric
         // result code. Carry it across the postMessage boundary so pool.ts
         // can mint SQLiteError('BUSY') rather than SQLiteError('WORKER_CRASHED').
@@ -775,15 +804,24 @@ const deleteDatabaseFiles = async (data: {
     throw error;
   }
 
+  const layout = VFS_CAPABILITIES[vfs].layout;
+
   try {
-    for (const suffix of DB_RELATED_SUFFIXES) {
-      // Pass syncDir=1, not 0. IDBBatchAtomicVFS.jDelete (wa-sqlite
-      // IDBBatchAtomicVFS.js:119-133) only awaits its IndexedDB transaction
-      // when syncDir is truthy — with 0 the delete is queued on #chain but
-      // the worker exits before it commits, leaving the data intact.
-      // OPFSAdaptiveVFS, OPFSAnyContextVFS and IDBMirrorVFS honour the same
-      // flag with `if (syncDir) await result`; the remaining VFS ignore it.
-      await vfsInstance.jDelete(`${file}${suffix}`, 1);
+    // Not on the opfs-path layout: the OPFS pass below removes every file there,
+    // after the VFS has closed, so jDelete adds nothing there — and OPFSWriteAheadVFS's
+    // refuses anything but its own temporary files, logging an error per call
+    // (three per deletion, on every engine; 2026-09-14). No test can see that
+    // console: it belongs to the delete worker.
+    if (layout !== 'opfs-path') {
+      for (const suffix of DB_RELATED_SUFFIXES) {
+        // Pass syncDir=1, not 0. IDBBatchAtomicVFS.jDelete (wa-sqlite
+        // IDBBatchAtomicVFS.js:119-133) only awaits its IndexedDB transaction
+        // when syncDir is truthy — with 0 the delete is queued on #chain but
+        // the worker exits before it commits, leaving the data intact.
+        // OPFSAdaptiveVFS, OPFSAnyContextVFS and IDBMirrorVFS honour the same
+        // flag with `if (syncDir) await result`; the remaining VFS ignore it.
+        await vfsInstance.jDelete(`${file}${suffix}`, 1);
+      }
     }
 
     // Commit barrier for idb-store VFS. This call is a barrier, not a check —
@@ -813,7 +851,7 @@ const deleteDatabaseFiles = async (data: {
     // VFS_CAPABILITIES and never special-cased by name. A future idb-store VFS
     // inherits the barrier, which is either needed (like IDBBatchAtomicVFS) or
     // inert (like IDBMirrorVFS).
-    if (VFS_CAPABILITIES[vfs].layout === 'idb-store') {
+    if (layout === 'idb-store') {
       const pResOut = new DataView(new ArrayBuffer(4));
       await vfsInstance.jAccess(`${file}`, 0, pResOut);
     }
@@ -821,10 +859,21 @@ const deleteDatabaseFiles = async (data: {
     await vfsInstance.close?.();
   }
 
-  if (VFS_CAPABILITIES[vfs].layout === 'opfs-path') {
-    for (const suffix of DB_RELATED_SUFFIXES) {
+  if (layout === 'opfs-path') {
+    // Sidecars first, the main file (suffix '') last. If a sidecar removal
+    // then failed while the main file went first, the file this VFS opens to
+    // probe existence would already be gone: the next deleteDatabase answers
+    // DATABASE_NOT_FOUND and nothing public can remove the sidecar left
+    // behind. Removing the main file last means a failure here always still
+    // leaves it in place, so a retried deleteDatabase finds the database and
+    // tries again. No test can inject the failed removal this guards against.
+    for (const suffix of [
+      ...DB_RELATED_SUFFIXES.filter((suffix) => suffix !== ''),
+      ...VFS_CAPABILITIES[vfs].extraFileSuffixes,
+    ]) {
       await removeOpfsEntry(`${file}${suffix}`);
     }
+    await removeOpfsEntry(file);
   }
 
   return true;
@@ -863,6 +912,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         statementCacheBytes,
         abortSlots,
         abortIndex,
+        declineWithout,
       } = data;
       open(file, {
         vfs,
@@ -872,6 +922,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         statementCacheBytes,
         abortSlots,
         abortIndex,
+        declineWithout,
       });
       break;
     }

@@ -71,6 +71,12 @@ export type ClientMessageData =
       abortSlots?: SharedArrayBuffer;
       /** This worker's index into `abortSlots`. */
       abortIndex?: number;
+      /**
+       * Features this worker must find before opening; it declines instead of
+       * opening when one is missing (spec 2026-09-13). Sent to slots of index
+       * ≥ 1 only, and only by a VFS that declares `singleConnectionWithout`.
+       */
+      declineWithout?: readonly PlatformFeature[];
     }
   | {
       type: 'query';
@@ -93,6 +99,11 @@ export type ClientMessageData =
 
 export type WorkerMessageData =
   | { type: 'ready'; callId: number }
+  /**
+   * The worker found a feature of `declineWithout` missing and opened nothing:
+   * the environment caps the pool (spec 2026-09-13).
+   */
+  | { type: 'declined'; callId: number; missing: PlatformFeature }
   | { type: 'chunk'; callId: number; data: unknown[] }
   | {
       type: 'done';
@@ -249,9 +260,10 @@ export type VFSCapability = {
    *
    * `readwrite-unsafe` is the one that bites: WebIDL ignores the unknown
    * dictionary member on engines that do not implement it, so the handle
-   * silently opens exclusive and the second connection hangs rather than
-   * failing. Declaring it is what lets the conformance suite probe for it and
-   * skip, instead of leaving it to surface as a 60-second timeout.
+   * silently opens exclusive, and a second connection then waits or fails
+   * depending on the VFS — see `degradesWithout` and `singleConnectionWithout`.
+   * Declaring it is what lets the conformance suite probe for it and skip,
+   * instead of leaving it to surface as a 60-second timeout.
    */
   readonly requires: readonly PlatformFeature[];
   /**
@@ -260,14 +272,37 @@ export type VFSCapability = {
    * `OPFSAdaptiveVFS` is the case this field exists for. Without
    * `readwrite-unsafe` it rotates a single exclusive access handle between
    * connections instead of holding one each. That works — Firefox is the engine
-   * the browser suite exercises it on, and that suite is a CI gate — but it
-   * serializes the whole pool for the duration of a long uninterruptible
-   * statement.
+   * the browser suite exercises it on — but a connection in a long
+   * uninterruptible statement holds the handle, and every other connection to
+   * the database, in another client or tab, waits for it. Within one client it
+   * runs a single worker there: see `singleConnectionWithout`.
    *
    * Without this distinction, a support table derived from browser specs would
    * mark that VFS broken everywhere outside Chromium, when it merely degrades.
    */
   readonly degradesWithout: readonly PlatformFeature[];
+  /**
+   * Platform features without which a pool of more than one worker buys this
+   * VFS nothing, so it runs on one (spec 2026-09-13, §3 and §10). Either the
+   * VFS holds its database file exclusively for a connection's whole life and
+   * a second worker cannot open at all (`OPFSWriteAheadVFS`), or it rotates one
+   * exclusive access handle between connections and a second worker only waits
+   * its turn (`OPFSAdaptiveVFS` — measured 2026-09-14 on Firefox: a pool of one
+   * was faster at startup and on bursts of reads, and equal everywhere else).
+   * The pool's surplus workers probe the feature before loading anything and
+   * decline (`src/worker/probes.ts`); every feature listed needs a probe there.
+   */
+  readonly singleConnectionWithout: readonly PlatformFeature[];
+  /**
+   * Files this VFS keeps beside the database, by suffix, beyond the three every
+   * layout may have (`''`, `-journal`, `-wal`). `deleteDatabase` removes them
+   * with the rest; a file missing from this list outlives its database.
+   *
+   * `OPFSWriteAheadVFS` keeps its write-ahead log in two files of its own,
+   * `-wa0` and `-wa1` (wa-sqlite's `#getWriteAheadNameFromDbName`) — measured
+   * left behind by every deletion until 2026-09-14.
+   */
+  readonly extraFileSuffixes: readonly string[];
   /**
    * PRAGMAs this library applies on open for this VFS.
    *
@@ -338,12 +373,16 @@ export const VFS_CAPABILITIES = {
     storage: 'opfs',
     layout: 'opfs-path',
     // Measured on Firefox 2026-08-27, HAS_UNSAFE_HANDLES false: all three
-    // build pairs and all six invariants pass, concurrent writes included, at
-    // poolSize 1, 2 and 4. `requires` used to name readwrite-unsafe, which made
+    // build pairs and all six invariants pass. That campaign ran at an
+    // EFFECTIVE pool of one: without readwrite-unsafe every worker but the
+    // first failed to open, and conformance did not count live workers
+    // (spec 2026-09-13). `requires` used to name readwrite-unsafe, which made
     // the conformance suite skip the very pairs that would have falsified it.
-    // Safari is still unmeasured for this VFS — see `mem:follow-ups`.
+    // Safari behaves as Firefox — observed 2026-09-13, InvalidStateError.
     requires: ['opfs'],
     degradesWithout: ['readwrite-unsafe'],
+    singleConnectionWithout: ['readwrite-unsafe'],
+    extraFileSuffixes: ['-wa0', '-wa1'],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -358,13 +397,17 @@ export const VFS_CAPABILITIES = {
     layout: 'opfs-path',
     requires: ['opfs'],
     degradesWithout: ['readwrite-unsafe'],
+    singleConnectionWithout: ['readwrite-unsafe'],
+    extraFileSuffixes: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
   OPFSCoopSyncVFS: {
     builds: ['sync', 'async', 'jspi'],
-    maxPoolSize: null,
-    poolLimitReason: null,
+    // Capped on every engine (spec 2026-09-13, §10, D9): a pool of one was faster at startup and on bursts of reads, equal elsewhere, on Chromium and Firefox (POOL-SIZE, 2026-09-14). The handle still rotates between clients and tabs, which is why the COOPSYNC-BUSY retry stays.
+    maxPoolSize: 1,
+    poolLimitReason:
+      'it rotates one exclusive access handle between connections, so another worker only waits its turn',
     multiConnection: true,
     persistent: true,
     memoryModel: 'page-cache',
@@ -372,6 +415,8 @@ export const VFS_CAPABILITIES = {
     layout: 'opfs-path',
     requires: ['opfs'],
     degradesWithout: [],
+    singleConnectionWithout: [],
+    extraFileSuffixes: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -386,6 +431,8 @@ export const VFS_CAPABILITIES = {
     layout: 'opfs-pool',
     requires: ['opfs'],
     degradesWithout: [],
+    singleConnectionWithout: [],
+    extraFileSuffixes: [],
     // Two clients on one database break each other silently (AHP-2TAB,
     // 2026-09-01): the second resolves SELECT 1 but cannot read any table. An
     // origin-wide connection lock ensures the second client fails fast with
@@ -413,6 +460,8 @@ export const VFS_CAPABILITIES = {
     layout: 'idb-store',
     requires: [],
     degradesWithout: [],
+    singleConnectionWithout: [],
+    extraFileSuffixes: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -443,6 +492,8 @@ export const VFS_CAPABILITIES = {
     layout: 'idb-store',
     requires: [],
     degradesWithout: [],
+    singleConnectionWithout: [],
+    extraFileSuffixes: [],
     // `multiConnection: false` marks concurrent-writer unsafety (MIRROR-1),
     // not isolation. Two clients share data over BroadcastChannel (measured
     // 2026-09-01, 3/3 both engines), so no exclusive lock is needed or correct.
@@ -460,6 +511,8 @@ export const VFS_CAPABILITIES = {
     layout: 'opfs-path',
     requires: ['opfs', 'writable-stream'],
     degradesWithout: [],
+    singleConnectionWithout: [],
+    extraFileSuffixes: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -475,6 +528,8 @@ export const VFS_CAPABILITIES = {
     layout: 'memory',
     requires: [],
     degradesWithout: [],
+    singleConnectionWithout: [],
+    extraFileSuffixes: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -490,6 +545,8 @@ export const VFS_CAPABILITIES = {
     layout: 'memory',
     requires: [],
     degradesWithout: [],
+    singleConnectionWithout: [],
+    extraFileSuffixes: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },

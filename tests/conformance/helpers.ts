@@ -1,6 +1,6 @@
-import { afterEach } from '@rstest/core';
+import { afterEach, expect } from '@rstest/core';
 import { detectFeatures } from '../../src/capabilities';
-import { createSQLiteClient } from '../../src/client';
+import { createSQLiteClient, type WorkerLostEvent } from '../../src/client';
 import {
   BUILD_REQUIREMENTS,
   defaultBuildFor,
@@ -116,6 +116,36 @@ export const poolFor = (vfs: SQLiteVFS): number =>
   VFS_CAPABILITIES[vfs].maxPoolSize ?? 2;
 
 /**
+ * True when this VFS runs a single worker in this browser — declared
+ * (`maxPoolSize: 1`) or because it lacks a `singleConnectionWithout` feature
+ * here (spec 2026-09-13, §10). An invariant about two workers is skipped
+ * there, never "passed" on one.
+ */
+export const oneWorkerHere = (vfs: SQLiteVFS): boolean =>
+  VFS_CAPABILITIES[vfs].maxPoolSize === 1 ||
+  VFS_CAPABILITIES[vfs].singleConnectionWithout.some(
+    (feature) => !AVAILABLE_FEATURES.has(feature),
+  );
+
+/**
+ * Every worker a conformance client lost, as `"<vfs> slot <index>: <message>"`.
+ * A conformance pass with a lost worker is not a pass: on 2026-08-27 Firefox
+ * "passed" OPFSWriteAheadVFS at poolSize 2 and 4 on ONE live worker, because
+ * nothing here counted them (spec 2026-09-13). Drained by `expectNoWorkerLost`.
+ */
+const workerLosses: string[] = [];
+const recordLoss =
+  (vfs: SQLiteVFS) =>
+  ({ index, cause }: WorkerLostEvent) => {
+    workerLosses.push(`${vfs} slot ${index}: ${cause.message}`);
+  };
+
+/** Register with `afterEach` at the top level of every conformance file. */
+export const expectNoWorkerLost = () => {
+  expect(workerLosses.splice(0)).toEqual([]);
+};
+
+/**
  * A client on a unique database, registered for cleanup. Unique names keep
  * scenarios independent; OPFS entries are removed afterwards, and the memory
  * VFS have nothing to remove.
@@ -136,7 +166,15 @@ export const conformanceClient = (
     }
   });
 
-  return { file, db: createSQLiteClient(file, { vfs, build, poolSize }) };
+  return {
+    file,
+    db: createSQLiteClient(file, {
+      vfs,
+      build,
+      poolSize,
+      onWorkerLost: recordLoss(vfs),
+    }),
+  };
 };
 
 /**
@@ -149,4 +187,5 @@ export const createReopened = (file: string, vfs: SQLiteVFS) =>
     vfs,
     build: defaultBuildFor(vfs),
     poolSize: poolFor(vfs),
+    onWorkerLost: recordLoss(vfs),
   });

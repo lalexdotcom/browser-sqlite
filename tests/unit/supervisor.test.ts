@@ -220,3 +220,31 @@ describe("supervisor — 'lost' is a terminal death, not a restartable one", () 
     expect(supervisor.report(0, 'lost')).toBeUndefined();
   });
 });
+
+describe('supervisor — retired: a slot the environment refused', () => {
+  // Falsifiable: return 'lost' from the 'retired' branch — the client would
+  // announce a loss for a worker that was never meant to open.
+  it('yields no decision', () => {
+    const supervisor = createSupervisor({ size: 2 });
+    expect(supervisor.report(1, 'retired')).toBeUndefined();
+  });
+
+  // Falsifiable: leave `slot.alive` true in the 'retired' branch — liveCount
+  // still counts the slot, and the last real worker's death returns 'lost'
+  // instead of failing the client.
+  it('leaves liveCount, so the last real worker still fails the client', () => {
+    const supervisor = createSupervisor({ size: 2 });
+    supervisor.report(1, 'retired');
+    expect(supervisor.report(0, 'died')).toBe('fail-client');
+  });
+
+  // Falsifiable: drop `slot.lost = true` — a late 'spawned'/'ready' revives
+  // the slot and its death takes the restart path.
+  it('cannot be revived by a late spawned or ready', () => {
+    const supervisor = createSupervisor({ size: 2 });
+    supervisor.report(1, 'retired');
+    supervisor.report(1, 'spawned');
+    supervisor.report(1, 'ready');
+    expect(supervisor.report(1, 'died')).toBeUndefined();
+  });
+});

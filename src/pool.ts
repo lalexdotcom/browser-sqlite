@@ -2,6 +2,7 @@ import { DEFAULT_CREDIT_WINDOW } from './credits';
 import { SQLiteError, type SQLiteErrorCode } from './errors';
 import type { Logger } from './logger';
 import type {
+  PlatformFeature,
   SavepointOp,
   SQLiteBuild,
   SQLiteVFS,
@@ -110,6 +111,9 @@ export type PoolWorker = Worker & {
   terminate: (reason?: SQLiteError) => void;
 };
 
+/** What `createPoolWorker` settles with when its worker declined to open. */
+export type DeclinedWorker = { declined: PlatformFeature };
+
 const STOP = Symbol('stop');
 
 /** SQLITE_BUSY and SQLITE_LOCKED — the two ways a lock conflict reports. */
@@ -196,7 +200,8 @@ export const createPoolWorker = (deps: {
     | undefined;
   logger: Logger;
   abortSlots?: SharedArrayBuffer | undefined;
-}): Promise<PoolWorker> => {
+  declineWithout?: readonly PlatformFeature[] | undefined;
+}): Promise<PoolWorker | DeclinedWorker> => {
   const {
     index,
     pool,
@@ -211,8 +216,9 @@ export const createPoolWorker = (deps: {
   } = deps;
   const { createWorkerDebugState, createQueryDebugState, logger } = deps;
   const { abortSlots } = deps;
+  const { declineWithout } = deps;
 
-  const deferredInit = Promise.withResolvers<PoolWorker>();
+  const deferredInit = Promise.withResolvers<PoolWorker | DeclinedWorker>();
 
   const workerName = `${clientName} / Worker ${index + 1}`;
   const worker = Object.assign(spawnWorker(workerName) as PoolWorker, {
@@ -332,6 +338,12 @@ export const createPoolWorker = (deps: {
     worker.status = 'DEAD';
     deathDeferred.reject(error);
     deferredInit.reject(error); // no-op once resolved
+    // A dead worker can never send the 'closed' reply close() is awaiting —
+    // it either never received the 'close' message or is gone before it could
+    // reply. Resolving (not rejecting) here is what lets close() return
+    // promptly instead of running out its drainTimeout for a reply that will
+    // never come.
+    deferredClose?.resolve();
     return true;
   };
 
@@ -414,6 +426,16 @@ export const createPoolWorker = (deps: {
                 cause: data.cause,
               }),
           );
+        }
+        break;
+      }
+      case 'declined': {
+        // Not a death: this worker opened nothing and never will. It settles
+        // init WITHOUT `die`, so no `onDeath`; the client retires the slot and
+        // terminates the thread (spec 2026-09-13).
+        if (data.callId === 0) {
+          logger.info(`worker ${index + 1} declined: no ${data.missing}`);
+          deferredInit.resolve({ declined: data.missing });
         }
         break;
       }
@@ -775,6 +797,11 @@ export const createPoolWorker = (deps: {
     },
     quiesce: () => idle?.promise ?? Promise.resolve(),
     close: async () => {
+      // A dead worker will never reply 'closed' — posting to it would just
+      // wait out deferredClose with nobody left to resolve it. `poison`
+      // resolves an in-flight deferredClose when the worker dies mid-wait;
+      // this is the other half, for a close() call that arrives afterwards.
+      if (dead) return;
       if (!deferredClose) {
         deferredClose = Promise.withResolvers<void>();
         worker.postMessage({ type: 'close', callId: 0 });
@@ -796,6 +823,7 @@ export const createPoolWorker = (deps: {
     statementCacheBytes,
     abortSlots,
     abortIndex: abortSlots ? index : undefined,
+    declineWithout,
   });
 
   return deferredInit.promise;
