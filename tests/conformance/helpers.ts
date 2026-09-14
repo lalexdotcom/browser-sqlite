@@ -116,6 +116,18 @@ export const poolFor = (vfs: SQLiteVFS): number =>
   VFS_CAPABILITIES[vfs].maxPoolSize ?? 2;
 
 /**
+ * True when this VFS runs a single worker in this browser — declared
+ * (`maxPoolSize: 1`) or because it lacks a `singleConnectionWithout` feature
+ * here (spec 2026-09-13, §10). An invariant about two workers is skipped
+ * there, never "passed" on one.
+ */
+export const oneWorkerHere = (vfs: SQLiteVFS): boolean =>
+  VFS_CAPABILITIES[vfs].maxPoolSize === 1 ||
+  VFS_CAPABILITIES[vfs].singleConnectionWithout.some(
+    (feature) => !AVAILABLE_FEATURES.has(feature),
+  );
+
+/**
  * Every worker a conformance client lost, as `"<vfs> slot <index>: <message>"`.
  * A conformance pass with a lost worker is not a pass: on 2026-08-27 Firefox
  * "passed" OPFSWriteAheadVFS at poolSize 2 and 4 on ONE live worker, because

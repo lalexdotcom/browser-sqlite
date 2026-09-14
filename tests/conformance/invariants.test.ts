@@ -7,6 +7,7 @@ import {
   createReopened,
   expectNoWorkerLost,
   missingHere,
+  oneWorkerHere,
 } from './helpers';
 
 // Falsifiable: remove this line — Firefox "passes" OPFSWriteAheadVFS on a
@@ -72,8 +73,8 @@ describe('invariant 3 — concurrent writes lose nothing', () => {
       it.skip(`${vfs} — skipped, no ${missing} in this browser`, () => {});
       continue;
     }
-    if (VFS_CAPABILITIES[vfs].maxPoolSize === 1) {
-      it.skip(`${vfs} — skipped, capped at one worker`, () => {});
+    if (oneWorkerHere(vfs)) {
+      it.skip(`${vfs} — skipped, runs one worker in this browser`, () => {});
       continue;
     }
     it(`${vfs}`, async () => {
@@ -160,8 +161,8 @@ describe('invariant 6 — no read runs inside an open transaction', () => {
       it.skip(`${vfs} — skipped, no ${missing} in this browser`, () => {});
       continue;
     }
-    if (VFS_CAPABILITIES[vfs].maxPoolSize === 1) {
-      it.skip(`${vfs} — skipped, capped at one worker`, () => {});
+    if (oneWorkerHere(vfs)) {
+      it.skip(`${vfs} — skipped, runs one worker in this browser`, () => {});
       continue;
     }
     it(`${vfs}`, async () => {
