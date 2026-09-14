@@ -304,6 +304,20 @@ export type VFSCapability = {
    */
   readonly extraFileSuffixes: readonly string[];
   /**
+   * Whether every statement on this VFS must hand its worker back to the event
+   * loop while it runs, abortable or not.
+   *
+   * `IDBBatchAtomicVFS` is why it exists. Its `jLock` opens a readwrite
+   * IndexedDB transaction on reaching SHARED, and IndexedDB commits a
+   * transaction only once its thread returns to the event loop. A worker inside
+   * one long statement never did, so every other connection's read queued
+   * behind it until the statement ended — measured 2026-09-14 on both engines
+   * (`mem:measurements`, IDB-SIGNAL). The worker then runs its progress handler
+   * on every statement, a task turn every `PROGRESS_OPS` VM ops, which measured
+   * no cost. The `sync` build cannot yield and ignores it.
+   */
+  readonly yieldsDuringStatements: boolean;
+  /**
    * PRAGMAs this library applies on open for this VFS.
    *
    * Merged UNDER the consumer's `pragmas`, so any key they set wins and they
@@ -383,6 +397,7 @@ export const VFS_CAPABILITIES = {
     degradesWithout: ['readwrite-unsafe'],
     singleConnectionWithout: ['readwrite-unsafe'],
     extraFileSuffixes: ['-wa0', '-wa1'],
+    yieldsDuringStatements: false,
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -399,6 +414,7 @@ export const VFS_CAPABILITIES = {
     degradesWithout: ['readwrite-unsafe'],
     singleConnectionWithout: ['readwrite-unsafe'],
     extraFileSuffixes: [],
+    yieldsDuringStatements: false,
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -417,6 +433,7 @@ export const VFS_CAPABILITIES = {
     degradesWithout: [],
     singleConnectionWithout: [],
     extraFileSuffixes: [],
+    yieldsDuringStatements: false,
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -433,6 +450,7 @@ export const VFS_CAPABILITIES = {
     degradesWithout: [],
     singleConnectionWithout: [],
     extraFileSuffixes: [],
+    yieldsDuringStatements: false,
     // Two clients on one database break each other silently (AHP-2TAB,
     // 2026-09-01): the second resolves SELECT 1 but cannot read any table. An
     // origin-wide connection lock ensures the second client fails fast with
@@ -462,6 +480,7 @@ export const VFS_CAPABILITIES = {
     degradesWithout: [],
     singleConnectionWithout: [],
     extraFileSuffixes: [],
+    yieldsDuringStatements: true,
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -494,6 +513,7 @@ export const VFS_CAPABILITIES = {
     degradesWithout: [],
     singleConnectionWithout: [],
     extraFileSuffixes: [],
+    yieldsDuringStatements: false,
     // `multiConnection: false` marks concurrent-writer unsafety (MIRROR-1),
     // not isolation. Two clients share data over BroadcastChannel (measured
     // 2026-09-01, 3/3 both engines), so no exclusive lock is needed or correct.
@@ -513,6 +533,7 @@ export const VFS_CAPABILITIES = {
     degradesWithout: [],
     singleConnectionWithout: [],
     extraFileSuffixes: [],
+    yieldsDuringStatements: false,
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -530,6 +551,7 @@ export const VFS_CAPABILITIES = {
     degradesWithout: [],
     singleConnectionWithout: [],
     extraFileSuffixes: [],
+    yieldsDuringStatements: false,
     exclusiveConnection: false,
     defaultPragmas: {},
   },
@@ -547,6 +569,7 @@ export const VFS_CAPABILITIES = {
     degradesWithout: [],
     singleConnectionWithout: [],
     extraFileSuffixes: [],
+    yieldsDuringStatements: false,
     exclusiveConnection: false,
     defaultPragmas: {},
   },

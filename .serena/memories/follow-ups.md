@@ -95,6 +95,27 @@ Once it exists, `db.poolSize`'s contract becomes "exact once `db.ready` resolves
 Firefox and Safari, which run 1. Once `db.ready` exists the header shows the requested `poolSize`
 → the effective `db.poolSize`, when they differ. The export already records `db.poolSize`.
 
+## Default to the first build the environment supports — `jspi` before `async`, for rc.6 (user, 2026-09-14)
+
+A behaviour change, so rc.6. `defaultBuildFor` returns `builds[0]` whatever the engine, and the
+client then refuses a build the engine lacks (`missingFeature`, `src/client.ts`) — so merely
+listing `jspi` first would break every engine without JSPI, Safari 26 included. The agreed shape:
+list `jspi` before `async` for the five `async`-first VFS (`OPFSAdaptiveVFS`,
+`IDBBatchAtomicVFS`, `IDBMirrorVFS`, `OPFSAnyContextVFS`, `MemoryAsyncVFS`) and resolve the default
+as the first declared build whose `BUILD_REQUIREMENTS` `detectFeatures()` meets; `async` stays the
+fallback. The `sync`-first VFS do not move.
+
+**Why:** Safari's Asyncify slowdown (IDB-SIGNAL, `mem:measurements`), which `jspi` escapes on
+Safari 27. On Chromium and Firefox the bench corpus says `jspi` is equal or faster — full scan
+×0.41-0.66, list page ×0.40-0.86, bulk insert ×0.72-1.04 — except two Chromium IDBBatchAtomicVFS
+rows: single write ×1.18 (3.0 → 3.55 ms) and 500 UPDATEs ×1.13 (median of 10 exports each).
+
+**To do:** the resolution everywhere `defaultBuildFor` is called (client, worker, `deleteDatabase`);
+a test of the no-JSPI fallback; the stale JSDoc at `src/client.ts` ("JSPI is Chromium-only" — VFS.md
+says Firefox 153+, Safari 27+); `VFS.md`; a CHANGELOG entry, the default changing. **Check first:** a
+consumer who passes one `.wasm` URL without `build`. **Measure first:** `OPFSAdaptiveVFS` on `jspi`
+on Safari 27, the pair whose default would change for the most consumers.
+
 ## `OPFSCoopSyncVFS` writes can fail with the handle-transfer BUSY between clients (2026-09-14)
 
 Found while rewriting `coopsync-retry.test.ts` for the one-worker cap (`fix/pool-environment-cap`,
@@ -121,29 +142,43 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   `OPFSAnyContextVFS` opens two connections at once without harm. The lock still serialises opens
   across clients and tabs; a two-client test is what would guard it. Its comment says so.
 
-## `IDBBatchAtomicVFS` serves a read during a long statement only if it carries a `signal` or `timeout` (2026-09-14)
+## What the `IDBBatchAtomicVFS` long-statement fix left open (2026-09-14)
 
-Measured and explained in IDB-SIGNAL (`mem:measurements`). Not scheduled; three decisions, the
-user's, and the last waits on the first:
+- **On Safari, wa-sqlite's `async` (Asyncify) build slows down after a few long statements, and
+  stays slow.** Measured 2026-09-14 on Safari 26.6.2 (IDB-SIGNAL, `mem:measurements`): after four
+  ~1.5 s reads, `IDBBatchAtomicVFS` and `OPFSAnyContextVFS` ran their fourth at 11-30 s, and every
+  `async` column's cached full scan ran 8-17× slower afterwards; `MemoryVFS` on the `sync` build did
+  not move. Not IndexedDB (a 32 MB cache changes nothing), not the library's yield (no signal in the
+  probe, and rc.4 shows it). Pre-existing; Chromium and Firefox never showed it. **The `jspi`
+  build escapes it** (Safari 27.0, flat long reads and a cached scan back at baseline), and on
+  that Safari the bench's two `jspi` columns answer `true` where both `async` ones stay `null`.
+  The library defaults to a VFS's first declared build (`defaultBuildFor`), which is `async` for
+  `OPFSAdaptiveVFS` — a recommended VFS — `IDBBatchAtomicVFS`, `IDBMirrorVFS`,
+  `OPFSAnyContextVFS` and `MemoryAsyncVFS`; `OPFSAdaptiveVFS` itself was not probed.
+  The default build is decided for rc.6 (the entry "Default to the first build the environment
+  supports"). Still open: saying it in `VFS.md`, and an upstream report (wa-sqlite or WebKit).
+- **Whether a yielding statement lets a rotated OPFS handle move between clients.** HANDLE-1 says a
+  long statement never returns to its event loop; an abortable one on `async`/`jspi` now does,
+  every 100 000 VM ops. Unmeasured.
 
-- **The library.** Only an abortable statement yields, so on this VFS one long unsignalled read
-  makes every other connection's read wait it out, and the same read with a `signal` does not.
-  Installing the yielding progress handler on every `IDBBatchAtomicVFS` statement would make the
-  second behaviour the default; its cost measured nil within noise on both engines and both builds
-  (IDB-SIGNAL). `IDBMirrorVFS` is not concerned.
-- **The bench row.** `reads-during-long-query` passes its row `signal` to the long query, so it
-  has answered for the signalled path since `f4b3fd7` and for the unsignalled one before — its
-  verdict flipped with no change to the row. Either drop the signal from the long query, or report
-  both paths.
-- **The consumer docs.** `VFS.md` says `IDBBatchAtomicVFS` "does not serve a read while a long
-  query runs, on any engine" (its own section and Concurrent reads): true without a signal, false
-  with one.
+## wa-sqlite's `OPFSAdaptiveVFS.js` reads `FileSystemSyncAccessHandle.prototype` at module load (2026-09-14)
 
-Found on the way: that row's comment says aborting a read "abandons the wait, not the work" and
-that "there is no `sqlite3_interrupt` anywhere" — both stale since `f4b3fd7` made a signal stop
-the statement. And HANDLE-1 says a worker in a long statement "never returns to its event loop",
-which an abortable one on `async`/`jspi` now does every 100 000 ops; whether that lets a rotated
-OPFS handle move between clients is unmeasured.
+Line 9, unguarded, and it is bundled into the one worker file, so where the interface is missing no
+VFS loads at all, memory VFS included: Playwright's Linux WebKit 26.5 failed every column's `opens`
+with `TypeError: undefined is not an object (evaluating
+'globalThis.FileSystemSyncAccessHandle.prototype')`. Safari on macOS has the interface, and
+Playwright's Linux WebKit was set aside earlier for limits of this kind (user). Unmeasured whether
+a consumer environment lacks it; an insecure context is the candidate. Pre-existing, not scheduled.
+
+## A timed-out read on Firefox can leave the next query meeting `GENERATOR_ABANDONED`, under load (2026-09-14)
+
+`query-timeout.test.ts :: rejects with OPERATION_TIMEOUT and leaves the client usable` —
+`MemoryVFS`, `poolSize` 1, a `timeout: 200` read — failed once in a pre-push `pnpm test`, with
+"Worker 1 already has a query in flight": the follow-up query reached the worker before the
+interrupted one had finished. The machine was loaded by a Chromium probe running beside it; 10
+isolated runs of the file then passed. The code path is untouched by the branch it failed on.
+Load-sensitive, like the defect ABANDON-WEDGE describes (`mem:measurements`); the busy-loop method
+there is how to make it reproduce. Reliability by the triage rule; not scheduled.
 
 ## `SQLITE_FULL` reaches the client with neither `code` nor `sqliteCode` (2026-09-10)
 

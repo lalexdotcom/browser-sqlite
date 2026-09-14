@@ -57,8 +57,91 @@ signal / none:
 Every ratio inside the run-to-run spread of its own samples (the 1.08: 198-212 ms against
 191-242). The signalled 50 000-row insert kept all its rows, every time. **Not measured:** the
 same under concurrent connections; any other VFS under a yielding statement — in particular whether
-`OPFSAdaptiveVFS` can hand its rotated handle over mid-statement between clients. Decisions owed:
-`mem:follow-ups`.
+`OPFSAdaptiveVFS` can hand its rotated handle over mid-statement between clients.
+
+**Fixed on `fix/idb-long-read` (`133d51a`), 2026-09-14.** `yieldsDuringStatements`, true for this
+VFS only, makes the worker yield on every statement there. `tests/browser/idb-long-read.test.ts`
+failed before it on both engines and both builds, and passes after. **Safari 26.6.2 macOS, the
+user's console probe on preview `4340da6`** (`.scratchpad/idb-safari-yield-2026-09-14/safari-paste-v3.js`):
+a read issued 50 ms into an unsignalled self-join won 3/3, 2-3 ms against 343-355 ms. The worker
+tick costs 0.05 ms there (0.002-0.005 on Chromium and Firefox), and a signal adds nothing
+measurable to MemoryAsyncVFS (19-21 against 20-22 ms). Before a Safari restart the same probe
+could not open `IDBBatchAtomicVFS` at all — `create` and `deleteDatabase` hung past 20 s — in a
+tab where an earlier probe had left a client stuck: the blocked-origin case ("A tab on the origin
+blocks two columns", below), not the fix.
+
+**The bench's `null` on Safari, traced — an intermittent stall, not the fix.** Console probes on
+the user's Safari 26.6.2 (`.scratchpad/idb-safari-yield-2026-09-14/safari-paste-v4..v7.js`):
+- **The yield costs Safari nothing.** The bench's own cross-join at bounds 25/50/100, preview
+  (yields) against the rc.4 page (never yields): IDBBatchAtomicVFS 52/97/190 against 49/95/194 ms,
+  MemoryAsyncVFS the same, signal or not — ~1.9 ms per bound unit, as on Chromium.
+- **The calibration succeeds at `poolSize` 4** — bound 1 208, verified in 1 937 ms — **until one
+  sample stalls.** After the bench's earlier writes (single inserts, reads, a scan, 500 inserts and
+  500 UPDATEs in transactions), bound 1026 cost 1 642 ms and the very next run of the same statement
+  **38 013 ms**. On the rc.4 page, so it predates the fix.
+- **Not a stall — a slowdown that holds.** v7's 48 further runs saw nothing, but none of them ran
+  a ~1.6 s statement twice. The bench at `a85c273`, same Safari, IDBBatchAtomicVFS pool 4, with
+  every timing exported (`longQueryCalibration`): attempts 200 → 428 ms and 935 → 1 639 ms, then
+  the three verifications of bound 935 at **25 432, 33 896 and 34 289 ms**. So after the bench's
+  writes, the statement that just took 1.6 s takes 15-20× that on every later run — on the rc.4 page
+  too (v6), so it predates the fix. Retrying the verification does not help; `a85c273`'s premise
+  that "a stall misses one" is refuted, and its comment in the bench is wrong until rewritten.
+  Cause unknown; `mem:follow-ups`.
+- **It degrades run by run, not at once** (v8, preview, same Safari, after the same writes, the
+  first worker running every statement): successive long reads of ~900 bound ran **1 596, 1 570,
+  3 683, 33 582 ms** at `poolSize` 4 and **1 706, 1 672, 10 205, 35 389 ms** at `poolSize` 1. The
+  third was a new SQL text, so not the statement cache; a point read between them took 2-3 ms, so
+  not a wait; pool 1 matches pool 4, so not routing. The bench's calibration met it on its third
+  long statement (attempt 200, attempt ~935, verification); it now skips a verification the search
+  already timed, which makes the race the third.
+- **Not the IndexedDB request path** (v9, preview, same Safari, pool 1, after the same writes). At
+  the default cache the four long reads ran 1 642, 1 629, 1 555, **22 660 ms**; at
+  `cache_size = -32000`, where the whole table stays in SQLite's page cache and the long reads stop
+  reaching IndexedDB after the first, **1 909, 1 759, 4 401, 38 113 ms**. And a full scan served
+  from that cache went from 12/11 ms before the long reads to 80/78 ms after — the worker's own
+  execution slows, not its reads. A larger cache is no workaround.
+- **The bench answers on Safari since `5052d4f`.** Served from the container's `_site` on
+  `localhost:8099`, Safari 26.6.2, IDBBatchAtomicVFS/async at `poolSize` 4:
+  `reads-during-long-query` **true**, calibration 200 → 430 ms and 930 → 1 591 ms, no verification
+  run, `reasons` empty (`.bench/browser-sqlite-20260914181700-…`). Its label reads `a85c273`: the
+  page was built before `5052d4f` was committed, from the same tree.
+- **It is the `async` build, not IndexedDB and not the library** (v10, `localhost:8099`, same
+  Safari, pool 1, after the same writes, no signal anywhere, so no yield from us). Four ~1.5 s long
+  reads, then a full scan before → after them:
+
+  | VFS / build | long reads, ms | scan before → after, ms |
+  |---|---|---|
+  | MemoryVFS `sync` | 1 477 / 1 463 / 1 433 / 1 458 | 5 → 5 |
+  | MemoryAsyncVFS `async` | 1 575 / 1 585 / 1 575 / 1 580 | 8 → 76 |
+  | OPFSAnyContextVFS `async` | 1 363 / 1 389 / 1 363 / **29 684** | 10 → 175 |
+  | IDBBatchAtomicVFS `async` | 1 327 / 1 352 / 1 348 / **11 191** | 9 → 119 |
+
+  The `sync` build is untouched; every Asyncify build degrades and stays degraded, worst where
+  the VFS does real asynchronous I/O inside the statement. Chromium ran the same probe flat. A guess,
+  not a finding: JavaScriptCore moving the Asyncify module to a slower tier or bounds-checking mode.
+  Untested: the `jspi` build, which has no Asyncify — Safari 27 has JSPI, 26.6 does not.
+- **`jspi` escapes it — Safari 27.0 macOS, the user's second Mac, preview `5052d4f`** (v11,
+  `.scratchpad/idb-safari-yield-2026-09-14/safari-paste-v11.js`, same shape, pool 1):
+
+  | VFS / build | long reads, ms | scan before → after, ms |
+  |---|---|---|
+  | IDBBatchAtomicVFS `async` | 1 264 / 1 283 / 1 281 / **2 394** | 13 → 179 / **95** |
+  | IDBBatchAtomicVFS `jspi` | 1 327 / 1 328 / 1 321 / 1 310 | 8 → 80 / **8** |
+  | OPFSAnyContextVFS `async` | 1 238 / 1 240 / 1 240 / 1 241 | 14 → 310 / **92** |
+  | OPFSAnyContextVFS `jspi` | 1 307 / 1 311 / 1 308 / 1 307 | 9 → 200 / **11** |
+  | MemoryVFS `sync` | 1 587 / 1 567 / 1 570 / 1 569 | 7 → 7 |
+
+  Milder than on 26.6.2, same shape: the `async` builds stay slow afterwards, the `jspi` builds'
+  second scan is back at baseline — as on Chromium, whose first scan after long reads is also slow
+  once. **The bench on that Safari 27** (`.bench/browser-sqlite-20260914182334-…`):
+  `reads-during-long-query` **true** on IDBBatchAtomicVFS/jspi (200 → 587, 681 → 1 612 ms) and
+  OPFSAnyContextVFS/jspi (200 → 579, 691 → 1 619 ms); **null** on both `async` columns, whose
+  per-unit cost climbed during the calibration itself — IDB 200 → 631, 634 → 4 425, verified 317 →
+  14 538 ms; AnyContext 200 → 8 430, verified 100 → 4 128 ms. The earlier rows had already set the
+  slowdown off. The `null` is honest there: that build cannot hold a statement's cost steady.
+- **Safari only.** The same v10 on Firefox 153, this container: four long reads per column at
+  1 520-1 608 ms on all four VFS/builds, and a full scan after them 149-157 ms once on the two I/O
+  VFS, back to 57-58 ms on the second — Chromium's shape. MemoryVFS `sync` 41 → 43 ms.
 
 ## SAFARI-CAP — the pool caps hold on Safari and Firefox, 2026-09-14, the user's Mac + this container
 
