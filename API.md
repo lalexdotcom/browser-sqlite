@@ -2,7 +2,7 @@
 
 Every method, property and option of [browser-sqlite](README.md).
 
-[*client*.id](#clientid) · [*client*.name](#clientname) · [*client*.file](#clientfile) · [*client*.vfs](#clientvfs) · [*client*.build](#clientbuild)
+[*client*.id](#clientid) · [*client*.name](#clientname) · [*client*.file](#clientfile) · [*client*.vfs](#clientvfs) · [*client*.build](#clientbuild) · [*client*.poolSize](#clientpoolsize)
 
 [createSQLiteClient()](#createsqliteclient) · [*client*.read()](#clientread) · [*client*.write()](#clientwrite) · [*client*.stream()](#clientstream) · [*client*.chunk()](#clientchunk) · [*client*.first()](#clientfirst) · [*client*.transaction()](#clienttransaction) · [*client*.bulkWrite()](#clientbulkwrite) · [*client*.output()](#clientoutput) · [*client*.inspect()](#clientinspect) · [*client*.close()](#clientclose) · [deleteDatabase()](#deletedatabase) · [inspectDatabase()](#inspectdatabase)
 
@@ -34,7 +34,7 @@ const db = createSQLiteClient('myapp.sqlite', {
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `poolSize` | `number` | `2`, capped to the VFS's `maxPoolSize` | Web Workers in the pool. |
+| `poolSize` | `number` | `2`, capped to the VFS's `maxPoolSize` and to what the environment allows | Web Workers in the pool. |
 | `vfs` | `SQLiteVFS` | — (required) | Where the database is stored.<br>See [Recommendations](VFS.md#recommendations). |
 | `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite WebAssembly build to load.<br>See [Builds reference](VFS.md#builds-reference). |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Where the workers fetch their `.wasm`. |
@@ -45,7 +45,7 @@ const db = createSQLiteClient('myapp.sqlite', {
 | `debug` | `string \| boolean` | `undefined` | Lifecycle logging, and the `db.debug` introspection tree. |
 | `onWorkerLost` | `(event: WorkerLostEvent) => void` | `undefined` | Called when a worker is lost for good. |
 
-**`poolSize` delays your first query.** Nothing is served until every worker has opened, and the opens are serialized across the origin, so the wait grows with the pool. A VFS that holds a single connection caps it at `1` and throws if you pass more; omitting it never throws.
+**`poolSize` delays your first query.** Nothing is served until every worker has opened, and the opens are serialized across the origin, so the wait grows with the pool. Two things cap it. A VFS that holds a single connection caps it at `1` and throws if you pass more; omitting it never throws. And `OPFSWriteAheadVFS` runs on one worker wherever `readwrite-unsafe` is missing — every engine but Chromium, for now — because it keeps its database file open exclusively: there the pool is capped without an error, and warns once only if you passed `poolSize`. [`poolSize`](#clientpoolsize) tells you the size you got.
 
 **`build`** throws `INVALID_OPTION` at construction when the VFS does not declare that build, naming the ones it does.
 
@@ -55,9 +55,9 @@ const db = createSQLiteClient('myapp.sqlite', {
 
 **`openTimeout`** most often expires on a database another tab holds under an exclusive lock. **A pool that will never open takes up to twice this before your first query rejects**, because a failed slot is retried once when another slot opens; at the default that is about a minute with nothing reported.
 
-**`debug`** logs lifecycle events only — worker created, ready, open-error, crash, restart, worker lost, close, skipped staging sweep — never one line per query. A string is used as the log prefix, `true` falls back to the client name. One thing is logged even when it is off: a permanently lost worker always warns, because a pool quietly smaller than `poolSize` is not something to discover later.
+**`debug`** logs lifecycle events only — worker created, ready, open-error, crash, restart, worker lost, close, skipped staging sweep — never one line per query. A string is used as the log prefix, `true` falls back to the client name. One thing is logged even when it is off: a permanently lost worker always warns, with the error that killed it, because a pool quietly smaller than `poolSize` is not something to discover later.
 
-**`onWorkerLost`** receives the slot index, how many workers are left, the requested `poolSize`, and the error. It fires before the client fails if that worker was the last. A callback that throws is caught and warned about; it cannot break the pool.
+**`onWorkerLost`** receives the slot index, how many workers are left, the pool's size — [`poolSize`](#clientpoolsize), not the option — and the error. It fires before the client fails if that worker was the last. A callback that throws is caught and warned about; it cannot break the pool. A worker the environment never let open is not lost: nothing is reported for it.
 
 ## *client*.id
 
@@ -78,6 +78,10 @@ const db = createSQLiteClient('myapp.sqlite', {
 ## *client*.build
 
 `SQLiteBuild`, readonly. The wa-sqlite build actually loaded — the VFS's first when `build` was not passed.
+
+## *client*.poolSize
+
+`number`, readonly. The number of workers the pool runs: `poolSize` as requested, capped by the VFS and by the environment. Exact once every worker has opened or declined; every query waits for that, so it is settled by the time any query returns.
 
 ## *client*.read
 

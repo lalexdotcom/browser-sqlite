@@ -101,7 +101,7 @@ several connections at speed.
 
 **It takes `readwrite-unsafe` where the engine offers it — Chromium 121+, for now.** There it holds one access handle per connection, and serves a read while a long query runs, on its `sync` build.
 
-**Everywhere else it opens the handle exclusively and rotates it between workers.** A browser without `readwrite-unsafe` ignores the `mode` option rather than rejecting it, so the VFS still works and falls into [reduced mode](#reduced-mode): no read is served while another worker holds the handle, for as long as its statement runs.
+**Everywhere else it runs on a single worker.** A browser without `readwrite-unsafe` ignores the `mode` option rather than rejecting it, so the handle opens exclusively — and this VFS keeps it for the connection's whole life instead of handing it over. Only one connection can open, so the pool is capped at `1` there, which is [reduced mode](#reduced-mode) at its narrowest: no read is served while a statement runs.
 
 Bulk loading is what it is fastest at, on every engine measured.
 
@@ -318,8 +318,9 @@ per VFS on the browser you run it in.
 ### Reduced mode
 
 A VFS marked `[reduced]` for an engine runs there, but without
-`readwrite-unsafe` access handles: one exclusive handle rotated between workers
-instead of one held per connection. Chromium 121+ is, for now, the only engine
+`readwrite-unsafe` access handles: one exclusive handle instead of one per
+connection — rotated between workers by `OPFSAdaptiveVFS`, held by the single
+worker `OPFSWriteAheadVFS` runs on there. Chromium 121+ is, for now, the only engine
 that implements `readwrite-unsafe`, so every other one runs these VFS this way.<br>
 **It is not a partial failure**: everything a VFS does, it still does correctly,
 and what degrades is concurrency alone.
@@ -329,8 +330,9 @@ long time. **On an engine without `readwrite-unsafe`, a VFS that rotates a singl
 exclusive OPFS access handle cannot serve any other worker while one of them
 holds it** — the holder does not give it back before its statement ends, and the
 next acquisition blocks in the scheduler, before an `AbortSignal` is ever
-consulted. That covers `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` in reduced
-mode, and it reaches into other tabs: serializing writers changes who writes
+consulted. That covers `OPFSAdaptiveVFS` in reduced mode, and
+`OPFSWriteAheadVFS`, whose single worker is the whole pool there, and it
+reaches into other tabs: serializing writers changes who writes
 when, not which handle the VFS holds.
 
 **A long *read* does this as much as a write transaction.** A worker inside a
