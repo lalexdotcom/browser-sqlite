@@ -1187,3 +1187,203 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
   - `pnpm lint` — 13 warnings, 1 info, or report the difference
 - [ ] **Step 2: One Safari export read by hand.** After the user moves the `preview` tag (their gesture), they run the bench on Safari with `OPFSWriteAheadVFS`: the console shows no `lost` line and no wa-sqlite error pair, and the export's `poolSize` for that pair is `1`.
 - [ ] **Step 3: Report**, with the numbers read, to the user. Merging and the memories belong to the closure procedure (`mem:conventions`), which the user calls.
+
+---
+
+## Addendum — pools that buy nothing (spec §10, user 2026-09-14)
+
+Tasks 10-13 implement spec §10: `OPFSAdaptiveVFS` capped at one worker without
+`readwrite-unsafe` (D8), `OPFSCoopSyncVFS` capped at one on every engine (D9), a generic cap
+warning (D10), a `Shared` fact in the generated header (D11). **Order is load-bearing:** Task 10
+moves the pool-mechanics tests off `OPFSAdaptiveVFS` while the code is unchanged, so that Task 11
+can land the declarations green. Read spec §10 before either.
+
+### Task 10: The pool-mechanics tests move to a VFS that keeps its pool on every engine
+
+**Files:** `tests/browser/barrier.test.ts`, `tests/browser/writer-spread.test.ts`,
+`tests/browser/lifecycle.test.ts`, `tests/browser/abandon-transaction.test.ts`,
+`tests/browser/long-query.test.ts`, `tests/browser/tx-quiesce.test.ts`. No `src/` change.
+
+**Interfaces:** none produced; Task 11 relies on these 12 tests passing on Firefox with
+`OPFSAdaptiveVFS` capped.
+
+**The 12 tests** — each failed on Firefox in the 2026-09-14 dry run with Adaptive capped (spec §10.3):
+
+- `barrier.test.ts` — "commit-propagation barrier > sees a schema swap committed by another worker",
+  "> sees a table dropped and replaced with a different shape", "> does not repeat the barrier on a
+  worker that is already current", "> sends a read to the worker that just wrote, which owes no
+  barrier", "barrier — two clients in one tab > client B observes client A's schema change",
+  "> treats two spellings of one file as one database" (all: timeout, no assertion reached)
+- `writer-spread.test.ts` — "writer spread > sends a write to a free worker while a read holds the
+  preferred one", "> keeps results correct under writes and reads issued together" ("pool never
+  reached READY")
+- `lifecycle.test.ts` — "worker lifecycle — onWorkerLost callback > a throwing callback does not
+  break the pool", "worker lifecycle — startup readiness gate > reports a slot that opened and
+  then dies during the retry round as lost"
+- `abandon-transaction.test.ts` — "an abandoned generator inside a transaction > commits, and
+  evicts no worker"
+- `long-query.test.ts` — "a long single step > does not terminate the worker it abandoned"
+- `tx-quiesce.test.ts` — "the boundary of that wait > fails cleanly when the drop is never caught"
+
+**The rule, test by test.** Read the test and the comment above it. If its subject is the pool's
+machinery — scheduling, the writer designation, the commit barrier between connections,
+evictions, the startup gate — it moves to `vfs: 'OPFSAnyContextVFS'`, which keeps a real pool on
+every engine. If its subject is `OPFSAdaptiveVFS` itself (a comment names Adaptive's rotation or
+handle as what is under test), it keeps Adaptive and becomes `(HAS_UNSAFE_HANDLES ? it : it.skip)`
+with `HAS_UNSAFE_HANDLES` imported from `../conformance/helpers`, and the report names it. Where a
+file sets the VFS once (a module constant or a helper), change it there only if every test that
+uses it follows the same rule. Keep every existing comment, adding one line where the VFS changes:
+`// OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS runs one worker without
+readwrite-unsafe (spec 2026-09-13, §10).`
+
+- [ ] **Step 1: Migrate** the 12 tests by the rule.
+- [ ] **Step 2: Green at HEAD's code, both engines.** Run the six files with
+  `pnpm exec rstest --project chromium <files>` and `pnpm exec rstest --config rstest.firefox.config.ts <files>`.
+- [ ] **Step 3: Green under Task 11's declaration, Firefox — a dry run, not a commit.** With Serena's
+  `replace_content`, change `OPFSAdaptiveVFS`'s `singleConnectionWithout: [],` in `src/types.ts` to
+  `singleConnectionWithout: ['readwrite-unsafe'] /* DRY RUN — revert */,`, run the six files on
+  Firefox, then restore the line exactly and prove it: `grep -c 'DRY RUN' src/types.ts` prints 0
+  and `git diff src/types.ts` is empty. Expected: every one of the 12 passes.
+- [ ] **Step 4: Falsifiers.** For each file, try the existing `// Falsifiable:` mutation of one
+  migrated test once and see it red on the new VFS; if a falsifier no longer bites there, say so
+  in the report instead of weakening the test.
+- [ ] **Step 5: Commit** — `pnpm exec tsc --noEmit`, `pnpm check`, the full `pnpm test` (three
+  reports; baseline 780 / 320 / 7), then:
+
+```bash
+git add tests/browser/barrier.test.ts tests/browser/writer-spread.test.ts tests/browser/lifecycle.test.ts \
+  tests/browser/abandon-transaction.test.ts tests/browser/long-query.test.ts tests/browser/tx-quiesce.test.ts
+git commit -m "test: run the pool-mechanics tests on a VFS that keeps its pool on every engine
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 11: Cap the pools that buy nothing
+
+**Files:** `src/types.ts`, `src/client.ts` (`retireSlot`), `scripts/render-vfs-matrix.ts`, `VFS.md`
+(generated zones only, by `pnpm docs:vfs`), `tests/unit/capabilities.test.ts`,
+`tests/browser/vfs.test.ts`, `tests/browser/pool-cap.test.ts`, `tests/browser/coopsync-retry.test.ts`.
+
+**Interfaces:** consumes Task 10's migration. Produces `OPFSAdaptiveVFS.singleConnectionWithout =
+['readwrite-unsafe']`, `OPFSCoopSyncVFS.maxPoolSize = 1`.
+
+- [ ] **Step 1: Tests first.**
+  - `tests/unit/capabilities.test.ts`: the test "caps OPFSWriteAheadVFS and nothing else" becomes
+    "caps OPFSWriteAheadVFS and OPFSAdaptiveVFS, and nothing else", expecting
+    `['OPFSWriteAheadVFS', 'OPFSAdaptiveVFS']`, its falsifier comment naming "remove
+    OPFSAdaptiveVFS's declaration". Add, beside it:
+
+    ```ts
+    // Falsifiable: set OPFSCoopSyncVFS's maxPoolSize back to null (spec 2026-09-13, §10, D9).
+    it('caps OPFSCoopSyncVFS at one worker on every engine', () => {
+      expect(VFS_CAPABILITIES.OPFSCoopSyncVFS.maxPoolSize).toBe(1);
+      expect(VFS_CAPABILITIES.OPFSCoopSyncVFS.multiConnection).toBe(true);
+    });
+    ```
+  - `tests/browser/vfs.test.ts`: a `describe('OPFSCoopSyncVFS pool guard', …)` mirroring
+    `'AccessHandlePoolVFS pool guard'`'s first two tests — an explicit `poolSize: 2` throws
+    `/pool sizes greater than 1/`; omitted, it opens, serves a query, and `db.poolSize` is `1`.
+  - `tests/browser/pool-cap.test.ts`, T3 becomes:
+
+    ```ts
+    // T3. Falsifiable: remove OPFSAdaptiveVFS's singleConnectionWithout — Firefox then keeps 4.
+    it('caps OPFSAdaptiveVFS too without readwrite-unsafe: a second worker would only wait its turn', async () => {
+      const lost: number[] = [];
+      const db = await createTestClient({
+        vfs: 'OPFSAdaptiveVFS',
+        poolSize: 4,
+        onWorkerLost: ({ index }) => lost.push(index),
+      });
+      await db.write('CREATE TABLE t (a)');
+      expect(db.poolSize).toBe(CAPPED ? 1 : 4);
+      expect(lost).toEqual([]);
+      await db.close();
+    });
+    ```
+  - `tests/browser/coopsync-retry.test.ts`: the client with `poolSize: 4` becomes **two clients on
+    the same file**, each with the default pool, and the existing mixed batch is split across both
+    and issued at once. Keep the file's header, adding a dated paragraph: since spec §10 (D9) a
+    client runs CoopSync on one worker, so the handle transfer now happens between clients — which
+    is what tabs do. Then run the retry's falsifier (find the COOPSYNC-BUSY retry in `src/` by its
+    comment) on both engines, several times. If no shape across two or three clients turns red with
+    the retry removed, keep the test, state in its header that it no longer has a falsifier, and
+    report DONE_WITH_CONCERNS with what was tried — do not delete the test.
+  - Run the four test files and see the new expectations fail where the code is unchanged.
+- [ ] **Step 2: `src/types.ts`.**
+  - `OPFSAdaptiveVFS`: `singleConnectionWithout: ['readwrite-unsafe'],`.
+  - `OPFSCoopSyncVFS`: `maxPoolSize: 1,` and
+    `poolLimitReason: 'it rotates one exclusive access handle between connections, so another worker only waits its turn',`
+    — `multiConnection` stays `true`. Above `maxPoolSize`, the comment:
+    `// Capped on every engine (spec 2026-09-13, §10, D9): a pool of one was faster at startup and on bursts of reads, equal elsewhere, on Chromium and Firefox (POOL-SIZE, 2026-09-14). The handle still rotates between clients and tabs, which is why the COOPSYNC-BUSY retry stays.`
+  - The doc comment of `singleConnectionWithout` becomes:
+
+    ```ts
+      /**
+       * Platform features without which a pool of more than one worker buys this
+       * VFS nothing, so it runs on one (spec 2026-09-13, §3 and §10). Either the
+       * VFS holds its database file exclusively for a connection's whole life and
+       * a second worker cannot open at all (`OPFSWriteAheadVFS`), or it rotates one
+       * exclusive access handle between connections and a second worker only waits
+       * its turn (`OPFSAdaptiveVFS` — measured 2026-09-14 on Firefox: a pool of one
+       * was faster at startup and on bursts of reads, and equal everywhere else).
+       * The pool's surplus workers probe the feature before loading anything and
+       * decline (`src/worker/probes.ts`); every feature listed needs a probe there.
+       */
+    ```
+- [ ] **Step 3: `src/client.ts`, `retireSlot`.** The message becomes
+  `` `${vfs} gains nothing from more than one worker without ${missing}: pool capped at 1 of ${poolSize}` ``.
+  `tests/browser/pool-cap.test.ts` T1's assertions (`without readwrite-unsafe`, `pool capped at 1 of 4`)
+  still hold; change nothing there.
+- [ ] **Step 4: `scripts/render-vfs-matrix.ts`.** Replace the guard that throws when
+  `(cap.maxPoolSize === null) !== cap.multiConnection` — and the comment above it — with:
+
+  ```ts
+    // A pool worker is a connection, so an unbounded pool and sharing between
+    // connections are usually one fact and the header states it once, as the pool
+    // size. They diverge where a pool is capped for another reason than sharing —
+    // OPFSCoopSyncVFS runs one worker because it rotates one handle, yet shares its
+    // database across tabs (spec 2026-09-13, §10, D11) — and only there does the
+    // header add a `Shared` fact.
+    const shared =
+      (cap.maxPoolSize === null) !== cap.multiConnection
+        ? `**Shared:** ${cap.multiConnection ? 'yes' : 'no'}`
+        : null;
+  ```
+
+  and make the facts array `[`**Pool size:** ${pool}`, ...(shared ? [shared] : []), `**RAM:** …`]`.
+  Run `pnpm docs:vfs` and put the whole `git diff VFS.md` in the report. Expected: Adaptive's header
+  `Any, 1 without \`readwrite-unsafe\``; CoopSync's `**1**` with a pool footnote and `**Shared:** yes`;
+  the VFS table's Pool cell for CoopSync changes; footnote numbers may shift. Anything else: stop and report.
+- [ ] **Step 5: Everything green.** `pnpm exec tsc --noEmit`; `pnpm check`; the unit project; the
+  four test files on both engines; `pnpm test:conformance` (expect 14 skipped per engine, identical);
+  the full `pnpm test` (three reports). Try every new falsifier once.
+- [ ] **Step 6: Commit.**
+
+```bash
+git add src/types.ts src/client.ts scripts/render-vfs-matrix.ts VFS.md tests/unit/capabilities.test.ts \
+  tests/browser/vfs.test.ts tests/browser/pool-cap.test.ts tests/browser/coopsync-retry.test.ts
+git commit -m "fix(types): cap the pools that buy nothing — OPFSAdaptiveVFS without readwrite-unsafe, OPFSCoopSyncVFS everywhere
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 12: Documentation — inline, with the user
+
+Not dispatched; proposed, shown, iterated, committed on the user's word. `API.md`: the
+**`poolSize` delays your first query** paragraph names both environment caps and CoopSync's
+declared one. `VFS.md` prose: the `OPFSAdaptiveVFS` entry (one worker per client without
+`readwrite-unsafe`; the lazy close and reopen now serves clients and tabs), the `OPFSCoopSyncVFS`
+entry (a pool of one; the rotation and its stalls are between clients and tabs), *Reduced mode*
+and *Concurrent reads*. `CHANGELOG.md`: *Breaking* — `OPFSCoopSyncVFS` refuses a `poolSize` above
+1; *Changed* — `OPFSAdaptiveVFS` runs one worker without `readwrite-unsafe`, and the cap warning's
+wording. `pnpm docs:vfs` must leave the generated zones as Task 11 left them.
+
+### Task 13: Verification
+
+The baseline table of `mem:state` in one pass (as Task 9), and a Safari export read by hand once
+the user moves the `preview` tag: `poolSize` is `1` for `OPFSWriteAheadVFS`, `OPFSAdaptiveVFS` and
+`OPFSCoopSyncVFS`, and no `lost` line or wa-sqlite error pair appears.

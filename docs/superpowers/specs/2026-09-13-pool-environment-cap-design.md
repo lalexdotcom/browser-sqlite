@@ -349,3 +349,73 @@ approved; where one is wrong, the amendment says so.
   `pool-savepoint.test.ts`); they narrow its new union result with an explicit throw rather than
   a cast. **The bench check runs after `pnpm bench:build`**, which is what assembles the page it
   serves.
+
+## 10. Amendment — 2026-09-14: pools that buy nothing (user)
+
+The decline mechanism of §3 turned a second question up: on a VFS that rotates one exclusive
+access handle, does a pool of more than one worker buy anything at all? Measured, then decided.
+
+### 10.1 The measurement — POOL-SIZE, 2026-09-14
+
+Throwaway probes `.scratchpad/pool-size-probe/probe.test.ts` and `probe-long.test.ts`, logs
+beside them. Fresh client and database per sample, pool sizes rotated per iteration, 2 warm-ups,
+5 measured iterations, 3 runs per engine, medians. 2 000-row table.
+
+| ms | Firefox Adaptive (reduced) @1 / @4 | Firefox CoopSync @1 / @4 | Chromium CoopSync @1 / @4 | Chromium Adaptive (control) @1 / @4 |
+|---|---|---|---|---|
+| startup to first query | **70-76** / 129-136 | **67-80** / 130-144 | **57-65** / 94-108 | **67-79** / 83-113 |
+| 5 bursts of 8 parallel reads | **71-74** / 117-130 | **44-47** / 118-129 | **25-28** / 86-94 | 60-82 / **44-53** |
+| a read during an open write transaction | 265 / 265 (waits) | 256 / 262 (waits) | 258 / 270 (waits) | 263 / **3** (served) |
+| a table read during a long table query | ≈ remaining time at every size | same | inconclusive (the "long" query ran 20-30 ms) | 24 / **2.5** (served) |
+| point reads, writes, transactions, scans | equal | equal | equal | equal |
+
+No stall at any size. **The control discriminates**: where `readwrite-unsafe` gives each
+connection its own handle, a pool serves reads concurrently and speeds bursts. Where one handle
+rotates — `OPFSAdaptiveVFS` in reduced mode, `OPFSCoopSyncVFS` on every engine — a pool of one is
+faster at startup and on bursts and equal everywhere else. The one thing a single worker gives
+up: a query that touches no table (`SELECT 1`, pure computation) waits behind a long query
+instead of running beside it. Memory needs no measurement: every worker is one wasm instance, one
+page cache and one statement cache more, and nothing grows when requests queue on one worker.
+
+Not measured: Safari (reduced like Firefox, so the same result is likely, not shown), and
+anything across tabs — the handle still rotates between tabs whatever one client's pool is.
+
+### 10.2 Decisions (user, 2026-09-14)
+
+- **D8 — `singleConnectionWithout` widens.** It now names the features without which a pool of
+  more than one worker buys the VFS nothing: either a second worker cannot open
+  (`OPFSWriteAheadVFS`) or it only waits its turn on a rotated handle (`OPFSAdaptiveVFS`).
+  `OPFSAdaptiveVFS` declares `['readwrite-unsafe']`. The field keeps its name; §3's mechanism is
+  unchanged — surplus workers probe and decline.
+- **D9 — `OPFSCoopSyncVFS` gets `maxPoolSize: 1`**, on every engine, since it rotates on every
+  engine. Known and accepted: through the existing declared-cap rule an explicit `poolSize`
+  above 1 now throws `INVALID_OPTION` at construction — a **breaking** change. The COOPSYNC-BUSY
+  retry stays: the handle still rotates between clients and tabs.
+- **D10 — the cap warning becomes generic**, since "holds its database file exclusively" is true
+  of `OPFSWriteAheadVFS` only. It replaces §3.2's text:
+  `` `${vfs} gains nothing from more than one worker without ${missing}: pool capped at 1 of ${poolSize}` ``.
+- **D11 — `OPFSCoopSyncVFS` keeps `multiConnection: true`**: it shares its database across tabs.
+  `scripts/render-vfs-matrix.ts` refused a capped pool with `multiConnection: true` and its own
+  comment anticipated this case — a pool capped for a reason other than sharing. Where the two
+  fields diverge the per-VFS header now carries a `Shared` fact instead of the generator throwing.
+
+### 10.3 What it does to the suite — measured by a dry run, 2026-09-14
+
+Both declarations applied to the tree without a commit, the suite run config by config, the
+tree restored. Chromium, isolated and conformance: nothing unexpected (conformance skips
+`OPFSCoopSyncVFS` in the two invariants that need two workers). Firefox: 15 failures in 8 files,
+plus 1 unit test.
+
+- **By construction (3):** `pool-cap.test.ts` T3 (Adaptive keeps its pool) inverts; the unit
+  enumeration "caps OPFSWriteAheadVFS and nothing else" gains Adaptive; `coopsync-retry.test.ts`
+  asks CoopSync for `poolSize: 4`.
+- **Pool mechanics on the default VFS (12):** `barrier` ×6, `writer-spread` ×2, `lifecycle` ×2,
+  `abandon-transaction`, `long-query`, `tx-quiesce` ×1 each — each needs two workers to exist,
+  and `OPFSAdaptiveVFS` on Firefox now runs one. None is a consumer-visible regression.
+
+**Test strategy.** A test whose subject is the pool's machinery moves to `OPFSAnyContextVFS`,
+which keeps a real pool on every engine (it does not depend on `readwrite-unsafe`), so Firefox
+keeps covering the scheduler, the commit barrier and evictions. A test whose subject is
+`OPFSAdaptiveVFS` itself keeps it and takes the `HAS_UNSAFE_HANDLES` arbiter. `coopsync-retry`
+becomes two clients on one file; whether the transfer `BUSY` still reproduces across clients is
+**not known** and is checked when it is rewritten.
