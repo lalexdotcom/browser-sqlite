@@ -90,15 +90,36 @@ when the gate opens, rejects with `failClient`'s error on a total startup failur
 reads it sees no unhandled rejection. It derives from the scheduler's `gateDeferred.promise`.
 Once it exists, `db.poolSize`'s contract becomes "exact once `db.ready` resolves".
 
-## `worker 1 lost; pool is now 1 of 2` on every Firefox run of a probe (2026-09-11)
+**The bench's column header waits for it too (user, 2026-09-14).** It shows the declared
+`poolFor` today, and the burst row divides its ideal gain by it — 4 for `OPFSAdaptiveVFS` on
+Firefox and Safari, which run 1. Once `db.ready` exists the header shows the requested `poolSize`
+→ the effective `db.poolSize`, when they differ. The export already records `db.poolSize`.
 
-Logged by every Firefox run of the TX-SAVEPOINT probe — three runs, three VFS
-(`mem:measurements`, TX-SAVEPOINT) — and never on Chromium; the client logging it was the file's
-second client. It could not move those figures (a transaction uses one worker) and nobody looked
-further. **Reliability by the triage rule, so an rc.5 candidate; the user has not scheduled it.**
-First step: re-run the probe with `debug: true` and `onWorkerLost`'s `cause` captured, and check
-whether `pnpm test`'s Firefox config logs it too — the closure baselines capture no console
-output, so nothing says yet.
+## `OPFSCoopSyncVFS` writes can fail with the handle-transfer BUSY between clients (2026-09-14)
+
+Found while rewriting `coopsync-retry.test.ts` for the one-worker cap (`fix/pool-environment-cap`,
+Task 11): two `OPFSCoopSyncVFS` clients on one file, constructed together, make a **write** fail
+with the `SQLITE_BUSY` its `jLock` returns while a handle transfer is in flight — reproducibly, on
+both engines. COOPSYNC-BUSY retries a read once (and `stream()`/`chunk()` before their first row);
+nothing retries a write. Two clients is what two tabs are. Pre-existing; the branch lowered the
+odds, since a client now runs one CoopSync worker. **Reliability by the triage rule, so an rc.5
+candidate; not scheduled** — logged on the recommendation at the 2026-09-14 closure, the user not
+having ruled on it. The question to answer first: is retrying a write safe? A BUSY at `xLock`
+precedes the statement, but inside a transaction it is another matter, and the origin's write
+lock is held meanwhile. The test's header names the shape it avoids on purpose.
+
+## Three browser tests guard less than their comments said (2026-09-14)
+
+Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
+
+- **`barrier.test.ts` does not guard the barrier.** Deleting `BARRIER_SQL` in `applyBarrier` leaves
+  it green on `OPFSAdaptiveVFS` (Chromium, real multi-connection) and on `OPFSAnyContextVFS` alike —
+  pre-existing, not caused by the migration (checked by the task reviewer).
+- **`long-query.test.ts`'s `interrupt()` falsifier was already inert at 14be4ee**, on Adaptive.
+- **Concurrency D-09 has no falsifier by construction.** Every VFS with an exclusive handle now runs
+  one worker per client where that matters, so a second worker never reaches the init lock, and
+  `OPFSAnyContextVFS` opens two connections at once without harm. The lock still serialises opens
+  across clients and tabs; a two-client test is what would guard it. Its comment says so.
 
 ## `SQLITE_FULL` reaches the client with neither `code` nor `sqliteCode` (2026-09-10)
 

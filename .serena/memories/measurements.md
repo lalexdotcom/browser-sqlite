@@ -4,6 +4,51 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## WORKER-LOST — why `OPFSWriteAheadVFS` lost workers off Chromium, 2026-09-13/14, this container + the user's devices
+
+Method and full tables: spec `docs/superpowers/specs/2026-09-13-pool-environment-cap-design.md`
+§6; probes and logs in `.scratchpad/worker-lost/`. Firefox 3 runs per probe, Chromium control.
+
+- **Structural, not a race:** `OPFSWriteAheadVFS` at `poolSize` 1/2/4 lost 0/1/3 workers on Firefox,
+  3/3 runs, on all three builds; 0 on Chromium; `OPFSAdaptiveVFS` at 4 lost none anywhere. Which
+  slot survived varied — the race is for the VFS's `#open` lock.
+- **Cause:** a second `createSyncAccessHandle({ mode: 'readwrite-unsafe' })` on a held file rejects
+  — `NoModificationAllowedError` on Firefox, `InvalidStateError` on Safari (WebKit's exclusive
+  `acquireLockForFile`); `h.mode` is undefined off Chromium, so the option is ignored.
+- **The probe that fixes it:** `'mode' in FileSystemSyncAccessHandle.prototype` in a dedicated
+  worker — Chromium true, Firefox false, Safari false (the user, in Safari's console);
+  `typeof FileSystemSyncAccessHandle` is `"undefined"` in the page on both local engines.
+- Each failed open printed two console lines — `jOpen`'s empty `e.stack`, then `jGetLastError`'s
+  error: six pairs at `poolSize` 4 (the user's Safari and Firefox consoles, preview page).
+- **Why nothing saw it:** rstest's markdown reporter omits a passing test's console; with
+  `--reporter default` the Firefox suite printed 12 `lost` lines, every one intended.
+
+## POOL-SIZE — a pool buys nothing on a rotated exclusive handle, 2026-09-14, this container
+
+Method and table: spec §10.1; probes in `.scratchpad/pool-size-probe/`. Fresh client per sample,
+sizes 1/2/4 rotated per iteration, 2 warm-ups + 5 measured, 3 runs per engine, medians, 2 000 rows.
+
+- **Firefox `OPFSAdaptiveVFS` (reduced):** startup 70-76 ms @1 against 129-136 @4; five bursts of
+  eight reads 71-74 against 117-130; a read during an open write transaction ≈ 265 ms at every
+  size; a table read during a long table query waits out the query at every size.
+- **`OPFSCoopSyncVFS`:** bursts 44-47 @1 against 118-129 @4 on Firefox, 25-28 against 86-94 on
+  Chromium; a read during a write transaction waits at every size, on both.
+- **Control, Chromium `OPFSAdaptiveVFS`:** bursts 60-82 @1 against 44-53 @4; a read during a write
+  transaction 263 ms @1, 3 ms @2 and @4 — the probe does discriminate.
+- The one cost of a pool of one found: a query touching no table waits behind a long query instead
+  of running beside it. Point reads, writes, transactions and scans: equal at every size.
+- The first long-query arm touched no table and measured nothing (`mem:lessons`). Not measured:
+  Safari; anything across tabs.
+
+## DELETE-WA — `deleteDatabase` left `OPFSWriteAheadVFS`'s write-ahead files, 2026-09-14, both engines
+
+Probe `.scratchpad/worker-lost/probe-delete.test.ts`: create, write, close, delete, list the OPFS
+root. `OPFSWriteAheadVFS`: `(db)`, `-wa0`, `-wa1` before, **`-wa0`, `-wa1` after**;
+`OPFSAdaptiveVFS`: `(db)` before, nothing after. Each deletion also printed three console errors —
+its `jDelete` refuses every file but its own temporaries. Fixed by `extraFileSuffixes` and an
+OPFS-only pass for the `opfs-path` layout (39d0dd4). Orphans from earlier deletions stay, and are
+harmless: the VFS truncates them when it creates a database of that name.
+
 ## TX-M1M2 — a write stopped after its first row, and the savepoint premise, 2026-09-11, all three configurations
 
 **Method.** Throwaway probe `.scratchpad/savepoint-probe/m1m2.test.ts`, copied into

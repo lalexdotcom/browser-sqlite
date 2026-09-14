@@ -746,3 +746,37 @@ passed over it; the final review found it unbuilt, and found the path that made 
 consumer's `…; RELEASE u` carrying its own timeout, abandoned, pops the library's savepoint with
 `u`, and the rejected write was committed. **Every consequence a spec's mechanism states needs a
 line in its own test list**, or the plan — which argues from the test list — silently drops it.
+
+## A conformance that does not count live workers can refute a true claim — 2026-09-13
+
+`70b2b7a` (2026-08-27) declared false the README's "off Chromium the first connection opens and
+the second cannot take the handle", because conformance passed `OPFSWriteAheadVFS` on Firefox at
+`poolSize` 1, 2 and 4. The claim was true: every worker but one failed to open, and a pool of one
+passes every invariant. For two weeks a correct statement stood refuted, and every bench export of
+that VFS off Chromium ran on one worker of four. **A suite that proves a VFS works must also prove
+how many workers it worked with** — conformance now fails on any lost worker
+(`expectNoWorkerLost`) and skips a two-worker invariant where the pool runs one (`oneWorkerHere`).
+
+## `pnpm test` stops at the first red config — 2026-09-14
+
+It chains three configs with `&&`. In a dry run the chromium+unit config failed by design, so the
+Firefox config — the only one that mattered — never ran, and its silence read as green until the
+reports were counted. **Count the reports before reading any of them, and run configs separately
+when a failure is expected.**
+
+## A dry run finds the tests that turn red, not those that turn vacuous — 2026-09-14
+
+Capping `OPFSAdaptiveVFS` at one worker on Firefox was sized by a dry run: twelve tests failed and
+moved to a VFS that keeps a pool. The final review found three more, green on Firefox through
+another path — a declined worker instead of an opened one — whose falsifiers no longer bit there.
+**When a change removes a capability, grep for every test that exercises it: a red list only shows
+the tests that noticed.** Kin of "a plan's list of tests to invert is a guess until the tests are
+grepped".
+
+## A probe must touch what it measures — 2026-09-14
+
+POOL-SIZE's first "read during a long query" timed `SELECT 1` behind a recursive CTE. Neither
+touched a table, neither needed the access handle, and the column reported a pool serving
+concurrent reads where it served only file-less queries. Caught on reading the first run and
+re-run with a table scan against a row read. **Check that each workload exercises the resource in
+question before reading its number.**

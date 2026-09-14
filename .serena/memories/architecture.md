@@ -78,7 +78,8 @@ both engines — a VFS sound on one and broken on the other is how HANDLE-1 was 
 `SQLiteQueryAPI` — `read` / `write` / `chunk` / `stream` / `first` / `bulkWrite` /
 `output` — is shared by **both** the client and a transaction, so a method cannot be
 added to one and forgotten on the other. `SQLiteDB` adds `transaction` / `close` /
-`debug` / `inspect`, plus five readonly getters — `id` / `name` / `file` / `vfs` / `build`,
+`debug` / `inspect`, plus six readonly getters — `id` / `name` / `file` / `vfs` / `build` / `poolSize` (the pool it
+actually runs: the option, capped by the VFS and by the environment),
 which exist so a module handed a client can describe it without also being handed its options;
 `SQLiteTransactionDB` adds `commit` / `rollback`. `signal` on every method **except `inspect`**,
 a documented exception: `navigator.locks.query()` takes no lock and waits for nothing, so the
@@ -259,6 +260,24 @@ For the same reason credits are granted **on consumption** (after the `yield` in
 `pool.ts`'s generator), never on arrival: crediting on arrival silently defeats
 back-pressure. Use `MessageChannel`, never `setTimeout` — nested `setTimeout` is clamped
 to 4 ms.
+
+**A surplus worker declines; it does not die (spec 2026-09-13, §3 and §10).** Where a VFS declares
+`singleConnectionWithout` and the engine lacks the feature, only slots of index ≥ 1 receive
+`declineWithout`; they probe it (`src/worker/probes.ts`) before loading wasm and post `declined`.
+That settles init without `die` — no `onDeath`. `retireSlot` then clears the slot's round-1
+`startupLosses` entry, reports `'retired'` to the supervisor BEFORE `scheduler.retire` (which may
+open the gate, and `onGateOpen` reads `liveCount`), and decrements `effectivePoolSize` — what
+`db.poolSize` and `WorkerLostEvent.size` report; on a closing client it changes nothing
+observable. The gate settles a retired slot as `'declined'`, neither opened nor failed, so it never
+enters the retry round. Slot 0 never probes. Where the probe passes, nothing differs from before.
+
+**Poisoning a transport settles a pending `close()`.** A dead worker can never reply `closed`;
+before 2026-09-14, `close()` sat out `drainTimeout` for a worker terminated while closing.
+
+**`deleteDatabase` on the `opfs-path` layout deletes through OPFS only**, after the VFS has
+closed: every sidecar first — `DB_RELATED_SUFFIXES` plus the declared `extraFileSuffixes` — and the
+main file last, so a failed removal stays retryable. `jDelete` stays for `idb-store` and
+`opfs-pool`, which have no OPFS pass.
 
 ## Scheduling rules
 

@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-09-11.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-09-14.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one.
 
 **No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
@@ -24,14 +24,13 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-12 after the caught-write-abort merge
+## The verification baseline — compare against these, re-measured 2026-09-14 after the pool-cap merge
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a
-run in this container on 2026-09-12, on `main` at merge `65a40d3` (`fix/tx-savepoint`)** — none
-is carried forward, none is arithmetic. The whole table was re-read in one pass, which is what
-its own rule demands; raw outputs in `.scratchpad/closure-baseline-2026-09-12/`. The merge's
-pre-merge-commit hook had already run `pnpm test` on the merged tree and read the same three
-counts.
+run in this container on 2026-09-14, on `main` at merge `121b0f6` (`fix/pool-environment-cap`)** —
+none is carried forward, none is arithmetic. The whole table was re-read in one pass, which is what
+its own rule demands; raw outputs in `.scratchpad/closure-baseline-2026-09-14/`. The merge's
+pre-merge-commit hook had already run `pnpm test` on the merged tree and read the same three counts.
 
 **`pnpm test` chains THREE configs** — chromium+unit, firefox, and the isolated project — so a
 green `pnpm test` covers what CI covers. Since 2026-09-11 a commit pays only the unit project; a merge or a push pays all three
@@ -43,21 +42,22 @@ on the last branch landed with a failing typecheck that no test run could show (
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **750 tests / 62 files** (unit + chromium, **1 skipped**), **305 / 43** (firefox, **1 skipped**), **7 / 3** (isolated) |
-| `pnpm exec rstest --project unit run` | 446 tests, 20 files |
-| `pnpm exec rstest --project chromium run` | 304 tests, 42 files, 1 skipped |
-| `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each, **73 passed / 12 skipped**, identical on both engines |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **783 tests / 64 files** (unit + chromium, **4 skipped**), **322 / 44** (firefox, **1 skipped**), **7 / 3** (isolated) |
+| `pnpm exec rstest --project unit run` | 462 tests, 21 files |
+| `pnpm exec rstest --project chromium run` | 321 tests, 43 files, 4 skipped |
+| `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each: **Chromium 71 passed / 14 skipped, Firefox 67 / 18** — they differ by design since 2026-09-14 |
 | `pnpm test:consumer` | 24/24 stages |
-| `BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 116 files, 13 warnings, 1 info |
+| `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`, `poolSize` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
+| `pnpm lint` | 119 files, 13 warnings, 1 info |
 | `dependencies` in `package.json` | absent |
 
-**The two skipped browser tests are one test, and they are the first this repository has had.**
-`tests/browser/abandon-gc.test.ts` pins the `FinalizationRegistry` path and needs
-`--expose-gc`, which cannot go into `rstest.config.ts` without changing the launch arguments
-every other browser test runs under. It therefore skips under `pnpm test` and in CI, and the
-file's own header carries the CLI override that runs it. **A skip count of 1 on each browser
-config is the expected state, not a regression** — a count above 1 is something to look at.
+**The browser skips are expected: 4 on Chromium, 1 on Firefox.** One, on both, is
+`tests/browser/abandon-gc.test.ts`: it pins the `FinalizationRegistry` path and needs
+`--expose-gc`, which cannot go into `rstest.config.ts` without changing the launch arguments every
+other browser test runs under, so it skips under `pnpm test` and in CI and its header carries the
+CLI override that runs it. The three more on Chromium are `pool-cap.test.ts`'s capped-engine
+tests — the effective size after a loss, the retry-round decline, the total failure at `poolSize`
+4 — which skip where `readwrite-unsafe` exists. **Any other count is something to look at.**
 
 **The per-project split is here on purpose.** A total alone cannot say which suite moved, and
 the totals are what rot: this file carried "the browser project is 158/158" from 2026-08-28
@@ -69,25 +69,30 @@ when you touch it; do not patch one cell.**
 show an unhandled rejection escaping outside any test, which the per-test
 counters cannot. That was reported green once — see `mem:lessons`.
 
-Firefox conformance was 57/19 until `OPFSWriteAheadVFS`'s declaration was corrected; the
-two engines agreeing is the current expectation, and a divergence means something skipped.
-As of 2026-09-03 they agree on **both** suites, test for test — conformance and the browser
-project alike.
+Firefox conformance was 57/19 until `OPFSWriteAheadVFS`'s declaration was corrected. **Since
+2026-09-14 the two engines no longer agree, by design:** on Firefox two invariants skip
+`OPFSAdaptiveVFS` and `OPFSWriteAheadVFS`, which run one worker there (`oneWorkerHere` in
+`tests/conformance/helpers.ts`). Any other divergence means something skipped that should not.
 
 **Firefox is a CI gate since 2026-08-28, and since 2026-09-03 it is inside `pnpm test`**
 rather than a step of its own — `TEST_BROWSER` is gone, and a local run covers what CI covers. The two flakes this file used to warn about are gone: `long-query :: does not
 block the pool` was never a pool defect (it timed the FILE — see `mem:follow-ups`), and
 `barrier` did not reproduce in 13 consecutive runs. **A failure on the Firefox step is
-signal, not noise** — it is the only step that drives the pool against a rotating exclusive
-OPFS handle, so it is where a reduced-mode regression lands first. The 13-run campaign was
+signal, not noise** — it is the only step without `readwrite-unsafe`, so it is where a
+reduced-mode regression lands first. Since 2026-09-14 it no longer drives a pool against a rotated
+handle within one client (`OPFSAdaptiveVFS` runs one worker there); the rotation is exercised
+between clients. The 13-run campaign was
 one machine and one build; slower CI hardware may still surface timing the campaign did not.
 
 ## Decisions the user owes
 
-- **Whether two open subjects precede rc.5.** Both are reliability by the triage rule below, and
-  neither is scheduled: the SQL error code lost at the worker boundary, and the Firefox
-  `worker 1 lost` observation (`mem:follow-ups`, both). The savepoint rule, the last subject
-  the user named for rc.5, merged on 2026-09-12.
+- **Whether the open reliability subjects precede rc.5.** None is scheduled: the SQL error code
+  lost at the worker boundary, and `OPFSCoopSyncVFS` writes taking the handle-transfer BUSY between
+  clients — logged on the recommendation, the user not having ruled on it (`mem:follow-ups`, both).
+  The Firefox `worker 1 lost` observation became the pool-cap work, merged on 2026-09-14 (§ below).
+- **The Safari check of the pool caps.** The preview tag sits at `0d93de5`, before the Adaptive and
+  CoopSync caps: on Safari only `OPFSWriteAheadVFS`'s cap was seen (the user's console, n=1). Moving
+  the tag is the user's gesture.
 
 **rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
 and both are now closed — the second by merge `eeabe06` on 2026-09-11.
@@ -130,7 +135,7 @@ ABANDON-WEDGE).
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
 the 2026-09-05 entry in `mem:follow-ups` called for.
 
-**Nothing is in flight.** The savepoint rule merged on 2026-09-12 (§ below). Everything in
+**Nothing is in flight.** The pool-cap work merged on 2026-09-14 (§ below). Everything in
 `mem:follow-ups` is unscheduled.
 
 **HANDLE-2 was investigated on 2026-09-09 and came apart under measurement.** Its stated cause
@@ -148,6 +153,41 @@ permanent, silent, origin-wide — was found and fixed the same day (§ below).
 2026-09-08 by medianing the bench corpus at n≥3 per platform (`mem:measurements`,
 VFS-MEDIAN). The answer was not "move it": there are now **two** recommendations,
 `OPFSWriteAheadVFS` and `OPFSAdaptiveVFS`, and the constant itself left `src/` — see § below.
+
+## The pool capped by its environment — merged 2026-09-14
+
+Spec `docs/superpowers/specs/2026-09-13-pool-environment-cap-design.md` — read its §9 and §10
+amendments; plan `docs/superpowers/plans/2026-09-13-pool-environment-cap.md` (Tasks 1-13).
+Merge `121b0f6`. Invariants in `mem:architecture`; numbers in `mem:measurements` (WORKER-LOST,
+POOL-SIZE, DELETE-WA); VFS facts in `mem:vfs`.
+
+**Six things the code will not tell you:**
+
+- **The observation was a VFS design fact the repository once had right.** Off Chromium,
+  `OPFSWriteAheadVFS` keeps its file exclusively for a connection's life; `70b2b7a` (2026-08-27)
+  "refuted" that on a conformance pass that never counted workers. Conformance now fails on a lost
+  worker and skips a two-worker invariant where the pool runs one (`mem:lessons`).
+- **The decisions are the user's (spec D1-D11):** a capped pool is capped, not lost; the warning
+  fires only on an explicit `poolSize`; a `db.poolSize` getter, not a callback; every surplus worker
+  probes and declines itself; `WorkerLostEvent.size` is the effective size; `db.ready` is rc.6;
+  `singleConnectionWithout` means "a pool beyond one buys nothing" and covers `OPFSAdaptiveVFS`;
+  `OPFSCoopSyncVFS` has `maxPoolSize: 1` everywhere — **breaking, accepted**.
+- **The probe reads the `mode` ATTRIBUTE inside a worker.** The page cannot probe:
+  `FileSystemSyncAccessHandle` exists in dedicated workers only, and a probe worker of its own would
+  still answer asynchronously and meet a consumer CSP without `worker-src blob:`. Passing the
+  dictionary option proves nothing — WebIDL ignores it. Do not "simplify" either way.
+- **The Firefox config no longer drives a pool against a rotated handle within one client.**
+  `OPFSAdaptiveVFS`, `createTestClient`'s default, runs one worker there; the fifteen tests that
+  need two workers run on `OPFSAnyContextVFS`, and rotation is exercised only between clients.
+- **Conformance no longer agrees across engines, by design** — Chromium skips 14, Firefox 18: on
+  Firefox two invariants skip `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS`, which run one worker there.
+- **The bench still shows the declared pool** in its column header and burst normalisation; the
+  export records `db.poolSize`. The header waits for `db.ready` (user, `mem:follow-ups`).
+
+**What it does NOT deliver.** Safari was seen by console only, before Tasks 10-11 (§ decisions
+owed). CoopSync writes can still take the transfer BUSY between clients; `barrier.test.ts` does
+not guard the barrier; D-09 has no falsifier by construction (`mem:follow-ups`). Orphan
+`-wa0`/`-wa1` files left by deletions before the fix stay — harmless, by decision.
 
 ## The caught write abort — merged 2026-09-12
 
