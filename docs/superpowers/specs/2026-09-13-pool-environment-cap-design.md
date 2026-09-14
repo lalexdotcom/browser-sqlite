@@ -316,3 +316,36 @@ on Firefox and Safari; an open failure carries its real cause. *Added*: `db.pool
 campaign as WORKER-LOST; `mem:lessons`, a conformance that does not count live workers cannot
 see a shrunk pool, and made us refute a true claim; `mem:follow-ups`, the `worker 1 lost` entry
 deleted.
+
+## 9. Amendments — 2026-09-13, during implementation
+
+What building it established that the sections above did not say. The sections stand as
+approved; where one is wrong, the amendment says so.
+
+- **§3.2 missed two startup paths, found by the final review with probes on Firefox and fixed on
+  the branch.**
+  - *`close()` during startup.* A surplus worker still booting when `close()` runs can decline
+    and reply `closed` in that order; the client terminates it on the `declined`, and the queued
+    `closed` reply is dropped, so `close()` waited the whole `drainTimeout` (5001 ms at
+    `drainTimeout: 5000`, against 99 ms for `OPFSAdaptiveVFS`). Fixed at the root: poisoning a
+    worker's transport now settles a pending `close()`, since a dead worker can never reply; and
+    `retireSlot` changes nothing observable on a closing client. This covers any worker that dies
+    with a close pending, not only a declined one.
+  - *A decline in the retry round.* A surplus slot that missed `openTimeout` in round 1 and
+    declined in the retry round was announced lost through `onGateOpen`'s leftover round-1
+    entry. The `declined` branch now clears it, as the `ready` branch does.
+- **§3.4, two statements corrected.** "A fresh `vfsInstance` per `open()` means the value cannot
+  be stale" holds across opens, not within one: a VFS error SQLite ignored earlier in the same
+  open could label a later, unrelated failure. No concrete path was found and none is guarded
+  against. And a VFS error that cannot be cloned falls back to its string form — `cloneable`'s
+  behaviour — not to today's cause. The carried cause applies to every VFS that records a
+  `lastError`, not only `OPFSWriteAheadVFS`, as §4 already promised.
+- **§7, T5 on Chromium is measured:** the VFS's `readwrite-unsafe` open against a third party's
+  exclusive handle raises `NoModificationAllowedError`, as on Firefox, so T5 runs on both
+  engines. Tests added beyond §7: `close()` right after construction (both engines), the
+  retry-round decline and the total failure at `poolSize` 4 (capped engines only), and T4 now
+  asserts the client fails.
+- **Two test harnesses call `createPoolWorker` directly** (`abandon.test.ts`,
+  `pool-savepoint.test.ts`); they narrow its new union result with an explicit throw rather than
+  a cast. **The bench check runs after `pnpm bench:build`**, which is what assembles the page it
+  serves.
