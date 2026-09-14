@@ -780,3 +780,13 @@ touched a table, neither needed the access handle, and the column reported a poo
 concurrent reads where it served only file-less queries. Caught on reading the first run and
 re-run with a table scan against a row read. **Check that each workload exercises the resource in
 question before reading its number.**
+
+## A verdict that flips across a corpus is split by commit before engine — 2026-09-14
+
+`IDBBatchAtomicVFS`'s `reads-during-long-query` came back `true` in this container, and it read
+as a Firefox 153 or container difference. Split by each export's `preview` commit, the corpus
+partitioned exactly — every `false` before `f4b3fd7`, every `true` after, Chromium included. The
+row passes a `signal`, and `f4b3fd7` changed what a signal does in the worker: the row's question
+changed with no change to the row (IDB-SIGNAL, `mem:measurements`). **A measurement that hands the
+library an option measures that option's path; when the option's semantics move, the measurement
+moves with them.**

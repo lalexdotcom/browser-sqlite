@@ -90,6 +90,9 @@ one machine and one build; slower CI hardware may still surface timing the campa
   lost at the worker boundary, and `OPFSCoopSyncVFS` writes taking the handle-transfer BUSY between
   clients — logged on the recommendation, the user not having ruled on it (`mem:follow-ups`, both).
   The Firefox `worker 1 lost` observation became the pool-cap work, merged on 2026-09-14 (§ below).
+- **What `IDBBatchAtomicVFS` does during a long statement.** A read is served only if that
+  statement carries a `signal` or a `timeout` (IDB-SIGNAL, `mem:measurements`). Three decisions, in
+  order: the library default, the bench row, `VFS.md`'s wording (`mem:follow-ups`).
 
 **rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
 and both are now closed — the second by merge `eeabe06` on 2026-09-11.
@@ -179,10 +182,13 @@ POOL-SIZE, DELETE-WA); VFS facts in `mem:vfs`.
 - **Conformance no longer agrees across engines, by design** — Chromium skips 14, Firefox 18: on
   Firefox two invariants skip `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS`, which run one worker there.
 - **The bench still shows the declared pool** in its column header and burst normalisation; the
-  export records `db.poolSize`. The header waits for `db.ready` (user, `mem:follow-ups`).
+  export records `db.poolSize`. The header waits for `db.ready` (user, `mem:follow-ups`). Since
+  `29fbc71` it skips **three** rows on a one-worker column, not the two its message names:
+  `reads-during-long-query` too — whether the other workers serve during a long query has no
+  subject on one worker. So the bench no longer shows HANDLE-1 within a client off Chromium.
 
-**What it does NOT deliver.** Safari is checked at n=1 (SAFARI-CAP, `mem:measurements`): every
-cap holds there, one Mac, one run. CoopSync writes can still take the transfer BUSY between clients; `barrier.test.ts` does
+**What it does NOT deliver.** Safari is checked at n=4 on one Mac and Firefox at n=3 in this
+container (SAFARI-CAP, `mem:measurements`): every cap holds. CoopSync writes can still take the transfer BUSY between clients; `barrier.test.ts` does
 not guard the barrier; D-09 has no falsifier by construction (`mem:follow-ups`). Orphan
 `-wa0`/`-wa1` files left by deletions before the fix stay — harmless, by decision.
 

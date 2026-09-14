@@ -121,6 +121,29 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   `OPFSAnyContextVFS` opens two connections at once without harm. The lock still serialises opens
   across clients and tabs; a two-client test is what would guard it. Its comment says so.
 
+## `IDBBatchAtomicVFS` serves a read during a long statement only if it carries a `signal` or `timeout` (2026-09-14)
+
+Measured and explained in IDB-SIGNAL (`mem:measurements`). Not scheduled; three decisions, the
+user's, and the last waits on the first:
+
+- **The library.** Only an abortable statement yields, so on this VFS one long unsignalled read
+  makes every other connection's read wait it out, and the same read with a `signal` does not.
+  Installing the yielding progress handler on every statement for IndexedDB-backed VFS would make
+  the second behaviour the default; its cost — a task turn per 100 000 VM ops — is unmeasured.
+- **The bench row.** `reads-during-long-query` passes its row `signal` to the long query, so it
+  has answered for the signalled path since `f4b3fd7` and for the unsignalled one before — its
+  verdict flipped with no change to the row. Either drop the signal from the long query, or report
+  both paths.
+- **The consumer docs.** `VFS.md` says `IDBBatchAtomicVFS` "does not serve a read while a long
+  query runs, on any engine" (its own section and Concurrent reads): true without a signal, false
+  with one.
+
+Found on the way: that row's comment says aborting a read "abandons the wait, not the work" and
+that "there is no `sqlite3_interrupt` anywhere" — both stale since `f4b3fd7` made a signal stop
+the statement. And HANDLE-1 says a worker in a long statement "never returns to its event loop",
+which an abortable one on `async`/`jspi` now does every 100 000 ops; whether that lets a rotated
+OPFS handle move between clients is unmeasured.
+
 ## `SQLITE_FULL` reaches the client with neither `code` nor `sqliteCode` (2026-09-10)
 
 Seen in TX-M1 (`mem:measurements`): a caught INSERT failing with *database or disk is full*

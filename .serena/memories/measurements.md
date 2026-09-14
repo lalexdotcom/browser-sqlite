@@ -4,17 +4,75 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
-## SAFARI-CAP — the pool caps hold on Safari, 2026-09-14, the user's Mac
+## IDB-SIGNAL — a signal lets `IDBBatchAtomicVFS` serve a read during a long query, 2026-09-14, this container
 
-Bench export `.bench/browser-sqlite-20260914142953-macos-safari-26.6.2-1.0.0-rc.4.json`, preview
-`5db2c8b`, Safari 26.6.2 macOS, `readwriteUnsafe: false`, n=1. `poolSize` **1** on all five pairs —
-`OPFSWriteAheadVFS` sync and async, `OPFSAdaptiveVFS` async, `OPFSCoopSyncVFS` sync and async;
-`reasons` empty; conformance all pass, CoopSync skipping its two two-worker rows. The console (the
-user's screenshot) showed only the cap warnings — eight for WriteAhead, four for Adaptive, one per
-bench client since the page passes `poolSize: 4`, none for CoopSync — and no `lost` line, no
-wa-sqlite error pair, no `jDelete` error. The export also showed the page still "passing" the two
-two-worker rows on WriteAhead and Adaptive at one worker: the BENCH-DRIFT copy had not followed
-conformance's `oneWorkerHere`, fixed the same day.
+**The discrepancy.** The bench's `reads-during-long-query` reported `IDBBatchAtomicVFS/async`
+`false` in every export from 2026-09-04 to 2026-09-08 — previews `2700426`, `45e67fa`, `0b63bf3`;
+Chromium 150, Firefox 154, Safari macOS/iPadOS/iOS, Chrome Android — and `true` in every export at
+`main@29fbc71`: Firefox 153 ×3 and Chromium 151 ×1, this container, `poolSize` 4. Not the
+calibration (Chromium: 971 iterations against 953-979 on 2026-09-04), not the row (its body is
+unchanged since 2026-09-04).
+
+**The probe** — `.scratchpad/idb-long-2026-09-14/probe2.test.ts`, current `main`, pool 4, 4 000
+rows, a self-join as the long query, a point read 50 ms in, 3 runs per arm, one variable: a
+`signal` on the queries.
+
+| | Chromium 151 | Firefox 153 |
+|---|---|---|
+| IDBBatchAtomic, no signal | **waited** — read 109 ms behind a 187 ms query | **waited** — 796 behind 836 |
+| IDBBatchAtomic, signal | served — 2 ms | served — 3-4 ms |
+| OPFSAnyContext, either (control) | served — 2-3 ms | served — 3 ms |
+
+Deterministic, 3/3 per arm on both engines.
+
+**The mechanism.** `IDBBatchAtomicVFS.jLock` opens a `'rw'` IndexedDB transaction on reaching
+SHARED (it clears a failed batch's blocks), and its `'ro'` reads reuse it while it is pending. An
+IDB transaction commits only when its thread gets back to the event loop with nothing pending, so a
+connection busy in one statement keeps it, and every other connection's SHARED lock queues behind
+it until the statement ends — with the bench's dataset reaching storage as much as with the
+probe's cached one. Since `f4b3fd7` (2026-09-04 20:35 — after the HANDLE-1 exports, and not in
+`0b63bf3`) a query given a `signal`, or a `timeout` (`withDeadline` turns it into one), runs with
+`abortable: true`, and on the `async` and `jspi` builds the worker installs a progress handler
+that awaits `gate.tick()` every `PROGRESS_OPS` (100 000) VM ops: a task turn, so the transaction
+commits. The bench row has passed its row `signal` to the long query since it was written — it
+measured the unsignalled path until `f4b3fd7` and the signalled one since.
+
+**What it changes.** HANDLE-1's "IDBBatchAtomic waited" holds for a statement with neither `signal`
+nor `timeout`, and is false for one with either. **Not measured:** the yield's own cost; any other
+VFS under a yielding statement — in particular whether `OPFSAdaptiveVFS` can hand its rotated
+handle over mid-statement between clients. Decisions owed: `mem:follow-ups`.
+
+## SAFARI-CAP — the pool caps hold on Safari and Firefox, 2026-09-14, the user's Mac + this container
+
+Bench exports in `.bench/`. Safari 26.6.2 macOS, `readwriteUnsafe: false`: one run at preview
+`5db2c8b` (`…20260914142953…`), three at preview `29fbc71` (`…150411…`, `…150425…`, `…150436…`).
+Firefox 153 linux, this container: three at `main@29fbc71` (`…130632…`, `…130832…`, `…131030…`).
+`poolSize` **1** on every column of `OPFSWriteAheadVFS`, `OPFSAdaptiveVFS` and `OPFSCoopSyncVFS`,
+every build, every run; `reasons` empty; conformance all pass. At `5db2c8b` the page still "passed"
+the two two-worker rows on WriteAhead and Adaptive at one worker — the BENCH-DRIFT copy had not
+followed conformance's `oneWorkerHere`; since `29fbc71` they report `skipped`, and so does
+`reads-during-long-query`. The console at `5db2c8b` (the user's screenshot) showed only the cap
+warnings — eight for WriteAhead, four for Adaptive, one per bench client since the page passes
+`poolSize: 4`, none for CoopSync — and no `lost` line, no wa-sqlite error pair, no `jDelete` error.
+
+**`OPFSWriteAheadVFS`'s lead over `OPFSAdaptiveVFS` holds at equal pool** — every column below
+ran one worker. Medians of 3 runs, ms; Safari and Firefox are different machines, so compare
+within an engine only.
+
+| Safari | WA sync | WA async | Adaptive async | CoopSync sync | CoopSync async |
+|---|---|---|---|---|---|
+| write p50 | 0.4 | 0.4 | 1.2 | 0.6 | 0.6 |
+| point read p50 | 0.25 | 0.25 | 0.55 | 0.25 | 0.3 |
+| transaction | 25 | 29 | 34 | 26 | 33 |
+
+| Firefox | WA sync | WA async | WA jspi | Adaptive async | Adaptive jspi | CoopSync sync | CoopSync async | CoopSync jspi |
+|---|---|---|---|---|---|---|---|---|
+| write p50 | 1.2 | 1.4 | 1.4 | 3.4 | 3.6 | 1.8 | 1.8 | 2.2 |
+| point read p50 | 0.4 | 0.4 | 0.5 | 0.85 | 0.9 | 0.4 | 0.45 | 0.55 |
+| transaction | 64 | 68 | 71 | 66 | 73 | 66 | 65 | 71 |
+
+So the 2026-09-04 gap was not pool size: Adaptive writes and point reads cost 2-3× WriteAhead's on
+both engines, build for build; transactions are close on Firefox.
 
 ## WORKER-LOST — why `OPFSWriteAheadVFS` lost workers off Chromium, 2026-09-13/14, this container + the user's devices
 
@@ -1419,6 +1477,13 @@ every VFS below, so "no other worker" is excluded.
 | Chromium 150 (has `readwrite-unsafe`) | Adaptive, WriteAhead, AnyContext | CoopSync, IDBBatchAtomic |
 | Safari 27 (no RWU, macOS + iPadOS) | AnyContext/jspi only | everything else |
 | Firefox 154 (accepts RWU, ignores it) | AnyContext only | everything else |
+
+**Corrected 2026-09-14 — two cells of this table are not what they say.** IDBBatchAtomic's
+"waited" is the **unsignalled** path: the row passes a `signal`, which reached the worker only from
+`f4b3fd7`, after these exports, and at `29fbc71` the same row reports it served (IDB-SIGNAL,
+above). WriteAhead's "waited" off Chromium ran on **one live worker**, the other three lost
+(WORKER-LOST, above). The one-handle OPFS columns were not re-measured under a yielding statement:
+since `29fbc71` the row skips a column whose pool runs one worker.
 
 **The partition follows `readwrite-unsafe` exactly** — the README's central limitation, until
 now stated in prose and inferred from `read-burst` ratios. The read-burst gains agree
