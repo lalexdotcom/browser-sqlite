@@ -102,8 +102,10 @@ as `cause`, so `err.cause` will be the `STATEMENT_FAILED`.
   use: `err.code === 'BUSY' && err.sqliteCode === SQLITE_CODES.BUSY`.
 - **Form: an `as const` object, frozen.** `sqliteCode` and `sqliteExtendedCode` stay typed
   `number`, not a literal union: a later SQLite may add codes.
-- **Source: transcribed from `sqlite3.h` of SQLite 3.53.0**, the version bundled by wa-sqlite
-  1.1.1 (source-id `2026-04-09 11:41:38 4525003a53a7fc63ca75`, read from the wasm). The comment
+- **Source: transcribed from `src/sqlite.h.in`, the source of `sqlite3.h`, at SQLite's tag
+  `version-3.53.0`**, the version bundled by wa-sqlite 1.1.1 (source-id
+  `2026-04-09 11:41:38 4525003a53a7fc63ca75`, read from the wasm; the tag's `manifest.uuid`
+  begins with the same hash). 31 primary codes and 82 extended ones. The comment
   names the version and the date checked, as `FEATURE_SUPPORT` does. wa-sqlite's
   `sqlite-constants.js` cannot serve as the source: it holds the 31 primary codes and 33
   extended ones, mostly `IOERR_*` and `CONSTRAINT_*`, and no `BUSY_*`, `LOCKED_*`,
