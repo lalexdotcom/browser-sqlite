@@ -1732,13 +1732,17 @@
        * DATASET_ROWS² and is still too fast on this device), null is stored
        * and the long-query race returns null rather than a meaningless verdict.
        *
-       * **The verification is tried up to three times**, because one sample
-       * can stall. Measured 2026-09-14 on Safari 26.6.2, IDBBatchAtomicVFS at
-       * `poolSize` 4, on the rc.4 page: bound 1026 cost 1 642 ms, and the very
-       * next run of the same statement 38 013 ms — while 48 more runs, in
-       * three shapes, did not stall once. A sample like that turned the
-       * IDBBatchAtomicVFS column `null` on two Safari runs. A bound genuinely
-       * wrong for the device misses all three tries; a stall misses one.
+       * **The verification runs only when the search did not time the bound
+       * it settled on** — after halving an overshoot, or after six attempts. A
+       * bound the search timed inside 1.5–3 s is already verified, and running
+       * it again is not free everywhere. On Safari 26.6.2, IDBBatchAtomicVFS,
+       * after this page's writes, the same ~1.6 s statement ran 1.6, 1.6, then
+       * 3.7–10, then 33–35 s on successive runs — at `poolSize` 1 as at 4, and
+       * on the rc.4 page too (2026-09-14, `mem:measurements` IDB-SIGNAL). A
+       * verification that re-ran the bound made the IDBBatchAtomicVFS column
+       * `null` on three Safari runs, and retrying it only ran further down the
+       * slope. The slowdown is the library's to answer (`mem:follow-ups`); this
+       * only stops the calibration from spending statements it does not need.
        *
        * Every timing is kept in `__calibration` and exported as
        * `longQueryCalibration`, so a `null` carries its own evidence.
@@ -1748,10 +1752,15 @@
         const calibration = { attempts: [], verify: [] };
         RESULTS.measurements[ctx.pair.id].__calibration = calibration;
         let bound = 200;
+        // What the final bound cost, when the search itself timed it.
+        let measured = null;
         for (let attempt = 0; attempt < 6; attempt++) {
           const ms = await time(() => ctx.db.read(longQuery(bound)));
           calibration.attempts.push({ bound, ms: Math.round(ms) });
-          if (ms >= 1500 && ms <= 3000) break;
+          if (ms >= 1500 && ms <= 3000) {
+            measured = ms;
+            break;
+          }
           if (ms > 3000) {
             bound = Math.max(1, Math.round(bound / 2));
             break;
@@ -1761,15 +1770,11 @@
             Math.round(bound * Math.max(2, 2000 / Math.max(ms, 1))),
           );
         }
-        ctx.longIterations = null;
-        for (let tries = 0; tries < 3; tries++) {
-          const verify = await time(() => ctx.db.read(longQuery(bound)));
-          calibration.verify.push({ bound, ms: Math.round(verify) });
-          if (verify >= 1000 && verify <= 4000) {
-            ctx.longIterations = bound;
-            break;
-          }
+        if (measured === null) {
+          measured = await time(() => ctx.db.read(longQuery(bound)));
+          calibration.verify.push({ bound, ms: Math.round(measured) });
         }
+        ctx.longIterations = measured >= 1000 && measured <= 4000 ? bound : null;
         RESULTS.measurements[ctx.pair.id].__iterations = ctx.longIterations;
         return ctx.longIterations;
       };

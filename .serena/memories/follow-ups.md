@@ -123,11 +123,12 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
 
 ## What the `IDBBatchAtomicVFS` long-statement fix left open (2026-09-14)
 
-- **A read on Safari's `IDBBatchAtomicVFS` can stall ~20× for one sample.** The same statement
-  cost 1 642 ms, then 38 013 ms, on the rc.4 page after the bench's writes (IDB-SIGNAL,
-  `mem:measurements`); 48 further runs did not stall once. Pre-existing, cause unknown — a pause in
-  WebKit's IndexedDB backing store is a guess, not a finding. A consumer would meet it as one read
-  taking seconds.
+- **On Safari, `IDBBatchAtomicVFS` long reads slow down run after run, after writes.** ~1.6 s
+  cross-joins ran 1.6, 1.6, 3.7-10, then 33-35 s in succession, at `poolSize` 1 as at 4, new SQL
+  text or not, with point reads between them unaffected (IDB-SIGNAL, `mem:measurements`). On the
+  rc.4 page too, so pre-existing; Chromium and Firefox never showed it. Cause unknown — what grows
+  with each long statement is the question. A consumer would meet it as long reads that suddenly
+  take tens of seconds. Not scheduled.
 - **Whether a yielding statement lets a rotated OPFS handle move between clients.** HANDLE-1 says a
   long statement never returns to its event loop; an abortable one on `async`/`jspi` now does,
   every 100 000 VM ops. Unmeasured.

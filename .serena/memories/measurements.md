@@ -79,12 +79,21 @@ the user's Safari 26.6.2 (`.scratchpad/idb-safari-yield-2026-09-14/safari-paste-
   sample stalls.** After the bench's earlier writes (single inserts, reads, a scan, 500 inserts and
   500 UPDATEs in transactions), bound 1026 cost 1 642 ms and the very next run of the same statement
   **38 013 ms**. On the rc.4 page, so it predates the fix.
-- **Not reproduced in 48 further runs**: eight point+long pairs after the writes, in three shapes —
-  pool 4 and pool 1 after 500 UPDATEs, pool 4 after 500 INSERTs — every long read 313-402 ms.
-
-One such sample on the verification is enough to make the row `null`; the bench now retries it
-three times and exports every timing (`longQueryCalibration`). The stall itself is logged in
-`mem:follow-ups`.
+- **Not a stall — a slowdown that holds.** v7's 48 further runs saw nothing, but none of them ran
+  a ~1.6 s statement twice. The bench at `a85c273`, same Safari, IDBBatchAtomicVFS pool 4, with
+  every timing exported (`longQueryCalibration`): attempts 200 → 428 ms and 935 → 1 639 ms, then
+  the three verifications of bound 935 at **25 432, 33 896 and 34 289 ms**. So after the bench's
+  writes, the statement that just took 1.6 s takes 15-20× that on every later run — on the rc.4 page
+  too (v6), so it predates the fix. Retrying the verification does not help; `a85c273`'s premise
+  that "a stall misses one" is refuted, and its comment in the bench is wrong until rewritten.
+  Cause unknown; `mem:follow-ups`.
+- **It degrades run by run, not at once** (v8, preview, same Safari, after the same writes, the
+  first worker running every statement): successive long reads of ~900 bound ran **1 596, 1 570,
+  3 683, 33 582 ms** at `poolSize` 4 and **1 706, 1 672, 10 205, 35 389 ms** at `poolSize` 1. The
+  third was a new SQL text, so not the statement cache; a point read between them took 2-3 ms, so
+  not a wait; pool 1 matches pool 4, so not routing. The bench's calibration met it on its third
+  long statement (attempt 200, attempt ~935, verification); it now skips a verification the search
+  already timed, which makes the race the third.
 
 ## SAFARI-CAP — the pool caps hold on Safari and Firefox, 2026-09-14, the user's Mac + this container
 
