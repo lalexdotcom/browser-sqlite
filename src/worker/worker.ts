@@ -860,12 +860,20 @@ const deleteDatabaseFiles = async (data: {
   }
 
   if (layout === 'opfs-path') {
+    // Sidecars first, the main file (suffix '') last. If a sidecar removal
+    // then failed while the main file went first, the file this VFS opens to
+    // probe existence would already be gone: the next deleteDatabase answers
+    // DATABASE_NOT_FOUND and nothing public can remove the sidecar left
+    // behind. Removing the main file last means a failure here always still
+    // leaves it in place, so a retried deleteDatabase finds the database and
+    // tries again. No test can inject the failed removal this guards against.
     for (const suffix of [
-      ...DB_RELATED_SUFFIXES,
+      ...DB_RELATED_SUFFIXES.filter((suffix) => suffix !== ''),
       ...VFS_CAPABILITIES[vfs].extraFileSuffixes,
     ]) {
       await removeOpfsEntry(`${file}${suffix}`);
     }
+    await removeOpfsEntry(file);
   }
 
   return true;
