@@ -90,9 +90,10 @@ one machine and one build; slower CI hardware may still surface timing the campa
   lost at the worker boundary, and `OPFSCoopSyncVFS` writes taking the handle-transfer BUSY between
   clients — logged on the recommendation, the user not having ruled on it (`mem:follow-ups`, both).
   The Firefox `worker 1 lost` observation became the pool-cap work, merged on 2026-09-14 (§ below).
-- **The Safari check of the pool caps.** The preview tag sits at `0d93de5`, before the Adaptive and
-  CoopSync caps: on Safari only `OPFSWriteAheadVFS`'s cap was seen (the user's console, n=1). Moving
-  the tag is the user's gesture.
+- **The Safari check of the pool caps.** The preview tag was moved to `5db2c8b` (the merged
+  work) and pushed on 2026-09-14, at the user's word. What is owed is the user's run on Safari:
+  `OPFSAdaptiveVFS`, `OPFSWriteAheadVFS` and `OPFSCoopSyncVFS` should each export `poolSize: 1`,
+  with no `lost` line and no wa-sqlite error pair in the console.
 
 **rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
 and both are now closed — the second by merge `eeabe06` on 2026-09-11.
