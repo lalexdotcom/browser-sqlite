@@ -35,6 +35,9 @@ describe('a long single step', () => {
   it('does not terminate the worker it abandoned', async () => {
     const records = interceptWorkers();
     const db = await createTestClient({
+      // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS
+      // runs one worker without readwrite-unsafe (spec 2026-09-13, §10).
+      vfs: 'OPFSAnyContextVFS',
       poolSize: 2,
       drainTimeout: 60_000,
       debug: true,
