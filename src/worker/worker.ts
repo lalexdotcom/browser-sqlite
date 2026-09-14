@@ -451,17 +451,23 @@ const open = (file: string, options: OpenOptions) => {
     const { abortable } = options ?? {};
     const wantsSignal = abortable === true;
     const canYield = currentBuild !== 'sync';
+    // A VFS that must yield gets the task turn on every statement; only an
+    // abortable statement may be stopped by it (`yieldsDuringStatements`).
+    const yields =
+      canYield && (wantsSignal || VFS_CAPABILITIES[vfs].yieldsDuringStatements);
+    const polls = !canYield && wantsSignal && slot !== undefined;
     const abortedHere = () =>
       slot !== undefined && Atomics.load(slot, abortIndex as number) === callId;
-    if (wantsSignal && (canYield || slot !== undefined)) {
+    if (yields || polls) {
       sqlite.progress_handler(
         db,
         PROGRESS_OPS,
-        wantsSignal && canYield
+        yields
           ? async () => {
-              // The task turn is what lets a queued `stop` be delivered.
+              // The task turn is what lets a queued `stop` be delivered, and
+              // what lets IDBBatchAtomicVFS's IndexedDB transaction commit.
               await gate.tick();
-              return gate.isStopped() ? 1 : 0;
+              return wantsSignal && gate.isStopped() ? 1 : 0;
             }
           : () => (abortedHere() ? 1 : 0),
         null,
@@ -530,8 +536,7 @@ const open = (file: string, options: OpenOptions) => {
 
       yield sqlite.changes(db);
     } finally {
-      if (wantsSignal && (canYield || slot !== undefined))
-        sqlite.progress_handler(db, 0, () => 0, null);
+      if (yields || polls) sqlite.progress_handler(db, 0, () => 0, null);
     }
   };
 
