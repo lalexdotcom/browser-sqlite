@@ -291,16 +291,17 @@ describe('SQL errors (INT-10)', () => {
 });
 
 /**
- * D-09: Test lock() blocking behavior in browser environment
+ * D-09: both workers of a two-worker pool open and serve.
  *
- * Context: Phase 2 D2 deferred this test to Phase 3.
- * lock() is called only inside workers (in open()).
- * With poolSize: 2, both workers call lock() during open() — the second
- * blocks on Atomics.wait until the first calls unlock() after its open().
- *
- * Pragmatic test: if both workers initialize successfully (READY),
- * the lock/unlock mechanism works. If lock() were broken, both workers
- * would open the DB simultaneously, risking corruption or errors.
+ * Written to guard the init lock (`initLockName`, taken in the worker's
+ * open()): with poolSize 2, the second worker's open waits for the first's.
+ * No known mutation turns it red any more. Every VFS whose handle is exclusive
+ * now runs one worker per client where that matters (spec 2026-09-13, §10), so
+ * a second worker never reaches the lock there, and OPFSAnyContextVFS — the
+ * VFS this runs on so that it keeps two workers on every engine — opens two
+ * connections at once without harm. What it still shows: a pool of two opens
+ * and each worker serves its own read. The lock still serialises opens across
+ * clients and tabs; a test of that is a follow-up.
  */
 describe('lock() blocking behavior (D-09)', () => {
   it('both workers with poolSize: 2 reach READY (sequential lock/unlock)', async () => {

@@ -122,6 +122,11 @@ handles. Only one access handle may be open on a file at a time, so it closes
 and reopens lazily to let a second connection in; where the browser allows
 several handles at once it takes that path instead, which is what it adapts to.
 
+**Without `readwrite-unsafe` it runs on a single worker per client.** Its handle
+is exclusive there and a second worker would only wait for it to be handed over,
+so the pool is capped at `1`. The handle still changes hands between clients and
+tabs, which is what the lazy close and reopen is for.
+
 ### `OPFSCoopSyncVFS`
 
 <!-- BEGIN GENERATED OPFSCoopSyncVFS -->
@@ -139,7 +144,7 @@ transparent. It holds a pool of access handles for everything but the main
 database and its journal, and closes those two lazily so several connections
 can take turns on them.
 
-**It does not read concurrently, and stalls unpredictably under a pool.** It implements its own locking and silently ignores the `lockPolicy: 'shared'` this library constructs every VFS with, holding one *exclusive* access handle and rotating it between workers instead of one per connection. A read issued while a write transaction is open is **never served**: the pool acquisition blocks before any `AbortSignal` is consulted. A bulk insert either finishes promptly or **exceeds 30 seconds**, with no middle ground and no consistency across runs. None of this depends on `readwrite-unsafe`, so it happens on Chromium too.
+**It does not read concurrently, and runs a pool of one.** It implements its own locking and silently ignores the `lockPolicy: 'shared'` this library constructs every VFS with, holding one *exclusive* access handle and handing it from connection to connection instead of one per connection. A second worker only waits its turn — under a pool, a read issued while a write transaction was open was **never served**, and a bulk insert either finished promptly or **exceeded 30 seconds** — so a client runs one worker, and passing a larger `poolSize` throws. The handle still changes hands between clients and tabs, and a read there waits for whoever holds it. None of this depends on `readwrite-unsafe`, so it happens on Chromium too.
 
 ### `AccessHandlePoolVFS`
 
@@ -319,25 +324,23 @@ per VFS on the browser you run it in.
 
 A VFS marked `[reduced]` for an engine runs there, but without
 `readwrite-unsafe` access handles: one exclusive handle instead of one per
-connection — rotated between workers by `OPFSAdaptiveVFS`, held by the single
-worker `OPFSWriteAheadVFS` runs on there. Chromium 121+ is, for now, the only engine
-that implements `readwrite-unsafe`, so every other one runs these VFS this way.<br>
+connection. A second worker of the same client would only wait for that handle,
+so there these VFS run a pool of one — `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS`
+alike. Chromium 121+ is, for now, the only engine that implements
+`readwrite-unsafe`, so every other one runs these VFS this way.<br>
 **It is not a partial failure**: everything a VFS does, it still does correctly,
 and what degrades is concurrency alone.
 
-What it costs is pool concurrency whenever one worker holds that handle for a
-long time. **On an engine without `readwrite-unsafe`, a VFS that rotates a single
-exclusive OPFS access handle cannot serve any other worker while one of them
-holds it** — the holder does not give it back before its statement ends, and the
-next acquisition blocks in the scheduler, before an `AbortSignal` is ever
-consulted. That covers `OPFSAdaptiveVFS` in reduced mode, and
-`OPFSWriteAheadVFS`, whose single worker is the whole pool there, and it
-reaches into other tabs: serializing writers changes who writes
-when, not which handle the VFS holds.
+What it costs is concurrency whenever one connection holds that handle for a
+long time. **On an engine without `readwrite-unsafe`, no other connection to the
+database is served while one holds it** — in this client's single worker, in
+another client, in another tab — the holder does not give it back before its
+statement ends, and the others wait until it does. Serializing writers changes
+who writes when, not which handle the VFS holds.
 
-**A long *read* does this as much as a write transaction.** A worker inside a
+**A long *read* does this as much as a write transaction.** A connection inside a
 single long statement cannot answer a hand-over request, so a query that runs for
-seconds serializes every other read for its whole duration.
+seconds serializes every other connection's reads for its whole duration.
 
 <!-- BEGIN GENERATED FOOTNOTES — edit scripts/render-vfs-matrix.ts -->
 

@@ -49,6 +49,11 @@ All notable changes to this project are documented here.
   the transaction's `signal` fired, a statement its callback issued rejected with
   `signal.reason`; it now rejects with `TRANSACTION_CLOSED`, carrying that reason as `cause`.
   `transaction()` itself still rejects with `signal.reason`.
+- **`OPFSCoopSyncVFS` runs a pool of one, and refuses a `poolSize` above 1 with
+  `INVALID_OPTION`.** It hands one access handle from connection to connection, so a second
+  worker only waited its turn: measured on Chromium and Firefox, a pool of one started faster
+  and served bursts of reads faster, and was equal everywhere else. Omitting `poolSize` never
+  throws.
 
 ### Added
 
@@ -125,6 +130,11 @@ All notable changes to this project are documented here.
 - **`WorkerLostEvent.size` is the pool's size, `db.poolSize`, rather than the `poolSize`
   option.** The two differ only where the environment caps the pool, which is new. The
   lost-worker warning now ends with the error that killed the worker.
+- **`OPFSAdaptiveVFS` runs on one worker wherever `readwrite-unsafe` is missing** — every
+  engine but Chromium, for now — for the same reason: its handle is exclusive there and a
+  second worker only waited for it. Silently with the default `poolSize`; one warning if you
+  passed one, which now reads `… gains nothing from more than one worker without
+  readwrite-unsafe: pool capped at 1 of N`.
 
 ### Performance
 

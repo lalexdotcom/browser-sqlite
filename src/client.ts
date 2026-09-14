@@ -153,13 +153,14 @@ export type CreateSQLiteClientOptions = {
    * Number of Web Workers spawned in the pool at initialization.
    * A larger pool allows more concurrent read operations but increases
    * memory consumption and OPFS file handle usage.
-   * A VFS that holds a single connection caps this at `1`, and passing more
-   * throws at construction time. Omitting it never throws: the default is
-   * capped to what the VFS allows.
-   * The environment can cap it too: `OPFSWriteAheadVFS` runs on one worker
-   * wherever `readwrite-unsafe` is missing, with no error, and warns once only
-   * when this option was passed. `db.poolSize` reports the size the pool runs
-   * at.
+   * A VFS that holds a single connection, or gains nothing from a second one,
+   * caps this at `1` (`OPFSCoopSyncVFS` among them), and passing more throws at
+   * construction time. Omitting it never throws: the default is capped to what
+   * the VFS allows.
+   * The environment can cap it too: `OPFSWriteAheadVFS` and `OPFSAdaptiveVFS`
+   * run on one worker wherever `readwrite-unsafe` is missing, with no error, and
+   * warn once only when this option was passed. `db.poolSize` reports the size
+   * the pool runs at.
    * @defaultValue `2`, or the VFS's maximum when it is lower
    */
   poolSize?: number;
@@ -322,7 +323,6 @@ let clientCount = 0;
  * import { createSQLiteClient } from 'browser-sqlite';
  *
  * const db = createSQLiteClient('myapp.sqlite', {
- *   poolSize: 3,
  *   vfs: 'OPFSAdaptiveVFS',
  *   pragmas: { journal_mode: 'WAL', synchronous: 'NORMAL' },
  * });

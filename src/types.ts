@@ -272,9 +272,10 @@ export type VFSCapability = {
    * `OPFSAdaptiveVFS` is the case this field exists for. Without
    * `readwrite-unsafe` it rotates a single exclusive access handle between
    * connections instead of holding one each. That works — Firefox is the engine
-   * the browser suite exercises it on, and that suite is a CI gate — but it
-   * serializes the whole pool for the duration of a long uninterruptible
-   * statement.
+   * the browser suite exercises it on — but a connection in a long
+   * uninterruptible statement holds the handle, and every other connection to
+   * the database, in another client or tab, waits for it. Within one client it
+   * runs a single worker there: see `singleConnectionWithout`.
    *
    * Without this distinction, a support table derived from browser specs would
    * mark that VFS broken everywhere outside Chromium, when it merely degrades.

@@ -13,8 +13,10 @@ type TestClientOptions = Omit<InternalSQLiteClientOptions, 'name' | 'vfs'> & {
  * automatic OPFS cleanup via afterEach.
  *
  * Decisions: D-06 (unique name), D-07 (afterEach cleanup), D-08 (shared helper)
- * VFS: OPFSAdaptiveVFS on the Asyncify build by default — do not pass `vfs`
- * or `build` unless the test is about VFS selection itself.
+ * VFS: OPFSAdaptiveVFS on the Asyncify build by default. Pass `vfs` when the
+ * test is about VFS selection, or when it needs a pool of more than one worker
+ * on every engine — OPFSAdaptiveVFS runs one where `readwrite-unsafe` is
+ * missing, so such tests use OPFSAnyContextVFS (spec 2026-09-13, §10).
  */
 export async function createTestClient(options: TestClientOptions = {}) {
   const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
