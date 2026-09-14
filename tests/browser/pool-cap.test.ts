@@ -112,8 +112,8 @@ describe('a pool capped by its environment', () => {
     await db.close();
   });
 
-  // T3. Falsifiable: declare singleConnectionWithout on OPFSAdaptiveVFS.
-  it('leaves OPFSAdaptiveVFS its whole pool: it rotates its handle', async () => {
+  // T3. Falsifiable: remove OPFSAdaptiveVFS's singleConnectionWithout — Firefox then keeps 4.
+  it('caps OPFSAdaptiveVFS too without readwrite-unsafe: a second worker would only wait its turn', async () => {
     const lost: number[] = [];
     const db = await createTestClient({
       vfs: 'OPFSAdaptiveVFS',
@@ -121,7 +121,7 @@ describe('a pool capped by its environment', () => {
       onWorkerLost: ({ index }) => lost.push(index),
     });
     await db.write('CREATE TABLE t (a)');
-    expect(db.poolSize).toBe(4);
+    expect(db.poolSize).toBe(CAPPED ? 1 : 4);
     expect(lost).toEqual([]);
     await db.close();
   });

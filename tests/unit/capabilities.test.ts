@@ -216,13 +216,18 @@ describe('singleConnectionWithout', () => {
     }
   });
 
-  // Falsifiable: declare it on OPFSAdaptiveVFS — that VFS rotates its handle
-  // and opens its whole pool without readwrite-unsafe (spec 2026-09-13, §6).
-  it('caps OPFSWriteAheadVFS and nothing else', () => {
+  // Falsifiable: remove OPFSAdaptiveVFS's declaration.
+  it('caps OPFSWriteAheadVFS and OPFSAdaptiveVFS, and nothing else', () => {
     const capped = Object.entries(VFS_CAPABILITIES)
       .filter(([, cap]) => cap.singleConnectionWithout.length > 0)
       .map(([name]) => name);
-    expect(capped).toEqual(['OPFSWriteAheadVFS']);
+    expect(capped).toEqual(['OPFSWriteAheadVFS', 'OPFSAdaptiveVFS']);
+  });
+
+  // Falsifiable: set OPFSCoopSyncVFS's maxPoolSize back to null (spec 2026-09-13, §10, D9).
+  it('caps OPFSCoopSyncVFS at one worker on every engine', () => {
+    expect(VFS_CAPABILITIES.OPFSCoopSyncVFS.maxPoolSize).toBe(1);
+    expect(VFS_CAPABILITIES.OPFSCoopSyncVFS.multiConnection).toBe(true);
   });
 });
 

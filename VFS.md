@@ -72,7 +72,7 @@ on its [VFS page](https://github.com/rhashimoto/wa-sqlite/tree/master/src/exampl
 |---|---|---|---|---|---|---|
 | [`OPFSWriteAheadVFS`](#opfswriteaheadvfs)<br>**(recommended)** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | [`OPFSAdaptiveVFS`](#opfsadaptivevfs)<br>**(recommended)** | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| [`OPFSCoopSyncVFS`](#opfscoopsyncvfs) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| [`OPFSCoopSyncVFS`](#opfscoopsyncvfs) | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
 | [`AccessHandlePoolVFS`](#accesshandlepoolvfs) | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
 | [`IDBBatchAtomicVFS`](#idbbatchatomicvfs) | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | [`IDBMirrorVFS`](#idbmirrorvfs) | ❌ | ✅ | ✅ | ❌ | ✅ | ❌ |
@@ -113,7 +113,7 @@ Bulk loading is what it is fastest at, on every engine measured.
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+<sup><a href="#reduced-mode">[reduced]</a></sup>, Safari 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>, Android 109+/?, iOS 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>
 
-**Pool size:** Any · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
+**Pool size:** Any, 1 without `readwrite-unsafe` · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
 
 <!-- END GENERATED OPFSAdaptiveVFS -->
 
@@ -130,7 +130,7 @@ several handles at once it takes that path instead, which is what it adapts to.
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+, Safari 15.4+/27+, Android 109+/?, iOS 15.4+/27+
 
-**Pool size:** Any · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
+**Pool size:** **1**<sup><a href="#fn-4">[4]</a></sup> · **Shared:** yes · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
 
 <!-- END GENERATED OPFSCoopSyncVFS -->
 
@@ -149,7 +149,7 @@ can take turns on them.
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+, Safari 15.4+/27+, Android 109+/?, iOS 15.4+/27+
 
-**Pool size:** **1**<sup><a href="#fn-4">[4]</a></sup> · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup> · **Default PRAGMAs:** `locking_mode=exclusive`, `journal_mode=wal`
+**Pool size:** **1**<sup><a href="#fn-5">[5]</a></sup> · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup> · **Default PRAGMAs:** `locking_mode=exclusive`, `journal_mode=wal`
 
 <!-- END GENERATED AccessHandlePoolVFS -->
 
@@ -200,7 +200,7 @@ engine. See [Concurrent reads](#concurrent-reads).
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
-**Pool size:** **1**<sup><a href="#fn-5">[5]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
+**Pool size:** **1**<sup><a href="#fn-6">[6]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
 
 <!-- END GENERATED IDBMirrorVFS -->
 
@@ -242,7 +242,7 @@ so it suits read-only or nearly read-only databases.
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
-**Pool size:** **1**<sup><a href="#fn-6">[6]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
+**Pool size:** **1**<sup><a href="#fn-7">[7]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
 
 <!-- END GENERATED MemoryVFS -->
 
@@ -258,7 +258,7 @@ performance, not as storage.
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
-**Pool size:** **1**<sup><a href="#fn-6">[6]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
+**Pool size:** **1**<sup><a href="#fn-7">[7]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
 
 <!-- END GENERATED MemoryAsyncVFS -->
 
@@ -353,12 +353,15 @@ seconds serializes every other read for its whole duration.
 <sub>**3.** **Whole database in RAM**, multiplied by `poolSize`.</sub>
 
 <a id="fn-4"></a>
-<sub>**4.** Pool size: 1 max — it cannot share access handles between connections.</sub>
+<sub>**4.** Pool size: 1 max — it rotates one exclusive access handle between connections, so another worker only waits its turn.</sub>
 
 <a id="fn-5"></a>
-<sub>**5.** Pool size: 1 max — its pages are mirrored per worker and commits propagate asynchronously, so a larger pool reads stale data or fails outright.</sub>
+<sub>**5.** Pool size: 1 max — it cannot share access handles between connections.</sub>
 
 <a id="fn-6"></a>
-<sub>**6.** Pool size: 1 max — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently.</sub>
+<sub>**6.** Pool size: 1 max — its pages are mirrored per worker and commits propagate asynchronously, so a larger pool reads stale data or fails outright.</sub>
+
+<a id="fn-7"></a>
+<sub>**7.** Pool size: 1 max — its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently.</sub>
 
 <!-- END GENERATED FOOTNOTES -->

@@ -1477,7 +1477,7 @@ export const createSQLiteClient = (
     scheduler.retire(index);
     if (closing || capAnnounced) return;
     capAnnounced = true;
-    const message = `${vfs} holds its database file exclusively without ${missing}: pool capped at 1 of ${poolSize}`;
+    const message = `${vfs} gains nothing from more than one worker without ${missing}: pool capped at 1 of ${poolSize}`;
     if (clientOptions.poolSize !== undefined) logger.always.warn(message);
     else logger.info(message);
   };

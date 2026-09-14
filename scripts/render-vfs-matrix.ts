@@ -463,19 +463,19 @@ const detailFor = (name: string, cap: VFSCapability): string => {
         ? 'Any'
         : `Any, 1 without ${cap.singleConnectionWithout.map((f) => `\`${f}\``).join(', ')}`
       : `**${cap.maxPoolSize}**${noteRef(`pool-${name}`)}`;
-  // No `Shared` line: an unbounded pool and sharing between connections are the
-  // same fact here, because a pool worker IS a connection. They are separate
-  // fields in `VFS_CAPABILITIES` and nothing in the type forces them together,
-  // so this asserts rather than assumes — a VFS that ever caps its pool for a
-  // reason unrelated to sharing would otherwise be described wrongly, silently.
-  if ((cap.maxPoolSize === null) !== cap.multiConnection) {
-    throw new Error(
-      'maxPoolSize and multiConnection have diverged: the per-VFS header drops' +
-        ' `Shared` because they agree. Render it again — see this guard.',
-    );
-  }
+  // A pool worker is a connection, so an unbounded pool and sharing between
+  // connections are usually one fact and the header states it once, as the pool
+  // size. They diverge where a pool is capped for another reason than sharing —
+  // OPFSCoopSyncVFS runs one worker because it rotates one handle, yet shares its
+  // database across tabs (spec 2026-09-13, §10, D11) — and only there does the
+  // header add a `Shared` fact.
+  const shared =
+    (cap.maxPoolSize === null) !== cap.multiConnection
+      ? `**Shared:** ${cap.multiConnection ? 'yes' : 'no'}`
+      : null;
   const facts = [
     `**Pool size:** ${pool}`,
+    ...(shared ? [shared] : []),
     `**RAM:** ${MEMORY_SHORT[cap.memoryModel]}${noteRef(`ram-${cap.memoryModel}`)}`,
   ];
   // Shown only when there are any: an empty "Default PRAGMAs: —" on six of the

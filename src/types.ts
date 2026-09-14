@@ -281,16 +281,15 @@ export type VFSCapability = {
    */
   readonly degradesWithout: readonly PlatformFeature[];
   /**
-   * Platform features without which this VFS holds its database file
-   * exclusively for a connection's whole life, so exactly ONE worker of a pool
-   * can open — the others fail at `xOpen` rather than wait.
-   *
-   * Not `degradesWithout`: `OPFSAdaptiveVFS` lacks `readwrite-unsafe` off
-   * Chromium too, but hands its handle over between connections and opens its
-   * whole pool. `OPFSWriteAheadVFS` keeps its main and write-ahead handles
-   * until close. Every feature listed here needs a worker-side probe in
-   * `src/worker/probes.ts`: the pool's surplus workers probe it before loading
-   * anything and decline instead of failing (spec 2026-09-13).
+   * Platform features without which a pool of more than one worker buys this
+   * VFS nothing, so it runs on one (spec 2026-09-13, §3 and §10). Either the
+   * VFS holds its database file exclusively for a connection's whole life and
+   * a second worker cannot open at all (`OPFSWriteAheadVFS`), or it rotates one
+   * exclusive access handle between connections and a second worker only waits
+   * its turn (`OPFSAdaptiveVFS` — measured 2026-09-14 on Firefox: a pool of one
+   * was faster at startup and on bursts of reads, and equal everywhere else).
+   * The pool's surplus workers probe the feature before loading anything and
+   * decline (`src/worker/probes.ts`); every feature listed needs a probe there.
    */
   readonly singleConnectionWithout: readonly PlatformFeature[];
   /**
@@ -397,15 +396,17 @@ export const VFS_CAPABILITIES = {
     layout: 'opfs-path',
     requires: ['opfs'],
     degradesWithout: ['readwrite-unsafe'],
-    singleConnectionWithout: [],
+    singleConnectionWithout: ['readwrite-unsafe'],
     extraFileSuffixes: [],
     exclusiveConnection: false,
     defaultPragmas: {},
   },
   OPFSCoopSyncVFS: {
     builds: ['sync', 'async', 'jspi'],
-    maxPoolSize: null,
-    poolLimitReason: null,
+    // Capped on every engine (spec 2026-09-13, §10, D9): a pool of one was faster at startup and on bursts of reads, equal elsewhere, on Chromium and Firefox (POOL-SIZE, 2026-09-14). The handle still rotates between clients and tabs, which is why the COOPSYNC-BUSY retry stays.
+    maxPoolSize: 1,
+    poolLimitReason:
+      'it rotates one exclusive access handle between connections, so another worker only waits its turn',
     multiConnection: true,
     persistent: true,
     memoryModel: 'page-cache',
