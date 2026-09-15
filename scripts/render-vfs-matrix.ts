@@ -306,8 +306,11 @@ const supportFor = (
 /** One sentence per build, rendered under its own heading so links can land there. */
 const BUILD_NOTE: Record<SQLiteBuild, string> = {
   sync: 'Plain synchronous WebAssembly. Needs nothing beyond baseline WASM, so it runs anywhere — but only VFS whose file operations are all synchronous can offer it.',
+  // The Safari paragraph is a measured observation (IDB-SIGNAL, 2026-09-14).
+  // It was first written by hand into VFS.md, where the next render erased it.
   async:
-    'Asyncify: the WASM stack is unwound and rewound around asynchronous file operations. Also needs nothing beyond baseline WASM. Every VFS here can run on it.',
+    'Asyncify: the WASM stack is unwound and rewound around asynchronous file operations. Also needs nothing beyond baseline WASM. Every VFS here can run on it.\n\n' +
+    '**On Safari it slows down as it works.** After a few statements of a second or more, a worker on this build runs several times slower — up to twenty times on Safari 26 — and stays slow; Chromium and Firefox do not. The [`jspi`](#build-jspi) build avoids it on Safari 27+. Safari 26 has no JSPI, so there a VFS without a `sync` build has no way around it.',
   jspi: 'JavaScript Promise Integration — the same asynchrony handled by the engine rather than by Asyncify. Opt-in, and no default uses it, so its narrower availability constrains nobody who does not ask for it.',
 };
 
