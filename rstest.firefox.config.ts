@@ -1,6 +1,9 @@
 import { withRslibConfig } from '@rstest/adapter-rslib';
-import { defineConfig } from '@rstest/core';
+import { defineConfig, type ProjectConfig } from '@rstest/core';
 import { pluginSilenceWorkerHmrLogs } from './rstest.config';
+import { targetLabel, targetsFromEnv } from './tests/target-projects.ts';
+
+const targets = targetsFromEnv(process.env.BSQ_TEST_TARGETS);
 
 /**
  * The Firefox half of the browser suite.
@@ -18,9 +21,10 @@ import { pluginSilenceWorkerHmrLogs } from './rstest.config';
  */
 export default defineConfig({
   extends: withRslibConfig(),
+  // One project per target, as in rstest.config.ts (spec 2026-09-15, A5).
   projects: [
-    {
-      name: 'firefox',
+    ...targets.map((target): ProjectConfig & { name: string } => ({
+      name: `firefox · ${targetLabel(target)}`,
       browser: {
         enabled: true,
         provider: 'playwright',
@@ -31,6 +35,9 @@ export default defineConfig({
       include: ['tests/browser/*.test.ts', 'tests/browser/firefox/**/*.test.ts'],
       exclude: ['**/worktrees/**'],
       testTimeout: 30000,
-    },
+      source: {
+        define: { __BSQ_TEST_TARGET__: JSON.stringify(target) },
+      },
+    })),
   ],
 });

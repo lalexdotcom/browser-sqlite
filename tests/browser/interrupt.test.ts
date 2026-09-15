@@ -9,7 +9,11 @@ import {
 describe('aborting a running statement', () => {
   it('frees the worker, so the next query does not wait it out', async () => {
     // poolSize 1: the next query MUST land on the worker that was interrupted.
-    const db = await createTestClient({ poolSize: 1, debug: true });
+    const db = await createTestClient({
+      poolSize: 1,
+      debug: true,
+      needs: ['interruptible'],
+    });
     try {
       // Slow prime: run the query to completion so the statement is cached and
       // the real abort run takes run(cached) — no macrotask boundary before
@@ -58,7 +62,11 @@ describe('aborting a running statement', () => {
   }, 90_000);
 
   it('still rejects immediately, without waiting for the worker', async () => {
-    const db = await createTestClient({ poolSize: 1, debug: true });
+    const db = await createTestClient({
+      poolSize: 1,
+      debug: true,
+      needs: ['interruptible'],
+    });
     try {
       // Fast-abort prime (same rationale as "frees the worker" above):
       // ensure the real abort run takes run(cached) so the step starts.
@@ -94,7 +102,11 @@ describe('aborting a running statement', () => {
   });
 
   it('leaves nothing broken behind', async () => {
-    const db = await createTestClient({ poolSize: 1, debug: true });
+    const db = await createTestClient({
+      poolSize: 1,
+      debug: true,
+      needs: ['interruptible'],
+    });
     try {
       await db.write('CREATE TABLE t (a INTEGER)');
       // Fast-abort prime so the real abort run takes run(cached) and the step

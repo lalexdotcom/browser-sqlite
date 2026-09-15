@@ -1,5 +1,8 @@
 import { withRslibConfig } from '@rstest/adapter-rslib';
-import { defineConfig } from '@rstest/core';
+import { defineConfig, type ProjectConfig } from '@rstest/core';
+import { targetLabel, targetsFromEnv } from './tests/target-projects.ts';
+
+const targets = targetsFromEnv(process.env.BSQ_TEST_TARGETS);
 
 // Suppresses "window is not defined" noise from rsbuild's HMR client running
 // inside Web Worker bundles. The HMR client calls window.location.reload()
@@ -56,7 +59,7 @@ export default defineConfig({
       // so anything approaching this bound is a deadlock, not slowness.
       testTimeout: 10000,
     },
-    // ONE browser project here, and a second engine in rstest.firefox.config.ts
+    // ONE browser engine here, and a second engine in rstest.firefox.config.ts
     // rather than beside this one. Not a preference: rstest 0.11.8 refuses two
     // browser-enabled projects with different engines in a single run —
     // "All browser-enabled projects in one run must share
@@ -76,8 +79,15 @@ export default defineConfig({
     // The shared glob is NON-recursive on purpose. `tests/browser/**` would
     // make this project pick up `tests/browser/firefox/`, which is the whole
     // thing this layout exists to prevent.
-    {
-      name: 'chromium',
+    //
+    // One project per TARGET, a (vfs, build) pair, each injecting its own as
+    // `__BSQ_TEST_TARGET__`: a test that names no VFS runs on it (spec
+    // 2026-09-15, A5). rstest does accept several browser projects of ONE
+    // engine differing by `source.define` — spiked 2026-09-15 (plan Task 7) —
+    // so both recommended pairs run in this one invocation. Unset,
+    // `BSQ_TEST_TARGETS` means those two; see tests/target-projects.ts.
+    ...targets.map((target): ProjectConfig & { name: string } => ({
+      name: `chromium · ${targetLabel(target)}`,
       browser: {
         enabled: true,
         provider: 'playwright',
@@ -88,6 +98,9 @@ export default defineConfig({
       include: ['tests/browser/*.test.ts', 'tests/browser/chromium/**/*.test.ts'],
       exclude: ['**/worktrees/**'],
       testTimeout: 30000,
-    },
+      source: {
+        define: { __BSQ_TEST_TARGET__: JSON.stringify(target) },
+      },
+    })),
   ],
 });
