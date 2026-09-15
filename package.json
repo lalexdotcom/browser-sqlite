@@ -77,7 +77,7 @@
 		"playwright": "1.62.1",
 		"simple-git-hooks": "^2.13.1",
 		"typescript": "^7.0.2",
-		"wa-sqlite": "github:rhashimoto/wa-sqlite#v1.1.2"
+		"wa-sqlite": "github:rhashimoto/wa-sqlite#07ad48cf2f682d279f9cd69818cc1d39b2ccda86"
 	},
 	"lint-staged": {
 		"*.{js,ts,jsx,tsx,mjs,cjs}": [
@@ -94,7 +94,7 @@
 			"simple-git-hooks"
 		],
 		"patchedDependencies": {
-			"wa-sqlite@1.1.1": "patches/wa-sqlite@1.1.1.patch"
+			"wa-sqlite@1.1.2": "patches/wa-sqlite@1.1.2.patch"
 		}
 	},
 	"private": false,
