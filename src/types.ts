@@ -498,7 +498,7 @@ export const VFS_CAPABILITIES = {
     // Two clients on one database break each other silently (AHP-2TAB,
     // 2026-09-01): the second resolves SELECT 1 but cannot read any table. An
     // origin-wide connection lock ensures the second client fails fast with
-    // BUSY instead of appearing healthy and being useless.
+    // DATABASE_IN_USE instead of appearing healthy and being useless.
     exclusiveConnection: true,
     exclusiveConnectionWithout: [],
     // The one VFS that clears the bar for a default. Upstream: "there is no

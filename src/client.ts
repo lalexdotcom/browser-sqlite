@@ -494,8 +494,9 @@ export const createSQLiteClient = (
     (() => {
       // onFirstSettle and onGateOpen are callbacks that fire asynchronously
       // (after all const declarations in this scope have been initialised), so
-      // references to spawn / failClient / supervisor / emitWorkerLost are
-      // safe even though those names appear later in the source.
+      // references to spawn / failClient / supervisor / emitWorkerLost /
+      // probeSettled are safe even though those names appear later in the
+      // source.
       const onFirstSettle = (result: {
         openedCount: number;
         failedIndices: number[];
@@ -556,6 +557,9 @@ export const createSQLiteClient = (
           const verdict = supervisor.report(index, 'lost');
           // Honour a 'fail-client' verdict from the supervisor.
           if (verdict === 'fail-client') failClientError ??= error;
+          // Worker 0 lost before it answered the probe: whatever is left of
+          // the pool, no answer will come (see `probeSettled`).
+          else if (index === 0 && !probeSettled) failClientError ??= error;
         }
         // Emit all losses BEFORE possibly failing the client — the contract
         // requires the callback to fire before the client is failed.
@@ -637,10 +641,12 @@ export const createSQLiteClient = (
   const heldWriteLocks = new Set<() => void>();
 
   /**
-   * The release function for the origin-wide exclusive connection lock, held
-   * for this client's lifetime when `capability.exclusiveConnection` is true.
-   * `undefined` when the lock was unavailable (another client holds it) or
-   * when this VFS does not require exclusive connections.
+   * The release function for `bsq:conn`, held for this client's lifetime on
+   * every VFS that shares storage — exclusive or shared, decided at
+   * construction or after worker 0's probe (spec 2026-09-15, §3.2). Its
+   * absence does not mean refusal: it is also absent before the lock is
+   * decided, on the memory VFS, and on a client that failed or closed before
+   * its lock was decided. A refusal is `connRefused` (A3).
    */
   let connRelease: (() => void) | undefined;
   /**
@@ -674,7 +680,20 @@ export const createSQLiteClient = (
       ? Promise.withResolvers<PlatformFeature | null | undefined>()
       : undefined;
   let sharedProbe: PromiseWithResolvers<PlatformFeature | null> | undefined;
+  /**
+   * False while an answer is owed: until `probeAnswer` settles — with a worker
+   * 0's answer, this client's or the realm's memo (A1), or as "none" by
+   * `failClient` / `close()`. While it is false, losing slot 0 loses the only
+   * worker that will ever answer: nothing would take the connection lock and
+   * every method would wait on it for ever, however many workers are left, so
+   * the client fails with that slot's error instead (A3). True from the start
+   * where no answer is owed.
+   */
+  let probeSettled = probeAnswer === undefined;
   if (probeAnswer) {
+    void probeAnswer.promise.then(() => {
+      probeSettled = true;
+    });
     const key = capability.exclusiveConnectionWithout.join(',');
     sharedProbe = exclusivityProbes.get(key);
     if (!sharedProbe) {
@@ -1023,11 +1042,12 @@ export const createSQLiteClient = (
    * mean "stop and do something else".
    *
    * A `BUSY` SQLite reported carries `sqliteCode` (5 or 6); a `BUSY` this
-   * library mints carries none. The `exclusiveConnection` guard above and
-   * `deleteDatabase` both mint their `BUSY` without one, deliberately: those
-   * say "close the other client", and retrying them would delay exactly the
-   * fast failure they exist to produce. Since final review, `sqliteCode` also
-   * rides on `STATEMENT_FAILED` and `WORKER_CRASHED`, so the numeric code
+   * library mints carries none. The connection guard above mints
+   * `DATABASE_IN_USE` without one, and so does `deleteDatabase`, with a `BUSY`
+   * of its own beside it — deliberately: those say "close the other client",
+   * and retrying them would delay exactly the fast failure they exist to
+   * produce. Since final review, `sqliteCode` also rides on
+   * `STATEMENT_FAILED` and `WORKER_CRASHED`, so the numeric code
    * alone no longer tells a retryable `BUSY` apart from those — the
    * `code === 'BUSY'` check is what does that; the presence of a numeric code
    * is what tells SQLite's `BUSY` apart from this library's own.
@@ -1481,7 +1501,8 @@ export const createSQLiteClient = (
       createQueryDebugState: clientDebug?.createQueryDebugState,
       logger,
       abortSlots,
-      // Slot 0 never probes and always opens; only surplus workers may decline.
+      // Slot 0 never declines; only surplus workers may. Where a probe is owed,
+      // slot 0 probes instead (`probeFirst` below) and opens once told to.
       declineWithout:
         index > 0 && capability.singleConnectionWithout.length > 0
           ? capability.singleConnectionWithout
@@ -1611,8 +1632,10 @@ export const createSQLiteClient = (
       logger.warn(`restarting worker ${index + 1}`);
       void spawn(index);
     } else if (decision === 'lost') {
-      // Slot permanently lost, but the pool still has workers.
+      // Slot permanently lost, but the pool still has workers — none of which
+      // can stand in for worker 0 before it has answered (`probeSettled`).
       emitWorkerLost(index, error);
+      if (index === 0 && !probeSettled) failClient(error);
     } else if (decision === 'fail-client') {
       // Last worker gone — emit loss (with live=0) before failing the client.
       emitWorkerLost(index, error);

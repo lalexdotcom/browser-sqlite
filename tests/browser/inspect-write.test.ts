@@ -17,8 +17,9 @@ describe('inspectDatabase write', () => {
 
   // One VFS: two clients must share one database; OPFSAdaptiveVFS shares it
   // on every engine (see SHARED_VFS). Measured: on Firefox's
-  // OPFSWriteAheadVFS/sync target, the second client's construction throws
-  // DATABASE_IN_USE (no `readwrite-unsafe`), so this cannot follow the target.
+  // OPFSWriteAheadVFS/sync target, the second client's first query rejects
+  // with DATABASE_IN_USE (no `readwrite-unsafe`), so this cannot follow the
+  // target.
   it('names the writing tab and counts who waits', async () => {
     const file = 'writing.db';
     const vfs = 'OPFSAdaptiveVFS' as const;

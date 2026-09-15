@@ -239,7 +239,12 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
     }
   }, 120_000);
 
-  // Falsifiable: as T3.
+  // No falsifier known. T3's was run here on 2026-09-15 and refuted: with
+  // `needs` dropped, on the uninterruptible OPFSWriteAheadVFS/sync pair, T4
+  // stayed green on both Chromium projects. Its `took` bound measures how fast
+  // the transaction rejects against its own 150 ms timeout, not whether the
+  // background write was cut. `needs: ['interruptible']` stays: the subject is
+  // a build that can cut a step.
   it("cuts an abandoned write when the transaction's own timeout expires (T4)", async () => {
     const db = await setUp({ needs: ['interruptible'] });
     try {

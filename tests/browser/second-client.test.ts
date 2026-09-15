@@ -7,7 +7,17 @@ import {
   type SQLiteVFS,
   VFS_CAPABILITIES,
 } from '../../src/types';
-import { ALL_VFS, missingHere } from '../conformance/helpers';
+import {
+  ALL_VFS,
+  AVAILABLE_FEATURES,
+  missingHere,
+} from '../conformance/helpers';
+import {
+  interceptWorkers,
+  killSilently,
+  sleep,
+  type WorkerRecord,
+} from './helpers';
 import { secondClientOutcome } from './helpers/vfs-contract';
 
 /**
@@ -60,6 +70,74 @@ const oneDatabase = (vfs: SQLiteVFS, build: SQLiteBuild) => {
   return { file, open, losses };
 };
 
+describe('a client whose worker 0 is lost before it answers the probe', () => {
+  // Spec 2026-09-15, A3: every method settles. Worker 0 is terminated before
+  // its first message and then dies, in the first round and in the retry, so
+  // it never posts `probed`. On Chromium worker 2 has `readwrite-unsafe`,
+  // does not decline and opens, so the pool is not empty — yet no answer
+  // comes, nothing takes `bsq:conn`, and every method waited on it for ever.
+  // On Firefox worker 2 declines, the pool empties and the client failed
+  // already; the assertion is the same on both.
+  //
+  // First in this file on purpose: the answer is memoised per realm (A1) and
+  // each test file runs in a fresh one. Once an OPFSWriteAheadVFS client here
+  // has had its answer, a new client gets its own at construction and this
+  // test cannot see the hang.
+  //
+  // Falsifier run 2026-09-15: deleting the `index === 0 && !probeSettled`
+  // line of `onGateOpen` (src/client.ts) turns this red on both Chromium
+  // projects — the query is still waiting at the bound.
+  it("fails the client with that worker's error rather than hanging", async () => {
+    // One VFS: the subject is the probe that only this VFS's exclusiveConnectionWithout triggers.
+    const vfs = 'OPFSWriteAheadVFS' as const;
+    const file = `second-client-${crypto.randomUUID()}`;
+    const LOST = 'worker 0 lost before it answered the probe';
+    // A bound on a hang, not a timing claim.
+    const LOST_WITHIN = 10_000;
+    const records = interceptWorkers();
+    const record = records.push.bind(records);
+    // Every worker told to probe is slot 0. interceptWorkers pushes a record
+    // from inside the Worker constructor, before the client posts `open`, so
+    // the wrapper below sees that first message.
+    records.push = (...added: WorkerRecord[]) => {
+      for (const { worker } of added) {
+        const post = worker.postMessage.bind(worker) as (
+          m: unknown,
+          ...r: unknown[]
+        ) => void;
+        worker.postMessage = (message: unknown, ...rest: unknown[]) => {
+          if ((message as { probeFirst?: unknown }).probeFirst === undefined) {
+            post(message, ...rest);
+            return;
+          }
+          killSilently(worker);
+          setTimeout(() => {
+            worker.dispatchEvent(new ErrorEvent('error', { message: LOST }));
+          }, 0);
+        };
+      }
+      return record(...added);
+    };
+    const db = createSQLiteClient(file, { vfs, poolSize: 2 });
+    onTestFinished(async () => {
+      await db.close().catch(() => {});
+      await deleteDatabase(file, { vfs }).catch(() => {});
+    });
+    const outcome = await Promise.race([
+      db.read('SELECT 1').then(
+        () => 'resolved',
+        (e: unknown) => e,
+      ),
+      sleep(LOST_WITHIN).then(() => 'still waiting'),
+    ]);
+    expect(outcome).toBeInstanceOf(SQLiteError);
+    expect(outcome).toMatchObject({
+      code: 'WORKER_CRASHED',
+      message: expect.stringContaining(LOST),
+    });
+  });
+});
+
 for (const vfs of ALL_VFS) {
   const outcome = secondClientOutcome(vfs);
   describe(`${vfs}: a second client is ${outcome}`, () => {
@@ -103,7 +181,22 @@ for (const vfs of ALL_VFS) {
               (e: unknown) => e,
             );
             expect(refusal).toBeInstanceOf(SQLiteError);
-            expect((refusal as SQLiteError).code).toBe('DATABASE_IN_USE');
+            const { code, message, sqliteCode } = refusal as SQLiteError;
+            expect(code).toBe('DATABASE_IN_USE');
+            // Spec §3.2, step 4: the error names the VFS and — where a feature
+            // this browser lacks is what makes the VFS exclusive — that
+            // feature. It carries no `sqliteCode`, so `readWithRetry` does
+            // not act on it.
+            expect(message).toContain(vfs);
+            const lacking = VFS_CAPABILITIES[
+              vfs
+            ].exclusiveConnectionWithout.find(
+              (f) => !AVAILABLE_FEATURES.has(f),
+            );
+            if (lacking !== undefined) {
+              expect(message).toContain(`without ${lacking}`);
+            }
+            expect(sqliteCode).toBeUndefined();
             expect(performance.now() - started).toBeLessThan(REFUSED_WITHIN);
             // The first client is untouched by the refusal.
             await a.write('INSERT INTO t VALUES (2)');
@@ -145,8 +238,11 @@ describe('a client closed before worker 0 has answered', () => {
   // `open`, which posts `probed`, before it reads `close`, and once the
   // realm's memo is settled the answer comes at construction. And `close()`
   // awaits `connLockPromise` before it releases, so a lock taken while
-  // closing is gone before `close()` resolves. This test proves the positive
-  // path only; neither guard has an observed falsifier in it.
+  // closing is gone before `close()` resolves. Neither client-side guard has
+  // an observed falsifier in it. Its one observed falsifier is on the worker
+  // side (Task 4 review, 2026-09-15): deleting the waiting-`close` branch of
+  // `src/worker/worker.ts` (`case 'close'` while `proceedGate` is set) makes
+  // this test time out.
   it('closes promptly, holds no lock, and leaves the database to the next client', async () => {
     const vfs = 'OPFSWriteAheadVFS' as const;
     const file = `second-client-${crypto.randomUUID()}`;
