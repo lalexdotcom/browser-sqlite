@@ -116,41 +116,59 @@ says Firefox 153+, Safari 27+); `VFS.md`; a CHANGELOG entry, the default changin
 consumer who passes one `.wasm` URL without `build`. **Measure first:** `OPFSAdaptiveVFS` on `jspi`
 on Safari 27, the pair whose default would change for the most consumers.
 
-## `OPFSWriteAheadVFS` refuses a second client off Chromium, and no test opens two clients per VFS (user, 2026-09-15)
+## The rstest/Firefox silent hang — priority, it threatens CI (2026-09-15)
 
-Found by the multi-VFS probe of the CoopSync hand-over work (COOPSYNC-HANDOVER, `mem:measurements`):
-on Firefox, a second `OPFSWriteAheadVFS` client on a database another client holds open fails
-**every** query with `WORKER_CRASHED`, `sqliteCode` 14, `sqlite3_open_v2: NoModificationAllowedError`
-— 20/20 attempts in each of five shapes. Chromium, which has `readwrite-unsafe`: 0/20. It follows
-from what `mem:vfs` already says — without `readwrite-unsafe` this VFS keeps its handles for a
-connection's life, so one connection opens — but the 2026-09-14 pool cap drew the consequence inside
-one client only, and `VFS.md` states it as a pool size, never as "a second tab is refused". It is one
-of the two recommended VFS. **Not measured:** Safari; whether the second client recovers once the
-first closes; what the first client sees.
+Three sightings in ~15 full Firefox runs in one afternoon: the build completes, then nothing — no output,
+Firefox content processes at 0 % CPU, machine idle. The per-test timeout is 30 s, so the hang is OUTSIDE a
+test body (cleanup, `onTestFinished`, a file transition) — **not established**. The first sighting was on
+the untouched tree (`e5d0152`), so it predates the second-client branch; two target projects per engine
+make it likelier. `pnpm test:matrix` bounds each run and reports the cell as timed out; `pnpm test` does
+not, so a hook or a CI run can sit for ever. To chase it: a single-file Firefox run under the sixteen busy
+loops (ABANDON-WEDGE's method), and rstest's own reporter rather than the agent one.
 
-**Why nothing caught it, in rc.5 of all releases — the one that ships multi-client and multi-tab
-coordination.** Every conformance invariant runs one client per database: the two Firefox skips
-through `oneWorkerHere` (invariants 3 and 6) are pools inside one client, not a second client. In
-`tests/browser/`, no test opens a second `OPFSWriteAheadVFS` client. **The one test that met the
-situation pinned it as correct:** `pool-cap.test.ts` T5 has a raw worker hold the file, then asserts
-that an `OPFSWriteAheadVFS` client fails with `WORKER_CRASHED` — its subject is the error message, and
-the refusal itself went in as the expected outcome.
+## What the full matrix found, and nobody has triaged (2026-09-15)
 
-**Asked by the user: tests that check it systematically, on Chromium and Firefox** — two clients on
-one database for every VFS in `VFS_CAPABILITIES`, both constructed and both issuing queries, asserting
-what each VFS is meant to give a second client (it serves; it waits its turn; or it is refused fast
-with a documented code, as `exclusiveConnection` does for `AccessHandlePoolVFS`), so that a refusal
-cannot pass unseen again. Reliability by the triage rule, so rc.5. What `OPFSWriteAheadVFS` should do
-with a second client off Chromium is a design question those tests will force; it is not decided.
+Numbers and grouping in `mem:measurements`, MATRIX-1. Open work, in the order that costs least:
 
-**The tests to parametrize first:** `multi-client.test.ts` (6 tests) and `cross-tab.test.ts` (4) —
-the whole multi-client and cross-tab coverage of rc.5 — run on `OPFSAdaptiveVFS` alone. A static count
-on 2026-09-15 (`.scratchpad/vfs-coverage.mjs`) found ~150 browser tests in 29 files on one VFS, mostly
-`createTestClient`'s default, and only the conformance invariants, `vfs.test.ts` and `builds.test.ts`
-looping over every VFS — one client each. Most single-VFS tests exercise library logic the VFS does
-not touch; what needs every VFS is the tests whose subject depends on it: multi-client, cross-tab,
-locks, barrier, handle transfer. **The next session is for this (user, 2026-09-15): run those tests on
-every VFS offered, the two recommended first.**
+- **A test-infrastructure defect:** `createTestClient` never closes its client and removes OPFS entries by
+  name, which frees no slot in `AccessHandlePoolVFS`'s pool — ~40 `WORKER_CRASHED` per cell there come
+  from the previous test's client still holding the database.
+- **Three probable product defects:** `IDBBatchAtomicVFS` hangs on an abandoned write through `tx.first()`
+  inside a transaction (both engines); `IDBMirrorVFS` fails 11 tests with `database disk image is
+  malformed`; `OPFSCoopSyncVFS` answers `DATABASE_NOT_FOUND` to one `deleteDatabase` of a database the
+  test created. Each needs a diagnosis before a fix, as `output()` did.
+- **Tests that assume what they do not declare:** a pool of two workers, shared storage, persistence, a
+  raw OPFS file. The `Need` vocabulary would grow by `shared-storage`, `persistent` and `opfs-file` — the
+  list grows by decision, and the user has not taken it.
+
+## Mixing VFS of the `opfs-path` family on one database (2026-09-15)
+
+Measured while the second-client guard was built: on Chromium an `OPFSAdaptiveVFS` client beside a LIVE
+`OPFSWriteAheadVFS` client opens and reads an **empty** database (`no such table`) — WriteAhead's writes
+live in its own `-wa0`/`-wa1` files; on Firefox it waits while WriteAhead holds `bsq:conn` exclusively,
+then gets `WORKER_CRASHED` once that client closes. **Not measured:** the successive shape (WriteAhead
+writes, closes, another VFS reopens), where the same write-ahead files are the reason to fear a stale
+read. CROSS-VFS (2026-09-02) already showed deletion through any member destroys the others' data.
+
+**The user's idea, on the table:** a short per-VFS prefix in the file name, which would make "one database,
+one VFS" true by construction, as it already is for the `idb-store` and `opfs-pool` families. Its own
+branch: the migration of existing databases is the design's core (rc.4 is published under `latest`), and
+the prefix spends part of wa-sqlite's 56-character path budget.
+
+## Smaller things this branch left open (2026-09-15)
+
+- A **refused client still appears in `inspectDatabase().clients`** until it is closed —
+  `AccessHandlePoolVFS` behaved that way before the branch too.
+- **Interrupt latency differs per pair:** `OPFSWriteAheadVFS/async` cuts an abandoned write at ≈0.6 of its
+  natural length on Chromium where `OPFSAdaptiveVFS/async` cuts below 0.5. `tx-savepoint` T3/T4's bound was
+  widened to `natural * 0.8` for it; nobody has measured the others.
+- **`handleDeath`'s guard for a slot-0 loss before the probe has no test** — no path was found that reaches
+  it with the probe unanswered; it is defensive (`a0373c0`).
+- **Three tests of `multi-client.test.ts` carry no falsifier** (their claims were run and refuted): "never
+  refuses a read-only transaction opened under a writer", "gives back a usable client after a transaction
+  is aborted mid-contention", "commits at most one more batch after a bulkWrite is aborted". Their comments
+  now say what was tried. Whether to find a real falsifier or delete them is the user's call.
+
 
 ## Three browser tests guard less than their comments said (2026-09-14)
 

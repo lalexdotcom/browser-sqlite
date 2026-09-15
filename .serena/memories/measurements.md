@@ -2328,67 +2328,58 @@ be less than 2000`. `sync` without isolation keeps its documented limitation;
 `interrupt.test.ts` pins it on purpose. **Firefox runs this recursive CTE four to five times
 slower than Chromium** — a bound calibrated on Chromium is a bound Firefox may not meet.
 
-## COOPSYNC-HANDOVER — a re-prepare inside one `step` handed the handle away, 2026-09-15, both engines
+\1
 
-**Method.** Throwaway probe `tests/browser/coopsync-write-probe.test.ts` (every version saved in
-`.scratchpad/coopsync-write-busy/`) and a temporary lock trace in `src/worker/worker.ts` (saved as
-`probe-worker.patch`) that posts, on a `BroadcastChannel`, `jLock`/`jUnlock` with the VFS's handle
-state before and after, `vfs.log`, and every `step`/`prepare` with `SQLITE_STMTSTATUS_REPREPARE`. Two
-clients per attempt on a fresh file, batches of 8 mixed operations, 20 attempts per scenario, raw
-outputs beside the probe. Scenarios: `together` (both clients built before A's `CREATE TABLE`),
-`together-clean` (the same after purging orphaned `.ahp-*` directories), `together-warm` (then one
-sequential B write and A read), `sequential` (B built after the `CREATE TABLE`), `foreign-ddl`,
-`foreign-ddl-writes` (B runs a `CREATE TABLE`, then A writes while B reads). Default build unless
-stated. **The rates below were taken with the trace on**, which shifts timing (`mem:lessons`).
+## SECOND-CLIENT — what a second client got before the guard, 2026-09-15, n=10 per build per shape
 
-**The mechanism, read off the trace.** A's barrier statement was prepared before A's own `CREATE
-TABLE`. Its first run after B's first write: `jLock` finds no handle, queues the request, returns
-BUSY and leaves `isFileLocked` true; B's request arrives and the single-shot listener marks the handle
-wanted before A holds it; `retry()`'s second try locks; the schema cookie differs, SQLite re-prepares
-inside the same `step`: `jUnlock(NONE)` hands the handle to B, the relock returns BUSY, no try left.
-`reprepare` went 0→1 on every failing step, 0→0 where the re-prepare itself failed.
+**Method.** Throwaway probe (`.scratchpad/second-client-2026-09-15/second-client-probe.test.ts`, kept there):
+two clients on one database, `openTimeout: 5000`, every declared build, two shapes — `together` (both
+built before either queries) and `after` (B built once A has written). Chromium 151 / Firefox 154.
 
-| `OPFSCoopSyncVFS`, unpatched | Chromium | Firefox |
-|---|---|---|
-| `together` — a write fails with `BUSY` | 4-5 of 20 (plus 1-2 `NotFound`, below) | 15 of 20 |
-| `together-warm` | 0 `BUSY` | 0 |
-| `sequential` | 0 at the page; 1-2 barrier `BUSY` absorbed by `readWithRetry` | 0; 18-20 absorbed |
-| `foreign-ddl` | 0; 8 absorbed | 0; 32 absorbed |
-| `foreign-ddl-writes` — a write fails | 0 of 20 | 17 and 18 of 20 |
+- **Chromium: both clients work**, 60/60 rows, every build.
+- **Firefox, `after`:** B fails every query with `WORKER_CRASHED`, 10/10 per build; it never recovers once
+  A closes; a NEW client opens 10/10.
+- **Firefox, `together`: the FIRST client fails** in 6/10 (`sync`), 3/10 (`async`), 4/10 (`jspi`) — the
+  handle race picks either side, as AHP-2TAB did. This is what the per-realm memo (spec A1) removes.
+- **Open latency** (`createSQLiteClient` → resolved `SELECT 1`, n=20, median): Chromium 58 ms before the
+  guard, 55 after; Firefox 69 before, 63 after. The guard costs no measurable time.
 
-**No other VFS produced a SQLite-reported `BUSY`** in any scenario on either engine —
-`OPFSAdaptiveVFS`, `OPFSWriteAheadVFS`, `OPFSAnyContextVFS`, `IDBBatchAtomicVFS`, `IDBMirrorVFS`,
-0/20 each with zero worker-side throws. **`OPFSWriteAheadVFS` on Firefox refuses the second client
-instead**: every query `WORKER_CRASHED`, `sqliteCode` 14, `sqlite3_open_v2: NoModificationAllowedError`,
-20/20 in each of five scenarios; Chromium 0/20 (`mem:follow-ups`).
+## BEGIN-DEFERRED — `OPFSWriteAheadVFS` refuses a deferred write transaction, 2026-09-15, both engines
 
-| patch | `sync`, `async` | `jspi` |
-|---|---|---|
-| hand-over in a **microtask** | 0 at the page, 0 worker `BUSY`, both engines | Chromium 1/20 `together`, 1/20 `together-clean`; **Firefox 13/20, 16/20, 9/20 (`foreign-ddl-writes`), 18/20 on a trace run** |
-| hand-over in a **task** (`setTimeout`) | 0 | 0 |
+**Method.** Four throwaway probes (`.scratchpad/second-client-2026-09-15/output-writeahead-probe{,2,3,4}.test.ts`),
+fresh database per case.
 
-With the task, **720 attempts — 3 builds × 2 engines × 6 scenarios × 20 — saw no `BUSY` at the page
-or in a worker**, reads included. The `jspi` trace showed the microtask releasing the handle between
-the inner `jUnlock` and the relock of one `step`: wa-sqlite wraps every VFS import in
-`WebAssembly.Suspending` on that build. Scenario durations on `sync`, unpatched / microtask / task,
-agreed within ±0.3 s — the only cost signal taken, and not a hand-over latency.
+- A transaction whose first statement READS, or writes nothing (`DROP TABLE IF EXISTS <missing>`), and
+  then writes: `STATEMENT_FAILED`, extended code **778** (`IOERR_WRITE`) — **3850** (`IOERR_LOCK`) on an
+  empty file — and **every later statement on that client fails too**, reads included.
+- A single-statement transaction (insert, create, drop, rename, create index, select) passes on a fresh
+  database, on `sync`, `async` and `jspi`, both engines.
+- A raw `BEGIN` through `write()` reproduces it; `BEGIN IMMEDIATE` does not. `OPFSAdaptiveVFS` passes
+  every shape.
+- **Cause, read in the source** (`node_modules/wa-sqlite/src/examples/OPFSWriteAheadVFS.js:453-457`):
+  `jLock` throws `Write transaction cannot use BEGIN DEFERRED` when SQLite asks RESERVED without the
+  write hint, which SQLite only sends for `BEGIN IMMEDIATE`/`EXCLUSIVE` or an autocommit write.
+  **Not established:** why the connection stays broken afterwards.
+- `output()` hit it through its swap transaction's `DROP TABLE IF EXISTS <target>`, which writes nothing
+  when the target does not exist yet: 10 tests of `output.test.ts` plus one of `tx-write.test.ts`.
 
-**`NotFound` at startup** (`WORKER_CRASHED`, "A requested file or directory could not be found" on
-Chromium, "Entry not found" on Firefox): two workers deleting the same orphaned `.ahp-*` directory in
-`#initialize`. Natural rate on Chromium `together`: 2 of 19 attempts with orphans present, 0 of 20
-after purging them; Firefox 0 of 40. With 30 orphans created first it reproduces on every run.
+## MATRIX-1 — the whole browser suite on every (vfs, build) pair, 2026-09-15
 
-**Without the trace**, `coopsync-handover.test.ts`'s first test failed three single runs of three on
-Chromium (3-5 `BUSY` in 20 attempts), while one whole-file run happened to show none.
+**Method.** `pnpm test:matrix`: 22 declared pairs × {chromium, firefox, isolated}, one rstest project per
+pair, 66 runs, each bounded at 600 s. 3447 s total, this container. Raw reports under `.matrix/<run>/`.
 
-**In wa-sqlite's own suite** (`test/vfs_handover.js` on the fork branch; HeadlessChrome 151;
-`yarn web-test-runner test/OPFSCoopSyncVFS.test.js`): on its master VFS, **`BUSY` on 47 of 100 steps
-(default build) and 46 of 100 (Asyncify)**, `NotFoundError` on 9 of 10 starts on both, the file 66
-passed / 4 failed; with the fix, 70 passed; the whole suite 2 899 passed, 0 failed, 39.9 s. Its
-`jspi` builds are skipped: `TestContext.supportsJSPI()` builds a `WebAssembly.Function`, which Chrome
-151 lacks. Upstream CI run #392 on PR #347 (Chrome 129, both `yarn test` passes): green.
-
-**Falsifiers run the same day.** Mutating the vendored patch back to a microtask turns
-`coopsync-handover.test.ts`'s two `jspi` tests red on Firefox (28 `BUSY`), its `sync` tests staying
-green. And `coopsync-retry.test.ts` with `readWithRetry`'s catch removed stayed green 5 of 5 on
-Firefox, where it went red 3-4 of 5 before the patch: its falsifier died with the defect.
+- **Green on every column:** `OPFSWriteAheadVFS` (sync/async/jspi), `OPFSAdaptiveVFS` (async/jspi),
+  `OPFSAnyContextVFS` (async/jspi). The isolated column is green for all 22 pairs.
+- **Reds per cell (chromium/firefox):** `OPFSCoopSyncVFS` 12/12; `AccessHandlePoolVFS` ~99/~99;
+  `IDBBatchAtomicVFS` 4/4; `IDBMirrorVFS` 25/24, its firefox `async` cell **timed out** (the Firefox
+  hang); `MemoryVFS` and `MemoryAsyncVFS` 21/21-22.
+- **Most reds are test assumptions, not defects:** a test pinning `poolSize: 2` on a VFS capped at 1
+  (`INVALID_OPTION`, 5-11 per cell); tests needing shared or persistent storage (inspection refuses a
+  memory VFS by design); `statement-errors` writing a raw OPFS file against an IndexedDB VFS;
+  `AccessHandlePoolVFS`'s `locking_mode=exclusive` default against a test expecting `normal`. On
+  `AccessHandlePoolVFS`, ~40 `WORKER_CRASHED` come from a previous test's client still being open:
+  `createTestClient` closes no client, and removing an OPFS entry by name frees no slot there.
+- **Probable defects, not triaged:** `IDBBatchAtomicVFS` — an abandoned write through `tx.first()` inside
+  a transaction HANGS (30 s and 60 s test timeouts, both engines); `IDBMirrorVFS` — 11 tests fail with
+  `database disk image is malformed`; `OPFSCoopSyncVFS` — one `deleteDatabase` answers
+  `DATABASE_NOT_FOUND` for a database the test created.

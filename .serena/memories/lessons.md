@@ -868,10 +868,28 @@ never saw (`mem:follow-ups`), while its multi-client and cross-tab suites ran on
 **When a test asserts a failure, ask whether the failure is the contract or the defect — and a
 promise made across VFS is tested across VFS.**
 
-## A trace changes the rate it measures — 2026-09-15
+\1
 
-The CoopSync probe's lock trace posts a message at every `jLock`; under it Chromium failed 4-5
-attempts in 20. The bare test failed three single runs of three, yet one whole-file run showed no
-`BUSY` at all. **Report a rate taken under instrumentation as such.** The reproduction that settles
-it is the one without the trace — and the one upstream needed came from its own suite, where the bare
-code failed 47 steps in 100.
+## A suite pinned to one VFS hides every defect in the VFS it does not run — 2026-09-15
+
+Running the whole browser suite on the SECOND recommended VFS found, in one afternoon: `output()` broken on
+`OPFSWriteAheadVFS` (a deferred `BEGIN` that VFS refuses by design, leaving the connection unusable), a
+second client that could break the FIRST one, and ~200 further failures across the other seven VFS. Those
+tests had been green for months. **What made it cheap was making the VFS a runtime target rather than a
+literal in each file**: one mechanism, one command per pair, and a test declares what it needs
+(`two-workers`, `interruptible`) instead of naming a VFS.
+
+## A subagent handed a 16-file triage reads for fifteen minutes before it writes anything — 2026-09-15
+
+Three batches behaved identically: 10-18 minutes of reading, no edit, no report. What fixed it was one line
+in the brief — *work file by file; write your first table row within ten minutes* — plus a controller
+message when the ledger showed no edit after ten. **Split a batch before dispatching it, and give the first
+artifact a deadline.** A monitor that counts the report's rows, not only the modified files, shows the
+difference between thinking and stalling.
+
+## A falsifier claim written months ago is a claim, not a fact — 2026-09-15
+
+Of six carried by `multi-client`/`cross-tab`, two reproduced everywhere, one only on some VFS, and three
+were refuted: the `src/` lines they named were redundant, so deleting them changed nothing observable.
+**Re-run a falsifier whenever its test starts running somewhere new** — and when it is refuted, say so in
+the comment rather than rewording it into something that sounds true.

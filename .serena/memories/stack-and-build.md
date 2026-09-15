@@ -87,6 +87,16 @@ engine switch is ever reintroduced.
 | `conformance` | `tests/conformance/` | On demand: every declared (vfs, build) pair through six invariants. `pnpm test:conformance` runs BOTH engines from two configs; no per-engine directory, deliberately — the value is the same invariants on both |
 | `consumer` | `scripts/consumer-smoke.mjs` | On demand: packs the tarball into **five** temp app dirs **outside** the repo and drives **dev and build for each** — Vite, Vite 6 (pinned), rsbuild, webpack, Parcel — plus no-bundler static serve and a bare-specifier assertion over `dist/**/*.js`. **24 stages.** `pnpm test:consumer` |
 
+**Since 2026-09-15 each browser config declares one project PER TARGET, not one project.** A target is a
+(vfs, build) pair, injected into the test code through `source.define` as `__BSQ_TEST_TARGET__`; a test
+that names no VFS runs on it, and `tests/browser/target.ts`'s `resolvePair` falls back to another pair
+when the test declares a `needs` the target cannot meet. `pnpm test` therefore runs
+`<engine> · OPFSWriteAheadVFS/sync` and `<engine> · OPFSAdaptiveVFS/async` per config —
+**project filters must be globs** (`--project 'chromium*'`), rstest's filter being anchored.
+`BSQ_TEST_TARGETS` overrides the list (`all`, or a comma list of `vfs/build`), and `pnpm test:matrix`
+(`scripts/test-matrix.mjs`) runs every declared pair on the three configs, bounding each run itself,
+keeping raw reports under `.matrix/<run>/` and exiting non-zero on any failed or timed-out cell.
+
 350 tests green on `main`, 2026-08-26. **No COOP/COEP headers anywhere** since the SAB was
 removed — if you find a reference to them in a config, it is stale.
 

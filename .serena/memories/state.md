@@ -43,13 +43,13 @@ on the last branch landed with a failing typecheck that no test run could show (
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **834 tests / 70 files** (unit + chromium, **4 skipped**), **353 / 47** (firefox, **1 skipped**), **7 / 3** (isolated) |
+| `pnpm test` | **THREE reports**, `status: pass` on each, re-measured 2026-09-15 on `fix/second-client` (`b3bf8e7`): **1554 tests / 74 files** (unit + the two chromium target projects, **8 skipped**), **1038 / 49** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects). The browser counts roughly doubled when each config gained one project per target (`0156d92`); the rest is this branch's new tests |
 | `pnpm exec rstest --project unit run` | 482 tests, 24 files |
-| `pnpm exec rstest --project chromium run` | 352 tests, 46 files, 4 skipped |
+| `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are now `chromium · <vfs>/<build>` and rstest's filter is anchored |
 | `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each: **Chromium 71 passed / 14 skipped, Firefox 67 / 18** — they differ by design since 2026-09-14 |
 | `pnpm test:consumer` | 24/24 stages |
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 127 files, 13 warnings, 1 info |
+| `pnpm lint` | 134 files, 13 warnings, 1 info (2026-09-15) |
 | `dependencies` in `package.json` | absent |
 
 **The browser skips are expected: 4 on Chromium, 1 on Firefox.** One, on both, is
@@ -87,13 +87,19 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 ## Decisions the user owes
 
-- **Whether the open reliability subjects precede rc.5.** One is open: `OPFSWriteAheadVFS`
-  refuses a second client off Chromium (found 2026-09-15, `mem:follow-ups`), and the user has said
-  what comes first — **the next session runs the multi-client and cross-tab tests on every VFS
-  offered, the two recommended first** — leaving what a second `OPFSWriteAheadVFS` client should get
-  to what those tests force. The CoopSync write BUSY was fixed and merged on 2026-09-15 (§ below);
-  the SQL error code lost at the worker boundary the same day; the Firefox `worker 1 lost`
-  observation became the pool-cap work, merged on 2026-09-14 (§ below).
+- **The second-client subject is CLOSED, on branch `fix/second-client` (2026-09-15).** What the user set
+  the session on — the multi-client and cross-tab tests on every VFS — grew into the branch that ships:
+  `exclusiveConnectionWithout` and the guard that answers a second `OPFSWriteAheadVFS` client with
+  `DATABASE_IN_USE` where the engine lacks `readwrite-unsafe` (it used to fail every query with
+  `WORKER_CRASHED`, and could break the FIRST client instead); `BEGIN IMMEDIATE` for write transactions,
+  which is what `OPFSWriteAheadVFS` requires and what `output()` was failing on; the second-client matrix
+  over every (vfs, build) pair; `multi-client`/`cross-tab` on every VFS that shares; and the whole browser
+  suite following an injected (vfs, build) target, with `pnpm test` covering both recommended pairs and
+  `pnpm test:matrix` covering all 22. Design and its amendments A1-A5:
+  `docs/superpowers/specs/2026-09-15-second-client-design.md`. **The merge is the user's call and had not
+  been given when this was written.** What the branch surfaced and did NOT fix is in `mem:follow-ups`:
+  the rstest/Firefox silent hang (priority), three probable defects the matrix found, a
+  `createTestClient` cleanup defect, and the tests that assume what they do not declare.
 
 **rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
 and both are now closed — the second by merge `eeabe06` on 2026-09-11.
