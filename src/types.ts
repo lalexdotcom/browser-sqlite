@@ -351,7 +351,7 @@ export type VFSCapability = {
    * client's lifetime.
    *
    * When `true`, `createSQLiteClient` acquires a `bsq:conn:…` Web Lock on first
-   * use. A second client that attempts to open the same database receives `BUSY`
+   * use. A second client that attempts to open the same database receives `DATABASE_IN_USE`
    * immediately on its first query instead of silently reading a frozen, broken
    * view. This field is the only thing standing between a consumer and an
    * unfalsifiable silent failure — `SELECT 1` and even
@@ -371,6 +371,23 @@ export type VFSCapability = {
    * The gate is by this declaration, not by VFS name.
    */
   readonly exclusiveConnection: boolean;
+  /**
+   * Platform features without which this VFS holds its database file
+   * exclusively for a connection's whole life, across the origin — so the
+   * client takes `bsq:conn` exclusively, as for `exclusiveConnection`, and a
+   * second client gets `DATABASE_IN_USE` (spec 2026-09-15).
+   *
+   * `OPFSWriteAheadVFS` without `readwrite-unsafe`: upstream's VFS requires the
+   * mode and keeps its three access handles for the connection's life, so
+   * nothing else can open the file — every query of a second client failed
+   * with WORKER_CRASHED on Firefox, 20/20 per shape (2026-09-15).
+   *
+   * The page cannot probe these features, so worker 0 probes them before
+   * opening (`src/worker/probes.ts`): every feature listed needs a probe there,
+   * and must also be in `singleConnectionWithout`, whose surplus workers
+   * decline before they touch the file.
+   */
+  readonly exclusiveConnectionWithout: readonly PlatformFeature[];
 };
 
 /**
@@ -409,6 +426,7 @@ export const VFS_CAPABILITIES = {
     extraFileSuffixes: ['-wa0', '-wa1'],
     yieldsDuringStatements: false,
     exclusiveConnection: false,
+    exclusiveConnectionWithout: ['readwrite-unsafe'],
     defaultPragmas: {},
   },
   OPFSAdaptiveVFS: {
@@ -426,6 +444,7 @@ export const VFS_CAPABILITIES = {
     extraFileSuffixes: [],
     yieldsDuringStatements: false,
     exclusiveConnection: false,
+    exclusiveConnectionWithout: [],
     defaultPragmas: {},
   },
   OPFSCoopSyncVFS: {
@@ -445,6 +464,7 @@ export const VFS_CAPABILITIES = {
     extraFileSuffixes: [],
     yieldsDuringStatements: false,
     exclusiveConnection: false,
+    exclusiveConnectionWithout: [],
     defaultPragmas: {},
   },
   AccessHandlePoolVFS: {
@@ -466,6 +486,7 @@ export const VFS_CAPABILITIES = {
     // origin-wide connection lock ensures the second client fails fast with
     // BUSY instead of appearing healthy and being useless.
     exclusiveConnection: true,
+    exclusiveConnectionWithout: [],
     // The one VFS that clears the bar for a default. Upstream: "there is no
     // drawback to using PRAGMA locking_mode=exclusive" here, because this VFS
     // does not allow multiple connections anyway — and exclusive locking is
@@ -492,6 +513,7 @@ export const VFS_CAPABILITIES = {
     extraFileSuffixes: [],
     yieldsDuringStatements: true,
     exclusiveConnection: false,
+    exclusiveConnectionWithout: [],
     defaultPragmas: {},
   },
   IDBMirrorVFS: {
@@ -528,6 +550,7 @@ export const VFS_CAPABILITIES = {
     // not isolation. Two clients share data over BroadcastChannel (measured
     // 2026-09-01, 3/3 both engines), so no exclusive lock is needed or correct.
     exclusiveConnection: false,
+    exclusiveConnectionWithout: [],
     defaultPragmas: {},
   },
   OPFSAnyContextVFS: {
@@ -545,6 +568,7 @@ export const VFS_CAPABILITIES = {
     extraFileSuffixes: [],
     yieldsDuringStatements: false,
     exclusiveConnection: false,
+    exclusiveConnectionWithout: [],
     defaultPragmas: {},
   },
   MemoryVFS: {
@@ -563,6 +587,7 @@ export const VFS_CAPABILITIES = {
     extraFileSuffixes: [],
     yieldsDuringStatements: false,
     exclusiveConnection: false,
+    exclusiveConnectionWithout: [],
     defaultPragmas: {},
   },
   MemoryAsyncVFS: {
@@ -581,6 +606,7 @@ export const VFS_CAPABILITIES = {
     extraFileSuffixes: [],
     yieldsDuringStatements: false,
     exclusiveConnection: false,
+    exclusiveConnectionWithout: [],
     defaultPragmas: {},
   },
 } as const satisfies Record<string, VFSCapability>;
