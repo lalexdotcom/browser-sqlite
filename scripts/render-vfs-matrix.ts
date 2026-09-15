@@ -453,9 +453,17 @@ const detailFor = (name: string, cap: VFSCapability): string => {
     (cap.maxPoolSize === null) !== cap.multiConnection
       ? `**Shared:** ${cap.multiConnection ? 'yes' : 'no'}`
       : null;
+  // Who can hold the database at once, where the answer is not "any number":
+  // a second client gets DATABASE_IN_USE (spec 2026-09-15).
+  const clients = cap.exclusiveConnection
+    ? '**Clients:** one at a time'
+    : cap.exclusiveConnectionWithout.length > 0
+      ? `**Clients:** one at a time without ${cap.exclusiveConnectionWithout.map((f) => `\`${f}\``).join(', ')}`
+      : null;
   const facts = [
     `**Pool size:** ${pool}`,
     ...(shared ? [shared] : []),
+    ...(clients ? [clients] : []),
     `**RAM:** ${MEMORY_SHORT[cap.memoryModel]}${noteRef(`ram-${cap.memoryModel}`)}`,
   ];
   // Shown only when there are any: an empty "Default PRAGMAs: —" on six of the

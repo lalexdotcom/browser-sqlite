@@ -122,6 +122,7 @@ All notable changes to this project are documented here.
   and `WORKER_CRASHED` now carries `sqliteCode` when SQLite refused an open or a deletion.
   `SQLITE_CODES` and `SQLITE_EXTENDED_CODES` export SQLite 3.53.0's result codes by name, and
   `SQLiteResultCode` and `SQLiteExtendedResultCode` type them.
+- `VFSCapability.exclusiveConnectionWithout`: the platform features without which a VFS allows one client at a time across the origin.
 
 ### Changed
 
@@ -188,6 +189,8 @@ All notable changes to this project are documented here.
   served an incoherent snapshot*.
 
 ### Fixed
+
+- **A second `OPFSWriteAheadVFS` client now fails fast with `DATABASE_IN_USE` where the browser lacks `readwrite-unsafe`** — every engine but Chromium today. That VFS holds its files exclusively for a connection's whole life there, so one client — one tab — can use a database at a time. A second client used to fail every query with `WORKER_CRASHED`, and when both were created at once it could break the FIRST one instead. Now the client created first always keeps the database; close it and the next one opens.
 
 - **A transaction that reads before it writes no longer breaks `OPFSWriteAheadVFS`.** That VFS refuses a write transaction that did not announce itself when it began, and `transaction()` began every transaction deferred: a callback whose first statement read — or ran a write that changed nothing — failed with `STATEMENT_FAILED` ("disk I/O error") and left the client unusable. `output()` failed on that VFS for the same reason whenever its target table did not exist yet. A write transaction now begins `IMMEDIATE`; a `readOnly` one still begins deferred.
 
