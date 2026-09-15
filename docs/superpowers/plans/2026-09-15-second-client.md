@@ -1185,7 +1185,7 @@ const twoClients = (vfs: SQLiteVFS) => {
 };
 ```
 - Wrap the whole `describe('two clients writing at once', …)` in `for (const vfs of SHARED_VFS) { describe(vfs, () => { … }); }` and pass `vfs` to every `twoClients(vfs)` call.
-- Move `it('leaves nothing behind when a tx.bulkWrite is interrupted', …)` out of that loop into its own block, `for (const vfs of RECOMMENDED_VFS) { describe(vfs, () => { describe('one client', () => { it(…) }) }) }`, with `const a = await createTestClient({ vfs });` in place of `const { a } = twoClients();` (import `createTestClient` from `./helpers`).
+- Move `it('leaves nothing behind when a tx.bulkWrite is interrupted', …)` out of that loop into its own `describe('one client', …)`, with `const a = await createTestClient();` in place of `const { a } = twoClients();` (import `createTestClient` from `./helpers`). It follows the injected target once Task 7 lands (spec A5) and runs on `OPFSAdaptiveVFS` until then.
 - Update the file's header comment: it runs on every VFS a second client shares, and why the others are absent (the helper's comment says it; point to it).
 
 - [ ] **Step 4: `cross-tab.test.ts`**
@@ -1221,103 +1221,111 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 7: `createTestClient` names its VFS
+### Task 7: The injected target (rewritten 2026-09-15, spec A5)
 
-A behaviour-preserving pass: afterwards every test runs exactly where it ran before, but says so.
+`createTestClient` stops defaulting to one VFS: a test that names none runs on the target its
+project injects, and `pnpm test` runs both recommended targets on both engines.
 
 **Files:**
-- Modify: `tests/browser/helpers.ts`; every browser test file calling `createTestClient` (34 files, 67 calls on 2026-09-15 — re-count with `grep -rn "createTestClient(" tests/browser | wc -l`)
+- Create: `tests/browser/target.ts`, `tests/unit/test-target.test.ts`, `tests/target-projects.ts`
+- Modify: `tests/browser/helpers.ts`, `rstest.config.ts`, `rstest.firefox.config.ts`, `rstest.isolated.config.ts`, `tsconfig.json` (only if `tests/target-projects.ts` needs including — it is under `tests/`, so it already is), and `tests/browser/interrupt.test.ts` (its needs)
 
 **Interfaces:**
-- Produces: `createTestClient(options: TestClientOptions)` with `vfs: SQLiteVFS` required; `export { RECOMMENDED_VFS } from '../../scripts/recommended-vfs';` from `tests/browser/helpers.ts`.
+- Consumes: `RECOMMENDED_VFS` (`scripts/recommended-vfs.ts`, Task 6); `VFS_CAPABILITIES`, `defaultBuildFor`, `BUILD_REQUIREMENTS`, `PlatformFeature`, `SQLiteVFS`, `SQLiteBuild` (`src/types.ts`).
+- Produces, in `tests/browser/target.ts`:
+  - `type TestTarget = { readonly vfs: SQLiteVFS; readonly build: SQLiteBuild }`
+  - `type Need = 'two-workers' | 'interruptible'`
+  - `type Here = { readonly features: ReadonlySet<PlatformFeature>; readonly crossOriginIsolated: boolean }`
+  - `resolvePair(target: TestTarget, needs: readonly Need[], here: Here): TestTarget | null` — pure
+  - `TEST_TARGET: TestTarget` — the injected `__BSQ_TEST_TARGET__`
+- Produces, in `tests/target-projects.ts` (Node, read by the configs): `targetsFromEnv(env: string | undefined): TestTarget[]` — `undefined` → the recommended pairs on their default builds; `'all'` → every declared (vfs, build); otherwise a comma list of `vfs/build`; and `targetLabel(t: TestTarget): string` → `` `${t.vfs}/${t.build}` ``.
+- `createTestClient(options?: TestClientOptions)` where `TestClientOptions` gains `needs?: readonly Need[]` and keeps `vfs?`: with `vfs`, the test is pinned (its `build` or the VFS default); without, `resolvePair(TEST_TARGET, needs ?? [], here)`; `null` → throw `Error('TARGET_NOT_RUNNABLE: …')` naming the target and the needs.
 
-- [ ] **Step 1: The helper**
+- [ ] **Step 1: Spike — two browser projects of one engine, distinct defines**
 
-```ts
-/**
- * Options for createTestClient. `vfs` is required, as it is by the library: a
- * test names the VFS it runs on, so one cannot fall back to a single VFS
- * without saying so (spec 2026-09-15, D8).
- */
-type TestClientOptions = Omit<InternalSQLiteClientOptions, 'name' | 'vfs'> & {
-  vfs: SQLiteVFS;
-};
+In a throwaway copy of `rstest.config.ts` at the repository root (`rstest.spike.config.ts`, deleted after), declare two `chromium` projects that differ only by `name` and `source: { define: { __BSQ_TEST_TARGET__: JSON.stringify('A') } }` / `'B'`, both including one throwaway test that does `expect(__BSQ_TEST_TARGET__).toBe('')` (declare the global in the test). Run it once. **Pass** if the report shows both projects and the two failures print `'A'` and `'B'`. Record the outcome in the report. If it fails, use the fallback of spec A5 (one run per target with `BSQ_TEST_TARGETS`, chained in the `test` script) for every later step, and say so.
 
-export { RECOMMENDED_VFS } from '../../scripts/recommended-vfs';
-```
-In `createTestClient(options: TestClientOptions)` (no default parameter), replace the cleanup body and the VFS line:
+- [ ] **Step 2: The resolver, TDD, in Node**
 
-```ts
-  afterEach(async () => {
-    try {
-      const root = await navigator.storage.getDirectory();
-      // The database and every file a VFS keeps beside it — the three every
-      // layout may have (DB_RELATED_SUFFIXES in src/worker/worker.ts) and the
-      // VFS's own, such as OPFSWriteAheadVFS's -wa0/-wa1, which outlived every
-      // test until 2026-09-15.
-      for (const suffix of [
-        '',
-        '-journal',
-        '-wal',
-        ...VFS_CAPABILITIES[options.vfs].extraFileSuffixes,
-      ]) {
-        await root
-          .removeEntry(`${dbName}${suffix}`, { recursive: true })
-          .catch(() => {});
-      }
-    } catch {
-      // No OPFS here, or nothing was created.
-    }
-  });
+Write `tests/unit/test-target.test.ts` first (the resolver takes `here` as a parameter precisely so it runs in Node). Cases, each with a `// Falsifiable:` line:
+1. no needs → the target itself, when `missingFeature` finds nothing;
+2. `interruptible` on `OPFSWriteAheadVFS/sync`, not isolated → `OPFSWriteAheadVFS/async` (same VFS, next declared build);
+3. `interruptible` on `OPFSWriteAheadVFS/sync`, isolated → the target itself;
+4. `two-workers` on `OPFSAdaptiveVFS/async` without `readwrite-unsafe` → `OPFSAnyContextVFS/async` (neither recommended VFS runs two workers there; first other VFS in `VFS_CAPABILITIES` key order that does, on its declared builds);
+5. `two-workers` on `OPFSAdaptiveVFS/async` with `readwrite-unsafe` → the target;
+6. a pair needing a feature not in `here.features` (e.g. `jspi` without it) is never returned;
+7. no pair satisfies → `null`.
 
-  return createSQLiteClient(dbName, options as InternalSQLiteClientOptions);
-```
-Rewrite the helper's doc comment: drop "OPFSAdaptiveVFS on the Asyncify build by default"; say the VFS is the caller's, that a test whose subject is not a VFS loops over `RECOMMENDED_VFS`, and that the exception is written as `// One VFS: <reason>`.
+Then implement `resolvePair` in `tests/browser/target.ts`: candidate order = target; target's VFS on its other declared builds; each VFS of `RECOMMENDED_VFS` on its declared builds; every other VFS in `VFS_CAPABILITIES` key order on its declared builds. A candidate qualifies when `[...requires, ...BUILD_REQUIREMENTS[build]]` are all in `here.features` and every need holds: `two-workers` ⇔ `maxPoolSize !== 1` and no feature of `singleConnectionWithout` is missing; `interruptible` ⇔ `build !== 'sync' || here.crossOriginIsolated`. `TEST_TARGET` reads `__BSQ_TEST_TARGET__` (declare it with `declare const __BSQ_TEST_TARGET__: TestTarget | undefined;`) and throws if it is undefined — a browser project without a target is a configuration error, not a default.
 
-- [ ] **Step 2: The mechanical pass**
+Run: `pnpm exec rstest --project unit run tests/unit/test-target.test.ts` red, then green.
 
-Serena `replace_in_files`, dry run first, over `tests/browser`: `createTestClient()` → `createTestClient({ vfs: 'OPFSAdaptiveVFS' })`. Then `pnpm exec tsc --noEmit` lists every remaining call without `vfs`; add `vfs: 'OPFSAdaptiveVFS',` to each. Nothing else changes.
+- [ ] **Step 3: The projects**
 
-- [ ] **Step 3: Prove nothing moved**
+`tests/target-projects.ts` implements `targetsFromEnv` and `targetLabel` (validating every `vfs/build` against `VFS_CAPABILITIES`, throwing on an unknown one). In `rstest.config.ts`, `rstest.firefox.config.ts` and `rstest.isolated.config.ts`, replace the single browser project by `...targetsFromEnv(process.env.BSQ_TEST_TARGETS).map((target) => ({ ...theExistingProject, name: `${engine} · ${targetLabel(target)}`, source: { define: { __BSQ_TEST_TARGET__: JSON.stringify(target) } } }))`, keeping every existing field and comment. (With the Step 1 fallback: one project, the target from the single `BSQ_TEST_TARGETS` value, and the `test` script chains one run per recommended target.)
 
-`pnpm test` — THREE green reports with the same test counts as the run that ended Task 6.
+- [ ] **Step 4: `createTestClient`**
 
-- [ ] **Step 4: Commit**
+As in Interfaces. Keep the sidecar cleanup of the original Task 7 (the three every layout may have plus the VFS's `extraFileSuffixes`), applied to the RESOLVED vfs. `here` is `{ features: detectFeatures() ∪ ('readwrite-unsafe' if the conformance probe says so), crossOriginIsolated: globalThis.crossOriginIsolated === true }` — reuse `AVAILABLE_FEATURES` from `tests/conformance/helpers.ts`. Rewrite the doc comment: the VFS is the target's unless the test pins one, pinning is for tests whose subject is a VFS, and a property the subject requires is declared as a need.
 
-```bash
-git add tests/browser
-git commit -m "test: createTestClient requires vfs, and removes the files a VFS keeps beside a database
+- [ ] **Step 5: The reds the dry run predicted**
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
-```
+Task 1's dry run (`.scratchpad/second-client-2026-09-15/dry-run.md`) found, under `OPFSWriteAheadVFS/sync`, `interrupt.test.ts` red for calibration (the `sync` build cannot interrupt) and `output.test.ts`/`tx-write.test.ts` red for the defect Task 3b fixed. Give the `interrupt.test.ts` clients `needs: ['interruptible']`. Nothing else is changed in this task.
+
+- [ ] **Step 6: Run**
+
+`pnpm exec tsc --noEmit && pnpm check && pnpm test`. Expected: each engine's report lists one project per recommended target; the `OPFSAdaptiveVFS/async` projects pass the same tests as before this task; the `OPFSWriteAheadVFS/sync` projects pass. Any red: triage per the Tasks 8-10 rule — a calibration fixed by a need, anything else stopped and reported. Record both projects' durations per engine against Task 1's baseline.
+
+- [ ] **Step 7: Falsifiers, run**
+
+1. Make `resolvePair` ignore `needs` → the unit cases 2 and 4 red, and `interrupt.test.ts` red under the WriteAhead project. Restore.
+2. Make `createTestClient` ignore the target (hard-code `OPFSAdaptiveVFS`) → nothing in the browser suite goes red; record it — the proof the target is used is the project list and the unit tests, and the report says so plainly.
+
+- [ ] **Step 8: Commit** — `test: the browser suite follows an injected target; pnpm test runs both recommended pairs` with the trailer.
 
 ---
 
-### Tasks 8, 9, 10: The single-VFS tests on both recommended VFS
+### Tasks 8, 9: Triage under the target (rewritten 2026-09-15, spec A5)
 
-One rule, three batches, so a reviewer can reject one batch and approve its neighbour.
+After Task 7, every test that calls `createTestClient()` without a VFS already runs on both recommended targets. These tasks convert the tests that still pin a VFS, one batch each, so a reviewer can reject one and approve the other.
 
-**The rule (spec §4.3):**
-- A test whose subject is not a VFS runs on both: `for (const vfs of RECOMMENDED_VFS) { describe(vfs, () => { … }) }`, every client of the test created with that `vfs`.
-- A test keeps one VFS when its subject needs it, and says why on the line above: `// One VFS: <reason>.` Admissible reasons: the subject is that VFS (`coopsync-handover`, `idb-long-read`, `exclusive-connection`, `default-pragmas`' `AccessHandlePoolVFS` cases, `vfs.test.ts`, `delete.test.ts`' per-VFS loops); a build the recommended VFS lack; or two workers inside one client, which neither recommended VFS runs on Firefox (spec 2026-09-13 §10.3 — `OPFSAnyContextVFS` keeps them).
-- A test that needs a specific build on a recommended VFS pins it (`build: 'async'` on `OPFSWriteAheadVFS` for an interrupt or timeout whose subject needs an interruptible build) with a comment saying so.
-- **Every red met is triaged against Task 1's `dry-run.md`**: calibration → fixed in the test, with the reason in a comment; defect → stop and report, never fixed silently; flake → measured (n runs) before any verdict.
-- The task report carries a table: file · decision (both / one VFS) · reason · reds met and their triage.
+**The rule:**
+- The subject is a VFS → keep `vfs`, with `// One VFS: <reason>` on the line above.
+- The subject needs a property the target may lack → drop `vfs`, declare `needs` (`two-workers` for pool machinery — barrier, evictions, writer spread, a read during a long statement; `interruptible` for interrupt and timeout subjects). A need not in the list: stop and report; the list grows by decision, not by drift.
+- Otherwise → drop `vfs`: the test follows the target.
+- `build:` pinned without the subject being that build → drop it too.
+- Every red met is triaged: calibration → fixed in the test with the reason in a comment; defect → stop and report, never fixed silently; flake → measured (n runs) before any verdict.
+- The report carries a table: file · test · before · after (target / needs / pinned + reason) · reds and their triage.
 
-**Each batch's steps:**
+**Each batch:** apply the rule file by file (Serena for every edit); `pnpm exec tsc --noEmit && pnpm check`; the batch's files on both engines (single-file commands, `timeout 300`); `pnpm test` (THREE reports, every project); commit `test: <batch> follow the target`.
 
-- [ ] Apply the rule file by file (Serena for every edit).
-- [ ] `pnpm exec tsc --noEmit && pnpm check`
-- [ ] Run the batch's files on both engines, single-file commands.
-- [ ] Record each file's duration before/after.
-- [ ] `pnpm test` — THREE green reports.
-- [ ] Commit: `test: <batch> on both recommended VFS` with the trailer.
+**Task 8 — files that mix the target with pinned VFS:** `concurrency`, `lifecycle`, `output`, `tx-savepoint`, `tx-abort`, `barrier`, `tx-quiesce`, `init`, `debug`, `default-pragmas`, `long-query`, `abandon-transaction`, `statement-errors`, `inspect-marker`, `inspect-client`, `pool-cap`.
 
-**Task 8 — the files that took the default alone:** `statement-cache`, `transaction`, `queries`, `tx-handle`, `bulk-write`, `tx-write`, `close`, `routing`, `backpressure`.
+**Task 9 — files pinned to a non-recommended VFS:** `query-timeout`, `chunk-delivery`, `abandon`, `pool-savepoint`, `tx-timeout`, `abandon-gc` (`MemoryVFS`); `isolated/abort-slot`, `isolated/tx-savepoint` (`MemoryVFS`, isolated config); `inspect`, `inspect-realm`, `inspect-write`, `write-lock-reclaim`, `idb-long-read` (`IDBBatchAtomicVFS`); `writer-spread` (`OPFSAnyContextVFS`); `coopsync-handover`, `coopsync-retry`, `exclusive-connection`, `vfs`, `delete`. Before starting, re-run `node .scratchpad/vfs-coverage.mjs` and add any file it lists that neither batch names.
 
-**Task 9 — the files that mixed the default with a named VFS:** `concurrency`, `lifecycle`, `output`, `tx-savepoint`, `tx-abort`, `barrier`, `tx-quiesce`, `init`, `debug`, `default-pragmas`, `interrupt`, `long-query`, `abandon-transaction`.
+---
 
-**Task 10 — the files on a non-recommended VFS:** `query-timeout`, `chunk-delivery`, `abandon`, `pool-savepoint`, `tx-timeout`, `abandon-gc` (`MemoryVFS`); `isolated/abort-slot`, `isolated/tx-savepoint` (`MemoryVFS`, isolated config — the `sync` shared-slot path exists on `OPFSWriteAheadVFS`'s default build too); `inspect`, `inspect-realm`, `inspect-write`, `write-lock-reclaim`, `idb-long-read` (`IDBBatchAtomicVFS`); `writer-spread` (`OPFSAnyContextVFS`); `coopsync-handover`, `coopsync-retry`; `statement-errors`, `exclusive-connection`, `inspect-marker`, `inspect-client`, `pool-cap`. Before starting, re-run `node .scratchpad/vfs-coverage.mjs` and add any file it lists that no batch names.
+### Task 10: `pnpm test:matrix` (rewritten 2026-09-15, spec A5)
+
+**Files:**
+- Create: `scripts/test-matrix.mjs`
+- Modify: `package.json` (`"test:matrix": "node scripts/test-matrix.mjs"`), `.gitignore` (`.matrix/`)
+
+- [ ] **Step 1: The script**
+
+- Enumerates every declared (vfs, build) from `VFS_CAPABILITIES` (import `../src/types.ts` — Node strips the types, as `scripts/render-vfs-matrix.ts` does), and the engine configs `rstest.config.ts` (Chromium; run with `--project` filtering out `unit`) and `rstest.firefox.config.ts`.
+- Optional arguments narrow it: `--engine chromium|firefox`, `--pair vfs/build` (repeatable).
+- For each engine, for each pair, sequentially: `timeout 600 pnpm exec rstest --config <cfg> run` with `BSQ_TEST_TARGETS=<vfs/build>` in the environment (and `--project` for Chromium), stdout+stderr saved to `.matrix/<ISO date>/<engine>-<vfs>-<build>.txt`.
+- Parses rstest's JSON summary block from each output (`counts.tests`, `failedTests`, `skippedTests`, `durationMs.total`). A run whose every failure message starts with `TARGET_NOT_RUNNABLE` is "not runnable here". A run that timed out is "timed out".
+- Prints a table: rows = pairs, columns = engines, cells = `passed/failed/skipped · seconds` or the status word. Exit code 1 if any cell failed or timed out.
+
+- [ ] **Step 2: A unit test for the parsing** (`tests/unit/test-matrix.test.ts`, importing the parse function the script exports): a passing summary, a failing one, an all-`TARGET_NOT_RUNNABLE` one, an output with no summary (timed out).
+
+- [ ] **Step 3: One full run — CHECKPOINT**
+
+`pnpm test:matrix` with a progress monitor (mem: progress every two minutes). Report the table, the total duration, and every red with its first error line. **Reds here are findings for the user**, not for this task to fix.
+
+- [ ] **Step 4: Commit** — `test: pnpm test:matrix runs the browser suite on every VFS and build` with the trailer.
 
 ---
 
@@ -1404,7 +1412,7 @@ Read every report: THREE for `pnpm test`, TWO for conformance, 24/24 consumer st
 - `mem:follow-ups`: delete the `OPFSWriteAheadVFS refuses a second client …` entry; add any finding the branch opened and did not close (an `IDBMirrorVFS` result, a refused client in the roster, the mixed `opfs-path` observation), one short entry each.
 - `mem:state`: rewrite the affected sections (the decision owed, the baseline table's counts).
 - `mem:lessons`: only if the branch taught one.
-- `mem:stack-and-build`: the test-suite table's description of `createTestClient` (vfs required).
+- `mem:stack-and-build`: the test-suite table: the injected target, `pnpm test` running both recommended pairs, `pnpm test:matrix`.
 
 - [ ] **Step 3: Commit the memories**
 

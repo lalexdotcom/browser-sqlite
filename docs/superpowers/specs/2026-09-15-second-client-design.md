@@ -307,3 +307,40 @@ Confronting §3.2 with `src/client.ts` changed two things. The sections above st
   (vfs, build) pair. **Not established:** why the connection stays broken after the refusal — a
   consumer who sends a raw `BEGIN` through `write()` can still reach it; that goes to
   `mem:follow-ups`. Inserted in the plan as Task 3b, before Task 4.
+
+## 12. Amendment — 2026-09-15: every browser test on every pair (user)
+
+- **A5 — The single-VFS browser tests follow an injected target; nothing loops in a file.** This
+  replaces D8's in-file loops and amends §4.3; the rest of §4.3 (the list moving to
+  `scripts/recommended-vfs.ts`, sidecar cleanup, the dry run) stands.
+  - **Target** = a (vfs, build) pair. A test that names no VFS runs on the target:
+    `createTestClient()` without `vfs` takes it. A test that names a VFS is pinned, and only when its
+    subject is that VFS, with `// One VFS: <reason>` above it.
+  - **Needs, with fallback, never a skip.** A test whose subject requires a property declares it —
+    `createTestClient({ needs: ['two-workers'] })`, `needs: ['interruptible']` — and runs on the
+    target when the target has it in this browser, otherwise on the first pair of this browser that
+    has it: the target's VFS on another of its builds first, then the recommended VFS, then the
+    others, each in declared build order. `two-workers`: the pool runs at least two workers here
+    (`maxPoolSize` is not 1 and no `singleConnectionWithout` feature is missing). `interruptible`:
+    the build is not `sync`, or the context is cross-origin isolated. The resolution is a pure
+    function, unit-tested. No engine loses the coverage it has today — on Firefox the barrier
+    tests keep `OPFSAnyContextVFS` — and a target that has the property is the one exercised. The
+    list of needs grows only when a test's triage requires a new one.
+  - **`pnpm test` runs the browser suite on both recommended pairs**, each on its default build —
+    `OPFSWriteAheadVFS`/`sync` and `OPFSAdaptiveVFS`/`async` — on both engines. Mechanism: one
+    rstest project per target in each engine's config, each injecting its target through
+    `source.define` (`__BSQ_TEST_TARGET__`). If rstest cannot run two browser projects of one
+    engine with distinct defines (spiked first in Task 7), the fallback is one config run per
+    target with a prefixed environment variable, `BSQ_TEST_TARGETS` — never a generic name: VS Code
+    exports `BROWSER` (mem:stack-and-build).
+  - **`pnpm test:matrix`** runs the suite on every declared (vfs, build) pair, on each engine,
+    sequentially, each run bounded. It prints a pair × engine table (passed, failed, skipped,
+    duration), keeps the raw reports under a gitignored `.matrix/<date>/`, and exits non-zero on any
+    failure. A pair this browser cannot run is reported "not runnable here", never failed. Where it
+    runs — CI, a hook, on demand — is decided later (user).
+  - The isolated config follows the same target. Conformance is unchanged: it already runs every
+    pair.
+  - **Cost, accepted (user):** the default run doubles the target-following part — about +40 s on
+    Chromium and +80-107 s on Firefox per `pnpm test` (plan Task 1).
+  - Plan: Tasks 7-10 are rewritten; Task 6's single-client test follows the target instead of
+    looping over `RECOMMENDED_VFS`.
