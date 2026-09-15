@@ -1,6 +1,7 @@
 import { DEFAULT_CREDIT_WINDOW } from './credits';
 import { SQLiteError, type SQLiteErrorCode } from './errors';
 import type { Logger } from './logger';
+import type { SQLiteResultCode } from './sqlite-codes';
 import type {
   PlatformFeature,
   SavepointOp,
@@ -126,7 +127,7 @@ const BUSY_CODES = new Set([5, 6]);
  * a successful call is a wrong read, and must stay visible.
  */
 const subtypeOf = (data: {
-  sqliteCode?: number;
+  sqliteCode?: SQLiteResultCode;
   sqliteExtendedCode?: number;
 }): number | undefined =>
   data.sqliteExtendedCode !== data.sqliteCode
@@ -143,7 +144,7 @@ const subtypeOf = (data: {
 export const busyFromCode = (data: {
   message: string;
   cause?: unknown;
-  sqliteCode?: number;
+  sqliteCode?: SQLiteResultCode;
   sqliteExtendedCode?: number;
 }): SQLiteError | undefined => {
   if (data.sqliteCode === undefined || !BUSY_CODES.has(data.sqliteCode)) {
@@ -168,7 +169,7 @@ export const busyFromCode = (data: {
 export const statementError = (data: {
   message: string;
   cause?: unknown;
-  sqliteCode?: number;
+  sqliteCode?: SQLiteResultCode;
   sqliteExtendedCode?: number;
   errorCode?: SQLiteErrorCode;
 }): Error => {
@@ -199,7 +200,7 @@ export const statementError = (data: {
 export const startupError = (data: {
   message: string;
   cause?: unknown;
-  sqliteCode?: number;
+  sqliteCode?: SQLiteResultCode;
 }): SQLiteError => {
   // D7: no extended code at open/delete, as a property of the client — not
   // merely because the worker never sends one. Only `message`, `cause` and

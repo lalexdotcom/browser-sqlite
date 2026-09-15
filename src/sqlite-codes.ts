@@ -17,8 +17,10 @@
  * `tests/unit/sqlite-codes.test.ts` checks every name the two share.
  * Re-transcribe when wa-sqlite moves to another SQLite.
  *
- * `sqliteCode` and `sqliteExtendedCode` stay typed `number`, not a union of
- * these: a later SQLite may report a code these tables do not hold.
+ * `SQLiteError.sqliteCode` is typed `SQLiteResultCode` (strict): since
+ * `sqliteCodeOf`, it is always a primary code of the bundled SQLite (D10).
+ * `sqliteExtendedCode` stays open (`SQLiteExtendedResultCode | (number & {})`):
+ * a wrong read must stay representable (D9).
  */
 
 /** The 31 primary result codes — what `SQLiteError.sqliteCode` holds. */
@@ -144,3 +146,14 @@ export const SQLITE_EXTENDED_CODES = Object.freeze({
   OK_LOAD_PERMANENTLY: 256,
   OK_SYMLINK: 512,
 } as const);
+
+/** A primary result code of SQLite 3.53.0 — the type of `SQLiteError.sqliteCode`. */
+export type SQLiteResultCode = (typeof SQLITE_CODES)[keyof typeof SQLITE_CODES];
+
+/**
+ * An extended result code of SQLite 3.53.0. `SQLiteError.sqliteExtendedCode`
+ * is typed `SQLiteExtendedResultCode | (number & {})`: open, because a wrong
+ * read must stay representable (spec D9), yet still completing these values.
+ */
+export type SQLiteExtendedResultCode =
+  (typeof SQLITE_EXTENDED_CODES)[keyof typeof SQLITE_EXTENDED_CODES];

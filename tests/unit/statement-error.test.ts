@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@rstest/core';
 import { SQLiteError } from '../../src/errors';
 import { startupError, statementError } from '../../src/pool';
+import type { SQLiteResultCode } from '../../src/sqlite-codes';
 
 /**
  * docs/superpowers/specs/2026-09-14-statement-errors-design.md §5.3: what the
@@ -101,7 +102,7 @@ describe('startupError — an open or a delete the worker reports failed', () =>
   it('keeps BUSY for a lock conflict, and drops any extended code (D7)', () => {
     const data: {
       message: string;
-      sqliteCode: number;
+      sqliteCode: SQLiteResultCode;
       sqliteExtendedCode: number;
     } = {
       message: 'database is locked',

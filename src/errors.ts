@@ -18,6 +18,11 @@
  * SQLite's own; `sqliteCode` carries its result code, and `sqliteExtendedCode`
  * its subtype when SQLite reports one.
  */
+import type {
+  SQLiteExtendedResultCode,
+  SQLiteResultCode,
+} from './sqlite-codes';
+
 export type SQLiteErrorCode =
   | 'NOT_A_READ_QUERY'
   | 'CLIENT_CLOSED'
@@ -44,9 +49,11 @@ export class SQLiteError extends Error {
    * SQLite's own numeric result code, present only when the failure came from
    * SQLite rather than from this library. Always the PRIMARY code. `BUSY`
    * covers both SQLITE_BUSY (5) and SQLITE_LOCKED (6); this is how a caller
-   * tells them apart.
+   * tells them apart. Typed `SQLiteResultCode` (D10): since `sqliteCodeOf`,
+   * it is always a primary code of the bundled SQLite, so comparing it with
+   * an extended code does not compile.
    */
-  readonly sqliteCode?: number;
+  readonly sqliteCode?: SQLiteResultCode;
   /**
    * SQLite's extended result code, present only when a statement SQLite ran
    * failed WITH A SUBTYPE — `STATEMENT_FAILED` or `BUSY` from a query, never
@@ -56,8 +63,10 @@ export class SQLiteError extends Error {
    * subtype SQLite reports, `(sqliteExtendedCode & 0xff) === sqliteCode` is
    * SQLite's own guarantee, not something this library enforces: the client
    * deliberately lets a differing value through (a 0 from a wrong read).
+   * Typed open (`SQLiteExtendedResultCode | (number & {})`, D10): D9 lets a
+   * wrong read through, which a strict type would misdescribe.
    */
-  readonly sqliteExtendedCode?: number;
+  readonly sqliteExtendedCode?: SQLiteExtendedResultCode | (number & {});
   /**
    * The `timeout` that was exceeded, in milliseconds. Present only on
    * `OPERATION_TIMEOUT`, so a log need not parse the message for it.
@@ -69,8 +78,8 @@ export class SQLiteError extends Error {
     message: string,
     options?: {
       cause?: unknown;
-      sqliteCode?: number;
-      sqliteExtendedCode?: number;
+      sqliteCode?: SQLiteResultCode;
+      sqliteExtendedCode?: SQLiteExtendedResultCode | (number & {});
       timeout?: number;
     },
   ) {
