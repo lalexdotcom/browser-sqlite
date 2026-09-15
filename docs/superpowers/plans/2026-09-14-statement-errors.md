@@ -3,9 +3,10 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Every statement SQLite refuses rejects with `SQLiteError` code `STATEMENT_FAILED`,
-carrying SQLite's primary result code on `sqliteCode` and its extended one on
-`sqliteExtendedCode`. Opens and deletes that SQLite fails keep `WORKER_CRASHED` but carry
-`sqliteCode`. `SQLITE_CODES` exports every result code by name.
+carrying SQLite's primary result code on `sqliteCode` and, when SQLite reports a subtype, its
+extended one on `sqliteExtendedCode`. Opens and deletes that SQLite fails keep `WORKER_CRASHED`
+but carry `sqliteCode`. `SQLITE_CODES` (primary) and `SQLITE_EXTENDED_CODES` (extended) export
+every result code by name.
 
 **Architecture:** The worker already sends `sqliteCode` for every SQLite failure. The client
 drops it in `workerError` (`src/pool.ts`), in the `open-error` case of the same file, and in the
@@ -13,11 +14,12 @@ drops it in `workerError` (`src/pool.ts`), in the `open-error` case of the same 
 worker reads the extended code with `module._sqlite3_extended_errcode(db)` **where the statement
 fails**, stamps it on wa-sqlite's error, and sends it on the wire.
 
-**Tech Stack:** TypeScript, wa-sqlite 1.1.1 (SQLite 3.53.0), rstest (a `unit` Node project plus
+**Tech Stack:** TypeScript, the vendored wa-sqlite v1.1.2 (SQLite 3.53.0; its `package.json`
+still reads 1.1.1), rstest (a `unit` Node project plus
 Chromium and Firefox browser projects), biome.
 
 **Spec:** `docs/superpowers/specs/2026-09-14-statement-errors-design.md`. Read it, not a summary
-of it.
+of it. Its amendment of 2026-09-15 (D8, D9) is part of it.
 
 ## Global Constraints
 
@@ -37,8 +39,10 @@ of it.
 - **Do not accept "pre-existing" for a failure without checking it on the base commit**
   (`git stash` is NOT allowed; use `git worktree add /tmp/base <sha>` and run the file there).
 - The new public code is exactly `STATEMENT_FAILED`. The new field is exactly
-  `sqliteExtendedCode`. The new export is exactly `SQLITE_CODES`, keyed without the `SQLITE_`
-  prefix.
+  `sqliteExtendedCode`. The new exports are exactly `SQLITE_CODES` (the 31 primary codes) and
+  `SQLITE_EXTENDED_CODES` (the 82 extended codes), keyed without the `SQLITE_` prefix.
+- `sqliteExtendedCode` is present only when SQLite reported a subtype: the client drops it when
+  it equals `sqliteCode` (spec D9). The worker sends it unfiltered.
 - `sqliteCode` stays SQLite's **primary** code everywhere. Never enable
   `sqlite3_extended_result_codes` on the connection.
 - The `message` of every error stays exactly as it is today.
@@ -49,11 +53,11 @@ of it.
 | File | Change | Task |
 |---|---|---|
 | `src/errors.ts` | `STATEMENT_FAILED` in `SQLiteErrorCode`; the `sqliteExtendedCode` field and constructor option | 1 |
-| `src/sqlite-codes.ts` | **new**: `SQLITE_CODES` | 1 |
-| `src/index.ts` | re-export `SQLITE_CODES` | 1 |
+| `src/sqlite-codes.ts` | **new**: `SQLITE_CODES`, `SQLITE_EXTENDED_CODES` | 1 |
+| `src/index.ts` | re-export both | 1 |
 | `tests/unit/errors.test.ts`, `tests/unit/exports.test.ts` | one test each | 1 |
 | `tests/unit/sqlite-codes.test.ts` | **new** | 1 |
-| `src/pool.ts` | `busyFromCode` carries the extended code; `workerError` renamed `statementError` and exported, with a `STATEMENT_FAILED` branch; new `startupError`; the `open-error` case uses it | 2 |
+| `src/pool.ts` | `subtypeOf` (D9); `busyFromCode` carries the extended code when it is a subtype; `workerError` renamed `statementError` and exported, with a `STATEMENT_FAILED` branch; new `startupError`; the `open-error` case uses it | 2 |
 | `src/delete.ts` | the `error` case uses `startupError` | 2 |
 | `tests/unit/statement-error.test.ts` | **new** | 2 |
 | `src/wa-sqlite.d.ts` | declare `_sqlite3_extended_errcode` | 3 |
@@ -65,7 +69,7 @@ of it.
 
 ---
 
-### Task 1: The public contract — `STATEMENT_FAILED`, `sqliteExtendedCode`, `SQLITE_CODES`
+### Task 1: The public contract — `STATEMENT_FAILED`, `sqliteExtendedCode`, `SQLITE_CODES`, `SQLITE_EXTENDED_CODES`
 
 **Files:**
 - Modify: `src/errors.ts` (the header comment, `SQLiteErrorCode`, `SQLiteError`)
@@ -76,9 +80,10 @@ of it.
 **Interfaces:**
 - Produces: `SQLiteErrorCode` includes `'STATEMENT_FAILED'`;
   `new SQLiteError(code, message, { cause?, sqliteCode?, sqliteExtendedCode?, timeout? })`;
-  `SQLiteError#sqliteExtendedCode?: number`; and
-  `SQLITE_CODES: Readonly<{ OK: 0; …; CONSTRAINT_UNIQUE: 2067; … }>`, exported from
-  `src/sqlite-codes.ts` and from the package entry.
+  `SQLiteError#sqliteExtendedCode?: number`;
+  `SQLITE_CODES: Readonly<{ OK: 0; …; CONSTRAINT: 19; …; DONE: 101 }>` and
+  `SQLITE_EXTENDED_CODES: Readonly<{ ERROR_MISSING_COLLSEQ: 257; …; CONSTRAINT_UNIQUE: 2067; … }>`,
+  both exported from `src/sqlite-codes.ts` and from the package entry.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -105,9 +110,10 @@ Add after the test `'still exposes the client and the error type'` in
 `tests/unit/exports.test.ts`:
 
 ```ts
-  // Falsifiable: drop the SQLITE_CODES re-export from src/index.ts.
-  it('exposes the SQLite result codes', () => {
-    expect(api.SQLITE_CODES.CONSTRAINT_UNIQUE).toBe(2067);
+  // Falsifiable: drop either re-export from src/index.ts.
+  it('exposes the SQLite result codes, primary and extended', () => {
+    expect(api.SQLITE_CODES.CONSTRAINT).toBe(19);
+    expect(api.SQLITE_EXTENDED_CODES.CONSTRAINT_UNIQUE).toBe(2067);
   });
 ```
 
@@ -116,42 +122,59 @@ Create `tests/unit/sqlite-codes.test.ts`:
 ```ts
 import { describe, expect, it } from '@rstest/core';
 import * as wa from 'wa-sqlite/src/sqlite-constants.js';
-import { SQLITE_CODES } from '../../src/sqlite-codes';
+import { SQLITE_CODES, SQLITE_EXTENDED_CODES } from '../../src/sqlite-codes';
 
 /**
- * docs/superpowers/specs/2026-09-14-statement-errors-design.md §4. The list is
- * transcribed, so what can be checked mechanically is checked here.
+ * docs/superpowers/specs/2026-09-14-statement-errors-design.md §4 (D8). The
+ * tables are transcribed, so what can be checked mechanically is checked here.
  */
-describe('SQLITE_CODES', () => {
+const constants = wa as unknown as Record<string, number>;
+
+describe('SQLITE_CODES and SQLITE_EXTENDED_CODES', () => {
   // Falsifiable: mistype any value that wa-sqlite also defines — e.g.
   // CONSTRAINT_UNIQUE: 2068.
-  it('agrees with every result code wa-sqlite also defines', () => {
-    const constants = wa as unknown as Record<string, number>;
-    const shared = Object.entries(SQLITE_CODES).filter(
-      ([name]) => `SQLITE_${name}` in constants,
-    );
-    // 65 on wa-sqlite 1.1.1. Guards the lookup, not the list: a broken import
-    // would otherwise let this pass having compared nothing.
+  it('agree with every result code wa-sqlite also defines', () => {
+    const shared = [
+      ...Object.entries(SQLITE_CODES),
+      ...Object.entries(SQLITE_EXTENDED_CODES),
+    ].filter(([name]) => `SQLITE_${name}` in constants);
+    // 65 on the vendored wa-sqlite (v1.1.2). Guards the lookup, not the
+    // tables: a broken import would otherwise let this pass having compared
+    // nothing.
     expect(shared.length).toBeGreaterThanOrEqual(65);
     expect(
       shared.filter(([name, value]) => constants[`SQLITE_${name}`] !== value),
     ).toEqual([]);
   });
 
-  // Falsifiable: give an extended code a low byte that is no primary code —
-  // e.g. IOERR_READ: 267 + 0x100.
-  it('maps every extended code onto a primary code of the list', () => {
-    const values: number[] = Object.values(SQLITE_CODES);
-    const primary = new Set(values.filter((v) => v < 256));
-    expect(values.filter((v) => v >= 256 && !primary.has(v & 0xff))).toEqual(
-      [],
-    );
+  // Falsifiable: move one code into the other table — e.g. CONSTRAINT_UNIQUE
+  // into SQLITE_CODES.
+  it('keep primary and extended codes apart', () => {
+    const primary: number[] = Object.values(SQLITE_CODES);
+    const extended: number[] = Object.values(SQLITE_EXTENDED_CODES);
+    expect(primary.filter((v) => v >= 256)).toEqual([]);
+    expect(extended.filter((v) => v < 256)).toEqual([]);
   });
 
-  // Falsifiable: drop one entry, or the Object.freeze.
-  it('holds the 113 result codes of SQLite 3.53.0, frozen', () => {
-    expect(Object.keys(SQLITE_CODES)).toHaveLength(113);
+  // Falsifiable: key an extended code under the wrong family — e.g.
+  // IOERR_READ: 267, CORRUPT's low byte. Checks the family the NAME announces,
+  // not merely that some primary code matches the low byte.
+  it("give every extended code its name's family as low byte", () => {
+    const family = SQLITE_CODES as Record<string, number>;
+    expect(
+      Object.entries(SQLITE_EXTENDED_CODES).filter(
+        ([name, value]) =>
+          family[name.slice(0, name.indexOf('_'))] !== (value & 0xff),
+      ),
+    ).toEqual([]);
+  });
+
+  // Falsifiable: drop one entry, or either Object.freeze.
+  it('hold the 31 primary and 82 extended codes of SQLite 3.53.0, frozen', () => {
+    expect(Object.keys(SQLITE_CODES)).toHaveLength(31);
+    expect(Object.keys(SQLITE_EXTENDED_CODES)).toHaveLength(82);
     expect(Object.isFrozen(SQLITE_CODES)).toBe(true);
+    expect(Object.isFrozen(SQLITE_EXTENDED_CODES)).toBe(true);
   });
 });
 ```
@@ -170,7 +193,8 @@ In the header comment above `SQLiteErrorCode`, append these lines before the clo
 ```ts
  * `STATEMENT_FAILED` is a statement SQLite refused or failed for any reason
  * but a lock conflict — a constraint, a syntax error, a full disk. `message` is
- * SQLite's own; `sqliteCode` and `sqliteExtendedCode` carry its result codes.
+ * SQLite's own; `sqliteCode` carries its result code, and `sqliteExtendedCode`
+ * its subtype when SQLite reports one.
 ```
 
 Add `| 'STATEMENT_FAILED'` to the `SQLiteErrorCode` union, directly after `| 'BUSY'`.
@@ -188,10 +212,12 @@ export class SQLiteError extends Error {
    */
   readonly sqliteCode?: number;
   /**
-   * SQLite's extended result code, present only on a statement SQLite ran —
-   * `STATEMENT_FAILED` or `BUSY` from a query, never an open or a delete.
-   * `sqliteExtendedCode & 0xff === sqliteCode` always holds: 2067
-   * (`SQLITE_CODES.CONSTRAINT_UNIQUE`) against 19.
+   * SQLite's extended result code, present only when a statement SQLite ran
+   * failed WITH A SUBTYPE — `STATEMENT_FAILED` or `BUSY` from a query, never
+   * an open or a delete: 2067 (`SQLITE_EXTENDED_CODES.CONSTRAINT_UNIQUE`)
+   * under `sqliteCode` 19. Absent when SQLite has no subtype for the failure
+   * (a full disk, a syntax error), since `sqliteCode` already says it. When
+   * present, `sqliteExtendedCode & 0xff === sqliteCode`.
    */
   readonly sqliteExtendedCode?: number;
   /**
@@ -225,16 +251,18 @@ export class SQLiteError extends Error {
 
 ```ts
 /**
- * Every result code of SQLite 3.53.0, primary and extended, keyed without the
- * `SQLITE_` prefix: `SQLITE_CODES.CONSTRAINT_UNIQUE` is SQLite's
- * `SQLITE_CONSTRAINT_UNIQUE`. Compare them with `SQLiteError.sqliteCode`, which
- * is always a primary code, and `SQLiteError.sqliteExtendedCode`; an extended
- * code's low byte is its primary (`2067 & 0xff === 19`). What each one means:
+ * The result codes of SQLite 3.53.0, keyed without the `SQLITE_` prefix, in two
+ * tables that match `SQLiteError`'s two fields: test the family on `sqliteCode`
+ * against `SQLITE_CODES` (`CONSTRAINT`, `FULL`), the subtype on
+ * `sqliteExtendedCode` against `SQLITE_EXTENDED_CODES` (`CONSTRAINT_UNIQUE`).
+ * An extended code's low byte is its family (`2067 & 0xff === 19`), and its key
+ * begins with the family's key. What each one means:
  * https://sqlite.org/rescode.html.
  *
  * Transcribed from `src/sqlite.h.in` — the source of `sqlite3.h` — at SQLite's
- * tag `version-3.53.0`, checked 2026-09-14. That is the SQLite wa-sqlite 1.1.1
- * bundles: its source-id, read from the wasm, is `2026-04-09 11:41:38
+ * tag `version-3.53.0`, checked 2026-09-14. That is the SQLite of the vendored
+ * wa-sqlite, v1.1.2 (its `package.json` still reads 1.1.1: upstream did not
+ * bump it): its source-id, read from the wasm, is `2026-04-09 11:41:38
  * 4525003a53a7fc63ca75`, and the tag's `manifest.uuid` begins with the same
  * hash. Not read from wa-sqlite's `sqlite-constants.js`, which has no
  * `BUSY_*`, `LOCKED_*`, `CANTOPEN_*`, `CORRUPT_*` or `READONLY_*` codes;
@@ -242,10 +270,11 @@ export class SQLiteError extends Error {
  * Re-transcribe when wa-sqlite moves to another SQLite.
  *
  * `sqliteCode` and `sqliteExtendedCode` stay typed `number`, not a union of
- * these: a later SQLite may report a code this list does not hold.
+ * these: a later SQLite may report a code these tables do not hold.
  */
+
+/** The 31 primary result codes — what `SQLiteError.sqliteCode` holds. */
 export const SQLITE_CODES = Object.freeze({
-  // Primary codes
   OK: 0,
   ERROR: 1,
   INTERNAL: 2,
@@ -277,7 +306,13 @@ export const SQLITE_CODES = Object.freeze({
   WARNING: 28,
   ROW: 100,
   DONE: 101,
-  // Extended codes
+} as const);
+
+/**
+ * The 82 extended result codes — what `SQLiteError.sqliteExtendedCode` holds
+ * when SQLite reports a subtype. No primary code is repeated here.
+ */
+export const SQLITE_EXTENDED_CODES = Object.freeze({
   ERROR_MISSING_COLLSEQ: 257,
   ERROR_RETRY: 513,
   ERROR_SNAPSHOT: 769,
@@ -368,7 +403,7 @@ export const SQLITE_CODES = Object.freeze({
 Add after `export * from './errors';`:
 
 ```ts
-export { SQLITE_CODES } from './sqlite-codes';
+export { SQLITE_CODES, SQLITE_EXTENDED_CODES } from './sqlite-codes';
 ```
 
 - [ ] **Step 6: Run the tests and confirm they pass**
@@ -383,7 +418,7 @@ Expected: no type error, and all three reports green.
 
 ```bash
 git add src/errors.ts src/sqlite-codes.ts src/index.ts tests/unit/errors.test.ts tests/unit/exports.test.ts tests/unit/sqlite-codes.test.ts
-git commit -m "feat(errors): STATEMENT_FAILED, sqliteExtendedCode and SQLITE_CODES
+git commit -m "feat(errors): STATEMENT_FAILED, sqliteExtendedCode and the result-code tables
 
 The public contract of spec 2026-09-14 §3-§4. Nothing produces the new
 code yet.
@@ -463,6 +498,34 @@ describe('statementError — a query the worker reports failed', () => {
     }
   });
 
+  // Spec D9. Falsifiable: make subtypeOf return data.sqliteExtendedCode
+  // unconditionally — both of these then carry it.
+  it('drops the extended code when SQLite reported no subtype', () => {
+    const full = statementError({
+      message: 'database or disk is full',
+      sqliteCode: 13,
+      sqliteExtendedCode: 13,
+    }) as SQLiteError;
+    expect(full).toMatchObject({ code: 'STATEMENT_FAILED', sqliteCode: 13 });
+    expect(full.sqliteExtendedCode).toBeUndefined();
+    const busy = statementError({
+      message: 'database is locked',
+      sqliteCode: 5,
+      sqliteExtendedCode: 5,
+    }) as SQLiteError;
+    expect(busy).toMatchObject({ code: 'BUSY', sqliteCode: 5 });
+    expect(busy.sqliteExtendedCode).toBeUndefined();
+  });
+
+  // Spec D9: only equality with sqliteCode is dropped. A 0 is what a read
+  // after a successful call returns — a wrong read, which must stay visible.
+  // Falsifiable: filter on `>= 256` instead of on equality.
+  it('keeps an extended code that differs from sqliteCode, even 0', () => {
+    expect(
+      statementError({ message: 'm', sqliteCode: 1, sqliteExtendedCode: 0 }),
+    ).toMatchObject({ code: 'STATEMENT_FAILED', sqliteExtendedCode: 0 });
+  });
+
   it('prefers a code the worker minted over the SQLite code', () => {
     expect(
       statementError({
@@ -525,14 +588,30 @@ Use Serena's `rename_symbol` on `workerError` in `src/pool.ts`. Its one call sit
 
 - [ ] **Step 4: Rewrite `busyFromCode`, `statementError`, and add `startupError`**
 
-Replace `busyFromCode`, together with its doc comment, with:
+Insert `subtypeOf` directly before `busyFromCode`, and replace `busyFromCode`, together with its
+doc comment, with:
 
 ```ts
+/**
+ * The extended code when it names a subtype, else undefined (spec D9). SQLite
+ * reports the primary code again for a failure that has no subtype, and
+ * `sqliteCode` already says that. Any other difference is kept: a 0 read after
+ * a successful call is a wrong read, and must stay visible.
+ */
+const subtypeOf = (data: {
+  sqliteCode?: number;
+  sqliteExtendedCode?: number;
+}): number | undefined =>
+  data.sqliteExtendedCode !== data.sqliteCode
+    ? data.sqliteExtendedCode
+    : undefined;
+
 /**
  * Returns a SQLiteError('BUSY', …) when data carries a lock-conflict result
  * code (5 or 6), else undefined. Shared by `statementError` and `startupError`
  * so the BUSY_CODES decision lives in exactly one place. The extended code
- * travels with it when the worker sent one — a query does, an open does not.
+ * travels with it when it is a subtype (`subtypeOf`) — a query sends one, an
+ * open does not.
  */
 export const busyFromCode = (data: {
   message: string;
@@ -544,7 +623,7 @@ export const busyFromCode = (data: {
     ? new SQLiteError('BUSY', data.message, {
         cause: data.cause,
         sqliteCode: data.sqliteCode,
-        sqliteExtendedCode: data.sqliteExtendedCode,
+        sqliteExtendedCode: subtypeOf(data),
       })
     : undefined;
 ```
@@ -557,7 +636,9 @@ insert `startupError` directly after it:
  * What a query's `error` message becomes (spec 2026-09-14 §5.3): a code the
  * worker minted; else `BUSY` for a lock conflict; else `STATEMENT_FAILED` for
  * any other code SQLite reported; else — a failure SQLite did not report, such
- * as a JS exception in the worker — a plain Error, as before.
+ * as a JS exception in the worker — a plain Error, as before. `BUSY` and
+ * `STATEMENT_FAILED` carry `sqliteCode`, and `sqliteExtendedCode` when it is a
+ * subtype (`subtypeOf`).
  */
 export const statementError = (data: {
   message: string;
@@ -574,7 +655,7 @@ export const statementError = (data: {
     ? new SQLiteError('STATEMENT_FAILED', data.message, {
         cause: data.cause,
         sqliteCode: data.sqliteCode,
-        sqliteExtendedCode: data.sqliteExtendedCode,
+        sqliteExtendedCode: subtypeOf(data),
       })
     : new Error(data.message, { cause: data.cause }));
 
@@ -677,7 +758,8 @@ git log --oneline -1 && git show --stat HEAD
 
 **Interfaces:**
 - Consumes (Task 2): `statementError` copies `data.sqliteExtendedCode` onto `BUSY` and
-  `STATEMENT_FAILED`. Consumes (Task 1): `SQLITE_CODES`.
+  `STATEMENT_FAILED` when it differs from `sqliteCode` (`subtypeOf`, spec D9). Consumes
+  (Task 1): `SQLITE_CODES`, `SQLITE_EXTENDED_CODES`.
 - Produces: the `error` wire message carries `sqliteExtendedCode?: number`. wa-sqlite's error
   object carries an `extendedCode` property inside the worker, which is internal and never
   crosses the boundary under that name.
@@ -696,7 +778,7 @@ Create `tests/browser/statement-errors.test.ts`:
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { SQLiteError } from '../../src/errors';
-import { SQLITE_CODES } from '../../src/sqlite-codes';
+import { SQLITE_CODES, SQLITE_EXTENDED_CODES } from '../../src/sqlite-codes';
 import { createTestClient } from './helpers';
 
 /**
@@ -716,7 +798,7 @@ const CONSTRAINTS = [
     name: 'UNIQUE',
     setup: ['CREATE TABLE u (a INTEGER UNIQUE)', 'INSERT INTO u VALUES (1)'],
     failing: 'INSERT INTO u VALUES (1)',
-    extended: SQLITE_CODES.CONSTRAINT_UNIQUE,
+    extended: SQLITE_EXTENDED_CODES.CONSTRAINT_UNIQUE,
     message: /UNIQUE constraint failed: u\.a/,
   },
   {
@@ -726,14 +808,14 @@ const CONSTRAINTS = [
       'CREATE TABLE c (p INTEGER REFERENCES p (id))',
     ],
     failing: 'INSERT INTO c VALUES (42)',
-    extended: SQLITE_CODES.CONSTRAINT_FOREIGNKEY,
+    extended: SQLITE_EXTENDED_CODES.CONSTRAINT_FOREIGNKEY,
     message: /FOREIGN KEY constraint failed/,
   },
   {
     name: 'NOT NULL',
     setup: ['CREATE TABLE n (a INTEGER NOT NULL)'],
     failing: 'INSERT INTO n VALUES (NULL)',
-    extended: SQLITE_CODES.CONSTRAINT_NOTNULL,
+    extended: SQLITE_EXTENDED_CODES.CONSTRAINT_NOTNULL,
     message: /NOT NULL constraint failed: n\.a/,
   },
 ];
@@ -779,17 +861,39 @@ describe('a failed statement carries SQLite codes', () => {
     }
 
     // The prepare path: no statement exists yet, so `run` never sees this
-    // error. Falsifiable: drop the stamp in the `catch` of query's outer
-    // `try` — sqliteExtendedCode is undefined.
-    it(`a syntax error through read() (${build})`, async () => {
+    // error. A missing collation is the prepare failure that has a subtype,
+    // so it is the one that can falsify the prepare-level stamp. Falsifiable:
+    // drop the stamp in the `catch` of query's outer `try` —
+    // sqliteExtendedCode is undefined.
+    it(`a missing collation through read(), the prepare path (${build})`, async () => {
+      const db = await memoryClient(build);
+      try {
+        const error = await db
+          .read("SELECT 'a' = 'b' COLLATE nosuch")
+          .catch((e) => e);
+        expect(error).toMatchObject({
+          code: 'STATEMENT_FAILED',
+          sqliteCode: SQLITE_CODES.ERROR,
+          sqliteExtendedCode: SQLITE_EXTENDED_CODES.ERROR_MISSING_COLLSEQ,
+        });
+        expect(error.message).toMatch(/no such collation sequence: nosuch/);
+      } finally {
+        await db.close();
+      }
+    });
+
+    // Spec D9: SQLite reports no subtype for a syntax error, so there is no
+    // sqliteExtendedCode. Falsifiable: make subtypeOf in src/pool.ts return
+    // data.sqliteExtendedCode unconditionally — it arrives as 1.
+    it(`a syntax error has no subtype (${build})`, async () => {
       const db = await memoryClient(build);
       try {
         const error = await db.read('SELECT * FROM WHERE').catch((e) => e);
         expect(error).toMatchObject({
           code: 'STATEMENT_FAILED',
           sqliteCode: SQLITE_CODES.ERROR,
-          sqliteExtendedCode: SQLITE_CODES.ERROR,
         });
+        expect(error.sqliteExtendedCode).toBeUndefined();
         expect(error.message).toMatch(/syntax error/);
       } finally {
         await db.close();
@@ -817,8 +921,11 @@ describe('a failed statement carries SQLite codes', () => {
         expect(caught).toMatchObject({
           code: 'STATEMENT_FAILED',
           sqliteCode: SQLITE_CODES.FULL,
-          sqliteExtendedCode: SQLITE_CODES.FULL,
         });
+        // SQLite has no subtype for a full database (spec D9).
+        expect(
+          (caught as { sqliteExtendedCode?: number }).sqliteExtendedCode,
+        ).toBeUndefined();
         expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
           { a: 1 },
           { a: 2 },
@@ -846,7 +953,7 @@ describe('bulkWrite', () => {
       expect(error.cause).toMatchObject({
         code: 'STATEMENT_FAILED',
         sqliteCode: SQLITE_CODES.CONSTRAINT,
-        sqliteExtendedCode: SQLITE_CODES.CONSTRAINT_UNIQUE,
+        sqliteExtendedCode: SQLITE_EXTENDED_CODES.CONSTRAINT_UNIQUE,
       });
     } finally {
       await db.close();
@@ -906,8 +1013,9 @@ describe('a file that is not a database', () => {
     expect(error).toMatchObject({
       code: 'STATEMENT_FAILED',
       sqliteCode: SQLITE_CODES.NOTADB,
-      sqliteExtendedCode: SQLITE_CODES.NOTADB,
     });
+    // SQLite has no subtype for NOTADB (spec D9).
+    expect(error.sqliteExtendedCode).toBeUndefined();
   });
 });
 ```
@@ -919,23 +1027,28 @@ to the imports. In the F2 test, directly after
 ```ts
       // Spec 2026-09-14 §5.1: the worker issues a ROLLBACK after this failure
       // and before replying, which resets the connection's error code to 0.
-      // Falsifiable: read sqlite3_extended_errcode while building the reply
-      // instead of stamping it where the statement failed — this finds 0.
+      // "no such savepoint" has no subtype, so a correct read equals
+      // sqliteCode and D9 drops it. Falsifiable: read sqlite3_extended_errcode
+      // while building the reply instead of stamping it where the statement
+      // failed — it finds 0, which differs from 1 and is kept.
       expect(secondCaught).toMatchObject({
         code: 'STATEMENT_FAILED',
         sqliteCode: SQLITE_CODES.ERROR,
-        sqliteExtendedCode: SQLITE_CODES.ERROR,
       });
+      expect(
+        (secondCaught as { sqliteExtendedCode?: number }).sqliteExtendedCode,
+      ).toBeUndefined();
 ```
 
 - [ ] **Step 2: Run them and confirm the expected failures**
 
 Run: `pnpm exec rstest run --project chromium statement-errors tx-savepoint`
 Expected results:
-- **pass:** `fails the open with WORKER_CRASHED carrying NOTADB…` alone, since Task 2 already
-  produces what it asserts (`sqliteExtendedCode` is expected absent at open);
-- **fail:** every other new test, including the lazy-open one, on `sqliteExtendedCode` being
-  `undefined` where a number is expected, and so does the F2 assertion.
+- **pass:** every test that asserts `sqliteExtendedCode` absent — the syntax, FULL, both open
+  tests and the F2 assertion — since Task 2 already produces what they assert and nothing is
+  stamped yet;
+- **fail:** the constraint, missing-collation and bulkWrite tests, on `sqliteExtendedCode`
+  being `undefined` where a subtype is expected.
 
 Any other failure, such as a `code` that is not `STATEMENT_FAILED` or a message that does not
 match, is a finding: stop and report it before implementing. In particular, if the
@@ -1064,10 +1177,10 @@ Expected: PASS on both, every test.
 
 Each check is one temporary edit, one run, and a revert with Serena, then a fresh look to
 confirm the file matches Step 5 again:
-1. Make `stamped` return `e` without stamping. Expect the constraint, syntax, FULL, bulkWrite,
-   lazy-open and F2 tests to fail.
+1. Make `stamped` return `e` without stamping. Expect the constraint, missing-collation and
+   bulkWrite tests to fail.
 2. Restore `stamped`. Replace only the query-level `throw stamped(e);` with `throw e;`. Expect
-   the syntax test to fail and the constraint tests to still pass.
+   the missing-collation test to fail and the constraint tests to still pass.
 3. Restore. Delete the three `stamped` call sites in `run` and the query-level catch. Instead,
    in the `'query'` case's reply, send
    `sqliteExtendedCode: openedDB && (await openedDB).module._sqlite3_extended_errcode((await openedDB).db)`
@@ -1128,11 +1241,11 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 Insert this row directly before the `BUSY` row:
 
 ```markdown
-| `STATEMENT_FAILED` | SQLite refused or failed a statement for any reason other than a lock conflict: a constraint, a syntax error, a full disk, a file that is not a database. `message` is SQLite's own; `sqliteCode` and `sqliteExtendedCode` carry its result codes. |
+| `STATEMENT_FAILED` | SQLite refused or failed a statement for any reason other than a lock conflict: a constraint, a syntax error, a full disk, a file that is not a database. `message` is SQLite's own; `sqliteCode` carries its result code, and `sqliteExtendedCode` its subtype when SQLite reports one. |
 ```
 
 In the `BUSY` row, replace `with the numeric code on \`sqliteCode\`` with
-`with its result code on \`sqliteCode\` and its extended one on \`sqliteExtendedCode\``.
+`with its result code on \`sqliteCode\` and, when SQLite reports one, its subtype on \`sqliteExtendedCode\``.
 
 In the `WORKER_CRASHED` row, append: ` When SQLite refused to open the database — a file that is
 not a database, a \`pragmas\` entry it rejected — \`sqliteCode\` carries its result code.`
@@ -1142,14 +1255,14 @@ not a database, a \`pragmas\` entry it rejected — \`sqliteCode\` carries its r
 After the paragraph that begins `Discriminate on \`error.code\` or \`error.name\``, insert:
 
 ```markdown
-**SQLite's result codes.** An error SQLite reported carries its primary result code on `sqliteCode` and, when a statement failed, its extended one on `sqliteExtendedCode`: a UNIQUE violation gives `19` and `2067`, a foreign key `19` and `787`. `SQLITE_CODES` names every one, so neither needs a literal. What each means: [Result and Error Codes](https://sqlite.org/rescode.html).
+**SQLite's result codes.** An error SQLite reported carries its result code on `sqliteCode` and, when a statement failed with a subtype, that subtype on `sqliteExtendedCode`: a UNIQUE violation gives `19` and `2067`, a foreign key `19` and `787`, a full disk `13` and no subtype. Test the family on `sqliteCode` against `SQLITE_CODES`, the subtype on `sqliteExtendedCode` against `SQLITE_EXTENDED_CODES`; `sqliteCode` never equals an extended code. What each code means: [Result and Error Codes](https://sqlite.org/rescode.html).
 ```
 
 Replace the example block that follows with:
 
 ````markdown
 ```typescript
-import { SQLITE_CODES, SQLiteError } from 'browser-sqlite';
+import { SQLITE_EXTENDED_CODES, SQLiteError } from 'browser-sqlite';
 
 try {
   await db.write('...');
@@ -1157,7 +1270,7 @@ try {
   if (err instanceof SQLiteError) {
     switch (err.code) {
       case 'STATEMENT_FAILED':
-        if (err.sqliteExtendedCode === SQLITE_CODES.CONSTRAINT_UNIQUE) {
+        if (err.sqliteExtendedCode === SQLITE_EXTENDED_CODES.CONSTRAINT_UNIQUE) {
           /* already exists */
         }
         break;
@@ -1185,10 +1298,10 @@ Append as the last entry of `### Added`, directly before `### Changed`:
 
 ```markdown
 - **A failed statement says why, in numbers.** `STATEMENT_FAILED` carries SQLite's result code
-  on `sqliteCode` and its extended code on the new `sqliteExtendedCode` — `19` and `2067` for a
-  UNIQUE violation. A `BUSY` from a statement carries the extended code too, and
-  `WORKER_CRASHED` now carries `sqliteCode` when SQLite refused an open or a deletion.
-  `SQLITE_CODES` exports every result code of SQLite 3.53.0 by name.
+  on `sqliteCode` and, when SQLite reports one, its subtype on the new `sqliteExtendedCode` —
+  `19` and `2067` for a UNIQUE violation. A `BUSY` from a statement carries the subtype too,
+  and `WORKER_CRASHED` now carries `sqliteCode` when SQLite refused an open or a deletion.
+  `SQLITE_CODES` and `SQLITE_EXTENDED_CODES` export SQLite 3.53.0's result codes by name.
 ```
 
 - [ ] **Step 5: Show the user the diff, and wait**
