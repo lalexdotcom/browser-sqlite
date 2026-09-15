@@ -1,6 +1,6 @@
 # A failed statement says why — design
 
-**Status:** approved in chat 2026-09-14, section by section; **amended 2026-09-15** (D8, D9).
+**Status:** approved in chat 2026-09-14, section by section; **amended 2026-09-15** (D8, D9, D10).
 **Branch:** `feat/statement-errors`, from `main` after `42d587d`.
 **Triage:** reliability, so rc.5 (`mem:state`, the user's rule of 2026-09-09) — except D4, a
 feature the user put in scope explicitly.
@@ -84,13 +84,27 @@ what a failed statement produces. No test asserts the class of a SQL error.
   `undefined === SQLITE_EXTENDED_CODES.X` is false in both. **The client normalises, not the
   worker:** `statementError` keeps the extended code when it differs from `sqliteCode`. So a
   wrong read (a 0 from a successful call) stays visible instead of being filtered out.
+- **D10 (user, 2026-09-15, after the final review): `sqliteCode` is typed `SQLiteResultCode`,
+  strict; `sqliteExtendedCode` is typed `SQLiteExtendedResultCode | (number & {})`, open.** Asked
+  for code completion. Measured with TypeScript 5.9.3 and 6.0.3 (VS Code's language service) and
+  7.0.2 (`tsc`): both forms keep the literals in completion — bare numbers, without names;
+  `SQLITE_CODES.` stays the named path. The strict form also makes D8's mistake a compile error
+  (TS2367) and allows an exhaustive `switch`. It is honest for `sqliteCode`: since `sqliteCodeOf`,
+  the value is always a primary code of the bundled SQLite, and the list is re-transcribed when
+  wa-sqlite moves. `sqliteExtendedCode` stays open because D9 lets a wrong read through (0, or
+  101 after a JS-side `MISUSE`), which a strict type would misdescribe. Cost: a type-level break,
+  since `sqliteCode` has been published since rc.4 — constructing a `SQLiteError` with an
+  arbitrary `number` no longer compiles. Chosen over the open form for both (completion without
+  safety) and over leaving `number`.
 
 ## 3. The contract
 
 `SQLiteErrorCode` gains `STATEMENT_FAILED`. `SQLiteError` gains
 `readonly sqliteExtendedCode?: number`, present only when a statement SQLite ran failed **with a
-subtype**. When present, `sqliteExtendedCode & 0xff === sqliteCode`. The constructor accepts it
-as an option, like `sqliteCode`.
+subtype**. SQLite guarantees `(sqliteExtendedCode & 0xff) === sqliteCode` for a subtype it
+reports; the client does not enforce it, so a wrong read stays visible (D9). The constructor
+accepts it as an option, like `sqliteCode`. Types (D10): `sqliteCode?: SQLiteResultCode`,
+`sqliteExtendedCode?: SQLiteExtendedResultCode | (number & {})`.
 
 | Failure | `code` | `sqliteCode` | `sqliteExtendedCode` |
 |---|---|---|---|
@@ -111,7 +125,9 @@ Examples: a UNIQUE violation gives 19 and 2067; a full disk gives 13 and no subt
 - a SQL error is no longer a plain `Error` but a `SQLiteError`;
 - its `name` changes from `'Error'` to `'STATEMENT_FAILED'`, which stack traces and logs show;
 - a `catch` treating `instanceof SQLiteError` as "the library's error, not my statement's" now
-  catches SQL errors too.
+  catches SQL errors too;
+- `sqliteCode` is typed `SQLiteResultCode`, not `number` (D10): constructing a `SQLiteError` with
+  an arbitrary number no longer compiles.
 
 Nothing in `src/` depends on any of the three. Every `instanceof SQLiteError` test there
 (`client.ts`, twice, and `pool.ts`) also tests for one specific code: `OPERATION_TIMEOUT`,
@@ -128,8 +144,11 @@ as `cause`, so `err.cause` will be the `STATEMENT_FAILED`.
   no judgment decides which codes deserve a place.
 - **Keys drop the prefix**: `SQLITE_CODES.CONSTRAINT` (19), `SQLITE_EXTENDED_CODES.CONSTRAINT_UNIQUE`
   (2067). An extended key begins with its family's primary key.
-- **Form: two `as const` objects, frozen.** `sqliteCode` and `sqliteExtendedCode` stay typed
-  `number`, not a literal union: a later SQLite may add codes.
+- **Form: two `as const` objects, frozen, each with an exported type alias** —
+  `SQLiteResultCode` and `SQLiteExtendedResultCode`. `sqliteCode` is typed `SQLiteResultCode`,
+  `sqliteExtendedCode` `SQLiteExtendedResultCode | (number & {})` (D10). The argument first
+  written here — "a later SQLite may add codes" — does not hold for a vendored SQLite whose list
+  is re-transcribed on every move.
 - **Source: transcribed from `src/sqlite.h.in`, the source of `sqlite3.h`, at SQLite's tag
   `version-3.53.0`.** That is the SQLite of the vendored wa-sqlite, v1.1.2, whose `package.json`
   still reads 1.1.1 because upstream did not bump it. The evidence is the source-id read from
@@ -282,4 +301,3 @@ The builds matter because each has its own export of the extended-code function.
 - Named codes per result-code family (D1). They can be added over `STATEMENT_FAILED` later.
 - The extended code at open and delete (D7).
 - A worker failure that carries no SQLite code: a JS exception stays a plain `Error`.
-- Literal-union types for `sqliteCode` and `sqliteExtendedCode` (§4).
