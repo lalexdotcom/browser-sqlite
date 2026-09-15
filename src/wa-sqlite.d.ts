@@ -58,6 +58,12 @@ type WASQLiteModuleArg = { locateFile?: (path: string) => string };
 // ── sqlite-api.js — upstream declares the bare `wa-sqlite` entry, not this one ─
 declare module 'wa-sqlite/src/sqlite-api.js' {
   export function Factory(module: WASQLiteModule): SQLiteAPI;
+
+  /** Raised by wa-sqlite for every SQLite result code: `new SQLiteError(message, code)`. */
+  export class SQLiteError extends Error {
+    constructor(message: string, code: number);
+    code: number;
+  }
 }
 
 // ── the jspi build — upstream declares only the sync and async ones ──────────

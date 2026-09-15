@@ -40,6 +40,7 @@ import {
 import { renderPragmas } from '../utils';
 import { cloneable } from './cloneable';
 import { firstMissing } from './probes';
+import { sqliteCodeOf } from './sqlite-code';
 import { createStatementCache } from './statement-cache';
 
 type SQLOptions = {
@@ -310,17 +311,20 @@ const open = (file: string, options: OpenOptions) => {
         vfsError instanceof Error
           ? `${vfsError.name}: ${vfsError.message}`
           : undefined;
+      // Carried across the postMessage boundary so pool.ts can mint
+      // SQLiteError('BUSY') rather than SQLiteError('WORKER_CRASHED') — only
+      // for wa-sqlite's own SQLiteError (sqliteCodeOf), never any numeric
+      // `code`: the open chain awaits navigator.storage.getDirectory() and
+      // AccessHandlePoolVFS's #acquireAccessHandles(), whose DOMExceptions
+      // carry a numeric legacy `code` that is not SQLite's (e.g. 18 for
+      // SecurityError, which reads as SQLITE_CODES.TOOBIG).
+      const sqliteCode = sqliteCodeOf(error);
       self.postMessage({
         type: 'open-error',
         callId: 0,
         message: detail ? `${base}: ${detail}` : base,
         cause: cloneable(detail ? vfsError : error),
-        // wa-sqlite raises SQLiteError(message, code) with SQLite's numeric
-        // result code. Carry it across the postMessage boundary so pool.ts
-        // can mint SQLiteError('BUSY') rather than SQLiteError('WORKER_CRASHED').
-        ...(typeof (error as { code?: unknown })?.code === 'number'
-          ? { sqliteCode: (error as { code: number }).code }
-          : {}),
+        ...(sqliteCode !== undefined ? { sqliteCode } : {}),
       });
       throw error;
     });
@@ -363,7 +367,7 @@ const open = (file: string, options: OpenOptions) => {
      * after a failed conclusion. `??=`: the first stamp wins.
      */
     const stamped = (e: unknown) => {
-      if (typeof (e as { code?: unknown })?.code === 'number') {
+      if (sqliteCodeOf(e) !== undefined) {
         (e as { extendedCode?: number }).extendedCode ??=
           module._sqlite3_extended_errcode(db);
       }
@@ -650,6 +654,10 @@ const open = (file: string, options: OpenOptions) => {
             });
           }
         } catch (e) {
+          // Only for wa-sqlite's own SQLiteError (sqliteCodeOf), never any
+          // numeric `code`. Without this the code dies at the postMessage
+          // boundary and the client can only string-match the message.
+          const sqliteCode = sqliteCodeOf(e);
           reply({
             type: 'error',
             callId,
@@ -658,12 +666,7 @@ const open = (file: string, options: OpenOptions) => {
                 ? { message: e.message, cause: cloneable(e.cause) }
                 : { message: 'Unknown error', cause: e }
               : { message: `Unknown error (${e})` }),
-            // wa-sqlite raises SQLiteError(message, code) with SQLite's numeric
-            // result code. Without this the code dies at the postMessage
-            // boundary and the client can only string-match the message.
-            ...(typeof (e as { code?: unknown })?.code === 'number'
-              ? { sqliteCode: (e as { code: number }).code }
-              : {}),
+            ...(sqliteCode !== undefined ? { sqliteCode } : {}),
             ...(typeof (e as { extendedCode?: unknown })?.extendedCode ===
             'number'
               ? {
@@ -977,6 +980,11 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
           }
         })
         .catch((error: unknown) => {
+          // Only for wa-sqlite's own SQLiteError (sqliteCodeOf), never any
+          // numeric `code`: this path rethrows every DOMException but
+          // NotFoundError, and a DOMException's legacy `code` is numeric
+          // (e.g. 18 for SecurityError) but is not SQLite's.
+          const sqliteCode = sqliteCodeOf(error);
           self.postMessage({
             type: 'error',
             callId: 0,
@@ -985,9 +993,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
                 ? error.message
                 : `Failed to delete ${data.file}`,
             cause: cloneable(error),
-            ...(typeof (error as { code?: unknown })?.code === 'number'
-              ? { sqliteCode: (error as { code: number }).code }
-              : {}),
+            ...(sqliteCode !== undefined ? { sqliteCode } : {}),
           });
         });
       break;

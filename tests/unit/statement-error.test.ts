@@ -93,10 +93,24 @@ describe('statementError — a query the worker reports failed', () => {
 });
 
 describe('startupError — an open or a delete the worker reports failed', () => {
-  it('keeps BUSY for a lock conflict', () => {
-    expect(
-      startupError({ message: 'database is locked', sqliteCode: 5 }),
-    ).toMatchObject({ code: 'BUSY', sqliteCode: 5 });
+  // D7 as a property of the client: startupError passes busyFromCode only
+  // message/cause/sqliteCode, so an sqliteExtendedCode on the input (a
+  // variable, so TypeScript's excess-property check does not reject it — a
+  // literal here would) cannot come through. Falsifiable: pass `data`
+  // straight to busyFromCode instead of a rebuilt object — 517 comes through.
+  it('keeps BUSY for a lock conflict, and drops any extended code (D7)', () => {
+    const data: {
+      message: string;
+      sqliteCode: number;
+      sqliteExtendedCode: number;
+    } = {
+      message: 'database is locked',
+      sqliteCode: 5,
+      sqliteExtendedCode: 517,
+    };
+    const error = startupError(data);
+    expect(error).toMatchObject({ code: 'BUSY', sqliteCode: 5 });
+    expect(error.sqliteExtendedCode).toBeUndefined();
   });
 
   // Falsifiable: drop `sqliteCode` from the WORKER_CRASHED built in

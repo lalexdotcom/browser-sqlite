@@ -201,7 +201,14 @@ export const startupError = (data: {
   cause?: unknown;
   sqliteCode?: number;
 }): SQLiteError => {
-  const busy = busyFromCode(data);
+  // D7: no extended code at open/delete, as a property of the client — not
+  // merely because the worker never sends one. Only `message`, `cause` and
+  // `sqliteCode` reach `busyFromCode`, whatever else `data` might carry.
+  const busy = busyFromCode({
+    message: data.message,
+    ...(data.cause !== undefined ? { cause: data.cause } : {}),
+    ...(data.sqliteCode !== undefined ? { sqliteCode: data.sqliteCode } : {}),
+  });
   if (busy) return busy;
   return new SQLiteError('WORKER_CRASHED', data.message, {
     cause: data.cause,
