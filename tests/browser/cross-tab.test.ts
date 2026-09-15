@@ -66,10 +66,9 @@ for (const vfs of SHARED_VFS) {
             /* a failed client has nothing to close */
           }
           try {
-            const root = await navigator.storage.getDirectory();
-            await root.removeEntry(dbName, { recursive: true });
+            await deleteDatabase(dbName, { vfs });
           } catch {
-            /* the entry may not exist if the test failed before creation */
+            /* never created */
           }
         });
 
