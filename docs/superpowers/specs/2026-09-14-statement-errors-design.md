@@ -10,6 +10,9 @@ codes are split into `SQLITE_CODES` (primary) and `SQLITE_EXTENDED_CODES` (D8), 
 `sqliteExtendedCode` is absent when SQLite reports no subtype (D9). §3, §4, §5.3, §6 and §7
 below are written to the amended design.
 
+**Amended again 2026-09-15 after the final review:** `sqliteCode` is carried only for
+wa-sqlite's `SQLiteError` (`sqliteCodeOf`), and the worker stamps at three sites.
+
 ## 1. The problem
 
 A statement SQLite refuses reaches the consumer as a plain `Error`. Its `code` is undefined, it
@@ -18,8 +21,9 @@ the message. Seen in TX-M1 (`mem:measurements`, 2026-09-10): a caught INSERT fai
 *database or disk is full* arrived with neither `code` nor `sqliteCode`.
 
 **The worker is not where the code is lost.** Its three error sites — a query, an open and a
-delete — already copy wa-sqlite's numeric `code` into `sqliteCode` on the wire. The client drops
-it:
+delete — already copy a numeric `code` into `sqliteCode` on the wire. That premise was too
+broad: before the final review they copied ANY numeric `code`, not only wa-sqlite's own —
+§5.2 narrows this to `sqliteCodeOf`. The client drops it:
 
 - `workerError` in `src/pool.ts` builds a `SQLiteError` only for `errorCode` (no producer today)
   and for `sqliteCode` 5 or 6 (`busyFromCode`). Everything else — syntax (1), constraint (19),
@@ -148,12 +152,18 @@ and `finalize` also write it, with results that depend on SQLite's internals.
 
 So `query` stamps the code on wa-sqlite's error the first time it is caught, as a property
 `extendedCode` assigned with `??=`, so that nothing later overwrites it. It stamps only an error
-whose `code` is a number. Two sites cover every failure:
+for which `sqliteCodeOf` reads a code (§5.2) — wa-sqlite's own `SQLiteError`, never any numeric
+`code`. Three sites cover every failure:
 
 - **in `run`, around `bind_collection` and `step`**, before any cleanup. `SQLITE_INTERRUPT` is
   excluded: it breaks out of the loop and is never reported;
-- **at `query` level, for `prepare` failures** (syntax errors, a missing collation), where no
-  SQL runs between the failure and the `catch`.
+- **the fresh branch's own inner catch**, for a later statement's prepare failure in a
+  multi-statement string — a syntax error or a missing collation reached before that string's
+  `finally` can finalize anything;
+- **at `query` level, the outer catch** — the uncacheable branch's own prepare failures, which
+  leave wa-sqlite's own `statements()` generator with no catch of ours in between (it runs only
+  `sqlite3_errmsg` and `sqlite3_free` before the error leaves it, neither touching
+  `sqlite3_extended_errcode(db)`), so this is the only site that stamps them.
 
 Savepoint statements go through `query`, so they are covered with no extra site.
 
@@ -167,6 +177,14 @@ The worker sends what SQLite reported, subtype or not. D9's normalisation is the
 
 The `error` message in `src/types.ts` gains `sqliteExtendedCode?: number`. The worker's `query`
 catch copies it from `extendedCode` beside `sqliteCode`. `open-error` does not gain it (D7).
+
+**Final review.** All three reply sites — `open-error`, the `query` case's `error`, and the
+`delete` path's `error` — carry `sqliteCode` only through `sqliteCodeOf` (`src/worker/sqlite-code.ts`),
+never from any numeric `code` on the thrown value. Without it, the open chain's
+`navigator.storage.getDirectory()` and `AccessHandlePoolVFS`'s `#acquireAccessHandles()`, and the
+delete path's rethrown `DOMException`s, would leak a legacy numeric `code` as if it were SQLite's
+— e.g. `SecurityError`'s 18 reading as `SQLITE_CODES.TOOBIG`. `sqliteCodeOf` recognizes only
+wa-sqlite's own `SQLiteError`, the class `src/sqlite-api.js` exports beside `Factory`.
 
 ### 5.3 The client — two pure functions, exported for the unit project
 
@@ -191,8 +209,15 @@ one helper both mappers use.
 
 - The statement mapper: all four branches, both codes carried where present, and the extended
   code dropped when it equals `sqliteCode`, for `STATEMENT_FAILED` and `BUSY` alike.
-- The startup mapper: `BUSY`, `WORKER_CRASHED` with `sqliteCode`, `WORKER_CRASHED` without.
+- The startup mapper: `BUSY`, `WORKER_CRASHED` with `sqliteCode`, `WORKER_CRASHED` without; and,
+  final review, D7 as a property of `startupError` itself — an input carrying
+  `sqliteExtendedCode` still produces none, because `startupError` rebuilds `busyFromCode`'s
+  argument from `message`/`cause`/`sqliteCode` alone rather than forwarding it whole.
 - `SQLiteError`: `sqliteExtendedCode` set and unset.
+- `sqliteCodeOf` (final review, `src/worker/sqlite-code.ts`): reads the code off wa-sqlite's own
+  `SQLiteError`; returns undefined for a `DOMException` carrying the same numeric `code` shape
+  (asserting its `.code` first so the exclusion means something), a plain object, and a plain
+  `Error`.
 - The two tables:
   - every name shared with wa-sqlite's `sqlite-constants.js` has the same value there;
   - no primary sits in the extended table and no extended code in the primary one;
@@ -209,8 +234,16 @@ The builds matter because each has its own export of the extended-code function.
   and the message unchanged.
 - **The `prepare` path, through `read()`**: a missing collation, `SELECT 'a' = 'b' COLLATE
   nosuch`, gives 1/257 (`ERROR_MISSING_COLLSEQ`). It is the prepare failure that has a
-  subtype, and so the one that can falsify the prepare-level stamp (checked on SQLite 3.46 with
-  Python's `sqlite3`, 2026-09-15: raised at prepare, extended 257).
+  subtype, and so the one that can falsify a prepare-level stamp (checked on SQLite 3.46 with
+  Python's `sqlite3`, 2026-09-15: raised at prepare, extended 257). This single-statement form
+  takes the fresh branch's own inner catch, which stamps first (`??=`), so it falsifies only the
+  removal of BOTH prepare-level stamps together.
+- **The same failure, fresh then uncacheable (final review)**: the same SQL as a later statement
+  in a multi-statement string, `SELECT 1; SELECT 'a' = 'b' COLLATE nosuch`, read twice. The first
+  run takes the fresh branch and marks the string uncacheable; the second prepares through
+  wa-sqlite's own `statements()` generator, where only `query`'s outer catch stamps. This is what
+  falsifies the outer stamp alone: drop it and the second run's `sqliteExtendedCode` is
+  undefined while the first run's is unaffected.
 - **A syntax error through `read()`**: `STATEMENT_FAILED`, 1, and no `sqliteExtendedCode` —
   D9's absence, end to end.
 - **`SQLITE_FULL` inside a transaction**, TX-M1's scenario (`PRAGMA max_page_count` then an

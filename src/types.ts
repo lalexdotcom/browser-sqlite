@@ -133,8 +133,11 @@ export type WorkerMessageData =
       sqliteCode?: number;
       /**
        * SQLite's extended result code, read in the worker where the statement
-       * failed (spec 2026-09-14, §5.1). Sent by the query path only;
-       * `sqliteExtendedCode & 0xff === sqliteCode`.
+       * failed (spec 2026-09-14, §5.1). Sent by the query path only, and
+       * unfiltered: this is exactly what SQLite reported, including a value
+       * equal to `sqliteCode` (no subtype). The client is what drops it in
+       * that case (D9); when SQLite does report a subtype,
+       * `(sqliteExtendedCode & 0xff) === sqliteCode`.
        */
       sqliteExtendedCode?: number;
       /**

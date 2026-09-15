@@ -3,7 +3,7 @@
  * tables that match `SQLiteError`'s two fields: test the family on `sqliteCode`
  * against `SQLITE_CODES` (`CONSTRAINT`, `FULL`), the subtype on
  * `sqliteExtendedCode` against `SQLITE_EXTENDED_CODES` (`CONSTRAINT_UNIQUE`).
- * An extended code's low byte is its family (`2067 & 0xff === 19`), and its key
+ * An extended code's low byte is its family (`(2067 & 0xff) === 19`), and its key
  * begins with the family's key. What each one means:
  * https://sqlite.org/rescode.html.
  *

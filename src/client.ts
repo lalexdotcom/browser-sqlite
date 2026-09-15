@@ -950,12 +950,15 @@ export const createSQLiteClient = (
    * A `BUSY` SQLite itself reported, as opposed to one this library minted to
    * mean "stop and do something else".
    *
-   * `pool.ts` attaches `sqliteCode` only for SQLITE_BUSY (5) and
-   * SQLITE_LOCKED (6). The `exclusiveConnection` guard above and
+   * A `BUSY` SQLite reported carries `sqliteCode` (5 or 6); a `BUSY` this
+   * library mints carries none. The `exclusiveConnection` guard above and
    * `deleteDatabase` both mint their `BUSY` without one, deliberately: those
    * say "close the other client", and retrying them would delay exactly the
-   * fast failure they exist to produce. The presence of a numeric code is what
-   * tells the two apart, and it is why this does not gate on a VFS name.
+   * fast failure they exist to produce. Since final review, `sqliteCode` also
+   * rides on `STATEMENT_FAILED` and `WORKER_CRASHED`, so the numeric code
+   * alone no longer tells a retryable `BUSY` apart from those — the
+   * `code === 'BUSY'` check is what does that; the presence of a numeric code
+   * is what tells SQLite's `BUSY` apart from this library's own.
    */
   const isRetryableBusy = (error: unknown) =>
     error instanceof SQLiteError &&

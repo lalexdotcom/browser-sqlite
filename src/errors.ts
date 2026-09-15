@@ -52,8 +52,10 @@ export class SQLiteError extends Error {
    * failed WITH A SUBTYPE — `STATEMENT_FAILED` or `BUSY` from a query, never
    * an open or a delete: 2067 (`SQLITE_EXTENDED_CODES.CONSTRAINT_UNIQUE`)
    * under `sqliteCode` 19. Absent when SQLite has no subtype for the failure
-   * (a full disk, a syntax error), since `sqliteCode` already says it. When
-   * present, `sqliteExtendedCode & 0xff === sqliteCode`.
+   * (a full disk, a syntax error), since `sqliteCode` already says it. For a
+   * subtype SQLite reports, `(sqliteExtendedCode & 0xff) === sqliteCode` is
+   * SQLite's own guarantee, not something this library enforces: the client
+   * deliberately lets a differing value through (a 0 from a wrong read).
    */
   readonly sqliteExtendedCode?: number;
   /**
