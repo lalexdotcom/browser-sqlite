@@ -60,6 +60,7 @@
 		"test:conformance": "rstest --config rstest.conformance.config.ts && rstest --config rstest.conformance.firefox.config.ts",
 		"test:conformance:chromium": "rstest --config rstest.conformance.config.ts",
 		"test:conformance:firefox": "rstest --config rstest.conformance.firefox.config.ts",
+		"test:matrix": "node scripts/test-matrix.mjs",
 		"docs:vfs": "node scripts/render-vfs-matrix.ts",
 		"bench:build": "pnpm build && node scripts/bench/assemble.mjs _site",
 		"bench:serve": "npx --yes kill-port 8099 && pnpm bench:build && node scripts/static-server.mjs _site 8099",
