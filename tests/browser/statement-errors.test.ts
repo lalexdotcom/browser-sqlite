@@ -85,9 +85,11 @@ describe('a failed statement carries SQLite codes', () => {
 
     // The prepare path: no statement exists yet, so `run` never sees this
     // error. A missing collation is the prepare failure that has a subtype,
-    // so it is the one that can falsify the prepare-level stamp. Falsifiable:
-    // drop the stamp in the `catch` of query's outer `try` —
-    // sqliteExtendedCode is undefined.
+    // so it is the one that can falsify SOME prepare-level stamp. This SQL is
+    // a single statement, so it takes the fresh branch's own inner catch,
+    // which stamps first — the outer stamp would read the same value there
+    // (`??=`), so this falsifies only the removal of BOTH prepare-level
+    // stamps. The test below is what falsifies the outer one alone.
     it(`a missing collation through read(), the prepare path (${build})`, async () => {
       const db = await memoryClient(build);
       try {
@@ -100,6 +102,31 @@ describe('a failed statement carries SQLite codes', () => {
           sqliteExtendedCode: SQLITE_EXTENDED_CODES.ERROR_MISSING_COLLSEQ,
         });
         expect(error.message).toMatch(/no such collation sequence: nosuch/);
+      } finally {
+        await db.close();
+      }
+    });
+
+    // The uncacheable branch. A multi-statement string's first run takes the
+    // fresh branch and marks the string uncacheable; its second run prepares
+    // through wa-sqlite's own statements() generator, where only query's outer
+    // catch stamps. Falsifiable: drop that outer stamp — the second run's
+    // sqliteExtendedCode is undefined. The fresh branch's own stamp (first run)
+    // has no falsifier: nothing runs between that failure and the outer catch,
+    // which would read the same value.
+    it(`a later statement's prepare failure, fresh then uncacheable (${build})`, async () => {
+      const db = await memoryClient(build);
+      try {
+        const sql = "SELECT 1; SELECT 'a' = 'b' COLLATE nosuch";
+        const expected = {
+          code: 'STATEMENT_FAILED',
+          sqliteCode: SQLITE_CODES.ERROR,
+          sqliteExtendedCode: SQLITE_EXTENDED_CODES.ERROR_MISSING_COLLSEQ,
+        };
+        const fresh = await db.read(sql).catch((e) => e);
+        expect(fresh).toMatchObject(expected);
+        const uncacheable = await db.read(sql).catch((e) => e);
+        expect(uncacheable).toMatchObject(expected);
       } finally {
         await db.close();
       }
