@@ -189,6 +189,8 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **A transaction that reads before it writes no longer breaks `OPFSWriteAheadVFS`.** That VFS refuses a write transaction that did not announce itself when it began, and `transaction()` began every transaction deferred: a callback whose first statement read — or ran a write that changed nothing — failed with `STATEMENT_FAILED` ("disk I/O error") and left the client unusable. `output()` failed on that VFS for the same reason whenever its target table did not exist yet. A write transaction now begins `IMMEDIATE`; a `readOnly` one still begins deferred.
+
 - **`IDBBatchAtomicVFS` serves reads while a long query runs.** A long statement
   on one worker made every other connection's read wait until it finished, as
   if the VFS held one exclusive handle — which it does not. Every statement on
