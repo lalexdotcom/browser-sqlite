@@ -1,6 +1,6 @@
 import { SQLiteError } from './errors';
 import { connectionLockName, createLocks, initLockName } from './locks';
-import { busyFromCode, spawnWorker } from './pool';
+import { spawnWorker, startupError } from './pool';
 import {
   defaultBuildFor,
   type SQLiteBuild,
@@ -173,12 +173,7 @@ const runDelete = (message: {
         );
       }
       if (data.type === 'error') {
-        return settle(
-          busyFromCode(data) ??
-            new SQLiteError('WORKER_CRASHED', data.message, {
-              cause: data.cause,
-            }),
-        );
+        return settle(startupError(data));
       }
     };
 
