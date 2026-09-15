@@ -76,6 +76,7 @@ describe('a pool capped by its environment', () => {
     const warnings = captureWarnings();
     const records = interceptWorkers();
     const lost: number[] = [];
+    // One VFS: the subject is OPFSWriteAheadVFS's own environment cap.
     const db = await createTestClient({
       vfs: 'OPFSWriteAheadVFS',
       poolSize: 4,
@@ -105,6 +106,7 @@ describe('a pool capped by its environment', () => {
   // T2. Falsifiable: drop the "poolSize was passed" condition on the warning.
   it('caps silently when poolSize was left to its default', async () => {
     const warnings = captureWarnings();
+    // One VFS: the subject is OPFSWriteAheadVFS's own environment cap.
     const db = await createTestClient({ vfs: 'OPFSWriteAheadVFS' });
     await db.write('CREATE TABLE t (a)');
     expect(db.poolSize).toBe(CAPPED ? 1 : 2);
@@ -115,6 +117,7 @@ describe('a pool capped by its environment', () => {
   // T3. Falsifiable: remove OPFSAdaptiveVFS's singleConnectionWithout — Firefox then keeps 4.
   it('caps OPFSAdaptiveVFS too without readwrite-unsafe: a second worker would only wait its turn', async () => {
     const lost: number[] = [];
+    // One VFS: the subject is OPFSAdaptiveVFS's own environment cap.
     const db = await createTestClient({
       vfs: 'OPFSAdaptiveVFS',
       poolSize: 4,
@@ -132,6 +135,7 @@ describe('a pool capped by its environment', () => {
     async () => {
       const records = interceptWorkers();
       const events: { size: number; live: number }[] = [];
+      // One VFS: the subject is OPFSWriteAheadVFS's own environment cap.
       const db = await createTestClient({
         vfs: 'OPFSWriteAheadVFS',
         poolSize: 4,
@@ -165,6 +169,8 @@ describe('a pool capped by its environment', () => {
 
     const warnings = captureWarnings();
     const causes: Error[] = [];
+    // One VFS: the subject is OPFSWriteAheadVFS's own open-call shape and the
+    // storage error it surfaces (holdFileExclusively above).
     const db = createSQLiteClient(file, {
       vfs: 'OPFSWriteAheadVFS',
       poolSize: 1,
@@ -201,6 +207,8 @@ describe('a pool capped by its environment', () => {
       const root = await navigator.storage.getDirectory();
       await root.removeEntry(file, { recursive: true }).catch(() => {});
     });
+    // One VFS: the subject is close() during startup of a pool capped by
+    // OPFSWriteAheadVFS's own environment cap.
     const db = createSQLiteClient(file, {
       vfs: 'OPFSWriteAheadVFS',
       poolSize: 2,
@@ -263,6 +271,8 @@ describe('a pool capped by its environment', () => {
 
       const warnings = captureWarnings();
       const lost: unknown[] = [];
+      // One VFS: the subject is a surplus slot declining under
+      // OPFSWriteAheadVFS's own environment cap, during the retry round.
       const db = createSQLiteClient(file, {
         vfs: 'OPFSWriteAheadVFS',
         poolSize: 2,
@@ -302,6 +312,8 @@ describe('a pool capped by its environment', () => {
 
       const events: { index: number; size: number; live: number }[] = [];
       const causes: Error[] = [];
+      // One VFS: the subject is the capped total-failure path under
+      // OPFSWriteAheadVFS's own environment cap.
       const db = createSQLiteClient(file, {
         vfs: 'OPFSWriteAheadVFS',
         poolSize: 4,

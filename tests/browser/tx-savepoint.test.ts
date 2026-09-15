@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@rstest/core';
 import { SQLITE_CODES } from '../../src/sqlite-codes';
 import { createTestClient } from './helpers';
+import type { Need } from './target';
 
 /**
  * docs/superpowers/specs/2026-09-11-tx-savepoint-design.md: a statement the
@@ -21,10 +22,7 @@ type Debuggable = { debug: { workers: { creationTime: number }[] } };
 const workerIdentity = (db: unknown) =>
   (db as Debuggable).debug.workers.map((w) => w.creationTime).join(',');
 
-const setUp = async (options: {
-  vfs: 'MemoryVFS' | 'OPFSAdaptiveVFS';
-  build?: 'sync' | 'async';
-}) => {
+const setUp = async (options: { needs?: readonly Need[] } = {}) => {
   const db = await createTestClient({ ...options, poolSize: 1, debug: true });
   await db.write('CREATE TABLE t (a INTEGER)');
   await db.write('CREATE TABLE big (x INTEGER)');
@@ -66,7 +64,7 @@ describe('an SQL error the callback catches (spec 2026-09-11 §1)', () => {
   // rejection — the caught violation then kills the transaction and
   // INSERT (2) never lands.
   it('lets the transaction go on and commit what preceded it (T11)', async () => {
-    const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
+    const db = await setUp();
     try {
       await db.write('CREATE UNIQUE INDEX t_a ON t (a)');
       let caught: unknown;
@@ -87,7 +85,7 @@ describe('an SQL error the callback catches (spec 2026-09-11 §1)', () => {
   // dieIfConnectionLeft() call from `settled` — the SELECT then runs in
   // autocommit and `later` holds its rows.
   it('dies when ON CONFLICT ROLLBACK takes the transaction with it (T10)', async () => {
-    const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
+    const db = await setUp();
     try {
       await db.write('CREATE UNIQUE INDEX t_a ON t (a)');
       const before = workerIdentity(db);
@@ -122,84 +120,85 @@ const HUGE_INSERT =
   'INSERT INTO big WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 3000000) SELECT x FROM c';
 
 describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R3)', () => {
-  for (const vfs of ['OPFSAdaptiveVFS', 'MemoryVFS'] as const) {
-    // Falsifiable: in `settled`, `await worker.quiesce()` before rethrowing the
-    // own abort — the rejection then arrives when the write ends, and the next
-    // statement waits for nothing.
-    it(`rejects at the deadline, and the next statement pays for the rest (T2, ${vfs})`, async () => {
-      const db = await setUp({ vfs });
-      try {
-        let rejectedAfter = 0;
-        let nextWaited = 0;
-        await db.transaction(async (tx) => {
-          const t0 = performance.now();
-          await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
-          const t1 = performance.now();
-          await tx.write('INSERT INTO t VALUES (1)');
-          rejectedAfter = t1 - t0;
-          nextWaited = performance.now() - t1;
-        });
-        expect(nextWaited).toBeGreaterThan(rejectedAfter);
-        expect(await bigCount(db)).toBe(0);
-        expect(await rowsOf(db)).toEqual([0, 1]);
-      } finally {
-        await db.close();
-      }
-    }, 60_000);
+  // Falsifiable: in `settled`, `await worker.quiesce()` before rethrowing the
+  // own abort — the rejection then arrives when the write ends, and the next
+  // statement waits for nothing. Holds on every build: the promise rejects at
+  // the deadline whether or not the underlying step can be cut, so this no
+  // longer loops over VFS (spec 2026-09-15, A5).
+  it('rejects at the deadline, and the next statement pays for the rest (T2)', async () => {
+    const db = await setUp();
+    try {
+      let rejectedAfter = 0;
+      let nextWaited = 0;
+      await db.transaction(async (tx) => {
+        const t0 = performance.now();
+        await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+        const t1 = performance.now();
+        await tx.write('INSERT INTO t VALUES (1)');
+        rejectedAfter = t1 - t0;
+        nextWaited = performance.now() - t1;
+      });
+      expect(nextWaited).toBeGreaterThan(rejectedAfter);
+      expect(await bigCount(db)).toBe(0);
+      expect(await rowsOf(db)).toEqual([0, 1]);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
 
-    // Falsifiable: in `entryWait`, await `abandoned` without racing the
-    // waiting statement's own signal — the rejection still arrives (`own`'s
-    // pre-checked `throwIfAborted()` catches it once the wait ends), but only
-    // once the abandoned write itself has finished: `rejectedAfter` then costs
-    // the whole remaining run and `nextWaited` costs nothing, so the timing
-    // assertion below inverts instead of the outcome silently staying green.
-    it(`rejects a statement that times out behind an abandoned write, alone (T5, ${vfs})`, async () => {
-      const db = await setUp({ vfs });
-      try {
-        let second: unknown;
-        let rejectedAfter = 0;
-        let nextWaited = 0;
-        await db.transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
-          await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
-          const t0 = performance.now();
-          second = await tx
-            .write('INSERT INTO t VALUES (9)', [], { timeout: 20 })
-            .catch((e) => e);
-          const t1 = performance.now();
-          rejectedAfter = t1 - t0;
-          await tx.write('INSERT INTO t VALUES (2)');
-          nextWaited = performance.now() - t1;
-        });
-        expect(second).toMatchObject({
-          code: 'OPERATION_TIMEOUT',
-          timeout: 20,
-        });
-        expect(rejectedAfter).toBeLessThan(nextWaited);
-        expect(await rowsOf(db)).toEqual([0, 1, 2]);
-        expect(await bigCount(db)).toBe(0);
-      } finally {
-        await db.close();
-      }
-    }, 60_000);
+  // Falsifiable: in `entryWait`, await `abandoned` without racing the
+  // waiting statement's own signal — the rejection still arrives (`own`'s
+  // pre-checked `throwIfAborted()` catches it once the wait ends), but only
+  // once the abandoned write itself has finished: `rejectedAfter` then costs
+  // the whole remaining run and `nextWaited` costs nothing, so the timing
+  // assertion below inverts instead of the outcome silently staying green.
+  // Holds on every build (see T2's note).
+  it('rejects a statement that times out behind an abandoned write, alone (T5)', async () => {
+    const db = await setUp();
+    try {
+      let second: unknown;
+      let rejectedAfter = 0;
+      let nextWaited = 0;
+      await db.transaction(async (tx) => {
+        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+        const t0 = performance.now();
+        second = await tx
+          .write('INSERT INTO t VALUES (9)', [], { timeout: 20 })
+          .catch((e) => e);
+        const t1 = performance.now();
+        rejectedAfter = t1 - t0;
+        await tx.write('INSERT INTO t VALUES (2)');
+        nextWaited = performance.now() - t1;
+      });
+      expect(second).toMatchObject({
+        code: 'OPERATION_TIMEOUT',
+        timeout: 20,
+      });
+      expect(rejectedAfter).toBeLessThan(nextWaited);
+      expect(await rowsOf(db)).toEqual([0, 1, 2]);
+      expect(await bigCount(db)).toBe(0);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
 
-    // Falsifiable: make commitNow() send its COMMIT with `exec(worker, …)`
-    // instead of `via(false)` — the COMMIT then carries no undo and the
-    // million rows are committed.
-    it(`commits only what preceded a caught abandoned write when the callback returns at once (T6, ${vfs})`, async () => {
-      const db = await setUp({ vfs });
-      try {
-        await db.transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
-          await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
-        });
-        expect(await rowsOf(db)).toEqual([0, 1]);
-        expect(await bigCount(db)).toBe(0);
-      } finally {
-        await db.close();
-      }
-    }, 60_000);
-  }
+  // Falsifiable: make commitNow() send its COMMIT with `exec(worker, …)`
+  // instead of `via(false)` — the COMMIT then carries no undo and the
+  // million rows are committed. Holds on every build (see T2's note).
+  it('commits only what preceded a caught abandoned write when the callback returns at once (T6)', async () => {
+    const db = await setUp();
+    try {
+      await db.transaction(async (tx) => {
+        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+      });
+      expect(await rowsOf(db)).toEqual([0, 1]);
+      expect(await bigCount(db)).toBe(0);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
 
   // On a build that can cut a step: the rejection escapes, the transaction
   // dies, and the background write is cut rather than awaited. Falsifiable:
@@ -207,7 +206,7 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
   // `settled` — the death then cannot cut it and transaction() waits for the
   // whole write.
   it('cuts the write, keeps nothing, and aborts tx.signal when the rejection escapes (T3)', async () => {
-    const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
+    const db = await setUp({ needs: ['interruptible'] });
     try {
       const natural = await timed(() => db.write(HUGE_INSERT));
       await db.write('DELETE FROM big');
@@ -225,7 +224,11 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
           }),
         ).rejects.toBe(reason),
       );
-      expect(took).toBeLessThan(natural / 2);
+      // A write that is not cut runs to about `natural`; one that is cut ends
+      // well before it. 0.8, not 0.5: OPFSWriteAheadVFS/async cuts later than
+      // OPFSAdaptiveVFS/async on Chromium (≈0.6 of natural, 2026-09-15) and
+      // the subject is that the write is cut, not how fast.
+      expect(took).toBeLessThan(natural * 0.8);
       expect(seen.aborted).toBe(true);
       expect(seen.reason).toBe(reason);
       expect(await rowsOf(db)).toEqual([0]);
@@ -238,7 +241,7 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
 
   // Falsifiable: as T3.
   it("cuts an abandoned write when the transaction's own timeout expires (T4)", async () => {
-    const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
+    const db = await setUp({ needs: ['interruptible'] });
     try {
       const natural = await timed(() => db.write(HUGE_INSERT));
       await db.write('DELETE FROM big');
@@ -259,7 +262,11 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
         code: 'OPERATION_TIMEOUT',
         timeout: 150,
       });
-      expect(took).toBeLessThan(natural / 2);
+      // A write that is not cut runs to about `natural`; one that is cut ends
+      // well before it. 0.8, not 0.5: OPFSWriteAheadVFS/async cuts later than
+      // OPFSAdaptiveVFS/async on Chromium (≈0.6 of natural, 2026-09-15) and
+      // the subject is that the write is cut, not how fast.
+      expect(took).toBeLessThan(natural * 0.8);
       expect(await rowsOf(db)).toEqual([0]);
       expect(await bigCount(db)).toBe(0);
     } finally {
@@ -269,37 +276,33 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
 });
 
 describe('a write issued through a generator (spec 2026-09-11, §4)', () => {
-  for (const vfs of ['OPFSAdaptiveVFS', 'MemoryVFS'] as const) {
-    // Falsifiable: in `releasing`, drop the abandon(…) call — the write is
-    // then closed like any generator: cut where a step can be cut (the
-    // transaction dies), committed where it cannot.
-    it(`undoes a caught write issued through tx.chunk(), and goes on (${vfs})`, async () => {
-      const db = await setUp({ vfs });
-      try {
-        let caught: unknown;
-        await db.transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
-          caught = await (async () => {
-            for await (const _rows of tx.chunk(
-              `${BIG_INSERT} RETURNING x`,
-              [],
-              {
-                timeout: 30,
-              },
-            )) {
-              // The first chunk comes only after the whole DML.
-            }
-          })().catch((e) => e);
-          await tx.write('INSERT INTO t VALUES (2)');
-        });
-        expect(caught).toMatchObject({ code: 'OPERATION_TIMEOUT' });
-        expect(await rowsOf(db)).toEqual([0, 1, 2]);
-        expect(await bigCount(db)).toBe(0);
-      } finally {
-        await db.close();
-      }
-    }, 60_000);
-  }
+  // Falsifiable: in `releasing`, drop the abandon(…) call — the write is
+  // then closed like any generator: cut where a step can be cut (the
+  // transaction dies), committed where it cannot. Holds on every build (T2's
+  // note in the describe above): the promise rejects at the deadline either
+  // way, so this no longer loops over VFS (spec 2026-09-15, A5).
+  it('undoes a caught write issued through tx.chunk(), and goes on', async () => {
+    const db = await setUp();
+    try {
+      let caught: unknown;
+      await db.transaction(async (tx) => {
+        await tx.write('INSERT INTO t VALUES (1)');
+        caught = await (async () => {
+          for await (const _rows of tx.chunk(`${BIG_INSERT} RETURNING x`, [], {
+            timeout: 30,
+          })) {
+            // The first chunk comes only after the whole DML.
+          }
+        })().catch((e) => e);
+        await tx.write('INSERT INTO t VALUES (2)');
+      });
+      expect(caught).toMatchObject({ code: 'OPERATION_TIMEOUT' });
+      expect(await rowsOf(db)).toEqual([0, 1, 2]);
+      expect(await bigCount(db)).toBe(0);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
 });
 
 describe('a load the callback abandons (spec 2026-09-11, R4, D6)', () => {
@@ -309,7 +312,7 @@ describe('a load the callback abandons (spec 2026-09-11, R4, D6)', () => {
   // the `onAbandoned` hook in src/bulk.ts — the transaction then dies and
   // nothing is kept.
   it('keeps the batches an abandoned tx.bulkWrite completed (T9)', async () => {
-    const db = await setUp({ vfs: 'MemoryVFS' });
+    const db = await setUp();
     try {
       // src/bulk.ts: maxVariables (32766) / one key.
       const batch = 32766;
@@ -347,7 +350,7 @@ describe("a consumer's own savepoints (spec 2026-09-11, D7, D8)", () => {
   // timed RELEASE u then runs inside __bsq_sp and pops it, and the COMMIT's
   // RELEASE __bsq_sp fails.
   it('undoes to the consumer savepoint across a caught abandoned write (T8)', async () => {
-    const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
+    const db = await setUp();
     try {
       await db.transaction(async (tx) => {
         await tx.write('SAVEPOINT u');
@@ -378,7 +381,7 @@ describe("a consumer's own savepoints (spec 2026-09-11, D7, D8)", () => {
   // ROLLBACK from the conclude/open catch in src/worker/worker.ts — the
   // transaction then resolves and the abandoned rows are committed.
   it('dies when an abandoned write pops a consumer savepoint along with __bsq_sp', async () => {
-    const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
+    const db = await setUp();
     try {
       const before = workerIdentity(db);
       let firstCaught: unknown;

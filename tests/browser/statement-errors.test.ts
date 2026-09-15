@@ -2,7 +2,7 @@ import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { SQLiteError } from '../../src/errors';
 import { SQLITE_CODES, SQLITE_EXTENDED_CODES } from '../../src/sqlite-codes';
-import { createTestClient } from './helpers';
+import { createTestClient, TEST_TARGET } from './helpers';
 
 /**
  * docs/superpowers/specs/2026-09-14-statement-errors-design.md: a statement
@@ -52,6 +52,9 @@ const memoryClient = (
   pragmas?: Record<string, string>,
 ) =>
   createTestClient({
+    // One VFS: the subject is SQLite's own error/code translation, exercised
+    // across every build; MemoryVFS isolates it from storage-layer noise
+    // (declares all three builds, needs no cleanup — see file docblock).
     vfs: 'MemoryVFS',
     build,
     poolSize: 1,
@@ -223,13 +226,14 @@ describe('a file that is not a database', () => {
     return { file, remove: () => root.removeEntry(file).catch(() => {}) };
   };
 
-  // `OPFSAdaptiveVFS` declares no default pragma, so a `pragmas` entry is
-  // what makes the open read the file. Falsifiable: drop `sqliteCode` from
-  // the WORKER_CRASHED built in startupError.
+  // The target declares no default pragma, so a `pragmas` entry is what makes
+  // the open read the file. Falsifiable: drop `sqliteCode` from the
+  // WORKER_CRASHED built in startupError.
   it('fails the open with WORKER_CRASHED carrying NOTADB when a pragma reads it', async () => {
     const { file, remove } = await garbageFile();
     const db = createSQLiteClient(file, {
-      vfs: 'OPFSAdaptiveVFS',
+      vfs: TEST_TARGET.vfs,
+      build: TEST_TARGET.build,
       poolSize: 1,
       pragmas: { user_version: '1' },
     });
@@ -250,7 +254,8 @@ describe('a file that is not a database', () => {
   it('fails the first statement with STATEMENT_FAILED when nothing reads it at open', async () => {
     const { file, remove } = await garbageFile();
     const db = createSQLiteClient(file, {
-      vfs: 'OPFSAdaptiveVFS',
+      vfs: TEST_TARGET.vfs,
+      build: TEST_TARGET.build,
       poolSize: 1,
     });
     onTestFinished(async () => {

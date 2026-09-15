@@ -305,10 +305,11 @@ describe('SQL errors (INT-10)', () => {
  */
 describe('lock() blocking behavior (D-09)', () => {
   it('both workers with poolSize: 2 reach READY (sequential lock/unlock)', async () => {
-    // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS runs
-    // one worker without readwrite-unsafe (spec 2026-09-13, §10).
+    // Both workers must reach READY: needs two-workers so a target that caps
+    // the pool without readwrite-unsafe (spec 2026-09-13, §10) falls back to
+    // a pair that keeps two, on every engine (spec 2026-09-15, A5).
     const db = await createTestClient({
-      vfs: 'OPFSAnyContextVFS',
+      needs: ['two-workers'],
       poolSize: 2,
     });
 

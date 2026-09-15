@@ -10,9 +10,10 @@ import { createTestClient } from './helpers';
  * would pin nothing. Control before the barrier: 8/8 stale.
  */
 const forced = {
-  // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS runs
-  // one worker without readwrite-unsafe (spec 2026-09-13, §10).
-  vfs: 'OPFSAnyContextVFS' as const,
+  // Writer spread: needs two live workers, so a target that caps the pool
+  // without readwrite-unsafe (spec 2026-09-13, §10) falls back to a pair
+  // that keeps two, on every engine (spec 2026-09-15, A5).
+  needs: ['two-workers'] as const,
   poolSize: 2,
   __unsafeTestWriterPolicy: (i: number) => i !== 0,
 };
@@ -101,6 +102,10 @@ describe('commit-propagation barrier', () => {
   });
 });
 
+// One VFS: two clients must share one database; OPFSAdaptiveVFS shares it on
+// every engine (see SHARED_VFS).
+const sharedFile = { vfs: 'OPFSAdaptiveVFS' as const };
+
 describe('barrier — two clients in one tab', () => {
   // Falsifiable: replace the globalThis symbol registry in src/epochs.ts with
   // a per-client counter and this goes red.
@@ -113,8 +118,8 @@ describe('barrier — two clients in one tab', () => {
   // to see it, making such a test vacuous.
   it("client B observes client A's schema change", async () => {
     const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
-    const a = createSQLiteClient(dbName, forced);
-    const b = createSQLiteClient(dbName, forced);
+    const a = createSQLiteClient(dbName, sharedFile);
+    const b = createSQLiteClient(dbName, sharedFile);
     onTestFinished(async () => {
       try {
         await a.close();
@@ -152,8 +157,8 @@ describe('barrier — two clients in one tab', () => {
     // SQLite checks nPathname + 8 > mxPathname = 64 before calling xOpen).
     // './browser-sqlite-test-<uuid>' = 58 chars would crash the worker.
     const dbName = `bsq-test-${crypto.randomUUID()}`;
-    const a = createSQLiteClient(dbName, forced);
-    const b = createSQLiteClient(`./${dbName}`, forced);
+    const a = createSQLiteClient(dbName, sharedFile);
+    const b = createSQLiteClient(`./${dbName}`, sharedFile);
     onTestFinished(async () => {
       try {
         await a.close();

@@ -20,11 +20,12 @@ describe('an abandoned generator inside a transaction', () => {
   // the current code, and its absence is deterministic with the fix.
   it('commits, and evicts no worker', async () => {
     const records = interceptWorkers();
-    // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS runs
-    // one worker without readwrite-unsafe (spec 2026-09-13, §10).
+    // Both workers must stay alive and unevicted: needs two-workers so a
+    // target that caps the pool without readwrite-unsafe (spec 2026-09-13,
+    // §10) falls back to a pair that keeps two (spec 2026-09-15, A5).
     const db = await createTestClient({
       poolSize: 2,
-      vfs: 'OPFSAnyContextVFS',
+      needs: ['two-workers'],
     });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');

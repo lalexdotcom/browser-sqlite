@@ -1,21 +1,30 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
+import { TEST_TARGET } from './helpers';
 
-const VFS = 'IDBBatchAtomicVFS' as const;
+// One VFS: two clients must share one database (inspect()'s sibling/tabs
+// roster); OPFSAdaptiveVFS shares it on every engine (see SHARED_VFS).
+const VFS = 'OPFSAdaptiveVFS' as const;
 
 describe('db identity getters', () => {
   it('describes itself without the debug option', async () => {
-    const db = createSQLiteClient('./ident.db', { vfs: VFS, name: 'ledger' });
+    const db = createSQLiteClient('./ident.db', {
+      vfs: TEST_TARGET.vfs,
+      build: TEST_TARGET.build,
+      name: 'ledger',
+    });
     onTestFinished(async () => {
       await db.close().catch(() => {});
-      await deleteDatabase('ident.db', { vfs: VFS }).catch(() => {});
+      await deleteDatabase('ident.db', { vfs: TEST_TARGET.vfs }).catch(
+        () => {},
+      );
     });
     expect(db.debug).toBeUndefined();
     expect(db.name).toMatch(/^ledger \d+$/);
     expect(db.file).toBe('ident.db');
-    expect(db.vfs).toBe(VFS);
-    expect(db.build).toBe('async');
+    expect(db.vfs).toBe(TEST_TARGET.vfs);
+    expect(db.build).toBe(TEST_TARGET.build);
     expect(db.id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
     );
@@ -23,6 +32,8 @@ describe('db identity getters', () => {
 });
 
 describe('db.inspect on a memory VFS', () => {
+  // One VFS: the subject is MemoryVFS's own semantics — two clients on it are
+  // two independent, unrelated databases, so inspect() cannot see a sibling.
   it('throws INVALID_OPTION — two memory clients are two databases', async () => {
     const db = createSQLiteClient('mem.db', { vfs: 'MemoryVFS', poolSize: 1 });
     onTestFinished(async () => {

@@ -196,11 +196,12 @@ describe('the boundary of that wait', () => {
   // src/transaction.ts — a worker is then evicted.
   it('fails cleanly when the drop is never caught', async () => {
     const records = interceptWorkers();
-    // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS runs
-    // one worker without readwrite-unsafe (spec 2026-09-13, §10).
+    // Both workers must stay alive and unevicted: needs two-workers so a
+    // target that caps the pool without readwrite-unsafe (spec 2026-09-13,
+    // §10) falls back to a pair that keeps two (spec 2026-09-15, A5).
     const db = await createTestClient({
       poolSize: 2,
-      vfs: 'OPFSAnyContextVFS',
+      needs: ['two-workers'],
     });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');

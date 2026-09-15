@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@rstest/core';
 import { createTestClient, longQuery } from './helpers';
+import type { Need } from './target';
 
 /**
  * One INSERT whose single step() runs for hundreds of milliseconds (Chromium)
@@ -21,10 +22,7 @@ const abortAfter = (ms: number, reason: unknown) => {
   return ctl.signal;
 };
 
-const setUp = async (options: {
-  vfs: 'MemoryVFS' | 'OPFSAdaptiveVFS';
-  build?: 'sync' | 'async';
-}) => {
+const setUp = async (options: { needs?: readonly Need[] } = {}) => {
   const db = await createTestClient({ ...options, poolSize: 1, debug: true });
   await db.write('CREATE TABLE t (a INTEGER)');
   await db.write('CREATE TABLE big (x INTEGER)');
@@ -41,7 +39,7 @@ describe('a write abandoned inside a transaction', () => {
    * in transaction.ts's catch.
    */
   it('costs no worker and no committed data when the callback does not catch it', async () => {
-    const db = await setUp({ vfs: 'MemoryVFS', build: 'async' });
+    const db = await setUp({ needs: ['interruptible'] });
     try {
       const before = workerIdentity(db);
       const reason = new Error('abandon the write');
@@ -66,7 +64,7 @@ describe('a write abandoned inside a transaction', () => {
   // Spec 2026-09-11, R1. Falsifiable: in src/transaction.ts's `abandon`, drop
   // `pending = 'undo'` — the million rows are then committed.
   it('undoes a caught abandoned write, and the transaction goes on (async)', async () => {
-    const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
+    const db = await setUp({ needs: ['interruptible'] });
     try {
       const before = workerIdentity(db);
       const reason = new Error('abandon the write');
@@ -97,7 +95,7 @@ describe('a write abandoned inside a transaction', () => {
   // Spec 2026-09-11, R3: nothing can cut the step on this build, and the
   // outcome is now the same as where something can. Falsifiable: as above.
   it('undoes a caught abandoned write on the sync build too, and goes on (R3)', async () => {
-    const db = await setUp({ vfs: 'MemoryVFS' });
+    const db = await setUp();
     try {
       const reason = new Error('abandon the write');
       await db.transaction(async (tx) => {
@@ -124,7 +122,7 @@ describe('a write abandoned inside a transaction', () => {
   // callback catches it exactly as for any other error, and the transaction
   // goes on to commit both other rows.
   it('rejects a write whose signal was already aborted, and the transaction goes on', async () => {
-    const db = await setUp({ vfs: 'MemoryVFS' });
+    const db = await setUp();
     try {
       const reason = new Error('never started');
       const ctl = new AbortController();
@@ -151,7 +149,7 @@ describe('a write abandoned inside a transaction', () => {
 
   // Falsifiable: as for the signal above.
   it('undoes a write abandoned by its own timeout, and goes on', async () => {
-    const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
+    const db = await setUp();
     try {
       const before = workerIdentity(db);
       let caught: unknown;
@@ -182,7 +180,7 @@ describe('a write abandoned inside a transaction', () => {
   // whenever a statement is rejected by its own signal, not only a
   // savepointed write — the abandoned read then kills the transaction too.
   it('does not abandon the transaction for an abandoned read (R7)', async () => {
-    const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
+    const db = await setUp({ needs: ['interruptible'] });
     try {
       const slow = longQuery(20_000_000);
       // Prepare and cache the exact statement first, so the measured run takes
@@ -212,7 +210,7 @@ describe('a write abandoned inside a transaction', () => {
   // return false — the write is then cut mid-step and SQLite takes the
   // transaction with it.
   it('undoes a caught write issued through tx.first(), and goes on', async () => {
-    const db = await setUp({ vfs: 'OPFSAdaptiveVFS' });
+    const db = await setUp({ needs: ['interruptible'] });
     try {
       const reason = new Error('cut mid-step');
       let caught: unknown;
@@ -241,7 +239,7 @@ describe('a write abandoned inside a transaction', () => {
   // Spec 2026-09-11, R4. Falsifiable: restore the `onAbandoned` hook in
   // src/bulk.ts — the abandoned load kills the transaction again.
   it('keeps the transaction when a tx.bulkWrite is abandoned between batches', async () => {
-    const db = await setUp({ vfs: 'MemoryVFS' });
+    const db = await setUp();
     try {
       const reason = new Error('stop loading');
       const ctl = new AbortController();
@@ -273,7 +271,7 @@ describe('a write abandoned inside a transaction', () => {
   // the row is buffered instead, `refused` stays undefined, and the
   // assertion below fails.
   it('rejects a tx.bulkWrite created with an aborted signal, and the transaction goes on', async () => {
-    const db = await setUp({ vfs: 'MemoryVFS' });
+    const db = await setUp();
     try {
       const reason = new Error('never started');
       const ctl = new AbortController();
@@ -304,7 +302,7 @@ describe('a write abandoned inside a transaction', () => {
 
   // Falsifiable: as above.
   it('keeps the transaction, and leaves no staging table, when a tx.output is abandoned', async () => {
-    const db = await setUp({ vfs: 'MemoryVFS' });
+    const db = await setUp();
     try {
       const reason = new Error('stop loading');
       const ctl = new AbortController();

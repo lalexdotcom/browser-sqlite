@@ -23,6 +23,8 @@ const scrubVfsDirectory = async () => {
 
 /** The mode SQLite reports, which is the only proof the pragma was applied. */
 const modesOf = async (pragmas?: Record<string, string>) => {
+  // One VFS: the subject is AccessHandlePoolVFS's own `defaultPragmas`
+  // (journal_mode: wal, locking_mode: exclusive) — the only VFS that declares any.
   const db = createSQLiteClient(`default-pragmas-${crypto.randomUUID()}`, {
     vfs: 'AccessHandlePoolVFS',
     poolSize: 1,

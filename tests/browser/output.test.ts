@@ -313,7 +313,8 @@ describe('output() atomicity and sweep', () => {
   it('does not collect a staging table that is still in flight', async () => {
     // Two clients share the same OPFS file so their sweeps interact.
     const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
-    // The barrier now supplies the RYOW guarantee; that property is pinned in tests/browser/barrier.test.ts.
+    // One VFS: two clients must share one database; OPFSAdaptiveVFS shares
+    // it on every engine (see SHARED_VFS).
     const dbA = createSQLiteClient(dbName, { vfs: 'OPFSAdaptiveVFS' });
     const dbB = createSQLiteClient(dbName, { vfs: 'OPFSAdaptiveVFS' });
 

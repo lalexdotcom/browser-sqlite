@@ -1,6 +1,6 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
-import { createTestClient } from './helpers';
+import { createTestClient, TEST_TARGET } from './helpers';
 
 describe('debug subsystem (B6)', () => {
   it('is undefined when the option is absent', async () => {
@@ -51,7 +51,8 @@ describe('debug subsystem (B6)', () => {
 
   it('names the client the way its log lines are prefixed', async () => {
     const db = createSQLiteClient('debug-name.db', {
-      vfs: 'IDBBatchAtomicVFS',
+      vfs: TEST_TARGET.vfs,
+      build: TEST_TARGET.build,
       name: 'ledger',
       debug: true,
     });
