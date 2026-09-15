@@ -87,7 +87,7 @@
 	"simple-git-hooks": {
 		"pre-commit": "pnpm exec tsc --noEmit && npx lint-staged && if [ -f \"$(git rev-parse --git-path MERGE_HEAD)\" ]; then pnpm test; else pnpm test:unit; fi",
 		"pre-merge-commit": "pnpm exec tsc --noEmit && pnpm exec biome ci . && pnpm test",
-		"pre-push": "pnpm exec tsc --noEmit && pnpm exec biome ci . && pnpm test"
+		"pre-push": "pnpm exec tsc --noEmit && pnpm exec biome ci . && pnpm docs:vfs && git diff --exit-code VFS.md && pnpm test"
 	},
 	"pnpm": {
 		"onlyBuiltDependencies": [
