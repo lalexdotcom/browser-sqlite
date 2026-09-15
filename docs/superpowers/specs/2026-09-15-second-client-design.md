@@ -344,3 +344,17 @@ Confronting §3.2 with `src/client.ts` changed two things. The sections above st
     Chromium and +80-107 s on Firefox per `pnpm test` (plan Task 1).
   - Plan: Tasks 7-10 are rewritten; Task 6's single-client test follows the target instead of
     looping over `RECOMMENDED_VFS`.
+  - **Amended 2026-09-15, while building Task 7 (controller ruling under the user's delegation).**
+    The fallback order written above was wrong: in `VFS_CAPABILITIES` key order `IDBBatchAtomicVFS`
+    precedes `OPFSAnyContextVFS` and satisfies both needs with no feature at all, so Firefox's
+    barrier tests would have moved to it — breaking this amendment's own promise — and "no pair
+    satisfies" could never happen. Building it also exposed a hole: a target the browser cannot
+    run would have fallen back silently to another build, and the matrix would have reported
+    green a pair that never ran. The rule now:
+    1. **A target this browser cannot run is not runnable here** — a feature of the VFS's
+       `requires` or of the build's `BUILD_REQUIREMENTS` is missing. No fallback: the client
+       throws `TARGET_NOT_RUNNABLE`, which the matrix reports as such.
+    2. **The fallback serves an unmet need only**, in this order: the target's VFS on its other
+       declared builds; the recommended VFS; the other VFS sharing the target's `storage`; the
+       rest — each in `VFS_CAPABILITIES` key order, on its declared builds. On Firefox a
+       `two-workers` need under an OPFS target resolves to `OPFSAnyContextVFS`, as today.
