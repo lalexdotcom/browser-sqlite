@@ -282,6 +282,20 @@ All notable changes to this project are documented here.
   measured, the first retry cleared it every time, in 10-17 ms. Writes are not
   retried, and a `BUSY` this library raises to mean "stop" — a database in use,
   a delete in flight — is untouched and still fails immediately.
+- **A write on `OPFSCoopSyncVFS` no longer fails with `BUSY` when another client
+  or tab uses the same database.** The VFS lends its single access handle to
+  whichever connection asks for it, and it gave the handle away in the middle
+  of a statement whenever SQLite locked the file twice for that statement —
+  which it does when a cached statement must be recompiled because the schema
+  changed, in this tab or in another. Two clients opened together on a new
+  database met it on an early write; a migration run in another tab made the
+  next write here fail. The handle now changes hands only between statements,
+  on every build. The fix is a change to wa-sqlite's VFS, carried in this
+  package's build until wa-sqlite ships it.
+- **Two `OPFSCoopSyncVFS` clients starting at the same moment no longer fail
+  with `WORKER_CRASHED`.** Each starting client clears the temporary directories
+  earlier sessions left behind, and two starting together could try to clear
+  the same one; the second then failed to start at all.
 
 - **The documentation said deleting through the wrong VFS was harmless. It is not,
   and now it says so.** Measured on both engines: `OPFSAdaptiveVFS`,
