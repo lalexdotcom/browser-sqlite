@@ -14,6 +14,7 @@ export {
   type InspectionBase,
   inspectDatabase,
 } from './inspect';
+export { SQLITE_CODES } from './sqlite-codes';
 // Named rather than `export *`: the wire-protocol types in types.ts are
 // internal and must not reach the public surface.
 export {

@@ -33,6 +33,21 @@ describe('SQLiteError', () => {
     expect(error.name).toBe('DATABASE_NOT_FOUND');
     expect(error.sqliteCode).toBeUndefined();
   });
+
+  // Falsifiable: drop the sqliteExtendedCode assignment in the constructor.
+  it('carries sqliteExtendedCode when given one, and nothing otherwise', () => {
+    const error = new SQLiteError(
+      'STATEMENT_FAILED',
+      'UNIQUE constraint failed: u.a',
+      { sqliteCode: 19, sqliteExtendedCode: 2067 },
+    );
+    expect(error.name).toBe('STATEMENT_FAILED');
+    expect(error.sqliteCode).toBe(19);
+    expect(error.sqliteExtendedCode).toBe(2067);
+    expect(
+      new SQLiteError('CLIENT_CLOSED', 'closed').sqliteExtendedCode,
+    ).toBeUndefined();
+  });
 });
 
 describe('SQLiteError — SQLite result codes', () => {

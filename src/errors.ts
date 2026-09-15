@@ -13,6 +13,9 @@
  * `OPERATION_TIMEOUT` is the `timeout` a caller set on a call being spent. It is
  * deliberately not `TIMEOUT`, which means a deadline this library imposed on
  * itself — a worker that never became ready, a deletion that did not complete.
+ * `STATEMENT_FAILED` is a statement SQLite refused or failed for any reason
+ * but a lock conflict — a constraint, a syntax error, a full disk. `message` is
+ * SQLite's own; `sqliteCode` and `sqliteExtendedCode` carry its result codes.
  */
 export type SQLiteErrorCode =
   | 'NOT_A_READ_QUERY'
@@ -25,6 +28,7 @@ export type SQLiteErrorCode =
   | 'INVALID_PRAGMA'
   | 'BULK_WRITE_FAILED'
   | 'BUSY'
+  | 'STATEMENT_FAILED'
   | 'DATABASE_IN_USE'
   | 'DATABASE_NOT_FOUND'
   | 'READ_ONLY_TRANSACTION'
@@ -37,10 +41,18 @@ export class SQLiteError extends Error {
   readonly code: SQLiteErrorCode;
   /**
    * SQLite's own numeric result code, present only when the failure came from
-   * SQLite rather than from this library. `BUSY` covers both SQLITE_BUSY (5)
-   * and SQLITE_LOCKED (6); this is how a caller tells them apart.
+   * SQLite rather than from this library. Always the PRIMARY code. `BUSY`
+   * covers both SQLITE_BUSY (5) and SQLITE_LOCKED (6); this is how a caller
+   * tells them apart.
    */
   readonly sqliteCode?: number;
+  /**
+   * SQLite's extended result code, present only on a statement SQLite ran —
+   * `STATEMENT_FAILED` or `BUSY` from a query, never an open or a delete.
+   * `sqliteExtendedCode & 0xff === sqliteCode` always holds: 2067
+   * (`SQLITE_CODES.CONSTRAINT_UNIQUE`) against 19.
+   */
+  readonly sqliteExtendedCode?: number;
   /**
    * The `timeout` that was exceeded, in milliseconds. Present only on
    * `OPERATION_TIMEOUT`, so a log need not parse the message for it.
@@ -50,12 +62,19 @@ export class SQLiteError extends Error {
   constructor(
     code: SQLiteErrorCode,
     message: string,
-    options?: { cause?: unknown; sqliteCode?: number; timeout?: number },
+    options?: {
+      cause?: unknown;
+      sqliteCode?: number;
+      sqliteExtendedCode?: number;
+      timeout?: number;
+    },
   ) {
     super(message, options);
     this.code = code;
     this.name = code;
     if (options?.sqliteCode !== undefined) this.sqliteCode = options.sqliteCode;
+    if (options?.sqliteExtendedCode !== undefined)
+      this.sqliteExtendedCode = options.sqliteExtendedCode;
     if (options?.timeout !== undefined) this.timeout = options.timeout;
   }
 }
