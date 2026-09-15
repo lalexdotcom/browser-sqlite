@@ -537,7 +537,7 @@ const open = (file: string, options: OpenOptions) => {
           }
         } catch (e) {
           failed = true;
-          throw e;
+          throw stamped(e);
         } finally {
           if (keep !== undefined) {
             await settle(keep, failed);
@@ -555,8 +555,14 @@ const open = (file: string, options: OpenOptions) => {
 
       yield sqlite.changes(db);
     } catch (e) {
-      // A prepare failure (a syntax error) never reaches `run`. No SQL runs
-      // between it and here; a step failure was already stamped in `run`.
+      // Only the uncacheable branch can still reach here unstamped: its
+      // prepare failures come straight from wa-sqlite's own statements()
+      // generator, with no catch of ours in between. Checked 2026-09-14 in
+      // sqlite-api.js: between a failed prepare and the error leaving that
+      // generator, it calls only sqlite3_errmsg (read-only) and sqlite3_free
+      // (memory only) — neither touches sqlite3_extended_errcode(db). The
+      // cached and fresh branches already stamp in `run` and their own inner
+      // catch, so `??=` makes this a no-op for those.
       throw stamped(e);
     } finally {
       if (yields || polls) sqlite.progress_handler(db, 0, () => 0, null);
