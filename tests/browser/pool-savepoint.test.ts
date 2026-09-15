@@ -6,7 +6,7 @@ import {
   type PoolWorker,
   type PoolWorkerQueryOptions,
 } from '../../src/pool';
-import { defaultBuildFor } from '../../src/types';
+import { removeDatabaseFiles, TEST_TARGET } from './helpers';
 
 /**
  * The worker half of the savepoint protocol (spec 2026-09-11, §4), reached
@@ -14,15 +14,16 @@ import { defaultBuildFor } from '../../src/types';
  * no transaction.ts is involved, so what is pinned is the worker's order of
  * operations and the moment the pool reads the thunk, nothing above.
  */
-const spawn = async (): Promise<PoolWorker> => {
+const spawn = async (): Promise<{ worker: PoolWorker; file: string }> => {
+  // Short: sqlite3_open_v2 refuses a name near the VFS's 64-byte path budget.
+  const file = `psp-${Date.now().toString(36)}`;
   const opened = await createPoolWorker({
     index: 0,
     pool: [] as (PoolWorker | undefined)[],
     clientName: 'pool-savepoint',
-    // Short: sqlite3_open_v2 refuses a name near the VFS's 64-byte path budget.
-    file: `psp-${Date.now().toString(36)}`,
-    vfs: 'MemoryVFS',
-    build: defaultBuildFor('MemoryVFS'),
+    file,
+    vfs: TEST_TARGET.vfs,
+    build: TEST_TARGET.build,
     drainTimeout: 5000,
     logger: createLogger('test', false),
   });
@@ -30,7 +31,7 @@ const spawn = async (): Promise<PoolWorker> => {
   // itself is broken, not the scenario under test.
   if ('declined' in opened)
     throw new Error(`worker declined to open: no ${opened.declined}`);
-  return opened;
+  return { worker: opened, file };
 };
 
 const run = async (
@@ -48,7 +49,7 @@ describe('the worker concludes, then opens, a savepoint before the statement', (
   // Falsifiable: drop the `ROLLBACK TO` line in src/worker/worker.ts — row 2
   // is then committed.
   it('undoes the savepointed statement when the next message says undo', async () => {
-    const worker = await spawn();
+    const { worker, file } = await spawn();
     try {
       await run(worker, 'CREATE TABLE t (a INTEGER)');
       await run(worker, 'BEGIN');
@@ -67,13 +68,14 @@ describe('the worker concludes, then opens, a savepoint before the statement', (
     } finally {
       await worker.close();
       worker.terminate();
+      await removeDatabaseFiles(file, TEST_TARGET.vfs);
     }
   });
 
   // Falsifiable: drop the `RELEASE` line — the savepoint survives and the
   // ROLLBACK TO below succeeds instead of failing.
   it('keeps the statement, and closes the savepoint, when the next message says release', async () => {
-    const worker = await spawn();
+    const { worker, file } = await spawn();
     try {
       await run(worker, 'CREATE TABLE t (a INTEGER)');
       await run(worker, 'BEGIN');
@@ -94,6 +96,7 @@ describe('the worker concludes, then opens, a savepoint before the statement', (
     } finally {
       await worker.close();
       worker.terminate();
+      await removeDatabaseFiles(file, TEST_TARGET.vfs);
     }
   });
 
@@ -101,7 +104,7 @@ describe('the worker concludes, then opens, a savepoint before the statement', (
   // reuse guard — it is then read for a query the guard refuses, and a
   // transaction would lose its pending conclusion to it.
   it('reads the thunk only for a query it actually sends', async () => {
-    const worker = await spawn();
+    const { worker, file } = await spawn();
     try {
       // Held mid-query: one row delivered, the worker parked on its credit.
       const held = worker.query(
@@ -128,6 +131,7 @@ describe('the worker concludes, then opens, a savepoint before the statement', (
     } finally {
       await worker.close();
       worker.terminate();
+      await removeDatabaseFiles(file, TEST_TARGET.vfs);
     }
   });
 
@@ -139,7 +143,7 @@ describe('the worker concludes, then opens, a savepoint before the statement', (
   // block in src/worker/worker.ts — row 1 then survives and a fresh
   // BEGIN below fails, the connection still being inside the old one.
   it('rolls the connection out of its transaction when a conclusion fails', async () => {
-    const worker = await spawn();
+    const { worker, file } = await spawn();
     try {
       await run(worker, 'CREATE TABLE t (a INTEGER)');
       await run(worker, 'BEGIN');
@@ -164,6 +168,7 @@ describe('the worker concludes, then opens, a savepoint before the statement', (
     } finally {
       await worker.close();
       worker.terminate();
+      await removeDatabaseFiles(file, TEST_TARGET.vfs);
     }
   });
 });

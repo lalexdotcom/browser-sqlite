@@ -60,6 +60,35 @@ const HERE: Here = {
  * that does (`resolvePair`, spec 2026-09-15, A5). No such pair is an error,
  * TARGET_NOT_RUNNABLE, never a skip.
  */
+/**
+ * Removes a database file and every file a VFS keeps beside it — the three
+ * every layout may have, and the VFS's own (e.g. OPFSWriteAheadVFS's
+ * -wa0/-wa1, which outlived every test until 2026-09-15). Shared by
+ * createTestClient's own cleanup and by tests that open a worker directly
+ * with createPoolWorker, bypassing the client and its afterEach
+ * (pool-savepoint.test.ts, abandon.test.ts).
+ */
+export const removeDatabaseFiles = async (
+  name: string,
+  vfs: SQLiteVFS,
+): Promise<void> => {
+  try {
+    const root = await navigator.storage.getDirectory();
+    for (const suffix of [
+      '',
+      '-journal',
+      '-wal',
+      ...VFS_CAPABILITIES[vfs].extraFileSuffixes,
+    ]) {
+      await root
+        .removeEntry(`${name}${suffix}`, { recursive: true })
+        .catch(() => {});
+    }
+  } catch {
+    // No OPFS here, or nothing was created.
+  }
+};
+
 export async function createTestClient(options: TestClientOptions = {}) {
   const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
   const { needs = [], ...clientOptions } = options;
@@ -76,27 +105,7 @@ export async function createTestClient(options: TestClientOptions = {}) {
     );
   }
 
-  afterEach(async () => {
-    try {
-      const root = await navigator.storage.getDirectory();
-      // The database and every file a VFS keeps beside it — the three every
-      // layout may have (DB_RELATED_SUFFIXES in src/worker/worker.ts) and the
-      // VFS's own, such as OPFSWriteAheadVFS's -wa0/-wa1, which outlived every
-      // test until 2026-09-15.
-      for (const suffix of [
-        '',
-        '-journal',
-        '-wal',
-        ...VFS_CAPABILITIES[pair.vfs].extraFileSuffixes,
-      ]) {
-        await root
-          .removeEntry(`${dbName}${suffix}`, { recursive: true })
-          .catch(() => {});
-      }
-    } catch {
-      // No OPFS here, or nothing was created.
-    }
-  });
+  afterEach(() => removeDatabaseFiles(dbName, pair.vfs));
 
   // createSQLiteClient is synchronous — workers initialize in the background.
   // The first query queues until a worker reaches READY.
