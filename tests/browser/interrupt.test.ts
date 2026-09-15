@@ -147,11 +147,16 @@ describe('aborting a running statement', () => {
     }
   });
 
+  // One VFS: the subject is the `sync` build's degraded (non-interruptible)
+  // behaviour, which needs an explicit `sync`-build pin — the opposite of
+  // `needs: ['interruptible']`. OPFSAdaptiveVFS does not support `sync` at
+  // all, so the pin moves to the recommended OPFSWriteAheadVFS (its default
+  // build is `sync`), same precedent as isolated/abort-slot.test.ts.
   it('leaves a sync build degraded, and says so by behaving so', async () => {
     // The ordinary test host is NOT cross-origin isolated, so this is the
     // degraded row of the design's §6: the signal stops the wait, not the work.
     const db = await createTestClient({
-      vfs: 'MemoryVFS',
+      vfs: 'OPFSWriteAheadVFS',
       build: 'sync',
       poolSize: 1,
       debug: true,

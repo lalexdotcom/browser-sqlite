@@ -3,9 +3,15 @@ import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
 import { inspectDatabase } from '../../src/inspect';
 import { clientMarkerName } from '../../src/locks';
+import { TEST_TARGET } from './helpers';
 import { holdIn, makeRealm } from './helpers/realm';
 
-const VFS = 'IDBBatchAtomicVFS' as const;
+// `inspectDatabase` requires a persistent VFS (layout not `memory`) — both
+// targets qualify, and nothing here is specific to one VFS family (lock
+// names derive from `layout`, never from a VFS name), so this follows the
+// target.
+const VFS = TEST_TARGET.vfs;
+const BUILD = TEST_TARGET.build;
 
 describe('inspectDatabase', () => {
   it('reports nobody on a database nothing holds', async () => {
@@ -15,7 +21,7 @@ describe('inspectDatabase', () => {
   });
 
   it('normalizes the file the way the client does', async () => {
-    const db = createSQLiteClient('norm.db', { vfs: VFS });
+    const db = createSQLiteClient('norm.db', { vfs: VFS, build: BUILD });
     onTestFinished(async () => {
       await db.close().catch(() => {});
       await deleteDatabase('norm.db', { vfs: VFS }).catch(() => {});
@@ -27,7 +33,7 @@ describe('inspectDatabase', () => {
 
   it('separates tabs and marks only the caller as sameTab', async () => {
     const file = 'two-tabs.db';
-    const db = createSQLiteClient(file, { vfs: VFS });
+    const db = createSQLiteClient(file, { vfs: VFS, build: BUILD });
     onTestFinished(async () => {
       await db.close().catch(() => {});
       await deleteDatabase(file, { vfs: VFS }).catch(() => {});

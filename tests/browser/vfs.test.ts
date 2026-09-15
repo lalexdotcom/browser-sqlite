@@ -12,6 +12,7 @@ import { createTestClient } from './helpers';
  * The guard is easy to break during the pool refactor (wave 1), hence the test.
  */
 describe('AccessHandlePoolVFS pool guard', () => {
+  // One VFS: the subject is AccessHandlePoolVFS's own poolSize guard.
   it('throws when combined with an explicit poolSize > 1', () => {
     expect(() =>
       createSQLiteClient(`browser-sqlite-test-${crypto.randomUUID()}`, {
@@ -24,6 +25,7 @@ describe('AccessHandlePoolVFS pool guard', () => {
   // Falsifiable: restore `clientOptions.poolSize ?? DEFAULT_POOL_SIZE` in
   // client.ts. Selecting a single-connection VFS and nothing else used to
   // throw on a pool size the caller never chose.
+  // One VFS: the subject is AccessHandlePoolVFS's own poolSize cap.
   it('defaults to the VFS cap rather than throwing when poolSize is omitted', async () => {
     const db = createSQLiteClient(
       `browser-sqlite-test-${crypto.randomUUID()}`,
@@ -38,6 +40,7 @@ describe('AccessHandlePoolVFS pool guard', () => {
   });
 
   // Falsifiable: revert the pool guard in client.ts to `throw new Error(...)`.
+  // One VFS: the subject is AccessHandlePoolVFS's own poolSize guard.
   it('reports the pool guard as SQLiteError with code INVALID_OPTION', () => {
     let caught: unknown;
     try {
@@ -57,6 +60,7 @@ describe('AccessHandlePoolVFS pool guard', () => {
     expect((caught as SQLiteError).message).toMatch(/access handles/);
   });
 
+  // One VFS: the subject is AccessHandlePoolVFS's own poolSize guard.
   it('accepts poolSize 1 and serves queries', async () => {
     const db = await createTestClient({
       vfs: 'AccessHandlePoolVFS',
@@ -77,6 +81,7 @@ describe('AccessHandlePoolVFS pool guard', () => {
 });
 
 describe('OPFSCoopSyncVFS pool guard', () => {
+  // One VFS: the subject is OPFSCoopSyncVFS's own poolSize cap.
   // Falsifiable: revert OPFSCoopSyncVFS.maxPoolSize to null.
   it('throws when combined with an explicit poolSize > 1', () => {
     expect(() =>
@@ -87,6 +92,7 @@ describe('OPFSCoopSyncVFS pool guard', () => {
     ).toThrow(/pool sizes greater than 1/);
   });
 
+  // One VFS: the subject is OPFSCoopSyncVFS's own poolSize cap.
   // Falsifiable: revert OPFSCoopSyncVFS.maxPoolSize to null — db.poolSize is
   // then 2, not 1.
   it('defaults to the VFS cap rather than throwing when poolSize is omitted', async () => {
@@ -113,6 +119,8 @@ describe('OPFSCoopSyncVFS pool guard', () => {
  * surfacing later as an opaque `open-error` from inside a worker.
  */
 describe('vfs/build combination guard', () => {
+  // One VFS: the guard needs a concrete VFS whose declared builds exclude
+  // 'sync' — OPFSAdaptiveVFS declares ['async', 'jspi'].
   it('throws when the build is not one the VFS supports', () => {
     // OPFSAdaptiveVFS declares ['async', 'jspi'] — 'sync' is not among them.
     expect(() =>
@@ -123,6 +131,7 @@ describe('vfs/build combination guard', () => {
     ).toThrow(/cannot run on the 'sync' build/);
   });
 
+  // One VFS: same guard, same concrete mismatch as above.
   it('reports the failure as SQLiteError with code INVALID_OPTION', () => {
     let caught: unknown;
     try {
@@ -139,6 +148,7 @@ describe('vfs/build combination guard', () => {
     expect((caught as SQLiteError).message).toContain('async');
   });
 
+  // One VFS: the accept side of the same guard pairing tested above.
   it('accepts an explicitly declared combination and serves queries', async () => {
     const db = await createTestClient({
       vfs: 'OPFSAdaptiveVFS',
@@ -164,6 +174,8 @@ describe('vfs/build combination guard', () => {
  * gate that keeps `pnpm test` honest about the four additions.
  */
 describe('newly wired VFS', () => {
+  // One VFS (one per case): each case's own opening/round-trip is the
+  // subject — the gate that keeps `pnpm test` honest about each addition.
   // Falsifiable: delete any one loader from VFSConfigs in worker/worker.ts.
   const cases = [
     // poolSize 1 because the capability table now says so — see MIRROR-1.
@@ -197,6 +209,8 @@ describe('newly wired VFS', () => {
  * volatility, and the guard states it.
  */
 describe('memory VFS pool guard', () => {
+  // One VFS (one per case): each memory VFS's own pool-size guard is the
+  // subject.
   // Falsifiable: set maxPoolSize to null on MemoryVFS in VFS_CAPABILITIES.
   for (const vfs of ['MemoryVFS', 'MemoryAsyncVFS'] as const) {
     it(`${vfs} refuses a pool larger than 1`, () => {

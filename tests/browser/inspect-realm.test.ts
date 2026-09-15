@@ -3,7 +3,10 @@ import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
 import { resolveRealmId } from '../../src/inspect';
 import { createLocks } from '../../src/locks';
+import { TEST_TARGET } from './helpers';
 
+// resolveRealmId reads Web Lock entries generically — nothing here is
+// specific to one VFS family, so this follows the target.
 const locks = createLocks();
 
 describe('resolveRealmId', () => {
@@ -16,10 +19,13 @@ describe('resolveRealmId', () => {
 
   it('matches the realm holding our own client marker', async () => {
     const file = 'realm-id.db';
-    const db = createSQLiteClient(file, { vfs: 'IDBBatchAtomicVFS' });
+    const db = createSQLiteClient(file, {
+      vfs: TEST_TARGET.vfs,
+      build: TEST_TARGET.build,
+    });
     onTestFinished(async () => {
       await db.close().catch(() => {});
-      await deleteDatabase(file, { vfs: 'IDBBatchAtomicVFS' }).catch(() => {});
+      await deleteDatabase(file, { vfs: TEST_TARGET.vfs }).catch(() => {});
     });
     await db.read('SELECT 1');
 

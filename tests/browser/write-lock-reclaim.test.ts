@@ -21,6 +21,9 @@ import { holdIn, makeRealm } from './helpers/realm';
  * the right one to pin it with.
  */
 
+// One VFS: see the file header — the defect is about a Web Lock, and
+// IDBBatchAtomicVFS is the VFS that cannot confuse it with an OPFS access
+// handle.
 const VFS = 'IDBBatchAtomicVFS' as const;
 const locks = createLocks();
 

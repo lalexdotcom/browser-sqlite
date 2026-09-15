@@ -46,6 +46,7 @@ const CONCURRENT = 8;
  */
 const BUILDS = ['sync', 'jspi'] as const;
 
+// One VFS: the subject is OPFSCoopSyncVFS's own handle hand-over protocol.
 const open = (file: string, build: (typeof BUILDS)[number] = 'sync') =>
   createSQLiteClient(file, { vfs: 'OPFSCoopSyncVFS', build });
 
