@@ -355,10 +355,29 @@ const open = (file: string, options: OpenOptions) => {
 
     const buffer: Record<string, unknown>[] = [];
 
+    /**
+     * Stamps SQLite's extended result code on a wa-sqlite error where the
+     * statement failed (spec 2026-09-14, §5.1). The connection's code describes
+     * its MOST RECENT call, so it is read before any cleanup can overwrite it:
+     * `settle`'s reset or finalize, or the ROLLBACK the savepoint path issues
+     * after a failed conclusion. `??=`: the first stamp wins.
+     */
+    const stamped = (e: unknown) => {
+      if (typeof (e as { code?: unknown })?.code === 'number') {
+        (e as { extendedCode?: number }).extendedCode ??=
+          module._sqlite3_extended_errcode(db);
+      }
+      return e;
+    };
+
     /** Binds and streams one statement. Never finalises: the caller owns it. */
     const run = async function* (stmt: number) {
-      if (params?.length) {
-        sqlite.bind_collection(stmt, params as any);
+      try {
+        if (params?.length) {
+          sqlite.bind_collection(stmt, params as any);
+        }
+      } catch (e) {
+        throw stamped(e);
       }
       // Column names are read after the first SQLITE_ROW, not before: v2
       // re-preparation happens during step(), so names read beforehand would
@@ -380,7 +399,7 @@ const open = (file: string, options: OpenOptions) => {
             // exit and keeps the statement cached.
             break;
           }
-          throw e;
+          throw stamped(e);
         }
         if (gate.isStopped()) break;
 
@@ -535,6 +554,10 @@ const open = (file: string, options: OpenOptions) => {
       }
 
       yield sqlite.changes(db);
+    } catch (e) {
+      // A prepare failure (a syntax error) never reaches `run`. No SQL runs
+      // between it and here; a step failure was already stamped in `run`.
+      throw stamped(e);
     } finally {
       if (yields || polls) sqlite.progress_handler(db, 0, () => 0, null);
     }
@@ -634,6 +657,13 @@ const open = (file: string, options: OpenOptions) => {
             // boundary and the client can only string-match the message.
             ...(typeof (e as { code?: unknown })?.code === 'number'
               ? { sqliteCode: (e as { code: number }).code }
+              : {}),
+            ...(typeof (e as { extendedCode?: unknown })?.extendedCode ===
+            'number'
+              ? {
+                  sqliteExtendedCode: (e as { extendedCode: number })
+                    .extendedCode,
+                }
               : {}),
             ...(typeof (e as { errorCode?: unknown })?.errorCode === 'string'
               ? { errorCode: (e as { errorCode: SQLiteErrorCode }).errorCode }

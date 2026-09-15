@@ -34,6 +34,14 @@ type WASQLiteModule = {
    * at the call site: the twelve structural `any` in `src/` stay twelve.
    */
   _sqlite3_stmt_status: (stmt: number, op: number, resetFlag: number) => number;
+  /**
+   * `sqlite3_extended_errcode`. Exported by all three builds (checked
+   * 2026-09-14 in each glue file); unwrapped by the JS façade, like
+   * `_sqlite3_stmt_status`. It reports the connection's MOST RECENT API call,
+   * so `worker.ts` reads it where a statement fails, never later (spec
+   * 2026-09-14, §5.1).
+   */
+  _sqlite3_extended_errcode: (db: number) => number;
 };
 
 /**

@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
+import { SQLITE_CODES } from '../../src/sqlite-codes';
 import { createTestClient } from './helpers';
 
 /**
@@ -399,6 +400,19 @@ describe("a consumer's own savepoints (spec 2026-09-11, D7, D8)", () => {
         timeout: 30,
       });
       expect((secondCaught as Error).message).toMatch(/no such savepoint/);
+      // Spec 2026-09-14 §5.1: the worker issues a ROLLBACK after this failure
+      // and before replying, which resets the connection's error code to 0.
+      // "no such savepoint" has no subtype, so a correct read equals
+      // sqliteCode and D9 drops it. Falsifiable: read sqlite3_extended_errcode
+      // while building the reply instead of stamping it where the statement
+      // failed — it finds 0, which differs from 1 and is kept.
+      expect(secondCaught).toMatchObject({
+        code: 'STATEMENT_FAILED',
+        sqliteCode: SQLITE_CODES.ERROR,
+      });
+      expect(
+        (secondCaught as { sqliteExtendedCode?: number }).sqliteExtendedCode,
+      ).toBeUndefined();
       expect(outcome).toBe(secondCaught);
       expect(await bigCount(db)).toBe(0);
       expect(await rowsOf(db)).toEqual([0]);
