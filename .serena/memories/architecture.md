@@ -16,7 +16,8 @@ Stack, build output and test tooling: `mem:stack-and-build`. VFS: `mem:vfs`.
 | `client.ts` | ~1050 | **Assembly only**: options, validation, wiring, the public `SQLiteDB` surface, `close()`. Holds `DEFAULT_POOL_SIZE = 2`, `DEFAULT_STATEMENT_CACHE_SIZE = 32` and `DEFAULT_STATEMENT_CACHE_BYTES = 8 MiB`, the vfs/build guard, `applyBarrier` and `acquireInstrumented` — **the single choke point through which every read, write, transaction and bulk acquires a lease**, which is what makes the barrier one wrapper rather than six. **All four read entry points (`read`, `first`, `chunk`, `stream`) now go through `readWithRetry` / `streamWithRetry`**, which re-issue once on a `BUSY` that carries a `sqliteCode` — see below. Line numbers deliberately omitted: they rotted every time they were cited. |
 | `capabilities.ts` | 121 | `detectFeatures` / `missingFeature` / `describeMissing`, `BUILD_REQUIREMENTS`, `UNPROBEABLE`. Public: the first two only. |
 | `types.ts` | 368 | Wire protocol, `SQLiteQueryOptions`, and **`VFS_CAPABILITIES` — the single source of truth** the client guard, the conformance suite, the README generator and the benchmark page all read. `SQLiteVFS` derives from its keys. |
-| `errors.ts` | 61 | `SQLiteError extends Error` with `code` and `name` mirroring it, plus `SQLiteBulkWriteError`. Eleven codes: `NOT_A_READ_QUERY`, `CLIENT_CLOSED`, `WORKER_CRASHED`, `TIMEOUT`, `PROTOCOL_ERROR`, `INVALID_IDENTIFIER`, `INVALID_OPTION`, `INVALID_PRAGMA`, `BULK_WRITE_FAILED`, `BUSY`, `READ_ONLY_TRANSACTION`. |
+| `errors.ts` | — | `SQLiteError extends Error` with `code` and `name` mirroring it, plus `SQLiteBulkWriteError`. `sqliteCode?: SQLiteResultCode` — strict, a primary code — and `sqliteExtendedCode?: SQLiteExtendedResultCode \| (number & {})` — open, because a wrong read must stay representable (spec 2026-09-14, D9/D10). The union in the file is the list of codes; since 2026-09-15 `STATEMENT_FAILED` is every statement SQLite refuses other than a lock conflict. |
+| `sqlite-codes.ts` | — | `SQLITE_CODES` (31 primary) and `SQLITE_EXTENDED_CODES` (82 extended) with their types, transcribed from SQLite 3.53.0's `sqlite.h.in`. **Re-transcribe when wa-sqlite moves to another SQLite**: `tests/unit/sqlite-codes.test.ts` checks the names wa-sqlite also defines, and cannot see a code it lacks. |
 | `scheduler.ts` | 366 | **Pure** — availability (a private `Set`), both wait queues, writer designation, opaque leases, `remove(index)`, `shutdown(reason)`, per-index generation counter. No `Worker`, no DOM. **This purity is load-bearing: B1 survived for months because the scheduler was only reachable through slow browser tests.** |
 | `pool.ts` | 509 | Worker creation and transport: `postMessage`/`onmessage` routed by `callId`, the raw query generator, the stop-and-drain that waits for the worker's in-flight `done` before a lease returns, `onerror`/`messageerror`, the `close` handshake, the per-worker `status` field. |
 | `supervisor.ts` | 94 | Pure per-slot restart policy, zero imports. A slot holds a worker **from `spawned`, not from `ready`** — that is SUP-1's fix. Restart counter resets on a request actually served; eviction leaving no live slot fails the client; `evicted` is permanent against a late `ready`. |
@@ -32,6 +33,7 @@ Stack, build output and test tooling: `mem:stack-and-build`. VFS: `mem:vfs`.
 | `utils.ts` | 205 | `isReadQuery`/`isWriteQuery` + `assertReadable` + `quoteIdent`/`renderPragmas` + `sqlParams`/`addParam`. |
 | `worker/worker.ts` | 700 | Worker thread: VFS bootstrap, `open`, statement execution, chunked streaming. Holds `VFSConfigs` and `WA_SQLITE_BUILDS`. **Constructs every VFS with `{ lockPolicy: 'shared' }` (`:159`).** `ready` only on success, `open-error` on failure; every `cause` structured-clone-probed; exhaustive message dispatch. |
 | `worker/statement-cache.ts` | 85 | **Pure** — a per-worker LRU of prepared statements keyed by the exact SQL string. Prepares nothing, finalises nothing, imports nothing: `set`/`markUncacheable` return the handles their insertion evicted and `worker.ts` finalises them, so no handle can be dropped by omission. Unit-tested in Node against plain integers. |
+| `worker/sqlite-code.ts` | — | **Pure** — `sqliteCodeOf(e)`: SQLite's result code only for wa-sqlite's own `SQLiteError`, else `undefined`. Every `sqliteCode` the worker sends goes through it: a DOMException's legacy `code` (SecurityError 18) would otherwise pass for SQLite's `TOOBIG`. Unit-tested in Node. |
 | `index.ts` | 17 | Re-exports. `types.ts` is exported **by name**, never `export *` — the wire-protocol types are internal. |
 
 **The read path retries once, and the discriminator is `sqliteCode` (2026-09-03).** A `BUSY`
@@ -41,6 +43,9 @@ That is why the retry gates on the code and not on a VFS name. `stream()` and `c
 only before a row has been delivered, since a later retry would repeat rows. It exists for
 `OPFSCoopSyncVFS`'s handle-transfer protocol (`mem:vfs`, COOPSYNC-BUSY in `mem:measurements`);
 anything else that reports a lock conflict simply gets one free retry.
+**Since 2026-09-15 `sqliteCode` also rides on `STATEMENT_FAILED` and `WORKER_CRASHED`**, so
+`isRetryableBusy` must keep testing `code === 'BUSY'` as well: the presence of a code no longer
+means a lock conflict on its own.
 
 
 `src/orchestrator.ts` is **deleted** and with it every `SharedArrayBuffer`. Do not look
@@ -117,6 +122,18 @@ the query that compiled them. Lend a worker to a second concurrent caller and th
 finalise a handle that query still holds — a use-after-free on a `sqlite3_stmt` pointer.
 Before the cache this was merely confusing. The consequence is written where someone would
 break it, on the `available` declaration in `scheduler.ts`, not only in the worker.
+
+**The extended result code is read where the statement fails, never when the reply is built
+(spec 2026-09-14, §5.1).** `sqlite3_extended_errcode` reports the connection's MOST RECENT call,
+and the error path runs more calls: `settle`'s reset or finalize, and after a failed savepoint
+conclusion a full `ROLLBACK`, which resets it to 0. So `query` stamps wa-sqlite's error
+(`extendedCode`, `??=`) at three sites — `run` (bind, step); the fresh branch's inner catch (a
+later statement's prepare failure, before that branch's `finally` finalizes anything); and
+`query`'s outer catch (the uncacheable branch, where wa-sqlite's `statements()` runs only
+`sqlite3_errmsg` and `sqlite3_free` in between). **A new path out of `query` that runs SQL before
+reaching one of them sends a wrong code.** The fresh-branch stamp has no falsifier; the other two
+do. The client's `subtypeOf` (`pool.ts`) drops the value when it equals `sqliteCode` and keeps
+every other difference, 0 included, so a wrong read stays visible.
 
 **A transaction statement does not resolve until the worker is idle again, and that rule is
 held by DISCIPLINE, not by structure.** `settled` (inside `withSignal`) now takes the query

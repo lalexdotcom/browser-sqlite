@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-09-14.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-09-15.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one.
 
 **No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
@@ -24,13 +24,13 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-14 after the long-read merge
+## The verification baseline — compare against these, re-measured 2026-09-15 after the statement-errors merge
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a
-run in this container on 2026-09-14, on `main` right after the merge that made
-`IDBBatchAtomicVFS` serve reads during a long statement** — none is carried forward, none is
-arithmetic. The whole table was re-read in one pass, which is what its own rule demands; raw
-outputs in `.scratchpad/closure-baseline-2026-09-14-idb/`. The `pnpm test` row is the merge's
+run in this container on 2026-09-15, on `main` right after the merge that made a failed statement
+say why (`54c4492`)** — none is carried forward, none is arithmetic. The whole table was re-read in
+one pass, which is what its own rule demands; raw outputs in
+`.scratchpad/closure-baseline-2026-09-15-statement-errors/`. The `pnpm test` row is the merge's
 pre-merge-commit hook, run on the merged tree.
 
 **`pnpm test` chains THREE configs** — chromium+unit, firefox, and the isolated project — so a
@@ -43,13 +43,13 @@ on the last branch landed with a failing typecheck that no test run could show (
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **785 tests / 65 files** (unit + chromium, **4 skipped**), **324 / 45** (firefox, **1 skipped**), **7 / 3** (isolated) |
-| `pnpm exec rstest --project unit run` | 462 tests, 21 files |
-| `pnpm exec rstest --project chromium run` | 323 tests, 44 files, 4 skipped |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **829 tests / 69 files** (unit + chromium, **4 skipped**), **348 / 46** (firefox, **1 skipped**), **7 / 3** (isolated) |
+| `pnpm exec rstest --project unit run` | 482 tests, 24 files |
+| `pnpm exec rstest --project chromium run` | 347 tests, 45 files, 4 skipped |
 | `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each: **Chromium 71 passed / 14 skipped, Firefox 67 / 18** — they differ by design since 2026-09-14 |
 | `pnpm test:consumer` | 24/24 stages |
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 120 files, 13 warnings, 1 info |
+| `pnpm lint` | 126 files, 13 warnings, 1 info |
 | `dependencies` in `package.json` | absent |
 
 **The browser skips are expected: 4 on Chromium, 1 on Firefox.** One, on both, is
@@ -87,10 +87,11 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 ## Decisions the user owes
 
-- **Whether the open reliability subjects precede rc.5.** None is scheduled: the SQL error code
-  lost at the worker boundary, and `OPFSCoopSyncVFS` writes taking the handle-transfer BUSY between
-  clients — logged on the recommendation, the user not having ruled on it (`mem:follow-ups`, both).
-  The Firefox `worker 1 lost` observation became the pool-cap work, merged on 2026-09-14 (§ below).
+- **Whether the open reliability subjects precede rc.5.** One is left unscheduled:
+  `OPFSCoopSyncVFS` writes taking the handle-transfer BUSY between clients — logged on the
+  recommendation, the user not having ruled on it (`mem:follow-ups`). The SQL error code lost at
+  the worker boundary was taken up by the user on 2026-09-15 and merged the same day (§ below); the
+  Firefox `worker 1 lost` observation became the pool-cap work, merged on 2026-09-14 (§ below).
 
 **rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
 and both are now closed — the second by merge `eeabe06` on 2026-09-11.
@@ -133,7 +134,7 @@ ABANDON-WEDGE).
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
 the 2026-09-05 entry in `mem:follow-ups` called for.
 
-**Nothing is in flight.** The long-read work merged on 2026-09-14 (§ below). Everything in
+**Nothing is in flight.** The statement-errors work merged on 2026-09-15 (§ below). Everything in
 `mem:follow-ups` is unscheduled but one entry: the default build, scheduled for rc.6.
 
 **HANDLE-2 was investigated on 2026-09-09 and came apart under measurement.** Its stated cause
@@ -151,6 +152,32 @@ permanent, silent, origin-wide — was found and fixed the same day (§ below).
 2026-09-08 by medianing the bench corpus at n≥3 per platform (`mem:measurements`,
 VFS-MEDIAN). The answer was not "move it": there are now **two** recommendations,
 `OPFSWriteAheadVFS` and `OPFSAdaptiveVFS`, and the constant itself left `src/` — see § below.
+
+## Statement errors — merged 2026-09-15
+
+Spec `docs/superpowers/specs/2026-09-14-statement-errors-design.md` — read its decisions D8-D10,
+the user's amendments while it was built, and not only the first version. Plan
+`docs/superpowers/plans/2026-09-14-statement-errors.md`; its code predates D10 and the final fix
+wave, so the spec and the source are what is current. Merge `54c4492`.
+
+**Four things the code will not tell you:**
+
+- **Why `sqliteCode` is strict and `sqliteExtendedCode` open (D10).** The strict type makes
+  `err.sqliteCode === SQLITE_EXTENDED_CODES.X` a compile error. The open one exists because the
+  client deliberately lets a wrong read through (D9) — a 0, or 101 after a JS-side `MISUSE`. Do not
+  tighten the extended type, and do not turn `subtypeOf` into a `>= 256` filter: either would hide
+  a wrong read.
+- **The stamp's three sites are an invariant, not a style** (`mem:architecture`).
+- **`sqliteCodeOf` is why an open refused by OPFS carries no `sqliteCode`.** Before it, any
+  numeric `code` crossed the boundary, and a DOMException's legacy code is numeric.
+- **D10 rests on a measurement, not an assumption**: TypeScript's completion does offer numeric
+  literals (5.9.3, 6.0.3), and `number & {}` keeps them from collapsing into `number`
+  (`mem:stack-and-build` says how to probe it under TS 7).
+
+**What it does NOT deliver.** No extended code at open or delete (D7); no named code per
+result-code family (D1). A later statement's prepare failure in a fresh multi-statement string is
+stamped by a site no test can falsify. `SQLITE_CODES` is re-transcribed by hand when wa-sqlite moves
+to another SQLite.
 
 ## `IDBBatchAtomicVFS` during a long statement — merged 2026-09-14
 

@@ -790,3 +790,35 @@ row passes a `signal`, and `f4b3fd7` changed what a signal does in the worker: t
 changed with no change to the row (IDB-SIGNAL, `mem:measurements`). **A measurement that hands the
 library an option measures that option's path; when the option's semantics move, the measurement
 moves with them.**
+
+## Code a plan hands over verbatim must compile under the repo's own flags — 2026-09-15
+
+Task 2 of the statement-errors plan gave its implementer exact code, and it failed `tsc` three
+times over: `exactOptionalPropertyTypes` refuses `{ sqliteCode: maybeUndefined }` for an optional
+property. The implementer adapted it; the next task's dispatch had to warn about the same trap.
+The plan had been written without type-checking a line of it. **When a plan carries code to
+transcribe, put it through `tsc` under this repo's `tsconfig.json` before handing it over** — a
+scratch file is enough. `exactOptionalPropertyTypes` is the flag that bites: pass an optional
+field through a conditional spread, never as `key: value | undefined`.
+
+## A fix round can move a test's only falsifier — 2026-09-15
+
+The worker stamps SQLite's extended code at the query level, and a missing-collation test was its
+falsifier. A task review found a path where that stamp came too late; the fix added a second stamp
+nearer the failure — on the path the test itself ran. From then on the test went red only if both
+stamps were removed, the query-level one had no falsifier, and the test's comment still named it.
+The ruling on that fix round had asked whether the NEW path could be tested, and not what the fix
+did to the existing test. The final review caught it. **When a fix changes which code a test runs
+through, re-run the falsifier the test's comment names** — a green suite cannot show that a test
+stopped guarding what it claims.
+
+## Publishing a value that used to be dropped publishes its sloppiest producer — 2026-09-15
+
+For months the worker copied any numeric `code` off a thrown value into `sqliteCode`, harmlessly:
+the client kept the field only for 5 and 6. Once the client kept it everywhere, a DOMException's
+legacy code — SecurityError is 18, InvalidStateError 11 — would have reached the consumer as
+`WORKER_CRASHED` with `sqliteCode: 18`, which reads as `SQLITE_TOOBIG`. Nothing in the branch
+touched the producer; the final review found it by asking where the value came from. **When a
+change starts publishing a field that was filtered before, audit every producer of it, not only
+the consumer you changed** — a check that was loose but unreachable becomes a published lie. The
+fix is `sqliteCodeOf`, which accepts wa-sqlite's own `SQLiteError` only.

@@ -180,18 +180,6 @@ isolated runs of the file then passed. The code path is untouched by the branch 
 Load-sensitive, like the defect ABANDON-WEDGE describes (`mem:measurements`); the busy-loop method
 there is how to make it reproduce. Reliability by the triage rule; not scheduled.
 
-## `SQLITE_FULL` reaches the client with neither `code` nor `sqliteCode` (2026-09-10)
-
-Seen in TX-M1 (`mem:measurements`): a caught INSERT failing with *database or disk is full*
-arrived as an error whose `code` and `sqliteCode` were both undefined. `BUSY` keeps its
-numeric code through `busyFromCode`; other SQLite result codes may not reach the client as a
-`SQLiteError` at all. Verified from the code on 2026-09-11, and broader than the title: the worker sends
-`sqliteCode` for every SQLite error (the query case of `src/worker/worker.ts`), but `workerError`
-in `src/pool.ts` keeps it only for `BUSY`/`LOCKED` — a constraint violation, `FULL`, `IOERR`,
-`READONLY` all reach the consumer as a plain `Error`, told apart only by the message. **Reliability
-by the triage rule, so an rc.5 candidate; not scheduled.** The shape discussed and not decided: a
-`SQLiteError` with a new public code carrying `sqliteCode`.
-
 ## The pre-commit hook — three hooks since 2026-09-11 (user)
 
 Decided and installed on 2026-09-11, in `package.json` under `simple-git-hooks`:

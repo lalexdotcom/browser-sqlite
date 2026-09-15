@@ -32,6 +32,15 @@ extension, wired in `.devcontainer/devcontainer.json` via two machine-scoped set
 The setting is `js/ts.tsdk.path`, **not** the `typescript.native-preview.tsdk` the write-ups
 still document — trust VS Code's in-editor schema warning over the blog posts.
 
+**Probing what the editor offers needs a TypeScript with the JS API, and the repo's has none.**
+TS 7's `typescript` package exposes neither `createLanguageService` nor `sys`. The VS Code server
+bundles the classic one for its built-in features —
+`/vscode/vscode-server/bin/<commit>/extensions/node_modules/typescript/lib/typescript.js`, 6.0.3
+and 5.9.3 on 2026-09-15 — and a script that requires it by path can call
+`getCompletionsAtPosition`. That is how D10 of the statement-errors spec was measured. The repo's
+own `tsc` still gives the diagnostics, as `tsc --ignoreConfig --noEmit --strict <file>`: without
+`--ignoreConfig` it refuses a file argument while `tsconfig.json` exists (TS5112).
+
 ### A TS 7 trap paid for in wave 1
 
 `const x: (() => T) | undefined = undefined` narrows to `undefined`, and TS 7 then reports
