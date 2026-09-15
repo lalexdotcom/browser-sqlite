@@ -1,14 +1,16 @@
 /**
- * Every result code of SQLite 3.53.0, primary and extended, keyed without the
- * `SQLITE_` prefix: `SQLITE_CODES.CONSTRAINT_UNIQUE` is SQLite's
- * `SQLITE_CONSTRAINT_UNIQUE`. Compare them with `SQLiteError.sqliteCode`, which
- * is always a primary code, and `SQLiteError.sqliteExtendedCode`; an extended
- * code's low byte is its primary (`2067 & 0xff === 19`). What each one means:
+ * The result codes of SQLite 3.53.0, keyed without the `SQLITE_` prefix, in two
+ * tables that match `SQLiteError`'s two fields: test the family on `sqliteCode`
+ * against `SQLITE_CODES` (`CONSTRAINT`, `FULL`), the subtype on
+ * `sqliteExtendedCode` against `SQLITE_EXTENDED_CODES` (`CONSTRAINT_UNIQUE`).
+ * An extended code's low byte is its family (`2067 & 0xff === 19`), and its key
+ * begins with the family's key. What each one means:
  * https://sqlite.org/rescode.html.
  *
  * Transcribed from `src/sqlite.h.in` — the source of `sqlite3.h` — at SQLite's
- * tag `version-3.53.0`, checked 2026-09-14. That is the SQLite wa-sqlite 1.1.1
- * bundles: its source-id, read from the wasm, is `2026-04-09 11:41:38
+ * tag `version-3.53.0`, checked 2026-09-14. That is the SQLite of the vendored
+ * wa-sqlite, v1.1.2 (its `package.json` still reads 1.1.1: upstream did not
+ * bump it): its source-id, read from the wasm, is `2026-04-09 11:41:38
  * 4525003a53a7fc63ca75`, and the tag's `manifest.uuid` begins with the same
  * hash. Not read from wa-sqlite's `sqlite-constants.js`, which has no
  * `BUSY_*`, `LOCKED_*`, `CANTOPEN_*`, `CORRUPT_*` or `READONLY_*` codes;
@@ -16,10 +18,11 @@
  * Re-transcribe when wa-sqlite moves to another SQLite.
  *
  * `sqliteCode` and `sqliteExtendedCode` stay typed `number`, not a union of
- * these: a later SQLite may report a code this list does not hold.
+ * these: a later SQLite may report a code these tables do not hold.
  */
+
+/** The 31 primary result codes — what `SQLiteError.sqliteCode` holds. */
 export const SQLITE_CODES = Object.freeze({
-  // Primary codes
   OK: 0,
   ERROR: 1,
   INTERNAL: 2,
@@ -51,7 +54,13 @@ export const SQLITE_CODES = Object.freeze({
   WARNING: 28,
   ROW: 100,
   DONE: 101,
-  // Extended codes
+} as const);
+
+/**
+ * The 82 extended result codes — what `SQLiteError.sqliteExtendedCode` holds
+ * when SQLite reports a subtype. No primary code is repeated here.
+ */
+export const SQLITE_EXTENDED_CODES = Object.freeze({
   ERROR_MISSING_COLLSEQ: 257,
   ERROR_RETRY: 513,
   ERROR_SNAPSHOT: 769,

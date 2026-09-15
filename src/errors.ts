@@ -15,7 +15,8 @@
  * itself — a worker that never became ready, a deletion that did not complete.
  * `STATEMENT_FAILED` is a statement SQLite refused or failed for any reason
  * but a lock conflict — a constraint, a syntax error, a full disk. `message` is
- * SQLite's own; `sqliteCode` and `sqliteExtendedCode` carry its result codes.
+ * SQLite's own; `sqliteCode` carries its result code, and `sqliteExtendedCode`
+ * its subtype when SQLite reports one.
  */
 export type SQLiteErrorCode =
   | 'NOT_A_READ_QUERY'
@@ -47,10 +48,12 @@ export class SQLiteError extends Error {
    */
   readonly sqliteCode?: number;
   /**
-   * SQLite's extended result code, present only on a statement SQLite ran —
-   * `STATEMENT_FAILED` or `BUSY` from a query, never an open or a delete.
-   * `sqliteExtendedCode & 0xff === sqliteCode` always holds: 2067
-   * (`SQLITE_CODES.CONSTRAINT_UNIQUE`) against 19.
+   * SQLite's extended result code, present only when a statement SQLite ran
+   * failed WITH A SUBTYPE — `STATEMENT_FAILED` or `BUSY` from a query, never
+   * an open or a delete: 2067 (`SQLITE_EXTENDED_CODES.CONSTRAINT_UNIQUE`)
+   * under `sqliteCode` 19. Absent when SQLite has no subtype for the failure
+   * (a full disk, a syntax error), since `sqliteCode` already says it. When
+   * present, `sqliteExtendedCode & 0xff === sqliteCode`.
    */
   readonly sqliteExtendedCode?: number;
   /**
