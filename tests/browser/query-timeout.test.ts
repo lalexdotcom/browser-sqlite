@@ -3,24 +3,51 @@ import { createTestClient, longQuery } from './helpers';
 
 describe('query timeout', () => {
   it('rejects with OPERATION_TIMEOUT and leaves the client usable', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    // `async`, not MemoryVFS's default `sync`: without cross-origin isolation the
+    // sync build cannot cut a running statement, so the next read would wait out
+    // the whole query — 4 s on Chromium, 22 s on Firefox, past this test's 30 s on
+    // a CI runner (mem:measurements, CI-QUERY-TIMEOUT).
+    const db = await createTestClient({
+      vfs: 'MemoryVFS',
+      build: 'async',
+      poolSize: 1,
+    });
     try {
+      const slow = longQuery(20_000_000);
+      // A fresh client's first call can time out while it waits for the worker
+      // to start, and then no statement ever runs. Start the worker, then warm
+      // the statement, so the timeout below lands inside step() (mem:lessons,
+      // 2026-09-05).
+      await db.read('SELECT 1');
+      await db.read(slow, [], { timeout: 50 }).catch(() => {});
       const started = performance.now();
-      await expect(
-        db.read(longQuery(20_000_000), [], { timeout: 200 }),
-      ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
-      // The statement really stopped: nowhere near the seconds it would run.
+      await expect(db.read(slow, [], { timeout: 200 })).rejects.toMatchObject({
+        code: 'OPERATION_TIMEOUT',
+      });
+      // The rejection is immediate by contract, whether the statement stopped or
+      // not; this bounds only the contract.
       expect(performance.now() - started).toBeLessThan(1500);
-      // And the connection still works.
+      // What proves the statement stopped: the next read does not wait it out.
+      // Falsifiable: create this client on the `sync` build — the read then
+      // waits for the query's natural end, seconds on either engine.
+      const next = performance.now();
       expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+      expect(performance.now() - next).toBeLessThan(2000);
     } finally {
       await db.close();
     }
   });
 
   it('spends the budget over the whole call, not per statement', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    // `async`, so the write is really cut and close() does not wait it out on
+    // Firefox (mem:measurements, CI-QUERY-TIMEOUT).
+    const db = await createTestClient({
+      vfs: 'MemoryVFS',
+      build: 'async',
+      poolSize: 1,
+    });
     try {
+      await db.read('SELECT 1');
       // Two statements, each shorter than the budget, whose sum is not.
       const half = `${longQuery(8_000_000)};`;
       await expect(
@@ -86,19 +113,38 @@ describe('query timeout', () => {
   });
 
   it('spends the budget while the call is still queued', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    // `async`, and a holder that carries a signal. A statement yields only when
+    // it is abortable, so an unsignalled holder keeps its worker to its natural
+    // end even on `async`, and close() waits it out — 31.6 s on Firefox, 22 s on
+    // the `sync` build, past this test's 30 s (mem:measurements,
+    // CI-QUERY-TIMEOUT). It is abandoned at the end, as in concurrency.test.ts.
+    const db = await createTestClient({
+      vfs: 'MemoryVFS',
+      build: 'async',
+      poolSize: 1,
+    });
     try {
+      // The worker must be up, so the long read below occupies it rather than
+      // waiting for it to start alongside the call under test.
+      await db.read('SELECT 1');
       // The only worker is busy for seconds; the second call never reaches a
       // step() and must still time out. Falsifier: create the controller below
       // the lease acquisition and this goes green for the wrong reason — the
       // clock must run during the wait, which is what the assertion pins.
-      const long = db.read(longQuery(20_000_000));
+      const holder = new AbortController();
+      const long = db.read(longQuery(20_000_000), [], {
+        signal: holder.signal,
+      });
       long.catch(() => {});
-      const started = performance.now();
-      await expect(
-        db.read('SELECT 1 AS one', [], { timeout: 150 }),
-      ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
-      expect(performance.now() - started).toBeLessThan(1000);
+      try {
+        const started = performance.now();
+        await expect(
+          db.read('SELECT 1 AS one', [], { timeout: 150 }),
+        ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
+        expect(performance.now() - started).toBeLessThan(1000);
+      } finally {
+        holder.abort();
+      }
     } finally {
       await db.close();
     }
