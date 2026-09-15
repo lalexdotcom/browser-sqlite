@@ -833,3 +833,17 @@ not run either. **Text inside a generated span belongs in the generator's source
 `pnpm docs:vfs && git diff VFS.md` before it is committed; the `pre-push` hook now does it. **And a
 CI job that fails early hides every later step**: a red run is not "the tests failed" until the
 failing step is read.
+
+## A timeout test on a build that cannot interrupt measures the query's length — 2026-09-15
+
+`query-timeout.test.ts` claimed "the statement really stopped" and bounded the rejection, which is
+immediate by contract. On `MemoryVFS`'s default `sync` build without isolation nothing stopped: the
+next read and `close()` waited out the whole query — 4 s on Chromium, 22 s on Firefox, past 30 s
+on the first CI runner (CI-QUERY-TIMEOUT, `mem:measurements`). Two more traps sat under it. **A
+fresh client's first call can time out while still queued for the worker**, so under load the test
+sometimes ran no statement at all and passed instantly; one loaded run was green for that reason.
+And **`async` alone did not fix it**: a statement yields only when it is abortable, so an
+unsignalled holder kept its worker on `async` too. The 2026-09-05 discipline, extended: bound what
+only an interruption buys — the NEXT call's latency — warm the client and the statement, give every
+statement the test expects to cut a signal or a timeout, and run the falsifier (`sync`: 4.2 s
+against a 2 s bound).

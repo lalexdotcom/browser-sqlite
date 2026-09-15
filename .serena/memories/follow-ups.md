@@ -172,13 +172,16 @@ a consumer environment lacks it; an insecure context is the candidate. Pre-exist
 
 ## A timed-out read on Firefox can leave the next query meeting `GENERATOR_ABANDONED`, under load (2026-09-14)
 
-`query-timeout.test.ts :: rejects with OPERATION_TIMEOUT and leaves the client usable` —
-`MemoryVFS`, `poolSize` 1, a `timeout: 200` read — failed once in a pre-push `pnpm test`, with
-"Worker 1 already has a query in flight": the follow-up query reached the worker before the
-interrupted one had finished. The machine was loaded by a Chromium probe running beside it; 10
-isolated runs of the file then passed. The code path is untouched by the branch it failed on.
-Load-sensitive, like the defect ABANDON-WEDGE describes (`mem:measurements`); the busy-loop method
-there is how to make it reproduce. Reliability by the triage rule; not scheduled.
+`query-timeout.test.ts :: rejects with OPERATION_TIMEOUT and leaves the client usable` failed once
+in a pre-push `pnpm test` on a loaded machine, with "Worker 1 already has a query in flight".
+**What 2026-09-15 established about that test** (CI-QUERY-TIMEOUT, `mem:measurements`): it ran on
+`MemoryVFS`'s default `sync` build, which cannot cut a running statement without isolation, so the
+query it timed out kept its worker for its whole natural length — 22 s on Firefox, 60 s loaded.
+The follow-up read was racing a worker that was still busy. The test now runs on `async` and
+bounds that read. **Not established:** whether the library itself can hand a query to a worker
+still inside the previous one, which is what the message says — the lease should be held until
+quiesce. Reliability by the triage rule; not scheduled. To chase it, reproduce on `sync` with the
+busy-loop method (ABANDON-WEDGE) first.
 
 ## The pre-commit hook — three hooks since 2026-09-11 (user)
 

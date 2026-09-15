@@ -2292,3 +2292,38 @@ has described — a permanent, silent, origin-wide wedge — is produced determi
 WRITELOCK-STUCK above, whose shape the pre-fix branch is independently recorded as having hit
 (`mem:history`: "an `await gen.return()` parked behind an in-flight `next()` that held the
 origin's write lock indefinitely").
+
+## CI-QUERY-TIMEOUT — a statement the `sync` build cannot cut, and how long its neighbours wait, 2026-09-15, both engines
+
+**Method.** Throwaway probes `.scratchpad/ci-query-timeout-2026-09-15/probe.test.ts` and
+`probe2.test.ts`, copied into `tests/browser/` for a run and deleted; logs beside them. `MemoryVFS`,
+`poolSize` 1, no cross-origin isolation, `main` at `87076f6`. "Loaded" is 32 busy loops on this
+16-core container. Asked by the first CI run of rc.5 that reached its tests (run 34950424311), where
+two `query-timeout.test.ts` tests timed out at 30 s after their assertions had passed.
+
+| `longQuery(20M)`, warm client | Chromium `sync` | Chromium `async` | Firefox `sync` | Firefox `async` |
+|---|---|---|---|---|
+| runs to its end, idle | 4.4 s | 5.5 s | 22.9 s | 31.6 s |
+| runs to its end, loaded | 12.8 s | 13.6 s | 67.7 s | 99.1 s |
+| next read after a `timeout: 200` rejection, idle | 2.6 s | 0.21 s | 22.8 s | 0.20 s |
+| same, loaded | 7.5 s | 0.21 s | 60.5 s | 0.23 s |
+
+**On a FRESH client, the test's own shape** (`timeout: 200`, then a read; n=3): idle, the worker
+starts in 43-73 ms and the long statement always runs — the read waits 4.2 s (Chromium) or 22.2 s
+(Firefox). Loaded on Firefox: **60.1 s, 71 ms, 60.2 s** — bimodal, because a startup past the
+budget rejects the call while it is still queued and nothing runs. A single loaded run of the file
+passed for exactly that reason.
+
+**`async` alone is not enough.** A statement yields only when it is abortable (`wantsSignal`) or
+its VFS declares `yieldsDuringStatements`, so an unsignalled long read on `MemoryVFS` holds its
+worker on `async` too, and `close()` waits it out: the queued test still failed on Firefox until
+its holder carried a signal.
+
+**What it settled.** The tests pinned no interruption: the rejection is immediate by contract,
+and the statement ran on regardless. They now run on `async`, warmed, every statement they expect
+to cut carrying a signal or a timeout, the next read bounded at 2 s. **Verified the same day:** the
+file 8/8 on Chromium (4 s) and on Firefox (5 s), and 8/8 three times on Firefox under 32 loops
+(9-10 s); its falsifier, the first test back on `sync`, fails on Chromium with `expected 4164.5 to
+be less than 2000`. `sync` without isolation keeps its documented limitation;
+`interrupt.test.ts` pins it on purpose. **Firefox runs this recursive CTE four to five times
+slower than Chromium** — a bound calibrated on Chromium is a bound Firefox may not meet.
