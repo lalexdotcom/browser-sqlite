@@ -14,8 +14,22 @@ export type MatrixResult =
       readonly seconds: number;
     }
   | { readonly status: 'not-runnable'; readonly seconds: number }
-  | { readonly status: 'timed-out' };
+  | { readonly status: 'timed-out' }
+  | { readonly status: 'error'; readonly message: string };
 
 export declare function parseMatrixReport(output: string): MatrixResult;
 
 export declare function allPairs(): { vfs: string; build: string }[];
+
+/** What `runBounded` resolves with — never rejects, so every outcome round-trips through here. */
+export type BoundedResult = {
+  readonly output: string;
+  readonly timedOut: boolean;
+  readonly error: (Error & { readonly code?: string }) | null;
+};
+
+export declare function runBounded(
+  command: string,
+  args: readonly string[],
+  options: { readonly cwd?: string; readonly env?: NodeJS.ProcessEnv; readonly timeoutMs: number },
+): Promise<BoundedResult>;

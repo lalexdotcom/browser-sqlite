@@ -130,25 +130,44 @@ function parseArgs(argv) {
 }
 
 /**
- * Runs one (engine, pair) cell to completion or to its timeout.
+ * Spawns `command` with `args`, collecting combined stdout+stderr and
+ * bounding the run to `timeoutMs`.
  *
- * `detached: true` puts the child in its own process group, the same pattern
- * `scripts/consumer-smoke.mjs` uses: `pnpm exec rstest` forks the actual
- * Playwright-driven test runner and browser processes, which survive killing
- * only the direct child and are exactly what was left running (0% CPU,
- * silent) by the Firefox hang this script exists to bound.
+ * Two distinct failure shapes, both reported through the return value rather
+ * than a thrown/rejected promise, so a caller never has to choose between
+ * `try/catch` and `.then` to cover every outcome:
+ *
+ * - The child starts but outlives `timeoutMs`: the whole process group is
+ *   killed (`detached: true` + `process.kill(-pid, 'SIGKILL')` — the same
+ *   pattern `scripts/consumer-smoke.mjs` uses, because `pnpm exec rstest`
+ *   forks the actual Playwright-driven runner and browser, which survive
+ *   killing only the direct child) and `timedOut: true` is returned.
+ * - The child never starts at all (`ENOENT`, `EACCES`, …): Node emits
+ *   `'error'` instead of `'close'`, and never emits `'close'` for a process
+ *   that was never spawned. A promise built on `'close'` alone never settles
+ *   — the exact hang this script exists to prevent, one layer earlier than
+ *   the timeout above. `error` is returned instead, and the timer is cleared
+ *   so it cannot later try to kill a pid that was never assigned.
+ *
+ * A `settled` guard makes the two mutually exclusive: Node's own contract
+ * still allows a `'close'` after an `'error'` for the same child, and only
+ * the first of the two may resolve the promise.
+ *
+ * @param {string} command
+ * @param {readonly string[]} args
+ * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, timeoutMs: number }} options
  */
-function runOne(engine, pair, outFile) {
+export function runBounded(command, args, { cwd, env, timeoutMs }) {
   return new Promise((resolve) => {
-    const args = ['exec', 'rstest', '--config', engine.config, ...engine.extraArgs, 'run'];
-    const child = spawn('pnpm', args, {
-      cwd: ROOT,
-      env: { ...process.env, BSQ_TEST_TARGETS: `${pair.vfs}/${pair.build}` },
+    const child = spawn(command, args, {
+      cwd,
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     });
     let output = '';
     let timedOut = false;
+    let settled = false;
     const timer = setTimeout(() => {
       timedOut = true;
       try {
@@ -156,18 +175,39 @@ function runOne(engine, pair, outFile) {
       } catch {
         child.kill('SIGKILL');
       }
-    }, RUN_TIMEOUT_MS);
-    child.stdout.on('data', (d) => {
+    }, timeoutMs);
+    child.stdout?.on('data', (d) => {
       output += String(d);
     });
-    child.stderr.on('data', (d) => {
+    child.stderr?.on('data', (d) => {
       output += String(d);
+    });
+    child.on('error', (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ output, timedOut, error });
     });
     child.on('close', () => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      writeFileSync(outFile, output);
-      resolve(timedOut ? { status: 'timed-out' } : parseMatrixReport(output));
+      resolve({ output, timedOut, error: null });
     });
+  });
+}
+
+/** Runs one (engine, pair) cell via `runBounded`, translating its result into a matrix cell. */
+function runOne(engine, pair, outFile) {
+  const args = ['exec', 'rstest', '--config', engine.config, ...engine.extraArgs, 'run'];
+  return runBounded('pnpm', args, {
+    cwd: ROOT,
+    env: { ...process.env, BSQ_TEST_TARGETS: `${pair.vfs}/${pair.build}` },
+    timeoutMs: RUN_TIMEOUT_MS,
+  }).then(({ output, timedOut, error }) => {
+    writeFileSync(outFile, output);
+    if (error) return { status: 'error', message: error.message };
+    return timedOut ? { status: 'timed-out' } : parseMatrixReport(output);
   });
 }
 
@@ -175,6 +215,7 @@ function runOne(engine, pair, outFile) {
 function formatCell(result) {
   if (result.status === 'not-runnable') return 'not runnable here';
   if (result.status === 'timed-out') return 'timed out';
+  if (result.status === 'error') return `error: ${result.message}`;
   return `${result.passed}/${result.failed}/${result.skipped} · ${result.seconds}s`;
 }
 
@@ -218,7 +259,7 @@ async function main() {
   console.log(`Total: ${totalSeconds}s. Reports under ${join('.matrix', runId)}.`);
 
   const failed = [...results.values()].some(
-    (r) => r.status === 'failed' || r.status === 'timed-out',
+    (r) => r.status === 'failed' || r.status === 'timed-out' || r.status === 'error',
   );
   process.exitCode = failed ? 1 : 0;
 }

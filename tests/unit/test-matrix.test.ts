@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
-import { parseMatrixReport } from '../../scripts/test-matrix.mjs';
+import { parseMatrixReport, runBounded } from '../../scripts/test-matrix.mjs';
 
 /**
  * Fixtures are trimmed excerpts of real rstest 0.11.8 markdown reports,
@@ -218,5 +218,38 @@ describe('parseMatrixReport', () => {
     expect(parseMatrixReport(NO_SUMMARY_REPORT)).toEqual({
       status: 'timed-out',
     });
+  });
+});
+
+describe('runBounded', () => {
+  it('resolves with error set when the child fails to start', async () => {
+    // Falsifiable: runBounded without an 'error' listener on the child never
+    // settles for a command that cannot start — removing that listener turns
+    // this test into a timeout instead of a pass. Verified by hand: with the
+    // listener commented out, this test hits rstest's 10s project timeout
+    // instead of resolving.
+    const result = await runBounded('bsq-test-matrix-nonexistent-binary', [], {
+      env: process.env,
+      timeoutMs: 5000,
+    });
+    expect(result.timedOut).toBe(false);
+    expect(result.error).toBeTruthy();
+    expect(result.error?.code).toBe('ENOENT');
+  });
+
+  it('kills a child that outlives its timeout', async () => {
+    // Falsifiable: removing the SIGKILL call from runBounded's timer lets the
+    // 5s child run to completion instead of being cut off — the assertion on
+    // elapsed time (and, with it, this test staying well under `sleep 5`'s
+    // 5000ms) would fail. Verified by hand: with the kill removed, this test
+    // takes roughly 5s instead of ~200ms and its elapsed-time assertion fails.
+    const started = Date.now();
+    const result = await runBounded('sleep', ['5'], {
+      env: process.env,
+      timeoutMs: 200,
+    });
+    const elapsed = Date.now() - started;
+    expect(result.timedOut).toBe(true);
+    expect(elapsed).toBeLessThan(4000);
   });
 });
