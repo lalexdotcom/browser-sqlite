@@ -47,9 +47,11 @@ export type DeleteDatabaseOptions = {
  *
  * @throws {SQLiteError} `INVALID_OPTION` when `vfs` is missing or the `build`
  *   is not one the VFS supports — synchronously in spirit, as a rejection here.
- * @throws {SQLiteError} `BUSY` when the database is open or being opened, in
- *   this tab or another. A connection already holding its handles cannot be
+ * @throws {SQLiteError} `DATABASE_IN_USE` when the database is open, in this
+ *   tab or another. A connection already holding its handles cannot be
  *   revoked from here; see the README's Known Limitations.
+ * @throws {SQLiteError} `BUSY` when the database is being opened or deleted
+ *   elsewhere. Try again in a moment.
  */
 export const deleteDatabase = async (
   file: string,
