@@ -42,7 +42,11 @@ that SQLite itself reported carries a numeric code; the ones this library mints 
 That is why the retry gates on the code and not on a VFS name. `stream()` and `chunk()` retry
 only before a row has been delivered, since a later retry would repeat rows. It exists for
 `OPFSCoopSyncVFS`'s handle-transfer protocol (`mem:vfs`, COOPSYNC-BUSY in `mem:measurements`);
-anything else that reports a lock conflict simply gets one free retry.
+anything else that reports a lock conflict simply gets one free retry. **Since 2026-09-15 that
+BUSY no longer occurs**: it was a re-prepare inside one `step` handing the handle away, fixed by the
+wa-sqlite patch (COOPSYNC-HANDOVER, `mem:measurements`). The retry stays, for any lock conflict SQLite
+reports; no test exercises it any more, and the user ruled that fine — the test that went red to
+green is `coopsync-handover.test.ts`.
 **Since 2026-09-15 `sqliteCode` also rides on `STATEMENT_FAILED` and `WORKER_CRASHED`**, so
 `isRetryableBusy` must keep testing `code === 'BUSY'` as well: the presence of a code no longer
 means a lock conflict on its own.

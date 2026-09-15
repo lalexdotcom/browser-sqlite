@@ -13,14 +13,23 @@
     file's style is maintained by hand — verified 2026-08-27 after a `},{` survived a
     format run.
 - Tests: **rstest 0.11.8**, Playwright pinned at 1.62.1.
-- **Runtime dependencies: none.** `wa-sqlite` is a devDependency only
-  (`github:rhashimoto/wa-sqlite#v1.1.2`, commit `2bf1c59`), vendored into
-  `dist/worker/worker.js` at build time so it never reaches a consumer lockfile.
-  `patches/wa-sqlite@1.1.1.patch` carries the WebKit `OPFSAnyContextVFS` fix.
+- **Runtime dependencies: none.** `wa-sqlite` is a devDependency only, vendored into
+  `dist/worker/worker.js` at build time so it never reaches a consumer lockfile. **Pinned by commit
+  SHA, not by tag, since 2026-09-15 (user):**
+  `github:rhashimoto/wa-sqlite#07ad48cf2f682d279f9cd69818cc1d39b2ccda86`, upstream `master` with #344
+  merged. Vendored, so a commit serves as well as a release and nothing waits for one.
+  `patches/wa-sqlite@1.1.2.patch` carries the `OPFSCoopSyncVFS` hand-over fix only (upstream as #347);
+  when that merges, repin to its merge commit and delete the patch.
   - **The `wa-sqlite` on npmjs is not the upstream package**: `1.0.0`, published by
     `gabrieldevunstatic <tailinh@unstatic.co>`, no `repository` field. Never point at it.
-  - The v1.1.2 tag ships a `package.json` still saying `"version": "1.1.1"` — upstream
-    forgot the bump. Verify by commit, not by that field.
+  - **Upstream's tags do not follow its versions.** `v1.1.2` points at `2bf1c59`, whose
+    `package.json` says `1.1.1`; the bump to `1.1.2` and #344 came after it. The patch key is the
+    `version` field of the resolved commit — `wa-sqlite@1.1.2` today. Verify by commit.
+  - **`pnpm patch` (10.31) does NOT re-apply the existing patch** in its edit directory: apply it by
+    hand (`patch -p1 < patches/…`) before editing, or `patch-commit` silently drops what the old patch
+    held. **After a change of patch key, `patch-commit` left `node_modules` unpatched** — the `.pnpm`
+    directory had no patch-hash suffix and the lockfile no `patchedDependencies` — until a second
+    `pnpm install`. Check both before trusting a run.
 
 ### TS 7 in the editor — known, do not re-diagnose
 
@@ -296,6 +305,24 @@ instead.
   package.
 - `tsconfig.json` `include` is `["src", "tests", "rslib.config.ts", "rstest.config.ts"]`.
   Only `strict` is on.
+
+## The wa-sqlite fork and its test suite
+
+`.work/wa-sqlite` is the user's fork (`origin` = `lalexdotcom/wa-sqlite`), with `upstream` =
+`rhashimoto/wa-sqlite` added on 2026-09-15. It pushes through the VS Code credential helper; opening
+a PR is the user's. Its suite runs with yarn 4 (PnP, pinned by `.yarnrc.yml`'s `yarnPath`):
+`yarn install`, then `CHROME_PATH=~/.cache/ms-playwright/chromium-1234/chrome-linux/chrome yarn
+web-test-runner test/OPFSCoopSyncVFS.test.js` — Chrome only; the whole suite is `yarn test`, ~40 s
+and 2 899 tests on 2026-09-15. Three facts that cost time:
+
+- **`TestContext.create()` never rejects**: a worker that fails to start throws from the message
+  listener and the promise stays pending. `test/vfs_handover.js` starts its workers through a helper
+  that does reject.
+- **`TestContext.supportsJSPI()` builds a `WebAssembly.Function`**, gone from Chrome 151 (which has
+  `WebAssembly.Suspending` and `promising`), so every `jspi` describe is skipped locally.
+- **Upstream CI** (`.github/workflows/ci.yml`) runs `yarn test` on Chrome 129, then rebuilds the WASM
+  with Emscripten 3.1.61 and runs it again. It starts on a PR from the fork without approval. Its
+  job steps are readable through the public API (`/actions/runs/<id>/jobs`); its logs are not.
 
 ## The benchmark page
 

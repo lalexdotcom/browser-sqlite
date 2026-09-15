@@ -24,13 +24,13 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-15 after the statement-errors merge
+## The verification baseline — compare against these, re-measured 2026-09-15 after the CoopSync hand-over merge
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a
-run in this container on 2026-09-15, on `main` right after the merge that made a failed statement
-say why (`54c4492`)** — none is carried forward, none is arithmetic. The whole table was re-read in
+run in this container on 2026-09-15, on `main` right after the merge of the CoopSync hand-over fix
+(`256ce09`)** — none is carried forward, none is arithmetic. The whole table was re-read in
 one pass, which is what its own rule demands; raw outputs in
-`.scratchpad/closure-baseline-2026-09-15-statement-errors/`. The `pnpm test` row is the merge's
+`.scratchpad/closure-2026-09-15-coopsync/`. The `pnpm test` row is the merge's
 pre-merge-commit hook, run on the merged tree.
 
 **`pnpm test` chains THREE configs** — chromium+unit, firefox, and the isolated project — so a
@@ -43,13 +43,13 @@ on the last branch landed with a failing typecheck that no test run could show (
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **829 tests / 69 files** (unit + chromium, **4 skipped**), **348 / 46** (firefox, **1 skipped**), **7 / 3** (isolated) |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **834 tests / 70 files** (unit + chromium, **4 skipped**), **353 / 47** (firefox, **1 skipped**), **7 / 3** (isolated) |
 | `pnpm exec rstest --project unit run` | 482 tests, 24 files |
-| `pnpm exec rstest --project chromium run` | 347 tests, 45 files, 4 skipped |
+| `pnpm exec rstest --project chromium run` | 352 tests, 46 files, 4 skipped |
 | `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each: **Chromium 71 passed / 14 skipped, Firefox 67 / 18** — they differ by design since 2026-09-14 |
 | `pnpm test:consumer` | 24/24 stages |
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 126 files, 13 warnings, 1 info |
+| `pnpm lint` | 127 files, 13 warnings, 1 info |
 | `dependencies` in `package.json` | absent |
 
 **The browser skips are expected: 4 on Chromium, 1 on Firefox.** One, on both, is
@@ -87,11 +87,13 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 ## Decisions the user owes
 
-- **Whether the open reliability subjects precede rc.5.** One is left unscheduled:
-  `OPFSCoopSyncVFS` writes taking the handle-transfer BUSY between clients — logged on the
-  recommendation, the user not having ruled on it (`mem:follow-ups`). The SQL error code lost at
-  the worker boundary was taken up by the user on 2026-09-15 and merged the same day (§ below); the
-  Firefox `worker 1 lost` observation became the pool-cap work, merged on 2026-09-14 (§ below).
+- **Whether the open reliability subjects precede rc.5.** One is open: `OPFSWriteAheadVFS`
+  refuses a second client off Chromium (found 2026-09-15, `mem:follow-ups`), and the user has said
+  what comes first — **the next session runs the multi-client and cross-tab tests on every VFS
+  offered, the two recommended first** — leaving what a second `OPFSWriteAheadVFS` client should get
+  to what those tests force. The CoopSync write BUSY was fixed and merged on 2026-09-15 (§ below);
+  the SQL error code lost at the worker boundary the same day; the Firefox `worker 1 lost`
+  observation became the pool-cap work, merged on 2026-09-14 (§ below).
 
 **rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
 and both are now closed — the second by merge `eeabe06` on 2026-09-11.
@@ -124,7 +126,10 @@ current* — a hand edit inside a generated span (`mem:lessons`) — before any 
 feared (CI-QUERY-TIMEOUT, `mem:measurements`). **Run 34953847713 at `7cf2944` is green end to
 end**: biome, the table, `tsc`, build, `pnpm test` (4 min 39 s on the runner), conformance on both
 engines (27 s) and the consumer smoke (55 s). The user judges the release ready — the bump itself
-remains an instructed act, never an inferred one.
+remains an instructed act, never an inferred one. **That judgment predates two findings of the same
+afternoon** — the CoopSync hand-over, fixed, and the `OPFSWriteAheadVFS` second-client refusal, open —
+and the user has since set the next session on multi-client tests across VFS (§ Decisions the user
+owes). The commits since have not been through CI: `main` is not pushed.
 
 **One thing to expect on CI, and it is not a defect.** The abandoned-generator
 work found a defect that reproduces about once in eighteen runs of `pnpm test` and **never**
@@ -137,8 +142,11 @@ ABANDON-WEDGE).
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
 the 2026-09-05 entry in `mem:follow-ups` called for.
 
-**Nothing is in flight.** The statement-errors work merged on 2026-09-15 (§ below). Everything in
-`mem:follow-ups` is unscheduled but one entry: the default build, scheduled for rc.6.
+**Nothing is in flight.** The CoopSync hand-over fix merged on 2026-09-15 (§ below), after the
+statement-errors work the same day. **Next session (user, 2026-09-15): the multi-client and
+cross-tab tests on every VFS offered** — the `OPFSWriteAheadVFS` entry in `mem:follow-ups` says which
+files and why. Otherwise everything in `mem:follow-ups` is unscheduled but the default build,
+scheduled for rc.6. Upstream, rhashimoto/wa-sqlite#347 is open (§ Pending).
 
 **HANDLE-2 was investigated on 2026-09-09 and came apart under measurement.** Its stated cause
 is false — Firefox releases a killed worker's sync access handle in 1-6 ms (HANDLE-ORPHAN) — and
@@ -155,6 +163,36 @@ permanent, silent, origin-wide — was found and fixed the same day (§ below).
 2026-09-08 by medianing the bench corpus at n≥3 per platform (`mem:measurements`,
 VFS-MEDIAN). The answer was not "move it": there are now **two** recommendations,
 `OPFSWriteAheadVFS` and `OPFSAdaptiveVFS`, and the constant itself left `src/` — see § below.
+
+## `OPFSCoopSyncVFS` hands its handle over between calls only — merged 2026-09-15
+
+No spec: investigated with systematic debugging, the fix designed in chat and approved. Numbers in
+`mem:measurements` (COOPSYNC-HANDOVER); the VFS fact in `mem:vfs`; the pin and the patch traps in
+`mem:stack-and-build`. The fix is a wa-sqlite patch, proposed upstream as rhashimoto/wa-sqlite#347.
+
+**Five things the code will not tell you:**
+
+- **The cause is a re-prepare, not the protocol step COOPSYNC-BUSY named.** SQLite locks, unlocks
+  and locks again inside one `step` when a cached statement's schema changed; the VFS released at the
+  inner unlock; `retry()` tries twice. The 2026-09-03 read failures were the same mechanism, which
+  `readWithRetry` absorbed; nothing produces them now and no test exercises that retry — fine by the
+  user: the red-to-green test is what counts.
+- **A task, not a microtask.** The JSPI build suspends at every VFS call; the microtask version was
+  reasoned safe and measured wrong (`mem:lessons`). `coopsync-handover.test.ts` runs on `jspi` for that
+  reason, and its mutation back to a microtask is recorded.
+- **wa-sqlite is pinned by SHA (user).** Vendored, so a commit serves as well as a release: upstream
+  HEAD `07ad48c`, which carries #344, so the patch holds the CoopSync change only, under the key
+  `wa-sqlite@1.1.2`. When #347 merges, repin to its merge commit and delete the patch.
+- **#347's evidence is wa-sqlite's own suite, never this library** (user: a stable library is not
+  argued from an unstable one — `mem:conventions`). Its `jspi` claim rests on our measurements: that
+  suite skips `jspi` on current Chrome.
+- **The same probe found the next subject.** `OPFSWriteAheadVFS` refuses a second client off
+  Chromium, and the multi-client and cross-tab suites run on `OPFSAdaptiveVFS` alone
+  (`mem:follow-ups`) — the next session.
+
+**What it does NOT deliver.** Nothing for `OPFSWriteAheadVFS`. The NotFound fix rests on a small
+natural sample (2 of 19 against 0 of 20) and on a test that forces the race with 30 orphaned
+directories.
 
 ## Statement errors — merged 2026-09-15
 
@@ -657,10 +695,10 @@ README warning.
   `lalexdotcom`. rhashimoto's two conditions — a link to a filed WebKit bug, and
   the original `.subarray()` kept commented out above a TODO — were satisfied
   before he merged. **Nothing is owed upstream.**
-  - **What is pending is a wa-sqlite RELEASE, and there was none as of
-    2026-08-31 (user).** The re-vendoring waits for it: until wa-sqlite publishes
-    a version carrying the fix, `patches/wa-sqlite@1.1.1.patch` stays exactly as
-    it is. Do not remove it early and do not hand-edit it (see below).
+  - **Nothing waits for a wa-sqlite release any more (user, 2026-09-15).** wa-sqlite is pinned by
+    commit SHA to upstream `07ad48c`, which carries #344, and the AnyContext patch is gone
+    (`mem:stack-and-build`). Upstream's `v1.1.2` tag predates that merge; no release carrying it
+    existed on 2026-09-15.
   - **The WebKit bug already existed — do not file another one.**
     <https://bugs.webkit.org/show_bug.cgi?id=302733>, "FileSystemWritableFileStream.write()
     ignores byteOffset when writing TypedArray subarrays", Website Storage,
@@ -668,10 +706,12 @@ README warning.
     exact case and the report itself names `.slice()` as the workaround, so the
     patch is the sanctioned fix, not a guess. A second reporter extended it to
     `DataView` on 2026-08-24. No WebKit PR touches it.
-  - `patches/wa-sqlite@1.1.1.patch` carries the same TODO and link as the
-    upstream commit and must keep doing so — regenerate it with `pnpm patch` /
-    `pnpm patch-commit`, never by hand, or the lock's patch hash and the file
-    disagree.
+  - **Open upstream: rhashimoto/wa-sqlite#347** (2026-09-15), the `OPFSCoopSyncVFS` hand-over fix,
+    from `lalexdotcom:fix/coopsync-deferred-handle-release`: the two changes of
+    `patches/wa-sqlite@1.1.2.patch` plus `test/vfs_handover.js`, which fails on its master (47 and 46
+    `BUSY` in 100 steps, 9 `NotFoundError` in 10 starts) and passes with them; upstream CI run #392
+    green. The PR text is the user's. When it merges, repin to the merge commit and delete the patch —
+    regenerated or removed through `pnpm patch` / `pnpm patch-commit`, never by hand.
   - **Tooling, since `gh` is still not installed here:** PR bodies, comments and
     Bugzilla all read fine through `WebFetch` on `api.github.com` and
     `bugs.webkit.org`; the fork clone lives at `.work/wa-sqlite` and pushes

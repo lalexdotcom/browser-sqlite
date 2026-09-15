@@ -116,18 +116,41 @@ says Firefox 153+, Safari 27+); `VFS.md`; a CHANGELOG entry, the default changin
 consumer who passes one `.wasm` URL without `build`. **Measure first:** `OPFSAdaptiveVFS` on `jspi`
 on Safari 27, the pair whose default would change for the most consumers.
 
-## `OPFSCoopSyncVFS` writes can fail with the handle-transfer BUSY between clients (2026-09-14)
+## `OPFSWriteAheadVFS` refuses a second client off Chromium, and no test opens two clients per VFS (user, 2026-09-15)
 
-Found while rewriting `coopsync-retry.test.ts` for the one-worker cap (`fix/pool-environment-cap`,
-Task 11): two `OPFSCoopSyncVFS` clients on one file, constructed together, make a **write** fail
-with the `SQLITE_BUSY` its `jLock` returns while a handle transfer is in flight — reproducibly, on
-both engines. COOPSYNC-BUSY retries a read once (and `stream()`/`chunk()` before their first row);
-nothing retries a write. Two clients is what two tabs are. Pre-existing; the branch lowered the
-odds, since a client now runs one CoopSync worker. **Reliability by the triage rule, so an rc.5
-candidate; not scheduled** — logged on the recommendation at the 2026-09-14 closure, the user not
-having ruled on it. The question to answer first: is retrying a write safe? A BUSY at `xLock`
-precedes the statement, but inside a transaction it is another matter, and the origin's write
-lock is held meanwhile. The test's header names the shape it avoids on purpose.
+Found by the multi-VFS probe of the CoopSync hand-over work (COOPSYNC-HANDOVER, `mem:measurements`):
+on Firefox, a second `OPFSWriteAheadVFS` client on a database another client holds open fails
+**every** query with `WORKER_CRASHED`, `sqliteCode` 14, `sqlite3_open_v2: NoModificationAllowedError`
+— 20/20 attempts in each of five shapes. Chromium, which has `readwrite-unsafe`: 0/20. It follows
+from what `mem:vfs` already says — without `readwrite-unsafe` this VFS keeps its handles for a
+connection's life, so one connection opens — but the 2026-09-14 pool cap drew the consequence inside
+one client only, and `VFS.md` states it as a pool size, never as "a second tab is refused". It is one
+of the two recommended VFS. **Not measured:** Safari; whether the second client recovers once the
+first closes; what the first client sees.
+
+**Why nothing caught it, in rc.5 of all releases — the one that ships multi-client and multi-tab
+coordination.** Every conformance invariant runs one client per database: the two Firefox skips
+through `oneWorkerHere` (invariants 3 and 6) are pools inside one client, not a second client. In
+`tests/browser/`, no test opens a second `OPFSWriteAheadVFS` client. **The one test that met the
+situation pinned it as correct:** `pool-cap.test.ts` T5 has a raw worker hold the file, then asserts
+that an `OPFSWriteAheadVFS` client fails with `WORKER_CRASHED` — its subject is the error message, and
+the refusal itself went in as the expected outcome.
+
+**Asked by the user: tests that check it systematically, on Chromium and Firefox** — two clients on
+one database for every VFS in `VFS_CAPABILITIES`, both constructed and both issuing queries, asserting
+what each VFS is meant to give a second client (it serves; it waits its turn; or it is refused fast
+with a documented code, as `exclusiveConnection` does for `AccessHandlePoolVFS`), so that a refusal
+cannot pass unseen again. Reliability by the triage rule, so rc.5. What `OPFSWriteAheadVFS` should do
+with a second client off Chromium is a design question those tests will force; it is not decided.
+
+**The tests to parametrize first:** `multi-client.test.ts` (6 tests) and `cross-tab.test.ts` (4) —
+the whole multi-client and cross-tab coverage of rc.5 — run on `OPFSAdaptiveVFS` alone. A static count
+on 2026-09-15 (`.scratchpad/vfs-coverage.mjs`) found ~150 browser tests in 29 files on one VFS, mostly
+`createTestClient`'s default, and only the conformance invariants, `vfs.test.ts` and `builds.test.ts`
+looping over every VFS — one client each. Most single-VFS tests exercise library logic the VFS does
+not touch; what needs every VFS is the tests whose subject depends on it: multi-client, cross-tab,
+locks, barrier, handle transfer. **The next session is for this (user, 2026-09-15): run those tests on
+every VFS offered, the two recommended first.**
 
 ## Three browser tests guard less than their comments said (2026-09-14)
 

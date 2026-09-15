@@ -221,6 +221,12 @@ policy becomes applicable as written.
   *when*, a *where* or a *what*, check that choice against the code before proposing another
   one.**
 
+- **Upstream contributions stand on upstream's own evidence (user, 2026-09-15).** A PR to
+  wa-sqlite does not cite this library — a stable library is not argued from an unstable one — and
+  its measurements must be reproducible with wa-sqlite alone, best as a test in its own suite that
+  fails on its master. Claude's part is disclosed (the commits are co-signed anyway). The licence
+  checkbox of its PR template is the user's to tick, never ours. Drafts go in `.scratchpad/`.
+
 - **Open questions stay in the backlog; each wave's own brainstorming raises them when it
   gets there** (user, 2026-08-17). Do not front-load a decision session for a wave that is
   not the next one.

@@ -2327,3 +2327,68 @@ file 8/8 on Chromium (4 s) and on Firefox (5 s), and 8/8 three times on Firefox 
 be less than 2000`. `sync` without isolation keeps its documented limitation;
 `interrupt.test.ts` pins it on purpose. **Firefox runs this recursive CTE four to five times
 slower than Chromium** — a bound calibrated on Chromium is a bound Firefox may not meet.
+
+## COOPSYNC-HANDOVER — a re-prepare inside one `step` handed the handle away, 2026-09-15, both engines
+
+**Method.** Throwaway probe `tests/browser/coopsync-write-probe.test.ts` (every version saved in
+`.scratchpad/coopsync-write-busy/`) and a temporary lock trace in `src/worker/worker.ts` (saved as
+`probe-worker.patch`) that posts, on a `BroadcastChannel`, `jLock`/`jUnlock` with the VFS's handle
+state before and after, `vfs.log`, and every `step`/`prepare` with `SQLITE_STMTSTATUS_REPREPARE`. Two
+clients per attempt on a fresh file, batches of 8 mixed operations, 20 attempts per scenario, raw
+outputs beside the probe. Scenarios: `together` (both clients built before A's `CREATE TABLE`),
+`together-clean` (the same after purging orphaned `.ahp-*` directories), `together-warm` (then one
+sequential B write and A read), `sequential` (B built after the `CREATE TABLE`), `foreign-ddl`,
+`foreign-ddl-writes` (B runs a `CREATE TABLE`, then A writes while B reads). Default build unless
+stated. **The rates below were taken with the trace on**, which shifts timing (`mem:lessons`).
+
+**The mechanism, read off the trace.** A's barrier statement was prepared before A's own `CREATE
+TABLE`. Its first run after B's first write: `jLock` finds no handle, queues the request, returns
+BUSY and leaves `isFileLocked` true; B's request arrives and the single-shot listener marks the handle
+wanted before A holds it; `retry()`'s second try locks; the schema cookie differs, SQLite re-prepares
+inside the same `step`: `jUnlock(NONE)` hands the handle to B, the relock returns BUSY, no try left.
+`reprepare` went 0→1 on every failing step, 0→0 where the re-prepare itself failed.
+
+| `OPFSCoopSyncVFS`, unpatched | Chromium | Firefox |
+|---|---|---|
+| `together` — a write fails with `BUSY` | 4-5 of 20 (plus 1-2 `NotFound`, below) | 15 of 20 |
+| `together-warm` | 0 `BUSY` | 0 |
+| `sequential` | 0 at the page; 1-2 barrier `BUSY` absorbed by `readWithRetry` | 0; 18-20 absorbed |
+| `foreign-ddl` | 0; 8 absorbed | 0; 32 absorbed |
+| `foreign-ddl-writes` — a write fails | 0 of 20 | 17 and 18 of 20 |
+
+**No other VFS produced a SQLite-reported `BUSY`** in any scenario on either engine —
+`OPFSAdaptiveVFS`, `OPFSWriteAheadVFS`, `OPFSAnyContextVFS`, `IDBBatchAtomicVFS`, `IDBMirrorVFS`,
+0/20 each with zero worker-side throws. **`OPFSWriteAheadVFS` on Firefox refuses the second client
+instead**: every query `WORKER_CRASHED`, `sqliteCode` 14, `sqlite3_open_v2: NoModificationAllowedError`,
+20/20 in each of five scenarios; Chromium 0/20 (`mem:follow-ups`).
+
+| patch | `sync`, `async` | `jspi` |
+|---|---|---|
+| hand-over in a **microtask** | 0 at the page, 0 worker `BUSY`, both engines | Chromium 1/20 `together`, 1/20 `together-clean`; **Firefox 13/20, 16/20, 9/20 (`foreign-ddl-writes`), 18/20 on a trace run** |
+| hand-over in a **task** (`setTimeout`) | 0 | 0 |
+
+With the task, **720 attempts — 3 builds × 2 engines × 6 scenarios × 20 — saw no `BUSY` at the page
+or in a worker**, reads included. The `jspi` trace showed the microtask releasing the handle between
+the inner `jUnlock` and the relock of one `step`: wa-sqlite wraps every VFS import in
+`WebAssembly.Suspending` on that build. Scenario durations on `sync`, unpatched / microtask / task,
+agreed within ±0.3 s — the only cost signal taken, and not a hand-over latency.
+
+**`NotFound` at startup** (`WORKER_CRASHED`, "A requested file or directory could not be found" on
+Chromium, "Entry not found" on Firefox): two workers deleting the same orphaned `.ahp-*` directory in
+`#initialize`. Natural rate on Chromium `together`: 2 of 19 attempts with orphans present, 0 of 20
+after purging them; Firefox 0 of 40. With 30 orphans created first it reproduces on every run.
+
+**Without the trace**, `coopsync-handover.test.ts`'s first test failed three single runs of three on
+Chromium (3-5 `BUSY` in 20 attempts), while one whole-file run happened to show none.
+
+**In wa-sqlite's own suite** (`test/vfs_handover.js` on the fork branch; HeadlessChrome 151;
+`yarn web-test-runner test/OPFSCoopSyncVFS.test.js`): on its master VFS, **`BUSY` on 47 of 100 steps
+(default build) and 46 of 100 (Asyncify)**, `NotFoundError` on 9 of 10 starts on both, the file 66
+passed / 4 failed; with the fix, 70 passed; the whole suite 2 899 passed, 0 failed, 39.9 s. Its
+`jspi` builds are skipped: `TestContext.supportsJSPI()` builds a `WebAssembly.Function`, which Chrome
+151 lacks. Upstream CI run #392 on PR #347 (Chrome 129, both `yarn test` passes): green.
+
+**Falsifiers run the same day.** Mutating the vendored patch back to a microtask turns
+`coopsync-handover.test.ts`'s two `jspi` tests red on Firefox (28 `BUSY`), its `sync` tests staying
+green. And `coopsync-retry.test.ts` with `readWithRetry`'s catch removed stayed green 5 of 5 on
+Firefox, where it went red 3-4 of 5 before the patch: its falsifier died with the defect.

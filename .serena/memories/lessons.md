@@ -847,3 +847,31 @@ unsignalled holder kept its worker on `async` too. The 2026-09-05 discipline, ex
 only an interruption buys — the NEXT call's latency — warm the client and the statement, give every
 statement the test expects to cut a signal or a timeout, and run the falsifier (`sync`: 4.2 s
 against a 2 s bound).
+
+## What can run inside a WASM call depends on the build — 2026-09-15
+
+The CoopSync hand-over fix first deferred the release to a microtask, argued safe: a `step` is one
+synchronous call, and nothing else runs until it returns. True on `sync` and `async`, measured clean
+there — and false on `jspi`, where wa-sqlite wraps every VFS import in `WebAssembly.Suspending`,
+synchronous ones included, so pending microtasks run at each VFS call, mid-`step`. Firefox's `jspi`
+still failed 9-18 times in 20 (COOPSYNC-HANDOVER, `mem:measurements`). **A claim about what can
+interleave inside a WASM call is a claim about the build: measure all three, and give the test the
+build that breaks the claim** — `coopsync-handover.test.ts` runs on `jspi` for exactly this, and a
+mutation back to a microtask turns it red.
+
+## A test can pin a defect as the contract — 2026-09-15
+
+`pool-cap.test.ts` T5 makes a raw worker hold an `OPFSWriteAheadVFS` file, then asserts that the
+client fails with `WORKER_CRASHED` — its subject was the error message, and the refusal went in as the
+expected outcome. The same refusal, met by a second client, is a defect the multi-client work of rc.5
+never saw (`mem:follow-ups`), while its multi-client and cross-tab suites ran on one VFS out of nine.
+**When a test asserts a failure, ask whether the failure is the contract or the defect — and a
+promise made across VFS is tested across VFS.**
+
+## A trace changes the rate it measures — 2026-09-15
+
+The CoopSync probe's lock trace posts a message at every `jLock`; under it Chromium failed 4-5
+attempts in 20. The bare test failed three single runs of three, yet one whole-file run showed no
+`BUSY` at all. **Report a rate taken under instrumentation as such.** The reproduction that settles
+it is the one without the trace — and the one upstream needed came from its own suite, where the bare
+code failed 47 steps in 100.
