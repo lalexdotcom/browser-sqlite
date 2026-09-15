@@ -290,6 +290,17 @@ export type WorkerLostEvent = {
 let clientCount = 0;
 
 /**
+ * Worker 0's probe answer, per realm and per feature list (spec 2026-09-15,
+ * A1). The engine does not change under a page, and one shared promise makes
+ * clients built together request `bsq:conn` in construction order — so the
+ * first one constructed wins, whichever worker happens to answer first.
+ */
+const exclusivityProbes = new Map<
+  string,
+  PromiseWithResolvers<PlatformFeature | null>
+>();
+
+/**
  * Creates a SQLite client backed by a pool of Web Workers, each running
  * a wa-sqlite instance in a dedicated thread.
  *
@@ -632,11 +643,76 @@ export const createSQLiteClient = (
    * when this VFS does not require exclusive connections.
    */
   let connRelease: (() => void) | undefined;
+  /**
+   * True once an `ifAvailable` request for `bsq:conn` came back empty: another
+   * client holds the database and this one is refused (spec 2026-09-15, A3).
+   * Not "no releaser", which is also true of a client that failed or closed
+   * before its lock was decided — that one reports its own failure.
+   */
+  let connRefused = false;
+  /** The feature whose absence made this client exclusive, for the message. */
+  let exclusiveWithout: PlatformFeature | null = null;
+
+  const inUse = () =>
+    new SQLiteError(
+      'DATABASE_IN_USE',
+      `${vfs} supports one connection at a time across the whole origin` +
+        (exclusiveWithout
+          ? ` without ${exclusiveWithout}, which this browser lacks`
+          : '') +
+        `. Another tab or client is already connected to '${dbFile}'. ` +
+        `Close that client to open a new one here.`,
+    );
 
   /**
-   * Settles as soon as the Web Locks API responds to the connection request.
+   * Where this VFS is exclusive only without a feature the page cannot probe,
+   * worker 0 probes it and waits (spec 2026-09-15, §3.2). `undefined` means no
+   * answer will come: the client failed or closed first.
+   */
+  const probeAnswer =
+    sharesStorage(vfs) && capability.exclusiveConnectionWithout.length > 0
+      ? Promise.withResolvers<PlatformFeature | null | undefined>()
+      : undefined;
+  let sharedProbe: PromiseWithResolvers<PlatformFeature | null> | undefined;
+  if (probeAnswer) {
+    const key = capability.exclusiveConnectionWithout.join(',');
+    sharedProbe = exclusivityProbes.get(key);
+    if (!sharedProbe) {
+      sharedProbe = Promise.withResolvers<PlatformFeature | null>();
+      exclusivityProbes.set(key, sharedProbe);
+    }
+    // Subscribed at construction, so in construction order (A1).
+    void sharedProbe.promise.then(probeAnswer.resolve);
+  }
+  /** Set once the lock is ours; from then on slot 0 opens without probing. */
+  let lockGranted = false;
+  let proceedWorker0: (() => void) | undefined;
+  /** Worker 0 opens once BOTH its answer and the lock are in, in either order. */
+  const maybeProceed = () => {
+    if (!lockGranted || !proceedWorker0 || closing) return;
+    const proceed = proceedWorker0;
+    proceedWorker0 = undefined;
+    proceed();
+  };
+
+  const holdConnection = (exclusive: boolean): Promise<void> =>
+    (
+      locks.hold(connectionLockName(vfs, dbFile), {
+        mode: exclusive ? 'exclusive' : 'shared',
+        ...(exclusive ? { ifAvailable: true } : {}),
+      }) as Promise<(() => void) | undefined>
+    ).then((release) => {
+      connRelease = release;
+      connRefused = release === undefined;
+    });
+
+  /**
+   * Settles as soon as the Web Locks API responds to the connection request —
+   * after worker 0's probe answer, where the VFS declares
+   * `exclusiveConnectionWithout`.
    *
    * The mode is the VFS's: `exclusive` where `exclusiveConnection` is declared,
+   * or where worker 0 found a feature of `exclusiveConnectionWithout` missing,
    * so a second client is refused; `shared` everywhere else, so any number of
    * clients coexist while `deleteDatabase` — which asks for the same name
    * exclusively — is still kept out.
@@ -650,16 +726,16 @@ export const createSQLiteClient = (
    *
    * `undefined` on the memory VFS, where two clients are two databases.
    */
-  const connLockPromise: Promise<void> | undefined = sharesStorage(vfs)
-    ? (
-        locks.hold(connectionLockName(vfs, dbFile), {
-          mode: capability.exclusiveConnection ? 'exclusive' : 'shared',
-          ...(capability.exclusiveConnection ? { ifAvailable: true } : {}),
-        }) as Promise<(() => void) | undefined>
-      ).then((release) => {
-        connRelease = release;
-      })
-    : undefined;
+  const connLockPromise: Promise<void> | undefined = !sharesStorage(vfs)
+    ? undefined
+    : probeAnswer
+      ? probeAnswer.promise.then((missing) => {
+          // No answer: the client failed or closed first, and takes no lock.
+          if (missing === undefined || closing) return;
+          exclusiveWithout = missing;
+          return holdConnection(missing !== null);
+        })
+      : holdConnection(capability.exclusiveConnection);
   /**
    * The roster marker: a liveness lock nobody contends, released by the browser
    * if this tab dies without closing. `undefined` on the memory VFS, on the
@@ -824,23 +900,19 @@ export const createSQLiteClient = (
   ) => {
     // Connection guard — first thing, before any pool or lock interaction.
     //
-    // For VFS that enforce an exclusive connection (`exclusiveConnection: true`
-    // in VFS_CAPABILITIES), the lock request was started at construction and
-    // resolves exactly once. Subsequent awaits on an already-settled promise
-    // are instant. If the lock was unavailable (another client holds it), fail
-    // fast here on every method rather than returning a client that looks
-    // healthy but cannot read any table — the silent failure measured as
-    // AHP-2TAB (2026-09-01).
+    // For VFS exclusive here — `exclusiveConnection: true`, or a feature of
+    // `exclusiveConnectionWithout` missing (spec 2026-09-15) — the lock request
+    // resolves exactly once: at construction for the first, once worker 0 has
+    // answered its probe for the second. Subsequent awaits on an
+    // already-settled promise are instant. If the lock was unavailable (another
+    // client holds it), fail fast here on every method rather than returning a
+    // client that looks healthy but cannot read any table — the silent failure
+    // measured as AHP-2TAB (2026-09-01). `connRefused`, not "no releaser"
+    // (A3): a client whose worker 0 failed before answering reports its own
+    // failure.
     if (connLockPromise !== undefined) {
       await connLockPromise;
-      if (connRelease === undefined) {
-        throw new SQLiteError(
-          'DATABASE_IN_USE',
-          `${vfs} supports one connection at a time across the whole origin. ` +
-            `Another tab or client is already connected to '${dbFile}'. ` +
-            `Close that client to open a new one here.`,
-        );
-      }
+      if (connRefused) throw inUse();
     }
 
     // Lock BEFORE the lease, never after. The reverse holds a pool worker
@@ -1264,6 +1336,10 @@ export const createSQLiteClient = (
     if (closing) return closing;
     closing = (async () => {
       logger.info('client closing');
+      // A client closed before worker 0 answered takes no lock (spec
+      // 2026-09-15, A3): settle the answer as "none" so connLockPromise, which
+      // this function awaits below, cannot wait on a worker being closed.
+      probeAnswer?.resolve(undefined);
       const closingError = new SQLiteError(
         'CLIENT_CLOSED',
         'The SQLite client has been closed.',
@@ -1336,6 +1412,9 @@ export const createSQLiteClient = (
   let fatal: SQLiteError | undefined;
 
   const failClient = (error: SQLiteError) => {
+    // Spec 2026-09-15, A3: queries awaiting the connection lock must reach the
+    // scheduler's `fatal`, not wait on an answer that will never come.
+    probeAnswer?.resolve(undefined);
     fatal ??= error;
     void scheduler.shutdown(fatal);
     for (const dying of pool) dying?.terminate(fatal);
@@ -1407,6 +1486,17 @@ export const createSQLiteClient = (
         index > 0 && capability.singleConnectionWithout.length > 0
           ? capability.singleConnectionWithout
           : undefined,
+      // Spec 2026-09-15, §3.2: slot 0 waits for the lock until one is ours;
+      // a slot 0 restarted after that opens straight away.
+      probeFirst:
+        index === 0 && probeAnswer !== undefined && !lockGranted
+          ? capability.exclusiveConnectionWithout
+          : undefined,
+      onProbed: (missing, proceed) => {
+        proceedWorker0 = proceed;
+        sharedProbe?.resolve(missing);
+        maybeProceed();
+      },
     })
       .then((result) => {
         if ('declined' in result) {
@@ -1543,27 +1633,34 @@ export const createSQLiteClient = (
   const startWorkers = () => {
     for (let index = 0; index < poolSize; index += 1) spawn(index);
   };
+  // Spec 2026-09-15, §3.2 and A2: the whole pool spawns now, as for every
+  // shared VFS; worker 0 waits for this decision. Without the feature the
+  // surplus workers decline on `singleConnectionWithout` before touching the
+  // file; with it they open alongside.
+  if (probeAnswer && connLockPromise !== undefined) {
+    void connLockPromise.then(() => {
+      if (connRefused) {
+        failClient(inUse());
+      } else if (connRelease !== undefined) {
+        lockGranted = true;
+        maybeProceed();
+      }
+    });
+  }
   if (capability.exclusiveConnection && connLockPromise !== undefined) {
     void connLockPromise.then(() => {
-      if (connRelease === undefined) {
+      if (connRefused) {
         // Lock was held elsewhere — fail the client now so workers never open
         // the database. The DATABASE_IN_USE error here matches the one thrown
         // in `acquireInstrumented`, ensuring the first query on this client
         // fails with a legible message rather than a WORKER_CRASHED stall.
         //
         // This code is not independently covered by any test: both sites fire
-        // on the same condition (connRelease === undefined after
+        // on the same condition (`connRefused` after
         // connLockPromise settles), and acquireInstrumented's throw wins on
         // every method call because it runs before scheduler.acquire. A
         // silent revert of this code stays green.
-        failClient(
-          new SQLiteError(
-            'DATABASE_IN_USE',
-            `${vfs} supports one connection at a time across the whole origin. ` +
-              `Another tab or client is already connected to '${dbFile}'. ` +
-              `Close that client to open a new one here.`,
-          ),
-        );
+        failClient(inUse());
       } else if (!closing) {
         // Guard: if close() was called before the lock settled, the pool
         // sweep has already run (pool.length = 0) and close() is now

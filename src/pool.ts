@@ -265,6 +265,12 @@ export const createPoolWorker = (deps: {
   logger: Logger;
   abortSlots?: SharedArrayBuffer | undefined;
   declineWithout?: readonly PlatformFeature[] | undefined;
+  /** Sent to slot 0 where exclusivity depends on a feature (spec 2026-09-15). */
+  probeFirst?: readonly PlatformFeature[] | undefined;
+  /** Worker 0's probe answer, with the function that lets it open. */
+  onProbed?:
+    | ((missing: PlatformFeature | null, proceed: () => void) => void)
+    | undefined;
 }): Promise<PoolWorker | DeclinedWorker> => {
   const {
     index,
@@ -280,7 +286,7 @@ export const createPoolWorker = (deps: {
   } = deps;
   const { createWorkerDebugState, createQueryDebugState, logger } = deps;
   const { abortSlots } = deps;
-  const { declineWithout } = deps;
+  const { declineWithout, probeFirst } = deps;
 
   const deferredInit = Promise.withResolvers<PoolWorker | DeclinedWorker>();
 
@@ -495,6 +501,19 @@ export const createPoolWorker = (deps: {
         if (data.callId === 0) {
           logger.info(`worker ${index + 1} declined: no ${data.missing}`);
           deferredInit.resolve({ declined: data.missing });
+        }
+        break;
+      }
+      case 'probed': {
+        // Worker 0 opens nothing until `proceed`: the client decides the
+        // connection lock's mode from this answer first (spec 2026-09-15).
+        if (data.callId === 0) {
+          logger.info(
+            `worker ${index + 1} probed: ${data.missing ? `no ${data.missing}` : 'nothing missing'}`,
+          );
+          deps.onProbed?.(data.missing, () =>
+            worker.postMessage({ type: 'proceed', callId: 0 }),
+          );
         }
         break;
       }
@@ -883,6 +902,7 @@ export const createPoolWorker = (deps: {
     abortSlots,
     abortIndex: abortSlots ? index : undefined,
     declineWithout,
+    probeFirst,
   });
 
   return deferredInit.promise;

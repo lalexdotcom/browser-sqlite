@@ -170,6 +170,13 @@ const locks = createLocks();
 let queryRunning: PromiseWithResolvers<void> | undefined;
 const idleUntilQueryEnds = () => queryRunning?.promise ?? Promise.resolve();
 let closing = false;
+
+/**
+ * Set while worker 0 waits for the client's connection lock (spec 2026-09-15,
+ * §3.2). `proceed` resolves and clears it; a `close` arriving while it is set
+ * is answered at once, since nothing was opened.
+ */
+let proceedGate: PromiseWithResolvers<void> | undefined;
 // Assigned in open() before any query can arrive: the worker posts `ready`
 // only after open() completes, and pool.ts does not dispatch a query until
 // the worker is READY. The default 'async' is never read.
@@ -185,6 +192,7 @@ type OpenOptions = {
   abortSlots?: SharedArrayBuffer | undefined;
   abortIndex?: number | undefined;
   declineWithout?: readonly PlatformFeature[] | undefined;
+  probeFirst?: readonly PlatformFeature[] | undefined;
 };
 
 /**
@@ -244,6 +252,19 @@ const open = (file: string, options: OpenOptions) => {
     return;
   }
 
+  // Spec 2026-09-15, §3.2: where the VFS is exclusive without a feature the
+  // page cannot probe, report it and open nothing until the client has decided
+  // the connection lock. A worker that opened first would fail on a file
+  // another client holds — or take it from under that client.
+  if (options.probeFirst && options.probeFirst.length > 0) {
+    proceedGate = Promise.withResolvers<void>();
+    self.postMessage({
+      type: 'probed',
+      callId: 0,
+      missing: firstMissing(options.probeFirst),
+    } satisfies WorkerMessageData);
+  }
+
   const { vfs, wasm, pragmas = {}, abortSlots, abortIndex } = options;
   const build = options.build ?? defaultBuildFor(vfs);
   currentBuild = build;
@@ -261,7 +282,8 @@ const open = (file: string, options: OpenOptions) => {
   // instance per open() means the value cannot be stale.
   let vfsInstanceSeen: { lastError?: unknown } | undefined;
 
-  openedDB = WA_SQLITE_BUILDS[build]()
+  openedDB = (proceedGate?.promise ?? Promise.resolve())
+    .then(() => WA_SQLITE_BUILDS[build]())
     .then(({ default: factory }) => factory(wasmModuleArg(wasm)))
     .then((module) => {
       const sqlite = SQLite.Factory(module);
@@ -685,7 +707,19 @@ const open = (file: string, options: OpenOptions) => {
         }
         break;
       }
+      case 'proceed': {
+        proceedGate?.resolve();
+        proceedGate = undefined;
+        break;
+      }
       case 'close': {
+        if (proceedGate) {
+          // Still waiting for the connection lock: nothing was opened, so
+          // there is nothing to drain or close (spec 2026-09-15, §3.2).
+          closing = true;
+          reply({ type: 'closed', callId: 0 });
+          break;
+        }
         // Spec §5.3: with the tick, `close` is deliverable mid-query for the
         // first time. Closing a database under a live statement returns
         // SQLITE_BUSY, which the catch below would swallow while the row loop
@@ -957,6 +991,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         abortSlots,
         abortIndex,
         declineWithout,
+        probeFirst,
       } = data;
       open(file, {
         vfs,
@@ -967,6 +1002,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         abortSlots,
         abortIndex,
         declineWithout,
+        probeFirst,
       });
       break;
     }
@@ -1010,7 +1046,9 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
     }
     // No query can be running before open.
     case 'credit':
-    case 'stop': {
+    case 'stop':
+    // open() replaces this handler synchronously; proceed always arrives after.
+    case 'proceed': {
       break;
     }
     default: {

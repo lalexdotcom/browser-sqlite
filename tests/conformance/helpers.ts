@@ -82,7 +82,7 @@ export const HAS_UNSAFE_HANDLES = await probeUnsafeHandles();
  * no edit in this file; `readwrite-unsafe` has no synchronous probe — which is
  * why `detectFeatures` cannot report it — and comes from the async probe above.
  */
-const AVAILABLE_FEATURES: ReadonlySet<PlatformFeature> = new Set([
+export const AVAILABLE_FEATURES: ReadonlySet<PlatformFeature> = new Set([
   ...detectFeatures(),
   ...(HAS_UNSAFE_HANDLES ? (['readwrite-unsafe'] as const) : []),
 ]);

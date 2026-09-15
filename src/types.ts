@@ -78,6 +78,13 @@ export type ClientMessageData =
        * ≥ 1 only, and only by a VFS that declares `singleConnectionWithout`.
        */
       declineWithout?: readonly PlatformFeature[];
+      /**
+       * Features worker 0 probes before opening, where the VFS is exclusive
+       * without one (spec 2026-09-15, §3.2): it reports them with `probed`,
+       * then loads nothing until `proceed`. Sent to slot 0 only, and only by a
+       * VFS that declares `exclusiveConnectionWithout`.
+       */
+      probeFirst?: readonly PlatformFeature[];
     }
   | {
       type: 'query';
@@ -89,6 +96,8 @@ export type ClientMessageData =
   | { type: 'close'; callId: number }
   | { type: 'credit'; callId: number; n: number }
   | { type: 'stop'; callId: number }
+  /** The client decided the connection lock; worker 0 may open (spec 2026-09-15). */
+  | { type: 'proceed'; callId: number }
   | {
       type: 'delete';
       callId: number;
@@ -105,6 +114,11 @@ export type WorkerMessageData =
    * the environment caps the pool (spec 2026-09-13).
    */
   | { type: 'declined'; callId: number; missing: PlatformFeature }
+  /**
+   * Worker 0's answer to `probeFirst`: the first feature missing, or null. It
+   * opens nothing until the client sends `proceed` (spec 2026-09-15, §3.2).
+   */
+  | { type: 'probed'; callId: number; missing: PlatformFeature | null }
   | { type: 'chunk'; callId: number; data: unknown[] }
   | {
       type: 'done';
