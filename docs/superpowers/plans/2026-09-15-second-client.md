@@ -283,6 +283,208 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
+### Task 3b: A write transaction begins IMMEDIATE (inserted 2026-09-15, user)
+
+Found by Task 1 and diagnosed the same day (spec §10, A4): `OPFSWriteAheadVFS` refuses a write transaction that did not announce itself at `BEGIN` — `jLock` throws `Write transaction cannot use BEGIN DEFERRED` (`node_modules/wa-sqlite/src/examples/OPFSWriteAheadVFS.js:453-457`) — so a transaction whose first statement reads, or runs a write that changes nothing, fails with `STATEMENT_FAILED` "disk I/O error" (extended code 778, or 3850 on an empty file), and the client stays unusable afterwards. `transaction()` issues a plain, deferred `BEGIN` (`src/transaction.ts:853`). `output()`'s swap transaction starts with `DROP TABLE IF EXISTS <target>`, which writes nothing when the target does not exist, so `output()` fails on that VFS. Probes: `.scratchpad/second-client-2026-09-15/output-writeahead-probe{,2,3,4}.test.ts`.
+
+**Files:**
+- Create: `tests/browser/transaction-begin.test.ts`
+- Modify: `src/transaction.ts` (the `BEGIN` line and its comment), `tests/unit/transaction.test.ts`, `CHANGELOG.md`
+
+**Interfaces:**
+- Consumes: `ALL_VFS`, `missingHere` from `tests/conformance/helpers.ts`; `deleteDatabase` from `src/delete.ts`.
+- Produces: nothing later tasks import. Behaviour: a transaction with `readOnly: false` (the default) sends `BEGIN IMMEDIATE`; `readOnly: true` sends `BEGIN`.
+
+- [ ] **Step 1: The failing browser test**
+
+Create `tests/browser/transaction-begin.test.ts`:
+
+```ts
+import { describe, expect, it, onTestFinished } from '@rstest/core';
+import { createSQLiteClient } from '../../src/client';
+import { deleteDatabase } from '../../src/delete';
+import {
+  type SQLiteBuild,
+  type SQLiteVFS,
+  VFS_CAPABILITIES,
+} from '../../src/types';
+import { ALL_VFS, missingHere } from '../conformance/helpers';
+
+/**
+ * A transaction whose first statement does not write, on every VFS and every
+ * build this browser can run (spec 2026-09-15, A4).
+ *
+ * OPFSWriteAheadVFS refuses a write transaction that did not announce itself at
+ * BEGIN — "Write transaction cannot use BEGIN DEFERRED" — and the client stayed
+ * unusable afterwards. `output()`'s swap starts with a DROP TABLE IF EXISTS that
+ * writes nothing when the target is new, so `output()` failed there too.
+ * Nothing caught it: every transaction test wrote first, and on one VFS.
+ */
+
+type Db = ReturnType<typeof createSQLiteClient>;
+
+const SHAPES: Record<string, { run: (db: Db) => Promise<unknown>; after: string; rows: number }> = {
+  'reads, then writes': {
+    run: (db) =>
+      db.transaction(async (tx) => {
+        await tx.read('SELECT n FROM t');
+        await tx.write('INSERT INTO t VALUES (2)');
+      }),
+    after: 'SELECT count(*) AS n FROM t',
+    rows: 2,
+  },
+  'runs a write that changes nothing, then writes': {
+    run: (db) =>
+      db.transaction(async (tx) => {
+        await tx.write('DROP TABLE IF EXISTS missing');
+        await tx.write('INSERT INTO t VALUES (2)');
+      }),
+    after: 'SELECT count(*) AS n FROM t',
+    rows: 2,
+  },
+  'output() creates a table that does not exist yet': {
+    run: async (db) => {
+      const out = db.output('o', { n: 'INTEGER' });
+      out.enqueue({ n: 1 });
+      await out.close();
+    },
+    after: 'SELECT count(*) AS n FROM o',
+    rows: 1,
+  },
+  'a readOnly transaction still reads': {
+    run: (db) =>
+      db.transaction(
+        async (tx) => {
+          await tx.read('SELECT n FROM t');
+        },
+        { readOnly: true },
+      ),
+    after: 'SELECT count(*) AS n FROM t',
+    rows: 1,
+  },
+};
+
+const fresh = (vfs: SQLiteVFS, build: SQLiteBuild) => {
+  const file = `transaction-begin-${crypto.randomUUID()}`;
+  const db = createSQLiteClient(file, { vfs, build });
+  onTestFinished(async () => {
+    try {
+      await db.close();
+    } catch {
+      /* a failed client has nothing to close */
+    }
+    try {
+      await deleteDatabase(file, { vfs, build });
+    } catch {
+      /* never created */
+    }
+  });
+  return db;
+};
+
+for (const vfs of ALL_VFS) {
+  describe(`${vfs}: a transaction that does not write first`, () => {
+    for (const build of VFS_CAPABILITIES[vfs].builds) {
+      const missing = missingHere(vfs, build);
+      for (const [shape, { run, after, rows }] of Object.entries(SHAPES)) {
+        const title = `${build}: ${shape}`;
+        if (missing !== null) {
+          it.skip(`${title} — skipped, no ${missing} in this browser`, () => {});
+          continue;
+        }
+        it(title, async () => {
+          const db = fresh(vfs, build);
+          await db.write('CREATE TABLE t (n)');
+          await db.write('INSERT INTO t VALUES (1)');
+          await run(db);
+          // The client is still usable: the failure left it broken for good.
+          const [row] = await db.read<{ n: number }>(after);
+          expect(row?.n).toBe(rows);
+        });
+      }
+    }
+  });
+}
+```
+
+- [ ] **Step 2: Run it red**
+
+```bash
+timeout 300 pnpm exec rstest --project chromium run tests/browser/transaction-begin.test.ts
+timeout 300 pnpm exec rstest --config rstest.firefox.config.ts run tests/browser/transaction-begin.test.ts
+```
+Expected: red on `OPFSWriteAheadVFS`'s first three shapes, every build, both engines — `STATEMENT_FAILED`; green everywhere else. **Any other red: stop and report it.**
+
+- [ ] **Step 3: The fix**
+
+In `src/transaction.ts`, replace `await exec(via(false), 'BEGIN');` with:
+
+```ts
+        // A write transaction announces itself: OPFSWriteAheadVFS refuses one
+        // that reaches its first write from a deferred BEGIN — "Write
+        // transaction cannot use BEGIN DEFERRED" — and the client stayed broken
+        // afterwards (spec 2026-09-15, A4). The origin write lock is already
+        // held here, so IMMEDIATE only moves SQLite's RESERVED lock to the start
+        // of a transaction no other writer can be in. A read-only one stays
+        // deferred: it takes no write lock and must not ask SQLite for one.
+        await exec(via(false), readOnly ? 'BEGIN' : 'BEGIN IMMEDIATE');
+```
+and prepend to the long comment above it that it concerns `BEGIN` in both forms.
+
+- [ ] **Step 4: Unit tests**
+
+In `tests/unit/transaction.test.ts`, every expectation of the SQL a write transaction sends (`'BEGIN'` in `worker.executed` arrays and in `fakeWorker([...])` scripts) becomes `'BEGIN IMMEDIATE'`; those of a `readOnly: true` transaction stay `'BEGIN'` — read each test to decide, never by blind replace. Add:
+
+```ts
+  // Falsifiable: send 'BEGIN' for every transaction in src/transaction.ts, or
+  // 'BEGIN IMMEDIATE' for every one (spec 2026-09-15, A4).
+  it('begins a write transaction IMMEDIATE and a read-only one deferred', async () => {
+    // Build both with the file's existing fakeWorker/createTransaction helpers,
+    // run one statement in each, and assert
+    //   write:    worker.executed[0] === 'BEGIN IMMEDIATE'
+    //   readOnly: worker.executed[0] === 'BEGIN'
+  });
+```
+(Write it with the helpers the file already uses — read how the neighbouring tests build a transaction; the comment above states exactly what to assert.)
+
+- [ ] **Step 5: Run green**
+
+```bash
+pnpm exec tsc --noEmit && pnpm check
+pnpm exec rstest --project unit run tests/unit/transaction.test.ts
+timeout 300 pnpm exec rstest --project chromium run tests/browser/transaction-begin.test.ts tests/browser/transaction.test.ts tests/browser/output.test.ts tests/browser/tx-write.test.ts tests/browser/multi-client.test.ts
+timeout 300 pnpm exec rstest --config rstest.firefox.config.ts run tests/browser/transaction-begin.test.ts tests/browser/transaction.test.ts tests/browser/output.test.ts tests/browser/tx-write.test.ts tests/browser/multi-client.test.ts
+```
+Expected: all green on both engines.
+
+- [ ] **Step 6: Falsifiers, run**
+
+1. Put back `'BEGIN'` for every transaction → the WriteAhead rows of `transaction-begin.test.ts` red on both engines, and the new unit test red. Restore.
+2. Send `'BEGIN IMMEDIATE'` for `readOnly` too → the new unit test red. Restore.
+
+- [ ] **Step 7: `CHANGELOG.md`**, unreleased section, under the fixes heading (create `### Fixed` after `### Breaking` if none exists):
+
+```md
+- **A transaction that reads before it writes no longer breaks `OPFSWriteAheadVFS`.** That VFS refuses a write transaction that did not announce itself when it began, and `transaction()` began every transaction deferred: a callback whose first statement read — or ran a write that changed nothing — failed with `STATEMENT_FAILED` ("disk I/O error") and left the client unusable. `output()` failed on that VFS for the same reason whenever its target table did not exist yet. A write transaction now begins `IMMEDIATE`; a `readOnly` one still begins deferred.
+```
+
+- [ ] **Step 8: Full suite and commit**
+
+```bash
+pnpm exec tsc --noEmit && pnpm check && pnpm test
+git add src/transaction.ts tests/unit/transaction.test.ts tests/browser/transaction-begin.test.ts CHANGELOG.md
+git commit -m "fix(transaction): a write transaction begins IMMEDIATE
+
+OPFSWriteAheadVFS refuses a write transaction that reaches its first write
+from a deferred BEGIN, and the client stayed broken afterwards; output()
+hit it through its swap's DROP TABLE IF EXISTS.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```
+Every `pnpm test` run wrapped in nothing: it runs three configs in sequence; if one hangs past 10 min, kill it, record it, rerun once.
+
+---
+
 ### Task 4: The matrix, red; the guard, green
 
 **Files:**

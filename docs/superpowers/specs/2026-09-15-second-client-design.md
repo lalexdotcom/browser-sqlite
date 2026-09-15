@@ -289,3 +289,21 @@ Confronting §3.2 with `src/client.ts` changed two things. The sections above st
   true of a client whose worker 0 died or closed before answering, and it must report its own
   failure, not `DATABASE_IN_USE`. `failClient` and `close()` settle the pending answer as "none", so
   that `close()` and every query awaiting the connection lock always settle.
+
+## 11. Amendment — 2026-09-15, found by the dry run (user)
+
+- **A4 — A write transaction begins `IMMEDIATE`.** The step-3 dry run (plan Task 1) found
+  `output()` failing on `OPFSWriteAheadVFS` with "disk I/O error", both engines. Diagnosed the
+  same day by four throwaway probes: that VFS refuses a write transaction that did not announce
+  itself at `BEGIN` — its `jLock` throws `Write transaction cannot use BEGIN DEFERRED`, by design
+  ("which this VFS treats as an error") — so a transaction whose first statement reads, or runs a
+  write that changes nothing, fails with `SQLITE_IOERR_WRITE` (778; `IOERR_LOCK`, 3850, on an
+  empty file) and leaves the connection unusable. `BEGIN IMMEDIATE` passes every shape;
+  `OPFSAdaptiveVFS` passes every shape either way. `transaction()` sent a plain `BEGIN`, and
+  `output()`'s swap begins with a `DROP TABLE IF EXISTS` that writes nothing on a new target.
+  Decided: `transaction()` sends `BEGIN IMMEDIATE` unless `readOnly`, which keeps `BEGIN`. The
+  origin write lock is already held at that point, so `IMMEDIATE` moves SQLite's RESERVED lock to
+  the start of a transaction no other writer can be in. Guarded by a browser test over every
+  (vfs, build) pair. **Not established:** why the connection stays broken after the refusal — a
+  consumer who sends a raw `BEGIN` through `write()` can still reach it; that goes to
+  `mem:follow-ups`. Inserted in the plan as Task 3b, before Task 4.
