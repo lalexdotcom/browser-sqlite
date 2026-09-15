@@ -191,7 +191,9 @@ Decided and installed on 2026-09-11, in `package.json` under `simple-git-hooks`:
 - `pre-merge-commit` — `tsc`, `biome ci .`, `pnpm test`. Every merge here is `--no-ff`, so
   every merge into `main` pays the full suite.
 - `pre-push` — the same, as the backstop for commits made directly on `main` before anything
-  reaches CI.
+  reaches CI. Since 2026-09-15 it also runs CI's VFS table check, `pnpm docs:vfs && git diff
+  --exit-code VFS.md` (user), after a hand edit inside a generated span of `VFS.md` failed the
+  first CI run of rc.5 before it reached a single test.
 
 Verified in a scratch repository: an ordinary commit, a clean `--no-ff` merge, a conflicted
 merge concluded by `git commit` and by `git merge --continue`, and a push each fire the

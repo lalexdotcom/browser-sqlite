@@ -822,3 +822,14 @@ touched the producer; the final review found it by asking where the value came f
 change starts publishing a field that was filtered before, audit every producer of it, not only
 the consumer you changed** — a check that was loose but unreachable becomes a published lie. The
 fix is `sqliteCodeOf`, which accepts wa-sqlite's own `SQLiteError` only.
+
+## A hand edit inside a generated span is erased by the next render — 2026-09-15
+
+`3dd0897` wrote the Safari paragraph into `VFS.md`'s generated *Build `async`* section by hand.
+Nothing local runs the render; CI does, and CI had not run since `d3a5755`. So the first CI run of
+rc.5 failed on it — at a step before the typecheck, the build and every test, which therefore did
+not run either. **Text inside a generated span belongs in the generator's source** (here
+`BUILD_NOTE` in `scripts/render-vfs-matrix.ts`), and a doc edit near one is checked with
+`pnpm docs:vfs && git diff VFS.md` before it is committed; the `pre-push` hook now does it. **And a
+CI job that fails early hides every later step**: a red run is not "the tests failed" until the
+failing step is read.
