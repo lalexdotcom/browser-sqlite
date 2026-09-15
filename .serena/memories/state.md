@@ -116,14 +116,17 @@ addition is planned for rc.6, which the user will come back to. So the question 
 anything discovered from here is not "is it on the list" but "is it reliability" — if it is, it
 belongs in rc.5, and a feature does not.
 
-**The CI gate stands as well, and it has still never run** (user, 2026-09-05). The `Interruptible` work and the abandoned-generator work are both merged.
-Everything from the lots and from both branches was verified **in this container only**, and
-several tests carry bounds calibrated on this machine, so slower CI hardware is where a
-surprise would land. `main` has not been pushed since rc.4, so this has still never run. When
-it holds, the user judges the release ready — the bump itself remains an instructed act, never
-an inferred one.
+**The CI gate holds since 2026-09-15** (the gate is the user's, 2026-09-05). `main` was pushed
+that day for the first time since rc.4, and it took three runs. The first stopped at *VFS table is
+current* — a hand edit inside a generated span (`mem:lessons`) — before any test ran; the
+`pre-push` hook now runs that check. The second reached the tests and lost two in
+`query-timeout.test.ts` on Firefox, a bound calibrated on this machine exactly as this paragraph
+feared (CI-QUERY-TIMEOUT, `mem:measurements`). **Run 34953847713 at `7cf2944` is green end to
+end**: biome, the table, `tsc`, build, `pnpm test` (4 min 39 s on the runner), conformance on both
+engines (27 s) and the consumer smoke (55 s). The user judges the release ready — the bump itself
+remains an instructed act, never an inferred one.
 
-**One thing to expect on that first CI run, and it is not a defect.** The abandoned-generator
+**One thing to expect on CI, and it is not a defect.** The abandoned-generator
 work found a defect that reproduces about once in eighteen runs of `pnpm test` and **never**
 in isolation — it needed the full chain, and it turned out to be load-sensitive. It is fixed,
 but the shape is the warning: **a Firefox browser test that fails once on CI and passes on a
