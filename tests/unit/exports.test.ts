@@ -82,6 +82,12 @@ describe('public entry', () => {
     expect('BulkWriteError' in api).toBe(false);
   });
 
+  // Falsifiable: drop either re-export from src/index.ts.
+  it('exposes the SQLite result codes, primary and extended', () => {
+    expect(api.SQLITE_CODES.CONSTRAINT).toBe(19);
+    expect(api.SQLITE_EXTENDED_CODES.CONSTRAINT_UNIQUE).toBe(2067);
+  });
+
   // Falsifiable: drop the capabilities re-export from src/index.ts. The
   // benchmark page imports these instead of holding a second copy of the
   // probes — see BENCH-DRIFT in mem:follow-ups.

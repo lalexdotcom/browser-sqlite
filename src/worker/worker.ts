@@ -40,6 +40,7 @@ import {
 import { renderPragmas } from '../utils';
 import { cloneable } from './cloneable';
 import { firstMissing } from './probes';
+import { sqliteCodeOf } from './sqlite-code';
 import { createStatementCache } from './statement-cache';
 
 type SQLOptions = {
@@ -310,17 +311,20 @@ const open = (file: string, options: OpenOptions) => {
         vfsError instanceof Error
           ? `${vfsError.name}: ${vfsError.message}`
           : undefined;
+      // Carried across the postMessage boundary so pool.ts can mint
+      // SQLiteError('BUSY') rather than SQLiteError('WORKER_CRASHED') — only
+      // for wa-sqlite's own SQLiteError (sqliteCodeOf), never any numeric
+      // `code`: the open chain awaits navigator.storage.getDirectory() and
+      // AccessHandlePoolVFS's #acquireAccessHandles(), whose DOMExceptions
+      // carry a numeric legacy `code` that is not SQLite's (e.g. 18 for
+      // SecurityError, which reads as SQLITE_CODES.TOOBIG).
+      const sqliteCode = sqliteCodeOf(error);
       self.postMessage({
         type: 'open-error',
         callId: 0,
         message: detail ? `${base}: ${detail}` : base,
         cause: cloneable(detail ? vfsError : error),
-        // wa-sqlite raises SQLiteError(message, code) with SQLite's numeric
-        // result code. Carry it across the postMessage boundary so pool.ts
-        // can mint SQLiteError('BUSY') rather than SQLiteError('WORKER_CRASHED').
-        ...(typeof (error as { code?: unknown })?.code === 'number'
-          ? { sqliteCode: (error as { code: number }).code }
-          : {}),
+        ...(sqliteCode !== undefined ? { sqliteCode } : {}),
       });
       throw error;
     });
@@ -355,10 +359,29 @@ const open = (file: string, options: OpenOptions) => {
 
     const buffer: Record<string, unknown>[] = [];
 
+    /**
+     * Stamps SQLite's extended result code on a wa-sqlite error where the
+     * statement failed (spec 2026-09-14, §5.1). The connection's code describes
+     * its MOST RECENT call, so it is read before any cleanup can overwrite it:
+     * `settle`'s reset or finalize, or the ROLLBACK the savepoint path issues
+     * after a failed conclusion. `??=`: the first stamp wins.
+     */
+    const stamped = (e: unknown) => {
+      if (sqliteCodeOf(e) !== undefined) {
+        (e as { extendedCode?: number }).extendedCode ??=
+          module._sqlite3_extended_errcode(db);
+      }
+      return e;
+    };
+
     /** Binds and streams one statement. Never finalises: the caller owns it. */
     const run = async function* (stmt: number) {
-      if (params?.length) {
-        sqlite.bind_collection(stmt, params as any);
+      try {
+        if (params?.length) {
+          sqlite.bind_collection(stmt, params as any);
+        }
+      } catch (e) {
+        throw stamped(e);
       }
       // Column names are read after the first SQLITE_ROW, not before: v2
       // re-preparation happens during step(), so names read beforehand would
@@ -380,7 +403,7 @@ const open = (file: string, options: OpenOptions) => {
             // exit and keeps the statement cached.
             break;
           }
-          throw e;
+          throw stamped(e);
         }
         if (gate.isStopped()) break;
 
@@ -518,7 +541,7 @@ const open = (file: string, options: OpenOptions) => {
           }
         } catch (e) {
           failed = true;
-          throw e;
+          throw stamped(e);
         } finally {
           if (keep !== undefined) {
             await settle(keep, failed);
@@ -535,6 +558,16 @@ const open = (file: string, options: OpenOptions) => {
       }
 
       yield sqlite.changes(db);
+    } catch (e) {
+      // Only the uncacheable branch can still reach here unstamped: its
+      // prepare failures come straight from wa-sqlite's own statements()
+      // generator, with no catch of ours in between. Checked 2026-09-14 in
+      // sqlite-api.js: between a failed prepare and the error leaving that
+      // generator, it calls only sqlite3_errmsg (read-only) and sqlite3_free
+      // (memory only) — neither touches sqlite3_extended_errcode(db). The
+      // cached and fresh branches already stamp in `run` and their own inner
+      // catch, so `??=` makes this a no-op for those.
+      throw stamped(e);
     } finally {
       if (yields || polls) sqlite.progress_handler(db, 0, () => 0, null);
     }
@@ -621,6 +654,10 @@ const open = (file: string, options: OpenOptions) => {
             });
           }
         } catch (e) {
+          // Only for wa-sqlite's own SQLiteError (sqliteCodeOf), never any
+          // numeric `code`. Without this the code dies at the postMessage
+          // boundary and the client can only string-match the message.
+          const sqliteCode = sqliteCodeOf(e);
           reply({
             type: 'error',
             callId,
@@ -629,11 +666,13 @@ const open = (file: string, options: OpenOptions) => {
                 ? { message: e.message, cause: cloneable(e.cause) }
                 : { message: 'Unknown error', cause: e }
               : { message: `Unknown error (${e})` }),
-            // wa-sqlite raises SQLiteError(message, code) with SQLite's numeric
-            // result code. Without this the code dies at the postMessage
-            // boundary and the client can only string-match the message.
-            ...(typeof (e as { code?: unknown })?.code === 'number'
-              ? { sqliteCode: (e as { code: number }).code }
+            ...(sqliteCode !== undefined ? { sqliteCode } : {}),
+            ...(typeof (e as { extendedCode?: unknown })?.extendedCode ===
+            'number'
+              ? {
+                  sqliteExtendedCode: (e as { extendedCode: number })
+                    .extendedCode,
+                }
               : {}),
             ...(typeof (e as { errorCode?: unknown })?.errorCode === 'string'
               ? { errorCode: (e as { errorCode: SQLiteErrorCode }).errorCode }
@@ -941,6 +980,11 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
           }
         })
         .catch((error: unknown) => {
+          // Only for wa-sqlite's own SQLiteError (sqliteCodeOf), never any
+          // numeric `code`: this path rethrows every DOMException but
+          // NotFoundError, and a DOMException's legacy `code` is numeric
+          // (e.g. 18 for SecurityError) but is not SQLite's.
+          const sqliteCode = sqliteCodeOf(error);
           self.postMessage({
             type: 'error',
             callId: 0,
@@ -949,9 +993,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
                 ? error.message
                 : `Failed to delete ${data.file}`,
             cause: cloneable(error),
-            ...(typeof (error as { code?: unknown })?.code === 'number'
-              ? { sqliteCode: (error as { code: number }).code }
-              : {}),
+            ...(sqliteCode !== undefined ? { sqliteCode } : {}),
           });
         });
       break;

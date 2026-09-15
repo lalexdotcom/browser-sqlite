@@ -499,17 +499,18 @@ write latency and read concurrency do not.
 
 ## Error handling
 
-Errors raised by this library are instances of `SQLiteError`, exported from the package entry point.
+Errors raised by this library, and every statement SQLite refuses, are instances of `SQLiteError`, exported from the package entry point.
 
 | Code | When it is thrown |
 |------|------------------|
 | `NOT_A_READ_QUERY` | `read()`, `chunk()`, `stream()`, or `first()` was called with a statement that is not a provably readable query. A bare read pragma (`PRAGMA journal_mode`) is accepted; a pragma that assigns a value or takes an argument must go through `write()`. |
 | `CLIENT_CLOSED` | A query was queued after `close()` was called. |
-| `WORKER_CRASHED` | A pool worker died and the supervisor decided not to restart it. All queued and in-flight work on that slot is rejected. |
+| `WORKER_CRASHED` | A pool worker died and the supervisor decided not to restart it. All queued and in-flight work on that slot is rejected. When SQLite refused to open the database — a file that is not a database, a `pragmas` entry it rejected — `sqliteCode` carries its result code. |
 | `TIMEOUT` | A worker did not post `ready` within `openTimeout` milliseconds. The most common cause is a database held under an exclusive lock by another tab or client. |
 | `OPERATION_TIMEOUT` | The `timeout` set on a call was spent. The error carries it as `error.timeout`. Deliberately not `TIMEOUT`, which means a deadline this library imposed on itself — a worker that never became ready, a deletion that did not complete. |
 | `PROTOCOL_ERROR` | A message was received from a worker that could not be deserialized (`messageerror`). The worker survives; only the in-flight request is rejected. |
-| `BUSY` | A transient conflict, worth retrying. Either SQLite reported a lock conflict — `SQLITE_BUSY` or `SQLITE_LOCKED`, with the numeric code on `sqliteCode` — or a database was being opened or deleted elsewhere at that moment. **A read that SQLite reported busy is retried once for you**; if it reaches you, the retry failed too. Writes are never retried, and neither is a `BUSY` without a `sqliteCode`. |
+| `STATEMENT_FAILED` | SQLite refused or failed a statement for any reason other than a lock conflict: a constraint, a syntax error, a full disk, a file that is not a database. `message` is SQLite's own; `sqliteCode` carries its result code, and `sqliteExtendedCode` its subtype when SQLite reports one. |
+| `BUSY` | A transient conflict, worth retrying. Either SQLite reported a lock conflict — `SQLITE_BUSY` or `SQLITE_LOCKED`, with its result code on `sqliteCode` and, when SQLite reports one, its subtype on `sqliteExtendedCode` — or a database was being opened or deleted elsewhere at that moment. **A read that SQLite reported busy is retried once for you**; if it reaches you, the retry failed too. Writes are never retried, and neither is a `BUSY` without a `sqliteCode`. |
 | `INVALID_OPTION` | An option was refused at the call, before any worker ran: `vfs` missing or unknown, a `(vfs, build)` pair the VFS does not support, a `poolSize` above what the VFS allows, a `wasmUrl` that is not a URL, or `inspectDatabase` on a memory VFS. The message names the option and what it accepts. |
 | `INVALID_PRAGMA` | A `pragmas` entry could not be rendered. The name must be a bare word; the value must be an integer, a bare word such as `WAL`, or a quoted SQL literal. |
 | `INVALID_IDENTIFIER` | A name or type handed to `output()` or `bulkWrite()` cannot be used as written: an empty name, a name containing a NUL, a column type that is not a word with optional numeric arguments, or a generated expression that is not parenthesised and free of `;`. |
@@ -523,14 +524,21 @@ Errors raised by this library are instances of `SQLiteError`, exported from the 
 
 Discriminate on `error.code` or `error.name` — they carry the same value, so `err.name` reads the way `'AbortError'` does on a DOM `AbortError`.
 
+**SQLite's result codes.** An error SQLite reported carries its result code on `sqliteCode` and, when a statement failed with a subtype, that subtype on `sqliteExtendedCode`: a UNIQUE violation gives `19` and `2067`, a foreign key `19` and `787`, a full disk `13` and no subtype. Test the family on `sqliteCode` against `SQLITE_CODES`, the subtype on `sqliteExtendedCode` against `SQLITE_EXTENDED_CODES`. `sqliteCode` is typed `SQLiteResultCode`, so comparing it with an extended code does not compile; `sqliteExtendedCode` is typed `SQLiteExtendedResultCode | (number & {})`. What each code means: [Result and Error Codes](https://sqlite.org/rescode.html).
+
 ```typescript
-import { SQLiteError } from 'browser-sqlite';
+import { SQLITE_EXTENDED_CODES, SQLiteError } from 'browser-sqlite';
 
 try {
   await db.write('...');
 } catch (err) {
   if (err instanceof SQLiteError) {
     switch (err.code) {
+      case 'STATEMENT_FAILED':
+        if (err.sqliteExtendedCode === SQLITE_EXTENDED_CODES.CONSTRAINT_UNIQUE) {
+          /* already exists */
+        }
+        break;
       case 'WORKER_CRASHED': /* restart or notify */ break;
       case 'CLIENT_CLOSED':  /* client was shut down */ break;
     }

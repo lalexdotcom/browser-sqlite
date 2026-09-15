@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@rstest/core';
 import { SQLiteError } from '../../src/errors';
+import { SQLITE_CODES, SQLITE_EXTENDED_CODES } from '../../src/sqlite-codes';
 
 describe('SQLiteError', () => {
   // Falsifiable: delete `this.name = code` in errors.ts and this fails.
@@ -32,6 +33,45 @@ describe('SQLiteError', () => {
     expect(error.code).toBe('DATABASE_NOT_FOUND');
     expect(error.name).toBe('DATABASE_NOT_FOUND');
     expect(error.sqliteCode).toBeUndefined();
+  });
+
+  // Falsifiable: drop the sqliteExtendedCode assignment in the constructor.
+  it('carries sqliteExtendedCode when given one, and nothing otherwise', () => {
+    const error = new SQLiteError(
+      'STATEMENT_FAILED',
+      'UNIQUE constraint failed: u.a',
+      { sqliteCode: 19, sqliteExtendedCode: 2067 },
+    );
+    expect(error.name).toBe('STATEMENT_FAILED');
+    expect(error.sqliteCode).toBe(19);
+    expect(error.sqliteExtendedCode).toBe(2067);
+    expect(
+      new SQLiteError('CLIENT_CLOSED', 'closed').sqliteExtendedCode,
+    ).toBeUndefined();
+  });
+
+  // Spec D10. sqliteCode is typed as a primary code, so comparing it with an
+  // extended code does not compile; sqliteExtendedCode stays open (D9).
+  // Falsifiable: widen `sqliteCode` back to `number` in src/errors.ts —
+  // `pnpm exec tsc --noEmit` then fails with TS2578 (unused @ts-expect-error).
+  it('types sqliteCode as a primary result code, sqliteExtendedCode open', () => {
+    const error = new SQLiteError(
+      'STATEMENT_FAILED',
+      'UNIQUE constraint failed: u.a',
+      {
+        sqliteCode: SQLITE_CODES.CONSTRAINT,
+        sqliteExtendedCode: SQLITE_EXTENDED_CODES.CONSTRAINT_UNIQUE,
+      },
+    );
+    // @ts-expect-error TS2367: a primary code never equals an extended one.
+    expect(error.sqliteCode === SQLITE_EXTENDED_CODES.CONSTRAINT_UNIQUE).toBe(
+      false,
+    );
+    const wrongRead = new SQLiteError('STATEMENT_FAILED', 'm', {
+      sqliteCode: SQLITE_CODES.ERROR,
+      sqliteExtendedCode: 0,
+    });
+    expect(wrongRead.sqliteExtendedCode).toBe(0);
   });
 });
 

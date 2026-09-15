@@ -1,6 +1,7 @@
 import { DEFAULT_CREDIT_WINDOW } from './credits';
 import { SQLiteError, type SQLiteErrorCode } from './errors';
 import type { Logger } from './logger';
+import type { SQLiteResultCode } from './sqlite-codes';
 import type {
   PlatformFeature,
   SavepointOp,
@@ -120,38 +121,101 @@ const STOP = Symbol('stop');
 const BUSY_CODES = new Set([5, 6]);
 
 /**
+ * The extended code when it names a subtype, else undefined (spec D9). SQLite
+ * reports the primary code again for a failure that has no subtype, and
+ * `sqliteCode` already says that. Any other difference is kept: a 0 read after
+ * a successful call is a wrong read, and must stay visible.
+ */
+const subtypeOf = (data: {
+  sqliteCode?: SQLiteResultCode;
+  sqliteExtendedCode?: number;
+}): number | undefined =>
+  data.sqliteExtendedCode !== data.sqliteCode
+    ? data.sqliteExtendedCode
+    : undefined;
+
+/**
  * Returns a SQLiteError('BUSY', …) when data carries a lock-conflict result
- * code (5 or 6), else undefined. Shared by both the query-error and
- * open-error paths so the BUSY_CODES decision lives in exactly one place.
+ * code (5 or 6), else undefined. Shared by `statementError` and `startupError`
+ * so the BUSY_CODES decision lives in exactly one place. The extended code
+ * travels with it when it is a subtype (`subtypeOf`) — a query sends one, an
+ * open does not.
  */
 export const busyFromCode = (data: {
   message: string;
   cause?: unknown;
-  sqliteCode?: number;
-}): SQLiteError | undefined =>
-  data.sqliteCode !== undefined && BUSY_CODES.has(data.sqliteCode)
-    ? new SQLiteError('BUSY', data.message, {
-        cause: data.cause,
-        sqliteCode: data.sqliteCode,
-      })
-    : undefined;
+  sqliteCode?: SQLiteResultCode;
+  sqliteExtendedCode?: number;
+}): SQLiteError | undefined => {
+  if (data.sqliteCode === undefined || !BUSY_CODES.has(data.sqliteCode)) {
+    return undefined;
+  }
+  const sqliteExtendedCode = subtypeOf(data);
+  return new SQLiteError('BUSY', data.message, {
+    cause: data.cause,
+    sqliteCode: data.sqliteCode,
+    ...(sqliteExtendedCode !== undefined ? { sqliteExtendedCode } : {}),
+  });
+};
 
 /**
- * Mints a typed error only for lock conflicts. Every other SQLite failure
- * keeps today's shape — a plain Error carrying SQLite's message — so no
- * existing consumer's error handling changes.
+ * What a query's `error` message becomes (spec 2026-09-14 §5.3): a code the
+ * worker minted; else `BUSY` for a lock conflict; else `STATEMENT_FAILED` for
+ * any other code SQLite reported; else — a failure SQLite did not report, such
+ * as a JS exception in the worker — a plain Error, as before. `BUSY` and
+ * `STATEMENT_FAILED` carry `sqliteCode`, and `sqliteExtendedCode` when it is a
+ * subtype (`subtypeOf`).
  */
-const workerError = (data: {
+export const statementError = (data: {
   message: string;
   cause?: unknown;
-  sqliteCode?: number;
+  sqliteCode?: SQLiteResultCode;
+  sqliteExtendedCode?: number;
   errorCode?: SQLiteErrorCode;
-}) =>
-  (data.errorCode
-    ? new SQLiteError(data.errorCode, data.message, { cause: data.cause })
-    : undefined) ??
-  busyFromCode(data) ??
-  new Error(data.message, { cause: data.cause });
+}): Error => {
+  if (data.errorCode) {
+    return new SQLiteError(data.errorCode, data.message, {
+      cause: data.cause,
+    });
+  }
+  const busy = busyFromCode(data);
+  if (busy) return busy;
+  if (data.sqliteCode === undefined) {
+    return new Error(data.message, { cause: data.cause });
+  }
+  const sqliteExtendedCode = subtypeOf(data);
+  return new SQLiteError('STATEMENT_FAILED', data.message, {
+    cause: data.cause,
+    sqliteCode: data.sqliteCode,
+    ...(sqliteExtendedCode !== undefined ? { sqliteExtendedCode } : {}),
+  });
+};
+
+/**
+ * What a failed open or delete becomes: `BUSY` for a lock conflict, else
+ * `WORKER_CRASHED` — the slot dies either way — carrying SQLite's primary code
+ * when there is one (spec 2026-09-14, D2). No extended code: when
+ * `sqlite3_open_v2` itself fails there is no connection to ask (D7).
+ */
+export const startupError = (data: {
+  message: string;
+  cause?: unknown;
+  sqliteCode?: SQLiteResultCode;
+}): SQLiteError => {
+  // D7: no extended code at open/delete, as a property of the client — not
+  // merely because the worker never sends one. Only `message`, `cause` and
+  // `sqliteCode` reach `busyFromCode`, whatever else `data` might carry.
+  const busy = busyFromCode({
+    message: data.message,
+    ...(data.cause !== undefined ? { cause: data.cause } : {}),
+    ...(data.sqliteCode !== undefined ? { sqliteCode: data.sqliteCode } : {}),
+  });
+  if (busy) return busy;
+  return new SQLiteError('WORKER_CRASHED', data.message, {
+    cause: data.cause,
+    ...(data.sqliteCode !== undefined ? { sqliteCode: data.sqliteCode } : {}),
+  });
+};
 
 /**
  * The single `new Worker(new URL(…))` expression in this package.
@@ -420,12 +484,7 @@ export const createPoolWorker = (deps: {
         const { callId } = data;
         if (callId === 0) {
           logger.error(`worker ${index + 1} failed to open: ${data.message}`);
-          die(
-            busyFromCode(data) ??
-              new SQLiteError('WORKER_CRASHED', data.message, {
-                cause: data.cause,
-              }),
-          );
+          die(startupError(data));
         }
         break;
       }
@@ -488,7 +547,7 @@ export const createPoolWorker = (deps: {
         const { callId } = data;
         if (deferredChunk && callId === currentCallId) {
           worker.inTransaction = data.inTransaction;
-          const error = workerError(data);
+          const error = statementError(data);
           if (state?.currentRequest?.currentQuery) {
             state.currentRequest.currentQuery.error = error;
             state.currentRequest.currentQuery.endTime = Date.now();

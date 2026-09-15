@@ -54,6 +54,21 @@ All notable changes to this project are documented here.
   worker only waited its turn: measured on Chromium and Firefox, a pool of one started faster
   and served bursts of reads faster, and was equal everywhere else. Omitting `poolSize` never
   throws.
+- **A statement SQLite refuses now rejects with `SQLiteError`, code `STATEMENT_FAILED`.** A
+  constraint violation, a syntax error or a full disk used to reject with a plain `Error`; its
+  message is unchanged. What a consumer can notice:
+  - `err.name` is now `'STATEMENT_FAILED'` where it was `'Error'`;
+  - a `catch` that took `instanceof SQLiteError`, or a defined `err.code`, to mean "the
+    library's own failure" now catches these too;
+  - a `switch (err.code)` with an exhaustive `never` default stops compiling until it handles
+    `STATEMENT_FAILED`;
+  - a `sqliteCode` alone no longer means a lock conflict: it now also rides on
+    `STATEMENT_FAILED` and `WORKER_CRASHED`. Test `err.code === 'BUSY'`.
+
+  `BUSY` itself is unchanged.
+- **`SQLiteError.sqliteCode` is typed `SQLiteResultCode`, no longer `number`.** Reading it is
+  unaffected. Constructing a `SQLiteError` with an arbitrary number no longer compiles: pass a
+  `SQLITE_CODES` value. In return, comparing it with an extended code is a compile error.
 
 ### Added
 
@@ -101,6 +116,12 @@ All notable changes to this project are documented here.
   abandoned, for the callback to hand to work of its own.
 - **`db.poolSize`**, the number of workers the pool runs: the `poolSize` option, capped by the
   VFS and by the environment.
+- **A failed statement says why, in numbers.** `STATEMENT_FAILED` carries SQLite's result code
+  on `sqliteCode` and, when SQLite reports one, its subtype on the new `sqliteExtendedCode` —
+  `19` and `2067` for a UNIQUE violation. A `BUSY` from a statement carries the subtype too,
+  and `WORKER_CRASHED` now carries `sqliteCode` when SQLite refused an open or a deletion.
+  `SQLITE_CODES` and `SQLITE_EXTENDED_CODES` export SQLite 3.53.0's result codes by name, and
+  `SQLiteResultCode` and `SQLiteExtendedResultCode` type them.
 
 ### Changed
 

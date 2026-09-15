@@ -1,4 +1,5 @@
 import type { SQLiteErrorCode } from './errors';
+import type { SQLiteResultCode } from './sqlite-codes';
 
 export type SQLiteWorkerMessageData<_T = unknown> = {
   callId: number;
@@ -130,7 +131,16 @@ export type WorkerMessageData =
       message: string;
       cause?: unknown;
       /** SQLite's numeric result code, when the failure came from SQLite. */
-      sqliteCode?: number;
+      sqliteCode?: SQLiteResultCode;
+      /**
+       * SQLite's extended result code, read in the worker where the statement
+       * failed (spec 2026-09-14, §5.1). Sent by the query path only, and
+       * unfiltered: this is exactly what SQLite reported, including a value
+       * equal to `sqliteCode` (no subtype). The client is what drops it in
+       * that case (D9); when SQLite does report a subtype,
+       * `(sqliteExtendedCode & 0xff) === sqliteCode`.
+       */
+      sqliteExtendedCode?: number;
       /**
        * A code this library minted, when the worker knows the cause. The
        * generic path by which a worker-side error keeps its code across the
@@ -162,7 +172,7 @@ export type WorkerMessageData =
       message: string;
       cause?: unknown;
       /** SQLite's numeric result code, when the failure came from SQLite. */
-      sqliteCode?: number;
+      sqliteCode?: SQLiteResultCode;
     };
 
 /** Which wa-sqlite WebAssembly build a worker loads. */

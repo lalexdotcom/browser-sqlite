@@ -13,7 +13,16 @@
  * `OPERATION_TIMEOUT` is the `timeout` a caller set on a call being spent. It is
  * deliberately not `TIMEOUT`, which means a deadline this library imposed on
  * itself — a worker that never became ready, a deletion that did not complete.
+ * `STATEMENT_FAILED` is a statement SQLite refused or failed for any reason
+ * but a lock conflict — a constraint, a syntax error, a full disk. `message` is
+ * SQLite's own; `sqliteCode` carries its result code, and `sqliteExtendedCode`
+ * its subtype when SQLite reports one.
  */
+import type {
+  SQLiteExtendedResultCode,
+  SQLiteResultCode,
+} from './sqlite-codes';
+
 export type SQLiteErrorCode =
   | 'NOT_A_READ_QUERY'
   | 'CLIENT_CLOSED'
@@ -25,6 +34,7 @@ export type SQLiteErrorCode =
   | 'INVALID_PRAGMA'
   | 'BULK_WRITE_FAILED'
   | 'BUSY'
+  | 'STATEMENT_FAILED'
   | 'DATABASE_IN_USE'
   | 'DATABASE_NOT_FOUND'
   | 'READ_ONLY_TRANSACTION'
@@ -37,10 +47,26 @@ export class SQLiteError extends Error {
   readonly code: SQLiteErrorCode;
   /**
    * SQLite's own numeric result code, present only when the failure came from
-   * SQLite rather than from this library. `BUSY` covers both SQLITE_BUSY (5)
-   * and SQLITE_LOCKED (6); this is how a caller tells them apart.
+   * SQLite rather than from this library. Always the PRIMARY code. `BUSY`
+   * covers both SQLITE_BUSY (5) and SQLITE_LOCKED (6); this is how a caller
+   * tells them apart. Typed `SQLiteResultCode` (D10): since `sqliteCodeOf`,
+   * it is always a primary code of the bundled SQLite, so comparing it with
+   * an extended code does not compile.
    */
-  readonly sqliteCode?: number;
+  readonly sqliteCode?: SQLiteResultCode;
+  /**
+   * SQLite's extended result code, present only when a statement SQLite ran
+   * failed WITH A SUBTYPE — `STATEMENT_FAILED` or `BUSY` from a query, never
+   * an open or a delete: 2067 (`SQLITE_EXTENDED_CODES.CONSTRAINT_UNIQUE`)
+   * under `sqliteCode` 19. Absent when SQLite has no subtype for the failure
+   * (a full disk, a syntax error), since `sqliteCode` already says it. For a
+   * subtype SQLite reports, `(sqliteExtendedCode & 0xff) === sqliteCode` is
+   * SQLite's own guarantee, not something this library enforces: the client
+   * deliberately lets a differing value through (a 0 from a wrong read).
+   * Typed open (`SQLiteExtendedResultCode | (number & {})`, D10): D9 lets a
+   * wrong read through, which a strict type would misdescribe.
+   */
+  readonly sqliteExtendedCode?: SQLiteExtendedResultCode | (number & {});
   /**
    * The `timeout` that was exceeded, in milliseconds. Present only on
    * `OPERATION_TIMEOUT`, so a log need not parse the message for it.
@@ -50,12 +76,19 @@ export class SQLiteError extends Error {
   constructor(
     code: SQLiteErrorCode,
     message: string,
-    options?: { cause?: unknown; sqliteCode?: number; timeout?: number },
+    options?: {
+      cause?: unknown;
+      sqliteCode?: SQLiteResultCode;
+      sqliteExtendedCode?: SQLiteExtendedResultCode | (number & {});
+      timeout?: number;
+    },
   ) {
     super(message, options);
     this.code = code;
     this.name = code;
     if (options?.sqliteCode !== undefined) this.sqliteCode = options.sqliteCode;
+    if (options?.sqliteExtendedCode !== undefined)
+      this.sqliteExtendedCode = options.sqliteExtendedCode;
     if (options?.timeout !== undefined) this.timeout = options.timeout;
   }
 }
