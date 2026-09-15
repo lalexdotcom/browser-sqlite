@@ -265,3 +265,27 @@ Memories at closure: `mem:vfs` (the `OPFSWriteAheadVFS` row: one tab without `re
 - Recovery of a refused client (D9).
 - Safari: the probe answered `false` there on 2026-09-13, so the guard applies; a second client on
   Safari is not measured, and the guard does not depend on it.
+
+## 10. Amendments — 2026-09-15, while planning (user)
+
+Confronting §3.2 with `src/client.ts` changed two things. The sections above stand as amended here.
+
+- **A1 — The probe answer is memoised per realm, for determinism, not cost (reverses D6's
+  deferral).** With each client waiting on its own worker 0, two clients built together request the
+  lock in the order their workers answer — so the SECOND client constructed can win and the first
+  be refused. A module-level promise per feature list, resolved by the first worker 0 to answer,
+  makes every client of the realm subscribe in construction order, so the first constructed requests
+  the lock first and wins, as with `AccessHandlePoolVFS`. Every worker 0 still probes and still
+  waits for `proceed`: the memo decides the lock's order, never whether a worker may open. Across
+  tabs the order stays first-come, which is correct.
+- **A2 — The pool is spawned at construction, as today; only worker 0 waits.** The surplus workers
+  already carry `declineWithout`: without the feature they decline before touching the file, and with
+  it they open while worker 0 waits for the lock, as every shared VFS does today. §3.2's "spawns
+  worker 0 only … then the rest" is dropped, which leaves the scheduler's startup gate untouched. It
+  holds on one condition, pinned by a unit test: every feature of `exclusiveConnectionWithout` is
+  also in `singleConnectionWithout`.
+- **A3 — A refused client is `connRefused`, not "no releaser".** The guard in `acquireInstrumented`
+  tests a flag set only when an `ifAvailable` request comes back empty. "No releaser" would also be
+  true of a client whose worker 0 died or closed before answering, and it must report its own
+  failure, not `DATABASE_IN_USE`. `failClient` and `close()` settle the pending answer as "none", so
+  that `close()` and every query awaiting the connection lock always settle.
