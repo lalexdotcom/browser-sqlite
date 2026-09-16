@@ -97,8 +97,29 @@ when the test declares a `needs` the target cannot meet. `pnpm test` therefore r
 (`scripts/test-matrix.mjs`) runs every declared pair on the three configs, bounding each run itself,
 keeping raw reports under `.matrix/<run>/` and exiting non-zero on any failed or timed-out cell.
 
-350 tests green on `main`, 2026-08-26. **No COOP/COEP headers anywhere** since the SAB was
-removed — if you find a reference to them in a config, it is stale.
+**Every browser script runs under a deadline since 2026-09-16** — `node scripts/bounded.mjs
+<seconds> <command>` wraps each leg of `test`, `test:browser`, `test:chromium`, `test:firefox`,
+`test:isolated` and `test:conformance` (900 s per leg, 600 s for the isolated one), and exits 124
+when it kills one, the code `test:matrix` already uses. It exists because a run CAN hang where
+`testTimeout` and `hookTimeout` cannot reach — a module-scope `await` that never settles means no
+test is running, so nothing times out (`mem:follow-ups`). `timeout(1)` is absent from a stock
+macOS, hence a script rather than a shell word; `tests/unit/bounded.test.ts` proves the deadline
+actually kills.
+
+**No test file enumerates VFS** since 2026-09-16: a file states what its subject needs of the pair
+(`needs: ['two-workers' | 'interruptible' | 'shared-second-client']`) and the matrix supplies the
+pairs. The five that used to sweep `ALL_VFS`/`SHARED_VFS` by hand repeated their whole sweep in
+every cell.
+
+350 tests green on `main`, 2026-08-26. **COOP/COEP live in ONE place: `rstest.isolated.config.ts`**,
+which sets `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy:
+require-corp` through a `modifyRsbuildConfig` plugin — a top-level `server.headers` key is silently
+ignored by rstest. That config is chromium like the default one; the difference is the isolation,
+not the engine, and it includes `tests/browser/isolated/**` only (7 tests per cell) because its
+subject is the `sync` build's abort channel, which needs a `SharedArrayBuffer`. Every other config
+stays un-isolated ON PURPOSE: that is what most consumers deploy, and the degraded path has to be
+asserted somewhere. (This line used to say "no COOP/COEP headers anywhere" — true when the SAB was
+removed, false since that config exists. Corrected 2026-09-16.)
 
 Two rstest facts that cost time:
 

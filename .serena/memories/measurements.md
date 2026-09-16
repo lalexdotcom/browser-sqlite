@@ -2383,3 +2383,69 @@ pair, 66 runs, each bounded at 600 s. 3447 s total, this container. Raw reports 
   a transaction HANGS (30 s and 60 s test timeouts, both engines); `IDBMirrorVFS` — 11 tests fail with
   `database disk image is malformed`; `OPFSCoopSyncVFS` — one `deleteDatabase` answers
   `DATABASE_NOT_FOUND` for a database the test created.
+
+## MATRIX-2 — the whole browser suite on every (vfs, build) pair, 2026-09-16
+
+`pnpm test:matrix`, run `.matrix/2026-09-16T12-46-17-062Z`, 22 pairs × {chromium, firefox,
+isolated} = 66 cells, **2386 s** — 31 % faster than MATRIX-1's 3447 s, which is the per-cell
+redundancy removed when the five VFS-sweeping files started following the target.
+
+- **Green on every column:** `OPFSWriteAheadVFS` (sync/async/jspi), `OPFSAdaptiveVFS` (async/jspi),
+  `OPFSAnyContextVFS` (async/jspi). The `isolated` column is green for all 22 pairs (7 tests each).
+- **Failures per cell (chromium/firefox):** `AccessHandlePoolVFS` 99/99 · `IDBMirrorVFS` 25/24 ·
+  `MemoryVFS` and `MemoryAsyncVFS` 21/21 · `OPFSCoopSyncVFS` 12/12 · `IDBBatchAtomicVFS` 4/4.
+  Same profile as MATRIX-1, and **no cell timed out** — firefox `IDBMirrorVFS/async`, which died on
+  the matrix's own bound in MATRIX-1, reported its 334 tests this time (the probe's bound, `6560c9e`).
+- 989 failing tests, 143 distinct (file, test, error) groups. Only 690 of the 989 are listed in the
+  reports — rstest truncates long lists — so the group counts under-report the widest causes.
+
+**The triage, 2026-09-16** (`.scratchpad/matrix-triage/`, `aggregate.mjs` + `triage-2026-09-16.md`):
+
+| Tas | cell-failures | what it is |
+| --- | ---: | --- |
+| Tests assuming what they do not declare | ~412 | `poolSize: 2` pinned on a capped VFS (250); inspection on a memory VFS (120); `statement-errors` writing a raw OPFS file (36); `default-pragmas` vs AccessHandlePool's `locking_mode` (6) |
+| Our own test infrastructure | ~258 | every one on `AccessHandlePoolVFS`: `sqlite3_open_v2`, `unable to open database file`, `Failed to execute 'createSyncAccessHandle'`, `No modification allowed` — the previous test's client is never closed, so its pool slot is never returned |
+| Probable product defects | ~60 | `IDBMirrorVFS` 46 (`database disk image is malformed`, in tx-abort/tx-handle/tx-savepoint); `IDBBatchAtomicVFS` 8 (an abandoned write through a generator inside a transaction: timeout with no assertion, `TRANSACTION_CLOSED`, `offset is out of bounds`, `source array is too long`); `OPFSCoopSyncVFS` 6 (`DATABASE_NOT_FOUND` for a database the test created) |
+
+## SAFARI-OPFS — what Safari 26 and 27 answer about OPFS access handles, 2026-09-16
+
+Measured by the user in Safari 26's console on a `localhost` page (a secure context is required —
+with no page open, `navigator.storage` is undefined and every worker throws `TypeError`), running
+`.scratchpad/firefox-hang-2026-09-16/safari-console-probe.js`: 144 workers across 12 iframes × 3
+rounds, each asking the OPFS root for one shared file and then two sync access handles on it.
+
+- **Safari does NOT honour `mode: 'readwrite-unsafe'`.** Every worker that got the file reported
+  `unsafe: false` — its second handle was refused. Safari sits with Firefox, not Chromium. The
+  library's consequence: `OPFSWriteAheadVFS` is single-client there, so a second client (a second
+  tab) gets `DATABASE_IN_USE`, exactly as on Firefox.
+- **Safari's error for a handle another context holds is `InvalidStateError: The object is in an
+  invalid state.`** — not Chromium's and Firefox's `NoModificationAllowedError`. 132 of 144 workers
+  got it. Any code that matches on the error NAME rather than on the failure will behave
+  differently on Safari.
+- **12 of 144 got through, and WHICH ones is the finding.** Per round: 6, 4, 2. They cluster by
+  context — round 1 put all four workers of context 11 (the last iframe created) through, plus one
+  each in contexts 0 and 9. The contention burst clears in ~60 ms, and whoever arrives after it is
+  served normally. So Safari 26 refuses a SIMULTANEOUS contender outright; it does not refuse a
+  later one. The 6 → 4 → 2 decline fits: later rounds start with warm iframes, so they are more
+  tightly synchronized.
+- **It is fast:** every worker settled in 45-68 ms, contention included.
+- **No wedge** (0 of 144), but that proves nothing about the Firefox `getDirectory()` hang: this
+  probe does not reproduce it on Firefox either (0 of 144 there, churn included). See
+  `mem:follow-ups`.
+
+**Safari 27, same probe, same day — the capability is unchanged, the CONTENTION is not.**
+
+- `readwrite-unsafe` is still refused: every worker that got the file reports `unsafe: false`. So
+  the second-client guard applies to Safari 26 and 27 alike.
+- **Safari 26 put 12 of 144 through (8 %), never waiting — everything settled in 45-68 ms.
+  Safari 27 put 113 of 144 through (78 %), in 53-172 ms.**
+- **Safari 27 QUEUES, and round 1 shows it exactly: 48 of 48 through, served in the order the
+  contexts were created** — context 0 at 59 ms, 1 at 70, 2 at 78, … 11 at 172, four workers per
+  context, about ten milliseconds per step. That is FIFO on the file, not a race. Round 2: 44 of
+  48. Round 3: 21 of 48 — so the queue is not unconditional; it degrades under pressure (or with a
+  previous round's handles still settling), and the losers get `InvalidStateError`.
+- So between 26 and 27 WebKit moved from REFUSING a contended `createSyncAccessHandle` to WAITING
+  for its turn. On 27 a second context that asks for a handle gets it; on 26 it fails at once.
+- Consequence to check before relying on it: handle starvation is asserted for Firefox only
+  (`tests/browser/firefox/handle-starvation.test.ts`). If Safari 27 queues, its starvation shape
+  is neither Firefox's nor Chromium's, and nothing measures it.

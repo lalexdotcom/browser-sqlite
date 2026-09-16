@@ -97,9 +97,26 @@ one machine and one build; slower CI hardware may still surface timing the campa
   suite following an injected (vfs, build) target, with `pnpm test` covering both recommended pairs and
   `pnpm test:matrix` covering all 22. Design and its amendments A1-A5:
   `docs/superpowers/specs/2026-09-15-second-client-design.md`. **The merge is the user's call and had not
-  been given when this was written.** What the branch surfaced and did NOT fix is in `mem:follow-ups`:
-  the rstest/Firefox silent hang (priority), three probable defects the matrix found, a
-  `createTestClient` cleanup defect, and the tests that assume what they do not declare.
+  been given when this was written.**
+
+  **Where it stood at the end of 2026-09-16, for a cold restart.** The branch then also carried: the
+  whole browser suite freed of VFS enumeration — no test file loops over VFS any more, a file states
+  what its subject needs (`two-workers`, `interruptible`, `shared-second-client`) and the matrix
+  supplies the pairs (spec amendment A6); `db.inspect()` and `detectFeatures` following the target
+  (they had never run outside one pinned VFS); and two guards against a run that sits for ever —
+  the conformance probe bounded with retries, and `scripts/bounded.mjs` giving every browser script
+  a deadline. Verified whole on 2026-09-16: `pnpm test` 1173/668/14, unit 507, conformance 85 per
+  engine identical to baseline, `tsc` clean, and a full `pnpm test:matrix` (MATRIX-2, 2386 s) with
+  no timed-out cell.
+
+  **THE MERGE WAITS ON THE MATRIX TRIAGE (user, 2026-09-16): "on mergera une fois le tri
+  effectué".** The triage itself is DONE — three tas, their sizes and the order to take them are in
+  `mem:follow-ups`, the numbers in `mem:measurements` MATRIX-2, and `scripts/matrix-triage.mjs`
+  regenerates the grouping from any `.matrix/<run>/`. What remains is the WORK the triage names,
+  starting with the `createTestClient` cleanup (~258 cell-failures, all on `AccessHandlePoolVFS`),
+  then the `Need` vocabulary — **a decision the user has not taken** — then the three probable
+  product defects. The Firefox silent hang that blocked runs is diagnosed and guarded, not cured:
+  `navigator.storage.getDirectory()` can fail to settle in a worker on Firefox.
 
 **rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
 and both are now closed — the second by merge `eeabe06` on 2026-09-11.

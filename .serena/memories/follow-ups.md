@@ -116,30 +116,88 @@ says Firefox 153+, Safari 27+); `VFS.md`; a CHANGELOG entry, the default changin
 consumer who passes one `.wasm` URL without `build`. **Measure first:** `OPFSAdaptiveVFS` on `jspi`
 on Safari 27, the pair whose default would change for the most consumers.
 
-## The rstest/Firefox silent hang — priority, it threatens CI (2026-09-15)
+## The rstest/Firefox silent hang — CAUSE FOUND 2026-09-16, fix not taken
 
-Three sightings in ~15 full Firefox runs in one afternoon: the build completes, then nothing — no output,
-Firefox content processes at 0 % CPU, machine idle. The per-test timeout is 30 s, so the hang is OUTSIDE a
-test body (cleanup, `onTestFinished`, a file transition) — **not established**. The first sighting was on
-the untouched tree (`e5d0152`), so it predates the second-client branch; two target projects per engine
-make it likelier. `pnpm test:matrix` bounds each run and reports the cell as timed out; `pnpm test` does
-not, so a hook or a CI run can sit for ever. To chase it: a single-file Firefox run under the sixteen busy
-loops (ABANDON-WEDGE's method), and rstest's own reporter rather than the agent one.
+**`navigator.storage.getDirectory()` inside a dedicated worker sometimes never settles on Firefox
+— no resolve, no reject — under concurrent OPFS access from many pages.** That call sits at
+module scope behind a TOP-LEVEL AWAIT: `probeUnsafeHandles()` in `tests/conformance/helpers.ts`,
+reached by every browser test file through `tests/browser/helpers.ts` → `AVAILABLE_FEATURES`.
+rstest runs test files in parallel pages, so ~43 of these probe workers start per run, ten of them
+inside one five-second window. When one never answers, that file's module never finishes
+evaluating: **no test starts, so neither `testTimeout` (30 s) nor `hookTimeout` can fire**, rstest
+reports the file as "running" for ever, and `pnpm test` never ends.
 
-## What the full matrix found, and nobody has triaged (2026-09-15)
+Established 2026-09-16, by instrumenting the probe worker step by step and catching a wedge:
+the wedged page prints `worker constructed` then `step:start` and nothing more, where a healthy
+page goes `step:start → got-root → got-file-handle → h1 → caught(NoModificationAllowedError) →
+ANSWERED false`. It stops at `await navigator.storage.getDirectory()`.
 
-Numbers and grouping in `mem:measurements`, MATRIX-1. Open work, in the order that costs least:
+Arms, all on Firefox `OPFSWriteAheadVFS/sync`, one project, no load: real probe **4 hangs / 24
+runs** (~17 %); probe stubbed to `return false` (behaviour-neutral on Firefox) **0 / 9**; probe
+bounded at 8 s **0 / 6**. The hang lands on whichever file loses: `inspect-marker` ×3,
+`inspect-client` ×1, `pool-savepoint` ×1.
 
-- **A test-infrastructure defect:** `createTestClient` never closes its client and removes OPFS entries by
-  name, which frees no slot in `AccessHandlePoolVFS`'s pool — ~40 `WORKER_CRASHED` per cell there come
-  from the previous test's client still holding the database.
-- **Three probable product defects:** `IDBBatchAtomicVFS` hangs on an abandoned write through `tx.first()`
-  inside a transaction (both engines); `IDBMirrorVFS` fails 11 tests with `database disk image is
-  malformed`; `OPFSCoopSyncVFS` answers `DATABASE_NOT_FOUND` to one `deleteDatabase` of a database the
-  test created. Each needs a diagnosis before a fix, as `output()` did.
-- **Tests that assume what they do not declare:** a pool of two workers, shared storage, persistence, a
-  raw OPFS file. The `Need` vocabulary would grow by `shared-storage`, `persistent` and `opfs-file` — the
-  list grows by decision, and the user has not taken it.
+REFUTED on the way, keep refuted: it is NOT contention on the probe's fixed file name. Measured
+directly — a second `createSyncAccessHandle` on a held file REJECTS at once on Firefox
+(`NoModificationAllowedError`) and is granted on Chromium (that is what the probe reads).
+
+**Guarded 2026-09-16 (`6560c9e`), not cured.** Each probe attempt is bounded at 10 s, a wedged
+worker is terminated and replaced, three times, and the third failure THROWS rather than answering
+— a silent `false` would flip `readwrite-unsafe` on Chromium and make tests pass for the wrong
+reason. `scripts/bounded.mjs` now gives every browser script a deadline (exit 124), because the
+next hang of this shape will not be this one.
+
+WHAT REMAINS OPEN:
+- **`AVAILABLE_FEATURES` is still awaited at module scope.** Making it lazy — awaited inside the
+  tests that need it, where a `testTimeout` can reach it — is the structural answer: nothing at
+  module scope should await I/O. Several module-scope readers move with it (`HERE` in
+  `tests/browser/helpers.ts`, `secondClientOutcome` in `second-client.test.ts`). Belongs with
+  putting `test:matrix` in CI, which is the same subject.
+- **The engine bug is unreported.** A `navigator.storage.getDirectory()` that never settles in a
+  dedicated worker is Mozilla's, and the repro is in hand: ~50 pages, each a worker asking for the
+  OPFS root inside the same few seconds. NOTE: the console probe in
+  `.scratchpad/firefox-hang-2026-09-16/` does NOT reproduce it (0 of 144 on Firefox, iframes and
+  OPFS churn included) — only the suite's shape does, so the report must carry the suite, not that
+  probe.
+
+## `pool-cap`'s surplus-slot test fails under load (2026-09-16)
+
+`tests/browser/pool-cap.test.ts :: a pool capped by its environment > a surplus slot that times
+out, then declines in the retry round, is not announced lost`, on `firefox · OPFSAdaptiveVFS/async`.
+Twice today on a loaded machine, green on rerun both times. The 600 ms `openTimeout` is deliberate
+— it is what makes the surplus slot time out, which is the subject — but the HEALTHY worker has to
+beat the same 600 ms, and on a loaded machine it does not: the failure is
+`Worker 1 did not become ready within 600 ms`. A budget that the subject needs tight and the setup
+needs loose cannot be one number; splitting them is the fix, and nobody has taken it.
+
+## The matrix is triaged (2026-09-16); the three tas are open work
+
+Numbers, and the classification that produced these three, in `mem:measurements`, MATRIX-2. The
+tools are kept: `.scratchpad/matrix-triage/aggregate.mjs` turns a `.matrix/<run>/` directory into
+143 groups with the cells each one hit, which is what makes 989 reds readable.
+
+**Do them in this order — it is not a preference, the first clears the third's view.**
+
+1. **Our own test infrastructure — ~258 cell-failures, all on `AccessHandlePoolVFS`.**
+   `createTestClient` never closes its client, and removing OPFS entries by name returns no slot to
+   that VFS's pool, so the next test cannot open: `sqlite3_open_v2`, `unable to open database
+   file`, `Failed to execute 'createSyncAccessHandle'`, `No modification allowed`. The fix is the
+   helper closing the client in its cleanup — `close()` is idempotent (`src/client.ts:1356`), so
+   the ~40 files that already close are unaffected. Cheapest, largest, and until it is done nobody
+   can see what else AccessHandlePoolVFS hides.
+2. **Tests that assume what they do not declare — ~412 cell-failures.** `poolSize: 2` pinned on a
+   capped VFS (250), inspection on a memory VFS (120), `statement-errors` writing a raw OPFS file
+   (36), `default-pragmas` against AccessHandlePool's `locking_mode` (6). The repair is the `Need`
+   vocabulary — `shared-storage`, `persistent`, `opfs-file` — plus replacing the pinned
+   `poolSize: 2` with `needs: ['two-workers']`. **The list grows by the user's decision, never by
+   drift**, and that decision is still not taken.
+3. **Three probable product defects — ~60 cell-failures.** `IDBMirrorVFS` (46): `database disk
+   image is malformed` in tx-abort, tx-handle and tx-savepoint — an abandoned transaction corrupts
+   the image. `IDBBatchAtomicVFS` (8): an abandoned write through a generator inside a transaction
+   times out with no assertion, plus `TRANSACTION_CLOSED`, `offset is out of bounds` and `source
+   array is too long` — the last two read like a wrong buffer length. `OPFSCoopSyncVFS` (6):
+   `DATABASE_NOT_FOUND` for `marker-delete.db`, which the test had just created. Each needs a
+   diagnosis before a fix, as `output()` did.
 
 ## Mixing VFS of the `opfs-path` family on one database (2026-09-15)
 
