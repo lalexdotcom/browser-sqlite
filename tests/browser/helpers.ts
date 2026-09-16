@@ -1,5 +1,6 @@
-import { afterEach, onTestFinished } from '@rstest/core';
+import { onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
+import { deleteDatabase } from '../../src/delete';
 import type { InternalSQLiteClientOptions } from '../../src/scheduler';
 import {
   defaultBuildFor,
@@ -46,9 +47,9 @@ const HERE: Here = {
 
 /**
  * Creates a SQLite client with a unique database name (UUID) and registers
- * cleanup of its files via afterEach.
+ * cleanup of the client and its files via onTestFinished.
  *
- * Decisions: D-06 (unique name), D-07 (afterEach cleanup), D-08 (shared helper)
+ * Decisions: D-06 (unique name), D-07 (per-test cleanup), D-08 (shared helper)
  *
  * VFS: the target this project injects (`TEST_TARGET`), unless the test pins
  * one with `vfs`. Pinning is for tests whose subject IS a VFS, and says why on
@@ -65,7 +66,7 @@ const HERE: Here = {
  * every layout may have, and the VFS's own (e.g. OPFSWriteAheadVFS's
  * -wa0/-wa1, which outlived every test until 2026-09-15). Shared by
  * createTestClient's own cleanup and by tests that open a worker directly
- * with createPoolWorker, bypassing the client and its afterEach
+ * with createPoolWorker, bypassing the client and its cleanup
  * (pool-savepoint.test.ts, abandon.test.ts).
  */
 export const removeDatabaseFiles = async (
@@ -120,15 +121,42 @@ export async function createTestClient(options: TestClientOptions = {}) {
           build: options.build ?? defaultBuildFor(options.vfs),
         };
 
-  afterEach(() => removeDatabaseFiles(dbName, pair.vfs));
-
   // createSQLiteClient is synchronous — workers initialize in the background.
   // The first query queues until a worker reaches READY.
-  return createSQLiteClient(dbName, {
+  const db = createSQLiteClient(dbName, {
     ...clientOptions,
     vfs: pair.vfs,
     build: pair.build,
   } as InternalSQLiteClientOptions);
+
+  // onTestFinished, NOT afterEach: afterEach registered from inside a test
+  // body never runs in rstest — this cleanup was dead code from the day it was
+  // written, which is why nothing a test created was ever removed. The same
+  // trap is documented on interceptWorkers below.
+  onTestFinished(async () => {
+    // Closing first is what lets the deletion below happen at all —
+    // deleteDatabase refuses with DATABASE_IN_USE while a client holds the
+    // connection lock. A client the test deliberately poisoned may refuse to
+    // close, which is that test's subject, not this cleanup's.
+    await db.close().catch(() => {});
+    // AccessHandlePoolVFS (`opfs-pool`, the only one) holds a FIXED pool of
+    // six OPFS files and hands a slot back on its own xDelete alone: jClose
+    // returns nothing, and the path→handle association is written into the
+    // OPFS file header, so it outlives the worker, the page and the whole
+    // run. Since every test opens a fresh UUID name, the sixth test exhausts
+    // the origin and nothing opens afterwards. removeDatabaseFiles cannot
+    // help — that VFS keeps its files under opaque names inside its own
+    // directory, so removing the database's name matches nothing.
+    if (VFS_CAPABILITIES[pair.vfs].layout === 'opfs-pool') {
+      await deleteDatabase(dbName, {
+        vfs: pair.vfs,
+        build: pair.build,
+      }).catch(() => {});
+    }
+    await removeDatabaseFiles(dbName, pair.vfs);
+  });
+
+  return db;
 }
 
 export type WorkerRecord = {
