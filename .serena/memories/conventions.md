@@ -199,6 +199,14 @@ policy becomes applicable as written.
   for Safari — it lacks `FileSystemSyncAccessHandle` and loads no worker at all.
 - **Always give a verdict when offering options.** A menu without a recommendation is not
   an answer.
+- **A fact known to be false, whose true value you hold, is corrected — not reported (user,
+  2026-09-16).** Said of `mem:state`'s baseline table, flagged as stale instead of being
+  re-measured. This does NOT loosen the rules above it: a *decision* still belongs to the
+  user, and an option still needs a verdict rather than a unilateral pick. It is about
+  **facts** — a stale number, a comment contradicted by the code, a memory naming a cause
+  that measurement refuted. If you can establish the true value, establish it and say what
+  you changed; notifying without fixing makes the user the courier of your own finding. When
+  the true value costs a measurement, take the measurement.
 - **That rule runs one way only (user, 2026-08-27).** When *you* offer options, decide and
   recommend. When the *user* offers two without stating a preference — "soit A, soit B" —
   that is a question to answer, not a mandate to pick one and act. In one session an option

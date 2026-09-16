@@ -24,14 +24,18 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-15 after the CoopSync hand-over merge
+## The verification baseline — compare against these, re-measured 2026-09-16 on `fix/second-client`
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a
-run in this container on 2026-09-15, on `main` right after the merge of the CoopSync hand-over fix
-(`256ce09`)** — none is carried forward, none is arithmetic. The whole table was re-read in
-one pass, which is what its own rule demands; raw outputs in
-`.scratchpad/closure-2026-09-15-coopsync/`. The `pnpm test` row is the merge's
-pre-merge-commit hook, run on the merged tree.
+run in this container on 2026-09-16, on `fix/second-client` right after the test-cleanup fix** —
+none is carried forward, none is arithmetic. The whole table was re-read in one pass, which is
+what its own rule demands.
+
+The previous version of this table was measured on 2026-09-15 and went stale the next day: the
+branch stopped every test file from enumerating VFS, which took `pnpm test` from 1554/1038/14 to
+1173/668/14 and the unit project from 482 to 507. It sat wrong for a day beside a prose paragraph
+carrying the right numbers. **That is what "re-measure the whole table, do not patch one cell"
+is protecting against — and a table known to be wrong gets re-measured, not annotated.**
 
 **`pnpm test` chains THREE configs** — chromium+unit, firefox, and the isolated project — so a
 green `pnpm test` covers what CI covers. Since 2026-09-11 a commit pays only the unit project; a merge or a push pays all three
@@ -43,16 +47,19 @@ on the last branch landed with a failing typecheck that no test run could show (
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` on each, re-measured 2026-09-15 on `fix/second-client` (`b3bf8e7`): **1554 tests / 74 files** (unit + the two chromium target projects, **8 skipped**), **1038 / 49** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects). The browser counts roughly doubled when each config gained one project per target (`0156d92`); the rest is this branch's new tests |
-| `pnpm exec rstest --project unit run` | 482 tests, 24 files |
+| `pnpm test` | **THREE reports**, `status: pass` on each: **1173 tests / 76 files** (unit + the two chromium target projects, **8 skipped**), **668 / 50** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects) |
+| `pnpm exec rstest --project unit run` | 507 tests, 27 files |
 | `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are now `chromium · <vfs>/<build>` and rstest's filter is anchored |
 | `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each: **Chromium 71 passed / 14 skipped, Firefox 67 / 18** — they differ by design since 2026-09-14 |
 | `pnpm test:consumer` | 24/24 stages |
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 134 files, 13 warnings, 1 info (2026-09-15) |
+| `pnpm lint` | 136 files, 13 warnings, 1 info |
 | `dependencies` in `package.json` | absent |
+| `pnpm test:matrix` | **not in this table on purpose** — 66 cells, ~2900 s, and 500 expected failures. Its baseline is `mem:measurements`, MATRIX-3 |
 
-**The browser skips are expected: 4 on Chromium, 1 on Firefox.** One, on both, is
+**The browser skips are expected: 4 per Chromium project, 1 per Firefox project.** Each config
+now builds ONE project per target, so the table's per-config totals are twice those: **8** on the
+chromium report and **2** on the firefox one. Count per project before comparing. One, on both, is
 `tests/browser/abandon-gc.test.ts`: it pins the `FinalizationRegistry` path and needs
 `--expose-gc`, which cannot go into `rstest.config.ts` without changing the launch arguments every
 other browser test runs under, so it skips under `pnpm test` and in CI and its header carries the
