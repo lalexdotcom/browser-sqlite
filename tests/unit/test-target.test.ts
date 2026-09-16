@@ -14,10 +14,9 @@ import {
   type TestTarget,
 } from '../browser/target';
 
-const here = (
-  features: readonly PlatformFeature[],
-  crossOriginIsolated = false,
-): Here => ({ features: new Set(features), crossOriginIsolated });
+const here = (features: readonly PlatformFeature[]): Here => ({
+  features: new Set(features),
+});
 
 const pair = (vfs: SQLiteVFS, build: SQLiteBuild): TestTarget => ({
   vfs,
@@ -59,10 +58,7 @@ describe('resolvePair', () => {
   it('keeps an interruptible test on a sync build under cross-origin isolation', () => {
     // Falsifiable: an `interruptible` that ignores `crossOriginIsolated` and
     // calls every sync build uninterruptible turns this red.
-    const isolated = here(
-      [...WITH_UNSAFE.features, 'cross-origin-isolated'],
-      true,
-    );
+    const isolated = here([...WITH_UNSAFE.features, 'cross-origin-isolated']);
     expect(
       resolvePair(
         pair('OPFSWriteAheadVFS', 'sync'),

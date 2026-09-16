@@ -39,11 +39,13 @@ export const TEST_TARGET: TestTarget = (() => {
   return __BSQ_TEST_TARGET__;
 })();
 
-/** This browser, as the resolver sees it: the conformance probe's features. */
-const HERE: Here = {
-  features: AVAILABLE_FEATURES,
-  crossOriginIsolated: globalThis.crossOriginIsolated === true,
-};
+/**
+ * This browser, as the resolver sees it: the conformance probe's features,
+ * which already carry `cross-origin-isolated` — `AVAILABLE_FEATURES` is
+ * `detectFeatures()` plus the async probe, and isolation is one of the four
+ * synchronous probes. Nothing here re-tests a global by hand.
+ */
+const HERE: Here = { features: AVAILABLE_FEATURES };
 
 /**
  * Creates a SQLite client with a unique database name (UUID) and registers

@@ -17,10 +17,7 @@ export type SecondClientOutcome = 'shared' | 'isolated' | 'refused';
  */
 export const secondClientOutcome = (vfs: SQLiteVFS): SecondClientOutcome => {
   if (VFS_CAPABILITIES[vfs].layout === 'memory') return 'isolated';
-  return sharedSecondClient(vfs, {
-    features: AVAILABLE_FEATURES,
-    crossOriginIsolated: globalThis.crossOriginIsolated === true,
-  })
+  return sharedSecondClient(vfs, { features: AVAILABLE_FEATURES })
     ? 'shared'
     : 'refused';
 };

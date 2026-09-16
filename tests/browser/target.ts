@@ -1,6 +1,7 @@
 import { RECOMMENDED_VFS } from '../../scripts/recommended-vfs';
 import { sharesStorage } from '../../src/locks';
 import {
+  BUILD_DEGRADES_WITHOUT,
   BUILD_REQUIREMENTS,
   type PlatformFeature,
   type SQLiteBuild,
@@ -41,10 +42,16 @@ export type Need =
   | 'shared-storage'
   | 'opfs-file';
 
-/** What this browser offers. A parameter, so the resolver runs in Node. */
+/**
+ * What this browser offers. A parameter, so the resolver runs in Node.
+ *
+ * One field, deliberately: `cross-origin-isolated` IS a `PlatformFeature` with
+ * a probe of its own (`PROBES` in src/capabilities.ts), so it arrives in
+ * `features` like every other. A second boolean beside the set held the same
+ * fact twice and made the caller re-implement the probe by hand.
+ */
 export type Here = {
   readonly features: ReadonlySet<PlatformFeature>;
-  readonly crossOriginIsolated: boolean;
 };
 
 const ALL_VFS = Object.keys(VFS_CAPABILITIES) as SQLiteVFS[];
@@ -94,7 +101,16 @@ const holds = (need: Need, { vfs, build }: TestTarget, here: Here): boolean => {
         )
       );
     case 'interruptible':
-      return build !== 'sync' || here.crossOriginIsolated;
+      // Read from the declaration, not restated: BUILD_DEGRADES_WITHOUT.sync
+      // is `['cross-origin-isolated']` for exactly this reason — without a
+      // SharedArrayBuffer the sync build cannot carry an abort into a running
+      // step(). PROVISIONAL SHAPE: `degradesWithout` means "degrades on any
+      // axis", and it is only because the sync build has one single declared
+      // degradation that reading the whole list is equivalent to asking about
+      // interruption. rc.6's BUILD_CAPABILITIES gives the property its own
+      // field (`mem:follow-ups`); until then a second entry in this list would
+      // make this answer silently wrong.
+      return allHere(BUILD_DEGRADES_WITHOUT[build], here);
     case 'shared-second-client':
       return sharedSecondClient(vfs, here);
     case 'shared-storage':
