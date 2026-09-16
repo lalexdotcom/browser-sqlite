@@ -170,34 +170,22 @@ beat the same 600 ms, and on a loaded machine it does not: the failure is
 `Worker 1 did not become ready within 600 ms`. A budget that the subject needs tight and the setup
 needs loose cannot be one number; splitting them is the fix, and nobody has taken it.
 
-## The matrix is triaged (2026-09-16); the three tas are open work
+## The matrix's remaining piles (re-measured 2026-09-16, after the cleanup fix)
 
-Numbers, and the classification that produced these three, in `mem:measurements`, MATRIX-2. The
-tools are kept: `.scratchpad/matrix-triage/aggregate.mjs` turns a `.matrix/<run>/` directory into
-143 groups with the cells each one hit, which is what makes 989 reds readable.
+Numbers in `mem:measurements`, MATRIX-3. `scripts/matrix-triage.mjs` regenerates the grouping from any `.matrix/<run>/`.
 
-**Do them in this order — it is not a preference, the first clears the third's view.**
+**The first pile is done, and its clearing is what these numbers are.** 989 cell-failures → 500, 143 groups → 97, `AccessHandlePoolVFS` 593 → 102. What it hid then surfaced, so the second pile GREW rather than shrank — the triage's ORDER was right even though its stated cause was wrong (`mem:lessons`, the `afterEach` entry).
 
-1. **Our own test infrastructure — ~258 cell-failures, all on `AccessHandlePoolVFS`.**
-   `createTestClient` never closes its client, and removing OPFS entries by name returns no slot to
-   that VFS's pool, so the next test cannot open: `sqlite3_open_v2`, `unable to open database
-   file`, `Failed to execute 'createSyncAccessHandle'`, `No modification allowed`. The fix is the
-   helper closing the client in its cleanup — `close()` is idempotent (`src/client.ts:1356`), so
-   the ~40 files that already close are unaffected. Cheapest, largest, and until it is done nobody
-   can see what else AccessHandlePoolVFS hides.
-2. **Tests that assume what they do not declare — ~412 cell-failures.** `poolSize: 2` pinned on a
-   capped VFS (250), inspection on a memory VFS (120), `statement-errors` writing a raw OPFS file
-   (36), `default-pragmas` against AccessHandlePool's `locking_mode` (6). The repair is the `Need`
-   vocabulary — `shared-storage`, `persistent`, `opfs-file` — plus replacing the pinned
-   `poolSize: 2` with `needs: ['two-workers']`. **The list grows by the user's decision, never by
-   drift**, and that decision is still not taken.
-3. **Three probable product defects — ~60 cell-failures.** `IDBMirrorVFS` (46): `database disk
-   image is malformed` in tx-abort, tx-handle and tx-savepoint — an abandoned transaction corrupts
-   the image. `IDBBatchAtomicVFS` (8): an abandoned write through a generator inside a transaction
-   times out with no assertion, plus `TRANSACTION_CLOSED`, `offset is out of bounds` and `source
-   array is too long` — the last two read like a wrong buffer length. `OPFSCoopSyncVFS` (6):
-   `DATABASE_NOT_FOUND` for `marker-delete.db`, which the test had just created. Each needs a
-   diagnosis before a fix, as `output()` did.
+1. **Tests that assume what they do not declare — 420 cell-failures, 84 % of what is left.** `poolSize: 2` pinned on a capped VFS, inspection on a memory VFS, `statement-errors` writing a raw OPFS file (24 cells now, not 18 — AccessHandlePool reaches it at last), `default-pragmas` against AccessHandlePool's `locking_mode`, plus `routing` and four `tx-quiesce` that only became visible now. The repair is the `Need` vocabulary — `shared-storage`, `persistent`, `opfs-file` — plus replacing the pinned `poolSize: 2` with `needs: ['two-workers']`. **The list grows by the user's decision, never by drift**, and that decision is still not taken. Nothing in this pile moves until it is.
+2. **Three probable product defects — 62 cell-failures.** `IDBMirrorVFS` (46): `database disk image is malformed` in tx-abort, tx-handle and tx-savepoint — an abandoned transaction corrupts the image; the largest and the most serious of the three. `IDBBatchAtomicVFS` (8): an abandoned write through a generator inside a transaction times out with no assertion, plus `TRANSACTION_CLOSED`, `offset is out of bounds` and `source array is too long` — the last two read like a wrong buffer length. `OPFSCoopSyncVFS` (6): `DATABASE_NOT_FOUND` for `marker-delete.db`, which the test had just created. Each needs a diagnosis before a fix, as `output()` did. Independent of the `Need` decision, so this pile can advance while that one waits.
+
+## A killed worker's OPFS handles are not free when its replacement opens (2026-09-16)
+
+Eighteen cell-failures on `AccessHandlePoolVFS`, `WORKER_CRASHED: Failed to execute 'createSyncAccessHandle'` — seventeen in `lifecycle.test.ts` (crash detection, the restart budget, `onWorkerLost`, the deserialization failure, the second-client BUSY refusal) and one in `long-query.test.ts` ("is presumed dead when it never answers the stop request"). Those tests kill a worker deliberately and the replacement collides with handles the dead one still holds. **Invisible until the cleanup fix**, because nothing on that VFS got far enough to reach them. Unclassified: it may be the tests' timing, or the library restarting a slot sooner than the engine releases. HANDLE-ORPHAN measured Firefox releasing them in 1-6 ms (`mem:measurements`); nobody has measured Chromium, which is where these land.
+
+## One CoopSync lifecycle failure the isolated probe does not explain (2026-09-16)
+
+`lifecycle.test.ts :: worker lifecycle — crash detection > restarts the slot once and keeps serving` fails on `chromium OPFSCoopSyncVFS/sync` and `/jspi`, absent from MATRIX-2 — the cell went 12 → 13. **Not caused by the cleanup fix**: run alone on that pair, the file fails 3 times WITHOUT the fix and 2 times WITH it, three runs each. So the fix removes one there while the full-run count rises by one, which the isolated probe does not account for. Open, and deliberately not dismissed as a flake — it reproduced 3/3.
 
 ## Mixing VFS of the `opfs-path` family on one database (2026-09-15)
 

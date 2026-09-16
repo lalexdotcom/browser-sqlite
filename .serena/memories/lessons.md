@@ -887,6 +887,29 @@ message when the ledger showed no edit after ten. **Split a batch before dispatc
 artifact a deadline.** A monitor that counts the report's rows, not only the modified files, shows the
 difference between thinking and stalling.
 
+## `afterEach` registered from inside a test body NEVER RUNS in rstest — 2026-09-16
+
+`createTestClient`'s cleanup called `afterEach(...)` from the test that was running. rstest
+silently drops it: instrumented on one file, **30 registrations and 0 executions**. So no
+browser test had ever removed the database it created, on any VFS, since the helper was
+written — and a comment in the same file asserted the opposite ("suite-scoped when called
+inside a test body"), which is how it survived so long. `onTestFinished` is the test-scoped
+hook that does run, and the same file already used it, with a comment explaining the
+difference, twenty lines below.
+
+**A registration is not an execution — instrument both ends before believing a hook.** One
+`console.error` at the registration and one at the entry answered in a single run what two
+rounds of reading the code and two whole-matrix runs (80 minutes) had not.
+
+**And the triage entry that sent me there named a mechanism that was measurably false.** It
+said "createTestClient never closes its client, and removing OPFS entries by name returns no
+slot to the pool". Closing was necessary but does nothing for the pool — `jClose` returns no
+slot, only `xDelete` does — and the cleanup that was supposed to do the removing never ran
+at all. Its ORDER was right, its cause was wrong. `mem:follow-ups` already says to verify an
+entry against the source before scheduling work on it; **this is the first time the entry
+also carried a stated cause, and the cause is exactly the part that rotted.** Treat a
+backlog entry's diagnosis as a hypothesis with a date on it, never as a finding.
+
 ## A falsifier claim written months ago is a claim, not a fact — 2026-09-15
 
 Of six carried by `multi-client`/`cross-tab`, two reproduced everywhere, one only on some VFS, and three

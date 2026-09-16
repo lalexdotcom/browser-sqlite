@@ -110,13 +110,17 @@ one machine and one build; slower CI hardware may still surface timing the campa
   no timed-out cell.
 
   **THE MERGE WAITS ON THE MATRIX TRIAGE (user, 2026-09-16): "on mergera une fois le tri
-  effectué".** The triage itself is DONE — three tas, their sizes and the order to take them are in
-  `mem:follow-ups`, the numbers in `mem:measurements` MATRIX-2, and `scripts/matrix-triage.mjs`
-  regenerates the grouping from any `.matrix/<run>/`. What remains is the WORK the triage names,
-  starting with the `createTestClient` cleanup (~258 cell-failures, all on `AccessHandlePoolVFS`),
-  then the `Need` vocabulary — **a decision the user has not taken** — then the three probable
-  product defects. The Firefox silent hang that blocked runs is diagnosed and guarded, not cured:
-  `navigator.storage.getDirectory()` can fail to settle in a worker on Firefox.
+  effectué".** The triage is done and its FIRST pile is now cleared and committed — the browser
+  test cleanup never ran at all (`mem:lessons`), and fixing it took 989 cell-failures to 500 and
+  `AccessHandlePoolVFS` from 593 to 102 (`mem:measurements`, MATRIX-3). **The user chose on
+  2026-09-16 to stay on the branch after that commit — the merge was NOT given.** What is left is
+  two piles in `mem:follow-ups`: the undeclared needs (420, 84 % of the remainder), gated on the
+  **`Need` vocabulary — a decision the user has not taken and which I must not take** — and the
+  three probable product defects (62), which need no decision and can advance. My reading, given
+  once and not to be re-litigated: the remainder is tests that misdeclare and pre-existing VFS
+  defects, neither of which belongs to this branch — but whether that satisfies "le tri effectué"
+  is the user's call. The Firefox silent hang that blocked runs is diagnosed and guarded, not
+  cured: `navigator.storage.getDirectory()` can fail to settle in a worker on Firefox.
 
 **rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
 and both are now closed — the second by merge `eeabe06` on 2026-09-11.

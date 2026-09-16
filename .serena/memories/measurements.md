@@ -2407,6 +2407,40 @@ redundancy removed when the five VFS-sweeping files started following the target
 | Our own test infrastructure | ~258 | every one on `AccessHandlePoolVFS`: `sqlite3_open_v2`, `unable to open database file`, `Failed to execute 'createSyncAccessHandle'`, `No modification allowed` — the previous test's client is never closed, so its pool slot is never returned |
 | Probable product defects | ~60 | `IDBMirrorVFS` 46 (`database disk image is malformed`, in tx-abort/tx-handle/tx-savepoint); `IDBBatchAtomicVFS` 8 (an abandoned write through a generator inside a transaction: timeout with no assertion, `TRANSACTION_CLOSED`, `offset is out of bounds`, `source array is too long`); `OPFSCoopSyncVFS` 6 (`DATABASE_NOT_FOUND` for a database the test created) |
 
+## MATRIX-3 — the same matrix after the test-cleanup fix, 2026-09-16
+
+`pnpm test:matrix`, run `.matrix/2026-09-16T13-50-57-796Z`, the same 66 cells, **2885 s**,
+no cell timed out. The tree is MATRIX-2's plus `bbd0862` (`onTestFinished` + `close()` +
+`deleteDatabase` on the `opfs-pool` layout). Triaged with `scripts/matrix-triage.mjs`, whose
+output is the numbers below.
+
+| | MATRIX-2 | MATRIX-3 |
+| --- | ---: | ---: |
+| cell-failures | 989 | **500** |
+| distinct groups | 143 | **97** |
+| green cells | 36/66 | 36/66 |
+
+**Per VFS, summed over its six browser cells:** `AccessHandlePoolVFS` **593 → 102** ·
+`OPFSCoopSyncVFS` 72 → 74 · `IDBMirrorVFS` 98 → 98 · `MemoryVFS` 126 → 126 ·
+`MemoryAsyncVFS` 84 → 84 · `IDBBatchAtomicVFS` 16 → 16. Per cell, AccessHandlePool goes
+99/99/99 (chromium) to 21/19/20 and 99/98/99 (firefox) to 14/14/14. **No cell turned green**:
+what remains on that VFS is the undeclared-needs pile.
+
+**The piles were re-cut on this run, not carried forward:** undeclared needs **420** (it GREW
+from ~372 — AccessHandlePool tests now reach their real cause), probable product defects
+**62**, and **18** newly visible `createSyncAccessHandle` collisions in `lifecycle.test.ts`
+and `long-query.test.ts` (`mem:follow-ups`). MATRIX-2's "~258 for our own test
+infrastructure" was the symptom counted correctly under a cause that was wrong.
+
+**The two pieces of the fix, each measured necessary** on `queries.test.ts` against
+`AccessHandlePoolVFS/sync`: 5/11 before · 5/11 with `onTestFinished` but no `deleteDatabase`
+· **11/11 with both**. `close()` alone cannot help — wa-sqlite's `jClose` flushes and drops
+the `fileId`, only `xDelete` frees a slot, and `DEFAULT_CAPACITY` is 6.
+
+**A whole-matrix run is not the instrument for this.** Two of them (80 min) said only
+"99, unchanged"; one instrumented single-file run answered it. Reach for `BSQ_TEST_TARGETS=<pair>
+pnpm exec rstest --config <cfg> --project 'chromium*' run <one file>` first — ~25 s.
+
 ## SAFARI-OPFS — what Safari 26 and 27 answer about OPFS access handles, 2026-09-16
 
 Measured by the user in Safari 26's console on a `localhost` page (a secure context is required —
