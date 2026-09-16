@@ -4,7 +4,7 @@ import { deleteDatabase } from '../../src/delete';
 import { SQLiteError } from '../../src/errors';
 import { initLockName } from '../../src/locks';
 import { VFS_CAPABILITIES } from '../../src/types';
-import { TEST_TARGET } from './helpers';
+import { longQuery, sleep, TEST_TARGET } from './helpers';
 
 /**
  * The database is gone when a fresh client on the same name finds no table.
@@ -322,4 +322,41 @@ describe('deleteDatabase under a live connection', () => {
     const rows = await db.read('SELECT n FROM t');
     expect(rows).toEqual([]);
   });
+});
+
+/**
+ * A worker killed while it was inside a statement holds its OPFS sync access
+ * handles for far longer than an idle one — measured 2026-09-16 on Chromium:
+ * ~2000 ms against ~65 ms. `AccessHandlePoolVFS` acquires every file in its
+ * directory exclusively, so a delete issued in that window meets the corpse.
+ *
+ * `close()` then `deleteDatabase()` is the sequence a consumer writes, and
+ * before the retry it failed with WORKER_CRASHED / NoModificationAllowedError.
+ *
+ * Falsifiable: make createVfsInstance in src/worker/worker.ts rethrow
+ * instead of waiting (verified red, 2026-09-16).
+ */
+describe('deleting after a worker died inside a statement', () => {
+  // One VFS: the subject IS AccessHandlePoolVFS's fixed handle pool. No other
+  // VFS holds its whole directory, so none of them can show this.
+  const vfs = 'AccessHandlePoolVFS' as const;
+
+  it('deletes a database whose worker was killed mid-statement', async () => {
+    const file = `delete-busy-${crypto.randomUUID()}`;
+    const db = createSQLiteClient(file, {
+      vfs,
+      poolSize: 1,
+      drainTimeout: 200,
+    });
+    await db.write('CREATE TABLE t (a)');
+
+    // Abandoned on purpose: close() bounds the drain and terminates the worker
+    // while it is still inside the statement.
+    const running = db.read(longQuery(20_000_000)).catch(() => {});
+    await sleep(100);
+    await db.close();
+    await running;
+
+    await expect(deleteDatabase(file, { vfs })).resolves.toBeUndefined();
+  }, 60_000);
 });

@@ -36,9 +36,11 @@ export type DeleteDatabaseOptions = {
 /**
  * Deletes a database and the two siblings SQLite may leave beside it.
  *
- * Deleting a database that is not there is success — SQLite's own `xDelete`
- * behaves the same way, and a caller who wanted it gone has got what they
- * asked for.
+ * Deleting a database that is not there REJECTS with `DATABASE_NOT_FOUND`.
+ * This paragraph said the opposite until 2026-09-16 — that absence was success,
+ * as SQLite's own `xDelete` treats it — but the probe in `deleteDatabaseFiles`
+ * has always reported absence, and `delete.test.ts` pins that with a falsifier.
+ * The doc was the stale half, and it ships in the published `.d.ts`.
  *
  * Nothing a VFS keeps for itself is touched: not the IndexedDB store, which is
  * shared by every database that VFS holds on this origin, and not the
@@ -52,6 +54,8 @@ export type DeleteDatabaseOptions = {
  *   revoked from here; see the README's Known Limitations.
  * @throws {SQLiteError} `BUSY` when the database is being opened or deleted
  *   elsewhere. Try again in a moment.
+ * @throws {SQLiteError} `DATABASE_NOT_FOUND` when there is no such database.
+ *   A caller deleting speculatively should catch this one code.
  */
 export const deleteDatabase = async (
   file: string,

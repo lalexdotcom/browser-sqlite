@@ -1,6 +1,7 @@
 import { onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
+import type { SQLiteError } from '../../src/errors';
 import type { InternalSQLiteClientOptions } from '../../src/scheduler';
 import {
   defaultBuildFor,
@@ -149,11 +150,24 @@ export async function createTestClient(options: TestClientOptions = {}) {
     // the origin and nothing opens afterwards. removeDatabaseFiles cannot
     // help — that VFS keeps its files under opaque names inside its own
     // directory, so removing the database's name matches nothing.
+    //
+    // NOT swallowed, and that is the point. This call used to end in
+    // `.catch(() => {})`; it was failing on every test that had just killed a
+    // busy worker — the dying worker still held the directory — so the slot
+    // leaked, the pool ran out, and the next tests failed for a reason nobody
+    // could see. The silence cost a full day (`mem:lessons`). A cleanup that
+    // cannot clean must say so.
     if (VFS_CAPABILITIES[pair.vfs].layout === 'opfs-pool') {
-      await deleteDatabase(dbName, {
-        vfs: pair.vfs,
-        build: pair.build,
-      }).catch(() => {});
+      await deleteDatabase(dbName, { vfs: pair.vfs, build: pair.build }).catch(
+        (error: unknown) => {
+          // DATABASE_NOT_FOUND only: the client never got as far as creating
+          // the file, which is the subject of several tests here and not a
+          // cleanup failure. Anything else — a slot this cleanup could not
+          // give back — must reach the test.
+          if ((error as SQLiteError)?.code !== 'DATABASE_NOT_FOUND')
+            throw error;
+        },
+      );
     }
     await removeDatabaseFiles(dbName, pair.vfs);
   });

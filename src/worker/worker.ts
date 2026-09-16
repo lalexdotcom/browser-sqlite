@@ -59,6 +59,66 @@ type SQLOptions = {
 const PROGRESS_OPS = 100_000;
 
 /**
+ * The DOMException name a second `createSyncAccessHandle` on a held file
+ * throws. Specified by the File System API, and the same on both engines —
+ * unlike the message, which is engine prose ("Access Handles cannot be
+ * created…" on Chromium). Never match on that.
+ */
+const HELD_ELSEWHERE = 'NoModificationAllowedError';
+
+/** How long to keep waiting for a dying worker to let go, and how often. */
+const ACQUIRE_RETRY_BUDGET_MS = 10_000;
+const ACQUIRE_RETRY_INTERVAL_MS = 100;
+
+/**
+ * Instantiates the VFS, waiting out a worker of this origin that has just died
+ * and still holds the files.
+ *
+ * `AccessHandlePoolVFS` acquires EVERY file in its directory exclusively, and a
+ * worker killed INSIDE a statement keeps its OPFS sync access handles far
+ * longer than an idle one: ~2000 ms against ~65 ms, measured on Chromium
+ * 2026-09-16. Both callers open squarely inside that window — a pool worker
+ * restarted by `handleDeath`, which terminates and respawns in one synchronous
+ * pass, and the delete worker a consumer reaches by calling `close()` and then
+ * `deleteDatabase()`, which is the ordinary sequence.
+ *
+ * **Waiting here is waiting for a corpse, not hoping.** The caller already
+ * holds the connection lock exclusively, so no other CLIENT can be in this
+ * file; on a VFS that takes its whole directory the only possible holder is a
+ * worker of ours on its way out. That is what makes a retry correct rather
+ * than a papering-over.
+ *
+ * Bounded at 10 s although `openTimeout` and `DELETE_TIMEOUT` (30 s each)
+ * already bound it from outside — deliberately, and below them: a holder that
+ * is NOT ours (another application on this origin using the same VFS directly)
+ * must still surface the engine's own error, which says what is wrong, rather
+ * than the caller's timeout, which does not. The 10 s is one measurement plus
+ * margin, not a ceiling: 2039 ms was one machine, one engine, one statement.
+ */
+const createVfsInstance = async (
+  vfsClass: VFSClass,
+  vfs: string,
+  module: WASQLiteModule,
+): Promise<unknown> => {
+  const deadline = Date.now() + ACQUIRE_RETRY_BUDGET_MS;
+  for (;;) {
+    try {
+      return await vfsClass.create(vfs, module, { lockPolicy: 'shared' });
+    } catch (error) {
+      if (
+        (error as { name?: string })?.name !== HELD_ELSEWHERE ||
+        Date.now() >= deadline
+      ) {
+        throw error;
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, ACQUIRE_RETRY_INTERVAL_MS),
+      );
+    }
+  }
+};
+
+/**
  * The one savepoint this library opens inside a transaction (spec 2026-09-11,
  * D7). One at a time — the next message concludes it before anything else —
  * so a fixed name suffices, and its three statements stay in the statement
@@ -294,32 +354,32 @@ const open = (file: string, options: OpenOptions) => {
       }));
     })
     .then(({ sqlite, module, vfsModule }) => {
-      return (
-        vfsModule.create(vfs, module, { lockPolicy: 'shared' }) as Promise<any>
-      ).then((vfsInstance: any) => {
-        vfsInstanceSeen = vfsInstance;
-        sqlite.vfs_register(vfsInstance, true);
-        // One lock for open + pragmas. withLock releases on throw too, which
-        // is what the explicit unlock() in the old .catch existed to do.
-        //
-        // `file` arrives already normalized from `createSQLiteClient`, so
-        // two clients spelling the same database differently (e.g. 'data' vs
-        // './data') always compete on the same lock and open the same file.
-        // The relative form is intentional: sqlite3_open_v2 checks
-        // nPathname + 8 > mxPathname (64, wa-sqlite/src/VFS.js:10) before
-        // xOpen, so an absolute name costs a character the budget cannot spare
-        // (measured: broke all 96 browser tests on 56-char names). The VFS
-        // normalizes internally, so 'data' and '/data' open the same OPFS file.
-        return locks.withLock(initLockName(vfs, file), async () => {
-          const db = await sqlite.open_v2(file);
-          for (const statement of renderPragmas(pragmas)) {
-            for await (const stmt of sqlite.statements(db, statement)) {
-              while ((await sqlite.step(stmt)) === SQLITE_ROW) {}
+      return (createVfsInstance(vfsModule, vfs, module) as Promise<any>).then(
+        (vfsInstance: any) => {
+          vfsInstanceSeen = vfsInstance;
+          sqlite.vfs_register(vfsInstance, true);
+          // One lock for open + pragmas. withLock releases on throw too, which
+          // is what the explicit unlock() in the old .catch existed to do.
+          //
+          // `file` arrives already normalized from `createSQLiteClient`, so
+          // two clients spelling the same database differently (e.g. 'data' vs
+          // './data') always compete on the same lock and open the same file.
+          // The relative form is intentional: sqlite3_open_v2 checks
+          // nPathname + 8 > mxPathname (64, wa-sqlite/src/VFS.js:10) before
+          // xOpen, so an absolute name costs a character the budget cannot spare
+          // (measured: broke all 96 browser tests on 56-char names). The VFS
+          // normalizes internally, so 'data' and '/data' open the same OPFS file.
+          return locks.withLock(initLockName(vfs, file), async () => {
+            const db = await sqlite.open_v2(file);
+            for (const statement of renderPragmas(pragmas)) {
+              for await (const stmt of sqlite.statements(db, statement)) {
+                while ((await sqlite.step(stmt)) === SQLITE_ROW) {}
+              }
             }
-          }
-          return { sqlite, module, db };
-        });
-      });
+            return { sqlite, module, db };
+          });
+        },
+      );
     })
     .then((opened) => {
       self.postMessage({ type: 'ready', callId: 0 });
@@ -853,9 +913,11 @@ const deleteDatabaseFiles = async (data: {
     string,
     VFSClass
   >;
-  const vfsInstance = (await vfsModule[vfs].create(vfs, module, {
-    lockPolicy: 'shared',
-  })) as any;
+  const vfsInstance = (await createVfsInstance(
+    vfsModule[vfs],
+    vfs,
+    module,
+  )) as any;
 
   // Probe: open without SQLITE_OPEN_CREATE to detect absence. SQLITE_CANTOPEN
   // (14) means the database is not there. Any other error is a genuine failure
