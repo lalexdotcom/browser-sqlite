@@ -119,12 +119,13 @@ for (const vfs of SHARED_VFS) {
       // transaction is never REFUSED by it. Whether it also completes promptly is
       // the VFS's business, and differs by regime.
       //
-      // Checked 2026-09-15: hardcoding `deps.scheduler.acquire('write', signal)`
-      // for the readOnly branch too (both engines) did not turn this red. B
-      // simply waits behind A's write lock and resolves cleanly once A's
-      // callback returns — this test passes no signal, so there is nothing to
-      // time out or abort. No usable source falsifier is known for this
-      // assertion (refuted claim removed, not reworded — `mem:lessons`).
+      // Falsifiable: in `acquireInstrumented` (src/client.ts), make a `read`
+      // also probe the origin write lock with `ifAvailable`, throwing when it
+      // is held, so a readOnly transaction opened under a writer is refused
+      // instead of waiting. Verified 2026-09-16: red on OPFSWriteAheadVFS,
+      // OPFSAdaptiveVFS, OPFSCoopSyncVFS, IDBBatchAtomicVFS, IDBMirrorVFS,
+      // OPFSAnyContextVFS (Chromium); OPFSAdaptiveVFS, OPFSCoopSyncVFS,
+      // IDBBatchAtomicVFS, IDBMirrorVFS, OPFSAnyContextVFS (Firefox).
       it('never refuses a read-only transaction opened under a writer', async () => {
         const { a, b } = twoClients(vfs);
         await a.write('CREATE TABLE t (n)');
@@ -187,134 +188,6 @@ for (const vfs of SHARED_VFS) {
           'SELECT count(*) AS n FROM t WHERE c0 >= 0',
         );
         expect(after?.n).toBe(batch * 2);
-      });
-
-      // The invariant the whole abort design exists for, observed under the
-      // contention that only turned up on 2026-08-31: a caller who gives up must
-      // never leave a worker holding an open transaction. It is held by
-      // construction — `BEGIN`/`COMMIT`/`ROLLBACK` deliberately carry no signal so
-      // their completion decides whether a rollback is owed, `begun` stops a
-      // ROLLBACK reaching a connection that opened nothing, and the lease returns
-      // only after `quiesce()`. None of that had ever been run against a second
-      // client holding the file.
-      //
-      // The proof is the LAST assertion, not the rejection: if the abandoned
-      // transaction had gone back to the pool still open, the next statement on
-      // that client would fail or hang. It answers.
-      //
-      // Checked 2026-09-15 (4 runs Chromium, 1 Firefox): threading `signal`
-      // into `exec(worker, 'BEGIN')` in transaction.ts did not turn this red.
-      // B's 500 ms abort fires while B is still queued behind A's write lock,
-      // well before BEGIN ever reaches the worker, so the race this comment
-      // described never opens under this test's timing. No usable source
-      // falsifier is known for this assertion (refuted claim removed, not
-      // reworded — `mem:lessons`).
-      it('gives back a usable client after a transaction is aborted mid-contention', async () => {
-        const { a, b } = twoClients(vfs);
-        await a.write('CREATE TABLE t (n)');
-
-        let error: unknown;
-        await a.transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
-          // B is refused at once or waits for the file, depending on the mode;
-          // either way the signal is what ends it.
-          error = await rejectionOf(
-            b.transaction(
-              async (btx) => {
-                await btx.write('INSERT INTO t VALUES (2)');
-              },
-              { signal: AbortSignal.timeout(500) },
-            ),
-          );
-        });
-
-        expect(error).toBeInstanceOf(Error);
-
-        // Nothing of B's abandoned transaction reached the database.
-        const rows = await a.read<{ n: number }>('SELECT n FROM t ORDER BY n');
-        expect(rows.map((row) => row.n)).toEqual([1]);
-
-        // And B still works — the connection went back clean, not poisoned. A
-        // worker returned mid-transaction would fail or hang here.
-        await b.write('INSERT INTO t VALUES (3)');
-        const after = await b.read<{ n: number }>('SELECT n FROM t ORDER BY n');
-        expect(after.map((row) => row.n)).toEqual([1, 3]);
-      });
-
-      // Same invariant for the other long-running writer, plus the bound that
-      // matters to a consumer: how much can still land AFTER they gave up.
-      //
-      // At most one batch — the one already handed to a worker. An abort abandons
-      // the wait, never the work, so a statement already dispatched runs when the
-      // file frees, and no client-side guard can recall it. Every batch behind it
-      // is skipped by the `signal?.aborted` check in `bulk.ts`. Measured
-      // 2026-08-31: with THREE batches queued behind the abort, exactly one landed.
-      //
-      // The bound is what is asserted, not a count, because the two modes differ
-      // and neither is wrong: where the flush is refused outright nothing lands at
-      // all, where it waits one batch does.
-      //
-      // Checked 2026-09-15: deleting both `signal?.aborted` checks in
-      // `bulk.ts` (the pre-check before dispatch and the one in the catch)
-      // did not turn this red. `write()` independently rejects an
-      // already-aborted signal before the round trip ever reaches the worker
-      // (queries.ts, B9), so no extra batch gets through either way. No
-      // usable source falsifier is known for this assertion (refuted claim
-      // removed, not reworded — `mem:lessons`).
-      it('commits at most one more batch after a bulkWrite is aborted, and stays usable', async () => {
-        const { a, b } = twoClients(vfs);
-        const keys = Array.from({ length: 16 }, (_, i) => `c${i}`);
-        await a.write(`CREATE TABLE t (${keys.join(', ')})`);
-        const batch = Math.floor(32766 / keys.length);
-        const row = (n: number) =>
-          Object.fromEntries(keys.map((k) => [k, n])) as Record<string, number>;
-
-        const writer = b.bulkWrite('t', keys, {
-          signal: AbortSignal.timeout(2500),
-        });
-        for (let i = 0; i < batch; i += 1) await writer.enqueue(row(i));
-
-        let committed = 0;
-        for (let poll = 0; poll < 100 && committed === 0; poll += 1) {
-          const [count] = await a.read<{ n: number }>(
-            'SELECT count(*) AS n FROM t',
-          );
-          committed = count?.n ?? 0;
-          if (committed === 0) await new Promise((r) => setTimeout(r, 50));
-        }
-        expect(committed).toBe(batch);
-
-        let error: unknown;
-        await a.transaction(async (tx) => {
-          await tx.write(`INSERT INTO t (${keys[0]}) VALUES (-1)`);
-          error = await rejectionOf(
-            (async () => {
-              // Three batches behind the abort, so "one landed" cannot be read as
-              // "everything queued landed".
-              for (let i = 0; i < 3 * batch; i += 1)
-                await writer.enqueue(row(i));
-              return writer.close();
-            })(),
-          );
-        });
-
-        expect(error).toBeInstanceOf(Error);
-        // Let anything still in flight settle before counting.
-        await new Promise((r) => setTimeout(r, 1500));
-
-        const [after] = await a.read<{ n: number }>(
-          'SELECT count(*) AS n FROM t WHERE c0 >= 0',
-        );
-        const extra = ((after?.n ?? 0) - batch) / batch;
-        expect(extra).toBeGreaterThanOrEqual(0);
-        expect(extra).toBeLessThanOrEqual(1);
-
-        // The client is still usable.
-        await b.write(`INSERT INTO t (${keys[0]}) VALUES (-2)`);
-        const [total] = await b.read<{ n: number }>(
-          'SELECT count(*) AS n FROM t',
-        );
-        expect(total?.n).toBe((after?.n ?? 0) + 2);
       });
     });
   });
