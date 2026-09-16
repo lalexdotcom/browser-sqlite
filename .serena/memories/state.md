@@ -121,8 +121,9 @@ one machine and one build; slower CI hardware may still surface timing the campa
   test cleanup never ran at all (`mem:lessons`), and fixing it took 989 cell-failures to 500 and
   `AccessHandlePoolVFS` from 593 to 102 (`mem:measurements`, MATRIX-3). **The user chose on
   2026-09-16 to stay on the branch after that commit — the merge was NOT given.** What is left is
-  two piles in `mem:follow-ups`: the undeclared needs (420, 84 % of the remainder), gated on the
-  **`Need` vocabulary — a decision the user has not taken and which I must not take** — and the
+  two piles in `mem:follow-ups`: the undeclared needs (420, of which **only 140 are gated** on the
+  **`Need` vocabulary — a decision the user has not taken and which I must not take**; the other
+  286 are a pinned `poolSize: 2` becoming `needs: ['two-workers']`, a need that already exists) and the
   three probable product defects (62), which need no decision and can advance. My reading, given
   once and not to be re-litigated: the remainder is tests that misdeclare and pre-existing VFS
   defects, neither of which belongs to this branch — but whether that satisfies "le tri effectué"

@@ -238,3 +238,12 @@ policy becomes applicable as written.
 - **Open questions stay in the backlog; each wave's own brainstorming raises them when it
   gets there** (user, 2026-08-17). Do not front-load a decision session for a wave that is
   not the next one.
+- **Finish the subject in hand before putting anything else in front of them (user,
+  2026-09-16).** Asked after a six-item list of pending decisions was laid out while the
+  matrix test work was still open: *"tu peux éviter de me proposer d'autres choses avant
+  qu'on ait réglé ça ?"*. A backlog inventory is not progress, and answering "what should I
+  decide?" with everything that is technically undecided hands the triage back to the user.
+  **While a subject is live, the only things to raise are the ones that block it.** Everything
+  else stays in `mem:follow-ups`, which exists precisely so it does not have to be said aloud.
+  This does not cancel the verdict rule above — when they ask for options, still recommend;
+  just do not manufacture the occasion.

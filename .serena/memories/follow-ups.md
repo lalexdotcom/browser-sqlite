@@ -79,6 +79,94 @@ back to it. Not designed. It will sit on the savepoint machinery merged on 2026-
 `mem:architecture`): a new entry point must go through the facade, which concludes the library's
 savepoint before opening its own.
 
+## `BUILD_CAPABILITIES` — one registry per axis, for rc.6 (user, 2026-09-16)
+
+A comfort refactor, so rc.6 by the triage rule — raised by the user while the matrix ran.
+Aggregate `BUILD_REQUIREMENTS` and `BUILD_DEGRADES_WITHOUT` into one
+`BUILD_CAPABILITIES` table and derive `type SQLiteBuild = keyof typeof BUILD_CAPABILITIES`,
+exactly as `SQLiteVFS` already derives from `VFS_CAPABILITIES` (`src/types.ts`). **Keep
+`WA_SQLITE_BUILDS` in the worker and `BUILD_NOTE` in the VFS.md generator** — the dynamic
+`wa-sqlite` imports and the documentation data must not ship to every consumer, which is the
+reason `types.ts` already gives for keeping browser versions out.
+
+**The objection written in `src/types.ts` against `keyof` is measurably false — delete it, do
+not move it.** It claims `keyof` "would let a forgotten entry mean silently that the build does
+not exist". Measured 2026-09-16 on a scratch file: under `keyof`, a build added to a dependent
+table but missing from the registry fails with TS2561 (excess key) — on a `satisfies` table AND
+on a type-annotated one — and a build in the registry missing from a dependent table fails with
+TS2741. The `keyof` shape is STRICTER, because every other build-keyed table is then checked
+against the registry in both directions.
+
+**The one detail that makes it compile:** `satisfies Record<string, BuildCapability>`, with
+`string` and not `SQLiteBuild` — otherwise the derivation is circular. `VFS_CAPABILITIES` does
+exactly that.
+
+**Scope:** `BUILD_REQUIREMENTS[build]` becomes `BUILD_CAPABILITIES[build].requires` at 11 sites
+in 7 files — `src/capabilities.ts` (3), `scripts/render-vfs-matrix.ts` (4, including
+`Object.keys(BUILD_REQUIREMENTS)` which becomes the build list and reads better for it), and
+four test files. src + scripts + tests, so it needs the user's go-ahead before it starts.
+
+**`interruptible` must be RE-DERIVED as part of this, not carried over (user, 2026-09-16).**
+The property belongs to the build, and today it is stated twice: `BUILD_DEGRADES_WITHOUT.sync
+= ['cross-origin-isolated']` declares it, and `holds('interruptible')` in
+`tests/browser/target.ts` restates it as `build !== 'sync' || here.crossOriginIsolated`. The
+duplication of the FACT is removed before rc.6 (§ below, done in the test chantier); what waits
+for `BUILD_CAPABILITIES` is naming the PROPERTY. **Do not derive it from `degradesWithout` taken
+as a whole**: that list means "degrades on any axis", and it is only by coincidence that the
+`sync` build's single declared degradation IS the interrupt. The clean shape is a field that
+names it — `interruptibleWithout: ['cross-origin-isolated']` for `sync`, empty elsewhere — from
+which `degradesWithout` can be derived, not the reverse. Same relation as `layout` → `storage`:
+the fine datum carries the logic, the aggregate is derived.
+
+**THE BOUNDARY, and it is the user's, 2026-09-16: build PREFERENCE ORDER does not move here.**
+It stays in each VFS's `builds` array in `VFS_CAPABILITIES` — per-VFS granularity, and far more
+readable than a global ranking. The library's rule, in the user's words: *if you specified no
+build, I take the first of this VFS that your environment supports; if you specified one it does
+not support, I raise.* That is the entry "Default to the first build the environment supports"
+below, and `BUILD_CAPABILITIES` only supplies the `requires` that rule tests against. Raised as a
+possible home for the ordering and refused on the spot.
+
+## Split `src/types.ts` into `const/` and `types/`, for rc.6 (user, 2026-09-16)
+
+The user's design, decided in chat after being confronted with a smaller counter-proposal and
+holding. **The stated goal is the one that decides the open cases: the root of `src/` is too
+full, and the benefit is the user reading the code.** Do it AFTER `BUILD_CAPABILITIES` (§ above)
+— `const/builds.ts` is that table's home, so the other order writes the file twice.
+
+**The rule that places everything: a type derived from a const lives in the same file as the
+const.** No import, no drift. It is why `SQLiteVFS` does not move away from `VFS_CAPABILITIES`.
+
+`const/` — platform.ts (`PlatformFeature`; no const, but the base of the DAG) · builds.ts
+(`BUILD_CAPABILITIES` + `SQLiteBuild`) · vfs.ts (`VFS_CAPABILITIES` + `SQLiteVFS`,
+`VFSCapability`, `VFSStorage`, `VFSLayout`, `VFSMemoryModel`, `defaultBuildFor`) · sqlite.ts
+(today's `src/sqlite-codes.ts`, moved — the move IS the point, not a side effect).
+
+`types/` — protocol.ts (`ClientMessageData`, `WorkerMessageData`, `SQLiteWorkerMessageData`,
+`SQLWorkerResultData`, `SavepointOp`, `WasmLocation`, `SQLOptions`, `SharedArrayTypes`) ·
+errors.ts (today's `src/errors.ts` whole, `SQLiteErrorCode` AND the two classes — user,
+2026-09-16). Note in passing: `types/` therefore emits JS, it is not erasable-only; the
+directory name groups declarations, it is not a contract.
+
+**`src/types.ts` may survive, and the distinction is exact (user, 2026-09-16): it keeps whatever
+isolated types belong nowhere else, but it NEVER re-exports what moved.** A residual module
+holding its own orphan declarations is fine; a barrel forwarding `const/` and `types/` is not,
+because it would keep alive the public/internal mixing the split exists to end. On today's
+content the leftover set looks empty — `WasmLocation` is the likeliest orphan, since it travels
+in the worker message (`pool.ts`) but is also a plain option shape used by `utils`, `delete` and
+`client` — so decide it when the move is made, not now.
+
+DAG: platform ← builds ← vfs ← protocol, no cycle.
+
+**The strongest reason is already written in the code**, at `src/index.ts`: "Named rather than
+`export *`: the wire-protocol types in types.ts are internal and must not reach the public
+surface." One file mixes public API with internal protocol, and only a hand-maintained export
+list separates them. Extracting `protocol.ts` makes that boundary structural.
+
+**No re-export barrel at `src/types.ts`.** 28 files import it; a barrel would make the change
+invisible to all of them and keep alive exactly the public/internal mixing the split exists to
+end. **The user does not consider the import churn a cost** — one LSP rename — and that
+judgement is theirs, taken on being told the number.
+
 ## `db.ready` — a promise for the pool's startup, for rc.6 (user, 2026-09-13)
 
 A feature, so rc.6 by the triage rule. Raised while designing the environment pool cap:
@@ -176,7 +264,23 @@ Numbers in `mem:measurements`, MATRIX-3. `scripts/matrix-triage.mjs` regenerates
 
 **The first pile is done, and its clearing is what these numbers are.** 989 cell-failures → 500, 143 groups → 97, `AccessHandlePoolVFS` 593 → 102. What it hid then surfaced, so the second pile GREW rather than shrank — the triage's ORDER was right even though its stated cause was wrong (`mem:lessons`, the `afterEach` entry).
 
-1. **Tests that assume what they do not declare — 420 cell-failures, 84 % of what is left.** `poolSize: 2` pinned on a capped VFS, inspection on a memory VFS, `statement-errors` writing a raw OPFS file (24 cells now, not 18 — AccessHandlePool reaches it at last), `default-pragmas` against AccessHandlePool's `locking_mode`, plus `routing` and four `tx-quiesce` that only became visible now. The repair is the `Need` vocabulary — `shared-storage`, `persistent`, `opfs-file` — plus replacing the pinned `poolSize: 2` with `needs: ['two-workers']`. **The list grows by the user's decision, never by drift**, and that decision is still not taken. Nothing in this pile moves until it is.
+1. **Tests that assume what they do not declare — 420 cell-failures.** **Only 140 of them are
+   blocked on the `Need` decision, not all 420** — the split was made on MATRIX-3 and it is the
+   thing to know before scheduling this pile:
+   - **286 need no new word and no decision.** They are `INVALID_OPTION: <vfs> does not support
+     pool sizes greater than 1`, i.e. a pinned `poolSize: 2` where `needs: ['two-workers']` says
+     the same thing — and `two-workers` ALREADY EXISTS in `tests/browser/target.ts`. Mechanical
+     substitution, available now.
+   - **140 want a word that does not exist yet**: a second client on a memory VFS (50), a test
+     writing a raw OPFS file (48, `statement-errors`), inspection on a memory VFS (36), and
+     AccessHandlePool's `locking_mode` vs `default-pragmas` (6). Candidates named at the triage:
+     `shared-storage`, `persistent`, `opfs-file`.
+   - **CHECK BEFORE ASKING FOR THE WORD:** `shared-second-client` already exists and already
+     answers false on every memory VFS (`sharedSecondClient`, `tests/browser/target.ts` — it tests
+     `layout !== 'memory'`). It may cover the 50 and part of the 36 with no new vocabulary at all.
+     Nobody has checked; that is work, not a decision, and it shrinks the question put to the user.
+
+   **The list grows by the user's decision, never by drift**, and that decision is still not taken.
 2. **Three probable product defects — 62 cell-failures.** `IDBMirrorVFS` (46): `database disk image is malformed` in tx-abort, tx-handle and tx-savepoint — an abandoned transaction corrupts the image; the largest and the most serious of the three. `IDBBatchAtomicVFS` (8): an abandoned write through a generator inside a transaction times out with no assertion, plus `TRANSACTION_CLOSED`, `offset is out of bounds` and `source array is too long` — the last two read like a wrong buffer length. `OPFSCoopSyncVFS` (6): `DATABASE_NOT_FOUND` for `marker-delete.db`, which the test had just created. Each needs a diagnosis before a fix, as `output()` did. Independent of the `Need` decision, so this pile can advance while that one waits.
 
 ## A killed worker's OPFS handles are not free when its replacement opens (2026-09-16)
