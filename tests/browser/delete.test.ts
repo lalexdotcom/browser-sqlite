@@ -53,6 +53,14 @@ describe('deleteDatabase', () => {
     expect(await tableCount(file)).toBe(0);
   });
 
+  // No target-following deletion test lives here. One was written on
+  // 2026-09-16 and deleted the same day: the cross-VFS sweep below and
+  // conformance invariant 7 already delete on every VFS, and no mutation of
+  // src/ reddened the target version without reddening one of those first —
+  // including the one that stops the deletion from removing a VFS's own
+  // sidecars, which the sweep catches and it did not. It varied the BUILD and
+  // nothing else, and deletion does not read the build.
+
   it('rejects with INVALID_OPTION when vfs is missing', async () => {
     await expect(
       // @ts-expect-error — the guard exists for JavaScript callers
