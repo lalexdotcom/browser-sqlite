@@ -19,7 +19,9 @@ describe('a long single step', () => {
   // `aborted` after the await — the rejection then waits for the sort to finish
   // and this exceeds its budget.
   it('gives the caller back control at the moment the signal fires', async () => {
-    const db = await createTestClient({ poolSize: 2 });
+    // A second worker must be free to answer while the first is inside the
+    // long sort, so the pair has to keep two (spec 2026-09-15, A5).
+    const db = await createTestClient({ poolSize: 2, needs: ['two-workers'] });
     const started = performance.now();
     await expect(
       db.read(longQuery(20_000_000), [], {

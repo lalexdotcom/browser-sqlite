@@ -383,8 +383,12 @@ describe('worker lifecycle — startup readiness gate', () => {
     // Worker 2 (slot 1, retry): bad URL — fails again.
     const created = failWorkersFromIndex(1);
     const lostIndices: number[] = [];
+    // The startup gate is about TWO slots, so the pair must keep two: a target
+    // that caps the pool would refuse the client instead of exercising the gate
+    // (spec 2026-09-15, A5).
     const db = await createTestClient({
       poolSize: 2,
+      needs: ['two-workers'],
       onWorkerLost: ({ index }) => lostIndices.push(index),
     });
 
@@ -424,8 +428,12 @@ describe('worker lifecycle — startup readiness gate', () => {
   it('fires onWorkerLost for every slot on total startup failure (openedCount === 0)', async () => {
     interceptWorkers({ url: '/definitely-missing-worker.js' });
     const lostIndices: number[] = [];
+    // The startup gate is about TWO slots, so the pair must keep two: a target
+    // that caps the pool would refuse the client instead of exercising the gate
+    // (spec 2026-09-15, A5).
     const db = await createTestClient({
       poolSize: 2,
+      needs: ['two-workers'],
       onWorkerLost: ({ index }) => lostIndices.push(index),
     });
 

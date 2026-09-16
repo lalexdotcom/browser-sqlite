@@ -1,6 +1,15 @@
 import { describe, expect, it } from '@rstest/core';
 import { createTestClient, interceptWorkers, sleep } from './helpers';
 
+/**
+ * Every test here drives two statements against two workers, so it declares
+ * two-workers rather than merely asking for `poolSize: 2`: a target that caps
+ * the pool without readwrite-unsafe (spec 2026-09-13, §10) falls back to a
+ * pair of this browser that keeps two (spec 2026-09-15, A5). Pinning the size
+ * alone refused the client outright on the five capped VFS.
+ */
+const TWO_WORKERS = { poolSize: 2, needs: ['two-workers'] } as const;
+
 const SEED =
   'INSERT INTO t (n) WITH RECURSIVE c(x) AS ' +
   '(SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 2000) ' +
@@ -22,7 +31,7 @@ const SEED =
  */
 describe('a statement following a short-circuited statement in the same callback', () => {
   it('follows tx.first()', async () => {
-    const db = await createTestClient({ poolSize: 2 });
+    const db = await createTestClient(TWO_WORKERS);
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -47,7 +56,7 @@ describe('a statement following a short-circuited statement in the same callback
   }, 30_000);
 
   it('follows a tx.chunk() broken out of mid-callback', async () => {
-    const db = await createTestClient({ poolSize: 2 });
+    const db = await createTestClient(TWO_WORKERS);
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -76,7 +85,7 @@ describe('a statement following a short-circuited statement in the same callback
   }, 30_000);
 
   it('follows a tx.read() aborted by its own signal', async () => {
-    const db = await createTestClient({ poolSize: 2 });
+    const db = await createTestClient(TWO_WORKERS);
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -126,7 +135,7 @@ describe('the boundary of that wait', () => {
    * why it is documented as best effort.
    */
   it('does not cover a generator the callback merely drops', async () => {
-    const db = await createTestClient({ poolSize: 2 });
+    const db = await createTestClient(TWO_WORKERS);
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -160,7 +169,7 @@ describe('the boundary of that wait', () => {
    * the transaction would hang instead of failing.
    */
   it('rejects a tx.chunk() refused by the guard instead of hanging', async () => {
-    const db = await createTestClient({ poolSize: 2 });
+    const db = await createTestClient(TWO_WORKERS);
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -196,13 +205,8 @@ describe('the boundary of that wait', () => {
   // src/transaction.ts — a worker is then evicted.
   it('fails cleanly when the drop is never caught', async () => {
     const records = interceptWorkers();
-    // Both workers must stay alive and unevicted: needs two-workers so a
-    // target that caps the pool without readwrite-unsafe (spec 2026-09-13,
-    // §10) falls back to a pair that keeps two (spec 2026-09-15, A5).
-    const db = await createTestClient({
-      poolSize: 2,
-      needs: ['two-workers'],
-    });
+    // Both workers must stay alive and unevicted here, not merely exist.
+    const db = await createTestClient(TWO_WORKERS);
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
