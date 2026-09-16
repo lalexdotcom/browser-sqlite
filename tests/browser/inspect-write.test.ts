@@ -2,16 +2,17 @@ import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
 import { inspectDatabase } from '../../src/inspect';
-import { TEST_TARGET } from './helpers';
+import { pairFor } from './helpers';
 
 // The write-lock accounting `inspectDatabase` reports is generic — nothing
 // here is specific to one VFS family — so the no-client case below follows
-// the target.
-const VFS = TEST_TARGET.vfs;
+// the target, declaring only that the database outlives its worker.
 
 describe('inspectDatabase write', () => {
   it('is empty when nobody writes', async () => {
-    const result = await inspectDatabase('quiet.db', { vfs: VFS });
+    const result = await inspectDatabase('quiet.db', {
+      vfs: pairFor(['shared-storage']).vfs,
+    });
     expect(result.write).toEqual({ tab: null, sameTab: false, waiting: 0 });
   });
 

@@ -3,14 +3,22 @@ import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
 import { createLocks, parseClientMarker } from '../../src/locks';
 import type { SQLiteVFS } from '../../src/types';
-import { TEST_TARGET } from './helpers';
+import { pairFor } from './helpers';
 
 // One VFS: two clients must share one database (the marker roster);
 // OPFSAdaptiveVFS shares it on every engine (see `secondClientOutcome`).
 const SHARED_FILE_VFS = 'OPFSAdaptiveVFS' as const;
 const locks = createLocks();
 
-const markersFor = async (file: string, vfs: SQLiteVFS = TEST_TARGET.vfs) => {
+/**
+ * A marker only reaches the lock registry for a database that outlives the
+ * worker holding it — a memory VFS has no roster to hold one in, which is what
+ * `holds no marker on the memory VFS` below asserts on purpose. Every other
+ * test here declares the need rather than assuming the target has it.
+ */
+const shared = () => pairFor(['shared-storage']);
+
+const markersFor = async (file: string, vfs: SQLiteVFS = shared().vfs) => {
   const { held } = await locks.entries();
   return held
     .map((entry) => parseClientMarker(entry.name, vfs, file))
@@ -22,22 +30,23 @@ const markersFor = async (file: string, vfs: SQLiteVFS = TEST_TARGET.vfs) => {
 
 describe('the client liveness marker', () => {
   it('is held while the client lives and gone after close', async () => {
+    const pair = shared();
     const file = 'marker-life.db';
     const db = createSQLiteClient(file, {
-      vfs: TEST_TARGET.vfs,
-      build: TEST_TARGET.build,
+      vfs: pair.vfs,
+      build: pair.build,
       name: 'ledger',
     });
     onTestFinished(async () => {
       await db.close().catch(() => {});
-      await deleteDatabase(file, { vfs: TEST_TARGET.vfs }).catch(() => {});
+      await deleteDatabase(file, { vfs: pair.vfs }).catch(() => {});
     });
 
     await db.read('SELECT 1');
-    const during = await markersFor(file);
+    const during = await markersFor(file, pair.vfs);
     expect(during).toHaveLength(1);
     expect(during[0]?.name).toBe('ledger 1');
-    expect(during[0]?.vfs).toBe(TEST_TARGET.vfs);
+    expect(during[0]?.vfs).toBe(pair.vfs);
 
     await db.close();
     expect(await markersFor(file)).toHaveLength(0);
@@ -70,9 +79,10 @@ describe('the client liveness marker', () => {
   });
 
   it('releases the marker when close() races the acquisition', async () => {
+    const pair = shared();
     const file = 'marker-race.db';
     onTestFinished(async () => {
-      await deleteDatabase(file, { vfs: TEST_TARGET.vfs }).catch(() => {});
+      await deleteDatabase(file, { vfs: pair.vfs }).catch(() => {});
     });
 
     // Wrap navigator.locks.request to defer bsq:client: grants until signaled.
@@ -102,8 +112,8 @@ describe('the client liveness marker', () => {
     });
 
     const db = createSQLiteClient(file, {
-      vfs: TEST_TARGET.vfs,
-      build: TEST_TARGET.build,
+      vfs: pair.vfs,
+      build: pair.build,
     });
     // No query — close() runs before the marker grant can land.
     await db.close();
@@ -115,30 +125,31 @@ describe('the client liveness marker', () => {
     await new Promise<void>((r) => setTimeout(r, 50));
 
     // Without the fix: marker is leaked. With the fix: self-released.
-    expect(await markersFor(file)).toHaveLength(0);
+    expect(await markersFor(file, pair.vfs)).toHaveLength(0);
   });
 
   it('does not change what deleteDatabase reports', async () => {
+    const pair = shared();
     const file = 'marker-delete.db';
     const db = createSQLiteClient(file, {
-      vfs: TEST_TARGET.vfs,
-      build: TEST_TARGET.build,
+      vfs: pair.vfs,
+      build: pair.build,
     });
     await db.read('SELECT 1');
 
-    await expect(
-      deleteDatabase(file, { vfs: TEST_TARGET.vfs }),
-    ).rejects.toMatchObject({
-      code: 'DATABASE_IN_USE',
-    });
+    await expect(deleteDatabase(file, { vfs: pair.vfs })).rejects.toMatchObject(
+      {
+        code: 'DATABASE_IN_USE',
+      },
+    );
 
     await db.close();
-    await deleteDatabase(file, { vfs: TEST_TARGET.vfs });
+    await deleteDatabase(file, { vfs: pair.vfs });
 
-    await expect(
-      deleteDatabase(file, { vfs: TEST_TARGET.vfs }),
-    ).rejects.toMatchObject({
-      code: 'DATABASE_NOT_FOUND',
-    });
+    await expect(deleteDatabase(file, { vfs: pair.vfs })).rejects.toMatchObject(
+      {
+        code: 'DATABASE_NOT_FOUND',
+      },
+    );
   });
 });

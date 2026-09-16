@@ -1,4 +1,5 @@
 import { RECOMMENDED_VFS } from '../../scripts/recommended-vfs';
+import { sharesStorage } from '../../src/locks';
 import {
   BUILD_REQUIREMENTS,
   type PlatformFeature,
@@ -24,8 +25,21 @@ export type TestTarget = {
  * - `interruptible`: a running statement can be interrupted here.
  * - `shared-second-client`: a second client on the same database reaches the
  *   same bytes here — neither refused nor a database of its own.
+ * - `shared-storage`: the database outlives the worker that opened it, so a
+ *   second realm can see that it exists. Weaker than `shared-second-client`,
+ *   and the difference is load-bearing: an exclusive VFS REFUSES a second
+ *   client yet is perfectly inspectable, so a test that only reads the lock
+ *   registry must not ask for the stronger one and exile itself from
+ *   `OPFSWriteAheadVFS`.
+ * - `opfs-file`: the database is an OPFS file at its own name, so a test can
+ *   put bytes there before anything opens it.
  */
-export type Need = 'two-workers' | 'interruptible' | 'shared-second-client';
+export type Need =
+  | 'two-workers'
+  | 'interruptible'
+  | 'shared-second-client'
+  | 'shared-storage'
+  | 'opfs-file';
 
 /** What this browser offers. A parameter, so the resolver runs in Node. */
 export type Here = {
@@ -83,6 +97,13 @@ const holds = (need: Need, { vfs, build }: TestTarget, here: Here): boolean => {
       return build !== 'sync' || here.crossOriginIsolated;
     case 'shared-second-client':
       return sharedSecondClient(vfs, here);
+    case 'shared-storage':
+      // The product's own predicate, not a copy of it: `inspectDatabase`
+      // refuses on exactly this condition (src/inspect.ts), so a test that
+      // declares the need and a client that enforces it can never drift.
+      return sharesStorage(vfs);
+    case 'opfs-file':
+      return VFS_CAPABILITIES[vfs].layout === 'opfs-path';
   }
 };
 

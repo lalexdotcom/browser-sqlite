@@ -3,24 +3,26 @@ import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
 import { inspectDatabase } from '../../src/inspect';
 import { clientMarkerName } from '../../src/locks';
-import { TEST_TARGET } from './helpers';
+import { pairFor } from './helpers';
 import { holdIn, makeRealm } from './helpers/realm';
 
-// `inspectDatabase` requires a persistent VFS (layout not `memory`) — both
-// targets qualify, and nothing here is specific to one VFS family (lock
-// names derive from `layout`, never from a VFS name), so this follows the
-// target.
-const VFS = TEST_TARGET.vfs;
-const BUILD = TEST_TARGET.build;
+// `inspectDatabase` needs a database that outlives the worker holding it, and
+// refuses on exactly that condition — so every test here declares
+// `shared-storage` rather than assuming the target has it. Nothing else here
+// is specific to one VFS family: lock names derive from `layout`, never from a
+// VFS name. Resolved inside each test, so a browser that cannot run the pair
+// fails that test rather than the whole file at load.
 
 describe('inspectDatabase', () => {
   it('reports nobody on a database nothing holds', async () => {
+    const { vfs: VFS } = pairFor(['shared-storage']);
     const result = await inspectDatabase('nobody.db', { vfs: VFS });
     expect(result.clients).toEqual([]);
     expect(result.tabs).toBe(0);
   });
 
   it('normalizes the file the way the client does', async () => {
+    const { vfs: VFS, build: BUILD } = pairFor(['shared-storage']);
     const db = createSQLiteClient('norm.db', { vfs: VFS, build: BUILD });
     onTestFinished(async () => {
       await db.close().catch(() => {});
@@ -32,6 +34,7 @@ describe('inspectDatabase', () => {
   });
 
   it('separates tabs and marks only the caller as sameTab', async () => {
+    const { vfs: VFS, build: BUILD } = pairFor(['shared-storage']);
     const file = 'two-tabs.db';
     const db = createSQLiteClient(file, { vfs: VFS, build: BUILD });
     onTestFinished(async () => {
@@ -63,6 +66,7 @@ describe('inspectDatabase', () => {
   });
 
   it('drops a marker whose realm was torn down without closing', async () => {
+    const { vfs: VFS } = pairFor(['shared-storage']);
     const file = 'torn-down.db';
     const foreign = clientMarkerName(
       VFS,
