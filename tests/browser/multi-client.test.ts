@@ -189,6 +189,61 @@ for (const vfs of SHARED_VFS) {
         );
         expect(after?.n).toBe(batch * 2);
       });
+
+      // The invariant the whole abort design exists for, observed under the
+      // contention that only turned up on 2026-08-31: a caller who gives up must
+      // never leave a worker holding an open transaction. It is held by
+      // construction — `BEGIN`/`COMMIT`/`ROLLBACK` deliberately carry no signal so
+      // their completion decides whether a rollback is owed, `begun` stops a
+      // ROLLBACK reaching a connection that opened nothing, and the lease returns
+      // only after `quiesce()`. None of that had ever been run against a second
+      // client holding the file.
+      //
+      // The proof is the LAST assertion, not the rejection: if the abandoned
+      // transaction had gone back to the pool still open, the next statement on
+      // that client would fail or hang. It answers.
+      //
+      // Falsifiable: in `acquireInstrumented` (src/client.ts), stop merging
+      // the caller's signal into the write-lock hold — pass only the close
+      // signal, so an aborted caller no longer cancels its queued lock
+      // request. Verified 2026-09-16: red on OPFSWriteAheadVFS,
+      // OPFSAdaptiveVFS, OPFSCoopSyncVFS, IDBBatchAtomicVFS, IDBMirrorVFS,
+      // OPFSAnyContextVFS (Chromium); OPFSAdaptiveVFS, OPFSCoopSyncVFS,
+      // IDBBatchAtomicVFS, IDBMirrorVFS, OPFSAnyContextVFS (Firefox) — every
+      // VFS times out at 30s waiting on B's write lock request, which A's
+      // callback in turn is waiting on B to settle, since B's own abort no
+      // longer cancels it.
+      it('gives back a usable client after a transaction is aborted mid-contention', async () => {
+        const { a, b } = twoClients(vfs);
+        await a.write('CREATE TABLE t (n)');
+
+        let error: unknown;
+        await a.transaction(async (tx) => {
+          await tx.write('INSERT INTO t VALUES (1)');
+          // B is refused at once or waits for the file, depending on the mode;
+          // either way the signal is what ends it.
+          error = await rejectionOf(
+            b.transaction(
+              async (btx) => {
+                await btx.write('INSERT INTO t VALUES (2)');
+              },
+              { signal: AbortSignal.timeout(500) },
+            ),
+          );
+        });
+
+        expect(error).toBeInstanceOf(Error);
+
+        // Nothing of B's abandoned transaction reached the database.
+        const rows = await a.read<{ n: number }>('SELECT n FROM t ORDER BY n');
+        expect(rows.map((row) => row.n)).toEqual([1]);
+
+        // And B still works — the connection went back clean, not poisoned. A
+        // worker returned mid-transaction would fail or hang here.
+        await b.write('INSERT INTO t VALUES (3)');
+        const after = await b.read<{ n: number }>('SELECT n FROM t ORDER BY n');
+        expect(after.map((row) => row.n)).toEqual([1, 3]);
+      });
     });
   });
 }
