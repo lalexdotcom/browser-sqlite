@@ -6,7 +6,7 @@ import type { SQLiteVFS } from '../../src/types';
 import { TEST_TARGET } from './helpers';
 
 // One VFS: two clients must share one database (the marker roster);
-// OPFSAdaptiveVFS shares it on every engine (see SHARED_VFS).
+// OPFSAdaptiveVFS shares it on every engine (see `secondClientOutcome`).
 const SHARED_FILE_VFS = 'OPFSAdaptiveVFS' as const;
 const locks = createLocks();
 

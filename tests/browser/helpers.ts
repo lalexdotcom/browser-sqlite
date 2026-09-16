@@ -89,21 +89,36 @@ export const removeDatabaseFiles = async (
   }
 };
 
-export async function createTestClient(options: TestClientOptions = {}) {
-  const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
-  const { needs = [], ...clientOptions } = options;
-  const pair: TestTarget | null =
-    options.vfs === undefined
-      ? resolvePair(TEST_TARGET, needs, HERE)
-      : {
-          vfs: options.vfs,
-          build: options.build ?? defaultBuildFor(options.vfs),
-        };
+/**
+ * The pair a test with these needs runs on — the target itself where it has
+ * them, otherwise the nearest pair of this browser that does.
+ *
+ * Exported for the few tests that build their clients themselves (a foreign
+ * realm, an intercepted worker, a pool size of its own): everything else takes
+ * `createTestClient`, which calls this. Call it INSIDE the test, never at
+ * module scope, so a target this browser cannot run fails that test with
+ * TARGET_NOT_RUNNABLE instead of failing the file at load.
+ */
+export const pairFor = (needs: readonly Need[] = []): TestTarget => {
+  const pair = resolvePair(TEST_TARGET, needs, HERE);
   if (pair === null) {
     throw new Error(
       `TARGET_NOT_RUNNABLE: no pair of this browser runs ${targetLabel(TEST_TARGET)} with needs [${needs.join(', ')}]`,
     );
   }
+  return pair;
+};
+
+export async function createTestClient(options: TestClientOptions = {}) {
+  const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+  const { needs = [], ...clientOptions } = options;
+  const pair: TestTarget =
+    options.vfs === undefined
+      ? pairFor(needs)
+      : {
+          vfs: options.vfs,
+          build: options.build ?? defaultBuildFor(options.vfs),
+        };
 
   afterEach(() => removeDatabaseFiles(dbName, pair.vfs));
 

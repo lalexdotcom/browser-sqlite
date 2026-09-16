@@ -1,10 +1,6 @@
-import { RECOMMENDED_VFS } from '../../../scripts/recommended-vfs';
 import { type SQLiteVFS, VFS_CAPABILITIES } from '../../../src/types';
-import {
-  ALL_VFS,
-  AVAILABLE_FEATURES,
-  missingHere,
-} from '../../conformance/helpers';
+import { AVAILABLE_FEATURES } from '../../conformance/helpers';
+import { sharedSecondClient } from '../target';
 
 export type SecondClientOutcome = 'shared' | 'isolated' | 'refused';
 
@@ -20,25 +16,11 @@ export type SecondClientOutcome = 'shared' | 'isolated' | 'refused';
  *   is measured, not asserted (spec §6).
  */
 export const secondClientOutcome = (vfs: SQLiteVFS): SecondClientOutcome => {
-  const cap = VFS_CAPABILITIES[vfs];
-  if (cap.layout === 'memory') return 'isolated';
-  if (cap.exclusiveConnection) return 'refused';
-  if (cap.exclusiveConnectionWithout.some((f) => !AVAILABLE_FEATURES.has(f))) {
-    return 'refused';
-  }
-  return 'shared';
+  if (VFS_CAPABILITIES[vfs].layout === 'memory') return 'isolated';
+  return sharedSecondClient(vfs, {
+    features: AVAILABLE_FEATURES,
+    crossOriginIsolated: globalThis.crossOriginIsolated === true,
+  })
+    ? 'shared'
+    : 'refused';
 };
-
-/**
- * The VFS a test of two clients sharing one database can run on in this
- * browser, on their default build, the recommended first (spec 2026-09-15,
- * D7). The refused and the isolated drop out by the same rule the matrix
- * asserts: a refused second client cannot exist, and the memory VFS take no
- * write lock and publish no epoch, so these tests would test nothing there.
- */
-export const SHARED_VFS: readonly SQLiteVFS[] = [
-  ...RECOMMENDED_VFS,
-  ...ALL_VFS.filter((vfs) => !RECOMMENDED_VFS.includes(vfs)),
-].filter(
-  (vfs) => secondClientOutcome(vfs) === 'shared' && missingHere(vfs) === null,
-);

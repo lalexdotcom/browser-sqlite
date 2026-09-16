@@ -314,7 +314,7 @@ describe('output() atomicity and sweep', () => {
     // Two clients share the same OPFS file so their sweeps interact.
     const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
     // One VFS: two clients must share one database; OPFSAdaptiveVFS shares
-    // it on every engine (see SHARED_VFS).
+    // it on every engine (see `secondClientOutcome`).
     const dbA = createSQLiteClient(dbName, { vfs: 'OPFSAdaptiveVFS' });
     const dbB = createSQLiteClient(dbName, { vfs: 'OPFSAdaptiveVFS' });
 

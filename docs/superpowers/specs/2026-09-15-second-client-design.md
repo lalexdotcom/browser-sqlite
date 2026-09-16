@@ -358,3 +358,26 @@ Confronting §3.2 with `src/client.ts` changed two things. The sections above st
        declared builds; the recommended VFS; the other VFS sharing the target's `storage`; the
        rest — each in `VFS_CAPABILITIES` key order, on its declared builds. On Firefox a
        `two-workers` need under an OPFS target resolves to `OPFSAnyContextVFS`, as today.
+
+## 13. Amendment — 2026-09-16: no file loops over VFS any more (user)
+
+- **A6 — The five files that swept VFS by hand now follow the target, and a third `Need` was
+  added for the two that could not.** A5 left five files looping internally:
+  `delete.test.ts` (two sweeps), `second-client.test.ts`, `transaction-begin.test.ts`,
+  `cross-tab.test.ts` and `multi-client.test.ts`. Each of them ran its FULL sweep in every cell of
+  `pnpm test:matrix` — 22 repetitions of the same work, a measurable share of the 3447 s.
+  - The rule is now uniform: **no test file enumerates VFS.** A file states what its subject needs
+    of the pair; the matrix supplies the pairs.
+  - `cross-tab` and `multi-client` need a VFS whose second client reaches the same database.
+    That is the new need, **`shared-second-client`**: not the memory layout (two clients there are
+    two databases), not `exclusiveConnection`, and no feature of `exclusiveConnectionWithout`
+    missing here. `sharedSecondClient` in `tests/browser/target.ts` is the one place that rule
+    exists; `secondClientOutcome` reads it, and `SHARED_VFS` — which no test iterates any more —
+    is deleted.
+  - Where a VFS's answer differs by layout rather than by feature, the test branches on the
+    declaration and says so (`delete.test.ts`: a memory VFS reports no `DATABASE_NOT_FOUND`
+    because it never persisted anything; a VFS that keeps no OPFS entry skips the root-entry
+    case with its reason in the title).
+  - **The cost, stated plainly:** `pnpm test` now sees these subjects on two VFS per engine
+    instead of nine. The other seven are covered when `pnpm test:matrix` runs — which is why the
+    user took this and the matrix's placement in CI as one subject, in that order (2026-09-16).

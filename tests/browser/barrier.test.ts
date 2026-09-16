@@ -103,7 +103,7 @@ describe('commit-propagation barrier', () => {
 });
 
 // One VFS: two clients must share one database; OPFSAdaptiveVFS shares it on
-// every engine (see SHARED_VFS).
+// every engine (see `secondClientOutcome`).
 const sharedFile = { vfs: 'OPFSAdaptiveVFS' as const };
 
 describe('barrier — two clients in one tab', () => {

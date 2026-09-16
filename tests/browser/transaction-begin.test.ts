@@ -1,16 +1,12 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
+import type { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
-import {
-  type SQLiteBuild,
-  type SQLiteVFS,
-  VFS_CAPABILITIES,
-} from '../../src/types';
-import { ALL_VFS, missingHere } from '../conformance/helpers';
+import { createTestClient } from './helpers';
 
 /**
- * A transaction whose first statement does not write, on every VFS and every
- * build this browser can run (spec 2026-09-15, A4).
+ * A transaction whose first statement does not write, on the (vfs, build) pair
+ * this project injects — every pair, run by run, under `pnpm test:matrix`
+ * (spec 2026-09-15, A4 and A6).
  *
  * OPFSWriteAheadVFS refuses a write transaction that did not announce itself at
  * BEGIN — "Write transaction cannot use BEGIN DEFERRED" — and the client stayed
@@ -65,9 +61,8 @@ const SHAPES: Record<
   },
 };
 
-const fresh = (vfs: SQLiteVFS, build: SQLiteBuild) => {
-  const file = `transaction-begin-${crypto.randomUUID()}`;
-  const db = createSQLiteClient(file, { vfs, build });
+const fresh = async () => {
+  const db = await createTestClient();
   onTestFinished(async () => {
     try {
       await db.close();
@@ -75,7 +70,7 @@ const fresh = (vfs: SQLiteVFS, build: SQLiteBuild) => {
       /* a failed client has nothing to close */
     }
     try {
-      await deleteDatabase(file, { vfs, build });
+      await deleteDatabase(db.file, { vfs: db.vfs, build: db.build });
     } catch {
       /* never created */
     }
@@ -83,26 +78,16 @@ const fresh = (vfs: SQLiteVFS, build: SQLiteBuild) => {
   return db;
 };
 
-for (const vfs of ALL_VFS) {
-  describe(`${vfs}: a transaction that does not write first`, () => {
-    for (const build of VFS_CAPABILITIES[vfs].builds) {
-      const missing = missingHere(vfs, build);
-      for (const [shape, { run, after, rows }] of Object.entries(SHAPES)) {
-        const title = `${build}: ${shape}`;
-        if (missing !== null) {
-          it.skip(`${title} — skipped, no ${missing} in this browser`, () => {});
-          continue;
-        }
-        it(title, async () => {
-          const db = fresh(vfs, build);
-          await db.write('CREATE TABLE t (n)');
-          await db.write('INSERT INTO t VALUES (1)');
-          await run(db);
-          // The client is still usable: the failure left it broken for good.
-          const [row] = await db.read<{ n: number }>(after);
-          expect(row?.n).toBe(rows);
-        });
-      }
-    }
-  });
-}
+describe('a transaction that does not write first', () => {
+  for (const [shape, { run, after, rows }] of Object.entries(SHAPES)) {
+    it(shape, async () => {
+      const db = await fresh();
+      await db.write('CREATE TABLE t (n)');
+      await db.write('INSERT INTO t VALUES (1)');
+      await run(db);
+      // The client is still usable: the failure left it broken for good.
+      const [row] = await db.read<{ n: number }>(after);
+      expect(row?.n).toBe(rows);
+    });
+  }
+});

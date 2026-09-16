@@ -98,6 +98,51 @@ describe('resolvePair', () => {
     ).toEqual(pair('OPFSAdaptiveVFS', 'async'));
   });
 
+  it('moves a shared-second-client test off OPFSWriteAheadVFS without readwrite-unsafe', () => {
+    // Firefox: that VFS refuses a second client there, so a test of two
+    // clients on one database cannot run on it (spec 2026-09-15, A6).
+    // Falsifiable: a `shared-second-client` that reads only
+    // `exclusiveConnection` — true for AccessHandlePoolVFS alone — leaves this
+    // on OPFSWriteAheadVFS and turns it red.
+    const moved = resolvePair(
+      pair('OPFSWriteAheadVFS', 'sync'),
+      ['shared-second-client'],
+      WITHOUT_UNSAFE,
+    );
+    expect(moved).not.toBeNull();
+    expect(moved?.vfs).not.toBe('OPFSWriteAheadVFS');
+    expect(VFS_CAPABILITIES[moved?.vfs as SQLiteVFS].layout).not.toBe('memory');
+  });
+
+  it('keeps a shared-second-client test on OPFSWriteAheadVFS where that feature exists', () => {
+    // Chromium: the same VFS shares there, so the target stays.
+    expect(
+      resolvePair(
+        pair('OPFSWriteAheadVFS', 'sync'),
+        ['shared-second-client'],
+        WITH_UNSAFE,
+      ),
+    ).toEqual(pair('OPFSWriteAheadVFS', 'sync'));
+  });
+
+  it('never leaves a shared-second-client test on a VFS that isolates or refuses', () => {
+    // Falsifiable: drop the `layout !== 'memory'` clause and the memory
+    // targets resolve to themselves, where two clients are two databases.
+    for (const target of [
+      pair('MemoryVFS', 'sync'),
+      pair('MemoryAsyncVFS', 'async'),
+      pair('AccessHandlePoolVFS', 'sync'),
+    ]) {
+      const resolved = resolvePair(
+        target,
+        ['shared-second-client'],
+        WITH_UNSAFE,
+      );
+      expect(resolved).not.toBeNull();
+      expect(resolved?.vfs).not.toBe(target.vfs);
+    }
+  });
+
   it('never returns a pair that needs a feature missing here', () => {
     // Falsifiable: a qualification that skips a candidate VFS's own `requires`
     // returns OPFSWriteAheadVFS/async here, where there is no OPFS at all.

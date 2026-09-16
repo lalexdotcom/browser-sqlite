@@ -183,7 +183,7 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
   });
 
   // One VFS: two clients must share one database; OPFSAdaptiveVFS shares it
-  // on every engine (see SHARED_VFS).
+  // on every engine (see `secondClientOutcome`).
   it('lets two clients coexist on a shared-mode VFS, and both hold the lock', async () => {
     const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
     const options = { vfs: 'OPFSAdaptiveVFS' as const, poolSize: 1 };
@@ -248,7 +248,7 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
   // VFS_CAPABILITIES. The second client then gets BUSY and this goes RED.
   // -------------------------------------------------------------------------
   // One VFS: two clients must share one database; OPFSAdaptiveVFS shares it
-  // on every engine (see SHARED_VFS).
+  // on every engine (see `secondClientOutcome`).
   it('does not block a second client on OPFSAdaptiveVFS (control)', async () => {
     const name = dbName();
     const opts = { vfs: 'OPFSAdaptiveVFS' as const, poolSize: 1 };

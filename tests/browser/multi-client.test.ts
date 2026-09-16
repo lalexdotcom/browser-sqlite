@@ -1,15 +1,15 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
-import type { SQLiteVFS } from '../../src/types';
 import { poolFor } from '../conformance/helpers';
-import { createTestClient } from './helpers';
-import { SHARED_VFS } from './helpers/vfs-contract';
+import { createTestClient, pairFor } from './helpers';
 
 /**
- * What two clients writing at once actually do, on every VFS a second client
- * shares — `SHARED_VFS` in `tests/browser/helpers/vfs-contract.ts` says which,
- * and why the rest are absent.
+ * What two clients writing at once actually do, on the pair this project
+ * injects wherever a second client shares its database there — declared as
+ * `shared-second-client`, resolved to the nearest pair of this browser that
+ * has it otherwise (spec 2026-09-15, A6). It used to sweep SHARED_VFS by hand,
+ * which repeated the whole file in every cell of `pnpm test:matrix`.
  *
  * Nothing here mentions tabs and everything here is about them: Web Locks and
  * OPFS access handles are both origin-wide, so two clients in this one page
@@ -28,9 +28,12 @@ import { SHARED_VFS } from './helpers/vfs-contract';
  * B waits the two deadlocked — the test presupposed the fail-fast behaviour it
  * was written to observe.
  */
-const twoClients = (vfs: SQLiteVFS) => {
+const NEEDS = ['shared-second-client'] as const;
+
+const twoClients = () => {
+  const { vfs, build } = pairFor(NEEDS);
   const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
-  const options = { vfs, poolSize: poolFor(vfs) };
+  const options = { vfs, build, poolSize: poolFor(vfs) };
   const a = createSQLiteClient(dbName, options);
   const b = createSQLiteClient(dbName, options);
   onTestFinished(async () => {
@@ -42,7 +45,7 @@ const twoClients = (vfs: SQLiteVFS) => {
       }
     }
     try {
-      await deleteDatabase(dbName, { vfs });
+      await deleteDatabase(dbName, { vfs, build });
     } catch {
       /* never created */
     }
@@ -73,180 +76,176 @@ const settledWithin = (
     new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms)),
   ]);
 
-for (const vfs of SHARED_VFS) {
-  describe(vfs, () => {
-    describe('two clients writing at once', () => {
-      // Falsifiable: delete the `locks.hold(writeLock, …)` line in
-      // `acquireInstrumented` and this goes red on `settled` where handles are
-      // per-connection — B is refused with BUSY instead of waiting.
-      //
-      // Verified 2026-09-15: red on OPFSAdaptiveVFS, IDBBatchAtomicVFS,
-      // IDBMirrorVFS, OPFSAnyContextVFS (Chromium); IDBBatchAtomicVFS,
-      // IDBMirrorVFS, OPFSAnyContextVFS (Firefox). Stays green on
-      // OPFSCoopSyncVFS and OPFSWriteAheadVFS (both engines) and on
-      // OPFSAdaptiveVFS (Firefox): each rotates one exclusive OPFS handle
-      // between the two clients regardless of our lock, which still
-      // serializes the second write on its own (HANDLE-1, `mem:vfs`).
-      it('makes the second writer wait, on both regimes', async () => {
-        const { a, b } = twoClients(vfs);
-        await a.write('CREATE TABLE t (n)');
+describe('two clients writing at once', () => {
+  // Falsifiable: delete the `locks.hold(writeLock, …)` line in
+  // `acquireInstrumented` and this goes red on `settled` where handles are
+  // per-connection — B is refused with BUSY instead of waiting.
+  //
+  // Verified 2026-09-15: red on OPFSAdaptiveVFS, IDBBatchAtomicVFS,
+  // IDBMirrorVFS, OPFSAnyContextVFS (Chromium); IDBBatchAtomicVFS,
+  // IDBMirrorVFS, OPFSAnyContextVFS (Firefox). Stays green on
+  // OPFSCoopSyncVFS and OPFSWriteAheadVFS (both engines) and on
+  // OPFSAdaptiveVFS (Firefox): each rotates one exclusive OPFS handle
+  // between the two clients regardless of our lock, which still
+  // serializes the second write on its own (HANDLE-1, `mem:vfs`).
+  it('makes the second writer wait, on both regimes', async () => {
+    const { a, b } = twoClients();
+    await a.write('CREATE TABLE t (n)');
 
-        let settled = false;
-        let attempt!: Promise<unknown>;
-        await a.transaction(async (tx) => {
-          // A holds the write lock from here until this callback returns.
-          await tx.write('INSERT INTO t VALUES (1)');
-          attempt = rejectionOf(b.write('INSERT INTO t VALUES (2)'));
-          settled = await settledWithin(attempt, TURNED_AWAY_WITHIN);
-        });
-        const error = await attempt;
-
-        expect(settled).toBe(false);
-        expect(error).toBeUndefined();
-
-        // The invariant a consumer cares about: exactly the writes that were
-        // accepted are in the database, and now BOTH are accepted.
-        const rows = await a.read<{ n: number }>('SELECT n FROM t ORDER BY n');
-        expect(rows.map((row) => row.n)).toEqual([1, 2]);
-      });
-
-      // I13: B is never awaited to completion inside A's callback. In reduced mode
-      // a read waits for the rotated exclusive handle, so awaiting it there
-      // deadlocks the test rather than failing it — which is precisely how the
-      // first version of this file was written, and why it is called out.
-      //
-      // So what is asserted is the claim our lock actually makes: a read-only
-      // transaction is never REFUSED by it. Whether it also completes promptly is
-      // the VFS's business, and differs by regime.
-      //
-      // Falsifiable: in `acquireInstrumented` (src/client.ts), make a `read`
-      // also probe the origin write lock with `ifAvailable`, throwing when it
-      // is held, so a readOnly transaction opened under a writer is refused
-      // instead of waiting. Verified 2026-09-16: red on OPFSWriteAheadVFS,
-      // OPFSAdaptiveVFS, OPFSCoopSyncVFS, IDBBatchAtomicVFS, IDBMirrorVFS,
-      // OPFSAnyContextVFS (Chromium); OPFSAdaptiveVFS, OPFSCoopSyncVFS,
-      // IDBBatchAtomicVFS, IDBMirrorVFS, OPFSAnyContextVFS (Firefox).
-      it('never refuses a read-only transaction opened under a writer', async () => {
-        const { a, b } = twoClients(vfs);
-        await a.write('CREATE TABLE t (n)');
-        await a.write('INSERT INTO t VALUES (1)');
-
-        let attempt!: Promise<unknown>;
-        await a.transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (2)');
-          attempt = rejectionOf(
-            b.transaction(
-              async (btx) => {
-                await btx.read<{ n: number }>('SELECT n FROM t');
-              },
-              { readOnly: true },
-            ),
-          );
-          // Bounded, and the result is deliberately not asserted: on one regime it
-          // settles here, on the other it is still waiting on the OPFS handle.
-          await settledWithin(attempt, TURNED_AWAY_WITHIN);
-        });
-
-        // Awaited to completion only now that A has let the file go.
-        expect(await attempt).toBeUndefined();
-      });
-
-      // `bulkWrite` still commits PER BATCH and still takes one lock per batch —
-      // `bulk.ts` calls the public `write`. So another client's write can still
-      // land between two batches; what changed is that neither side is refused.
-      //
-      // Falsifiable by its own middle assertion: if `bulkWrite` did not commit per
-      // batch, the first batch would be invisible to A until `close()` and
-      // `committed` would stay 0 through all hundred polls.
-      it('interleaves a bulkWrite with another client, refusing neither', async () => {
-        const { a, b } = twoClients(vfs);
-        const keys = Array.from({ length: 16 }, (_, i) => `c${i}`);
-        await a.write(`CREATE TABLE t (${keys.join(', ')})`);
-
-        const batch = Math.floor(32766 / keys.length);
-        const row = (n: number) =>
-          Object.fromEntries(keys.map((k) => [k, n])) as Record<string, number>;
-
-        const writer = b.bulkWrite('t', keys);
-        for (let i = 0; i < batch; i += 1) await writer.enqueue(row(i));
-
-        let committed = 0;
-        for (let poll = 0; poll < 100 && committed === 0; poll += 1) {
-          const [count] = await a.read<{ n: number }>(
-            'SELECT count(*) AS n FROM t',
-          );
-          committed = count?.n ?? 0;
-          if (committed === 0) await new Promise((r) => setTimeout(r, 50));
-        }
-        expect(committed).toBe(batch);
-
-        await a.write(`INSERT INTO t (${keys[0]}) VALUES (-1)`);
-        for (let i = 0; i < batch; i += 1) await writer.enqueue(row(i));
-        await writer.close();
-
-        const [after] = await a.read<{ n: number }>(
-          'SELECT count(*) AS n FROM t WHERE c0 >= 0',
-        );
-        expect(after?.n).toBe(batch * 2);
-      });
-
-      // The invariant the whole abort design exists for, observed under the
-      // contention that only turned up on 2026-08-31: a caller who gives up must
-      // never leave a worker holding an open transaction. It is held by
-      // construction — `BEGIN`/`COMMIT`/`ROLLBACK` deliberately carry no signal so
-      // their completion decides whether a rollback is owed, `begun` stops a
-      // ROLLBACK reaching a connection that opened nothing, and the lease returns
-      // only after `quiesce()`. None of that had ever been run against a second
-      // client holding the file.
-      //
-      // The proof is the LAST assertion, not the rejection: if the abandoned
-      // transaction had gone back to the pool still open, the next statement on
-      // that client would fail or hang. It answers.
-      //
-      // Falsifiable: in `acquireInstrumented` (src/client.ts), stop merging
-      // the caller's signal into the write-lock hold — pass only the close
-      // signal, so an aborted caller no longer cancels its queued lock
-      // request. Verified 2026-09-16: red on OPFSWriteAheadVFS,
-      // OPFSAdaptiveVFS, OPFSCoopSyncVFS, IDBBatchAtomicVFS, IDBMirrorVFS,
-      // OPFSAnyContextVFS (Chromium); OPFSAdaptiveVFS, OPFSCoopSyncVFS,
-      // IDBBatchAtomicVFS, IDBMirrorVFS, OPFSAnyContextVFS (Firefox) — every
-      // VFS times out at 30s waiting on B's write lock request, which A's
-      // callback in turn is waiting on B to settle, since B's own abort no
-      // longer cancels it.
-      it('gives back a usable client after a transaction is aborted mid-contention', async () => {
-        const { a, b } = twoClients(vfs);
-        await a.write('CREATE TABLE t (n)');
-
-        let error: unknown;
-        await a.transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
-          // B is refused at once or waits for the file, depending on the mode;
-          // either way the signal is what ends it.
-          error = await rejectionOf(
-            b.transaction(
-              async (btx) => {
-                await btx.write('INSERT INTO t VALUES (2)');
-              },
-              { signal: AbortSignal.timeout(500) },
-            ),
-          );
-        });
-
-        expect(error).toBeInstanceOf(Error);
-
-        // Nothing of B's abandoned transaction reached the database.
-        const rows = await a.read<{ n: number }>('SELECT n FROM t ORDER BY n');
-        expect(rows.map((row) => row.n)).toEqual([1]);
-
-        // And B still works — the connection went back clean, not poisoned. A
-        // worker returned mid-transaction would fail or hang here.
-        await b.write('INSERT INTO t VALUES (3)');
-        const after = await b.read<{ n: number }>('SELECT n FROM t ORDER BY n');
-        expect(after.map((row) => row.n)).toEqual([1, 3]);
-      });
+    let settled = false;
+    let attempt!: Promise<unknown>;
+    await a.transaction(async (tx) => {
+      // A holds the write lock from here until this callback returns.
+      await tx.write('INSERT INTO t VALUES (1)');
+      attempt = rejectionOf(b.write('INSERT INTO t VALUES (2)'));
+      settled = await settledWithin(attempt, TURNED_AWAY_WITHIN);
     });
+    const error = await attempt;
+
+    expect(settled).toBe(false);
+    expect(error).toBeUndefined();
+
+    // The invariant a consumer cares about: exactly the writes that were
+    // accepted are in the database, and now BOTH are accepted.
+    const rows = await a.read<{ n: number }>('SELECT n FROM t ORDER BY n');
+    expect(rows.map((row) => row.n)).toEqual([1, 2]);
   });
-}
+
+  // I13: B is never awaited to completion inside A's callback. In reduced mode
+  // a read waits for the rotated exclusive handle, so awaiting it there
+  // deadlocks the test rather than failing it — which is precisely how the
+  // first version of this file was written, and why it is called out.
+  //
+  // So what is asserted is the claim our lock actually makes: a read-only
+  // transaction is never REFUSED by it. Whether it also completes promptly is
+  // the VFS's business, and differs by regime.
+  //
+  // Falsifiable: in `acquireInstrumented` (src/client.ts), make a `read`
+  // also probe the origin write lock with `ifAvailable`, throwing when it
+  // is held, so a readOnly transaction opened under a writer is refused
+  // instead of waiting. Verified 2026-09-16: red on OPFSWriteAheadVFS,
+  // OPFSAdaptiveVFS, OPFSCoopSyncVFS, IDBBatchAtomicVFS, IDBMirrorVFS,
+  // OPFSAnyContextVFS (Chromium); OPFSAdaptiveVFS, OPFSCoopSyncVFS,
+  // IDBBatchAtomicVFS, IDBMirrorVFS, OPFSAnyContextVFS (Firefox).
+  it('never refuses a read-only transaction opened under a writer', async () => {
+    const { a, b } = twoClients();
+    await a.write('CREATE TABLE t (n)');
+    await a.write('INSERT INTO t VALUES (1)');
+
+    let attempt!: Promise<unknown>;
+    await a.transaction(async (tx) => {
+      await tx.write('INSERT INTO t VALUES (2)');
+      attempt = rejectionOf(
+        b.transaction(
+          async (btx) => {
+            await btx.read<{ n: number }>('SELECT n FROM t');
+          },
+          { readOnly: true },
+        ),
+      );
+      // Bounded, and the result is deliberately not asserted: on one regime it
+      // settles here, on the other it is still waiting on the OPFS handle.
+      await settledWithin(attempt, TURNED_AWAY_WITHIN);
+    });
+
+    // Awaited to completion only now that A has let the file go.
+    expect(await attempt).toBeUndefined();
+  });
+
+  // `bulkWrite` still commits PER BATCH and still takes one lock per batch —
+  // `bulk.ts` calls the public `write`. So another client's write can still
+  // land between two batches; what changed is that neither side is refused.
+  //
+  // Falsifiable by its own middle assertion: if `bulkWrite` did not commit per
+  // batch, the first batch would be invisible to A until `close()` and
+  // `committed` would stay 0 through all hundred polls.
+  it('interleaves a bulkWrite with another client, refusing neither', async () => {
+    const { a, b } = twoClients();
+    const keys = Array.from({ length: 16 }, (_, i) => `c${i}`);
+    await a.write(`CREATE TABLE t (${keys.join(', ')})`);
+
+    const batch = Math.floor(32766 / keys.length);
+    const row = (n: number) =>
+      Object.fromEntries(keys.map((k) => [k, n])) as Record<string, number>;
+
+    const writer = b.bulkWrite('t', keys);
+    for (let i = 0; i < batch; i += 1) await writer.enqueue(row(i));
+
+    let committed = 0;
+    for (let poll = 0; poll < 100 && committed === 0; poll += 1) {
+      const [count] = await a.read<{ n: number }>(
+        'SELECT count(*) AS n FROM t',
+      );
+      committed = count?.n ?? 0;
+      if (committed === 0) await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(committed).toBe(batch);
+
+    await a.write(`INSERT INTO t (${keys[0]}) VALUES (-1)`);
+    for (let i = 0; i < batch; i += 1) await writer.enqueue(row(i));
+    await writer.close();
+
+    const [after] = await a.read<{ n: number }>(
+      'SELECT count(*) AS n FROM t WHERE c0 >= 0',
+    );
+    expect(after?.n).toBe(batch * 2);
+  });
+
+  // The invariant the whole abort design exists for, observed under the
+  // contention that only turned up on 2026-08-31: a caller who gives up must
+  // never leave a worker holding an open transaction. It is held by
+  // construction — `BEGIN`/`COMMIT`/`ROLLBACK` deliberately carry no signal so
+  // their completion decides whether a rollback is owed, `begun` stops a
+  // ROLLBACK reaching a connection that opened nothing, and the lease returns
+  // only after `quiesce()`. None of that had ever been run against a second
+  // client holding the file.
+  //
+  // The proof is the LAST assertion, not the rejection: if the abandoned
+  // transaction had gone back to the pool still open, the next statement on
+  // that client would fail or hang. It answers.
+  //
+  // Falsifiable: in `acquireInstrumented` (src/client.ts), stop merging
+  // the caller's signal into the write-lock hold — pass only the close
+  // signal, so an aborted caller no longer cancels its queued lock
+  // request. Verified 2026-09-16: red on OPFSWriteAheadVFS,
+  // OPFSAdaptiveVFS, OPFSCoopSyncVFS, IDBBatchAtomicVFS, IDBMirrorVFS,
+  // OPFSAnyContextVFS (Chromium); OPFSAdaptiveVFS, OPFSCoopSyncVFS,
+  // IDBBatchAtomicVFS, IDBMirrorVFS, OPFSAnyContextVFS (Firefox) — every
+  // VFS times out at 30s waiting on B's write lock request, which A's
+  // callback in turn is waiting on B to settle, since B's own abort no
+  // longer cancels it.
+  it('gives back a usable client after a transaction is aborted mid-contention', async () => {
+    const { a, b } = twoClients();
+    await a.write('CREATE TABLE t (n)');
+
+    let error: unknown;
+    await a.transaction(async (tx) => {
+      await tx.write('INSERT INTO t VALUES (1)');
+      // B is refused at once or waits for the file, depending on the mode;
+      // either way the signal is what ends it.
+      error = await rejectionOf(
+        b.transaction(
+          async (btx) => {
+            await btx.write('INSERT INTO t VALUES (2)');
+          },
+          { signal: AbortSignal.timeout(500) },
+        ),
+      );
+    });
+
+    expect(error).toBeInstanceOf(Error);
+
+    // Nothing of B's abandoned transaction reached the database.
+    const rows = await a.read<{ n: number }>('SELECT n FROM t ORDER BY n');
+    expect(rows.map((row) => row.n)).toEqual([1]);
+
+    // And B still works — the connection went back clean, not poisoned. A
+    // worker returned mid-transaction would fail or hang here.
+    await b.write('INSERT INTO t VALUES (3)');
+    const after = await b.read<{ n: number }>('SELECT n FROM t ORDER BY n');
+    expect(after.map((row) => row.n)).toEqual([1, 3]);
+  });
+});
 
 describe('one client', () => {
   // The other half of the sentence the README puts in front of a consumer:

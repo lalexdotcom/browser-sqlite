@@ -5,7 +5,7 @@ import { VFS_CAPABILITIES } from '../../src/types';
 import { createTestClient, TEST_TARGET } from './helpers';
 
 // One VFS: two clients must share one database (inspect()'s sibling/tabs
-// roster); OPFSAdaptiveVFS shares it on every engine (see SHARED_VFS).
+// roster); OPFSAdaptiveVFS shares it on every engine (see `secondClientOutcome`).
 const VFS = 'OPFSAdaptiveVFS' as const;
 
 describe('db identity getters', () => {

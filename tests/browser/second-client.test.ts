@@ -7,22 +7,20 @@ import {
   type SQLiteVFS,
   VFS_CAPABILITIES,
 } from '../../src/types';
-import {
-  ALL_VFS,
-  AVAILABLE_FEATURES,
-  missingHere,
-} from '../conformance/helpers';
+import { AVAILABLE_FEATURES } from '../conformance/helpers';
 import {
   interceptWorkers,
   killSilently,
   sleep,
+  TEST_TARGET,
   type WorkerRecord,
 } from './helpers';
 import { secondClientOutcome } from './helpers/vfs-contract';
 
 /**
- * What a second client on the same database gets, for every VFS and every
- * build this browser can run (spec 2026-09-15, §4.1).
+ * What a second client on the same database gets, on the (vfs, build) pair
+ * this project injects — every pair, run by run, under `pnpm test:matrix`
+ * (spec 2026-09-15, §4.1 and A6).
  *
  * Two clients in one page contend exactly as two tabs do: Web Locks, OPFS
  * access handles and IndexedDB are all origin-wide. The expectation is never
@@ -138,90 +136,82 @@ describe('a client whose worker 0 is lost before it answers the probe', () => {
   });
 });
 
-for (const vfs of ALL_VFS) {
+{
+  const { vfs, build } = TEST_TARGET;
   const outcome = secondClientOutcome(vfs);
-  describe(`${vfs}: a second client is ${outcome}`, () => {
-    for (const build of VFS_CAPABILITIES[vfs].builds) {
-      const missing = missingHere(vfs, build);
-      for (const shape of ['together', 'after'] as const) {
-        const title = `${build}, built ${shape === 'together' ? 'together' : 'after the first write'}`;
-        if (missing !== null) {
-          it.skip(`${title} — skipped, no ${missing} in this browser`, () => {});
-          continue;
-        }
-        it(title, async () => {
-          const { file, open, losses } = oneDatabase(vfs, build);
-          const a = open('A');
-          let b = shape === 'together' ? open('B') : undefined;
-          await a.write('CREATE TABLE t (n)');
-          await a.write('INSERT INTO t VALUES (1)');
-          b ??= open('B');
+  describe(`a second client is ${outcome} on the target`, () => {
+    for (const shape of ['together', 'after'] as const) {
+      const title = `built ${shape === 'together' ? 'together' : 'after the first write'}`;
+      it(title, async () => {
+        const { file, open, losses } = oneDatabase(vfs, build);
+        const a = open('A');
+        let b = shape === 'together' ? open('B') : undefined;
+        await a.write('CREATE TABLE t (n)');
+        await a.write('INSERT INTO t VALUES (1)');
+        b ??= open('B');
 
-          if (outcome === 'shared') {
-            expect(
-              values(await b.read<{ n: number }>('SELECT n FROM t')),
-            ).toEqual([1]);
-            await b.write('INSERT INTO t VALUES (2)');
-            expect(
-              values(await a.read<{ n: number }>('SELECT n FROM t ORDER BY n')),
-            ).toEqual([1, 2]);
-          } else if (outcome === 'isolated') {
-            await expect(b.read('SELECT n FROM t')).rejects.toMatchObject({
-              code: 'STATEMENT_FAILED',
-            });
-            await b.write('CREATE TABLE t (n)');
-            await b.write('INSERT INTO t VALUES (9)');
-            expect(
-              values(await a.read<{ n: number }>('SELECT n FROM t')),
-            ).toEqual([1]);
-          } else {
-            const started = performance.now();
-            const refusal = await b.read('SELECT 1').then(
-              () => undefined,
-              (e: unknown) => e,
-            );
-            expect(refusal).toBeInstanceOf(SQLiteError);
-            const { code, message, sqliteCode } = refusal as SQLiteError;
-            expect(code).toBe('DATABASE_IN_USE');
-            // Spec §3.2, step 4: the error names the VFS and — where a feature
-            // this browser lacks is what makes the VFS exclusive — that
-            // feature. It carries no `sqliteCode`, so `readWithRetry` does
-            // not act on it.
-            expect(message).toContain(vfs);
-            const lacking = VFS_CAPABILITIES[
-              vfs
-            ].exclusiveConnectionWithout.find(
-              (f) => !AVAILABLE_FEATURES.has(f),
-            );
-            if (lacking !== undefined) {
-              expect(message).toContain(`without ${lacking}`);
-            }
-            expect(sqliteCode).toBeUndefined();
-            expect(performance.now() - started).toBeLessThan(REFUSED_WITHIN);
-            // The first client is untouched by the refusal.
-            await a.write('INSERT INTO t VALUES (2)');
-            expect(
-              values(await a.read<{ n: number }>('SELECT n FROM t ORDER BY n')),
-            ).toEqual([1, 2]);
-            // The lock that refused B is the one deleteDatabase reads (spec §3.3).
-            await expect(
-              deleteDatabase(file, { vfs, build }),
-            ).rejects.toMatchObject({
-              code: 'DATABASE_IN_USE',
-            });
-            await a.close();
-            // A refused client never recovers (D9); a new one opens once the
-            // first is gone.
-            const c = open('C');
-            expect(
-              values(await c.read<{ n: number }>('SELECT n FROM t ORDER BY n')),
-            ).toEqual([1, 2]);
+        if (outcome === 'shared') {
+          expect(
+            values(await b.read<{ n: number }>('SELECT n FROM t')),
+          ).toEqual([1]);
+          await b.write('INSERT INTO t VALUES (2)');
+          expect(
+            values(await a.read<{ n: number }>('SELECT n FROM t ORDER BY n')),
+          ).toEqual([1, 2]);
+        } else if (outcome === 'isolated') {
+          await expect(b.read('SELECT n FROM t')).rejects.toMatchObject({
+            code: 'STATEMENT_FAILED',
+          });
+          await b.write('CREATE TABLE t (n)');
+          await b.write('INSERT INTO t VALUES (9)');
+          expect(
+            values(await a.read<{ n: number }>('SELECT n FROM t')),
+          ).toEqual([1]);
+        } else {
+          const started = performance.now();
+          const refusal = await b.read('SELECT 1').then(
+            () => undefined,
+            (e: unknown) => e,
+          );
+          expect(refusal).toBeInstanceOf(SQLiteError);
+          const { code, message, sqliteCode } = refusal as SQLiteError;
+          expect(code).toBe('DATABASE_IN_USE');
+          // Spec §3.2, step 4: the error names the VFS and — where a feature
+          // this browser lacks is what makes the VFS exclusive — that
+          // feature. It carries no `sqliteCode`, so `readWithRetry` does
+          // not act on it.
+          expect(message).toContain(vfs);
+          const lacking = VFS_CAPABILITIES[vfs].exclusiveConnectionWithout.find(
+            (f) => !AVAILABLE_FEATURES.has(f),
+          );
+          if (lacking !== undefined) {
+            expect(message).toContain(`without ${lacking}`);
           }
-          // A suite that proves a VFS works proves how many workers it worked
-          // with (mem:lessons, 2026-09-13).
-          expect(losses).toEqual([]);
-        });
-      }
+          expect(sqliteCode).toBeUndefined();
+          expect(performance.now() - started).toBeLessThan(REFUSED_WITHIN);
+          // The first client is untouched by the refusal.
+          await a.write('INSERT INTO t VALUES (2)');
+          expect(
+            values(await a.read<{ n: number }>('SELECT n FROM t ORDER BY n')),
+          ).toEqual([1, 2]);
+          // The lock that refused B is the one deleteDatabase reads (spec §3.3).
+          await expect(
+            deleteDatabase(file, { vfs, build }),
+          ).rejects.toMatchObject({
+            code: 'DATABASE_IN_USE',
+          });
+          await a.close();
+          // A refused client never recovers (D9); a new one opens once the
+          // first is gone.
+          const c = open('C');
+          expect(
+            values(await c.read<{ n: number }>('SELECT n FROM t ORDER BY n')),
+          ).toEqual([1, 2]);
+        }
+        // A suite that proves a VFS works proves how many workers it worked
+        // with (mem:lessons, 2026-09-13).
+        expect(losses).toEqual([]);
+      });
     }
   });
 }
