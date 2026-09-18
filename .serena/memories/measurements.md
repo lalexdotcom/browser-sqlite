@@ -4,6 +4,39 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## VFS-PILES — the three product piles, cause and cost, 2026-09-18, this container
+
+Full matrix before: **62 cell-failures, 20 groups, 52/66 cells green** (2026-09-16). After the
+four wa-sqlite fixes: **1 failing test, 1 group, 65/66 green** — the one a load flake, 3/3 green
+alone. Mechanisms in `docs/upstream/`; only the numbers are here.
+
+**`OPFSCoopSyncVFS` — 7, two unrelated causes.**
+- Six `DATABASE_NOT_FOUND`: a database opened and never written is 0 bytes, so `jOpen` without
+  `SQLITE_OPEN_CREATE` returns `SQLITE_CANTOPEN` and the delete probe read it as absence. Proved
+  by returning a distinct code from that branch alone — the error changed — and back when the
+  distinct code was moved to the non-empty case.
+- Two `sqlite3_open_v2`: reproduced 5 times in 14 full-cell runs (36 %), never in isolation
+  (18/18 green). At the failure, `navigator.locks.query()` showed `held=none pending=none` for
+  every `ahp:` lock: the holder is a dead context. The file was free **1-12 ms** after the open
+  gave up, and a replayed acquisition succeeded in **4-14 ms, 4 of 4** — which read as "one retry
+  is enough" and was **wrong**: `Promise.all` leaks the handles acquired beside the one that
+  failed, so 25 retries over 2.5 s all failed on `-journal`, the file itself free since 78 ms.
+
+**`IDBBatchAtomicVFS` — 8, one cause, two faces.** A write at 1843200 found the block at 1839104:
+one 4096-byte page missing from a contiguous run of **2305**, `queued-before=0` — never written,
+not lost. On `jspi` it surfaces as `offset is out of bounds` (Chromium) / `source array is too
+long` (Firefox); on `async` the rejection is swallowed and the test hangs its full 30 s.
+
+**`IDBMirrorVFS` — 46, one cause.** `block.set(pData, …)` stores zeroes because `pData` is a
+`Uint8ArrayProxy` with no indexed access. Seen on the journal header: written
+`d9d505f920a163d700000002`, stored `00000000`. The rollback then reads an empty-looking journal and
+undoes nothing — header and file disagree, `2694` pages claimed for 3, or 3 claimed for 2070.
+
+**A storage leak found afterwards, and NOT introduced by those fixes** — 93 blocks with the fix,
+93 without. Grown to 531 pages then emptied and `VACUUM`ed back to 2: **531 blocks kept**. It does
+not accumulate (a second rollback rewrites the same offsets) and resolves if the database grows
+again; the database stays correct throughout.
+
 ## IDB-SIGNAL — a signal lets `IDBBatchAtomicVFS` serve a read during a long query, 2026-09-14, this container
 
 **The discrepancy.** The bench's `reads-during-long-query` reported `IDBBatchAtomicVFS/async`
@@ -2328,67 +2361,231 @@ be less than 2000`. `sync` without isolation keeps its documented limitation;
 `interrupt.test.ts` pins it on purpose. **Firefox runs this recursive CTE four to five times
 slower than Chromium** — a bound calibrated on Chromium is a bound Firefox may not meet.
 
-## COOPSYNC-HANDOVER — a re-prepare inside one `step` handed the handle away, 2026-09-15, both engines
+\1
 
-**Method.** Throwaway probe `tests/browser/coopsync-write-probe.test.ts` (every version saved in
-`.scratchpad/coopsync-write-busy/`) and a temporary lock trace in `src/worker/worker.ts` (saved as
-`probe-worker.patch`) that posts, on a `BroadcastChannel`, `jLock`/`jUnlock` with the VFS's handle
-state before and after, `vfs.log`, and every `step`/`prepare` with `SQLITE_STMTSTATUS_REPREPARE`. Two
-clients per attempt on a fresh file, batches of 8 mixed operations, 20 attempts per scenario, raw
-outputs beside the probe. Scenarios: `together` (both clients built before A's `CREATE TABLE`),
-`together-clean` (the same after purging orphaned `.ahp-*` directories), `together-warm` (then one
-sequential B write and A read), `sequential` (B built after the `CREATE TABLE`), `foreign-ddl`,
-`foreign-ddl-writes` (B runs a `CREATE TABLE`, then A writes while B reads). Default build unless
-stated. **The rates below were taken with the trace on**, which shifts timing (`mem:lessons`).
+## SECOND-CLIENT — what a second client got before the guard, 2026-09-15, n=10 per build per shape
 
-**The mechanism, read off the trace.** A's barrier statement was prepared before A's own `CREATE
-TABLE`. Its first run after B's first write: `jLock` finds no handle, queues the request, returns
-BUSY and leaves `isFileLocked` true; B's request arrives and the single-shot listener marks the handle
-wanted before A holds it; `retry()`'s second try locks; the schema cookie differs, SQLite re-prepares
-inside the same `step`: `jUnlock(NONE)` hands the handle to B, the relock returns BUSY, no try left.
-`reprepare` went 0→1 on every failing step, 0→0 where the re-prepare itself failed.
+**Method.** Throwaway probe (`.scratchpad/second-client-2026-09-15/second-client-probe.test.ts`, kept there):
+two clients on one database, `openTimeout: 5000`, every declared build, two shapes — `together` (both
+built before either queries) and `after` (B built once A has written). Chromium 151 / Firefox 154.
 
-| `OPFSCoopSyncVFS`, unpatched | Chromium | Firefox |
-|---|---|---|
-| `together` — a write fails with `BUSY` | 4-5 of 20 (plus 1-2 `NotFound`, below) | 15 of 20 |
-| `together-warm` | 0 `BUSY` | 0 |
-| `sequential` | 0 at the page; 1-2 barrier `BUSY` absorbed by `readWithRetry` | 0; 18-20 absorbed |
-| `foreign-ddl` | 0; 8 absorbed | 0; 32 absorbed |
-| `foreign-ddl-writes` — a write fails | 0 of 20 | 17 and 18 of 20 |
+- **Chromium: both clients work**, 60/60 rows, every build.
+- **Firefox, `after`:** B fails every query with `WORKER_CRASHED`, 10/10 per build; it never recovers once
+  A closes; a NEW client opens 10/10.
+- **Firefox, `together`: the FIRST client fails** in 6/10 (`sync`), 3/10 (`async`), 4/10 (`jspi`) — the
+  handle race picks either side, as AHP-2TAB did. This is what the per-realm memo (spec A1) removes.
+- **Open latency** (`createSQLiteClient` → resolved `SELECT 1`, n=20, median): Chromium 58 ms before the
+  guard, 55 after; Firefox 69 before, 63 after. The guard costs no measurable time.
 
-**No other VFS produced a SQLite-reported `BUSY`** in any scenario on either engine —
-`OPFSAdaptiveVFS`, `OPFSWriteAheadVFS`, `OPFSAnyContextVFS`, `IDBBatchAtomicVFS`, `IDBMirrorVFS`,
-0/20 each with zero worker-side throws. **`OPFSWriteAheadVFS` on Firefox refuses the second client
-instead**: every query `WORKER_CRASHED`, `sqliteCode` 14, `sqlite3_open_v2: NoModificationAllowedError`,
-20/20 in each of five scenarios; Chromium 0/20 (`mem:follow-ups`).
+## BEGIN-DEFERRED — `OPFSWriteAheadVFS` refuses a deferred write transaction, 2026-09-15, both engines
 
-| patch | `sync`, `async` | `jspi` |
-|---|---|---|
-| hand-over in a **microtask** | 0 at the page, 0 worker `BUSY`, both engines | Chromium 1/20 `together`, 1/20 `together-clean`; **Firefox 13/20, 16/20, 9/20 (`foreign-ddl-writes`), 18/20 on a trace run** |
-| hand-over in a **task** (`setTimeout`) | 0 | 0 |
+**Method.** Four throwaway probes (`.scratchpad/second-client-2026-09-15/output-writeahead-probe{,2,3,4}.test.ts`),
+fresh database per case.
 
-With the task, **720 attempts — 3 builds × 2 engines × 6 scenarios × 20 — saw no `BUSY` at the page
-or in a worker**, reads included. The `jspi` trace showed the microtask releasing the handle between
-the inner `jUnlock` and the relock of one `step`: wa-sqlite wraps every VFS import in
-`WebAssembly.Suspending` on that build. Scenario durations on `sync`, unpatched / microtask / task,
-agreed within ±0.3 s — the only cost signal taken, and not a hand-over latency.
+- A transaction whose first statement READS, or writes nothing (`DROP TABLE IF EXISTS <missing>`), and
+  then writes: `STATEMENT_FAILED`, extended code **778** (`IOERR_WRITE`) — **3850** (`IOERR_LOCK`) on an
+  empty file — and **every later statement on that client fails too**, reads included.
+- A single-statement transaction (insert, create, drop, rename, create index, select) passes on a fresh
+  database, on `sync`, `async` and `jspi`, both engines.
+- A raw `BEGIN` through `write()` reproduces it; `BEGIN IMMEDIATE` does not. `OPFSAdaptiveVFS` passes
+  every shape.
+- **Cause, read in the source** (`node_modules/wa-sqlite/src/examples/OPFSWriteAheadVFS.js:453-457`):
+  `jLock` throws `Write transaction cannot use BEGIN DEFERRED` when SQLite asks RESERVED without the
+  write hint, which SQLite only sends for `BEGIN IMMEDIATE`/`EXCLUSIVE` or an autocommit write.
+  **Not established:** why the connection stays broken afterwards.
+- `output()` hit it through its swap transaction's `DROP TABLE IF EXISTS <target>`, which writes nothing
+  when the target does not exist yet: 10 tests of `output.test.ts` plus one of `tx-write.test.ts`.
 
-**`NotFound` at startup** (`WORKER_CRASHED`, "A requested file or directory could not be found" on
-Chromium, "Entry not found" on Firefox): two workers deleting the same orphaned `.ahp-*` directory in
-`#initialize`. Natural rate on Chromium `together`: 2 of 19 attempts with orphans present, 0 of 20
-after purging them; Firefox 0 of 40. With 30 orphans created first it reproduces on every run.
+## MATRIX-1 — the whole browser suite on every (vfs, build) pair, 2026-09-15
 
-**Without the trace**, `coopsync-handover.test.ts`'s first test failed three single runs of three on
-Chromium (3-5 `BUSY` in 20 attempts), while one whole-file run happened to show none.
+**Method.** `pnpm test:matrix`: 22 declared pairs × {chromium, firefox, isolated}, one rstest project per
+pair, 66 runs, each bounded at 600 s. 3447 s total, this container. Raw reports under `.matrix/<run>/`.
 
-**In wa-sqlite's own suite** (`test/vfs_handover.js` on the fork branch; HeadlessChrome 151;
-`yarn web-test-runner test/OPFSCoopSyncVFS.test.js`): on its master VFS, **`BUSY` on 47 of 100 steps
-(default build) and 46 of 100 (Asyncify)**, `NotFoundError` on 9 of 10 starts on both, the file 66
-passed / 4 failed; with the fix, 70 passed; the whole suite 2 899 passed, 0 failed, 39.9 s. Its
-`jspi` builds are skipped: `TestContext.supportsJSPI()` builds a `WebAssembly.Function`, which Chrome
-151 lacks. Upstream CI run #392 on PR #347 (Chrome 129, both `yarn test` passes): green.
+- **Green on every column:** `OPFSWriteAheadVFS` (sync/async/jspi), `OPFSAdaptiveVFS` (async/jspi),
+  `OPFSAnyContextVFS` (async/jspi). The isolated column is green for all 22 pairs.
+- **Reds per cell (chromium/firefox):** `OPFSCoopSyncVFS` 12/12; `AccessHandlePoolVFS` ~99/~99;
+  `IDBBatchAtomicVFS` 4/4; `IDBMirrorVFS` 25/24, its firefox `async` cell **timed out** (the Firefox
+  hang); `MemoryVFS` and `MemoryAsyncVFS` 21/21-22.
+- **Most reds are test assumptions, not defects:** a test pinning `poolSize: 2` on a VFS capped at 1
+  (`INVALID_OPTION`, 5-11 per cell); tests needing shared or persistent storage (inspection refuses a
+  memory VFS by design); `statement-errors` writing a raw OPFS file against an IndexedDB VFS;
+  `AccessHandlePoolVFS`'s `locking_mode=exclusive` default against a test expecting `normal`. On
+  `AccessHandlePoolVFS`, ~40 `WORKER_CRASHED` come from a previous test's client still being open:
+  `createTestClient` closes no client, and removing an OPFS entry by name frees no slot there.
+- **Probable defects, not triaged:** `IDBBatchAtomicVFS` — an abandoned write through `tx.first()` inside
+  a transaction HANGS (30 s and 60 s test timeouts, both engines); `IDBMirrorVFS` — 11 tests fail with
+  `database disk image is malformed`; `OPFSCoopSyncVFS` — one `deleteDatabase` answers
+  `DATABASE_NOT_FOUND` for a database the test created.
 
-**Falsifiers run the same day.** Mutating the vendored patch back to a microtask turns
-`coopsync-handover.test.ts`'s two `jspi` tests red on Firefox (28 `BUSY`), its `sync` tests staying
-green. And `coopsync-retry.test.ts` with `readWithRetry`'s catch removed stayed green 5 of 5 on
-Firefox, where it went red 3-4 of 5 before the patch: its falsifier died with the defect.
+## MATRIX-2 — the whole browser suite on every (vfs, build) pair, 2026-09-16
+
+`pnpm test:matrix`, run `.matrix/2026-09-16T12-46-17-062Z`, 22 pairs × {chromium, firefox,
+isolated} = 66 cells, **2386 s** — 31 % faster than MATRIX-1's 3447 s, which is the per-cell
+redundancy removed when the five VFS-sweeping files started following the target.
+
+- **Green on every column:** `OPFSWriteAheadVFS` (sync/async/jspi), `OPFSAdaptiveVFS` (async/jspi),
+  `OPFSAnyContextVFS` (async/jspi). The `isolated` column is green for all 22 pairs (7 tests each).
+- **Failures per cell (chromium/firefox):** `AccessHandlePoolVFS` 99/99 · `IDBMirrorVFS` 25/24 ·
+  `MemoryVFS` and `MemoryAsyncVFS` 21/21 · `OPFSCoopSyncVFS` 12/12 · `IDBBatchAtomicVFS` 4/4.
+  Same profile as MATRIX-1, and **no cell timed out** — firefox `IDBMirrorVFS/async`, which died on
+  the matrix's own bound in MATRIX-1, reported its 334 tests this time (the probe's bound, `6560c9e`).
+- 989 failing tests, 143 distinct (file, test, error) groups. Only 690 of the 989 are listed in the
+  reports — rstest truncates long lists — so the group counts under-report the widest causes.
+
+**The triage, 2026-09-16** (`.scratchpad/matrix-triage/`, `aggregate.mjs` + `triage-2026-09-16.md`):
+
+| Tas | cell-failures | what it is |
+| --- | ---: | --- |
+| Tests assuming what they do not declare | ~412 | `poolSize: 2` pinned on a capped VFS (250); inspection on a memory VFS (120); `statement-errors` writing a raw OPFS file (36); `default-pragmas` vs AccessHandlePool's `locking_mode` (6) |
+| Our own test infrastructure | ~258 | every one on `AccessHandlePoolVFS`: `sqlite3_open_v2`, `unable to open database file`, `Failed to execute 'createSyncAccessHandle'`, `No modification allowed` — the previous test's client is never closed, so its pool slot is never returned |
+| Probable product defects | ~60 | `IDBMirrorVFS` 46 (`database disk image is malformed`, in tx-abort/tx-handle/tx-savepoint); `IDBBatchAtomicVFS` 8 (an abandoned write through a generator inside a transaction: timeout with no assertion, `TRANSACTION_CLOSED`, `offset is out of bounds`, `source array is too long`); `OPFSCoopSyncVFS` 6 (`DATABASE_NOT_FOUND` for a database the test created) |
+
+## MATRIX-3 — the same matrix after the test-cleanup fix, 2026-09-16
+
+`pnpm test:matrix`, run `.matrix/2026-09-16T13-50-57-796Z`, the same 66 cells, **2885 s**,
+no cell timed out. The tree is MATRIX-2's plus `bbd0862` (`onTestFinished` + `close()` +
+`deleteDatabase` on the `opfs-pool` layout). Triaged with `scripts/matrix-triage.mjs`, whose
+output is the numbers below.
+
+| | MATRIX-2 | MATRIX-3 |
+| --- | ---: | ---: |
+| cell-failures | 989 | **500** |
+| distinct groups | 143 | **97** |
+| green cells | 36/66 | 36/66 |
+
+**Per VFS, summed over its six browser cells:** `AccessHandlePoolVFS` **593 → 102** ·
+`OPFSCoopSyncVFS` 72 → 74 · `IDBMirrorVFS` 98 → 98 · `MemoryVFS` 126 → 126 ·
+`MemoryAsyncVFS` 84 → 84 · `IDBBatchAtomicVFS` 16 → 16. Per cell, AccessHandlePool goes
+99/99/99 (chromium) to 21/19/20 and 99/98/99 (firefox) to 14/14/14. **No cell turned green**:
+what remains on that VFS is the undeclared-needs pile.
+
+**The piles were re-cut on this run, not carried forward:** undeclared needs **420** (it GREW
+from ~372 — AccessHandlePool tests now reach their real cause), probable product defects
+**62**, and **18** newly visible `createSyncAccessHandle` collisions in `lifecycle.test.ts`
+and `long-query.test.ts` (`mem:follow-ups`). MATRIX-2's "~258 for our own test
+infrastructure" was the symptom counted correctly under a cause that was wrong.
+
+**The two pieces of the fix, each measured necessary** on `queries.test.ts` against
+`AccessHandlePoolVFS/sync`: 5/11 before · 5/11 with `onTestFinished` but no `deleteDatabase`
+· **11/11 with both**. `close()` alone cannot help — wa-sqlite's `jClose` flushes and drops
+the `fileId`, only `xDelete` frees a slot, and `DEFAULT_CAPACITY` is 6.
+
+**A whole-matrix run is not the instrument for this.** Two of them (80 min) said only
+"99, unchanged"; one instrumented single-file run answered it. Reach for `BSQ_TEST_TARGETS=<pair>
+pnpm exec rstest --config <cfg> --project 'chromium*' run <one file>` first — ~25 s.
+
+## MATRIX-5 — the matrix after the dying-worker fix, 2026-09-18
+
+`.matrix/2026-09-18T08-25-56-316Z`, 66 cells, **3067 s**, no cell timed out. Triaged with
+`scripts/matrix-triage.mjs`. **This is the reference a matrix regression is read against.**
+
+| | M-2 (09-16) | +cleanup | +needs | **M-5** |
+| --- | ---: | ---: | ---: | ---: |
+| cell-failures | 989 | 500 | 79 | **62** |
+| distinct groups | 143 | 97 | 26 | **20** |
+| green cells /66 | 36 | 36 | 49 | **52** |
+
+Per VFS, summed over its six browser cells: `AccessHandlePoolVFS` 593 → 102 → 18 → **0** ·
+`MemoryVFS` 126 → **0** · `MemoryAsyncVFS` 84 → **0** · `IDBMirrorVFS` **46** (unmoved since the
+needs work) · `IDBBatchAtomicVFS` **8** · `OPFSCoopSyncVFS` 7 → **8**.
+
+**All nine `AccessHandlePoolVFS` cells are green** — three builds × three configs — where only
+`chromium/sync` had been verified by hand. The two risks named before the run did not
+materialise: the cleanup that no longer swallows created no failure on any cell, Firefox and
+isolated included.
+
+**The one regression, and it is informative:** `OPFSCoopSyncVFS` 7 → 8. Both of its
+`sqlite3_open_v2` failures (`restarts the slot once`, `a worker killed silently`) look like
+HANDLE-CORPSE on a path the fix does not cover — `AccessHandlePoolVFS` takes its directory at
+VFS **creation**, where `createVfsInstance` retries, while an `opfs-path` VFS takes the file's
+handle later at **xOpen**, inside `sqlite3_open_v2`. Not established: the message is a bare
+`sqlite3_open_v2` with no `lastError` from the VFS, so nothing yet proves it is the corpse.
+
+Everything else is the three product defects in `mem:follow-ups`.
+
+## HANDLE-CORPSE — a worker killed INSIDE a statement holds its OPFS handles ~30× longer, 2026-09-16
+
+Chromium, `AccessHandlePoolVFS`. Time from `worker.terminate()` until a fresh client on the same
+database opens and answers `SELECT 1`, polled; the first client is closed first so the connection
+lock is not what is being measured (the first attempt at this measured the lock instead and read
+`-1` on every trial — the probe, not the engine, was wrong).
+
+| the worker was… | handles released after |
+| --- | ---: |
+| idle, between statements | **65 ms** |
+| inside `longQuery(20_000_000)`, a long synchronous `step()` | **2039 ms** |
+
+Control: a client closed cleanly, no terminate — **67 ms**, i.e. indistinguishable from killing an
+idle one. **It is not termination that is slow, it is termination while the thread is inside
+synchronous WASM.**
+
+**Why it bites only this VFS:** `#acquireAccessHandles()` opens a `FileSystemSyncAccessHandle` on
+EVERY file of its directory, and such a handle is exclusive per file. Two instances of that VFS
+therefore cannot coexist on one origin, even on different databases — so a new worker meets the
+corpse and dies with `NoModificationAllowedError` before SQLite is involved (hence no
+`sqliteCode`; `worker.ts` had already noted these DOMExceptions carry a misleading numeric `code`).
+
+**The name is the discriminator and it is specified.** `NoModificationAllowedError`, identical on
+both engines — `mem:follow-ups` had already recorded it for Firefox from an unrelated probe. The
+MESSAGE is engine prose ("Access Handles cannot be created…" on Chromium); never match on it.
+
+**How the causal chain was closed, after two refuted hypotheses.** Delaying the respawn by 250 ms
+and by 1000 ms changed nothing — both are BELOW the 2 s threshold, which is why the first two
+attempts read as "not a race". 3000 ms turned the isolated test green. On the suite side the same
+threshold explains the cascade: a 3000 ms wait before the victim test clears it, while the same
+wait placed AFTER the cleanup's `deleteDatabase` does not — because the delete itself runs inside
+the window, fails, and leaks the pool slot. Moving the wait BEFORE the delete took the file from
+6 failures to 1.
+
+**Cost of the silence:** the cleanup's `deleteDatabase` ended in `.catch(() => {})`, so the leaked
+slots were invisible and the later failures read as capacity exhaustion with no cause. A full day
+(`mem:lessons`).
+
+**Fixed 2026-09-16 (`3755805`)** in `createVfsInstance` (`src/worker/worker.ts`), shared by the
+pool worker and the delete worker. `AccessHandlePoolVFS/sync` on chromium: **330/0/4**, from 7
+failures at MATRIX-4. **Note a figure I got wrong when reporting it, and which is in that commit
+message: I said "from 21". 21 was that cell two fixes earlier; 7 is what it was immediately
+before.**
+
+## SAFARI-OPFS — what Safari 26 and 27 answer about OPFS access handles, 2026-09-16
+
+Measured by the user in Safari 26's console on a `localhost` page (a secure context is required —
+with no page open, `navigator.storage` is undefined and every worker throws `TypeError`), running
+`.scratchpad/firefox-hang-2026-09-16/safari-console-probe.js`: 144 workers across 12 iframes × 3
+rounds, each asking the OPFS root for one shared file and then two sync access handles on it.
+
+- **Safari does NOT honour `mode: 'readwrite-unsafe'`.** Every worker that got the file reported
+  `unsafe: false` — its second handle was refused. Safari sits with Firefox, not Chromium. The
+  library's consequence: `OPFSWriteAheadVFS` is single-client there, so a second client (a second
+  tab) gets `DATABASE_IN_USE`, exactly as on Firefox.
+- **Safari's error for a handle another context holds is `InvalidStateError: The object is in an
+  invalid state.`** — not Chromium's and Firefox's `NoModificationAllowedError`. 132 of 144 workers
+  got it. Any code that matches on the error NAME rather than on the failure will behave
+  differently on Safari.
+- **12 of 144 got through, and WHICH ones is the finding.** Per round: 6, 4, 2. They cluster by
+  context — round 1 put all four workers of context 11 (the last iframe created) through, plus one
+  each in contexts 0 and 9. The contention burst clears in ~60 ms, and whoever arrives after it is
+  served normally. So Safari 26 refuses a SIMULTANEOUS contender outright; it does not refuse a
+  later one. The 6 → 4 → 2 decline fits: later rounds start with warm iframes, so they are more
+  tightly synchronized.
+- **It is fast:** every worker settled in 45-68 ms, contention included.
+- **No wedge** (0 of 144), but that proves nothing about the Firefox `getDirectory()` hang: this
+  probe does not reproduce it on Firefox either (0 of 144 there, churn included). See
+  `mem:follow-ups`.
+
+**Safari 27, same probe, same day — the capability is unchanged, the CONTENTION is not.**
+
+- `readwrite-unsafe` is still refused: every worker that got the file reports `unsafe: false`. So
+  the second-client guard applies to Safari 26 and 27 alike.
+- **Safari 26 put 12 of 144 through (8 %), never waiting — everything settled in 45-68 ms.
+  Safari 27 put 113 of 144 through (78 %), in 53-172 ms.**
+- **Safari 27 QUEUES, and round 1 shows it exactly: 48 of 48 through, served in the order the
+  contexts were created** — context 0 at 59 ms, 1 at 70, 2 at 78, … 11 at 172, four workers per
+  context, about ten milliseconds per step. That is FIFO on the file, not a race. Round 2: 44 of
+  48. Round 3: 21 of 48 — so the queue is not unconditional; it degrades under pressure (or with a
+  previous round's handles still settling), and the losers get `InvalidStateError`.
+- So between 26 and 27 WebKit moved from REFUSING a contended `createSyncAccessHandle` to WAITING
+  for its turn. On 27 a second context that asks for a handle gets it; on 26 it fails at once.
+- Consequence to check before relying on it: handle starvation is asserted for Firefox only
+  (`tests/browser/firefox/handle-starvation.test.ts`). If Safari 27 queues, its starvation shape
+  is neither Firefox's nor Chromium's, and nothing measures it.

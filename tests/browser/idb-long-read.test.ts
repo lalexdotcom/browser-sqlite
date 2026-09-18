@@ -26,6 +26,8 @@ describe('IDBBatchAtomicVFS during a long statement', () => {
     // queries only, as before — the read then waits the self-join out and
     // loses the race.
     it(`serves a read from another worker without a signal (${build})`, async () => {
+      // One VFS: the subject is IDBBatchAtomicVFS's own yield-during-a-long-
+      // statement behaviour (see file header, IDB-SIGNAL).
       const vfs = 'IDBBatchAtomicVFS';
       const file = `idb-long-read-${crypto.randomUUID()}`;
       const db = createSQLiteClient(file, { vfs, build, poolSize: 2 });

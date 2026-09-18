@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
-import { createTestClient } from './helpers';
+import { createTestClient, TEST_TARGET } from './helpers';
 
 /**
  * INT-02: createSQLiteClient initializes and workers reach READY
@@ -40,7 +40,8 @@ describe('createSQLiteClient (INT-02)', () => {
     // afterEach is not available here directly — clean up manually
     try {
       const db = createSQLiteClient(dbName, {
-        vfs: 'OPFSAdaptiveVFS',
+        vfs: TEST_TARGET.vfs,
+        build: TEST_TARGET.build,
         poolSize: 1,
       });
       const rows = await db.read<{ n: number }>('SELECT 42 AS n');

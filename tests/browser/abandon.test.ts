@@ -1,8 +1,12 @@
 import { describe, expect, it } from '@rstest/core';
 import { createLogger } from '../../src/logger';
 import { createPoolWorker, type PoolWorker } from '../../src/pool';
-import { defaultBuildFor } from '../../src/types';
-import { createTestClient, sleep } from './helpers';
+import {
+  createTestClient,
+  removeDatabaseFiles,
+  sleep,
+  TEST_TARGET,
+} from './helpers';
 
 const ROWS = 4000;
 const SEED =
@@ -40,7 +44,7 @@ const abandon = async (make: () => AsyncGenerator<unknown>) => {
 
 describe('an abandoned generator gives its worker back', () => {
   it('at the deadline, when the caller set a timeout', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await seed(db);
       await abandon(() =>
@@ -61,7 +65,7 @@ describe('an abandoned generator gives its worker back', () => {
 
   it('at once, when the caller aborts the signal', async () => {
     const controller = new AbortController();
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await seed(db);
       await abandon(() =>
@@ -80,7 +84,7 @@ describe('an abandoned generator gives its worker back', () => {
   }, 30_000);
 
   it('leaves a correct consumer untouched', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await seed(db);
       let seen = 0;
@@ -118,7 +122,7 @@ describe('a reclaim that arrives late', () => {
    */
   it('does not truncate the query the worker has moved on to', async () => {
     const controller = new AbortController();
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await seed(db);
 
@@ -177,16 +181,17 @@ describe("interrupt() ignores a transport the worker isn't serving", () => {
    */
   it('does not stop the live query when named the stale one', async () => {
     const pool: (PoolWorker | undefined)[] = [];
+    // Short on purpose: sqlite3_open_v2 checks nPathname + 8 > mxPathname
+    // (64, wa-sqlite/src/VFS.js:10), so a name near that budget fails
+    // open() for a reason that has nothing to do with this test.
+    const file = `pid-${Date.now().toString(36)}`;
     const opened = await createPoolWorker({
       index: 0,
       pool,
       clientName: 'pool-interrupt-direct',
-      // Short on purpose: sqlite3_open_v2 checks nPathname + 8 > mxPathname
-      // (64, wa-sqlite/src/VFS.js:10), so a name near that budget fails
-      // open() for a reason that has nothing to do with this test.
-      file: `pid-${Date.now().toString(36)}`,
-      vfs: 'MemoryVFS',
-      build: defaultBuildFor('MemoryVFS'),
+      file,
+      vfs: TEST_TARGET.vfs,
+      build: TEST_TARGET.build,
       drainTimeout: 5000,
       logger: createLogger('test', false),
     });
@@ -230,9 +235,13 @@ describe("interrupt() ignores a transport the worker isn't serving", () => {
       // close() posts `close` and waits for the reply; terminating is the
       // caller's own job (src/pool.ts's PoolWorker). Nothing else owns this
       // worker — it was built here rather than by a client — so without the
-      // terminate every run of this suite leaks one Worker.
+      // terminate every run of this suite leaks one Worker. And with no
+      // client's own afterEach behind it, the OPFS file it may have opened
+      // (TEST_TARGET.vfs, unlike the MemoryVFS this used to pin) needs its
+      // own cleanup.
       await worker.close();
       worker.terminate();
+      await removeDatabaseFiles(file, TEST_TARGET.vfs);
     }
   });
 });

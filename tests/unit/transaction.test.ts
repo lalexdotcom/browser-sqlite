@@ -147,7 +147,10 @@ describe('transaction — a poisoned connection is never re-lent', () => {
       }),
     ).rejects.toBeInstanceOf(SQLiteError);
 
-    expect(worker.executed).toEqual(['BEGIN', 'INSERT INTO t VALUES (1)']);
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'INSERT INTO t VALUES (1)',
+    ]);
     expect(poisoned).toEqual([]);
   });
 
@@ -162,7 +165,7 @@ describe('transaction — a poisoned connection is never re-lent', () => {
     ).rejects.toBeInstanceOf(SQLiteError);
 
     expect(worker.executed).toEqual([
-      'BEGIN',
+      'BEGIN IMMEDIATE',
       'INSERT INTO t VALUES (1)',
       'ROLLBACK',
     ]);
@@ -206,7 +209,7 @@ describe('transaction — the caller may abandon it', () => {
       SQLiteError,
     );
 
-    expect(worker.executed).toEqual(['BEGIN']);
+    expect(worker.executed).toEqual(['BEGIN IMMEDIATE']);
     expect(poisoned).toEqual([]);
   });
 
@@ -229,7 +232,7 @@ describe('transaction — the caller may abandon it', () => {
     ).rejects.toBe(reason);
 
     expect(called).toBe(false);
-    expect(worker.executed).toEqual(['BEGIN', 'ROLLBACK']);
+    expect(worker.executed).toEqual(['BEGIN IMMEDIATE', 'ROLLBACK']);
     expect(poisoned).toEqual([]);
   });
 
@@ -256,7 +259,7 @@ describe('transaction — the caller may abandon it', () => {
     ctl.abort(reason);
 
     await expect(running).rejects.toBe(reason);
-    expect(worker.executed).toEqual(['BEGIN', 'ROLLBACK']);
+    expect(worker.executed).toEqual(['BEGIN IMMEDIATE', 'ROLLBACK']);
   });
 
   it('does not commit when the callback swallows the abort', async () => {
@@ -281,7 +284,7 @@ describe('transaction — the caller may abandon it', () => {
       ),
     ).rejects.toBe(reason);
 
-    expect(worker.executed).toEqual(['BEGIN', 'ROLLBACK']);
+    expect(worker.executed).toEqual(['BEGIN IMMEDIATE', 'ROLLBACK']);
   });
 
   // Falsifiable: remove throwIfAborted() from commit() and the COMMIT reaches
@@ -379,7 +382,7 @@ describe('transaction — the caller may abandon it', () => {
 
     await expect(running).rejects.toBe(reason);
     expect(worker.executed).toEqual([
-      'BEGIN',
+      'BEGIN IMMEDIATE',
       'SAVEPOINT __bsq_sp',
       'INSERT INTO t VALUES (1)',
       'ROLLBACK',
@@ -493,7 +496,7 @@ describe('transaction — a closed handle never reaches the worker (spec R3, R4)
     await expect(kept.rollback()).resolves.toBeUndefined();
     expect(warnings).toHaveLength(1);
     expect(worker.executed).toEqual([
-      'BEGIN',
+      'BEGIN IMMEDIATE',
       'INSERT INTO t VALUES (1)',
       'COMMIT',
     ]);
@@ -522,7 +525,10 @@ describe('transaction — what else kills it (spec R1)', () => {
     expect(outcome).toBe(first);
     expect(later).toMatchObject({ code: 'TRANSACTION_CLOSED' });
     expect((later as Error).cause).toBe(first);
-    expect(worker.executed).toEqual(['BEGIN', 'INSERT INTO t VALUES (1)']);
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'INSERT INTO t VALUES (1)',
+    ]);
     expect(poisoned).toEqual([]);
   });
 
@@ -554,7 +560,7 @@ describe('transaction — what else kills it (spec R1)', () => {
     });
     expect(caught).toBe(reason);
     expect(worker.executed).toEqual([
-      'BEGIN',
+      'BEGIN IMMEDIATE',
       'SAVEPOINT __bsq_sp',
       'INSERT INTO t VALUES (1)',
       'ROLLBACK TO __bsq_sp',
@@ -575,7 +581,7 @@ describe('transaction — what else kills it (spec R1)', () => {
       await tx.write('INSERT INTO t VALUES (2)');
     });
     expect(worker.executed).toEqual([
-      'BEGIN',
+      'BEGIN IMMEDIATE',
       'SELECT slow',
       'INSERT INTO t VALUES (2)',
       'COMMIT',
@@ -616,7 +622,7 @@ describe('transaction — what else kills it (spec R1)', () => {
     });
     expect(caught).toBe(reason);
     expect(worker.executed).toEqual([
-      'BEGIN',
+      'BEGIN IMMEDIATE',
       'SAVEPOINT __bsq_sp',
       'INSERT INTO t VALUES (1) RETURNING a',
       'ROLLBACK TO __bsq_sp',
@@ -641,7 +647,7 @@ describe('transaction — what else kills it (spec R1)', () => {
 
     const outcome = await running.catch((e) => e);
     expect(outcome).toMatchObject({ code: 'TRANSACTION_CLOSED' });
-    expect(worker.executed).toEqual(['BEGIN', 'SELECT 1']);
+    expect(worker.executed).toEqual(['BEGIN IMMEDIATE', 'SELECT 1']);
   });
 
   // dieIfConnectionLeft's SUCCESS branch: the statement itself succeeded, so
@@ -768,7 +774,7 @@ describe('transaction — a write whose own signal was already aborted at the ca
 
     expect(refused).toBe(reason);
     expect(worker.executed).toEqual([
-      'BEGIN',
+      'BEGIN IMMEDIATE',
       'INSERT INTO t VALUES (2)',
       'COMMIT',
     ]);
@@ -845,7 +851,7 @@ describe('transaction — a savepointed write, and the message after it (spec 20
     it(`${name}() concludes the abandoned write's savepoint, with an undo, first`, async () => {
       const executed = await abandonedThen(entry);
       expect(executed.slice(0, 6)).toEqual([
-        'BEGIN',
+        'BEGIN IMMEDIATE',
         'SAVEPOINT __bsq_sp',
         'INSERT INTO t VALUES (1)',
         'ROLLBACK TO __bsq_sp',
@@ -885,7 +891,7 @@ describe('transaction — a savepointed write, and the message after it (spec 20
   it('rollback() concludes nothing: a full ROLLBACK discards every savepoint', async () => {
     const executed = await abandonedThen((tx) => tx.rollback());
     expect(executed).toEqual([
-      'BEGIN',
+      'BEGIN IMMEDIATE',
       'SAVEPOINT __bsq_sp',
       'INSERT INTO t VALUES (1)',
       'ROLLBACK',
@@ -902,7 +908,7 @@ describe('transaction — a savepointed write, and the message after it (spec 20
       await tx.write('INSERT INTO t VALUES (2)');
     });
     expect(worker.executed).toEqual([
-      'BEGIN',
+      'BEGIN IMMEDIATE',
       'SAVEPOINT __bsq_sp',
       'INSERT INTO t VALUES (1)',
       'RELEASE __bsq_sp',
@@ -948,7 +954,7 @@ describe('transaction — a savepointed write, and the message after it (spec 20
     });
     expect(refused).toBe(reason);
     expect(worker.executed).toEqual([
-      'BEGIN',
+      'BEGIN IMMEDIATE',
       'SAVEPOINT __bsq_sp',
       'INSERT INTO t VALUES (1)',
       'ROLLBACK TO __bsq_sp',
@@ -983,7 +989,7 @@ describe('transaction — a savepointed write, and the message after it (spec 20
       }),
     ).rejects.toBe(failure);
     expect(worker.executed).toEqual([
-      'BEGIN',
+      'BEGIN IMMEDIATE',
       'SAVEPOINT __bsq_sp',
       'INSERT INTO t VALUES (1)',
       'ROLLBACK',
@@ -999,10 +1005,33 @@ describe('transaction — a savepointed write, and the message after it (spec 20
       await tx.write('RELEASE u', [], { timeout: 60_000 });
     });
     expect(worker.executed).toEqual([
-      'BEGIN',
+      'BEGIN IMMEDIATE',
       'SAVEPOINT u',
       'RELEASE u',
       'COMMIT',
     ]);
+  });
+});
+
+describe('transaction — BEGIN announces write intent (spec 2026-09-15, A4)', () => {
+  // Falsifiable: send 'BEGIN' for every transaction in src/transaction.ts, or
+  // 'BEGIN IMMEDIATE' for every one (spec 2026-09-15, A4).
+  it('begins a write transaction IMMEDIATE and a read-only one deferred', async () => {
+    const writeWorker = fakeWorker([]);
+    const { transaction: writeTransaction } = harness(writeWorker);
+    await writeTransaction(async (tx) => {
+      await tx.write('INSERT INTO t VALUES (1)');
+    });
+    expect(writeWorker.executed[0]).toBe('BEGIN IMMEDIATE');
+
+    const readOnlyWorker = fakeWorker([]);
+    const { transaction: readOnlyTransaction } = harness(readOnlyWorker);
+    await readOnlyTransaction(
+      async (tx) => {
+        await tx.read('SELECT 1');
+      },
+      { readOnly: true },
+    );
+    expect(readOnlyWorker.executed[0]).toBe('BEGIN');
   });
 });

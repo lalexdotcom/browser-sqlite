@@ -3,12 +3,16 @@ import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
 import { SQLiteError } from '../../src/errors';
 import { initLockName } from '../../src/locks';
+import { VFS_CAPABILITIES } from '../../src/types';
+import { longQuery, sleep, TEST_TARGET } from './helpers';
 
 /**
  * The database is gone when a fresh client on the same name finds no table.
  * Asserted through the library rather than through OPFS, because half the VFS
  * do not keep a file at that name at all.
  */
+// One VFS: any OPFS-backed VFS reads through the same file; OPFSAdaptiveVFS
+// is the representative used to check "gone" through the library.
 const tableCount = async (file: string) => {
   const db = createSQLiteClient(file, { vfs: 'OPFSAdaptiveVFS' });
   const rows = await db.read<{ n: number }>(
@@ -37,6 +41,8 @@ describe('deleteDatabase', () => {
     return file;
   };
 
+  // One VFS: the deletion mechanism itself, exercised on a single
+  // representative OPFS VFS — the full cross-VFS sweep is below.
   it('removes a closed database', async () => {
     const file = freshFile();
     const db = createSQLiteClient(file, { vfs: 'OPFSAdaptiveVFS' });
@@ -49,6 +55,14 @@ describe('deleteDatabase', () => {
     expect(await tableCount(file)).toBe(0);
   });
 
+  // No target-following deletion test lives here. One was written on
+  // 2026-09-16 and deleted the same day: the cross-VFS sweep below and
+  // conformance invariant 7 already delete on every VFS, and no mutation of
+  // src/ reddened the target version without reddening one of those first —
+  // including the one that stops the deletion from removing a VFS's own
+  // sidecars, which the sweep catches and it did not. It varied the BUILD and
+  // nothing else, and deletion does not read the build.
+
   it('rejects with INVALID_OPTION when vfs is missing', async () => {
     await expect(
       // @ts-expect-error — the guard exists for JavaScript callers
@@ -56,12 +70,15 @@ describe('deleteDatabase', () => {
     ).rejects.toMatchObject({ code: 'INVALID_OPTION' });
   });
 
+  // One VFS: the guard needs a concrete VFS whose declared builds exclude
+  // 'sync' — OPFSAdaptiveVFS declares ['async', 'jspi'].
   it('rejects with INVALID_OPTION when the build is not one the VFS supports', async () => {
     await expect(
       deleteDatabase('anything', { vfs: 'OPFSAdaptiveVFS', build: 'sync' }),
     ).rejects.toMatchObject({ code: 'INVALID_OPTION' });
   });
 
+  // One VFS: the subject is MemoryVFS's no-op delete (nothing persisted).
   it('resolves without a worker for a memory VFS', async () => {
     await expect(
       deleteDatabase('anything', { vfs: 'MemoryVFS' }),
@@ -71,6 +88,8 @@ describe('deleteDatabase', () => {
   // `navigator.locks` is origin-wide, so this is the same lock a client in
   // another tab would hold while opening. Held here directly, because the point
   // is the lock and not the client that usually takes it.
+  // One VFS: the init lock's name and behaviour is OPFS-family; OPFSAdaptiveVFS
+  // is the representative used to hold it directly.
   it('rejects with BUSY while the init lock is held', async () => {
     const file = freshFile();
     const release = Promise.withResolvers<void>();
@@ -91,6 +110,7 @@ describe('deleteDatabase', () => {
 
   // Falsifiable: make the BUSY path return instead of throwing from inside
   // `tryWithLock`, and the second call finds a lock nobody released.
+  // One VFS: same init lock as above, same representative.
   it('releases the lock after a rejection, so a retry is possible', async () => {
     const file = freshFile();
     // Create the database so the retry resolves rather than throwing DATABASE_NOT_FOUND.
@@ -123,51 +143,82 @@ describe('deleteDatabase', () => {
   });
 
   describe('deleteDatabase on a database that is not there', () => {
-    for (const vfs of [
-      'OPFSAdaptiveVFS',
-      'OPFSAnyContextVFS',
-      'OPFSCoopSyncVFS',
-      'OPFSWriteAheadVFS',
-      'AccessHandlePoolVFS',
-      'IDBBatchAtomicVFS',
-      'IDBMirrorVFS',
-    ] as const) {
-      // Falsifiable: remove the probe in deleteDatabaseFiles and every one of
-      // these resolves instead of throwing — that is what the code does today.
-      it(`throws DATABASE_NOT_FOUND on ${vfs} when nothing was created`, async () => {
-        const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
-        const error = await deleteDatabase(dbName, { vfs }).then(
-          () => undefined,
-          (e) => e,
-        );
-        expect(error).toBeInstanceOf(SQLiteError);
-        expect((error as SQLiteError).code).toBe('DATABASE_NOT_FOUND');
-      });
+    const { vfs, build } = TEST_TARGET;
+    const { layout } = VFS_CAPABILITIES[vfs];
 
-      it(`deletes on ${vfs}, then reports the second attempt`, async () => {
+    // Falsifiable: remove the probe in deleteDatabaseFiles and this resolves
+    // instead of throwing — that is what the code does today.
+    it('throws DATABASE_NOT_FOUND when nothing was created', async () => {
+      const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+      const attempt = deleteDatabase(dbName, { vfs, build });
+      if (layout === 'memory') {
+        // Nothing persisted, so there is nothing to find missing either: the
+        // memory VFS return before any probe (src/delete.ts:80).
+        await expect(attempt).resolves.toBeUndefined();
+        return;
+      }
+      const error = await attempt.then(
+        () => undefined,
+        (e) => e,
+      );
+      expect(error).toBeInstanceOf(SQLiteError);
+      expect((error as SQLiteError).code).toBe('DATABASE_NOT_FOUND');
+    });
+
+    it('deletes, then reports the second attempt', async () => {
+      const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+      const db = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
+      await db.write('CREATE TABLE t (n)');
+      await db.close();
+
+      await expect(
+        deleteDatabase(dbName, { vfs, build }),
+      ).resolves.toBeUndefined();
+
+      const error = await deleteDatabase(dbName, { vfs, build }).then(
+        () => undefined,
+        (e) => e,
+      );
+      if (layout === 'memory') {
+        expect(error).toBeUndefined();
+        return;
+      }
+      expect((error as SQLiteError).code).toBe('DATABASE_NOT_FOUND');
+    });
+
+    // A database opened but never written is still a database: the file
+    // exists, it is merely empty. Red on OPFSCoopSyncVFS, whose
+    // #createPersistentFile only adds a path to `accessiblePaths` when the
+    // file has a size, so jOpen without SQLITE_OPEN_CREATE throws
+    // `File ... not found` and returns SQLITE_CANTOPEN — which the probe in
+    // deleteDatabaseFiles reads as absence.
+    it('deletes a database that was opened but never written', async () => {
+      const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+      const db = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
+      // No write, so SQLite lays down no page and the file stays at 0 bytes.
+      await db.read('SELECT 1');
+      await db.close();
+
+      await expect(
+        deleteDatabase(dbName, { vfs, build }),
+      ).resolves.toBeUndefined();
+    });
+
+    // Falsifiable: drop `...VFS_CAPABILITIES[vfs].extraFileSuffixes` from the
+    // opfs-path pass in deleteDatabaseFiles — OPFSWriteAheadVFS leaves `-wa0`
+    // and `-wa1` behind, and this goes red on that target.
+    const opfsEntries = layout === 'opfs-path' || layout === 'opfs-pool';
+    (opfsEntries ? it : it.skip)(
+      `leaves no OPFS root entry named after the database${opfsEntries ? '' : ' — skipped, this VFS keeps no OPFS entry'}`,
+      async () => {
         const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
-        const db = createSQLiteClient(dbName, { vfs, poolSize: 1 });
+        const db = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
         await db.write('CREATE TABLE t (n)');
         await db.close();
 
-        await expect(deleteDatabase(dbName, { vfs })).resolves.toBeUndefined();
-
-        const error = await deleteDatabase(dbName, { vfs }).then(
-          () => undefined,
-          (e) => e,
-        );
-        expect((error as SQLiteError).code).toBe('DATABASE_NOT_FOUND');
-      });
-
-      // Falsifiable: drop `...VFS_CAPABILITIES[vfs].extraFileSuffixes` from the opfs-path
-      // pass in deleteDatabaseFiles — OPFSWriteAheadVFS leaves `-wa0` and `-wa1`.
-      it(`leaves no OPFS root entry named after the database on ${vfs}`, async () => {
-        const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
-        const db = createSQLiteClient(dbName, { vfs, poolSize: 1 });
-        await db.write('CREATE TABLE t (n)');
-        await db.close();
-
-        await expect(deleteDatabase(dbName, { vfs })).resolves.toBeUndefined();
+        await expect(
+          deleteDatabase(dbName, { vfs, build }),
+        ).resolves.toBeUndefined();
 
         const root = await navigator.storage.getDirectory();
         const remaining: string[] = [];
@@ -175,29 +226,16 @@ describe('deleteDatabase', () => {
           if (name.startsWith(dbName)) remaining.push(name);
         }
         expect(remaining).toEqual([]);
-      });
-    }
-
-    it('still resolves on the memory VFS, which persists nothing', async () => {
-      await expect(
-        deleteDatabase(`browser-sqlite-test-${crypto.randomUUID()}`, {
-          vfs: 'MemoryVFS',
-        }),
-      ).resolves.toBeUndefined();
-    });
+      },
+    );
   });
 });
 
 describe('deleteDatabase under a live connection', () => {
-  const liveClient = (
-    vfs:
-      | 'OPFSAnyContextVFS'
-      | 'IDBBatchAtomicVFS'
-      | 'IDBMirrorVFS'
-      | 'OPFSAdaptiveVFS',
-  ) => {
+  const liveClient = () => {
+    const { vfs, build } = TEST_TARGET;
     const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
-    const db = createSQLiteClient(dbName, { vfs, poolSize: 1 });
+    const db = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
     onTestFinished(async () => {
       try {
         await db.close();
@@ -205,7 +243,7 @@ describe('deleteDatabase under a live connection', () => {
         /* a failed client has nothing to close */
       }
       try {
-        await deleteDatabase(dbName, { vfs });
+        await deleteDatabase(dbName, { vfs, build });
       } catch {
         /* best-effort cleanup */
       }
@@ -213,21 +251,20 @@ describe('deleteDatabase under a live connection', () => {
     return { db, dbName };
   };
 
-  for (const vfs of [
-    'OPFSAnyContextVFS',
-    'IDBBatchAtomicVFS',
-    'IDBMirrorVFS',
-    'OPFSAdaptiveVFS',
-  ] as const) {
-    // Falsifiable: remove the connection-lock acquisition in delete.ts and the
-    // first three go red by resolving (they delete the database today), while
-    // OPFSAdaptiveVFS goes red with WORKER_CRASHED instead of DATABASE_IN_USE.
-    it(`refuses with DATABASE_IN_USE on ${vfs}`, async () => {
-      const { db, dbName } = liveClient(vfs);
+  const { vfs, build } = TEST_TARGET;
+  const shared = VFS_CAPABILITIES[vfs].layout !== 'memory';
+
+  // Falsifiable: remove the connection-lock acquisition in delete.ts and this
+  // goes red — by resolving where the VFS shares its store, and with
+  // WORKER_CRASHED instead of DATABASE_IN_USE on OPFSAdaptiveVFS.
+  (shared ? it : it.skip)(
+    `refuses with DATABASE_IN_USE while a client is live${shared ? '' : ' — skipped, a memory VFS shares no connection (pinned test below)'}`,
+    async () => {
+      const { db, dbName } = liveClient();
       await db.write('CREATE TABLE t (n)');
       await db.write('INSERT INTO t VALUES (1)');
 
-      const error = await deleteDatabase(dbName, { vfs }).then(
+      const error = await deleteDatabase(dbName, { vfs, build }).then(
         () => undefined,
         (e) => e,
       );
@@ -237,16 +274,19 @@ describe('deleteDatabase under a live connection', () => {
       // The live client is untouched — this is the whole point.
       const rows = await db.read<{ n: number }>('SELECT n FROM t');
       expect(rows.map((r) => r.n)).toEqual([1]);
-    });
+    },
+  );
 
-    it(`deletes on ${vfs} once the client has closed`, async () => {
-      const { db, dbName } = liveClient(vfs);
-      await db.write('CREATE TABLE t (n)');
-      await db.close();
-      await expect(deleteDatabase(dbName, { vfs })).resolves.toBeUndefined();
-    });
-  }
+  it('deletes once the client has closed', async () => {
+    const { db, dbName } = liveClient();
+    await db.write('CREATE TABLE t (n)');
+    await db.close();
+    await expect(
+      deleteDatabase(dbName, { vfs, build }),
+    ).resolves.toBeUndefined();
+  });
 
+  // One VFS: the subject is MemoryVFS's lack of any shared connection lock.
   it('still deletes on the memory VFS with a client open — nothing is shared there', async () => {
     const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
     const db = createSQLiteClient(dbName, { vfs: 'MemoryVFS', poolSize: 1 });
@@ -263,6 +303,8 @@ describe('deleteDatabase under a live connection', () => {
     ).resolves.toBeUndefined();
   });
 
+  // One VFS: the connection lock and its FIFO ordering is OPFS-family;
+  // OPFSAdaptiveVFS is the representative.
   it('refuses a delete issued in the same task as a client construction', async () => {
     const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
     const vfs = 'OPFSAdaptiveVFS' as const;
@@ -298,4 +340,41 @@ describe('deleteDatabase under a live connection', () => {
     const rows = await db.read('SELECT n FROM t');
     expect(rows).toEqual([]);
   });
+});
+
+/**
+ * A worker killed while it was inside a statement holds its OPFS sync access
+ * handles for far longer than an idle one — measured 2026-09-16 on Chromium:
+ * ~2000 ms against ~65 ms. `AccessHandlePoolVFS` acquires every file in its
+ * directory exclusively, so a delete issued in that window meets the corpse.
+ *
+ * `close()` then `deleteDatabase()` is the sequence a consumer writes, and
+ * before the retry it failed with WORKER_CRASHED / NoModificationAllowedError.
+ *
+ * Falsifiable: make createVfsInstance in src/worker/worker.ts rethrow
+ * instead of waiting (verified red, 2026-09-16).
+ */
+describe('deleting after a worker died inside a statement', () => {
+  // One VFS: the subject IS AccessHandlePoolVFS's fixed handle pool. No other
+  // VFS holds its whole directory, so none of them can show this.
+  const vfs = 'AccessHandlePoolVFS' as const;
+
+  it('deletes a database whose worker was killed mid-statement', async () => {
+    const file = `delete-busy-${crypto.randomUUID()}`;
+    const db = createSQLiteClient(file, {
+      vfs,
+      poolSize: 1,
+      drainTimeout: 200,
+    });
+    await db.write('CREATE TABLE t (a)');
+
+    // Abandoned on purpose: close() bounds the drain and terminates the worker
+    // while it is still inside the statement.
+    const running = db.read(longQuery(20_000_000)).catch(() => {});
+    await sleep(100);
+    await db.close();
+    await running;
+
+    await expect(deleteDatabase(file, { vfs })).resolves.toBeUndefined();
+  }, 60_000);
 });

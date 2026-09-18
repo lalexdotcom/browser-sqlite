@@ -843,14 +843,23 @@ export const createTransaction =
 
       try {
         signal?.throwIfAborted();
-        // BEGIN carries no signal, and neither do COMMIT and ROLLBACK. Their
+        // BEGIN carries no signal, and neither do COMMIT and ROLLBACK — this
+        // concerns BEGIN in both its deferred and IMMEDIATE forms. Their
         // completion is what decides whether a rollback is owed: a BEGIN that ran
         // on the worker but rejected on the client would return a connection to
         // the pool holding an open transaction, which is the state onPoisoned
         // exists to prevent. The cost is a window — while BEGIN is in flight the
         // transaction cannot be abandoned, and on a VFS rotating one exclusive
         // handle that wait can be long. The abort lands the moment BEGIN settles.
-        await exec(via(false), 'BEGIN');
+        //
+        // A write transaction announces itself: OPFSWriteAheadVFS refuses one
+        // that reaches its first write from a deferred BEGIN — "Write
+        // transaction cannot use BEGIN DEFERRED" — and the client stayed broken
+        // afterwards (spec 2026-09-15, A4). The origin write lock is already
+        // held here, so IMMEDIATE only moves SQLite's RESERVED lock to the start
+        // of a transaction no other writer can be in. A read-only one stays
+        // deferred: it takes no write lock and must not ask SQLite for one.
+        await exec(via(false), readOnly ? 'BEGIN' : 'BEGIN IMMEDIATE');
         begun = true;
         // That window, closed: the signal may have fired while BEGIN was in
         // flight, and the transaction is open now. The callback never runs.

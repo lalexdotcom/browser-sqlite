@@ -2,7 +2,7 @@ import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { SQLiteError } from '../../src/errors';
 import { SQLITE_CODES, SQLITE_EXTENDED_CODES } from '../../src/sqlite-codes';
-import { createTestClient } from './helpers';
+import { createTestClient, pairFor } from './helpers';
 
 /**
  * docs/superpowers/specs/2026-09-14-statement-errors-design.md: a statement
@@ -52,6 +52,9 @@ const memoryClient = (
   pragmas?: Record<string, string>,
 ) =>
   createTestClient({
+    // One VFS: the subject is SQLite's own error/code translation, exercised
+    // across every build; MemoryVFS isolates it from storage-layer noise
+    // (declares all three builds, needs no cleanup — see file docblock).
     vfs: 'MemoryVFS',
     build,
     poolSize: 1,
@@ -212,6 +215,15 @@ describe('bulkWrite', () => {
 });
 
 describe('a file that is not a database', () => {
+  /**
+   * These two tests put bytes at the database's own name before anything
+   * opens it, so they need a VFS that opens an OPFS file by that name: a pool
+   * VFS keeps its files under opaque names, an IndexedDB one has no file, and
+   * a memory one has nothing at all — on those three, the garbage is simply
+   * never read and a healthy empty database opens instead.
+   */
+  const opfsPair = () => pairFor(['opfs-file']);
+
   /** An OPFS file of 4 KiB of 'A' — what an `opfs-path` VFS opens by name. */
   const garbageFile = async () => {
     const file = `statement-errors-${crypto.randomUUID()}`;
@@ -223,13 +235,15 @@ describe('a file that is not a database', () => {
     return { file, remove: () => root.removeEntry(file).catch(() => {}) };
   };
 
-  // `OPFSAdaptiveVFS` declares no default pragma, so a `pragmas` entry is
-  // what makes the open read the file. Falsifiable: drop `sqliteCode` from
-  // the WORKER_CRASHED built in startupError.
+  // The target declares no default pragma, so a `pragmas` entry is what makes
+  // the open read the file. Falsifiable: drop `sqliteCode` from the
+  // WORKER_CRASHED built in startupError.
   it('fails the open with WORKER_CRASHED carrying NOTADB when a pragma reads it', async () => {
+    const pair = opfsPair();
     const { file, remove } = await garbageFile();
     const db = createSQLiteClient(file, {
-      vfs: 'OPFSAdaptiveVFS',
+      vfs: pair.vfs,
+      build: pair.build,
       poolSize: 1,
       pragmas: { user_version: '1' },
     });
@@ -248,9 +262,11 @@ describe('a file that is not a database', () => {
   // Without one, the open is lazy and succeeds: the first statement that
   // reads the schema is what fails.
   it('fails the first statement with STATEMENT_FAILED when nothing reads it at open', async () => {
+    const pair = opfsPair();
     const { file, remove } = await garbageFile();
     const db = createSQLiteClient(file, {
-      vfs: 'OPFSAdaptiveVFS',
+      vfs: pair.vfs,
+      build: pair.build,
       poolSize: 1,
     });
     onTestFinished(async () => {

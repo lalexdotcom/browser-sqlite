@@ -44,7 +44,7 @@ const MANY = 20_000;
 
 describe('chunk delivery', () => {
   it('delivers every chunk to a consumer that pauses between them', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await seed(db);
       let rows = 0;
@@ -62,7 +62,7 @@ describe('chunk delivery', () => {
   });
 
   it('delivers every row to a stream consumer that awaits per row', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await seed(db);
       const seen: number[] = [];
@@ -82,7 +82,7 @@ describe('chunk delivery', () => {
   });
 
   it('still delivers every row to a consumer that never pauses', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await seed(db);
       let rows = 0;
@@ -116,7 +116,7 @@ describe('chunk delivery', () => {
    */
   describe('while the consumer is suspended between chunks', () => {
     it('stops on an early break, and hands the worker back', async () => {
-      const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+      const db = await createTestClient({ poolSize: 1 });
       try {
         await seed(db);
         let chunks = 0;
@@ -138,7 +138,7 @@ describe('chunk delivery', () => {
 
     it('rejects on an undeserializable message', async () => {
       const records = interceptWorkers();
-      const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+      const db = await createTestClient({ poolSize: 1 });
       try {
         await seed(db, MANY);
         const consuming = (async () => {
@@ -160,7 +160,7 @@ describe('chunk delivery', () => {
 
     it('rejects when the worker dies', async () => {
       const records = interceptWorkers();
-      const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+      const db = await createTestClient({ poolSize: 1 });
       try {
         await seed(db, MANY);
         const consuming = (async () => {

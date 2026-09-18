@@ -9,8 +9,12 @@ import {
 
 describe('the sync build, isolated', () => {
   it('stops a running statement on abort', async () => {
+    // One VFS: the subject is the `sync` build's SharedArrayBuffer abort-slot
+    // mechanism, exercised only under cross-origin isolation on a `sync`
+    // build. OPFSWriteAheadVFS is the recommended VFS whose default build is
+    // `sync` (spec 2026-09-15, A5, task 9a context).
     const db = await createTestClient({
-      vfs: 'MemoryVFS',
+      vfs: 'OPFSWriteAheadVFS',
       build: 'sync',
       poolSize: 1,
       debug: true,
@@ -53,8 +57,9 @@ describe('the sync build, isolated', () => {
     // the one the abort wrote, and on no other: the defect is a single wrong
     // interrupt, several queries after the restart.
     const records = interceptWorkers();
+    // One VFS: same reason as above — the sync build's abort-slot mechanism.
     const db = await createTestClient({
-      vfs: 'MemoryVFS',
+      vfs: 'OPFSWriteAheadVFS',
       build: 'sync',
       poolSize: 1,
       maxWorkerRestarts: 1,
@@ -118,8 +123,9 @@ describe('statement cache, sync build isolated', () => {
     // Falsifiability: revert `|| abortedHere()` from the SQLITE_INTERRUPT
     // catch block in worker.ts and this test fails — the third run recompiles.
     const sql = longQuery(20_000_000);
+    // One VFS: same reason as above — the sync build's abort-slot mechanism.
     const db = await createTestClient({
-      vfs: 'MemoryVFS',
+      vfs: 'OPFSWriteAheadVFS',
       build: 'sync',
       poolSize: 1,
       debug: true,

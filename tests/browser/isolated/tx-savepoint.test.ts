@@ -11,7 +11,15 @@ const BIG_INSERT =
   'INSERT INTO big WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 1000000) SELECT x FROM c';
 
 const setUp = async () => {
-  const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+  // One VFS: the subject is the `sync` build's SharedArrayBuffer abort-slot
+  // channel, exercised only under cross-origin isolation on a `sync` build
+  // (see the file docstring). OPFSWriteAheadVFS is the recommended VFS whose
+  // default build is `sync` (spec 2026-09-15, A5, task 9a context).
+  const db = await createTestClient({
+    vfs: 'OPFSWriteAheadVFS',
+    build: 'sync',
+    poolSize: 1,
+  });
   await db.write('CREATE TABLE t (a INTEGER)');
   await db.write('CREATE TABLE big (x INTEGER)');
   await db.write('INSERT INTO t VALUES (0)');

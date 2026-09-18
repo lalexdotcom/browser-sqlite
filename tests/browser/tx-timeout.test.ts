@@ -8,17 +8,21 @@ import { createTestClient, longQuery, sleep } from './helpers';
  * only: a write abandoned by its own timeout abandons the whole transaction,
  * which tests/browser/tx-abort.test.ts pins.
  *
- * `longQuery` is a single-row aggregate: on the `sync` build with no
- * cross-origin isolation (both engines, in this suite) worker.ts installs no
- * progress handler at all, so the recursive CTE runs to completion in one
- * uninterruptible step() regardless of the timeout. The size below (2 000 000)
- * is chosen so that natural completion is comfortably above the 200 ms budget
- * on both engines (~500 ms Chromium, ~2.3 s Firefox, measured) while staying
- * well inside each test's own timeout.
+ * `longQuery` is a single-row aggregate: on a `sync` build with no
+ * cross-origin isolation, worker.ts installs no progress handler at all, so
+ * the recursive CTE runs to completion in one uninterruptible step()
+ * regardless of the timeout; on `async`/`jspi` a statement with a timeout
+ * yields periodically and can actually be cut (mem:vfs, HANDLE-1). Either
+ * way the transaction's own deadline rejects on schedule, which is the whole
+ * subject here — the test follows the target (spec 2026-09-15, A5), no
+ * `needs` declared. The size below (2 000 000) is chosen so that natural
+ * completion is comfortably above the 200 ms budget on both engines (~500 ms
+ * Chromium, ~2.3 s Firefox, measured on `sync`) while staying well inside
+ * each test's own timeout even when the statement is not actually cut.
  */
 describe('a statement timeout inside a transaction', () => {
   it('rejects the transaction, uncaught, and rolls back an earlier write', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await db.write('CREATE TABLE t (a INTEGER)');
 
@@ -36,7 +40,7 @@ describe('a statement timeout inside a transaction', () => {
   }, 15000);
 
   it('lets the callback catch the timeout and continue to COMMIT', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await db.write('CREATE TABLE t (a INTEGER)');
 
@@ -58,7 +62,7 @@ describe('a statement timeout inside a transaction', () => {
   }, 15000);
 
   it('rejects a tx.chunk() whose consumer pauses past the timeout between chunks', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await db.write('CREATE TABLE t (x INTEGER)');
       await db.write(

@@ -66,6 +66,8 @@ describe('OPFSCoopSyncVFS handle-transfer BUSY', () => {
     // database would — each client at its default (capped) pool of one
     // worker, so the handle transfer this test chases now happens between
     // these two clients rather than between workers of one pool.
+    // One VFS: the subject is OPFSCoopSyncVFS's exclusive-handle transfer
+    // between two clients.
     const dbA = createSQLiteClient(file, { vfs: 'OPFSCoopSyncVFS' });
     try {
       await dbA.write('CREATE TABLE t (a INTEGER)');

@@ -2,22 +2,33 @@ import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
 import { inspectDatabase } from '../../src/inspect';
+import { pairFor } from './helpers';
 
-const VFS = 'IDBBatchAtomicVFS' as const;
+// The write-lock accounting `inspectDatabase` reports is generic — nothing
+// here is specific to one VFS family — so the no-client case below follows
+// the target, declaring only that the database outlives its worker.
 
 describe('inspectDatabase write', () => {
   it('is empty when nobody writes', async () => {
-    const result = await inspectDatabase('quiet.db', { vfs: VFS });
+    const result = await inspectDatabase('quiet.db', {
+      vfs: pairFor(['shared-storage']).vfs,
+    });
     expect(result.write).toEqual({ tab: null, sameTab: false, waiting: 0 });
   });
 
+  // One VFS: two clients must share one database; OPFSAdaptiveVFS shares it
+  // on every engine (see `secondClientOutcome`). Measured: on Firefox's
+  // OPFSWriteAheadVFS/sync target, the second client's first query rejects
+  // with DATABASE_IN_USE (no `readwrite-unsafe`), so this cannot follow the
+  // target.
   it('names the writing tab and counts who waits', async () => {
     const file = 'writing.db';
-    const a = createSQLiteClient(file, { vfs: VFS });
-    const b = createSQLiteClient(file, { vfs: VFS });
+    const vfs = 'OPFSAdaptiveVFS' as const;
+    const a = createSQLiteClient(file, { vfs });
+    const b = createSQLiteClient(file, { vfs });
     onTestFinished(async () => {
       await Promise.all([a.close(), b.close()]).catch(() => {});
-      await deleteDatabase(file, { vfs: VFS }).catch(() => {});
+      await deleteDatabase(file, { vfs }).catch(() => {});
     });
     await a.write('CREATE TABLE t (v)');
 
@@ -39,7 +50,7 @@ describe('inspectDatabase write', () => {
       queued = b.write('INSERT INTO t VALUES (2)');
 
       for (let attempt = 0; attempt < 50; attempt++) {
-        seen = await inspectDatabase(file, { vfs: VFS });
+        seen = await inspectDatabase(file, { vfs });
         if (seen.write.waiting >= 1) break;
         await new Promise<void>((r) => setTimeout(r, 20));
       }

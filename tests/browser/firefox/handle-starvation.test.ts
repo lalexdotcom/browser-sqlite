@@ -28,6 +28,9 @@ import { deleteDatabase } from '../../../src/delete';
  * exactly the kind of platform movement this project wants to hear about.
  */
 
+// One VFS: see the file header — the subject is Firefox's reduced-mode
+// handle rotation, which OPFSAdaptiveVFS exhibits; this cannot be written to
+// pass on both engines or follow a target that might resolve to Chromium.
 const VFS = 'OPFSAdaptiveVFS' as const;
 
 describe('handle starvation during open (reduced mode)', () => {

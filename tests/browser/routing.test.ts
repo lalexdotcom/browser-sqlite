@@ -68,7 +68,9 @@ describe('routing — strictness', () => {
 
   // Falsifiable: put the ternary back on write()'s acquire in src/client.ts.
   it('write() accepts a read statement and routes it to the writer', async () => {
-    const db = await createTestClient({ poolSize: 2 });
+    // "Routed to the WRITER" only means something where a reader exists too,
+    // so the pair has to keep two workers (spec 2026-09-15, A5).
+    const db = await createTestClient({ poolSize: 2, needs: ['two-workers'] });
     const { result } = await db.write<{ n: number }>('SELECT 1 AS n');
     expect(result[0]?.n).toBe(1);
   });

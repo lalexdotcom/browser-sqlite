@@ -9,8 +9,11 @@
 // invocation time only, via rstest's CLI override, and never touches the
 // checked-in config:
 //
-//   pnpm exec rstest --project chromium run tests/browser/abandon-gc.test.ts \
+//   pnpm exec rstest --project 'chromium*' run tests/browser/abandon-gc.test.ts \
 //     --browser.providerOptions.launch.args.0="--js-flags=--expose-gc"
+//
+// `chromium*` matches every chromium project (one per target, spec
+// 2026-09-15, A5) — there is no longer a project named plain `chromium`.
 //
 // Without that flag `globalThis.gc` is undefined and this test skips itself
 // below — that is expected, not a failure, when run through `pnpm test` or
@@ -41,7 +44,7 @@ describe('an abandoned generator is recovered at collection', () => {
     it.skip('skipped — this browser was not launched with --expose-gc', () => {});
   } else {
     it('gives the worker back with no timeout and no signal', async () => {
-      const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+      const db = await createTestClient({ poolSize: 1 });
       try {
         await db.write('CREATE TABLE t (n INTEGER)');
         await db.write(SEED);
@@ -81,7 +84,7 @@ describe('an abandoned generator is recovered at collection', () => {
       // every test in this repository stayed green. D3 is the rule that keeps
       // it from reaching; this is the test that would notice if it did.
       const controller = new AbortController();
-      const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+      const db = await createTestClient({ poolSize: 1 });
       try {
         await db.write('CREATE TABLE t (n INTEGER)');
         await db.write(SEED);

@@ -1,42 +1,178 @@
-import { afterEach, onTestFinished } from '@rstest/core';
+import { onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
+import { deleteDatabase } from '../../src/delete';
+import type { SQLiteError } from '../../src/errors';
 import type { InternalSQLiteClientOptions } from '../../src/scheduler';
-import type { SQLiteVFS } from '../../src/types';
+import {
+  defaultBuildFor,
+  type SQLiteVFS,
+  VFS_CAPABILITIES,
+} from '../../src/types';
+import { AVAILABLE_FEATURES } from '../conformance/helpers';
+import { targetLabel } from '../target-projects';
+import { type Here, type Need, resolvePair, type TestTarget } from './target';
 
-/** Options for createTestClient — vfs defaults to OPFSAdaptiveVFS. */
+/**
+ * Options for createTestClient. `vfs` pins the test to one VFS; without it the
+ * test follows the target, and `needs` declares what its subject requires of
+ * the pair it runs on.
+ */
 type TestClientOptions = Omit<InternalSQLiteClientOptions, 'name' | 'vfs'> & {
   vfs?: SQLiteVFS;
+  needs?: readonly Need[];
 };
+
+declare const __BSQ_TEST_TARGET__: TestTarget | undefined;
+
+/**
+ * The target this project injects — `source.define` in the browser configs,
+ * one project per target (tests/target-projects.ts). A browser project without
+ * one is a configuration error, not a default, so this throws rather than
+ * choose a VFS. It lives here, not in `./target`, because the resolver there
+ * is imported by a Node unit test, where no project injects anything.
+ */
+export const TEST_TARGET: TestTarget = (() => {
+  if (typeof __BSQ_TEST_TARGET__ === 'undefined') {
+    throw new Error(
+      'TEST_TARGET: this project injects no __BSQ_TEST_TARGET__ — a browser project needs a target (tests/target-projects.ts)',
+    );
+  }
+  return __BSQ_TEST_TARGET__;
+})();
+
+/**
+ * This browser, as the resolver sees it: the conformance probe's features,
+ * which already carry `cross-origin-isolated` — `AVAILABLE_FEATURES` is
+ * `detectFeatures()` plus the async probe, and isolation is one of the four
+ * synchronous probes. Nothing here re-tests a global by hand.
+ */
+const HERE: Here = { features: AVAILABLE_FEATURES };
 
 /**
  * Creates a SQLite client with a unique database name (UUID) and registers
- * automatic OPFS cleanup via afterEach.
+ * cleanup of the client and its files via onTestFinished.
  *
- * Decisions: D-06 (unique name), D-07 (afterEach cleanup), D-08 (shared helper)
- * VFS: OPFSAdaptiveVFS on the Asyncify build by default. Pass `vfs` when the
- * test is about VFS selection, or when it needs a pool of more than one worker
- * on every engine — OPFSAdaptiveVFS runs one where `readwrite-unsafe` is
- * missing, so such tests use OPFSAnyContextVFS (spec 2026-09-13, §10).
+ * Decisions: D-06 (unique name), D-07 (per-test cleanup), D-08 (shared helper)
+ *
+ * VFS: the target this project injects (`TEST_TARGET`), unless the test pins
+ * one with `vfs`. Pinning is for tests whose subject IS a VFS, and says why on
+ * a `// One VFS: <reason>` line above the call; a pinned test runs on its
+ * `build`, or that VFS's default. A property the subject requires of the pair
+ * it runs on — two workers in the pool, an interruptible statement — is
+ * declared in `needs`, never obtained by pinning: the test runs on the target
+ * where the target has it here, otherwise on the nearest pair of this browser
+ * that does (`resolvePair`, spec 2026-09-15, A5). No such pair is an error,
+ * TARGET_NOT_RUNNABLE, never a skip.
  */
+/**
+ * Removes a database file and every file a VFS keeps beside it — the three
+ * every layout may have, and the VFS's own (e.g. OPFSWriteAheadVFS's
+ * -wa0/-wa1, which outlived every test until 2026-09-15). Shared by
+ * createTestClient's own cleanup and by tests that open a worker directly
+ * with createPoolWorker, bypassing the client and its cleanup
+ * (pool-savepoint.test.ts, abandon.test.ts).
+ */
+export const removeDatabaseFiles = async (
+  name: string,
+  vfs: SQLiteVFS,
+): Promise<void> => {
+  try {
+    const root = await navigator.storage.getDirectory();
+    for (const suffix of [
+      '',
+      '-journal',
+      '-wal',
+      ...VFS_CAPABILITIES[vfs].extraFileSuffixes,
+    ]) {
+      await root
+        .removeEntry(`${name}${suffix}`, { recursive: true })
+        .catch(() => {});
+    }
+  } catch {
+    // No OPFS here, or nothing was created.
+  }
+};
+
+/**
+ * The pair a test with these needs runs on — the target itself where it has
+ * them, otherwise the nearest pair of this browser that does.
+ *
+ * Exported for the few tests that build their clients themselves (a foreign
+ * realm, an intercepted worker, a pool size of its own): everything else takes
+ * `createTestClient`, which calls this. Call it INSIDE the test, never at
+ * module scope, so a target this browser cannot run fails that test with
+ * TARGET_NOT_RUNNABLE instead of failing the file at load.
+ */
+export const pairFor = (needs: readonly Need[] = []): TestTarget => {
+  const pair = resolvePair(TEST_TARGET, needs, HERE);
+  if (pair === null) {
+    throw new Error(
+      `TARGET_NOT_RUNNABLE: no pair of this browser runs ${targetLabel(TEST_TARGET)} with needs [${needs.join(', ')}]`,
+    );
+  }
+  return pair;
+};
+
 export async function createTestClient(options: TestClientOptions = {}) {
   const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
-
-  afterEach(async () => {
-    try {
-      const root = await navigator.storage.getDirectory();
-      await root.removeEntry(dbName, { recursive: true });
-    } catch {
-      // OPFS entry may not exist if the test failed before DB creation
-    }
-  });
+  const { needs = [], ...clientOptions } = options;
+  const pair: TestTarget =
+    options.vfs === undefined
+      ? pairFor(needs)
+      : {
+          vfs: options.vfs,
+          build: options.build ?? defaultBuildFor(options.vfs),
+        };
 
   // createSQLiteClient is synchronous — workers initialize in the background.
   // The first query queues until a worker reaches READY.
-  const vfs: SQLiteVFS = options.vfs ?? 'OPFSAdaptiveVFS';
-  return createSQLiteClient(dbName, {
-    ...options,
-    vfs,
+  const db = createSQLiteClient(dbName, {
+    ...clientOptions,
+    vfs: pair.vfs,
+    build: pair.build,
   } as InternalSQLiteClientOptions);
+
+  // onTestFinished, NOT afterEach: afterEach registered from inside a test
+  // body never runs in rstest — this cleanup was dead code from the day it was
+  // written, which is why nothing a test created was ever removed. The same
+  // trap is documented on interceptWorkers below.
+  onTestFinished(async () => {
+    // Closing first is what lets the deletion below happen at all —
+    // deleteDatabase refuses with DATABASE_IN_USE while a client holds the
+    // connection lock. A client the test deliberately poisoned may refuse to
+    // close, which is that test's subject, not this cleanup's.
+    await db.close().catch(() => {});
+    // AccessHandlePoolVFS (`opfs-pool`, the only one) holds a FIXED pool of
+    // six OPFS files and hands a slot back on its own xDelete alone: jClose
+    // returns nothing, and the path→handle association is written into the
+    // OPFS file header, so it outlives the worker, the page and the whole
+    // run. Since every test opens a fresh UUID name, the sixth test exhausts
+    // the origin and nothing opens afterwards. removeDatabaseFiles cannot
+    // help — that VFS keeps its files under opaque names inside its own
+    // directory, so removing the database's name matches nothing.
+    //
+    // NOT swallowed, and that is the point. This call used to end in
+    // `.catch(() => {})`; it was failing on every test that had just killed a
+    // busy worker — the dying worker still held the directory — so the slot
+    // leaked, the pool ran out, and the next tests failed for a reason nobody
+    // could see. The silence cost a full day (`mem:lessons`). A cleanup that
+    // cannot clean must say so.
+    if (VFS_CAPABILITIES[pair.vfs].layout === 'opfs-pool') {
+      await deleteDatabase(dbName, { vfs: pair.vfs, build: pair.build }).catch(
+        (error: unknown) => {
+          // DATABASE_NOT_FOUND only: the client never got as far as creating
+          // the file, which is the subject of several tests here and not a
+          // cleanup failure. Anything else — a slot this cleanup could not
+          // give back — must reach the test.
+          if ((error as SQLiteError)?.code !== 'DATABASE_NOT_FOUND')
+            throw error;
+        },
+      );
+    }
+    await removeDatabaseFiles(dbName, pair.vfs);
+  });
+
+  return db;
 }
 
 export type WorkerRecord = {

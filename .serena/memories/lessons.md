@@ -28,6 +28,39 @@ pinning a defect that appears 1.7 % of the time would itself fail most runs.
 
 ## About debugging
 
+**A green cell can mean the test never ran there.** `isolated` showed 0 failures on
+`IDBBatchAtomicVFS` and `IDBMirrorVFS` throughout the 2026-09-18 triage, and it nearly sent the
+diagnosis the wrong way. That config reads `tests/browser/isolated/**` only — a separate
+three-file suite, 7 tests against 334. **Before reading a zero as evidence, check the cell ran the
+subject**: `grep -c '<the test name>'` on its report answers it in one command.
+
+**Your own instrumentation can be the artefact — prove the defect without it.** Chasing the
+`IDBMirrorVFS` corruption, a probe showed `block.set(pData, 0)` leaving the destination at zero
+with a valid source, which is impossible for a `Uint8Array`. The right move was the control that
+came far too late: one read-only probe, nothing in the write path, which confirmed the stored bytes
+were zeroes regardless. Only then was it worth explaining. (The cause was that `pData` is a
+`Uint8ArrayProxy` with no indexed access — `set()` read `undefined` everywhere.)
+
+**The scenario a defect is found through is rarely the one that demonstrates it.** #353's first
+test reproduced a storage leak through a rolled-back transaction — the path the investigation came
+from — which made it depend on another PR and fail on upstream's master for the wrong reason, and
+stay red after the fix. `DELETE` + `VACUUM` reaches the same truncation without rolling anything
+back, runs on master unchanged, and shows the leak more plainly (531 blocks against 93). Ask what
+the smallest thing that triggers this is, not what happened to trigger it.
+
+**Six refuted hypotheses are a signal to stop guessing, not to guess better.** The same
+investigation refuted misalignment, a short read, an inconsistent deduced size, a changed block
+size, an orphan block and `BATCH_ATOMIC` — each a plausible read of the code. What worked was a
+trace: the VFS posting its events on a `BroadcastChannel` that a throwaway test carried into its
+assertion, because a worker's console never reaches the report. Three candidate fixes were refuted
+the same way afterwards, including one the trace itself seemed to point at.
+
+**A pile of failures can be one defect — and can be two, when nothing suggests it.**
+`IDBMirrorVFS`'s 46 failures over twelve subjects were a single cause; `OPFSCoopSyncVFS`'s 7 were
+**two unrelated ones** that shared a VFS and nothing else. Count causes by measurement, never by
+the shape of the pile.
+
+
 **Instrument the product, not the test.** Every probe placed in a hanging test made the bug
 disappear — bounding the call, enabling `debug: true`, shortening a sleep. A trace array on
 `globalThis`, written from `client.ts`/`pool.ts`, caught it in five runs.
@@ -868,10 +901,87 @@ never saw (`mem:follow-ups`), while its multi-client and cross-tab suites ran on
 **When a test asserts a failure, ask whether the failure is the contract or the defect — and a
 promise made across VFS is tested across VFS.**
 
-## A trace changes the rate it measures — 2026-09-15
+\1
 
-The CoopSync probe's lock trace posts a message at every `jLock`; under it Chromium failed 4-5
-attempts in 20. The bare test failed three single runs of three, yet one whole-file run showed no
-`BUSY` at all. **Report a rate taken under instrumentation as such.** The reproduction that settles
-it is the one without the trace — and the one upstream needed came from its own suite, where the bare
-code failed 47 steps in 100.
+## A suite pinned to one VFS hides every defect in the VFS it does not run — 2026-09-15
+
+Running the whole browser suite on the SECOND recommended VFS found, in one afternoon: `output()` broken on
+`OPFSWriteAheadVFS` (a deferred `BEGIN` that VFS refuses by design, leaving the connection unusable), a
+second client that could break the FIRST one, and ~200 further failures across the other seven VFS. Those
+tests had been green for months. **What made it cheap was making the VFS a runtime target rather than a
+literal in each file**: one mechanism, one command per pair, and a test declares what it needs
+(`two-workers`, `interruptible`) instead of naming a VFS.
+
+## A subagent handed a 16-file triage reads for fifteen minutes before it writes anything — 2026-09-15
+
+Three batches behaved identically: 10-18 minutes of reading, no edit, no report. What fixed it was one line
+in the brief — *work file by file; write your first table row within ten minutes* — plus a controller
+message when the ledger showed no edit after ten. **Split a batch before dispatching it, and give the first
+artifact a deadline.** A monitor that counts the report's rows, not only the modified files, shows the
+difference between thinking and stalling.
+
+## A swallowed cleanup turns one defect into an unreadable cascade — 2026-09-16
+
+`createTestClient`'s cleanup ended its `deleteDatabase` with `.catch(() => {})`. On
+`AccessHandlePoolVFS` that call was failing on every test that had just killed a busy worker —
+the dying worker still held the directory — so the pool slot was never given back. Six slots,
+then nothing opened, and the later tests failed with `sqlite3_open_v2`, which names no cause at
+all. **The defect was one line away from the evidence and the evidence was being deleted.**
+
+**A cleanup that cannot clean must say so.** Tolerate exactly the outcomes that are a test's
+subject — here `DATABASE_NOT_FOUND`, for the several tests whose client never creates a file —
+and let everything else reach the test. `.catch(() => {})` in a cleanup is not defensive, it is a
+decision to hide whatever the cleanup was for.
+
+**The corollary, and it is what cost the time:** the same silence made a PRODUCT defect look like
+test infrastructure. `close()` then `deleteDatabase()` is the sequence a consumer writes, and it
+was failing for real. It was written off as "our test helper leaks" for hours because nothing
+ever printed.
+
+## A delay that does not fix it has only refuted the delay you tried — 2026-09-16
+
+Chasing the same defect, delaying the worker respawn by 250 ms and then 1000 ms changed nothing,
+and both were read as "not a timing race". The release actually takes ~2000 ms (HANDLE-CORPSE,
+`mem:measurements`): both probes were under the threshold. **A negative result from a magnitude
+you chose by feel refutes that magnitude, not the hypothesis.** Measure the quantity before
+bisecting on it — the direct measurement (terminate, then poll until reopen succeeds) took one
+run and answered exactly.
+
+Two more traps from the same afternoon, both of which produced confident wrong readings:
+
+- **The first probe measured the connection lock, not the engine.** It reopened while the first
+  client was still alive, so it was reading `bsq:conn`'s exclusivity — `-1` on every trial, which
+  reads like "never released". Close the thing that is not under test.
+- **rstest prints `console` output only for tests that FAIL.** A probe that logs its measurement
+  and passes prints nothing. Carry the value in the assertion (`expect(measured).toBe('X')`) — and
+  keep it short, the report truncates the message.
+
+## `afterEach` registered from inside a test body NEVER RUNS in rstest — 2026-09-16
+
+`createTestClient`'s cleanup called `afterEach(...)` from the test that was running. rstest
+silently drops it: instrumented on one file, **30 registrations and 0 executions**. So no
+browser test had ever removed the database it created, on any VFS, since the helper was
+written — and a comment in the same file asserted the opposite ("suite-scoped when called
+inside a test body"), which is how it survived so long. `onTestFinished` is the test-scoped
+hook that does run, and the same file already used it, with a comment explaining the
+difference, twenty lines below.
+
+**A registration is not an execution — instrument both ends before believing a hook.** One
+`console.error` at the registration and one at the entry answered in a single run what two
+rounds of reading the code and two whole-matrix runs (80 minutes) had not.
+
+**And the triage entry that sent me there named a mechanism that was measurably false.** It
+said "createTestClient never closes its client, and removing OPFS entries by name returns no
+slot to the pool". Closing was necessary but does nothing for the pool — `jClose` returns no
+slot, only `xDelete` does — and the cleanup that was supposed to do the removing never ran
+at all. Its ORDER was right, its cause was wrong. `mem:follow-ups` already says to verify an
+entry against the source before scheduling work on it; **this is the first time the entry
+also carried a stated cause, and the cause is exactly the part that rotted.** Treat a
+backlog entry's diagnosis as a hypothesis with a date on it, never as a finding.
+
+## A falsifier claim written months ago is a claim, not a fact — 2026-09-15
+
+Of six carried by `multi-client`/`cross-tab`, two reproduced everywhere, one only on some VFS, and three
+were refuted: the `src/` lines they named were redundant, so deleting them changed nothing observable.
+**Re-run a falsifier whenever its test starts running somewhere new** — and when it is refuted, say so in
+the comment rather than rewording it into something that sounds true.

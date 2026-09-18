@@ -21,8 +21,13 @@ export const ALL_VFS = Object.keys(VFS_CAPABILITIES) as SQLiteVFS[];
  * permissions, or a browser that ignores the mode and enforces exclusive
  * locking (which blocks the second open).
  */
-async function probeUnsafeHandles(): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
+/**
+ * One attempt. Resolves `'wedged'` rather than an answer when the worker does
+ * not report inside `PROBE_BOUND_MS` — see `probeUnsafeHandles` for why that
+ * case exists at all.
+ */
+function probeOnce(attempt: number): Promise<boolean | 'wedged'> {
+  return new Promise<boolean | 'wedged'>((resolve) => {
     const src = `
       self.onmessage = async () => {
         let h1;
@@ -53,11 +58,23 @@ async function probeUnsafeHandles(): Promise<boolean> {
     // often enough to leave `__probe_unsafe_handles` in the OPFS root (4 of 6
     // Chromium loads, measured on the bench page's copy of this probe — see
     // BENCH-DRIFT in mem:follow-ups). `onerror` means no cleanup will run.
+    const bound = setTimeout(() => {
+      // The worker is wedged, not slow: terminate it so it cannot hold an OPFS
+      // entry, and let the caller start a fresh one.
+      worker.terminate();
+      URL.revokeObjectURL(url);
+      console.error(
+        `[conformance] readwrite-unsafe probe attempt ${attempt} did not report in ${PROBE_BOUND_MS} ms — see the Firefox getDirectory() hang in mem:follow-ups`,
+      );
+      resolve('wedged');
+    }, PROBE_BOUND_MS);
     worker.onmessage = (e: MessageEvent<boolean>) => {
+      clearTimeout(bound);
       resolve(e.data);
       URL.revokeObjectURL(url);
     };
     worker.onerror = () => {
+      clearTimeout(bound);
       resolve(false);
       worker.terminate();
       URL.revokeObjectURL(url);
@@ -74,6 +91,39 @@ async function probeUnsafeHandles(): Promise<boolean> {
  * open). Resolved once at module load via top-level await so the skip
  * decision can be made synchronously at test-declaration time.
  */
+/** How long one attempt gets before its worker is written off as wedged. */
+const PROBE_BOUND_MS = 10_000;
+/** How many workers get to try before the suite gives up and says so. */
+const PROBE_ATTEMPTS = 3;
+
+/**
+ * The answer, or a thrown error — never a guess.
+ *
+ * This runs at module scope behind a TOP-LEVEL AWAIT, in every browser test
+ * file's page, and rstest runs those files in parallel pages. On Firefox,
+ * `await navigator.storage.getDirectory()` inside the worker below sometimes
+ * NEVER SETTLES under that concurrency — no resolve, no reject (established
+ * 2026-09-16, `mem:follow-ups`). An unbounded probe therefore hangs its page
+ * before any test starts, where neither `testTimeout` nor `hookTimeout` can
+ * fire: the file stays "running" for ever and the whole run never ends. Four
+ * sightings, and `pnpm test` bounds nothing on its own.
+ *
+ * So each attempt is bounded and a wedged worker is terminated and replaced.
+ * It THROWS rather than answering false after the last attempt, because false
+ * is a real answer here — Firefox's and Safari's — and a silent false on
+ * Chromium would flip `readwrite-unsafe` for the whole run and make tests pass
+ * for the wrong reason.
+ */
+async function probeUnsafeHandles(): Promise<boolean> {
+  for (let attempt = 1; attempt <= PROBE_ATTEMPTS; attempt++) {
+    const answer = await probeOnce(attempt);
+    if (answer !== 'wedged') return answer;
+  }
+  throw new Error(
+    `readwrite-unsafe probe: ${PROBE_ATTEMPTS} workers in a row failed to report within ${PROBE_BOUND_MS} ms each. On Firefox this is navigator.storage.getDirectory() never settling inside a worker (mem:follow-ups). The suite refuses to guess the answer.`,
+  );
+}
+
 export const HAS_UNSAFE_HANDLES = await probeUnsafeHandles();
 
 /**
@@ -82,7 +132,7 @@ export const HAS_UNSAFE_HANDLES = await probeUnsafeHandles();
  * no edit in this file; `readwrite-unsafe` has no synchronous probe — which is
  * why `detectFeatures` cannot report it — and comes from the async probe above.
  */
-const AVAILABLE_FEATURES: ReadonlySet<PlatformFeature> = new Set([
+export const AVAILABLE_FEATURES: ReadonlySet<PlatformFeature> = new Set([
   ...detectFeatures(),
   ...(HAS_UNSAFE_HANDLES ? (['readwrite-unsafe'] as const) : []),
 ]);

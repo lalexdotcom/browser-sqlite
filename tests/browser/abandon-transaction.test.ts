@@ -6,6 +6,15 @@ import {
   sleep,
 } from './helpers';
 
+/**
+ * Every test here needs two workers alive and unevicted, so it declares
+ * two-workers rather than merely asking for `poolSize: 2`: a target that caps
+ * the pool without readwrite-unsafe (spec 2026-09-13, §10) falls back to a
+ * pair of this browser that keeps two (spec 2026-09-15, A5). Pinning the size
+ * alone refused the client outright on the five capped VFS.
+ */
+const TWO_WORKERS = { poolSize: 2, needs: ['two-workers'] } as const;
+
 const SEED =
   'INSERT INTO t (n) WITH RECURSIVE c(x) AS ' +
   '(SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 2000) ' +
@@ -20,12 +29,7 @@ describe('an abandoned generator inside a transaction', () => {
   // the current code, and its absence is deterministic with the fix.
   it('commits, and evicts no worker', async () => {
     const records = interceptWorkers();
-    // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS runs
-    // one worker without readwrite-unsafe (spec 2026-09-13, §10).
-    const db = await createTestClient({
-      poolSize: 2,
-      vfs: 'OPFSAnyContextVFS',
-    });
+    const db = await createTestClient(TWO_WORKERS);
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -57,7 +61,7 @@ describe('an abandoned generator inside a transaction', () => {
   }, 30_000);
 
   it('leaves a correct transaction untouched', async () => {
-    const db = await createTestClient({ poolSize: 2 });
+    const db = await createTestClient(TWO_WORKERS);
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -87,7 +91,7 @@ describe('an abandoned generator inside a transaction', () => {
     // Short on purpose: the worker is inside one uninterruptible step() and
     // will answer no stop, so drainTimeout is what bounds the wait. That
     // bound is the whole point — see closeOpenStatements()'s JSDoc.
-    const db = await createTestClient({ poolSize: 2, drainTimeout: 2000 });
+    const db = await createTestClient({ ...TWO_WORKERS, drainTimeout: 2000 });
     try {
       const started = performance.now();
       await expect(

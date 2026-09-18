@@ -24,14 +24,25 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-15 after the CoopSync hand-over merge
+## The verification baseline — compare against these, re-measured 2026-09-18 on `fix/second-client`
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a
-run in this container on 2026-09-15, on `main` right after the merge of the CoopSync hand-over fix
-(`256ce09`)** — none is carried forward, none is arithmetic. The whole table was re-read in
-one pass, which is what its own rule demands; raw outputs in
-`.scratchpad/closure-2026-09-15-coopsync/`. The `pnpm test` row is the merge's
-pre-merge-commit hook, run on the merged tree.
+run in this container on 2026-09-18, on `fix/second-client` after the four wa-sqlite fixes and a
+clean `pnpm install`** — none is carried forward, none is arithmetic. The whole table was read in
+one pass, which is what its own rule demands.
+
+**2026-09-18, the whole table in one pass:** `pnpm test` **1173 / 674 / 14**, unit **507**,
+conformance **71 and 67**, `tsc` clean, `biome ci` exit 0, `pnpm docs:vfs` leaves `VFS.md`
+unchanged. Full matrix: **65 of 66 cells green, 1 failing test, 1 group** (a load flake). The
+firefox figure moved from 668 to 674 and chromium held at 1173: two tests were added this day —
+one in `delete.test.ts`, one in `transaction.test.ts`, both following the target, plus
+`open-retry.test.ts` which names `OPFSCoopSyncVFS`. Do not reconcile these by arithmetic; re-run.
+
+A previous version of this table was measured on 2026-09-15 and went stale the next day: the
+branch stopped every test file from enumerating VFS, which took `pnpm test` from 1554/1038/14 to
+1173/668/14 and the unit project from 482 to 507. It sat wrong for a day beside a prose paragraph
+carrying the right numbers. **That is what "re-measure the whole table, do not patch one cell"
+is protecting against — and a table known to be wrong gets re-measured, not annotated.**
 
 **`pnpm test` chains THREE configs** — chromium+unit, firefox, and the isolated project — so a
 green `pnpm test` covers what CI covers. Since 2026-09-11 a commit pays only the unit project; a merge or a push pays all three
@@ -43,16 +54,19 @@ on the last branch landed with a failing typecheck that no test run could show (
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **834 tests / 70 files** (unit + chromium, **4 skipped**), **353 / 47** (firefox, **1 skipped**), **7 / 3** (isolated) |
-| `pnpm exec rstest --project unit run` | 482 tests, 24 files |
-| `pnpm exec rstest --project chromium run` | 352 tests, 46 files, 4 skipped |
+| `pnpm test` | **THREE reports**, `status: pass` on each: **1175 tests / 76 files** (unit + the two chromium target projects, **8 skipped**), **670 / 50** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects) |
+| `pnpm exec rstest --project unit run` | 507 tests, 27 files |
+| `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are now `chromium · <vfs>/<build>` and rstest's filter is anchored |
 | `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each: **Chromium 71 passed / 14 skipped, Firefox 67 / 18** — they differ by design since 2026-09-14 |
 | `pnpm test:consumer` | 24/24 stages |
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 127 files, 13 warnings, 1 info |
+| `pnpm lint` | 136 files, 13 warnings, 1 info |
 | `dependencies` in `package.json` | absent |
+| `pnpm test:matrix` | **not in this table on purpose** — 66 cells, ~50 min, and failures are expected. Its baseline is `mem:measurements`, MATRIX-5 |
 
-**The browser skips are expected: 4 on Chromium, 1 on Firefox.** One, on both, is
+**The browser skips are expected: 4 per Chromium project, 1 per Firefox project.** Each config
+now builds ONE project per target, so the table's per-config totals are twice those: **8** on the
+chromium report and **2** on the firefox one. Count per project before comparing. One, on both, is
 `tests/browser/abandon-gc.test.ts`: it pins the `FinalizationRegistry` path and needs
 `--expose-gc`, which cannot go into `rstest.config.ts` without changing the launch arguments every
 other browser test runs under, so it skips under `pnpm test` and in CI and its header carries the
@@ -87,13 +101,47 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 ## Decisions the user owes
 
-- **Whether the open reliability subjects precede rc.5.** One is open: `OPFSWriteAheadVFS`
-  refuses a second client off Chromium (found 2026-09-15, `mem:follow-ups`), and the user has said
-  what comes first — **the next session runs the multi-client and cross-tab tests on every VFS
-  offered, the two recommended first** — leaving what a second `OPFSWriteAheadVFS` client should get
-  to what those tests force. The CoopSync write BUSY was fixed and merged on 2026-09-15 (§ below);
-  the SQL error code lost at the worker boundary the same day; the Firefox `worker 1 lost`
-  observation became the pool-cap work, merged on 2026-09-14 (§ below).
+- **The second-client subject is CLOSED, on branch `fix/second-client` (2026-09-15).** What the user set
+  the session on — the multi-client and cross-tab tests on every VFS — grew into the branch that ships:
+  `exclusiveConnectionWithout` and the guard that answers a second `OPFSWriteAheadVFS` client with
+  `DATABASE_IN_USE` where the engine lacks `readwrite-unsafe` (it used to fail every query with
+  `WORKER_CRASHED`, and could break the FIRST client instead); `BEGIN IMMEDIATE` for write transactions,
+  which is what `OPFSWriteAheadVFS` requires and what `output()` was failing on; the second-client matrix
+  over every (vfs, build) pair; `multi-client`/`cross-tab` on every VFS that shares; and the whole browser
+  suite following an injected (vfs, build) target, with `pnpm test` covering both recommended pairs and
+  `pnpm test:matrix` covering all 22. Design and its amendments A1-A5:
+  `docs/superpowers/specs/2026-09-15-second-client-design.md`. **The merge is the user's call and had not
+  been given when this was written.**
+
+  **Where it stood at the end of 2026-09-16, for a cold restart.** The branch then also carried: the
+  whole browser suite freed of VFS enumeration — no test file loops over VFS any more, a file states
+  what its subject needs (`two-workers`, `interruptible`, `shared-second-client`) and the matrix
+  supplies the pairs (spec amendment A6); `db.inspect()` and `detectFeatures` following the target
+  (they had never run outside one pinned VFS); and two guards against a run that sits for ever —
+  the conformance probe bounded with retries, and `scripts/bounded.mjs` giving every browser script
+  a deadline. Verified whole on 2026-09-16: `pnpm test` 1173/668/14, unit 507, conformance 85 per
+  engine identical to baseline, `tsc` clean, and a full `pnpm test:matrix` (MATRIX-2, 2386 s) with
+  no timed-out cell.
+
+  **THE TRIAGE IS FINISHED, tests and product alike (2026-09-18).** Three commits took the matrix
+  from 989 cell-failures to 79: the browser cleanup that never ran (`mem:lessons`), the pinned
+  `poolSize: 2` becoming `needs: ['two-workers']`, and the two new needs the user validated
+  (`shared-storage`, `opfs-file`). A fourth fixed the product defect those cleared tests exposed
+  (HANDLE-CORPSE). **Then 2026-09-18 took the remaining three product piles to zero: the full
+  matrix now reads 65 of 66 cells green, 1 failing test, 1 group** — against 62 cell-failures and
+  20 groups on 2026-09-16 — and that one is a load flake (`mem:follow-ups`), green 3/3 alone.
+
+  **Every one of the three traced to wa-sqlite, not to this library**, and each went upstream with
+  a test failing on wa-sqlite's own master: #350 and #351, #352 and #353. Our own share was two
+  changes — `deleteDatabase` deciding presence from the OPFS entry rather than from an open probe,
+  and a retry around `sqlite3_open_v2` gated by a new `exclusiveFileHandle` capability
+  (`mem:vfs`). The patch now carries five PRs over three files (`mem:stack-and-build`), reports in
+  `docs/upstream/`.
+
+  **Two decisions still owed and neither blocks work: the merge, and HANDLE-2's verdict.**
+
+  The Firefox silent hang that blocked runs is diagnosed and guarded, not cured:
+  `navigator.storage.getDirectory()` can fail to settle in a worker on Firefox.
 
 **rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
 and both are now closed — the second by merge `eeabe06` on 2026-09-11.

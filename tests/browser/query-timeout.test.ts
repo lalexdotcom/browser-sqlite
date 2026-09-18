@@ -3,13 +3,11 @@ import { createTestClient, longQuery } from './helpers';
 
 describe('query timeout', () => {
   it('rejects with OPERATION_TIMEOUT and leaves the client usable', async () => {
-    // `async`, not MemoryVFS's default `sync`: without cross-origin isolation the
-    // sync build cannot cut a running statement, so the next read would wait out
-    // the whole query — 4 s on Chromium, 22 s on Firefox, past this test's 30 s on
-    // a CI runner (mem:measurements, CI-QUERY-TIMEOUT).
+    // Needs interruptible: without it the next read would wait out the whole
+    // query — 4 s on Chromium, 22 s on Firefox, past this test's 30 s on a CI
+    // runner (mem:measurements, CI-QUERY-TIMEOUT).
     const db = await createTestClient({
-      vfs: 'MemoryVFS',
-      build: 'async',
+      needs: ['interruptible'],
       poolSize: 1,
     });
     try {
@@ -39,11 +37,10 @@ describe('query timeout', () => {
   });
 
   it('spends the budget over the whole call, not per statement', async () => {
-    // `async`, so the write is really cut and close() does not wait it out on
-    // Firefox (mem:measurements, CI-QUERY-TIMEOUT).
+    // Needs interruptible: so the write is really cut and close() does not
+    // wait it out (mem:measurements, CI-QUERY-TIMEOUT).
     const db = await createTestClient({
-      vfs: 'MemoryVFS',
-      build: 'async',
+      needs: ['interruptible'],
       poolSize: 1,
     });
     try {
@@ -59,7 +56,7 @@ describe('query timeout', () => {
   });
 
   it('charges the consumer for its own slowness', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await db.write('CREATE TABLE t (x INTEGER)');
       await db.write(
@@ -68,8 +65,9 @@ describe('query timeout', () => {
       );
       // The budget is wall clock from the call, so the consumer's own pauses
       // spend it. Falsifier: count the budget inside step() again and the
-      // 100 ms is never reached, because MemoryVFS steps 1001 rows in
-      // microseconds — the sleeping is the only thing that can exceed it.
+      // 100 ms is never reached, because stepping 1001 rows takes well under a
+      // millisecond on any target — the sleeping is the only thing that can
+      // exceed it.
       const iterate = async () => {
         for await (const rows of db.chunk<{ x: number }>(
           'SELECT x FROM t',
@@ -92,7 +90,12 @@ describe('query timeout', () => {
   });
 
   it('lets the caller signal win, with its own reason', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    // Needs interruptible: the abandoned long query must not keep close()
+    // waiting for its natural length after the signal wins.
+    const db = await createTestClient({
+      needs: ['interruptible'],
+      poolSize: 1,
+    });
     try {
       const controller = new AbortController();
       const mine = new Error('mine');
@@ -113,14 +116,13 @@ describe('query timeout', () => {
   });
 
   it('spends the budget while the call is still queued', async () => {
-    // `async`, and a holder that carries a signal. A statement yields only when
-    // it is abortable, so an unsignalled holder keeps its worker to its natural
-    // end even on `async`, and close() waits it out — 31.6 s on Firefox, 22 s on
-    // the `sync` build, past this test's 30 s (mem:measurements,
-    // CI-QUERY-TIMEOUT). It is abandoned at the end, as in concurrency.test.ts.
+    // Needs interruptible: a statement yields only when it is abortable, so an
+    // unsignalled holder keeps its worker to its natural end without it, and
+    // close() waits it out — 31.6 s on Firefox, 22 s on the `sync` build, past
+    // this test's 30 s (mem:measurements, CI-QUERY-TIMEOUT). It is abandoned at
+    // the end, as in concurrency.test.ts.
     const db = await createTestClient({
-      vfs: 'MemoryVFS',
-      build: 'async',
+      needs: ['interruptible'],
       poolSize: 1,
     });
     try {
@@ -151,7 +153,7 @@ describe('query timeout', () => {
   });
 
   it('bounds a transaction, including the callback between its statements', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await db.write('CREATE TABLE t (a INTEGER)');
       // The callback runs no long statement: it sleeps. Only a wall-clock
@@ -176,7 +178,7 @@ describe('query timeout', () => {
   });
 
   it('bounds a bulkWrite from the call, not from close()', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await db.write('CREATE TABLE t (a INTEGER)');
       const { enqueue, close } = db.bulkWrite('t', ['a'], { timeout: 200 });
@@ -195,7 +197,7 @@ describe('query timeout', () => {
   });
 
   it('bounds an output() the same way, leaving the target untouched', async () => {
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await db.write('CREATE TABLE dest (a INTEGER)');
       await db.write('INSERT INTO dest VALUES (42)');

@@ -231,6 +231,51 @@ describe('singleConnectionWithout', () => {
   });
 });
 
+describe('exclusiveConnectionWithout', () => {
+  // Falsifiable: remove OPFSWriteAheadVFS's declaration, or declare one on
+  // OPFSAdaptiveVFS — which shares its database across tabs.
+  it('makes OPFSWriteAheadVFS alone exclusive where a feature is missing', () => {
+    const declared = Object.entries(VFS_CAPABILITIES)
+      .filter(([, cap]) => cap.exclusiveConnectionWithout.length > 0)
+      .map(([name]) => name);
+    expect(declared).toEqual(['OPFSWriteAheadVFS']);
+    expect(
+      VFS_CAPABILITIES.OPFSWriteAheadVFS.exclusiveConnectionWithout,
+    ).toEqual(['readwrite-unsafe']);
+  });
+
+  // Falsifiable: declare `exclusiveConnectionWithout: ['opfs']` on any VFS —
+  // worker 0 has no probe for it, so the lock's mode could never be decided.
+  it('names only features a worker can probe', () => {
+    for (const cap of Object.values(VFS_CAPABILITIES)) {
+      for (const feature of cap.exclusiveConnectionWithout) {
+        expect(feature in WORKER_PROBES).toBe(true);
+      }
+    }
+  });
+
+  // Falsifiable: remove 'readwrite-unsafe' from OPFSWriteAheadVFS's
+  // singleConnectionWithout. The client spawns its whole pool at once and only
+  // worker 0 waits for the connection lock (spec 2026-09-15, A2); a surplus
+  // worker is kept off the file by declining on that list.
+  it('is covered by singleConnectionWithout', () => {
+    for (const cap of Object.values(VFS_CAPABILITIES)) {
+      for (const feature of cap.exclusiveConnectionWithout) {
+        expect(cap.singleConnectionWithout).toContain(feature);
+      }
+    }
+  });
+
+  // Falsifiable: set exclusiveConnection: true on OPFSWriteAheadVFS.
+  it('is never combined with exclusiveConnection', () => {
+    for (const cap of Object.values(VFS_CAPABILITIES)) {
+      if (cap.exclusiveConnection) {
+        expect(cap.exclusiveConnectionWithout).toEqual([]);
+      }
+    }
+  });
+});
+
 describe('extraFileSuffixes', () => {
   // Falsifiable: remove '-wa0'/'-wa1' from OPFSWriteAheadVFS, or declare a suffix on
   // another VFS without a measurement behind it.

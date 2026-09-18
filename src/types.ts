@@ -78,6 +78,13 @@ export type ClientMessageData =
        * ≥ 1 only, and only by a VFS that declares `singleConnectionWithout`.
        */
       declineWithout?: readonly PlatformFeature[];
+      /**
+       * Features worker 0 probes before opening, where the VFS is exclusive
+       * without one (spec 2026-09-15, §3.2): it reports them with `probed`,
+       * then loads nothing until `proceed`. Sent to slot 0 only, and only by a
+       * VFS that declares `exclusiveConnectionWithout`.
+       */
+      probeFirst?: readonly PlatformFeature[];
     }
   | {
       type: 'query';
@@ -89,6 +96,8 @@ export type ClientMessageData =
   | { type: 'close'; callId: number }
   | { type: 'credit'; callId: number; n: number }
   | { type: 'stop'; callId: number }
+  /** The client decided the connection lock; worker 0 may open (spec 2026-09-15). */
+  | { type: 'proceed'; callId: number }
   | {
       type: 'delete';
       callId: number;
@@ -105,6 +114,11 @@ export type WorkerMessageData =
    * the environment caps the pool (spec 2026-09-13).
    */
   | { type: 'declined'; callId: number; missing: PlatformFeature }
+  /**
+   * Worker 0's answer to `probeFirst`: the first feature missing, or null. It
+   * opens nothing until the client sends `proceed` (spec 2026-09-15, §3.2).
+   */
+  | { type: 'probed'; callId: number; missing: PlatformFeature | null }
   | { type: 'chunk'; callId: number; data: unknown[] }
   | {
       type: 'done';
@@ -266,6 +280,31 @@ export type VFSCapability = {
   /** How the database is arranged within that storage. */
   readonly layout: VFSLayout;
   /**
+   * Whether this VFS takes its OPFS access handle in the EXCLUSIVE mode —
+   * `createSyncAccessHandle()` with no `mode`, rather than
+   * `mode: 'readwrite-unsafe'`.
+   *
+   * It decides whether an acquisition has to be retried. A terminated context
+   * releases its Web Locks at once but keeps its OPFS access handles for up to
+   * ~2 s on Chromium (HANDLE-CORPSE, `mem:measurements`), so a VFS taking an
+   * exclusive handle can meet a file held by something that answers nothing:
+   * no lock to wait on, no owner to ask, only time to wait out. Where
+   * `readwrite-unsafe` is used a second handle is granted regardless, and a
+   * dead holder blocks nobody.
+   *
+   * Declared rather than detected, because the error is not available where the
+   * decision has to be made: wa-sqlite's `jOpen` swallows it (measured
+   * 2026-09-18) and SQLite reports a bare `SQLITE_CANTOPEN`. Where the error IS
+   * available — VFS instantiation — `createVfsInstance` tests it directly and
+   * needs no declaration.
+   *
+   * NOT declared for `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS`, which ask for
+   * `readwrite-unsafe` and fall back to an exclusive handle only on an engine
+   * that lacks it. That combination is real but out of reach: Firefox releases
+   * a dead worker's handle in 1-6 ms (HANDLE-ORPHAN), a window nothing loses.
+   */
+  readonly exclusiveFileHandle: boolean;
+  /**
    * Platform features without which this VFS cannot work at all.
    *
    * `readwrite-unsafe` is the one that bites: WebIDL ignores the unknown
@@ -351,7 +390,7 @@ export type VFSCapability = {
    * client's lifetime.
    *
    * When `true`, `createSQLiteClient` acquires a `bsq:conn:…` Web Lock on first
-   * use. A second client that attempts to open the same database receives `BUSY`
+   * use. A second client that attempts to open the same database receives `DATABASE_IN_USE`
    * immediately on its first query instead of silently reading a frozen, broken
    * view. This field is the only thing standing between a consumer and an
    * unfalsifiable silent failure — `SELECT 1` and even
@@ -371,6 +410,23 @@ export type VFSCapability = {
    * The gate is by this declaration, not by VFS name.
    */
   readonly exclusiveConnection: boolean;
+  /**
+   * Platform features without which this VFS holds its database file
+   * exclusively for a connection's whole life, across the origin — so the
+   * client takes `bsq:conn` exclusively, as for `exclusiveConnection`, and a
+   * second client gets `DATABASE_IN_USE` (spec 2026-09-15).
+   *
+   * `OPFSWriteAheadVFS` without `readwrite-unsafe`: upstream's VFS requires the
+   * mode and keeps its three access handles for the connection's life, so
+   * nothing else can open the file — every query of a second client failed
+   * with WORKER_CRASHED on Firefox, 20/20 per shape (2026-09-15).
+   *
+   * The page cannot probe these features, so worker 0 probes them before
+   * opening (`src/worker/probes.ts`): every feature listed needs a probe there,
+   * and must also be in `singleConnectionWithout`, whose surplus workers
+   * decline before they touch the file.
+   */
+  readonly exclusiveConnectionWithout: readonly PlatformFeature[];
 };
 
 /**
@@ -396,6 +452,7 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'page-cache',
     storage: 'opfs',
     layout: 'opfs-path',
+    exclusiveFileHandle: false,
     // Measured on Firefox 2026-08-27, HAS_UNSAFE_HANDLES false: all three
     // build pairs and all six invariants pass. That campaign ran at an
     // EFFECTIVE pool of one: without readwrite-unsafe every worker but the
@@ -409,6 +466,7 @@ export const VFS_CAPABILITIES = {
     extraFileSuffixes: ['-wa0', '-wa1'],
     yieldsDuringStatements: false,
     exclusiveConnection: false,
+    exclusiveConnectionWithout: ['readwrite-unsafe'],
     defaultPragmas: {},
   },
   OPFSAdaptiveVFS: {
@@ -420,12 +478,14 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'page-cache',
     storage: 'opfs',
     layout: 'opfs-path',
+    exclusiveFileHandle: false,
     requires: ['opfs'],
     degradesWithout: ['readwrite-unsafe'],
     singleConnectionWithout: ['readwrite-unsafe'],
     extraFileSuffixes: [],
     yieldsDuringStatements: false,
     exclusiveConnection: false,
+    exclusiveConnectionWithout: [],
     defaultPragmas: {},
   },
   OPFSCoopSyncVFS: {
@@ -439,12 +499,14 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'page-cache',
     storage: 'opfs',
     layout: 'opfs-path',
+    exclusiveFileHandle: true,
     requires: ['opfs'],
     degradesWithout: [],
     singleConnectionWithout: [],
     extraFileSuffixes: [],
     yieldsDuringStatements: false,
     exclusiveConnection: false,
+    exclusiveConnectionWithout: [],
     defaultPragmas: {},
   },
   AccessHandlePoolVFS: {
@@ -456,6 +518,7 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'page-cache',
     storage: 'opfs',
     layout: 'opfs-pool',
+    exclusiveFileHandle: true,
     requires: ['opfs'],
     degradesWithout: [],
     singleConnectionWithout: [],
@@ -464,8 +527,9 @@ export const VFS_CAPABILITIES = {
     // Two clients on one database break each other silently (AHP-2TAB,
     // 2026-09-01): the second resolves SELECT 1 but cannot read any table. An
     // origin-wide connection lock ensures the second client fails fast with
-    // BUSY instead of appearing healthy and being useless.
+    // DATABASE_IN_USE instead of appearing healthy and being useless.
     exclusiveConnection: true,
+    exclusiveConnectionWithout: [],
     // The one VFS that clears the bar for a default. Upstream: "there is no
     // drawback to using PRAGMA locking_mode=exclusive" here, because this VFS
     // does not allow multiple connections anyway — and exclusive locking is
@@ -486,12 +550,14 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'page-cache',
     storage: 'indexeddb',
     layout: 'idb-store',
+    exclusiveFileHandle: false,
     requires: [],
     degradesWithout: [],
     singleConnectionWithout: [],
     extraFileSuffixes: [],
     yieldsDuringStatements: true,
     exclusiveConnection: false,
+    exclusiveConnectionWithout: [],
     defaultPragmas: {},
   },
   IDBMirrorVFS: {
@@ -519,6 +585,7 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'whole-database',
     storage: 'indexeddb',
     layout: 'idb-store',
+    exclusiveFileHandle: false,
     requires: [],
     degradesWithout: [],
     singleConnectionWithout: [],
@@ -528,6 +595,7 @@ export const VFS_CAPABILITIES = {
     // not isolation. Two clients share data over BroadcastChannel (measured
     // 2026-09-01, 3/3 both engines), so no exclusive lock is needed or correct.
     exclusiveConnection: false,
+    exclusiveConnectionWithout: [],
     defaultPragmas: {},
   },
   OPFSAnyContextVFS: {
@@ -539,12 +607,14 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'page-cache',
     storage: 'opfs',
     layout: 'opfs-path',
+    exclusiveFileHandle: false,
     requires: ['opfs', 'writable-stream'],
     degradesWithout: [],
     singleConnectionWithout: [],
     extraFileSuffixes: [],
     yieldsDuringStatements: false,
     exclusiveConnection: false,
+    exclusiveConnectionWithout: [],
     defaultPragmas: {},
   },
   MemoryVFS: {
@@ -557,12 +627,14 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'whole-database',
     storage: 'memory',
     layout: 'memory',
+    exclusiveFileHandle: false,
     requires: [],
     degradesWithout: [],
     singleConnectionWithout: [],
     extraFileSuffixes: [],
     yieldsDuringStatements: false,
     exclusiveConnection: false,
+    exclusiveConnectionWithout: [],
     defaultPragmas: {},
   },
   MemoryAsyncVFS: {
@@ -575,12 +647,14 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'whole-database',
     storage: 'memory',
     layout: 'memory',
+    exclusiveFileHandle: false,
     requires: [],
     degradesWithout: [],
     singleConnectionWithout: [],
     extraFileSuffixes: [],
     yieldsDuringStatements: false,
     exclusiveConnection: false,
+    exclusiveConnectionWithout: [],
     defaultPragmas: {},
   },
 } as const satisfies Record<string, VFSCapability>;

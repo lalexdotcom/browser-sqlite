@@ -184,6 +184,8 @@ describe('worker lifecycle — bounds', () => {
   // collide on the OPFS handle, producing WORKER_CRASHED instead of BUSY.
   it('rejects a second client with BUSY instead of crashing its workers', async () => {
     shared = `browser-sqlite-test-${crypto.randomUUID()}`;
+    // One VFS: the subject is AccessHandlePoolVFS's exclusive-connection
+    // guard (AHP-2TAB).
     const first = createSQLiteClient(shared, {
       poolSize: 1,
       vfs: 'AccessHandlePoolVFS',
@@ -210,9 +212,9 @@ describe('worker lifecycle — onWorkerLost callback', () => {
     const records = interceptWorkers();
     const events: number[] = [];
     const db = await createTestClient({
-      // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS
-      // runs one worker without readwrite-unsafe (spec 2026-09-13, §10).
-      vfs: 'OPFSAnyContextVFS',
+      // Two live workers, so killing slot 0 leaves slot 1 to observe from
+      // (spec 2026-09-15, A5).
+      needs: ['two-workers'],
       poolSize: 2,
       maxWorkerRestarts: 0,
       onWorkerLost: ({ index }) => events.push(index),
@@ -258,9 +260,8 @@ describe('worker lifecycle — onWorkerLost callback', () => {
   it('a throwing callback does not break the pool', async () => {
     const records = interceptWorkers();
     const db = await createTestClient({
-      // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS
-      // runs one worker without readwrite-unsafe (spec 2026-09-13, §10).
-      vfs: 'OPFSAnyContextVFS',
+      // Worker 1 must still be alive after worker 0 crashes (spec 2026-09-15, A5).
+      needs: ['two-workers'],
       poolSize: 2,
       maxWorkerRestarts: 0,
       onWorkerLost: () => {
@@ -341,9 +342,8 @@ describe('worker lifecycle — startup readiness gate', () => {
     const created = failWorkerAtIndex(1);
     const lostIndices: number[] = [];
     const db = await createTestClient({
-      // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS
-      // runs one worker without readwrite-unsafe (spec 2026-09-13, §10).
-      vfs: 'OPFSAnyContextVFS',
+      // Two live slots to distinguish which one died/recovered (spec 2026-09-15, A5).
+      needs: ['two-workers'],
       poolSize: 2,
       onWorkerLost: ({ index }) => lostIndices.push(index),
     });
@@ -383,8 +383,12 @@ describe('worker lifecycle — startup readiness gate', () => {
     // Worker 2 (slot 1, retry): bad URL — fails again.
     const created = failWorkersFromIndex(1);
     const lostIndices: number[] = [];
+    // The startup gate is about TWO slots, so the pair must keep two: a target
+    // that caps the pool would refuse the client instead of exercising the gate
+    // (spec 2026-09-15, A5).
     const db = await createTestClient({
       poolSize: 2,
+      needs: ['two-workers'],
       onWorkerLost: ({ index }) => lostIndices.push(index),
     });
 
@@ -424,8 +428,12 @@ describe('worker lifecycle — startup readiness gate', () => {
   it('fires onWorkerLost for every slot on total startup failure (openedCount === 0)', async () => {
     interceptWorkers({ url: '/definitely-missing-worker.js' });
     const lostIndices: number[] = [];
+    // The startup gate is about TWO slots, so the pair must keep two: a target
+    // that caps the pool would refuse the client instead of exercising the gate
+    // (spec 2026-09-15, A5).
     const db = await createTestClient({
       poolSize: 2,
+      needs: ['two-workers'],
       onWorkerLost: ({ index }) => lostIndices.push(index),
     });
 
@@ -447,9 +455,8 @@ describe('worker lifecycle — startup readiness gate', () => {
     failWorkerAtIndex(1);
     const lostIndices: number[] = [];
     const db = await createTestClient({
-      // OPFSAnyContextVFS: it keeps a pool on every engine; OPFSAdaptiveVFS
-      // runs one worker without readwrite-unsafe (spec 2026-09-13, §10).
-      vfs: 'OPFSAnyContextVFS',
+      // Two live slots to distinguish which one died/recovered (spec 2026-09-15, A5).
+      needs: ['two-workers'],
       poolSize: 2,
       onWorkerLost: ({ index }) => lostIndices.push(index),
     });

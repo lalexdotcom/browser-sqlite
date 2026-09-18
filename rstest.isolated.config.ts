@@ -1,6 +1,9 @@
 import { withRslibConfig } from '@rstest/adapter-rslib';
-import { defineConfig } from '@rstest/core';
+import { defineConfig, type ProjectConfig } from '@rstest/core';
 import { pluginSilenceWorkerHmrLogs } from './rstest.config';
+import { targetLabel, targetsFromEnv } from './tests/target-projects.ts';
+
+const targets = targetsFromEnv(process.env.BSQ_TEST_TARGETS);
 
 // Cross-origin isolation cannot be expressed through rstest's `defineConfig`
 // directly: a `server: { headers: ... }` key at the top level is silently
@@ -54,17 +57,25 @@ const pluginCrossOriginIsolation = {
  * and nothing else: the ordinary projects deliberately stay un-isolated,
  * because that is the configuration most consumers deploy and the degraded row
  * of the design has to be asserted somewhere.
+ *
+ * It follows the same targets as the other configs, one project each (spec
+ * 2026-09-15, A5): the name keeps `isolated` where the others name the engine.
  */
 export default defineConfig({
   extends: withRslibConfig(),
-  name: 'isolated',
-  browser: {
-    enabled: true,
-    provider: 'playwright',
-    browser: 'chromium',
-    headless: true,
-  },
-  plugins: [pluginCrossOriginIsolation, pluginSilenceWorkerHmrLogs],
-  include: ['tests/browser/isolated/**/*.test.ts'],
-  testTimeout: 30000,
+  projects: targets.map((target): ProjectConfig & { name: string } => ({
+    name: `isolated · ${targetLabel(target)}`,
+    browser: {
+      enabled: true,
+      provider: 'playwright',
+      browser: 'chromium',
+      headless: true,
+    },
+    plugins: [pluginCrossOriginIsolation, pluginSilenceWorkerHmrLogs],
+    include: ['tests/browser/isolated/**/*.test.ts'],
+    testTimeout: 30000,
+    source: {
+      define: { __BSQ_TEST_TARGET__: JSON.stringify(target) },
+    },
+  })),
 });

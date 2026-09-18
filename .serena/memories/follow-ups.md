@@ -79,6 +79,94 @@ back to it. Not designed. It will sit on the savepoint machinery merged on 2026-
 `mem:architecture`): a new entry point must go through the facade, which concludes the library's
 savepoint before opening its own.
 
+## `BUILD_CAPABILITIES` — one registry per axis, for rc.6 (user, 2026-09-16)
+
+A comfort refactor, so rc.6 by the triage rule — raised by the user while the matrix ran.
+Aggregate `BUILD_REQUIREMENTS` and `BUILD_DEGRADES_WITHOUT` into one
+`BUILD_CAPABILITIES` table and derive `type SQLiteBuild = keyof typeof BUILD_CAPABILITIES`,
+exactly as `SQLiteVFS` already derives from `VFS_CAPABILITIES` (`src/types.ts`). **Keep
+`WA_SQLITE_BUILDS` in the worker and `BUILD_NOTE` in the VFS.md generator** — the dynamic
+`wa-sqlite` imports and the documentation data must not ship to every consumer, which is the
+reason `types.ts` already gives for keeping browser versions out.
+
+**The objection written in `src/types.ts` against `keyof` is measurably false — delete it, do
+not move it.** It claims `keyof` "would let a forgotten entry mean silently that the build does
+not exist". Measured 2026-09-16 on a scratch file: under `keyof`, a build added to a dependent
+table but missing from the registry fails with TS2561 (excess key) — on a `satisfies` table AND
+on a type-annotated one — and a build in the registry missing from a dependent table fails with
+TS2741. The `keyof` shape is STRICTER, because every other build-keyed table is then checked
+against the registry in both directions.
+
+**The one detail that makes it compile:** `satisfies Record<string, BuildCapability>`, with
+`string` and not `SQLiteBuild` — otherwise the derivation is circular. `VFS_CAPABILITIES` does
+exactly that.
+
+**Scope:** `BUILD_REQUIREMENTS[build]` becomes `BUILD_CAPABILITIES[build].requires` at 11 sites
+in 7 files — `src/capabilities.ts` (3), `scripts/render-vfs-matrix.ts` (4, including
+`Object.keys(BUILD_REQUIREMENTS)` which becomes the build list and reads better for it), and
+four test files. src + scripts + tests, so it needs the user's go-ahead before it starts.
+
+**`interruptible` must be RE-DERIVED as part of this, not carried over (user, 2026-09-16).**
+The property belongs to the build, and today it is stated twice: `BUILD_DEGRADES_WITHOUT.sync
+= ['cross-origin-isolated']` declares it, and `holds('interruptible')` in
+`tests/browser/target.ts` restates it as `build !== 'sync' || here.crossOriginIsolated`. The
+duplication of the FACT is removed before rc.6 (§ below, done in the test chantier); what waits
+for `BUILD_CAPABILITIES` is naming the PROPERTY. **Do not derive it from `degradesWithout` taken
+as a whole**: that list means "degrades on any axis", and it is only by coincidence that the
+`sync` build's single declared degradation IS the interrupt. The clean shape is a field that
+names it — `interruptibleWithout: ['cross-origin-isolated']` for `sync`, empty elsewhere — from
+which `degradesWithout` can be derived, not the reverse. Same relation as `layout` → `storage`:
+the fine datum carries the logic, the aggregate is derived.
+
+**THE BOUNDARY, and it is the user's, 2026-09-16: build PREFERENCE ORDER does not move here.**
+It stays in each VFS's `builds` array in `VFS_CAPABILITIES` — per-VFS granularity, and far more
+readable than a global ranking. The library's rule, in the user's words: *if you specified no
+build, I take the first of this VFS that your environment supports; if you specified one it does
+not support, I raise.* That is the entry "Default to the first build the environment supports"
+below, and `BUILD_CAPABILITIES` only supplies the `requires` that rule tests against. Raised as a
+possible home for the ordering and refused on the spot.
+
+## Split `src/types.ts` into `const/` and `types/`, for rc.6 (user, 2026-09-16)
+
+The user's design, decided in chat after being confronted with a smaller counter-proposal and
+holding. **The stated goal is the one that decides the open cases: the root of `src/` is too
+full, and the benefit is the user reading the code.** Do it AFTER `BUILD_CAPABILITIES` (§ above)
+— `const/builds.ts` is that table's home, so the other order writes the file twice.
+
+**The rule that places everything: a type derived from a const lives in the same file as the
+const.** No import, no drift. It is why `SQLiteVFS` does not move away from `VFS_CAPABILITIES`.
+
+`const/` — platform.ts (`PlatformFeature`; no const, but the base of the DAG) · builds.ts
+(`BUILD_CAPABILITIES` + `SQLiteBuild`) · vfs.ts (`VFS_CAPABILITIES` + `SQLiteVFS`,
+`VFSCapability`, `VFSStorage`, `VFSLayout`, `VFSMemoryModel`, `defaultBuildFor`) · sqlite.ts
+(today's `src/sqlite-codes.ts`, moved — the move IS the point, not a side effect).
+
+`types/` — protocol.ts (`ClientMessageData`, `WorkerMessageData`, `SQLiteWorkerMessageData`,
+`SQLWorkerResultData`, `SavepointOp`, `WasmLocation`, `SQLOptions`, `SharedArrayTypes`) ·
+errors.ts (today's `src/errors.ts` whole, `SQLiteErrorCode` AND the two classes — user,
+2026-09-16). Note in passing: `types/` therefore emits JS, it is not erasable-only; the
+directory name groups declarations, it is not a contract.
+
+**`src/types.ts` may survive, and the distinction is exact (user, 2026-09-16): it keeps whatever
+isolated types belong nowhere else, but it NEVER re-exports what moved.** A residual module
+holding its own orphan declarations is fine; a barrel forwarding `const/` and `types/` is not,
+because it would keep alive the public/internal mixing the split exists to end. On today's
+content the leftover set looks empty — `WasmLocation` is the likeliest orphan, since it travels
+in the worker message (`pool.ts`) but is also a plain option shape used by `utils`, `delete` and
+`client` — so decide it when the move is made, not now.
+
+DAG: platform ← builds ← vfs ← protocol, no cycle.
+
+**The strongest reason is already written in the code**, at `src/index.ts`: "Named rather than
+`export *`: the wire-protocol types in types.ts are internal and must not reach the public
+surface." One file mixes public API with internal protocol, and only a hand-maintained export
+list separates them. Extracting `protocol.ts` makes that boundary structural.
+
+**No re-export barrel at `src/types.ts`.** 28 files import it; a barrel would make the change
+invisible to all of them and keep alive exactly the public/internal mixing the split exists to
+end. **The user does not consider the import churn a cost** — one LSP rename — and that
+judgement is theirs, taken on being told the number.
+
 ## `db.ready` — a promise for the pool's startup, for rc.6 (user, 2026-09-13)
 
 A feature, so rc.6 by the triage rule. Raised while designing the environment pool cap:
@@ -116,41 +204,169 @@ says Firefox 153+, Safari 27+); `VFS.md`; a CHANGELOG entry, the default changin
 consumer who passes one `.wasm` URL without `build`. **Measure first:** `OPFSAdaptiveVFS` on `jspi`
 on Safari 27, the pair whose default would change for the most consumers.
 
-## `OPFSWriteAheadVFS` refuses a second client off Chromium, and no test opens two clients per VFS (user, 2026-09-15)
+## The rstest/Firefox silent hang — CAUSE FOUND 2026-09-16, fix not taken
 
-Found by the multi-VFS probe of the CoopSync hand-over work (COOPSYNC-HANDOVER, `mem:measurements`):
-on Firefox, a second `OPFSWriteAheadVFS` client on a database another client holds open fails
-**every** query with `WORKER_CRASHED`, `sqliteCode` 14, `sqlite3_open_v2: NoModificationAllowedError`
-— 20/20 attempts in each of five shapes. Chromium, which has `readwrite-unsafe`: 0/20. It follows
-from what `mem:vfs` already says — without `readwrite-unsafe` this VFS keeps its handles for a
-connection's life, so one connection opens — but the 2026-09-14 pool cap drew the consequence inside
-one client only, and `VFS.md` states it as a pool size, never as "a second tab is refused". It is one
-of the two recommended VFS. **Not measured:** Safari; whether the second client recovers once the
-first closes; what the first client sees.
+**`navigator.storage.getDirectory()` inside a dedicated worker sometimes never settles on Firefox
+— no resolve, no reject — under concurrent OPFS access from many pages.** That call sits at
+module scope behind a TOP-LEVEL AWAIT: `probeUnsafeHandles()` in `tests/conformance/helpers.ts`,
+reached by every browser test file through `tests/browser/helpers.ts` → `AVAILABLE_FEATURES`.
+rstest runs test files in parallel pages, so ~43 of these probe workers start per run, ten of them
+inside one five-second window. When one never answers, that file's module never finishes
+evaluating: **no test starts, so neither `testTimeout` (30 s) nor `hookTimeout` can fire**, rstest
+reports the file as "running" for ever, and `pnpm test` never ends.
 
-**Why nothing caught it, in rc.5 of all releases — the one that ships multi-client and multi-tab
-coordination.** Every conformance invariant runs one client per database: the two Firefox skips
-through `oneWorkerHere` (invariants 3 and 6) are pools inside one client, not a second client. In
-`tests/browser/`, no test opens a second `OPFSWriteAheadVFS` client. **The one test that met the
-situation pinned it as correct:** `pool-cap.test.ts` T5 has a raw worker hold the file, then asserts
-that an `OPFSWriteAheadVFS` client fails with `WORKER_CRASHED` — its subject is the error message, and
-the refusal itself went in as the expected outcome.
+Established 2026-09-16, by instrumenting the probe worker step by step and catching a wedge:
+the wedged page prints `worker constructed` then `step:start` and nothing more, where a healthy
+page goes `step:start → got-root → got-file-handle → h1 → caught(NoModificationAllowedError) →
+ANSWERED false`. It stops at `await navigator.storage.getDirectory()`.
 
-**Asked by the user: tests that check it systematically, on Chromium and Firefox** — two clients on
-one database for every VFS in `VFS_CAPABILITIES`, both constructed and both issuing queries, asserting
-what each VFS is meant to give a second client (it serves; it waits its turn; or it is refused fast
-with a documented code, as `exclusiveConnection` does for `AccessHandlePoolVFS`), so that a refusal
-cannot pass unseen again. Reliability by the triage rule, so rc.5. What `OPFSWriteAheadVFS` should do
-with a second client off Chromium is a design question those tests will force; it is not decided.
+Arms, all on Firefox `OPFSWriteAheadVFS/sync`, one project, no load: real probe **4 hangs / 24
+runs** (~17 %); probe stubbed to `return false` (behaviour-neutral on Firefox) **0 / 9**; probe
+bounded at 8 s **0 / 6**. The hang lands on whichever file loses: `inspect-marker` ×3,
+`inspect-client` ×1, `pool-savepoint` ×1.
 
-**The tests to parametrize first:** `multi-client.test.ts` (6 tests) and `cross-tab.test.ts` (4) —
-the whole multi-client and cross-tab coverage of rc.5 — run on `OPFSAdaptiveVFS` alone. A static count
-on 2026-09-15 (`.scratchpad/vfs-coverage.mjs`) found ~150 browser tests in 29 files on one VFS, mostly
-`createTestClient`'s default, and only the conformance invariants, `vfs.test.ts` and `builds.test.ts`
-looping over every VFS — one client each. Most single-VFS tests exercise library logic the VFS does
-not touch; what needs every VFS is the tests whose subject depends on it: multi-client, cross-tab,
-locks, barrier, handle transfer. **The next session is for this (user, 2026-09-15): run those tests on
-every VFS offered, the two recommended first.**
+REFUTED on the way, keep refuted: it is NOT contention on the probe's fixed file name. Measured
+directly — a second `createSyncAccessHandle` on a held file REJECTS at once on Firefox
+(`NoModificationAllowedError`) and is granted on Chromium (that is what the probe reads).
+
+**Guarded 2026-09-16 (`6560c9e`), not cured.** Each probe attempt is bounded at 10 s, a wedged
+worker is terminated and replaced, three times, and the third failure THROWS rather than answering
+— a silent `false` would flip `readwrite-unsafe` on Chromium and make tests pass for the wrong
+reason. `scripts/bounded.mjs` now gives every browser script a deadline (exit 124), because the
+next hang of this shape will not be this one.
+
+WHAT REMAINS OPEN:
+- **`AVAILABLE_FEATURES` is still awaited at module scope.** Making it lazy — awaited inside the
+  tests that need it, where a `testTimeout` can reach it — is the structural answer: nothing at
+  module scope should await I/O. Several module-scope readers move with it (`HERE` in
+  `tests/browser/helpers.ts`, `secondClientOutcome` in `second-client.test.ts`). Belongs with
+  putting `test:matrix` in CI, which is the same subject.
+- **The engine bug is unreported.** A `navigator.storage.getDirectory()` that never settles in a
+  dedicated worker is Mozilla's, and the repro is in hand: ~50 pages, each a worker asking for the
+  OPFS root inside the same few seconds. NOTE: the console probe in
+  `.scratchpad/firefox-hang-2026-09-16/` does NOT reproduce it (0 of 144 on Firefox, iframes and
+  OPFS churn included) — only the suite's shape does, so the report must carry the suite, not that
+  probe.
+
+## `pool-cap`'s surplus-slot test fails under load (2026-09-16)
+
+`tests/browser/pool-cap.test.ts :: a pool capped by its environment > a surplus slot that times
+out, then declines in the retry round, is not announced lost`, on `firefox · OPFSAdaptiveVFS/async`.
+Twice today on a loaded machine, green on rerun both times. The 600 ms `openTimeout` is deliberate
+— it is what makes the surplus slot time out, which is the subject — but the HEALTHY worker has to
+beat the same 600 ms, and on a loaded machine it does not: the failure is
+`Worker 1 did not become ready within 600 ms`. A budget that the subject needs tight and the setup
+needs loose cannot be one number; splitting them is the fix, and nobody has taken it.
+
+## `tx-handle`'s timeout test flakes under a full matrix cell (2026-09-18)
+
+`tx-handle.test.ts :: tx.signal > aborts with OPERATION_TIMEOUT when the transaction outlives its
+timeout`. Seen twice on 2026-09-18, on two unrelated VFS — `firefox · MemoryVFS/jspi` in the full
+matrix (`expected undefined to be defined`) and `chromium · IDBMirrorVFS/async` in a full cell —
+and green every time it is run alone: 3/3 and 2/2 on the very cells that had failed. Its subject
+is a deadline, so a machine loaded by a 49-file cell is exactly what breaks it. Same shape as the
+`pool-cap` entry below, and the same fix is available: the budget the subject needs tight and the
+one the setup needs loose cannot be one number.
+
+## The consumer docs are hard-wrapped at 80 columns (2026-09-18)
+
+`VFS.md` ~23 wrapped prose paragraphs, `README.md` ~9, `API.md` ~3; `CHANGELOG.md` is clean. The
+user's rule is long lines in markdown (`mem:conventions`, writing for the consumer) — hard wrapping
+makes a reworded sentence reflow a whole block and hurts reading in rendered form. **`VFS.md` cannot
+be fixed in the file alone**: 14 of its spans are generated, and the wrapped strings live in
+`scripts/render-vfs-matrix.ts`; the `pre-push` hook runs `pnpm docs:vfs && git diff --exit-code
+VFS.md` and would reject a divergence. Pure formatting, no behaviour, but it touches three consumer
+files plus a script.
+
+## What the matrix showed, and what it shows now (2026-09-16, resolved 2026-09-18)
+
+**The three product defects are gone.** Full matrix on 2026-09-18 after the fixes: **65 of 66 cells
+green, 1 failing test, 1 distinct group** — against 62 cell-failures and 20 groups on 2026-09-16.
+The one is the `tx-handle` flake above, green 3/3 alone. Every one of the three traced to a
+wa-sqlite defect rather than to this library, and each is upstream with a falsifying test in
+wa-sqlite's own suite: `OPFSCoopSyncVFS` → #350 plus our own `deleteDatabase` probe (a file's
+existence, not an open), `IDBBatchAtomicVFS` → #351, `IDBMirrorVFS` → #352 and #353. Reports in
+`docs/upstream/`, patch inventory in `mem:stack-and-build`.
+
+Kept for its method rather than its content — the original entry, now closed:
+
+Numbers in `mem:measurements`. `scripts/matrix-triage.mjs` regenerates the grouping from any
+`.matrix/<run>/`.
+
+**Everything the triage called test work is done.** 989 cell-failures → 500 (the dead cleanup)
+→ 79 (the `Need` vocabulary and the pinned pool sizes) → pending, after the dying-worker handle
+fix cleared the last 18. `MemoryVFS` and `MemoryAsyncVFS` are entirely green; 49 of 66 cells were
+green before the last fix. **The lesson the sequence taught, and it was the triage's own
+prediction: clearing the first pile is what made the second readable** — the second GREW when the
+first went, because tests finally reached their real cause.
+
+What is left is product, on three VFS, none of them recommended. Each needs a diagnosis before a
+fix, as `output()` did.
+
+- **`IDBMirrorVFS` — 46.** All one defect, and the abandonment was never the cause: `pData` is a
+  `Uint8ArrayProxy`, so `block.set(pData, …)` stored zeroes — including over SQLite's rollback
+  journal header, after which a rollback undid nothing.
+- **`IDBBatchAtomicVFS` — 8.** One defect too, with two faces by build: `jWrite` wrote through a
+  block it assumed started at the offset.
+- **`OPFSCoopSyncVFS` — 7.** Two unrelated causes, which nothing suggested: the six
+  `DATABASE_NOT_FOUND` were `deleteDatabase` reading `SQLITE_CANTOPEN` as absence on a database
+  that existed but was empty; the `sqlite3_open_v2` ones were handles leaked by a partial
+  acquisition.
+
+**The lesson the three shared, and it is in `mem:lessons`: a pile's twelve subjects can be one
+defect, and the scenario a defect is found through is often not the one that demonstrates it.**
+
+## Two `OPFSCoopSyncVFS` opens that look like HANDLE-CORPSE on a path the fix misses (2026-09-18)
+
+`lifecycle.test.ts :: crash detection > restarts the slot once and keeps serving` and
+`long-query.test.ts :: a worker killed silently > is presumed dead when it never answers the stop
+request`, both `WORKER_CRASHED: sqlite3_open_v2`, both on chromium only. They are why CoopSync
+went 7 → 8 at MATRIX-5 while every other VFS held or improved.
+
+**The hypothesis, and it decides more than these two cells.** `AccessHandlePoolVFS` acquires its
+whole directory when the VFS INSTANCE is created, which is where `createVfsInstance`
+(`src/worker/worker.ts`) now waits out a dying worker. An `opfs-path` VFS takes the file's handle
+later, at `xOpen` — inside `sqlite3_open_v2`, which the retry never sees. If that holds, the fix
+shipped on 2026-09-16 is a special case of a rule that should cover every VFS holding a file
+handle, and the answer belongs in our open path rather than upstream.
+
+**NOT established, and do not write it down as though it were:** the message is a bare
+`sqlite3_open_v2` with no `lastError` from the VFS, so nothing yet distinguishes the corpse from
+any other open failure. The first move is to make that path carry its cause — the worker already
+builds `detail` from `vfsInstanceSeen.lastError` and it was empty here.
+
+Previously logged as "the isolated probe does not explain it": run alone on that pair the file
+failed 3× without the cleanup fix and 2× with it, three runs each, which no longer looks
+mysterious under this hypothesis.
+
+## Mixing VFS of the `opfs-path` family on one database (2026-09-15)
+
+Measured while the second-client guard was built: on Chromium an `OPFSAdaptiveVFS` client beside a LIVE
+`OPFSWriteAheadVFS` client opens and reads an **empty** database (`no such table`) — WriteAhead's writes
+live in its own `-wa0`/`-wa1` files; on Firefox it waits while WriteAhead holds `bsq:conn` exclusively,
+then gets `WORKER_CRASHED` once that client closes. **Not measured:** the successive shape (WriteAhead
+writes, closes, another VFS reopens), where the same write-ahead files are the reason to fear a stale
+read. CROSS-VFS (2026-09-02) already showed deletion through any member destroys the others' data.
+
+**The user's idea, on the table:** a short per-VFS prefix in the file name, which would make "one database,
+one VFS" true by construction, as it already is for the `idb-store` and `opfs-pool` families. Its own
+branch: the migration of existing databases is the design's core (rc.4 is published under `latest`), and
+the prefix spends part of wa-sqlite's 56-character path budget.
+
+## Smaller things this branch left open (2026-09-15)
+
+- A **refused client still appears in `inspectDatabase().clients`** until it is closed —
+  `AccessHandlePoolVFS` behaved that way before the branch too.
+- **Interrupt latency differs per pair:** `OPFSWriteAheadVFS/async` cuts an abandoned write at ≈0.6 of its
+  natural length on Chromium where `OPFSAdaptiveVFS/async` cuts below 0.5. `tx-savepoint` T3/T4's bound was
+  widened to `natural * 0.8` for it; nobody has measured the others.
+- **`handleDeath`'s guard for a slot-0 loss before the probe has no test** — no path was found that reaches
+  it with the probe unanswered; it is defensive (`a0373c0`).
+- **Three tests of `multi-client.test.ts` carry no falsifier** (their claims were run and refuted): "never
+  refuses a read-only transaction opened under a writer", "gives back a usable client after a transaction
+  is aborted mid-contention", "commits at most one more batch after a bulkWrite is aborted". Their comments
+  now say what was tried. Whether to find a real falsifier or delete them is the user's call.
+
 
 ## Three browser tests guard less than their comments said (2026-09-14)
 

@@ -41,6 +41,8 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
   // and appears healthy, so `error` comes back undefined and the test goes RED.
   // Restore the block and the test goes GREEN.
   // -------------------------------------------------------------------------
+  // One VFS: the subject is AccessHandlePoolVFS's exclusive-connection guard
+  // (AHP-2TAB).
   it('makes the second client fail BUSY on its first query, not silently succeed', async () => {
     const name = dbName();
     const opts = { vfs: 'AccessHandlePoolVFS' as const, poolSize: 1 };
@@ -75,6 +77,7 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
 
   // The BUSY error must arrive quickly — not after a 30-second stall, which
   // is what happens without the guard when an exclusive handle is already held.
+  // One VFS: the subject is AccessHandlePoolVFS's exclusive-connection guard.
   it('fails fast — within 3 seconds, not after a timeout stall', async () => {
     const name = dbName();
     const opts = { vfs: 'AccessHandlePoolVFS' as const, poolSize: 1 };
@@ -109,6 +112,8 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
   // Without it the lock is never released, the second client always gets BUSY,
   // and this test goes RED at the `await c.read(...)` assertion.
   // -------------------------------------------------------------------------
+  // One VFS: the subject is AccessHandlePoolVFS's exclusive-connection guard
+  // releasing on close().
   it('allows a new client after the first is closed', async () => {
     const name = dbName();
     const opts = { vfs: 'AccessHandlePoolVFS' as const, poolSize: 1 };
@@ -154,6 +159,8 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
   // crashes deterministically on Firefox because the orphan already holds the
   // OPFS handles by the time B's workers start.
   // -------------------------------------------------------------------------
+  // One VFS: the subject is AccessHandlePoolVFS's orphan-worker race
+  // (AHP-CLOSE-RACE), specific to its pooled OPFS access handles.
   it('does not orphan workers when close() is called before any query', async () => {
     const name = dbName();
     const opts = { vfs: 'AccessHandlePoolVFS' as const, poolSize: 1 };
@@ -175,6 +182,8 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
     expect(rows[0].n).toBe(1);
   });
 
+  // One VFS: two clients must share one database; OPFSAdaptiveVFS shares it
+  // on every engine (see `secondClientOutcome`).
   it('lets two clients coexist on a shared-mode VFS, and both hold the lock', async () => {
     const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
     const options = { vfs: 'OPFSAdaptiveVFS' as const, poolSize: 1 };
@@ -211,6 +220,8 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
     ).toBe(true);
   });
 
+  // One VFS: the subject is MemoryVFS's lack of any OPFS-backed connection
+  // lock (it holds no shared storage to guard).
   it('takes no connection lock on the memory VFS', async () => {
     const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
     const db = createSQLiteClient(dbName, { vfs: 'MemoryVFS', poolSize: 1 });
@@ -236,6 +247,8 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
   // Falsifiable: set `exclusiveConnection: true` on OPFSAdaptiveVFS in
   // VFS_CAPABILITIES. The second client then gets BUSY and this goes RED.
   // -------------------------------------------------------------------------
+  // One VFS: two clients must share one database; OPFSAdaptiveVFS shares it
+  // on every engine (see `secondClientOutcome`).
   it('does not block a second client on OPFSAdaptiveVFS (control)', async () => {
     const name = dbName();
     const opts = { vfs: 'OPFSAdaptiveVFS' as const, poolSize: 1 };

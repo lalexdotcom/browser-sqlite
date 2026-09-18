@@ -28,6 +28,9 @@ doc_build/
 # Scratch clones for upstream work (forks, patches under review). Never shipped.
 .work/
 
+# Raw reports from `pnpm test:matrix`, one run per timestamped directory.
+.matrix/
+
 # Probes, fixtures and throwaway harnesses. In the project so they are visible
 # in the editor, ignored so they never ship. Never referenced by src/ or by CI.
 .scratchpad/

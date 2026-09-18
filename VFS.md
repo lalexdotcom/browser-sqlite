@@ -90,7 +90,7 @@ on its [VFS page](https://github.com/rhashimoto/wa-sqlite/tree/master/src/exampl
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+<sup><a href="#reduced-mode">[reduced]</a></sup>, Safari 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>, Android 109+/?, iOS 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>
 
-**Pool size:** Any, 1 without `readwrite-unsafe` · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup> · **Extra files:** `-wa0`, `-wa1`
+**Pool size:** Any, 1 without `readwrite-unsafe` · **Clients:** one at a time without `readwrite-unsafe` · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup> · **Extra files:** `-wa0`, `-wa1`
 
 <!-- END GENERATED OPFSWriteAheadVFS -->
 
@@ -101,7 +101,7 @@ several connections at speed.
 
 **It takes `readwrite-unsafe` where the engine offers it — Chromium 121+, for now.** There it holds one access handle per connection, and serves a read while a long query runs, on its `sync` build.
 
-**Everywhere else it runs on a single worker.** A browser without `readwrite-unsafe` ignores the `mode` option rather than rejecting it, so the handle opens exclusively — and this VFS keeps it for the connection's whole life instead of handing it over. Only one connection can open, so the pool is capped at `1` there, which is [reduced mode](#reduced-mode) at its narrowest: no read is served while a statement runs.
+**Everywhere else it runs on a single worker, and a single client.** A browser without `readwrite-unsafe` ignores the `mode` option rather than rejecting it, so the handle opens exclusively — and this VFS keeps it for the connection's whole life instead of handing it over. Only one connection can open, in this tab or any other: the pool is capped at `1`, which is [reduced mode](#reduced-mode) at its narrowest — no read is served while a statement runs — and a second client on the same database fails its first query with `DATABASE_IN_USE`, immediately. Close the first client and the next one opens.
 
 Bulk loading is what it is fastest at, on every engine measured.
 
@@ -154,7 +154,7 @@ can take turns on them.
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+, Safari 15.4+/27+, Android 109+/?, iOS 15.4+/27+
 
-**Pool size:** **1**<sup><a href="#fn-5">[5]</a></sup> · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup> · **Default PRAGMAs:** `locking_mode=exclusive`, `journal_mode=wal`
+**Pool size:** **1**<sup><a href="#fn-5">[5]</a></sup> · **Clients:** one at a time · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup> · **Default PRAGMAs:** `locking_mode=exclusive`, `journal_mode=wal`
 
 <!-- END GENERATED AccessHandlePoolVFS -->
 
@@ -165,7 +165,7 @@ cannot be imported or exported directly — which is what buys it
 
 **`AccessHandlePoolVFS` runs a pool of one.** You do not have to say so — omitting `poolSize` gives you 1 here rather than the usual 2. Passing anything above 1 throws synchronously at client creation time.
 
-**`AccessHandlePoolVFS` allows one connection per origin, not one per tab.** A second client on the same database — in this tab or another — fails its first query with `BUSY`, immediately. Close the first client and the next one opens. An application that expects to be open in two tabs cannot run on it.
+**`AccessHandlePoolVFS` allows one connection per origin, not one per tab.** A second client on the same database — in this tab or another — fails its first query with `DATABASE_IN_USE`, immediately. Close the first client and the next one opens. An application that expects to be open in two tabs cannot run on it.
 
 ### `IDBBatchAtomicVFS`
 

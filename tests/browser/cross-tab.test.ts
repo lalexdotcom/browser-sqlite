@@ -1,14 +1,28 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
+import { deleteDatabase } from '../../src/delete';
 import { BARRIER_SQL, epochLockName } from '../../src/epochs';
 import { namespaceFor } from '../../src/locks';
+import { poolFor } from '../conformance/helpers';
+import { pairFor } from './helpers';
 import { heldNamesIn, holdIn, makeRealm } from './helpers/realm';
 
-const VFS = 'OPFSAdaptiveVFS' as const;
+/**
+ * An epoch marker exists only where two realms reach one database, so these
+ * tests declare `shared-second-client` and follow the target wherever it has
+ * it (spec 2026-09-15, A6). They used to sweep SHARED_VFS by hand, which
+ * repeated the whole file in every cell of `pnpm test:matrix`.
+ */
+const NEEDS = ['shared-second-client'] as const;
 
 const oneClient = () => {
+  const { vfs, build } = pairFor(NEEDS);
   const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
-  const db = createSQLiteClient(dbName, { vfs: VFS, poolSize: 2 });
+  const db = createSQLiteClient(dbName, {
+    vfs,
+    build,
+    poolSize: poolFor(vfs),
+  });
   onTestFinished(async () => {
     try {
       await db.close();
@@ -16,13 +30,12 @@ const oneClient = () => {
       /* a failed client has nothing to close */
     }
     try {
-      const root = await navigator.storage.getDirectory();
-      await root.removeEntry(dbName, { recursive: true });
+      await deleteDatabase(dbName, { vfs, build });
     } catch {
-      /* the entry may not exist if the test failed before creation */
+      /* never created */
     }
   });
-  return { db, dbName };
+  return { db, dbName, vfs };
 };
 
 const countBarrierStatements = (
@@ -41,10 +54,20 @@ describe('an epoch published by another realm', () => {
   // Falsifiable: drop the `await epochs.originMax(); epochs.raiseTo(origin);`
   // lines in `applyBarrier` and this goes red — the local cell never hears
   // about the foreign epoch, so barriers stays 0.
+  //
+  // Verified 2026-09-15: red on OPFSWriteAheadVFS, OPFSAdaptiveVFS,
+  // OPFSCoopSyncVFS, IDBBatchAtomicVFS, IDBMirrorVFS, OPFSAnyContextVFS
+  // (Chromium); OPFSAdaptiveVFS, OPFSCoopSyncVFS, IDBBatchAtomicVFS,
+  // IDBMirrorVFS, OPFSAnyContextVFS (Firefox) — every VFS this file runs
+  // on, on both engines. The same mutation also turns 'never lets the
+  // target go backwards when the marker disappears' red on the same VFS,
+  // since both rest on `applyBarrier` reading the foreign marker.
   it('makes this client run the barrier it would otherwise skip', async () => {
+    const { vfs, build } = pairFor(NEEDS);
     const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
     const db = createSQLiteClient(dbName, {
-      vfs: VFS,
+      vfs,
+      build,
       poolSize: 1,
       debug: true,
     });
@@ -55,10 +78,9 @@ describe('an epoch published by another realm', () => {
         /* a failed client has nothing to close */
       }
       try {
-        const root = await navigator.storage.getDirectory();
-        await root.removeEntry(dbName, { recursive: true });
+        await deleteDatabase(dbName, { vfs, build });
       } catch {
-        /* the entry may not exist if the test failed before creation */
+        /* never created */
       }
     });
 
@@ -76,7 +98,7 @@ describe('an epoch published by another realm', () => {
     // Hold a marker far ahead of the local epoch from another realm, exactly
     // as a foreign tab would after committing at epoch 9999.
     const realm = await makeRealm();
-    const marker = epochLockName(namespaceFor(VFS), dbName, 9_999);
+    const marker = epochLockName(namespaceFor(vfs), dbName, 9_999);
     const release = await holdIn(realm, marker, 'shared');
 
     // Foreign-marker direction: originMax() now reports 9999, raiseTo raises
@@ -89,11 +111,11 @@ describe('an epoch published by another realm', () => {
   });
 
   it('never lets the target go backwards when the marker disappears', async () => {
-    const { db, dbName } = oneClient();
+    const { db, dbName, vfs } = oneClient();
     await db.write('CREATE TABLE t (n)');
 
     const realm = await makeRealm();
-    const marker = epochLockName(namespaceFor(VFS), dbName, 4_242);
+    const marker = epochLockName(namespaceFor(vfs), dbName, 4_242);
     const release = await holdIn(realm, marker, 'shared');
     await db.read('SELECT n FROM t');
     release();
@@ -103,10 +125,10 @@ describe('an epoch published by another realm', () => {
     // this design has to make impossible (epochs.ts:51-53).
     await db.write('INSERT INTO t VALUES (1)');
     const published = (await heldNamesIn(window)).filter((name) =>
-      name.startsWith(`bsq:epoch:${namespaceFor(VFS)}:${dbName}:`),
+      name.startsWith(`bsq:epoch:${namespaceFor(vfs)}:${dbName}:`),
     );
     expect(published).toEqual([
-      epochLockName(namespaceFor(VFS), dbName, 4_243),
+      epochLockName(namespaceFor(vfs), dbName, 4_243),
     ]);
   });
 
@@ -115,6 +137,12 @@ describe('an epoch published by another realm', () => {
     // transaction.ts's finally and this goes red — transaction() resolves
     // before publish() grants the shared lock, so txResolved is true while
     // our exclusive lock still blocks the grant.
+    //
+    // Verified 2026-09-15: red on OPFSWriteAheadVFS, OPFSAdaptiveVFS,
+    // OPFSCoopSyncVFS, IDBBatchAtomicVFS, IDBMirrorVFS, OPFSAnyContextVFS
+    // (Chromium); OPFSAdaptiveVFS, OPFSCoopSyncVFS, IDBBatchAtomicVFS,
+    // IDBMirrorVFS, OPFSAnyContextVFS (Firefox) — every VFS this file runs
+    // on, on both engines.
     //
     // The simpler heldNamesIn shape (check after await transaction()) was
     // attempted first and found non-falsifiable on both engines: the `await`
@@ -142,10 +170,10 @@ describe('an epoch published by another realm', () => {
     // before starting the race, so the 400 ms budget measures only what it
     // claims — whether transaction() is blocked by the lock — not the write
     // round-trip time. Never use a wall-clock budget to order two async events.
-    const { db, dbName } = oneClient();
+    const { db, dbName, vfs } = oneClient();
     const realm = await makeRealm();
     // The first commit in a fresh client publishes epoch 1.
-    const marker = epochLockName(namespaceFor(VFS), dbName, 1);
+    const marker = epochLockName(namespaceFor(vfs), dbName, 1);
     let releaseExclusive: (() => void) | undefined;
 
     // Resolves the moment holdIn() returns — i.e., the exclusive lock is actually held.
@@ -191,13 +219,13 @@ describe('an epoch published by another realm', () => {
   });
 
   it('publishes exactly one marker per realm, whatever the pool size', async () => {
-    const { db, dbName } = oneClient();
+    const { db, dbName, vfs } = oneClient();
     await db.write('CREATE TABLE t (n)');
     await db.write('INSERT INTO t VALUES (1)');
     await db.write('INSERT INTO t VALUES (2)');
     await db.write('INSERT INTO t VALUES (3)');
 
-    const prefix = `bsq:epoch:${namespaceFor(VFS)}:${dbName}:`;
+    const prefix = `bsq:epoch:${namespaceFor(vfs)}:${dbName}:`;
     const published = (await heldNamesIn(window)).filter((name) =>
       name.startsWith(prefix),
     );
