@@ -1,5 +1,65 @@
+diff --git a/src/examples/IDBBatchAtomicVFS.js b/src/examples/IDBBatchAtomicVFS.js
+index 86353cdda6ccd599e22bb1a531f473d414c5a8d2..ae344d0d0860eebc4eac4604a0cc426cb7a4ae85 100644
+--- a/src/examples/IDBBatchAtomicVFS.js
++++ b/src/examples/IDBBatchAtomicVFS.js
+@@ -271,18 +271,45 @@ export class IDBBatchAtomicVFS extends WebLocksMixin(FacadeVFS) {
+         }, 'rw', file.txOptions);
+       } else {
+         this.#idb.q(async ({ blocks }) => {
+-          // Read the existing block.
+-          const range = IDBKeyRange.bound(
+-            [file.path, -iOffset],
+-            [file.path, Infinity]);
+-          const block = await blocks.get(range);
++          // Walk the blocks this write covers, the way jRead does. A single
++          // block starting exactly at iOffset and holding the whole write is
++          // the common case, not a guarantee: SQLite writes its transient
++          // files out of order, so nothing may start at iOffset at all, and it
++          // rewrites parts of a journal header, so a block may be shorter than
++          // what is written over it.
++          let dataOffset = 0;
++          while (dataOffset < data.byteLength) {
++            const fileOffset = iOffset + dataOffset;
++            const range = IDBKeyRange.bound(
++              [file.path, -fileOffset],
++              [file.path, Infinity]);
++            const block = await blocks.get(range);
++
++            if (!block || block.data.byteLength - block.offset <= fileOffset) {
++              // No block reaches this offset. Store the rest as its own block,
++              // as the branch above does for a file being extended.
++              blocks.put({
++                path: file.path,
++                offset: -fileOffset,
++                version: version,
++                data: data.slice(dataOffset)
++              });
++              return;
++            }
+ 
+-          // Modify the block data.
+-          // @ts-ignore
+-          block.data.subarray(iOffset + block.offset).set(data);
++            // Modify the block data.
++            const blockOffset = fileOffset + block.offset;
++            const nBytes = Math.min(
++              block.data.byteLength - blockOffset,
++              data.byteLength - dataOffset);
++            // @ts-ignore
++            block.data.subarray(blockOffset, blockOffset + nBytes)
++              .set(data.subarray(dataOffset, dataOffset + nBytes));
+ 
+-          // Write back.
+-          blocks.put(block);
++            // Write back.
++            blocks.put(block);
++            dataOffset += nBytes;
++          }
+         }, 'rw', file.txOptions);
+ 
+       }
 diff --git a/src/examples/OPFSCoopSyncVFS.js b/src/examples/OPFSCoopSyncVFS.js
-index 44028251d71987256171f3c3494925c516db023d..b69df1e4f6fe2da3cafb72dd16af3573b50e9c3b 100644
+index 44028251d71987256171f3c3494925c516db023d..5a8b1997012c82c45db18b3cecea5c888b108e9c 100644
 --- a/src/examples/OPFSCoopSyncVFS.js
 +++ b/src/examples/OPFSCoopSyncVFS.js
 @@ -77,7 +77,11 @@ export class OPFSCoopSyncVFS extends FacadeVFS {
@@ -44,3 +104,34 @@ index 44028251d71987256171f3c3494925c516db023d..b69df1e4f6fe2da3cafb72dd16af3573
        }
      }
      return VFS.SQLITE_OK;
+@@ -522,13 +538,23 @@ export class OPFSCoopSyncVFS extends FacadeVFS {
+         try {
+           // Get access handles for the database and releated files in parallel.
+           this.log?.(`creating access handles for ${file.path}`)
+-          await Promise.all(DB_RELATED_FILE_SUFFIXES.map(async suffix => {
+-            const persistentFile = this.persistentFiles.get(file.path + suffix);
+-            if (persistentFile) {
+-              persistentFile.accessHandle =
+-                await persistentFile.fileHandle.createSyncAccessHandle();
+-            }
+-          }));
++          // Settle them all before reporting a failure: Promise.all rejects as
++          // soon as one does, while the others are still in flight, so the
++          // cleanup in the catch below runs too early to see them. Those
++          // acquisitions then complete and assign to persistent files nothing
++          // will close, leaking one access handle per attempt - which makes
++          // every later open of the same database fail on a sidecar file it
++          // holds itself.
++          const results = await Promise.allSettled(
++            DB_RELATED_FILE_SUFFIXES.map(async suffix => {
++              const persistentFile = this.persistentFiles.get(file.path + suffix);
++              if (persistentFile) {
++                persistentFile.accessHandle =
++                  await persistentFile.fileHandle.createSyncAccessHandle();
++              }
++            }));
++          const failure = results.find(result => result.status === 'rejected');
++          if (failure) throw failure.reason;
+         } catch (e) {
+           this.log?.(`failed to create access handles for ${file.path}`, e);
+           // Close any of the potentially opened access handles
