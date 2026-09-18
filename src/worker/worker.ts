@@ -119,6 +119,52 @@ const createVfsInstance = async (
 };
 
 /**
+ * How long to keep retrying an open that a dead context's handle is blocking.
+ * Sized on the window itself: a worker killed inside a `step()` holds its OPFS
+ * handles for up to ~2 s on Chromium (HANDLE-CORPSE, `mem:measurements`), and
+ * 65 ms at rest. In the failures this was written for the replacement worker's
+ * boot had already spent most of that window — the file was free 1-12 ms after
+ * the open gave up, and a replayed attempt succeeded in 4-14 ms, 4 times out
+ * of 4 (measured 2026-09-18).
+ */
+const OPEN_RETRY_BUDGET_MS = 2_500;
+
+/**
+ * `sqlite3_open_v2`, retried for a VFS that takes an exclusive OPFS access
+ * handle inside `xOpen` — where `createVfsInstance`'s retry cannot reach,
+ * because the handle is taken per file, long after the VFS instance exists.
+ *
+ * Retried blind, and that is not a shortcut: wa-sqlite's `jOpen` catches the
+ * acquisition failure, logs it to the worker's console and returns
+ * `SQLITE_CANTOPEN` with no `lastError`, so nothing here can tell a held file
+ * from any other refusal (measured 2026-09-18). What narrows it instead is the
+ * declaration: only a VFS holding an EXCLUSIVE handle can be blocked by a
+ * context that answers nothing, and only those retry at all. The cost is borne
+ * by a genuine open failure on those VFS alone, which waits out the budget
+ * before reporting — an error path, and a bounded one.
+ */
+const openWithRetry = async (
+  sqlite: { open_v2: (file: string) => Promise<number> },
+  file: string,
+  vfs: SQLiteVFS,
+): Promise<number> => {
+  if (!VFS_CAPABILITIES[vfs].exclusiveFileHandle) {
+    return sqlite.open_v2(file);
+  }
+  const deadline = Date.now() + OPEN_RETRY_BUDGET_MS;
+  for (;;) {
+    try {
+      return await sqlite.open_v2(file);
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+      await new Promise((resolve) =>
+        setTimeout(resolve, ACQUIRE_RETRY_INTERVAL_MS),
+      );
+    }
+  }
+};
+
+/**
  * The one savepoint this library opens inside a transaction (spec 2026-09-11,
  * D7). One at a time — the next message concludes it before anything else —
  * so a fixed name suffices, and its three statements stay in the statement
@@ -370,7 +416,7 @@ const open = (file: string, options: OpenOptions) => {
           // (measured: broke all 96 browser tests on 56-char names). The VFS
           // normalizes internally, so 'data' and '/data' open the same OPFS file.
           return locks.withLock(initLockName(vfs, file), async () => {
-            const db = await sqlite.open_v2(file);
+            const db = await openWithRetry(sqlite, file, vfs);
             for (const statement of renderPragmas(pragmas)) {
               for await (const stmt of sqlite.statements(db, statement)) {
                 while ((await sqlite.step(stmt)) === SQLITE_ROW) {}

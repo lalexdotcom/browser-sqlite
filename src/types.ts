@@ -280,6 +280,31 @@ export type VFSCapability = {
   /** How the database is arranged within that storage. */
   readonly layout: VFSLayout;
   /**
+   * Whether this VFS takes its OPFS access handle in the EXCLUSIVE mode —
+   * `createSyncAccessHandle()` with no `mode`, rather than
+   * `mode: 'readwrite-unsafe'`.
+   *
+   * It decides whether an acquisition has to be retried. A terminated context
+   * releases its Web Locks at once but keeps its OPFS access handles for up to
+   * ~2 s on Chromium (HANDLE-CORPSE, `mem:measurements`), so a VFS taking an
+   * exclusive handle can meet a file held by something that answers nothing:
+   * no lock to wait on, no owner to ask, only time to wait out. Where
+   * `readwrite-unsafe` is used a second handle is granted regardless, and a
+   * dead holder blocks nobody.
+   *
+   * Declared rather than detected, because the error is not available where the
+   * decision has to be made: wa-sqlite's `jOpen` swallows it (measured
+   * 2026-09-18) and SQLite reports a bare `SQLITE_CANTOPEN`. Where the error IS
+   * available — VFS instantiation — `createVfsInstance` tests it directly and
+   * needs no declaration.
+   *
+   * NOT declared for `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS`, which ask for
+   * `readwrite-unsafe` and fall back to an exclusive handle only on an engine
+   * that lacks it. That combination is real but out of reach: Firefox releases
+   * a dead worker's handle in 1-6 ms (HANDLE-ORPHAN), a window nothing loses.
+   */
+  readonly exclusiveFileHandle: boolean;
+  /**
    * Platform features without which this VFS cannot work at all.
    *
    * `readwrite-unsafe` is the one that bites: WebIDL ignores the unknown
@@ -427,6 +452,7 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'page-cache',
     storage: 'opfs',
     layout: 'opfs-path',
+    exclusiveFileHandle: false,
     // Measured on Firefox 2026-08-27, HAS_UNSAFE_HANDLES false: all three
     // build pairs and all six invariants pass. That campaign ran at an
     // EFFECTIVE pool of one: without readwrite-unsafe every worker but the
@@ -452,6 +478,7 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'page-cache',
     storage: 'opfs',
     layout: 'opfs-path',
+    exclusiveFileHandle: false,
     requires: ['opfs'],
     degradesWithout: ['readwrite-unsafe'],
     singleConnectionWithout: ['readwrite-unsafe'],
@@ -472,6 +499,7 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'page-cache',
     storage: 'opfs',
     layout: 'opfs-path',
+    exclusiveFileHandle: true,
     requires: ['opfs'],
     degradesWithout: [],
     singleConnectionWithout: [],
@@ -490,6 +518,7 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'page-cache',
     storage: 'opfs',
     layout: 'opfs-pool',
+    exclusiveFileHandle: true,
     requires: ['opfs'],
     degradesWithout: [],
     singleConnectionWithout: [],
@@ -521,6 +550,7 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'page-cache',
     storage: 'indexeddb',
     layout: 'idb-store',
+    exclusiveFileHandle: false,
     requires: [],
     degradesWithout: [],
     singleConnectionWithout: [],
@@ -555,6 +585,7 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'whole-database',
     storage: 'indexeddb',
     layout: 'idb-store',
+    exclusiveFileHandle: false,
     requires: [],
     degradesWithout: [],
     singleConnectionWithout: [],
@@ -576,6 +607,7 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'page-cache',
     storage: 'opfs',
     layout: 'opfs-path',
+    exclusiveFileHandle: false,
     requires: ['opfs', 'writable-stream'],
     degradesWithout: [],
     singleConnectionWithout: [],
@@ -595,6 +627,7 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'whole-database',
     storage: 'memory',
     layout: 'memory',
+    exclusiveFileHandle: false,
     requires: [],
     degradesWithout: [],
     singleConnectionWithout: [],
@@ -614,6 +647,7 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'whole-database',
     storage: 'memory',
     layout: 'memory',
+    exclusiveFileHandle: false,
     requires: [],
     degradesWithout: [],
     singleConnectionWithout: [],
