@@ -2441,6 +2441,50 @@ the `fileId`, only `xDelete` frees a slot, and `DEFAULT_CAPACITY` is 6.
 "99, unchanged"; one instrumented single-file run answered it. Reach for `BSQ_TEST_TARGETS=<pair>
 pnpm exec rstest --config <cfg> --project 'chromium*' run <one file>` first — ~25 s.
 
+## HANDLE-CORPSE — a worker killed INSIDE a statement holds its OPFS handles ~30× longer, 2026-09-16
+
+Chromium, `AccessHandlePoolVFS`. Time from `worker.terminate()` until a fresh client on the same
+database opens and answers `SELECT 1`, polled; the first client is closed first so the connection
+lock is not what is being measured (the first attempt at this measured the lock instead and read
+`-1` on every trial — the probe, not the engine, was wrong).
+
+| the worker was… | handles released after |
+| --- | ---: |
+| idle, between statements | **65 ms** |
+| inside `longQuery(20_000_000)`, a long synchronous `step()` | **2039 ms** |
+
+Control: a client closed cleanly, no terminate — **67 ms**, i.e. indistinguishable from killing an
+idle one. **It is not termination that is slow, it is termination while the thread is inside
+synchronous WASM.**
+
+**Why it bites only this VFS:** `#acquireAccessHandles()` opens a `FileSystemSyncAccessHandle` on
+EVERY file of its directory, and such a handle is exclusive per file. Two instances of that VFS
+therefore cannot coexist on one origin, even on different databases — so a new worker meets the
+corpse and dies with `NoModificationAllowedError` before SQLite is involved (hence no
+`sqliteCode`; `worker.ts` had already noted these DOMExceptions carry a misleading numeric `code`).
+
+**The name is the discriminator and it is specified.** `NoModificationAllowedError`, identical on
+both engines — `mem:follow-ups` had already recorded it for Firefox from an unrelated probe. The
+MESSAGE is engine prose ("Access Handles cannot be created…" on Chromium); never match on it.
+
+**How the causal chain was closed, after two refuted hypotheses.** Delaying the respawn by 250 ms
+and by 1000 ms changed nothing — both are BELOW the 2 s threshold, which is why the first two
+attempts read as "not a race". 3000 ms turned the isolated test green. On the suite side the same
+threshold explains the cascade: a 3000 ms wait before the victim test clears it, while the same
+wait placed AFTER the cleanup's `deleteDatabase` does not — because the delete itself runs inside
+the window, fails, and leaks the pool slot. Moving the wait BEFORE the delete took the file from
+6 failures to 1.
+
+**Cost of the silence:** the cleanup's `deleteDatabase` ended in `.catch(() => {})`, so the leaked
+slots were invisible and the later failures read as capacity exhaustion with no cause. A full day
+(`mem:lessons`).
+
+**Fixed 2026-09-16 (`3755805`)** in `createVfsInstance` (`src/worker/worker.ts`), shared by the
+pool worker and the delete worker. `AccessHandlePoolVFS/sync` on chromium: **330/0/4**, from 7
+failures at MATRIX-4. **Note a figure I got wrong when reporting it, and which is in that commit
+message: I said "from 21". 21 was that cell two fixes earlier; 7 is what it was immediately
+before.**
+
 ## SAFARI-OPFS — what Safari 26 and 27 answer about OPFS access handles, 2026-09-16
 
 Measured by the user in Safari 26's console on a `localhost` page (a secure context is required —

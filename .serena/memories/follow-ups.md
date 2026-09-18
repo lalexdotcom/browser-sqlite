@@ -258,34 +258,34 @@ beat the same 600 ms, and on a loaded machine it does not: the failure is
 `Worker 1 did not become ready within 600 ms`. A budget that the subject needs tight and the setup
 needs loose cannot be one number; splitting them is the fix, and nobody has taken it.
 
-## The matrix's remaining piles (re-measured 2026-09-16, after the cleanup fix)
+## What the matrix still shows — three product defects (2026-09-16)
 
-Numbers in `mem:measurements`, MATRIX-3. `scripts/matrix-triage.mjs` regenerates the grouping from any `.matrix/<run>/`.
+Numbers in `mem:measurements`. `scripts/matrix-triage.mjs` regenerates the grouping from any
+`.matrix/<run>/`.
 
-**The first pile is done, and its clearing is what these numbers are.** 989 cell-failures → 500, 143 groups → 97, `AccessHandlePoolVFS` 593 → 102. What it hid then surfaced, so the second pile GREW rather than shrank — the triage's ORDER was right even though its stated cause was wrong (`mem:lessons`, the `afterEach` entry).
+**Everything the triage called test work is done.** 989 cell-failures → 500 (the dead cleanup)
+→ 79 (the `Need` vocabulary and the pinned pool sizes) → pending, after the dying-worker handle
+fix cleared the last 18. `MemoryVFS` and `MemoryAsyncVFS` are entirely green; 49 of 66 cells were
+green before the last fix. **The lesson the sequence taught, and it was the triage's own
+prediction: clearing the first pile is what made the second readable** — the second GREW when the
+first went, because tests finally reached their real cause.
 
-1. **Tests that assume what they do not declare — 420 cell-failures.** **Only 140 of them are
-   blocked on the `Need` decision, not all 420** — the split was made on MATRIX-3 and it is the
-   thing to know before scheduling this pile:
-   - **286 need no new word and no decision.** They are `INVALID_OPTION: <vfs> does not support
-     pool sizes greater than 1`, i.e. a pinned `poolSize: 2` where `needs: ['two-workers']` says
-     the same thing — and `two-workers` ALREADY EXISTS in `tests/browser/target.ts`. Mechanical
-     substitution, available now.
-   - **140 want a word that does not exist yet**: a second client on a memory VFS (50), a test
-     writing a raw OPFS file (48, `statement-errors`), inspection on a memory VFS (36), and
-     AccessHandlePool's `locking_mode` vs `default-pragmas` (6). Candidates named at the triage:
-     `shared-storage`, `persistent`, `opfs-file`.
-   - **CHECK BEFORE ASKING FOR THE WORD:** `shared-second-client` already exists and already
-     answers false on every memory VFS (`sharedSecondClient`, `tests/browser/target.ts` — it tests
-     `layout !== 'memory'`). It may cover the 50 and part of the 36 with no new vocabulary at all.
-     Nobody has checked; that is work, not a decision, and it shrinks the question put to the user.
+What is left is product, on three VFS, none of them recommended. Each needs a diagnosis before a
+fix, as `output()` did.
 
-   **The list grows by the user's decision, never by drift**, and that decision is still not taken.
-2. **Three probable product defects — 62 cell-failures.** `IDBMirrorVFS` (46): `database disk image is malformed` in tx-abort, tx-handle and tx-savepoint — an abandoned transaction corrupts the image; the largest and the most serious of the three. `IDBBatchAtomicVFS` (8): an abandoned write through a generator inside a transaction times out with no assertion, plus `TRANSACTION_CLOSED`, `offset is out of bounds` and `source array is too long` — the last two read like a wrong buffer length. `OPFSCoopSyncVFS` (6): `DATABASE_NOT_FOUND` for `marker-delete.db`, which the test had just created. Each needs a diagnosis before a fix, as `output()` did. Independent of the `Need` decision, so this pile can advance while that one waits.
+- **`IDBMirrorVFS` — 46.** `STATEMENT_FAILED: database disk image is malformed`, eleven groups
+  across `tx-abort`, `tx-handle` and `tx-savepoint`, every one of them on a write abandoned inside
+  a transaction. The largest and the most serious: an abandoned transaction corrupting the image is
+  data loss, not a test artefact.
+- **`IDBBatchAtomicVFS` — 8.** An abandoned write through a generator inside a transaction times
+  out with no assertion, plus `TRANSACTION_CLOSED`, `offset is out of bounds` and `source array is
+  too long` — the last two read like a wrong buffer length.
+- **`OPFSCoopSyncVFS` — 7.** Six are `DATABASE_NOT_FOUND` for `marker-delete.db`, which the test
+  had just created; one is a `long-query` failing on `sqlite3_open_v2`. **The 2026-09-16 fix
+  touched `deleteDatabase`'s JSDoc, NOT its behaviour** — these are unchanged and still to
+  diagnose.
 
-## A killed worker's OPFS handles are not free when its replacement opens (2026-09-16)
-
-Eighteen cell-failures on `AccessHandlePoolVFS`, `WORKER_CRASHED: Failed to execute 'createSyncAccessHandle'` — seventeen in `lifecycle.test.ts` (crash detection, the restart budget, `onWorkerLost`, the deserialization failure, the second-client BUSY refusal) and one in `long-query.test.ts` ("is presumed dead when it never answers the stop request"). Those tests kill a worker deliberately and the replacement collides with handles the dead one still holds. **Invisible until the cleanup fix**, because nothing on that VFS got far enough to reach them. Unclassified: it may be the tests' timing, or the library restarting a slot sooner than the engine releases. HANDLE-ORPHAN measured Firefox releasing them in 1-6 ms (`mem:measurements`); nobody has measured Chromium, which is where these land.
+**Reliability by the triage rule, so rc.5.**
 
 ## One CoopSync lifecycle failure the isolated probe does not explain (2026-09-16)
 

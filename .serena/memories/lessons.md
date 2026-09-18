@@ -887,6 +887,42 @@ message when the ledger showed no edit after ten. **Split a batch before dispatc
 artifact a deadline.** A monitor that counts the report's rows, not only the modified files, shows the
 difference between thinking and stalling.
 
+## A swallowed cleanup turns one defect into an unreadable cascade — 2026-09-16
+
+`createTestClient`'s cleanup ended its `deleteDatabase` with `.catch(() => {})`. On
+`AccessHandlePoolVFS` that call was failing on every test that had just killed a busy worker —
+the dying worker still held the directory — so the pool slot was never given back. Six slots,
+then nothing opened, and the later tests failed with `sqlite3_open_v2`, which names no cause at
+all. **The defect was one line away from the evidence and the evidence was being deleted.**
+
+**A cleanup that cannot clean must say so.** Tolerate exactly the outcomes that are a test's
+subject — here `DATABASE_NOT_FOUND`, for the several tests whose client never creates a file —
+and let everything else reach the test. `.catch(() => {})` in a cleanup is not defensive, it is a
+decision to hide whatever the cleanup was for.
+
+**The corollary, and it is what cost the time:** the same silence made a PRODUCT defect look like
+test infrastructure. `close()` then `deleteDatabase()` is the sequence a consumer writes, and it
+was failing for real. It was written off as "our test helper leaks" for hours because nothing
+ever printed.
+
+## A delay that does not fix it has only refuted the delay you tried — 2026-09-16
+
+Chasing the same defect, delaying the worker respawn by 250 ms and then 1000 ms changed nothing,
+and both were read as "not a timing race". The release actually takes ~2000 ms (HANDLE-CORPSE,
+`mem:measurements`): both probes were under the threshold. **A negative result from a magnitude
+you chose by feel refutes that magnitude, not the hypothesis.** Measure the quantity before
+bisecting on it — the direct measurement (terminate, then poll until reopen succeeds) took one
+run and answered exactly.
+
+Two more traps from the same afternoon, both of which produced confident wrong readings:
+
+- **The first probe measured the connection lock, not the engine.** It reopened while the first
+  client was still alive, so it was reading `bsq:conn`'s exclusivity — `-1` on every trial, which
+  reads like "never released". Close the thing that is not under test.
+- **rstest prints `console` output only for tests that FAIL.** A probe that logs its measurement
+  and passes prints nothing. Carry the value in the assertion (`expect(measured).toBe('X')`) — and
+  keep it short, the report truncates the message.
+
 ## `afterEach` registered from inside a test body NEVER RUNS in rstest — 2026-09-16
 
 `createTestClient`'s cleanup called `afterEach(...)` from the test that was running. rstest

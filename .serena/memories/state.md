@@ -27,11 +27,11 @@ obligations and unmeasured ground.
 ## The verification baseline — compare against these, re-measured 2026-09-16 on `fix/second-client`
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a
-run in this container on 2026-09-16, on `fix/second-client` right after the test-cleanup fix** —
-none is carried forward, none is arithmetic. The whole table was re-read in one pass, which is
-what its own rule demands.
+run in this container on 2026-09-16, on `fix/second-client` right after the dying-worker handle
+fix** — none is carried forward, none is arithmetic. The whole table was read in one pass, which
+is what its own rule demands.
 
-The previous version of this table was measured on 2026-09-15 and went stale the next day: the
+A previous version of this table was measured on 2026-09-15 and went stale the next day: the
 branch stopped every test file from enumerating VFS, which took `pnpm test` from 1554/1038/14 to
 1173/668/14 and the unit project from 482 to 507. It sat wrong for a day beside a prose paragraph
 carrying the right numbers. **That is what "re-measure the whole table, do not patch one cell"
@@ -47,7 +47,7 @@ on the last branch landed with a failing typecheck that no test run could show (
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` on each: **1173 tests / 76 files** (unit + the two chromium target projects, **8 skipped**), **668 / 50** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects) |
+| `pnpm test` | **THREE reports**, `status: pass` on each: **1175 tests / 76 files** (unit + the two chromium target projects, **8 skipped**), **670 / 50** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects) |
 | `pnpm exec rstest --project unit run` | 507 tests, 27 files |
 | `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are now `chromium · <vfs>/<build>` and rstest's filter is anchored |
 | `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each: **Chromium 71 passed / 14 skipped, Firefox 67 / 18** — they differ by design since 2026-09-14 |
@@ -55,7 +55,7 @@ on the last branch landed with a failing typecheck that no test run could show (
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
 | `pnpm lint` | 136 files, 13 warnings, 1 info |
 | `dependencies` in `package.json` | absent |
-| `pnpm test:matrix` | **not in this table on purpose** — 66 cells, ~2900 s, and 500 expected failures. Its baseline is `mem:measurements`, MATRIX-3 |
+| `pnpm test:matrix` | **not in this table on purpose** — 66 cells, ~50 min, and failures are expected. Its baseline is `mem:measurements`, MATRIX-5 |
 
 **The browser skips are expected: 4 per Chromium project, 1 per Firefox project.** Each config
 now builds ONE project per target, so the table's per-config totals are twice those: **8** on the
@@ -117,18 +117,23 @@ one machine and one build; slower CI hardware may still surface timing the campa
   no timed-out cell.
 
   **THE MERGE WAITS ON THE MATRIX TRIAGE (user, 2026-09-16): "on mergera une fois le tri
-  effectué".** The triage is done and its FIRST pile is now cleared and committed — the browser
-  test cleanup never ran at all (`mem:lessons`), and fixing it took 989 cell-failures to 500 and
-  `AccessHandlePoolVFS` from 593 to 102 (`mem:measurements`, MATRIX-3). **The user chose on
-  2026-09-16 to stay on the branch after that commit — the merge was NOT given.** What is left is
-  two piles in `mem:follow-ups`: the undeclared needs (420, of which **only 140 are gated** on the
-  **`Need` vocabulary — a decision the user has not taken and which I must not take**; the other
-  286 are a pinned `poolSize: 2` becoming `needs: ['two-workers']`, a need that already exists) and the
-  three probable product defects (62), which need no decision and can advance. My reading, given
-  once and not to be re-litigated: the remainder is tests that misdeclare and pre-existing VFS
-  defects, neither of which belongs to this branch — but whether that satisfies "le tri effectué"
-  is the user's call. The Firefox silent hang that blocked runs is diagnosed and guarded, not
-  cured: `navigator.storage.getDirectory()` can fail to settle in a worker on Firefox.
+  effectué" — and as of 2026-09-18 EVERYTHING THE TRIAGE CALLED TEST WORK IS DONE.** Three
+  commits took the matrix from 989 cell-failures to 79: the browser cleanup that never ran
+  (`mem:lessons`), the pinned `poolSize: 2` becoming `needs: ['two-workers']`, and the two new
+  needs the user validated (`shared-storage`, `opfs-file`). A fourth then fixed the product
+  defect those cleared tests exposed — a worker killed inside a statement holds its OPFS handles
+  ~2 s (HANDLE-CORPSE, `mem:measurements`). **The user said on 2026-09-16 to stay on the branch,
+  and the merge has still NOT been given.**
+
+  What remains is product, not tests: three defects on three non-recommended VFS
+  (`mem:follow-ups`), `IDBMirrorVFS`'s corrupted image the largest at 46. My reading, given once
+  and not to be re-litigated: none of it belongs to this branch — but whether that satisfies "le
+  tri effectué" is the user's call, and they have not taken it.
+
+  **Two decisions still owed and neither blocks work: the merge, and HANDLE-2's verdict.**
+
+  The Firefox silent hang that blocked runs is diagnosed and guarded, not cured:
+  `navigator.storage.getDirectory()` can fail to settle in a worker on Firefox.
 
 **rc.5 does NOT ship with the open subjects below (user, 2026-09-09).** Said of two subjects,
 and both are now closed — the second by merge `eeabe06` on 2026-09-11.
