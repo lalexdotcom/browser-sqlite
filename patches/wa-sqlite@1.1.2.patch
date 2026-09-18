@@ -59,7 +59,7 @@ index 86353cdda6ccd599e22bb1a531f473d414c5a8d2..ae344d0d0860eebc4eac4604a0cc426c
  
        }
 diff --git a/src/examples/IDBMirrorVFS.js b/src/examples/IDBMirrorVFS.js
-index 55a6dac2df169732236bf88a0d47c393108a5618..09fcd0ed48be0913beb5a7068cff9bb7f2afbf8c 100644
+index 55a6dac2df169732236bf88a0d47c393108a5618..03aa8584e69a4558a532bff9a387c23e96f48577 100644
 --- a/src/examples/IDBMirrorVFS.js
 +++ b/src/examples/IDBMirrorVFS.js
 @@ -354,7 +354,10 @@ export class IDBMirrorVFS extends FacadeVFS {
@@ -74,6 +74,40 @@ index 55a6dac2df169732236bf88a0d47c393108a5618..09fcd0ed48be0913beb5a7068cff9bb7
          file.blockSize = Math.max(file.blockSize, iOffset + pData.byteLength);
        }
        return VFS.SQLITE_OK;
+@@ -653,9 +656,15 @@ export class IDBMirrorVFS extends FacadeVFS {
+       }
+     }
+ 
+-    let truncated = tx.fileSize + file.blockSize;
+-    while (file.blocks.delete(truncated)) {
+-      truncated += file.blockSize;
++    // Drop the blocks past the end of the file. The first of them starts at
++    // fileSize, not one block beyond it, and they need not be contiguous.
++    if (file.blockSize) {
++      const end = Math.ceil(tx.fileSize / file.blockSize) * file.blockSize;
++      for (const offset of [...file.blocks.keys()]) {
++        if (offset >= end) {
++          file.blocks.delete(offset);
++        }
++      }
+     }
+ 
+     file.viewTx = tx;
+@@ -679,6 +688,14 @@ export class IDBMirrorVFS extends FacadeVFS {
+       blocks.put({ path: file.path, offset, data });
+     }
+ 
++    // Delete blocks past the end of the file, which the view has just
++    // dropped. Without this the store keeps every block a shrinking
++    // transaction leaves behind.
++    if (file.blockSize) {
++      const end = Math.ceil(file.txActive.fileSize / file.blockSize) * file.blockSize;
++      blocks.delete(IDBKeyRange.bound([file.path, end], [file.path, Infinity]));
++    }
++
+     // Delete obsolete transactions no longer needed.
+     const oldRange = IDBKeyRange.bound(
+       [file.path, -Infinity], [file.path, oldestTxId],
 diff --git a/src/examples/OPFSCoopSyncVFS.js b/src/examples/OPFSCoopSyncVFS.js
 index 44028251d71987256171f3c3494925c516db023d..5a8b1997012c82c45db18b3cecea5c888b108e9c 100644
 --- a/src/examples/OPFSCoopSyncVFS.js

@@ -41,7 +41,7 @@ Measured after this fix: a database of **2 pages leaves 93 blocks in IndexedDB**
 
 **It is NOT introduced by this fix**, and the measurement says so in both directions: 93 blocks with the fix, 93 without. Before the fix the leak was simply unreachable, hidden behind a database too corrupt to query. Anyone applying this patch will see that count and should not read it as a regression.
 
-Not patched here because the purge is not ours to design: this VFS is multi-connection, and `#getOldestTxInUse` inspects the Web Locks other connections hold to decide how far it may prune — it already governs the `tx` store. Deleting blocks has to pass the same barrier, or it pulls data out from under a connection still reading an older view.
+**Both are fixed by [#353](2026-09-18-wa-sqlite-353-idb-mirror-block-leak.md)**, sent the same day and independent of this one. The purge turned out to be safe to design: blocks are not versioned, and connections learn about changes through the `BroadcastChannel`, which carries the block data rather than a pointer into the store — so `#getOldestTxInUse`, which guards the `tx` store, does not need to guard this.
 
 ## Evidence
 
