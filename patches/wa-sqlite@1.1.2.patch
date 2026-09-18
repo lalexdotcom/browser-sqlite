@@ -58,6 +58,22 @@ index 86353cdda6ccd599e22bb1a531f473d414c5a8d2..ae344d0d0860eebc4eac4604a0cc426c
          }, 'rw', file.txOptions);
  
        }
+diff --git a/src/examples/IDBMirrorVFS.js b/src/examples/IDBMirrorVFS.js
+index 55a6dac2df169732236bf88a0d47c393108a5618..09fcd0ed48be0913beb5a7068cff9bb7f2afbf8c 100644
+--- a/src/examples/IDBMirrorVFS.js
++++ b/src/examples/IDBMirrorVFS.js
+@@ -354,7 +354,10 @@ export class IDBMirrorVFS extends FacadeVFS {
+           file.blocks.set(0, newBlock);
+           block = newBlock;
+         }
+-        block.set(pData, iOffset);
++        // pData is a Uint8ArrayProxy, which has no indexed access, so set()
++        // would read undefined at every index and store zeroes. subarray()
++        // returns a real Uint8Array over the same bytes.
++        block.set(pData.subarray(), iOffset);
+         file.blockSize = Math.max(file.blockSize, iOffset + pData.byteLength);
+       }
+       return VFS.SQLITE_OK;
 diff --git a/src/examples/OPFSCoopSyncVFS.js b/src/examples/OPFSCoopSyncVFS.js
 index 44028251d71987256171f3c3494925c516db023d..5a8b1997012c82c45db18b3cecea5c888b108e9c 100644
 --- a/src/examples/OPFSCoopSyncVFS.js
