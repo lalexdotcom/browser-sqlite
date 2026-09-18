@@ -28,6 +28,39 @@ pinning a defect that appears 1.7 % of the time would itself fail most runs.
 
 ## About debugging
 
+**A green cell can mean the test never ran there.** `isolated` showed 0 failures on
+`IDBBatchAtomicVFS` and `IDBMirrorVFS` throughout the 2026-09-18 triage, and it nearly sent the
+diagnosis the wrong way. That config reads `tests/browser/isolated/**` only — a separate
+three-file suite, 7 tests against 334. **Before reading a zero as evidence, check the cell ran the
+subject**: `grep -c '<the test name>'` on its report answers it in one command.
+
+**Your own instrumentation can be the artefact — prove the defect without it.** Chasing the
+`IDBMirrorVFS` corruption, a probe showed `block.set(pData, 0)` leaving the destination at zero
+with a valid source, which is impossible for a `Uint8Array`. The right move was the control that
+came far too late: one read-only probe, nothing in the write path, which confirmed the stored bytes
+were zeroes regardless. Only then was it worth explaining. (The cause was that `pData` is a
+`Uint8ArrayProxy` with no indexed access — `set()` read `undefined` everywhere.)
+
+**The scenario a defect is found through is rarely the one that demonstrates it.** #353's first
+test reproduced a storage leak through a rolled-back transaction — the path the investigation came
+from — which made it depend on another PR and fail on upstream's master for the wrong reason, and
+stay red after the fix. `DELETE` + `VACUUM` reaches the same truncation without rolling anything
+back, runs on master unchanged, and shows the leak more plainly (531 blocks against 93). Ask what
+the smallest thing that triggers this is, not what happened to trigger it.
+
+**Six refuted hypotheses are a signal to stop guessing, not to guess better.** The same
+investigation refuted misalignment, a short read, an inconsistent deduced size, a changed block
+size, an orphan block and `BATCH_ATOMIC` — each a plausible read of the code. What worked was a
+trace: the VFS posting its events on a `BroadcastChannel` that a throwaway test carried into its
+assertion, because a worker's console never reaches the report. Three candidate fixes were refuted
+the same way afterwards, including one the trace itself seemed to point at.
+
+**A pile of failures can be one defect — and can be two, when nothing suggests it.**
+`IDBMirrorVFS`'s 46 failures over twelve subjects were a single cause; `OPFSCoopSyncVFS`'s 7 were
+**two unrelated ones** that shared a VFS and nothing else. Count causes by measurement, never by
+the shape of the pile.
+
+
 **Instrument the product, not the test.** Every probe placed in a hanging test made the bug
 disappear — bounding the call, enabling `debug: true`, shortening a sleep. A trace array on
 `globalThis`, written from `client.ts`/`pool.ts`, caught it in five runs.

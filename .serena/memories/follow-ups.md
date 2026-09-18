@@ -258,7 +258,37 @@ beat the same 600 ms, and on a loaded machine it does not: the failure is
 `Worker 1 did not become ready within 600 ms`. A budget that the subject needs tight and the setup
 needs loose cannot be one number; splitting them is the fix, and nobody has taken it.
 
-## What the matrix still shows — three product defects (2026-09-16)
+## `tx-handle`'s timeout test flakes under a full matrix cell (2026-09-18)
+
+`tx-handle.test.ts :: tx.signal > aborts with OPERATION_TIMEOUT when the transaction outlives its
+timeout`. Seen twice on 2026-09-18, on two unrelated VFS — `firefox · MemoryVFS/jspi` in the full
+matrix (`expected undefined to be defined`) and `chromium · IDBMirrorVFS/async` in a full cell —
+and green every time it is run alone: 3/3 and 2/2 on the very cells that had failed. Its subject
+is a deadline, so a machine loaded by a 49-file cell is exactly what breaks it. Same shape as the
+`pool-cap` entry below, and the same fix is available: the budget the subject needs tight and the
+one the setup needs loose cannot be one number.
+
+## The consumer docs are hard-wrapped at 80 columns (2026-09-18)
+
+`VFS.md` ~23 wrapped prose paragraphs, `README.md` ~9, `API.md` ~3; `CHANGELOG.md` is clean. The
+user's rule is long lines in markdown (`mem:conventions`, writing for the consumer) — hard wrapping
+makes a reworded sentence reflow a whole block and hurts reading in rendered form. **`VFS.md` cannot
+be fixed in the file alone**: 14 of its spans are generated, and the wrapped strings live in
+`scripts/render-vfs-matrix.ts`; the `pre-push` hook runs `pnpm docs:vfs && git diff --exit-code
+VFS.md` and would reject a divergence. Pure formatting, no behaviour, but it touches three consumer
+files plus a script.
+
+## What the matrix showed, and what it shows now (2026-09-16, resolved 2026-09-18)
+
+**The three product defects are gone.** Full matrix on 2026-09-18 after the fixes: **65 of 66 cells
+green, 1 failing test, 1 distinct group** — against 62 cell-failures and 20 groups on 2026-09-16.
+The one is the `tx-handle` flake above, green 3/3 alone. Every one of the three traced to a
+wa-sqlite defect rather than to this library, and each is upstream with a falsifying test in
+wa-sqlite's own suite: `OPFSCoopSyncVFS` → #350 plus our own `deleteDatabase` probe (a file's
+existence, not an open), `IDBBatchAtomicVFS` → #351, `IDBMirrorVFS` → #352 and #353. Reports in
+`docs/upstream/`, patch inventory in `mem:stack-and-build`.
+
+Kept for its method rather than its content — the original entry, now closed:
 
 Numbers in `mem:measurements`. `scripts/matrix-triage.mjs` regenerates the grouping from any
 `.matrix/<run>/`.
@@ -273,19 +303,18 @@ first went, because tests finally reached their real cause.
 What is left is product, on three VFS, none of them recommended. Each needs a diagnosis before a
 fix, as `output()` did.
 
-- **`IDBMirrorVFS` — 46.** `STATEMENT_FAILED: database disk image is malformed`, eleven groups
-  across `tx-abort`, `tx-handle` and `tx-savepoint`, every one of them on a write abandoned inside
-  a transaction. The largest and the most serious: an abandoned transaction corrupting the image is
-  data loss, not a test artefact.
-- **`IDBBatchAtomicVFS` — 8.** An abandoned write through a generator inside a transaction times
-  out with no assertion, plus `TRANSACTION_CLOSED`, `offset is out of bounds` and `source array is
-  too long` — the last two read like a wrong buffer length.
-- **`OPFSCoopSyncVFS` — 7.** Six are `DATABASE_NOT_FOUND` for `marker-delete.db`, which the test
-  had just created; one is a `long-query` failing on `sqlite3_open_v2`. **The 2026-09-16 fix
-  touched `deleteDatabase`'s JSDoc, NOT its behaviour** — these are unchanged and still to
-  diagnose.
+- **`IDBMirrorVFS` — 46.** All one defect, and the abandonment was never the cause: `pData` is a
+  `Uint8ArrayProxy`, so `block.set(pData, …)` stored zeroes — including over SQLite's rollback
+  journal header, after which a rollback undid nothing.
+- **`IDBBatchAtomicVFS` — 8.** One defect too, with two faces by build: `jWrite` wrote through a
+  block it assumed started at the offset.
+- **`OPFSCoopSyncVFS` — 7.** Two unrelated causes, which nothing suggested: the six
+  `DATABASE_NOT_FOUND` were `deleteDatabase` reading `SQLITE_CANTOPEN` as absence on a database
+  that existed but was empty; the `sqlite3_open_v2` ones were handles leaked by a partial
+  acquisition.
 
-**Reliability by the triage rule, so rc.5.**
+**The lesson the three shared, and it is in `mem:lessons`: a pile's twelve subjects can be one
+defect, and the scenario a defect is found through is often not the one that demonstrates it.**
 
 ## Two `OPFSCoopSyncVFS` opens that look like HANDLE-CORPSE on a path the fix misses (2026-09-18)
 

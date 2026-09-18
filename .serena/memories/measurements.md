@@ -4,6 +4,39 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## VFS-PILES — the three product piles, cause and cost, 2026-09-18, this container
+
+Full matrix before: **62 cell-failures, 20 groups, 52/66 cells green** (2026-09-16). After the
+four wa-sqlite fixes: **1 failing test, 1 group, 65/66 green** — the one a load flake, 3/3 green
+alone. Mechanisms in `docs/upstream/`; only the numbers are here.
+
+**`OPFSCoopSyncVFS` — 7, two unrelated causes.**
+- Six `DATABASE_NOT_FOUND`: a database opened and never written is 0 bytes, so `jOpen` without
+  `SQLITE_OPEN_CREATE` returns `SQLITE_CANTOPEN` and the delete probe read it as absence. Proved
+  by returning a distinct code from that branch alone — the error changed — and back when the
+  distinct code was moved to the non-empty case.
+- Two `sqlite3_open_v2`: reproduced 5 times in 14 full-cell runs (36 %), never in isolation
+  (18/18 green). At the failure, `navigator.locks.query()` showed `held=none pending=none` for
+  every `ahp:` lock: the holder is a dead context. The file was free **1-12 ms** after the open
+  gave up, and a replayed acquisition succeeded in **4-14 ms, 4 of 4** — which read as "one retry
+  is enough" and was **wrong**: `Promise.all` leaks the handles acquired beside the one that
+  failed, so 25 retries over 2.5 s all failed on `-journal`, the file itself free since 78 ms.
+
+**`IDBBatchAtomicVFS` — 8, one cause, two faces.** A write at 1843200 found the block at 1839104:
+one 4096-byte page missing from a contiguous run of **2305**, `queued-before=0` — never written,
+not lost. On `jspi` it surfaces as `offset is out of bounds` (Chromium) / `source array is too
+long` (Firefox); on `async` the rejection is swallowed and the test hangs its full 30 s.
+
+**`IDBMirrorVFS` — 46, one cause.** `block.set(pData, …)` stores zeroes because `pData` is a
+`Uint8ArrayProxy` with no indexed access. Seen on the journal header: written
+`d9d505f920a163d700000002`, stored `00000000`. The rollback then reads an empty-looking journal and
+undoes nothing — header and file disagree, `2694` pages claimed for 3, or 3 claimed for 2070.
+
+**A storage leak found afterwards, and NOT introduced by those fixes** — 93 blocks with the fix,
+93 without. Grown to 531 pages then emptied and `VACUUM`ed back to 2: **531 blocks kept**. It does
+not accumulate (a second rollback rewrites the same offsets) and resolves if the database grows
+again; the database stays correct throughout.
+
 ## IDB-SIGNAL — a signal lets `IDBBatchAtomicVFS` serve a read during a long query, 2026-09-14, this container
 
 **The discrepancy.** The bench's `reads-during-long-query` reported `IDBBatchAtomicVFS/async`

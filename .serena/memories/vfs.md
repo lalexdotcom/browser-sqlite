@@ -152,6 +152,35 @@ only way the next client sees the release. **The deferral cost a Critical defect
 first query left a live orphan worker holding handles for thirty seconds, delivering exactly
 the `WORKER_CRASHED` the guard replaces. Fixed by not spawning at all once `closing` is set.
 
+## HANDLE-CORPSE reaches `xOpen`, and `exclusiveFileHandle` is what declares it (2026-09-18)
+
+A terminated worker releases its Web Locks **at once** and its OPFS access handles **some time
+later** — up to ~2 s on Chromium when it was killed inside a `step()`, 1-6 ms on Firefox
+(HANDLE-ORPHAN). So a VFS acquiring a handle meets a file held by a context that answers nothing:
+no lock to wait on, no owner to ask, only time. `createVfsInstance` already waited that out, but
+**only around `vfsClass.create()`** — an `opfs-path` VFS takes the file's handle later, inside
+`sqlite3_open_v2`, where that retry never looked. Measured with `held=none pending=none` for every
+`ahp:` lock at the moment of failure: nobody holds anything.
+
+**The condition is conjoint: an EXCLUSIVE handle, and an engine that keeps a dead context's
+handles.** `readwrite-unsafe` immunises `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` on their open
+path — a second handle is granted regardless. `AccessHandlePoolVFS` is exclusive but acquires at
+instance creation, where `createVfsInstance` covers it. **`OPFSCoopSyncVFS` is the only VFS meeting
+both**, hence `exclusiveFileHandle` in `VFS_CAPABILITIES`, true for it and for
+`AccessHandlePoolVFS`.
+
+**Declared rather than detected, and that is forced:** wa-sqlite's `jOpen` swallows the acquisition
+failure — `console.error`, an invalid `PersistentFile`, and a bare `SQLITE_CANTOPEN` with no
+`lastError` — so nothing at the decision point can tell a held file from any other refusal. Where
+the error IS available (instance creation) the retry tests it directly and needs no declaration.
+
+**`SQLITE_CANTOPEN` does not mean "not there", and `deleteDatabase` used to read it that way.**
+`OPFSCoopSyncVFS` returns it for a file that exists and is **empty** — its `jOpen` only reaches a
+path recorded in `accessiblePaths`, which `#createPersistentFile` fills only for a file with a
+size. So a database opened and never written was reported absent. Presence is now decided by the
+OPFS entry on the `opfs-path` layout; the open probe stays where nothing is observable from
+outside the store.
+
 ## HANDLE-1 — the limit that shapes every recommendation
 
 **Without `readwrite-unsafe` there is one exclusive OPFS access handle, rotated between

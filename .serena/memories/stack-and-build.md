@@ -18,8 +18,20 @@
   SHA, not by tag, since 2026-09-15 (user):**
   `github:rhashimoto/wa-sqlite#07ad48cf2f682d279f9cd69818cc1d39b2ccda86`, upstream `master` with #344
   merged. Vendored, so a commit serves as well as a release and nothing waits for one.
-  `patches/wa-sqlite@1.1.2.patch` carries the `OPFSCoopSyncVFS` hand-over fix only (upstream as #347);
-  when that merges, repin to its merge commit and delete the patch.
+  **`patches/wa-sqlite@1.1.2.patch` carries FIVE upstream PRs since 2026-09-18 — seven hunks over three
+  files**, and is no longer deletable as a block. Each is independent and each has a report in
+  `docs/upstream/`, which is where the mechanisms and measurements live:
+  - `OPFSCoopSyncVFS.js` — #347 (hand-over deferred to a task, plus the temp-directory race),
+    `@@ -77` and `@@ -434`; and #350 (`Promise.allSettled`, so a failed acquisition closes what
+    succeeded instead of leaking it), `@@ -522`.
+  - `IDBBatchAtomicVFS.js` — #351 (`jWrite` walks the blocks a write covers instead of assuming one
+    starts at the offset), `@@ -271`.
+  - `IDBMirrorVFS.js` — #352 (`pData.subarray()`: `pData` is a `Uint8ArrayProxy`, and `set()` on it
+    stores zeroes) and #353 (drop the blocks past the end of the file, in the view and in the store).
+
+  **When one merges, repin and regenerate the patch WITHOUT that PR's hunks — do not delete the
+  file.** The hunks sit in different regions and, for two of them, different files, so a selective
+  removal is mechanical; `pnpm patch` then `patch -p1 < patches/…` first, as below.
   - **The `wa-sqlite` on npmjs is not the upstream package**: `1.0.0`, published by
     `gabrieldevunstatic <tailinh@unstatic.co>`, no `repository` field. Never point at it.
   - **Upstream's tags do not follow its versions.** `v1.1.2` points at `2bf1c59`, whose
@@ -344,7 +356,18 @@ instead.
 a PR is the user's. Its suite runs with yarn 4 (PnP, pinned by `.yarnrc.yml`'s `yarnPath`):
 `yarn install`, then `CHROME_PATH=~/.cache/ms-playwright/chromium-1234/chrome-linux/chrome yarn
 web-test-runner test/OPFSCoopSyncVFS.test.js` — Chrome only; the whole suite is `yarn test`, ~40 s
-and 2 899 tests on 2026-09-15. Three facts that cost time:
+and 2 899 tests on 2026-09-15.
+
+**`npm install` works there too and is what four PRs of 2026-09-18 used** —
+`npx web-test-runner --config web-test-runner.config.mjs --files './test/<VFS>.test.js'`, same
+`CHROME_PATH`. Two traps paid for that day: `npm install` **rewrites `yarn.lock`** (restore it
+before committing), and `git stash -u` **takes `node_modules` with it**, after which the runner
+dies with `ERR_MODULE_NOT_FOUND` rather than anything explanatory.
+
+**A test that calls the VFS directly cannot see a `Uint8ArrayProxy` defect.** Comlink clones
+what crosses to the worker, so `proxy.vfs.jWrite(...)` receives a real `Uint8Array`; the proxy
+only appears when SQLite calls the VFS from WebAssembly. #352's first test was written that way
+and passed against the bug — the falsifier had to go through SQL. Three facts that cost time:
 
 - **`TestContext.create()` never rejects**: a worker that fails to start throws from the message
   listener and the promise stays pending. `test/vfs_handover.js` starts its workers through a helper

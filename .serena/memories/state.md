@@ -24,12 +24,19 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-16 on `fix/second-client`
+## The verification baseline — compare against these, re-measured 2026-09-18 on `fix/second-client`
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a
-run in this container on 2026-09-16, on `fix/second-client` right after the dying-worker handle
-fix** — none is carried forward, none is arithmetic. The whole table was read in one pass, which
-is what its own rule demands.
+run in this container on 2026-09-18, on `fix/second-client` after the four wa-sqlite fixes and a
+clean `pnpm install`** — none is carried forward, none is arithmetic. The whole table was read in
+one pass, which is what its own rule demands.
+
+**2026-09-18, the whole table in one pass:** `pnpm test` **1173 / 674 / 14**, unit **507**,
+conformance **71 and 67**, `tsc` clean, `biome ci` exit 0, `pnpm docs:vfs` leaves `VFS.md`
+unchanged. Full matrix: **65 of 66 cells green, 1 failing test, 1 group** (a load flake). The
+firefox figure moved from 668 to 674 and chromium held at 1173: two tests were added this day —
+one in `delete.test.ts`, one in `transaction.test.ts`, both following the target, plus
+`open-retry.test.ts` which names `OPFSCoopSyncVFS`. Do not reconcile these by arithmetic; re-run.
 
 A previous version of this table was measured on 2026-09-15 and went stale the next day: the
 branch stopped every test file from enumerating VFS, which took `pnpm test` from 1554/1038/14 to
@@ -116,19 +123,20 @@ one machine and one build; slower CI hardware may still surface timing the campa
   engine identical to baseline, `tsc` clean, and a full `pnpm test:matrix` (MATRIX-2, 2386 s) with
   no timed-out cell.
 
-  **THE MERGE WAITS ON THE MATRIX TRIAGE (user, 2026-09-16): "on mergera une fois le tri
-  effectué" — and as of 2026-09-18 EVERYTHING THE TRIAGE CALLED TEST WORK IS DONE.** Three
-  commits took the matrix from 989 cell-failures to 79: the browser cleanup that never ran
-  (`mem:lessons`), the pinned `poolSize: 2` becoming `needs: ['two-workers']`, and the two new
-  needs the user validated (`shared-storage`, `opfs-file`). A fourth then fixed the product
-  defect those cleared tests exposed — a worker killed inside a statement holds its OPFS handles
-  ~2 s (HANDLE-CORPSE, `mem:measurements`). **The user said on 2026-09-16 to stay on the branch,
-  and the merge has still NOT been given.**
+  **THE TRIAGE IS FINISHED, tests and product alike (2026-09-18).** Three commits took the matrix
+  from 989 cell-failures to 79: the browser cleanup that never ran (`mem:lessons`), the pinned
+  `poolSize: 2` becoming `needs: ['two-workers']`, and the two new needs the user validated
+  (`shared-storage`, `opfs-file`). A fourth fixed the product defect those cleared tests exposed
+  (HANDLE-CORPSE). **Then 2026-09-18 took the remaining three product piles to zero: the full
+  matrix now reads 65 of 66 cells green, 1 failing test, 1 group** — against 62 cell-failures and
+  20 groups on 2026-09-16 — and that one is a load flake (`mem:follow-ups`), green 3/3 alone.
 
-  What remains is product, not tests: three defects on three non-recommended VFS
-  (`mem:follow-ups`), `IDBMirrorVFS`'s corrupted image the largest at 46. My reading, given once
-  and not to be re-litigated: none of it belongs to this branch — but whether that satisfies "le
-  tri effectué" is the user's call, and they have not taken it.
+  **Every one of the three traced to wa-sqlite, not to this library**, and each went upstream with
+  a test failing on wa-sqlite's own master: #350 and #351, #352 and #353. Our own share was two
+  changes — `deleteDatabase` deciding presence from the OPFS entry rather than from an open probe,
+  and a retry around `sqlite3_open_v2` gated by a new `exclusiveFileHandle` capability
+  (`mem:vfs`). The patch now carries five PRs over three files (`mem:stack-and-build`), reports in
+  `docs/upstream/`.
 
   **Two decisions still owed and neither blocks work: the merge, and HANDLE-2's verdict.**
 
