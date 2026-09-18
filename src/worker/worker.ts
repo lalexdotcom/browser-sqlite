@@ -882,6 +882,29 @@ const removeOpfsEntry = async (path: string): Promise<void> => {
 };
 
 /**
+ * Whether an OPFS entry exists at `path`. The presence test for the
+ * `opfs-path` layout, where the database IS the file at that name — so the
+ * file system answers directly, without going through a VFS whose open path
+ * has conditions of its own.
+ */
+const opfsEntryExists = async (path: string): Promise<boolean> => {
+  const segments = path.split('/').filter(Boolean);
+  const name = segments.pop();
+  if (!name) return false;
+  try {
+    let dir = await navigator.storage.getDirectory();
+    for (const segment of segments) {
+      dir = await dir.getDirectoryHandle(segment);
+    }
+    await dir.getFileHandle(name);
+    return true;
+  } catch (error) {
+    if ((error as DOMException)?.name === 'NotFoundError') return false;
+    throw error;
+  }
+};
+
+/**
  * Deletes a database without opening it.
  *
  * The VFS is instantiated because `jDelete` is the only correct removal on
@@ -919,32 +942,50 @@ const deleteDatabaseFiles = async (data: {
     module,
   )) as any;
 
-  // Probe: open without SQLITE_OPEN_CREATE to detect absence. SQLITE_CANTOPEN
-  // (14) means the database is not there. Any other error is a genuine failure
-  // and must not be swallowed as DATABASE_NOT_FOUND — a corrupt database
-  // returns SQLITE_CORRUPT, and a WASM/VFS start-up failure throws before
-  // open_v2 is reached at all. Measured on all seven persistent VFS, n=3,
-  // both engines: the signal is uniform and unambiguous.
+  const layout = VFS_CAPABILITIES[vfs].layout;
+
+  // Presence, and it is decided differently per layout.
+  //
+  // On `opfs-path` the database IS the file at that name, so the entry answers
+  // — and it has to, because an open probe cannot. SQLITE_CANTOPEN does NOT
+  // mean "not there" on every VFS: OPFSCoopSyncVFS returns it for a file that
+  // exists but is empty, because its jOpen only reaches a path recorded in
+  // `accessiblePaths` and it records one only for a file with a size. A
+  // database opened and never written was therefore reported absent (measured
+  // 2026-09-18; `delete.test.ts` pins it). The same code comes back when the
+  // file's exclusive handle is held by a context that has died, so reading it
+  // as absence would also let a deletion silently skip a live database's files.
+  //
+  // Everywhere else the probe stands: open without SQLITE_OPEN_CREATE and read
+  // SQLITE_CANTOPEN (14) as absence. Any other error is a genuine failure and
+  // must not be swallowed as DATABASE_NOT_FOUND — a corrupt database returns
+  // SQLITE_CORRUPT, and a WASM/VFS start-up failure throws before open_v2 is
+  // reached at all.
   const sqlite = SQLite.Factory(module);
   sqlite.vfs_register(vfsInstance, true);
-  try {
-    const db = await sqlite.open_v2(file, SQLITE_OPEN_READWRITE);
-    // Database exists; close the handle at once and proceed to deletion.
-    // The same vfsInstance services both this probe and the jDelete calls
-    // below, so no re-acquisition of OPFS access handles is needed.
-    await sqlite.close(db);
-  } catch (error: unknown) {
-    if ((error as { code?: unknown })?.code === SQLITE_CANTOPEN) {
-      // Nothing to delete. Close the VFS instance and report absence —
-      // no jDelete and no opfs-path second pass, because those would
-      // operate on files the probe just confirmed are not there.
+  if (layout === 'opfs-path') {
+    if (!(await opfsEntryExists(file))) {
+      // Nothing to delete. Close the VFS instance and report absence — no
+      // jDelete and no opfs-path second pass, because those would operate on
+      // files just confirmed to be absent.
       await vfsInstance.close?.();
       return false;
     }
-    throw error;
+  } else {
+    try {
+      const db = await sqlite.open_v2(file, SQLITE_OPEN_READWRITE);
+      // Database exists; close the handle at once and proceed to deletion.
+      // The same vfsInstance services both this probe and the jDelete calls
+      // below, so no re-acquisition of OPFS access handles is needed.
+      await sqlite.close(db);
+    } catch (error: unknown) {
+      if ((error as { code?: unknown })?.code === SQLITE_CANTOPEN) {
+        await vfsInstance.close?.();
+        return false;
+      }
+      throw error;
+    }
   }
-
-  const layout = VFS_CAPABILITIES[vfs].layout;
 
   try {
     // Not on the opfs-path layout: the OPFS pass below removes every file there,

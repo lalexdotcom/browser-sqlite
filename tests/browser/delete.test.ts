@@ -186,6 +186,24 @@ describe('deleteDatabase', () => {
       expect((error as SQLiteError).code).toBe('DATABASE_NOT_FOUND');
     });
 
+    // A database opened but never written is still a database: the file
+    // exists, it is merely empty. Red on OPFSCoopSyncVFS, whose
+    // #createPersistentFile only adds a path to `accessiblePaths` when the
+    // file has a size, so jOpen without SQLITE_OPEN_CREATE throws
+    // `File ... not found` and returns SQLITE_CANTOPEN — which the probe in
+    // deleteDatabaseFiles reads as absence.
+    it('deletes a database that was opened but never written', async () => {
+      const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+      const db = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
+      // No write, so SQLite lays down no page and the file stays at 0 bytes.
+      await db.read('SELECT 1');
+      await db.close();
+
+      await expect(
+        deleteDatabase(dbName, { vfs, build }),
+      ).resolves.toBeUndefined();
+    });
+
     // Falsifiable: drop `...VFS_CAPABILITIES[vfs].extraFileSuffixes` from the
     // opfs-path pass in deleteDatabaseFiles — OPFSWriteAheadVFS leaves `-wa0`
     // and `-wa1` behind, and this goes red on that target.
