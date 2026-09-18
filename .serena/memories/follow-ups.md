@@ -287,9 +287,28 @@ fix, as `output()` did.
 
 **Reliability by the triage rule, so rc.5.**
 
-## One CoopSync lifecycle failure the isolated probe does not explain (2026-09-16)
+## Two `OPFSCoopSyncVFS` opens that look like HANDLE-CORPSE on a path the fix misses (2026-09-18)
 
-`lifecycle.test.ts :: worker lifecycle — crash detection > restarts the slot once and keeps serving` fails on `chromium OPFSCoopSyncVFS/sync` and `/jspi`, absent from MATRIX-2 — the cell went 12 → 13. **Not caused by the cleanup fix**: run alone on that pair, the file fails 3 times WITHOUT the fix and 2 times WITH it, three runs each. So the fix removes one there while the full-run count rises by one, which the isolated probe does not account for. Open, and deliberately not dismissed as a flake — it reproduced 3/3.
+`lifecycle.test.ts :: crash detection > restarts the slot once and keeps serving` and
+`long-query.test.ts :: a worker killed silently > is presumed dead when it never answers the stop
+request`, both `WORKER_CRASHED: sqlite3_open_v2`, both on chromium only. They are why CoopSync
+went 7 → 8 at MATRIX-5 while every other VFS held or improved.
+
+**The hypothesis, and it decides more than these two cells.** `AccessHandlePoolVFS` acquires its
+whole directory when the VFS INSTANCE is created, which is where `createVfsInstance`
+(`src/worker/worker.ts`) now waits out a dying worker. An `opfs-path` VFS takes the file's handle
+later, at `xOpen` — inside `sqlite3_open_v2`, which the retry never sees. If that holds, the fix
+shipped on 2026-09-16 is a special case of a rule that should cover every VFS holding a file
+handle, and the answer belongs in our open path rather than upstream.
+
+**NOT established, and do not write it down as though it were:** the message is a bare
+`sqlite3_open_v2` with no `lastError` from the VFS, so nothing yet distinguishes the corpse from
+any other open failure. The first move is to make that path carry its cause — the worker already
+builds `detail` from `vfsInstanceSeen.lastError` and it was empty here.
+
+Previously logged as "the isolated probe does not explain it": run alone on that pair the file
+failed 3× without the cleanup fix and 2× with it, three runs each, which no longer looks
+mysterious under this hypothesis.
 
 ## Mixing VFS of the `opfs-path` family on one database (2026-09-15)
 

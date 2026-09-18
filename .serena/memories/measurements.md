@@ -2441,6 +2441,35 @@ the `fileId`, only `xDelete` frees a slot, and `DEFAULT_CAPACITY` is 6.
 "99, unchanged"; one instrumented single-file run answered it. Reach for `BSQ_TEST_TARGETS=<pair>
 pnpm exec rstest --config <cfg> --project 'chromium*' run <one file>` first — ~25 s.
 
+## MATRIX-5 — the matrix after the dying-worker fix, 2026-09-18
+
+`.matrix/2026-09-18T08-25-56-316Z`, 66 cells, **3067 s**, no cell timed out. Triaged with
+`scripts/matrix-triage.mjs`. **This is the reference a matrix regression is read against.**
+
+| | M-2 (09-16) | +cleanup | +needs | **M-5** |
+| --- | ---: | ---: | ---: | ---: |
+| cell-failures | 989 | 500 | 79 | **62** |
+| distinct groups | 143 | 97 | 26 | **20** |
+| green cells /66 | 36 | 36 | 49 | **52** |
+
+Per VFS, summed over its six browser cells: `AccessHandlePoolVFS` 593 → 102 → 18 → **0** ·
+`MemoryVFS` 126 → **0** · `MemoryAsyncVFS` 84 → **0** · `IDBMirrorVFS` **46** (unmoved since the
+needs work) · `IDBBatchAtomicVFS` **8** · `OPFSCoopSyncVFS` 7 → **8**.
+
+**All nine `AccessHandlePoolVFS` cells are green** — three builds × three configs — where only
+`chromium/sync` had been verified by hand. The two risks named before the run did not
+materialise: the cleanup that no longer swallows created no failure on any cell, Firefox and
+isolated included.
+
+**The one regression, and it is informative:** `OPFSCoopSyncVFS` 7 → 8. Both of its
+`sqlite3_open_v2` failures (`restarts the slot once`, `a worker killed silently`) look like
+HANDLE-CORPSE on a path the fix does not cover — `AccessHandlePoolVFS` takes its directory at
+VFS **creation**, where `createVfsInstance` retries, while an `opfs-path` VFS takes the file's
+handle later at **xOpen**, inside `sqlite3_open_v2`. Not established: the message is a bare
+`sqlite3_open_v2` with no `lastError` from the VFS, so nothing yet proves it is the corpse.
+
+Everything else is the three product defects in `mem:follow-ups`.
+
 ## HANDLE-CORPSE — a worker killed INSIDE a statement holds its OPFS handles ~30× longer, 2026-09-16
 
 Chromium, `AccessHandlePoolVFS`. Time from `worker.terminate()` until a fresh client on the same
