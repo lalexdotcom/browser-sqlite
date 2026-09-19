@@ -40,6 +40,12 @@
 					{
 						"type": "command",
 						"command": "serena-hooks activate --client=claude-code"
+					},
+					{
+						"type": "command",
+						"command": "python3 \"${CLAUDE_PROJECT_DIR:-/workspaces/wsqlite}/.claude/scripts/fix-session-mtimes.py\" >> \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/fix-session-mtimes.log\" 2>&1 || true",
+						"timeout": 30,
+						"statusMessage": "Restoring session timestamps"
 					}
 				]
 			}
