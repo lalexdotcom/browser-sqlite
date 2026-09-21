@@ -54,4 +54,6 @@ PR [#357][pr357] on 2026-09-21, from `lalexdotcom:fix/coopsync-open-last-error`,
 
 It claims nothing about what SQLite tells a caller: the connection's message is the generic string for `SQLITE_CANTOPEN` and stays so. It makes the cause exist somewhere, which it did not.
 
+Upstream CI on the head commit is green — [run 35592627851](https://github.com/rhashimoto/wa-sqlite/actions/runs/35592627851), `build (20.x)`, the only check.
+
 **Two commits, four files**, and the second of them is the one to watch in review: the test needs a line in `test/test-worker.js`, because the harness proxies the VFS behind a getter that returns only functions. That is a change to upstream's own test infrastructure, small and load-bearing — without it no test can observe VFS state at all.
