@@ -207,6 +207,36 @@ export const createTransaction =
        */
       let abandoned: Promise<void> | undefined;
 
+      /**
+       * The tail of this transaction's statement queue.
+       *
+       * Its statements share one connection with no scheduler lease between
+       * them, so they must run one at a time. Issued sequentially they already
+       * did — each one awaits `quiesce()` before it settles. Issued in the SAME
+       * TICK they did not: both read the worker as free and the second met
+       * `pool.ts`'s reuse guard, which lost the whole transaction to
+       * `GENERATOR_ABANDONED` for what is baseline usage (`Promise.all` over
+       * two reads).
+       *
+       * Each statement captures this SYNCHRONOUSLY and replaces it before its
+       * first `await`. That is what makes the order the ISSUE order rather than
+       * the resumption order: capturing after a wait would let concurrent
+       * statements read the same tail and start together, which is the defect
+       * moved rather than fixed.
+       *
+       * Never rejects — a statement's failure belongs to its caller, not to the
+       * queue behind it.
+       *
+       * **`undefined` when no statement is in flight, and that is load-bearing,
+       * not tidiness.** The uncontended path must post SYNCHRONOUSLY, as it
+       * always has — the same invariant `entryWait` is careful about. Awaiting
+       * an already-resolved tail still costs a microtask, and a statement whose
+       * own signal aborts in that window never reaches the worker: it broke
+       * spec R7 (`tests/unit/transaction.test.ts`, "does not die when a read is
+       * abandoned by its own signal"), where the read must run on and be judged.
+       */
+      let tail: Promise<void> | undefined;
+
       // The SQL ends, for the transaction's own use. BEGIN, COMMIT and
       // ROLLBACK carry no signal, so a death can land while one is in flight.
       const commitNow = async () => {
@@ -271,9 +301,10 @@ export const createTransaction =
        * the cause. Call it only when `abandoned` is set, so that the common
        * path posts synchronously, as it always has.
        */
-      const entryWait = async (waiting: AbortSignal | undefined) => {
-        const current = abandoned;
-        if (!current) return;
+      const waitFor = async (
+        current: Promise<void>,
+        waiting: AbortSignal | undefined,
+      ) => {
         // B9: addEventListener never fires for a signal already aborted.
         waiting?.throwIfAborted();
         const { aborted, teardown } = makeAbortRace(waiting);
@@ -283,6 +314,12 @@ export const createTransaction =
           teardown();
         }
         if (ending) throw closedError(ending);
+      };
+
+      const entryWait = async (waiting: AbortSignal | undefined) => {
+        const current = abandoned;
+        if (!current) return;
+        await waitFor(current, waiting);
       };
 
       /**
@@ -446,12 +483,18 @@ export const createTransaction =
         const settled = async <R>(
           start: (target: PoolWorker, options: O) => Promise<R>,
         ): Promise<R> => {
+          // Captured and replaced BEFORE the first await, so the queue keeps
+          // the issue order even when statements are created in one tick.
+          const prior = tail;
+          const mine = Promise.withResolvers<void>();
+          tail = mine.promise;
           let failed = false;
           let error: unknown;
           // Set when the caller was rejected by its own signal while the write
           // ran on: from then on the wait belongs to `abandoned`.
           let left = false;
           try {
+            if (prior) await waitFor(prior, options.signal);
             if (abandoned) await entryWait(options.signal);
             if (!savepointed) return await start(via(false, mark), options);
             // Its own signal may have fired during the wait: then it never
@@ -482,9 +525,18 @@ export const createTransaction =
             throw e;
           } finally {
             release();
-            if (mark.posted && !left) {
-              await worker.quiesce();
-              dieIfConnectionLeft(failed, error, method);
+            try {
+              if (mark.posted && !left) {
+                await worker.quiesce();
+                dieIfConnectionLeft(failed, error, method);
+              }
+            } finally {
+              // After quiesce, never before: the next statement in the queue
+              // must find the worker genuinely idle. And in a `finally` of its
+              // own, because `dieIfConnectionLeft` throws — a death must not
+              // strand every statement queued behind it.
+              if (tail === mine.promise) tail = undefined;
+              mine.resolve();
             }
           }
         };
