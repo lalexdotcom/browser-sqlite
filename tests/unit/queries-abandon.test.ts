@@ -56,6 +56,7 @@ const fakeWorker = (chunks: Record<string, unknown>[][]) => {
       interrupted.push(on);
     },
     quiesce: async () => {},
+    free: async () => {},
     query: (): AsyncGenerator<Record<string, unknown>[]> => {
       const self: { gen?: AsyncGenerator<Record<string, unknown>[]> } = {};
       self.gen = (async function* () {

@@ -59,6 +59,9 @@ const fakeWorker = (
     },
     interrupt: () => {},
     quiesce: async () => {},
+    // Earlier than quiesce() on a real worker: the guard's own condition
+    // (src/pool.ts, `free`). Here both are immediate.
+    free: async () => {},
   };
   return worker;
 };

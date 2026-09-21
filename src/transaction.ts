@@ -94,6 +94,8 @@ export const createTransaction =
       read: ReadFn;
       write: WriteFn;
       transaction: TransactionFn;
+      /** See `src/bulk.ts`: the batch's place in this transaction's queue. */
+      reserve?: () => { started: Promise<void>; done: () => void };
     }) => {
       bulkWrite: SQLiteQueryAPI['bulkWrite'];
       output: SQLiteQueryAPI['output'];
@@ -451,6 +453,13 @@ export const createTransaction =
         given: O | undefined,
         method: string,
         sql: string,
+        /**
+         * `false` for a statement that ALREADY holds a place in the queue — the
+         * batches of a `bulkWrite`, which reserve theirs synchronously in
+         * `flush()` (`src/bulk.ts`). Without this they would wait for the slot
+         * they are themselves holding.
+         */
+        queued = true,
       ): {
         options: O;
         driving: O;
@@ -485,9 +494,9 @@ export const createTransaction =
         ): Promise<R> => {
           // Captured and replaced BEFORE the first await, so the queue keeps
           // the issue order even when statements are created in one tick.
-          const prior = tail;
+          const prior = queued ? tail : undefined;
           const mine = Promise.withResolvers<void>();
-          tail = mine.promise;
+          if (queued) tail = mine.promise;
           let failed = false;
           let error: unknown;
           // Set when the caller was rejected by its own signal while the write
@@ -588,15 +597,63 @@ export const createTransaction =
             st.release();
             throw closedError(ending);
           }
+          // The queue, joined at the FIRST next() rather than at creation:
+          // this body does not run until the consumer pulls, and a generator
+          // created but never pulled holds no worker — making it hold the queue
+          // would deadlock every statement behind it. In a `Promise.all` the
+          // `for await` pulls before the next statement is issued, so the issue
+          // order still holds.
+          const prior = tail;
+          const mine = Promise.withResolvers<void>();
+          tail = mine.promise;
           let failed = false;
           let error: unknown;
           // As in `settled`: set when the consumer was rejected by the
           // statement's own signal while the write ran on.
           let left = false;
           try {
+            if (prior) await waitFor(prior, st.options.signal);
             if (abandoned) await entryWait(st.options.signal);
+
+            // **The queue waits on the WORKER, not on this object.** A consumer
+            // that stops pulling a query which has already reached `done`
+            // leaves this body suspended at its `yield` for ever, so the
+            // `finally` below never runs — while pool.ts has long since cleared
+            // `deferredChunk` and the worker is free. Blocking the queue on
+            // that is wrong, and `abandon.test.ts` ("does not truncate the query
+            // the worker has moved on to") says so.
+            //
+            // So the release is `free()` — the pool's own "the guard would let
+            // the next one through", resolved where `deferredChunk` is cleared.
+            // NOT `quiesce()`, which waits for the transport's finally and so
+            // never fires for a parked consumer. Armed at the FIRST value,
+            // strictly after the query has posted, which makes it deterministic
+            // rather than a bet on when a task runs. A generator abandoned
+            // mid-stream never frees the worker, and that is the case the queue
+            // is meant to hold.
+            const releaseQueue = () => {
+              if (tail === mine.promise) tail = undefined;
+              mine.resolve();
+            };
+            let watching = false;
+            const watchIdle = () => {
+              if (watching) return;
+              watching = true;
+              void worker.free().then(releaseQueue, releaseQueue);
+            };
+
             if (!st.savepointed) {
-              yield* source;
+              try {
+                for await (const value of source) {
+                  watchIdle();
+                  yield value;
+                }
+              } finally {
+                // `yield*` forwarded the consumer's `return()` to the source on
+                // its own; the explicit loop owes it by hand, exactly as the
+                // savepointed branch below already does.
+                await source.return(undefined);
+              }
               return;
             }
             st.own?.throwIfAborted();
@@ -607,6 +664,7 @@ export const createTransaction =
                   ? await Promise.race([source.next(), aborted])
                   : await source.next();
                 if (next.done) return;
+                watchIdle();
                 yield next.value;
               }
             } catch (e) {
@@ -642,9 +700,14 @@ export const createTransaction =
             // because `yield*` forwards `return()` to the source and awaits it.
             // Not owed by an abandoned write either: drainToEnd now owns its
             // wait, and judging it is abandon()'s job, not this finally's.
-            if (st.mark.posted && !left) {
-              await worker.quiesce();
-              dieIfConnectionLeft(failed, error, method);
+            try {
+              if (st.mark.posted && !left) {
+                await worker.quiesce();
+                dieIfConnectionLeft(failed, error, method);
+              }
+            } finally {
+              if (tail === mine.promise) tail = undefined;
+              mine.resolve();
             }
           }
         })();
@@ -743,10 +806,34 @@ export const createTransaction =
             write: (sql, params, given) => {
               if (ending) return Promise.reject(closedError(ending));
               const query = checksql(sql);
-              const { settled } = withSignal(given, 'write', query);
+              // Not queued: `flush()` took the slot synchronously, the moment
+              // the batch was committed to. Asking for a second one here would
+              // wait for the first.
+              const { settled } = withSignal(given, 'write', query, false);
               return settled((target, options) =>
                 writeWorker(target, query, params, options),
               );
+            },
+            /**
+             * A batch takes its place in the queue the instant `flush()` is
+             * called — synchronously, from `close()` or from the `enqueue()`
+             * that filled the buffer — and holds it until the batch has been
+             * written. Without it the batch posts a microtask later and a
+             * statement issued after it runs FIRST, which is not an error but a
+             * stale read: `tests/browser/tx-concurrent.test.ts` caught a count
+             * of 2 where the rows were 4.
+             */
+            reserve: () => {
+              const prior = tail;
+              const mine = Promise.withResolvers<void>();
+              tail = mine.promise;
+              return {
+                started: prior ?? Promise.resolve(),
+                done: () => {
+                  if (tail === mine.promise) tail = undefined;
+                  mine.resolve();
+                },
+              };
             },
             // The caller's transaction is already open. No BEGIN, no COMMIT.
             // db is referenced before its const declaration, deliberately: this arrow
