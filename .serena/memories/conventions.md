@@ -244,6 +244,14 @@ policy becomes applicable as written.
   fails on its master. Claude's part is disclosed (the commits are co-signed anyway). The licence
   checkbox of its PR template is the user's to tick, never ours. Drafts go in `.scratchpad/`.
 
+  **The report in `docs/upstream/` is written AFTER the PR is opened, named with its number from
+  the start (user, 2026-09-21).** Not before, and not under a numberless name to be renamed later:
+  the number belongs in the file name, the title, the table row and the "Posted upstream" section,
+  so writing the file first means touching all four twice. Said after #357's report was written
+  while the branch was still local, then `git mv`-ed — the history carries that once. What DOES
+  belong before the PR: the branch, the test that fails on upstream's master, and the PR body
+  draft in `.scratchpad/`.
+
 - **Open questions stay in the backlog; each wave's own brainstorming raises them when it
   gets there** (user, 2026-08-17). Do not front-load a decision session for a wave that is
   not the next one.

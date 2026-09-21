@@ -1,8 +1,10 @@
-# wa-sqlite — an open that fails asynchronously loses its cause
+# wa-sqlite #357 — an open that fails asynchronously loses its cause
 
 *2026-09-21 — found while closing the two matrix cells it had made unreadable, measured on Chromium*
 
-**Why this is here.** [browser-sqlite](../../README.md) does not carry this change: it fixes no failure, it makes an existing one legible. The defect it names is what forced the `NoModificationAllowedError` behind [#350](2026-09-18-wa-sqlite-350-coopsync-access-handle-leak.md) to be found by hand, instrumenting a `catch`, rather than read off an error message. That report ends by calling it a separate subject; this is that subject.
+[pr357]: https://github.com/rhashimoto/wa-sqlite/pull/357
+
+**Why this is here.** [browser-sqlite](../../README.md) does not carry this change, proposed upstream as [rhashimoto/wa-sqlite#357][pr357]: it fixes no failure, it makes an existing one legible. The defect it names is what forced the `NoModificationAllowedError` behind [#350](2026-09-18-wa-sqlite-350-coopsync-access-handle-leak.md) to be found by hand, instrumenting a `catch`, rather than read off an error message. That report ends by calling it a separate subject; this is that subject.
 
 ## The shape of the defect
 
@@ -48,4 +50,8 @@ Re-measured after rebasing onto `upstream/master` at `93b92308`, five commits on
 
 ## Posted upstream
 
-Not yet — the branch is `fix/coopsync-open-last-error` on the fork. The PR number goes in this file's name and in the table of [`README.md`](README.md) when it is opened.
+PR [#357][pr357] on 2026-09-21, from `lalexdotcom:fix/coopsync-open-last-error`, rebased onto `master` at `93b92308` before opening — five commits on from where the branch was cut, one of them [#330](https://github.com/rhashimoto/wa-sqlite/pull/330), which is what made the measurement above worth taking.
+
+It claims nothing about what SQLite tells a caller: the connection's message is the generic string for `SQLITE_CANTOPEN` and stays so. It makes the cause exist somewhere, which it did not.
+
+**Two commits, four files**, and the second of them is the one to watch in review: the test needs a line in `test/test-worker.js`, because the harness proxies the VFS behind a getter that returns only functions. That is a change to upstream's own test infrastructure, small and load-bearing — without it no test can observe VFS state at all.
