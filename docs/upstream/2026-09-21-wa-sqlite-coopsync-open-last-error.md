@@ -19,6 +19,8 @@ vfs.lastError                           ->  undefined
 
 A caller is left unable to tell a file held by another context — retryable, and the ordinary case when a worker has just been terminated — from a file that is not there.
 
+**And SQLite will not tell them either, which was measured rather than assumed.** Upstream merged [#330](https://github.com/rhashimoto/wa-sqlite/pull/330) on 2026-09-21, so a failed `open_v2` now reports the connection's own message instead of the function name — but that message is `unable to open database file`, the generic string for `SQLITE_CANTOPEN`, identical with and without this change. SQLite does not fold `xGetLastError` into it here. The VFS instance is the only holder of the cause, which is exactly why it must record it.
+
 ## Why this branch and no other
 
 Mapping every non-OK return of the VFS against its `lastError` assignments: the synchronous catch of `jOpen`, and `jDelete`, `jAccess`, `jClose`, `jRead`, `jWrite`, `jTruncate`, `jSync`, `jFileSize`, `jFileControl` all record the cause before returning. The returns that do not are results rather than failures — `SQLITE_BUSY` from `jOpen` and `jLock`, `SQLITE_IOERR_SHORT_READ`, `jFileControl`'s `SQLITE_NOTFOUND`.
@@ -31,18 +33,18 @@ This is worth stating precisely because the first reading was the opposite one �
 
 The suite's own harness could not see it, which is the second finding. `test/test-worker.js` exposes the VFS behind a proxy whose getter returns only functions, so a test can call `jOpen` and read its return code but cannot read the state the call left behind. Probed directly: after a `jOpen` that fails synchronously — a path that **does** set `lastError` — `await vfs.lastError` answers `undefined`. One line makes plain properties pass through.
 
-With that, `test/vfs_open_last_error.js` holds the database file from a worker of its own and drives `jOpen` directly, which is the caller's situation when `sqlite3_open_v2` is what failed: there is no connection to ask `sqlite3_errmsg`.
+With that, `test/vfs_open_last_error.js` holds the database file from a worker of its own and drives `jOpen` directly — the level at which the distinction exists at all, per the paragraph above.
 
 | | `default` | `asyncify` |
 | --- | --- | --- |
 | `upstream/master` | FAILED, `Expected null to be truthy` | FAILED, same |
 | with the fix | OK | OK |
 
-The whole upstream suite with both changes: **2901 tests, 13 files, 0 failures.**
+Re-measured after rebasing onto `upstream/master` at `93b92308`, five commits on from where the branch was cut: the test still fails on master and passes with the fix, and the whole upstream suite with both changes is **2905 tests, 14 files, 0 failures**.
 
 ## What it would buy us, if it lands
 
-`src/worker/worker.ts` already reads `vfsInstanceSeen.lastError` on an open failure and formats it as `name: message` into the error's `detail`; the instance is fresh per `open()`, so the value cannot be stale. `WORKER_CRASHED: sqlite3_open_v2` would carry `NoModificationAllowedError: …` instead of nothing. Nothing on our side changes.
+`src/worker/worker.ts` already reads `vfsInstanceSeen.lastError` on an open failure and formats it as `name: message` into the error's `detail`; the instance is fresh per `open()`, so the value cannot be stale. `WORKER_CRASHED: sqlite3_open_v2` would carry `NoModificationAllowedError: …` instead of nothing. Nothing on our side changes — and reading the instance is not a shortcut we happen to take, it is the only route: the connection's message is generic, as measured above.
 
 ## Posted upstream
 
