@@ -24,19 +24,22 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-18 on `fix/second-client`
+## The verification baseline — compare against these, re-measured 2026-09-21 on `main`
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a
-run in this container on 2026-09-18, on `fix/second-client` after the four wa-sqlite fixes and a
-clean `pnpm install`** — none is carried forward, none is arithmetic. The whole table was read in
-one pass, which is what its own rule demands.
+run in this container on 2026-09-21, on `main` at `e164f78`** — none is carried forward, none is
+arithmetic. The whole table was read in one pass, which is what its own rule demands.
 
-**2026-09-18, the whole table in one pass:** `pnpm test` **1173 / 674 / 14**, unit **507**,
-conformance **71 and 67**, `tsc` clean, `biome ci` exit 0, `pnpm docs:vfs` leaves `VFS.md`
-unchanged. Full matrix: **65 of 66 cells green, 1 failing test, 1 group** (a load flake). The
-firefox figure moved from 668 to 674 and chromium held at 1173: two tests were added this day —
-one in `delete.test.ts`, one in `transaction.test.ts`, both following the target, plus
-`open-retry.test.ts` which names `OPFSCoopSyncVFS`. Do not reconcile these by arithmetic; re-run.
+**2026-09-21, the whole table in one pass:** `pnpm test` **1181 / 676 / 14** (77 / 51 / 3 files),
+unit **507** (27 files), conformance **85 and 85** (2 files per engine), `tsc` clean, `biome ci`
+exit 0, `pnpm docs:vfs` leaves `VFS.md` unchanged. Full matrix: **66 of 66 cells green, 0 failing
+tests, 2650 s** — that run is the same morning's, on the same tree bar a formatting-only pass
+biome applied at the commit.
+
+Against 2026-09-18's table — `pnpm test` 1173 / 674 / 14, conformance 71 and 67, matrix 65 of 66
+with 1 failing test — chromium gained 8 and firefox 2, and conformance moved to 85 per engine.
+**Do not reconcile any of these by arithmetic; re-run.** The one figure that is explained is the
+matrix: `2be2ae6` fixed the `tx-handle` load flake that was its single red cell.
 
 A previous version of this table was measured on 2026-09-15 and went stale the next day: the
 branch stopped every test file from enumerating VFS, which took `pnpm test` from 1554/1038/14 to

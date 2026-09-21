@@ -207,6 +207,15 @@ policy becomes applicable as written.
   that measurement refuted. If you can establish the true value, establish it and say what
   you changed; notifying without fixing makes the user the courier of your own finding. When
   the true value costs a measurement, take the measurement.
+- **`mem:state`'s verification baseline is re-measured and rewritten on sight, without asking
+  (user, 2026-09-21).** Said after being told the table was stale and offered the refresh:
+  *"refais cette section systématiquement quand elle est périmée, pas besoin de me le dire à
+  chaque fois"*. So it is neither a proposal nor an announcement — notice it, run the pass,
+  rewrite the section, and say what changed afterwards. The table's own rule still governs
+  HOW: the whole thing in ONE pass, never patched figure by figure — `pnpm test`, unit,
+  conformance on both engines, `tsc`, `biome ci`, `pnpm docs:vfs` with its
+  `git diff --exit-code`, and the matrix result. The standing exception to "a question is
+  answered, not acted on": this one the user has already answered.
 - **That rule runs one way only (user, 2026-08-27).** When *you* offer options, decide and
   recommend. When the *user* offers two without stating a preference — "soit A, soit B" —
   that is a question to answer, not a mandate to pick one and act. In one session an option
