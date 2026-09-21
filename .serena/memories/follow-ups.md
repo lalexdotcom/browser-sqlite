@@ -341,7 +341,11 @@ defect, and the scenario a defect is found through is often not the one that dem
 
 **The fix is one line — `this.lastError = e` in that catch — and both consumers are already in place.** `jGetLastError` reads `lastError`, does not clear it, and writes the message where SQLite's own `errmsg` will carry it; `src/worker/worker.ts` already reads `vfsInstanceSeen.lastError` and formats it as `name: message` into the open failure's `detail`. Nothing on our side changes, which is why this buys diagnosability and nothing else — the failure it used to hide is fixed.
 
-**Upstream-shaped, so it stands on upstream's own evidence** (`mem:conventions`): a test in wa-sqlite's suite asserting the message, never ours. Not scheduled.
+**Written and verified on 2026-09-21, NOT posted.** Branch `fix/coopsync-open-last-error` on the fork, two commits, prepared in a worktree at `.work/wa-sqlite-lasterror` because `.work/wa-sqlite` had a dirty tree on another branch. `test/vfs_open_last_error.js` fails on `upstream/master` on the `default` and `asyncify` builds and passes with the fix; the whole upstream suite is 2901/13/0 with both changes. Report and evidence: `docs/upstream/2026-09-21-wa-sqlite-coopsync-open-last-error.md`; PR body drafted at `.scratchpad/coopsync-open-2026-09-21/PR-body.md`. **What is owed is the user's: pushing the branch and opening the PR**, then the number goes in the report's file name and in `docs/upstream/README.md`.
+
+**The second finding, and it is the one a reviewer will weigh:** the upstream test harness cannot observe VFS state at all. `test/test-worker.js` proxies the VFS behind a getter that returns only functions, so `await vfs.lastError` answers `undefined` even after a path that DOES set it (probed directly). The test therefore carries a one-line harness change. Nothing depended on the old behaviour — every non-function property answered `undefined`.
+
+**Not carried in `patches/`** — deliberately: it fixes no failure, it makes one legible. Carrying it would put `NoModificationAllowedError` into our open failures' `detail`; that is the user's call and it is not taken.
 
 ## Mixing VFS of the `opfs-path` family on one database (2026-09-15)
 

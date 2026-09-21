@@ -12,6 +12,7 @@ merged, through [`patches/`](../../patches).
 | [wa-sqlite #351 — `IDBBatchAtomicVFS` writes through a block it assumed was there](2026-09-18-wa-sqlite-351-idb-sparse-write.md) | Two write shapes the block store never handled, one of them corrupting the file silently. Why the abandonment was not the cause. |
 | [wa-sqlite #352 — `IDBMirrorVFS` writes zeroes where SQLite stamps its journal header](2026-09-18-wa-sqlite-352-idb-mirror-proxy-write.md) | A rollback that undoes nothing, because the journal header never reached the store. Six hypotheses refuted, and a test that passes against the bug. |
 | [wa-sqlite #353 — `IDBMirrorVFS` keeps every block a shrinking database leaves behind](2026-09-18-wa-sqlite-353-idb-mirror-block-leak.md) | Found by questioning a sentence in #352's report. Why the scenario a bug is found through is not always the one that demonstrates it. |
+| [wa-sqlite — an open that fails asynchronously loses its cause](2026-09-21-wa-sqlite-coopsync-open-last-error.md) | Not yet opened. The defect that made #350 findable only by hand, and why the test harness could not see it. |
 
 [`repro/`](repro) holds the scripts, self-contained: each runs from a plain
 wa-sqlite checkout with nothing but Playwright installed.
