@@ -298,9 +298,10 @@ files plus a script.
 
 ## What the matrix showed, and what it shows now (2026-09-16, resolved 2026-09-18)
 
-**The three product defects are gone.** Full matrix on 2026-09-18 after the fixes: **65 of 66 cells
-green, 1 failing test, 1 distinct group** — against 62 cell-failures and 20 groups on 2026-09-16.
-The one is the `tx-handle` flake above, green 3/3 alone. Every one of the three traced to a
+**The three product defects are gone.** Full matrix on 2026-09-18 after the fixes: 65 of 66 cells
+green, 1 failing test, 1 distinct group — against 62 cell-failures and 20 groups on 2026-09-16.
+**Re-measured 2026-09-21 once that one was fixed (`2be2ae6`): 66 of 66 cells green, 0 failing
+tests, 2650 s.** Every one of the three traced to a
 wa-sqlite defect rather than to this library, and each is upstream with a falsifying test in
 wa-sqlite's own suite: `OPFSCoopSyncVFS` → #350 plus our own `deleteDatabase` probe (a file's
 existence, not an open), `IDBBatchAtomicVFS` → #351, `IDBMirrorVFS` → #352 and #353. Reports in
