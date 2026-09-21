@@ -425,10 +425,23 @@ in a pre-push `pnpm test` on a loaded machine, with "Worker 1 already has a quer
 `MemoryVFS`'s default `sync` build, which cannot cut a running statement without isolation, so the
 query it timed out kept its worker for its whole natural length — 22 s on Firefox, 60 s loaded.
 The follow-up read was racing a worker that was still busy. The test now runs on `async` and
-bounds that read. **Not established:** whether the library itself can hand a query to a worker
-still inside the previous one, which is what the message says — the lease should be held until
-quiesce. Reliability by the triage rule; not scheduled. To chase it, reproduce on `sync` with the
-busy-loop method (ABANDON-WEDGE) first.
+bounds that read.
+
+**Chased on 2026-09-21 with the busy-loop method, and the lease holds: 0 of 40** (LEASE-QUIESCE,
+`mem:measurements`). The shape was recreated deliberately — `firefox · MemoryVFS/sync`, no
+isolation, so the worker stays busy 22 s — and every run's follow-up read came back, which on that
+build is only possible by waiting the statement out. The detection path was proved with a positive
+control rather than assumed, so the zero is a statement and not a blind spot.
+
+**What keeps this entry open is narrow and stated: the sighting's context was a whole `pnpm test`,
+tens of pages in parallel, while the campaign ran one file under CPU load.** ABANDON-WEDGE's own
+lesson was that the reproducing context can be the full chain. The next arm is the whole Firefox
+config under load; nobody has run it. Reliability by the triage rule, still not scheduled — and now
+with one measured arm against it rather than nothing.
+
+Carry this whichever way it goes: **`GENERATOR_ABANDONED` is wider than its name.** Two overlapping
+`tx.read()`s reach the same guard with no generator anywhere, and so does an in-flight `bulkWrite`
+batch (`src/pool.ts`, and the comment there says so).
 
 ## The pre-commit hook — three hooks since 2026-09-11 (user)
 

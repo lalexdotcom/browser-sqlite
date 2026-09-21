@@ -37,6 +37,36 @@ undoes nothing — header and file disagree, `2694` pages claimed for 3, or 3 cl
 not accumulate (a second rollback rewrites the same offsets) and resolves if the database grows
 again; the database stays correct throughout.
 
+## LEASE-QUIESCE — the lease IS held to quiesce after a timeout, 0/40 under load, 2026-09-21, this container
+
+The open question behind the single `GENERATOR_ABANDONED` sighting of 2026-09-14: can the library
+hand a query to a worker still inside the previous one? Chased with the ABANDON-WEDGE method —
+sixteen busy loops (the machine has 16 cores) around a single-file Firefox run, the load that once
+cut time-to-failure twentyfold.
+
+**Shape, recreated deliberately** (`.scratchpad/wedge-2026-09-21/`, run in a detached worktree so
+nothing could land on `main`): `firefox · MemoryVFS/sync` outside cross-origin isolation, so a
+statement cannot be cut and the worker stays busy for the query's natural length — **22.4 s
+unloaded, measured**. Warm the worker and the statement, time a read out at 200 ms, then read again.
+
+**Result: 0 of 40 runs produced the signal, and 0 of 40 failed at all** — every run's follow-up read
+came back. That is not merely an absence: on this build the read can only return by waiting out the
+statement, so **the lease was held to quiesce in all 40**.
+
+**The detection path is proved, which is what makes the zero worth anything.** A positive control —
+two `tx.read()` overlapping inside one transaction, which `src/pool.ts` says reaches the in-flight
+guard with no generator anywhere — raises `GENERATOR_ABANDONED`; and inverting its expectation shows
+the text `GENERATOR_ABANDONED: Worker 1 already has…` reaching the rstest report, where the
+campaign's grep matches it. Two independent channels, since the campaign also counted `failedTests`
+per run.
+
+**What is NOT covered, and it is the same caution ABANDON-WEDGE recorded: the reproducing context
+may be the full chain.** The 2026-09-14 sighting happened inside a whole `pnpm test`, tens of pages
+in parallel; this campaign ran one file under CPU load. The next arm, if anyone chases it, is the
+whole Firefox config under load rather than one file. Also worth carrying: `GENERATOR_ABANDONED` is
+wider than its name — two overlapping `tx.read()`s and an in-flight `bulkWrite` batch reach the same
+guard.
+
 ## WAL-COMPAT — a WriteAhead database crosses the 2026-09-21 repin, both ways, 2026-09-21, this container
 
 wa-sqlite #355 adds a file-end flag to the WAL commit frame header, and a comment claims the end
