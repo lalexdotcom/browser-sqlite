@@ -429,6 +429,10 @@ await db.transaction(async (tx) => {
 
 **A statement waits for the connection before it resolves.** Every statement in a transaction runs on the same connection, and one that ends early leaves it finishing behind: [`first()`](#clientfirst) stops at the first row, a [`chunk()`](#clientchunk) or [`stream()`](#clientstream) you `break` out of stops mid-result, an abort cuts a statement short. Each one waits for the connection to be free, so the next statement in the same callback runs normally. Any generator the callback leaves open is closed before the transaction commits or rolls back.
 
+**Statements share one connection and run one at a time, in the order you issue them.** Creating several without awaiting each in turn is fine — `await Promise.all([tx.read(…), tx.read(…)])` runs them back to back, in the order you called them, not the order they resolve. `commit()` takes its place in that queue like any other statement, and so does each batch a `bulkWrite()` flushes. A statement aborted by its own `signal` or `timeout` while it is still waiting its turn never reaches the database and rejects alone; the ones behind it keep their order.
+
+**A generator you have stopped pulling holds the connection, and everything issued after it waits.** That is the one case where waiting does not end on its own: the library cannot tell a generator you have abandoned from one whose loop body is merely slow, so it does not decide for you — it warns on the console after a few seconds and keeps waiting. Close your generators, and give a `timeout` to the statements that follow one if a consumer might not.
+
 **A generator you simply drop is the exception.** Closing one is what the transaction can wait for — exhaust it, `break` out of it, call its `return()`, or use `await using`. One that is neither closed nor exhausted still holds the connection, and the next statement in the same callback meets `GENERATOR_ABANDONED` — including an explicit `tx.commit()`.
 
 > [!WARNING]
@@ -518,7 +522,7 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 | `DATABASE_IN_USE` | A client still holds the database, in this tab or another. Retrying will not help: close every client on it first. Raised by `deleteDatabase`, and by any method on a second client where the VFS supports one connection at a time. |
 | `DATABASE_NOT_FOUND` | There is nothing at that name to delete. Raised by `deleteDatabase` alone — `createSQLiteClient` creates a database that is absent, so it has no such case. The likeliest cause is a `vfs` that is not the one the database was created with. |
 | `UNSUPPORTED` | The platform cannot answer. Raised by `inspectDatabase` and `db.inspect()` where the Web Locks API is unavailable — reporting zero clients there would be indistinguishable from a database nobody holds. |
-| `GENERATOR_ABANDONED` | A statement was issued on a worker that still had a query in flight. Statements on one worker must not overlap, and inside a `transaction()` they all share one worker. The usual cause is a `chunk()` or `stream()` generator left open — exhaust it, `break` out of it, or call its `return()`. |
+| `GENERATOR_ABANDONED` | A statement reached a worker that still had a query in flight. Inside a `transaction()` statements queue instead, so this is no longer raised there; it remains the guard for a statement that reaches a busy worker by any other route. |
 | `READ_ONLY_TRANSACTION` | raised when a write statement, `bulkWrite()` or `output()` is used inside a transaction opened with `readOnly: true`. |
 | `TRANSACTION_CLOSED` | A statement, `commit()`, `bulkWrite()` or `output()` was used on a transaction object whose transaction is over. `error.cause` is the reason the transaction was abandoned; it is absent when the transaction committed or rolled back. |
 
