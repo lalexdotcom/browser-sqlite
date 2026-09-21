@@ -37,6 +37,32 @@ undoes nothing — header and file disagree, `2694` pages claimed for 3, or 3 cl
 not accumulate (a second rollback rewrites the same offsets) and resolves if the database grows
 again; the database stays correct throughout.
 
+## WAL-COMPAT — a WriteAhead database crosses the 2026-09-21 repin, both ways, 2026-09-21, this container
+
+wa-sqlite #355 adds a file-end flag to the WAL commit frame header, and a comment claims the end
+frame is still written and read "for readers that do not understand the commit [flag]". Measured
+instead of trusted, because rc.4 is published under `latest` and `OPFSWriteAheadVFS` is recommended,
+so consumer databases written by the OLD pin exist. Probe in
+`.scratchpad/wa-compat-2026-09-21/`: two detached worktrees of wa-sqlite — `07ad48c` and `93b9230` —
+served from ONE origin, a module worker per step, the `sync` build.
+
+| writer → reader | result |
+| --- | --- |
+| old → new | rows read back |
+| new → old | rows read back |
+| old → old, new → new (controls) | rows read back |
+
+**The premise is proved, not assumed, and that arm is the reason the table means anything.** After a
+write the main database file is **0 bytes** and the write-ahead file holds **16 608**; emptying the
+two `-wa` files WITHOUT deleting them (truncate to 0, so what is tested is their content and not the
+VFS's need for the files to exist) makes the same build fail with `no such table: t`. So the rows
+genuinely travelled in the write-ahead files, and a cross-version read is a statement about the
+frame format. Had they survived, every row of the table above would have been vacuous and the probe
+exits non-zero saying so.
+
+Incidental, unexplained and harmless: the old build writes its frames to `-wa1`, the new one to
+`-wa0`. Both readers find the active file either way.
+
 ## COOPSYNC-OPEN-CLOSED — the two `sqlite3_open_v2` cells do not come back, 2026-09-21, this container
 
 Method: the one cell that ever carried them, `BSQ_TEST_TARGETS=OPFSCoopSyncVFS/sync pnpm exec rstest

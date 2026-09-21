@@ -16,8 +16,15 @@
 - **Runtime dependencies: none.** `wa-sqlite` is a devDependency only, vendored into
   `dist/worker/worker.js` at build time so it never reaches a consumer lockfile. **Pinned by commit
   SHA, not by tag, since 2026-09-15 (user):**
-  `github:rhashimoto/wa-sqlite#07ad48cf2f682d279f9cd69818cc1d39b2ccda86`, upstream `master` with #344
-  merged. Vendored, so a commit serves as well as a release and nothing waits for one.
+  `github:rhashimoto/wa-sqlite#93b9230892a4c440ddbc06936bcd8500e2d6e6cf` since 2026-09-21, upstream
+  `master` with #344, #330 and #355 merged. Vendored, so a commit serves as well as a release and
+  nothing waits for one. **The 2026-09-21 repin was taken for two fixes by other contributors**:
+  #330, which stops a failed `sqlite3_open_v2` leaking the database handle SQLite allocates for it —
+  `openWithRetry` can make 25 attempts, each of which leaked before — and #355, race conditions in
+  `OPFSWriteAheadVFS`. The patch applied to the new base unchanged, only line offsets, and upstream's
+  version is still `1.1.2`, so the `patchedDependencies` key did not move. **#330 also changes what a
+  failed open reports** — SQLite's own `unable to open database file` instead of the function name
+  (`mem:measurements`, WAL-COMPAT's neighbour in `mem:state`'s baseline; CHANGELOG under Changed).
   **`patches/wa-sqlite@1.1.2.patch` carries FIVE upstream PRs since 2026-09-18 — seven hunks over three
   files**, and is no longer deletable as a block. Each is independent and each has a report in
   `docs/upstream/`, which is where the mechanisms and measurements live:

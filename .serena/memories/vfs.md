@@ -289,7 +289,7 @@ WebKit's `FileSystemWritableFileStream.write()` **ignores a typed array view's
 every 4 KiB page landed as a multi-megabyte splat and the database header did not survive
 the second write. Hence `SQLITE_NOTADB` at `opens`. The fix is one word: `pData.slice()`,
 which keeps the Proxy unwrapping that `subarray()` was there for and copies exactly the
-page. Merged upstream as rhashimoto/wa-sqlite#344 and carried by the pinned commit `07ad48c` since
+page. Merged upstream as rhashimoto/wa-sqlite#344 and carried by the pinned commit (`07ad48c`, then `93b9230` since 2026-09-21) since
 2026-09-15; no patch holds it any more.
 
 ## DEFAULT-1 — a platform-dependent default was considered and rejected

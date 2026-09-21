@@ -24,28 +24,46 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-21 on `main`
+## The verification baseline — compare against these, re-measured 2026-09-21 after the wa-sqlite repin
 
-Not history: the numbers a regression is detected against. **Every figure below was read off a
-run in this container on 2026-09-21, on `main` at `e164f78`** — none is carried forward, none is
-arithmetic. The whole table was read in one pass, which is what its own rule demands.
+Not history: the numbers a regression is detected against. **Every figure below was read off a run
+in this container on 2026-09-21, on `main` with wa-sqlite repinned to upstream `93b9230`** — none is
+carried forward, none is arithmetic. The whole table was read in ONE pass, which is what its own
+rule demands, and that pass is what caught the previous version contradicting itself: its prose said
+`pnpm test` 1181 / 676 / 14 while its own table row still said 1175 / 670. A cell had been patched
+and the table had not been re-read.
 
-**2026-09-21, the whole table in one pass:** `pnpm test` **1181 / 676 / 14** (77 / 51 / 3 files),
-unit **507** (27 files), conformance **85 and 85** (2 files per engine), `tsc` clean, `biome ci`
-exit 0, `pnpm docs:vfs` leaves `VFS.md` unchanged. Full matrix: **66 of 66 cells green, 0 failing
-tests, 2650 s** — that run is the same morning's, on the same tree bar a formatting-only pass
-biome applied at the commit.
+| command | result |
+|---|---|
+| `pnpm exec tsc --noEmit` | clean |
+| `pnpm build` | clean |
+| `pnpm test` | **THREE reports**, `status: pass` on each: **1181 tests / 77 files** (unit + the two chromium target projects, **8 skipped**), **676 / 51** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects, none skipped) |
+| `pnpm exec rstest --project unit run` | 507 tests, 27 files |
+| `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are now `chromium · <vfs>/<build>` and rstest's filter is anchored |
+| `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each: **Chromium 71 passed / 14 skipped, Firefox 67 / 18** — they differ by design since 2026-09-14 |
+| `pnpm exec biome ci .` | exit 0 |
+| `pnpm docs:vfs` | leaves `VFS.md` unchanged (`git diff --exit-code`) |
+| `pnpm test:consumer` | 24/24 stages |
+| `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | `OK`, `"reasons": {}`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
+| `pnpm lint` | 137 files, 13 warnings, 1 info — **136 until the repin pass**; the file count moves with the tree, the warning count is the signal |
+| `dependencies` in `package.json` | absent |
+| `pnpm test:matrix` | **66 of 66 cells green, 0 failing tests, 2486 s** on this pin. ~40 min. Its per-cell detail is `mem:measurements`, MATRIX-5 and after |
 
-Against 2026-09-18's table — `pnpm test` 1173 / 674 / 14, conformance 71 and 67, matrix 65 of 66
-with 1 failing test — chromium gained 8 and firefox 2, and conformance moved to 85 per engine.
-**Do not reconcile any of these by arithmetic; re-run.** The one figure that is explained is the
-matrix: `2be2ae6` fixed the `tx-handle` load flake that was its single red cell.
+Against the morning's table on the previous pin — the same `pnpm test` 1181 / 676 / 14, the same
+conformance, matrix 66 of 66 in 2650 s — **nothing moved but the matrix's wall clock**, which is not
+a regression signal. That is the whole point of having run it: wa-sqlite #330 and #355 changed a
+vendored dependency that is bundled into `dist/worker/worker.js`, so `build`, the consumer smoke and
+the bench checker were run for the same reason as the tests.
 
-A previous version of this table was measured on 2026-09-15 and went stale the next day: the
-branch stopped every test file from enumerating VFS, which took `pnpm test` from 1554/1038/14 to
+Against 2026-09-18's table — `pnpm test` 1173 / 674 / 14, matrix 65 of 66 with 1 failing test —
+chromium gained 8 and firefox 2, and conformance moved to 85 per engine. **Do not reconcile any of
+these by arithmetic; re-run.**
+
+A previous version of this table was measured on 2026-09-15 and went stale the next day: the branch
+stopped every test file from enumerating VFS, which took `pnpm test` from 1554/1038/14 to
 1173/668/14 and the unit project from 482 to 507. It sat wrong for a day beside a prose paragraph
-carrying the right numbers. **That is what "re-measure the whole table, do not patch one cell"
-is protecting against — and a table known to be wrong gets re-measured, not annotated.**
+carrying the right numbers. **That is what "re-measure the whole table, do not patch one cell" is
+protecting against — and a table known to be wrong gets re-measured, not annotated.**
 
 **`pnpm test` chains THREE configs** — chromium+unit, firefox, and the isolated project — so a
 green `pnpm test` covers what CI covers. Since 2026-09-11 a commit pays only the unit project; a merge or a push pays all three
@@ -235,7 +253,8 @@ No spec: investigated with systematic debugging, the fix designed in chat and ap
   reasoned safe and measured wrong (`mem:lessons`). `coopsync-handover.test.ts` runs on `jspi` for that
   reason, and its mutation back to a microtask is recorded.
 - **wa-sqlite is pinned by SHA (user).** Vendored, so a commit serves as well as a release: upstream
-  HEAD `07ad48c`, which carries #344, so the patch holds the CoopSync change only, under the key
+  HEAD `07ad48c` at the time — `93b9230` since 2026-09-21 — which carries #344, so the patch held the
+  CoopSync change only, under the key
   `wa-sqlite@1.1.2`. When #347 merges, repin to its merge commit and delete the patch.
 - **#347's evidence is wa-sqlite's own suite, never this library** (user: a stable library is not
   argued from an unstable one — `mem:conventions`). Its `jspi` claim rests on our measurements: that
@@ -750,7 +769,7 @@ README warning.
   the original `.subarray()` kept commented out above a TODO — were satisfied
   before he merged. **Nothing is owed upstream.**
   - **Nothing waits for a wa-sqlite release any more (user, 2026-09-15).** wa-sqlite is pinned by
-    commit SHA to upstream `07ad48c`, which carries #344, and the AnyContext patch is gone
+    commit SHA to upstream `93b9230` since 2026-09-21 (`07ad48c` before), which carries #344, and the AnyContext patch is gone
     (`mem:stack-and-build`). Upstream's `v1.1.2` tag predates that merge; no release carrying it
     existed on 2026-09-15.
   - **The WebKit bug already existed — do not file another one.**
