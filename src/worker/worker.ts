@@ -382,10 +382,12 @@ const open = (file: string, options: OpenOptions) => {
 
   const vfsConfig = VFSConfigs[vfs];
 
-  // Hoisted for the final `catch`. For `sqlite3_open_v2` wa-sqlite has no
-  // connection to ask `sqlite3_errmsg`, so its error names only the function;
-  // the VFS keeps the real one in `lastError` (spec 2026-09-13, §3.4). A fresh
-  // instance per open() means the value cannot be stale.
+  // Hoisted for the final `catch`. A failed `sqlite3_open_v2` says nothing
+  // useful on its own: it used to name only the function, and since wa-sqlite
+  // #330 it carries the connection's message, which is SQLite's generic
+  // `unable to open database file`. Either way the real cause is the VFS's,
+  // kept in `lastError` (spec 2026-09-13, §3.4). A fresh instance per open()
+  // means the value cannot be stale.
   let vfsInstanceSeen: { lastError?: unknown } | undefined;
 
   openedDB = (proceedGate?.promise ?? Promise.resolve())

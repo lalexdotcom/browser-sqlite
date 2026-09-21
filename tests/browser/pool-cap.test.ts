@@ -157,7 +157,10 @@ describe('a pool capped by its environment', () => {
   );
 
   // T5. Falsifiable: ignore `lastError` in the worker's final catch — the
-  // cause then says `sqlite3_open_v2` and nothing else.
+  // cause then says SQLite's own `unable to open database file` and nothing
+  // else. The base message is deliberately NOT asserted: it belongs to
+  // wa-sqlite, which changed it from the function name to the connection's
+  // message in #330. What this test is about is the storage error behind it.
   it('reports the storage error behind a failed open', async () => {
     const file = `pool-cap-held-${crypto.randomUUID()}`;
     // A third party holds the file exclusively, then tries the VFS's own call
@@ -180,7 +183,7 @@ describe('a pool capped by its environment', () => {
       code: 'WORKER_CRASHED',
     });
     expect(causes).toHaveLength(1);
-    expect(causes[0]?.message).toContain(`sqlite3_open_v2: ${oracle}:`);
+    expect(causes[0]?.message).toContain(`${oracle}:`);
     expect((causes[0]?.cause as { name?: string } | undefined)?.name).toBe(
       oracle,
     );
@@ -348,7 +351,7 @@ describe('a pool capped by its environment', () => {
       });
       expect(events).toEqual([{ index: 0, size: 1, live: 0 }]);
       expect(causes).toHaveLength(1);
-      expect(causes[0]?.message).toContain(`sqlite3_open_v2: ${oracle}:`);
+      expect(causes[0]?.message).toContain(`${oracle}:`);
       await db.close();
     },
   );

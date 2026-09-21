@@ -126,6 +126,7 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- **The vendored wa-sqlite moves to upstream `93b9230`**, which brings two fixes from other contributors: a failed `sqlite3_open_v2` no longer leaks the database handle SQLite allocates for it — this library can make up to 25 open attempts against a file a dead context still holds, and each one leaked before — and `OPFSWriteAheadVFS` has its race conditions corrected upstream. **A visible consequence:** the `cause` of a `WORKER_CRASHED` raised by a failed open now begins with SQLite's own `unable to open database file` instead of `sqlite3_open_v2`. The storage error behind it is unchanged and still follows, so `cause.cause.name` — the discriminator — is unaffected; only a consumer matching on that leading string is.
 - The per-worker statement cache is now bounded in bytes (8 MB) as well as in
   entries (32). This makes the worst case finite and stated; it does not reduce
   the common footprint — one `bulkWrite` retained ~3 MB before and retains ~3 MB

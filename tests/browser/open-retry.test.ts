@@ -10,7 +10,9 @@ import { createSQLiteClient } from '../../src/client';
  * `mem:measurements`), while its Web Locks are released at once — so the
  * replacement worker meets a file held by a context that no longer answers
  * anything. Measured 2026-09-18 on `chromium · OPFSCoopSyncVFS/sync`: the open
- * dies with `WORKER_CRASHED: sqlite3_open_v2`, and the cause never reaches the
+ * dies with `WORKER_CRASHED: sqlite3_open_v2` — the base message is SQLite's
+ * own `unable to open database file` since wa-sqlite #330, the rest is
+ * unchanged — and the cause never reaches the
  * caller because wa-sqlite swallows it — `jOpen`'s asynchronous phase logs the
  * `NoModificationAllowedError` to the console, stores an invalid
  * `PersistentFile`, and the retried open returns `SQLITE_CANTOPEN` with no
