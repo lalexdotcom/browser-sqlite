@@ -576,8 +576,17 @@ export const createTransaction =
               // must find the worker genuinely idle. And in a `finally` of its
               // own, because `dieIfConnectionLeft` throws — a death must not
               // strand every statement queued behind it.
+              //
+              // **Resolved WITH `prior`, not empty.** A statement that leaves
+              // the queue early — aborted by its own signal while it was still
+              // waiting its turn — never waited for its own place, so handing
+              // an empty resolution on would let the next statement start while
+              // the one at the head was still in flight. It met the reuse guard
+              // there, which is the defect this queue exists to remove
+              // (`tx-concurrent.test.ts`, "rejects a statement aborted while it
+              // waits its turn"). A place left early is passed on, not cancelled.
               if (tail === mine.promise) tail = undefined;
-              mine.resolve();
+              mine.resolve(prior);
             }
           }
         };
@@ -665,7 +674,7 @@ export const createTransaction =
             // is meant to hold.
             const releaseQueue = () => {
               if (tail === mine.promise) tail = undefined;
-              mine.resolve();
+              mine.resolve(prior);
             };
             let watching = false;
             const watchIdle = () => {
@@ -739,7 +748,7 @@ export const createTransaction =
               }
             } finally {
               if (tail === mine.promise) tail = undefined;
-              mine.resolve();
+              mine.resolve(prior);
             }
           }
         })();
@@ -863,7 +872,7 @@ export const createTransaction =
                 started: prior ?? Promise.resolve(),
                 done: () => {
                   if (tail === mine.promise) tail = undefined;
-                  mine.resolve();
+                  mine.resolve(prior);
                 },
               };
             },
@@ -1001,7 +1010,7 @@ export const createTransaction =
             await commitNow();
           } finally {
             if (tail === mine.promise) tail = undefined;
-            mine.resolve();
+            mine.resolve(prior);
           }
         },
 
@@ -1022,7 +1031,7 @@ export const createTransaction =
             await rollbackNow();
           } finally {
             if (tail === mine.promise) tail = undefined;
-            mine.resolve();
+            mine.resolve(prior);
           }
         },
         // The merged signal itself (spec §4): it aborts on every cause of death with the cause as

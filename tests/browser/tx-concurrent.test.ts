@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
-import { createTestClient } from './helpers';
+import { createTestClient, longQuery } from './helpers';
 
 /**
  * Statements created in the SAME tick inside one transaction.
@@ -116,4 +116,72 @@ describe('statements issued in the same tick inside a transaction', () => {
       await db.close();
     }
   });
+
+  it('rejects a statement aborted while it waits its turn, and keeps the queue', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    try {
+      const controller = new AbortController();
+
+      const outcome = await db.transaction(async (tx) => {
+        // First holds the connection; the other two are created behind it.
+        const first = tx.read(longQuery(2_000_000));
+        const queued = tx.read('SELECT 1 AS one', [], {
+          signal: controller.signal,
+        });
+        const after = tx.read<{ two: number }>('SELECT 2 AS two');
+        // The abort lands while `queued` is still waiting its turn, so the
+        // statement never reaches the database. Falsifiable: pass `undefined`
+        // instead of the statement's signal to the queue wait in
+        // src/transaction.ts — `queued` then waits its turn and resolves.
+        controller.abort(new Error('the caller changed its mind'));
+        const settled = await Promise.allSettled([first, queued, after]);
+        return settled.map((s) =>
+          s.status === 'rejected'
+            ? `rejected:${(s.reason as { code?: string; message?: string }).code ?? (s.reason as Error).message}`
+            : s.status,
+        );
+      });
+
+      // Rejected alone, with its OWN reason, and the queue goes on: the
+      // statement behind it still runs. A place left early is handed on, not
+      // cancelled — releasing it outright let `after` start while the FIRST
+      // statement was still in flight, and it met the reuse guard.
+      expect(outcome).toEqual([
+        'fulfilled',
+        'rejected:the caller changed its mind',
+        'fulfilled',
+      ]);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
+
+  it("gives a queued statement the transaction's reason when the transaction aborts", async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    try {
+      const controller = new AbortController();
+      const reason = new Error('the whole transaction');
+      let queuedError: unknown;
+
+      await expect(
+        db.transaction(
+          async (tx) => {
+            const first = tx.read(longQuery(2_000_000));
+            const queued = tx.read('SELECT 1 AS one').catch((e: unknown) => {
+              queuedError = e;
+              throw e;
+            });
+            controller.abort(reason);
+            await Promise.all([first, queued]);
+          },
+          { signal: controller.signal },
+        ),
+      ).rejects.toBe(reason);
+
+      // Not a bare abort: the statement waiting its turn carries the cause.
+      expect(queuedError).toBe(reason);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
 });
