@@ -325,6 +325,38 @@ export const createTransaction =
       };
 
       /**
+       * Waiting one's turn in the statement queue, with a diagnosis attached.
+       *
+       * A wait that does not end has exactly one consumer-side cause — a
+       * `chunk()`/`stream()` left open, which no statement after it can get
+       * past — and that cause is indistinguishable from a consumer whose loop
+       * body is merely slow: both leave the worker holding a query with nobody
+       * pulling. So this WARNS rather than decides. An advisory may be wrong
+       * about a slow consumer and cost nothing; an error may not, and refusing
+       * the statement is what this whole change exists to stop doing.
+       */
+      const QUEUE_WARN_MS = 5_000;
+      const queueWait = async (
+        prior: Promise<void>,
+        waiting: AbortSignal | undefined,
+      ) => {
+        const advisory = setTimeout(() => {
+          deps.logger.always.warn(
+            'A statement has waited several seconds for its turn on this ' +
+              "transaction's connection. Statements in a transaction share one " +
+              'connection and run one at a time, in issue order. A wait that ' +
+              'never ends is usually a chunk() or stream() generator left open ' +
+              '— exhaust it, break out of it, or call its return().',
+          );
+        }, QUEUE_WARN_MS);
+        try {
+          await waitFor(prior, waiting);
+        } finally {
+          clearTimeout(advisory);
+        }
+      };
+
+      /**
        * The write was abandoned by its own signal while it ran (spec
        * 2026-09-11, R1). It runs on, driven by the transaction's signal alone;
        * the next message rolls it back, and every entry point waits for it. If
@@ -503,7 +535,7 @@ export const createTransaction =
           // ran on: from then on the wait belongs to `abandoned`.
           let left = false;
           try {
-            if (prior) await waitFor(prior, options.signal);
+            if (prior) await queueWait(prior, options.signal);
             if (abandoned) await entryWait(options.signal);
             if (!savepointed) return await start(via(false, mark), options);
             // Its own signal may have fired during the wait: then it never
@@ -612,7 +644,7 @@ export const createTransaction =
           // statement's own signal while the write ran on.
           let left = false;
           try {
-            if (prior) await waitFor(prior, st.options.signal);
+            if (prior) await queueWait(prior, st.options.signal);
             if (abandoned) await entryWait(st.options.signal);
 
             // **The queue waits on the WORKER, not on this object.** A consumer
@@ -957,8 +989,20 @@ export const createTransaction =
             if (ending.kind === 'committed') return;
             throw closedError(ending);
           }
-          if (abandoned) await entryWait(signal);
-          await commitNow();
+          // COMMIT is a statement on the same worker, so it takes its place in
+          // the queue like any other: an explicit commit() created alongside
+          // the write it concludes must follow it, not race it.
+          const prior = tail;
+          const mine = Promise.withResolvers<void>();
+          tail = mine.promise;
+          try {
+            if (prior) await queueWait(prior, signal);
+            if (abandoned) await entryWait(signal);
+            await commitNow();
+          } finally {
+            if (tail === mine.promise) tail = undefined;
+            mine.resolve();
+          }
         },
 
         rollback: async () => {
@@ -969,8 +1013,17 @@ export const createTransaction =
               );
             return;
           }
-          if (abandoned) await entryWait(signal);
-          await rollbackNow();
+          const prior = tail;
+          const mine = Promise.withResolvers<void>();
+          tail = mine.promise;
+          try {
+            if (prior) await queueWait(prior, signal);
+            if (abandoned) await entryWait(signal);
+            await rollbackNow();
+          } finally {
+            if (tail === mine.promise) tail = undefined;
+            mine.resolve();
+          }
         },
         // The merged signal itself (spec §4): it aborts on every cause of death with the cause as
         // reason, and the outer finally only detaches it, so a normal end leaves it un-aborted for good.

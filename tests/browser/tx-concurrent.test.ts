@@ -94,4 +94,26 @@ describe('statements issued in the same tick inside a transaction', () => {
       await db.close();
     }
   });
+
+  it('commits after the write issued in the same tick, never before it', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    try {
+      await db.write('CREATE TABLE t (n INTEGER)');
+
+      await db.transaction(async (tx) => {
+        // An explicit commit created alongside the write it is meant to
+        // conclude. COMMIT is a statement on the same worker like any other.
+        await Promise.all([
+          tx.write('INSERT INTO t (n) VALUES (1)'),
+          tx.commit(),
+        ]);
+      });
+
+      expect(await db.read<{ n: number }>('SELECT n FROM t')).toEqual([
+        { n: 1 },
+      ]);
+    } finally {
+      await db.close();
+    }
+  });
 });
