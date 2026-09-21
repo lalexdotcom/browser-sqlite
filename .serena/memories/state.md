@@ -160,8 +160,8 @@ one machine and one build; slower CI hardware may still surface timing the campa
   (`mem:vfs`). The patch now carries five PRs over three files (`mem:stack-and-build`), reports in
   `docs/upstream/`.
 
-  **One decision is still owed and it blocks nothing: HANDLE-2's verdict** (§ below). The merge was
-  given on 2026-09-18.
+  **No decision is owed any more.** The merge was given on 2026-09-18, and HANDLE-2 was closed by the
+  user on 2026-09-21 as a misattribution (`mem:vfs`).
 
   The Firefox silent hang that blocked runs is diagnosed and guarded, not cured:
   `navigator.storage.getDirectory()` can fail to settle in a worker on Firefox.
@@ -226,10 +226,11 @@ the wedge itself does not reproduce: ~70 attempts on `main` in six shapes, and *
 pre-fix commit on the very VFS where 9/40 was recorded**. Details and the failed reproductions:
 `mem:vfs`, HANDLE-2; `mem:measurements`, "HANDLE-2 does not reproduce".
 
-**The verdict on the entry is the user's and has NOT been given.** Do not close it, and do not
-present it as a live defect either. Two things are established and neither of them is a verdict:
-the engine is not the cause, and nobody holds a reproduction. What produced its symptom —
-permanent, silent, origin-wide — was found and fixed the same day (§ below).
+**CLOSED by the user on 2026-09-21: the entry was a misattribution.** What produced its symptom —
+permanent, silent, origin-wide — was found and fixed the same day (§ below), and that defect
+reproduces every time where HANDLE-2 reproduces never. The one candidate that survives the closure
+is the single-shot `onmessage` listener in `OPFSCoopSyncVFS.jLock` (`mem:vfs`); nothing else about
+the entry is owed.
 
 **The `RECOMMENDED_VFS` question is settled and must not be reopened.** It was answered on
 2026-09-08 by medianing the bench corpus at n≥3 per platform (`mem:measurements`,

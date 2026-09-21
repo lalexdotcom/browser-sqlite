@@ -205,7 +205,23 @@ which is where a long statement now serialises everyone.
 It is a race, not a certainty, and a genuine Heisenbug: instrumenting it can shift the
 race and turn the failure green. Trust the unperturbed run.
 
-## HANDLE-2 — killing a worker that holds the handle wedges the pool, on Firefox
+## HANDLE-2 — CLOSED 2026-09-21 (user): the entry was a misattribution
+
+**The verdict, and it was owed since 2026-09-09.** HANDLE-2 named a permanent pool wedge and
+blamed the OPFS handle. Every factual claim it made has been refuted by measurement, and a
+different defect — found while hunting it — reproduces the same symptom deterministically, was
+fixed and merged the same day. The likeliest reading, now adopted: **HANDLE-2 WAS the origin
+write-lock defect, misattributed to the handle because one log line carried
+`NoModificationAllowedError`.** The entry is kept below rather than deleted because its
+measurements are true and load-bearing elsewhere — what is closed is the defect, not the data.
+
+**One candidate survives the closure and is the thing to confront first if this ever returns:**
+`OPFSCoopSyncVFS.jLock` installs `handleRequestChannel.onmessage` as a SINGLE-SHOT listener — it
+nulls itself after firing — and reinstalls it only on a `jLock` that finds `handleLockReleaser`
+null. A connection that consumed its listener without releasing the handle is never notified
+again. Read from source, never confronted with a failing scenario.
+
+What the entry said, kept for its measurements:
 
 **Measured 2026-09-09, and pre-existing: nothing in the abandoned-generator work created it.**
 It is the consequence of HANDLE-1 that nobody had written down.

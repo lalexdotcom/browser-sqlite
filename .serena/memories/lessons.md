@@ -34,6 +34,16 @@ diagnosis the wrong way. That config reads `tests/browser/isolated/**` only — 
 three-file suite, 7 tests against 334. **Before reading a zero as evidence, check the cell ran the
 subject**: `grep -c '<the test name>'` on its report answers it in one command.
 
+**A defect named after the log line it carried outlives its own refutation.** HANDLE-2 was named,
+filed and reasoned about for twelve days as "Firefox does not release the OPFS handle", on the
+strength of one `NoModificationAllowedError` in one run. Measurement then refuted the cause
+(Firefox releases in 1-6 ms), the wedge stopped reproducing anywhere (~70 attempts, and 0/40 at the
+very commit where 9/40 had been recorded), and a different defect — a transaction callback holding
+`bsq:write` for the origin — was found to reproduce the same symptom every time. Yet the entry
+survived all three, because closing it meant contradicting its NAME. **The tell is an entry whose
+every factual claim has been replaced while its title has not.** When that happens the question is
+not "what else could cause this?" but "is this the same defect at all?". Closed 2026-09-21.
+
 **Your own instrumentation can be the artefact — prove the defect without it.** Chasing the
 `IDBMirrorVFS` corruption, a probe showed `block.set(pData, 0)` leaving the destination at zero
 with a valid source, which is impossible for a `Uint8Array`. The right move was the control that
