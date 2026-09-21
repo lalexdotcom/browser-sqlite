@@ -265,6 +265,22 @@ describe('tx.signal', () => {
   it('aborts with OPERATION_TIMEOUT when the transaction outlives its timeout', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
+      // The deadline starts at the CALL: `withDeadline` runs before
+      // scheduler.acquire() and before BEGIN IMMEDIATE (src/transaction.ts), so
+      // `timeout` below covers the setup as well as the subject. On a fresh
+      // client that setup is COLD, and the cold one is the whole problem —
+      // measured 2026-09-21 inside a full cell, the first transaction of a
+      // client took 1134 ms on firefox · MemoryVFS/jspi and 452 ms on
+      // chromium · IDBMirrorVFS/async, against medians of 4 ms and 15 ms once
+      // warm. A 1 s deadline expired during the setup, the callback never ran,
+      // and the test failed on `seen` being undefined (mem:follow-ups,
+      // 2026-09-18).
+      //
+      // So the setup gets its own budget — this empty transaction, bounded by
+      // the test's own timeout — and `timeout` below is left to measure only
+      // what this test is about. One number cannot do both.
+      await db.transaction(async () => {});
+
       let seen!: AbortSignal;
       await expect(
         db.transaction(

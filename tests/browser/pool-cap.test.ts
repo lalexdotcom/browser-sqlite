@@ -250,7 +250,7 @@ describe('a pool capped by its environment', () => {
                   try {
                     post(m);
                   } catch {}
-                }, 3000);
+                }, 15000);
                 return;
               }
               post(m);
@@ -276,9 +276,29 @@ describe('a pool capped by its environment', () => {
       const db = createSQLiteClient(file, {
         vfs: 'OPFSWriteAheadVFS',
         poolSize: 2,
-        // Short enough that round 1 gives up on slot 1 well before the
-        // delayed 'open' above (3000 ms) would ever be delivered.
-        openTimeout: 600,
+        // Two budgets ride on this one number, and that is what made the test
+        // flake under load (mem:follow-ups, 2026-09-16): it must be SHORT
+        // enough that round 1 gives up on slot 1 well before the delayed
+        // 'open' above would ever be delivered, and LONG enough that slot 0's
+        // HEALTHY worker becomes ready inside it — otherwise the client fails
+        // with "Worker 1 did not become ready within 600 ms", which is the
+        // setup collapsing, not the subject.
+        //
+        // They are separable because the delay above is ours: scale the pair
+        // and the subject's ordering holds while the healthy worker gets room.
+        // Measured 2026-09-21 by squeezing this number on an idle machine
+        // (firefox · OPFSWriteAheadVFS): 10, 25 and 50 ms all fail with that
+        // very message, 100 ms passes — so slot 0 needs some tens of ms here,
+        // and 600 ms was about a tenfold margin that a full matrix cell ate.
+        // 3000 ms is ~50×, and the delayed open moves to 15000 to stay well
+        // past it. The test costs one openTimeout in wall clock; that is the
+        // price, and it is why this is not simply set to a minute.
+        //
+        // That the apparatus still describes what the title says was checked
+        // at 3000 rather than assumed: the interception constructs exactly
+        // THREE workers — slot 0, slot 1's round-1 worker, slot 1's retry —
+        // and the pool settles at 1 with no loss and no warning.
+        openTimeout: 3000,
         onWorkerLost: (e) => lost.push(e),
       });
       await db.write('CREATE TABLE t (a)');
@@ -287,7 +307,8 @@ describe('a pool capped by its environment', () => {
       expect(warnings.some((w) => w.includes(' lost;'))).toBe(false);
       await db.close();
     },
-    15000,
+    // Room for the widened openTimeout above and the round that follows it.
+    30000,
   );
 
   // Minor 5: the capped total-failure path had no browser coverage. Slot 0's
