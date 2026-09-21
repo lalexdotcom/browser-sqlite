@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-09-15.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-09-21.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one.
 
 **No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
@@ -104,7 +104,8 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 ## Decisions the user owes
 
-- **The second-client subject is CLOSED, on branch `fix/second-client` (2026-09-15).** What the user set
+- **The second-client subject is CLOSED and MERGED** — `5661048`, 2026-09-18, `--no-ff`, branch deleted
+  local and remote. What the user set
   the session on — the multi-client and cross-tab tests on every VFS — grew into the branch that ships:
   `exclusiveConnectionWithout` and the guard that answers a second `OPFSWriteAheadVFS` client with
   `DATABASE_IN_USE` where the engine lacks `readwrite-unsafe` (it used to fail every query with
@@ -113,8 +114,7 @@ one machine and one build; slower CI hardware may still surface timing the campa
   over every (vfs, build) pair; `multi-client`/`cross-tab` on every VFS that shares; and the whole browser
   suite following an injected (vfs, build) target, with `pnpm test` covering both recommended pairs and
   `pnpm test:matrix` covering all 22. Design and its amendments A1-A5:
-  `docs/superpowers/specs/2026-09-15-second-client-design.md`. **The merge is the user's call and had not
-  been given when this was written.**
+  `docs/superpowers/specs/2026-09-15-second-client-design.md`.
 
   **Where it stood at the end of 2026-09-16, for a cold restart.** The branch then also carried: the
   whole browser suite freed of VFS enumeration — no test file loops over VFS any more, a file states
@@ -131,8 +131,9 @@ one machine and one build; slower CI hardware may still surface timing the campa
   `poolSize: 2` becoming `needs: ['two-workers']`, and the two new needs the user validated
   (`shared-storage`, `opfs-file`). A fourth fixed the product defect those cleared tests exposed
   (HANDLE-CORPSE). **Then 2026-09-18 took the remaining three product piles to zero: the full
-  matrix now reads 65 of 66 cells green, 1 failing test, 1 group** — against 62 cell-failures and
-  20 groups on 2026-09-16 — and that one is a load flake (`mem:follow-ups`), green 3/3 alone.
+  matrix read 65 of 66 cells green, 1 failing test, 1 group** — against 62 cell-failures and
+  20 groups on 2026-09-16 — and that one was a load flake, fixed by `2be2ae6`. **The matrix has read
+  66 of 66 since 2026-09-21** (§ the verification baseline).
 
   **Every one of the three traced to wa-sqlite, not to this library**, and each went upstream with
   a test failing on wa-sqlite's own master: #350 and #351, #352 and #353. Our own share was two
@@ -141,7 +142,8 @@ one machine and one build; slower CI hardware may still surface timing the campa
   (`mem:vfs`). The patch now carries five PRs over three files (`mem:stack-and-build`), reports in
   `docs/upstream/`.
 
-  **Two decisions still owed and neither blocks work: the merge, and HANDLE-2's verdict.**
+  **One decision is still owed and it blocks nothing: HANDLE-2's verdict** (§ below). The merge was
+  given on 2026-09-18.
 
   The Firefox silent hang that blocked runs is diagnosed and guarded, not cured:
   `navigator.storage.getDirectory()` can fail to settle in a worker on Firefox.
@@ -178,9 +180,8 @@ feared (CI-QUERY-TIMEOUT, `mem:measurements`). **Run 34953847713 at `7cf2944` is
 end**: biome, the table, `tsc`, build, `pnpm test` (4 min 39 s on the runner), conformance on both
 engines (27 s) and the consumer smoke (55 s). The user judges the release ready — the bump itself
 remains an instructed act, never an inferred one. **That judgment predates two findings of the same
-afternoon** — the CoopSync hand-over, fixed, and the `OPFSWriteAheadVFS` second-client refusal, open —
-and the user has since set the next session on multi-client tests across VFS (§ Decisions the user
-owes). The commits since have not been through CI: `main` is not pushed.
+afternoon** — the CoopSync hand-over and the `OPFSWriteAheadVFS` second-client refusal — and both have
+been fixed and merged since. The commits since have not been through CI: `main` is not pushed.
 
 **One thing to expect on CI, and it is not a defect.** The abandoned-generator
 work found a defect that reproduces about once in eighteen runs of `pnpm test` and **never**
@@ -193,11 +194,13 @@ ABANDON-WEDGE).
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
 the 2026-09-05 entry in `mem:follow-ups` called for.
 
-**Nothing is in flight.** The CoopSync hand-over fix merged on 2026-09-15 (§ below), after the
-statement-errors work the same day. **Next session (user, 2026-09-15): the multi-client and
-cross-tab tests on every VFS offered** — the `OPFSWriteAheadVFS` entry in `mem:follow-ups` says which
-files and why. Otherwise everything in `mem:follow-ups` is unscheduled but the default build,
-scheduled for rc.6. Upstream, rhashimoto/wa-sqlite#347 is open (§ Pending).
+**Nothing is in flight, and the work is on `main` (2026-09-21).** The second-client branch merged on
+2026-09-18; everything since is documentation. `main` sits ahead of `origin/main` — the convention,
+not an oversight.
+
+**The subject the user set on 2026-09-21 — the two `OPFSCoopSyncVFS` opens that failed on chromium — is CLOSED, and it was closed before it was started.** `mem:follow-ups` still described it as HANDLE-CORPSE on a path the retry misses; that entry had rotted. The cells failed at MATRIX-5 (2026-09-18 08:25) and the two fixes landed at 13:33 and 13:34 the same day: wa-sqlite #350 (the partial acquisition that leaks the handles beside the one that failed, which is what made every retry fail on `-journal`) and `exclusiveFileHandle` + `openWithRetry` on our side — `OPFSCoopSyncVFS` **is** declared `exclusiveFileHandle: true`, so `sqlite3_open_v2` does get the retry. Verified by measurement rather than by reading: eight consecutive runs of that cell, 8/8 green, plus the two full matrices since (COOPSYNC-OPEN-CLOSED, `mem:measurements`).
+
+**What survives of it is diagnosability, and only that:** `jOpen`'s asynchronous phase never sets `this.lastError`, so an open blocked by a dead context is indistinguishable from a missing file. One line upstream, both consumers already in place, unscheduled — `mem:follow-ups`. Everything else there stays unscheduled but the default build, scheduled for rc.6. Upstream, rhashimoto/wa-sqlite#347 is open (§ Pending).
 
 **HANDLE-2 was investigated on 2026-09-09 and came apart under measurement.** Its stated cause
 is false — Firefox releases a killed worker's sync access handle in 1-6 ms (HANDLE-ORPHAN) — and

@@ -335,28 +335,13 @@ fix, as `output()` did.
 **The lesson the three shared, and it is in `mem:lessons`: a pile's twelve subjects can be one
 defect, and the scenario a defect is found through is often not the one that demonstrates it.**
 
-## Two `OPFSCoopSyncVFS` opens that look like HANDLE-CORPSE on a path the fix misses (2026-09-18)
+## wa-sqlite's `jOpen` swallows the cause of a failed open — upstream candidate (2026-09-21)
 
-`lifecycle.test.ts :: crash detection > restarts the slot once and keeps serving` and
-`long-query.test.ts :: a worker killed silently > is presumed dead when it never answers the stop
-request`, both `WORKER_CRASHED: sqlite3_open_v2`, both on chromium only. They are why CoopSync
-went 7 → 8 at MATRIX-5 while every other VFS held or improved.
+`OPFSCoopSyncVFS.jOpen`'s asynchronous phase catches its error, stores an invalid `PersistentFile` as the only signal and calls `console.error(e)` — it never sets `this.lastError` (the catch inside the `retryOps` push, `node_modules/wa-sqlite/src/examples/OPFSCoopSyncVFS.js`). The retried open then reads `!persistentFile.fileHandle` and returns `SQLITE_CANTOPEN`, so a caller cannot tell a file held by a dead context from one that does not exist. That is what made the two matrix cells report a bare `WORKER_CRASHED: sqlite3_open_v2`, and instrumenting that catch by hand is what produced the `NoModificationAllowedError` the #350 diagnosis rests on. The #350 report already names it a separate subject.
 
-**The hypothesis, and it decides more than these two cells.** `AccessHandlePoolVFS` acquires its
-whole directory when the VFS INSTANCE is created, which is where `createVfsInstance`
-(`src/worker/worker.ts`) now waits out a dying worker. An `opfs-path` VFS takes the file's handle
-later, at `xOpen` — inside `sqlite3_open_v2`, which the retry never sees. If that holds, the fix
-shipped on 2026-09-16 is a special case of a rule that should cover every VFS holding a file
-handle, and the answer belongs in our open path rather than upstream.
+**The fix is one line — `this.lastError = e` in that catch — and both consumers are already in place.** `jGetLastError` reads `lastError`, does not clear it, and writes the message where SQLite's own `errmsg` will carry it; `src/worker/worker.ts` already reads `vfsInstanceSeen.lastError` and formats it as `name: message` into the open failure's `detail`. Nothing on our side changes, which is why this buys diagnosability and nothing else — the failure it used to hide is fixed.
 
-**NOT established, and do not write it down as though it were:** the message is a bare
-`sqlite3_open_v2` with no `lastError` from the VFS, so nothing yet distinguishes the corpse from
-any other open failure. The first move is to make that path carry its cause — the worker already
-builds `detail` from `vfsInstanceSeen.lastError` and it was empty here.
-
-Previously logged as "the isolated probe does not explain it": run alone on that pair the file
-failed 3× without the cleanup fix and 2× with it, three runs each, which no longer looks
-mysterious under this hypothesis.
+**Upstream-shaped, so it stands on upstream's own evidence** (`mem:conventions`): a test in wa-sqlite's suite asserting the message, never ours. Not scheduled.
 
 ## Mixing VFS of the `opfs-path` family on one database (2026-09-15)
 

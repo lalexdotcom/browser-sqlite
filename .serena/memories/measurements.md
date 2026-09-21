@@ -37,6 +37,20 @@ undoes nothing — header and file disagree, `2694` pages claimed for 3, or 3 cl
 not accumulate (a second rollback rewrites the same offsets) and resolves if the database grows
 again; the database stays correct throughout.
 
+## COOPSYNC-OPEN-CLOSED — the two `sqlite3_open_v2` cells do not come back, 2026-09-21, this container
+
+Method: the one cell that ever carried them, `BSQ_TEST_TARGETS=OPFSCoopSyncVFS/sync pnpm exec rstest
+--config rstest.config.ts --project 'chromium*' run`, eight consecutive times on an otherwise idle
+machine. **8 of 8 green** — 337 tests, 333 passed, 4 skipped, 0 failed on every run, ~32 s each, and
+no `sqlite3_open_v2` anywhere in the output. The two files execute rather than skip on that target:
+run alone they give 18 tests, 0 skipped.
+
+With the two full matrices since the fix (2026-09-18 15:50 and 2026-09-21) that is **ten clean runs
+of that cell**. It failed 5 times in 14 full-cell runs before (36 %, VFS-PILES above), which puts ten
+consecutive greens at ~1 % by luck. Cause and fix: wa-sqlite #350, the partial-acquisition leak, with
+`exclusiveFileHandle` and `openWithRetry` on our side. **What remains of the subject is
+diagnosability alone** — `jOpen` still swallows the cause (`mem:follow-ups`).
+
 ## IDB-SIGNAL — a signal lets `IDBBatchAtomicVFS` serve a read during a long query, 2026-09-14, this container
 
 **The discrepancy.** The bench's `reads-during-long-query` reported `IDBBatchAtomicVFS/async`
@@ -2495,11 +2509,13 @@ materialise: the cleanup that no longer swallows created no failure on any cell,
 isolated included.
 
 **The one regression, and it is informative:** `OPFSCoopSyncVFS` 7 → 8. Both of its
-`sqlite3_open_v2` failures (`restarts the slot once`, `a worker killed silently`) look like
-HANDLE-CORPSE on a path the fix does not cover — `AccessHandlePoolVFS` takes its directory at
-VFS **creation**, where `createVfsInstance` retries, while an `opfs-path` VFS takes the file's
-handle later at **xOpen**, inside `sqlite3_open_v2`. Not established: the message is a bare
-`sqlite3_open_v2` with no `lastError` from the VFS, so nothing yet proves it is the corpse.
+`sqlite3_open_v2` failures (`restarts the slot once`, `a worker killed silently`) were read at the
+time as HANDLE-CORPSE on a path the fix does not cover — `AccessHandlePoolVFS` takes its directory
+at VFS **creation**, where `createVfsInstance` retries, while an `opfs-path` VFS takes the file's
+handle later at **xOpen**, inside `sqlite3_open_v2`. **Diagnosed and fixed the same day, and the
+hypothesis was only half of it:** the corpse starts it, but what made it permanent is the
+partial-acquisition leak (wa-sqlite #350, VFS-PILES above), which is why a retry at `xOpen` was
+necessary and not sufficient. Closed by measurement on 2026-09-21 — COOPSYNC-OPEN-CLOSED below.
 
 Everything else is the three product defects in `mem:follow-ups`.
 
