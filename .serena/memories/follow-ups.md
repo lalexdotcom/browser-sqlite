@@ -236,37 +236,55 @@ reason. `scripts/bounded.mjs` now gives every browser script a deadline (exit 12
 next hang of this shape will not be this one.
 
 WHAT REMAINS OPEN:
-- **`AVAILABLE_FEATURES` is still awaited at module scope.** Making it lazy — awaited inside the
-  tests that need it, where a `testTimeout` can reach it — is the structural answer: nothing at
-  module scope should await I/O. Several module-scope readers move with it (`HERE` in
-  `tests/browser/helpers.ts`, `secondClientOutcome` in `second-client.test.ts`). Belongs with
-  putting `test:matrix` in CI, which is the same subject.
-- **The engine bug is unreported.** A `navigator.storage.getDirectory()` that never settles in a
-  dedicated worker is Mozilla's, and the repro is in hand: ~50 pages, each a worker asking for the
-  OPFS root inside the same few seconds. NOTE: the console probe in
-  `.scratchpad/firefox-hang-2026-09-16/` does NOT reproduce it (0 of 144 on Firefox, iframes and
-  OPFS churn included) — only the suite's shape does, so the report must carry the suite, not that
-  probe.
+- **`HAS_UNSAFE_HANDLES` is still awaited at module scope** (`tests/conformance/helpers.ts`, the
+  top-level await; `AVAILABLE_FEATURES` is only derived from it — this entry used to name the wrong
+  one). **Making it lazy is NOT the structural answer this entry once claimed, and the correction
+  is measured (2026-09-21):** it would not reduce the number of probes, which is what wakes the
+  engine bug. `readwrite-unsafe` feeds `singleConnectionWithout` and `exclusiveConnectionWithout`
+  (`src/types.ts`), so `pairFor()` needs the answer in every browser test — on demand or at load,
+  every page still probes once. And the run no longer hangs either way, since `6560c9e` bounds it.
+  What laziness would still buy is only that a module-scope throw becomes a named test failure.
+- **The lever that WOULD attack the trigger is one probe per run instead of one per page**, and it
+  is now designed rather than speculated. Measured 2026-09-21, all three in `.scratchpad/probe-2026-09-21/`:
+  rstest 0.11.8 has **no per-run hook with browser access** (`setupFiles` runs before each FILE;
+  `globalSetup` runs in Node, and beside `projects` at root level it is silently IGNORED — declared
+  per project it runs once per project); the **injection channel works** — a value set in
+  `globalSetup`'s `process.env` reaches the page as `import.meta.env.X`, synchronously at module
+  scope, so declaration-time skips survive; and **no storage is shared** to cache an answer in —
+  not across runs, not across files of one run (same origin, isolated: `a` reads back its own
+  write, `b` reads `<empty>` 4 s later), not across projects (the origin's port differs). So the
+  shape is: `globalSetup` launches its own Playwright browser against a `127.0.0.1` page, probes
+  once, injects. Cost measured at **813 ms per project** (launch 183, page 404, probe 45, teardown
+  175) — ≈ +3.3 s on `pnpm test`, ≈ +2 % on the matrix, against 45 ms per page removed in parallel.
+  Roughly neutral in wall clock: the cost is not the argument either way.
+- **The engine bug is unreported, and Bugzilla was searched on 2026-09-21: nothing matches.** The
+  component is **Core › Storage: Bucket File System** (where the OPFS meta 1748667 lives); its 33
+  open bugs are almost all the `readwrite-unsafe` series and PBM, and a summary search for
+  `getDirectory` and `hang` there returns nothing of this shape. `Storage: Quota Manager`'s hangs
+  are all shutdownhangs.
+  **Two things block the report, and neither is the writing.** (1) The repro is not portable: the
+  console probe in `.scratchpad/firefox-hang-2026-09-16/` does NOT reproduce it (0 of 144), only
+  the suite's shape does — ~50 pages each asking a worker for the OPFS root within a few seconds.
+  (2) Every sighting is on **Playwright's Firefox 153.0** (BuildID 20260722045007), a patched
+  build; Mozilla will ask first, so confirm on a stock Firefox before opening, or the bug is
+  Playwright's, not theirs. Then: `enter_bug.cgi?product=Core&component=Storage%3A%20Bucket%20File%20System`,
+  blocks 1748667, keyword `hang`, and a `mozregression` range if it reproduces on stock.
 
-## `pool-cap`'s surplus-slot test fails under load (2026-09-16)
+## `pool-cap`'s surplus-slot flake — margin widened, cure NOT demonstrated (2026-09-21)
 
 `tests/browser/pool-cap.test.ts :: a pool capped by its environment > a surplus slot that times
-out, then declines in the retry round, is not announced lost`, on `firefox · OPFSAdaptiveVFS/async`.
-Twice today on a loaded machine, green on rerun both times. The 600 ms `openTimeout` is deliberate
-— it is what makes the surplus slot time out, which is the subject — but the HEALTHY worker has to
-beat the same 600 ms, and on a loaded machine it does not: the failure is
-`Worker 1 did not become ready within 600 ms`. A budget that the subject needs tight and the setup
-needs loose cannot be one number; splitting them is the fix, and nobody has taken it.
+out, then declines in the retry round, is not announced lost`. The coupling is fixed — `openTimeout`
+600 → 3000 with the delayed open 3000 → 15000 (`2be2ae6`) — and the mechanism is established:
+`openTimeout` is client-wide, so it governs slot 0's HEALTHY worker as well as the surplus slot,
+and under load it was the healthy one that missed. Squeezed on an idle machine, slot 0 needs some
+tens of ms: 10, 25 and 50 ms all fail with `Worker 1 did not become ready within N ms`, 100 ms
+passes. So 600 was ~10×, and 3000 is ~50×.
 
-## `tx-handle`'s timeout test flakes under a full matrix cell (2026-09-18)
-
-`tx-handle.test.ts :: tx.signal > aborts with OPERATION_TIMEOUT when the transaction outlives its
-timeout`. Seen twice on 2026-09-18, on two unrelated VFS — `firefox · MemoryVFS/jspi` in the full
-matrix (`expected undefined to be defined`) and `chromium · IDBMirrorVFS/async` in a full cell —
-and green every time it is run alone: 3/3 and 2/2 on the very cells that had failed. Its subject
-is a deadline, so a machine loaded by a 49-file cell is exactly what breaks it. Same shape as the
-`pool-cap` entry below, and the same fix is available: the budget the subject needs tight and the
-one the setup needs loose cannot be one number.
+**What stays open is the verdict.** The flake itself was NEVER reproduced: 64 busy loops leave the
+old and new budgets both green, and a full matrix is green exactly as it was on the days the flake
+did not show. If it returns, fiftyfold is still short and the next move is to stop scaling and give
+slot 0 a budget of its own — which needs a product change, since `openTimeout` is one knob for the
+whole client.
 
 ## The consumer docs are hard-wrapped at 80 columns (2026-09-18)
 
