@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
-import { createTestClient } from './helpers';
+import { createTestClient, longQuery } from './helpers';
 
 /**
  * Calls created in the SAME tick at the CLIENT level — `Promise.all`, which is
@@ -20,6 +20,14 @@ import { createTestClient } from './helpers';
  * is idle and only then returned. They guard that: a scheduler that handed out
  * a second lease for a busy worker would redden this file, and the transaction
  * surface has just shown what that class of defect looks like.
+ *
+ * The last three close the gaps the first pass left: `output()`, the only one
+ * of the seven surfaces never issued concurrently; two `transaction()` calls in
+ * one tick, which is a queue behind a queue — each serialises its own
+ * statements, and the two serialise against each other on the origin's write
+ * lock; and the ABORT axis, a call aborted while it waits behind another. That
+ * last one is here because its counterpart inside a transaction was green on
+ * the ordering tests and broken underneath (`mem:lessons`).
  */
 const ONE_WORKER = { poolSize: 1 } as const;
 
@@ -157,6 +165,93 @@ describe('calls issued in the same tick on one worker', () => {
       expect(
         await db.read<{ n: number }>('SELECT n FROM t ORDER BY n'),
       ).toEqual([{ n: 1 }, { n: 2 }]);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
+
+  it('closes two output() loads', async () => {
+    const db = await createTestClient(ONE_WORKER);
+    try {
+      const one = db.output('out_a', { n: 'INTEGER' });
+      const two = db.output('out_b', { n: 'INTEGER' });
+      one.enqueue({ n: 1 });
+      two.enqueue({ n: 2 });
+
+      // Each close() runs a staging load and an atomic rename inside its own
+      // transaction, so two of them in one tick is two transactions racing for
+      // the same connection.
+      const [first, second] = await Promise.all([one.close(), two.close()]);
+
+      expect(first).toBe(1);
+      expect(second).toBe(1);
+      expect(await db.read<{ n: number }>('SELECT n FROM out_a')).toEqual([
+        { n: 1 },
+      ]);
+      expect(await db.read<{ n: number }>('SELECT n FROM out_b')).toEqual([
+        { n: 2 },
+      ]);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
+
+  it('runs two transactions issued in the same tick, one after the other', async () => {
+    const db = await createTestClient(ONE_WORKER);
+    try {
+      await db.write('CREATE TABLE t (n INTEGER)');
+
+      // A queue behind a queue: each transaction serialises its own
+      // statements, and the two transactions serialise against each other on
+      // the origin's write lock.
+      await Promise.all([
+        db.transaction(async (tx) => {
+          await tx.write('INSERT INTO t (n) VALUES (1)');
+          await tx.write('INSERT INTO t (n) VALUES (2)');
+        }),
+        db.transaction(async (tx) => {
+          await tx.write('INSERT INTO t (n) VALUES (3)');
+          await tx.write('INSERT INTO t (n) VALUES (4)');
+        }),
+      ]);
+
+      // Both committed, and neither interleaved into the other: whichever ran
+      // first, its pair is contiguous.
+      const rows = await db.read<{ n: number }>('SELECT n FROM t');
+      expect(rows.map((r) => r.n).sort((a, b) => a - b)).toEqual([1, 2, 3, 4]);
+      const order = rows.map((r) => r.n);
+      expect(
+        order.join(',') === '1,2,3,4' || order.join(',') === '3,4,1,2',
+      ).toBe(true);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
+
+  it('rejects a call aborted while it waits behind another, and keeps the rest', async () => {
+    const db = await createTestClient(ONE_WORKER);
+    try {
+      await db.write('CREATE TABLE t (n INTEGER)');
+      await db.write('INSERT INTO t (n) VALUES (1)');
+      const controller = new AbortController();
+
+      const first = db.read(longQuery(2_000_000));
+      const queued = db.read('SELECT 1 AS one', [], {
+        signal: controller.signal,
+      });
+      const after = db.read<{ n: number }>('SELECT n FROM t');
+      // The abort lands while `queued` is still waiting for the worker.
+      controller.abort(new Error('the caller changed its mind'));
+
+      const settled = await Promise.allSettled([first, queued, after]);
+      expect(settled.map((r) => r.status)).toEqual([
+        'fulfilled',
+        'rejected',
+        'fulfilled',
+      ]);
+      expect(
+        (settled[2] as PromiseFulfilledResult<{ n: number }[]>).value,
+      ).toEqual([{ n: 1 }]);
     } finally {
       await db.close();
     }
