@@ -242,11 +242,18 @@ once. Abandoned and slow are indistinguishable, so the library warns after five 
 waiting; the bound is the caller's (`timeout`, the transaction's, or `close()`). Three `tx-quiesce`
 tests pinned the old contract by name and were rewritten.
 
-**Verified whole on 2026-09-22, twice — the second pass after the last three tests landed:** `tsc`
-clean, `biome ci` exit 0, `pnpm test` **1215 / 710 / 14** (skips 8 / 2 / 0 — unchanged throughout,
-which is the count to watch: a test that started skipping instead of running would not show in a
-total), conformance 85 and 85 (71/14 and 67/18), and a full `pnpm test:matrix` at **66 of 66 cells
-green, 0 failing tests, 2537 s**. The +34 on each browser config is the 17 new tests × 2 projects.
+**Verified whole four times on 2026-09-22; the closing pass:** `tsc` clean, `biome ci` exit 0,
+`pnpm docs:vfs` leaves `VFS.md` unchanged, `pnpm test` **1218 / 712 / 14** (skips 8 / 2 / 0 —
+unchanged throughout, which is the count to watch: a test that started skipping instead of running
+would not show in a total), unit **508**, conformance 85 and 85 (71/14 and 67/18), and a full
+`pnpm test:matrix` at **66 of 66 cells green, 0 failing tests, 2514 s**.
+
+**The third pass had one red, and it was mine — worth keeping because the mechanism generalises.**
+`tx-savepoint`'s T4 on `chromium · OPFSWriteAheadVFS/jspi` measures INTERRUPT LATENCY against a
+bound calibrated on an idle machine, and the advisory test I had just added waits seven seconds by
+construction. A matrix cell is one browser running one project's files, so it loaded the machine
+while T4 measured time: 0 failures in 3 for T4 alone, 2 in 4 for the whole cell with that test, 0
+in 5 with it skipped, 5 of 5 once it moved to the unit project on fake timers (`mem:lessons`).
 
 **The concurrency coverage this exposed is the other half of the branch.** Before it, `Promise.all`
 appeared in 17 of 50 browser test files and in NONE of the eight transaction files. There are now
