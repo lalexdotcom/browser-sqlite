@@ -433,7 +433,7 @@ await db.transaction(async (tx) => {
 
 **A generator you have stopped pulling holds the connection, and everything issued after it waits.** That is the one case where waiting does not end on its own: the library cannot tell a generator you have abandoned from one whose loop body is merely slow, so it does not decide for you — it warns on the console after a few seconds and keeps waiting. Close your generators, and give a `timeout` to the statements that follow one if a consumer might not.
 
-**A generator you simply drop is the exception.** Closing one is what the transaction can wait for — exhaust it, `break` out of it, call its `return()`, or use `await using`. One that is neither closed nor exhausted still holds the connection, and the next statement in the same callback meets `GENERATOR_ABANDONED` — including an explicit `tx.commit()`.
+**A generator you simply drop is the exception.** Closing one is what the transaction can wait for — exhaust it, `break` out of it, call its `return()`, or use `await using`. One that is neither closed nor exhausted still holds the connection, so the next statement in the same callback waits for it — including an explicit `tx.commit()`.
 
 > [!WARNING]
 > On the `sync` build without cross-origin isolation, a statement already
@@ -522,7 +522,7 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 | `DATABASE_IN_USE` | A client still holds the database, in this tab or another. Retrying will not help: close every client on it first. Raised by `deleteDatabase`, and by any method on a second client where the VFS supports one connection at a time. |
 | `DATABASE_NOT_FOUND` | There is nothing at that name to delete. Raised by `deleteDatabase` alone — `createSQLiteClient` creates a database that is absent, so it has no such case. The likeliest cause is a `vfs` that is not the one the database was created with. |
 | `UNSUPPORTED` | The platform cannot answer. Raised by `inspectDatabase` and `db.inspect()` where the Web Locks API is unavailable — reporting zero clients there would be indistinguishable from a database nobody holds. |
-| `GENERATOR_ABANDONED` | A statement reached a worker that still had a query in flight. Inside a `transaction()` statements queue instead, so this is no longer raised there; it remains the guard for a statement that reaches a busy worker by any other route. |
+| `WORKER_BUSY` | A statement reached a worker that still had a query in flight. You should never see it: a statement holds its worker until it is idle, and a transaction queues its statements. If you do, that serialisation was broken — please report it. |
 | `READ_ONLY_TRANSACTION` | raised when a write statement, `bulkWrite()` or `output()` is used inside a transaction opened with `readOnly: true`. |
 | `TRANSACTION_CLOSED` | A statement, `commit()`, `bulkWrite()` or `output()` was used on a transaction object whose transaction is over. `error.cause` is the reason the transaction was abandoned; it is absent when the transaction committed or rolled back. |
 

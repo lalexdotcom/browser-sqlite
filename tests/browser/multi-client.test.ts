@@ -289,7 +289,7 @@ describe('one client', () => {
         // transaction's own worker, and a second query on that worker breaks
         // the one-query-per-lease invariant the statement cache rests on —
         // caught under load, after passing in isolation, on the reuse guard in
-        // src/pool.ts (which now raises GENERATOR_ABANDONED; the message it
+        // src/pool.ts (which now raises WORKER_BUSY; the message it
         // carried at the time, "Previous query not finished on worker N", is
         // gone). A batch in flight is the second producer of that guard, and
         // the reason its message names the generator as a likely cause rather

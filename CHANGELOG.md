@@ -105,12 +105,12 @@ All notable changes to this project are documented here.
   did not complete. The new one means the `timeout` you set was spent. The error carries the
   timeout value as `error.timeout`.
 
-- **`GENERATOR_ABANDONED` is a new error code.** It is raised when a statement is
-  issued on a worker that still has a query in flight. Statements on one worker
-  must not overlap, and inside a `transaction()` they all run on the same worker,
-  so that is where a consumer meets it. The usual cause is a `chunk()` or
-  `stream()` generator left open. It replaces a bare `Error` whose message named
-  an internal invariant.
+- **`WORKER_BUSY` is a new error code.** It is raised when a statement reaches a
+  worker that still has a query in flight, and it replaces a bare `Error` whose
+  message named an internal invariant. **It is a backstop, not something a
+  consumer can cause**: a client statement holds its lease until the worker is
+  idle, and a transaction queues its statements, so reaching it means that
+  serialisation was broken.
 - **`TRANSACTION_CLOSED`**, the error a transaction object raises once its transaction is over.
 - **`SQLiteTransactionDB` provides a `signal`**, aborted when the transaction fails or is
   abandoned, for the callback to hand to work of its own.
@@ -191,11 +191,11 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
-- **Statements created in the same tick inside a `transaction()` now queue instead of being refused.** `await Promise.all([tx.read(…), tx.read(…)])` — baseline usage of a concurrency library — lost the WHOLE transaction to `GENERATOR_ABANDONED`, an error named after a generator the consumer never opened. A transaction's statements share one connection and must run one at a time; that part was by design, refusing them was not. They now run back to back in the order they were issued, `commit()` and each `bulkWrite()` batch included. A statement aborted by its own `signal` or `timeout` while it waits its turn never reaches the database, rejects alone, and the ones behind it keep their order.
+- **Statements created in the same tick inside a `transaction()` now queue instead of being refused.** `await Promise.all([tx.read(…), tx.read(…)])` — baseline usage of a concurrency library — lost the WHOLE transaction to a reuse-guard error named after a generator the consumer never opened. A transaction's statements share one connection and must run one at a time; that part was by design, refusing them was not. They now run back to back in the order they were issued, `commit()` and each `bulkWrite()` batch included. A statement aborted by its own `signal` or `timeout` while it waits its turn never reaches the database, rejects alone, and the ones behind it keep their order.
 
   **A `bulkWrite()` batch was worse than an error: it was silently out of order.** `close()` posted its rows a microtask later, so a read issued after it ran FIRST and returned stale rows — a count of 2 where the table held 4. Batches now take their place the instant `flush()` commits to them, which covers `close()` and the `enqueue()` that fills the buffer alike.
 
-  **What changed for a generator you drop:** a `chunk()` or `stream()` you have stopped pulling still holds the connection, so statements issued after it now WAIT where they used to fail at once. The library cannot tell an abandoned generator from a slow consumer, so it does not decide: it warns on the console after a few seconds and keeps waiting. Bound those statements with a `timeout`, or the transaction with one, if a consumer might abandon a generator. `GENERATOR_ABANDONED` is no longer raised inside a transaction.
+  **What changed for a generator you drop:** a `chunk()` or `stream()` you have stopped pulling still holds the connection, so statements issued after it now WAIT where they used to fail at once. The library cannot tell an abandoned generator from a slow consumer, so it does not decide: it warns on the console after a few seconds and keeps waiting. Bound those statements with a `timeout`, or the transaction with one, if a consumer might abandon a generator. The reuse guard — now `WORKER_BUSY` — is no longer reachable from a transaction at all.
 
 - **A second `OPFSWriteAheadVFS` client now fails fast with `DATABASE_IN_USE` where the browser lacks `readwrite-unsafe`** — every engine but Chromium today. That VFS holds its files exclusively for a connection's whole life there, so one client — one tab — can use a database at a time. A second client used to fail every query with `WORKER_CRASHED`, and when both were created at once it could break the FIRST one instead. Now the client created first always keeps the database; close it and the next one opens.
 
@@ -208,7 +208,7 @@ All notable changes to this project are documented here.
   cost. `VFS_CAPABILITIES` declares it as `yieldsDuringStatements`.
 
 - **A statement following a short-circuited statement in the same
-  `transaction()` callback no longer fails with `GENERATOR_ABANDONED`.**
+  `transaction()` callback no longer fails on the reuse guard.**
   Statements in a transaction all run on one connection, and one that ends
   before its result does left that connection still finishing: the next
   statement in the same callback met the reuse guard a moment too early and
@@ -218,9 +218,9 @@ All notable changes to this project are documented here.
   `output()` cut short by its own `signal` and caught by the callback. Every
   statement now waits for the connection before it resolves, which costs
   nothing where there is nothing to wait for. A generator the callback simply
-  drops — never closed, never exhausted — still holds the connection and still
-  meets `GENERATOR_ABANDONED`; that is what closing a generator is for, and
-  `API.md` says so under *Inside a transaction*.
+  drops — never closed, never exhausted — still holds the connection, so what
+  follows it waits; that is what closing a generator is for, and `API.md` says
+  so under *Inside a transaction*.
 
 - **A statement issued after `close()` now rejects instead of hanging for
   ever.** `PoolWorker` is the native `Worker`, so terminating it stopped the
@@ -228,9 +228,8 @@ All notable changes to this project are documented here.
   waited for a reply that could never arrive. That is what a transaction's
   callback met when it spoke again after a close — and what its own fallback
   `ROLLBACK` met, which carries no signal and so could not even be aborted. The
-  second and third statements then failed with `GENERATOR_ABANDONED`, which was
-  never the diagnosis: it was the reuse guard reacting to the first one still
-  being stuck. Terminating a worker now kills its transport with it.
+  second and third statements then failed on the reuse guard, which was never
+  the diagnosis: it was reacting to the first one still being stuck. Terminating a worker now kills its transport with it.
   Statements issued outside a transaction were already refused, by the
   scheduler.
 - **`close()` now releases the origin's write lock, instead of reporting success

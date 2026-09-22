@@ -124,7 +124,7 @@ describe('the worker concludes, then opens, a savepoint before the statement', (
         .next()
         .catch((e) => e);
       expect(refused).toBeInstanceOf(SQLiteError);
-      expect((refused as SQLiteError).code).toBe('GENERATOR_ABANDONED');
+      expect((refused as SQLiteError).code).toBe('WORKER_BUSY');
       expect(read).toBe(false);
       worker.interrupt(held);
       await held.return(undefined);

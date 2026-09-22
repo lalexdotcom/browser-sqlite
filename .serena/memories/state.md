@@ -256,8 +256,20 @@ client one green on arrival, since a lease is held until the worker is idle. **T
 the finding**: the client path was sound and the transaction path was not, because the transaction
 owns its worker directly with no lease between statements.
 
-**Still open, and the user's:** the merge; and `GENERATOR_ABANDONED`'s name, now that it is a
-backstop rather than a consumer-facing error (`mem:follow-ups`).
+**`GENERATOR_ABANDONED` was renamed `WORKER_BUSY` on the branch (user, 2026-09-22), and the reason
+matters more than the name: rc.5 IS NOT PUBLISHED.** The code was added after rc.4, in the still-open
+section of `CHANGELOG.md`, so it had never reached a consumer and renaming cost nothing — I had
+filed it as an rc.6 public-surface change and the user corrected that. **Check what has actually
+shipped before deferring anything as breaking**; `package.json` sits at `1.0.0-rc.4` and everything
+since is unreleased.
+
+The message was rewritten with it: it used to tell the consumer to close a generator, which was
+wrong twice over — two overlapping `tx.read()`s and an in-flight `bulkWrite` batch reach the same
+guard with no generator anywhere. Now that the transaction serialises, no consumer can reach it at
+all, so it names the broken invariant and asks for a report. `docs/superpowers/` specs and plans and
+`mem:history` keep the old name deliberately: they record what was decided then.
+
+**Still open, and the user's:** the merge.
 
 **Nothing else is in flight, and the work is on `main` (2026-09-21).** The second-client branch merged on
 2026-09-18; everything since is documentation. `main` sits ahead of `origin/main` — the convention,

@@ -44,6 +44,13 @@ survived all three, because closing it meant contradicting its NAME. **The tell 
 every factual claim has been replaced while its title has not.** When that happens the question is
 not "what else could cause this?" but "is this the same defect at all?". Closed 2026-09-21.
 
+**Check what has SHIPPED before calling a change breaking.** `GENERATOR_ABANDONED` was filed for
+rc.6 as a public-surface rename, twice, on the reasoning that a published error code cannot move.
+It had never been published: it was added after rc.4, in the still-open section of `CHANGELOG.md`,
+and `package.json` has sat at `1.0.0-rc.4` throughout. The user corrected it in five words. **The
+repository states this plainly and it is one command away** — everything since rc.4 is unreleased,
+so "breaking" applies to rc.4's surface and to nothing added since.
+
 **A concurrency library needs `Promise.all` in its tests, or its core contract is untested.** On
 2026-09-21 this repo had `Promise.all` in 17 of 50 browser test files and in NONE of the eight
 transaction ones. Every transaction test awaited each statement in turn — which is the one shape

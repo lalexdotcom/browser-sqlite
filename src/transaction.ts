@@ -217,7 +217,7 @@ export const createTransaction =
        * did — each one awaits `quiesce()` before it settles. Issued in the SAME
        * TICK they did not: both read the worker as free and the second met
        * `pool.ts`'s reuse guard, which lost the whole transaction to
-       * `GENERATOR_ABANDONED` for what is baseline usage (`Promise.all` over
+       * `WORKER_BUSY` for what is baseline usage (`Promise.all` over
        * two reads).
        *
        * Each statement captures this SYNCHRONOUSLY and replaces it before its
@@ -452,7 +452,7 @@ export const createTransaction =
        * `iterator.return()` WITHOUT awaiting it, deliberately, because the
        * client path has a lease to do the waiting and no reason to block. Here
        * nobody does, so the next statement in the same callback meets the reuse
-       * guard a microtask later and throws `GENERATOR_ABANDONED`.
+       * guard a microtask later and throws `WORKER_BUSY`.
        *
        * **It costs nothing when there is nothing to wait for.** `quiesce()` is
        * `idle?.promise ?? Promise.resolve()`, and on a query that ended by

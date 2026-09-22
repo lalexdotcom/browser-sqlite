@@ -21,11 +21,11 @@ const SEED =
  * fires `iterator.return()` WITHOUT awaiting it. `deferredChunk` in pool.ts
  * therefore clears only when a message comes back from the worker — a task —
  * while the next statement in the same callback is a microtask away, and meets
- * the reuse guard with `GENERATOR_ABANDONED`.
+ * the reuse guard with `WORKER_BUSY`.
  *
  * Falsifiable for all three: remove the `await worker.quiesce()` that
  * src/transaction.ts owes each statement. Every test below then fails with
- * `GENERATOR_ABANDONED` on its SECOND statement. No CPU load and no flake
+ * `WORKER_BUSY` on its SECOND statement. No CPU load and no flake
  * budget: the worker's reply needs a task and the next statement does not, so
  * the trip is deterministic rather than a race.
  */

@@ -659,21 +659,26 @@ export const createPoolWorker = (deps: {
   ): AsyncGenerator<T[] | number> {
     try {
       if (deferredChunk) {
-        // Structural: this fires on "a query is already in flight on this
-        // worker", not on a diagnosis — so the message leads with that and
-        // names the generator only as the likely cause. An earlier draft
-        // asserted the abandoned generator outright, and it was wrong: two
-        // overlapping `tx.read()`s reach here with no generator anywhere, and
-        // so does a `tx.bulkWrite` batch still in flight
-        // (tests/browser/multi-client.test.ts). The CODE stays as it is —
-        // renaming a public error code is a separate decision.
+        // **A backstop, not a diagnosis for the caller.** It fires on "a query
+        // is already in flight on this worker" — nothing narrower. It was
+        // called GENERATOR_ABANDONED until 2026-09-22 and told the consumer to
+        // close a generator, which was wrong twice over: two overlapping
+        // `tx.read()`s reach here with no generator anywhere, and so does a
+        // `tx.bulkWrite` batch still in flight
+        // (tests/browser/multi-client.test.ts).
+        //
+        // Since the transaction serialises its statements, no consumer can
+        // reach this any more: a client statement holds its lease until the
+        // worker is idle, and a transaction queues. So the message names the
+        // invariant rather than instructing anyone — if this is seen, the
+        // serialisation is broken and the bug is ours.
         throw new SQLiteError(
-          'GENERATOR_ABANDONED',
-          `Worker ${index + 1} already has a query in flight; statements on ` +
-            'one worker must not overlap, and inside a transaction they all ' +
-            'run on the same worker. The usual cause is a chunk()/stream() ' +
-            'generator left open — exhaust it, break out of it, or call its ' +
-            'return().',
+          'WORKER_BUSY',
+          `Worker ${index + 1} already has a query in flight. One worker ` +
+            'serves one query at a time; a client statement holds its lease ' +
+            'until the worker is idle and a transaction queues its ' +
+            'statements, so reaching this means that serialisation was ' +
+            'broken. Please report it.',
         );
       }
 
