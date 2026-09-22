@@ -44,6 +44,16 @@ survived all three, because closing it meant contradicting its NAME. **The tell 
 every factual claim has been replaced while its title has not.** When that happens the question is
 not "what else could cause this?" but "is this the same defect at all?". Closed 2026-09-21.
 
+**A test that really waits seconds is a load generator, and its neighbours may be measuring time.**
+A browser test waiting seven seconds — it had to outlast a five-second advisory — reddened
+`tx-savepoint`'s T4 on `chromium · OPFSWriteAheadVFS/jspi`, which measures INTERRUPT LATENCY against
+a bound calibrated on an idle machine. Measured: 2 failures in 4 runs with it present, 0 in 5 with
+it skipped, 5 of 5 green once it moved. **A matrix cell is one browser running one project's files;
+a slow test does not wait politely in its own corner.** The fix is to remove the load, not to widen
+the neighbour's bound — a timer-driven behaviour belongs in the unit project on fake timers, where
+it costs nothing and asserts the same thing. `rstest.useFakeTimers()` and
+`advanceTimersByTimeAsync()` exist and were unused here until 2026-09-22.
+
 **Check what has SHIPPED before calling a change breaking.** `GENERATOR_ABANDONED` was filed for
 rc.6 as a public-surface rename, twice, on the reasoning that a published error code cannot move.
 It had never been published: it was added after rc.4, in the still-open section of `CHANGELOG.md`,

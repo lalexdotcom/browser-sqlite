@@ -271,38 +271,14 @@ describe('statements issued in the same tick inside a transaction', () => {
         ]);
       });
 
-      // The half that matters. An advisory on every healthy wait would be
-      // worse than none: the queue waits by design, and most waits are short.
+      // The half that matters, and the half that belongs in a browser: an
+      // advisory on every healthy wait would be worse than none, since the
+      // queue waits by design and most waits are short. Its twin — that the
+      // advisory DOES fire after five seconds — lives in the unit project on
+      // fake timers: a browser test that really waits seven seconds loads the
+      // machine, and the cell it shares with `tx-savepoint` measures interrupt
+      // latency (T4 failed 2 of 4 runs with it present, 0 of 5 without).
       expect(warnings.filter((w) => w.includes(ADVISORY))).toEqual([]);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
-
-  it('warns when a statement waits behind a generator nobody is pulling', async () => {
-    const warnings = captureWarnings();
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write('INSERT INTO t (n) VALUES (1), (2), (3), (4)');
-
-      await db.transaction(async (tx) => {
-        // Dropped mid-stream: the worker is never freed, so the read below
-        // waits until its own bound — past the advisory's five seconds, which
-        // is why this test is slow by construction rather than by accident.
-        const dropped = tx.chunk<{ n: number }>('SELECT n FROM t', [], {
-          chunkSize: 1,
-        });
-        await dropped.next();
-        await tx
-          .read('SELECT 1 AS one', [], { timeout: 7_000 })
-          .catch(() => undefined);
-      });
-
-      expect(warnings.some((w) => w.includes(ADVISORY))).toBe(true);
-      // And it names the remedy, since the one cause it can have is the
-      // consumer's.
-      expect(warnings.some((w) => w.includes('return()'))).toBe(true);
     } finally {
       await db.close();
     }

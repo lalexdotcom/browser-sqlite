@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it, rstest } from '@rstest/core';
 import type { SQLiteTransactionDB } from '../../src/api';
 import { SQLiteError } from '../../src/errors';
 import { createTransaction } from '../../src/transaction';
@@ -1036,5 +1036,45 @@ describe('transaction — BEGIN announces write intent (spec 2026-09-15, A4)', (
       { readOnly: true },
     );
     expect(readOnlyWorker.executed[0]).toBe('BEGIN');
+  });
+});
+
+describe('transaction — the statement queue advisory', () => {
+  /**
+   * The advisory lives on a five-second timer, which is why it belongs HERE
+   * rather than in the browser suite. A browser test that really waits seven
+   * seconds loads the machine, and the cell it shares with `tx-savepoint`
+   * measures INTERRUPT LATENCY: T4 failed 2 runs out of 4 with such a test
+   * present and 0 of 5 without it (2026-09-22). Fake timers cost nothing and
+   * measure the same thing.
+   *
+   * Falsifiable: raise `QUEUE_WARN_MS` in src/transaction.ts and this goes red.
+   */
+  it('warns once a statement has waited its turn for several seconds', async () => {
+    rstest.useFakeTimers();
+    try {
+      const gate = Promise.withResolvers<void>();
+      const worker = fakeWorker([], { 'SELECT slow': () => gate.promise });
+      const { transaction, warnings } = harness(worker);
+
+      await transaction(async (tx) => {
+        // Issued in one tick: the second waits for the first, which is held.
+        const first = tx.read('SELECT slow');
+        const queued = tx.read('SELECT 1');
+
+        await rstest.advanceTimersByTimeAsync(5_000);
+        expect(warnings.some((w) => w.includes('waited several seconds'))).toBe(
+          true,
+        );
+        // It names the remedy, since the only cause it can have is the
+        // consumer's.
+        expect(warnings.some((w) => w.includes('return()'))).toBe(true);
+
+        gate.resolve();
+        await Promise.all([first, queued]);
+      });
+    } finally {
+      rstest.useRealTimers();
+    }
   });
 });
