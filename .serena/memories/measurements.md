@@ -113,6 +113,24 @@ Identical bytes in every arm; only the number of I/O calls changes, by 8x.
 
 **What it points at:** coalescing contiguous pages into single reads and writes inside `checkpoint()`. Local, no durability or behaviour change. `page_size` is a lever with no upstream dependency at all, but bulk insert is the friendliest case for large pages — a scattered-update workload has NOT been measured and must be before this becomes advice.
 
+## CHECKPOINT-COALESCE — the fix, measured: 0.66 to 0.026 with nothing else changed, 2026-09-22, Chromium
+
+Following PAGE-SIZE: if the cost is call count, coalesce the calls. `checkpoint()` was rewritten in `node_modules` to collect the pages first and then issue contiguous runs as single calls, in two halves. Patch kept at `.scratchpad/wavfs-coalesce-2026-09-22/`.
+
+| variant | `cut` (ms) | ratio |
+| --- | ---: | ---: |
+| upstream, as shipped | 3493 / 3544 / 3521 | .66 |
+| coalesced **writes** only | 1436 / 1426 / 1415 | .26 |
+| coalesced **reads + writes** | **165 / 152 / 152** | **.026** |
+
+**0.026 is the floor** — where every other VFS sits, and exactly the disabled-checkpoint arm (0.030). `page_size`, `autoCheckpoint`, `synchronous` and every default untouched.
+
+**Write half:** build a `Map` of db offset -> entry (newest transaction wins, as before), sort by offset, and write each contiguous run as one call with a 4 MiB cap. 2.5x on its own. **Read half:** frames are fixed stride (`FRAME_HEADER_SIZE + pageSize`), so entries grouped by handle (`waSalt1 & 1`) and sorted by `waOffset` form runs that are one read, sliced with `subarray` — no copy. Only strictly consecutive frames of equal page size join a run; anything else falls back to `#fetchPage`. The read half is what reaches the floor, which fits: it was one read per page against one write per run.
+
+**Correctness:** the full cell twice, write-half then both halves, identical to the unpatched baseline — chromium 351/0/4, firefox 355/0/1, isolated 7/0/0, no failures, no `Short WAL read`, no `Checkpoint write failed`.
+
+**Careful with truncated logs.** A first reading of this gave 157/156/161 and "22x". That came from a pre-push hook run of the whole suite, whose tail belonged to `OPFSAdaptiveVFS` — a VFS with no checkpoint, sitting at the floor for free. The number was real and measured the wrong target.
+
 ## CUT-RATIO — how late an abandoned write is cut, per pair, 2026-09-22, this container
 
 `tx-savepoint` T3/T4 assert that an abandoned write ends before `natural * f`. `f` was 0.8,
