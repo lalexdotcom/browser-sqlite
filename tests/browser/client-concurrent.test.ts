@@ -27,7 +27,7 @@ import { createTestClient, longQuery } from './helpers';
  * statements, and the two serialise against each other on the origin's write
  * lock; and the ABORT axis, a call aborted while it waits behind another. That
  * last one is here because its counterpart inside a transaction was green on
- * the ordering tests and broken underneath.
+ * the ordering tests and broken underneath (`mem:lessons`).
  */
 const ONE_WORKER = { poolSize: 1 } as const;
 
