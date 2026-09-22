@@ -7,7 +7,88 @@ on:
       - "v*.*.*-*"
 
 jobs:
+  # A tag is not a branch push, so ci.yaml never runs on it — and a red CI on
+  # `main` blocks nothing, since separate workflows cannot wait for each other.
+  # Calling it is what makes the gate real, and it covers what the cells
+  # cannot: the unit project, excluded by `--project 'chromium*'`.
+  verify:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yaml
+
+  # `pnpm test` covers two of the 22 declared pairs; the rest are only seen
+  # here, on the tag itself. One job per pair: ~10 min instead of ~70. Each
+  # shard goes through test-matrix.mjs, which owns the per-cell timer.
+  pairs:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.list.outputs.pairs }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The pair list lives in VFS_CAPABILITIES and nowhere else.
+      # Single-quoted: backticks and ${...} in a double-quoted $( ) would be
+      # eaten by bash before node saw them.
+      - id: list
+        run: |
+          PAIRS=$(node --experimental-strip-types -e 'import("./scripts/test-matrix.mjs").then(({ allPairs }) => console.log(JSON.stringify(allPairs().map((p) => p.vfs + "/" + p.build))))')
+          echo "pairs=$PAIRS" >> "$GITHUB_OUTPUT"
+
+  cells:
+    needs: pairs
+    runs-on: ubuntu-latest
+    # The default is six hours, and Firefox has an uncured hang here:
+    # navigator.storage.getDirectory() can fail to settle in a worker.
+    timeout-minutes: 25
+    strategy:
+      # A gate, not a triage tool (user, 2026-09-22): one red is enough to
+      # refuse, and diagnosis happens in a local run, not in 22 job logs.
+      fail-fast: true
+      matrix:
+        pair: ${{ fromJSON(needs.pairs.outputs.list) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-chromium-firefox-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Install browsers
+        run: pnpm exec playwright install --with-deps chromium firefox
+      - name: Matrix ${{ matrix.pair }}
+        run: node scripts/test-matrix.mjs --pair ${{ matrix.pair }}
+
+  # Only when a CHECK failed, so before `release` has run and before anything
+  # could be published. A failure after npm publish is left alone: deleting the
+  # tag there would orphan a published version.
+  untag:
+    needs: [verify, cells]
+    if: failure()
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the tag the matrix refused
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api -X DELETE \
+            "repos/${{ github.repository }}/git/refs/tags/${{ github.ref_name }}"
+          echo "::notice::${{ github.ref_name }} was deleted: the release checks did not pass."
+
   release:
+    needs: [verify, cells]
     permissions:
       contents: write
     runs-on: ubuntu-latest

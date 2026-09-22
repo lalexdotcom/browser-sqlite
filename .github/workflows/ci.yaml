@@ -5,6 +5,13 @@ on:
     branches:
       - main
   pull_request:
+  # From release-and-publish.yaml, so the gate that blocks a publication is the
+  # SAME verification, not a copy of it. A red CI on `main` blocks nothing by
+  # itself — the two workflows are independent and the release is triggered by
+  # a tag — so the release calls this one and waits for it. Duplicating these
+  # steps there was the alternative, and the browser-list comment below already
+  # says what two lists that must agree become.
+  workflow_call:
 
 concurrency:
   group: ci-${{ github.ref }}
