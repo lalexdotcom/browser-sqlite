@@ -347,6 +347,20 @@ defect, and the scenario a defect is found through is often not the one that dem
 
 **Not carried in `patches/`** — deliberately: it fixes no failure, it makes one legible. Carrying it would put `NoModificationAllowedError` into our open failures' `detail`; that is the user's call and it is not taken.
 
+## `GENERATOR_ABANDONED` is a backstop now, and its name says otherwise (2026-09-22)
+
+Since `fix/transaction-statement-queue` the transaction serialises its statements, so the pool's
+reuse guard is no longer reachable from a transaction — it fires only if that serialisation is
+broken, or from a path with no scheduler lease. Its text still addresses the consumer, telling them
+to close a `chunk()`/`stream()`, and its NAME still describes one cause out of several: two
+overlapping `tx.read()`s and an in-flight `bulkWrite` batch reached it with no generator anywhere,
+which `src/pool.ts` has said in a comment since rc.5.
+
+Renaming it is a public-surface change, so it is the user's and rc.6's. The code's own comment
+already deferred it once — *"The CODE stays as it is — renaming a public error code is a separate
+decision."* What is cheap and not deferred is the MESSAGE, which can stop instructing a consumer
+who can no longer cause it.
+
 ## Mixing VFS of the `opfs-path` family on one database (2026-09-15)
 
 Measured while the second-client guard was built: on Chromium an `OPFSAdaptiveVFS` client beside a LIVE

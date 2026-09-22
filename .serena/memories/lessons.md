@@ -44,6 +44,21 @@ survived all three, because closing it meant contradicting its NAME. **The tell 
 every factual claim has been replaced while its title has not.** When that happens the question is
 not "what else could cause this?" but "is this the same defect at all?". Closed 2026-09-21.
 
+**A concurrency library needs `Promise.all` in its tests, or its core contract is untested.** On
+2026-09-21 this repo had `Promise.all` in 17 of 50 browser test files and in NONE of the eight
+transaction ones. Every transaction test awaited each statement in turn — which is the one shape
+that cannot expose a serialisation defect. Two reads created in the same tick lost the whole
+transaction, and a `bulkWrite` batch posted after a read issued later, so the read returned stale
+rows. Both had shipped through rc.4 and every rc.5 lot. **The tell is a suite whose every call is
+awaited immediately**: it tests the library's sequential behaviour and calls it coverage.
+
+**On a queue, test the ABORT axis separately from the ORDER axis — they fail differently.** The
+ordering tests for that queue were all green while a real defect sat underneath: a statement
+aborted by its own signal WHILE WAITING released its place at once, although it had never waited
+for that place, so the statement behind it started while the head was still in flight. Only a test
+that aborted a QUEUED statement found it. The rule the fix encodes is worth carrying to any queue:
+**a place left early is handed on, not cancelled.**
+
 **Your own instrumentation can be the artefact — prove the defect without it.** Chasing the
 `IDBMirrorVFS` corruption, a probe showed `block.set(pData, 0)` leaving the destination at zero
 with a valid source, which is impossible for a `Uint8Array`. The right move was the control that

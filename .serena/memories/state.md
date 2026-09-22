@@ -212,7 +212,50 @@ ABANDON-WEDGE).
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
 the 2026-09-05 entry in `mem:follow-ups` called for.
 
-**Nothing is in flight, and the work is on `main` (2026-09-21).** The second-client branch merged on
+## In flight: `fix/transaction-statement-queue` — verified, merge not given (2026-09-22)
+
+**What it fixes, and the user's judgement is what put it in rc.5 rather than rc.6: two statements
+created in the same tick inside a `transaction()` lost the WHOLE transaction to
+`GENERATOR_ABANDONED`.** `await Promise.all([tx.read(…), tx.read(…)])` is baseline usage of a
+concurrency library; the error was named after a generator the consumer never opened. Statements
+now queue in ISSUE order — `read`/`write`/`first`, generators, `bulkWrite` batches, `commit` and
+`rollback`.
+
+**The silent one, and it is the reason this branch grew:** a `bulkWrite` batch posted a microtask
+after `flush()`, so a read issued AFTER it ran first and returned stale rows — a count of 2 where
+the table held 4. No error, wrong data.
+
+**Three implementation traps, each paid for and each recorded in the code:**
+- the uncontended path must post SYNCHRONOUSLY; awaiting an already-resolved tail costs a
+  microtask, and a statement whose own signal aborts in that window never reaches the worker
+  (spec R7, caught by the pre-commit hook);
+- a generator's slot cannot be released by its own `finally`, nor by `quiesce()` — both need a
+  consumer that keeps pulling. `pool.ts` now publishes `free()`, resolved where `deferredChunk` is
+  cleared, which is the guard's own condition;
+- **a queue place left early is HANDED ON, not cancelled.** A statement aborted while waiting had
+  never waited for its own place, so releasing it outright let the next one start while the head
+  was still in flight. Found only by the signal axis — the ordering tests were all green.
+
+**The contract change to state when reading `API.md`:** a `chunk()`/`stream()` the consumer stopped
+pulling still holds the connection, so statements after it now WAIT where they used to fail at
+once. Abandoned and slow are indistinguishable, so the library warns after five seconds and keeps
+waiting; the bound is the caller's (`timeout`, the transaction's, or `close()`). Three `tx-quiesce`
+tests pinned the old contract by name and were rewritten.
+
+**Verified whole on 2026-09-22:** `tsc` clean, `biome ci` exit 0, `pnpm test` **1209 / 704 / 14**
+(skips 8 / 2 / 0 — unchanged), conformance 85 and 85 (71/14 and 67/18), and a full
+`pnpm test:matrix` at **66 of 66 cells green, 0 failing tests, 2519 s**. The +28 on each browser
+config is the 14 new tests × 2 projects.
+
+**The concurrency coverage this exposed is the other half of the branch.** Before it, `Promise.all`
+appeared in 17 of 50 browser test files and in NONE of the eight transaction files. There are now
+14 transaction tests (ordering, the signal axis, the `savepointed` branch) and 12 client-level ones
+— the latter green on arrival, since a lease is held until the worker is idle.
+
+**Still open, and the user's:** the merge; and `GENERATOR_ABANDONED`'s name, now that it is a
+backstop rather than a consumer-facing error (`mem:follow-ups`).
+
+**Nothing else is in flight, and the work is on `main` (2026-09-21).** The second-client branch merged on
 2026-09-18; everything since is documentation. `main` sits ahead of `origin/main` — the convention,
 not an oversight.
 
