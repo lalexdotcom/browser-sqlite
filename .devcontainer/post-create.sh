@@ -46,3 +46,18 @@ claude mcp remove serena --scope user 2>/dev/null || true
 claude mcp add serena --scope user -- serena start-mcp-server --context=claude-code --project-from-cwd
 
 serena index --project-root "$PWD" 2>/dev/null || true
+
+# Serena has `serena index` above; MemPalace had no equivalent, so a rebuilt
+# volume left it installed but empty. init is idempotent and writes
+# mempalace.yaml, which the workspace bind mount already keeps.
+mempalace init --yes "$PWD" 2>/dev/null || true
+
+# chromadb hardcodes its ONNX model cache to ~/.cache/chroma (no env var), and
+# that path is not on the persisted volume: a rebuild re-downloads 79 MB at the
+# container's download speed. Link it into /ai-tools instead.
+mkdir -p /ai-tools/.cache/chroma
+if [ ! -L "$HOME/.cache/chroma" ]; then
+  mkdir -p "$HOME/.cache"
+  [ -d "$HOME/.cache/chroma" ] && cp -a "$HOME/.cache/chroma/." /ai-tools/.cache/chroma/ && rm -rf "$HOME/.cache/chroma"
+  ln -s /ai-tools/.cache/chroma "$HOME/.cache/chroma"
+fi

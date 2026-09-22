@@ -34,3 +34,7 @@ doc_build/
 # Probes, fixtures and throwaway harnesses. In the project so they are visible
 # in the editor, ignored so they never ship. Never referenced by src/ or by CI.
 .scratchpad/
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json
