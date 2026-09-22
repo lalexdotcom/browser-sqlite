@@ -69,8 +69,19 @@ in (observed cut, 1.0). The observed maximum is 0.807, on a CI runner slower tha
 window is therefore (0.81, 1.0) and **0.9 is the value**, leaving 10 % before an uncut write. It is
 not a widened margin: 0.8 was simply below the measurement.
 
-**Variance is real and not small.** The same pair measured 0.631 and 0.719 in two runs minutes
-apart on an idle machine, and 0.807 on CI. A bound on this ratio cannot be tight.
+**Variance is real and not small, and it is LOAD, not the pin.** The same pair measured 0.631 and
+0.719 minutes apart, and 0.807 on CI. Asked whether wa-sqlite #355 — which touches
+`OPFSWriteAheadVFS` — had made it worse, three runs on each pin under the same load say no:
+
+| pin | ratios | mean | `natural` |
+| --- | --- | ---: | ---: |
+| `07ad48c`, before the repin | 0.659 / 0.684 / 0.666 | **0.670** | ~5 300 ms |
+| `93b9230`, after | 0.672 / 0.678 / 0.672 | **0.674** | ~5 280 ms |
+
+Indistinguishable, and `natural` is unchanged, so #355 slowed neither the write nor its
+interruption. **It also corrects the table above:** the 0.719 there was taken while the
+conversation mining was starting. The honest range for this pair is 0.63-0.81 depending on what
+else the machine is doing — which is the whole reason a bound on it cannot be tight.
 
 ## LEASE-QUIESCE — the lease IS held to quiesce after a timeout, 0/40 under load, 2026-09-21, this container
 
