@@ -373,11 +373,19 @@ the prefix spends part of wa-sqlite's 56-character path budget.
   inferred: `PRAGMA wal_autocheckpoint=0` takes the pair from 0.67 to 0.030 with `natural`
   unchanged.
 
-  **Nothing is decided.** Three shapes, none costed: expose the knob and say so in `VFS.md`, which
-  is honest and free; raise the default to checkpoint every N transactions, which trades interrupt
-  latency for write-ahead size and is upstream's call as much as ours; or leave it and document
-  that abort is weaker on this VFS. It is a recommended VFS, so "leave it undocumented" is not one
-  of the three. `tx-savepoint`'s 0.9 bound exists because of this and can tighten once it is fixed.
+  **`autoCheckpoint` is a boolean wearing a number, and that removes the obvious middle option.**
+  `#autoCheckpoint()` tests `> 0` and nothing else, so 1, 100 and 1000 all mean "checkpoint after
+  every transaction". A threshold — SQLite's own `wal_autocheckpoint` is 1000 PAGES and means one —
+  does not exist here and would be an upstream change. No other VFS in this set has a write-ahead
+  stage at all, so there is no comparison value: `checkpoint` appears only in `WriteAhead.js` and
+  `OPFSWriteAheadVFS.js`.
+
+  **Nothing is decided. Two shapes, not three:** expose the knob and say what it costs in `VFS.md`,
+  which is honest and free; or ask upstream for a real threshold, which is the only way to trade
+  interrupt latency against write-ahead growth. Turning it off wholesale is not an option — the
+  write-ahead files then grow without bound and every read pays for the overlay. It is a
+  recommended VFS, so leaving it undocumented is not one either. `tx-savepoint`'s 0.9 bound exists
+  because of this and can tighten once it is addressed.
 - **`handleDeath`'s guard for a slot-0 loss before the probe has no test** — no path was found that reaches
   it with the probe unanswered; it is defensive (`a0373c0`).
 - **Three tests of `multi-client.test.ts` carry no falsifier** (their claims were run and refuted): "never
