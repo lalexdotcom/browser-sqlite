@@ -64,19 +64,6 @@ green `pnpm test` covers what CI covers. Since 2026-09-11 a commit pays only the
 **A green `pnpm test` is not a green tree: run `pnpm exec tsc --noEmit` beside it** — a commit
 on the last branch landed with a failing typecheck that no test run could show (`mem:lessons`).
 
-| command | result |
-|---|---|
-| `pnpm exec tsc --noEmit` | clean |
-| `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` on each: **1175 tests / 76 files** (unit + the two chromium target projects, **8 skipped**), **670 / 50** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects) |
-| `pnpm exec rstest --project unit run` | 507 tests, 27 files |
-| `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are now `chromium · <vfs>/<build>` and rstest's filter is anchored |
-| `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each: **Chromium 71 passed / 14 skipped, Firefox 67 / 18** — they differ by design since 2026-09-14 |
-| `pnpm test:consumer` | 24/24 stages |
-| `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | OK, empty `reasons`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 136 files, 13 warnings, 1 info |
-| `dependencies` in `package.json` | absent |
-| `pnpm test:matrix` | **not in this table on purpose** — 66 cells, ~50 min, and failures are expected. Its baseline is `mem:measurements`, MATRIX-5 |
 
 **The browser skips are expected: 4 per Chromium project, 1 per Firefox project.** Each config
 now builds ONE project per target, so the table's per-config totals are twice those: **8** on the

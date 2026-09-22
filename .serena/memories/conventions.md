@@ -185,6 +185,28 @@ honoured on the model half alone, and a subagent inherits the session's effort l
 tier it was dispatched at. Recorded rather than worked around; if `effort` appears later, the
 policy becomes applicable as written.
 
+## When to run the full matrix (2026-09-22)
+
+`pnpm test:matrix` costs ~45 min and covers the 22 declared (vfs, build) pairs × 3 engine configs.
+`pnpm test` covers **two recommended pairs**, so the matrix is the only thing that sees the other
+twenty. Run it when the change can behave differently per pair:
+
+- **the per-connection machinery** — `src/pool.ts`, `src/transaction.ts`, `src/worker/`;
+- **a wa-sqlite repin or a change to `patches/`** — every VFS comes from there;
+- **`VFS_CAPABILITIES`, the target machinery or a `needs` vocabulary change** — they decide which
+  pairs run what;
+- **a new browser test with no `needs`**, since it will run on all 22 pairs whether or not you
+  thought about them;
+- **before a release**.
+
+Not for documentation, memories, or a test change confined to what `pnpm test` already covers.
+
+**Two things about reading a red cell, both paid for on 2026-09-22.** A timing-sensitive failure
+may be LOAD rather than a defect: re-run the cell alone before diagnosing — `tx-savepoint`'s T4 went
+0/3 alone against 2/4 in the full cell. And the cause may be a test you just added: a matrix cell is
+one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.mjs` regroups any
+`.matrix/<run>/`.
+
 ## Working with the user
 
 - **Batch diagnostic probes.** When the user has to run probes by hand, send a whole
