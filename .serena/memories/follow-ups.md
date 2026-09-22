@@ -365,14 +365,19 @@ the prefix spends part of wa-sqlite's 56-character path budget.
 
 - A **refused client still appears in `inspectDatabase().clients`** until it is closed —
   `AccessHandlePoolVFS` behaved that way before the branch too.
-- **`OPFSWriteAheadVFS` on Chromium cuts an abandoned write far later than anything else, and nobody
-  knows why.** Measured across all 24 pair-engine combinations on 2026-09-22 (CUT-RATIO,
-  `mem:measurements`): 0.71-0.72 of natural, against ≤ 0.16 for the 22 others and ≤ 0.05 for most.
-  The same VFS on Firefox is at 0.10-0.16, so it is the pair, not the VFS. **This is a product
-  question dressed as a test one** — `tx-savepoint`'s bound is now 0.9 because of this one
-  combination, and a bound that exists for a single outlier is a description of the outlier. What
-  has NOT been asked: whether the interrupt is delivered late there, or delivered on time and the
-  VFS takes that long to unwind.
+- **`OPFSWriteAheadVFS`'s auto-checkpoint delays every interrupt, and the consumer pays for it.**
+  Cause established 2026-09-22 (AUTOCHECKPOINT-LATENCY, `mem:measurements`): `WriteAhead.js`
+  checkpoints after EVERY transaction (`autoCheckpoint: 1`), that work runs after the commit and
+  occupies the worker, and an interrupt aimed at the next statement waits for it. Aborting a
+  statement on this VFS gives back a third of its time against 97 % elsewhere — measured, not
+  inferred: `PRAGMA wal_autocheckpoint=0` takes the pair from 0.67 to 0.030 with `natural`
+  unchanged.
+
+  **Nothing is decided.** Three shapes, none costed: expose the knob and say so in `VFS.md`, which
+  is honest and free; raise the default to checkpoint every N transactions, which trades interrupt
+  latency for write-ahead size and is upstream's call as much as ours; or leave it and document
+  that abort is weaker on this VFS. It is a recommended VFS, so "leave it undocumented" is not one
+  of the three. `tx-savepoint`'s 0.9 bound exists because of this and can tighten once it is fixed.
 - **`handleDeath`'s guard for a slot-0 loss before the probe has no test** — no path was found that reaches
   it with the probe unanswered; it is defensive (`a0373c0`).
 - **Three tests of `multi-client.test.ts` carry no falsifier** (their claims were run and refuted): "never

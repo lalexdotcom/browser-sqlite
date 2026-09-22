@@ -37,6 +37,34 @@ undoes nothing — header and file disagree, `2694` pages claimed for 3, or 3 cl
 not accumulate (a second rollback rewrites the same offsets) and resolves if the database grows
 again; the database stays correct throughout.
 
+## AUTOCHECKPOINT-LATENCY — why `OPFSWriteAheadVFS` cuts late, 2026-09-22, Chromium, this container
+
+CUT-RATIO below left one question open: that pair cuts an abandoned write at 0.67 of its natural
+length where every other is under 0.16. **Cause found, by pragma rather than by reading.**
+
+`WriteAhead.js` defaults to `autoCheckpoint: 1` — a checkpoint copying the write-ahead files into
+the main database **after every transaction**, fired from `commit()`. No other VFS here has that
+stage. `OPFSWriteAheadVFS.jFileControl` exposes it: `PRAGMA wal_autocheckpoint=N` writes
+`file.writeAhead.options.autoCheckpoint` and then returns `SQLITE_NOTFOUND`, so SQLite also sees a
+pragma that means nothing to a connection outside its own WAL mode.
+
+`OPFSWriteAheadVFS/async`, Chromium, `poolSize` 1, three runs of each arm in one probe:
+
+| | `natural` | `cut` | ratio |
+| --- | ---: | ---: | ---: |
+| default (`autoCheckpoint: 1`) | 5316 / 5345 / 5372 | 3589 / 3576 / 3526 | 0.675 / 0.669 / 0.656 |
+| `wal_autocheckpoint=0` | 5347 / 5464 / 5414 | **160 / 160 / 172** | **0.030 / 0.029 / 0.032** |
+
+**`natural` does not move, and that is the finding.** The checkpoint does not slow the write it
+follows — it runs AFTER the commit and occupies the worker, so the interrupt aimed at the NEXT
+statement waits for it. Disabling it puts this pair at 0.030, exactly where every other VFS sits.
+
+**What it means for a consumer:** on `OPFSWriteAheadVFS` — a recommended VFS — aborting a statement
+gives back about a third of its time, against 97 % elsewhere, and the cost is work the VFS does in
+the background rather than anything the caller did. Not a defect of this library, and not fixed
+here: `autoCheckpoint: 1` is upstream's default and turning it off unbounds the write-ahead files.
+`mem:follow-ups` carries what would have to be decided.
+
 ## CUT-RATIO — how late an abandoned write is cut, per pair, 2026-09-22, this container
 
 `tx-savepoint` T3/T4 assert that an abandoned write ends before `natural * f`. `f` was 0.8,
