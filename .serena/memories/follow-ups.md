@@ -347,17 +347,6 @@ defect, and the scenario a defect is found through is often not the one that dem
 
 **Not carried in `patches/`** — deliberately: it fixes no failure, it makes one legible. Carrying it would put `NoModificationAllowedError` into our open failures' `detail`; that is the user's call and it is not taken.
 
-## The statement queue's console advisory has no test (2026-09-22)
-
-`queueWait` in `src/transaction.ts` warns after `QUEUE_WARN_MS` (5 000) that a statement has been
-waiting its turn, naming an open generator as the usual cause. **Nothing asserts that it fires, and
-nothing asserts that it does NOT fire on an ordinary wait** — the second is the one that matters,
-since a false advisory on every slow-but-healthy transaction would be worse than no advisory at all.
-`captureWarnings()` in `tests/browser/helpers.ts` is what the other warning tests use.
-
-The threshold itself is a number I chose, not one anyone measured: five seconds is long enough that
-no test waits for it, which is also why no test caught its absence.
-
 ## Mixing VFS of the `opfs-path` family on one database (2026-09-15)
 
 Measured while the second-client guard was built: on Chromium an `OPFSAdaptiveVFS` client beside a LIVE
