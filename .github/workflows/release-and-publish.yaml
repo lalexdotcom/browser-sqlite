@@ -68,6 +68,16 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium firefox
       - name: Matrix ${{ matrix.pair }}
         run: node scripts/test-matrix.mjs --pair ${{ matrix.pair }}
+      # The script writes each run's output to .matrix/ and prints only a
+      # verdict, so a red cell otherwise explains nothing — and "diagnose it
+      # locally" fails when the cell is green locally, which is how rc.5 went.
+      - name: Matrix report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matrix-report-${{ strategy.job-index }}
+          path: .matrix/
+          retention-days: 14
 
   # Only when a CHECK failed, so before `release` has run and before anything
   # could be published. A failure after npm publish is left alone: deleting the
