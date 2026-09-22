@@ -65,6 +65,54 @@ the background rather than anything the caller did. Not a defect of this library
 here: `autoCheckpoint: 1` is upstream's default and turning it off unbounds the write-ahead files.
 `mem:follow-ups` carries what would have to be decided.
 
+## AUTOCHECKPOINT-THRESHOLD — the threshold works, at values nobody can ship, 2026-09-22, Chromium
+
+`WriteAhead.js` was patched in `node_modules` to do what its option name promises — `this.getWriteAheadSize() >= this.options.autoCheckpoint` instead of `> 0` — and swept by `PRAGMA wal_autocheckpoint`. Same probe shape as CUT-RATIO's T4, `OPFSWriteAheadVFS/async`, Chromium, `poolSize` 1, three runs per arm, all arms in ONE browser process so they are directly comparable.
+
+| threshold (pages) | ratio |
+| --- | ---: |
+| 1 (= today's behaviour) | .677 / .645 / .669 |
+| 250 | .656 / .652 / .638 |
+| 1000 (SQLite's own value) | .683 / .667 / .658 |
+| 5000 | .660 / .664 / .650 |
+| **20 000** | **.029 / .030 / .030** |
+| 100 000 | .030 / .031 / .029 |
+| 0 (disabled) | .030 / .030 / .030 |
+
+**It is a step, not a curve** — either the checkpoint fires inside the measured window or it does not, and there is no middle to tune. `natural` stayed at 5300-5500 in every arm, so nothing else moved.
+
+**The knee belongs to the workload, not the VFS.** It sits just above the pages the preceding transaction left un-checkpointed — here between 5000 and 20 000 for a 3 M-row insert, i.e. 20-80 MB of write-ahead. A larger transaction moves it up. **For any threshold T, a transaction writing more than T pages puts a checkpoint back on the critical path**, so no value is safe for every workload. A threshold still helps the FREQUENCY of checkpoints on small-transaction workloads — the common case — but it is not the abort-latency fix, and both 250 and SQLite's 1000 sit on the wrong side of the step.
+
+## HANDLE-MODE — `readwrite-unsafe` is NOT why Chromium pays, 2026-09-22
+
+The obvious suspect for the Chromium/Firefox gap, and the user's first guess: this VFS takes `mode: 'readwrite-unsafe'` (`OPFSWriteAheadVFS.js:923`) where the engine offers it, which is Chromium only; Firefox gets an exclusive handle. Forcing `mode: 'readwrite'` at that one site, everything else identical including `poolSize: 1`:
+
+| arm | `natural` | `cut` | ratio |
+| --- | ---: | ---: | ---: |
+| `readwrite-unsafe` (as shipped) | 5337 / 5434 / 5435 | 3598 / 3582 / 3533 | .674 / .659 / .650 |
+| `readwrite` (exclusive) | 5321 / 6464 / 5606 | 3943 / 4343 / 3529 | .741 / .672 / .630 |
+
+**Refuted** — identical, marginally worse if anything. The handle mode is not the cause.
+
+## PAGE-SIZE — the cause is per-call I/O overhead, and Chromium pays it, 2026-09-22
+
+Same probe, `page_size` 4096 (default) against 32768, on both engines.
+
+| engine | `page_size` | `natural` | `cut` | ratio |
+| --- | --- | ---: | ---: | ---: |
+| Chromium | 4 KiB | 5267 / 5389 / 5314 | 3493 / 3544 / 3521 | .663 / .658 / .663 |
+| Chromium | 32 KiB | 1638 / 1639 / 1629 | 441 / 472 / 463 | .269 / .288 / .284 |
+| Firefox | 4 KiB | 7904 / 7853 / 7832 | 1127 / 1181 / 1138 | .143 / .150 / .145 |
+| Firefox | 32 KiB | 6684 / 6637 / 6663 | **160 / 165 / 156** | **.024 / .025 / .023** |
+
+Identical bytes in every arm; only the number of I/O calls changes, by 8x.
+
+**The asymmetry names the cause.** Eight times fewer pages cuts the whole insert by **3.25x on Chromium** (5320 -> 1635) and by **1.18x on Firefox** (7860 -> 6660). Firefox's bulk insert is dominated by SQLite's own work; Chromium's was dominated by `FileSystemSyncAccessHandle` per-call overhead. The tell: at 32 KiB Chromium is 4x faster than Firefox on the same insert, where at 4 KiB it was only 1.5x faster — **the fastest engine has the slowest I/O calls**.
+
+**Why the checkpoint is where it shows.** `checkpoint()` does one `#fetchPage` read plus one `#dbHandle.write` **per page** (`WriteAhead.js:454-458`), and only page 1 is cached, so it re-reads everything it wrote. It is the purest per-call workload in the VFS, which is why it costs ~3365 ms on Chromium against ~995 ms on Firefox at 4 KiB despite Chromium being faster everywhere else. At 32 KiB on Firefox `cut` reaches 160 ms — the floor every other VFS sits at.
+
+**What it points at:** coalescing contiguous pages into single reads and writes inside `checkpoint()`. Local, no durability or behaviour change. `page_size` is a lever with no upstream dependency at all, but bulk insert is the friendliest case for large pages — a scattered-update workload has NOT been measured and must be before this becomes advice.
+
 ## CUT-RATIO — how late an abandoned write is cut, per pair, 2026-09-22, this container
 
 `tx-savepoint` T3/T4 assert that an abandoned write ends before `natural * f`. `f` was 0.8,

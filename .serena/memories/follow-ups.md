@@ -347,6 +347,37 @@ defect, and the scenario a defect is found through is often not the one that dem
 
 **Not carried in `patches/`** — deliberately: it fixes no failure, it makes one legible. Carrying it would put `NoModificationAllowedError` into our open failures' `detail`; that is the user's call and it is not taken.
 
+## wa-sqlite's `autoCheckpoint` never reads the value it is given — upstream candidate (2026-09-22)
+
+**What it costs.** Aborting a statement on `OPFSWriteAheadVFS/sync` (Chromium) gives back a third of its time; every other pair gives back 84 % or more. Measured, three runs per arm, `natural` unchanged throughout — so this is the cut getting worse, not the query getting faster:
+
+| | `natural` (ms) | `cut` (ms) | ratio |
+|---|---|---|---|
+| default (`autoCheckpoint: 1`) | 5316 / 5345 / 5372 | 3589 / 3576 / 3526 | 0.675 / 0.669 / 0.656 |
+| `PRAGMA wal_autocheckpoint=0` | 5347 / 5464 / 5414 | 160 / 160 / 172 | **0.030 / 0.029 / 0.032** |
+
+Full entry: AUTOCHECKPOINT-LATENCY in `mem:measurements`. The mechanism: `WriteAhead.js` checkpoints after EVERY transaction, that work runs after the commit and occupies the worker, and an interrupt aimed at the *next* statement waits for it.
+
+**The option is a boolean wearing a number.** `#autoCheckpoint()` (`WriteAhead.js:601`) tests `> 0` and nothing else, so 1, 100 and 1000 all mean "after every transaction". The pragma parses a real integer — `OPFSWriteAheadVFS.js` `case 'wal_autocheckpoint'` does `file.writeAhead.options.autoCheckpoint = parseInt(value)` — and then no one compares against it. Upstream's own comment says as much: *"A setting greater than zero enables automatic checkpoints"*.
+
+That case ends on `break`, not `return SQLITE_OK` as `busy_timeout` and `wal_checkpoint` do, so it falls through to `SQLITE_NOTFOUND` and SQLite processes the pragma too — inert here, because this VFS implements its write-ahead BELOW SQLite, which is therefore not in WAL mode and has no `-wal` to watch.
+
+**What SQLite's own pragma means, for contrast.** `wal_autocheckpoint=N` is a threshold in **pages of the `-wal` file**, default **1000**. At the end of each commit SQLite checks the size and only then runs a PASSIVE checkpoint, which never blocks — it gives up rather than wait for a reader. `N <= 0` disables it. It is per-connection, not persisted. In this repo the real pragma is in play on exactly one VFS: `AccessHandlePoolVFS`, the only one whose `defaultPragmas` carry `journal_mode: 'wal'` (`src/types.ts:542`). No other VFS in the set has a write-ahead stage at all — `checkpoint` appears only in `WriteAhead.js` and `OPFSWriteAheadVFS.js` — so there is no comparison value to quote, and that is precisely why this pair is alone in its class here.
+
+**The two-line patch is a trap, and the reasons are specific to this VFS.** The material is free: `getWriteAheadSize()` (`WriteAhead.js:506`) returns `#approxPageCount`, a field kept incrementally (`+= tx.pages.size` at 535, `-=` at 629), and the class already has the threshold idiom at 355. But three things block a drive-by:
+
+1. **1000 is the wrong number here, even though it is SQLite's.** `journalSizeLimit` already defaults to 1000 pages (`DEFAULT_JOURNAL_SIZE_LIMIT`, line 3), and it is a *rotation* threshold evaluated at line 351 — in the same commit function, BEFORE `#autoCheckpoint()` at 375. Rotation requires `#isInactiveFileEmpty()`, which only a checkpoint achieves. Put both at 1000 and they arrive together: the journal wants to rotate exactly when it is fullest, and the checkpoint that would free the other file has not run. A checkpoint threshold has to sit comfortably BELOW the rotation threshold so it drains it in advance — ~100 keeps a factor of 10 and still cuts checkpoints by 100x.
+2. **There is no safety net for the idle case, and `autoCheckpoint: 1` is what hides that.** `#backstop()` calls `#advanceTxId({ readToCurrent: true })` — *without* `autoCheckpoint`; it recovers lost transaction broadcasts, it does not checkpoint. The only other path is an explicit `PRAGMA wal_checkpoint` (`OPFSWriteAheadVFS.js:822`). Nothing on close. Today every commit checkpoints, so no other path needs to exist. Raise the threshold and a connection that writes 50 pages then stops keeps them for ever.
+3. **Turning it off is not a setting, only an instrument.** `#isInactiveFileEmpty()` (line 1041) short-circuits on `#mapIdToTx.has(#activeHeader.nextTxId - 1)`, and `#mapIdToTx` is drained only by `#handleCheckpoint` (627). With `=0` the most recent transaction is always present, so rotation **never fires once** — not "once then never". The active file grows alone. The same checkpoint is also the only thing that purges `#waOverlay` (618-624). **That map is cheap, and an earlier version of this entry said otherwise** — `#writePage` stores `pageData: pageOffset === 0 ? pageData : undefined` (line 936), so only page 1 keeps its bytes; every other entry is three numbers and the checkpoint re-reads the page from the file (`#fetchPage`, 789). Deferring a checkpoint costs disk and read indirection, not JS heap. `=0` is how the 0.030 above was obtained and is good for nothing else.
+
+**MEASURED 2026-09-22, and it kills the threshold as a fix.** The patch above was applied to `node_modules` and swept (AUTOCHECKPOINT-THRESHOLD, `mem:measurements`). The response is a **step, not a curve**: 1, 250, 1000 and 5000 all give ~0.65; 20 000 and 100 000 both give 0.030, exactly the disabled arm. Nothing in between. The knee sits just above however many pages the preceding transaction left un-checkpointed, so it is **a property of the workload, not a value to choose** — for any threshold T, a transaction writing more than T pages puts a checkpoint back on the critical path. A threshold is still worth having for the FREQUENCY of checkpoints on small-transaction workloads, but it is not the abort-latency fix, and 250 and 1000 are both on the wrong side of the step.
+
+**The real lever is per-call I/O overhead, and that is where the upstream ask should go.** `readwrite-unsafe` was the obvious suspect for the Chromium/Firefox gap and is **refuted** — forcing `mode: 'readwrite'` in `OPFSWriteAheadVFS.js` changed nothing (HANDLE-MODE, `mem:measurements`). What does change everything is page size: at 32 KiB instead of 4 KiB the checkpoint costs 11x less on Chromium for identical bytes, and the whole bulk insert runs 3.25x faster — against 1.18x on Firefox, which is the asymmetry that names the cause (PAGE-SIZE, `mem:measurements`). The checkpoint does one `#fetchPage` read plus one `#dbHandle.write` **per page** (454-458); Chromium's `FileSystemSyncAccessHandle` per-call overhead is high, so the call count is the cost.
+
+So the upstream ask is **coalesce contiguous pages into single reads and writes in `checkpoint()`** — local, no behaviour or durability change, far easier to defend than a new default. Consuming the option value stays worth asking for as a separate, cheap correctness point. `page_size` is a lever we hold with no upstream at all, but it is NOT yet a recommendation: bulk insert is the friendliest case for large pages and a scattered-update workload has not been measured. The `VFS.md` paragraph saying what abort costs on this VFS is owed either way and is free.
+
+**What it costs us meanwhile.** `tx-savepoint`'s cut bound is 0.9 because of this and can tighten once it is addressed (CUT-RATIO, `mem:measurements`). Note this is a *second*, independent reason abort is weak on this VFS: the first is that its default `sync` build cannot interrupt a running statement outside cross-origin isolation, which is what made the CI abort-family tests intermittent (`965ab2f`).
+
 ## Mixing VFS of the `opfs-path` family on one database (2026-09-15)
 
 Measured while the second-client guard was built: on Chromium an `OPFSAdaptiveVFS` client beside a LIVE
@@ -365,27 +396,7 @@ the prefix spends part of wa-sqlite's 56-character path budget.
 
 - A **refused client still appears in `inspectDatabase().clients`** until it is closed —
   `AccessHandlePoolVFS` behaved that way before the branch too.
-- **`OPFSWriteAheadVFS`'s auto-checkpoint delays every interrupt, and the consumer pays for it.**
-  Cause established 2026-09-22 (AUTOCHECKPOINT-LATENCY, `mem:measurements`): `WriteAhead.js`
-  checkpoints after EVERY transaction (`autoCheckpoint: 1`), that work runs after the commit and
-  occupies the worker, and an interrupt aimed at the next statement waits for it. Aborting a
-  statement on this VFS gives back a third of its time against 97 % elsewhere — measured, not
-  inferred: `PRAGMA wal_autocheckpoint=0` takes the pair from 0.67 to 0.030 with `natural`
-  unchanged.
-
-  **`autoCheckpoint` is a boolean wearing a number, and that removes the obvious middle option.**
-  `#autoCheckpoint()` tests `> 0` and nothing else, so 1, 100 and 1000 all mean "checkpoint after
-  every transaction". A threshold — SQLite's own `wal_autocheckpoint` is 1000 PAGES and means one —
-  does not exist here and would be an upstream change. No other VFS in this set has a write-ahead
-  stage at all, so there is no comparison value: `checkpoint` appears only in `WriteAhead.js` and
-  `OPFSWriteAheadVFS.js`.
-
-  **Nothing is decided. Two shapes, not three:** expose the knob and say what it costs in `VFS.md`,
-  which is honest and free; or ask upstream for a real threshold, which is the only way to trade
-  interrupt latency against write-ahead growth. Turning it off wholesale is not an option — the
-  write-ahead files then grow without bound and every read pays for the overlay. It is a
-  recommended VFS, so leaving it undocumented is not one either. `tx-savepoint`'s 0.9 bound exists
-  because of this and can tighten once it is addressed.
+- **`OPFSWriteAheadVFS`'s auto-checkpoint delays every interrupt** — grew out of this list; see "wa-sqlite's `autoCheckpoint` never reads the value it is given" above.
 - **`handleDeath`'s guard for a slot-0 loss before the probe has no test** — no path was found that reaches
   it with the probe unanswered; it is defensive (`a0373c0`).
 - **Three tests of `multi-client.test.ts` carry no falsifier** (their claims were run and refuted): "never
