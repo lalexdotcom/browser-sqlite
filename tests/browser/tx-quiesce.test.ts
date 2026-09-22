@@ -21,11 +21,11 @@ const SEED =
  * fires `iterator.return()` WITHOUT awaiting it. `deferredChunk` in pool.ts
  * therefore clears only when a message comes back from the worker — a task —
  * while the next statement in the same callback is a microtask away, and meets
- * the reuse guard with `GENERATOR_ABANDONED`.
+ * the reuse guard with `WORKER_BUSY`.
  *
  * Falsifiable for all three: remove the `await worker.quiesce()` that
  * src/transaction.ts owes each statement. Every test below then fails with
- * `GENERATOR_ABANDONED` on its SECOND statement. No CPU load and no flake
+ * `WORKER_BUSY` on its SECOND statement. No CPU load and no flake
  * budget: the worker's reply needs a task and the next statement does not, so
  * the trip is deterministic rather than a race.
  */
@@ -126,15 +126,20 @@ describe('a statement following a short-circuited statement in the same callback
 
 describe('the boundary of that wait', () => {
   /**
-   * The limit A cannot lift, pinned so the documentation stays true. A
-   * generator that is `break`-ed out of, `return()`-ed or exhausted runs its
-   * `finally`, and that is where the wait lives. One simply DROPPED runs
-   * nothing at all — it stays suspended at its `yield`, holding the query —
-   * so the next statement in the same callback still meets the reuse guard.
-   * Nothing signals a drop, which is why the FinalizationRegistry exists and
-   * why it is documented as best effort.
+   * The limit A cannot lift, pinned so the documentation stays true — and
+   * RESHAPED on 2026-09-21, when statements began to queue instead of being
+   * refused. A generator that is `break`-ed out of, `return()`-ed or exhausted
+   * runs its `finally`. One simply DROPPED runs nothing at all: it stays
+   * suspended at its `yield` holding the query, so the worker is never freed
+   * and the next statement WAITS rather than failing at once.
+   *
+   * That wait is indistinguishable from a slow consumer, so the library does
+   * not end it — the caller's own bound does. Here that bound is the
+   * statement's `timeout`; a transaction `timeout` or `signal`, or `close()`,
+   * would serve as well. Nothing signals a drop, which is why the
+   * FinalizationRegistry exists and why it is documented as best effort.
    */
-  it('does not cover a generator the callback merely drops', async () => {
+  it('makes a statement after a dropped generator wait for its own bound', async () => {
     const db = await createTestClient(TWO_WORKERS);
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
@@ -148,27 +153,26 @@ describe('the boundary of that wait', () => {
         await rows.next();
         // Dropped, not closed: no `break`, no `return()`, no exhaustion.
         try {
-          await tx.read('SELECT count(*) AS c FROM t');
+          await tx.read('SELECT count(*) AS c FROM t', [], { timeout: 500 });
         } catch (error) {
           code = (error as { code?: string }).code;
         }
       });
 
-      expect(code).toBe('GENERATOR_ABANDONED');
+      expect(code).toBe('OPERATION_TIMEOUT');
     } finally {
       await db.close();
     }
   }, 30_000);
   /**
-   * The same boundary reached through a generator rather than a promise, and
-   * the reason `releasing`'s finally carries the same guard as `settled`: a
-   * chunk() refused by the reuse guard must reject at once. Waiting for a
-   * worker it never claimed would park this rejection behind the dropped
-   * generator, which only closeOpenStatements() will close — at the end of
-   * this callback, where the rejection was going. The two would deadlock, and
-   * the transaction would hang instead of failing.
+   * The same boundary reached through a generator rather than a promise. It
+   * queues like any other statement, so its own bound is what ends the wait —
+   * the deadlock the earlier version of this comment feared is real, and it is
+   * why a bound is the consumer's to set: only closeOpenStatements() would
+   * close the dropped generator, and that runs at the end of a callback which
+   * is itself waiting.
    */
-  it('rejects a tx.chunk() refused by the guard instead of hanging', async () => {
+  it('bounds a tx.chunk() queued behind a dropped generator', async () => {
     const db = await createTestClient(TWO_WORKERS);
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
@@ -181,21 +185,23 @@ describe('the boundary of that wait', () => {
         });
         await dropped.next();
         try {
-          await tx.chunk<{ n: number }>('SELECT n FROM t').next();
+          await tx
+            .chunk<{ n: number }>('SELECT n FROM t', [], { timeout: 500 })
+            .next();
         } catch (error) {
           code = (error as { code?: string }).code;
         }
       });
 
-      expect(code).toBe('GENERATOR_ABANDONED');
+      expect(code).toBe('OPERATION_TIMEOUT');
     } finally {
       await db.close();
     }
   }, 30_000);
   /**
-   * Characterization, not a repair: this passes on arrival and guards the
-   * SHAPE of the remaining failure. A drop that nobody catches must stay a
-   * clean failure — the transaction rejects with the guard's own code, the
+   * Characterization, not a repair: it guards the SHAPE of the remaining
+   * failure. A drop that nobody catches must stay a clean failure — the
+   * transaction rejects with the bound the caller set, the
    * dropped generator is closed by closeOpenStatements() before the ROLLBACK
    * so the rollback does not trip in turn, no worker is evicted, and the
    * client still serves. Turning that into an eviction or a hang is the
@@ -218,13 +224,13 @@ describe('the boundary of that wait', () => {
             chunkSize: 10,
           });
           await dropped.next();
-          await tx.read('SELECT count(*) AS c FROM t');
+          await tx.read('SELECT count(*) AS c FROM t', [], { timeout: 500 });
         });
       } catch (error) {
         code = (error as { code?: string }).code;
       }
 
-      expect(code).toBe('GENERATOR_ABANDONED');
+      expect(code).toBe('OPERATION_TIMEOUT');
       expect(records.some((record) => record.terminated)).toBe(false);
       expect(records.length).toBe(2);
 

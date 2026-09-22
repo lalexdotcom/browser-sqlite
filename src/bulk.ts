@@ -102,8 +102,20 @@ export const createBulk = (shared: {
     read: ReadFn;
     write: WriteFn;
     transaction: TransactionFn;
+    /**
+     * Takes this batch's place in the caller's statement queue, SYNCHRONOUSLY,
+     * at the moment `flush()` commits to it — from `close()` or from the
+     * `enqueue()` that filled the buffer. `started` is what was issued before
+     * it; `done()` gives the place back.
+     *
+     * Supplied by a transaction, where every statement shares one connection.
+     * The client path supplies none: there each statement takes its own lease.
+     * Without it the batch posts a microtask after `flush()` returns, so a
+     * statement issued AFTER it runs first — a stale read rather than an error.
+     */
+    reserve?: () => { started: Promise<void>; done: () => void };
   }) => {
-    const { read, write, transaction } = target;
+    const { read, write, transaction, reserve } = target;
 
     // bulkWrite, sweepOnce, indexStatements and output move in here VERBATIM.
     // Not one character of their bodies changes: they already read `read`,
@@ -185,6 +197,9 @@ export const createBulk = (shared: {
         const toInsert = [...buffer];
         buffer.length = 0;
         queuedRows += toInsert.length;
+        // Synchronous with the decision to write this batch — that is the whole
+        // point. Anything issued after this call queues behind the batch.
+        const slot = reserve?.();
         // The chain never rejects: a rejection here is what used to skip every
         // later `.then()` and drop already-spliced rows without a word (B5).
         const runBatch = async (currentAffected: number) => {
@@ -234,11 +249,16 @@ export const createBulk = (shared: {
         };
         writePromise = writePromise.then(async (currentAffected) => {
           try {
+            // Whatever was issued before this batch. Awaited here rather than
+            // inside runBatch so every path — including the ones that skip the
+            // write — keeps the order and releases the slot below.
+            if (slot) await slot.started;
             return await runBatch(currentAffected);
           } finally {
             // Every exit passes here — success, latched failure, and the batch
             // an abort skipped. One missed decrement and enqueue() never
             // resolves again.
+            slot?.done();
             queuedRows -= toInsert.length;
             if (queuedRows < queueSize) releaseRoom();
           }

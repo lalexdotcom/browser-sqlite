@@ -44,6 +44,38 @@ survived all three, because closing it meant contradicting its NAME. **The tell 
 every factual claim has been replaced while its title has not.** When that happens the question is
 not "what else could cause this?" but "is this the same defect at all?". Closed 2026-09-21.
 
+**A test that really waits seconds is a load generator, and its neighbours may be measuring time.**
+A browser test waiting seven seconds — it had to outlast a five-second advisory — reddened
+`tx-savepoint`'s T4 on `chromium · OPFSWriteAheadVFS/jspi`, which measures INTERRUPT LATENCY against
+a bound calibrated on an idle machine. Measured: 2 failures in 4 runs with it present, 0 in 5 with
+it skipped, 5 of 5 green once it moved. **A matrix cell is one browser running one project's files;
+a slow test does not wait politely in its own corner.** The fix is to remove the load, not to widen
+the neighbour's bound — a timer-driven behaviour belongs in the unit project on fake timers, where
+it costs nothing and asserts the same thing. `rstest.useFakeTimers()` and
+`advanceTimersByTimeAsync()` exist and were unused here until 2026-09-22.
+
+**Check what has SHIPPED before calling a change breaking.** `GENERATOR_ABANDONED` was filed for
+rc.6 as a public-surface rename, twice, on the reasoning that a published error code cannot move.
+It had never been published: it was added after rc.4, in the still-open section of `CHANGELOG.md`,
+and `package.json` has sat at `1.0.0-rc.4` throughout. The user corrected it in five words. **The
+repository states this plainly and it is one command away** — everything since rc.4 is unreleased,
+so "breaking" applies to rc.4's surface and to nothing added since.
+
+**A concurrency library needs `Promise.all` in its tests, or its core contract is untested.** On
+2026-09-21 this repo had `Promise.all` in 17 of 50 browser test files and in NONE of the eight
+transaction ones. Every transaction test awaited each statement in turn — which is the one shape
+that cannot expose a serialisation defect. Two reads created in the same tick lost the whole
+transaction, and a `bulkWrite` batch posted after a read issued later, so the read returned stale
+rows. Both had shipped through rc.4 and every rc.5 lot. **The tell is a suite whose every call is
+awaited immediately**: it tests the library's sequential behaviour and calls it coverage.
+
+**On a queue, test the ABORT axis separately from the ORDER axis — they fail differently.** The
+ordering tests for that queue were all green while a real defect sat underneath: a statement
+aborted by its own signal WHILE WAITING released its place at once, although it had never waited
+for that place, so the statement behind it started while the head was still in flight. Only a test
+that aborted a QUEUED statement found it. The rule the fix encodes is worth carrying to any queue:
+**a place left early is handed on, not cancelled.**
+
 **Your own instrumentation can be the artefact — prove the defect without it.** Chasing the
 `IDBMirrorVFS` corruption, a probe showed `block.set(pData, 0)` leaving the destination at zero
 with a valid source, which is impossible for a `Uint8Array`. The right move was the control that

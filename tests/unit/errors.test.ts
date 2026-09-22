@@ -111,10 +111,10 @@ describe('SQLiteError — timeout', () => {
   });
 });
 
-describe('GENERATOR_ABANDONED', () => {
+describe('WORKER_BUSY', () => {
   it('is a public error code', () => {
-    const error = new SQLiteError('GENERATOR_ABANDONED', 'test');
-    expect(error.code).toBe('GENERATOR_ABANDONED');
-    expect(error.name).toBe('GENERATOR_ABANDONED');
+    const error = new SQLiteError('WORKER_BUSY', 'test');
+    expect(error.code).toBe('WORKER_BUSY');
+    expect(error.name).toBe('WORKER_BUSY');
   });
 });

@@ -94,6 +94,8 @@ export const createTransaction =
       read: ReadFn;
       write: WriteFn;
       transaction: TransactionFn;
+      /** See `src/bulk.ts`: the batch's place in this transaction's queue. */
+      reserve?: () => { started: Promise<void>; done: () => void };
     }) => {
       bulkWrite: SQLiteQueryAPI['bulkWrite'];
       output: SQLiteQueryAPI['output'];
@@ -207,6 +209,36 @@ export const createTransaction =
        */
       let abandoned: Promise<void> | undefined;
 
+      /**
+       * The tail of this transaction's statement queue.
+       *
+       * Its statements share one connection with no scheduler lease between
+       * them, so they must run one at a time. Issued sequentially they already
+       * did — each one awaits `quiesce()` before it settles. Issued in the SAME
+       * TICK they did not: both read the worker as free and the second met
+       * `pool.ts`'s reuse guard, which lost the whole transaction to
+       * `WORKER_BUSY` for what is baseline usage (`Promise.all` over
+       * two reads).
+       *
+       * Each statement captures this SYNCHRONOUSLY and replaces it before its
+       * first `await`. That is what makes the order the ISSUE order rather than
+       * the resumption order: capturing after a wait would let concurrent
+       * statements read the same tail and start together, which is the defect
+       * moved rather than fixed.
+       *
+       * Never rejects — a statement's failure belongs to its caller, not to the
+       * queue behind it.
+       *
+       * **`undefined` when no statement is in flight, and that is load-bearing,
+       * not tidiness.** The uncontended path must post SYNCHRONOUSLY, as it
+       * always has — the same invariant `entryWait` is careful about. Awaiting
+       * an already-resolved tail still costs a microtask, and a statement whose
+       * own signal aborts in that window never reaches the worker: it broke
+       * spec R7 (`tests/unit/transaction.test.ts`, "does not die when a read is
+       * abandoned by its own signal"), where the read must run on and be judged.
+       */
+      let tail: Promise<void> | undefined;
+
       // The SQL ends, for the transaction's own use. BEGIN, COMMIT and
       // ROLLBACK carry no signal, so a death can land while one is in flight.
       const commitNow = async () => {
@@ -271,9 +303,10 @@ export const createTransaction =
        * the cause. Call it only when `abandoned` is set, so that the common
        * path posts synchronously, as it always has.
        */
-      const entryWait = async (waiting: AbortSignal | undefined) => {
-        const current = abandoned;
-        if (!current) return;
+      const waitFor = async (
+        current: Promise<void>,
+        waiting: AbortSignal | undefined,
+      ) => {
         // B9: addEventListener never fires for a signal already aborted.
         waiting?.throwIfAborted();
         const { aborted, teardown } = makeAbortRace(waiting);
@@ -283,6 +316,44 @@ export const createTransaction =
           teardown();
         }
         if (ending) throw closedError(ending);
+      };
+
+      const entryWait = async (waiting: AbortSignal | undefined) => {
+        const current = abandoned;
+        if (!current) return;
+        await waitFor(current, waiting);
+      };
+
+      /**
+       * Waiting one's turn in the statement queue, with a diagnosis attached.
+       *
+       * A wait that does not end has exactly one consumer-side cause — a
+       * `chunk()`/`stream()` left open, which no statement after it can get
+       * past — and that cause is indistinguishable from a consumer whose loop
+       * body is merely slow: both leave the worker holding a query with nobody
+       * pulling. So this WARNS rather than decides. An advisory may be wrong
+       * about a slow consumer and cost nothing; an error may not, and refusing
+       * the statement is what this whole change exists to stop doing.
+       */
+      const QUEUE_WARN_MS = 5_000;
+      const queueWait = async (
+        prior: Promise<void>,
+        waiting: AbortSignal | undefined,
+      ) => {
+        const advisory = setTimeout(() => {
+          deps.logger.always.warn(
+            'A statement has waited several seconds for its turn on this ' +
+              "transaction's connection. Statements in a transaction share one " +
+              'connection and run one at a time, in issue order. A wait that ' +
+              'never ends is usually a chunk() or stream() generator left open ' +
+              '— exhaust it, break out of it, or call its return().',
+          );
+        }, QUEUE_WARN_MS);
+        try {
+          await waitFor(prior, waiting);
+        } finally {
+          clearTimeout(advisory);
+        }
       };
 
       /**
@@ -381,7 +452,7 @@ export const createTransaction =
        * `iterator.return()` WITHOUT awaiting it, deliberately, because the
        * client path has a lease to do the waiting and no reason to block. Here
        * nobody does, so the next statement in the same callback meets the reuse
-       * guard a microtask later and throws `GENERATOR_ABANDONED`.
+       * guard a microtask later and throws `WORKER_BUSY`.
        *
        * **It costs nothing when there is nothing to wait for.** `quiesce()` is
        * `idle?.promise ?? Promise.resolve()`, and on a query that ended by
@@ -414,6 +485,13 @@ export const createTransaction =
         given: O | undefined,
         method: string,
         sql: string,
+        /**
+         * `false` for a statement that ALREADY holds a place in the queue — the
+         * batches of a `bulkWrite`, which reserve theirs synchronously in
+         * `flush()` (`src/bulk.ts`). Without this they would wait for the slot
+         * they are themselves holding.
+         */
+        queued = true,
       ): {
         options: O;
         driving: O;
@@ -446,12 +524,18 @@ export const createTransaction =
         const settled = async <R>(
           start: (target: PoolWorker, options: O) => Promise<R>,
         ): Promise<R> => {
+          // Captured and replaced BEFORE the first await, so the queue keeps
+          // the issue order even when statements are created in one tick.
+          const prior = queued ? tail : undefined;
+          const mine = Promise.withResolvers<void>();
+          if (queued) tail = mine.promise;
           let failed = false;
           let error: unknown;
           // Set when the caller was rejected by its own signal while the write
           // ran on: from then on the wait belongs to `abandoned`.
           let left = false;
           try {
+            if (prior) await queueWait(prior, options.signal);
             if (abandoned) await entryWait(options.signal);
             if (!savepointed) return await start(via(false, mark), options);
             // Its own signal may have fired during the wait: then it never
@@ -482,9 +566,27 @@ export const createTransaction =
             throw e;
           } finally {
             release();
-            if (mark.posted && !left) {
-              await worker.quiesce();
-              dieIfConnectionLeft(failed, error, method);
+            try {
+              if (mark.posted && !left) {
+                await worker.quiesce();
+                dieIfConnectionLeft(failed, error, method);
+              }
+            } finally {
+              // After quiesce, never before: the next statement in the queue
+              // must find the worker genuinely idle. And in a `finally` of its
+              // own, because `dieIfConnectionLeft` throws — a death must not
+              // strand every statement queued behind it.
+              //
+              // **Resolved WITH `prior`, not empty.** A statement that leaves
+              // the queue early — aborted by its own signal while it was still
+              // waiting its turn — never waited for its own place, so handing
+              // an empty resolution on would let the next statement start while
+              // the one at the head was still in flight. It met the reuse guard
+              // there, which is the defect this queue exists to remove
+              // (`tx-concurrent.test.ts`, "rejects a statement aborted while it
+              // waits its turn"). A place left early is passed on, not cancelled.
+              if (tail === mine.promise) tail = undefined;
+              mine.resolve(prior);
             }
           }
         };
@@ -536,15 +638,63 @@ export const createTransaction =
             st.release();
             throw closedError(ending);
           }
+          // The queue, joined at the FIRST next() rather than at creation:
+          // this body does not run until the consumer pulls, and a generator
+          // created but never pulled holds no worker — making it hold the queue
+          // would deadlock every statement behind it. In a `Promise.all` the
+          // `for await` pulls before the next statement is issued, so the issue
+          // order still holds.
+          const prior = tail;
+          const mine = Promise.withResolvers<void>();
+          tail = mine.promise;
           let failed = false;
           let error: unknown;
           // As in `settled`: set when the consumer was rejected by the
           // statement's own signal while the write ran on.
           let left = false;
           try {
+            if (prior) await queueWait(prior, st.options.signal);
             if (abandoned) await entryWait(st.options.signal);
+
+            // **The queue waits on the WORKER, not on this object.** A consumer
+            // that stops pulling a query which has already reached `done`
+            // leaves this body suspended at its `yield` for ever, so the
+            // `finally` below never runs — while pool.ts has long since cleared
+            // `deferredChunk` and the worker is free. Blocking the queue on
+            // that is wrong, and `abandon.test.ts` ("does not truncate the query
+            // the worker has moved on to") says so.
+            //
+            // So the release is `free()` — the pool's own "the guard would let
+            // the next one through", resolved where `deferredChunk` is cleared.
+            // NOT `quiesce()`, which waits for the transport's finally and so
+            // never fires for a parked consumer. Armed at the FIRST value,
+            // strictly after the query has posted, which makes it deterministic
+            // rather than a bet on when a task runs. A generator abandoned
+            // mid-stream never frees the worker, and that is the case the queue
+            // is meant to hold.
+            const releaseQueue = () => {
+              if (tail === mine.promise) tail = undefined;
+              mine.resolve(prior);
+            };
+            let watching = false;
+            const watchIdle = () => {
+              if (watching) return;
+              watching = true;
+              void worker.free().then(releaseQueue, releaseQueue);
+            };
+
             if (!st.savepointed) {
-              yield* source;
+              try {
+                for await (const value of source) {
+                  watchIdle();
+                  yield value;
+                }
+              } finally {
+                // `yield*` forwarded the consumer's `return()` to the source on
+                // its own; the explicit loop owes it by hand, exactly as the
+                // savepointed branch below already does.
+                await source.return(undefined);
+              }
               return;
             }
             st.own?.throwIfAborted();
@@ -555,6 +705,7 @@ export const createTransaction =
                   ? await Promise.race([source.next(), aborted])
                   : await source.next();
                 if (next.done) return;
+                watchIdle();
                 yield next.value;
               }
             } catch (e) {
@@ -590,9 +741,14 @@ export const createTransaction =
             // because `yield*` forwards `return()` to the source and awaits it.
             // Not owed by an abandoned write either: drainToEnd now owns its
             // wait, and judging it is abandon()'s job, not this finally's.
-            if (st.mark.posted && !left) {
-              await worker.quiesce();
-              dieIfConnectionLeft(failed, error, method);
+            try {
+              if (st.mark.posted && !left) {
+                await worker.quiesce();
+                dieIfConnectionLeft(failed, error, method);
+              }
+            } finally {
+              if (tail === mine.promise) tail = undefined;
+              mine.resolve(prior);
             }
           }
         })();
@@ -691,10 +847,34 @@ export const createTransaction =
             write: (sql, params, given) => {
               if (ending) return Promise.reject(closedError(ending));
               const query = checksql(sql);
-              const { settled } = withSignal(given, 'write', query);
+              // Not queued: `flush()` took the slot synchronously, the moment
+              // the batch was committed to. Asking for a second one here would
+              // wait for the first.
+              const { settled } = withSignal(given, 'write', query, false);
               return settled((target, options) =>
                 writeWorker(target, query, params, options),
               );
+            },
+            /**
+             * A batch takes its place in the queue the instant `flush()` is
+             * called — synchronously, from `close()` or from the `enqueue()`
+             * that filled the buffer — and holds it until the batch has been
+             * written. Without it the batch posts a microtask later and a
+             * statement issued after it runs FIRST, which is not an error but a
+             * stale read: `tests/browser/tx-concurrent.test.ts` caught a count
+             * of 2 where the rows were 4.
+             */
+            reserve: () => {
+              const prior = tail;
+              const mine = Promise.withResolvers<void>();
+              tail = mine.promise;
+              return {
+                started: prior ?? Promise.resolve(),
+                done: () => {
+                  if (tail === mine.promise) tail = undefined;
+                  mine.resolve(prior);
+                },
+              };
             },
             // The caller's transaction is already open. No BEGIN, no COMMIT.
             // db is referenced before its const declaration, deliberately: this arrow
@@ -818,8 +998,20 @@ export const createTransaction =
             if (ending.kind === 'committed') return;
             throw closedError(ending);
           }
-          if (abandoned) await entryWait(signal);
-          await commitNow();
+          // COMMIT is a statement on the same worker, so it takes its place in
+          // the queue like any other: an explicit commit() created alongside
+          // the write it concludes must follow it, not race it.
+          const prior = tail;
+          const mine = Promise.withResolvers<void>();
+          tail = mine.promise;
+          try {
+            if (prior) await queueWait(prior, signal);
+            if (abandoned) await entryWait(signal);
+            await commitNow();
+          } finally {
+            if (tail === mine.promise) tail = undefined;
+            mine.resolve(prior);
+          }
         },
 
         rollback: async () => {
@@ -830,8 +1022,17 @@ export const createTransaction =
               );
             return;
           }
-          if (abandoned) await entryWait(signal);
-          await rollbackNow();
+          const prior = tail;
+          const mine = Promise.withResolvers<void>();
+          tail = mine.promise;
+          try {
+            if (prior) await queueWait(prior, signal);
+            if (abandoned) await entryWait(signal);
+            await rollbackNow();
+          } finally {
+            if (tail === mine.promise) tail = undefined;
+            mine.resolve(prior);
+          }
         },
         // The merged signal itself (spec §4): it aborts on every cause of death with the cause as
         // reason, and the outer finally only detaches it, so a normal end leaves it un-aborted for good.

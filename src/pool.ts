@@ -91,6 +91,12 @@ export type PoolWorker = Worker & {
   interrupt: (on: object) => void;
   /** Resolves when no query is in flight on this worker. */
   quiesce: () => Promise<void>;
+  /**
+   * Resolves when this worker will accept another query — at `done`, which is
+   * earlier than `quiesce()`. Use it to wait for the WORKER; use `quiesce()`
+   * to wait for a statement to have been fully settled and judged.
+   */
+  free: () => Promise<void>;
   /** Posts `close`, awaits the `closed` reply, then the caller must terminate. */
   close: () => Promise<void>;
   /**
@@ -379,6 +385,25 @@ export const createPoolWorker = (deps: {
   // Resolved while a query is in flight; `quiesce()` is how a lease learns the
   // worker is genuinely idle again.
   let idle: PromiseWithResolvers<void> | undefined;
+
+  /**
+   * Resolved when this worker will accept another query — which is EARLIER
+   * than `idle`, and the gap is the whole reason this exists.
+   *
+   * The reuse guard reads `deferredChunk`, cleared by the message handler the
+   * moment `done` arrives. `idle` is resolved by the transport's own `finally`,
+   * which runs only once the consumer pulls past the last value — so a
+   * generator whose query has finished but whose consumer has walked away
+   * leaves `deferredChunk` clear and `idle` pending, for ever. A caller that
+   * waits for `quiesce()` there waits for nothing, while the worker is free
+   * (`tests/browser/abandon.test.ts`, "does not truncate the query the worker
+   * has moved on to").
+   *
+   * Resolved at both points, idempotently: where `deferredChunk` is cleared,
+   * and alongside `idle` for the paths — an error, a death — that never reach
+   * a `done`.
+   */
+  let freed: PromiseWithResolvers<void> | undefined;
   let stopRequested: PromiseWithResolvers<typeof STOP> | undefined;
 
   let dead = false;
@@ -557,6 +582,9 @@ export const createPoolWorker = (deps: {
           inbox.push(affected);
           deferredChunk.resolve(affected);
           deferredChunk = undefined;
+          // The guard's own condition has just gone: announce it here rather
+          // than at `idle`, which a parked consumer may never reach.
+          freed?.resolve();
           if (!suppressServed) deps.onServed?.(index);
           suppressServed = false;
         }
@@ -631,21 +659,26 @@ export const createPoolWorker = (deps: {
   ): AsyncGenerator<T[] | number> {
     try {
       if (deferredChunk) {
-        // Structural: this fires on "a query is already in flight on this
-        // worker", not on a diagnosis — so the message leads with that and
-        // names the generator only as the likely cause. An earlier draft
-        // asserted the abandoned generator outright, and it was wrong: two
-        // overlapping `tx.read()`s reach here with no generator anywhere, and
-        // so does a `tx.bulkWrite` batch still in flight
-        // (tests/browser/multi-client.test.ts). The CODE stays as it is —
-        // renaming a public error code is a separate decision.
+        // **A backstop, not a diagnosis for the caller.** It fires on "a query
+        // is already in flight on this worker" — nothing narrower. It was
+        // called GENERATOR_ABANDONED until 2026-09-22 and told the consumer to
+        // close a generator, which was wrong twice over: two overlapping
+        // `tx.read()`s reach here with no generator anywhere, and so does a
+        // `tx.bulkWrite` batch still in flight
+        // (tests/browser/multi-client.test.ts).
+        //
+        // Since the transaction serialises its statements, no consumer can
+        // reach this any more: a client statement holds its lease until the
+        // worker is idle, and a transaction queues. So the message names the
+        // invariant rather than instructing anyone — if this is seen, the
+        // serialisation is broken and the bug is ours.
         throw new SQLiteError(
-          'GENERATOR_ABANDONED',
-          `Worker ${index + 1} already has a query in flight; statements on ` +
-            'one worker must not overlap, and inside a transaction they all ' +
-            'run on the same worker. The usual cause is a chunk()/stream() ' +
-            'generator left open — exhaust it, break out of it, or call its ' +
-            'return().',
+          'WORKER_BUSY',
+          `Worker ${index + 1} already has a query in flight. One worker ` +
+            'serves one query at a time; a client statement holds its lease ' +
+            'until the worker is idle and a transaction queues its ' +
+            'statements, so reaching this means that serialisation was ' +
+            'broken. Please report it.',
         );
       }
 
@@ -680,6 +713,7 @@ export const createPoolWorker = (deps: {
         failure ??= error;
       });
       idle = Promise.withResolvers<void>();
+      freed = Promise.withResolvers<void>();
       stopRequested = Promise.withResolvers<typeof STOP>();
 
       // Send query to worker with options
@@ -808,6 +842,10 @@ export const createPoolWorker = (deps: {
         worker.status = dead ? 'DEAD' : 'READY';
         idle?.resolve();
         idle = undefined;
+        // Idempotent: `done` usually got there first. This covers the paths
+        // that never reach one — an error, a death, a stop.
+        freed?.resolve();
+        freed = undefined;
         servingQuery = undefined;
       }
     }
@@ -874,6 +912,7 @@ export const createPoolWorker = (deps: {
         Atomics.store(new Int32Array(abortSlots), index, currentCallId);
     },
     quiesce: () => idle?.promise ?? Promise.resolve(),
+    free: () => freed?.promise ?? Promise.resolve(),
     close: async () => {
       // A dead worker will never reply 'closed' — posting to it would just
       // wait out deferredClose with nobody left to resolve it. `poison`
