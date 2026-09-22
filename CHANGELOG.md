@@ -2,7 +2,11 @@
 
 All notable changes to this project are documented here.
 
-## Unreleased
+## 1.0.0-rc.5 — 2026-09-22
+
+Everything below lands between rc.4 (2026-08-31) and rc.5. Reliability was this
+release's whole job: the concurrency defects here were found by going looking
+for them, not by reports.
 
 ### Breaking
 
