@@ -347,6 +347,17 @@ defect, and the scenario a defect is found through is often not the one that dem
 
 **Not carried in `patches/`** — deliberately: it fixes no failure, it makes one legible. Carrying it would put `NoModificationAllowedError` into our open failures' `detail`; that is the user's call and it is not taken.
 
+## The statement queue's console advisory has no test (2026-09-22)
+
+`queueWait` in `src/transaction.ts` warns after `QUEUE_WARN_MS` (5 000) that a statement has been
+waiting its turn, naming an open generator as the usual cause. **Nothing asserts that it fires, and
+nothing asserts that it does NOT fire on an ordinary wait** — the second is the one that matters,
+since a false advisory on every slow-but-healthy transaction would be worse than no advisory at all.
+`captureWarnings()` in `tests/browser/helpers.ts` is what the other warning tests use.
+
+The threshold itself is a number I chose, not one anyone measured: five seconds is long enough that
+no test waits for it, which is also why no test caught its absence.
+
 ## Mixing VFS of the `opfs-path` family on one database (2026-09-15)
 
 Measured while the second-client guard was built: on Chromium an `OPFSAdaptiveVFS` client beside a LIVE
@@ -417,7 +428,7 @@ with `TypeError: undefined is not an object (evaluating
 Playwright's Linux WebKit was set aside earlier for limits of this kind (user). Unmeasured whether
 a consumer environment lacks it; an insecure context is the candidate. Pre-existing, not scheduled.
 
-## A timed-out read on Firefox can leave the next query meeting `GENERATOR_ABANDONED`, under load (2026-09-14)
+## A timed-out read on Firefox can leave the next query meeting the reuse guard, under load (2026-09-14)
 
 `query-timeout.test.ts :: rejects with OPERATION_TIMEOUT and leaves the client usable` failed once
 in a pre-push `pnpm test` on a loaded machine, with "Worker 1 already has a query in flight".
@@ -439,9 +450,11 @@ lesson was that the reproducing context can be the full chain. The next arm is t
 config under load; nobody has run it. Reliability by the triage rule, still not scheduled — and now
 with one measured arm against it rather than nothing.
 
-Carry this whichever way it goes: **`GENERATOR_ABANDONED` is wider than its name.** Two overlapping
-`tx.read()`s reach the same guard with no generator anywhere, and so does an in-flight `bulkWrite`
-batch (`src/pool.ts`, and the comment there says so).
+**The sighting was at the CLIENT level, so the transaction queue does not close this** — that queue
+serialises a transaction's statements, while this was `db.read` through the scheduler. The guard it
+named was renamed `WORKER_BUSY` on 2026-09-22, and with the transaction serialised it now means one
+thing only: the scheduler handed a lease for a worker that was not idle. If this ever reproduces,
+that is the sentence to test.
 
 ## The pre-commit hook — three hooks since 2026-09-11 (user)
 
