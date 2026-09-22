@@ -24,46 +24,39 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-21 after the wa-sqlite repin
+## The verification baseline — compare against these, re-measured 2026-09-22 on merged `main`
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a run
-in this container on 2026-09-21, on `main` with wa-sqlite repinned to upstream `93b9230`** — none is
-carried forward, none is arithmetic. The whole table was read in ONE pass, which is what its own
-rule demands, and that pass is what caught the previous version contradicting itself: its prose said
-`pnpm test` 1181 / 676 / 14 while its own table row still said 1175 / 670. A cell had been patched
-and the table had not been re-read.
+in this container on 2026-09-22, on `main` with `fix/transaction-statement-queue` merged** — none is
+carried forward, none is arithmetic, and the whole table was read in ONE pass, which is what its own
+rule demands.
 
 | command | result |
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` on each: **1181 tests / 77 files** (unit + the two chromium target projects, **8 skipped**), **676 / 51** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects, none skipped) |
-| `pnpm exec rstest --project unit run` | 507 tests, 27 files |
+| `pnpm test` | **THREE reports**, `status: pass` on each: **1218 tests / 77 files** (unit + the two chromium target projects, **8 skipped**), **712 / 51** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects, none skipped) |
+| `pnpm exec rstest --project unit run` | **508** tests, 27 files |
 | `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are now `chromium · <vfs>/<build>` and rstest's filter is anchored |
 | `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each: **Chromium 71 passed / 14 skipped, Firefox 67 / 18** — they differ by design since 2026-09-14 |
 | `pnpm exec biome ci .` | exit 0 |
 | `pnpm docs:vfs` | leaves `VFS.md` unchanged (`git diff --exit-code`) |
 | `pnpm test:consumer` | 24/24 stages |
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | `OK`, `"reasons": {}`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 137 files, 13 warnings, 1 info — **136 until the repin pass**; the file count moves with the tree, the warning count is the signal |
+| `pnpm lint` | 139 files, 13 warnings, 1 info — the file count moves with the tree, **the warning count is the signal** |
 | `dependencies` in `package.json` | absent |
-| `pnpm test:matrix` | **66 of 66 cells green, 0 failing tests, 2486 s** on this pin. ~40 min. Its per-cell detail is `mem:measurements`, MATRIX-5 and after |
+| `pnpm test:matrix` | **66 of 66 cells green, 0 failing tests, 2514 s**. ~45 min. Per-cell detail in `mem:measurements` |
 
-Against the morning's table on the previous pin — the same `pnpm test` 1181 / 676 / 14, the same
-conformance, matrix 66 of 66 in 2650 s — **nothing moved but the matrix's wall clock**, which is not
-a regression signal. That is the whole point of having run it: wa-sqlite #330 and #355 changed a
-vendored dependency that is bundled into `dist/worker/worker.js`, so `build`, the consumer smoke and
-the bench checker were run for the same reason as the tests.
+Against the same table before the merge — `pnpm test` 1181 / 676 / 14, unit 507, lint 137 files —
+the browser configs gained **37 and 36** and the unit project **1**: the concurrency matrix the
+suite never had, 14 transaction tests and 9 client-level ones, plus the advisory's timer half on
+fake timers in the unit project. **The skip counts did not move, and that is the cell to watch** —
+a test that started skipping instead of running would vanish into a total without a trace.
 
-Against 2026-09-18's table — `pnpm test` 1173 / 674 / 14, matrix 65 of 66 with 1 failing test —
-chromium gained 8 and firefox 2, and conformance moved to 85 per engine. **Do not reconcile any of
-these by arithmetic; re-run.**
-
-A previous version of this table was measured on 2026-09-15 and went stale the next day: the branch
-stopped every test file from enumerating VFS, which took `pnpm test` from 1554/1038/14 to
-1173/668/14 and the unit project from 482 to 507. It sat wrong for a day beside a prose paragraph
-carrying the right numbers. **That is what "re-measure the whole table, do not patch one cell" is
-protecting against — and a table known to be wrong gets re-measured, not annotated.**
+**Do not reconcile any of these by arithmetic; re-run.** A previous version of this table was
+measured on 2026-09-15 and went stale the next day, and another contradicted itself in September
+2026 — its prose said 1181 / 676 / 14 while its own row still said 1175 / 670, because a cell had
+been patched and the table had not been re-read. **Re-measure the whole table when you touch it.**
 
 **`pnpm test` chains THREE configs** — chromium+unit, firefox, and the isolated project — so a
 green `pnpm test` covers what CI covers. Since 2026-09-11 a commit pays only the unit project; a merge or a push pays all three
@@ -212,73 +205,7 @@ ABANDON-WEDGE).
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
 the 2026-09-05 entry in `mem:follow-ups` called for.
 
-## In flight: `fix/transaction-statement-queue` — verified, merge not given (2026-09-22)
-
-**What it fixes, and the user's judgement is what put it in rc.5 rather than rc.6: two statements
-created in the same tick inside a `transaction()` lost the WHOLE transaction to
-`GENERATOR_ABANDONED`.** `await Promise.all([tx.read(…), tx.read(…)])` is baseline usage of a
-concurrency library; the error was named after a generator the consumer never opened. Statements
-now queue in ISSUE order — `read`/`write`/`first`, generators, `bulkWrite` batches, `commit` and
-`rollback`.
-
-**The silent one, and it is the reason this branch grew:** a `bulkWrite` batch posted a microtask
-after `flush()`, so a read issued AFTER it ran first and returned stale rows — a count of 2 where
-the table held 4. No error, wrong data.
-
-**Three implementation traps, each paid for and each recorded in the code:**
-- the uncontended path must post SYNCHRONOUSLY; awaiting an already-resolved tail costs a
-  microtask, and a statement whose own signal aborts in that window never reaches the worker
-  (spec R7, caught by the pre-commit hook);
-- a generator's slot cannot be released by its own `finally`, nor by `quiesce()` — both need a
-  consumer that keeps pulling. `pool.ts` now publishes `free()`, resolved where `deferredChunk` is
-  cleared, which is the guard's own condition;
-- **a queue place left early is HANDED ON, not cancelled.** A statement aborted while waiting had
-  never waited for its own place, so releasing it outright let the next one start while the head
-  was still in flight. Found only by the signal axis — the ordering tests were all green.
-
-**The contract change to state when reading `API.md`:** a `chunk()`/`stream()` the consumer stopped
-pulling still holds the connection, so statements after it now WAIT where they used to fail at
-once. Abandoned and slow are indistinguishable, so the library warns after five seconds and keeps
-waiting; the bound is the caller's (`timeout`, the transaction's, or `close()`). Three `tx-quiesce`
-tests pinned the old contract by name and were rewritten.
-
-**Verified whole four times on 2026-09-22; the closing pass:** `tsc` clean, `biome ci` exit 0,
-`pnpm docs:vfs` leaves `VFS.md` unchanged, `pnpm test` **1218 / 712 / 14** (skips 8 / 2 / 0 —
-unchanged throughout, which is the count to watch: a test that started skipping instead of running
-would not show in a total), unit **508**, conformance 85 and 85 (71/14 and 67/18), and a full
-`pnpm test:matrix` at **66 of 66 cells green, 0 failing tests, 2514 s**.
-
-**The third pass had one red, and it was mine — worth keeping because the mechanism generalises.**
-`tx-savepoint`'s T4 on `chromium · OPFSWriteAheadVFS/jspi` measures INTERRUPT LATENCY against a
-bound calibrated on an idle machine, and the advisory test I had just added waits seven seconds by
-construction. A matrix cell is one browser running one project's files, so it loaded the machine
-while T4 measured time: 0 failures in 3 for T4 alone, 2 in 4 for the whole cell with that test, 0
-in 5 with it skipped, 5 of 5 once it moved to the unit project on fake timers (`mem:lessons`).
-
-**The concurrency coverage this exposed is the other half of the branch.** Before it, `Promise.all`
-appeared in 17 of 50 browser test files and in NONE of the eight transaction files. There are now
-14 transaction tests (ordering, the signal axis, the `savepointed` branch) and 9 client-level ones
-covering all seven surfaces plus two `transaction()` calls in one tick and the abort axis — every
-client one green on arrival, since a lease is held until the worker is idle. **That asymmetry is
-the finding**: the client path was sound and the transaction path was not, because the transaction
-owns its worker directly with no lease between statements.
-
-**`GENERATOR_ABANDONED` was renamed `WORKER_BUSY` on the branch (user, 2026-09-22), and the reason
-matters more than the name: rc.5 IS NOT PUBLISHED.** The code was added after rc.4, in the still-open
-section of `CHANGELOG.md`, so it had never reached a consumer and renaming cost nothing — I had
-filed it as an rc.6 public-surface change and the user corrected that. **Check what has actually
-shipped before deferring anything as breaking**; `package.json` sits at `1.0.0-rc.4` and everything
-since is unreleased.
-
-The message was rewritten with it: it used to tell the consumer to close a generator, which was
-wrong twice over — two overlapping `tx.read()`s and an in-flight `bulkWrite` batch reach the same
-guard with no generator anywhere. Now that the transaction serialises, no consumer can reach it at
-all, so it names the broken invariant and asks for a report. `docs/superpowers/` specs and plans and
-`mem:history` keep the old name deliberately: they record what was decided then.
-
-**Still open, and the user's:** the merge.
-
-**Nothing else is in flight, and the work is on `main` (2026-09-21).** The second-client branch merged on
+**Nothing is in flight (2026-09-22).** `fix/transaction-statement-queue` merged as `4b57e86` and its branch is deleted; what it shipped is one line in `mem:history` and its lessons are in `mem:lessons`. The second-client branch merged on
 2026-09-18; everything since is documentation. `main` sits ahead of `origin/main` — the convention,
 not an oversight.
 
