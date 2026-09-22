@@ -242,15 +242,19 @@ once. Abandoned and slow are indistinguishable, so the library warns after five 
 waiting; the bound is the caller's (`timeout`, the transaction's, or `close()`). Three `tx-quiesce`
 tests pinned the old contract by name and were rewritten.
 
-**Verified whole on 2026-09-22:** `tsc` clean, `biome ci` exit 0, `pnpm test` **1209 / 704 / 14**
-(skips 8 / 2 / 0 — unchanged), conformance 85 and 85 (71/14 and 67/18), and a full
-`pnpm test:matrix` at **66 of 66 cells green, 0 failing tests, 2519 s**. The +28 on each browser
-config is the 14 new tests × 2 projects.
+**Verified whole on 2026-09-22, twice — the second pass after the last three tests landed:** `tsc`
+clean, `biome ci` exit 0, `pnpm test` **1215 / 710 / 14** (skips 8 / 2 / 0 — unchanged throughout,
+which is the count to watch: a test that started skipping instead of running would not show in a
+total), conformance 85 and 85 (71/14 and 67/18), and a full `pnpm test:matrix` at **66 of 66 cells
+green, 0 failing tests, 2537 s**. The +34 on each browser config is the 17 new tests × 2 projects.
 
 **The concurrency coverage this exposed is the other half of the branch.** Before it, `Promise.all`
 appeared in 17 of 50 browser test files and in NONE of the eight transaction files. There are now
-14 transaction tests (ordering, the signal axis, the `savepointed` branch) and 12 client-level ones
-— the latter green on arrival, since a lease is held until the worker is idle.
+14 transaction tests (ordering, the signal axis, the `savepointed` branch) and 9 client-level ones
+covering all seven surfaces plus two `transaction()` calls in one tick and the abort axis — every
+client one green on arrival, since a lease is held until the worker is idle. **That asymmetry is
+the finding**: the client path was sound and the transaction path was not, because the transaction
+owns its worker directly with no lease between statements.
 
 **Still open, and the user's:** the merge; and `GENERATOR_ABANDONED`'s name, now that it is a
 backstop rather than a consumer-facing error (`mem:follow-ups`).
