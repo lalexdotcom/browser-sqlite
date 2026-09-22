@@ -21,7 +21,11 @@ describe('a long single step', () => {
   it('gives the caller back control at the moment the signal fires', async () => {
     // A second worker must be free to answer while the first is inside the
     // long sort, so the pair has to keep two (spec 2026-09-15, A5).
-    const db = await createTestClient({ poolSize: 2, needs: ['two-workers'] });
+    // Interruptible too: uncut, the teardown drains the whole 20M-row query.
+    const db = await createTestClient({
+      poolSize: 2,
+      needs: ['two-workers', 'interruptible'],
+    });
     const started = performance.now();
     await expect(
       db.read(longQuery(20_000_000), [], {
@@ -40,7 +44,8 @@ describe('a long single step', () => {
       // Both workers must stay alive: needs two-workers so a target that caps
       // the pool without readwrite-unsafe (spec 2026-09-13, §10) falls back to
       // a pair that keeps two (spec 2026-09-15, A5).
-      needs: ['two-workers'],
+      // Interruptible too: uncut, the teardown drains the whole 20M-row query.
+      needs: ['two-workers', 'interruptible'],
       poolSize: 2,
       drainTimeout: 60_000,
       debug: true,
