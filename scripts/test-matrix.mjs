@@ -202,7 +202,22 @@ export function runBounded(command, args, { cwd, env, timeoutMs }) {
 
 /** Runs one (engine, pair) cell via `runBounded`, translating its result into a matrix cell. */
 function runOne(engine, pair, outFile) {
-  const args = ['exec', 'rstest', '--config', engine.config, ...engine.extraArgs, 'run'];
+  // `--reporter md` is what `parseMatrixReport` reads, and leaving it unpinned
+  // let rstest choose: it defaults to `md` when it detects an agent — Claude
+  // Code sets AI_AGENT — and to `default` otherwise. The report therefore
+  // existed on a developer's machine and not on a runner, and every cell of the
+  // first CI matrix was called "timed out" while all of its tests passed.
+  // Reproduced by unsetting AI_AGENT: no ```json block, 20 lines of output.
+  const args = [
+    'exec',
+    'rstest',
+    '--config',
+    engine.config,
+    '--reporter',
+    'md',
+    ...engine.extraArgs,
+    'run',
+  ];
   return runBounded('pnpm', args, {
     cwd: ROOT,
     env: { ...process.env, BSQ_TEST_TARGETS: `${pair.vfs}/${pair.build}` },
