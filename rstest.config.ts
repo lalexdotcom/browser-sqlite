@@ -98,6 +98,12 @@ export default defineConfig({
       include: ['tests/browser/*.test.ts', 'tests/browser/chromium/**/*.test.ts'],
       exclude: ['**/worktrees/**'],
       testTimeout: 30000,
+      // A teardown closes a client that may still be draining an abandoned
+      // statement, and `close()` waits for it up to `drainTimeout` — 60 s by
+      // default, which some tests set explicitly. rstest's 10 s default for
+      // hooks contradicts that contract: it held on this machine and not on a
+      // CI runner, twice (long-query.test.ts, 2026-09-22).
+      hookTimeout: 60000,
       source: {
         define: { __BSQ_TEST_TARGET__: JSON.stringify(target) },
       },

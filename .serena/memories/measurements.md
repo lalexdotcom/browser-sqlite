@@ -37,6 +37,41 @@ undoes nothing — header and file disagree, `2694` pages claimed for 3, or 3 cl
 not accumulate (a second rollback rewrites the same offsets) and resolves if the database grows
 again; the database stays correct throughout.
 
+## CUT-RATIO — how late an abandoned write is cut, per pair, 2026-09-22, this container
+
+`tx-savepoint` T3/T4 assert that an abandoned write ends before `natural * f`. `f` was 0.8,
+extrapolated from one pair; `mem:follow-ups` had recorded that nobody had measured the others. CI
+then failed on it — 23 577 ms against a bound of 23 358, a ratio of **0.807**, i.e. the bound sat
+on the WRONG SIDE of the real value rather than merely close to it.
+
+Method: a throwaway probe (`.scratchpad/cut-ratio-2026-09-22/`) timing the same shape as T4 —
+`natural` uncut, then the transaction whose inner write carries `timeout: 30` under a transaction
+`timeout: 150` — on 12 pairs × {chromium, firefox}, `poolSize` 1, idle machine. rstest does not
+forward browser console output, so the values travel through a deliberately failing assertion.
+Validated against a known figure first: 0.631 for `OPFSWriteAheadVFS/async` on Chromium, where the
+2026-09-15 note said "≈0.6".
+
+| moteur | paire | ratio |
+| --- | --- | ---: |
+| chromium | **OPFSWriteAheadVFS/async** | **0.719** |
+| chromium | **OPFSWriteAheadVFS/jspi** | **0.709** |
+| firefox | OPFSWriteAheadVFS/jspi | 0.157 |
+| chromium | IDBMirrorVFS/async | 0.149 |
+| chromium | MemoryVFS/async | 0.145 |
+| firefox | OPFSWriteAheadVFS/async | 0.097 |
+| | the 18 others | **0.017 – 0.136** |
+
+**`OPFSWriteAheadVFS` on Chromium is alone in its class** — 4.5× the next pair, and the only one
+anywhere near the bound. Everything else is under 0.16, most under 0.05.
+
+**What that fixes the factor at.** An uncut write runs to ≈ 1.0 of natural, so the bound must lie
+in (observed cut, 1.0). The observed maximum is 0.807, on a CI runner slower than this machine. The
+window is therefore (0.81, 1.0) and **0.9 is the value**, leaving 10 % before an uncut write. It is
+not a widened margin: 0.8 was simply below the measurement.
+
+**Variance is real and not small.** The same pair measured 0.631 and 0.719 in two runs minutes
+apart on an idle machine, and 0.807 on CI. A bound on this ratio cannot be tight.
+
 ## LEASE-QUIESCE — the lease IS held to quiesce after a timeout, 0/40 under load, 2026-09-21, this container
 
 The open question behind the single `GENERATOR_ABANDONED` sighting of 2026-09-14: can the library

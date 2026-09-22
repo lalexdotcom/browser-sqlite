@@ -74,6 +74,8 @@ export default defineConfig({
     plugins: [pluginCrossOriginIsolation, pluginSilenceWorkerHmrLogs],
     include: ['tests/browser/isolated/**/*.test.ts'],
     testTimeout: 30000,
+    // See rstest.config.ts: a teardown drains, and drainTimeout is 60 s.
+    hookTimeout: 60000,
     source: {
       define: { __BSQ_TEST_TARGET__: JSON.stringify(target) },
     },

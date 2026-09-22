@@ -35,6 +35,8 @@ export default defineConfig({
       include: ['tests/browser/*.test.ts', 'tests/browser/firefox/**/*.test.ts'],
       exclude: ['**/worktrees/**'],
       testTimeout: 30000,
+      // See rstest.config.ts: a teardown drains, and drainTimeout is 60 s.
+      hookTimeout: 60000,
       source: {
         define: { __BSQ_TEST_TARGET__: JSON.stringify(target) },
       },

@@ -365,9 +365,14 @@ the prefix spends part of wa-sqlite's 56-character path budget.
 
 - A **refused client still appears in `inspectDatabase().clients`** until it is closed —
   `AccessHandlePoolVFS` behaved that way before the branch too.
-- **Interrupt latency differs per pair:** `OPFSWriteAheadVFS/async` cuts an abandoned write at ≈0.6 of its
-  natural length on Chromium where `OPFSAdaptiveVFS/async` cuts below 0.5. `tx-savepoint` T3/T4's bound was
-  widened to `natural * 0.8` for it; nobody has measured the others.
+- **`OPFSWriteAheadVFS` on Chromium cuts an abandoned write far later than anything else, and nobody
+  knows why.** Measured across all 24 pair-engine combinations on 2026-09-22 (CUT-RATIO,
+  `mem:measurements`): 0.71-0.72 of natural, against ≤ 0.16 for the 22 others and ≤ 0.05 for most.
+  The same VFS on Firefox is at 0.10-0.16, so it is the pair, not the VFS. **This is a product
+  question dressed as a test one** — `tx-savepoint`'s bound is now 0.9 because of this one
+  combination, and a bound that exists for a single outlier is a description of the outlier. What
+  has NOT been asked: whether the interrupt is delivered late there, or delivered on time and the
+  VFS takes that long to unwind.
 - **`handleDeath`'s guard for a slot-0 loss before the probe has no test** — no path was found that reaches
   it with the probe unanswered; it is defensive (`a0373c0`).
 - **Three tests of `multi-client.test.ts` carry no falsifier** (their claims were run and refuted): "never
