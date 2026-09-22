@@ -78,6 +78,11 @@ jobs:
           name: matrix-report-${{ strategy.job-index }}
           path: .matrix/
           retention-days: 14
+          # .matrix is a dotted path, which v4 excludes by default — the step
+          # then succeeds having uploaded nothing, which is how rc.5's second
+          # refusal came back with an empty artifact list.
+          include-hidden-files: true
+          if-no-files-found: error
 
   # Only when a CHECK failed, so before `release` has run and before anything
   # could be published. A failure after npm publish is left alone: deleting the

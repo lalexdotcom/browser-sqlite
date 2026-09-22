@@ -24,7 +24,7 @@
  * never as a hang.
  */
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { VFS_CAPABILITIES } from '../src/types.ts';
@@ -40,6 +40,9 @@ const ENGINES = [
 
 /** Matches Task 10's brief: `timeout 600` per run, owned in-process instead. */
 const RUN_TIMEOUT_MS = 600_000;
+
+/** Enough of a failing run's tail to name the cause; short enough to read in a job log. */
+const TAIL_LINES = 60;
 
 /** Every declared (vfs, build) pair, in `VFS_CAPABILITIES` key order. */
 export const allPairs = () =>
@@ -249,6 +252,15 @@ async function main() {
       const result = await runOne(engine, pair, outFile);
       results.set(`${engine.name}:${label}`, result);
       process.stdout.write(`[${engine.name}] ${label}: ${formatCell(result)}\n`);
+      // A verdict alone cannot be diagnosed anywhere the report file does not
+      // survive the machine, which is every CI runner. "timed out" especially:
+      // it is also what a run that never printed a report looks like.
+      if (result.status !== 'passed' && result.status !== 'not-runnable') {
+        const tail = readFileSync(outFile, 'utf8').split('\n').slice(-TAIL_LINES);
+        process.stdout.write(
+          `--- ${engine.name} ${label}: last ${tail.length} lines ---\n${tail.join('\n')}\n--- end ---\n`,
+        );
+      }
     }
   }
 
