@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented here.
 
+## Unreleased
+
+### Performance
+
+- **Aborting a statement on `OPFSWriteAheadVFS` gives its time back.** That VFS
+  writes its own write-ahead below SQLite and copied it into the database one
+  page at a time, after every transaction — two synchronous file calls per page,
+  4 KiB each. The copy runs once the commit has returned and occupies the
+  worker, so a `signal` or a `timeout` aimed at the next statement waited for it:
+  an abandoned write gave back about a third of its time here, against 97 % on
+  every other VFS. Contiguous pages are now moved in single calls, which is
+  about 40× faster on the copy itself, on Chromium and on Firefox alike. The fix
+  is a change to wa-sqlite's write-ahead, carried in this package's build until
+  wa-sqlite ships it.
+
+### Changed
+
+- **The vendored wa-sqlite moves to upstream `e98c65d`**, which corrects how
+  `OPFSWriteAheadVFS` tracks the size of its active write-ahead file across a
+  switch between the two — the threshold that decides when to rotate them.
+
 ## 1.0.0-rc.5 — 2026-09-22
 
 Everything below lands between rc.4 (2026-08-31) and rc.5. Reliability was this
