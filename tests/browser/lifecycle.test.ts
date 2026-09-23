@@ -1,6 +1,7 @@
 // tests/browser/lifecycle.test.ts
 import { afterEach, describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
+import { SQLiteError } from '../../src/errors';
 import {
   createTestClient,
   interceptWorkers,
@@ -466,5 +467,52 @@ describe('worker lifecycle — startup readiness gate', () => {
 
     // No permanent losses occurred.
     expect(lostIndices).toEqual([]);
+  });
+
+  // Falsifiable: drop `readyDeferred.reject(fatal)` from failClient — the gate
+  // is rejected before it opens, onGateOpen never runs, and `ready` stays
+  // pending until the test times out.
+  it('rejects db.ready with WORKER_CRASHED when no worker can start', async () => {
+    interceptWorkers({ url: '/definitely-missing-worker.js' });
+    const db = await createTestClient({ poolSize: 1 });
+    await expect(db.ready).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+  });
+
+  // Falsifiable: move `readyDeferred.resolve()` to the START of onGateOpen (or
+  // derive `ready` from the scheduler's gate). The gate opens on an empty pool
+  // and onGateOpen fails the client just after; `ready` must not resolve first.
+  it('rejects db.ready when the pool is empty at gate-open, although the gate opened', async () => {
+    // Same scenario as 'fails the client rather than hanging when all startup
+    // workers are gone': slot 0 opens then is killed during the retry round,
+    // slot 1 fails twice.
+    const created = failWorkersFromIndex(1);
+    const db = await createTestClient({ poolSize: 2, needs: ['two-workers'] });
+    while (created.length < 3) await sleep(10);
+    created[0].dispatchEvent(
+      new ErrorEvent('error', { message: 'killed during retry' }),
+    );
+    await expect(db.ready).rejects.toBeInstanceOf(SQLiteError);
+  });
+
+  // Falsifiable: drop `void readyDeferred.promise.catch(() => {})` — the
+  // failed client's unread `ready` then surfaces as an unhandledrejection.
+  it('raises no unhandled rejection for a failed client whose ready is never read', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (event: PromiseRejectionEvent) => {
+      unhandled.push(event.reason);
+      event.preventDefault();
+    };
+    window.addEventListener('unhandledrejection', onUnhandled);
+    onTestFinished(() =>
+      window.removeEventListener('unhandledrejection', onUnhandled),
+    );
+    interceptWorkers({ url: '/definitely-missing-worker.js' });
+    const db = await createTestClient({ poolSize: 1 });
+    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+      code: 'WORKER_CRASHED',
+    });
+    // unhandledrejection is dispatched after the microtask checkpoint.
+    await sleep(100);
+    expect(unhandled).toEqual([]);
   });
 });

@@ -585,6 +585,8 @@ export const createSQLiteClient = (
               ),
           );
         }
+        // A no-op when failClient above has already rejected it.
+        readyDeferred.resolve();
       };
 
       return writerPolicy
@@ -1364,6 +1366,7 @@ export const createSQLiteClient = (
         'CLIENT_CLOSED',
         'The SQLite client has been closed.',
       );
+      readyDeferred.reject(closingError);
       // Cancel every pending write-lock request (those still waiting for the
       // browser's lock manager to grant the lock). Writes that already hold
       // the lock are past the lock phase and unaffected — per the Web Locks
@@ -1429,6 +1432,11 @@ export const createSQLiteClient = (
     maxWorkerRestarts: clientOptions.maxWorkerRestarts,
   });
 
+  // Settled where the startup verdict is known, not derived from the
+  // scheduler's gate: the gate opens before onGateOpen may still fail the client.
+  const readyDeferred = Promise.withResolvers<void>();
+  void readyDeferred.promise.catch(() => {});
+
   let fatal: SQLiteError | undefined;
 
   const failClient = (error: SQLiteError) => {
@@ -1436,6 +1444,7 @@ export const createSQLiteClient = (
     // scheduler's `fatal`, not wait on an answer that will never come.
     probeAnswer?.resolve(undefined);
     fatal ??= error;
+    readyDeferred.reject(fatal);
     void scheduler.shutdown(fatal);
     for (const dying of pool) dying?.terminate(fatal);
   };
@@ -1763,6 +1772,7 @@ export const createSQLiteClient = (
     get poolSize() {
       return effectivePoolSize;
     },
+    ready: readyDeferred.promise,
     inspect,
 
     debug,

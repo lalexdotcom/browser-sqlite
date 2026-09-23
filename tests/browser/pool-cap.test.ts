@@ -355,4 +355,16 @@ describe('a pool capped by its environment', () => {
       await db.close();
     },
   );
+
+  // Falsifiable: resolve `readyDeferred` at creation — the declines have not
+  // arrived yet, and a capped engine still reads 4.
+  it('reports the capped size once db.ready resolves, before any query', async () => {
+    // One VFS: the subject is OPFSWriteAheadVFS's own environment cap.
+    const db = await createTestClient({
+      vfs: 'OPFSWriteAheadVFS',
+      poolSize: 4,
+    });
+    await db.ready;
+    expect(db.poolSize).toBe(CAPPED ? 1 : 4);
+  });
 });
