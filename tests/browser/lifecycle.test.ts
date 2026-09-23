@@ -330,6 +330,33 @@ function failWorkersFromIndex(from: number): Worker[] {
   return created;
 }
 
+/**
+ * Intercepts worker creation and makes workers from index `from` onward load
+ * a SILENT module — one that starts successfully and never answers a message.
+ * Returns the array of created Worker instances in creation order.
+ */
+function silentWorkersFromIndex(from: number): Worker[] {
+  const created: Worker[] = [];
+  const Original = globalThis.Worker;
+  const silentUrl = URL.createObjectURL(
+    new Blob(['self.onmessage = () => {};'], { type: 'text/javascript' }),
+  );
+  onTestFinished(() => {
+    URL.revokeObjectURL(silentUrl);
+  });
+  class Silent extends Original {
+    constructor(url: string | URL, options?: WorkerOptions) {
+      super(created.length >= from ? silentUrl : url, options);
+      created.push(this);
+    }
+  }
+  globalThis.Worker = Silent as unknown as typeof Worker;
+  onTestFinished(() => {
+    globalThis.Worker = Original;
+  });
+  return created;
+}
+
 describe('worker lifecycle — startup readiness gate', () => {
   // Falsifiable: in handleDeath (src/client.ts), guard the startupLosses.set
   // call with `if (retrySlots.has(index))` (reverting defect 1 fix). Slot 0's
@@ -466,5 +493,71 @@ describe('worker lifecycle — startup readiness gate', () => {
 
     // No permanent losses occurred.
     expect(lostIndices).toEqual([]);
+  });
+
+  // Falsifiable: drop `readyDeferred.reject(fatal)` from failClient — the gate
+  // is rejected before it opens, onGateOpen never runs, and `ready` stays
+  // pending until the test times out.
+  it('rejects db.ready with WORKER_CRASHED when no worker can start', async () => {
+    interceptWorkers({ url: '/definitely-missing-worker.js' });
+    const db = await createTestClient({ poolSize: 1 });
+    await expect(db.ready).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+  });
+
+  // Falsifiable: move `readyDeferred.resolve()` to the START of onGateOpen (or
+  // derive `ready` from the scheduler's gate). The gate opens on an empty pool
+  // and onGateOpen fails the client just after; `ready` must not resolve first.
+  it('rejects db.ready when the pool is empty at gate-open, although the gate opened', async () => {
+    // Every failure here is dispatched by the test itself, not timed by the
+    // browser: slot 1 (silent) fails round 1; once slot 0 (real) has opened,
+    // slot 1's retry (also silent) is spawned; slot 0 is then killed while
+    // that retry is still open; killing the retry settles the gate on an
+    // empty pool — onGateOpen must fail the client there, before `ready` is
+    // allowed to resolve.
+    const created = silentWorkersFromIndex(1);
+    const db = await createTestClient({ poolSize: 2, needs: ['two-workers'] });
+
+    // Slot 0 (real) and slot 1 (silent, round 1) have both been constructed.
+    while (created.length < 2) await sleep(10);
+    created[1].dispatchEvent(
+      new ErrorEvent('error', { message: 'slot 1 failed round 1' }),
+    );
+
+    // Round 1 settles only once slot 0 has genuinely opened — only then does
+    // the retry spawn slot 1's silent replacement (worker index 2).
+    while (created.length < 3) await sleep(10);
+
+    // Kill slot 0 while the retry round is still open.
+    created[0].dispatchEvent(
+      new ErrorEvent('error', { message: 'slot 0 killed during retry' }),
+    );
+    // Kill the retry itself: the pool is now empty, right as the gate opens.
+    created[2].dispatchEvent(
+      new ErrorEvent('error', { message: 'slot 1 retry failed' }),
+    );
+
+    await expect(db.ready).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+  });
+
+  // Falsifiable: drop `void readyDeferred.promise.catch(() => {})` — the
+  // failed client's unread `ready` then surfaces as an unhandledrejection.
+  it('raises no unhandled rejection for a failed client whose ready is never read', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (event: PromiseRejectionEvent) => {
+      unhandled.push(event.reason);
+      event.preventDefault();
+    };
+    window.addEventListener('unhandledrejection', onUnhandled);
+    onTestFinished(() =>
+      window.removeEventListener('unhandledrejection', onUnhandled),
+    );
+    interceptWorkers({ url: '/definitely-missing-worker.js' });
+    const db = await createTestClient({ poolSize: 1 });
+    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+      code: 'WORKER_CRASHED',
+    });
+    // unhandledrejection is dispatched after the microtask checkpoint.
+    await sleep(100);
+    expect(unhandled).toEqual([]);
   });
 });

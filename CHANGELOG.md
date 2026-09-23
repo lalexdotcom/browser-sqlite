@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+### Added
+
+- **`db.ready` says when the pool has started.** It resolves once every worker has opened or been declined by the environment — from then on `db.poolSize` is the size you got — and rejects with the error that failed the client, or `CLIENT_CLOSED` if you close it first. Queries never need it: they wait for the pool as before.
+
 ### Performance
 
 - **Aborting a statement on `OPFSWriteAheadVFS` gives its time back.** That VFS

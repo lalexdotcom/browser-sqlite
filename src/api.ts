@@ -443,11 +443,18 @@ export type SQLiteDB = SQLiteQueryAPI & {
   readonly build: SQLiteBuild;
   /**
    * The number of workers the pool runs: `poolSize` as requested, capped by
-   * the VFS and by the environment. Exact once every worker has opened or
-   * declined; every query waits for that, so it is settled by the time any
-   * query returns.
+   * the VFS and by the environment. Exact once `ready` resolves — and every
+   * query waits for that, so it is settled by the time any query returns.
    */
   readonly poolSize: number;
+  /**
+   * Settles once the pool has started: every worker has opened, declined, or
+   * failed its one retry. Resolves when at least one worker serves the database;
+   * rejects with the error that failed the client otherwise, and with
+   * `CLIENT_CLOSED` when `close()` comes first. Never needs awaiting — queries
+   * wait on their own — and never raises an unhandled rejection when unread.
+   */
+  readonly ready: Promise<void>;
   /**
    * Who else is live on this database, right now, in every tab of this origin.
    *

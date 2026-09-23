@@ -585,6 +585,8 @@ export const createSQLiteClient = (
               ),
           );
         }
+        // A no-op when failClient above has already rejected it.
+        readyDeferred.resolve();
       };
 
       return writerPolicy
@@ -1364,6 +1366,7 @@ export const createSQLiteClient = (
         'CLIENT_CLOSED',
         'The SQLite client has been closed.',
       );
+      readyDeferred.reject(closingError);
       // Cancel every pending write-lock request (those still waiting for the
       // browser's lock manager to grant the lock). Writes that already hold
       // the lock are past the lock phase and unaffected — per the Web Locks
@@ -1429,6 +1432,11 @@ export const createSQLiteClient = (
     maxWorkerRestarts: clientOptions.maxWorkerRestarts,
   });
 
+  // Settled where the startup verdict is known, not derived from the
+  // scheduler's gate: the gate opens before onGateOpen may still fail the client.
+  const readyDeferred = Promise.withResolvers<void>();
+  void readyDeferred.promise.catch(() => {});
+
   let fatal: SQLiteError | undefined;
 
   const failClient = (error: SQLiteError) => {
@@ -1436,6 +1444,7 @@ export const createSQLiteClient = (
     // scheduler's `fatal`, not wait on an answer that will never come.
     probeAnswer?.resolve(undefined);
     fatal ??= error;
+    readyDeferred.reject(fatal);
     void scheduler.shutdown(fatal);
     for (const dying of pool) dying?.terminate(fatal);
   };
@@ -1678,11 +1687,9 @@ export const createSQLiteClient = (
         // in `acquireInstrumented`, ensuring the first query on this client
         // fails with a legible message rather than a WORKER_CRASHED stall.
         //
-        // This code is not independently covered by any test: both sites fire
-        // on the same condition (`connRefused` after
-        // connLockPromise settles), and acquireInstrumented's throw wins on
-        // every method call because it runs before scheduler.acquire. A
-        // silent revert of this code stays green.
+        // Guarded by second-client.test.ts's refused branch: without this
+        // call, no worker starts, the gate never opens, and `b.ready` never
+        // settles.
         failClient(inUse());
       } else if (!closing) {
         // Guard: if close() was called before the lock settled, the pool
@@ -1763,6 +1770,7 @@ export const createSQLiteClient = (
     get poolSize() {
       return effectivePoolSize;
     },
+    ready: readyDeferred.promise,
     inspect,
 
     debug,

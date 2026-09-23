@@ -88,7 +88,8 @@ both engines — a VFS sound on one and broken on the other is how HANDLE-1 was 
 `output` — is shared by **both** the client and a transaction, so a method cannot be
 added to one and forgotten on the other. `SQLiteDB` adds `transaction` / `close` /
 `debug` / `inspect`, plus six readonly getters — `id` / `name` / `file` / `vfs` / `build` / `poolSize` (the pool it
-actually runs: the option, capped by the VFS and by the environment),
+actually runs: the option, capped by the VFS and by the environment, exact once `ready` resolves) — and
+`ready: Promise<void>`, which settles once the pool has started,
 which exist so a module handed a client can describe it without also being handed its options;
 `SQLiteTransactionDB` adds `commit` / `rollback`. `signal` on every method **except `inspect`**,
 a documented exception: `navigator.locks.query()` takes no lock and waits for nothing, so the
@@ -107,6 +108,12 @@ its branch taking one `{ file, vfs }` object and was changed before the merge; t
 the amendment. A missing `vfs` is refused by name, not reported back as `Unknown vfs 'undefined'`.
 
 ## Load-bearing invariants — weakening any of these reopens a closed bug
+
+**`db.ready` is settled by the client, never derived from the scheduler's gate.** `settleGateSlot`
+resolves `gateDeferred` and THEN calls `onGateOpen`, which may still `failClient` (empty pool, or
+worker 0 lost before the probe). So `readyDeferred` resolves as `onGateOpen`'s last statement and
+is rejected in `failClient` and `close()`; first settle wins. Guarded by `lifecycle.test.ts`'s
+"pool is empty at gate-open" test (spec `2026-09-23-db-ready-design.md` §2).
 
 **Exclusivity rests on availability being unreachable from outside `scheduler.ts`.**
 `PoolWorker` carries no `available` field: it was deleted, not guarded. Workers are handed

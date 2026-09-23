@@ -188,6 +188,11 @@ describe('a client whose worker 0 is lost before it answers the probe', () => {
             expect(message).toContain(`without ${lacking}`);
           }
           expect(sqliteCode).toBeUndefined();
+          // Falsifiable: drop `readyDeferred.reject(fatal)` from failClient —
+          // `ready` then never settles and the test times out.
+          await expect(b.ready).rejects.toMatchObject({
+            code: 'DATABASE_IN_USE',
+          });
           expect(performance.now() - started).toBeLessThan(REFUSED_WITHIN);
           // The first client is untouched by the refusal.
           await a.write('INSERT INTO t VALUES (2)');
