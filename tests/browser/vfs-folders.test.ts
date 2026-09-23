@@ -15,6 +15,9 @@ describe('the name a consumer uses', () => {
     async () => {
       const name = `vfs-folders-${crypto.randomUUID()}`;
       const db = createSQLiteClient(name, { vfs, build, poolSize: 1 });
+      onTestFinished(() =>
+        deleteDatabase(name, { vfs, build }).catch(() => {}),
+      );
       await db.write('CREATE TABLE t (a INTEGER)');
       // Falsifiable: return the path from `get file()` and the name becomes
       // `ad/ad/…` on a folder VFS — inspectDatabase then finds no client.
@@ -52,8 +55,10 @@ describe('the name a consumer uses', () => {
       onTestFinished(() =>
         deleteDatabase(name, { vfs, build }).catch(() => {}),
       );
+      // A residue from a killed run must not fail this run too.
+      await deleteDatabase(name, { vfs, build }).catch(() => {});
       const db = createSQLiteClient(name, { vfs, build, poolSize: 1 });
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.write('CREATE TABLE IF NOT EXISTS t (a INTEGER)');
       await db.close();
       const reopened = createSQLiteClient(name, { vfs, build, poolSize: 1 });
       const rows = await reopened.read<{ n: number }>(
