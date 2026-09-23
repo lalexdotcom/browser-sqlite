@@ -2,7 +2,7 @@
 
 Every method, property and option of [browser-sqlite](README.md).
 
-[*client*.id](#clientid) · [*client*.name](#clientname) · [*client*.file](#clientfile) · [*client*.vfs](#clientvfs) · [*client*.build](#clientbuild) · [*client*.poolSize](#clientpoolsize) · [*client*.ready](#clientready)
+[*client*.id](#clientid) · [*client*.name](#clientname) · [*client*.file](#clientfile) · [*client*.files](#clientfiles) · [*client*.vfs](#clientvfs) · [*client*.build](#clientbuild) · [*client*.poolSize](#clientpoolsize) · [*client*.ready](#clientready)
 
 [createSQLiteClient()](#createsqliteclient) · [*client*.read()](#clientread) · [*client*.write()](#clientwrite) · [*client*.stream()](#clientstream) · [*client*.chunk()](#clientchunk) · [*client*.first()](#clientfirst) · [*client*.transaction()](#clienttransaction) · [*client*.bulkWrite()](#clientbulkwrite) · [*client*.output()](#clientoutput) · [*client*.inspect()](#clientinspect) · [*client*.close()](#clientclose) · [deleteDatabase()](#deletedatabase) · [inspectDatabase()](#inspectdatabase)
 
@@ -70,6 +70,12 @@ const db = createSQLiteClient('myapp.sqlite', {
 ## *client*.file
 
 `string`, readonly. The database file, normalized. This is the identity every lock name is built on, and it may differ from the string you passed.
+
+A database name may be 56 characters once normalized — 53 on `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS`, which keep it in a folder of their own. A non-ASCII character counts three per UTF-8 byte.
+
+## *client*.files
+
+`readonly string[]`. Every name this database's files may have, as the VFS receives them: the database, `-journal`, `-wal`, and the VFS's own extra files. On a VFS with a folder these are OPFS paths; elsewhere they are names inside the VFS's own store. Empty on the memory VFS.
 
 ## *client*.vfs
 
@@ -337,12 +343,6 @@ await deleteDatabase('myapp.sqlite', { vfs: 'OPFSAdaptiveVFS' });
 Deleting a database that is not there throws — most often because `vfs` is not the one it was created with.
 
 What a VFS keeps for itself is left alone — the IndexedDB store shared by every database that VFS holds on this origin, and the `AccessHandlePoolVFS` directory whose files are its reusable capacity. The deleted database's own bytes are freed in both cases.
-
-> [!WARNING]
-> Some VFS share one file per database name, so deleting through any of them deletes what
-> the others created: <!-- BEGIN GENERATED SHARED VFS — edit `layout` in src/types.ts -->
-> `OPFSWriteAheadVFS`, `OPFSAdaptiveVFS`, `OPFSCoopSyncVFS` and `OPFSAnyContextVFS`.
-> <!-- END GENERATED SHARED VFS -->
 
 **The database must not be open, in this tab or any other.** `DATABASE_IN_USE` says a client still holds it, and retrying will not help — closing every client on it is what releases it. A client your application stopped using but never closed keeps blocking until its tab goes, and this library cannot revoke a connection it did not open: another library or native code on the same origin is invisible to it.
 

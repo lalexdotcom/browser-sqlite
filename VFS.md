@@ -8,13 +8,7 @@
 which VFS wins depends on the engine, and a single browser release can move the answer.
 
 > [!IMPORTANT]
-> **A database belongs to the VFS that wrote it.** It is not visible through
-> another — the bytes are still there, but nothing reads them, and changing
-> `vfs` migrates nothing.<br>
-> The exception is the OPFS VFS that address files by path, which are one store
-> between them: <!-- BEGIN GENERATED SHARED VFS — edit `layout` in src/types.ts -->
-> `OPFSWriteAheadVFS`, `OPFSAdaptiveVFS`, `OPFSCoopSyncVFS` and `OPFSAnyContextVFS`.
-> <!-- END GENERATED SHARED VFS -->
+> **A database belongs to the VFS that wrote it.** It is not visible through another — the bytes are still there, but nothing reads them, and changing `vfs` migrates nothing.
 
 ## Contents
 

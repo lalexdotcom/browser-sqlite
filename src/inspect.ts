@@ -66,7 +66,7 @@ export type DatabaseClient = {
   readonly tab: string;
   /** That realm is the caller's. A same-origin iframe is another tab here. */
   readonly sameTab: boolean;
-  /** Four VFS share the `opfs` namespace, and therefore the file. */
+  /** The VFS this client opened the database with. */
   readonly vfs: SQLiteVFS;
 };
 
@@ -209,9 +209,9 @@ export const libraryClientsHold = async (
 
 export type InspectDatabaseOptions = {
   /**
-   * The VFS the database was created with. Required, and not defaulted: four
-   * VFS share one underlying file, and the others are separate stores
-   * entirely, so guessing would report on a different database.
+   * The VFS the database was created with. Required, and not defaulted: each
+   * VFS keeps its own files, so guessing would report on a different
+   * database.
    */
   vfs: SQLiteVFS;
 };
@@ -240,7 +240,7 @@ export const inspectDatabase = async (
   if (!options?.vfs) {
     throw new SQLiteError(
       'INVALID_OPTION',
-      `vfs is required. Pass the VFS the database was created with — VFS.md compares them. Four VFS share one underlying file, and the rest are separate stores, so the wrong one reports on a different database.`,
+      `vfs is required. Pass the VFS the database was created with — VFS.md compares them. Each VFS keeps its own files, so the wrong one reports on a different database.`,
     );
   }
 

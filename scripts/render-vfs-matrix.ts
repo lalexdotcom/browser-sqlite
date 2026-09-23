@@ -3,7 +3,6 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import bcd from '@mdn/browser-compat-data' with { type: 'json' };
 import {
   BUILD_REQUIREMENTS,
-  folderOf,
   type PlatformFeature,
   type SQLiteBuild,
   type SQLiteVFS,
@@ -544,29 +543,6 @@ const tableOfContents = (doc: string): string => {
   return lines.join('\n');
 };
 
-/**
- * The VFS that share one file per database name, for the callout in `VFS.md`.
- *
- * `layout` is not documentation data: `locks.ts` derives the storage namespace
- * from it — `opfs-path` collapses to one namespace, everything else keys on the
- * VFS name — and `worker.ts` gates its staging sweep on it. So the VFS sharing a
- * file are exactly those declaring `opfs-path`, and listing them by hand would
- * be a second copy of a fact the runtime already owns.
- *
- * Only the list is generated. The sentence around it is hand-written in
- * `VFS.md` and says nothing that depends on how many there are, so it stays
- * true whatever this returns.
- */
-const sharedStoreVfs = (): string => {
-  const shared = Object.entries(VFS_CAPABILITIES)
-    .filter(([name]) => folderOf(name as SQLiteVFS) !== undefined)
-    .map(([name]) => `\`${name}\``);
-  const last = shared.pop();
-  // Carries its own quote prefixes: the `> ` before the END marker sits inside
-  // the replaced span, so the body has to put it back.
-  return `\n> ${shared.join(', ')} and ${last}.\n> `;
-};
-
 const path = new URL('../VFS.md', import.meta.url);
 const source = readFileSync(path, 'utf8');
 
@@ -651,13 +627,6 @@ doc = splice(
   '<!-- END GENERATED FOOTNOTES -->',
   footnotes,
 );
-doc = splice(
-  doc,
-  '<!-- BEGIN GENERATED SHARED VFS — edit `layout` in src/types.ts -->',
-  '<!-- END GENERATED SHARED VFS -->',
-  sharedStoreVfs(),
-  '',
-);
 // Last: the headings it reads are the ones every splice above has settled.
 doc = splice(
   doc,
@@ -667,24 +636,6 @@ doc = splice(
 );
 writeFileSync(path, doc);
 
-/**
- * `API.md` too, for one block: the VFS that share a file, which its
- * `deleteDatabase` warning used to transcribe. It has no generator of its own,
- * so this script owns that one span rather than leaving a fourth hand-written
- * copy of `layout` — the third was found by auditing links, not by a check.
- */
-const apiPath = new URL('../API.md', import.meta.url);
-writeFileSync(
-  apiPath,
-  splice(
-    readFileSync(apiPath, 'utf8'),
-    '<!-- BEGIN GENERATED SHARED VFS — edit `layout` in src/types.ts -->',
-    '<!-- END GENERATED SHARED VFS -->',
-    sharedStoreVfs(),
-    '',
-  ),
-);
-
 console.log(
-  `Rendered ${rows.length} VFS rows, ${rows.length} VFS headers and ${BUILDS.length} build sections into VFS.md, and the shared-store list into both pages`,
+  `Rendered ${rows.length} VFS rows, ${rows.length} VFS headers and ${BUILDS.length} build sections into VFS.md`,
 );
