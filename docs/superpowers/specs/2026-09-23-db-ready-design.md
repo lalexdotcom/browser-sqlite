@@ -51,7 +51,7 @@ Two files in `src/`.
   | `close()`, before `scheduler.shutdown` | `readyDeferred.reject(closingError)` |
 
   When `onGateOpen` itself calls `failClient`, the rejection lands first and the resolve at the end is a no-op. The returned client exposes `ready: readyDeferred.promise`.
-- **`src/api.ts`** — `ready` on `SQLiteClient` with the JSDoc of §1; `poolSize`'s JSDoc rewritten.
+- **`src/api.ts`** — `ready` on `SQLiteDB` with the JSDoc of §1; `poolSize`'s JSDoc rewritten.
 
 ## 4. Tests
 
