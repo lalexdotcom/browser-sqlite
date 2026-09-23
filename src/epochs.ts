@@ -14,7 +14,6 @@
  */
 
 import type { Locks } from './locks';
-import { namespaceFor } from './locks';
 import type { SQLiteVFS } from './types';
 
 /**
@@ -102,7 +101,7 @@ export const epochsFor = (
   file: string,
   locks: Locks,
 ): Epochs => {
-  const ns = namespaceFor(vfs);
+  const ns = vfs;
   const key = `${ns}:${file}`;
   const map = registry();
   const existing = map.get(key);

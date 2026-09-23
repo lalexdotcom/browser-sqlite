@@ -23,7 +23,12 @@ const recorder = (locks: Locks = noOpLocks) => {
       read: async () => [],
     });
 
-  const forTarget = createBulk({ file: 'app.db', locks, logger: noopLogger });
+  const forTarget = createBulk({
+    file: 'app.db',
+    vfs: 'OPFSAdaptiveVFS',
+    locks,
+    logger: noopLogger,
+  });
 
   return {
     sql,
@@ -86,6 +91,7 @@ const failingRecorder = (failAt: number) => {
 
   const forTarget = createBulk({
     file: 'app.db',
+    vfs: 'OPFSAdaptiveVFS',
     locks: noOpLocks,
     logger: noopLogger,
   });
@@ -141,6 +147,7 @@ describe('bulkWrite failure (B5)', () => {
     const { sql, deps } = failingRecorder(1);
     const { bulkWrite } = createBulk({
       file: 'app.db',
+      vfs: 'OPFSAdaptiveVFS',
       locks: noOpLocks,
       logger: noopLogger,
       maxVariables: 2,
@@ -277,6 +284,7 @@ const outputRecorder = () => {
 
   const forTarget = createBulk({
     file: 'app.db',
+    vfs: 'OPFSAdaptiveVFS',
     locks: noOpLocks,
     logger: noopLogger,
   });
@@ -357,6 +365,7 @@ describe('output() staging and swap (B5)', () => {
     };
     const { output } = createBulk({
       file: 'app.db',
+      vfs: 'OPFSAdaptiveVFS',
       locks: noOpLocks,
       logger: noopLogger,
     })({ write, read, transaction } as any);
@@ -401,6 +410,7 @@ describe('bulkWrite abort (ABORT-1)', () => {
     const { sql, deps } = recorder();
     const { bulkWrite } = createBulk({
       file: 'app.db',
+      vfs: 'OPFSAdaptiveVFS',
       locks: noOpLocks,
       logger: noopLogger,
       maxVariables: 2,
@@ -462,6 +472,7 @@ describe('bulkWrite abort (ABORT-1)', () => {
     };
     const { output } = createBulk({
       file: 'app.db',
+      vfs: 'OPFSAdaptiveVFS',
       locks: noOpLocks,
       logger: noopLogger,
     })({ write, read, transaction } as any);
@@ -514,6 +525,7 @@ describe('bulkWrite abort with a stalled batch (ABORT-1 regression)', () => {
 
     const { bulkWrite } = createBulk({
       file: 'app.db',
+      vfs: 'OPFSAdaptiveVFS',
       locks: noOpLocks,
       logger: noopLogger,
       maxVariables: 2,
@@ -596,6 +608,7 @@ describe('bulkWrite back-pressure', () => {
   const bulkFactory = (maxVariables: number, deps: any) =>
     createBulk({
       file: 'app.db',
+      vfs: 'OPFSAdaptiveVFS',
       locks: noOpLocks,
       logger: noopLogger,
       maxVariables,

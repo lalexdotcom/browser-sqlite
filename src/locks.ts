@@ -10,7 +10,7 @@
  */
 
 import type { SQLiteVFS } from './types';
-import { folderOf, VFS_CAPABILITIES } from './types';
+import { VFS_CAPABILITIES } from './types';
 
 /** One entry in the lock registry as returned by `query()`. */
 type QueriedLock = { name?: string; mode?: string; clientId?: string };
@@ -100,7 +100,8 @@ export const isStagingTable = (table: string) =>
 export const stagingLockName = (file: string, table: string) =>
   `bsq:staging:${file}:${table}`;
 
-export const sweepLockName = (file: string) => `bsq:sweep:${file}`;
+export const sweepLockName = (vfs: SQLiteVFS, file: string) =>
+  `bsq:sweep:${vfs}:${file}`;
 
 /**
  * The marker a client holds to publish that it is alive on a database.
@@ -121,7 +122,7 @@ export const clientMarkerName = (
   id: string,
   clientName: string,
 ): string =>
-  `bsq:client:${namespaceFor(vfs)}:${file}:${id}:${vfs}:${encodeURIComponent(clientName)}`;
+  `bsq:client:${vfs}:${file}:${id}:${vfs}:${encodeURIComponent(clientName)}`;
 
 export type ClientMarker = {
   readonly id: string;
@@ -144,7 +145,7 @@ export const parseClientMarker = (
   vfs: SQLiteVFS,
   file: string,
 ): ClientMarker | undefined => {
-  const prefix = `bsq:client:${namespaceFor(vfs)}:${file}:`;
+  const prefix = `bsq:client:${vfs}:${file}:`;
   if (!lockName.startsWith(prefix)) return undefined;
 
   const parts = lockName.slice(prefix.length).split(':');
@@ -167,24 +168,6 @@ export const parseClientMarker = (
 };
 
 /**
- * The storage namespace a VFS writes into — derived from its `folder`, NEVER from
- * the VFS name.
- *
- * `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and
- * `OPFSWriteAheadVFS` all walk from `navigator.storage.getDirectory()` and open
- * `getFileHandle(filename)`, so one database name is ONE file for all four. A
- * per-VFS key would let two of them write the same bytes without ever
- * excluding each other: a missed conflict corrupts, an invented one only slows.
- *
- * IndexedDB goes finer than storage on purpose — its two VFS each own an
- * IndexedDB database named after their class, so grouping them would invent a
- * conflict for free. A VFS without a folder and memory are alone in their storage, so the
- * VFS name is already the namespace.
- */
-export const namespaceFor = (vfs: SQLiteVFS): string =>
-  folderOf(vfs) !== undefined ? 'opfs' : vfs;
-
-/**
  * Whether two clients on this VFS can reach the same bytes at all.
  *
  * False for the memory VFS: its pages live in the worker that opened them and
@@ -198,14 +181,14 @@ export const sharesStorage = (vfs: SQLiteVFS): boolean =>
 
 /** Serializes database opening across the pool — replaces the SAB init mutex. */
 export const initLockName = (vfs: SQLiteVFS, file: string) =>
-  `bsq:init:${namespaceFor(vfs)}:${file}`;
+  `bsq:init:${vfs}:${file}`;
 
 /**
  * Serializes WRITERS across every client and tab in the origin. Exclusive, so
  * at most one is held per database at any instant however many clients exist.
  */
 export const writeLockName = (vfs: SQLiteVFS, file: string) =>
-  `bsq:write:${namespaceFor(vfs)}:${file}`;
+  `bsq:write:${vfs}:${file}`;
 
 /**
  * Origin-wide exclusive connection lock for VFS that cannot safely share a
@@ -217,11 +200,11 @@ export const writeLockName = (vfs: SQLiteVFS, file: string) =>
  * AHP-2TAB (2026-09-01) where `SELECT 1` passes and `SELECT count(*) FROM
  * sqlite_master` returns 0 on an unfixable connection.
  *
- * The key uses `namespaceFor(vfs)` for the same reason `writeLockName` does:
- * the gate is by layout declaration, not by VFS name.
+ * Keyed on the VFS: each VFS keeps its own files, so two VFS on one name are
+ * two databases.
  */
 export const connectionLockName = (vfs: SQLiteVFS, file: string) =>
-  `bsq:conn:${namespaceFor(vfs)}:${file}`;
+  `bsq:conn:${vfs}:${file}`;
 
 /**
  * Which staging tables no live `output()` is using — pure, so it is driven by

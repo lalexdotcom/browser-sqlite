@@ -2,7 +2,6 @@ import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
 import { BARRIER_SQL, epochLockName } from '../../src/epochs';
-import { namespaceFor } from '../../src/locks';
 import { poolFor } from '../conformance/helpers';
 import { pairFor } from './helpers';
 import { heldNamesIn, holdIn, makeRealm } from './helpers/realm';
@@ -98,7 +97,7 @@ describe('an epoch published by another realm', () => {
     // Hold a marker far ahead of the local epoch from another realm, exactly
     // as a foreign tab would after committing at epoch 9999.
     const realm = await makeRealm();
-    const marker = epochLockName(namespaceFor(vfs), dbName, 9_999);
+    const marker = epochLockName(vfs, dbName, 9_999);
     const release = await holdIn(realm, marker, 'shared');
 
     // Foreign-marker direction: originMax() now reports 9999, raiseTo raises
@@ -115,7 +114,7 @@ describe('an epoch published by another realm', () => {
     await db.write('CREATE TABLE t (n)');
 
     const realm = await makeRealm();
-    const marker = epochLockName(namespaceFor(vfs), dbName, 4_242);
+    const marker = epochLockName(vfs, dbName, 4_242);
     const release = await holdIn(realm, marker, 'shared');
     await db.read('SELECT n FROM t');
     release();
@@ -125,11 +124,9 @@ describe('an epoch published by another realm', () => {
     // this design has to make impossible (epochs.ts:51-53).
     await db.write('INSERT INTO t VALUES (1)');
     const published = (await heldNamesIn(window)).filter((name) =>
-      name.startsWith(`bsq:epoch:${namespaceFor(vfs)}:${dbName}:`),
+      name.startsWith(`bsq:epoch:${vfs}:${dbName}:`),
     );
-    expect(published).toEqual([
-      epochLockName(namespaceFor(vfs), dbName, 4_243),
-    ]);
+    expect(published).toEqual([epochLockName(vfs, dbName, 4_243)]);
   });
 
   it('blocks transaction() until the epoch marker is granted', async () => {
@@ -173,7 +170,7 @@ describe('an epoch published by another realm', () => {
     const { db, dbName, vfs } = oneClient();
     const realm = await makeRealm();
     // The first commit in a fresh client publishes epoch 1.
-    const marker = epochLockName(namespaceFor(vfs), dbName, 1);
+    const marker = epochLockName(vfs, dbName, 1);
     let releaseExclusive: (() => void) | undefined;
 
     // Resolves the moment holdIn() returns — i.e., the exclusive lock is actually held.
@@ -225,7 +222,7 @@ describe('an epoch published by another realm', () => {
     await db.write('INSERT INTO t VALUES (2)');
     await db.write('INSERT INTO t VALUES (3)');
 
-    const prefix = `bsq:epoch:${namespaceFor(vfs)}:${dbName}:`;
+    const prefix = `bsq:epoch:${vfs}:${dbName}:`;
     const published = (await heldNamesIn(window)).filter((name) =>
       name.startsWith(prefix),
     );

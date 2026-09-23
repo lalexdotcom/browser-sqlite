@@ -1317,7 +1317,12 @@ export const createSQLiteClient = (
     }
   };
 
-  const bulkFor = createBulk({ file: dbFile, locks: createLocks(), logger });
+  const bulkFor = createBulk({
+    file: dbFile,
+    vfs,
+    locks: createLocks(),
+    logger,
+  });
 
   const transaction = createTransaction({
     scheduler: { ...scheduler, acquire: acquireInstrumented },

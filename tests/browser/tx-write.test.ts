@@ -136,7 +136,7 @@ describe('the staging sweep under a transaction', () => {
     // is exact rather than assumed. createTestClient does not return the name
     // it generates, and changing that would touch fifteen browser test files.
     const db = await createTestClient({ debug: true });
-    const lockName = sweepLockName(db.debug!.file);
+    const lockName = sweepLockName(db.vfs, db.debug!.file);
 
     await db.write('CREATE TABLE target (a INTEGER)');
     // A staging table nobody holds a lock for: the sweep would drop it.

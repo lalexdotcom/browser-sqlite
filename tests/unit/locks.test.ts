@@ -4,7 +4,6 @@ import {
   connectionLockName,
   createLocks,
   initLockName,
-  namespaceFor,
   noOpLocks,
   parseClientMarker,
   sharesStorage,
@@ -119,29 +118,6 @@ describe('createLocks', () => {
   }, 1000);
 });
 
-describe('namespaceFor', () => {
-  // Falsifiable: return `vfs` unconditionally and this goes red. That is the
-  // whole point — these four VFS open the SAME OPFS path for one name, so a
-  // per-VFS key would let two clients write the same bytes unexcluded.
-  it('gives every opfs-path VFS one namespace', () => {
-    expect(namespaceFor('OPFSAdaptiveVFS')).toBe('opfs');
-    expect(namespaceFor('OPFSAnyContextVFS')).toBe('opfs');
-    expect(namespaceFor('OPFSCoopSyncVFS')).toBe('opfs');
-    expect(namespaceFor('OPFSWriteAheadVFS')).toBe('opfs');
-  });
-
-  it('keeps the two idb-store VFS apart — each owns its own IndexedDB database', () => {
-    expect(namespaceFor('IDBBatchAtomicVFS')).not.toBe(
-      namespaceFor('IDBMirrorVFS'),
-    );
-  });
-
-  it('keeps AccessHandlePoolVFS out of the opfs namespace', () => {
-    // Its own directory, random filenames: /<file> is not its file.
-    expect(namespaceFor('AccessHandlePoolVFS')).not.toBe('opfs');
-  });
-});
-
 describe('sharesStorage', () => {
   it('is false only for the memory VFS', () => {
     expect(sharesStorage('MemoryVFS')).toBe(false);
@@ -152,8 +128,8 @@ describe('sharesStorage', () => {
 });
 
 describe('writeLockName', () => {
-  it('is shared by the opfs-path VFS and distinct per file', () => {
-    expect(writeLockName('OPFSAdaptiveVFS', 'a.db')).toBe(
+  it('is distinct per VFS and per file', () => {
+    expect(writeLockName('OPFSAdaptiveVFS', 'a.db')).not.toBe(
       writeLockName('OPFSCoopSyncVFS', 'a.db'),
     );
     expect(writeLockName('OPFSAdaptiveVFS', 'a.db')).not.toBe(
@@ -164,7 +140,7 @@ describe('writeLockName', () => {
   it('does not collide with the init, sweep or staging namespaces', () => {
     const write = writeLockName('OPFSAdaptiveVFS', 'a.db');
     expect(write).not.toBe(initLockName('OPFSAdaptiveVFS', 'a.db'));
-    expect(write).not.toBe(sweepLockName('a.db'));
+    expect(write).not.toBe(sweepLockName('OPFSAdaptiveVFS', 'a.db'));
     expect(write.startsWith('bsq:write:')).toBe(true);
   });
 });
@@ -176,15 +152,15 @@ describe('initLockName', () => {
     );
   });
 
-  it('is shared by VFS that open the same file', () => {
-    expect(initLockName('OPFSAdaptiveVFS', 'a.db')).toBe(
+  it('is distinct per VFS', () => {
+    expect(initLockName('OPFSAdaptiveVFS', 'a.db')).not.toBe(
       initLockName('OPFSWriteAheadVFS', 'a.db'),
     );
   });
 
   it('does not collide with the sweep or staging namespaces', () => {
     expect(initLockName('OPFSAdaptiveVFS', 'a.db')).not.toBe(
-      sweepLockName('a.db'),
+      sweepLockName('OPFSAdaptiveVFS', 'a.db'),
     );
     expect(
       initLockName('OPFSAdaptiveVFS', 'a.db').startsWith('bsq:init:'),
@@ -405,7 +381,7 @@ describe('connectionLockName', () => {
     const conn = connectionLockName('AccessHandlePoolVFS', 'a.db');
     expect(conn).not.toBe(initLockName('AccessHandlePoolVFS', 'a.db'));
     expect(conn).not.toBe(writeLockName('AccessHandlePoolVFS', 'a.db'));
-    expect(conn).not.toBe(sweepLockName('a.db'));
+    expect(conn).not.toBe(sweepLockName('OPFSAdaptiveVFS', 'a.db'));
     expect(conn.startsWith('bsq:conn:')).toBe(true);
   });
 });
@@ -435,11 +411,11 @@ describe('clientMarkerName / parseClientMarker', () => {
     expect(parseClientMarker(lock, 'OPFSAdaptiveVFS', file)?.id).toBe(ID);
   });
 
-  it('sees a sibling opened through another VFS of the same namespace', () => {
+  it('ignores a marker of another VFS on the same name', () => {
     const lock = clientMarkerName('OPFSCoopSyncVFS', 'app.db', ID, 'SQLite 1');
-    expect(parseClientMarker(lock, 'OPFSAdaptiveVFS', 'app.db')?.vfs).toBe(
-      'OPFSCoopSyncVFS',
-    );
+    expect(
+      parseClientMarker(lock, 'OPFSAdaptiveVFS', 'app.db'),
+    ).toBeUndefined();
   });
 
   it('ignores a marker from another namespace', () => {
@@ -518,6 +494,37 @@ describe('clientMarkerName / parseClientMarker', () => {
         'app.db',
       ),
     ).toBeUndefined();
+  });
+
+  describe('lock names of the VFS without a folder', () => {
+    // A deploy leaves an rc.5 tab beside an rc.6 one. On these five VFS they are
+    // on the same database, so every name they exclude each other on must be
+    // exactly rc.5's. bsq:sweep is the one deliberate change.
+    it('are byte-identical to rc.5', () => {
+      expect(initLockName('IDBBatchAtomicVFS', 'app.db')).toBe(
+        'bsq:init:IDBBatchAtomicVFS:app.db',
+      );
+      expect(writeLockName('IDBMirrorVFS', 'app.db')).toBe(
+        'bsq:write:IDBMirrorVFS:app.db',
+      );
+      expect(connectionLockName('AccessHandlePoolVFS', 'app.db')).toBe(
+        'bsq:conn:AccessHandlePoolVFS:app.db',
+      );
+      expect(
+        clientMarkerName('IDBBatchAtomicVFS', 'app.db', ID, 'SQLite 1'),
+      ).toBe(
+        `bsq:client:IDBBatchAtomicVFS:app.db:${ID}:IDBBatchAtomicVFS:SQLite%201`,
+      );
+      expect(stagingLockName('app.db', '__bsq_staging_x')).toBe(
+        'bsq:staging:app.db:__bsq_staging_x',
+      );
+    });
+
+    it('puts the VFS in the sweep lock', () => {
+      expect(sweepLockName('IDBBatchAtomicVFS', 'app.db')).toBe(
+        'bsq:sweep:IDBBatchAtomicVFS:app.db',
+      );
+    });
   });
 });
 

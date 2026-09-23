@@ -14,6 +14,7 @@ import {
   sweepLockName,
 } from './locks';
 import type { Logger } from './logger';
+import type { SQLiteVFS } from './types';
 import {
   assertColumnType,
   assertGeneratedExpression,
@@ -78,11 +79,12 @@ const makeRoom = (): { promise: Promise<void>; resolve: () => void } => {
 
 export const createBulk = (shared: {
   file: string;
+  vfs: SQLiteVFS;
   locks: Locks;
   logger: Logger;
   maxVariables?: number;
 }) => {
-  const { file, locks, maxVariables = 32766, logger } = shared;
+  const { file, vfs, locks, maxVariables = 32766, logger } = shared;
 
   // Net 2 of the three-net cleanup: orphans left by a closed tab or a crashed
   // session.
@@ -329,7 +331,7 @@ export const createBulk = (shared: {
       // client was sweeping; retrying would put a lock request in front of every
       // output() for nothing.
       swept ??= locks
-        .tryWithLock(sweepLockName(file), async () => {
+        .tryWithLock(sweepLockName(vfs, file), async () => {
           const rows = await read(
             `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '__bsq_staging_%'`,
           );
