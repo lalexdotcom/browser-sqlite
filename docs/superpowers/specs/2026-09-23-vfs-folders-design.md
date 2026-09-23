@@ -62,7 +62,7 @@ SQLite refuses a path when `nPathname + 8 > mxPathname`, and `mxPathname` is 64 
 
 ## 3. Lock names
 
-- **`namespaceFor` is removed; lock names use the VFS name directly.** `bsq:init:OPFSAdaptiveVFS:ad/data` and `bsq:init:OPFSCoopSyncVFS:cs/data` are two locks for two files.
+- **`namespaceFor` is removed; lock names use the VFS name directly.** `bsq:init:OPFSAdaptiveVFS:.ad/data` and `bsq:init:OPFSCoopSyncVFS:.cs/data` are two locks for two files.
 - **`bsq:sweep` gains the VFS**: `bsq:sweep:<vfs>:<file>`. Two clients of different VFS on one name no longer skip each other's staging sweep.
 - **`bsq:staging` stays as it is.** Its table name carries a UUID, so no two VFS can produce the same lock, and it is a liveness marker the sweep reads: renaming it would let a new tab's sweep drop a live staging table held by an rc.5 tab on the same `idb-store` or `opfs-pool` database during a deploy.
 - **Compatibility across a deploy, which this preserves:** for the five VFS without a folder, every lock name except `bsq:sweep` is byte-identical to rc.5 — `namespaceFor` already returned the VFS name for them, and their path is the logical name. An rc.5 tab and an rc.6 tab on one such database still exclude each other. For the four folder VFS the two tabs are on different files, so there is nothing to exclude.
@@ -95,7 +95,7 @@ A database created by rc.5 or earlier on one of the four VFS sits at the OPFS ro
 
 The `## Unreleased` section of `CHANGELOG.md` carries it under **Breaking**, with a short snippet that moves a database's files from the root into its VFS folder. **The snippet is executed on Chromium and Firefox before it is written into the CHANGELOG.**
 
-The same Breaking entry lists: `layout` and `VFSLayout` removed, `folder` added; the name bound of the four VFS going from 56 to 53 characters. `db.files` goes under Added; the length guard (§2a) under Changed — a too-long name now fails with `INVALID_OPTION` at the call instead of at open.
+The same Breaking entry lists: `layout` and `VFSLayout` removed, `folder` added; the name bound of the four VFS going from 56 to 52 characters. `db.files` goes under Added; the length guard (§2a) under Changed — a too-long name now fails with `INVALID_OPTION` at the call instead of at open.
 
 ## 7. What goes with the shared-file exception
 
@@ -112,7 +112,7 @@ The same Breaking entry lists: `layout` and `VFSLayout` removed, `folder` added;
 - `capabilities.test.ts`: `folder` is declared exactly on `storage: 'opfs'` VFS whose files are addressed by path, two letters, unique; the `layout` ↔ `storage` assertions are removed.
 - The tests asserting the shared namespace are **inverted, not deleted** — `tests/unit/locks.test.ts` (`namespaceFor`, and the cases at 155, 179, 438), `tests/unit/epochs.test.ts:121`, `tests/unit/inspect.test.ts:150`: two folder VFS on one name share no lock, no epoch counter, and do not see each other's clients.
 - `bsq:sweep` carries the VFS; `bsq:staging` is unchanged.
-- The length guard: a path of 56 characters accepted and 57 refused, on a folder VFS (53 / 54 for the name) and on one without; a percent-encoded name counted after normalization; all three entry points refuse with `INVALID_OPTION` and `deleteDatabase` / `inspectDatabase` touch no lock.
+- The length guard: a path of 56 characters accepted and 57 refused, on a folder VFS (52 / 53 for the name) and on one without; a percent-encoded name counted after normalization; all three entry points refuse with `INVALID_OPTION` and `deleteDatabase` / `inspectDatabase` touch no lock.
 
 **Browser**
 - **Isolation**, on a ring so each folder VFS is both writer and reader once — `ad`→`ac`, `ac`→`cs`, `cs`→`wa`, `wa`→`ad`: a table written through the first and its client closed, the same name opened through the second reads an empty database; `deleteDatabase` through the other answers `DATABASE_NOT_FOUND` and the first still reads its table.
@@ -131,5 +131,5 @@ The same Breaking entry lists: `layout` and `VFSLayout` removed, `folder` added;
 ## 9. Out of scope
 
 - **Unexporting `VFS_CAPABILITIES`** — `mem:follow-ups`, "Unexport `VFS_CAPABILITIES`". Until then this change to the table is breaking and says so.
-- **Removing empty consumer subdirectories** (`ad/app/` left by deleting `ad/app/data`) — pre-existing for any name with a slash.
+- **Removing empty consumer subdirectories** (`.ad/app/` left by deleting `.ad/app/data`) — pre-existing for any name with a slash.
 - **Memories**, at closure: `mem:vfs` (CROSS-VFS becomes history of a fixed defect), `mem:architecture` (lock namespace), and the follow-up "Mixing VFS of the `opfs-path` family" is deleted.
