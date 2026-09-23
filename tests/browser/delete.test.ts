@@ -12,8 +12,9 @@ import { longQuery, removeDatabaseFiles, sleep, TEST_TARGET } from './helpers';
  * Asserted through the library rather than through OPFS, because half the VFS
  * do not keep a file at that name at all.
  */
-// One VFS: any OPFS-backed VFS reads through the same file; OPFSAdaptiveVFS
-// is the representative used to check "gone" through the library.
+// One VFS: each VFS now keeps its own folder, so this reads only what
+// OPFSAdaptiveVFS wrote. It is the representative used to check "gone"
+// through the library.
 const tableCount = async (file: string) => {
   const db = createSQLiteClient(file, { vfs: 'OPFSAdaptiveVFS' });
   const rows = await db.read<{ n: number }>(
@@ -211,8 +212,8 @@ describe('deleteDatabase', () => {
     });
 
     // Falsifiable: drop `...VFS_CAPABILITIES[vfs].extraFileSuffixes` from the
-    // opfs-path pass in deleteDatabaseFiles — OPFSWriteAheadVFS leaves `-wa0`
-    // and `-wa1` behind, and this goes red on that target.
+    // OPFS pass for a VFS with a folder in deleteDatabaseFiles — OPFSWriteAheadVFS
+    // leaves `-wa0` and `-wa1` behind, and this goes red on that target.
     const opfsEntries = storage === 'opfs';
     (opfsEntries ? it : it.skip)(
       `leaves no OPFS entry named after the database${opfsEntries ? '' : ' — skipped, this VFS keeps no OPFS entry'}`,
