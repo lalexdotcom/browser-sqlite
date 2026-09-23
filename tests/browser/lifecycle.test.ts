@@ -331,6 +331,37 @@ function failWorkersFromIndex(from: number): Worker[] {
   return created;
 }
 
+/**
+ * Intercepts worker creation and makes workers from index `from` onward load
+ * a SILENT module — one that starts successfully and never answers a message.
+ * Unlike `failWorkersFromIndex` (a missing URL, whose load-failure timing is
+ * the browser's own and races the test's own synchronous work), a silent
+ * worker never fails on its own: every failure is dispatched by the test,
+ * making the whole sequence deterministic. Returns the array of created
+ * Worker instances in creation order.
+ */
+function silentWorkersFromIndex(from: number): Worker[] {
+  const created: Worker[] = [];
+  const Original = globalThis.Worker;
+  const silentUrl = URL.createObjectURL(
+    new Blob(['self.onmessage = () => {};'], { type: 'text/javascript' }),
+  );
+  onTestFinished(() => {
+    URL.revokeObjectURL(silentUrl);
+  });
+  class Silent extends Original {
+    constructor(url: string | URL, options?: WorkerOptions) {
+      super(created.length >= from ? silentUrl : url, options);
+      created.push(this);
+    }
+  }
+  globalThis.Worker = Silent as unknown as typeof Worker;
+  onTestFinished(() => {
+    globalThis.Worker = Original;
+  });
+  return created;
+}
+
 describe('worker lifecycle — startup readiness gate', () => {
   // Falsifiable: in handleDeath (src/client.ts), guard the startupLosses.set
   // call with `if (retrySlots.has(index))` (reverting defect 1 fix). Slot 0's
@@ -482,15 +513,34 @@ describe('worker lifecycle — startup readiness gate', () => {
   // derive `ready` from the scheduler's gate). The gate opens on an empty pool
   // and onGateOpen fails the client just after; `ready` must not resolve first.
   it('rejects db.ready when the pool is empty at gate-open, although the gate opened', async () => {
-    // Same scenario as 'fails the client rather than hanging when all startup
-    // workers are gone': slot 0 opens then is killed during the retry round,
-    // slot 1 fails twice.
-    const created = failWorkersFromIndex(1);
+    // Every failure here is dispatched by the test itself, not timed by the
+    // browser: slot 1 (silent) fails round 1; once slot 0 (real) has opened,
+    // its own retry (also silent) is spawned; slot 0 is then killed while
+    // that retry is still open; killing the retry settles the gate on an
+    // empty pool — onGateOpen must fail the client there, before `ready` is
+    // allowed to resolve.
+    const created = silentWorkersFromIndex(1);
     const db = await createTestClient({ poolSize: 2, needs: ['two-workers'] });
-    while (created.length < 3) await sleep(10);
-    created[0].dispatchEvent(
-      new ErrorEvent('error', { message: 'killed during retry' }),
+
+    // Slot 0 (real) and slot 1 (silent, round 1) have both been constructed.
+    while (created.length < 2) await sleep(10);
+    created[1].dispatchEvent(
+      new ErrorEvent('error', { message: 'slot 1 failed round 1' }),
     );
+
+    // Round 1 settles only once slot 0 has genuinely opened — only then does
+    // the retry spawn slot 1's silent replacement (worker index 2).
+    while (created.length < 3) await sleep(10);
+
+    // Kill slot 0 while the retry round is still open.
+    created[0].dispatchEvent(
+      new ErrorEvent('error', { message: 'slot 0 killed during retry' }),
+    );
+    // Kill the retry itself: the pool is now empty, right as the gate opens.
+    created[2].dispatchEvent(
+      new ErrorEvent('error', { message: 'slot 1 retry failed' }),
+    );
+
     await expect(db.ready).rejects.toBeInstanceOf(SQLiteError);
   });
 
