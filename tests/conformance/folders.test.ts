@@ -53,14 +53,16 @@ describe('a database belongs to the VFS that wrote it', () => {
       await db.write('CREATE TABLE t (a INTEGER)');
       await db.close();
 
+      // Nothing exists yet at this name through the reader's VFS.
+      await expect(deleteDatabase(file, { vfs: reader })).rejects.toMatchObject(
+        { code: 'DATABASE_NOT_FOUND' },
+      );
       // Falsifiable: make databasePath return `file` unchanged and the reader
       // opens the writer's file, finding one table.
       expect(await tableCount(file, reader)).toBe(0);
-      await expect(
-        deleteDatabase(file, { vfs: reader }),
-      ).resolves.toBeUndefined();
-      // Deleting through the reader removed the reader's (empty) database only.
       expect(await tableCount(file, writer)).toBe(1);
+      // Cleanup: the reader's (empty) database now exists too.
+      await deleteDatabase(file, { vfs: reader });
       await deleteDatabase(file, { vfs: writer });
     });
   });
