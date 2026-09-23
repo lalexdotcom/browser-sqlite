@@ -167,6 +167,12 @@ invisible to all of them and keep alive exactly the public/internal mixing the s
 end. **The user does not consider the import churn a cost** — one LSP rename — and that
 judgement is theirs, taken on being told the number.
 
+## Unexport `VFS_CAPABILITIES` — the public surface (user, 2026-09-23)
+
+`VFS_CAPABILITIES` and its types `VFSCapability`, `VFSLayout`, `VFSStorage` and `VFSMemoryModel` are public since rc.4 (`2478c81`, `src/index.ts`), so every field of the table is public contract — internal ones like `exclusiveFileHandle` or `singleConnectionWithout` included — and every change to the table is breaking. **The only reader through the export is the bench page** (`scripts/bench/html/index.html`: the vfs × build pairs, and `storage` for its cleanup); `scripts/test-matrix.mjs` and `scripts/render-vfs-matrix.ts` import `src/types.ts` directly, no `tests/consumer*` project uses it, and no public signature names the four types. What must stay exported: `SQLiteVFS`, `SQLiteBuild`, `PlatformFeature` (returned by `detectFeatures()` / `missingFeature()`); `defaultBuildFor` is a separate question.
+
+**Proposed, not decided:** drop the export and have `bench:build` emit the table as JSON from `src/types.ts` (it is pure data). What a consumer loses: enumerating the VFS at runtime, e.g. for a selector — nothing in the repository needs it. Breaking. Parked by the user on 2026-09-23 to stay on the per-VFS folder work.
+
 ## The bench's `pool N → M` header has not been seen on Safari (2026-09-23)
 
 `feat/db-ready` made each column header show the pool it ran on once `db.ready` resolves. `check.mjs` verified it on Chromium and Firefox (Firefox exports `poolSize` 1 for the `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` pairs). On Safari the `OPFSAdaptiveVFS` columns should read `pool 4 → 1`; the user has not run it yet (serve from the container, `mem:conventions`).
