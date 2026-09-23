@@ -5,7 +5,6 @@ import {
   BUILD_REQUIREMENTS,
   type PlatformFeature,
   type SQLiteBuild,
-  type SQLiteVFS,
   VFS_CAPABILITIES,
   type VFSCapability,
   type VFSMemoryModel,

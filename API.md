@@ -69,7 +69,7 @@ const db = createSQLiteClient('myapp.sqlite', {
 
 ## *client*.file
 
-`string`, readonly. The database file, normalized. This is the identity every lock name is built on, and it may differ from the string you passed.
+`string`, readonly. The database name you passed, normalized — what to hand back to [`inspectDatabase`](#inspectdatabase) and [`deleteDatabase`](#deletedatabase). It may differ from what you passed.
 
 A database name may be 56 characters once normalized — 53 on `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS`, which keep it in a folder of their own. A non-ASCII character counts three per UTF-8 byte.
 

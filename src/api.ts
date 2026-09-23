@@ -409,10 +409,8 @@ export type SQLiteDB = SQLiteQueryAPI & {
    * object — the operation runs exactly once.
    *
    * @remarks
-   * **Stored data is NOT deleted.** `close()` releases workers and connections;
-   * it removes nothing. What a database leaves behind, and how to remove it,
-   * depends on the VFS — and this library does not yet expose a deletion that
-   * routes through the VFS itself.
+   * **Stored data is NOT deleted.** `close()` releases workers and
+   * connections; it removes nothing.
    *
    * To remove a database, close every client on it and call
    * `deleteDatabase(db.file, { vfs: db.vfs })`: it goes through the VFS, which
