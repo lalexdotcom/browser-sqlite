@@ -82,7 +82,7 @@ Consumer documentation is edited iteratively and not committed per pass (`mem:co
 
 - **The column header** reads `pool N` when the column is created (before its client exists), then `pool N → M` once `ready` resolves and the effective size `M` differs from the requested `N`. Equal sizes keep `pool N`. A rejected `ready` leaves `pool N`; the column fails as it does today.
 - **The VFS selector's label** keeps the requested size — no client exists when VFS are chosen.
-- **The burst row** divides its ideal gain by the effective size (`ctx.pool`) and caps its ranking with it (`capBy`). Today both use `poolFor`, which is 4 for `OPFSAdaptiveVFS` on Firefox and Safari, where it runs 1.
+- **The burst row** bounds its ranking by the effective size: `capBy` is the only place the pool size enters it (`ctx.pool` is set and never read). Today `capBy` returns `poolFor`, which is 4 for `OPFSAdaptiveVFS` on Firefox and Safari, where it runs 1 — so a gain above 1 there is ranked as if it were possible.
 
 Verified with `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all`; on Safari, served from the container and run by the user.
 
