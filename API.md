@@ -2,7 +2,7 @@
 
 Every method, property and option of [browser-sqlite](README.md).
 
-[*client*.id](#clientid) · [*client*.name](#clientname) · [*client*.file](#clientfile) · [*client*.vfs](#clientvfs) · [*client*.build](#clientbuild) · [*client*.poolSize](#clientpoolsize)
+[*client*.id](#clientid) · [*client*.name](#clientname) · [*client*.file](#clientfile) · [*client*.vfs](#clientvfs) · [*client*.build](#clientbuild) · [*client*.poolSize](#clientpoolsize) · [*client*.ready](#clientready)
 
 [createSQLiteClient()](#createsqliteclient) · [*client*.read()](#clientread) · [*client*.write()](#clientwrite) · [*client*.stream()](#clientstream) · [*client*.chunk()](#clientchunk) · [*client*.first()](#clientfirst) · [*client*.transaction()](#clienttransaction) · [*client*.bulkWrite()](#clientbulkwrite) · [*client*.output()](#clientoutput) · [*client*.inspect()](#clientinspect) · [*client*.close()](#clientclose) · [deleteDatabase()](#deletedatabase) · [inspectDatabase()](#inspectdatabase)
 
@@ -12,7 +12,7 @@ Every method, property and option of [browser-sqlite](README.md).
 
 ## createSQLiteClient
 
-`createSQLiteClient` spawns `poolSize` Web Worker threads immediately. Workers reach READY state asynchronously — queries made before workers are ready are queued automatically.
+`createSQLiteClient` spawns `poolSize` Web Worker threads immediately. Workers reach READY state asynchronously — queries made before workers are ready are queued automatically. [`ready`](#clientready) tells you when that startup is over.
 
 ```typescript
 import { createSQLiteClient } from 'browser-sqlite';
@@ -81,7 +81,13 @@ const db = createSQLiteClient('myapp.sqlite', {
 
 ## *client*.poolSize
 
-`number`, readonly. The number of workers the pool runs: `poolSize` as requested, capped by the VFS and by the environment. Exact once every worker has opened or declined; every query waits for that, so it is settled by the time any query returns.
+`number`, readonly. The number of workers the pool runs: `poolSize` as requested, capped by the VFS and by the environment. Exact once [`ready`](#clientready) resolves — and every query waits for that, so it is settled by the time any query returns.
+
+## *client*.ready
+
+`Promise<void>`, readonly. Settles once the pool has started: every worker has opened, been declined by the environment, or failed its one retry. It resolves when at least one worker serves the database, and [`poolSize`](#clientpoolsize) is final from then on. It rejects with the error that failed the client — `WORKER_CRASHED` when no worker could open, `DATABASE_IN_USE` when another client holds the database exclusively — and with `CLIENT_CLOSED` when `close()` comes first.
+
+You never need to await it: queries wait for the pool on their own. It settles once — a worker lost later is reported by [`onWorkerLost`](#options), not here — and leaving it unread never raises an unhandled rejection.
 
 ## *client*.read
 
