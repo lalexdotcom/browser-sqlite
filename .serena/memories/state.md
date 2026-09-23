@@ -16,7 +16,17 @@ obligations and unmeasured ground.
   (verified on the registry), and as a GitHub prerelease whose body is the CHANGELOG section
   for the tag. `package.json` sits at `1.0.0-rc.5` and stays there until the user calls the
   next bump; everything since lands in a new unreleased section of `CHANGELOG.md`, which
-  **the user's instruction creates** — no automation opens one, and none has been opened yet.
+  **the user's instruction creates** — no automation opens one. **`## Unreleased` exists since
+  2026-09-23**, opened on that instruction, and carries the wa-sqlite repin and the checkpoint
+  coalescing below.
+- **The vendored wa-sqlite sits at `e98c65de`** since 2026-09-23, up from `93b9230`, and
+  `patches/wa-sqlite@1.1.2.patch` carries **four** files since the same day: the three it already
+  had plus `src/examples/WriteAhead.js`, which is the exact diff of our PR #361 rather than a
+  rewrite of it. The old patch applied to the new source with no conflict.
+  **The matrix is OWED for this and was not run** — `mem:conventions` lists a repin or a change to
+  `patches/` among the cases that require it, `pnpm test` covers two of the 22 pairs, and every VFS
+  comes out of that patch. `tsc`, `biome`, `docs:vfs` and `pnpm test` (1218 / 712 / 14, 0 failures)
+  are green; the other twenty pairs are unverified.
 - **The release gate ran the full matrix for the first time, and it took four tags to get
   through.** 22/22 cells, `verify`, `consumer-smoke`, then `release`, with `untag` skipped.
   The three refusals before it were not test failures: `test-matrix.mjs` could not read a

@@ -266,6 +266,14 @@ one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.
   fails on its master. Claude's part is disclosed (the commits are co-signed anyway). The licence
   checkbox of its PR template is the user's to tick, never ours. Drafts go in `.scratchpad/`.
 
+  **Not citing this library means not citing it at all (user, 2026-09-23).** No "How this was found"
+  section, no "in a library built on wa-sqlite", no provenance of any kind: the maintainer's question
+  is whether the change is right for their code, and non-reproducible downstream numbers invite a
+  reviewer to weigh evidence they cannot check. Grep the body AND every commit message for the
+  library's name before submitting. **And the body must carry an arm the maintainer can run in their
+  own checkout, executed by us first** — see `mem:lessons`, "a measurement the maintainer cannot
+  rerun is not evidence for them".
+
   **The report in `docs/upstream/` is written AFTER the PR is opened, named with its number from
   the start (user, 2026-09-21).** Not before, and not under a numberless name to be renamed later:
   the number belongs in the file name, the title, the table row and the "Posted upstream" section,

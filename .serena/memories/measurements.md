@@ -129,6 +129,29 @@ Following PAGE-SIZE: if the cost is call count, coalesce the calls. `checkpoint(
 
 **Correctness:** the full cell twice, write-half then both halves, identical to the unpatched baseline — chromium 351/0/4, firefox 355/0/1, isolated 7/0/0, no failures, no `Short WAL read`, no `Checkpoint write failed`.
 
+**Submitted as rhashimoto/wa-sqlite#361 on 2026-09-23 and carried in `patches/` the same day.** Report: `docs/upstream/2026-09-23-wa-sqlite-361-writeahead-checkpoint-coalesce.md`.
+
+## CHECKPOINT-DIRECT — the same fix on the quantity a maintainer can rerun, 2026-09-23
+
+**Why this entry exists, and it is the lesson as much as the measurement:** every figure in CHECKPOINT-COALESCE above is a `cut / natural` ratio taken through OUR harness — rstest, our pool, our abort machinery. That metric cannot be *built* in wa-sqlite: no interrupt, no pool, no abortable statement in its `test/`. A PR carrying only those numbers asks a maintainer to weigh evidence they cannot check.
+
+The quantity underneath needs none of it. `PRAGMA wal_autocheckpoint=0`, bulk insert, then time `PRAGMA wal_checkpoint` on its own — the function the patch changes, called directly. It runs on upstream's own demo page (`demo/?build=default&config=OPFSWriteAheadVFS&reset=true`, two Executes), with **no new file and no build**: `WriteAhead.js` is served as a module and `dist/` is committed, so the two arms are one `git switch` apart. Driver kept at `.scratchpad/wavfs-coalesce-repro/measure.mjs`.
+
+3 M rows leave a **66 840 704 byte** write-ahead and a **66 314 240 byte** database — 16 190 pages of 4 KiB, read out of OPFS rather than estimated. The disarming is verified the same way: the database is 0 bytes until the checkpoint runs.
+
+| | `PRAGMA wal_checkpoint` (ms) | insert, control (ms) |
+| --- | ---: | ---: |
+| Chromium 151, `master` | 7172 / 7285 / 7313 | 10907 / 10328 / 10273 |
+| Chromium 151, #361 | **197 / 170 / 158** | 11035 / 10329 / 9924 |
+| Firefox 153, `master` | 2384 / 2432 | 10058 / 10188 |
+| Firefox 153, #361 | **58 / 49** | 9986 / 10049 |
+
+**About 40× on both engines**, the insert unmoved — it runs with the automatic checkpoint disarmed, so the patch cannot reach it.
+
+**Two of this file's own claims are corrected by it.** PAGE-SIZE's asymmetry is about the *insert*, where Firefox is bound by SQLite's own work; on the checkpoint alone both engines gain the same factor, so **"Chromium pays the per-call overhead" is not true of the checkpoint** — the call count dominates everywhere and Chromium merely pays ~3× more per call. And the **~3365 ms PAGE-SIZE attributes to the checkpoint was DERIVED**, a subtraction of two `cut` values, never measured; the direct figures are above, on a different workload shape, and the two are not comparable. What survives from PAGE-SIZE is the mechanism, not that number.
+
+The upstream suite on Chromium, `master` and branch: 14 files, 2899 passing, 0 failing on both.
+
 **Careful with truncated logs.** A first reading of this gave 157/156/161 and "22x". That came from a pre-push hook run of the whole suite, whose tail belonged to `OPFSAdaptiveVFS` — a VFS with no checkpoint, sitting at the floor for free. The number was real and measured the wrong target.
 
 ## CUT-RATIO — how late an abandoned write is cut, per pair, 2026-09-22, this container

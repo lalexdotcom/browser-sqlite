@@ -1058,3 +1058,29 @@ Of six carried by `multi-client`/`cross-tab`, two reproduced everywhere, one onl
 were refuted: the `src/` lines they named were redundant, so deleting them changed nothing observable.
 **Re-run a falsifier whenever its test starts running somewhere new** — and when it is refuted, say so in
 the comment rather than rewording it into something that sounds true.
+
+## A measurement the maintainer cannot rerun is not evidence for them — 2026-09-23
+
+#361's first draft argued the change with `cut / natural`: how much of an abandoned write a statement
+gives back. Every figure came from our harness, and that metric cannot be BUILT in wa-sqlite — no
+interrupt, no pool, no abortable statement in its `test/`. The user caught it with one question: *"comment
+le mainteneur peut les relancer ?"* The answer was that he could not, of any figure in the body.
+
+**The fix is not to explain the harness, it is to find the quantity underneath that is directly
+measurable in theirs.** Here: the ratio is a consequence, `checkpoint()`'s wall time is the cause, and an
+explicit `PRAGMA wal_checkpoint` with the automatic one disarmed times exactly the patched function — on
+upstream's own demo page, no new file, no build, the two arms one `git switch` apart. It also came out
+*stronger*: 40× on both engines, where the ratio had suggested a Chromium problem.
+
+So, before writing an upstream PR body: **name the arm a maintainer runs, and run it yourself first.**
+A recipe that has not been executed is a guess, and this one needed a proof the disarming had taken
+effect — the database file staying at 0 bytes — which only running it produced.
+
+## A variable name you did not choose may already be taken — 2026-09-23
+
+A measurement driver read `process.env.BROWSER` to pick a Playwright engine. This container defines
+`BROWSER` — VS Code's own helper script — so the Chromium arm launched nothing and died on
+`undefined.launch()`. Firefox worked throughout, because it was passed explicitly, which is what made the
+failure look like a Chromium problem. Second instance of "the environment an agent runs in is not
+neutral" above: prefix a probe's variables (`PW_BROWSER`), and suspect the environment when one arm of
+a symmetric harness fails.
