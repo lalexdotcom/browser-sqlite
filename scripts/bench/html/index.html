@@ -939,7 +939,10 @@
             try {
               let dir = root;
               for (const folder of segments) {
-                dir = await dir.getDirectoryHandle(folder);
+                // Bounded like the removal below: a directory that holds a
+                // handle from a close that has not settled, or from a
+                // previous run, can hang the lookup the same way.
+                dir = await withDeadline(dir.getDirectoryHandle(folder));
               }
               // Bounded for the same reason the sweep is: this runs at the
               // end of every column, so a removal that never settles hangs
@@ -1199,11 +1202,15 @@
               for (const folder of vfsFolders()) {
                 let dir;
                 try {
-                  dir = await root.getDirectoryHandle(folder);
+                  dir = await withDeadline(root.getDirectoryHandle(folder));
                 } catch (error) {
                   // Not created yet by this origin: nothing to sweep.
                   if (error?.name === 'NotFoundError') continue;
                   sweepLeft('opfs', folder, 'refused');
+                  continue;
+                }
+                if (dir === TIMED_OUT) {
+                  sweepLeft('opfs', folder, 'timed out');
                   continue;
                 }
                 const inFolder = await withDeadline(listOpfsRoot(dir));
