@@ -282,7 +282,6 @@
     <script type="module">
       import {
         createSQLiteClient,
-        defaultBuildFor,
         deleteDatabase,
         detectFeatures,
         missingFeature,
@@ -2507,18 +2506,6 @@
               );
             }
           }
-        }
-
-        // DEFAULT_VFS is intentionally not imported: the design requires a VFS
-        // name to live in the consumer's own source, and this page is a consumer.
-        const defaultPair = `OPFSAdaptiveVFS/${defaultBuildFor('OPFSAdaptiveVFS')}`;
-        if (ran.includes(defaultPair)) {
-          const led = decided.filter(([, w]) => w[0] === defaultPair);
-          parts.push(
-            led.length > 0
-              ? `<p class="caveat">The default, ${pretty(defaultPair)}, led ${led.map(([c]) => c.label).join(' and ')} here.</p>`
-              : `<p class="caveat">The default, ${pretty(defaultPair)}, led none of these criteria on this device.</p>`,
-          );
         }
 
         if (out.length > 0) {
