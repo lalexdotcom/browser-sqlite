@@ -1916,11 +1916,10 @@
            * hand it the row — the same defect the old `pool-blocking` ratio had
            * at the other end, where the noisiest column was crowned as best.
            *
-           * The cap is per column because `poolFor` differs per VFS, hence a
-           * function rather than a constant. It bounds the RANKING only; the
+           * The cap is per column because the pool each column ran on differs. It bounds the RANKING only; the
            * cell keeps what was measured, marked.
            */
-          capBy: (pair) => poolFor(pair.cap),
+          capBy: (pair) => RESULTS.poolSize[pair.id] ?? poolFor(pair.cap),
           applies: () => true,
           /**
            * Median of 5 serial/parallel gain ratios. Alternates which runs
@@ -2325,9 +2324,11 @@
         }
       };
 
+      const poolLabels = new Map(); // pair.id -> the <small> in its column header
       const addColumn = (pair) => {
         const th = document.createElement('th');
         th.innerHTML = `${pair.vfs} · ${pair.build}<small>pool ${poolFor(pair.cap)}</small>`;
+        poolLabels.set(pair.id, th.querySelector('small'));
         headRow.append(th);
         for (const tr of bodyRows.querySelectorAll('tr')) {
           const td = document.createElement('td');
@@ -2568,6 +2569,18 @@
           poolSize: poolFor(pair.cap),
           openTimeout: OPEN_TIMEOUT_MS,
         });
+        // The environment can cap the pool below what was asked for; the header
+        // says what ran once the pool has started.
+        db.ready.then(
+          () => {
+            RESULTS.poolSize[pair.id] = db.poolSize;
+            if (db.poolSize !== poolFor(pair.cap)) {
+              poolLabels.get(pair.id).textContent =
+                `pool ${poolFor(pair.cap)} → ${db.poolSize}`;
+            }
+          },
+          () => {},
+        );
         const ctx = { db, file, pair, pool: poolFor(pair.cap) };
 
         let abandoned = false;
