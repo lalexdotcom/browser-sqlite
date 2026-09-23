@@ -84,11 +84,14 @@ describe('the path length guard', () => {
   });
 
   it('inspectDatabase refuses a too-long name before taking any lock', async () => {
-    const request = rstest.spyOn(navigator.locks, 'request');
-    onTestFinished(() => request.mockRestore());
+    // inspectDatabase's only Web Locks call is locks.entries() -> query()
+    // (src/locks.ts), never request() — spying on query() is what a guard
+    // moved after that call would actually trip.
+    const query = rstest.spyOn(navigator.locks, 'query');
+    onTestFinished(() => query.mockRestore());
     await expect(
       inspectDatabase('n'.repeat(60), { vfs: 'IDBBatchAtomicVFS' }),
     ).rejects.toMatchObject({ code: 'INVALID_OPTION' });
-    expect(request).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
   });
 });
