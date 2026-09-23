@@ -436,8 +436,15 @@ export type SQLiteDB = SQLiteQueryAPI & {
   readonly id: string;
   /** This client's label, index included — what its log lines are prefixed with. */
   readonly name: string;
-  /** The database file, normalized: the identity every lock name is built on. */
+  /** The database name you passed, normalized — what to hand back to `inspectDatabase` and `deleteDatabase`. */
   readonly file: string;
+  /**
+   * Every name this database's files may have, as the VFS receives them: the
+   * database, `-journal`, `-wal`, and the VFS's own extra files. On a VFS with
+   * a folder these are OPFS paths; elsewhere they are names inside the VFS's
+   * own store. Empty on the memory VFS.
+   */
+  readonly files: readonly string[];
   readonly vfs: SQLiteVFS;
   /** The build actually loaded, resolved by `defaultBuildFor` when not passed. */
   readonly build: SQLiteBuild;

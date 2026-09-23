@@ -3,6 +3,7 @@ import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
 import { createLocks, parseClientMarker } from '../../src/locks';
 import type { SQLiteVFS } from '../../src/types';
+import { databasePath } from '../../src/utils';
 import { pairFor } from './helpers';
 
 // One VFS: two clients must share one database (the marker roster);
@@ -20,8 +21,9 @@ const shared = () => pairFor(['shared-storage']);
 
 const markersFor = async (file: string, vfs: SQLiteVFS = shared().vfs) => {
   const { held } = await locks.entries();
+  const path = databasePath(vfs, file);
   return held
-    .map((entry) => parseClientMarker(entry.name, vfs, file))
+    .map((entry) => parseClientMarker(entry.name, vfs, path))
     .filter(
       (m): m is NonNullable<ReturnType<typeof parseClientMarker>> =>
         m !== undefined,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
-import { createTestClient, TEST_TARGET } from './helpers';
+import { createTestClient, removeDatabaseFiles, TEST_TARGET } from './helpers';
 
 /**
  * INT-02: createSQLiteClient initializes and workers reach READY
@@ -26,12 +26,11 @@ describe('createSQLiteClient (INT-02)', () => {
     // createTestClient uses the default poolSize: 2
     // Verify that a minimal pool works
     const { createSQLiteClient } = await import('../../src/client');
-    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const dbName = `bsq-test-${crypto.randomUUID()}`;
 
     const cleanup = async () => {
       try {
-        const root = await navigator.storage.getDirectory();
-        await root.removeEntry(dbName, { recursive: true });
+        await removeDatabaseFiles(dbName, TEST_TARGET.vfs);
       } catch {
         /* ok */
       }

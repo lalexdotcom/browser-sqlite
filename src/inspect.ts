@@ -8,7 +8,7 @@ import {
 } from './locks';
 import type { SQLiteVFS } from './types';
 import { VFS_CAPABILITIES } from './types';
-import { normalizeDatabaseFile } from './utils';
+import { databasePath, resolveDatabase } from './utils';
 
 /**
  * The Web Locks `clientId` of THIS realm.
@@ -107,6 +107,8 @@ export type ClientInspection = InspectionBase & {
  * that never existed. The one exception: a realm whose id has never been
  * resolved and that was given no marker pays one extra query to read its own
  * `clientId` back — once, and never again for that realm's lifetime.
+ *
+ * `file` is the logical name, normalized; the path is derived here.
  */
 export const inspectWith = async (
   locks: Locks,
@@ -120,12 +122,13 @@ export const inspectWith = async (
       `${vfs} keeps its pages in the worker that opened them, so two clients are two databases and there is nothing to inspect. Ask this of a persistent VFS.`,
     );
   }
+  const path = databasePath(vfs, file);
   const snapshot = await locks.entries();
   const realm = await resolveRealmId(locks, snapshot, ownMarkerName);
 
   const clients: DatabaseClient[] = [];
   for (const entry of snapshot.held) {
-    const marker = parseClientMarker(entry.name, vfs, file);
+    const marker = parseClientMarker(entry.name, vfs, path);
     if (!marker) continue;
     clients.push({
       id: marker.id,
@@ -136,7 +139,7 @@ export const inspectWith = async (
     });
   }
 
-  const writeName = writeLockName(vfs, file);
+  const writeName = writeLockName(vfs, path);
   const writer = snapshot.held.find((entry) => entry.name === writeName);
   const waiting = snapshot.pending.filter(
     (entry) => entry.name === writeName,
@@ -263,5 +266,5 @@ export const inspectDatabase = async (
     );
   }
 
-  return inspectWith(locks, normalizeDatabaseFile(file), vfs);
+  return inspectWith(locks, resolveDatabase(file, vfs).file, vfs);
 };

@@ -9,7 +9,8 @@ import {
   type SQLiteVFS,
   VFS_CAPABILITIES,
 } from '../../src/types';
-import { AVAILABLE_FEATURES } from '../conformance/helpers';
+import { databaseFiles, databasePath } from '../../src/utils';
+import { AVAILABLE_FEATURES, removeOpfsPath } from '../conformance/helpers';
 import { targetLabel } from '../target-projects';
 import { type Here, type Need, resolvePair, type TestTarget } from './target';
 
@@ -77,21 +78,8 @@ export const removeDatabaseFiles = async (
   name: string,
   vfs: SQLiteVFS,
 ): Promise<void> => {
-  try {
-    const root = await navigator.storage.getDirectory();
-    for (const suffix of [
-      '',
-      '-journal',
-      '-wal',
-      ...VFS_CAPABILITIES[vfs].extraFileSuffixes,
-    ]) {
-      await root
-        .removeEntry(`${name}${suffix}`, { recursive: true })
-        .catch(() => {});
-    }
-  } catch {
-    // No OPFS here, or nothing was created.
-  }
+  for (const path of databaseFiles(vfs, databasePath(vfs, name)))
+    await removeOpfsPath(path);
 };
 
 /**
@@ -115,7 +103,7 @@ export const pairFor = (needs: readonly Need[] = []): TestTarget => {
 };
 
 export async function createTestClient(options: TestClientOptions = {}) {
-  const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+  const dbName = `bsq-test-${crypto.randomUUID()}`;
   const { needs = [], ...clientOptions } = options;
   const pair: TestTarget =
     options.vfs === undefined

@@ -2,6 +2,8 @@ import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { SQLiteError } from '../../src/errors';
 import { connectionLockName } from '../../src/locks';
+import { databasePath } from '../../src/utils';
+import { removeDatabaseFiles } from './helpers';
 
 /**
  * Guard against AHP-2TAB: two clients on `AccessHandlePoolVFS` silently break
@@ -15,7 +17,7 @@ import { connectionLockName } from '../../src/locks';
  */
 
 /** Unique database name for each test. */
-const dbName = () => `browser-sqlite-test-${crypto.randomUUID()}`;
+const dbName = () => `bsq-test-${crypto.randomUUID()}`;
 
 /** Clean up an AccessHandlePoolVFS database. Its files live in a pool
  *  directory named after the VFS class, not directly at the dbName path, so
@@ -186,7 +188,7 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
   // One VFS: two clients must share one database; OPFSAdaptiveVFS shares it
   // on every engine (see `secondClientOutcome`).
   it('lets two clients coexist on a shared-mode VFS, and both hold the lock', async () => {
-    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const dbName = `bsq-test-${crypto.randomUUID()}`;
     const options = { vfs: 'OPFSAdaptiveVFS' as const, poolSize: 1 };
     const a = createSQLiteClient(dbName, options);
     const b = createSQLiteClient(dbName, options);
@@ -199,8 +201,7 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
         }
       }
       try {
-        const root = await navigator.storage.getDirectory();
-        await root.removeEntry(dbName, { recursive: true });
+        await removeDatabaseFiles(dbName, options.vfs);
       } catch {
         /* the entry may not exist if the test failed before creation */
       }
@@ -212,7 +213,10 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
     // Falsifiable: give the shared branch `ifAvailable: true` and one of these
     // two clients starts throwing DATABASE_IN_USE.
     const held = (await navigator.locks.query()).held ?? [];
-    const name = connectionLockName(options.vfs, dbName);
+    const name = connectionLockName(
+      options.vfs,
+      databasePath(options.vfs, dbName),
+    );
     expect(held.filter((lock) => lock.name === name).length).toBe(2);
     expect(
       held
@@ -224,7 +228,7 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
   // One VFS: the subject is MemoryVFS's lack of any OPFS-backed connection
   // lock (it holds no shared storage to guard).
   it('takes no connection lock on the memory VFS', async () => {
-    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const dbName = `bsq-test-${crypto.randomUUID()}`;
     const db = createSQLiteClient(dbName, { vfs: 'MemoryVFS', poolSize: 1 });
     onTestFinished(async () => {
       try {
@@ -260,8 +264,7 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
     onTestFinished(async () => {
       await closeAll(a, b);
       try {
-        const root = await navigator.storage.getDirectory();
-        await root.removeEntry(name, { recursive: true });
+        await removeDatabaseFiles(name, opts.vfs);
       } catch {
         /* may not exist if the test failed early */
       }

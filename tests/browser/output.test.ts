@@ -1,6 +1,6 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
-import { createTestClient } from './helpers';
+import { createTestClient, removeDatabaseFiles } from './helpers';
 
 /**
  * Characterization tests for `db.output()` — the schema-driven staging-table
@@ -312,7 +312,7 @@ describe('output() atomicity and sweep', () => {
   // staging table → outA.close() fails with "no such table".
   it('does not collect a staging table that is still in flight', async () => {
     // Two clients share the same OPFS file so their sweeps interact.
-    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const dbName = `bsq-test-${crypto.randomUUID()}`;
     // One VFS: two clients must share one database; OPFSAdaptiveVFS shares
     // it on every engine (see `secondClientOutcome`).
     const dbA = createSQLiteClient(dbName, { vfs: 'OPFSAdaptiveVFS' });
@@ -330,8 +330,7 @@ describe('output() atomicity and sweep', () => {
         /* ignore */
       }
       try {
-        const root = await navigator.storage.getDirectory();
-        await root.removeEntry(dbName, { recursive: true });
+        await removeDatabaseFiles(dbName, 'OPFSAdaptiveVFS');
       } catch {
         /* ignore */
       }

@@ -8,8 +8,13 @@
  */
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
-import { HAS_UNSAFE_HANDLES } from '../conformance/helpers';
-import { createTestClient, interceptWorkers } from './helpers';
+import { databasePath } from '../../src/utils';
+import { HAS_UNSAFE_HANDLES, removeOpfsPath } from '../conformance/helpers';
+import {
+  createTestClient,
+  interceptWorkers,
+  removeDatabaseFiles,
+} from './helpers';
 
 const CAPPED = !HAS_UNSAFE_HANDLES;
 
@@ -27,20 +32,24 @@ const captureWarnings = () => {
 };
 
 /**
- * Holds `file` open with an exclusive OPFS sync access handle from a second
- * worker — the way a real second client of the same database would — then
- * probes whether this engine's readwrite-unsafe call shape can coexist with
- * that exclusive handle. Returns the engine's own error name for that probe
- * (the oracle used to assert on the cause below), or null where it doesn't
- * conflict. Registers its own release/cleanup via onTestFinished.
+ * Holds the file at `path` open with an exclusive OPFS sync access handle
+ * from a second worker — the way a real second client of the same database
+ * would, hence a path rather than a bare name — then probes whether this
+ * engine's readwrite-unsafe call shape can coexist with that exclusive
+ * handle. Returns the engine's own error name for that probe (the oracle
+ * used to assert on the cause below), or null where it doesn't conflict.
+ * Registers its own release/cleanup via onTestFinished.
  */
-const holdFileExclusively = async (file: string): Promise<string | null> => {
+const holdFileExclusively = async (path: string): Promise<string | null> => {
   const src = `
       let held;
       self.onmessage = async (e) => {
         if (e.data === 'release') { held?.close(); self.postMessage('released'); return; }
-        const root = await navigator.storage.getDirectory();
-        const fh = await root.getFileHandle(e.data, { create: true });
+        const segments = e.data.split('/');
+        const name = segments.pop();
+        let dir = await navigator.storage.getDirectory();
+        for (const segment of segments) dir = await dir.getDirectoryHandle(segment, { create: true });
+        const fh = await dir.getFileHandle(name, { create: true });
         held = await fh.createSyncAccessHandle();
         try {
           const again = await fh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
@@ -58,12 +67,11 @@ const holdFileExclusively = async (file: string): Promise<string | null> => {
       holder.onmessage = (e) => resolve(e.data);
       holder.postMessage(message);
     });
-  const oracle = (await ask(file)) as string | null;
+  const oracle = (await ask(path)) as string | null;
   onTestFinished(async () => {
     await ask('release');
     holder.terminate();
-    const root = await navigator.storage.getDirectory();
-    await root.removeEntry(file).catch(() => {});
+    await removeOpfsPath(path);
   });
   return oracle;
 };
@@ -165,7 +173,9 @@ describe('a pool capped by its environment', () => {
     const file = `pool-cap-held-${crypto.randomUUID()}`;
     // A third party holds the file exclusively, then tries the VFS's own call
     // shape once: the error it gets is the oracle, measured on this engine.
-    const oracle = await holdFileExclusively(file);
+    const oracle = await holdFileExclusively(
+      databasePath('OPFSWriteAheadVFS', file),
+    );
     // An engine where the VFS's call shape coexists with an exclusive handle
     // gives this test nothing to observe.
     expect(oracle).not.toBeNull();
@@ -207,8 +217,7 @@ describe('a pool capped by its environment', () => {
     const warnings = captureWarnings();
     const file = `pool-cap-close-${crypto.randomUUID()}`;
     onTestFinished(async () => {
-      const root = await navigator.storage.getDirectory();
-      await root.removeEntry(file, { recursive: true }).catch(() => {});
+      await removeDatabaseFiles(file, 'OPFSWriteAheadVFS');
     });
     // One VFS: the subject is close() during startup of a pool capped by
     // OPFSWriteAheadVFS's own environment cap.
@@ -268,8 +277,7 @@ describe('a pool capped by its environment', () => {
 
       const file = `pool-cap-retry-${crypto.randomUUID()}`;
       onTestFinished(async () => {
-        const root = await navigator.storage.getDirectory();
-        await root.removeEntry(file, { recursive: true }).catch(() => {});
+        await removeDatabaseFiles(file, 'OPFSWriteAheadVFS');
       });
 
       const warnings = captureWarnings();
@@ -331,7 +339,9 @@ describe('a pool capped by its environment', () => {
     'reports exactly one loss, for slot 0, when the capped pool fails to open at all',
     async () => {
       const file = `pool-cap-total-${crypto.randomUUID()}`;
-      const oracle = await holdFileExclusively(file);
+      const oracle = await holdFileExclusively(
+        databasePath('OPFSWriteAheadVFS', file),
+      );
       expect(oracle).not.toBeNull();
 
       const events: { index: number; size: number; live: number }[] = [];

@@ -2,6 +2,9 @@ import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { SQLiteError } from '../../src/errors';
 import { SQLITE_CODES, SQLITE_EXTENDED_CODES } from '../../src/sqlite-codes';
+import type { SQLiteVFS } from '../../src/types';
+import { databasePath } from '../../src/utils';
+import { removeOpfsPath } from '../conformance/helpers';
 import { createTestClient, pairFor } from './helpers';
 
 /**
@@ -224,15 +227,21 @@ describe('a file that is not a database', () => {
    */
   const opfsPair = () => pairFor(['opfs-file']);
 
-  /** An OPFS file of 4 KiB of 'A' — what an `opfs-path` VFS opens by name. */
-  const garbageFile = async () => {
+  /** An OPFS file of 4 KiB of 'A' — what a VFS with a folder opens at its path. */
+  const garbageFile = async (vfs: SQLiteVFS) => {
     const file = `statement-errors-${crypto.randomUUID()}`;
-    const root = await navigator.storage.getDirectory();
-    const handle = await root.getFileHandle(file, { create: true });
+    const path = databasePath(vfs, file);
+    const segments = path.split('/');
+    const name = segments.pop() as string;
+    let dir = await navigator.storage.getDirectory();
+    for (const segment of segments) {
+      dir = await dir.getDirectoryHandle(segment, { create: true });
+    }
+    const handle = await dir.getFileHandle(name, { create: true });
     const writable = await handle.createWritable();
     await writable.write(new Uint8Array(4096).fill(0x41));
     await writable.close();
-    return { file, remove: () => root.removeEntry(file).catch(() => {}) };
+    return { file, remove: () => removeOpfsPath(path) };
   };
 
   // The target declares no default pragma, so a `pragmas` entry is what makes
@@ -240,7 +249,7 @@ describe('a file that is not a database', () => {
   // WORKER_CRASHED built in startupError.
   it('fails the open with WORKER_CRASHED carrying NOTADB when a pragma reads it', async () => {
     const pair = opfsPair();
-    const { file, remove } = await garbageFile();
+    const { file, remove } = await garbageFile(pair.vfs);
     const db = createSQLiteClient(file, {
       vfs: pair.vfs,
       build: pair.build,
@@ -263,7 +272,7 @@ describe('a file that is not a database', () => {
   // reads the schema is what fails.
   it('fails the first statement with STATEMENT_FAILED when nothing reads it at open', async () => {
     const pair = opfsPair();
-    const { file, remove } = await garbageFile();
+    const { file, remove } = await garbageFile(pair.vfs);
     const db = createSQLiteClient(file, {
       vfs: pair.vfs,
       build: pair.build,

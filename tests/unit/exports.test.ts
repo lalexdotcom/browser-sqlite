@@ -26,6 +26,7 @@ type _ClientExtras =
   | 'id'
   | 'name'
   | 'file'
+  | 'files'
   | 'vfs'
   | 'build'
   | 'poolSize'

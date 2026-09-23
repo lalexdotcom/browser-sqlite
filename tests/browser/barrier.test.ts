@@ -1,7 +1,7 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { BARRIER_SQL } from '../../src/epochs';
-import { createTestClient } from './helpers';
+import { createTestClient, removeDatabaseFiles } from './helpers';
 
 /**
  * The failing configuration is forced, not waited for: with the designation
@@ -117,7 +117,7 @@ describe('barrier — two clients in one tab', () => {
   // commit; a pure INSERT leaves the schema unchanged so no barrier is needed
   // to see it, making such a test vacuous.
   it("client B observes client A's schema change", async () => {
-    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const dbName = `bsq-test-${crypto.randomUUID()}`;
     const a = createSQLiteClient(dbName, sharedFile);
     const b = createSQLiteClient(dbName, sharedFile);
     onTestFinished(async () => {
@@ -132,8 +132,7 @@ describe('barrier — two clients in one tab', () => {
         /* ignore */
       }
       try {
-        const root = await navigator.storage.getDirectory();
-        await root.removeEntry(dbName, { recursive: true });
+        await removeDatabaseFiles(dbName, sharedFile.vfs);
       } catch {
         /* ignore */
       }
@@ -152,10 +151,10 @@ describe('barrier — two clients in one tab', () => {
   // createSQLiteClient and this goes red — the two clients key two counters
   // so B's barrier never fires and B reads the stale schema.
   it('treats two spellings of one file as one database', async () => {
-    // Shorter prefix: './bsq-test-<uuid>' = 47 chars, safely under the
-    // 56-char wa-sqlite path limit (FacadeVFS.jFullPathname copies raw name;
-    // SQLite checks nPathname + 8 > mxPathname = 64 before calling xOpen).
-    // './browser-sqlite-test-<uuid>' = 58 chars would crash the worker.
+    // './bsq-test-<uuid>' normalizes to the same 45-char name as `dbName`
+    // (URL resolves './' away), well under the 56-char wa-sqlite path bound
+    // (SQLite checks nPathname + 8 > mxPathname = 64 before calling xOpen) —
+    // folder included, since this VFS keeps one.
     const dbName = `bsq-test-${crypto.randomUUID()}`;
     const a = createSQLiteClient(dbName, sharedFile);
     const b = createSQLiteClient(`./${dbName}`, sharedFile);
@@ -171,8 +170,7 @@ describe('barrier — two clients in one tab', () => {
         /* ignore */
       }
       try {
-        const root = await navigator.storage.getDirectory();
-        await root.removeEntry(dbName, { recursive: true });
+        await removeDatabaseFiles(dbName, sharedFile.vfs);
       } catch {
         /* ignore */
       }

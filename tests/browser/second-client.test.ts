@@ -7,6 +7,7 @@ import {
   type SQLiteVFS,
   VFS_CAPABILITIES,
 } from '../../src/types';
+import { databasePath } from '../../src/utils';
 import { AVAILABLE_FEATURES } from '../conformance/helpers';
 import {
   interceptWorkers,
@@ -250,7 +251,8 @@ describe('a client closed before worker 0 has answered', () => {
     expect(performance.now() - started).toBeLessThan(REFUSED_WITHIN);
     const held = ((await navigator.locks.query()).held ?? []).filter(
       (lock) =>
-        lock.name?.startsWith('bsq:conn:') && lock.name.endsWith(`:${file}`),
+        lock.name?.startsWith('bsq:conn:') &&
+        lock.name.endsWith(`:${databasePath(vfs, file)}`),
     );
     expect(held).toEqual([]);
     const b = createSQLiteClient(file, { vfs });

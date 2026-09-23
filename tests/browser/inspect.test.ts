@@ -3,6 +3,7 @@ import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
 import { inspectDatabase } from '../../src/inspect';
 import { clientMarkerName } from '../../src/locks';
+import { databasePath } from '../../src/utils';
 import { pairFor } from './helpers';
 import { holdIn, makeRealm } from './helpers/realm';
 
@@ -48,7 +49,7 @@ describe('inspectDatabase', () => {
     // clientId differ, and that is the whole of what `sameTab` reads.
     const foreign = clientMarkerName(
       VFS,
-      file,
+      databasePath(VFS, file),
       '0189d4a2-4f3c-7b1e-9c8a-2f5b6d7e8a99',
       'SQLite 1',
     );
@@ -70,7 +71,7 @@ describe('inspectDatabase', () => {
     const file = 'torn-down.db';
     const foreign = clientMarkerName(
       VFS,
-      file,
+      databasePath(VFS, file),
       '0189d4a2-4f3c-7b1e-9c8a-2f5b6d7e8a98',
       'SQLite 1',
     );

@@ -6,6 +6,7 @@ import {
   type PoolWorker,
   type PoolWorkerQueryOptions,
 } from '../../src/pool';
+import { databasePath } from '../../src/utils';
 import { removeDatabaseFiles, TEST_TARGET } from './helpers';
 
 /**
@@ -21,7 +22,7 @@ const spawn = async (): Promise<{ worker: PoolWorker; file: string }> => {
     index: 0,
     pool: [] as (PoolWorker | undefined)[],
     clientName: 'pool-savepoint',
-    file,
+    file: databasePath(TEST_TARGET.vfs, file),
     vfs: TEST_TARGET.vfs,
     build: TEST_TARGET.build,
     drainTimeout: 5000,

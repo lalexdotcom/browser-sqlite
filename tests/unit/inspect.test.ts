@@ -5,6 +5,7 @@ import {
   libraryClientsHold,
 } from '../../src/inspect';
 import { clientMarkerName, type Locks, noOpLocks } from '../../src/locks';
+import { databasePath } from '../../src/utils';
 
 const ID_A = '0189d4a2-4f3c-7b1e-9c8a-2f5b6d7e8a90';
 const ID_B = '0189d4a2-4f3c-7b1e-9c8a-2f5b6d7e8a91';
@@ -21,9 +22,13 @@ const stubLocks = (held: { name: string; clientId: string }[]): Locks =>
   }) as Locks;
 
 describe('inspectWith', () => {
+  // inspectWith takes the logical name and derives the path itself, so its
+  // markers are keyed on the path — what the client actually writes.
+  const path = databasePath('OPFSAdaptiveVFS', 'app.db');
+
   it('counts one tab for two clients in one realm', async () => {
     const marker = (id: string) =>
-      clientMarkerName('OPFSAdaptiveVFS', 'app.db', id, 'SQLite 1');
+      clientMarkerName('OPFSAdaptiveVFS', path, id, 'SQLite 1');
     const locks = stubLocks([
       { name: marker(ID_A), clientId: 'r1' },
       { name: marker(ID_B), clientId: 'r1' },
@@ -40,7 +45,7 @@ describe('inspectWith', () => {
 
   it('counts two tabs for two realms', async () => {
     const marker = (id: string) =>
-      clientMarkerName('OPFSAdaptiveVFS', 'app.db', id, 'SQLite 1');
+      clientMarkerName('OPFSAdaptiveVFS', path, id, 'SQLite 1');
     const locks = stubLocks([
       { name: marker(ID_A), clientId: 'r1' },
       { name: marker(ID_B), clientId: 'r2' },
@@ -60,7 +65,7 @@ describe('inspectWith', () => {
     // whether prior tests filled the module-scope cachedRealmId.
     const ownMarker = clientMarkerName(
       'OPFSAdaptiveVFS',
-      'app.db',
+      path,
       ID_A,
       'SQLite 1',
     );

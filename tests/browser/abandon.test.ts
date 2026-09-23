@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@rstest/core';
 import { createLogger } from '../../src/logger';
 import { createPoolWorker, type PoolWorker } from '../../src/pool';
+import { databasePath } from '../../src/utils';
 import {
   createTestClient,
   removeDatabaseFiles,
@@ -189,7 +190,7 @@ describe("interrupt() ignores a transport the worker isn't serving", () => {
       index: 0,
       pool,
       clientName: 'pool-interrupt-direct',
-      file,
+      file: databasePath(TEST_TARGET.vfs, file),
       vfs: TEST_TARGET.vfs,
       build: TEST_TARGET.build,
       drainTimeout: 5000,

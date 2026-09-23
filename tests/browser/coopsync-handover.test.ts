@@ -34,6 +34,7 @@
  */
 import { describe, expect, it } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
+import { removeDatabaseFiles } from './helpers';
 
 type Client = ReturnType<typeof createSQLiteClient>;
 
@@ -53,10 +54,7 @@ const open = (file: string, build: (typeof BUILDS)[number] = 'sync') =>
 const describeError = (e: any) => `${e?.code}: ${e?.message}`;
 
 const scrub = async (file: string) => {
-  const root = await navigator.storage.getDirectory();
-  for (const suffix of ['', '-journal', '-wal']) {
-    await root.removeEntry(file + suffix).catch(() => {});
-  }
+  await removeDatabaseFiles(file, 'OPFSCoopSyncVFS');
 };
 
 /** Writes on A, reads on B, all issued at once; returns every rejection. */
@@ -93,7 +91,7 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', () =
     it(`two clients opened together fail no statement (${build})`, async () => {
       const failures: string[] = [];
       for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-        const file = `coopsync-handover-${crypto.randomUUID()}`;
+        const file = `cs-handover-${crypto.randomUUID()}`;
         // Both built before A's CREATE TABLE: A prepares its barrier statement
         // on the empty schema, so its first barrier after B's first write must
         // be re-prepared inside one `step` — the inner unlock the bug released at.
@@ -119,7 +117,7 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', () =
     it(`a write following another client's schema change does not fail (${build})`, async () => {
       const failures: string[] = [];
       for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-        const file = `coopsync-handover-${crypto.randomUUID()}`;
+        const file = `cs-handover-${crypto.randomUUID()}`;
         const dbA = open(file, build);
         let dbB: Client | undefined;
         try {
@@ -157,7 +155,7 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', () =
       await Promise.all(
         orphans.map((name) => root.getDirectoryHandle(name, { create: true })),
       );
-      const file = `coopsync-handover-${crypto.randomUUID()}`;
+      const file = `cs-handover-${crypto.randomUUID()}`;
       const dbA = open(file);
       const dbB = open(file);
       try {
