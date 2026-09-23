@@ -447,3 +447,42 @@ describe('resolveDatabase', () => {
     });
   });
 });
+
+describe('resolveDatabase — the path bound', () => {
+  const name = (length: number) => 'n'.repeat(length);
+
+  it('accepts a path of exactly 56 characters, folder included', () => {
+    expect(resolveDatabase(name(53), 'OPFSAdaptiveVFS').path).toHaveLength(56);
+    expect(resolveDatabase(name(56), 'IDBBatchAtomicVFS').path).toHaveLength(
+      56,
+    );
+  });
+
+  it('refuses one character more with INVALID_OPTION', () => {
+    expect(() => resolveDatabase(name(54), 'OPFSAdaptiveVFS')).toThrow(
+      expect.objectContaining({ code: 'INVALID_OPTION' }),
+    );
+    expect(() => resolveDatabase(name(57), 'IDBBatchAtomicVFS')).toThrow(
+      expect.objectContaining({ code: 'INVALID_OPTION' }),
+    );
+  });
+
+  it('counts the normalized path, where a non-ASCII character costs three per UTF-8 byte', () => {
+    // 'é' is two UTF-8 bytes and normalizes to '%C3%A9', six characters
+    // (verified: new URL('é', 'file://').pathname is '/%C3%A9').
+    // 8 × 6 = 48, + 'ad/' = 51: accepted.
+    expect(resolveDatabase('é'.repeat(8), 'OPFSAdaptiveVFS').path).toHaveLength(
+      51,
+    );
+    // 9 × 6 = 54 > 53, though the input is 9 characters long.
+    expect(() => resolveDatabase('é'.repeat(9), 'OPFSAdaptiveVFS')).toThrow(
+      /once normalized/,
+    );
+  });
+
+  it('names the bound for that VFS', () => {
+    expect(() => resolveDatabase(name(60), 'OPFSWriteAheadVFS')).toThrow(
+      /OPFSWriteAheadVFS accepts at most 53/,
+    );
+  });
+});

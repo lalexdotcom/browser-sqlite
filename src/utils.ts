@@ -360,6 +360,14 @@ export const databaseFiles = (
       ].map((suffix) => `${path}${suffix}`);
 
 /**
+ * The longest database path, folder included. SQLite refuses a path when
+ * `nPathname + 8 > mxPathname` before calling `xOpen` (the 8 leaves room for
+ * `-journal`), and `mxPathname` is 64 on every wa-sqlite VFS
+ * (`node_modules/wa-sqlite/src/VFS.js:10`, inherited by all nine).
+ */
+export const MAX_DATABASE_PATH = 64 - 8;
+
+/**
  * A database's two names, computed once at each entry point: `file`, what the
  * consumer wrote, normalized — reported by `db.file`, inspections and error
  * messages; and `path`, the identity every lock, the epoch registry, the
@@ -370,7 +378,14 @@ export const resolveDatabase = (
   vfs: SQLiteVFS,
 ): { readonly file: string; readonly path: string } => {
   const normalized = normalizeDatabaseFile(file);
-  return { file: normalized, path: databasePath(vfs, normalized) };
+  const path = databasePath(vfs, normalized);
+  if (path.length > MAX_DATABASE_PATH) {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      `'${file}' is ${normalized.length} characters once normalized; ${vfs} accepts at most ${MAX_DATABASE_PATH - (path.length - normalized.length)}.`,
+    );
+  }
+  return { file: normalized, path };
 };
 
 /**
