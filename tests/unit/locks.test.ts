@@ -449,7 +449,7 @@ describe('clientMarkerName / parseClientMarker', () => {
   });
 
   it('ignores a marker with too few or too many segments', () => {
-    const prefix = 'bsq:client:opfs:app.db:';
+    const prefix = 'bsq:client:OPFSAdaptiveVFS:app.db:';
     expect(
       parseClientMarker(
         `${prefix}${ID}:OPFSAdaptiveVFS`,
@@ -469,7 +469,7 @@ describe('clientMarkerName / parseClientMarker', () => {
   it('ignores a marker whose id is not a UUID', () => {
     expect(
       parseClientMarker(
-        'bsq:client:opfs:app.db:not-a-uuid:OPFSAdaptiveVFS:SQLite%201',
+        'bsq:client:OPFSAdaptiveVFS:app.db:not-a-uuid:OPFSAdaptiveVFS:SQLite%201',
         'OPFSAdaptiveVFS',
         'app.db',
       ),
@@ -479,7 +479,7 @@ describe('clientMarkerName / parseClientMarker', () => {
   it('ignores a marker naming a VFS that does not exist', () => {
     expect(
       parseClientMarker(
-        `bsq:client:opfs:app.db:${ID}:NoSuchVFS:SQLite%201`,
+        `bsq:client:OPFSAdaptiveVFS:app.db:${ID}:NoSuchVFS:SQLite%201`,
         'OPFSAdaptiveVFS',
         'app.db',
       ),
@@ -489,7 +489,7 @@ describe('clientMarkerName / parseClientMarker', () => {
   it('ignores a marker whose encoding is malformed', () => {
     expect(
       parseClientMarker(
-        `bsq:client:opfs:app.db:${ID}:OPFSAdaptiveVFS:%E0%A4%A`,
+        `bsq:client:OPFSAdaptiveVFS:app.db:${ID}:OPFSAdaptiveVFS:%E0%A4%A`,
         'OPFSAdaptiveVFS',
         'app.db',
       ),

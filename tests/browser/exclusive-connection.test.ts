@@ -1,6 +1,7 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { SQLiteError } from '../../src/errors';
+import { connectionLockName } from '../../src/locks';
 
 /**
  * Guard against AHP-2TAB: two clients on `AccessHandlePoolVFS` silently break
@@ -211,7 +212,7 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
     // Falsifiable: give the shared branch `ifAvailable: true` and one of these
     // two clients starts throwing DATABASE_IN_USE.
     const held = (await navigator.locks.query()).held ?? [];
-    const name = `bsq:conn:opfs:${dbName}`;
+    const name = connectionLockName(options.vfs, dbName);
     expect(held.filter((lock) => lock.name === name).length).toBe(2);
     expect(
       held
