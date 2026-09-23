@@ -12,11 +12,16 @@ obligations and unmeasured ground.
 
 ## Standing facts about the repository
 
-- **`1.0.0-rc.4` is published**, on 2026-08-31: on npm under `rc`, `next` and `latest`, and
-  as a GitHub prerelease whose body is the CHANGELOG section for the tag. `package.json`
-  sits at `1.0.0-rc.4` and stays there until the user calls the next bump; everything since
-  lands in a new unreleased section of `CHANGELOG.md`, which **the user's instruction
-  creates** — no automation opens one.
+- **`1.0.0-rc.5` is published**, on 2026-09-22: on npm under `rc`, `next` and `latest`
+  (verified on the registry), and as a GitHub prerelease whose body is the CHANGELOG section
+  for the tag. `package.json` sits at `1.0.0-rc.5` and stays there until the user calls the
+  next bump; everything since lands in a new unreleased section of `CHANGELOG.md`, which
+  **the user's instruction creates** — no automation opens one, and none has been opened yet.
+- **The release gate ran the full matrix for the first time, and it took four tags to get
+  through.** 22/22 cells, `verify`, `consumer-smoke`, then `release`, with `untag` skipped.
+  The three refusals before it were not test failures: `test-matrix.mjs` could not read a
+  report that only exists for an agent (`mem:lessons`, 2026-09-22). Every cell it called
+  "timed out" had passed every test.
 - **Pushing is still not part of committing** (`mem:conventions`), and `main` may sit ahead
   of `origin/main` indefinitely. It was pushed on 2026-08-31 because a release needs the
   remote to carry the tagged commits, not because the convention changed. Do not push as

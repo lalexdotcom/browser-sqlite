@@ -28,6 +28,37 @@ pinning a defect that appears 1.7 % of the time would itself fail most runs.
 
 ## About debugging
 
+**The environment an agent runs in is not neutral, and a local reproduction that does not
+neutralise it compares two different things.** rstest chooses its reporters from the
+environment: it defaults to `md` when it detects an agent — Claude Code sets `AI_AGENT` —
+and to `default` otherwise. `scripts/test-matrix.mjs` parses the ```json block of that
+markdown report, so the report existed on this machine and on no runner, and every cell of
+the first CI matrix was called "timed out" while all of its tests passed. It cost four tags
+and three refuted hypotheses (slow runner, `readwrite-unsafe`, `GITHUB_ACTIONS`).
+
+Two things made it take that long, and both are the lesson rather than the bug:
+
+- **A falsification run that leaves the real variable set proves nothing.** Comparing the old
+  and new invocation gave identical output — because both ran with `AI_AGENT` still there.
+  The flag's effect is only visible where the agent is absent. `env -u AI_AGENT` reproduced
+  the CI format in one command; `GITHUB_ACTIONS`, `CI` and `FORCE_COLOR` each changed nothing.
+- **Reverse-engineering `node_modules` when the behaviour is documented.** Half an hour went
+  into reading rstest's dist; the answer is one sentence of its reporters page. Search before
+  disassembling — the user had to ask.
+
+**Pin the format wherever code parses output; never where a human reads it.** The fix is
+`--reporter md` in `test-matrix.mjs`, which is the only thing here that parses a test report.
+The CI jobs that run `pnpm test` are read through GitHub annotations, which come from the
+`github-actions` reporter rstest adds on a runner — pinning those would remove the tool that
+named `statement-cache.test.ts:157` and the two `long-query` tests earlier the same day.
+
+**A verdict that covers two causes sends you after the wrong one.** `test-matrix.mjs` returned
+`timed-out` both for a run its own timer killed and for a run whose report it could not parse;
+its comment admitted the two look alike. The word sent three release cycles looking for
+slowness. What broke the deadlock was printing the failing cell's last 60 lines, because the
+script writes each run's output to `.matrix/` and prints only a verdict — and that directory
+dies with the runner.
+
 **A green cell can mean the test never ran there.** `isolated` showed 0 failures on
 `IDBBatchAtomicVFS` and `IDBMirrorVFS` throughout the 2026-09-18 triage, and it nearly sent the
 diagnosis the wrong way. That config reads `tests/browser/isolated/**` only — a separate
