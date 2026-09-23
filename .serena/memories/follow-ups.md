@@ -175,6 +175,8 @@ judgement is theirs, taken on being told the number.
 
 `'fails the client rather than hanging when all startup workers are gone'` kills slot 0 while slot 1's retry worker fails by a real 404 whose timing the browser owns. When the 404 lands first, the gate opens on a live slot 0 and the scenario it names is not what runs. Found while `db.ready`'s case 4 flaked on the same fixture (`failWorkersFromIndex`); case 4 was rewritten on silent workers that the test fails itself, in order (`silentWorkersFromIndex`). The same rewrite applies here. Not seen failing in any `pnpm test` or matrix run.
 
+**A Firefox page crash on this file, once (2026-09-23).** The pre-merge `pnpm test` of `feat/db-ready` stopped with `Browser page crashed while running tests/browser/lifecycle.test.ts` on the Firefox config — no test failed, the file did not finish. Not reproduced: 10 of 10 runs of the file alone on Firefox clean, then the full `pnpm test` that concluded the merge green, and every earlier run that day (full suite, 22 Firefox matrix cells) clean. Unknown whether the new silent blob workers play a part; the next sighting should keep its `pnpm test` log.
+
 ## Default to the first build the environment supports — `jspi` before `async`, for rc.6 (user, 2026-09-14)
 
 A behaviour change, so rc.6. `defaultBuildFor` returns `builds[0]` whatever the engine, and the
