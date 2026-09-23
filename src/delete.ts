@@ -81,7 +81,7 @@ export const deleteDatabase = async (
 
   // Nothing was ever persisted, so there is nothing to delete and no worker
   // worth spawning to say so.
-  if (capability.layout === 'memory') return;
+  if (capability.storage === 'memory') return;
 
   const dbFile = normalizeDatabaseFile(file);
   const wasm = resolveWasmLocation(options.wasmUrl, build, location.href);

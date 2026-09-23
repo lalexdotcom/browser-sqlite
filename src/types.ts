@@ -241,19 +241,6 @@ export type PlatformFeature =
 /** Where a VFS keeps the database. */
 export type VFSStorage = 'opfs' | 'indexeddb' | 'memory';
 
-/**
- * How a VFS arranges a database in its storage — which is not the same
- * question as `storage`, and cannot be derived from it: `AccessHandlePoolVFS`
- * is `storage: 'opfs'` yet keeps opaque, randomly named slot files whose
- * association with a SQLite path lives in a header inside each file.
- *
- * `deleteDatabase` reads this to decide whether the database is also an OPFS
- * entry it can remove by name after `jDelete` — the pass that covers the two
- * VFS whose `jDelete` does not delete. A wrong value here is a deletion that
- * reports success over an intact file.
- */
-export type VFSLayout = 'opfs-path' | 'opfs-pool' | 'idb-store' | 'memory';
-
 /** How much of the database a VFS keeps resident in RAM. */
 export type VFSMemoryModel = 'page-cache' | 'whole-database';
 
@@ -277,8 +264,20 @@ export type VFSCapability = {
   readonly memoryModel: VFSMemoryModel;
   /** Where the database actually lives. */
   readonly storage: VFSStorage;
-  /** How the database is arranged within that storage. */
-  readonly layout: VFSLayout;
+  /**
+   * The folder this library places the database in, inside the OPFS root —
+   * and, by being set, the statement that this VFS addresses its files by
+   * path: the database IS the OPFS entry at `<folder>/<name>`, beside its
+   * `-journal`, `-wal` and `extraFileSuffixes`. Absent on every other VFS: an
+   * OPFS VFS without one keeps a pool of files whose names are not the
+   * database's (`AccessHandlePoolVFS`), and IndexedDB and memory have no path.
+   *
+   * `deleteDatabase` reads it to decide whether the database is an OPFS entry
+   * it can test and remove by name — the pass that covers the two VFS whose
+   * `jDelete` does not delete. A folder missing here is a deletion that
+   * reports success over an intact file; conformance invariant 7 catches it.
+   */
+  readonly folder?: string;
   /**
    * Whether this VFS takes its OPFS access handle in the EXCLUSIVE mode —
    * `createSyncAccessHandle()` with no `mode`, rather than
@@ -451,7 +450,7 @@ export const VFS_CAPABILITIES = {
     persistent: true,
     memoryModel: 'page-cache',
     storage: 'opfs',
-    layout: 'opfs-path',
+    folder: 'wa',
     exclusiveFileHandle: false,
     // Measured on Firefox 2026-08-27, HAS_UNSAFE_HANDLES false: all three
     // build pairs and all six invariants pass. That campaign ran at an
@@ -477,7 +476,7 @@ export const VFS_CAPABILITIES = {
     persistent: true,
     memoryModel: 'page-cache',
     storage: 'opfs',
-    layout: 'opfs-path',
+    folder: 'ad',
     exclusiveFileHandle: false,
     requires: ['opfs'],
     degradesWithout: ['readwrite-unsafe'],
@@ -498,7 +497,7 @@ export const VFS_CAPABILITIES = {
     persistent: true,
     memoryModel: 'page-cache',
     storage: 'opfs',
-    layout: 'opfs-path',
+    folder: 'cs',
     exclusiveFileHandle: true,
     requires: ['opfs'],
     degradesWithout: [],
@@ -517,7 +516,6 @@ export const VFS_CAPABILITIES = {
     persistent: true,
     memoryModel: 'page-cache',
     storage: 'opfs',
-    layout: 'opfs-pool',
     exclusiveFileHandle: true,
     requires: ['opfs'],
     degradesWithout: [],
@@ -549,7 +547,6 @@ export const VFS_CAPABILITIES = {
     persistent: true,
     memoryModel: 'page-cache',
     storage: 'indexeddb',
-    layout: 'idb-store',
     exclusiveFileHandle: false,
     requires: [],
     degradesWithout: [],
@@ -584,7 +581,6 @@ export const VFS_CAPABILITIES = {
     // IndexedDB", and the whole database must fit in available memory.
     memoryModel: 'whole-database',
     storage: 'indexeddb',
-    layout: 'idb-store',
     exclusiveFileHandle: false,
     requires: [],
     degradesWithout: [],
@@ -606,7 +602,7 @@ export const VFS_CAPABILITIES = {
     persistent: true,
     memoryModel: 'page-cache',
     storage: 'opfs',
-    layout: 'opfs-path',
+    folder: 'ac',
     exclusiveFileHandle: false,
     requires: ['opfs', 'writable-stream'],
     degradesWithout: [],
@@ -626,7 +622,6 @@ export const VFS_CAPABILITIES = {
     persistent: false,
     memoryModel: 'whole-database',
     storage: 'memory',
-    layout: 'memory',
     exclusiveFileHandle: false,
     requires: [],
     degradesWithout: [],
@@ -646,7 +641,6 @@ export const VFS_CAPABILITIES = {
     persistent: false,
     memoryModel: 'whole-database',
     storage: 'memory',
-    layout: 'memory',
     exclusiveFileHandle: false,
     requires: [],
     degradesWithout: [],
@@ -658,6 +652,16 @@ export const VFS_CAPABILITIES = {
     defaultPragmas: {},
   },
 } as const satisfies Record<string, VFSCapability>;
+
+/**
+ * The VFS's folder, or `undefined`. Read through `VFSCapability` because the
+ * `as const` table narrows each entry to its own literal type, and five of
+ * them have no `folder` key at all.
+ */
+export const folderOf = (vfs: SQLiteVFS): string | undefined => {
+  const capability: VFSCapability = VFS_CAPABILITIES[vfs];
+  return capability.folder;
+};
 
 export type SQLiteVFS = keyof typeof VFS_CAPABILITIES;
 

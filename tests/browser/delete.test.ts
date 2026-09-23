@@ -144,14 +144,14 @@ describe('deleteDatabase', () => {
 
   describe('deleteDatabase on a database that is not there', () => {
     const { vfs, build } = TEST_TARGET;
-    const { layout } = VFS_CAPABILITIES[vfs];
+    const { storage } = VFS_CAPABILITIES[vfs];
 
     // Falsifiable: remove the probe in deleteDatabaseFiles and this resolves
     // instead of throwing — that is what the code does today.
     it('throws DATABASE_NOT_FOUND when nothing was created', async () => {
       const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
       const attempt = deleteDatabase(dbName, { vfs, build });
-      if (layout === 'memory') {
+      if (storage === 'memory') {
         // Nothing persisted, so there is nothing to find missing either: the
         // memory VFS return before any probe (src/delete.ts:80).
         await expect(attempt).resolves.toBeUndefined();
@@ -179,7 +179,7 @@ describe('deleteDatabase', () => {
         () => undefined,
         (e) => e,
       );
-      if (layout === 'memory') {
+      if (storage === 'memory') {
         expect(error).toBeUndefined();
         return;
       }
@@ -207,7 +207,7 @@ describe('deleteDatabase', () => {
     // Falsifiable: drop `...VFS_CAPABILITIES[vfs].extraFileSuffixes` from the
     // opfs-path pass in deleteDatabaseFiles — OPFSWriteAheadVFS leaves `-wa0`
     // and `-wa1` behind, and this goes red on that target.
-    const opfsEntries = layout === 'opfs-path' || layout === 'opfs-pool';
+    const opfsEntries = storage === 'opfs';
     (opfsEntries ? it : it.skip)(
       `leaves no OPFS root entry named after the database${opfsEntries ? '' : ' — skipped, this VFS keeps no OPFS entry'}`,
       async () => {
@@ -252,7 +252,7 @@ describe('deleteDatabase under a live connection', () => {
   };
 
   const { vfs, build } = TEST_TARGET;
-  const shared = VFS_CAPABILITIES[vfs].layout !== 'memory';
+  const shared = VFS_CAPABILITIES[vfs].storage !== 'memory';
 
   // Falsifiable: remove the connection-lock acquisition in delete.ts and this
   // goes red — by resolving where the VFS shares its store, and with

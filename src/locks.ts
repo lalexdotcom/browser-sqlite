@@ -10,7 +10,7 @@
  */
 
 import type { SQLiteVFS } from './types';
-import { VFS_CAPABILITIES } from './types';
+import { folderOf, VFS_CAPABILITIES } from './types';
 
 /** One entry in the lock registry as returned by `query()`. */
 type QueriedLock = { name?: string; mode?: string; clientId?: string };
@@ -167,7 +167,7 @@ export const parseClientMarker = (
 };
 
 /**
- * The storage namespace a VFS writes into — derived from `layout`, NEVER from
+ * The storage namespace a VFS writes into — derived from its `folder`, NEVER from
  * the VFS name.
  *
  * `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and
@@ -176,15 +176,13 @@ export const parseClientMarker = (
  * per-VFS key would let two of them write the same bytes without ever
  * excluding each other: a missed conflict corrupts, an invented one only slows.
  *
- * `idb-store` goes finer than its layout on purpose — its two VFS each own an
+ * IndexedDB goes finer than storage on purpose — its two VFS each own an
  * IndexedDB database named after their class, so grouping them would invent a
- * conflict for free. `opfs-pool` and `memory` are alone in their layout, so the
+ * conflict for free. A VFS without a folder and memory are alone in their storage, so the
  * VFS name is already the namespace.
- *
- * `worker/worker.ts:627` gates on `layout` for the same reason, in those words.
  */
 export const namespaceFor = (vfs: SQLiteVFS): string =>
-  VFS_CAPABILITIES[vfs].layout === 'opfs-path' ? 'opfs' : vfs;
+  folderOf(vfs) !== undefined ? 'opfs' : vfs;
 
 /**
  * Whether two clients on this VFS can reach the same bytes at all.
@@ -192,11 +190,11 @@ export const namespaceFor = (vfs: SQLiteVFS): string =>
  * False for the memory VFS: its pages live in the worker that opened them and
  * `maxPoolSize` is 1, so two clients on one name are two independent
  * databases. Locking them against each other would be wrong as well as slow —
- * an origin round trip charged to the VFS chosen for speed. `delete.ts:79`
- * skips the same layout, for the same reason.
+ * an origin round trip charged to the VFS chosen for speed. `deleteDatabase`
+ * skips the same storage, for the same reason.
  */
 export const sharesStorage = (vfs: SQLiteVFS): boolean =>
-  VFS_CAPABILITIES[vfs].layout !== 'memory';
+  VFS_CAPABILITIES[vfs].storage !== 'memory';
 
 /** Serializes database opening across the pool — replaces the SAB init mutex. */
 export const initLockName = (vfs: SQLiteVFS, file: string) =>

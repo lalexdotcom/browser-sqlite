@@ -3,8 +3,10 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import bcd from '@mdn/browser-compat-data' with { type: 'json' };
 import {
   BUILD_REQUIREMENTS,
+  folderOf,
   type PlatformFeature,
   type SQLiteBuild,
+  type SQLiteVFS,
   VFS_CAPABILITIES,
   type VFSCapability,
   type VFSMemoryModel,
@@ -557,7 +559,7 @@ const tableOfContents = (doc: string): string => {
  */
 const sharedStoreVfs = (): string => {
   const shared = Object.entries(VFS_CAPABILITIES)
-    .filter(([, cap]) => cap.layout === 'opfs-path')
+    .filter(([name]) => folderOf(name as SQLiteVFS) !== undefined)
     .map(([name]) => `\`${name}\``);
   const last = shared.pop();
   // Carries its own quote prefixes: the `> ` before the END marker sits inside

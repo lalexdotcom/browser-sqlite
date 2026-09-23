@@ -237,8 +237,8 @@ describe('invariant 6 — no read runs inside an open transaction', () => {
  * nothing at that name, and `AccessHandlePoolVFS` keeps a slot file whose name
  * is unrelated to the database's.
  *
- * Falsifiable, and worth doing by hand once: change `OPFSCoopSyncVFS`'s
- * `layout` away from `'opfs-path'` and this must go red for that VFS. Only
+ * Falsifiable, and worth doing by hand once: remove `OPFSCoopSyncVFS`'s
+ * `folder` and this must go red for that VFS. Only
  * `jDelete` would then run, and `OPFSCoopSyncVFS.jDelete` truncates a file it
  * never removes — and does nothing at all for a database that is not open,
  * which is every database here. A step whose removal leaves the suite green is
@@ -246,7 +246,7 @@ describe('invariant 6 — no read runs inside an open transaction', () => {
  */
 describe('invariant 7 — a deleted database is gone', () => {
   for (const vfs of ALL_VFS) {
-    if (VFS_CAPABILITIES[vfs].layout === 'memory') {
+    if (VFS_CAPABILITIES[vfs].storage === 'memory') {
       it.skip(`${vfs} — skipped, nothing persists to delete`, () => {});
       continue;
     }
