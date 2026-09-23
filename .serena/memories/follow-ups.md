@@ -167,21 +167,13 @@ invisible to all of them and keep alive exactly the public/internal mixing the s
 end. **The user does not consider the import churn a cost** — one LSP rename — and that
 judgement is theirs, taken on being told the number.
 
-## `db.ready` — a promise for the pool's startup, for rc.6 (user, 2026-09-13)
+## The bench's `pool N → M` header has not been seen on Safari (2026-09-23)
 
-A feature, so rc.6 by the triage rule. Raised while designing the environment pool cap:
-`db.poolSize` is exact once every worker has opened or declined, and nothing public signals that
-moment — only a query that went through the scheduler's startup gate. Shape agreed in chat, not
-designed further: a property `db.ready: Promise<void>`, not an `onReady` option — it resolves
-when the gate opens, rejects with `failClient`'s error on a total startup failure and with
-`CLIENT_CLOSED` on a `close()` before it, and carries an internal `.catch` so a consumer who never
-reads it sees no unhandled rejection. It derives from the scheduler's `gateDeferred.promise`.
-Once it exists, `db.poolSize`'s contract becomes "exact once `db.ready` resolves".
+`feat/db-ready` made each column header show the pool it ran on once `db.ready` resolves. `check.mjs` verified it on Chromium and Firefox (Firefox exports `poolSize` 1 for the `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` pairs). On Safari the `OPFSAdaptiveVFS` columns should read `pool 4 → 1`; the user has not run it yet (serve from the container, `mem:conventions`).
 
-**The bench's column header waits for it too (user, 2026-09-14).** It shows the declared
-`poolFor` today, and the burst row divides its ideal gain by it — 4 for `OPFSAdaptiveVFS` on
-Firefox and Safari, which run 1. Once `db.ready` exists the header shows the requested `poolSize`
-→ the effective `db.poolSize`, when they differ. The export already records `db.poolSize`.
+## `lifecycle.test.ts`'s all-workers-gone test races the browser (2026-09-23)
+
+`'fails the client rather than hanging when all startup workers are gone'` kills slot 0 while slot 1's retry worker fails by a real 404 whose timing the browser owns. When the 404 lands first, the gate opens on a live slot 0 and the scenario it names is not what runs. Found while `db.ready`'s case 4 flaked on the same fixture (`failWorkersFromIndex`); case 4 was rewritten on silent workers that the test fails itself, in order (`silentWorkersFromIndex`). The same rewrite applies here. Not seen failing in any `pnpm test` or matrix run.
 
 ## Default to the first build the environment supports — `jspi` before `async`, for rc.6 (user, 2026-09-14)
 

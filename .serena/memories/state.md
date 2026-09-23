@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-09-21.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-09-23.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one.
 
 **No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
@@ -17,16 +17,14 @@ obligations and unmeasured ground.
   for the tag. `package.json` sits at `1.0.0-rc.5` and stays there until the user calls the
   next bump; everything since lands in a new unreleased section of `CHANGELOG.md`, which
   **the user's instruction creates** — no automation opens one. **`## Unreleased` exists since
-  2026-09-23**, opened on that instruction, and carries the wa-sqlite repin and the checkpoint
-  coalescing below.
+  2026-09-23**, opened on that instruction, and carries the wa-sqlite repin, the checkpoint coalescing below, and `db.ready` (Added, merged
+  2026-09-23).
 - **The vendored wa-sqlite sits at `e98c65de`** since 2026-09-23, up from `93b9230`, and
   `patches/wa-sqlite@1.1.2.patch` carries **four** files since the same day: the three it already
   had plus `src/examples/WriteAhead.js`, which is the exact diff of our PR #361 rather than a
   rewrite of it. The old patch applied to the new source with no conflict.
-  **The matrix is OWED for this and was not run** — `mem:conventions` lists a repin or a change to
-  `patches/` among the cases that require it, `pnpm test` covers two of the 22 pairs, and every VFS
-  comes out of that patch. `tsc`, `biome`, `docs:vfs` and `pnpm test` (1218 / 712 / 14, 0 failures)
-  are green; the other twenty pairs are unverified.
+  The matrix this repin owed was run on 2026-09-23 with `feat/db-ready`: 66 of 66 cells green
+  (§ the verification baseline).
 - **The release gate ran the full matrix for the first time, and it took four tags to get
   through.** 22/22 cells, `verify`, `consumer-smoke`, then `release`, with `untag` skipped.
   The three refusals before it were not test failures: `test-matrix.mjs` could not read a
@@ -39,10 +37,10 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-22 on merged `main`
+## The verification baseline — compare against these, re-measured 2026-09-23 on `feat/db-ready`
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a run
-in this container on 2026-09-22, on `main` with `fix/transaction-statement-queue` merged** — none is
+in this container on 2026-09-23, on `feat/db-ready` at its merge point** — none is
 carried forward, none is arithmetic, and the whole table was read in ONE pass, which is what its own
 rule demands.
 
@@ -50,7 +48,7 @@ rule demands.
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` on each: **1218 tests / 77 files** (unit + the two chromium target projects, **8 skipped**), **712 / 51** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects, none skipped) |
+| `pnpm test` | **THREE reports**, `status: pass` on each: **1230 tests / 80 files** (unit + the two chromium target projects, **8 skipped**), **724 / 54** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects, none skipped) |
 | `pnpm exec rstest --project unit run` | **508** tests, 27 files |
 | `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are now `chromium · <vfs>/<build>` and rstest's filter is anchored |
 | `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each: **Chromium 71 passed / 14 skipped, Firefox 67 / 18** — they differ by design since 2026-09-14 |
@@ -58,9 +56,9 @@ rule demands.
 | `pnpm docs:vfs` | leaves `VFS.md` unchanged (`git diff --exit-code`) |
 | `pnpm test:consumer` | 24/24 stages |
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | `OK`, `"reasons": {}`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 139 files, 13 warnings, 1 info — the file count moves with the tree, **the warning count is the signal** |
+| `pnpm lint` | 140 files, 13 warnings, 1 info — the file count moves with the tree, **the warning count is the signal** |
 | `dependencies` in `package.json` | absent |
-| `pnpm test:matrix` | **66 of 66 cells green, 0 failing tests, 2514 s**. ~45 min. Per-cell detail in `mem:measurements` |
+| `pnpm test:matrix` | **66 of 66 cells green, 0 failing tests, 2525 s** (`.matrix/2026-09-23T12-31-12-824Z`). ~45 min. Per-cell detail in `mem:measurements` |
 
 Against the same table before the merge — `pnpm test` 1181 / 676 / 14, unit 507, lint 137 files —
 the browser configs gained **37 and 36** and the unit project **1**: the concurrency matrix the
@@ -329,7 +327,7 @@ POOL-SIZE, DELETE-WA); VFS facts in `mem:vfs`.
   worker and skips a two-worker invariant where the pool runs one (`mem:lessons`).
 - **The decisions are the user's (spec D1-D11):** a capped pool is capped, not lost; the warning
   fires only on an explicit `poolSize`; a `db.poolSize` getter, not a callback; every surplus worker
-  probes and declines itself; `WorkerLostEvent.size` is the effective size; `db.ready` is rc.6;
+  probes and declines itself; `WorkerLostEvent.size` is the effective size; `db.ready` was deferred to rc.6 (shipped 2026-09-23);
   `singleConnectionWithout` means "a pool beyond one buys nothing" and covers `OPFSAdaptiveVFS`;
   `OPFSCoopSyncVFS` has `maxPoolSize: 1` everywhere — **breaking, accepted**.
 - **The probe reads the `mode` ATTRIBUTE inside a worker.** The page cannot probe:
@@ -341,8 +339,8 @@ POOL-SIZE, DELETE-WA); VFS facts in `mem:vfs`.
   need two workers run on `OPFSAnyContextVFS`, and rotation is exercised only between clients.
 - **Conformance no longer agrees across engines, by design** — Chromium skips 14, Firefox 18: on
   Firefox two invariants skip `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS`, which run one worker there.
-- **The bench still shows the declared pool** in its column header and burst normalisation; the
-  export records `db.poolSize`. The header waits for `db.ready` (user, `mem:follow-ups`). Since
+- **The bench shows `pool N → M`** in a column header once `db.ready` resolves on a capped pool,
+  and bounds the burst ranking by the effective size (2026-09-23); the export records `db.poolSize`. Since
   2026-09-14 it skips **three** rows on a one-worker column, not the two its commit message names:
   `reads-during-long-query` too — whether the other workers serve during a long query has no
   subject on one worker. So the bench no longer shows HANDLE-1 within a client off Chromium.
