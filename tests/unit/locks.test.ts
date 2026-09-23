@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
+import { epochLockName } from '../../src/epochs';
 import {
   clientMarkerName,
   connectionLockName,
@@ -381,7 +382,7 @@ describe('connectionLockName', () => {
     const conn = connectionLockName('AccessHandlePoolVFS', 'a.db');
     expect(conn).not.toBe(initLockName('AccessHandlePoolVFS', 'a.db'));
     expect(conn).not.toBe(writeLockName('AccessHandlePoolVFS', 'a.db'));
-    expect(conn).not.toBe(sweepLockName('OPFSAdaptiveVFS', 'a.db'));
+    expect(conn).not.toBe(sweepLockName('AccessHandlePoolVFS', 'a.db'));
     expect(conn.startsWith('bsq:conn:')).toBe(true);
   });
 });
@@ -517,6 +518,9 @@ describe('clientMarkerName / parseClientMarker', () => {
       );
       expect(stagingLockName('app.db', '__bsq_staging_x')).toBe(
         'bsq:staging:app.db:__bsq_staging_x',
+      );
+      expect(epochLockName('IDBBatchAtomicVFS', 'app.db', 1)).toBe(
+        'bsq:epoch:IDBBatchAtomicVFS:app.db:1',
       );
     });
 
