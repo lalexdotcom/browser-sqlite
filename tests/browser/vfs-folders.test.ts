@@ -100,3 +100,11 @@ describe('the path length guard', () => {
     expect(query).not.toHaveBeenCalled();
   });
 });
+
+describe('the empty name guard', () => {
+  it('deleteDatabase refuses a name that is empty once normalized', async () => {
+    await expect(deleteDatabase('?x', { vfs, build })).rejects.toMatchObject({
+      code: 'INVALID_OPTION',
+    });
+  });
+});

@@ -374,12 +374,20 @@ export const MAX_DATABASE_PATH = 64 - 8;
  * consumer wrote, normalized — reported by `db.file`, inspections and error
  * messages; and `path`, the identity every lock, the epoch registry, the
  * workers and the VFS use.
+ *
+ * Refuses a name that is empty once normalized.
  */
 export const resolveDatabase = (
   file: string,
   vfs: SQLiteVFS,
 ): { readonly file: string; readonly path: string } => {
   const normalized = normalizeDatabaseFile(file);
+  if (normalized === '') {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      `'${file}' is empty once normalized: a database name needs at least one character that is not '/', '.', or part of a '?query' or '#fragment'.`,
+    );
+  }
   const path = databasePath(vfs, normalized);
   if (path.length > MAX_DATABASE_PATH) {
     throw new SQLiteError(

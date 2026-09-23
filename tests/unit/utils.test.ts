@@ -486,3 +486,32 @@ describe('resolveDatabase — the path bound', () => {
     );
   });
 });
+
+describe('resolveDatabase — an empty name', () => {
+  const vfsList = [
+    'OPFSAdaptiveVFS',
+    'IDBBatchAtomicVFS',
+    'MemoryVFS',
+  ] as const;
+  const empties = ['', '.', './', '/', '..', '?x', '#x'];
+
+  it('refuses every input that normalizes to an empty name, on every VFS', () => {
+    for (const vfs of vfsList) {
+      for (const input of empties) {
+        expect(() => resolveDatabase(input, vfs)).toThrow(
+          expect.objectContaining({ code: 'INVALID_OPTION' }),
+        );
+        expect(() => resolveDatabase(input, vfs)).toThrow(
+          /empty once normalized/,
+        );
+      }
+    }
+  });
+
+  it('accepts a name that merely starts with a dot', () => {
+    expect(resolveDatabase('.hidden', 'OPFSAdaptiveVFS')).toEqual({
+      file: '.hidden',
+      path: '.ad/.hidden',
+    });
+  });
+});
