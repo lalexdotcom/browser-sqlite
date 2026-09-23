@@ -1687,11 +1687,9 @@ export const createSQLiteClient = (
         // in `acquireInstrumented`, ensuring the first query on this client
         // fails with a legible message rather than a WORKER_CRASHED stall.
         //
-        // This code is not independently covered by any test: both sites fire
-        // on the same condition (`connRefused` after
-        // connLockPromise settles), and acquireInstrumented's throw wins on
-        // every method call because it runs before scheduler.acquire. A
-        // silent revert of this code stays green.
+        // Guarded by second-client.test.ts's refused branch: without this
+        // call, no worker starts, the gate never opens, and `b.ready` never
+        // settles.
         failClient(inUse());
       } else if (!closing) {
         // Guard: if close() was called before the lock settled, the pool

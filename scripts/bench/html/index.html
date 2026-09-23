@@ -1916,8 +1916,9 @@
            * hand it the row — the same defect the old `pool-blocking` ratio had
            * at the other end, where the noisiest column was crowned as best.
            *
-           * The cap is per column because the pool each column ran on differs. It bounds the RANKING only; the
-           * cell keeps what was measured, marked.
+           * The cap is per column because the pool each column ran on
+           * differs, hence a function rather than a constant. It bounds the
+           * RANKING only; the cell keeps what was measured, marked.
            */
           capBy: (pair) => RESULTS.poolSize[pair.id] ?? poolFor(pair.cap),
           applies: () => true,

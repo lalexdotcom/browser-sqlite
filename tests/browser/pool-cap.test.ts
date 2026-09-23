@@ -357,7 +357,8 @@ describe('a pool capped by its environment', () => {
   );
 
   // Falsifiable: resolve `readyDeferred` at creation — the declines have not
-  // arrived yet, and a capped engine still reads 4.
+  // arrived yet, and a capped engine still reads 4. Only observable where the
+  // pool is capped (Firefox, Safari); inert on Chromium.
   it('reports the capped size once db.ready resolves, before any query', async () => {
     // One VFS: the subject is OPFSWriteAheadVFS's own environment cap.
     const db = await createTestClient({

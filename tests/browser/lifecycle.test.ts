@@ -1,7 +1,6 @@
 // tests/browser/lifecycle.test.ts
 import { afterEach, describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
-import { SQLiteError } from '../../src/errors';
 import {
   createTestClient,
   interceptWorkers,
@@ -334,11 +333,7 @@ function failWorkersFromIndex(from: number): Worker[] {
 /**
  * Intercepts worker creation and makes workers from index `from` onward load
  * a SILENT module — one that starts successfully and never answers a message.
- * Unlike `failWorkersFromIndex` (a missing URL, whose load-failure timing is
- * the browser's own and races the test's own synchronous work), a silent
- * worker never fails on its own: every failure is dispatched by the test,
- * making the whole sequence deterministic. Returns the array of created
- * Worker instances in creation order.
+ * Returns the array of created Worker instances in creation order.
  */
 function silentWorkersFromIndex(from: number): Worker[] {
   const created: Worker[] = [];
@@ -515,7 +510,7 @@ describe('worker lifecycle — startup readiness gate', () => {
   it('rejects db.ready when the pool is empty at gate-open, although the gate opened', async () => {
     // Every failure here is dispatched by the test itself, not timed by the
     // browser: slot 1 (silent) fails round 1; once slot 0 (real) has opened,
-    // its own retry (also silent) is spawned; slot 0 is then killed while
+    // slot 1's retry (also silent) is spawned; slot 0 is then killed while
     // that retry is still open; killing the retry settles the gate on an
     // empty pool — onGateOpen must fail the client there, before `ready` is
     // allowed to resolve.
@@ -541,7 +536,7 @@ describe('worker lifecycle — startup readiness gate', () => {
       new ErrorEvent('error', { message: 'slot 1 retry failed' }),
     );
 
-    await expect(db.ready).rejects.toBeInstanceOf(SQLiteError);
+    await expect(db.ready).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
   });
 
   // Falsifiable: drop `void readyDeferred.promise.catch(() => {})` — the
