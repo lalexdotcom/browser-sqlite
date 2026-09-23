@@ -924,7 +924,7 @@
       /**
        * Per column, so a long run does not carry 22 databases to the end.
        * `paths` is `ctx.db.files`: on a VFS with a folder these are OPFS
-       * paths (`ad/bench-…`), so each one is walked from the root before the
+       * paths (`.ad/bench-…`), so each one is walked from the root before the
        * removal; elsewhere they are names inside the VFS's own store, and the
        * walk is empty.
        */
@@ -1134,15 +1134,17 @@
           .map(([vfs]) => vfs);
 
       /**
-       * Every VFS folder declared in `VFS_CAPABILITIES`, deduplicated —
-       * derived rather than listed, so a new VFS with a folder is covered
-       * with no edit here.
+       * Every VFS folder declared in `VFS_CAPABILITIES`, deduplicated and
+       * dotted — mirrors `databasePath` in `src/utils.ts`, which this page
+       * does not import (it only imports the dist build) — derived rather
+       * than listed, so a new VFS with a folder is covered with no edit here.
        */
       const vfsFolders = () => [
         ...new Set(
           Object.values(VFS_CAPABILITIES)
             .map((cap) => cap.folder)
-            .filter((folder) => folder !== undefined),
+            .filter((folder) => folder !== undefined)
+            .map((folder) => `.${folder}`),
         ),
       ];
 

@@ -229,7 +229,7 @@ describe('a file that is not a database', () => {
 
   /** An OPFS file of 4 KiB of 'A' — what a VFS with a folder opens at its path. */
   const garbageFile = async (vfs: SQLiteVFS) => {
-    const file = `statement-errors-${crypto.randomUUID()}`;
+    const file = `stmt-errors-${crypto.randomUUID()}`;
     const path = databasePath(vfs, file);
     const segments = path.split('/');
     const name = segments.pop() as string;

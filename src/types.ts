@@ -267,8 +267,9 @@ export type VFSCapability = {
   /**
    * The folder this library places the database in, inside the OPFS root —
    * and, by being set, the statement that this VFS addresses its files by
-   * path: the database IS the OPFS entry at `<folder>/<name>`, beside its
-   * `-journal`, `-wal` and `extraFileSuffixes`. Absent on every other VFS: an
+   * path: the database IS the OPFS entry at `.<folder>/<name>` (the leading
+   * dot added by the library), beside its `-journal`, `-wal` and
+   * `extraFileSuffixes`. Absent on every other VFS: an
    * OPFS VFS without one keeps a pool of files whose names are not the
    * database's (`AccessHandlePoolVFS`), and IndexedDB and memory have no path.
    *

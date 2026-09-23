@@ -20,6 +20,8 @@ This design removes the exception. Each of the four keeps its files in a folder 
 | `OPFSWriteAheadVFS` | `wa` |
 | every other VFS | absent |
 
+The folder on disk is `.` + the declared value — `.ad`, `.ac`, `.cs`, `.wa`. The leading dot (user, 2026-09-23) keeps the library's folders apart from an application's own OPFS entries; database names may start with a dot.
+
 - **`folder` carries two meanings, and its JSDoc says both:** the directory the library places the database in, and the fact that this VFS addresses its files by path — the database IS the OPFS entry at that path. The second is not a coincidence of the first: a folder only makes sense where the library's name is the file's name.
 - **`layout` is removed; `storage` plus `folder` say everything it said.**
 
@@ -36,7 +38,7 @@ This design removes the exception. Each of the four keeps its files in a folder 
 
 ## 2. Where the folder is applied
 
-**One helper, `databasePath(vfs, file)`, applied where database identity is computed** — `folder/file` when the VFS declares a folder, `file` unchanged otherwise. It lives beside `normalizeDatabaseFile` in `src/utils.ts`, and the identity becomes:
+**One helper, `databasePath(vfs, file)`, applied where database identity is computed** — `.folder/file` when the VFS declares a folder, `file` unchanged otherwise. It lives beside `normalizeDatabaseFile` in `src/utils.ts`, and the identity becomes:
 
 ```ts
 const dbFile = databasePath(vfs, normalizeDatabaseFile(file));
@@ -45,13 +47,13 @@ const dbFile = databasePath(vfs, normalizeDatabaseFile(file));
 at the three entry points that compute it today: `createSQLiteClient` (`src/client.ts`), `deleteDatabase` (`src/delete.ts`) and `inspectDatabase` (`src/inspect.ts`).
 
 - **The path is the identity everywhere downstream** — every lock name, the epoch registry, client markers, `bulk`, and the name posted to the workers. The init lock is taken both in the worker and on `deleteDatabase`'s main thread; one identity for both is what keeps an open and a deletion mutually exclusive.
-- **The worker is untouched by the folder.** It receives `ad/data` and opens it; the four VFS create intermediate directories with `{ create }` (`OPFSAdaptiveVFS.js:22`, `OPFSAnyContextVFS.js:17`, `OPFSCoopSyncVFS.js:144`, `OPFSWriteAheadVFS.js:902`), and `removeOpfsEntry` / `opfsEntryExists` already walk path segments. It changes in two places only, neither about the folder: where it reads `layout` (§1), and the import of the suffix list (§4).
-- **The logical name stays public.** `db.file`, `InspectionBase.file` and error messages carry the name the consumer wrote, normalized — never the path. `db.file` is documented as what to pass back to `inspectDatabase` and `deleteDatabase`; carrying the path would make that `ad/ad/data`.
-- **The name budget shrinks by three characters on the four VFS** — §2a.
+- **The worker is untouched by the folder.** It receives `.ad/data` and opens it; the four VFS create intermediate directories with `{ create }` (`OPFSAdaptiveVFS.js:22`, `OPFSAnyContextVFS.js:17`, `OPFSCoopSyncVFS.js:144`, `OPFSWriteAheadVFS.js:902`), and `removeOpfsEntry` / `opfsEntryExists` already walk path segments. It changes in two places only, neither about the folder: where it reads `layout` (§1), and the import of the suffix list (§4).
+- **The logical name stays public.** `db.file`, `InspectionBase.file` and error messages carry the name the consumer wrote, normalized — never the path. `db.file` is documented as what to pass back to `inspectDatabase` and `deleteDatabase`; carrying the path would make that `.ad/.ad/data`.
+- **The name budget shrinks by four characters on the four VFS** — §2a.
 
 ## 2a. The length guard
 
-SQLite refuses a path when `nPathname + 8 > mxPathname`, and `mxPathname` is 64 on every wa-sqlite VFS (`VFS.js:10`, inherited by all nine). So **the path — folder included — may be 56 characters at most**: 53 for the name on the four folder VFS, 56 elsewhere. Nothing checks it today; a longer name fails later, at open, inside the worker.
+SQLite refuses a path when `nPathname + 8 > mxPathname`, and `mxPathname` is 64 on every wa-sqlite VFS (`VFS.js:10`, inherited by all nine). So **the path — folder included — may be 56 characters at most**: 52 for the name on the four folder VFS, 56 elsewhere. Nothing checks it today; a longer name fails later, at open, inside the worker.
 
 - **Checked where the path is computed** (§2), at the three entry points: `createSQLiteClient` throws synchronously, `deleteDatabase` and `inspectDatabase` reject — all with `INVALID_OPTION`, before any worker, lock or storage call.
 - **Counted on the normalized path**, which is what SQLite receives: `normalizeDatabaseFile` percent-encodes, so a non-ASCII character costs three characters per UTF-8 byte (`café` is `caf%C3%A9`, 9). The message says so, and gives the bound for that VFS: `'<name>' is N characters once normalized; <vfs> accepts at most M.`
@@ -84,7 +86,7 @@ readonly files: readonly string[];
 ## 5. `deleteDatabase`
 
 - Removes the database's files under the path (§2), exactly as today.
-- **Leaves the VFS folder in place, empty or not.** Removing it would race a first open of another database in the same folder: the VFS takes the directory handle, then awaits before `getFileHandle`, and the two databases share no lock. Two empty letters in OPFS cost nothing.
+- **Leaves the VFS folder in place, empty or not.** Removing it would race a first open of another database in the same folder: the VFS takes the directory handle, then awaits before `getFileHandle`, and the two databases share no lock. An empty two-letter folder in OPFS costs nothing.
 - Its `INVALID_OPTION` message, and `inspectDatabase`'s, drop "Four VFS share one underlying file": `vfs` stays required because a VFS still decides where the data is.
 
 ## 6. Existing databases — not migrated

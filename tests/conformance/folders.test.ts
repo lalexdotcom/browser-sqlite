@@ -111,7 +111,7 @@ describe('deleteDatabase leaves the VFS folder', () => {
       expect(await entriesBeside(files[0])).toEqual([]);
       const root = await navigator.storage.getDirectory();
       await expect(
-        root.getDirectoryHandle(folderOf(vfs) as string),
+        root.getDirectoryHandle(`.${folderOf(vfs)}`),
       ).resolves.toBeDefined();
     });
   }

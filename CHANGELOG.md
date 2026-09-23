@@ -6,23 +6,32 @@ All notable changes to this project are documented here.
 
 ### Breaking
 
-- **`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` keep each database in a folder of their own** — `ad/`, `ac/`, `cs/` and `wa/` in the OPFS root. Until now all four resolved one name to one file at the root, so deleting through any of them destroyed what the others created. A database created by an earlier release is not found: move its files into the folder once, before opening it —
+- **`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` keep each database in a folder of their own** — `.ad/`, `.ac/`, `.cs/` and `.wa/` in the OPFS root; the leading dot keeps these folders apart from an application's own OPFS entries. Until now all four resolved one name to one file at the root, so deleting through any of them destroyed what the others created. A database created by an earlier release is not found: move its files into the folder once, before opening it. `name` below is the normalized name `db.file` reports — e.g. `'caf%C3%A9'` for `'café'` —
 
   ```js
+  // `name` as `db.file` reports it — e.g. 'caf%C3%A9' for 'café'.
   const root = await navigator.storage.getDirectory();
-  const folder = await root.getDirectoryHandle('ad', { create: true }); // ac, cs or wa for the other three
-  for (const suffix of ['', '-journal', '-wal']) { // add '-wa0', '-wa1' for OPFSWriteAheadVFS
+  const parts = name.split('/');
+  const base = parts.pop();
+  let from = root;
+  let to = await root.getDirectoryHandle('.ad', { create: true }); // .ac, .cs or .wa for the other three
+  for (const part of parts) {
+    from = await from.getDirectoryHandle(part);
+    to = await to.getDirectoryHandle(part, { create: true });
+  }
+  await from.getFileHandle(base); // throws NotFoundError if the name is wrong
+  for (const suffix of ['-journal', '-wal', '']) { // put '-wa0', '-wa1' first for OPFSWriteAheadVFS
     try {
-      await (await root.getFileHandle(name + suffix)).move(folder);
+      await (await from.getFileHandle(base + suffix)).move(to, base + suffix);
     } catch (error) {
       if (error.name !== 'NotFoundError') throw error;
     }
   }
   ```
 
-  A name containing `/` keeps its subfolders inside the VFS folder. The other five VFS are unaffected.
+  A name containing `/` keeps its subfolders inside the VFS folder. The database file moves last, after its journal. The other five VFS are unaffected.
 - **`VFS_CAPABILITIES` loses `layout`, and `VFSLayout` is no longer exported.** `storage` says where a database lives; the new `folder` is set exactly on the four VFS above.
-- **A database name on those four VFS may be 53 characters instead of 56**, once normalized — the folder takes three.
+- **A database name on those four VFS may be 52 characters instead of 56**, once normalized — the folder takes four.
 
 ### Added
 

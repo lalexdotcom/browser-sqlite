@@ -334,13 +334,15 @@ export const normalizeDatabaseFile = (file: string): string =>
 export const DATABASE_FILE_SUFFIXES = ['', '-journal', '-wal'] as const;
 
 /**
- * Where a VFS keeps a database: `<folder>/<file>` on a VFS that declares a
- * folder, the name unchanged elsewhere. `file` must already be normalized, and
- * this must be applied once — a path passed back in gains a second folder.
+ * Where a VFS keeps a database: `.<folder>/<file>` on a VFS that declares a
+ * folder — the dot keeps the library's folders apart from an application's
+ * own OPFS entries — the name unchanged elsewhere. `file` must already be
+ * normalized, and this must be applied once — a path passed back in gains a
+ * second folder.
  */
 export const databasePath = (vfs: SQLiteVFS, file: string): string => {
   const folder = folderOf(vfs);
-  return folder === undefined ? file : `${folder}/${file}`;
+  return folder === undefined ? file : `.${folder}/${file}`;
 };
 
 /**

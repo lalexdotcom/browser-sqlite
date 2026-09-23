@@ -394,10 +394,10 @@ describe('isTransactionControl', () => {
 
 describe('databasePath', () => {
   it('places a database in its VFS folder', () => {
-    expect(databasePath('OPFSAdaptiveVFS', 'data')).toBe('ad/data');
-    expect(databasePath('OPFSAnyContextVFS', 'data')).toBe('ac/data');
-    expect(databasePath('OPFSCoopSyncVFS', 'data')).toBe('cs/data');
-    expect(databasePath('OPFSWriteAheadVFS', 'app/data')).toBe('wa/app/data');
+    expect(databasePath('OPFSAdaptiveVFS', 'data')).toBe('.ad/data');
+    expect(databasePath('OPFSAnyContextVFS', 'data')).toBe('.ac/data');
+    expect(databasePath('OPFSCoopSyncVFS', 'data')).toBe('.cs/data');
+    expect(databasePath('OPFSWriteAheadVFS', 'app/data')).toBe('.wa/app/data');
   });
 
   it('leaves the name alone on a VFS without a folder', () => {
@@ -415,12 +415,12 @@ describe('databasePath', () => {
 
 describe('databaseFiles', () => {
   it('lists the database, its SQLite siblings and the VFS extras', () => {
-    expect(databaseFiles('OPFSWriteAheadVFS', 'wa/data')).toEqual([
-      'wa/data',
-      'wa/data-journal',
-      'wa/data-wal',
-      'wa/data-wa0',
-      'wa/data-wa1',
+    expect(databaseFiles('OPFSWriteAheadVFS', '.wa/data')).toEqual([
+      '.wa/data',
+      '.wa/data-journal',
+      '.wa/data-wal',
+      '.wa/data-wa0',
+      '.wa/data-wa1',
     ]);
     expect(databaseFiles('IDBBatchAtomicVFS', 'data')).toEqual([
       'data',
@@ -439,7 +439,7 @@ describe('resolveDatabase', () => {
   it('returns the normalized name and its path', () => {
     expect(resolveDatabase('./app/data', 'OPFSCoopSyncVFS')).toEqual({
       file: 'app/data',
-      path: 'cs/app/data',
+      path: '.cs/app/data',
     });
     expect(resolveDatabase('/data', 'IDBMirrorVFS')).toEqual({
       file: 'data',
@@ -452,14 +452,14 @@ describe('resolveDatabase — the path bound', () => {
   const name = (length: number) => 'n'.repeat(length);
 
   it('accepts a path of exactly 56 characters, folder included', () => {
-    expect(resolveDatabase(name(53), 'OPFSAdaptiveVFS').path).toHaveLength(56);
+    expect(resolveDatabase(name(52), 'OPFSAdaptiveVFS').path).toHaveLength(56);
     expect(resolveDatabase(name(56), 'IDBBatchAtomicVFS').path).toHaveLength(
       56,
     );
   });
 
   it('refuses one character more with INVALID_OPTION', () => {
-    expect(() => resolveDatabase(name(54), 'OPFSAdaptiveVFS')).toThrow(
+    expect(() => resolveDatabase(name(53), 'OPFSAdaptiveVFS')).toThrow(
       expect.objectContaining({ code: 'INVALID_OPTION' }),
     );
     expect(() => resolveDatabase(name(57), 'IDBBatchAtomicVFS')).toThrow(
@@ -470,11 +470,11 @@ describe('resolveDatabase — the path bound', () => {
   it('counts the normalized path, where a non-ASCII character costs three per UTF-8 byte', () => {
     // 'é' is two UTF-8 bytes and normalizes to '%C3%A9', six characters
     // (verified: new URL('é', 'file://').pathname is '/%C3%A9').
-    // 8 × 6 = 48, + 'ad/' = 51: accepted.
+    // 8 × 6 = 48, + '.ad/' = 52: accepted.
     expect(resolveDatabase('é'.repeat(8), 'OPFSAdaptiveVFS').path).toHaveLength(
-      51,
+      52,
     );
-    // 9 × 6 = 54 > 53, though the input is 9 characters long.
+    // 9 × 6 = 54 > 52, though the input is 9 characters long.
     expect(() => resolveDatabase('é'.repeat(9), 'OPFSAdaptiveVFS')).toThrow(
       /once normalized/,
     );
@@ -482,7 +482,7 @@ describe('resolveDatabase — the path bound', () => {
 
   it('names the bound for that VFS', () => {
     expect(() => resolveDatabase(name(60), 'OPFSWriteAheadVFS')).toThrow(
-      /OPFSWriteAheadVFS accepts at most 53/,
+      /OPFSWriteAheadVFS accepts at most 52/,
     );
   });
 });

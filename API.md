@@ -71,7 +71,7 @@ const db = createSQLiteClient('myapp.sqlite', {
 
 `string`, readonly. The database name you passed, normalized — what to hand back to [`inspectDatabase`](#inspectdatabase) and [`deleteDatabase`](#deletedatabase). It may differ from what you passed.
 
-A database name may be 56 characters once normalized — 53 on `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS`, which keep it in a folder of their own. A non-ASCII character counts three per UTF-8 byte.
+A database name may be 56 characters once normalized — 52 on `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS`, which keep it in a folder of their own. A non-ASCII character counts three per UTF-8 byte.
 
 ## *client*.files
 

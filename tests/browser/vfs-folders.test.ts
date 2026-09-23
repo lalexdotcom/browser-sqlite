@@ -20,7 +20,7 @@ describe('the name a consumer uses', () => {
       );
       await db.write('CREATE TABLE t (a INTEGER)');
       // Falsifiable: return the path from `get file()` and the name becomes
-      // `ad/ad/…` on a folder VFS — inspectDatabase then finds no client.
+      // `.ad/.ad/…` on a folder VFS — inspectDatabase then finds no client.
       expect(db.file).toBe(name);
       expect((await inspectDatabase(db.file, { vfs })).clients.length).toBe(1);
       await db.close();
@@ -50,7 +50,7 @@ describe('the name a consumer uses', () => {
   (persistent ? it : it.skip)(
     'opens and persists a path exactly at the bound',
     async () => {
-      const folder = databasePath(vfs, '').length; // 3 on a folder VFS, 0 elsewhere
+      const folder = databasePath(vfs, '').length; // 4 on a folder VFS, 0 elsewhere
       const name = 'b'.repeat(MAX_DATABASE_PATH - folder);
       onTestFinished(() =>
         deleteDatabase(name, { vfs, build }).catch(() => {}),
