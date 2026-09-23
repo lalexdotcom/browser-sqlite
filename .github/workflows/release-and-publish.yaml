@@ -156,9 +156,9 @@ jobs:
           echo "file=$FILE" >> "$GITHUB_OUTPUT"
           echo "Release body: $HEADING ($(wc -l < "$FILE") lines)"
 
-      # Pinned to a SHA, not the mutable v1 tag: this job holds NPM_TOKEN, and
+      # Pinned to a SHA, not the mutable v2 tag: this job holds NPM_TOKEN, and
       # whoever can move that tag can move what runs with the token.
-      - uses: lalexdotcom/action-release-and-publish@090f72d88c4a3d608e79e0a92daa50eec44e2ae4 # v1.3.1
+      - uses: lalexdotcom/action-release-and-publish@16508679dc3c231d6e17f3801e7a786cf0117b69 # v2.0.0
         with:
           npm-token: ${{ secrets.NPM_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
