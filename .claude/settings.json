@@ -4,7 +4,7 @@
 		"mempalace@mempalace": true
 	},
 	"env": {
-		"CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4-6",
+		"CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
 		"CLAUDE_CODE_EFFORT_LEVEL": "high"
 	},
 	"permissions": {

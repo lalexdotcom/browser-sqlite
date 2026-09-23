@@ -65,8 +65,9 @@ governs **every** subagent dispatch — superpowers or not.
 | capable  | opus    | high     |
 
 Use these short aliases, not full model IDs — the Agent tool's `model`
-parameter only accepts `sonnet`, `opus`, `haiku`, `fable`. Full IDs belong in
-`CLAUDE_CODE_SUBAGENT_MODEL`, aliases in dispatches.
+parameter only accepts `sonnet`, `opus`, `haiku`, `fable`.
+`CLAUDE_CODE_SUBAGENT_MODEL` takes an alias too, so it follows the current
+version instead of going stale.
 
 - **Never dispatch a subagent without an explicit `model`.** An omitted model
   falls back to `CLAUDE_CODE_SUBAGENT_MODEL` — a default, not a decision.
