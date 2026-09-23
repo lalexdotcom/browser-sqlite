@@ -2,10 +2,13 @@ import { describe, expect, it } from '@rstest/core';
 import { SQLiteError } from '../../src/errors';
 import type { SQLiteBuild } from '../../src/types';
 import {
+  databaseFiles,
+  databasePath,
   isTransactionControl,
   isWriteQuery,
   mergeSignals,
   normalizeDatabaseFile,
+  resolveDatabase,
   resolvePragmas,
   resolveWasmLocation,
   sqlParams,
@@ -386,5 +389,61 @@ describe('isTransactionControl', () => {
       'RELEASED',
     ])
       expect(isTransactionControl(sql)).toBe(false);
+  });
+});
+
+describe('databasePath', () => {
+  it('places a database in its VFS folder', () => {
+    expect(databasePath('OPFSAdaptiveVFS', 'data')).toBe('ad/data');
+    expect(databasePath('OPFSAnyContextVFS', 'data')).toBe('ac/data');
+    expect(databasePath('OPFSCoopSyncVFS', 'data')).toBe('cs/data');
+    expect(databasePath('OPFSWriteAheadVFS', 'app/data')).toBe('wa/app/data');
+  });
+
+  it('leaves the name alone on a VFS without a folder', () => {
+    for (const vfs of [
+      'AccessHandlePoolVFS',
+      'IDBBatchAtomicVFS',
+      'IDBMirrorVFS',
+      'MemoryVFS',
+      'MemoryAsyncVFS',
+    ] as const) {
+      expect(databasePath(vfs, 'data')).toBe('data');
+    }
+  });
+});
+
+describe('databaseFiles', () => {
+  it('lists the database, its SQLite siblings and the VFS extras', () => {
+    expect(databaseFiles('OPFSWriteAheadVFS', 'wa/data')).toEqual([
+      'wa/data',
+      'wa/data-journal',
+      'wa/data-wal',
+      'wa/data-wa0',
+      'wa/data-wa1',
+    ]);
+    expect(databaseFiles('IDBBatchAtomicVFS', 'data')).toEqual([
+      'data',
+      'data-journal',
+      'data-wal',
+    ]);
+  });
+
+  it('is empty on the memory VFS', () => {
+    expect(databaseFiles('MemoryVFS', 'data')).toEqual([]);
+    expect(databaseFiles('MemoryAsyncVFS', 'data')).toEqual([]);
+  });
+});
+
+describe('resolveDatabase', () => {
+  it('returns the normalized name and its path', () => {
+    expect(resolveDatabase('./app/data', 'OPFSCoopSyncVFS')).toEqual({
+      file: 'app/data',
+      path: 'cs/app/data',
+    });
+    expect(resolveDatabase('/data', 'IDBMirrorVFS')).toEqual({
+      file: 'data',
+      path: 'data',
+    });
   });
 });

@@ -38,7 +38,7 @@ import {
   type WasmLocation,
   type WorkerMessageData,
 } from '../types';
-import { renderPragmas } from '../utils';
+import { DATABASE_FILE_SUFFIXES, renderPragmas } from '../utils';
 import { cloneable } from './cloneable';
 import { firstMissing } from './probes';
 import { sqliteCodeOf } from './sqlite-code';
@@ -901,15 +901,6 @@ const isSingleStatement = (sql: string, statementText: string) => {
 };
 
 /**
- * The database and the two siblings SQLite may leave beside it. The set is
- * upstream's own (`OPFSCoopSyncVFS.js:8`), not a guess: a stale `-journal` next
- * to a deleted database is a hot journal, and recreating a database of that
- * name would have SQLite attempt a rollback from it. On `AccessHandlePoolVFS`
- * each sibling also occupies its own pool slot.
- */
-const DB_RELATED_SUFFIXES = ['', '-journal', '-wal'] as const;
-
-/**
  * Removes one OPFS entry if it is there, walking the path's directories.
  * A missing entry is success — which is what makes this pass inert should
  * upstream's `jDelete` start removing the file itself.
@@ -1045,7 +1036,8 @@ const deleteDatabaseFiles = async (data: {
     // (three per deletion, on every engine; 2026-09-14). No test can see that
     // console: it belongs to the delete worker.
     if (!byPath) {
-      for (const suffix of DB_RELATED_SUFFIXES) {
+      // On AccessHandlePoolVFS each sibling also occupies its own pool slot.
+      for (const suffix of DATABASE_FILE_SUFFIXES) {
         // Pass syncDir=1, not 0. IDBBatchAtomicVFS.jDelete (wa-sqlite
         // IDBBatchAtomicVFS.js:119-133) only awaits its IndexedDB transaction
         // when syncDir is truthy — with 0 the delete is queued on #chain but
@@ -1100,7 +1092,7 @@ const deleteDatabaseFiles = async (data: {
     // leaves it in place, so a retried deleteDatabase finds the database and
     // tries again. No test can inject the failed removal this guards against.
     for (const suffix of [
-      ...DB_RELATED_SUFFIXES.filter((suffix) => suffix !== ''),
+      ...DATABASE_FILE_SUFFIXES.filter((suffix) => suffix !== ''),
       ...VFS_CAPABILITIES[vfs].extraFileSuffixes,
     ]) {
       await removeOpfsEntry(`${file}${suffix}`);

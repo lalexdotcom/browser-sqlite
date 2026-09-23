@@ -1,5 +1,6 @@
 import { SQLiteError } from './errors';
 import {
+  folderOf,
   type SQLiteBuild,
   type SQLiteVFS,
   VFS_CAPABILITIES,
@@ -323,6 +324,54 @@ export const renderPragmas = (pragmas: Record<string, string>): string[] =>
  */
 export const normalizeDatabaseFile = (file: string): string =>
   new URL(file, 'file://').pathname.replace(/^\//, '');
+
+/**
+ * The database and the two siblings SQLite may leave beside it. The set is
+ * upstream's own (`OPFSCoopSyncVFS.js:8`), not a guess: a stale `-journal` next
+ * to a deleted database is a hot journal, and recreating a database of that
+ * name would have SQLite attempt a rollback from it.
+ */
+export const DATABASE_FILE_SUFFIXES = ['', '-journal', '-wal'] as const;
+
+/**
+ * Where a VFS keeps a database: `<folder>/<file>` on a VFS that declares a
+ * folder, the name unchanged elsewhere. `file` must already be normalized, and
+ * this must be applied once — a path passed back in gains a second folder.
+ */
+export const databasePath = (vfs: SQLiteVFS, file: string): string => {
+  const folder = folderOf(vfs);
+  return folder === undefined ? file : `${folder}/${file}`;
+};
+
+/**
+ * Every name a database's files may have, as the VFS receives them — OPFS
+ * paths on a VFS with a folder, names inside the VFS's own store elsewhere.
+ * Derived, not observed: it includes a `-journal` an earlier session left.
+ */
+export const databaseFiles = (
+  vfs: SQLiteVFS,
+  path: string,
+): readonly string[] =>
+  VFS_CAPABILITIES[vfs].storage === 'memory'
+    ? []
+    : [
+        ...DATABASE_FILE_SUFFIXES,
+        ...VFS_CAPABILITIES[vfs].extraFileSuffixes,
+      ].map((suffix) => `${path}${suffix}`);
+
+/**
+ * A database's two names, computed once at each entry point: `file`, what the
+ * consumer wrote, normalized — reported by `db.file`, inspections and error
+ * messages; and `path`, the identity every lock, the epoch registry, the
+ * workers and the VFS use.
+ */
+export const resolveDatabase = (
+  file: string,
+  vfs: SQLiteVFS,
+): { readonly file: string; readonly path: string } => {
+  const normalized = normalizeDatabaseFile(file);
+  return { file: normalized, path: databasePath(vfs, normalized) };
+};
 
 /**
  * Turns the `wasmUrl` client option into the absolute location posted in the
