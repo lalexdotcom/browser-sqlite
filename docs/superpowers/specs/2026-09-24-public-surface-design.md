@@ -64,7 +64,11 @@ The bench page is exercised by `scripts/bench/check.mjs` after `pnpm bench:build
 
 ## 7. Documentation
 
-- **`CHANGELOG.md`, `## Unreleased`, Breaking.** Two lines go, because the release removes what they describe: "`VFS_CAPABILITIES` loses `layout`, and `VFSLayout` is no longer exported" and "`defaultBuildFor(vfs)` becomes `defaultBuildFor(vfs, available)`" (user). They are replaced by: `VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` are no longer exported — `db.build` reports the resolved build; and the `browser-sqlite/worker` subpath is gone. Nothing for `folderOf`.
+- **`CHANGELOG.md`, `## Unreleased`, Breaking.** The release notes must not announce anything this same release removes from the surface (user). Two lines go whole:
+  - "`VFS_CAPABILITIES` loses `layout`, and `VFSLayout` is no longer exported. `storage` says where a database lives; the new `folder` is set exactly on the VFS above." — its `folder` field was added to the table in this unreleased section and leaves with the table, so it reaches no release: no entry may mention it.
+  - "`defaultBuildFor(vfs)` becomes `defaultBuildFor(vfs, available)`" (user).
+
+  They are replaced by two entries: `VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` are no longer exported — `db.build` reports the resolved build; and the `browser-sqlite/worker` subpath is gone. `folderOf` gets no entry either, for the same reason as `folder`. The folder paths themselves (`.ad/`, `.ac/`, `.cs/`, `.wa/`) and `db.files` are behaviour and public API, and their entries stay.
 - **`CHANGELOG.md`, Changed:** `createSQLiteClient` is declared to return `SQLiteDB`.
 - **Consumer-facing prose stops naming internal symbols:** the last sentence of `VFS.md` § builds ("The pairing is declared in one place, `VFS_CAPABILITIES`…"), the two `@throws` of `createSQLiteClient` in `src/client.ts`, and the `build` doc comment in `src/api.ts` ("resolved by `defaultBuildFor`"). The generated-table marker comment in `VFS.md` is for maintainers and stays.
 - **`mem:architecture`, "Public surface"** is rewritten from § 1; it is already stale (it names `BulkWriteError` and omits `SQLITE_CODES` and `deleteDatabase`). The `mem:follow-ups` entries this closes are deleted.
