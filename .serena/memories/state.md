@@ -63,7 +63,7 @@ was not re-run through the matrix.
 | `pnpm docs:vfs` | leaves `VFS.md` unchanged (`git diff --exit-code`) |
 | `pnpm test:consumer` | 24/24 stages |
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | `OK`, `"reasons": {}`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 145 files (142 before the `const/` split), 13 warnings, 1 info — the file count moves with the tree, **the warning count is the signal** |
+| `pnpm lint` | 157 files (145 before biome took in `scripts/**` on 2026-09-24), 13 warnings, 1 info — the file count moves with the tree, **the warning count is the signal** |
 | `dependencies` in `package.json` | absent |
 | `pnpm test:matrix` | **66 of 66 cells green, 0 failing tests, 2480 s** (`.matrix/2026-09-23T19-36-06-860Z`, at `e184f25`). ~45 min. Per-cell detail in `mem:measurements` |
 
@@ -213,7 +213,7 @@ ABANDON-WEDGE).
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
 the 2026-09-05 entry in `mem:follow-ups` called for.
 
-**Nothing is in flight (2026-09-24).** `refactor/build-capabilities-const-split` is merged and its branch deleted; what it shipped is one line in `mem:history`, its lessons are in `mem:lessons`. **The next subject, set by the user the same day, is type-checking `scripts/`** (`mem:follow-ups`). `main` sits ahead of `origin/main` — the convention, not an oversight.
+**Nothing is in flight (2026-09-24).** `build/typecheck-scripts` is merged and its branch deleted: `tsc` and biome now cover `scripts/` (`mem:history`). No subject is set. `main` sits ahead of `origin/main` — the convention, not an oversight.
 
 **The subject the user set on 2026-09-21 — the two `OPFSCoopSyncVFS` opens that failed on chromium — is CLOSED, and it was closed before it was started.** `mem:follow-ups` still described it as HANDLE-CORPSE on a path the retry misses; that entry had rotted. The cells failed at MATRIX-5 (2026-09-18 08:25) and the two fixes landed at 13:33 and 13:34 the same day: wa-sqlite #350 (the partial acquisition that leaks the handles beside the one that failed, which is what made every retry fail on `-journal`) and `exclusiveFileHandle` + `openWithRetry` on our side — `OPFSCoopSyncVFS` **is** declared `exclusiveFileHandle: true`, so `sqlite3_open_v2` does get the retry. Verified by measurement rather than by reading: eight consecutive runs of that cell, 8/8 green, plus the two full matrices since (COOPSYNC-OPEN-CLOSED, `mem:measurements`).
 
