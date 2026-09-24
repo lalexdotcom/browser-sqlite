@@ -4,15 +4,17 @@ import { deleteDatabase } from '../../src/delete';
 import { SQLiteError } from '../../src/errors';
 import { initLockName } from '../../src/locks';
 import { VFS_CAPABILITIES } from '../../src/types';
-import { longQuery, sleep, TEST_TARGET } from './helpers';
+import { databasePath } from '../../src/utils';
+import { longQuery, removeDatabaseFiles, sleep, TEST_TARGET } from './helpers';
 
 /**
  * The database is gone when a fresh client on the same name finds no table.
  * Asserted through the library rather than through OPFS, because half the VFS
  * do not keep a file at that name at all.
  */
-// One VFS: any OPFS-backed VFS reads through the same file; OPFSAdaptiveVFS
-// is the representative used to check "gone" through the library.
+// One VFS: each VFS now keeps its own folder, so this reads only what
+// OPFSAdaptiveVFS wrote. It is the representative used to check "gone"
+// through the library.
 const tableCount = async (file: string) => {
   const db = createSQLiteClient(file, { vfs: 'OPFSAdaptiveVFS' });
   const rows = await db.read<{ n: number }>(
@@ -27,8 +29,7 @@ describe('deleteDatabase', () => {
   afterEach(async () => {
     for (const file of created.splice(0)) {
       try {
-        const root = await navigator.storage.getDirectory();
-        await root.removeEntry(file, { recursive: true });
+        await removeDatabaseFiles(file, 'OPFSAdaptiveVFS');
       } catch {
         // Already deleted by the test, which is the point of most of them.
       }
@@ -95,10 +96,13 @@ describe('deleteDatabase', () => {
     const release = Promise.withResolvers<void>();
     const held = Promise.withResolvers<void>();
 
-    void navigator.locks.request(initLockName('OPFSAdaptiveVFS', file), () => {
-      held.resolve();
-      return release.promise;
-    });
+    void navigator.locks.request(
+      initLockName('OPFSAdaptiveVFS', databasePath('OPFSAdaptiveVFS', file)),
+      () => {
+        held.resolve();
+        return release.promise;
+      },
+    );
     await held.promise;
 
     await expect(
@@ -121,10 +125,13 @@ describe('deleteDatabase', () => {
     const release = Promise.withResolvers<void>();
     const held = Promise.withResolvers<void>();
 
-    void navigator.locks.request(initLockName('OPFSAdaptiveVFS', file), () => {
-      held.resolve();
-      return release.promise;
-    });
+    void navigator.locks.request(
+      initLockName('OPFSAdaptiveVFS', databasePath('OPFSAdaptiveVFS', file)),
+      () => {
+        held.resolve();
+        return release.promise;
+      },
+    );
     await held.promise;
     await expect(
       deleteDatabase(file, { vfs: 'OPFSAdaptiveVFS' }),
@@ -144,14 +151,14 @@ describe('deleteDatabase', () => {
 
   describe('deleteDatabase on a database that is not there', () => {
     const { vfs, build } = TEST_TARGET;
-    const { layout } = VFS_CAPABILITIES[vfs];
+    const { storage } = VFS_CAPABILITIES[vfs];
 
     // Falsifiable: remove the probe in deleteDatabaseFiles and this resolves
     // instead of throwing — that is what the code does today.
     it('throws DATABASE_NOT_FOUND when nothing was created', async () => {
-      const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+      const dbName = `bsq-test-${crypto.randomUUID()}`;
       const attempt = deleteDatabase(dbName, { vfs, build });
-      if (layout === 'memory') {
+      if (storage === 'memory') {
         // Nothing persisted, so there is nothing to find missing either: the
         // memory VFS return before any probe (src/delete.ts:80).
         await expect(attempt).resolves.toBeUndefined();
@@ -166,7 +173,7 @@ describe('deleteDatabase', () => {
     });
 
     it('deletes, then reports the second attempt', async () => {
-      const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+      const dbName = `bsq-test-${crypto.randomUUID()}`;
       const db = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
       await db.write('CREATE TABLE t (n)');
       await db.close();
@@ -179,7 +186,7 @@ describe('deleteDatabase', () => {
         () => undefined,
         (e) => e,
       );
-      if (layout === 'memory') {
+      if (storage === 'memory') {
         expect(error).toBeUndefined();
         return;
       }
@@ -193,7 +200,7 @@ describe('deleteDatabase', () => {
     // `File ... not found` and returns SQLITE_CANTOPEN — which the probe in
     // deleteDatabaseFiles reads as absence.
     it('deletes a database that was opened but never written', async () => {
-      const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+      const dbName = `bsq-test-${crypto.randomUUID()}`;
       const db = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
       // No write, so SQLite lays down no page and the file stays at 0 bytes.
       await db.read('SELECT 1');
@@ -205,13 +212,13 @@ describe('deleteDatabase', () => {
     });
 
     // Falsifiable: drop `...VFS_CAPABILITIES[vfs].extraFileSuffixes` from the
-    // opfs-path pass in deleteDatabaseFiles — OPFSWriteAheadVFS leaves `-wa0`
-    // and `-wa1` behind, and this goes red on that target.
-    const opfsEntries = layout === 'opfs-path' || layout === 'opfs-pool';
+    // OPFS pass for a VFS with a folder in deleteDatabaseFiles — OPFSWriteAheadVFS
+    // leaves `-wa0` and `-wa1` behind, and this goes red on that target.
+    const opfsEntries = storage === 'opfs';
     (opfsEntries ? it : it.skip)(
-      `leaves no OPFS root entry named after the database${opfsEntries ? '' : ' — skipped, this VFS keeps no OPFS entry'}`,
+      `leaves no OPFS entry named after the database${opfsEntries ? '' : ' — skipped, this VFS keeps no OPFS entry'}`,
       async () => {
-        const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+        const dbName = `bsq-test-${crypto.randomUUID()}`;
         const db = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
         await db.write('CREATE TABLE t (n)');
         await db.close();
@@ -220,10 +227,18 @@ describe('deleteDatabase', () => {
           deleteDatabase(dbName, { vfs, build }),
         ).resolves.toBeUndefined();
 
-        const root = await navigator.storage.getDirectory();
+        // The folder of databasePath(vfs, dbName) — the root when the VFS
+        // has no folder.
+        const path = databasePath(vfs, dbName);
+        const segments = path.split('/');
+        const base = segments.pop() as string;
+        let dir = await navigator.storage.getDirectory();
+        for (const segment of segments) {
+          dir = await dir.getDirectoryHandle(segment);
+        }
         const remaining: string[] = [];
-        for await (const name of (root as any).keys()) {
-          if (name.startsWith(dbName)) remaining.push(name);
+        for await (const name of (dir as any).keys()) {
+          if (name.startsWith(base)) remaining.push(name);
         }
         expect(remaining).toEqual([]);
       },
@@ -234,7 +249,7 @@ describe('deleteDatabase', () => {
 describe('deleteDatabase under a live connection', () => {
   const liveClient = () => {
     const { vfs, build } = TEST_TARGET;
-    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const dbName = `bsq-test-${crypto.randomUUID()}`;
     const db = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
     onTestFinished(async () => {
       try {
@@ -252,7 +267,7 @@ describe('deleteDatabase under a live connection', () => {
   };
 
   const { vfs, build } = TEST_TARGET;
-  const shared = VFS_CAPABILITIES[vfs].layout !== 'memory';
+  const shared = VFS_CAPABILITIES[vfs].storage !== 'memory';
 
   // Falsifiable: remove the connection-lock acquisition in delete.ts and this
   // goes red — by resolving where the VFS shares its store, and with
@@ -288,7 +303,7 @@ describe('deleteDatabase under a live connection', () => {
 
   // One VFS: the subject is MemoryVFS's lack of any shared connection lock.
   it('still deletes on the memory VFS with a client open — nothing is shared there', async () => {
-    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const dbName = `bsq-test-${crypto.randomUUID()}`;
     const db = createSQLiteClient(dbName, { vfs: 'MemoryVFS', poolSize: 1 });
     onTestFinished(async () => {
       try {
@@ -306,7 +321,7 @@ describe('deleteDatabase under a live connection', () => {
   // One VFS: the connection lock and its FIFO ordering is OPFS-family;
   // OPFSAdaptiveVFS is the representative.
   it('refuses a delete issued in the same task as a client construction', async () => {
-    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const dbName = `bsq-test-${crypto.randomUUID()}`;
     const vfs = 'OPFSAdaptiveVFS' as const;
 
     // Both requests are issued in this one task, client first. Per the Web Locks

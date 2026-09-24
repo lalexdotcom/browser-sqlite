@@ -14,7 +14,6 @@
  */
 
 import type { Locks } from './locks';
-import { namespaceFor } from './locks';
 import type { SQLiteVFS } from './types';
 
 /**
@@ -88,7 +87,7 @@ export type Epochs = {
 };
 
 /**
- * Handles onto the counter for `(namespace, file)`, which MUST already be
+ * Handles onto the counter for `(VFS, file)`, which MUST already be
  * normalized by `normalizeDatabaseFile`. Entries are never removed: deleting
  * one would restart the counter at 0, and a worker still alive with `seen = 5`
  * would then read `5 > 0`, believe itself current forever, and serve stale
@@ -102,14 +101,13 @@ export const epochsFor = (
   file: string,
   locks: Locks,
 ): Epochs => {
-  const ns = namespaceFor(vfs);
-  const key = `${ns}:${file}`;
+  const key = `${vfs}:${file}`;
   const map = registry();
   const existing = map.get(key);
   const cell: Cell = existing ?? { value: 0 };
   if (!existing) map.set(key, cell);
 
-  const prefix = `bsq:epoch:${ns}:${file}`;
+  const prefix = `bsq:epoch:${vfs}:${file}`;
 
   return {
     current: () => cell.value,
@@ -126,7 +124,7 @@ export const epochsFor = (
       if (!locks.available) return;
       const previous = cell.releaseMarker;
       // New before old, always: `max` must never dip between the two.
-      cell.releaseMarker = await locks.hold(epochLockName(ns, file, n), {
+      cell.releaseMarker = await locks.hold(epochLockName(vfs, file, n), {
         mode: 'shared',
       });
       previous?.();

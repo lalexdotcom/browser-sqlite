@@ -3,15 +3,16 @@ import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
 import { inspectDatabase } from '../../src/inspect';
 import { clientMarkerName } from '../../src/locks';
+import { databasePath } from '../../src/utils';
 import { pairFor } from './helpers';
 import { holdIn, makeRealm } from './helpers/realm';
 
 // `inspectDatabase` needs a database that outlives the worker holding it, and
 // refuses on exactly that condition — so every test here declares
 // `shared-storage` rather than assuming the target has it. Nothing else here
-// is specific to one VFS family: lock names derive from `layout`, never from a
-// VFS name. Resolved inside each test, so a browser that cannot run the pair
-// fails that test rather than the whole file at load.
+// is specific to one VFS family: lock names are keyed on the VFS name.
+// Resolved inside each test, so a browser that cannot run the pair fails that
+// test rather than the whole file at load.
 
 describe('inspectDatabase', () => {
   it('reports nobody on a database nothing holds', async () => {
@@ -48,7 +49,7 @@ describe('inspectDatabase', () => {
     // clientId differ, and that is the whole of what `sameTab` reads.
     const foreign = clientMarkerName(
       VFS,
-      file,
+      databasePath(VFS, file),
       '0189d4a2-4f3c-7b1e-9c8a-2f5b6d7e8a99',
       'SQLite 1',
     );
@@ -70,7 +71,7 @@ describe('inspectDatabase', () => {
     const file = 'torn-down.db';
     const foreign = clientMarkerName(
       VFS,
-      file,
+      databasePath(VFS, file),
       '0189d4a2-4f3c-7b1e-9c8a-2f5b6d7e8a98',
       'SQLite 1',
     );

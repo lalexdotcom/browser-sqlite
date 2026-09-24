@@ -8,7 +8,7 @@ import {
   VFS_CAPABILITIES,
   type WorkerMessageData,
 } from './types';
-import { normalizeDatabaseFile, resolveWasmLocation } from './utils';
+import { resolveDatabase, resolveWasmLocation } from './utils';
 
 export type DeleteDatabaseOptions = {
   /**
@@ -64,7 +64,7 @@ export const deleteDatabase = async (
   if (!options?.vfs) {
     throw new SQLiteError(
       'INVALID_OPTION',
-      `vfs is required. Pass the VFS the database was created with — VFS.md compares them. Four VFS share one underlying file: passing the wrong one deletes a real database without reporting anything.`,
+      `vfs is required. Pass the VFS the database was created with — VFS.md compares them. Each VFS keeps its own files, so the wrong one finds nothing to delete.`,
     );
   }
 
@@ -79,11 +79,12 @@ export const deleteDatabase = async (
     );
   }
 
+  const { file: logicalFile, path: dbFile } = resolveDatabase(file, vfs);
+
   // Nothing was ever persisted, so there is nothing to delete and no worker
   // worth spawning to say so.
-  if (capability.layout === 'memory') return;
+  if (capability.storage === 'memory') return;
 
-  const dbFile = normalizeDatabaseFile(file);
   const wasm = resolveWasmLocation(options.wasmUrl, build, location.href);
 
   const locks = createLocks();
@@ -104,19 +105,19 @@ export const deleteDatabase = async (
   if (connRelease === undefined) {
     throw new SQLiteError(
       'DATABASE_IN_USE',
-      `${dbFile} is open. Close every client on it, in this tab and in any other, then delete it.`,
+      `${logicalFile} is open. Close every client on it, in this tab and in any other, then delete it.`,
     );
   }
 
   try {
     const ran = await locks.tryWithLock(initLockName(vfs, dbFile), () =>
-      runDelete({ file: dbFile, vfs, build, wasm }),
+      runDelete({ file: dbFile, vfs, build, wasm }, logicalFile),
     );
 
     if (!ran) {
       throw new SQLiteError(
         'BUSY',
-        `${dbFile} is being opened or deleted elsewhere. Try again in a moment.`,
+        `${logicalFile} is being opened or deleted elsewhere. Try again in a moment.`,
       );
     }
   } finally {
@@ -142,20 +143,23 @@ export const deleteDatabase = async (
  */
 const DELETE_TIMEOUT = 30_000;
 
-const runDelete = (message: {
-  file: string;
-  vfs: SQLiteVFS;
-  build: SQLiteBuild;
-  wasm: ReturnType<typeof resolveWasmLocation>;
-}): Promise<void> =>
+const runDelete = (
+  message: {
+    file: string;
+    vfs: SQLiteVFS;
+    build: SQLiteBuild;
+    wasm: ReturnType<typeof resolveWasmLocation>;
+  },
+  name: string,
+): Promise<void> =>
   new Promise<void>((resolve, reject) => {
-    const worker = spawnWorker(`SQLite delete / ${message.file}`);
+    const worker = spawnWorker(`SQLite delete / ${name}`);
 
     const timer = setTimeout(() => {
       settle(
         new SQLiteError(
           'TIMEOUT',
-          `deleting ${message.file} timed out after ${DELETE_TIMEOUT} ms. The database is most likely held open by another client or tab.`,
+          `deleting ${name} timed out after ${DELETE_TIMEOUT} ms. The database is most likely held open by another client or tab.`,
         ),
       );
     }, DELETE_TIMEOUT);
@@ -174,7 +178,7 @@ const runDelete = (message: {
         return settle(
           new SQLiteError(
             'DATABASE_NOT_FOUND',
-            `There is no database named '${message.file}' for ${message.vfs} to delete.`,
+            `There is no database named '${name}' for ${message.vfs} to delete.`,
           ),
         );
       }
@@ -187,7 +191,7 @@ const runDelete = (message: {
       settle(
         new SQLiteError(
           'WORKER_CRASHED',
-          `worker crashed while deleting ${message.file}: ${(event as ErrorEvent).message ?? ''}`,
+          `worker crashed while deleting ${name}: ${(event as ErrorEvent).message ?? ''}`,
         ),
       );
     };

@@ -2,10 +2,13 @@ import { describe, expect, it } from '@rstest/core';
 import { SQLiteError } from '../../src/errors';
 import type { SQLiteBuild } from '../../src/types';
 import {
+  databaseFiles,
+  databasePath,
   isTransactionControl,
   isWriteQuery,
   mergeSignals,
   normalizeDatabaseFile,
+  resolveDatabase,
   resolvePragmas,
   resolveWasmLocation,
   sqlParams,
@@ -386,5 +389,129 @@ describe('isTransactionControl', () => {
       'RELEASED',
     ])
       expect(isTransactionControl(sql)).toBe(false);
+  });
+});
+
+describe('databasePath', () => {
+  it('places a database in its VFS folder', () => {
+    expect(databasePath('OPFSAdaptiveVFS', 'data')).toBe('.ad/data');
+    expect(databasePath('OPFSAnyContextVFS', 'data')).toBe('.ac/data');
+    expect(databasePath('OPFSCoopSyncVFS', 'data')).toBe('.cs/data');
+    expect(databasePath('OPFSWriteAheadVFS', 'app/data')).toBe('.wa/app/data');
+  });
+
+  it('leaves the name alone on a VFS without a folder', () => {
+    for (const vfs of [
+      'AccessHandlePoolVFS',
+      'IDBBatchAtomicVFS',
+      'IDBMirrorVFS',
+      'MemoryVFS',
+      'MemoryAsyncVFS',
+    ] as const) {
+      expect(databasePath(vfs, 'data')).toBe('data');
+    }
+  });
+});
+
+describe('databaseFiles', () => {
+  it('lists the database, its SQLite siblings and the VFS extras', () => {
+    expect(databaseFiles('OPFSWriteAheadVFS', '.wa/data')).toEqual([
+      '.wa/data',
+      '.wa/data-journal',
+      '.wa/data-wal',
+      '.wa/data-wa0',
+      '.wa/data-wa1',
+    ]);
+    expect(databaseFiles('IDBBatchAtomicVFS', 'data')).toEqual([
+      'data',
+      'data-journal',
+      'data-wal',
+    ]);
+  });
+
+  it('is empty on the memory VFS', () => {
+    expect(databaseFiles('MemoryVFS', 'data')).toEqual([]);
+    expect(databaseFiles('MemoryAsyncVFS', 'data')).toEqual([]);
+  });
+});
+
+describe('resolveDatabase', () => {
+  it('returns the normalized name and its path', () => {
+    expect(resolveDatabase('./app/data', 'OPFSCoopSyncVFS')).toEqual({
+      file: 'app/data',
+      path: '.cs/app/data',
+    });
+    expect(resolveDatabase('/data', 'IDBMirrorVFS')).toEqual({
+      file: 'data',
+      path: 'data',
+    });
+  });
+});
+
+describe('resolveDatabase — the path bound', () => {
+  const name = (length: number) => 'n'.repeat(length);
+
+  it('accepts a path of exactly 56 characters, folder included', () => {
+    expect(resolveDatabase(name(52), 'OPFSAdaptiveVFS').path).toHaveLength(56);
+    expect(resolveDatabase(name(56), 'IDBBatchAtomicVFS').path).toHaveLength(
+      56,
+    );
+  });
+
+  it('refuses one character more with INVALID_OPTION', () => {
+    expect(() => resolveDatabase(name(53), 'OPFSAdaptiveVFS')).toThrow(
+      expect.objectContaining({ code: 'INVALID_OPTION' }),
+    );
+    expect(() => resolveDatabase(name(57), 'IDBBatchAtomicVFS')).toThrow(
+      expect.objectContaining({ code: 'INVALID_OPTION' }),
+    );
+  });
+
+  it('counts the normalized path, where a non-ASCII character costs three per UTF-8 byte', () => {
+    // 'é' is two UTF-8 bytes and normalizes to '%C3%A9', six characters
+    // (verified: new URL('é', 'file://').pathname is '/%C3%A9').
+    // 8 × 6 = 48, + '.ad/' = 52: accepted.
+    expect(resolveDatabase('é'.repeat(8), 'OPFSAdaptiveVFS').path).toHaveLength(
+      52,
+    );
+    // 9 × 6 = 54 > 52, though the input is 9 characters long.
+    expect(() => resolveDatabase('é'.repeat(9), 'OPFSAdaptiveVFS')).toThrow(
+      /once normalized/,
+    );
+  });
+
+  it('names the bound for that VFS', () => {
+    expect(() => resolveDatabase(name(60), 'OPFSWriteAheadVFS')).toThrow(
+      /OPFSWriteAheadVFS accepts at most 52/,
+    );
+  });
+});
+
+describe('resolveDatabase — an empty name', () => {
+  const vfsList = [
+    'OPFSAdaptiveVFS',
+    'IDBBatchAtomicVFS',
+    'MemoryVFS',
+  ] as const;
+  const empties = ['', '.', './', '/', '..', '?x', '#x'];
+
+  it('refuses every input that normalizes to an empty name, on every VFS', () => {
+    for (const vfs of vfsList) {
+      for (const input of empties) {
+        expect(() => resolveDatabase(input, vfs)).toThrow(
+          expect.objectContaining({ code: 'INVALID_OPTION' }),
+        );
+        expect(() => resolveDatabase(input, vfs)).toThrow(
+          /empty once normalized/,
+        );
+      }
+    }
+  });
+
+  it('accepts a name that merely starts with a dot', () => {
+    expect(resolveDatabase('.hidden', 'OPFSAdaptiveVFS')).toEqual({
+      file: '.hidden',
+      path: '.ad/.hidden',
+    });
   });
 });

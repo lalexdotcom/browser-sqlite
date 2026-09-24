@@ -921,21 +921,44 @@
         );
       }
 
-      /** Per column, so a long run does not carry 22 databases to the end. */
-      const cleanupOpfs = async (file) => {
+      /**
+       * Per column, so a long run does not carry 22 databases to the end.
+       * `paths` is `ctx.db.files`: on a VFS with a folder these are OPFS
+       * paths (`.ad/bench-…`), so each one is walked from the root before the
+       * removal; elsewhere they are names inside the VFS's own store, and the
+       * walk is empty.
+       */
+      const cleanupOpfs = async (paths) => {
         if (!HAS_OPFS) return;
         let root;
         try {
           root = await navigator.storage.getDirectory();
-          // Bounded for the same reason the sweep is: this runs at the end of
-          // every column, so a removal that never settles hangs the whole run
-          // rather than one cleanup.
-          await withDeadline(root.removeEntry(file, { recursive: true }));
+          for (const path of paths) {
+            const segments = path.split('/');
+            const name = segments.pop();
+            try {
+              let dir = root;
+              for (const folder of segments) {
+                // Bounded like the removal below: a directory that holds a
+                // handle from a close that has not settled, or from a
+                // previous run, can hang the lookup the same way.
+                dir = await withDeadline(dir.getDirectoryHandle(folder));
+              }
+              // Bounded for the same reason the sweep is: this runs at the
+              // end of every column, so a removal that never settles hangs
+              // the whole run rather than one cleanup.
+              await withDeadline(dir.removeEntry(name, { recursive: true }));
+            } catch {
+              // Never created, the wrong VFS for this path, or a folder
+              // segment that does not exist.
+            }
+          }
         } catch {
-          // Never created, or this VFS does not use OPFS at all. The claim
-          // below still has to happen: what a column created under a name of
-          // the VFS's own choosing is unrelated to whether OUR name was there.
+          // `getDirectory()` itself is unavailable.
         }
+        // The claim still has to happen: what a column created under a name
+        // of the VFS's own choosing is unrelated to whether OUR names were
+        // there.
         if (root) await claimNewOpfsNames(root);
       };
 
@@ -1111,15 +1134,30 @@
           .map(([vfs]) => vfs);
 
       /**
+       * Every VFS folder declared in `VFS_CAPABILITIES`, deduplicated and
+       * dotted — mirrors `databasePath` in `src/utils.ts`, which this page
+       * does not import (it only imports the dist build) — derived rather
+       * than listed, so a new VFS with a folder is covered with no edit here.
+       */
+      const vfsFolders = () => [
+        ...new Set(
+          Object.values(VFS_CAPABILITIES)
+            .map((cap) => cap.folder)
+            .filter((folder) => folder !== undefined)
+            .map((folder) => `.${folder}`),
+        ),
+      ];
+
+      /**
        * Runs before a bench, so it starts from a floor it established itself —
        * chaining two runs must not measure the first one's leftovers. Removes
        * five things and nothing else: our own `bench-` databases and their
        * `-journal` / `-wal` siblings, whose prefix makes them unambiguously
-       * ours; the unsafe-handle probe's file, which this page created at load
-       * and does not always manage to remove itself; anything a previous run of
-       * ours recorded as its own; the IndexedDB stores it recorded the same
-       * way; and the per-VFS stores above, which this page is about to exercise
-       * anyway.
+       * ours, found at the root and inside each VFS folder; the unsafe-handle
+       * probe's file, which this page created at load and does not always
+       * manage to remove itself; anything a previous run of ours recorded as
+       * its own; the IndexedDB stores it recorded the same way; and the
+       * per-VFS stores above, which this page is about to exercise anyway.
        */
       const sweepBeforeRun = async () => {
         SWEEP.partial = false;
@@ -1157,6 +1195,44 @@
                   // same — leaving it is the right move, calling the floor
                   // clean afterwards is not.
                   sweepLeft('opfs', name, 'refused');
+                }
+              }
+              // A VFS with a folder (`VFS_CAPABILITIES[vfs].folder`) keeps
+              // its bench- databases inside it, invisible to `root.keys()`
+              // above. The folders themselves are left; only their bench-
+              // residue is swept.
+              for (const folder of vfsFolders()) {
+                let dir;
+                try {
+                  dir = await withDeadline(root.getDirectoryHandle(folder));
+                } catch (error) {
+                  // Not created yet by this origin: nothing to sweep.
+                  if (error?.name === 'NotFoundError') continue;
+                  sweepLeft('opfs', folder, 'refused');
+                  continue;
+                }
+                if (dir === TIMED_OUT) {
+                  sweepLeft('opfs', folder, 'timed out');
+                  continue;
+                }
+                const inFolder = await withDeadline(listOpfsRoot(dir));
+                if (inFolder === TIMED_OUT) {
+                  sweepLeft('opfs', folder, 'timed out');
+                  continue;
+                }
+                for (const name of inFolder) {
+                  if (!name.startsWith('bench-')) continue;
+                  const label = `${folder}/${name}`;
+                  try {
+                    const done = await withDeadline(
+                      dir.removeEntry(name, { recursive: true }),
+                    );
+                    if (done === TIMED_OUT) sweepLeft('opfs', label, 'timed out');
+                    else forget('opfs', label);
+                  } catch {
+                    // Still held; a later run will try again.
+                    sweepLeft('opfs', label, 'refused');
+                  }
                 }
               }
             }
@@ -2730,7 +2806,7 @@
           // A close that never settles is HANDLE-1 holding the pool. Nothing
           // to do but move on; the worker dies with the page.
         }
-        await cleanupOpfs(file);
+        await cleanupOpfs(ctx.db.files);
       };
 
       /** Tooltip for a measurement cell that returned null. */

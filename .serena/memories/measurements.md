@@ -1210,6 +1210,8 @@ executor. Move either behind an `await` and the window reopens without any test 
 
 ## CROSS-VFS — deleting through the "wrong" VFS destroys data, 2026-09-02, n=3 per case per engine
 
+**True of rc.5 and earlier only.** Since `feat/vfs-folders` (merged 2026-09-24) each path-addressed OPFS VFS keeps its own `.<folder>/`, and conformance `folders.test.ts` asserts the opposite of the table below on every pair of its ring (`mem:vfs`, CROSS-VFS).
+
 **Method.** Throwaway `tests/browser/cross-vfs-probe.test.ts` (deleted). Create with VFS **A**, write a
 row, `close()`, `deleteDatabase(name, { vfs: B })`, reopen with **A**, check the row. `poolSize: 1`
 throughout. Chromium 151 / Firefox 153, this devcontainer. **Both engines agreed on every case, and

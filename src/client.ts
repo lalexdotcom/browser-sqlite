@@ -47,9 +47,10 @@ import {
 } from './types';
 import {
   assertReadable,
+  databaseFiles,
   mergeSignals,
-  normalizeDatabaseFile,
   renderPragmas,
+  resolveDatabase,
   resolvePragmas,
   resolveWasmLocation,
   withDeadline,
@@ -348,10 +349,6 @@ export const createSQLiteClient = (
   file: string,
   clientOptions: CreateSQLiteClientOptions,
 ) => {
-  // One definition of database identity for the workers, the VFS, the epoch
-  // registry, every lock name and the returned `db.debug.file`.
-  const dbFile = normalizeDatabaseFile(file);
-
   // FIRST, before anything reads the options. `clientOptions` is required in
   // the type, but a JavaScript caller can still omit it entirely — and then
   // every access below would throw a bare TypeError naming nothing. The `?.`
@@ -420,6 +417,13 @@ export const createSQLiteClient = (
       `${vfs} cannot run on the '${build}' build. Supported: ${capability.builds.join(', ')}.`,
     );
   }
+
+  // A database's two names. `dbFile` is the path — the identity every lock,
+  // the epoch registry, bulk, the workers and the VFS use, and what
+  // `db.debug.file` reports. `logicalFile` is the name the consumer wrote,
+  // normalized: what `db.file`, inspections and messages report.
+  const { file: logicalFile, path: dbFile } = resolveDatabase(file, vfs);
+  const files = databaseFiles(vfs, dbFile);
 
   // Resolved once, here, and reused by every worker in the pool and by every
   // restart — a callback must not be re-entered per slot. Undefined when the
@@ -668,7 +672,7 @@ export const createSQLiteClient = (
         (exclusiveWithout
           ? ` without ${exclusiveWithout}, which this browser lacks`
           : '') +
-        `. Another tab or client is already connected to '${dbFile}'. ` +
+        `. Another tab or client is already connected to '${logicalFile}'. ` +
         `Close that client to open a new one here.`,
     );
 
@@ -892,7 +896,7 @@ export const createSQLiteClient = (
       return error;
     let cause: string;
     try {
-      const inspection = await inspectWith(locks, dbFile, vfs, markerName);
+      const inspection = await inspectWith(locks, logicalFile, vfs, markerName);
       cause = writeLockCause(inspection.write);
     } catch {
       return error;
@@ -1317,7 +1321,12 @@ export const createSQLiteClient = (
     }
   };
 
-  const bulkFor = createBulk({ file: dbFile, locks: createLocks(), logger });
+  const bulkFor = createBulk({
+    file: dbFile,
+    vfs,
+    locks: createLocks(),
+    logger,
+  });
 
   const transaction = createTransaction({
     scheduler: { ...scheduler, acquire: acquireInstrumented },
@@ -1729,7 +1738,7 @@ export const createSQLiteClient = (
     }
     const { clients, ...base } = await inspectWith(
       locks,
-      dbFile,
+      logicalFile,
       vfs,
       markerName,
     );
@@ -1759,7 +1768,10 @@ export const createSQLiteClient = (
       return clientName;
     },
     get file() {
-      return dbFile;
+      return logicalFile;
+    },
+    get files() {
+      return files;
     },
     get vfs() {
       return vfs;

@@ -5,10 +5,12 @@ import type { SQLiteError } from '../../src/errors';
 import type { InternalSQLiteClientOptions } from '../../src/scheduler';
 import {
   defaultBuildFor,
+  folderOf,
   type SQLiteVFS,
   VFS_CAPABILITIES,
 } from '../../src/types';
-import { AVAILABLE_FEATURES } from '../conformance/helpers';
+import { databaseFiles, databasePath } from '../../src/utils';
+import { AVAILABLE_FEATURES, removeOpfsPath } from '../conformance/helpers';
 import { targetLabel } from '../target-projects';
 import { type Here, type Need, resolvePair, type TestTarget } from './target';
 
@@ -76,21 +78,8 @@ export const removeDatabaseFiles = async (
   name: string,
   vfs: SQLiteVFS,
 ): Promise<void> => {
-  try {
-    const root = await navigator.storage.getDirectory();
-    for (const suffix of [
-      '',
-      '-journal',
-      '-wal',
-      ...VFS_CAPABILITIES[vfs].extraFileSuffixes,
-    ]) {
-      await root
-        .removeEntry(`${name}${suffix}`, { recursive: true })
-        .catch(() => {});
-    }
-  } catch {
-    // No OPFS here, or nothing was created.
-  }
+  for (const path of databaseFiles(vfs, databasePath(vfs, name)))
+    await removeOpfsPath(path);
 };
 
 /**
@@ -114,7 +103,7 @@ export const pairFor = (needs: readonly Need[] = []): TestTarget => {
 };
 
 export async function createTestClient(options: TestClientOptions = {}) {
-  const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+  const dbName = `bsq-test-${crypto.randomUUID()}`;
   const { needs = [], ...clientOptions } = options;
   const pair: TestTarget =
     options.vfs === undefined
@@ -142,7 +131,7 @@ export async function createTestClient(options: TestClientOptions = {}) {
     // connection lock. A client the test deliberately poisoned may refuse to
     // close, which is that test's subject, not this cleanup's.
     await db.close().catch(() => {});
-    // AccessHandlePoolVFS (`opfs-pool`, the only one) holds a FIXED pool of
+    // AccessHandlePoolVFS (OPFS without a folder, the only one) holds a FIXED pool of
     // six OPFS files and hands a slot back on its own xDelete alone: jClose
     // returns nothing, and the path→handle association is written into the
     // OPFS file header, so it outlives the worker, the page and the whole
@@ -157,7 +146,10 @@ export async function createTestClient(options: TestClientOptions = {}) {
     // leaked, the pool ran out, and the next tests failed for a reason nobody
     // could see. The silence cost a full day (`mem:lessons`). A cleanup that
     // cannot clean must say so.
-    if (VFS_CAPABILITIES[pair.vfs].layout === 'opfs-pool') {
+    if (
+      VFS_CAPABILITIES[pair.vfs].storage === 'opfs' &&
+      folderOf(pair.vfs) === undefined
+    ) {
       await deleteDatabase(dbName, { vfs: pair.vfs, build: pair.build }).catch(
         (error: unknown) => {
           // DATABASE_NOT_FOUND only: the client never got as far as creating

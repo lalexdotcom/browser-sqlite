@@ -2,7 +2,7 @@
 
 Every method, property and option of [browser-sqlite](README.md).
 
-[*client*.id](#clientid) · [*client*.name](#clientname) · [*client*.file](#clientfile) · [*client*.vfs](#clientvfs) · [*client*.build](#clientbuild) · [*client*.poolSize](#clientpoolsize) · [*client*.ready](#clientready)
+[*client*.id](#clientid) · [*client*.name](#clientname) · [*client*.file](#clientfile) · [*client*.files](#clientfiles) · [*client*.vfs](#clientvfs) · [*client*.build](#clientbuild) · [*client*.poolSize](#clientpoolsize) · [*client*.ready](#clientready)
 
 [createSQLiteClient()](#createsqliteclient) · [*client*.read()](#clientread) · [*client*.write()](#clientwrite) · [*client*.stream()](#clientstream) · [*client*.chunk()](#clientchunk) · [*client*.first()](#clientfirst) · [*client*.transaction()](#clienttransaction) · [*client*.bulkWrite()](#clientbulkwrite) · [*client*.output()](#clientoutput) · [*client*.inspect()](#clientinspect) · [*client*.close()](#clientclose) · [deleteDatabase()](#deletedatabase) · [inspectDatabase()](#inspectdatabase)
 
@@ -69,7 +69,13 @@ const db = createSQLiteClient('myapp.sqlite', {
 
 ## *client*.file
 
-`string`, readonly. The database file, normalized. This is the identity every lock name is built on, and it may differ from the string you passed.
+`string`, readonly. The database name you passed, normalized — what to hand back to [`inspectDatabase`](#inspectdatabase) and [`deleteDatabase`](#deletedatabase). It may differ from what you passed.
+
+A database name may be 56 characters once normalized — 52 on `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS`, which keep it in a folder of their own. A non-ASCII character counts three per UTF-8 byte. It must also not be empty once normalized.
+
+## *client*.files
+
+`readonly string[]`. Every name this database's files may have, as the VFS receives them: the database, `-journal`, `-wal`, and the VFS's own extra files. On a VFS with a folder these are OPFS paths; elsewhere they are names inside the VFS's own store. Empty on the memory VFS.
 
 ## *client*.vfs
 
@@ -338,12 +344,6 @@ Deleting a database that is not there throws — most often because `vfs` is not
 
 What a VFS keeps for itself is left alone — the IndexedDB store shared by every database that VFS holds on this origin, and the `AccessHandlePoolVFS` directory whose files are its reusable capacity. The deleted database's own bytes are freed in both cases.
 
-> [!WARNING]
-> Some VFS share one file per database name, so deleting through any of them deletes what
-> the others created: <!-- BEGIN GENERATED SHARED VFS — edit `layout` in src/types.ts -->
-> `OPFSWriteAheadVFS`, `OPFSAdaptiveVFS`, `OPFSCoopSyncVFS` and `OPFSAnyContextVFS`.
-> <!-- END GENERATED SHARED VFS -->
-
 **The database must not be open, in this tab or any other.** `DATABASE_IN_USE` says a client still holds it, and retrying will not help — closing every client on it is what releases it. A client your application stopped using but never closed keeps blocking until its tab goes, and this library cannot revoke a connection it did not open: another library or native code on the same origin is invisible to it.
 
 The other three codes: `DATABASE_NOT_FOUND` means there was nothing at that name. `BUSY` is the transient case — another open or another delete was in flight at that moment, and retrying is the remedy. `TIMEOUT` means the VFS could not answer within 30 seconds.
@@ -521,7 +521,7 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 | `PROTOCOL_ERROR` | A message was received from a worker that could not be deserialized (`messageerror`). The worker survives; only the in-flight request is rejected. |
 | `STATEMENT_FAILED` | SQLite refused or failed a statement for any reason other than a lock conflict: a constraint, a syntax error, a full disk, a file that is not a database. `message` is SQLite's own; `sqliteCode` carries its result code, and `sqliteExtendedCode` its subtype when SQLite reports one. |
 | `BUSY` | A transient conflict, worth retrying. Either SQLite reported a lock conflict — `SQLITE_BUSY` or `SQLITE_LOCKED`, with its result code on `sqliteCode` and, when SQLite reports one, its subtype on `sqliteExtendedCode` — or a database was being opened or deleted elsewhere at that moment. **A read that SQLite reported busy is retried once for you**; if it reaches you, the retry failed too. Writes are never retried, and neither is a `BUSY` without a `sqliteCode`. |
-| `INVALID_OPTION` | An option was refused at the call, before any worker ran: `vfs` missing or unknown, a `(vfs, build)` pair the VFS does not support, a `poolSize` above what the VFS allows, a `wasmUrl` that is not a URL, or `inspectDatabase` on a memory VFS. The message names the option and what it accepts. |
+| `INVALID_OPTION` | An option was refused at the call, before any worker ran: `vfs` missing or unknown, a `(vfs, build)` pair the VFS does not support, a `poolSize` above what the VFS allows, a `wasmUrl` that is not a URL, a database name too long once normalized, a database name that is empty once normalized, or `inspectDatabase` on a memory VFS. The message names the option and what it accepts. |
 | `INVALID_PRAGMA` | A `pragmas` entry could not be rendered. The name must be a bare word; the value must be an integer, a bare word such as `WAL`, or a quoted SQL literal. |
 | `INVALID_IDENTIFIER` | A name or type handed to `output()` or `bulkWrite()` cannot be used as written: an empty name, a name containing a NUL, a column type that is not a word with optional numeric arguments, or a generated expression that is not parenthesised and free of `;`. |
 | `BULK_WRITE_FAILED` | A batch failed inside `bulkWrite().close()` or `output().close()`. The error is a `SQLiteBulkWriteError`, carrying `rowsWritten` and `rowsNotWritten`. |

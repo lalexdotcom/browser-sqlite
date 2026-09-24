@@ -39,7 +39,7 @@ describe('epochsFor', () => {
   it('adopts a registry another module copy already installed', async () => {
     const key = Symbol.for('browser-sqlite.epochs.v1');
     const host = globalThis as unknown as Record<symbol, unknown>;
-    host[key] = new Map([['opfs:/preseeded', { value: 41 }]]);
+    host[key] = new Map([['OPFSAdaptiveVFS:/preseeded', { value: 41 }]]);
 
     // In rstest's bundled Node environment the query-string trick does not
     // produce a separate module instance. A plain re-import is equivalent
@@ -118,11 +118,11 @@ describe('raiseTo', () => {
 });
 
 describe('namespaced epoch keys', () => {
-  it('shares one counter between VFS that open the same file', () => {
+  it('keeps one counter per VFS on the same name', () => {
     const a = epochsFor('OPFSAdaptiveVFS', '/same', noOpLocks);
     const b = epochsFor('OPFSCoopSyncVFS', '/same', noOpLocks);
     a.bump();
-    expect(b.current()).toBe(1);
+    expect(b.current()).toBe(0);
   });
 
   it('keeps namespaces apart', () => {
@@ -151,9 +151,9 @@ describe('publish', () => {
     await e.publish(1);
     await e.publish(2);
     expect(events).toEqual([
-      'hold bsq:epoch:opfs:/publish:1',
-      'hold bsq:epoch:opfs:/publish:2',
-      'release bsq:epoch:opfs:/publish:1',
+      'hold bsq:epoch:OPFSAdaptiveVFS:/publish:1',
+      'hold bsq:epoch:OPFSAdaptiveVFS:/publish:2',
+      'release bsq:epoch:OPFSAdaptiveVFS:/publish:1',
     ]);
   });
 

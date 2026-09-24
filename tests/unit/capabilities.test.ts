@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@rstest/core';
 import {
   defaultBuildFor,
+  folderOf,
   type SQLiteVFS,
   VFS_CAPABILITIES,
 } from '../../src/types';
@@ -143,28 +144,38 @@ describe('platform requirements', () => {
   });
 });
 
-describe('VFS layout declarations', () => {
-  // These are not documentation. `deleteDatabase` runs its OPFS removal pass
-  // only for `opfs-path`, and OPFSCoopSyncVFS's jDelete truncates without
-  // removing — so a wrong value here is a deletion that silently leaves the
-  // file in place. Pinned by name, one line per VFS.
-  it('names where each VFS keeps a database', () => {
-    expect(VFS_CAPABILITIES.OPFSAdaptiveVFS.layout).toBe('opfs-path');
-    expect(VFS_CAPABILITIES.OPFSAnyContextVFS.layout).toBe('opfs-path');
-    expect(VFS_CAPABILITIES.OPFSCoopSyncVFS.layout).toBe('opfs-path');
-    expect(VFS_CAPABILITIES.OPFSWriteAheadVFS.layout).toBe('opfs-path');
-    expect(VFS_CAPABILITIES.AccessHandlePoolVFS.layout).toBe('opfs-pool');
-    expect(VFS_CAPABILITIES.IDBBatchAtomicVFS.layout).toBe('idb-store');
-    expect(VFS_CAPABILITIES.IDBMirrorVFS.layout).toBe('idb-store');
-    expect(VFS_CAPABILITIES.MemoryVFS.layout).toBe('memory');
-    expect(VFS_CAPABILITIES.MemoryAsyncVFS.layout).toBe('memory');
+describe('VFS folder declarations', () => {
+  // Not documentation. `folder` is where the library places a database AND the
+  // statement that this VFS addresses its files by path: `deleteDatabase` runs
+  // its OPFS removal pass only where it is set, and OPFSCoopSyncVFS's jDelete
+  // truncates without removing — a missing folder is a deletion that silently
+  // leaves the file in place. Pinned by name, one line per VFS.
+  it('gives each path-addressed OPFS VFS its own folder', () => {
+    expect(folderOf('OPFSAdaptiveVFS')).toBe('ad');
+    expect(folderOf('OPFSAnyContextVFS')).toBe('ac');
+    expect(folderOf('OPFSCoopSyncVFS')).toBe('cs');
+    expect(folderOf('OPFSWriteAheadVFS')).toBe('wa');
+    expect(folderOf('AccessHandlePoolVFS')).toBeUndefined();
+    expect(folderOf('IDBBatchAtomicVFS')).toBeUndefined();
+    expect(folderOf('IDBMirrorVFS')).toBeUndefined();
+    expect(folderOf('MemoryVFS')).toBeUndefined();
+    expect(folderOf('MemoryAsyncVFS')).toBeUndefined();
   });
 
-  it('agrees with `storage` wherever both speak', () => {
+  it('declares folders only on OPFS, two letters each, never twice', () => {
+    const folders = (Object.keys(VFS_CAPABILITIES) as SQLiteVFS[])
+      .filter((vfs) => folderOf(vfs) !== undefined)
+      .map((vfs) => {
+        expect(VFS_CAPABILITIES[vfs].storage).toBe('opfs');
+        return folderOf(vfs) as string;
+      });
+    for (const folder of folders) expect(folder).toMatch(/^[a-z]{2}$/);
+    expect(new Set(folders).size).toBe(folders.length);
+  });
+
+  it('no longer declares a layout', () => {
     for (const cap of Object.values(VFS_CAPABILITIES)) {
-      if (cap.layout === 'idb-store') expect(cap.storage).toBe('indexeddb');
-      if (cap.layout === 'memory') expect(cap.storage).toBe('memory');
-      if (cap.layout.startsWith('opfs-')) expect(cap.storage).toBe('opfs');
+      expect('layout' in cap).toBe(false);
     }
   });
 });

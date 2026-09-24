@@ -107,7 +107,9 @@ describe('resolvePair', () => {
     );
     expect(moved).not.toBeNull();
     expect(moved?.vfs).not.toBe('OPFSWriteAheadVFS');
-    expect(VFS_CAPABILITIES[moved?.vfs as SQLiteVFS].layout).not.toBe('memory');
+    expect(VFS_CAPABILITIES[moved?.vfs as SQLiteVFS].storage).not.toBe(
+      'memory',
+    );
   });
 
   it('keeps a shared-second-client test on OPFSWriteAheadVFS where that feature exists', () => {

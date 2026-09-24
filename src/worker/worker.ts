@@ -30,6 +30,7 @@ import { createLocks, initLockName } from '../locks';
 import {
   type ClientMessageData,
   defaultBuildFor,
+  folderOf,
   type PlatformFeature,
   type SQLiteBuild,
   type SQLiteVFS,
@@ -37,7 +38,7 @@ import {
   type WasmLocation,
   type WorkerMessageData,
 } from '../types';
-import { renderPragmas } from '../utils';
+import { DATABASE_FILE_SUFFIXES, renderPragmas } from '../utils';
 import { cloneable } from './cloneable';
 import { firstMissing } from './probes';
 import { sqliteCodeOf } from './sqlite-code';
@@ -900,15 +901,6 @@ const isSingleStatement = (sql: string, statementText: string) => {
 };
 
 /**
- * The database and the two siblings SQLite may leave beside it. The set is
- * upstream's own (`OPFSCoopSyncVFS.js:8`), not a guess: a stale `-journal` next
- * to a deleted database is a hot journal, and recreating a database of that
- * name would have SQLite attempt a rollback from it. On `AccessHandlePoolVFS`
- * each sibling also occupies its own pool slot.
- */
-const DB_RELATED_SUFFIXES = ['', '-journal', '-wal'] as const;
-
-/**
  * Removes one OPFS entry if it is there, walking the path's directories.
  * A missing entry is success — which is what makes this pass inert should
  * upstream's `jDelete` start removing the file itself.
@@ -930,8 +922,8 @@ const removeOpfsEntry = async (path: string): Promise<void> => {
 };
 
 /**
- * Whether an OPFS entry exists at `path`. The presence test for the
- * `opfs-path` layout, where the database IS the file at that name — so the
+ * Whether an OPFS entry exists at `path`. The presence test for a VFS with a
+ * `folder`, where the database IS the file at that name — so the
  * file system answers directly, without going through a VFS whose open path
  * has conditions of its own.
  */
@@ -965,7 +957,7 @@ const opfsEntryExists = async (path: string): Promise<boolean> => {
  * every database here, since nothing is opened; `OPFSWriteAheadVFS` throws for
  * anything that is not a bound temporary file. Both keep the database at the
  * plain OPFS path, so the remedy is the `removeEntry` the other two OPFS VFS
- * already perform internally. It runs for all four `opfs-path` VFS rather than
+ * already perform internally. It runs for every VFS with a folder rather than
  * for an exception list, because it is idempotent and a list would be a second
  * place to update when a VFS is added.
  */
@@ -990,11 +982,13 @@ const deleteDatabaseFiles = async (data: {
     module,
   )) as any;
 
-  const layout = VFS_CAPABILITIES[vfs].layout;
+  const { storage } = VFS_CAPABILITIES[vfs];
+  // A folder is the declaration that the database IS the OPFS entry at its path.
+  const byPath = folderOf(vfs) !== undefined;
 
-  // Presence, and it is decided differently per layout.
+  // Presence, and it is decided differently per storage.
   //
-  // On `opfs-path` the database IS the file at that name, so the entry answers
+  // On a VFS with a `folder` the database IS the file at that name, so the entry answers
   // — and it has to, because an open probe cannot. SQLITE_CANTOPEN does NOT
   // mean "not there" on every VFS: OPFSCoopSyncVFS returns it for a file that
   // exists but is empty, because its jOpen only reaches a path recorded in
@@ -1011,10 +1005,10 @@ const deleteDatabaseFiles = async (data: {
   // reached at all.
   const sqlite = SQLite.Factory(module);
   sqlite.vfs_register(vfsInstance, true);
-  if (layout === 'opfs-path') {
+  if (byPath) {
     if (!(await opfsEntryExists(file))) {
       // Nothing to delete. Close the VFS instance and report absence — no
-      // jDelete and no opfs-path second pass, because those would operate on
+      // jDelete and no OPFS second pass, because those would operate on
       // files just confirmed to be absent.
       await vfsInstance.close?.();
       return false;
@@ -1036,13 +1030,14 @@ const deleteDatabaseFiles = async (data: {
   }
 
   try {
-    // Not on the opfs-path layout: the OPFS pass below removes every file there,
+    // Not on a VFS with a folder: the OPFS pass below removes every file there,
     // after the VFS has closed, so jDelete adds nothing there — and OPFSWriteAheadVFS's
     // refuses anything but its own temporary files, logging an error per call
     // (three per deletion, on every engine; 2026-09-14). No test can see that
     // console: it belongs to the delete worker.
-    if (layout !== 'opfs-path') {
-      for (const suffix of DB_RELATED_SUFFIXES) {
+    if (!byPath) {
+      // On AccessHandlePoolVFS each sibling also occupies its own pool slot.
+      for (const suffix of DATABASE_FILE_SUFFIXES) {
         // Pass syncDir=1, not 0. IDBBatchAtomicVFS.jDelete (wa-sqlite
         // IDBBatchAtomicVFS.js:119-133) only awaits its IndexedDB transaction
         // when syncDir is truthy — with 0 the delete is queued on #chain but
@@ -1053,7 +1048,7 @@ const deleteDatabaseFiles = async (data: {
       }
     }
 
-    // Commit barrier for idb-store VFS. This call is a barrier, not a check —
+    // Commit barrier for IndexedDB VFS. This call is a barrier, not a check —
     // its return value is deliberately discarded. Removing it silently
     // reintroduces the data-survives-deletion defect that invariant 7 caught.
     //
@@ -1069,18 +1064,18 @@ const deleteDatabaseFiles = async (data: {
     // has committed — that is a spec requirement, not engine behaviour. When
     // metadata.get's onsuccess fires, the rw deletes are durably committed.
     //
-    // IDBMirrorVFS (also idb-store) is inert here: its jAccess is a pure
+    // IDBMirrorVFS (also IndexedDB) is inert here: its jAccess is a pure
     // in-memory map lookup that issues no IDB transaction (IDBMirrorVFS.js:
     // 239-253), so no serialisation barrier is created. That is harmless
     // because IDBMirrorVFS.#deleteFile already awaits oncomplete before
     // returning (IDBMirrorVFS.js:738-751).
     //
-    // The gate is by layout declaration, not by VFS name, keeping with this
+    // The gate is by storage declaration, not by VFS name, keeping with this
     // project's convention that VFS behaviour is declared once in
-    // VFS_CAPABILITIES and never special-cased by name. A future idb-store VFS
+    // VFS_CAPABILITIES and never special-cased by name. A future IndexedDB VFS
     // inherits the barrier, which is either needed (like IDBBatchAtomicVFS) or
     // inert (like IDBMirrorVFS).
-    if (layout === 'idb-store') {
+    if (storage === 'indexeddb') {
       const pResOut = new DataView(new ArrayBuffer(4));
       await vfsInstance.jAccess(`${file}`, 0, pResOut);
     }
@@ -1088,7 +1083,7 @@ const deleteDatabaseFiles = async (data: {
     await vfsInstance.close?.();
   }
 
-  if (layout === 'opfs-path') {
+  if (byPath) {
     // Sidecars first, the main file (suffix '') last. If a sidecar removal
     // then failed while the main file went first, the file this VFS opens to
     // probe existence would already be gone: the next deleteDatabase answers
@@ -1097,7 +1092,7 @@ const deleteDatabaseFiles = async (data: {
     // leaves it in place, so a retried deleteDatabase finds the database and
     // tries again. No test can inject the failed removal this guards against.
     for (const suffix of [
-      ...DB_RELATED_SUFFIXES.filter((suffix) => suffix !== ''),
+      ...DATABASE_FILE_SUFFIXES.filter((suffix) => suffix !== ''),
       ...VFS_CAPABILITIES[vfs].extraFileSuffixes,
     ]) {
       await removeOpfsEntry(`${file}${suffix}`);

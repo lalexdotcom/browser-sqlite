@@ -5,8 +5,8 @@ import { deleteDatabase } from '../../../src/delete';
 /**
  * THIS FILE ASSERTS A PLATFORM DIFFERENCE, NOT A LIBRARY INVARIANT.
  *
- * On an engine without `readwrite-unsafe` access handles, a VFS in the
- * `opfs-path` family rotates ONE exclusive handle between workers. A write
+ * On an engine without `readwrite-unsafe` access handles, any of the four
+ * OPFS VFS with a folder rotates ONE exclusive handle between workers. A write
  * transaction holds it for the whole of its callback, so a second client's
  * `open_v2` cannot get it and the slot fails on `openTimeout` — the readiness
  * gate reporting rather than silently serving a pool smaller than asked for.

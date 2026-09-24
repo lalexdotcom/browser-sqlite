@@ -28,9 +28,9 @@ Stack, build output and test tooling: `mem:stack-and-build`. VFS: `mem:vfs`.
 | `epochs.ts` | — | The barrier's state. The realm-wide symbol registry (`Symbol.for('browser-sqlite.epochs.v1')`) is still there and every client in a tab shares it — but since rc.5 it is a **floor**, not the authority: `originMax()` reads `max(n)` over held `bsq:epoch:<ns>:<file>:<n>` lock names and `raiseTo` can only lift the cell. **`Symbol.for` is shared across realms; `globalThis` is not** — measured, and that is where the per-realm separation actually comes from, not from the symbol. `current`/`bump`/`raiseTo` are synchronous and must stay so; only `originMax`/`publish` are async. |
 | `debug.ts` | 238 | Instrumentation behind the `debug` option. Both histories bounded at 50; `queue` is getter-backed and reads through `scheduler.stats()`, so no counter can go stale. |
 | `logger.ts` | 30 | `createLogger(prefix, enabled, sink = console)`. **Lifecycle events only** — never per query. Disabled, it returns three no-op closures allocated once. |
-| `locks.ts` | — | Web Locks wrapper + the pure sweep decision + **every lock name this library takes**. `createLocks`, `noOpLocks` (use this in tests — `createLocks(undefined)` falls back to the real API and **Node 24 ships one**), `hold(name, { mode, signal })`, `namespaceFor`/`sharesStorage`, `initLockName(vfs, file)`/`writeLockName(vfs, file)`, `stagingTableName`/`stagingLockName`/`sweepLockName`, `staleStagingTables`, and since 2026-09-03 `clientMarkerName`/`parseClientMarker` plus `entries()` (held AND pending, each with `mode` and `clientId` — `heldNames()` is untouched, `epochsFor` needs nothing else). **`namespaceFor` derives from `VFS_CAPABILITIES.layout`, never from the VFS name** — four VFS resolve one database name to the same OPFS path, so a per-VFS key would let two clients write the same bytes unexcluded. Staging and sweep stay keyed on the file alone, deliberately: their uniqueness comes from the table's UUID. |
+| `locks.ts` | — | Web Locks wrapper + the pure sweep decision + **every lock name this library takes**. `createLocks`, `noOpLocks` (use this in tests — `createLocks(undefined)` falls back to the real API and **Node 24 ships one**), `hold(name, { mode, signal })`, `sharesStorage`, `initLockName(vfs, file)`/`writeLockName(vfs, file)`, `stagingTableName`/`stagingLockName`/`sweepLockName(vfs, file)`, `staleStagingTables`, and since 2026-09-03 `clientMarkerName`/`parseClientMarker` plus `entries()` (held AND pending, each with `mode` and `clientId` — `heldNames()` is untouched, `epochsFor` needs nothing else). **Every lock name is `bsq:<kind>:<VFS name>:<path>` since 2026-09-23** — `namespaceFor` is gone, because each VFS keeps its own files (§ "Two names per database" below). **`bsq:staging` alone stays keyed on the path without the VFS, deliberately**: its table name is a UUID, and it is a liveness marker the sweep reads, so renaming it would let a new tab's sweep drop a live staging table held by an older tab during a deploy. For the five VFS without a folder every name but `bsq:sweep` is byte-identical to rc.5 — pinned by `tests/unit/locks.test.ts`. |
 | `inspect.ts` | 218 | Database inspection: `inspectDatabase(file, { vfs })`, `db.inspect()`'s engine `inspectWith`, and `resolveRealmId`. **Nothing here sits on a query path.** One `locks.entries()` supplies the roster, the writing tab and the queue, so all three describe one instant — two calls would describe a state that never coexisted. `resolveRealmId` memoises the realm's own `clientId` at MODULE scope, not on `globalThis`: an iframe gets its own module instance and its own id, and that separation is the whole basis of `sameTab`. No API returns your own `clientId`, so it is read back by holding a uniquely named nonce and finding it in the registry — paid once per realm, ever, and not even once when a marker of ours is already in the snapshot. |
-| `utils.ts` | 205 | `isReadQuery`/`isWriteQuery` + `assertReadable` + `quoteIdent`/`renderPragmas` + `sqlParams`/`addParam`. |
+| `utils.ts` | 205 | `isReadQuery`/`isWriteQuery` + `assertReadable` + `quoteIdent`/`renderPragmas` + `sqlParams`/`addParam`, and since 2026-09-23 database identity: `normalizeDatabaseFile`, `databasePath`, `databaseFiles`, `DATABASE_FILE_SUFFIXES`, `MAX_DATABASE_PATH`, `resolveDatabase`. |
 | `worker/worker.ts` | 700 | Worker thread: VFS bootstrap, `open`, statement execution, chunked streaming. Holds `VFSConfigs` and `WA_SQLITE_BUILDS`. **Constructs every VFS with `{ lockPolicy: 'shared' }` (`:159`).** `ready` only on success, `open-error` on failure; every `cause` structured-clone-probed; exhaustive message dispatch. |
 | `worker/statement-cache.ts` | 85 | **Pure** — a per-worker LRU of prepared statements keyed by the exact SQL string. Prepares nothing, finalises nothing, imports nothing: `set`/`markUncacheable` return the handles their insertion evicted and `worker.ts` finalises them, so no handle can be dropped by omission. Unit-tested in Node against plain integers. |
 | `worker/sqlite-code.ts` | — | **Pure** — `sqliteCodeOf(e)`: SQLite's result code only for wa-sqlite's own `SQLiteError`, else `undefined`. Every `sqliteCode` the worker sends goes through it: a DOMException's legacy `code` (SecurityError 18) would otherwise pass for SQLite's `TOOBIG`. Unit-tested in Node. |
@@ -87,7 +87,7 @@ both engines — a VFS sound on one and broken on the other is how HANDLE-1 was 
 `SQLiteQueryAPI` — `read` / `write` / `chunk` / `stream` / `first` / `bulkWrite` /
 `output` — is shared by **both** the client and a transaction, so a method cannot be
 added to one and forgotten on the other. `SQLiteDB` adds `transaction` / `close` /
-`debug` / `inspect`, plus six readonly getters — `id` / `name` / `file` / `vfs` / `build` / `poolSize` (the pool it
+`debug` / `inspect`, plus seven readonly getters — `id` / `name` / `file` / `files` / `vfs` / `build` / `poolSize` (the pool it
 actually runs: the option, capped by the VFS and by the environment, exact once `ready` resolves) — and
 `ready: Promise<void>`, which settles once the pool has started,
 which exist so a module handed a client can describe it without also being handed its options;
@@ -97,7 +97,7 @@ parameter could only abort the `.then()`.
 and `chunkSize` on the three that stream. Client options: `name`, `poolSize`,
 **`vfs` (required)**, `build`, `pragmas`, `maxWorkerRestarts`, `openTimeout`,
 `drainTimeout`, `debug`. Exported besides: `SQLiteError`, `BulkWriteError`,
-`VFS_CAPABILITIES`, `defaultBuildFor`, `detectFeatures`, `missingFeature`, `inspectDatabase`,
+`VFS_CAPABILITIES`, `folderOf`, `defaultBuildFor`, `detectFeatures`, `missingFeature`, `inspectDatabase`,
 and the types `SQLiteVFS` / `SQLiteBuild` / `VFSCapability` / `VFSMemoryModel` /
 `DatabaseClient` / `DatabaseInspection` / `ClientInspection` / `InspectionBase` /
 `InspectDatabaseOptions`.
@@ -302,10 +302,38 @@ enters the retry round. Slot 0 never probes. Where the probe passes, nothing dif
 **Poisoning a transport settles a pending `close()`.** A dead worker can never reply `closed`;
 before 2026-09-14, `close()` sat out `drainTimeout` for a worker terminated while closing.
 
-**`deleteDatabase` on the `opfs-path` layout deletes through OPFS only**, after the VFS has
-closed: every sidecar first — `DB_RELATED_SUFFIXES` plus the declared `extraFileSuffixes` — and the
-main file last, so a failed removal stays retryable. `jDelete` stays for `idb-store` and
-`opfs-pool`, which have no OPFS pass.
+**`deleteDatabase` on a VFS with a `folder` deletes through OPFS only**, after the VFS has
+closed: every sidecar first — `DATABASE_FILE_SUFFIXES` plus the declared `extraFileSuffixes` — and the
+main file last, so a failed removal stays retryable. `jDelete` stays for the IndexedDB VFS and
+`AccessHandlePoolVFS`, which have no OPFS pass. The VFS folder itself is never removed: a first open
+of another database in it could be between `getDirectoryHandle` and `getFileHandle`, and nothing
+locks two databases of one folder against each other.
+
+## Two names per database (2026-09-23, `feat/vfs-folders`)
+
+`resolveDatabase(file, vfs)` runs once at each of the three entry points — `createSQLiteClient`,
+`deleteDatabase`, `inspectDatabase` — and returns `{ file, path }`:
+
+- **`path` is the identity everywhere downstream**: every lock name, the epoch registry, client
+  markers, bulk, the name posted to the workers, `db.debug.file`. On `OPFSAdaptiveVFS`,
+  `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` it is `.<folder>/<name>`
+  (`.ad`, `.ac`, `.cs`, `.wa` — the dot added by `databasePath` to `VFS_CAPABILITIES.folder`);
+  elsewhere it is the name. The init lock is taken both in the worker and on `deleteDatabase`'s main
+  thread — one string for both is what keeps an open and a deletion mutually exclusive.
+- **`file` is what the public surface reports**: `db.file`, `InspectionBase.file`, error messages.
+  `db.file` is documented as what to hand back to `inspectDatabase` / `deleteDatabase`; carrying the
+  path would double the folder. `inspectWith` takes the logical name and derives the path itself.
+- **`resolveDatabase` refuses**, with `INVALID_OPTION`, a path over `MAX_DATABASE_PATH` = 64 − 8 = 56
+  (SQLite's `nPathname + 8 > mxPathname` before `xOpen`; 52 for the name on a folder VFS), counted on
+  the normalized path — and a name empty once normalized (`''`, `'/'`, `'?x'`…).
+- **The worker is not touched by the folder**: the four VFS create intermediate directories with
+  `{ create }`, and `opfsEntryExists` / `removeOpfsEntry` walk the path's segments.
+- **`db.files`** is derived, not observed — `databaseFiles(vfs, path)` — so it lists a `-journal` an
+  earlier session left; empty on the memory VFS.
+
+**Test fixtures sit under the same bound**: a name built around a 36-character UUID has 16 characters
+left with a 4-character folder. `browser-sqlite-test-${uuid}` was exactly 56 and failed every open
+once the folder arrived.
 
 ## Scheduling rules
 
@@ -350,7 +378,7 @@ the realm. Four things the first settled that are easy to get wrong again:
 Design: `docs/superpowers/specs/2026-08-31-cross-tab-coordination-design.md`. Line counts in
 the table above are stale from here on; re-count before citing them.
 
-- **Lock before lease, never after.** `acquireInstrumented` takes `bsq:write:<ns>:<file>`
+- **Lock before lease, never after.** `acquireInstrumented` takes `bsq:write:<vfs>:<path>`
   before `scheduler.acquire`. The reverse holds a pool worker while blocked on a cross-tab
   lock, and at `poolSize: 2` two queued writes then starve the same tab's reads.
 - **The epoch bump stays synchronous, and `write()`/`transaction()` await the publication.**

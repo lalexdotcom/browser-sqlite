@@ -5,6 +5,7 @@ import {
   createTestClient,
   interceptWorkers,
   longQuery,
+  removeDatabaseFiles,
   sleep,
 } from './helpers';
 
@@ -168,8 +169,7 @@ describe('worker lifecycle — bounds', () => {
   let shared: string;
   afterEach(async () => {
     try {
-      const root = await navigator.storage.getDirectory();
-      await root.removeEntry(shared, { recursive: true });
+      await removeDatabaseFiles(shared, 'AccessHandlePoolVFS');
     } catch {
       // OPFS entry may not exist if the test failed before DB creation
     }
@@ -183,7 +183,7 @@ describe('worker lifecycle — bounds', () => {
   // spawn block in src/client.ts. Without it, workers start immediately and
   // collide on the OPFS handle, producing WORKER_CRASHED instead of BUSY.
   it('rejects a second client with BUSY instead of crashing its workers', async () => {
-    shared = `browser-sqlite-test-${crypto.randomUUID()}`;
+    shared = `bsq-test-${crypto.randomUUID()}`;
     // One VFS: the subject is AccessHandlePoolVFS's exclusive-connection
     // guard (AHP-2TAB).
     const first = createSQLiteClient(shared, {

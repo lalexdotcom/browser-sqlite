@@ -3,6 +3,7 @@ import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
 import { SQLiteError } from '../../src/errors';
 import { createLocks, writeLockName } from '../../src/locks';
+import { databasePath } from '../../src/utils';
 import { holdIn, makeRealm } from './helpers/realm';
 
 /**
@@ -56,11 +57,11 @@ describe('the origin write lock is reclaimed', () => {
     });
 
     const a = await stuckTransaction(file);
-    expect(await held(writeLockName(VFS, file))).toBe(true);
+    expect(await held(writeLockName(VFS, databasePath(VFS, file)))).toBe(true);
 
     await a.close();
 
-    expect(await held(writeLockName(VFS, file))).toBe(false);
+    expect(await held(writeLockName(VFS, databasePath(VFS, file)))).toBe(false);
 
     // Not merely absent from the registry: another client must be able to
     // write, which is the whole point of releasing it.
@@ -86,7 +87,11 @@ describe('a write that gives up says who was holding', () => {
     await db.write('CREATE TABLE IF NOT EXISTS t (v)');
 
     const realm = await makeRealm();
-    const release = await holdIn(realm, writeLockName(VFS, file), 'exclusive');
+    const release = await holdIn(
+      realm,
+      writeLockName(VFS, databasePath(VFS, file)),
+      'exclusive',
+    );
     onTestFinished(() => release());
 
     const failure = await db

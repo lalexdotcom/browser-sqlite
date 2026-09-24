@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
+import { removeDatabaseFiles } from './helpers';
 
 /**
  * `OPFSCoopSyncVFS` rotates one exclusive OPFS access handle between workers,
@@ -51,8 +52,7 @@ const ROUNDS = 6;
 
 const scrub = async (file: string) => {
   try {
-    const root = await navigator.storage.getDirectory();
-    await root.removeEntry(file, { recursive: true });
+    await removeDatabaseFiles(file, 'OPFSCoopSyncVFS');
   } catch {
     // Never created, or already gone.
   }

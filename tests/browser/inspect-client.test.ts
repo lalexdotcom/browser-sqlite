@@ -79,7 +79,7 @@ describe('db.inspect on the target', () => {
     onTestFinished(() => db.close().catch(() => {}));
     await db.read('SELECT 1');
 
-    if (VFS_CAPABILITIES[TEST_TARGET.vfs].layout === 'memory') {
+    if (VFS_CAPABILITIES[TEST_TARGET.vfs].storage === 'memory') {
       // A memory VFS keeps its database inside its own client: there is no
       // realm to inspect, and inspect() says so rather than inventing one.
       await expect(db.inspect()).rejects.toMatchObject({

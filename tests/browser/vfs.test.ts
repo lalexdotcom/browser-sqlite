@@ -15,7 +15,7 @@ describe('AccessHandlePoolVFS pool guard', () => {
   // One VFS: the subject is AccessHandlePoolVFS's own poolSize guard.
   it('throws when combined with an explicit poolSize > 1', () => {
     expect(() =>
-      createSQLiteClient(`browser-sqlite-test-${crypto.randomUUID()}`, {
+      createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
         vfs: 'AccessHandlePoolVFS',
         poolSize: 2,
       }),
@@ -27,10 +27,9 @@ describe('AccessHandlePoolVFS pool guard', () => {
   // throw on a pool size the caller never chose.
   // One VFS: the subject is AccessHandlePoolVFS's own poolSize cap.
   it('defaults to the VFS cap rather than throwing when poolSize is omitted', async () => {
-    const db = createSQLiteClient(
-      `browser-sqlite-test-${crypto.randomUUID()}`,
-      { vfs: 'AccessHandlePoolVFS' },
-    );
+    const db = createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
+      vfs: 'AccessHandlePoolVFS',
+    });
     try {
       await db.write('CREATE TABLE t (id INTEGER PRIMARY KEY)');
       expect(await db.read('SELECT id FROM t')).toEqual([]);
@@ -44,7 +43,7 @@ describe('AccessHandlePoolVFS pool guard', () => {
   it('reports the pool guard as SQLiteError with code INVALID_OPTION', () => {
     let caught: unknown;
     try {
-      createSQLiteClient(`browser-sqlite-test-${crypto.randomUUID()}`, {
+      createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
         vfs: 'AccessHandlePoolVFS',
         poolSize: 2,
       });
@@ -85,7 +84,7 @@ describe('OPFSCoopSyncVFS pool guard', () => {
   // Falsifiable: revert OPFSCoopSyncVFS.maxPoolSize to null.
   it('throws when combined with an explicit poolSize > 1', () => {
     expect(() =>
-      createSQLiteClient(`browser-sqlite-test-${crypto.randomUUID()}`, {
+      createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
         vfs: 'OPFSCoopSyncVFS',
         poolSize: 2,
       }),
@@ -96,10 +95,9 @@ describe('OPFSCoopSyncVFS pool guard', () => {
   // Falsifiable: revert OPFSCoopSyncVFS.maxPoolSize to null — db.poolSize is
   // then 2, not 1.
   it('defaults to the VFS cap rather than throwing when poolSize is omitted', async () => {
-    const db = createSQLiteClient(
-      `browser-sqlite-test-${crypto.randomUUID()}`,
-      { vfs: 'OPFSCoopSyncVFS' },
-    );
+    const db = createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
+      vfs: 'OPFSCoopSyncVFS',
+    });
     try {
       await db.write('CREATE TABLE t (id INTEGER PRIMARY KEY)');
       expect(await db.read('SELECT id FROM t')).toEqual([]);
@@ -124,7 +122,7 @@ describe('vfs/build combination guard', () => {
   it('throws when the build is not one the VFS supports', () => {
     // OPFSAdaptiveVFS declares ['async', 'jspi'] — 'sync' is not among them.
     expect(() =>
-      createSQLiteClient(`browser-sqlite-test-${crypto.randomUUID()}`, {
+      createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
         vfs: 'OPFSAdaptiveVFS',
         build: 'sync',
       }),
@@ -135,7 +133,7 @@ describe('vfs/build combination guard', () => {
   it('reports the failure as SQLiteError with code INVALID_OPTION', () => {
     let caught: unknown;
     try {
-      createSQLiteClient(`browser-sqlite-test-${crypto.randomUUID()}`, {
+      createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
         vfs: 'OPFSAdaptiveVFS',
         build: 'sync',
       });
@@ -216,7 +214,7 @@ describe('memory VFS pool guard', () => {
     it(`${vfs} refuses a pool larger than 1`, () => {
       let caught: unknown;
       try {
-        createSQLiteClient(`browser-sqlite-test-${crypto.randomUUID()}`, {
+        createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
           vfs,
           poolSize: 2,
         });
@@ -236,7 +234,7 @@ describe('vfs is required', () => {
     expect(() =>
       // @ts-expect-error — the point of the guard is the runtime half, for
       // JavaScript consumers and for anyone who reached for `as any`.
-      createSQLiteClient(`browser-sqlite-test-${crypto.randomUUID()}`, {}),
+      createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {}),
     ).toThrow(/vfs is required/);
   });
 
@@ -245,7 +243,7 @@ describe('vfs is required', () => {
     let caught: unknown;
     try {
       // @ts-expect-error — see above.
-      createSQLiteClient(`browser-sqlite-test-${crypto.randomUUID()}`, {});
+      createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {});
     } catch (error) {
       caught = error;
     }

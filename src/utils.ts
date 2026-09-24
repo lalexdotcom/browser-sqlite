@@ -1,5 +1,6 @@
 import { SQLiteError } from './errors';
 import {
+  folderOf,
   type SQLiteBuild,
   type SQLiteVFS,
   VFS_CAPABILITIES,
@@ -323,6 +324,79 @@ export const renderPragmas = (pragmas: Record<string, string>): string[] =>
  */
 export const normalizeDatabaseFile = (file: string): string =>
   new URL(file, 'file://').pathname.replace(/^\//, '');
+
+/**
+ * The database and the two siblings SQLite may leave beside it. The set is
+ * upstream's own (`OPFSCoopSyncVFS.js:8`), not a guess: a stale `-journal` next
+ * to a deleted database is a hot journal, and recreating a database of that
+ * name would have SQLite attempt a rollback from it.
+ */
+export const DATABASE_FILE_SUFFIXES = ['', '-journal', '-wal'] as const;
+
+/**
+ * Where a VFS keeps a database: `.<folder>/<file>` on a VFS that declares a
+ * folder — the dot keeps the library's folders apart from an application's
+ * own OPFS entries — the name unchanged elsewhere. `file` must already be
+ * normalized, and this must be applied once — a path passed back in gains a
+ * second folder.
+ */
+export const databasePath = (vfs: SQLiteVFS, file: string): string => {
+  const folder = folderOf(vfs);
+  return folder === undefined ? file : `.${folder}/${file}`;
+};
+
+/**
+ * Every name a database's files may have, as the VFS receives them — OPFS
+ * paths on a VFS with a folder, names inside the VFS's own store elsewhere.
+ * Derived, not observed: it includes a `-journal` an earlier session left.
+ */
+export const databaseFiles = (
+  vfs: SQLiteVFS,
+  path: string,
+): readonly string[] =>
+  VFS_CAPABILITIES[vfs].storage === 'memory'
+    ? []
+    : [
+        ...DATABASE_FILE_SUFFIXES,
+        ...VFS_CAPABILITIES[vfs].extraFileSuffixes,
+      ].map((suffix) => `${path}${suffix}`);
+
+/**
+ * The longest database path, folder included. SQLite refuses a path when
+ * `nPathname + 8 > mxPathname` before calling `xOpen` (the 8 leaves room for
+ * `-journal`), and `mxPathname` is 64 on every wa-sqlite VFS
+ * (`node_modules/wa-sqlite/src/VFS.js:10`, inherited by all nine).
+ */
+export const MAX_DATABASE_PATH = 64 - 8;
+
+/**
+ * A database's two names, computed once at each entry point: `file`, what the
+ * consumer wrote, normalized — reported by `db.file`, inspections and error
+ * messages; and `path`, the identity every lock, the epoch registry, the
+ * workers and the VFS use.
+ *
+ * Refuses a name that is empty once normalized.
+ */
+export const resolveDatabase = (
+  file: string,
+  vfs: SQLiteVFS,
+): { readonly file: string; readonly path: string } => {
+  const normalized = normalizeDatabaseFile(file);
+  if (normalized === '') {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      `'${file}' is empty once normalized: a database name needs at least one character that is not '/', '.', or part of a '?query' or '#fragment'.`,
+    );
+  }
+  const path = databasePath(vfs, normalized);
+  if (path.length > MAX_DATABASE_PATH) {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      `'${file}' is ${normalized.length} characters once normalized; ${vfs} accepts at most ${MAX_DATABASE_PATH - (path.length - normalized.length)}.`,
+    );
+  }
+  return { file: normalized, path };
+};
 
 /**
  * Turns the `wasmUrl` client option into the absolute location posted in the

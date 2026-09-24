@@ -3,6 +3,7 @@ import { sharesStorage } from '../../src/locks';
 import {
   BUILD_DEGRADES_WITHOUT,
   BUILD_REQUIREMENTS,
+  folderOf,
   type PlatformFeature,
   type SQLiteBuild,
   type SQLiteVFS,
@@ -81,7 +82,7 @@ const runsHere = ({ vfs, build }: TestTarget, here: Here): boolean =>
  * in `helpers/vfs-contract.ts` names the three outcomes from this same answer.
  */
 export const sharedSecondClient = (vfs: SQLiteVFS, here: Here): boolean =>
-  VFS_CAPABILITIES[vfs].layout !== 'memory' &&
+  VFS_CAPABILITIES[vfs].storage !== 'memory' &&
   !VFS_CAPABILITIES[vfs].exclusiveConnection &&
   allHere(
     VFS_CAPABILITIES[vfs]
@@ -119,7 +120,7 @@ const holds = (need: Need, { vfs, build }: TestTarget, here: Here): boolean => {
       // declares the need and a client that enforces it can never drift.
       return sharesStorage(vfs);
     case 'opfs-file':
-      return VFS_CAPABILITIES[vfs].layout === 'opfs-path';
+      return folderOf(vfs) !== undefined;
   }
 };
 

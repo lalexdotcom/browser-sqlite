@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
+import { databasePath } from '../../src/utils';
 
 /**
  * A VFS that takes an EXCLUSIVE OPFS access handle inside `xOpen` fails the
@@ -83,8 +84,13 @@ const exclusiveHolder = () => {
       const deadline = Date.now() + takeBudgetMs;
       for (;;) {
         try {
-          const root = await navigator.storage.getDirectory();
-          const fileHandle = await root.getFileHandle(file, { create: true });
+          const segments = file.split('/');
+          const name = segments.pop();
+          let dir = await navigator.storage.getDirectory();
+          for (const segment of segments) {
+            dir = await dir.getDirectoryHandle(segment, { create: true });
+          }
+          const fileHandle = await dir.getFileHandle(name, { create: true });
           handle = await fileHandle.createSyncAccessHandle();
           break;
         } catch (e) {
@@ -145,7 +151,7 @@ const exclusiveHolder = () => {
 
 describe('opening a database whose file is momentarily held', () => {
   it('succeeds once the holder lets go', async () => {
-    const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+    const dbName = `bsq-test-${crypto.randomUUID()}`;
 
     // Create the database, so the open under test is an ordinary reopen.
     const creator = createSQLiteClient(dbName, { vfs: VFS });
@@ -153,7 +159,7 @@ describe('opening a database whose file is momentarily held', () => {
     await creator.close();
 
     const holder = exclusiveHolder();
-    expect(await holder.take(dbName)).toBe('taken');
+    expect(await holder.take(databasePath(VFS, dbName))).toBe('taken');
 
     const db = createSQLiteClient(dbName, { vfs: VFS });
     // Not awaited before the holder is armed: the open has to start while the

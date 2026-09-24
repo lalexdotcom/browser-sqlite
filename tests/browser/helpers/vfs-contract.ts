@@ -16,7 +16,7 @@ export type SecondClientOutcome = 'shared' | 'isolated' | 'refused';
  *   is measured, not asserted (spec §6).
  */
 export const secondClientOutcome = (vfs: SQLiteVFS): SecondClientOutcome => {
-  if (VFS_CAPABILITIES[vfs].layout === 'memory') return 'isolated';
+  if (VFS_CAPABILITIES[vfs].storage === 'memory') return 'isolated';
   return sharedSecondClient(vfs, { features: AVAILABLE_FEATURES })
     ? 'shared'
     : 'refused';

@@ -4,9 +4,39 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+### Breaking
+
+- **`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` keep each database in a folder of their own** — `.ad/`, `.ac/`, `.cs/` and `.wa/` in the OPFS root; the leading dot keeps these folders apart from an application's own OPFS entries. Until now all four resolved one name to one file at the root, so deleting through any of them destroyed what the others created. A database created by an earlier release is not found: move its files into the folder once, before opening it. `name` below is the normalized name `db.file` reports — e.g. `'caf%C3%A9'` for `'café'` —
+
+  ```js
+  // `name` as `db.file` reports it — e.g. 'caf%C3%A9' for 'café'.
+  const root = await navigator.storage.getDirectory();
+  const parts = name.split('/');
+  const base = parts.pop();
+  let from = root;
+  let to = await root.getDirectoryHandle('.ad', { create: true }); // .ac, .cs or .wa for the other three
+  for (const part of parts) {
+    from = await from.getDirectoryHandle(part);
+    to = await to.getDirectoryHandle(part, { create: true });
+  }
+  await from.getFileHandle(base); // throws NotFoundError if the name is wrong
+  for (const suffix of ['-journal', '-wal', '']) { // put '-wa0', '-wa1' first for OPFSWriteAheadVFS
+    try {
+      await (await from.getFileHandle(base + suffix)).move(to, base + suffix);
+    } catch (error) {
+      if (error.name !== 'NotFoundError') throw error;
+    }
+  }
+  ```
+
+  A name containing `/` keeps its subfolders inside the VFS folder. The database file moves last, after its journal. The other five VFS are unaffected.
+- **`VFS_CAPABILITIES` loses `layout`, and `VFSLayout` is no longer exported.** `storage` says where a database lives; the new `folder` is set exactly on the four VFS above.
+- **A database name on those four VFS may be 52 characters instead of 56**, once normalized — the folder takes four.
+
 ### Added
 
 - **`db.ready` says when the pool has started.** It resolves once every worker has opened or been declined by the environment — from then on `db.poolSize` is the size you got — and rejects with the error that failed the client, or `CLIENT_CLOSED` if you close it first. Queries never need it: they wait for the pool as before.
+- **`db.files`** lists every name the database's files may have — the database, `-journal`, `-wal` and the VFS's own extra files — as OPFS paths on the four VFS above.
 
 ### Performance
 
@@ -26,6 +56,7 @@ All notable changes to this project are documented here.
 - **The vendored wa-sqlite moves to upstream `e98c65d`**, which corrects how
   `OPFSWriteAheadVFS` tracks the size of its active write-ahead file across a
   switch between the two — the threshold that decides when to rotate them.
+- **A database name too long for SQLite now fails at the call**, with `INVALID_OPTION` naming the bound, from `createSQLiteClient`, `deleteDatabase` and `inspectDatabase` — it used to fail later, when the worker opened the file. The same call also now refuses a name that is empty once normalized (`''`, `'/'`, `'?x'`…) with `INVALID_OPTION`.
 
 ## 1.0.0-rc.5 — 2026-09-22
 

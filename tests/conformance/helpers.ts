@@ -9,6 +9,7 @@ import {
   type SQLiteVFS,
   VFS_CAPABILITIES,
 } from '../../src/types';
+import { databaseFiles, databasePath } from '../../src/utils';
 
 /** Every wired VFS, in declaration order. */
 export const ALL_VFS = Object.keys(VFS_CAPABILITIES) as SQLiteVFS[];
@@ -196,6 +197,23 @@ export const expectNoWorkerLost = () => {
 };
 
 /**
+ * Removes one OPFS entry by path, walking its folders. Missing is success. The
+ * folders themselves are left: the library never removes them either.
+ */
+export const removeOpfsPath = async (path: string): Promise<void> => {
+  const segments = path.split('/').filter(Boolean);
+  const name = segments.pop();
+  if (!name) return;
+  try {
+    let dir = await navigator.storage.getDirectory();
+    for (const segment of segments) dir = await dir.getDirectoryHandle(segment);
+    await dir.removeEntry(name, { recursive: true });
+  } catch {
+    // Never created, or this VFS does not use OPFS at all.
+  }
+};
+
+/**
  * A client on a unique database, registered for cleanup. Unique names keep
  * scenarios independent; OPFS entries are removed afterwards, and the memory
  * VFS have nothing to remove.
@@ -208,12 +226,8 @@ export const conformanceClient = (
   const file = `conformance-${crypto.randomUUID()}`;
 
   afterEach(async () => {
-    try {
-      const root = await navigator.storage.getDirectory();
-      await root.removeEntry(file, { recursive: true });
-    } catch {
-      // Never created, or this VFS does not use OPFS at all.
-    }
+    for (const path of databaseFiles(vfs, databasePath(vfs, file)))
+      await removeOpfsPath(path);
   });
 
   return {

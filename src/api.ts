@@ -409,26 +409,13 @@ export type SQLiteDB = SQLiteQueryAPI & {
    * object — the operation runs exactly once.
    *
    * @remarks
-   * **Stored data is NOT deleted.** `close()` releases workers and connections;
-   * it removes nothing. What a database leaves behind, and how to remove it,
-   * depends on the VFS — and this library does not yet expose a deletion that
-   * routes through the VFS itself.
+   * **Stored data is NOT deleted.** `close()` releases workers and
+   * connections; it removes nothing.
    *
-   * Deleting files under `navigator.storage.getDirectory()` is only correct for
-   * the plain OPFS VFS, on a database that is already closed, and even there it
-   * leaves SQLite's `-journal` and `-wal` siblings unless you remove them too.
-   * It is wrong elsewhere:
-   *
-   * - `AccessHandlePoolVFS` keeps every database inside one directory named
-   *   after the VFS, in a fixed set of pre-allocated files with opaque names.
-   *   Removing a file does not free its slot — it takes capacity away from the
-   *   pool, and once capacity runs out no further database opens.
-   * - `IDBBatchAtomicVFS` and `IDBMirrorVFS` store nothing in OPFS at all;
-   *   their data lives in an IndexedDB database named after the VFS class, so
-   *   an OPFS deletion is a no-op.
-   *
-   * Until a `deleteDatabase` exists here, treat removal as VFS-specific and
-   * check what your chosen VFS actually writes.
+   * To remove a database, close every client on it and call
+   * `deleteDatabase(db.file, { vfs: db.vfs })`: it goes through the VFS, which
+   * is the only correct removal on `AccessHandlePoolVFS` and the IndexedDB
+   * VFS. `db.files` lists the names its files may have.
    */
   close: () => Promise<void>;
 
@@ -436,8 +423,15 @@ export type SQLiteDB = SQLiteQueryAPI & {
   readonly id: string;
   /** This client's label, index included — what its log lines are prefixed with. */
   readonly name: string;
-  /** The database file, normalized: the identity every lock name is built on. */
+  /** The database name you passed, normalized — what to hand back to `inspectDatabase` and `deleteDatabase`. */
   readonly file: string;
+  /**
+   * Every name this database's files may have, as the VFS receives them: the
+   * database, `-journal`, `-wal`, and the VFS's own extra files. On a VFS with
+   * a folder these are OPFS paths; elsewhere they are names inside the VFS's
+   * own store. Empty on the memory VFS.
+   */
+  readonly files: readonly string[];
   readonly vfs: SQLiteVFS;
   /** The build actually loaded, resolved by `defaultBuildFor` when not passed. */
   readonly build: SQLiteBuild;

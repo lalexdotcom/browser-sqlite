@@ -32,7 +32,7 @@ const NEEDS = ['shared-second-client'] as const;
 
 const twoClients = () => {
   const { vfs, build } = pairFor(NEEDS);
-  const dbName = `browser-sqlite-test-${crypto.randomUUID()}`;
+  const dbName = `bsq-test-${crypto.randomUUID()}`;
   const options = { vfs, build, poolSize: poolFor(vfs) };
   const a = createSQLiteClient(dbName, options);
   const b = createSQLiteClient(dbName, options);

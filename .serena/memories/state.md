@@ -17,8 +17,11 @@ obligations and unmeasured ground.
   for the tag. `package.json` sits at `1.0.0-rc.5` and stays there until the user calls the
   next bump; everything since lands in a new unreleased section of `CHANGELOG.md`, which
   **the user's instruction creates** — no automation opens one. **`## Unreleased` exists since
-  2026-09-23**, opened on that instruction, and carries the wa-sqlite repin, the checkpoint coalescing below, and `db.ready` (Added, merged
-  2026-09-23).
+  2026-09-23**, opened on that instruction, and carries the wa-sqlite repin, the checkpoint coalescing below, `db.ready` (Added, merged
+  2026-09-23), and **per-VFS OPFS folders** (merged 2026-09-24, the section's first **Breaking**
+  entries: `.ad/`, `.ac/`, `.cs/`, `.wa/`, `layout` and `VFSLayout` gone, the 52-character name bound
+  on those four VFS; `db.files` Added; the path and empty-name refusals Changed — `mem:vfs`, CROSS-VFS;
+  `mem:architecture`, "Two names per database").
 - **The vendored wa-sqlite sits at `e98c65de`** since 2026-09-23, up from `93b9230`, and
   `patches/wa-sqlite@1.1.2.patch` carries **four** files since the same day: the three it already
   had plus `src/examples/WriteAhead.js`, which is the exact diff of our PR #361 rather than a
@@ -37,34 +40,37 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-23 on `feat/db-ready`
+## The verification baseline — compare against these, re-measured 2026-09-24 on `feat/vfs-folders`
 
 Not history: the numbers a regression is detected against. **Every figure below was read off a run
-in this container on 2026-09-23, on `feat/db-ready` at its merge point** — none is
+in this container on 2026-09-24, on `feat/vfs-folders` at its merge point (`215a94b`)** — none is
 carried forward, none is arithmetic, and the whole table was read in ONE pass, which is what its own
-rule demands.
+rule demands. **One exception, stated:** the matrix ran on 2026-09-23 at `e184f25`, one commit before
+the merge point; the commit after it (`215a94b`, the empty-name refusal) runs before any worker and
+was not re-run through the matrix.
 
 | command | result |
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` on each: **1230 tests / 80 files** (unit + the two chromium target projects, **8 skipped**), **724 / 54** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects, none skipped) |
-| `pnpm exec rstest --project unit run` | **508** tests, 27 files |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1255 tests / 81 files** (unit + the two chromium target projects, **8 skipped**), **738 / 55** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects, none skipped) |
+| `pnpm exec rstest --project unit run` | **519** tests, 27 files |
 | `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are now `chromium · <vfs>/<build>` and rstest's filter is anchored |
-| `pnpm test:conformance` | **TWO reports** — 85 tests / 2 files each: **Chromium 71 passed / 14 skipped, Firefox 67 / 18** — they differ by design since 2026-09-14 |
+| `pnpm test:conformance` | **TWO reports** — 97 tests / 3 files each: **Chromium 83 passed / 14 skipped, Firefox 79 / 18** — they differ by design since 2026-09-14 |
 | `pnpm exec biome ci .` | exit 0 |
 | `pnpm docs:vfs` | leaves `VFS.md` unchanged (`git diff --exit-code`) |
 | `pnpm test:consumer` | 24/24 stages |
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | `OK`, `"reasons": {}`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 140 files, 13 warnings, 1 info — the file count moves with the tree, **the warning count is the signal** |
+| `pnpm lint` | 142 files, 13 warnings, 1 info — the file count moves with the tree, **the warning count is the signal** |
 | `dependencies` in `package.json` | absent |
-| `pnpm test:matrix` | **66 of 66 cells green, 0 failing tests, 2525 s** (`.matrix/2026-09-23T12-31-12-824Z`). ~45 min. Per-cell detail in `mem:measurements` |
+| `pnpm test:matrix` | **66 of 66 cells green, 0 failing tests, 2480 s** (`.matrix/2026-09-23T19-36-06-860Z`, at `e184f25`). ~45 min. Per-cell detail in `mem:measurements` |
 
-Against the same table before the merge — `pnpm test` 1181 / 676 / 14, unit 507, lint 137 files —
-the browser configs gained **37 and 36** and the unit project **1**: the concurrency matrix the
-suite never had, 14 transaction tests and 9 client-level ones, plus the advisory's timer half on
-fake timers in the unit project. **The skip counts did not move, and that is the cell to watch** —
-a test that started skipping instead of running would vanish into a total without a trace.
+Against the same table before the merge — `pnpm test` 1230 / 724 / 14, unit 508, conformance 85 / 2
+files, lint 140 files — the chromium+unit report gained **25** (11 of them unit), the firefox one **14**, and
+conformance **12 tests and one file** (`folders.test.ts`): the per-VFS folders, `db.files`, the path
+and empty-name refusals, the rc.5 lock-name pins. **The skip counts did not move, and that is the
+cell to watch** — a test that started skipping instead of running would vanish into a total without
+a trace.
 
 **Do not reconcile any of these by arithmetic; re-run.** A previous version of this table was
 measured on 2026-09-15 and went stale the next day, and another contradicted itself in September
@@ -752,6 +758,7 @@ anywhere in the repository.
 **What it does NOT deliver, and the README says so:** reads still wait on the rotated exclusive OPFS
 handle wherever `readwrite-unsafe` is missing. `IDBMirrorVFS` gains nothing cross-tab.
 `OPFSCoopSyncVFS`'s stalls are untouched. And deleting through the wrong VFS is still destructive
+(in rc.5 — rc.6's per-VFS folders end it, `mem:vfs` CROSS-VFS)
 within the `opfs-path` family — that family shares one file, which is measured and now carries a
 README warning.
 
