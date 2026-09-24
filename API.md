@@ -83,7 +83,7 @@ A database name may be 56 characters once normalized — 52 on `OPFSAdaptiveVFS`
 
 ## *client*.build
 
-`SQLiteBuild`, readonly. The wa-sqlite build actually loaded — the VFS's first when `build` was not passed.
+`SQLiteBuild`, readonly. The wa-sqlite build actually loaded — the first build the VFS declares that the browser supports, when `build` was not passed.
 
 ## *client*.poolSize
 
