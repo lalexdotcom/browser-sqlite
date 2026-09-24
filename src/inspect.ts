@@ -1,5 +1,4 @@
-import type { SQLiteVFS } from './const/vfs';
-import { VFS_CAPABILITIES } from './const/vfs';
+import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import type { LockEntries, Locks } from './locks';
 import {
   createLocks,

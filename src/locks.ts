@@ -9,8 +9,7 @@
  * collectable immediately, with no timestamp and no grace period.
  */
 
-import type { SQLiteVFS } from './const/vfs';
-import { VFS_CAPABILITIES } from './const/vfs';
+import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 
 /** One entry in the lock registry as returned by `query()`. */
 type QueriedLock = { name?: string; mode?: string; clientId?: string };
