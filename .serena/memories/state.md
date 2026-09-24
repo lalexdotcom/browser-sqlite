@@ -40,16 +40,16 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-24 on `feat/default-build`
+## The verification baseline — compare against these, re-measured 2026-09-24 on `feat/public-surface`
 
-Not history: the numbers a regression is detected against. **Every figure below was read off a run in this container on 2026-09-24, on `feat/default-build` at its last commit before the merge** — none is carried forward, none is arithmetic, and the table was read in ONE pass (`.scratchpad/default-build/baseline/`). **One exception, stated:** the matrix ran the same day two commits earlier; the commits after it change documentation, JSDoc and memories only.
+Not history: the numbers a regression is detected against. **Every figure below was read off a run in this container on 2026-09-24, on `feat/public-surface` at its last code commit** (the commits after it change memories only) — none is arithmetic, and the table was read in ONE pass (`.scratchpad/public-surface/`). **One exception, stated:** the matrix row is carried from `feat/default-build`, run the same day; `feat/public-surface` changes no VFS, build, pool or worker code, so `mem:conventions` ("When to run the full matrix") does not call for a new one.
 
 | command | result |
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1264 tests / 83 files** (unit + the two chromium target projects, **8 skipped**), **742 / 56** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects, none skipped). The chromium and firefox targets are `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` since the default build follows the engine |
-| `pnpm exec rstest --project unit run` | **524** tests, 28 files |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1263 tests / 83 files** (unit + the two chromium target projects, **8 skipped**), **742 / 56** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects, none skipped). The chromium and firefox targets are `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` since the default build follows the engine |
+| `pnpm exec rstest --project unit run` | **523** tests, 28 files |
 | `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are `chromium · <vfs>/<build>` and rstest's filter is anchored |
 | `pnpm test:conformance` | **TWO reports** — 97 tests / 3 files each: **Chromium 83 passed / 14 skipped, Firefox 79 / 18** — they differ by design since 2026-09-14. Each VFS runs on its default build for the engine, so the `jspi`-first VFS run `jspi` here |
 | `pnpm exec biome ci .` | exit 0 |
@@ -60,7 +60,7 @@ Not history: the numbers a regression is detected against. **Every figure below 
 | `dependencies` in `package.json` | absent |
 | `pnpm test:matrix` | **66 of 66 cells green, 0 failing tests, 2570 s** (`.matrix/2026-09-24T09-53-39-415Z`). ~45 min. Per-cell detail in `mem:measurements` |
 
-Against the table before `feat/default-build` — `pnpm test` 1255 / 738 / 14, unit 519 / 27 files — the chromium+unit report gained **9** (5 unit: the default-build resolution and `targetsFromEnv`; 4 browser: the no-JSPI test, two cases × two projects) and the firefox one **4**. **The skip counts did not move, and that is the cell to watch** — a test that started skipping instead of running would vanish into a total without a trace.
+Against the table before `feat/public-surface` — `pnpm test` 1264 / 742 / 14, unit 524 / 28 files — the chromium+unit report lost **1**: `tests/unit/exports.test.ts` replaced its per-name presence tests with one exact list of the runtime exports, plus a test on `package.json`'s `exports`. Nothing else moved. **The skip counts did not move, and that is the cell to watch** — a test that started skipping instead of running would vanish into a total without a trace.
 
 **Do not reconcile any of these by arithmetic; re-run.** A previous version of this table was
 measured on 2026-09-15 and went stale the next day, and another contradicted itself in September
