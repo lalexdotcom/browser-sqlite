@@ -466,7 +466,7 @@ export type SQLiteDB = SQLiteQueryAPI & {
    * Shape is subject to change without notice.
    * @internal
    */
-  debug?: ClientDebugState;
+  debug: ClientDebugState | undefined;
 };
 
 export type SQLiteTransactionDB = SQLiteQueryAPI & {

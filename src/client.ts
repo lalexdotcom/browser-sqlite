@@ -350,7 +350,7 @@ const exclusivityProbes = new Map<
 export const createSQLiteClient = (
   file: string,
   clientOptions: CreateSQLiteClientOptions,
-) => {
+): SQLiteDB => {
   // FIRST, before anything reads the options. `clientOptions` is required in
   // the type, but a JavaScript caller can still omit it entirely — and then
   // every access below would throw a bare TypeError naming nothing. The `?.`

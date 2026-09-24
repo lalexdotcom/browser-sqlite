@@ -60,6 +60,7 @@ All notable changes to this project are documented here.
   `OPFSWriteAheadVFS` tracks the size of its active write-ahead file across a
   switch between the two — the threshold that decides when to rotate them.
 - **A database name too long for SQLite now fails at the call**, with `INVALID_OPTION` naming the bound, from `createSQLiteClient`, `deleteDatabase` and `inspectDatabase` — it used to fail later, when the worker opened the file. The same call also now refuses a name that is empty once normalized (`''`, `'/'`, `'?x'`…) with `INVALID_OPTION`.
+- **`createSQLiteClient` is declared to return `SQLiteDB`**, instead of a copy of its members spelled out in the type declarations.
 
 ## 1.0.0-rc.5 — 2026-09-22
 
