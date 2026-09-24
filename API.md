@@ -36,7 +36,7 @@ const db = createSQLiteClient('myapp.sqlite', {
 |--------|------|---------|-------------|
 | `poolSize` | `number` | `2`, capped to the VFS's `maxPoolSize` and to what the environment allows | Web Workers in the pool. |
 | `vfs` | `SQLiteVFS` | — (required) | Where the database is stored.<br>See [Recommendations](VFS.md#recommendations). |
-| `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite WebAssembly build to load.<br>See [Builds reference](VFS.md#builds-reference). |
+| `build` | `SQLiteBuild` | first build the VFS declares that the browser supports | Which wa-sqlite WebAssembly build to load.<br>See [Builds reference](VFS.md#builds-reference). |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Where the workers fetch their `.wasm`. |
 | `pragmas` | `Record<string, string>` | `undefined` | SQLite PRAGMAs applied to each worker connection on open. |
 | `maxWorkerRestarts` | `number` | `1` | How many times a slot may be restarted after it dies. |
@@ -337,7 +337,7 @@ await deleteDatabase('myapp.sqlite', { vfs: 'OPFSAdaptiveVFS' });
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `vfs` | `SQLiteVFS` | — (required) | The VFS the database was created with. |
-| `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite build to load. It does not affect where the database lives — only which builds can instantiate the VFS. |
+| `build` | `SQLiteBuild` | first build the VFS declares that the browser supports | Which wa-sqlite build to load. It does not affect where the database lives — only which builds can instantiate the VFS. |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Same meaning as on [`createSQLiteClient`](#options). A deployment that needs it to open a database needs it to delete one. |
 
 Deleting a database that is not there throws — most often because `vfs` is not the one it was created with.

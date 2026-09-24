@@ -267,12 +267,7 @@ baseline rather than storage.
 
 ## Builds reference
 
-Each VFS runs on one or more wa-sqlite WebAssembly builds. The `build` option
-selects one; omitted, the first build the VFS declares is used — the `Builds`
-line of its entry lists them in that order. A pair the VFS does not support
-throws a `SQLiteError` with code `INVALID_OPTION` at construction, naming the
-builds it does support. The pairing is declared in one place,
-`VFS_CAPABILITIES`, which is also what the `SQLiteVFS` type is derived from.
+Each VFS runs on one or more wa-sqlite WebAssembly builds. The `build` option selects one; omitted, the first build the VFS declares that the browser supports is used — the `Builds` line of its entry lists them in that order, and `db.build` reports the one loaded. A pair the VFS does not support throws a `SQLiteError` with code `INVALID_OPTION` at construction, naming the builds it does support. The pairing is declared in one place, `VFS_CAPABILITIES`, which is also what the `SQLiteVFS` type is derived from.
 
 A build carries its own engine requirement, independent of where the VFS stores
 data — so a VFS can be reachable in `sync` on an old browser and in `jspi` only
@@ -288,7 +283,7 @@ Plain synchronous WebAssembly. Needs nothing beyond baseline WASM, so it runs an
 
 Asyncify: the WASM stack is unwound and rewound around asynchronous file operations. Also needs nothing beyond baseline WASM. Every VFS here can run on it.
 
-**On Safari it slows down as it works.** After a few statements of a second or more, a worker on this build runs several times slower — up to twenty times on Safari 26 — and stays slow; Chromium and Firefox do not. The [`jspi`](#build-jspi) build avoids it on Safari 27+. Safari 26 has no JSPI, so there a VFS without a `sync` build has no way around it.
+**On Safari it slows down as it works.** After a few statements of a second or more, a worker on this build runs several times slower — up to twenty times on Safari 26 — and stays slow; Chromium and Firefox do not. Where the browser has JSPI — Safari 27+ — an omitted `build` loads [`jspi`](#build-jspi), which avoids it. Safari 26 has no JSPI, so there a VFS without a `sync` build has no way around it.
 
 ### Build `jspi`
 
@@ -296,7 +291,7 @@ Asyncify: the WASM stack is unwound and rewound around asynchronous file operati
 |---|---|---|---|---|
 | 137+ | 153+ | 27+ | Yes | 27+ |
 
-JavaScript Promise Integration — the same asynchrony handled by the engine rather than by Asyncify. Opt-in, and no default uses it, so its narrower availability constrains nobody who does not ask for it.
+JavaScript Promise Integration — the same asynchrony handled by the engine rather than by Asyncify. Declared before `async` by every VFS that runs both, so it is the default wherever the browser has it; elsewhere an omitted `build` falls back to `async`, and its narrower availability constrains nobody.
 
 
 <!-- END GENERATED BUILD TABLE -->

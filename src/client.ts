@@ -197,9 +197,13 @@ export type CreateSQLiteClientOptions = {
    * A **callback names one file** and receives the resolved `build`, for a
    * bundler-emitted asset whose name carries a content hash:
    * ```ts
-   * import wasmUrl from 'browser-sqlite/dist/worker/wa-sqlite.wasm?url';
-   * createSQLiteClient('app.db', { vfs, wasmUrl: () => wasmUrl });
+   * import wasm from 'browser-sqlite/dist/worker/wa-sqlite.wasm?url';
+   * import wasmAsync from 'browser-sqlite/dist/worker/wa-sqlite-async.wasm?url';
+   * import wasmJspi from 'browser-sqlite/dist/worker/wa-sqlite-jspi.wasm?url';
+   * const urls = { sync: wasm, async: wasmAsync, jspi: wasmJspi };
+   * createSQLiteClient('app.db', { vfs, wasmUrl: (build) => urls[build] });
    * ```
+   * A callback that ignores its argument must be paired with an explicit `build`: an omitted one depends on the browser.
    * It is called once, at construction, and its answer is reused by every
    * worker and every restart.
    *
@@ -305,8 +309,9 @@ const exclusivityProbes = new Map<
  * @remarks
  * **Browser requirements:** This client uses OPFS through Web Workers; no
  * special HTTP headers are required and cross-origin isolation is not needed.
- * The default `build` needs no browser opt-in; only `build: 'jspi'` does, and
- * JSPI is Chromium-only — an unrelated constraint, not a header requirement.
+ * An omitted `build` needs no browser opt-in: it is the first build the VFS
+ * declares that the browser supports. Only an explicit `build: 'jspi'` requires
+ * JSPI — an engine constraint, not a header requirement.
  *
  * **Worker pool side effect:** Calling this function immediately spawns
  * `poolSize` Web Worker threads and begins asynchronous database

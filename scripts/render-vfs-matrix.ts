@@ -305,8 +305,8 @@ const BUILD_NOTE: Record<SQLiteBuild, string> = {
   // It was first written by hand into VFS.md, where the next render erased it.
   async:
     'Asyncify: the WASM stack is unwound and rewound around asynchronous file operations. Also needs nothing beyond baseline WASM. Every VFS here can run on it.\n\n' +
-    '**On Safari it slows down as it works.** After a few statements of a second or more, a worker on this build runs several times slower — up to twenty times on Safari 26 — and stays slow; Chromium and Firefox do not. The [`jspi`](#build-jspi) build avoids it on Safari 27+. Safari 26 has no JSPI, so there a VFS without a `sync` build has no way around it.',
-  jspi: 'JavaScript Promise Integration — the same asynchrony handled by the engine rather than by Asyncify. Opt-in, and no default uses it, so its narrower availability constrains nobody who does not ask for it.',
+    '**On Safari it slows down as it works.** After a few statements of a second or more, a worker on this build runs several times slower — up to twenty times on Safari 26 — and stays slow; Chromium and Firefox do not. Where the browser has JSPI — Safari 27+ — an omitted `build` loads [`jspi`](#build-jspi), which avoids it. Safari 26 has no JSPI, so there a VFS without a `sync` build has no way around it.',
+  jspi: 'JavaScript Promise Integration — the same asynchrony handled by the engine rather than by Asyncify. Declared before `async` by every VFS that runs both, so it is the default wherever the browser has it; elsewhere an omitted `build` falls back to `async`, and its narrower availability constrains nobody.',
 };
 
 const BUILDS = Object.keys(BUILD_CAPABILITIES) as SQLiteBuild[];
