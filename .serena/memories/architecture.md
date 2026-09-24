@@ -101,11 +101,7 @@ a documented exception: `navigator.locks.query()` takes no lock and waits for no
 parameter could only abort the `.then()`.
 and `chunkSize` on the three that stream. Client options: `name`, `poolSize`,
 **`vfs` (required)**, `build`, `pragmas`, `maxWorkerRestarts`, `openTimeout`,
-`drainTimeout`, `debug`. Exported besides: `SQLiteError`, `BulkWriteError`,
-`VFS_CAPABILITIES`, `folderOf`, `defaultBuildFor`, `detectFeatures`, `missingFeature`, `inspectDatabase`,
-and the types `SQLiteVFS` / `SQLiteBuild` / `VFSCapability` / `VFSMemoryModel` /
-`DatabaseClient` / `DatabaseInspection` / `ClientInspection` / `InspectionBase` /
-`InspectDatabaseOptions`.
+`drainTimeout`, `debug`. The entry exports exactly these names, pinned at runtime by `tests/unit/exports.test.ts`. Values: `createSQLiteClient`, `deleteDatabase`, `inspectDatabase`, `detectFeatures`, `missingFeature`, `SQLiteError`, `SQLiteBulkWriteError`, `SQLITE_CODES`, `SQLITE_EXTENDED_CODES`. Types: everything `src/api.ts` exports, plus `CreateSQLiteClientOptions`, `WorkerLostEvent`, `DeleteDatabaseOptions`, `InspectDatabaseOptions`, `DatabaseInspection`, `ClientInspection`, `InspectionBase`, `DatabaseClient`, `SQLiteVFS`, `SQLiteBuild`, `PlatformFeature`, `SQLiteErrorCode`, `SQLiteResultCode`, `SQLiteExtendedResultCode`. The package declares no subpath but `.`. The bench page gets its VFS table from `scripts/bench/assemble.mjs`, which writes it only when the page imports it, because `pages.yaml` runs the current assembler over the published tag. `SQLiteDB.debug` is declared `debug: ClientDebugState | undefined` — a required key that may hold `undefined` — since this chantier: under `exactOptionalPropertyTypes` the client's always-present key did not match the former `debug?:`, and the declared type now matches what the client publishes. `ClientDebugState` stays unexported (`@internal`); whether `db.debug` itself is public is the documentation review's call (`mem:follow-ups`).
 
 **Every root export names the database positionally** — `createSQLiteClient(file, options)`,
 `deleteDatabase(file, options)`, `inspectDatabase(file, options)`. `inspectDatabase` shipped on

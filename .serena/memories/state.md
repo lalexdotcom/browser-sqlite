@@ -21,10 +21,7 @@ obligations and unmeasured ground.
   2026-09-23), and **per-VFS OPFS folders** (merged 2026-09-24, the section's first **Breaking**
   entries: `.ad/`, `.ac/`, `.cs/`, `.wa/`, `layout` and `VFSLayout` gone, the 52-character name bound
   on those four VFS; `db.files` Added; the path and empty-name refusals Changed — `mem:vfs`, CROSS-VFS;
-  `mem:architecture`, "Two names per database"), and **the default build that follows the browser**
-  (merged 2026-09-24: Changed, plus two Breaking entries — a `wasmUrl` serving only the `async`
-  `.wasm`, and `defaultBuildFor`'s second parameter, which the public-surface chantier must drop
-  from the CHANGELOG when it unexports the function, `mem:follow-ups`).
+  `mem:architecture`, "Two names per database"), and **the default build that follows the browser** (merged 2026-09-24: Changed, plus two Breaking entries — a `wasmUrl` serving only the `async` `.wasm`, and `defaultBuildFor`'s second parameter), and **the public surface** (Breaking — `VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` no longer exported, the `./worker` subpath gone; Changed — `createSQLiteClient` declared to return `SQLiteDB`).
 - **The vendored wa-sqlite sits at `e98c65de`** since 2026-09-23, up from `93b9230`, and
   `patches/wa-sqlite@1.1.2.patch` carries **four** files since the same day: the three it already
   had plus `src/examples/WriteAhead.js`, which is the exact diff of our PR #361 rather than a
