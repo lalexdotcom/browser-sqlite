@@ -1,7 +1,7 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
-import { SQLiteError } from '../../src/errors';
 import { connectionLockName } from '../../src/locks';
+import { SQLiteError } from '../../src/types/errors';
 import { databasePath } from '../../src/utils';
 import { removeDatabaseFiles } from './helpers';
 

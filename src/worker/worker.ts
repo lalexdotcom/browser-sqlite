@@ -20,24 +20,26 @@ import {
   SQLITE_PREPARE_PERSISTENT,
   SQLITE_ROW,
 } from 'wa-sqlite/src/sqlite-constants.js';
+import type { SQLiteBuild } from '../const/builds';
+import type { PlatformFeature } from '../const/platform';
+import {
+  defaultBuildFor,
+  folderOf,
+  type SQLiteVFS,
+  VFS_CAPABILITIES,
+} from '../const/vfs';
 import {
   createCreditGate,
   createMessageChannelTick,
   DEFAULT_CREDIT_WINDOW,
 } from '../credits';
-import type { SQLiteErrorCode } from '../errors';
 import { createLocks, initLockName } from '../locks';
-import {
-  type ClientMessageData,
-  defaultBuildFor,
-  folderOf,
-  type PlatformFeature,
-  type SQLiteBuild,
-  type SQLiteVFS,
-  VFS_CAPABILITIES,
-  type WasmLocation,
-  type WorkerMessageData,
-} from '../types';
+import type { SQLiteErrorCode } from '../types/errors';
+import type {
+  ClientMessageData,
+  WasmLocation,
+  WorkerMessageData,
+} from '../types/protocol';
 import { DATABASE_FILE_SUFFIXES, renderPragmas } from '../utils';
 import { cloneable } from './cloneable';
 import { firstMissing } from './probes';
@@ -188,7 +190,7 @@ const WA_SQLITE_BUILDS = {
 
 /**
  * VFS loaders only. Which build each VFS may run on lives in `VFS_CAPABILITIES`
- * (`src/types.ts`) and nowhere else — the client validates against it and sends
+ * (`src/const/vfs.ts`) and nowhere else — the client validates against it and sends
  * the chosen build in the `open` message, so there is no second copy to drift.
  */
 const VFSConfigs = {

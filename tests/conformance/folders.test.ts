@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from '@rstest/core';
+import { folderOf, type SQLiteVFS } from '../../src/const/vfs';
 import { deleteDatabase } from '../../src/delete';
-import { folderOf, type SQLiteVFS } from '../../src/types';
 import { databasePath } from '../../src/utils';
 import {
   ALL_VFS,

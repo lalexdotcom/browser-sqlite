@@ -1,13 +1,9 @@
-import { SQLiteError } from './errors';
+import type { SQLiteBuild } from './const/builds';
+import { defaultBuildFor, type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { connectionLockName, createLocks, initLockName } from './locks';
 import { spawnWorker, startupError } from './pool';
-import {
-  defaultBuildFor,
-  type SQLiteBuild,
-  type SQLiteVFS,
-  VFS_CAPABILITIES,
-  type WorkerMessageData,
-} from './types';
+import { SQLiteError } from './types/errors';
+import type { WorkerMessageData } from './types/protocol';
 import { resolveDatabase, resolveWasmLocation } from './utils';
 
 export type DeleteDatabaseOptions = {

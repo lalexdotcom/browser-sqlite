@@ -5,9 +5,11 @@ import {
   detectFeatures,
   missingFeature,
 } from './capabilities';
+import type { SQLiteBuild } from './const/builds';
+import type { PlatformFeature } from './const/platform';
+import { defaultBuildFor, type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { createClientDebug } from './debug';
 import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
-import { SQLiteError } from './errors';
 import {
   type ClientInspection,
   type DatabaseInspection,
@@ -38,13 +40,7 @@ import {
 } from './scheduler';
 import { createSupervisor } from './supervisor';
 import { createTransaction } from './transaction';
-import {
-  defaultBuildFor,
-  type PlatformFeature,
-  type SQLiteBuild,
-  type SQLiteVFS,
-  VFS_CAPABILITIES,
-} from './types';
+import { SQLiteError } from './types/errors';
 import {
   assertReadable,
   databaseFiles,

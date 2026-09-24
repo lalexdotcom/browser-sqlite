@@ -1,8 +1,8 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
-import { SQLiteError } from '../../src/errors';
-import { SQLITE_CODES, SQLITE_EXTENDED_CODES } from '../../src/sqlite-codes';
-import type { SQLiteVFS } from '../../src/types';
+import { SQLITE_CODES, SQLITE_EXTENDED_CODES } from '../../src/const/sqlite';
+import type { SQLiteVFS } from '../../src/const/vfs';
+import { SQLiteError } from '../../src/types/errors';
 import { databasePath } from '../../src/utils';
 import { removeOpfsPath } from '../conformance/helpers';
 import { createTestClient, pairFor } from './helpers';

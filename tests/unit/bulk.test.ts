@@ -1,8 +1,8 @@
 import { describe, expect, it } from '@rstest/core';
 import { createBulk } from '../../src/bulk';
-import { SQLiteBulkWriteError } from '../../src/errors';
 import { type Locks, noOpLocks } from '../../src/locks';
 import { createLogger } from '../../src/logger';
+import { SQLiteBulkWriteError } from '../../src/types/errors';
 
 const noopLogger = createLogger('test', false);
 

@@ -1,12 +1,9 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient, type WorkerLostEvent } from '../../src/client';
+import type { SQLiteBuild } from '../../src/const/builds';
+import { type SQLiteVFS, VFS_CAPABILITIES } from '../../src/const/vfs';
 import { deleteDatabase } from '../../src/delete';
-import { SQLiteError } from '../../src/errors';
-import {
-  type SQLiteBuild,
-  type SQLiteVFS,
-  VFS_CAPABILITIES,
-} from '../../src/types';
+import { SQLiteError } from '../../src/types/errors';
 import { databasePath } from '../../src/utils';
 import { AVAILABLE_FEATURES } from '../conformance/helpers';
 import {

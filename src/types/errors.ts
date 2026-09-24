@@ -21,7 +21,7 @@
 import type {
   SQLiteExtendedResultCode,
   SQLiteResultCode,
-} from './sqlite-codes';
+} from '../const/sqlite';
 
 export type SQLiteErrorCode =
   | 'NOT_A_READ_QUERY'

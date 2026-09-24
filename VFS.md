@@ -60,7 +60,7 @@ What each VFS can do at all. Follow its name for the browser versions it needs
 and the rest of its detail; wa-sqlite describes the implementations themselves
 on its [VFS page](https://github.com/rhashimoto/wa-sqlite/tree/master/src/examples#readme).
 
-<!-- BEGIN GENERATED VFS TABLE — edit VFS_CAPABILITIES in src/types.ts, then run `pnpm docs:vfs` -->
+<!-- BEGIN GENERATED VFS TABLE — edit VFS_CAPABILITIES in src/const/vfs.ts, then run `pnpm docs:vfs` -->
 
 | VFS | [`sync`](#build-sync) | [`async`](#build-async) | [`jspi`](#build-jspi) | Pool | Persistent | `readwrite-unsafe` |
 |---|---|---|---|---|---|---|

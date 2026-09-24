@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
-import { SQLITE_CODES } from '../../src/sqlite-codes';
+import { SQLITE_CODES } from '../../src/const/sqlite';
 import { createTestClient } from './helpers';
 import type { Need } from './target';
 

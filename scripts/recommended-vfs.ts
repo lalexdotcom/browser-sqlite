@@ -1,4 +1,4 @@
-import type { SQLiteVFS } from '../src/types.ts';
+import type { SQLiteVFS } from '../src/const/vfs.ts';
 
 /**
  * The VFS this project recommends when a caller has no reason to choose

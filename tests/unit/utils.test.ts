@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@rstest/core';
-import { SQLiteError } from '../../src/errors';
-import type { SQLiteBuild } from '../../src/types';
+import type { SQLiteBuild } from '../../src/const/builds';
+import { SQLiteError } from '../../src/types/errors';
 import {
   databaseFiles,
   databasePath,

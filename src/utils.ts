@@ -1,11 +1,7 @@
-import { SQLiteError } from './errors';
-import {
-  folderOf,
-  type SQLiteBuild,
-  type SQLiteVFS,
-  VFS_CAPABILITIES,
-  type WasmLocation,
-} from './types';
+import type { SQLiteBuild } from './const/builds';
+import { folderOf, type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
+import { SQLiteError } from './types/errors';
+import type { WasmLocation } from './types/protocol';
 
 export const sqlParams = () => {
   // `unknown`, not `any`: these are SQL bind values and they are never

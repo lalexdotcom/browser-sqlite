@@ -1,10 +1,6 @@
-import {
-  BUILD_REQUIREMENTS,
-  type PlatformFeature,
-  type SQLiteBuild,
-  type SQLiteVFS,
-  VFS_CAPABILITIES,
-} from './types';
+import { BUILD_CAPABILITIES, type SQLiteBuild } from './const/builds';
+import type { PlatformFeature } from './const/platform';
+import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 
 /**
  * Synchronous platform probes, keyed by FEATURE rather than by VFS or by build.
@@ -81,7 +77,7 @@ export const missingFeature = (
 ): PlatformFeature | null => {
   const required: readonly PlatformFeature[] = [
     ...VFS_CAPABILITIES[vfs].requires,
-    ...BUILD_REQUIREMENTS[build],
+    ...BUILD_CAPABILITIES[build].requires,
   ];
   for (const feature of required) {
     if (UNPROBEABLE.has(feature)) continue;
@@ -103,7 +99,9 @@ export const describeMissing = (
   const label = FEATURE_LABEL[feature];
 
   if (
-    (BUILD_REQUIREMENTS[build] as readonly PlatformFeature[]).includes(feature)
+    (BUILD_CAPABILITIES[build].requires as readonly PlatformFeature[]).includes(
+      feature,
+    )
   ) {
     const others = VFS_CAPABILITIES[vfs].builds.filter((b) => b !== build);
     const suffix = others.length

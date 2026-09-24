@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
-import { SQLiteError } from '../../src/errors';
+import { SQLiteError } from '../../src/types/errors';
 import {
   assertColumnType,
   assertGeneratedExpression,

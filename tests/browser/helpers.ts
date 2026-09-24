@@ -1,14 +1,14 @@
 import { onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
-import { deleteDatabase } from '../../src/delete';
-import type { SQLiteError } from '../../src/errors';
-import type { InternalSQLiteClientOptions } from '../../src/scheduler';
 import {
   defaultBuildFor,
   folderOf,
   type SQLiteVFS,
   VFS_CAPABILITIES,
-} from '../../src/types';
+} from '../../src/const/vfs';
+import { deleteDatabase } from '../../src/delete';
+import type { InternalSQLiteClientOptions } from '../../src/scheduler';
+import type { SQLiteError } from '../../src/types/errors';
 import { databaseFiles, databasePath } from '../../src/utils';
 import { AVAILABLE_FEATURES, removeOpfsPath } from '../conformance/helpers';
 import { targetLabel } from '../target-projects';

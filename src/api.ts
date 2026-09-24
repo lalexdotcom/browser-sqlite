@@ -4,14 +4,17 @@
  * `SQLiteQueryOptions` and `TransactionDB` end up in the shipped `.d.ts`
  * without a consumer being able to name either.
  *
- * `types.ts` keeps the wire protocol and the VFS capability table.
+ * The wire protocol is in `types/protocol.ts`, the VFS capability table in
+ * `const/vfs.ts`.
  * `CreateSQLiteClientOptions` stays in `client.ts`, beside the constructor that
  * validates it: this module is the querying surface and its satellites — what a
  * caller passes to a query, and what comes back.
  */
+
+import type { SQLiteBuild } from './const/builds';
+import type { SQLiteVFS } from './const/vfs';
 import type { ClientDebugState } from './debug';
 import type { ClientInspection } from './inspect';
-import type { SQLiteBuild, SQLiteVFS } from './types';
 
 /**
  * Marks an options type as carrying an abort signal.

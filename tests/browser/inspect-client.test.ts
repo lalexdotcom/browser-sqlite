@@ -1,7 +1,7 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
+import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import { deleteDatabase } from '../../src/delete';
-import { VFS_CAPABILITIES } from '../../src/types';
 import { createTestClient, TEST_TARGET } from './helpers';
 
 // One VFS: two clients must share one database (inspect()'s sibling/tabs

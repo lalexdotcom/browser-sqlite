@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@rstest/core';
-import { SQLiteError } from '../../src/errors';
+import type { SQLiteResultCode } from '../../src/const/sqlite';
 import { startupError, statementError } from '../../src/pool';
-import type { SQLiteResultCode } from '../../src/sqlite-codes';
+import { SQLiteError } from '../../src/types/errors';
 
 /**
  * docs/superpowers/specs/2026-09-14-statement-errors-design.md §5.3: what the

@@ -45,7 +45,7 @@ describe('per-VFS default pragmas', () => {
   afterEach(scrubVfsDirectory);
 
   it('applies what the VFS declares, with no consumer pragmas', async () => {
-    // Falsifiability: empty AccessHandlePoolVFS's `defaultPragmas` in types.ts
+    // Falsifiability: empty AccessHandlePoolVFS's `defaultPragmas` in const/vfs.ts
     // and this is 'delete' / 'normal' — SQLite's own defaults.
     expect(await modesOf()).toEqual({
       journal: 'wal',

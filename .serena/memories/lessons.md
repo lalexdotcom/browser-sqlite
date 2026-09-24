@@ -1099,3 +1099,11 @@ green for the wrong reason. What works: after changing a name, grep the tests fo
 `browser-sqlite-test-${uuid}` was exactly 56 characters — SQLite's path limit — and nothing said so
 until a folder prefix pushed all of them over and every default-named client failed to open with a
 bare `SQLITE_CANTOPEN`. When a change shrinks a budget, measure the fixtures against it first.
+
+## About proving a refactor neutral (2026-09-24, `refactor/build-capabilities-const-split`)
+
+**TypeScript 7 ships no JavaScript compiler API** — `require('typescript')` exposes two keys, no `createProgram`. A surface check must work from the emitted `.d.ts`: a text dump of every top-level declaration keyed by name, plus a type-level `Equals<A, B>` file run with `tsc --ignoreConfig` (without that flag, tsc 7 refuses a command-line file while a `tsconfig.json` is present, TS5112). **`Equals` across two declaration trees gives false differences on generic methods**: two byte-identical copies of the same `dist` compare unequal on `output` and `transaction`. Run the control — the tree against a copy of itself — before believing a cross-tree failure.
+
+**`tsc --noEmit` clean says nothing about `scripts/`.** `tsconfig.json` includes `src` and `tests` only; `scripts/render-vfs-matrix.ts` carried seven type errors nobody's tsc saw (`mem:follow-ups`). Type-check a script you edit on its own until that changes.
+
+**The VFS.md generator finds its span by the BEGIN marker string.** Change that string in the generator and the next run cannot find the old marker in `VFS.md`: edit the marker line in `VFS.md` by hand, then run `pnpm docs:vfs` and check it changes nothing else.

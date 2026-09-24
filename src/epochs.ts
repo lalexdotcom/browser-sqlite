@@ -13,8 +13,8 @@
  * changes — bumping it per release recreates the fragmentation it prevents.
  */
 
+import type { SQLiteVFS } from './const/vfs';
 import type { Locks } from './locks';
-import type { SQLiteVFS } from './types';
 
 /**
  * The statement the barrier runs and discards.

@@ -4,8 +4,24 @@
 export * from './api';
 export { detectFeatures, missingFeature } from './capabilities';
 export * from './client';
+export type { SQLiteBuild } from './const/builds';
+export type { PlatformFeature } from './const/platform';
+export {
+  SQLITE_CODES,
+  SQLITE_EXTENDED_CODES,
+  type SQLiteExtendedResultCode,
+  type SQLiteResultCode,
+} from './const/sqlite';
+export {
+  defaultBuildFor,
+  folderOf,
+  type SQLiteVFS,
+  VFS_CAPABILITIES,
+  type VFSCapability,
+  type VFSMemoryModel,
+  type VFSStorage,
+} from './const/vfs';
 export * from './delete';
-export * from './errors';
 export {
   type ClientInspection,
   type DatabaseClient,
@@ -14,22 +30,5 @@ export {
   type InspectionBase,
   inspectDatabase,
 } from './inspect';
-export {
-  SQLITE_CODES,
-  SQLITE_EXTENDED_CODES,
-  type SQLiteExtendedResultCode,
-  type SQLiteResultCode,
-} from './sqlite-codes';
-// Named rather than `export *`: the wire-protocol types in types.ts are
-// internal and must not reach the public surface.
-export {
-  defaultBuildFor,
-  folderOf,
-  type PlatformFeature,
-  type SQLiteBuild,
-  type SQLiteVFS,
-  VFS_CAPABILITIES,
-  type VFSCapability,
-  type VFSMemoryModel,
-  type VFSStorage,
-} from './types';
+// Nothing exports from `./types/protocol`: the wire protocol stays internal.
+export * from './types/errors';

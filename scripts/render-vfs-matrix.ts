@@ -1,14 +1,9 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs';
 import bcd from '@mdn/browser-compat-data' with { type: 'json' };
-import {
-  BUILD_REQUIREMENTS,
-  type PlatformFeature,
-  type SQLiteBuild,
-  VFS_CAPABILITIES,
-  type VFSCapability,
-  type VFSMemoryModel,
-} from '../src/types.ts';
+import { BUILD_CAPABILITIES, type SQLiteBuild } from '../src/const/builds.ts';
+import type { PlatformFeature } from '../src/const/platform.ts';
+import { VFS_CAPABILITIES, type VFSCapability, type VFSMemoryModel } from '../src/const/vfs.ts';
 
 import { RECOMMENDED_VFS } from './recommended-vfs.ts';
 
@@ -266,7 +261,7 @@ const supportFor = (
   // rather than left absent, because a missing half would read as an omission.
   let second = '';
   if (cap.builds.includes('jspi')) {
-    const f = floorOf([...cap.requires, ...BUILD_REQUIREMENTS.jspi], browser);
+    const f = floorOf([...cap.requires, ...BUILD_CAPABILITIES.jspi.requires], browser);
     const raised = withLibFloor(f, browser);
     second = raised === null ? ' (no jspi)' : `/${raised === 'yes' ? '?' : `${raised}+`}`;
   }
@@ -291,7 +286,7 @@ const BUILD_NOTE: Record<SQLiteBuild, string> = {
   jspi: 'JavaScript Promise Integration — the same asynchrony handled by the engine rather than by Asyncify. Opt-in, and no default uses it, so its narrower availability constrains nobody who does not ask for it.',
 };
 
-const BUILDS = Object.keys(BUILD_REQUIREMENTS) as SQLiteBuild[];
+const BUILDS = Object.keys(BUILD_CAPABILITIES) as SQLiteBuild[];
 
 const HEADER = `| ${BROWSERS.map((b) => BROWSER_LABEL[b]).join(' | ')} |`;
 const RULE = `|${BROWSERS.map(() => '---').join('|')}|`;
@@ -305,7 +300,7 @@ const RULE = `|${BROWSERS.map(() => '---').join('|')}|`;
  * its own row makes the link target the answer.
  */
 const buildTable = BUILDS.flatMap((build) => {
-  const features = BUILD_REQUIREMENTS[build];
+  const features = BUILD_CAPABILITIES[build].requires;
   // A build that requires no feature runs wherever the library does, so its row
   // would read `Any` in every column: the note says that in fewer characters.
   const table =
@@ -323,7 +318,7 @@ const buildTable = BUILDS.flatMap((build) => {
 }).join('\n');
 
 const BEGIN =
-  '<!-- BEGIN GENERATED VFS TABLE — edit VFS_CAPABILITIES in src/types.ts, then run `pnpm docs:vfs` -->';
+  '<!-- BEGIN GENERATED VFS TABLE — edit VFS_CAPABILITIES in src/const/vfs.ts, then run `pnpm docs:vfs` -->';
 const END = '<!-- END GENERATED VFS TABLE -->';
 
 const MEMORY_LABEL = {
