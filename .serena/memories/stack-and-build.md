@@ -8,6 +8,7 @@
   entries, `index` and `worker`, with opposite goals — see below. `.d.ts` via `tsgo`.
 - Lint/format: **biome 2.5.8** (`biome.json`; it locally disables `noExplicitAny` and
   `noBannedTypes`). Run `pnpm check` after every modification.
+  - **biome covers `src/**`, `tests/**` and, since 2026-09-24, `scripts/**`** (`files.includes`) — `.mjs` and the bench page's `index.html` included.
   - **biome ignores `rslib.config.ts`.** Neither `pnpm format` nor `biome ci .` in CI will
     touch it, so a hand-edit's formatting survives untouched and nothing flags it. That
     file's style is maintained by hand — verified 2026-08-27 after a `},{` survived a
@@ -353,7 +354,7 @@ instead.
   source root to the repo root: declarations would land in `dist/src/` while
   `package.json` points at `dist/index.d.ts`, and `dist/tests/` would ship inside the
   package.
-- `tsconfig.json` `include` is `["src", "tests", "rslib.config.ts", "rstest.config.ts"]`.
+- `tsconfig.json` `include` is `["src", "tests", "scripts", "rslib.config.ts", "rstest.config.ts"]` — `scripts` since 2026-09-24. **`.mjs` files are still not type-checked**: there is no `allowJs`/`checkJs` (`mem:follow-ups`).
   Only `strict` is on.
 
 ## The wa-sqlite fork and its test suite

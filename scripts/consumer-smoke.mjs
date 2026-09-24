@@ -18,7 +18,13 @@
  * Set KEEP_TMP=1 to keep the scaffolded app for inspection.
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import {
+  cpSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -302,7 +308,9 @@ try {
   }
 
   // ── Vite, newest (the fixture range resolves to the current major) ────────
-  if (scaffoldApp('Vite', 'consumer', appDir, { nobundler: 'consumer-nobundler' })) {
+  if (
+    scaffoldApp('Vite', 'consumer', appDir, { nobundler: 'consumer-nobundler' })
+  ) {
     await checkMode(
       'Vite dev server',
       ['vite', '--host', HOST, '--port', String(DEV_PORT), '--strictPort'],
@@ -313,7 +321,15 @@ try {
     if (buildStage('vite build', ['vite', 'build'], appDir)) {
       await checkMode(
         'Vite preview (production bundle)',
-        ['vite', 'preview', '--host', HOST, '--port', String(PREVIEW_PORT), '--strictPort'],
+        [
+          'vite',
+          'preview',
+          '--host',
+          HOST,
+          '--port',
+          String(PREVIEW_PORT),
+          '--strictPort',
+        ],
         `http://${HOST}:${PREVIEW_PORT}/`,
         appDir,
       );
@@ -345,7 +361,14 @@ try {
   if (scaffoldApp('Vite 6', 'consumer-vite6', vite6AppDir)) {
     await checkMode(
       'Vite 6 dev server',
-      ['vite', '--host', HOST, '--port', String(VITE6_DEV_PORT), '--strictPort'],
+      [
+        'vite',
+        '--host',
+        HOST,
+        '--port',
+        String(VITE6_DEV_PORT),
+        '--strictPort',
+      ],
       `http://${HOST}:${VITE6_DEV_PORT}/`,
       vite6AppDir,
     );
@@ -353,7 +376,15 @@ try {
     if (buildStage('vite 6 build', ['vite', 'build'], vite6AppDir)) {
       await checkMode(
         'Vite 6 preview (production bundle)',
-        ['vite', 'preview', '--host', HOST, '--port', String(VITE6_PREVIEW_PORT), '--strictPort'],
+        [
+          'vite',
+          'preview',
+          '--host',
+          HOST,
+          '--port',
+          String(VITE6_PREVIEW_PORT),
+          '--strictPort',
+        ],
         `http://${HOST}:${VITE6_PREVIEW_PORT}/`,
         vite6AppDir,
       );
@@ -361,7 +392,10 @@ try {
       skipped('Vite 6 preview (production bundle)', 'vite 6 build failed');
     }
   } else {
-    for (const m of ['Vite 6 dev server', 'Vite 6 preview (production bundle)']) {
+    for (const m of [
+      'Vite 6 dev server',
+      'Vite 6 preview (production bundle)',
+    ]) {
       skipped(m, 'the Vite 6 app did not install');
     }
   }
@@ -378,7 +412,15 @@ try {
     if (buildStage('rsbuild build', ['rsbuild', 'build'], rsbuildAppDir)) {
       await checkMode(
         'rsbuild preview (production bundle)',
-        ['rsbuild', 'preview', '--host', HOST, '--port', String(RSBUILD_PORT), '--strict-port'],
+        [
+          'rsbuild',
+          'preview',
+          '--host',
+          HOST,
+          '--port',
+          String(RSBUILD_PORT),
+          '--strict-port',
+        ],
         `http://${HOST}:${RSBUILD_PORT}/`,
         rsbuildAppDir,
       );
@@ -386,7 +428,10 @@ try {
       skipped('rsbuild preview (production bundle)', 'rsbuild build failed');
     }
   } else {
-    for (const m of ['rsbuild dev server', 'rsbuild preview (production bundle)']) {
+    for (const m of [
+      'rsbuild dev server',
+      'rsbuild preview (production bundle)',
+    ]) {
       skipped(m, 'the rsbuild app did not install');
     }
   }
@@ -428,7 +473,13 @@ try {
       parcelAppDir,
     );
 
-    if (buildStage('Parcel build', ['parcel', 'build', 'index.html'], parcelAppDir)) {
+    if (
+      buildStage(
+        'Parcel build',
+        ['parcel', 'build', 'index.html'],
+        parcelAppDir,
+      )
+    ) {
       await checkMode(
         'Parcel output (static server)',
         staticServe(join(parcelAppDir, 'dist'), PARCEL_SERVE_PORT),

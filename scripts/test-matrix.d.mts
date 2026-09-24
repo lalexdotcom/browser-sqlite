@@ -31,5 +31,9 @@ export type BoundedResult = {
 export declare function runBounded(
   command: string,
   args: readonly string[],
-  options: { readonly cwd?: string; readonly env?: NodeJS.ProcessEnv; readonly timeoutMs: number },
+  options: {
+    readonly cwd?: string;
+    readonly env?: NodeJS.ProcessEnv;
+    readonly timeoutMs: number;
+  },
 ): Promise<BoundedResult>;

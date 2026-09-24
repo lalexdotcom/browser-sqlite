@@ -14,7 +14,13 @@
  * Usage: node scripts/bench/assemble.mjs <outDir>
  */
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -83,7 +89,10 @@ const buildRef = () => {
   // itself a development build. The second test does not depend on it: a ref
   // named exactly `v<package version>` is a release tag by construction, since
   // that is how this project tags.
-  if (name && (process.env.GITHUB_REF_TYPE === 'tag' || name === `v${version}`)) {
+  if (
+    name &&
+    (process.env.GITHUB_REF_TYPE === 'tag' || name === `v${version}`)
+  ) {
     return { release: true, label: name };
   }
 

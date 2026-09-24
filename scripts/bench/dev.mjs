@@ -31,15 +31,17 @@ const run = (command, args) =>
     const child = spawn(command, args, { cwd: root, stdio: 'inherit' });
     child.on('error', rejectRun);
     child.on('exit', (code) =>
-      code === 0 ? resolveRun() : rejectRun(new Error(`${command} exited ${code}`)),
+      code === 0
+        ? resolveRun()
+        : rejectRun(new Error(`${command} exited ${code}`)),
     );
   });
 
 const buildLibrary = () => run('pnpm', ['build']);
-const assemble = () => run(process.execPath, ['scripts/bench/assemble.mjs', OUT]);
+const assemble = () =>
+  run(process.execPath, ['scripts/bench/assemble.mjs', OUT]);
 
-const stamp = () =>
-  new Date().toLocaleTimeString('en-GB', { hour12: false });
+const stamp = () => new Date().toLocaleTimeString('en-GB', { hour12: false });
 
 /**
  * One rebuild at a time, with at most one queued behind it. A burst of file

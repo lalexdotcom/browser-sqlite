@@ -85,9 +85,9 @@ savepoint before opening its own.
 
 **Proposed, not decided:** drop the export and have `bench:build` emit the table as JSON from `src/const/vfs.ts` (it is pure data). What a consumer loses: enumerating the VFS at runtime, e.g. for a selector — nothing in the repository needs it. Breaking. Parked by the user on 2026-09-23 to stay on the per-VFS folder work.
 
-## `scripts/` is not type-checked — the next subject (user, 2026-09-24)
+## The `.mjs` scripts are not type-checked (2026-09-24)
 
-`tsconfig.json`'s `include` is `src`, `tests` and the two configs: `tsc --noEmit`, the pre-commit hook and CI never type-check `scripts/`, and Node runs them by erasing types. `scripts/render-vfs-matrix.ts` carried seven errors on `main` at `cdc704e`, seen only in the IDE: `FEATURE_SUPPORT`'s `satisfies Record<PlatformFeature, …>` misses `'cross-origin-isolated'` (added to `PlatformFeature` 2026-09-04 with no support row) and the two TS7053 that follow from it, `Support | undefined` into `Support`, a 3-argument call to a 2-parameter function, `'sync'` refused where `'async' | 'jspi'` is expected, `'readwrite-unsafe'` into `never`. Open decision in the first one: whether `cross-origin-isolated` — a page header, not an engine feature — gets a support row or is excluded from `FEATURE_SUPPORT`'s key set.
+`tsc` covers `scripts/*.ts` since 2026-09-24, but no `allowJs`/`checkJs` is set, so the `.mjs` files are only linted and formatted by biome. Measured with `checkJs` and `@types/node` on 2026-09-24: **84 errors** — `consumer-smoke.mjs` 44, `bench/check.mjs` 19, `bench/dev.mjs` 12, `matrix-triage.mjs` 5, `static-server.mjs` 2, `bench/assemble.mjs` 1, `bounded.mjs` 1. Not triaged: how many are JSDoc-less inference noise and how many real is unknown.
 
 ## Left by the BUILD_CAPABILITIES / `const/` split (2026-09-24)
 

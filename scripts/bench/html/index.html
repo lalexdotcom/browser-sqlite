@@ -17,24 +17,6 @@
         font: 15px/1.5 system-ui, sans-serif;
       }
       h1 { font-size: 1.2rem; margin: 0 0 var(--gap); }
-      #banner {
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
-        padding: var(--gap);
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        font-size: 0.85rem;
-      }
-      #banner b { font-weight: 600; }
-      #banner .line { display: flex; flex-wrap: wrap; gap: var(--gap); }
-      /* The flex gap already sits after the dot, so the margin before it must
-         be a full gap too — half of one left it hugging the value it hangs off
-         instead of sitting between the two it separates. */
-      #banner .flags > span:not(:last-child)::after {
-        content: '·'; margin-left: var(--gap); opacity: 0.45;
-      }
-      .no { opacity: 0.55; }
       /* A warning is not an absent capability: `.no` dims, which is right for a
          feature this engine lacks and exactly wrong for the one line telling a
          visitor the code under it is not the published package. Amber rather
@@ -46,6 +28,25 @@
         .warn { color: #f59e0b; }
       }
       .warn b { font-weight: 700; }
+      #banner {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        padding: var(--gap);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        font-size: 0.85rem;
+      }
+      #banner b { font-weight: 600; }
+      #banner .warn b { font-weight: 700; }
+      #banner .line { display: flex; flex-wrap: wrap; gap: var(--gap); }
+      /* The flex gap already sits after the dot, so the margin before it must
+         be a full gap too — half of one left it hugging the value it hangs off
+         instead of sitting between the two it separates. */
+      #banner .flags > span:not(:last-child)::after {
+        content: '·'; margin-left: var(--gap); opacity: 0.45;
+      }
+      .no { opacity: 0.55; }
       /* One line, whatever the state: idle it holds a button, running it holds
          the step in flight and the way out of it. */
       #control {
@@ -187,9 +188,9 @@
       missing API, a failed fetch of dist/.
     -->
     <script>
-      (function () {
+      (() => {
         var waited = 0;
-        var timer = setInterval(function () {
+        var timer = setInterval(() => {
           if (window.__BENCH__) {
             clearInterval(timer);
             return;
@@ -1346,7 +1347,8 @@
       const RESULTS = { conformance: {}, measurements: {}, reasons: {}, poolSize: {} };
 
       const setReason = (pairId, rowId, text) => {
-        (RESULTS.reasons[pairId] ??= {})[rowId] = text;
+        RESULTS.reasons[pairId] ??= {};
+        RESULTS.reasons[pairId][rowId] = text;
       };
 
       /**

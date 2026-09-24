@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from 'node:child_process';
 /**
  * Hand-run driver for the benchmark page. NOTHING RUNS THIS AUTOMATICALLY — it
  * is not wired into CI and must not be. It exists so a developer can prove the
@@ -13,7 +14,6 @@
  */
 import { readFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import playwright from 'playwright';
@@ -31,7 +31,11 @@ const PORT = Number(process.env.BENCH_PORT ?? 8099);
 
 const server = spawn(
   process.execPath,
-  [resolve(root, 'scripts/static-server.mjs'), resolve(root, '_site'), String(PORT)],
+  [
+    resolve(root, 'scripts/static-server.mjs'),
+    resolve(root, '_site'),
+    String(PORT),
+  ],
   { stdio: 'inherit' },
 );
 
@@ -90,9 +94,11 @@ try {
   const summary = await page.textContent('#picker-summary');
   process.stdout.write(`summary: ${summary}\n`);
   if (all) {
-    if (!summary?.startsWith('All (')) fail(`bad summary after select-all: ${summary}`);
+    if (!summary?.startsWith('All ('))
+      fail(`bad summary after select-all: ${summary}`);
   } else {
-    if (!summary?.startsWith('1 selected')) fail(`bad summary after select-one: ${summary}`);
+    if (!summary?.startsWith('1 selected'))
+      fail(`bad summary after select-one: ${summary}`);
   }
 
   if (problems.length) fail(problems.join('\n'));
@@ -102,8 +108,9 @@ try {
     timeout: 10 * 60_000,
   });
 
-  const stuck = await page.$$eval('#results td', (tds) =>
-    tds.filter((td) => td.textContent === '…').length,
+  const stuck = await page.$$eval(
+    '#results td',
+    (tds) => tds.filter((td) => td.textContent === '…').length,
   );
   if (stuck > 0) fail(`${stuck} cells never resolved`);
 
@@ -122,7 +129,11 @@ try {
   process.stdout.write(`download filename: ${filename}\n`);
   // Timestamp first: the exports are read as an ordered campaign, so the
   // directory has to sort chronologically without help.
-  if (!/^browser-sqlite-\d{14}-\w[\w.-]*-\w[\w.-]*-[\w.-]+-[\w.-]+\.json$/.test(filename)) {
+  if (
+    !/^browser-sqlite-\d{14}-\w[\w.-]*-\w[\w.-]*-[\w.-]+-[\w.-]+\.json$/.test(
+      filename,
+    )
+  ) {
     fail(`download filename has wrong shape: ${filename}`);
   }
 
@@ -132,13 +143,25 @@ try {
   try {
     payload = JSON.parse(readFileSync(savePath, 'utf8'));
   } finally {
-    try { unlinkSync(savePath); } catch {}
+    try {
+      unlinkSync(savePath);
+    } catch {}
   }
 
   const EXPECTED_KEYS = [
-    'generatedAt', 'lib', 'agent', 'features', 'clockMs', 'sweep',
-    'opfsRootAtStart', 'poolSize', 'longQueryIterations', 'longQueryCalibration', 'conformance',
-    'measurements', 'reasons',
+    'generatedAt',
+    'lib',
+    'agent',
+    'features',
+    'clockMs',
+    'sweep',
+    'opfsRootAtStart',
+    'poolSize',
+    'longQueryIterations',
+    'longQueryCalibration',
+    'conformance',
+    'measurements',
+    'reasons',
   ];
   for (const k of EXPECTED_KEYS) {
     if (!(k in payload)) fail(`export missing key: ${k}`);
@@ -191,11 +214,17 @@ try {
       fail(`measurements[${pairId}] has internal keys: ${internal.join(', ')}`);
     }
   }
-  process.stdout.write(`export OK — keys: ${Object.keys(payload).join(', ')}\n`);
+  process.stdout.write(
+    `export OK — keys: ${Object.keys(payload).join(', ')}\n`,
+  );
 
   process.stdout.write(
     `${columns} columns, results:\n` +
-      JSON.stringify(await page.evaluate(() => window.__BENCH__.results), null, 2) +
+      JSON.stringify(
+        await page.evaluate(() => window.__BENCH__.results),
+        null,
+        2,
+      ) +
       '\n',
   );
 

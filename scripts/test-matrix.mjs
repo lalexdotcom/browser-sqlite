@@ -33,7 +33,11 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 /** One column of the matrix: which config to run and how to select it. */
 const ENGINES = [
-  { name: 'chromium', config: 'rstest.config.ts', extraArgs: ['--project', 'chromium*'] },
+  {
+    name: 'chromium',
+    config: 'rstest.config.ts',
+    extraArgs: ['--project', 'chromium*'],
+  },
   { name: 'firefox', config: 'rstest.firefox.config.ts', extraArgs: [] },
   { name: 'isolated', config: 'rstest.isolated.config.ts', extraArgs: [] },
 ];
@@ -82,11 +86,15 @@ export function parseMatrixReport(output) {
 
   if (summary.status === 'fail') {
     const failuresIndex = output.indexOf('## Failures');
-    const failuresSection = failuresIndex === -1 ? '' : output.slice(failuresIndex);
-    const messages = [...failuresSection.matchAll(/"message":\s*"((?:\\.|[^"\\])*)"/g)].map(
-      (m) => JSON.parse(`"${m[1]}"`),
-    );
-    if (messages.length > 0 && messages.every((m) => m.startsWith('TARGET_NOT_RUNNABLE'))) {
+    const failuresSection =
+      failuresIndex === -1 ? '' : output.slice(failuresIndex);
+    const messages = [
+      ...failuresSection.matchAll(/"message":\s*"((?:\\.|[^"\\])*)"/g),
+    ].map((m) => JSON.parse(`"${m[1]}"`));
+    if (
+      messages.length > 0 &&
+      messages.every((m) => m.startsWith('TARGET_NOT_RUNNABLE'))
+    ) {
       return { status: 'not-runnable', seconds };
     }
   }
@@ -118,8 +126,15 @@ function parseArgs(argv) {
     } else if (arg === '--pair') {
       const label = argv[++i];
       const [vfs, build] = String(label).split('/');
-      if (!vfs || !build || !Object.hasOwn(VFS_CAPABILITIES, vfs) || !VFS_CAPABILITIES[vfs].builds.includes(build)) {
-        throw new Error(`test-matrix: --pair "${label}" is not a declared vfs/build pair`);
+      if (
+        !vfs ||
+        !build ||
+        !Object.hasOwn(VFS_CAPABILITIES, vfs) ||
+        !VFS_CAPABILITIES[vfs].builds.includes(build)
+      ) {
+        throw new Error(
+          `test-matrix: --pair "${label}" is not a declared vfs/build pair`,
+        );
       }
       pairs.push({ vfs, build });
     } else {
@@ -127,7 +142,9 @@ function parseArgs(argv) {
     }
   }
   return {
-    engines: engines.length ? ENGINES.filter((e) => engines.includes(e.name)) : ENGINES,
+    engines: engines.length
+      ? ENGINES.filter((e) => engines.includes(e.name))
+      : ENGINES,
     pairs: pairs.length ? pairs : allPairs(),
   };
 }
@@ -242,9 +259,13 @@ function printTable(pairs, engines, results) {
   const header = ['pair', ...engines.map((e) => e.name)];
   const rows = pairs.map((pair) => [
     pairLabel(pair),
-    ...engines.map((engine) => formatCell(results.get(`${engine.name}:${pairLabel(pair)}`))),
+    ...engines.map((engine) =>
+      formatCell(results.get(`${engine.name}:${pairLabel(pair)}`)),
+    ),
   ]);
-  const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
+  const widths = header.map((h, i) =>
+    Math.max(h.length, ...rows.map((r) => r[i].length)),
+  );
   const line = (cells) => cells.map((c, i) => c.padEnd(widths[i])).join('  ');
   console.log(line(header));
   console.log(widths.map((w) => '-'.repeat(w)).join('  '));
@@ -262,16 +283,23 @@ async function main() {
   for (const engine of engines) {
     for (const pair of pairs) {
       const label = `${pair.vfs}/${pair.build}`;
-      const outFile = join(runDir, `${engine.name}-${pair.vfs}-${pair.build}.txt`);
+      const outFile = join(
+        runDir,
+        `${engine.name}-${pair.vfs}-${pair.build}.txt`,
+      );
       process.stdout.write(`[${engine.name}] ${label}: running…\n`);
       const result = await runOne(engine, pair, outFile);
       results.set(`${engine.name}:${label}`, result);
-      process.stdout.write(`[${engine.name}] ${label}: ${formatCell(result)}\n`);
+      process.stdout.write(
+        `[${engine.name}] ${label}: ${formatCell(result)}\n`,
+      );
       // A verdict alone cannot be diagnosed anywhere the report file does not
       // survive the machine, which is every CI runner. "timed out" especially:
       // it is also what a run that never printed a report looks like.
       if (result.status !== 'passed' && result.status !== 'not-runnable') {
-        const tail = readFileSync(outFile, 'utf8').split('\n').slice(-TAIL_LINES);
+        const tail = readFileSync(outFile, 'utf8')
+          .split('\n')
+          .slice(-TAIL_LINES);
         process.stdout.write(
           `--- ${engine.name} ${label}: last ${tail.length} lines ---\n${tail.join('\n')}\n--- end ---\n`,
         );
@@ -283,10 +311,13 @@ async function main() {
   printTable(pairs, engines, results);
   const totalSeconds = Math.round((Date.now() - start) / 1000);
   console.log('');
-  console.log(`Total: ${totalSeconds}s. Reports under ${join('.matrix', runId)}.`);
+  console.log(
+    `Total: ${totalSeconds}s. Reports under ${join('.matrix', runId)}.`,
+  );
 
   const failed = [...results.values()].some(
-    (r) => r.status === 'failed' || r.status === 'timed-out' || r.status === 'error',
+    (r) =>
+      r.status === 'failed' || r.status === 'timed-out' || r.status === 'error',
   );
   process.exitCode = failed ? 1 : 0;
 }

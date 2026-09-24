@@ -3,7 +3,11 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import bcd from '@mdn/browser-compat-data' with { type: 'json' };
 import { BUILD_CAPABILITIES, type SQLiteBuild } from '../src/const/builds.ts';
 import type { PlatformFeature } from '../src/const/platform.ts';
-import { VFS_CAPABILITIES, type VFSCapability, type VFSMemoryModel } from '../src/const/vfs.ts';
+import {
+  VFS_CAPABILITIES,
+  type VFSCapability,
+  type VFSMemoryModel,
+} from '../src/const/vfs.ts';
 
 import { RECOMMENDED_VFS } from './recommended-vfs.ts';
 
@@ -18,6 +22,8 @@ import { RECOMMENDED_VFS } from './recommended-vfs.ts';
  *   the same versions.
  * - `readwrite-unsafe` (the `mode` option on `createSyncAccessHandle`): same
  *   source, the `mode` sub-feature. Firefox and Safari are recorded `false`.
+ * - `cross-origin-isolated` (the `crossOriginIsolated` global): MDN
+ *   browser-compat-data, `api.crossOriginIsolated`, checked 2026-09-24.
  *
  * This is documentation data with a shelf life. Re-check it against those
  * sources rather than trusting it a year from now.
@@ -66,16 +72,19 @@ const FEATURE_SUPPORT = {
     Safari: '27',
     iOS: '27',
   },
+  // The engine can be isolated from these versions; the page must still be
+  // served isolated (COOP/COEP or Document-Isolation-Policy).
+  'cross-origin-isolated': {
+    Chrome: '87',
+    Android: '87',
+    Firefox: '72',
+    Safari: '15.2',
+    iOS: '15.2',
+  },
 } as const satisfies Record<PlatformFeature, Record<string, Support>>;
 
 /** Desktop first, then mobile. Order is deliberate and shared by both tables. */
-const BROWSERS = [
-  'Chrome',
-  'Firefox',
-  'Safari',
-  'Android',
-  'iOS',
-] as const;
+const BROWSERS = ['Chrome', 'Firefox', 'Safari', 'Android', 'iOS'] as const;
 type Browser = (typeof BROWSERS)[number];
 
 /**
@@ -187,8 +196,14 @@ const withLibFloor = (v: Support | undefined, browser: string): Support => {
   return laterOf(v, lib);
 };
 
-const versionCell = (v: Support): string =>
-  v === null ? '**No**' : v === 'yes' ? 'Yes' : `${v}+`;
+const versionCell = (v: Support | undefined): string =>
+  v === undefined
+    ? 'Any'
+    : v === null
+      ? '**No**'
+      : v === 'yes'
+        ? 'Yes'
+        : `${v}+`;
 
 /**
  * The highest of several minimum versions. `null` if any feature is missing;
@@ -210,7 +225,9 @@ const floorOf = (
   }
   if (versions.length === 0) return unestablished ? 'yes' : undefined;
   if (unestablished) return 'yes';
-  return versions.sort((a, b) => Number.parseFloat(b) - Number.parseFloat(a))[0];
+  return versions.sort(
+    (a, b) => Number.parseFloat(b) - Number.parseFloat(a),
+  )[0];
 };
 
 /**
@@ -261,9 +278,15 @@ const supportFor = (
   // rather than left absent, because a missing half would read as an omission.
   let second = '';
   if (cap.builds.includes('jspi')) {
-    const f = floorOf([...cap.requires, ...BUILD_CAPABILITIES.jspi.requires], browser);
+    const f = floorOf(
+      [...cap.requires, ...BUILD_CAPABILITIES.jspi.requires],
+      browser,
+    );
     const raised = withLibFloor(f, browser);
-    second = raised === null ? ' (no jspi)' : `/${raised === 'yes' ? '?' : `${raised}+`}`;
+    second =
+      raised === null
+        ? ' (no jspi)'
+        : `/${raised === 'yes' ? '?' : `${raised}+`}`;
   }
 
   return `${browser} ${first}${second}${marker}`;
@@ -389,7 +412,7 @@ const NOTE_NUMBER = new Map<string, number>();
 for (const { id, text } of FOOTNOTES) {
   const seen = NOTE_TEXTS.indexOf(text);
   if (seen === -1) NOTE_TEXTS.push(text);
-  NOTE_NUMBER.set(id, (seen === -1 ? NOTE_TEXTS.length : seen + 1));
+  NOTE_NUMBER.set(id, seen === -1 ? NOTE_TEXTS.length : seen + 1);
 }
 
 /** The superscript call site. Throws rather than emitting a dangling link. */
@@ -426,7 +449,7 @@ const footnotes = [
  */
 const detailFor = (name: string, cap: VFSCapability): string => {
   const builds = cap.builds.map((b) => `[\`${b}\`](#build-${b})`).join(', ');
-  const compat = BROWSERS.map((b) => supportFor(cap, b, '(reduced)'))
+  const compat = BROWSERS.map((b) => supportFor(cap, b))
     .filter((x): x is string => x !== null)
     .join(', ');
   // The cap's reason goes to a footnote of its own: it is a full sentence, it
@@ -522,7 +545,8 @@ const tableOfContents = (doc: string): string => {
   const label = (h: string) =>
     TOC_LABEL[h] ?? h.replace(/`/g, '').replace(/^Build /, '');
   const flush = () => {
-    if (current) lines.push(`- ${current.title}${current.children.join(' · ')}`);
+    if (current)
+      lines.push(`- ${current.title}${current.children.join(' · ')}`);
   };
   for (const [, hashes, heading] of doc.matchAll(/^(#{2,3}) (.+)$/gm)) {
     // The contents heading is not one of the sections it lists.
@@ -564,11 +588,17 @@ const rows = Object.entries(VFS_CAPABILITIES).map(([name, cap]) => {
   const label = RECOMMENDED_VFS.some((v) => v === name)
     ? `${named}<br>**(recommended)**`
     : named;
-  const builds = BUILDS.map((b) => yes(cap.builds.includes(b))).join(' | ');
+  const builds = BUILDS.map((b) =>
+    yes((cap.builds as readonly SQLiteBuild[]).includes(b)),
+  ).join(' | ');
   // `degradesWithout` is the right field, not `requires`: the question is
   // whether the VFS TAKES the mode when the engine offers it. No VFS here
   // requires it — one that did would be unusable off Chromium entirely.
-  const unsafe = yes(cap.degradesWithout.includes('readwrite-unsafe'));
+  const unsafe = yes(
+    (cap.degradesWithout as readonly PlatformFeature[]).includes(
+      'readwrite-unsafe',
+    ),
+  );
   return `| ${label} | ${builds} | ${yes(cap.maxPoolSize === null)} | ${yes(cap.persistent)} | ${unsafe} |`;
 });
 
@@ -602,7 +632,13 @@ const splice = (
   if (stop < start) {
     throw new Error('VFS.md END marker precedes its BEGIN marker');
   }
-  return source.slice(0, start + begin.length) + gap + body + gap + source.slice(stop);
+  return (
+    source.slice(0, start + begin.length) +
+    gap +
+    body +
+    gap +
+    source.slice(stop)
+  );
 };
 
 let doc = splice(source, BEGIN, END, table);
