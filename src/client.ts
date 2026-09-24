@@ -170,10 +170,10 @@ export type CreateSQLiteClientOptions = {
    */
   vfs: SQLiteVFS;
   /**
-   * Which wa-sqlite WebAssembly build to load. Defaults to the first entry of
-   * `VFS_CAPABILITIES[vfs]` — `sync` where the VFS supports it, since it is both the
-   * fastest and the most portable, otherwise `async`. `jspi` needs engine
-   * support; see the Builds section of VFS.md for versions.
+   * Which wa-sqlite WebAssembly build to load. Defaults to the first build the
+   * VFS declares that the browser supports: `sync` where the VFS has it, else
+   * `jspi` where the browser has JSPI, else `async`. See the Builds section of
+   * VFS.md for versions; `db.build` reports the one loaded.
    *
    * @throws at construction when the build is not one the chosen VFS supports.
    */

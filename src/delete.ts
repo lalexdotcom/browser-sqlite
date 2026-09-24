@@ -19,7 +19,7 @@ export type DeleteDatabaseOptions = {
    * Which wa-sqlite build to load. It does **not** affect where the database
    * lives; it is here only because a VFS runs solely on the builds it
    * declares, and one of them must be loaded to instantiate the VFS at all.
-   * @defaultValue the first build the VFS declares
+   * @defaultValue the first build the VFS declares that the browser supports
    */
   build?: SQLiteBuild;
   /**

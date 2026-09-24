@@ -71,8 +71,7 @@ export const detectFeatures = (): ReadonlySet<PlatformFeature> => {
  * The first feature this pair needs and this engine lacks, or null.
  *
  * Pure, and takes `available` rather than probing, because the branches worth
- * testing are the negative ones and they are unreachable in a real browser:
- * JSPI cannot be taken away from Chromium.
+ * testing are the negative ones, which the engines under test do not offer.
  */
 export const missingFeature = (
   vfs: SQLiteVFS,
@@ -92,7 +91,7 @@ export const missingFeature = (
 
 /**
  * The build used when the caller does not name one: the first the VFS declares
- * whose requirements `available` meets. Pure for `missingFeature`'s reason.
+ * whose requirements `available` meets. Pure: pass `detectFeatures()`.
  */
 export const defaultBuildFor = (
   vfs: SQLiteVFS,

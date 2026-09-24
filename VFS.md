@@ -34,8 +34,7 @@ correctness.
   your page is cross-origin isolated: without it, an aborted call rejects straight away
   but the statement runs to its end on its worker. `build: 'async'` buys that back
   without touching your hosting, at the cost of the speed it is chosen for.
-- **`OPFSAdaptiveVFS`** — it picks its strategy per engine, and its `async` build (the
-  default) stops the running statement on every browser, with no headers to set.
+- **`OPFSAdaptiveVFS`** — it picks its strategy per engine, and its default build — `jspi` where the browser has it, `async` elsewhere — stops the running statement on every browser, with no headers to set.
 
 ### If you can guarantee a browser
 
@@ -283,7 +282,7 @@ Plain synchronous WebAssembly. Needs nothing beyond baseline WASM, so it runs an
 
 Asyncify: the WASM stack is unwound and rewound around asynchronous file operations. Also needs nothing beyond baseline WASM. Every VFS here can run on it.
 
-**On Safari it slows down as it works.** After a few statements of a second or more, a worker on this build runs several times slower — up to twenty times on Safari 26 — and stays slow; Chromium and Firefox do not. Where the browser has JSPI — Safari 27+ — an omitted `build` loads [`jspi`](#build-jspi), which avoids it. Safari 26 has no JSPI, so there a VFS without a `sync` build has no way around it.
+**On Safari it slows down as it works.** After a few statements of a second or more, a worker on this build runs several times slower — up to twenty times on Safari 26 — and stays slow; Chromium and Firefox do not. Where the browser has JSPI — Safari 27+ — a VFS without `sync` loads [`jspi`](#build-jspi) by default, which avoids it. Safari 26 has no JSPI, so there a VFS without a `sync` build has no way around it.
 
 ### Build `jspi`
 
@@ -291,7 +290,7 @@ Asyncify: the WASM stack is unwound and rewound around asynchronous file operati
 |---|---|---|---|---|
 | 137+ | 153+ | 27+ | Yes | 27+ |
 
-JavaScript Promise Integration — the same asynchrony handled by the engine rather than by Asyncify. Declared before `async` by every VFS that runs both, so it is the default wherever the browser has it; elsewhere an omitted `build` falls back to `async`, and its narrower availability constrains nobody.
+JavaScript Promise Integration — the same asynchrony handled by the engine rather than by Asyncify. Every VFS lists it before `async`, so a VFS without `sync` loads it by default where the browser has JSPI, and `async` elsewhere: its narrower availability constrains nobody.
 
 
 <!-- END GENERATED BUILD TABLE -->

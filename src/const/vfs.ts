@@ -198,9 +198,9 @@ export type VFSCapability = {
  * `client.ts` read it, the conformance suite gates its scenarios on it, and the
  * VFS.md table is generated from it. Nothing may hold a second copy.
  *
- * Build order is a decision per VFS, not a rule: `sync` is both the fastest and
- * the most portable build, so it leads wherever supported; `OPFSAdaptiveVFS`
- * cannot use it and leads with `async` because `jspi` is Chromium-only.
+ * `builds` is in preference order, the same for every VFS: `sync` where the VFS
+ * supports it, then `jspi`, then `async`. An omitted `build` takes the first one
+ * the engine supports (`defaultBuildFor`).
  *
  * Every declared build combination is verified by running it against the pinned
  * wa-sqlite v1.1.2, never copied from upstream's table.
