@@ -266,7 +266,7 @@ baseline rather than storage.
 
 ## Builds reference
 
-Each VFS runs on one or more wa-sqlite WebAssembly builds. The `build` option selects one; omitted, the first build the VFS declares that the browser supports is used — the `Builds` line of its entry lists them in that order, and `db.build` reports the one loaded. A pair the VFS does not support throws a `SQLiteError` with code `INVALID_OPTION` at construction, naming the builds it does support. The pairing is declared in one place, `VFS_CAPABILITIES`, which is also what the `SQLiteVFS` type is derived from.
+Each VFS runs on one or more wa-sqlite WebAssembly builds. The `build` option selects one; omitted, the first build the VFS declares that the browser supports is used — the `Builds` line of its entry lists them in that order, and `db.build` reports the one loaded. A pair the VFS does not support throws a `SQLiteError` with code `INVALID_OPTION` at construction, naming the builds it does support.
 
 A build carries its own engine requirement, independent of where the VFS stores
 data — so a VFS can be reachable in `sync` on an old browser and in `jspi` only

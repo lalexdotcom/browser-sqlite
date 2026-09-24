@@ -79,21 +79,13 @@ back to it. Not designed. It will sit on the savepoint machinery merged on 2026-
 `mem:architecture`): a new entry point must go through the facade, which concludes the library's
 savepoint before opening its own.
 
-## Unexport `VFS_CAPABILITIES` — the public surface (user, 2026-09-23)
-
-`VFS_CAPABILITIES` and its types `VFSCapability`, `VFSStorage` and `VFSMemoryModel` are public since rc.4 (`2478c81`, `src/index.ts`), so every field of the table is public contract — internal ones like `exclusiveFileHandle` or `singleConnectionWithout` included — and every change to the table is breaking. **The only reader through the export is the bench page** (`scripts/bench/html/index.html`: the vfs × build pairs, and `storage` for its cleanup); `scripts/test-matrix.mjs` and `scripts/render-vfs-matrix.ts` import `src/const/*.ts` directly, no `tests/consumer*` project uses it, and no public signature names the four types. What must stay exported: `SQLiteVFS`, `SQLiteBuild`, `PlatformFeature` (returned by `detectFeatures()` / `missingFeature()`). **`defaultBuildFor` goes too (user, 2026-09-24)** — only tests need it, and a consumer reads the resolved build from the client's `build`. It stays exported until this chantier, and rc.6's default-build change gives it a second, required `available` parameter: **when this chantier removes it, remove that signature change from the unreleased `CHANGELOG.md` section as well** (user), so the release notes do not announce a change to a function the same release deletes. **`folderOf` joined the exports on `feat/vfs-folders` (2026-09-23) without being planned, and the user kept it there for this chantier to decide** — it has no consumer through the package (tests and scripts import `src/const/vfs`, the bench reads `cap.folder`) and is documented nowhere.
-
-**Proposed, not decided:** drop the export and have `bench:build` emit the table as JSON from `src/const/vfs.ts` (it is pure data). What a consumer loses: enumerating the VFS at runtime, e.g. for a selector — nothing in the repository needs it. Breaking. Parked by the user on 2026-09-23 to stay on the per-VFS folder work.
-
 ## The `.mjs` scripts are not type-checked (2026-09-24)
 
 `tsc` covers `scripts/*.ts` since 2026-09-24, but no `allowJs`/`checkJs` is set, so the `.mjs` files are only linted and formatted by biome. Measured with `checkJs` and `@types/node` on 2026-09-24: **84 errors** — `consumer-smoke.mjs` 44, `bench/check.mjs` 19, `bench/dev.mjs` 12, `matrix-triage.mjs` 5, `static-server.mjs` 2, `bench/assemble.mjs` 1, `bounded.mjs` 1. Not triaged: how many are JSDoc-less inference noise and how many real is unknown.
 
-## Left by the BUILD_CAPABILITIES / `const/` split (2026-09-24)
+## `db.debug` — for the documentation review session (user, 2026-09-24)
 
-- **`SharedArrayTypes` (`src/types/protocol.ts`) has no reference anywhere** — dead before the split, moved verbatim.
-- `src/inspect.ts` and `src/locks.ts` import `./const/vfs` twice (type, then value), a split inherited from `./types`.
-- `createSQLiteClient`'s inferred return type prints `build` as `"async" | "jspi" | "sync"` in `dist/client.d.ts`, as it already printed `vfs` as the nine-name union: the declaration emitter expands a `keyof typeof` alias in an inferred position. An explicit return annotation would restore the names on hover.
+`API.md` has no `## *client*.debug` section: the property appears only in the options table (`debug` row: "the `db.debug` introspection tree"), which advertises it without saying what it holds or when it is `undefined`. Meanwhile `SQLiteDB.debug` is tagged `@internal` in `src/api.ts` ("Not part of the stable public API. Shape is subject to change without notice."), yet no `stripInternal` is set, so it ships in `dist/api.d.ts` with `ClientDebugState`. The docs and the tag disagree on whether it is public; the review settles which, and documents it or stops advertising it. Its type is also only partly readonly (`workers`, `requests`, `queries`, `currentRequest` and every `QueryDebugState` field are mutable).
 
 ## The bench's `pool N → M` header has not been seen on Safari (2026-09-23)
 

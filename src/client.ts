@@ -327,10 +327,10 @@ const exclusivityProbes = new Map<
  *
  * @throws {SQLiteError} With code `INVALID_OPTION` when `build` is not one of
  *   the builds the chosen `vfs` supports. The message names the supported
- *   builds; the pairing is declared once, in `VFS_CAPABILITIES`.
+ *   builds.
  * @throws {SQLiteError} With code `INVALID_OPTION` when `poolSize` exceeds the
- *   `maxPoolSize` the chosen `vfs` declares. The message names the cap and the
- *   reason for it; both come from `VFS_CAPABILITIES`.
+ *   cap the chosen `vfs` declares. The message names the cap and the reason
+ *   for it.
  *
  * @example
  * ```typescript
@@ -350,7 +350,7 @@ const exclusivityProbes = new Map<
 export const createSQLiteClient = (
   file: string,
   clientOptions: CreateSQLiteClientOptions,
-) => {
+): SQLiteDB => {
   // FIRST, before anything reads the options. `clientOptions` is required in
   // the type, but a JavaScript caller can still omit it entirely — and then
   // every access below would throw a bare TypeError naming nothing. The `?.`

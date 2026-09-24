@@ -18,12 +18,6 @@ export type SQLWorkerResultData<T = unknown> = {
   abort: { type: 'done' };
 };
 
-export const SharedArrayTypes = {
-  INT: 0,
-  STRING: 1,
-  OBJECT: 2,
-};
-
 /**
  * The savepoint a transaction asks the worker to handle around one query
  * (spec 2026-09-11, D4/D5). `conclude` settles the savepoint the previous
