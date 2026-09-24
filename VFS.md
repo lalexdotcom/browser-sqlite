@@ -80,7 +80,7 @@ on its [VFS page](https://github.com/rhashimoto/wa-sqlite/tree/master/src/exampl
 
 <!-- BEGIN GENERATED OPFSWriteAheadVFS -->
 
-**Builds:** [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`sync`](#build-sync), [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+<sup><a href="#reduced-mode">[reduced]</a></sup>, Safari 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>, Android 109+/?, iOS 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>
 
@@ -103,7 +103,7 @@ Bulk loading is what it is fastest at, on every engine measured.
 
 <!-- BEGIN GENERATED OPFSAdaptiveVFS -->
 
-**Builds:** [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+<sup><a href="#reduced-mode">[reduced]</a></sup>, Safari 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>, Android 109+/?, iOS 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>
 
@@ -125,7 +125,7 @@ tabs, which is what the lazy close and reopen is for.
 
 <!-- BEGIN GENERATED OPFSCoopSyncVFS -->
 
-**Builds:** [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`sync`](#build-sync), [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+, Safari 15.4+/27+, Android 109+/?, iOS 15.4+/27+
 
@@ -144,7 +144,7 @@ can take turns on them.
 
 <!-- BEGIN GENERATED AccessHandlePoolVFS -->
 
-**Builds:** [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`sync`](#build-sync), [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+, Safari 15.4+/27+, Android 109+/?, iOS 15.4+/27+
 
@@ -165,7 +165,7 @@ cannot be imported or exported directly — which is what buys it
 
 <!-- BEGIN GENERATED IDBBatchAtomicVFS -->
 
-**Builds:** [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
@@ -195,7 +195,7 @@ apply to it, and it serves a read while a long query runs, on every engine. See
 
 <!-- BEGIN GENERATED IDBMirrorVFS -->
 
-**Builds:** [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
@@ -215,7 +215,7 @@ database in memory per worker and propagates commits asynchronously. See
 
 <!-- BEGIN GENERATED OPFSAnyContextVFS -->
 
-**Builds:** [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+, Safari 26+/27+, Android 109+/?, iOS 26+/27+
 
@@ -237,7 +237,7 @@ so it suits read-only or nearly read-only databases.
 
 <!-- BEGIN GENERATED MemoryVFS -->
 
-**Builds:** [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`sync`](#build-sync), [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
@@ -253,7 +253,7 @@ performance, not as storage.
 
 <!-- BEGIN GENERATED MemoryAsyncVFS -->
 
-**Builds:** [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 

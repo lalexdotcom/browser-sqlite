@@ -1,9 +1,13 @@
 import { withRslibConfig } from '@rstest/adapter-rslib';
 import { defineConfig, type ProjectConfig } from '@rstest/core';
 import { pluginSilenceWorkerHmrLogs } from './rstest.config';
-import { targetLabel, targetsFromEnv } from './tests/target-projects.ts';
+import {
+  FIREFOX_FEATURES,
+  targetLabel,
+  targetsFromEnv,
+} from './tests/target-projects.ts';
 
-const targets = targetsFromEnv(process.env.BSQ_TEST_TARGETS);
+const targets = targetsFromEnv(process.env.BSQ_TEST_TARGETS, FIREFOX_FEATURES);
 
 /**
  * The Firefox half of the browser suite.

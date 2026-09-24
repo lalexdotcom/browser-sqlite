@@ -64,7 +64,7 @@ export type ClientMessageData =
       type: 'open';
       file: string;
       vfs: SQLiteVFS;
-      build?: SQLiteBuild;
+      build: SQLiteBuild;
       pragmas?: Record<string, string>;
       /** Statements retained per worker; see `src/client.ts`. Internal. */
       statementCacheSize?: number;
@@ -106,7 +106,7 @@ export type ClientMessageData =
       callId: number;
       file: string;
       vfs: SQLiteVFS;
-      build?: SQLiteBuild;
+      build: SQLiteBuild;
       wasm?: WasmLocation;
     };
 

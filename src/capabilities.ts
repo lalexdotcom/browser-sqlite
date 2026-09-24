@@ -1,6 +1,10 @@
 import { BUILD_CAPABILITIES, type SQLiteBuild } from './const/builds';
 import type { PlatformFeature } from './const/platform';
-import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
+import {
+  type SQLiteVFS,
+  VFS_CAPABILITIES,
+  type VFSCapability,
+} from './const/vfs';
 
 /**
  * Synchronous platform probes, keyed by FEATURE rather than by VFS or by build.
@@ -84,6 +88,24 @@ export const missingFeature = (
     if (!available.has(feature)) return feature;
   }
   return null;
+};
+
+/**
+ * The build used when the caller does not name one: the first the VFS declares
+ * whose requirements `available` meets. Pure for `missingFeature`'s reason.
+ */
+export const defaultBuildFor = (
+  vfs: SQLiteVFS,
+  available: ReadonlySet<PlatformFeature>,
+): SQLiteBuild => {
+  const { builds }: VFSCapability = VFS_CAPABILITIES[vfs];
+  return (
+    builds.find((build) =>
+      (BUILD_CAPABILITIES[build].requires as readonly PlatformFeature[]).every(
+        (feature) => available.has(feature),
+      ),
+    ) ?? builds[0]
+  );
 };
 
 /**

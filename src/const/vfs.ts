@@ -207,7 +207,7 @@ export type VFSCapability = {
  */
 export const VFS_CAPABILITIES = {
   OPFSWriteAheadVFS: {
-    builds: ['sync', 'async', 'jspi'],
+    builds: ['sync', 'jspi', 'async'],
     maxPoolSize: null,
     poolLimitReason: null,
     multiConnection: true,
@@ -233,7 +233,7 @@ export const VFS_CAPABILITIES = {
     defaultPragmas: {},
   },
   OPFSAdaptiveVFS: {
-    builds: ['async', 'jspi'],
+    builds: ['jspi', 'async'],
     maxPoolSize: null,
     poolLimitReason: null,
     multiConnection: true,
@@ -252,7 +252,7 @@ export const VFS_CAPABILITIES = {
     defaultPragmas: {},
   },
   OPFSCoopSyncVFS: {
-    builds: ['sync', 'async', 'jspi'],
+    builds: ['sync', 'jspi', 'async'],
     // Capped on every engine (spec 2026-09-13, §10, D9): a pool of one was faster at startup and on bursts of reads, equal elsewhere, on Chromium and Firefox (POOL-SIZE, 2026-09-14). The handle still rotates between clients and tabs, which is why the COOPSYNC-BUSY retry stays.
     maxPoolSize: 1,
     poolLimitReason:
@@ -273,7 +273,7 @@ export const VFS_CAPABILITIES = {
     defaultPragmas: {},
   },
   AccessHandlePoolVFS: {
-    builds: ['sync', 'async', 'jspi'],
+    builds: ['sync', 'jspi', 'async'],
     maxPoolSize: 1,
     poolLimitReason: 'it cannot share access handles between connections',
     multiConnection: false,
@@ -304,7 +304,7 @@ export const VFS_CAPABILITIES = {
     defaultPragmas: { locking_mode: 'exclusive', journal_mode: 'wal' },
   },
   IDBBatchAtomicVFS: {
-    builds: ['async', 'jspi'],
+    builds: ['jspi', 'async'],
     maxPoolSize: null,
     poolLimitReason: null,
     multiConnection: true,
@@ -322,7 +322,7 @@ export const VFS_CAPABILITIES = {
     defaultPragmas: {},
   },
   IDBMirrorVFS: {
-    builds: ['async', 'jspi'],
+    builds: ['jspi', 'async'],
     // Measured 2026-08-25, not inferred: `CREATE TABLE` → `INSERT` → `SELECT`
     // at poolSize 2, 300 rounds under a loaded suite, failed 5 times — with
     // `no such table` (a connection not seeing a committed statement) and
@@ -359,7 +359,7 @@ export const VFS_CAPABILITIES = {
     defaultPragmas: {},
   },
   OPFSAnyContextVFS: {
-    builds: ['async', 'jspi'],
+    builds: ['jspi', 'async'],
     maxPoolSize: null,
     poolLimitReason: null,
     multiConnection: true,
@@ -378,7 +378,7 @@ export const VFS_CAPABILITIES = {
     defaultPragmas: {},
   },
   MemoryVFS: {
-    builds: ['sync', 'async', 'jspi'],
+    builds: ['sync', 'jspi', 'async'],
     maxPoolSize: 1,
     poolLimitReason:
       'its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently',
@@ -397,7 +397,7 @@ export const VFS_CAPABILITIES = {
     defaultPragmas: {},
   },
   MemoryAsyncVFS: {
-    builds: ['async', 'jspi'],
+    builds: ['jspi', 'async'],
     maxPoolSize: 1,
     poolLimitReason:
       'its pages live in the worker that opened them, so a larger pool would open independent databases that diverge silently',
@@ -428,7 +428,3 @@ export const folderOf = (vfs: SQLiteVFS): string | undefined => {
 };
 
 export type SQLiteVFS = keyof typeof VFS_CAPABILITIES;
-
-/** The build used when the caller does not name one. */
-export const defaultBuildFor = (vfs: SQLiteVFS): SQLiteBuild =>
-  VFS_CAPABILITIES[vfs].builds[0];

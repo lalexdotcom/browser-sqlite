@@ -1,9 +1,13 @@
 import { withRslibConfig } from '@rstest/adapter-rslib';
 import { defineConfig, type ProjectConfig } from '@rstest/core';
 import { pluginSilenceWorkerHmrLogs } from './rstest.config';
-import { targetLabel, targetsFromEnv } from './tests/target-projects.ts';
+import {
+  CHROMIUM_FEATURES,
+  targetLabel,
+  targetsFromEnv,
+} from './tests/target-projects.ts';
 
-const targets = targetsFromEnv(process.env.BSQ_TEST_TARGETS);
+const targets = targetsFromEnv(process.env.BSQ_TEST_TARGETS, CHROMIUM_FEATURES);
 
 // Cross-origin isolation cannot be expressed through rstest's `defineConfig`
 // directly: a `server: { headers: ... }` key at the top level is silently

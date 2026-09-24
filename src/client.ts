@@ -1,13 +1,14 @@
 import type { SQLiteChunkOptions, SQLiteDB, SQLiteQueryOptions } from './api';
 import { createBulk } from './bulk';
 import {
+  defaultBuildFor,
   describeMissing,
   detectFeatures,
   missingFeature,
 } from './capabilities';
 import type { SQLiteBuild } from './const/builds';
 import type { PlatformFeature } from './const/platform';
-import { defaultBuildFor, type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
+import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { createClientDebug } from './debug';
 import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
 import {
@@ -369,7 +370,9 @@ export const createSQLiteClient = (
   const clientUuid = crypto.randomUUID();
 
   const vfs = clientOptions.vfs;
-  const build = clientOptions.build ?? defaultBuildFor(vfs);
+  // Probed once: the default build, the abort channel and the guard below read it.
+  const available = detectFeatures();
+  const build = clientOptions.build ?? defaultBuildFor(vfs, available);
 
   const capability = VFS_CAPABILITIES[vfs];
 
@@ -400,7 +403,7 @@ export const createSQLiteClient = (
    * restricted. Everywhere else this stays undefined and the whole channel is
    * a branch not taken.
    */
-  const abortSlots = detectFeatures().has('cross-origin-isolated')
+  const abortSlots = available.has('cross-origin-isolated')
     ? new SharedArrayBuffer(4 * poolSize)
     : undefined;
 
@@ -435,7 +438,7 @@ export const createSQLiteClient = (
 
   // The engine, not the declaration. Without this the mismatch surfaces later
   // as an opaque open-error from a worker that could not instantiate wasm.
-  const absent = missingFeature(vfs, build, detectFeatures());
+  const absent = missingFeature(vfs, build, available);
   if (absent) {
     throw new SQLiteError(
       'INVALID_OPTION',

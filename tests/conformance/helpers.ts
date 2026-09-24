@@ -1,13 +1,9 @@
 import { afterEach, expect } from '@rstest/core';
-import { detectFeatures } from '../../src/capabilities';
+import { defaultBuildFor, detectFeatures } from '../../src/capabilities';
 import { createSQLiteClient, type WorkerLostEvent } from '../../src/client';
 import { BUILD_CAPABILITIES, type SQLiteBuild } from '../../src/const/builds';
 import type { PlatformFeature } from '../../src/const/platform';
-import {
-  defaultBuildFor,
-  type SQLiteVFS,
-  VFS_CAPABILITIES,
-} from '../../src/const/vfs';
+import { type SQLiteVFS, VFS_CAPABILITIES } from '../../src/const/vfs';
 import { databaseFiles, databasePath } from '../../src/utils';
 
 /** Every wired VFS, in declaration order. */
@@ -152,7 +148,7 @@ export const AVAILABLE_FEATURES: ReadonlySet<PlatformFeature> = new Set([
  */
 export const missingHere = (
   vfs: SQLiteVFS,
-  build: SQLiteBuild = defaultBuildFor(vfs),
+  build: SQLiteBuild = defaultBuildFor(vfs, AVAILABLE_FEATURES),
 ): PlatformFeature | null =>
   // The widening casts mirror client.ts's build guard: `as const` on the tables
   // narrows an empty requirement list to `readonly []`, where `.find` takes never.
@@ -219,7 +215,7 @@ export const removeOpfsPath = async (path: string): Promise<void> => {
  */
 export const conformanceClient = (
   vfs: SQLiteVFS,
-  build: SQLiteBuild = defaultBuildFor(vfs),
+  build: SQLiteBuild = defaultBuildFor(vfs, AVAILABLE_FEATURES),
   poolSize: number = poolFor(vfs),
 ) => {
   const file = `conformance-${crypto.randomUUID()}`;
@@ -248,7 +244,7 @@ export const conformanceClient = (
 export const createReopened = (file: string, vfs: SQLiteVFS) =>
   createSQLiteClient(file, {
     vfs,
-    build: defaultBuildFor(vfs),
+    build: defaultBuildFor(vfs, AVAILABLE_FEATURES),
     poolSize: poolFor(vfs),
     onWorkerLost: recordLoss(vfs),
   });

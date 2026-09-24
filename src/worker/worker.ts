@@ -22,12 +22,7 @@ import {
 } from 'wa-sqlite/src/sqlite-constants.js';
 import type { SQLiteBuild } from '../const/builds';
 import type { PlatformFeature } from '../const/platform';
-import {
-  defaultBuildFor,
-  folderOf,
-  type SQLiteVFS,
-  VFS_CAPABILITIES,
-} from '../const/vfs';
+import { folderOf, type SQLiteVFS, VFS_CAPABILITIES } from '../const/vfs';
 import {
   createCreditGate,
   createMessageChannelTick,
@@ -293,7 +288,7 @@ let currentBuild: SQLiteBuild = 'async';
 
 type OpenOptions = {
   vfs: SQLiteVFS;
-  build?: SQLiteBuild | undefined;
+  build: SQLiteBuild;
   wasm?: WasmLocation | undefined;
   pragmas?: Record<string, string> | undefined;
   statementCacheSize?: number | undefined;
@@ -374,8 +369,7 @@ const open = (file: string, options: OpenOptions) => {
     } satisfies WorkerMessageData);
   }
 
-  const { vfs, wasm, pragmas = {}, abortSlots, abortIndex } = options;
-  const build = options.build ?? defaultBuildFor(vfs);
+  const { vfs, build, wasm, pragmas = {}, abortSlots, abortIndex } = options;
   currentBuild = build;
 
   const slot =
@@ -966,11 +960,10 @@ const opfsEntryExists = async (path: string): Promise<boolean> => {
 const deleteDatabaseFiles = async (data: {
   file: string;
   vfs: SQLiteVFS;
-  build?: SQLiteBuild;
+  build: SQLiteBuild;
   wasm?: WasmLocation;
 }): Promise<boolean> => {
-  const { file, vfs, wasm } = data;
-  const build = data.build ?? defaultBuildFor(vfs);
+  const { file, vfs, build, wasm } = data;
 
   const { default: factory } = await WA_SQLITE_BUILDS[build]();
   const module = await factory(wasmModuleArg(wasm));
