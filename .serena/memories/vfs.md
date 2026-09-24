@@ -1,6 +1,6 @@
 # VFS — the nine, and what is true of each
 
-**`VFS_CAPABILITIES` in `src/types.ts` is the single source of truth.** The client guard,
+**`VFS_CAPABILITIES` in `src/const/vfs.ts` is the single source of truth.** The client guard,
 the conformance suite, the README generator and the benchmark page all read it; one wrong
 field propagates everywhere. `SQLiteVFS` derives from its keys, so adding a VFS without a
 loader fails to compile. Read the table in the source — this file holds only what the
@@ -12,7 +12,7 @@ Numbers live in `mem:measurements`.
 
 - **`vfs` is required, and no recommendation lives in `src/` at all** (2026-09-08). The name
   must live in the consumer's own source, so nothing shipped can move a database underneath
-  it. `RECOMMENDED_VFS` used to be an unexported constant in `src/types.ts`; it is now a
+  it. `RECOMMENDED_VFS` used to be an unexported constant in `src/types.ts` (now split, `mem:architecture`); it is now a
   two-element list — `OPFSWriteAheadVFS`, `OPFSAdaptiveVFS` — in
   `scripts/render-vfs-matrix.ts`, and the error messages name no VFS. Rationale in
   `mem:state`, evidence in `mem:measurements` (VFS-MEDIAN).

@@ -79,99 +79,21 @@ back to it. Not designed. It will sit on the savepoint machinery merged on 2026-
 `mem:architecture`): a new entry point must go through the facade, which concludes the library's
 savepoint before opening its own.
 
-## `BUILD_CAPABILITIES` — one registry per axis, for rc.6 (user, 2026-09-16)
-
-A comfort refactor, so rc.6 by the triage rule — raised by the user while the matrix ran.
-Aggregate `BUILD_REQUIREMENTS` and `BUILD_DEGRADES_WITHOUT` into one
-`BUILD_CAPABILITIES` table and derive `type SQLiteBuild = keyof typeof BUILD_CAPABILITIES`,
-exactly as `SQLiteVFS` already derives from `VFS_CAPABILITIES` (`src/types.ts`). **Keep
-`WA_SQLITE_BUILDS` in the worker and `BUILD_NOTE` in the VFS.md generator** — the dynamic
-`wa-sqlite` imports and the documentation data must not ship to every consumer, which is the
-reason `types.ts` already gives for keeping browser versions out.
-
-**The objection written in `src/types.ts` against `keyof` is measurably false — delete it, do
-not move it.** It claims `keyof` "would let a forgotten entry mean silently that the build does
-not exist". Measured 2026-09-16 on a scratch file: under `keyof`, a build added to a dependent
-table but missing from the registry fails with TS2561 (excess key) — on a `satisfies` table AND
-on a type-annotated one — and a build in the registry missing from a dependent table fails with
-TS2741. The `keyof` shape is STRICTER, because every other build-keyed table is then checked
-against the registry in both directions.
-
-**The one detail that makes it compile:** `satisfies Record<string, BuildCapability>`, with
-`string` and not `SQLiteBuild` — otherwise the derivation is circular. `VFS_CAPABILITIES` does
-exactly that.
-
-**Scope:** `BUILD_REQUIREMENTS[build]` becomes `BUILD_CAPABILITIES[build].requires` at 11 sites
-in 7 files — `src/capabilities.ts` (3), `scripts/render-vfs-matrix.ts` (4, including
-`Object.keys(BUILD_REQUIREMENTS)` which becomes the build list and reads better for it), and
-four test files. src + scripts + tests, so it needs the user's go-ahead before it starts.
-
-**`interruptible` must be RE-DERIVED as part of this, not carried over (user, 2026-09-16).**
-The property belongs to the build, and today it is stated twice: `BUILD_DEGRADES_WITHOUT.sync
-= ['cross-origin-isolated']` declares it, and `holds('interruptible')` in
-`tests/browser/target.ts` restates it as `build !== 'sync' || here.crossOriginIsolated`. The
-duplication of the FACT is removed before rc.6 (§ below, done in the test chantier); what waits
-for `BUILD_CAPABILITIES` is naming the PROPERTY. **Do not derive it from `degradesWithout` taken
-as a whole**: that list means "degrades on any axis", and it is only by coincidence that the
-`sync` build's single declared degradation IS the interrupt. The clean shape is a field that
-names it — `interruptibleWithout: ['cross-origin-isolated']` for `sync`, empty elsewhere — from
-which `degradesWithout` can be derived, not the reverse. Same relation as `layout` → `storage`:
-the fine datum carries the logic, the aggregate is derived.
-
-**THE BOUNDARY, and it is the user's, 2026-09-16: build PREFERENCE ORDER does not move here.**
-It stays in each VFS's `builds` array in `VFS_CAPABILITIES` — per-VFS granularity, and far more
-readable than a global ranking. The library's rule, in the user's words: *if you specified no
-build, I take the first of this VFS that your environment supports; if you specified one it does
-not support, I raise.* That is the entry "Default to the first build the environment supports"
-below, and `BUILD_CAPABILITIES` only supplies the `requires` that rule tests against. Raised as a
-possible home for the ordering and refused on the spot.
-
-## Split `src/types.ts` into `const/` and `types/`, for rc.6 (user, 2026-09-16)
-
-The user's design, decided in chat after being confronted with a smaller counter-proposal and
-holding. **The stated goal is the one that decides the open cases: the root of `src/` is too
-full, and the benefit is the user reading the code.** Do it AFTER `BUILD_CAPABILITIES` (§ above)
-— `const/builds.ts` is that table's home, so the other order writes the file twice.
-
-**The rule that places everything: a type derived from a const lives in the same file as the
-const.** No import, no drift. It is why `SQLiteVFS` does not move away from `VFS_CAPABILITIES`.
-
-`const/` — platform.ts (`PlatformFeature`; no const, but the base of the DAG) · builds.ts
-(`BUILD_CAPABILITIES` + `SQLiteBuild`) · vfs.ts (`VFS_CAPABILITIES` + `SQLiteVFS`,
-`VFSCapability`, `VFSStorage`, `VFSLayout`, `VFSMemoryModel`, `defaultBuildFor`) · sqlite.ts
-(today's `src/sqlite-codes.ts`, moved — the move IS the point, not a side effect).
-
-`types/` — protocol.ts (`ClientMessageData`, `WorkerMessageData`, `SQLiteWorkerMessageData`,
-`SQLWorkerResultData`, `SavepointOp`, `WasmLocation`, `SQLOptions`, `SharedArrayTypes`) ·
-errors.ts (today's `src/errors.ts` whole, `SQLiteErrorCode` AND the two classes — user,
-2026-09-16). Note in passing: `types/` therefore emits JS, it is not erasable-only; the
-directory name groups declarations, it is not a contract.
-
-**`src/types.ts` may survive, and the distinction is exact (user, 2026-09-16): it keeps whatever
-isolated types belong nowhere else, but it NEVER re-exports what moved.** A residual module
-holding its own orphan declarations is fine; a barrel forwarding `const/` and `types/` is not,
-because it would keep alive the public/internal mixing the split exists to end. On today's
-content the leftover set looks empty — `WasmLocation` is the likeliest orphan, since it travels
-in the worker message (`pool.ts`) but is also a plain option shape used by `utils`, `delete` and
-`client` — so decide it when the move is made, not now.
-
-DAG: platform ← builds ← vfs ← protocol, no cycle.
-
-**The strongest reason is already written in the code**, at `src/index.ts`: "Named rather than
-`export *`: the wire-protocol types in types.ts are internal and must not reach the public
-surface." One file mixes public API with internal protocol, and only a hand-maintained export
-list separates them. Extracting `protocol.ts` makes that boundary structural.
-
-**No re-export barrel at `src/types.ts`.** 28 files import it; a barrel would make the change
-invisible to all of them and keep alive exactly the public/internal mixing the split exists to
-end. **The user does not consider the import churn a cost** — one LSP rename — and that
-judgement is theirs, taken on being told the number.
-
 ## Unexport `VFS_CAPABILITIES` — the public surface (user, 2026-09-23)
 
-`VFS_CAPABILITIES` and its types `VFSCapability`, `VFSLayout`, `VFSStorage` and `VFSMemoryModel` are public since rc.4 (`2478c81`, `src/index.ts`), so every field of the table is public contract — internal ones like `exclusiveFileHandle` or `singleConnectionWithout` included — and every change to the table is breaking. **The only reader through the export is the bench page** (`scripts/bench/html/index.html`: the vfs × build pairs, and `storage` for its cleanup); `scripts/test-matrix.mjs` and `scripts/render-vfs-matrix.ts` import `src/types.ts` directly, no `tests/consumer*` project uses it, and no public signature names the four types. What must stay exported: `SQLiteVFS`, `SQLiteBuild`, `PlatformFeature` (returned by `detectFeatures()` / `missingFeature()`); `defaultBuildFor` is a separate question. **`folderOf` joined the exports on `feat/vfs-folders` (2026-09-23) without being planned, and the user kept it there for this chantier to decide** — it has no consumer through the package (tests and scripts import `src/types`, the bench reads `cap.folder`) and is documented nowhere.
+`VFS_CAPABILITIES` and its types `VFSCapability`, `VFSStorage` and `VFSMemoryModel` are public since rc.4 (`2478c81`, `src/index.ts`), so every field of the table is public contract — internal ones like `exclusiveFileHandle` or `singleConnectionWithout` included — and every change to the table is breaking. **The only reader through the export is the bench page** (`scripts/bench/html/index.html`: the vfs × build pairs, and `storage` for its cleanup); `scripts/test-matrix.mjs` and `scripts/render-vfs-matrix.ts` import `src/const/*.ts` directly, no `tests/consumer*` project uses it, and no public signature names the four types. What must stay exported: `SQLiteVFS`, `SQLiteBuild`, `PlatformFeature` (returned by `detectFeatures()` / `missingFeature()`); `defaultBuildFor` is a separate question. **`folderOf` joined the exports on `feat/vfs-folders` (2026-09-23) without being planned, and the user kept it there for this chantier to decide** — it has no consumer through the package (tests and scripts import `src/const/vfs`, the bench reads `cap.folder`) and is documented nowhere.
 
-**Proposed, not decided:** drop the export and have `bench:build` emit the table as JSON from `src/types.ts` (it is pure data). What a consumer loses: enumerating the VFS at runtime, e.g. for a selector — nothing in the repository needs it. Breaking. Parked by the user on 2026-09-23 to stay on the per-VFS folder work.
+**Proposed, not decided:** drop the export and have `bench:build` emit the table as JSON from `src/const/vfs.ts` (it is pure data). What a consumer loses: enumerating the VFS at runtime, e.g. for a selector — nothing in the repository needs it. Breaking. Parked by the user on 2026-09-23 to stay on the per-VFS folder work.
+
+## `scripts/` is not type-checked — the next subject (user, 2026-09-24)
+
+`tsconfig.json`'s `include` is `src`, `tests` and the two configs: `tsc --noEmit`, the pre-commit hook and CI never type-check `scripts/`, and Node runs them by erasing types. `scripts/render-vfs-matrix.ts` carried seven errors on `main` at `cdc704e`, seen only in the IDE: `FEATURE_SUPPORT`'s `satisfies Record<PlatformFeature, …>` misses `'cross-origin-isolated'` (added to `PlatformFeature` 2026-09-04 with no support row) and the two TS7053 that follow from it, `Support | undefined` into `Support`, a 3-argument call to a 2-parameter function, `'sync'` refused where `'async' | 'jspi'` is expected, `'readwrite-unsafe'` into `never`. Open decision in the first one: whether `cross-origin-isolated` — a page header, not an engine feature — gets a support row or is excluded from `FEATURE_SUPPORT`'s key set.
+
+## Left by the BUILD_CAPABILITIES / `const/` split (2026-09-24)
+
+- **`SharedArrayTypes` (`src/types/protocol.ts`) has no reference anywhere** — dead before the split, moved verbatim.
+- `src/inspect.ts` and `src/locks.ts` import `./const/vfs` twice (type, then value), a split inherited from `./types`.
+- `createSQLiteClient`'s inferred return type prints `build` as `"async" | "jspi" | "sync"` in `dist/client.d.ts`, as it already printed `vfs` as the nine-name union: the declaration emitter expands a `keyof typeof` alias in an inferred position. An explicit return annotation would restore the names on hover.
 
 ## The bench's `pool N → M` header has not been seen on Safari (2026-09-23)
 
@@ -192,7 +114,7 @@ client then refuses a build the engine lacks (`missingFeature`, `src/client.ts`)
 listing `jspi` first would break every engine without JSPI, Safari 26 included. The agreed shape:
 list `jspi` before `async` for the five `async`-first VFS (`OPFSAdaptiveVFS`,
 `IDBBatchAtomicVFS`, `IDBMirrorVFS`, `OPFSAnyContextVFS`, `MemoryAsyncVFS`) and resolve the default
-as the first declared build whose `BUILD_REQUIREMENTS` `detectFeatures()` meets; `async` stays the
+as the first declared build whose `BUILD_CAPABILITIES[build].requires` `detectFeatures()` meets; `async` stays the
 fallback. The `sync`-first VFS do not move.
 
 **Why:** Safari's Asyncify slowdown (IDB-SIGNAL, `mem:measurements`), which `jspi` escapes on
@@ -243,7 +165,7 @@ WHAT REMAINS OPEN:
   one). **Making it lazy is NOT the structural answer this entry once claimed, and the correction
   is measured (2026-09-21):** it would not reduce the number of probes, which is what wakes the
   engine bug. `readwrite-unsafe` feeds `singleConnectionWithout` and `exclusiveConnectionWithout`
-  (`src/types.ts`), so `pairFor()` needs the answer in every browser test — on demand or at load,
+  (`src/const/vfs.ts`), so `pairFor()` needs the answer in every browser test — on demand or at load,
   every page still probes once. And the run no longer hangs either way, since `6560c9e` bounds it.
   What laziness would still buy is only that a module-scope throw becomes a named test failure.
 - **The lever that WOULD attack the trigger is one probe per run instead of one per page**, and it
