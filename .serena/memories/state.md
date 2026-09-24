@@ -21,7 +21,7 @@ obligations and unmeasured ground.
   2026-09-23), and **per-VFS OPFS folders** (merged 2026-09-24, the section's first **Breaking**
   entries: `.ad/`, `.ac/`, `.cs/`, `.wa/`, `layout` and `VFSLayout` gone, the 52-character name bound
   on those four VFS; `db.files` Added; the path and empty-name refusals Changed — `mem:vfs`, CROSS-VFS;
-  `mem:architecture`, "Two names per database"), and **the default build that follows the browser** (merged 2026-09-24: Changed, plus one Breaking entry — a `wasmUrl` serving only the `async` `.wasm`), and **the public surface** (Breaking — `VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` no longer exported, the `./worker` subpath gone; Changed — `createSQLiteClient` declared to return `SQLiteDB`).
+  `mem:architecture`, "Two names per database"), and **the default build that follows the browser** (merged 2026-09-24: Changed, plus one Breaking entry — a `wasmUrl` serving only the `async` `.wasm`), and **the public surface** (merged 2026-09-24: Breaking — `VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` no longer exported, the `./worker` subpath gone; Changed — `createSQLiteClient` declared to return `SQLiteDB`).
 - **The vendored wa-sqlite sits at `e98c65de`** since 2026-09-23, up from `93b9230`, and
   `patches/wa-sqlite@1.1.2.patch` carries **four** files since the same day: the three it already
   had plus `src/examples/WriteAhead.js`, which is the exact diff of our PR #361 rather than a
@@ -42,7 +42,7 @@ obligations and unmeasured ground.
 
 ## The verification baseline — compare against these, re-measured 2026-09-24 on `feat/public-surface`
 
-Not history: the numbers a regression is detected against. **Every figure below was read off a run in this container on 2026-09-24, on `feat/public-surface` at its last code commit** (the commits after it change memories only) — none is arithmetic, and the table was read in ONE pass (`.scratchpad/public-surface/`). **One exception, stated:** the matrix row is carried from `feat/default-build`, run the same day; `feat/public-surface` changes no VFS, build, pool or worker code, so `mem:conventions` ("When to run the full matrix") does not call for a new one.
+Not history: the numbers a regression is detected against. **Every figure below was read off a run in this container on 2026-09-24, on `feat/public-surface`** — none is arithmetic, and the table was read in ONE pass (`.scratchpad/public-surface/`). `tsc` and `pnpm test` were read on the branch's last commit and again by the merge hook, with identical counts; the other rows were read one commit of code earlier, and that last commit changes only the declared type of `SQLiteDB.debug`. **One exception, stated:** the matrix row is carried from `feat/default-build`, run the same day; `feat/public-surface` changes no VFS, build, pool or worker code, so `mem:conventions` ("When to run the full matrix") does not call for a new one.
 
 | command | result |
 |---|---|
