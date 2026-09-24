@@ -1,11 +1,18 @@
 import { RECOMMENDED_VFS } from '../scripts/recommended-vfs.ts';
+import { defaultBuildFor } from '../src/capabilities.ts';
 import type { SQLiteBuild } from '../src/const/builds.ts';
-import {
-  defaultBuildFor,
-  type SQLiteVFS,
-  VFS_CAPABILITIES,
-} from '../src/const/vfs.ts';
+import type { PlatformFeature } from '../src/const/platform.ts';
+import { type SQLiteVFS, VFS_CAPABILITIES } from '../src/const/vfs.ts';
 import type { TestTarget } from './browser/target.ts';
+
+/**
+ * What each engine the configs drive offers a build — the only features the
+ * default build reads. Both Playwright engines expose `WebAssembly.Suspending`.
+ */
+export const CHROMIUM_FEATURES: ReadonlySet<PlatformFeature> =
+  new Set<PlatformFeature>(['jspi']);
+export const FIREFOX_FEATURES: ReadonlySet<PlatformFeature> =
+  new Set<PlatformFeature>(['jspi']);
 
 /**
  * The targets the browser configs make one project each for, read in Node by
@@ -14,14 +21,20 @@ import type { TestTarget } from './browser/target.ts';
  *
  * `BSQ_TEST_TARGETS` — prefixed, never a generic name: VS Code exports
  * `BROWSER` (mem:stack-and-build) — selects them:
- * - unset: each recommended VFS on its default build;
+ * - unset: each recommended VFS on the default build of `engine`;
  * - `all`: every declared (vfs, build) pair;
  * - otherwise a comma list of `vfs/build`, each checked against
  *   `VFS_CAPABILITIES`, so a typo fails the run instead of testing nothing.
  */
-export const targetsFromEnv = (env: string | undefined): TestTarget[] => {
+export const targetsFromEnv = (
+  env: string | undefined,
+  engine: ReadonlySet<PlatformFeature>,
+): TestTarget[] => {
   if (env === undefined) {
-    return RECOMMENDED_VFS.map((vfs) => ({ vfs, build: defaultBuildFor(vfs) }));
+    return RECOMMENDED_VFS.map((vfs) => ({
+      vfs,
+      build: defaultBuildFor(vfs, engine),
+    }));
   }
   if (env === 'all') {
     return (Object.keys(VFS_CAPABILITIES) as SQLiteVFS[]).flatMap((vfs) =>

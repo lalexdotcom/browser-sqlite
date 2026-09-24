@@ -2784,6 +2784,34 @@ failures at MATRIX-4. **Note a figure I got wrong when reporting it, and which i
 message: I said "from 21". 21 was that cell two fixes earlier; 7 is what it was immediately
 before.**
 
+## MATRIX-DEFAULT-BUILD — the matrix after `jspi` moved before `async`, 2026-09-24
+
+`.matrix/2026-09-24T09-53-39-415Z`, `feat/default-build`, 2570 s, 66 of 66 cells green, 0 failing tests. Passed / failed / skipped per cell, identical across the builds of one VFS:
+
+| VFS | chromium | firefox | isolated |
+|---|---|---|---|
+| `OPFSWriteAheadVFS`, `OPFSAdaptiveVFS`, `OPFSCoopSyncVFS`, `AccessHandlePoolVFS`, `OPFSAnyContextVFS` | 366/0/4 | 370/0/1 | 7/0/0 |
+| `IDBBatchAtomicVFS`, `IDBMirrorVFS` | 365/0/5 | 369/0/2 | 7/0/0 |
+| `MemoryVFS`, `MemoryAsyncVFS` | 361/0/9 | 365/0/6 | 7/0/0 |
+
+Cells ran 22-79 s. In every row, on both engines, the `async` cell is the slowest of its VFS — by 4-7 s on Chromium and 3-10 s on Firefox against the next one. Wall clock per cell, setup included: a hint that agrees with the bench, not a benchmark.
+
+## ADAPTIVE-JSPI-SAFARI — `OPFSAdaptiveVFS` on `jspi` against `async`, Safari 27, read off banked exports 2026-09-24
+
+The measurement the default-build change required before `OPFSAdaptiveVFS` moved to `jspi`. It was already banked: 38 bench exports (`.bench/*safari-27*`, rc.3 and rc.4, 21 iPadOS and 17 macOS) carry both columns. Median of the per-run ratio `jspi / async`; below 1 favours `jspi`, except `read-burst-concurrency`, where higher is better. Extraction in `.scratchpad/adaptive-safari27.tsv`.
+
+| metric | macOS | iPadOS |
+|---|---|---|
+| full scan | 0.67 | 0.50 |
+| list page p50 | 0.66 | 0.50 |
+| point read p50 | 0.66 | 0.66 |
+| bulk insert 10k | 0.78 | 0.91 |
+| transaction throughput | 0.83 | 0.59 |
+| write latency p50 | 1.00 | 1.00 |
+| read-burst concurrency | 0.97 | 1.00 |
+
+No median favours `async`. Single runs spread wider — bulk insert on iPadOS up to 1.73 — and Asyncify's Safari slowdown (IDB-SIGNAL) can weigh on the `async` columns depending on where they fall in a run: a cost a consumer pays too, not an artefact. n differs per metric (4 to 21) because the bench's row set grew across those releases.
+
 ## SAFARI-OPFS — what Safari 26 and 27 answer about OPFS access handles, 2026-09-16
 
 Measured by the user in Safari 26's console on a `localhost` page (a secure context is required —

@@ -1100,6 +1100,10 @@ green for the wrong reason. What works: after changing a name, grep the tests fo
 until a folder prefix pushed all of them over and every default-named client failed to open with a
 bare `SQLITE_CANTOPEN`. When a change shrinks a budget, measure the fixtures against it first.
 
+## A changed default is described in more places than the spec lists (2026-09-24, `feat/default-build`)
+
+The spec named the docs to update — CHANGELOG, two `API.md` rows, `VFS.md`'s Builds prose and notes, one JSDoc — and all were done and reviewed green. The final review then found six more places still describing the old default: the `build` option's JSDoc and `deleteDatabase`'s `@defaultValue` (both shipped in the `.d.ts`), the build-order note above `VFS_CAPABILITIES` (which also said "`jspi` is Chromium-only"), the Recommendations bullet in `VFS.md`, the options example in `API.md`, and `client.build` in `API.md`. **When a spec changes a behaviour, its doc list is a starting point: grep the tree for every way the old behaviour is phrased (`first build`, `default`, the old value by name) before writing the list, and again before merging.** Every per-task review passed because each checked its own brief; only the whole-branch review was placed to see it.
+
 ## About proving a refactor neutral (2026-09-24, `refactor/build-capabilities-const-split`)
 
 **TypeScript 7 ships no JavaScript compiler API** — `require('typescript')` exposes two keys, no `createProgram`. A surface check must work from the emitted `.d.ts`: a text dump of every top-level declaration keyed by name, plus a type-level `Equals<A, B>` file run with `tsc --ignoreConfig` (without that flag, tsc 7 refuses a command-line file while a `tsconfig.json` is present, TS5112). **`Equals` across two declaration trees gives false differences on generic methods**: two byte-identical copies of the same `dist` compare unequal on `output` and `transaction`. Run the control — the tree against a copy of itself — before believing a cross-tree failure.

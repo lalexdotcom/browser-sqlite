@@ -72,7 +72,7 @@ describe('deleteDatabase', () => {
   });
 
   // One VFS: the guard needs a concrete VFS whose declared builds exclude
-  // 'sync' — OPFSAdaptiveVFS declares ['async', 'jspi'].
+  // 'sync' — OPFSAdaptiveVFS declares ['jspi', 'async'].
   it('rejects with INVALID_OPTION when the build is not one the VFS supports', async () => {
     await expect(
       deleteDatabase('anything', { vfs: 'OPFSAdaptiveVFS', build: 'sync' }),

@@ -34,8 +34,7 @@ correctness.
   your page is cross-origin isolated: without it, an aborted call rejects straight away
   but the statement runs to its end on its worker. `build: 'async'` buys that back
   without touching your hosting, at the cost of the speed it is chosen for.
-- **`OPFSAdaptiveVFS`** — it picks its strategy per engine, and its `async` build (the
-  default) stops the running statement on every browser, with no headers to set.
+- **`OPFSAdaptiveVFS`** — it picks its strategy per engine, and its default build — `jspi` where the browser has it, `async` elsewhere — stops the running statement on every browser, with no headers to set.
 
 ### If you can guarantee a browser
 
@@ -80,7 +79,7 @@ on its [VFS page](https://github.com/rhashimoto/wa-sqlite/tree/master/src/exampl
 
 <!-- BEGIN GENERATED OPFSWriteAheadVFS -->
 
-**Builds:** [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`sync`](#build-sync), [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+<sup><a href="#reduced-mode">[reduced]</a></sup>, Safari 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>, Android 109+/?, iOS 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>
 
@@ -103,7 +102,7 @@ Bulk loading is what it is fastest at, on every engine measured.
 
 <!-- BEGIN GENERATED OPFSAdaptiveVFS -->
 
-**Builds:** [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+<sup><a href="#reduced-mode">[reduced]</a></sup>, Safari 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>, Android 109+/?, iOS 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>
 
@@ -125,7 +124,7 @@ tabs, which is what the lazy close and reopen is for.
 
 <!-- BEGIN GENERATED OPFSCoopSyncVFS -->
 
-**Builds:** [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`sync`](#build-sync), [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+, Safari 15.4+/27+, Android 109+/?, iOS 15.4+/27+
 
@@ -144,7 +143,7 @@ can take turns on them.
 
 <!-- BEGIN GENERATED AccessHandlePoolVFS -->
 
-**Builds:** [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`sync`](#build-sync), [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+, Safari 15.4+/27+, Android 109+/?, iOS 15.4+/27+
 
@@ -165,7 +164,7 @@ cannot be imported or exported directly — which is what buys it
 
 <!-- BEGIN GENERATED IDBBatchAtomicVFS -->
 
-**Builds:** [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
@@ -195,7 +194,7 @@ apply to it, and it serves a read while a long query runs, on every engine. See
 
 <!-- BEGIN GENERATED IDBMirrorVFS -->
 
-**Builds:** [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
@@ -215,7 +214,7 @@ database in memory per worker and propagates commits asynchronously. See
 
 <!-- BEGIN GENERATED OPFSAnyContextVFS -->
 
-**Builds:** [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+, Safari 26+/27+, Android 109+/?, iOS 26+/27+
 
@@ -237,7 +236,7 @@ so it suits read-only or nearly read-only databases.
 
 <!-- BEGIN GENERATED MemoryVFS -->
 
-**Builds:** [`sync`](#build-sync), [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`sync`](#build-sync), [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
@@ -253,7 +252,7 @@ performance, not as storage.
 
 <!-- BEGIN GENERATED MemoryAsyncVFS -->
 
-**Builds:** [`async`](#build-async), [`jspi`](#build-jspi)
+**Builds:** [`jspi`](#build-jspi), [`async`](#build-async)
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
@@ -267,12 +266,7 @@ baseline rather than storage.
 
 ## Builds reference
 
-Each VFS runs on one or more wa-sqlite WebAssembly builds. The `build` option
-selects one; omitted, the first build the VFS declares is used — the `Builds`
-line of its entry lists them in that order. A pair the VFS does not support
-throws a `SQLiteError` with code `INVALID_OPTION` at construction, naming the
-builds it does support. The pairing is declared in one place,
-`VFS_CAPABILITIES`, which is also what the `SQLiteVFS` type is derived from.
+Each VFS runs on one or more wa-sqlite WebAssembly builds. The `build` option selects one; omitted, the first build the VFS declares that the browser supports is used — the `Builds` line of its entry lists them in that order, and `db.build` reports the one loaded. A pair the VFS does not support throws a `SQLiteError` with code `INVALID_OPTION` at construction, naming the builds it does support. The pairing is declared in one place, `VFS_CAPABILITIES`, which is also what the `SQLiteVFS` type is derived from.
 
 A build carries its own engine requirement, independent of where the VFS stores
 data — so a VFS can be reachable in `sync` on an old browser and in `jspi` only
@@ -288,7 +282,7 @@ Plain synchronous WebAssembly. Needs nothing beyond baseline WASM, so it runs an
 
 Asyncify: the WASM stack is unwound and rewound around asynchronous file operations. Also needs nothing beyond baseline WASM. Every VFS here can run on it.
 
-**On Safari it slows down as it works.** After a few statements of a second or more, a worker on this build runs several times slower — up to twenty times on Safari 26 — and stays slow; Chromium and Firefox do not. The [`jspi`](#build-jspi) build avoids it on Safari 27+. Safari 26 has no JSPI, so there a VFS without a `sync` build has no way around it.
+**On Safari it slows down as it works.** After a few statements of a second or more, a worker on this build runs several times slower — up to twenty times on Safari 26 — and stays slow; Chromium and Firefox do not. Where the browser has JSPI — Safari 27+ — a VFS without `sync` loads [`jspi`](#build-jspi) by default, which avoids it. Safari 26 has no JSPI, so there a VFS without a `sync` build has no way around it.
 
 ### Build `jspi`
 
@@ -296,7 +290,7 @@ Asyncify: the WASM stack is unwound and rewound around asynchronous file operati
 |---|---|---|---|---|
 | 137+ | 153+ | 27+ | Yes | 27+ |
 
-JavaScript Promise Integration — the same asynchrony handled by the engine rather than by Asyncify. Opt-in, and no default uses it, so its narrower availability constrains nobody who does not ask for it.
+JavaScript Promise Integration — the same asynchrony handled by the engine rather than by Asyncify. Every VFS lists it before `async`, so a VFS without `sync` loads it by default where the browser has JSPI, and `async` elsewhere: its narrower availability constrains nobody.
 
 
 <!-- END GENERATED BUILD TABLE -->

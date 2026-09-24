@@ -1,13 +1,14 @@
 import type { SQLiteChunkOptions, SQLiteDB, SQLiteQueryOptions } from './api';
 import { createBulk } from './bulk';
 import {
+  defaultBuildFor,
   describeMissing,
   detectFeatures,
   missingFeature,
 } from './capabilities';
 import type { SQLiteBuild } from './const/builds';
 import type { PlatformFeature } from './const/platform';
-import { defaultBuildFor, type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
+import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { createClientDebug } from './debug';
 import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
 import {
@@ -169,10 +170,10 @@ export type CreateSQLiteClientOptions = {
    */
   vfs: SQLiteVFS;
   /**
-   * Which wa-sqlite WebAssembly build to load. Defaults to the first entry of
-   * `VFS_CAPABILITIES[vfs]` — `sync` where the VFS supports it, since it is both the
-   * fastest and the most portable, otherwise `async`. `jspi` needs engine
-   * support; see the Builds section of VFS.md for versions.
+   * Which wa-sqlite WebAssembly build to load. Defaults to the first build the
+   * VFS declares that the browser supports: `sync` where the VFS has it, else
+   * `jspi` where the browser has JSPI, else `async`. See the Builds section of
+   * VFS.md for versions; `db.build` reports the one loaded.
    *
    * @throws at construction when the build is not one the chosen VFS supports.
    */
@@ -196,9 +197,13 @@ export type CreateSQLiteClientOptions = {
    * A **callback names one file** and receives the resolved `build`, for a
    * bundler-emitted asset whose name carries a content hash:
    * ```ts
-   * import wasmUrl from 'browser-sqlite/dist/worker/wa-sqlite.wasm?url';
-   * createSQLiteClient('app.db', { vfs, wasmUrl: () => wasmUrl });
+   * import wasm from 'browser-sqlite/dist/worker/wa-sqlite.wasm?url';
+   * import wasmAsync from 'browser-sqlite/dist/worker/wa-sqlite-async.wasm?url';
+   * import wasmJspi from 'browser-sqlite/dist/worker/wa-sqlite-jspi.wasm?url';
+   * const urls = { sync: wasm, async: wasmAsync, jspi: wasmJspi };
+   * createSQLiteClient('app.db', { vfs, wasmUrl: (build) => urls[build] });
    * ```
+   * A callback that ignores its argument must be paired with an explicit `build`: an omitted one depends on the browser.
    * It is called once, at construction, and its answer is reused by every
    * worker and every restart.
    *
@@ -304,8 +309,9 @@ const exclusivityProbes = new Map<
  * @remarks
  * **Browser requirements:** This client uses OPFS through Web Workers; no
  * special HTTP headers are required and cross-origin isolation is not needed.
- * The default `build` needs no browser opt-in; only `build: 'jspi'` does, and
- * JSPI is Chromium-only — an unrelated constraint, not a header requirement.
+ * An omitted `build` needs no browser opt-in: it is the first build the VFS
+ * declares that the browser supports. Only an explicit `build: 'jspi'` requires
+ * JSPI — an engine constraint, not a header requirement.
  *
  * **Worker pool side effect:** Calling this function immediately spawns
  * `poolSize` Web Worker threads and begins asynchronous database
@@ -369,7 +375,9 @@ export const createSQLiteClient = (
   const clientUuid = crypto.randomUUID();
 
   const vfs = clientOptions.vfs;
-  const build = clientOptions.build ?? defaultBuildFor(vfs);
+  // Probed once: the default build, the abort channel and the guard below read it.
+  const available = detectFeatures();
+  const build = clientOptions.build ?? defaultBuildFor(vfs, available);
 
   const capability = VFS_CAPABILITIES[vfs];
 
@@ -400,7 +408,7 @@ export const createSQLiteClient = (
    * restricted. Everywhere else this stays undefined and the whole channel is
    * a branch not taken.
    */
-  const abortSlots = detectFeatures().has('cross-origin-isolated')
+  const abortSlots = available.has('cross-origin-isolated')
     ? new SharedArrayBuffer(4 * poolSize)
     : undefined;
 
@@ -435,7 +443,7 @@ export const createSQLiteClient = (
 
   // The engine, not the declaration. Without this the mismatch surfaces later
   // as an opaque open-error from a worker that could not instantiate wasm.
-  const absent = missingFeature(vfs, build, detectFeatures());
+  const absent = missingFeature(vfs, build, available);
   if (absent) {
     throw new SQLiteError(
       'INVALID_OPTION',

@@ -1,5 +1,6 @@
+import { defaultBuildFor, detectFeatures } from './capabilities';
 import type { SQLiteBuild } from './const/builds';
-import { defaultBuildFor, type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
+import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { connectionLockName, createLocks, initLockName } from './locks';
 import { spawnWorker, startupError } from './pool';
 import { SQLiteError } from './types/errors';
@@ -18,7 +19,7 @@ export type DeleteDatabaseOptions = {
    * Which wa-sqlite build to load. It does **not** affect where the database
    * lives; it is here only because a VFS runs solely on the builds it
    * declares, and one of them must be loaded to instantiate the VFS at all.
-   * @defaultValue the first build the VFS declares
+   * @defaultValue the first build the VFS declares that the browser supports
    */
   build?: SQLiteBuild;
   /**
@@ -65,7 +66,7 @@ export const deleteDatabase = async (
   }
 
   const vfs = options.vfs;
-  const build = options.build ?? defaultBuildFor(vfs);
+  const build = options.build ?? defaultBuildFor(vfs, detectFeatures());
   const capability = VFS_CAPABILITIES[vfs];
 
   if (!(capability.builds as readonly SQLiteBuild[]).includes(build)) {

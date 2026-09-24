@@ -1,6 +1,8 @@
 import { describe, expect, it } from '@rstest/core';
+import { defaultBuildFor } from '../../src/capabilities';
+import { BUILD_CAPABILITIES, type SQLiteBuild } from '../../src/const/builds';
+import type { PlatformFeature } from '../../src/const/platform';
 import {
-  defaultBuildFor,
   folderOf,
   type SQLiteVFS,
   VFS_CAPABILITIES,
@@ -19,10 +21,48 @@ describe('VFS_CAPABILITIES', () => {
     }
   });
 
-  // Falsifiable: change `.builds[0]` to `.builds[1]` in defaultBuildFor.
-  it('resolves the default build to the first declared one', () => {
+  const WITH_JSPI = new Set<PlatformFeature>(['jspi']);
+  const WITHOUT_JSPI = new Set<PlatformFeature>();
+  const JSPI_FIRST: readonly SQLiteVFS[] = [
+    'OPFSAdaptiveVFS',
+    'IDBBatchAtomicVFS',
+    'IDBMirrorVFS',
+    'OPFSAnyContextVFS',
+    'MemoryAsyncVFS',
+  ];
+
+  // Falsifiable: swap `jspi` and `async` back in any `builds` array.
+  it('declares jspi before async on every VFS that runs both', () => {
     for (const vfs of names) {
-      expect(defaultBuildFor(vfs)).toBe(VFS_CAPABILITIES[vfs].builds[0]);
+      const builds = VFS_CAPABILITIES[vfs].builds as readonly SQLiteBuild[];
+      expect(builds.indexOf('jspi')).toBeLessThan(builds.indexOf('async'));
+    }
+  });
+
+  // Falsifiable: return `builds[1]` in defaultBuildFor.
+  it('resolves the default build to the first declared one where the engine has JSPI', () => {
+    for (const vfs of names) {
+      expect(defaultBuildFor(vfs, WITH_JSPI)).toBe(
+        VFS_CAPABILITIES[vfs].builds[0],
+      );
+    }
+  });
+
+  // Falsifiable: return `builds[0]` whatever `available` says.
+  it('falls back to the first declared build that requires nothing without JSPI', () => {
+    for (const vfs of names) {
+      const expected = JSPI_FIRST.includes(vfs) ? 'async' : 'sync';
+      expect(defaultBuildFor(vfs, WITHOUT_JSPI)).toBe(expected);
+    }
+  });
+
+  // Falsifiable: drop `async` from a jspi-first VFS's `builds`.
+  it('gives every VFS a build that requires nothing, so the resolution always lands', () => {
+    for (const vfs of names) {
+      const builds = VFS_CAPABILITIES[vfs].builds as readonly SQLiteBuild[];
+      expect(
+        builds.some((build) => BUILD_CAPABILITIES[build].requires.length === 0),
+      ).toBe(true);
     }
   });
 
@@ -55,8 +95,6 @@ import {
   KNOWN_FEATURES,
   missingFeature,
 } from '../../src/capabilities';
-import { BUILD_CAPABILITIES } from '../../src/const/builds';
-import type { PlatformFeature } from '../../src/const/platform';
 import { WORKER_PROBES } from '../../src/worker/probes';
 
 describe('platform requirements', () => {

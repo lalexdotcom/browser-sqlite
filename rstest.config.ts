@@ -1,8 +1,12 @@
 import { withRslibConfig } from '@rstest/adapter-rslib';
 import { defineConfig, type ProjectConfig } from '@rstest/core';
-import { targetLabel, targetsFromEnv } from './tests/target-projects.ts';
+import {
+  CHROMIUM_FEATURES,
+  targetLabel,
+  targetsFromEnv,
+} from './tests/target-projects.ts';
 
-const targets = targetsFromEnv(process.env.BSQ_TEST_TARGETS);
+const targets = targetsFromEnv(process.env.BSQ_TEST_TARGETS, CHROMIUM_FEATURES);
 
 // Suppresses "window is not defined" noise from rsbuild's HMR client running
 // inside Web Worker bundles. The HMR client calls window.location.reload()

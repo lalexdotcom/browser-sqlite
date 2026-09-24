@@ -118,9 +118,9 @@ describe('OPFSCoopSyncVFS pool guard', () => {
  */
 describe('vfs/build combination guard', () => {
   // One VFS: the guard needs a concrete VFS whose declared builds exclude
-  // 'sync' — OPFSAdaptiveVFS declares ['async', 'jspi'].
+  // 'sync' — OPFSAdaptiveVFS declares ['jspi', 'async'].
   it('throws when the build is not one the VFS supports', () => {
-    // OPFSAdaptiveVFS declares ['async', 'jspi'] — 'sync' is not among them.
+    // OPFSAdaptiveVFS declares ['jspi', 'async'] — 'sync' is not among them.
     expect(() =>
       createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
         vfs: 'OPFSAdaptiveVFS',

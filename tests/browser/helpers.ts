@@ -1,7 +1,7 @@
 import { onTestFinished } from '@rstest/core';
+import { defaultBuildFor } from '../../src/capabilities';
 import { createSQLiteClient } from '../../src/client';
 import {
-  defaultBuildFor,
   folderOf,
   type SQLiteVFS,
   VFS_CAPABILITIES,
@@ -110,7 +110,8 @@ export async function createTestClient(options: TestClientOptions = {}) {
       ? pairFor(needs)
       : {
           vfs: options.vfs,
-          build: options.build ?? defaultBuildFor(options.vfs),
+          build:
+            options.build ?? defaultBuildFor(options.vfs, AVAILABLE_FEATURES),
         };
 
   // createSQLiteClient is synchronous — workers initialize in the background.

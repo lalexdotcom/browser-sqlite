@@ -20,7 +20,7 @@ import { createSQLiteClient } from 'browser-sqlite';
 const db = createSQLiteClient('myapp.sqlite', {
   poolSize: 2,                    // number of worker threads (default: 2)
   vfs: 'OPFSAdaptiveVFS',         // required — see Browser compatibility
-  build: 'async',                 // wa-sqlite build (default: the VFS's first)
+  build: 'async',                 // wa-sqlite build (default: the first the browser supports)
   pragmas: {                      // SQLite PRAGMAs applied on open
     journal_mode: 'WAL',
     synchronous: 'NORMAL',
@@ -36,7 +36,7 @@ const db = createSQLiteClient('myapp.sqlite', {
 |--------|------|---------|-------------|
 | `poolSize` | `number` | `2`, capped to the VFS's `maxPoolSize` and to what the environment allows | Web Workers in the pool. |
 | `vfs` | `SQLiteVFS` | — (required) | Where the database is stored.<br>See [Recommendations](VFS.md#recommendations). |
-| `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite WebAssembly build to load.<br>See [Builds reference](VFS.md#builds-reference). |
+| `build` | `SQLiteBuild` | first build the VFS declares that the browser supports | Which wa-sqlite WebAssembly build to load.<br>See [Builds reference](VFS.md#builds-reference). |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Where the workers fetch their `.wasm`. |
 | `pragmas` | `Record<string, string>` | `undefined` | SQLite PRAGMAs applied to each worker connection on open. |
 | `maxWorkerRestarts` | `number` | `1` | How many times a slot may be restarted after it dies. |
@@ -83,7 +83,7 @@ A database name may be 56 characters once normalized — 52 on `OPFSAdaptiveVFS`
 
 ## *client*.build
 
-`SQLiteBuild`, readonly. The wa-sqlite build actually loaded — the VFS's first when `build` was not passed.
+`SQLiteBuild`, readonly. The wa-sqlite build actually loaded — the first build the VFS declares that the browser supports, when `build` was not passed.
 
 ## *client*.poolSize
 
@@ -337,7 +337,7 @@ await deleteDatabase('myapp.sqlite', { vfs: 'OPFSAdaptiveVFS' });
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `vfs` | `SQLiteVFS` | — (required) | The VFS the database was created with. |
-| `build` | `SQLiteBuild` | first build the VFS declares | Which wa-sqlite build to load. It does not affect where the database lives — only which builds can instantiate the VFS. |
+| `build` | `SQLiteBuild` | first build the VFS declares that the browser supports | Which wa-sqlite build to load. It does not affect where the database lives — only which builds can instantiate the VFS. |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Same meaning as on [`createSQLiteClient`](#options). A deployment that needs it to open a database needs it to delete one. |
 
 Deleting a database that is not there throws — most often because `vfs` is not the one it was created with.
