@@ -43,6 +43,8 @@ export const VFS_CAPABILITIES = { … }; // JSON.stringify of the table
 
 The page replaces `VFS_CAPABILITIES` in its `./dist/index.js` import with `import { VFS_CAPABILITIES } from './vfs-capabilities.js';`. Nothing else in the page changes. The table is JSON-safe (checked 2026-09-24: no `undefined` value, no non-finite number, no `Set` or `Map`).
 
+**The assembler writes the module only when the page imports it.** The Pages workflow (`.github/workflows/pages.yaml`, "Build the root, from the release tag") copies the current `assemble.mjs` into the checkout of the published tag and runs it there. Until a release ships this change, that tree has no `src/const/vfs.ts` (rc.5 keeps the table in `src/types.ts`) and its page imports the table from its own `dist/`. So the condition is the page's own import of `./vfs-capabilities.js`, not the presence of a source file: an old page assembles as before, and a page that needs the module while the source is missing fails the run on the import instead of shipping a page that 404s.
+
 Rejected: a `.json` fetched at startup (an `await` before the page can start, for no gain) and a placeholder substituted into the HTML like `__LIB_VERSION__` (an object literal spliced as text into a file nothing type-checks).
 
 ## 5. The split's leftovers

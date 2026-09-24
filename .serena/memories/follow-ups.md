@@ -95,6 +95,10 @@ savepoint before opening its own.
 - `src/inspect.ts` and `src/locks.ts` import `./const/vfs` twice (type, then value), a split inherited from `./types`.
 - `createSQLiteClient`'s inferred return type prints `build` as `"async" | "jspi" | "sync"` in `dist/client.d.ts`, as it already printed `vfs` as the nine-name union: the declaration emitter expands a `keyof typeof` alias in an inferred position. An explicit return annotation would restore the names on hover.
 
+## `db.debug` — for the documentation review session (user, 2026-09-24)
+
+`API.md` has no `## *client*.debug` section: the property appears only in the options table (`debug` row: "the `db.debug` introspection tree"), which advertises it without saying what it holds or when it is `undefined`. Meanwhile `SQLiteDB.debug` is tagged `@internal` in `src/api.ts` ("Not part of the stable public API. Shape is subject to change without notice."), yet no `stripInternal` is set, so it ships in `dist/api.d.ts` with `ClientDebugState`. The docs and the tag disagree on whether it is public; the review settles which, and documents it or stops advertising it. Its type is also only partly readonly (`workers`, `requests`, `queries`, `currentRequest` and every `QueryDebugState` field are mutable).
+
 ## The bench's `pool N → M` header has not been seen on Safari (2026-09-23)
 
 `feat/db-ready` made each column header show the pool it ran on once `db.ready` resolves. `check.mjs` verified it on Chromium and Firefox (Firefox exports `poolSize` 1 for the `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` pairs). On Safari the `OPFSAdaptiveVFS` columns should read `pool 4 → 1`; the user has not run it yet (serve from the container, `mem:conventions`).
