@@ -57,7 +57,7 @@ No `index.ts` in either directory and no re-export anywhere. `src/types.ts` is d
 | `src/types/errors.ts` | today's `src/errors.ts`, moved whole — `SQLiteErrorCode` and both classes | const/sqlite |
 | `src/types/protocol.ts` | `SQLiteWorkerMessageData`, `SQLWorkerResultData`, `SharedArrayTypes`, `SavepointOp`, `SQLOptions`, `WasmLocation`, `ClientMessageData`, `WorkerMessageData` | platform, builds, vfs, sqlite, errors |
 
-DAG: platform ← builds ← vfs ← protocol and sqlite ← errors ← protocol. No cycle. `types/` emits JS (`SharedArrayTypes`, the error classes): the directory groups declarations, it is not an erasable-only contract.
+DAG: platform ← builds ← vfs ← protocol and sqlite ← errors ← protocol. No cycle. **Inside `const/`, imports are `import type` only**: `pnpm docs:vfs` and `pnpm test:matrix` load these files under plain Node type stripping, which erases type imports but cannot resolve an extensionless value import — as `types.ts` already is today. `types/` emits JS (`SharedArrayTypes`, the error classes): the directory groups declarations, it is not an erasable-only contract.
 
 - **`git mv`** for `errors.ts` and `sqlite-codes.ts`, so their history follows.
 - **Imports** — every importer of `src/types`, `src/errors` or `src/sqlite-codes` across `src/`, `src/worker/`, `tests/` and `scripts/` imports from the file that declares what it uses. The churn is not a cost (user, 2026-09-16).
@@ -75,7 +75,12 @@ Each passes the `pre-commit` hook (`tsc`, lint-staged, unit).
 
 ## 4. Verification
 
-**The public surface.** A throwaway script — in the scratchpad, not committed — loads `dist/index.d.ts` through the TypeScript compiler API and prints every export with its fully expanded type, untruncated. Run on `main` and on the branch; **the diff must be empty**, `SQLiteBuild` resolving to `'sync' | 'async' | 'jspi'` in both. The per-file `.d.ts` paths under `dist/` change, and are not public: `package.json` `exports` publishes only `./dist/index.d.ts` and the worker.
+**The public surface.** TypeScript 7 ships no JavaScript compiler API, so the check is two throwaway tools, in the scratchpad and not committed, both tried on 2026-09-24:
+
+- a text dump of `dist/**/*.d.ts` — the names reachable from `index.d.ts`, then every top-level declaration keyed by name, comments and import lines stripped. Taken before the first code change and after the last; **the public name list must be identical**, and the declarations may differ only by `BUILD_REQUIREMENTS` and `BUILD_DEGRADES_WITHOUT` removed, `BuildCapability` and `BUILD_CAPABILITIES` added, and `SQLiteBuild`'s right-hand side;
+- a type-level equality check, `tsc --ignoreConfig` over a file importing the saved `dist` and the new one: `SQLiteBuild` equals `'sync' | 'async' | 'jspi'` in both. It fails when falsified (checked against `'sync' | 'async'`).
+
+The per-file `.d.ts` paths under `dist/` change, and are not public: `package.json` `exports` publishes only `./dist/index.d.ts` and the worker.
 
 **The 2026-09-24 baseline** (`mem:state`), read in one pass at the end:
 
