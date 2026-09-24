@@ -169,7 +169,7 @@ judgement is theirs, taken on being told the number.
 
 ## Unexport `VFS_CAPABILITIES` — the public surface (user, 2026-09-23)
 
-`VFS_CAPABILITIES` and its types `VFSCapability`, `VFSLayout`, `VFSStorage` and `VFSMemoryModel` are public since rc.4 (`2478c81`, `src/index.ts`), so every field of the table is public contract — internal ones like `exclusiveFileHandle` or `singleConnectionWithout` included — and every change to the table is breaking. **The only reader through the export is the bench page** (`scripts/bench/html/index.html`: the vfs × build pairs, and `storage` for its cleanup); `scripts/test-matrix.mjs` and `scripts/render-vfs-matrix.ts` import `src/types.ts` directly, no `tests/consumer*` project uses it, and no public signature names the four types. What must stay exported: `SQLiteVFS`, `SQLiteBuild`, `PlatformFeature` (returned by `detectFeatures()` / `missingFeature()`); `defaultBuildFor` is a separate question.
+`VFS_CAPABILITIES` and its types `VFSCapability`, `VFSLayout`, `VFSStorage` and `VFSMemoryModel` are public since rc.4 (`2478c81`, `src/index.ts`), so every field of the table is public contract — internal ones like `exclusiveFileHandle` or `singleConnectionWithout` included — and every change to the table is breaking. **The only reader through the export is the bench page** (`scripts/bench/html/index.html`: the vfs × build pairs, and `storage` for its cleanup); `scripts/test-matrix.mjs` and `scripts/render-vfs-matrix.ts` import `src/types.ts` directly, no `tests/consumer*` project uses it, and no public signature names the four types. What must stay exported: `SQLiteVFS`, `SQLiteBuild`, `PlatformFeature` (returned by `detectFeatures()` / `missingFeature()`); `defaultBuildFor` is a separate question. **`folderOf` joined the exports on `feat/vfs-folders` (2026-09-23) without being planned, and the user kept it there for this chantier to decide** — it has no consumer through the package (tests and scripts import `src/types`, the bench reads `cap.folder`) and is documented nowhere.
 
 **Proposed, not decided:** drop the export and have `bench:build` emit the table as JSON from `src/types.ts` (it is pure data). What a consumer loses: enumerating the VFS at runtime, e.g. for a selector — nothing in the repository needs it. Breaking. Parked by the user on 2026-09-23 to stay on the per-VFS folder work.
 
@@ -182,6 +182,8 @@ judgement is theirs, taken on being told the number.
 `'fails the client rather than hanging when all startup workers are gone'` kills slot 0 while slot 1's retry worker fails by a real 404 whose timing the browser owns. When the 404 lands first, the gate opens on a live slot 0 and the scenario it names is not what runs. Found while `db.ready`'s case 4 flaked on the same fixture (`failWorkersFromIndex`); case 4 was rewritten on silent workers that the test fails itself, in order (`silentWorkersFromIndex`). The same rewrite applies here. Not seen failing in any `pnpm test` or matrix run.
 
 **A Firefox page crash on this file, once (2026-09-23).** The pre-merge `pnpm test` of `feat/db-ready` stopped with `Browser page crashed while running tests/browser/lifecycle.test.ts` on the Firefox config — no test failed, the file did not finish. Not reproduced: 10 of 10 runs of the file alone on Firefox clean, then the full `pnpm test` that concluded the merge green, and every earlier run that day (full suite, 22 Firefox matrix cells) clean. Unknown whether the new silent blob workers play a part; the next sighting should keep its `pnpm test` log.
+
+**Second sighting, same day, on `feat/vfs-folders`** — the same message on the same file in the Firefox leg of a full `pnpm test`, run by a subagent after the dot-folder change; the file alone 34/34, the full rerun green. **The log was not kept this time either.** Two sightings in one day, both under a full parallel run, both clean in isolation: the next one must be captured — keep `.scratchpad/` logs of every full run until it is.
 
 ## Default to the first build the environment supports — `jspi` before `async`, for rc.6 (user, 2026-09-14)
 
@@ -363,19 +365,9 @@ defect, and the scenario a defect is found through is often not the one that dem
 
 T3/T4 assert an abandoned write ends before `natural * f`, and `f` is 0.9 because `OPFSWriteAheadVFS` sat at 0.66 (CUT-RATIO, `mem:measurements`). The cause is fixed in our build since the #361 patch; the bound has not been re-measured and still carries the old slack.
 
-## Mixing VFS of the `opfs-path` family on one database (2026-09-15)
+## Two worker fallback messages carry the path (2026-09-23)
 
-Measured while the second-client guard was built: on Chromium an `OPFSAdaptiveVFS` client beside a LIVE
-`OPFSWriteAheadVFS` client opens and reads an **empty** database (`no such table`) — WriteAhead's writes
-live in its own `-wa0`/`-wa1` files; on Firefox it waits while WriteAhead holds `bsq:conn` exclusively,
-then gets `WORKER_CRASHED` once that client closes. **Not measured:** the successive shape (WriteAhead
-writes, closes, another VFS reopens), where the same write-ahead files are the reason to fear a stale
-read. CROSS-VFS (2026-09-02) already showed deletion through any member destroys the others' data.
-
-**The user's idea, on the table:** a short per-VFS prefix in the file name, which would make "one database,
-one VFS" true by construction, as it already is for the `idb-store` and `opfs-pool` families. Its own
-branch: the migration of existing databases is the design's core (rc.4 is published under `latest`), and
-the prefix spends part of wa-sqlite's 56-character path budget.
+`src/worker/worker.ts`'s open and delete fallbacks read `Failed to open ${file}` / `Failed to delete ${data.file}`, and since `feat/vfs-folders` the worker only knows the path (`.ad/name`). They fire only when something that is not an `Error` is thrown, and `startupError` forwards the text verbatim, so no client wrapping re-adds the logical name. Parked by the controller's ruling: the path is the only identifier the worker has. Reattaching the logical name would mean sending it to the worker or wrapping on the client side.
 
 ## Smaller things this branch left open (2026-09-15)
 

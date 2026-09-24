@@ -1084,3 +1084,18 @@ A measurement driver read `process.env.BROWSER` to pick a Playwright engine. Thi
 failure look like a Chromium problem. Second instance of "the environment an agent runs in is not
 neutral" above: prefix a probe's variables (`PW_BROWSER`), and suspect the environment when one arm of
 a symmetric harness fails.
+
+## About verification (2026-09-23, `feat/vfs-folders`)
+
+**A task that changes a name every test builds must run the whole suite, not its own file list.**
+Task 3 re-keyed every lock on the VFS; its brief listed the tests that call the lock-name helpers, and
+the implementer ran exactly those. `exclusive-connection.test.ts` held a hardcoded `bsq:conn:opfs:…`
+literal nobody had listed, and went red on a commit reported green. The same sweep found four unit
+tests whose hardcoded prefix now failed the prefix check before reaching the branch they named —
+green for the wrong reason. What works: after changing a name, grep the tests for the NAME'S SHAPE
+(`bsq:`, `getDirectory()`, `LockName(`), not for the helper, and run `pnpm test` whole.
+
+**A fixture sitting exactly on a bound is invisible until the bound moves.** Every
+`browser-sqlite-test-${uuid}` was exactly 56 characters — SQLite's path limit — and nothing said so
+until a folder prefix pushed all of them over and every default-named client failed to open with a
+bare `SQLITE_CANTOPEN`. When a change shrinks a budget, measure the fixtures against it first.

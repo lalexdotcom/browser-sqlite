@@ -95,22 +95,33 @@ Numbers live in `mem:measurements`.
 (merge `be314db`, 2026-08-20): 24 % stale cross-connection reads, and deprecated upstream
 (rhashimoto/wa-sqlite#317). `grep -rn Permuted src/ README.md tests/` returns nothing.
 
-## CROSS-VFS — the four `opfs-path` VFS share one file, and deleting proves it
+## CROSS-VFS — CLOSED 2026-09-23: each OPFS path VFS keeps its own folder
 
-Measured 2026-09-02, n=3 per case per engine, both agreeing; table in `mem:measurements`.
+**Until `feat/vfs-folders` (rc.6)** `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and
+`OPFSWriteAheadVFS` resolved one database name to one OPFS file at the root. Measured 2026-09-02
+(table in `mem:measurements`): deleting through any of them destroyed a database created by any
+other, silently; on Chromium an `OPFSAdaptiveVFS` client beside a live `OPFSWriteAheadVFS` client
+read an empty database (WriteAhead's writes sat in its own `-wa0`/`-wa1`). The library documented it
+as an exception and keyed its locks on a shared `opfs` namespace.
 
-`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` all resolve one
-database name to the same OPFS file. **Deleting through any of them destroys a database created by
-any other, and `deleteDatabase` resolves without reporting anything.** Across layout families —
-`opfs-path` against `idb-store` or `opfs-pool` — the data survives, as the docs always claimed.
+**Now each keeps its databases in `.ad/`, `.ac/`, `.cs/`, `.wa/`** — `VFS_CAPABILITIES.folder`
+declares the two letters, `databasePath` adds the dot (user: it keeps the library's folders apart
+from an application's own OPFS entries; database names may still start with a dot). "A database
+belongs to the VFS that wrote it" is true on all nine VFS by construction, lock names key on the VFS
+name, and `layout` is gone from the table (`storage` + the presence of `folder` say what it said —
+`folder` doubles as "this VFS addresses its files by path", which is what `deleteDatabase` needs).
+Conformance `folders.test.ts` holds it: a ring `.ad`→`.ac`→`.cs`→`.wa`→`.ad` where the reader finds
+nothing to delete and an empty database, and the writer still reads its table.
 
-**Reading is a different question from deleting, and the two must not be argued from each other.**
-Within the family, three of four read pairs saw each other's data; `OPFSCoopSyncVFS` → `OPFSAdaptiveVFS`
-did not, most likely because those two default to different builds (`sync` against `async`) rather
-than because of the VFS. Deletion is unaffected either way: it removes a file, it does not read one.
+**Databases created before rc.6 are not migrated** (user's call: a pre-1.0 release announced to
+nobody does not justify a probe on every open). The CHANGELOG carries a snippet that moves a
+database's files into its folder — normalized name, subfolders, the database last after its journal —
+executed on Chromium and Firefox in four cases before it was written.
 
-This is why lock names in `locks.ts` derive from `layout` and never from a VFS name. The
-documentation had been claiming the opposite of what the lock keys already assumed.
+**The root entries `.ad`, `.ac`, `.cs`, `.wa` now belong to the library**, as `AccessHandlePoolVFS`,
+`.wa-sqlite` and `.ahp-*` already did. A file an application wrote under one of those names would
+make `getDirectoryHandle(…, { create })` throw `TypeMismatchError` on every open of that VFS; the dot
+is what makes that improbable. Not documented beyond that.
 
 ## AHP-2TAB — `AccessHandlePoolVFS` is not multi-tab, and it does not say so
 
@@ -158,7 +169,7 @@ A terminated worker releases its Web Locks **at once** and its OPFS access handl
 later** — up to ~2 s on Chromium when it was killed inside a `step()`, 1-6 ms on Firefox
 (HANDLE-ORPHAN). So a VFS acquiring a handle meets a file held by a context that answers nothing:
 no lock to wait on, no owner to ask, only time. `createVfsInstance` already waited that out, but
-**only around `vfsClass.create()`** — an `opfs-path` VFS takes the file's handle later, inside
+**only around `vfsClass.create()`** — a path-addressed OPFS VFS (one with a `folder`) takes the file's handle later, inside
 `sqlite3_open_v2`, where that retry never looked. Measured with `held=none pending=none` for every
 `ahp:` lock at the moment of failure: nobody holds anything.
 
@@ -178,7 +189,7 @@ the error IS available (instance creation) the retry tests it directly and needs
 `OPFSCoopSyncVFS` returns it for a file that exists and is **empty** — its `jOpen` only reaches a
 path recorded in `accessiblePaths`, which `#createPersistentFile` fills only for a file with a
 size. So a database opened and never written was reported absent. Presence is now decided by the
-OPFS entry on the `opfs-path` layout; the open probe stays where nothing is observable from
+OPFS entry on a VFS with a `folder`; the open probe stays where nothing is observable from
 outside the store.
 
 ## HANDLE-1 — the limit that shapes every recommendation
