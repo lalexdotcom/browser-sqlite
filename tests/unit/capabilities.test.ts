@@ -55,11 +55,7 @@ import {
   KNOWN_FEATURES,
   missingFeature,
 } from '../../src/capabilities';
-import {
-  BUILD_DEGRADES_WITHOUT,
-  BUILD_REQUIREMENTS,
-  type PlatformFeature,
-} from '../../src/types';
+import { BUILD_CAPABILITIES, type PlatformFeature } from '../../src/types';
 import { WORKER_PROBES } from '../../src/worker/probes';
 
 describe('platform requirements', () => {
@@ -73,8 +69,9 @@ describe('platform requirements', () => {
       for (const f of cap.degradesWithout) declared.add(f);
       for (const f of cap.singleConnectionWithout) declared.add(f);
     }
-    for (const reqs of Object.values(BUILD_REQUIREMENTS)) {
-      for (const f of reqs) declared.add(f);
+    for (const cap of Object.values(BUILD_CAPABILITIES)) {
+      for (const f of cap.requires) declared.add(f);
+      for (const f of cap.interruptibleWithout) declared.add(f);
     }
 
     expect(declared.size).toBeGreaterThan(0);
@@ -137,10 +134,12 @@ describe('platform requirements', () => {
     );
   });
 
-  it('declares which build degrades without which feature', () => {
-    expect(BUILD_DEGRADES_WITHOUT.sync).toEqual(['cross-origin-isolated']);
-    expect(BUILD_DEGRADES_WITHOUT.async).toEqual([]);
-    expect(BUILD_DEGRADES_WITHOUT.jspi).toEqual([]);
+  it('declares which build cannot be interrupted without which feature', () => {
+    expect(BUILD_CAPABILITIES.sync.interruptibleWithout).toEqual([
+      'cross-origin-isolated',
+    ]);
+    expect(BUILD_CAPABILITIES.async.interruptibleWithout).toEqual([]);
+    expect(BUILD_CAPABILITIES.jspi.interruptibleWithout).toEqual([]);
   });
 });
 

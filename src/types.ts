@@ -189,41 +189,32 @@ export type WorkerMessageData =
       sqliteCode?: SQLiteResultCode;
     };
 
+/** What a build needs from the engine, and what it loses without it. */
+export type BuildCapability = {
+  /** Platform features this build cannot run without, beyond plain WebAssembly. */
+  readonly requires: readonly PlatformFeature[];
+  /**
+   * Platform features without which a running statement cannot be interrupted.
+   * The `sync` build carries an abort into `step()` through a SharedArrayBuffer,
+   * which is absent outside a cross-origin isolated context (measured
+   * 2026-09-04). COOP/COEP and Document-Isolation-Policy all satisfy the probe.
+   */
+  readonly interruptibleWithout: readonly PlatformFeature[];
+};
+
+/**
+ * The build registry. Every other build-keyed table is typed against its keys,
+ * so a build missing from one, or extra in one, fails to compile. Preference
+ * order is per VFS, in `VFS_CAPABILITIES[vfs].builds`.
+ */
+export const BUILD_CAPABILITIES = {
+  sync: { requires: [], interruptibleWithout: ['cross-origin-isolated'] },
+  async: { requires: [], interruptibleWithout: [] },
+  jspi: { requires: ['jspi'], interruptibleWithout: [] },
+} as const satisfies Record<string, BuildCapability>;
+
 /** Which wa-sqlite WebAssembly build a worker loads. */
-export type SQLiteBuild = 'sync' | 'async' | 'jspi';
-
-/**
- * What each build needs from the engine beyond plain WebAssembly.
- *
- * `satisfies Record<SQLiteBuild, …>` and not `SQLiteBuild = keyof typeof …`:
- * the check must run in this direction. Adding a build to the union then fails
- * to compile until its requirements are declared, where `keyof` would let a
- * forgotten entry mean silently that the build does not exist. `VFS_CAPABILITIES`
- * derives `SQLiteVFS` from its keys because it *is* the VFS registry; the build
- * registry is `WA_SQLITE_BUILDS` in the worker, and this table describes one
- * attribute of builds rather than the builds themselves.
- */
-export const BUILD_REQUIREMENTS = {
-  sync: [],
-  async: [],
-  jspi: ['jspi'],
-} as const satisfies Record<SQLiteBuild, readonly PlatformFeature[]>;
-
-/**
- * Platform features a build USES when present and works without, at a cost —
- * the symmetric of `degradesWithout` on a VFS, at the level where this one
- * actually lives. The `sync` build cannot carry an abort into a running
- * `step()` without a `SharedArrayBuffer`, and there is no SharedArrayBuffer
- * outside a cross-origin isolated context: measured 2026-09-04, it is not
- * restricted there, it is absent. Nothing here names COOP/COEP or
- * Document-Isolation-Policy: any of them satisfies the probe, and one of them
- * is Chrome-only.
- */
-export const BUILD_DEGRADES_WITHOUT = {
-  sync: ['cross-origin-isolated'],
-  async: [],
-  jspi: [],
-} as const satisfies Record<SQLiteBuild, readonly PlatformFeature[]>;
+export type SQLiteBuild = keyof typeof BUILD_CAPABILITIES;
 
 /**
  * A platform feature a VFS may need. Which browser versions ship each one is

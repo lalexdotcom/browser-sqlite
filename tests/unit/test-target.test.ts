@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@rstest/core';
 import { missingFeature } from '../../src/capabilities';
 import {
-  BUILD_REQUIREMENTS,
+  BUILD_CAPABILITIES,
   type PlatformFeature,
   type SQLiteBuild,
   type SQLiteVFS,
@@ -166,7 +166,7 @@ describe('resolvePair', () => {
             if (found === null) continue;
             const required: readonly PlatformFeature[] = [
               ...VFS_CAPABILITIES[found.vfs].requires,
-              ...BUILD_REQUIREMENTS[found.build],
+              ...BUILD_CAPABILITIES[found.build].requires,
             ];
             expect(
               required.filter((feature) => !where.features.has(feature)),
@@ -184,7 +184,7 @@ describe('resolvePair', () => {
     const target = pair('OPFSAdaptiveVFS', 'jspi');
     const noJspi = here(['opfs', 'readwrite-unsafe', 'writable-stream']);
     expect(missingFeature(target.vfs, target.build, noJspi.features)).toBe(
-      BUILD_REQUIREMENTS.jspi[0],
+      BUILD_CAPABILITIES.jspi.requires[0],
     );
     expect(resolvePair(target, [], noJspi)).toBeNull();
     expect(resolvePair(target, ['interruptible'], noJspi)).toBeNull();
@@ -193,7 +193,7 @@ describe('resolvePair', () => {
       resolvePair(
         target,
         [],
-        here([...noJspi.features, ...BUILD_REQUIREMENTS.jspi]),
+        here([...noJspi.features, ...BUILD_CAPABILITIES.jspi.requires]),
       ),
     ).toEqual(target);
   });

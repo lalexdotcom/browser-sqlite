@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@rstest/core';
 import { detectFeatures, missingFeature } from '../../src/capabilities';
-import { BUILD_REQUIREMENTS, VFS_CAPABILITIES } from '../../src/types';
+import { BUILD_CAPABILITIES, VFS_CAPABILITIES } from '../../src/types';
 import { TEST_TARGET } from './helpers';
 
 /**
@@ -21,7 +21,7 @@ describe('detectFeatures, in the engine', () => {
     // not whether a VFS loads — so every feature here has a page probe.
     const required = [
       ...VFS_CAPABILITIES[TEST_TARGET.vfs].requires,
-      ...BUILD_REQUIREMENTS[TEST_TARGET.build],
+      ...BUILD_CAPABILITIES[TEST_TARGET.build].requires,
     ];
 
     for (const feature of required) {

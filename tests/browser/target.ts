@@ -1,8 +1,7 @@
 import { RECOMMENDED_VFS } from '../../scripts/recommended-vfs';
 import { sharesStorage } from '../../src/locks';
 import {
-  BUILD_DEGRADES_WITHOUT,
-  BUILD_REQUIREMENTS,
+  BUILD_CAPABILITIES,
   folderOf,
   type PlatformFeature,
   type SQLiteBuild,
@@ -66,7 +65,7 @@ const runsHere = ({ vfs, build }: TestTarget, here: Here): boolean =>
   allHere(
     [
       ...(VFS_CAPABILITIES[vfs].requires as readonly PlatformFeature[]),
-      ...(BUILD_REQUIREMENTS[build] as readonly PlatformFeature[]),
+      ...(BUILD_CAPABILITIES[build].requires as readonly PlatformFeature[]),
     ],
     here,
   );
@@ -102,16 +101,7 @@ const holds = (need: Need, { vfs, build }: TestTarget, here: Here): boolean => {
         )
       );
     case 'interruptible':
-      // Read from the declaration, not restated: BUILD_DEGRADES_WITHOUT.sync
-      // is `['cross-origin-isolated']` for exactly this reason — without a
-      // SharedArrayBuffer the sync build cannot carry an abort into a running
-      // step(). PROVISIONAL SHAPE: `degradesWithout` means "degrades on any
-      // axis", and it is only because the sync build has one single declared
-      // degradation that reading the whole list is equivalent to asking about
-      // interruption. rc.6's BUILD_CAPABILITIES gives the property its own
-      // field (`mem:follow-ups`); until then a second entry in this list would
-      // make this answer silently wrong.
-      return allHere(BUILD_DEGRADES_WITHOUT[build], here);
+      return allHere(BUILD_CAPABILITIES[build].interruptibleWithout, here);
     case 'shared-second-client':
       return sharedSecondClient(vfs, here);
     case 'shared-storage':

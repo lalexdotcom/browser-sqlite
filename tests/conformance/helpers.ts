@@ -2,7 +2,7 @@ import { afterEach, expect } from '@rstest/core';
 import { detectFeatures } from '../../src/capabilities';
 import { createSQLiteClient, type WorkerLostEvent } from '../../src/client';
 import {
-  BUILD_REQUIREMENTS,
+  BUILD_CAPABILITIES,
   defaultBuildFor,
   type PlatformFeature,
   type SQLiteBuild,
@@ -142,7 +142,7 @@ export const AVAILABLE_FEATURES: ReadonlySet<PlatformFeature> = new Set([
  * The first feature this (vfs, build) pair needs and this engine lacks, or
  * null when the pair can run. Both requirement lists are read from the tables
  * rather than restated here, so a feature added to a VFS's `requires` or to
- * `BUILD_REQUIREMENTS` is honoured with no edit in this file — which is how
+ * a build's `requires` is honoured with no edit in this file — which is how
  * `writable-stream` was missed once already.
  *
  * Returned by name, not as a boolean, so the skip message states the reason it
@@ -159,7 +159,7 @@ export const missingHere = (
   // narrows an empty requirement list to `readonly []`, where `.find` takes never.
   [
     ...(VFS_CAPABILITIES[vfs].requires as readonly PlatformFeature[]),
-    ...(BUILD_REQUIREMENTS[build] as readonly PlatformFeature[]),
+    ...(BUILD_CAPABILITIES[build].requires as readonly PlatformFeature[]),
   ].find((feature) => !AVAILABLE_FEATURES.has(feature)) ?? null;
 
 /** The VFS's declared pool cap when it has one, or 2 when the pool is unbounded. */
