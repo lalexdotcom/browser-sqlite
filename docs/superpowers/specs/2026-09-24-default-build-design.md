@@ -66,6 +66,16 @@ export const defaultBuildFor = (
 
 `tests/conformance/helpers.ts` (`missingHere`, `conformanceClient`, `createReopened`) and `tests/browser/helpers.ts` (`createTestClient`) pass `AVAILABLE_FEATURES`, which they already compute in the page.
 
+### 4.4 The fallback, end to end — a browser test
+
+No engine without JSPI is at hand (Safari 26 is gone; Playwright's Linux WebKit loads no worker, `mem:conventions`), and the unit test of § 4.1 sees only the pure function. What is new is the resolution, not the `async` build, which has been `OPFSAdaptiveVFS`'s default on every engine, Safari 26 included, until now.
+
+**A page can take JSPI away from itself.** `detectFeatures()` reads `typeof WebAssembly.Suspending` when it is called, and the property is `configurable` and `writable` on Playwright's Chromium and Firefox: `delete` makes `typeof` answer `undefined`, and assigning the saved value restores it (probed 2026-09-24, `.scratchpad/default-build/suspending-probe.mjs`).
+
+So one browser test hides `WebAssembly.Suspending`, creates a client on the project's VFS with no `build`, and asserts that `db.build` is the VFS's first declared build that requires nothing, and that a query runs; the property is restored in a `finally`. Test files run in pages of their own, so the deletion reaches no other file. The worker keeps its own global, where `Suspending` is still defined; the build it is told to load does not use it.
+
+It discriminates wherever the VFS's first declared build is `jspi` — `OPFSAdaptiveVFS` in `pnpm test`, and the five `jspi`-first VFS in the matrix. On a `sync`-first VFS it holds trivially. Falsifier: a resolution that returns `builds[0]` whatever `available` says makes the client refuse the pair at construction (`INVALID_OPTION`, JSPI missing), and the test fails.
+
 ## 5. Documentation
 
 - **`CHANGELOG.md`, `## Unreleased`:**
