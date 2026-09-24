@@ -81,7 +81,7 @@ savepoint before opening its own.
 
 ## Unexport `VFS_CAPABILITIES` — the public surface (user, 2026-09-23)
 
-`VFS_CAPABILITIES` and its types `VFSCapability`, `VFSStorage` and `VFSMemoryModel` are public since rc.4 (`2478c81`, `src/index.ts`), so every field of the table is public contract — internal ones like `exclusiveFileHandle` or `singleConnectionWithout` included — and every change to the table is breaking. **The only reader through the export is the bench page** (`scripts/bench/html/index.html`: the vfs × build pairs, and `storage` for its cleanup); `scripts/test-matrix.mjs` and `scripts/render-vfs-matrix.ts` import `src/const/*.ts` directly, no `tests/consumer*` project uses it, and no public signature names the four types. What must stay exported: `SQLiteVFS`, `SQLiteBuild`, `PlatformFeature` (returned by `detectFeatures()` / `missingFeature()`); `defaultBuildFor` is a separate question. **`folderOf` joined the exports on `feat/vfs-folders` (2026-09-23) without being planned, and the user kept it there for this chantier to decide** — it has no consumer through the package (tests and scripts import `src/const/vfs`, the bench reads `cap.folder`) and is documented nowhere.
+`VFS_CAPABILITIES` and its types `VFSCapability`, `VFSStorage` and `VFSMemoryModel` are public since rc.4 (`2478c81`, `src/index.ts`), so every field of the table is public contract — internal ones like `exclusiveFileHandle` or `singleConnectionWithout` included — and every change to the table is breaking. **The only reader through the export is the bench page** (`scripts/bench/html/index.html`: the vfs × build pairs, and `storage` for its cleanup); `scripts/test-matrix.mjs` and `scripts/render-vfs-matrix.ts` import `src/const/*.ts` directly, no `tests/consumer*` project uses it, and no public signature names the four types. What must stay exported: `SQLiteVFS`, `SQLiteBuild`, `PlatformFeature` (returned by `detectFeatures()` / `missingFeature()`). **`defaultBuildFor` goes too (user, 2026-09-24)** — only tests need it, and a consumer reads the resolved build from the client's `build`. It stays exported until this chantier, and rc.6's default-build change gives it a second, required `available` parameter: **when this chantier removes it, remove that signature change from the unreleased `CHANGELOG.md` section as well** (user), so the release notes do not announce a change to a function the same release deletes. **`folderOf` joined the exports on `feat/vfs-folders` (2026-09-23) without being planned, and the user kept it there for this chantier to decide** — it has no consumer through the package (tests and scripts import `src/const/vfs`, the bench reads `cap.folder`) and is documented nowhere.
 
 **Proposed, not decided:** drop the export and have `bench:build` emit the table as JSON from `src/const/vfs.ts` (it is pure data). What a consumer loses: enumerating the VFS at runtime, e.g. for a selector — nothing in the repository needs it. Breaking. Parked by the user on 2026-09-23 to stay on the per-VFS folder work.
 
@@ -107,26 +107,6 @@ savepoint before opening its own.
 
 **Second sighting, same day, on `feat/vfs-folders`** — the same message on the same file in the Firefox leg of a full `pnpm test`, run by a subagent after the dot-folder change; the file alone 34/34, the full rerun green. **The log was not kept this time either.** Two sightings in one day, both under a full parallel run, both clean in isolation: the next one must be captured — keep `.scratchpad/` logs of every full run until it is.
 
-## Default to the first build the environment supports — `jspi` before `async`, for rc.6 (user, 2026-09-14)
-
-A behaviour change, so rc.6. `defaultBuildFor` returns `builds[0]` whatever the engine, and the
-client then refuses a build the engine lacks (`missingFeature`, `src/client.ts`) — so merely
-listing `jspi` first would break every engine without JSPI, Safari 26 included. The agreed shape:
-list `jspi` before `async` for the five `async`-first VFS (`OPFSAdaptiveVFS`,
-`IDBBatchAtomicVFS`, `IDBMirrorVFS`, `OPFSAnyContextVFS`, `MemoryAsyncVFS`) and resolve the default
-as the first declared build whose `BUILD_CAPABILITIES[build].requires` `detectFeatures()` meets; `async` stays the
-fallback. The `sync`-first VFS do not move.
-
-**Why:** Safari's Asyncify slowdown (IDB-SIGNAL, `mem:measurements`), which `jspi` escapes on
-Safari 27. On Chromium and Firefox the bench corpus says `jspi` is equal or faster — full scan
-×0.41-0.66, list page ×0.40-0.86, bulk insert ×0.72-1.04 — except two Chromium IDBBatchAtomicVFS
-rows: single write ×1.18 (3.0 → 3.55 ms) and 500 UPDATEs ×1.13 (median of 10 exports each).
-
-**To do:** the resolution everywhere `defaultBuildFor` is called (client, worker, `deleteDatabase`);
-a test of the no-JSPI fallback; the stale JSDoc at `src/client.ts` ("JSPI is Chromium-only" — VFS.md
-says Firefox 153+, Safari 27+); `VFS.md`; a CHANGELOG entry, the default changing. **Check first:** a
-consumer who passes one `.wasm` URL without `build`. **Measure first:** `OPFSAdaptiveVFS` on `jspi`
-on Safari 27, the pair whose default would change for the most consumers.
 
 ## The rstest/Firefox silent hang — CAUSE FOUND 2026-09-16, fix not taken
 
@@ -326,11 +306,8 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   probe, and rc.4 shows it). Pre-existing; Chromium and Firefox never showed it. **The `jspi`
   build escapes it** (Safari 27.0, flat long reads and a cached scan back at baseline), and on
   that Safari the bench's two `jspi` columns answer `true` where both `async` ones stay `null`.
-  The library defaults to a VFS's first declared build (`defaultBuildFor`), which is `async` for
-  `OPFSAdaptiveVFS` — a recommended VFS — `IDBBatchAtomicVFS`, `IDBMirrorVFS`,
-  `OPFSAnyContextVFS` and `MemoryAsyncVFS`; `OPFSAdaptiveVFS` itself was not probed.
-  The default build is decided for rc.6 (the entry "Default to the first build the environment
-  supports"). Still open: saying it in `VFS.md`, and an upstream report (wa-sqlite or WebKit).
+  Since 2026-09-24 an omitted `build` loads `jspi` wherever the engine has it, so Safari 27+ escapes
+  it by default; `VFS.md`'s `async` note says so. Still open: an upstream report (wa-sqlite or WebKit).
 - **Whether a yielding statement lets a rotated OPFS handle move between clients.** HANDLE-1 says a
   long statement never returns to its event loop; an abortable one on `async`/`jspi` now does,
   every 100 000 VM ops. Unmeasured.

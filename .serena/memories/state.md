@@ -21,7 +21,10 @@ obligations and unmeasured ground.
   2026-09-23), and **per-VFS OPFS folders** (merged 2026-09-24, the section's first **Breaking**
   entries: `.ad/`, `.ac/`, `.cs/`, `.wa/`, `layout` and `VFSLayout` gone, the 52-character name bound
   on those four VFS; `db.files` Added; the path and empty-name refusals Changed — `mem:vfs`, CROSS-VFS;
-  `mem:architecture`, "Two names per database").
+  `mem:architecture`, "Two names per database"), and **the default build that follows the browser**
+  (merged 2026-09-24: Changed, plus two Breaking entries — a `wasmUrl` serving only the `async`
+  `.wasm`, and `defaultBuildFor`'s second parameter, which the public-surface chantier must drop
+  from the CHANGELOG when it unexports the function, `mem:follow-ups`).
 - **The vendored wa-sqlite sits at `e98c65de`** since 2026-09-23, up from `93b9230`, and
   `patches/wa-sqlite@1.1.2.patch` carries **four** files since the same day: the three it already
   had plus `src/examples/WriteAhead.js`, which is the exact diff of our PR #361 rather than a
@@ -40,39 +43,27 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-24 on `feat/vfs-folders`
+## The verification baseline — compare against these, re-measured 2026-09-24 on `feat/default-build`
 
-Not history: the numbers a regression is detected against. **Every figure below was read off a run
-in this container on 2026-09-24, on `feat/vfs-folders` at its merge point (`215a94b`)** — none is
-carried forward, none is arithmetic, and the whole table was read in ONE pass, which is what its own
-rule demands. **One exception, stated:** the matrix ran on 2026-09-23 at `e184f25`, one commit before
-the merge point; the commit after it (`215a94b`, the empty-name refusal) runs before any worker and
-was not re-run through the matrix.
-
-**Re-read whole on 2026-09-24 at the head of `refactor/build-capabilities-const-split` (`a47837c`)**: every figure below identical — unit 519, `pnpm test` 1255/738/14 with the same skips, conformance 83/14 and 79/18, consumer 24/24, bench `OK`, 13 lint warnings. The matrix was not re-run; nothing in that branch changes which tests a pair selects.
+Not history: the numbers a regression is detected against. **Every figure below was read off a run in this container on 2026-09-24, on `feat/default-build` at its last commit before the merge** — none is carried forward, none is arithmetic, and the table was read in ONE pass (`.scratchpad/default-build/baseline/`). **One exception, stated:** the matrix ran the same day two commits earlier; the commits after it change documentation, JSDoc and memories only.
 
 | command | result |
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1255 tests / 81 files** (unit + the two chromium target projects, **8 skipped**), **738 / 55** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects, none skipped) |
-| `pnpm exec rstest --project unit run` | **519** tests, 27 files |
-| `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are now `chromium · <vfs>/<build>` and rstest's filter is anchored |
-| `pnpm test:conformance` | **TWO reports** — 97 tests / 3 files each: **Chromium 83 passed / 14 skipped, Firefox 79 / 18** — they differ by design since 2026-09-14 |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1264 tests / 83 files** (unit + the two chromium target projects, **8 skipped**), **742 / 56** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects, none skipped). The chromium and firefox targets are `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` since the default build follows the engine |
+| `pnpm exec rstest --project unit run` | **524** tests, 28 files |
+| `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are `chromium · <vfs>/<build>` and rstest's filter is anchored |
+| `pnpm test:conformance` | **TWO reports** — 97 tests / 3 files each: **Chromium 83 passed / 14 skipped, Firefox 79 / 18** — they differ by design since 2026-09-14. Each VFS runs on its default build for the engine, so the `jspi`-first VFS run `jspi` here |
 | `pnpm exec biome ci .` | exit 0 |
 | `pnpm docs:vfs` | leaves `VFS.md` unchanged (`git diff --exit-code`) |
-| `pnpm test:consumer` | 24/24 stages |
+| `pnpm test:consumer` | 24/24 stages — every consumer app uses `OPFSAdaptiveVFS` with no `build`, so on Chromium each bundler now loads the `jspi` `.wasm` |
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | `OK`, `"reasons": {}`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 157 files (145 before biome took in `scripts/**` on 2026-09-24), 13 warnings, 1 info — the file count moves with the tree, **the warning count is the signal** |
+| `pnpm lint` | 159 files, 13 warnings, 1 info — the file count moves with the tree, **the warning count is the signal** |
 | `dependencies` in `package.json` | absent |
-| `pnpm test:matrix` | **66 of 66 cells green, 0 failing tests, 2480 s** (`.matrix/2026-09-23T19-36-06-860Z`, at `e184f25`). ~45 min. Per-cell detail in `mem:measurements` |
+| `pnpm test:matrix` | **66 of 66 cells green, 0 failing tests, 2570 s** (`.matrix/2026-09-24T09-53-39-415Z`). ~45 min. Per-cell detail in `mem:measurements` |
 
-Against the same table before the merge — `pnpm test` 1230 / 724 / 14, unit 508, conformance 85 / 2
-files, lint 140 files — the chromium+unit report gained **25** (11 of them unit), the firefox one **14**, and
-conformance **12 tests and one file** (`folders.test.ts`): the per-VFS folders, `db.files`, the path
-and empty-name refusals, the rc.5 lock-name pins. **The skip counts did not move, and that is the
-cell to watch** — a test that started skipping instead of running would vanish into a total without
-a trace.
+Against the table before `feat/default-build` — `pnpm test` 1255 / 738 / 14, unit 519 / 27 files — the chromium+unit report gained **9** (5 unit: the default-build resolution and `targetsFromEnv`; 4 browser: the no-JSPI test, two cases × two projects) and the firefox one **4**. **The skip counts did not move, and that is the cell to watch** — a test that started skipping instead of running would vanish into a total without a trace.
 
 **Do not reconcile any of these by arithmetic; re-run.** A previous version of this table was
 measured on 2026-09-15 and went stale the next day, and another contradicted itself in September
@@ -217,7 +208,7 @@ the 2026-09-05 entry in `mem:follow-ups` called for.
 
 **The subject the user set on 2026-09-21 — the two `OPFSCoopSyncVFS` opens that failed on chromium — is CLOSED, and it was closed before it was started.** `mem:follow-ups` still described it as HANDLE-CORPSE on a path the retry misses; that entry had rotted. The cells failed at MATRIX-5 (2026-09-18 08:25) and the two fixes landed at 13:33 and 13:34 the same day: wa-sqlite #350 (the partial acquisition that leaks the handles beside the one that failed, which is what made every retry fail on `-journal`) and `exclusiveFileHandle` + `openWithRetry` on our side — `OPFSCoopSyncVFS` **is** declared `exclusiveFileHandle: true`, so `sqlite3_open_v2` does get the retry. Verified by measurement rather than by reading: eight consecutive runs of that cell, 8/8 green, plus the two full matrices since (COOPSYNC-OPEN-CLOSED, `mem:measurements`).
 
-**What survives of it is diagnosability, and only that:** `jOpen`'s asynchronous phase never sets `this.lastError`, so an open blocked by a dead context is indistinguishable from a missing file. One line upstream, both consumers already in place, unscheduled — `mem:follow-ups`. Everything else there stays unscheduled but the default build, scheduled for rc.6. Upstream, rhashimoto/wa-sqlite#347 is open (§ Pending).
+**What survives of it is diagnosability, and only that:** `jOpen`'s asynchronous phase never sets `this.lastError`, so an open blocked by a dead context is indistinguishable from a missing file. One line upstream, both consumers already in place, unscheduled — `mem:follow-ups`. Everything else there stays unscheduled; the default build it named shipped on 2026-09-24. Upstream, rhashimoto/wa-sqlite#347 is open (§ Pending).
 
 **HANDLE-2 was investigated on 2026-09-09 and came apart under measurement.** Its stated cause
 is false — Firefox releases a killed worker's sync access handle in 1-6 ms (HANDLE-ORPHAN) — and
@@ -310,7 +301,7 @@ the VFS fact in `mem:vfs`; what is left in `mem:follow-ups`.
   `async` build down its slowdown and voided the IDB column; `longQueryCalibration` exports every
   timing, so a `null` explains itself.
 - **On Safari the `async` build degrades and stays slow; `jspi` escapes it on 27.** `VFS.md` says
-  so under *Build `async`*; the default build moves to the first supported one in rc.6.
+  so under *Build `async`*; since 2026-09-24 an omitted `build` loads `jspi` wherever the engine has it.
 - **Measure Safari from the container.** The user opens `localhost:8099`, served from `_site`
   (`mem:conventions`); Playwright's Linux WebKit cannot stand in, its workers do not even load.
 

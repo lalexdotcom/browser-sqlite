@@ -170,6 +170,7 @@ three.
   mechanism, the evidence and the investigation go to code comments, these memories, or a
   PR description. A fifteen-line Known Limitations entry about a WebKit bug was cut to one
   sentence plus `26+` in the generated table.
+- **No counts in docs or comments outside measurements (user, 2026-09-24).** "The VFS above", "the following VFS", "the VFS that now default to `jspi`" — never "the five VFS above" or "the other four". A number is written only when it is a measurement or a real value (a length limit, a version). A count goes stale when a VFS is added and made a broken reference look precise. Released CHANGELOG sections are history and stay as written.
 - **Do not explain compatibility in prose.** Version numbers in the tables are enough. A
   Requirements subsection arguing *why* each API mattered was cut for exactly this reason.
 - **Consumer documentation is edited iteratively — do not commit each pass.** Several round
