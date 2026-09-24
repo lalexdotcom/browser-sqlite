@@ -17,6 +17,17 @@
         font: 15px/1.5 system-ui, sans-serif;
       }
       h1 { font-size: 1.2rem; margin: 0 0 var(--gap); }
+      /* A warning is not an absent capability: `.no` dims, which is right for a
+         feature this engine lacks and exactly wrong for the one line telling a
+         visitor the code under it is not the published package. Amber rather
+         than red — the page still works, it just is not what npm ships.
+         `prefers-color-scheme` rather than `light-dark()`, which postdates this
+         page's browser floor. */
+      .warn { font-weight: 600; color: #b45309; }
+      @media (prefers-color-scheme: dark) {
+        .warn { color: #f59e0b; }
+      }
+      .warn b { font-weight: 700; }
       #banner {
         display: flex;
         flex-direction: column;
@@ -35,17 +46,6 @@
         content: '·'; margin-left: var(--gap); opacity: 0.45;
       }
       .no { opacity: 0.55; }
-      /* A warning is not an absent capability: `.no` dims, which is right for a
-         feature this engine lacks and exactly wrong for the one line telling a
-         visitor the code under it is not the published package. Amber rather
-         than red — the page still works, it just is not what npm ships.
-         `prefers-color-scheme` rather than `light-dark()`, which postdates this
-         page's browser floor. */
-      .warn { font-weight: 600; color: #b45309; }
-      @media (prefers-color-scheme: dark) {
-        .warn { color: #f59e0b; }
-      }
-      .warn b { font-weight: 700; }
       /* One line, whatever the state: idle it holds a button, running it holds
          the step in flight and the way out of it. */
       #control {
@@ -187,9 +187,9 @@
       missing API, a failed fetch of dist/.
     -->
     <script>
-      (function () {
+      (() => {
         var waited = 0;
-        var timer = setInterval(function () {
+        var timer = setInterval(() => {
           if (window.__BENCH__) {
             clearInterval(timer);
             return;
@@ -1346,7 +1346,8 @@
       const RESULTS = { conformance: {}, measurements: {}, reasons: {}, poolSize: {} };
 
       const setReason = (pairId, rowId, text) => {
-        (RESULTS.reasons[pairId] ??= {})[rowId] = text;
+        RESULTS.reasons[pairId] ??= {};
+        RESULTS.reasons[pairId][rowId] = text;
       };
 
       /**

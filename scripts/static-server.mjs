@@ -25,8 +25,9 @@ const TYPES = {
 };
 
 createServer((req, res) => {
-
-  const urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+  const urlPath = decodeURIComponent(
+    new URL(req.url, 'http://localhost').pathname,
+  );
   const relative = normalize(urlPath === '/' ? '/index.html' : urlPath).replace(
     /^(\.\.[/\\])+/,
     '',

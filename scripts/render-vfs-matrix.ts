@@ -3,7 +3,11 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import bcd from '@mdn/browser-compat-data' with { type: 'json' };
 import { BUILD_CAPABILITIES, type SQLiteBuild } from '../src/const/builds.ts';
 import type { PlatformFeature } from '../src/const/platform.ts';
-import { VFS_CAPABILITIES, type VFSCapability, type VFSMemoryModel } from '../src/const/vfs.ts';
+import {
+  VFS_CAPABILITIES,
+  type VFSCapability,
+  type VFSMemoryModel,
+} from '../src/const/vfs.ts';
 
 import { RECOMMENDED_VFS } from './recommended-vfs.ts';
 
@@ -80,13 +84,7 @@ const FEATURE_SUPPORT = {
 } as const satisfies Record<PlatformFeature, Record<string, Support>>;
 
 /** Desktop first, then mobile. Order is deliberate and shared by both tables. */
-const BROWSERS = [
-  'Chrome',
-  'Firefox',
-  'Safari',
-  'Android',
-  'iOS',
-] as const;
+const BROWSERS = ['Chrome', 'Firefox', 'Safari', 'Android', 'iOS'] as const;
 type Browser = (typeof BROWSERS)[number];
 
 /**
@@ -227,7 +225,9 @@ const floorOf = (
   }
   if (versions.length === 0) return unestablished ? 'yes' : undefined;
   if (unestablished) return 'yes';
-  return versions.sort((a, b) => Number.parseFloat(b) - Number.parseFloat(a))[0];
+  return versions.sort(
+    (a, b) => Number.parseFloat(b) - Number.parseFloat(a),
+  )[0];
 };
 
 /**
@@ -278,9 +278,15 @@ const supportFor = (
   // rather than left absent, because a missing half would read as an omission.
   let second = '';
   if (cap.builds.includes('jspi')) {
-    const f = floorOf([...cap.requires, ...BUILD_CAPABILITIES.jspi.requires], browser);
+    const f = floorOf(
+      [...cap.requires, ...BUILD_CAPABILITIES.jspi.requires],
+      browser,
+    );
     const raised = withLibFloor(f, browser);
-    second = raised === null ? ' (no jspi)' : `/${raised === 'yes' ? '?' : `${raised}+`}`;
+    second =
+      raised === null
+        ? ' (no jspi)'
+        : `/${raised === 'yes' ? '?' : `${raised}+`}`;
   }
 
   return `${browser} ${first}${second}${marker}`;
@@ -406,7 +412,7 @@ const NOTE_NUMBER = new Map<string, number>();
 for (const { id, text } of FOOTNOTES) {
   const seen = NOTE_TEXTS.indexOf(text);
   if (seen === -1) NOTE_TEXTS.push(text);
-  NOTE_NUMBER.set(id, (seen === -1 ? NOTE_TEXTS.length : seen + 1));
+  NOTE_NUMBER.set(id, seen === -1 ? NOTE_TEXTS.length : seen + 1);
 }
 
 /** The superscript call site. Throws rather than emitting a dangling link. */
@@ -539,7 +545,8 @@ const tableOfContents = (doc: string): string => {
   const label = (h: string) =>
     TOC_LABEL[h] ?? h.replace(/`/g, '').replace(/^Build /, '');
   const flush = () => {
-    if (current) lines.push(`- ${current.title}${current.children.join(' · ')}`);
+    if (current)
+      lines.push(`- ${current.title}${current.children.join(' · ')}`);
   };
   for (const [, hashes, heading] of doc.matchAll(/^(#{2,3}) (.+)$/gm)) {
     // The contents heading is not one of the sections it lists.
@@ -581,7 +588,9 @@ const rows = Object.entries(VFS_CAPABILITIES).map(([name, cap]) => {
   const label = RECOMMENDED_VFS.some((v) => v === name)
     ? `${named}<br>**(recommended)**`
     : named;
-  const builds = BUILDS.map((b) => yes((cap.builds as readonly SQLiteBuild[]).includes(b))).join(' | ');
+  const builds = BUILDS.map((b) =>
+    yes((cap.builds as readonly SQLiteBuild[]).includes(b)),
+  ).join(' | ');
   // `degradesWithout` is the right field, not `requires`: the question is
   // whether the VFS TAKES the mode when the engine offers it. No VFS here
   // requires it — one that did would be unusable off Chromium entirely.
@@ -623,7 +632,13 @@ const splice = (
   if (stop < start) {
     throw new Error('VFS.md END marker precedes its BEGIN marker');
   }
-  return source.slice(0, start + begin.length) + gap + body + gap + source.slice(stop);
+  return (
+    source.slice(0, start + begin.length) +
+    gap +
+    body +
+    gap +
+    source.slice(stop)
+  );
 };
 
 let doc = splice(source, BEGIN, END, table);
