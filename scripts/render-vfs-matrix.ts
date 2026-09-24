@@ -18,6 +18,8 @@ import { RECOMMENDED_VFS } from './recommended-vfs.ts';
  *   the same versions.
  * - `readwrite-unsafe` (the `mode` option on `createSyncAccessHandle`): same
  *   source, the `mode` sub-feature. Firefox and Safari are recorded `false`.
+ * - `cross-origin-isolated` (the `crossOriginIsolated` global): MDN
+ *   browser-compat-data, `api.crossOriginIsolated`, checked 2026-09-24.
  *
  * This is documentation data with a shelf life. Re-check it against those
  * sources rather than trusting it a year from now.
@@ -65,6 +67,15 @@ const FEATURE_SUPPORT = {
     Firefox: '153',
     Safari: '27',
     iOS: '27',
+  },
+  // The engine can be isolated from these versions; the page must still be
+  // served isolated (COOP/COEP or Document-Isolation-Policy).
+  'cross-origin-isolated': {
+    Chrome: '87',
+    Android: '87',
+    Firefox: '72',
+    Safari: '15.2',
+    iOS: '15.2',
   },
 } as const satisfies Record<PlatformFeature, Record<string, Support>>;
 
@@ -187,8 +198,14 @@ const withLibFloor = (v: Support | undefined, browser: string): Support => {
   return laterOf(v, lib);
 };
 
-const versionCell = (v: Support): string =>
-  v === null ? '**No**' : v === 'yes' ? 'Yes' : `${v}+`;
+const versionCell = (v: Support | undefined): string =>
+  v === undefined
+    ? 'Any'
+    : v === null
+      ? '**No**'
+      : v === 'yes'
+        ? 'Yes'
+        : `${v}+`;
 
 /**
  * The highest of several minimum versions. `null` if any feature is missing;
@@ -426,7 +443,7 @@ const footnotes = [
  */
 const detailFor = (name: string, cap: VFSCapability): string => {
   const builds = cap.builds.map((b) => `[\`${b}\`](#build-${b})`).join(', ');
-  const compat = BROWSERS.map((b) => supportFor(cap, b, '(reduced)'))
+  const compat = BROWSERS.map((b) => supportFor(cap, b))
     .filter((x): x is string => x !== null)
     .join(', ');
   // The cap's reason goes to a footnote of its own: it is a full sentence, it
@@ -564,11 +581,15 @@ const rows = Object.entries(VFS_CAPABILITIES).map(([name, cap]) => {
   const label = RECOMMENDED_VFS.some((v) => v === name)
     ? `${named}<br>**(recommended)**`
     : named;
-  const builds = BUILDS.map((b) => yes(cap.builds.includes(b))).join(' | ');
+  const builds = BUILDS.map((b) => yes((cap.builds as readonly SQLiteBuild[]).includes(b))).join(' | ');
   // `degradesWithout` is the right field, not `requires`: the question is
   // whether the VFS TAKES the mode when the engine offers it. No VFS here
   // requires it — one that did would be unusable off Chromium entirely.
-  const unsafe = yes(cap.degradesWithout.includes('readwrite-unsafe'));
+  const unsafe = yes(
+    (cap.degradesWithout as readonly PlatformFeature[]).includes(
+      'readwrite-unsafe',
+    ),
+  );
   return `| ${label} | ${builds} | ${yes(cap.maxPoolSize === null)} | ${yes(cap.persistent)} | ${unsafe} |`;
 });
 
