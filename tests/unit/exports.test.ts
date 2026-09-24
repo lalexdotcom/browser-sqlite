@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from '@rstest/core';
 import type { SQLiteDB, SQLiteTransactionDB } from '../../src/api';
+import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import * as api from '../../src/index';
 
 /**
@@ -44,24 +45,57 @@ type _PinTxToClient = _Assert<
   _SharedOfTransaction extends _SharedOfClient ? true : false
 >;
 
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
 /**
- * The benchmark page enumerates VFS from the library at runtime instead of
- * holding a copy that would drift. That only works if the table is reachable
- * from the package entry, which it was not: `SQLiteVFS` named the type of a
- * public option that no consumer could name.
+ * What the package entry exports at runtime, exactly. A name added to or
+ * dropped from `src/index.ts` changes the public contract and must show here.
  */
 describe('public entry', () => {
-  // Falsifiable: re-export DEFAULT_VFS from src/index.ts.
-  it('exposes the capability table and its default-build helper, but no default VFS', () => {
-    expect(typeof api.VFS_CAPABILITIES).toBe('object');
-    expect(typeof api.defaultBuildFor).toBe('function');
-    expect('DEFAULT_VFS' in api).toBe(false);
-    expect('RECOMMENDED_VFS' in api).toBe(false);
+  // Falsifiable: re-export VFS_CAPABILITIES from src/index.ts, or drop deleteDatabase.
+  it('exports exactly the public values', () => {
+    expect(Object.keys(api).sort()).toEqual(
+      [
+        'SQLITE_CODES',
+        'SQLITE_EXTENDED_CODES',
+        'SQLiteBulkWriteError',
+        'SQLiteError',
+        'createSQLiteClient',
+        'deleteDatabase',
+        'detectFeatures',
+        'inspectDatabase',
+        'missingFeature',
+      ].sort(),
+    );
   });
 
+  // Falsifiable: drop either re-export from src/index.ts.
+  it('exposes the SQLite result codes, primary and extended', () => {
+    expect(api.SQLITE_CODES.CONSTRAINT).toBe(19);
+    expect(api.SQLITE_EXTENDED_CODES.CONSTRAINT_UNIQUE).toBe(2067);
+  });
+
+  // Falsifiable: restore "./worker" in package.json's exports.
+  it('declares no subpath but the entry', () => {
+    const pkg = JSON.parse(
+      readFileSync(join(repoRoot, 'package.json'), 'utf8'),
+    );
+    expect(Object.keys(pkg.exports)).toEqual(['.']);
+  });
+});
+
+// Falsifiable: re-export one of these from src/index.ts; tsc then reports an unused directive.
+// @ts-expect-error VFSCapability is not exported
+type _NoVFSCapability = api.VFSCapability;
+// @ts-expect-error VFSStorage is not exported
+type _NoVFSStorage = api.VFSStorage;
+// @ts-expect-error VFSMemoryModel is not exported
+type _NoVFSMemoryModel = api.VFSMemoryModel;
+
+describe('VFS_CAPABILITIES', () => {
   // Falsifiable: drop one VFS from VFS_CAPABILITIES.
-  it('exposes every wired VFS', () => {
-    expect(Object.keys(api.VFS_CAPABILITIES).sort()).toEqual(
+  it('wires every VFS', () => {
+    expect(Object.keys(VFS_CAPABILITIES).sort()).toEqual(
       [
         'AccessHandlePoolVFS',
         'IDBBatchAtomicVFS',
@@ -75,31 +109,7 @@ describe('public entry', () => {
       ].sort(),
     );
   });
-
-  // Falsifiable: delete the createSQLiteClient re-export.
-  it('still exposes the client and the error type', () => {
-    expect(typeof api.createSQLiteClient).toBe('function');
-    expect(typeof api.SQLiteError).toBe('function');
-    expect(typeof api.SQLiteBulkWriteError).toBe('function');
-    expect('BulkWriteError' in api).toBe(false);
-  });
-
-  // Falsifiable: drop either re-export from src/index.ts.
-  it('exposes the SQLite result codes, primary and extended', () => {
-    expect(api.SQLITE_CODES.CONSTRAINT).toBe(19);
-    expect(api.SQLITE_EXTENDED_CODES.CONSTRAINT_UNIQUE).toBe(2067);
-  });
-
-  // Falsifiable: drop the capabilities re-export from src/index.ts. The
-  // benchmark page imports these instead of holding a second copy of the
-  // probes — see BENCH-DRIFT in mem:follow-ups.
-  it('exposes the capability probes the benchmark page needs', () => {
-    expect(typeof api.detectFeatures).toBe('function');
-    expect(typeof api.missingFeature).toBe('function');
-  });
 });
-
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /**
  * The files that import the built package **by path** rather than by bare

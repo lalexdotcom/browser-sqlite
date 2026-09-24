@@ -436,7 +436,7 @@ export type SQLiteDB = SQLiteQueryAPI & {
    */
   readonly files: readonly string[];
   readonly vfs: SQLiteVFS;
-  /** The build actually loaded, resolved by `defaultBuildFor` when not passed. */
+  /** The build actually loaded: the `build` option, or the first build the VFS declares that the browser supports. */
   readonly build: SQLiteBuild;
   /**
    * The number of workers the pool runs: `poolSize` as requested, capped by

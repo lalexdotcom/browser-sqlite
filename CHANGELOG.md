@@ -30,10 +30,10 @@ All notable changes to this project are documented here.
   ```
 
   A name containing `/` keeps its subfolders inside the VFS folder. The database file moves last, after its journal. The other VFS are unaffected.
-- **`VFS_CAPABILITIES` loses `layout`, and `VFSLayout` is no longer exported.** `storage` says where a database lives; the new `folder` is set exactly on the VFS above.
 - **A database name on those VFS may be 52 characters instead of 56**, once normalized — the folder takes four.
 - **A `wasmUrl` callback that ignores its argument can hand the wrong `.wasm` to the VFS that now default to `jspi` (see *Changed*)** when no `build` is passed and the browser has JSPI: the callback now receives `'jspi'`. Return the file for the build it receives, or pass `build`. A string `wasmUrl` names a directory, which must now also serve `wa-sqlite-jspi.wasm` — or pass `build`.
-- **`defaultBuildFor(vfs)` becomes `defaultBuildFor(vfs, available)`**: pass `detectFeatures()`.
+- **`VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` are no longer exported.** `db.build` reports the build a client resolved; `SQLiteVFS`, `SQLiteBuild` and `PlatformFeature` still name the options.
+- **The `browser-sqlite/worker` subpath is gone.** The client starts its worker itself, and no option accepts one.
 
 ### Added
 

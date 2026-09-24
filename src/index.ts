@@ -2,11 +2,7 @@
 // their messages are written for this library's own guard, and consumers
 // building their own messages want their own words.
 export * from './api';
-export {
-  defaultBuildFor,
-  detectFeatures,
-  missingFeature,
-} from './capabilities';
+export { detectFeatures, missingFeature } from './capabilities';
 export * from './client';
 export type { SQLiteBuild } from './const/builds';
 export type { PlatformFeature } from './const/platform';
@@ -16,14 +12,7 @@ export {
   type SQLiteExtendedResultCode,
   type SQLiteResultCode,
 } from './const/sqlite';
-export {
-  folderOf,
-  type SQLiteVFS,
-  VFS_CAPABILITIES,
-  type VFSCapability,
-  type VFSMemoryModel,
-  type VFSStorage,
-} from './const/vfs';
+export type { SQLiteVFS } from './const/vfs';
 export * from './delete';
 export {
   type ClientInspection,
