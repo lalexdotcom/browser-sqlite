@@ -1,7 +1,7 @@
 import { describe, expect, it, rstest } from '@rstest/core';
 import type { SQLiteTransactionDB } from '../../src/api';
-import { SQLiteError } from '../../src/errors';
 import { createTransaction } from '../../src/transaction';
+import { SQLiteError } from '../../src/types/errors';
 
 /**
  * A worker whose statements can be made to fail by name, and whose statements

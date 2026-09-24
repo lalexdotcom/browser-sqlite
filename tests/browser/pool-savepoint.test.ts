@@ -1,11 +1,11 @@
 import { describe, expect, it } from '@rstest/core';
-import { SQLiteError } from '../../src/errors';
 import { createLogger } from '../../src/logger';
 import {
   createPoolWorker,
   type PoolWorker,
   type PoolWorkerQueryOptions,
 } from '../../src/pool';
+import { SQLiteError } from '../../src/types/errors';
 import { databasePath } from '../../src/utils';
 import { removeDatabaseFiles, TEST_TARGET } from './helpers';
 

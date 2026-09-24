@@ -1,10 +1,10 @@
 import { RECOMMENDED_VFS } from '../scripts/recommended-vfs.ts';
+import type { SQLiteBuild } from '../src/const/builds.ts';
 import {
   defaultBuildFor,
-  type SQLiteBuild,
   type SQLiteVFS,
   VFS_CAPABILITIES,
-} from '../src/types.ts';
+} from '../src/const/vfs.ts';
 import type { TestTarget } from './browser/target.ts';
 
 /**

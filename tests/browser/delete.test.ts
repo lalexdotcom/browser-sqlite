@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
+import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import { deleteDatabase } from '../../src/delete';
-import { SQLiteError } from '../../src/errors';
 import { initLockName } from '../../src/locks';
-import { VFS_CAPABILITIES } from '../../src/types';
+import { SQLiteError } from '../../src/types/errors';
 import { databasePath } from '../../src/utils';
 import { longQuery, removeDatabaseFiles, sleep, TEST_TARGET } from './helpers';
 

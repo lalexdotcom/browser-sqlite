@@ -1,14 +1,9 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs';
 import bcd from '@mdn/browser-compat-data' with { type: 'json' };
-import {
-  BUILD_CAPABILITIES,
-  type PlatformFeature,
-  type SQLiteBuild,
-  VFS_CAPABILITIES,
-  type VFSCapability,
-  type VFSMemoryModel,
-} from '../src/types.ts';
+import { BUILD_CAPABILITIES, type SQLiteBuild } from '../src/const/builds.ts';
+import type { PlatformFeature } from '../src/const/platform.ts';
+import { VFS_CAPABILITIES, type VFSCapability, type VFSMemoryModel } from '../src/const/vfs.ts';
 
 import { RECOMMENDED_VFS } from './recommended-vfs.ts';
 
@@ -323,7 +318,7 @@ const buildTable = BUILDS.flatMap((build) => {
 }).join('\n');
 
 const BEGIN =
-  '<!-- BEGIN GENERATED VFS TABLE — edit VFS_CAPABILITIES in src/types.ts, then run `pnpm docs:vfs` -->';
+  '<!-- BEGIN GENERATED VFS TABLE — edit VFS_CAPABILITIES in src/const/vfs.ts, then run `pnpm docs:vfs` -->';
 const END = '<!-- END GENERATED VFS TABLE -->';
 
 const MEMORY_LABEL = {

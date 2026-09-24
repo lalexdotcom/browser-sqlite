@@ -4,7 +4,7 @@ import {
   folderOf,
   type SQLiteVFS,
   VFS_CAPABILITIES,
-} from '../../src/types';
+} from '../../src/const/vfs';
 
 describe('VFS_CAPABILITIES', () => {
   const names = Object.keys(VFS_CAPABILITIES) as SQLiteVFS[];
@@ -55,7 +55,8 @@ import {
   KNOWN_FEATURES,
   missingFeature,
 } from '../../src/capabilities';
-import { BUILD_CAPABILITIES, type PlatformFeature } from '../../src/types';
+import { BUILD_CAPABILITIES } from '../../src/const/builds';
+import type { PlatformFeature } from '../../src/const/platform';
 import { WORKER_PROBES } from '../../src/worker/probes';
 
 describe('platform requirements', () => {

@@ -12,7 +12,7 @@
  * dedicated worker: Chromium true, Firefox false, Safari false
  * (spec 2026-09-13, §3.1).
  */
-import type { PlatformFeature } from '../types';
+import type { PlatformFeature } from '../const/platform';
 
 /** The globals a probe reads; `globalThis` in a worker, a stub in tests. */
 export type ProbeScope = { FileSystemSyncAccessHandle?: unknown };

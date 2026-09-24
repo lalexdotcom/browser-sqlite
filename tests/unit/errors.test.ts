@@ -1,9 +1,9 @@
 import { describe, expect, it } from '@rstest/core';
-import { SQLiteError } from '../../src/errors';
-import { SQLITE_CODES, SQLITE_EXTENDED_CODES } from '../../src/sqlite-codes';
+import { SQLITE_CODES, SQLITE_EXTENDED_CODES } from '../../src/const/sqlite';
+import { SQLiteError } from '../../src/types/errors';
 
 describe('SQLiteError', () => {
-  // Falsifiable: delete `this.name = code` in errors.ts and this fails.
+  // Falsifiable: delete `this.name = code` in types/errors.ts and this fails.
   it('mirrors the code into name so err.name reads like AbortError', () => {
     const error = new SQLiteError('CLIENT_CLOSED', 'closed');
     expect(error.name).toBe('CLIENT_CLOSED');
@@ -52,7 +52,7 @@ describe('SQLiteError', () => {
 
   // Spec D10. sqliteCode is typed as a primary code, so comparing it with an
   // extended code does not compile; sqliteExtendedCode stays open (D9).
-  // Falsifiable: widen `sqliteCode` back to `number` in src/errors.ts —
+  // Falsifiable: widen `sqliteCode` back to `number` in src/types/errors.ts —
   // `pnpm exec tsc --noEmit` then fails with TS2578 (unused @ts-expect-error).
   it('types sqliteCode as a primary result code, sqliteExtendedCode open', () => {
     const error = new SQLiteError(

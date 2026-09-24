@@ -1,12 +1,8 @@
 import { describe, expect, it } from '@rstest/core';
 import { missingFeature } from '../../src/capabilities';
-import {
-  BUILD_CAPABILITIES,
-  type PlatformFeature,
-  type SQLiteBuild,
-  type SQLiteVFS,
-  VFS_CAPABILITIES,
-} from '../../src/types';
+import { BUILD_CAPABILITIES, type SQLiteBuild } from '../../src/const/builds';
+import type { PlatformFeature } from '../../src/const/platform';
+import { type SQLiteVFS, VFS_CAPABILITIES } from '../../src/const/vfs';
 import {
   type Here,
   type Need,

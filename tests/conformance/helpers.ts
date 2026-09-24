@@ -1,14 +1,13 @@
 import { afterEach, expect } from '@rstest/core';
 import { detectFeatures } from '../../src/capabilities';
 import { createSQLiteClient, type WorkerLostEvent } from '../../src/client';
+import { BUILD_CAPABILITIES, type SQLiteBuild } from '../../src/const/builds';
+import type { PlatformFeature } from '../../src/const/platform';
 import {
-  BUILD_CAPABILITIES,
   defaultBuildFor,
-  type PlatformFeature,
-  type SQLiteBuild,
   type SQLiteVFS,
   VFS_CAPABILITIES,
-} from '../../src/types';
+} from '../../src/const/vfs';
 import { databaseFiles, databasePath } from '../../src/utils';
 
 /** Every wired VFS, in declaration order. */

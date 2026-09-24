@@ -1,15 +1,15 @@
+import type { SQLiteBuild } from './const/builds';
+import type { PlatformFeature } from './const/platform';
+import type { SQLiteResultCode } from './const/sqlite';
+import type { SQLiteVFS } from './const/vfs';
 import { DEFAULT_CREDIT_WINDOW } from './credits';
-import { SQLiteError, type SQLiteErrorCode } from './errors';
 import type { Logger } from './logger';
-import type { SQLiteResultCode } from './sqlite-codes';
+import { SQLiteError, type SQLiteErrorCode } from './types/errors';
 import type {
-  PlatformFeature,
   SavepointOp,
-  SQLiteBuild,
-  SQLiteVFS,
   WasmLocation,
   WorkerMessageData,
-} from './types';
+} from './types/protocol';
 
 /**
  * Query execution options forwarded to a pool worker.

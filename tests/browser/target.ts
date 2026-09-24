@@ -1,13 +1,12 @@
 import { RECOMMENDED_VFS } from '../../scripts/recommended-vfs';
-import { sharesStorage } from '../../src/locks';
+import { BUILD_CAPABILITIES, type SQLiteBuild } from '../../src/const/builds';
+import type { PlatformFeature } from '../../src/const/platform';
 import {
-  BUILD_CAPABILITIES,
   folderOf,
-  type PlatformFeature,
-  type SQLiteBuild,
   type SQLiteVFS,
   VFS_CAPABILITIES,
-} from '../../src/types';
+} from '../../src/const/vfs';
+import { sharesStorage } from '../../src/locks';
 
 /**
  * A (vfs, build) pair the browser suite runs on. Each browser project injects

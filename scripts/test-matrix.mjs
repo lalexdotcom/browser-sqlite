@@ -27,7 +27,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { VFS_CAPABILITIES } from '../src/types.ts';
+import { VFS_CAPABILITIES } from '../src/const/vfs.ts';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from '@rstest/core';
-import { VFS_CAPABILITIES } from '../../src/types';
+import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import {
   ALL_VFS,
   conformanceClient,

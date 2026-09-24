@@ -1,10 +1,6 @@
-import {
-  BUILD_CAPABILITIES,
-  type PlatformFeature,
-  type SQLiteBuild,
-  type SQLiteVFS,
-  VFS_CAPABILITIES,
-} from './types';
+import { BUILD_CAPABILITIES, type SQLiteBuild } from './const/builds';
+import type { PlatformFeature } from './const/platform';
+import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 
 /**
  * Synchronous platform probes, keyed by FEATURE rather than by VFS or by build.

@@ -1,8 +1,8 @@
 import { describe, expect, it, onTestFinished, rstest } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
+import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import { deleteDatabase } from '../../src/delete';
 import { inspectDatabase } from '../../src/inspect';
-import { VFS_CAPABILITIES } from '../../src/types';
 import { databasePath, MAX_DATABASE_PATH } from '../../src/utils';
 import { TEST_TARGET } from './helpers';
 

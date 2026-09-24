@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
-import { SQLiteError } from '../../src/errors';
-import { VFS_CAPABILITIES } from '../../src/types';
+import { VFS_CAPABILITIES } from '../../src/const/vfs';
+import { SQLiteError } from '../../src/types/errors';
 import { createTestClient } from './helpers';
 
 /**
@@ -111,7 +111,7 @@ describe('OPFSCoopSyncVFS pool guard', () => {
 /**
  * Characterization tests for the `vfs` + `build` combination guard.
  *
- * `VFS_CAPABILITIES` in `types.ts` is the single table declaring which wa-sqlite
+ * `VFS_CAPABILITIES` in `const/vfs.ts` is the single table declaring which wa-sqlite
  * builds each VFS accepts. The client checks the pair at construction so a bad
  * combination fails synchronously, with the supported builds named, instead of
  * surfacing later as an opaque `open-error` from inside a worker.

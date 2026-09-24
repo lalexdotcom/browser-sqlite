@@ -6,7 +6,6 @@ import type {
   SQLiteTransactionOptions,
 } from './api';
 import type { ReadFn, TransactionFn, WriteFn } from './bulk';
-import { SQLiteError } from './errors';
 import type { Logger } from './logger';
 import type { PoolWorker, PoolWorkerQueryOptions } from './pool';
 import {
@@ -18,6 +17,7 @@ import {
   writeWorker,
 } from './queries';
 import type { Scheduler } from './scheduler';
+import { SQLiteError } from './types/errors';
 import {
   isTransactionControl,
   isWriteQuery,

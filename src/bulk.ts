@@ -5,7 +5,7 @@ import type {
   SQLiteOutputRow,
   SQLiteTransactionOptions,
 } from './api';
-import { SQLiteBulkWriteError } from './errors';
+import type { SQLiteVFS } from './const/vfs';
 import {
   type Locks,
   stagingLockName,
@@ -14,7 +14,7 @@ import {
   sweepLockName,
 } from './locks';
 import type { Logger } from './logger';
-import type { SQLiteVFS } from './types';
+import { SQLiteBulkWriteError } from './types/errors';
 import {
   assertColumnType,
   assertGeneratedExpression,

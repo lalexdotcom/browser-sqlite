@@ -1,4 +1,4 @@
-import { type SQLiteVFS, VFS_CAPABILITIES } from '../../../src/types';
+import { type SQLiteVFS, VFS_CAPABILITIES } from '../../../src/const/vfs';
 import { AVAILABLE_FEATURES } from '../../conformance/helpers';
 import { sharedSecondClient } from '../target';
 

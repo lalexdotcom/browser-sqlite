@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@rstest/core';
 import * as wa from 'wa-sqlite/src/sqlite-constants.js';
-import { SQLITE_CODES, SQLITE_EXTENDED_CODES } from '../../src/sqlite-codes';
+import { SQLITE_CODES, SQLITE_EXTENDED_CODES } from '../../src/const/sqlite';
 
 /**
  * docs/superpowers/specs/2026-09-14-statement-errors-design.md §4 (D8). The

@@ -1,8 +1,8 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
-import { SQLiteError } from '../../src/errors';
 import { createLocks, writeLockName } from '../../src/locks';
+import { SQLiteError } from '../../src/types/errors';
 import { databasePath } from '../../src/utils';
 import { holdIn, makeRealm } from './helpers/realm';
 

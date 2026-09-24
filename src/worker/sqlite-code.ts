@@ -1,5 +1,5 @@
 import { SQLiteError } from 'wa-sqlite/src/sqlite-api.js';
-import type { SQLiteResultCode } from '../sqlite-codes';
+import type { SQLiteResultCode } from '../const/sqlite';
 
 /**
  * SQLite's result code on a thrown value, or undefined when SQLite did not

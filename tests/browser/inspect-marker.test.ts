@@ -1,8 +1,8 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
+import type { SQLiteVFS } from '../../src/const/vfs';
 import { deleteDatabase } from '../../src/delete';
 import { createLocks, parseClientMarker } from '../../src/locks';
-import type { SQLiteVFS } from '../../src/types';
 import { databasePath } from '../../src/utils';
 import { pairFor } from './helpers';
 

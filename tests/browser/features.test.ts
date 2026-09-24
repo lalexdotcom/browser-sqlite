@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@rstest/core';
 import { detectFeatures, missingFeature } from '../../src/capabilities';
-import { BUILD_CAPABILITIES, VFS_CAPABILITIES } from '../../src/types';
+import { BUILD_CAPABILITIES } from '../../src/const/builds';
+import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import { TEST_TARGET } from './helpers';
 
 /**

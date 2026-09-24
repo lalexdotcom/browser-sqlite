@@ -1,4 +1,5 @@
-import { SQLiteError } from './errors';
+import type { SQLiteVFS } from './const/vfs';
+import { VFS_CAPABILITIES } from './const/vfs';
 import type { LockEntries, Locks } from './locks';
 import {
   createLocks,
@@ -6,8 +7,7 @@ import {
   sharesStorage,
   writeLockName,
 } from './locks';
-import type { SQLiteVFS } from './types';
-import { VFS_CAPABILITIES } from './types';
+import { SQLiteError } from './types/errors';
 import { databasePath, resolveDatabase } from './utils';
 
 /**

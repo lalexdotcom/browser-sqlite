@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from '@rstest/core';
+import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import { deleteDatabase } from '../../src/delete';
-import { VFS_CAPABILITIES } from '../../src/types';
 import {
   ALL_VFS,
   conformanceClient,

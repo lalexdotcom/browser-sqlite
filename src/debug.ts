@@ -1,6 +1,6 @@
 import type { CreateSQLiteClientOptions } from './client';
+import type { SQLiteVFS } from './const/vfs';
 import type { PoolWorker } from './pool';
-import type { SQLiteVFS } from './types';
 
 export const debugSQLQuery = (sql: string, params?: unknown[]) => {
   if (!params || params.length === 0) return sql;
