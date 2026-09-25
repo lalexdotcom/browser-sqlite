@@ -40,6 +40,12 @@ note about specs travelling with their branch still holds — it is about the br
 **CI green** (types, format, lint), **memories updated**, **git clean**. Groundwork already
 validated by the user outside a phase (dependency bumps) lands on `main` directly.
 
+**A job with several steps always gets a feature branch (user, 2026-09-25).** This narrows the
+rule above: the inline exception covers a single isolated edit, not a job made of several steps,
+even when each step is only a test calibration. Said after two follow-ups (a test rewrite and a
+re-measured bound, two commits) landed straight on `main` under the "calibration is inline"
+reading. Those commits were left there.
+
 **Specs and plans go on the branch, not on `main` (user, 2026-08-27).** This file said the
 opposite and it was wrong: a spec is the first artefact of the work it designs, so it
 travels with that work and lands at the merge. Two spec commits went straight to `main`
