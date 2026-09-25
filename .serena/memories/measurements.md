@@ -154,51 +154,43 @@ The upstream suite on Chromium, `master` and branch: 14 files, 2899 passing, 0 f
 
 **Careful with truncated logs.** A first reading of this gave 157/156/161 and "22x". That came from a pre-push hook run of the whole suite, whose tail belonged to `OPFSAdaptiveVFS` — a VFS with no checkpoint, sitting at the floor for free. The number was real and measured the wrong target.
 
-## CUT-RATIO — how late an abandoned write is cut, per pair, 2026-09-22, this container
+## CUT-RATIO — how late an abandoned write is cut, per pair, re-measured 2026-09-25, this container
 
-`tx-savepoint` T3/T4 assert that an abandoned write ends before `natural * f`. `f` was 0.8,
-extrapolated from one pair; `mem:follow-ups` had recorded that nobody had measured the others. CI
-then failed on it — 23 577 ms against a bound of 23 358, a ratio of **0.807**, i.e. the bound sat
-on the WRONG SIDE of the real value rather than merely close to it.
+`tx-savepoint` T3/T4 assert that an abandoned write ends before `natural * f`. **`f` is 0.6 since
+2026-09-25** (user's value), after `natural / 2` until 2026-09-15, 0.8, then 0.9 from 2026-09-22 —
+0.9 was forced by `OPFSWriteAheadVFS` on Chromium cutting at 0.63-0.81 (0.807 on CI), a cost the
+checkpoint coalescing of #361 removed (CHECKPOINT-COALESCE above).
 
-Method: a throwaway probe (`.scratchpad/cut-ratio-2026-09-22/`) timing the same shape as T4 —
-`natural` uncut, then the transaction whose inner write carries `timeout: 30` under a transaction
-`timeout: 150` — on 12 pairs × {chromium, firefox}, `poolSize` 1, idle machine. rstest does not
-forward browser console output, so the values travel through a deliberately failing assertion.
-Validated against a known figure first: 0.631 for `OPFSWriteAheadVFS/async` on Chromium, where the
-2026-09-15 note said "≈0.6".
+Method: a throwaway probe (`.scratchpad/cut-ratio-2026-09-25/`, script `run.sh`) copying T3 and T4
+exactly — fresh `poolSize: 1` client, `natural` uncut, `DELETE`, then the abandoned write — three
+runs of each, on every declared pair × {chromium, firefox}, idle machine. The values travel through
+a deliberately failing assertion (rstest forwards no console output). `AccessHandlePoolVFS` needs
+**one measurement per test** (`cut-ratio-probe-split.test.ts`): its fixed pool of six OPFS files
+is given back only by the per-test cleanup, so six 3 M-row databases in one test fail with
+`unable to open database file` — a probe artefact, not a product failure. The isolated config is
+out of scope: it includes only `tests/browser/isolated/**`, so T3/T4 never run there.
 
-| moteur | paire | ratio |
+**T3 (abort by signal) is at the floor everywhere: ≤ 0.04.** T4 (the transaction's own timeout)
+carries the rollback and spreads further:
+
+| engine | pairs | T4 ratio |
 | --- | --- | ---: |
-| chromium | **OPFSWriteAheadVFS/async** | **0.719** |
-| chromium | **OPFSWriteAheadVFS/jspi** | **0.709** |
-| firefox | OPFSWriteAheadVFS/jspi | 0.157 |
-| chromium | IDBMirrorVFS/async | 0.149 |
-| chromium | MemoryVFS/async | 0.145 |
-| firefox | OPFSWriteAheadVFS/async | 0.097 |
-| | the 18 others | **0.017 – 0.136** |
+| chromium | **IDBMirrorVFS/jspi** | **0.316 / 0.356 / 0.385** |
+| chromium | IDBMirrorVFS/async | 0.185 – 0.219 |
+| chromium | MemoryVFS/*, MemoryAsyncVFS/* | 0.134 – 0.168 |
+| chromium | IDBBatchAtomicVFS/* | 0.094 – 0.129 |
+| chromium | OPFSAnyContextVFS/* | 0.058 – 0.070 |
+| chromium | OPFSAdaptiveVFS/*, OPFSCoopSyncVFS/* | 0.045 – 0.050 |
+| chromium | OPFSWriteAheadVFS/* (was 0.63-0.81) | 0.025 – 0.030 |
+| chromium | AccessHandlePoolVFS/* | 0.015 – 0.016 |
+| firefox | every pair | 0.016 – 0.030 |
 
-**`OPFSWriteAheadVFS` on Chromium is alone in its class** — 4.5× the next pair, and the only one
-anywhere near the bound. Everything else is under 0.16, most under 0.05.
+**`IDBMirrorVFS/jspi` on Chromium is now the latest cut**, and the only pair above 0.22. Its
+2026-09-22 figure on `async` was 0.149 against 0.185-0.219 here; T3 on the same pair is 0.015,
+so the extra time is in what T4 does after the cut, not in the cut itself. Not chased.
 
-**What that fixes the factor at.** An uncut write runs to ≈ 1.0 of natural, so the bound must lie
-in (observed cut, 1.0). The observed maximum is 0.807, on a CI runner slower than this machine. The
-window is therefore (0.81, 1.0) and **0.9 is the value**, leaving 10 % before an uncut write. It is
-not a widened margin: 0.8 was simply below the measurement.
-
-**Variance is real and not small, and it is LOAD, not the pin.** The same pair measured 0.631 and
-0.719 minutes apart, and 0.807 on CI. Asked whether wa-sqlite #355 — which touches
-`OPFSWriteAheadVFS` — had made it worse, three runs on each pin under the same load say no:
-
-| pin | ratios | mean | `natural` |
-| --- | --- | ---: | ---: |
-| `07ad48c`, before the repin | 0.659 / 0.684 / 0.666 | **0.670** | ~5 300 ms |
-| `93b9230`, after | 0.672 / 0.678 / 0.672 | **0.674** | ~5 280 ms |
-
-Indistinguishable, and `natural` is unchanged, so #355 slowed neither the write nor its
-interruption. **It also corrects the table above:** the 0.719 there was taken while the
-conversation mining was starting. The honest range for this pair is 0.63-0.81 depending on what
-else the machine is doing — which is the whole reason a bound on it cannot be tight.
+**Variance is LOAD** (established 2026-09-22 on `OPFSWriteAheadVFS`: 0.631 and 0.719 minutes
+apart on the same pin, 0.807 on CI). 0.6 sits ~1.55× above the local maximum.
 
 ## LEASE-QUIESCE — the lease IS held to quiesce after a timeout, 0/40 under load, 2026-09-21, this container
 

@@ -253,10 +253,6 @@ defect, and the scenario a defect is found through is often not the one that dem
 
 32 KiB instead of 4 KiB made the whole bulk insert 3.25× faster on Chromium, 1.18× on Firefox (PAGE-SIZE, `mem:measurements`). No upstream dependency at all. **Not a recommendation yet:** bulk insert is the friendliest case for large pages, and a scattered-update workload has never been measured. Measure that before it goes anywhere near the docs.
 
-## `tx-savepoint`'s cut bound can tighten (2026-09-22)
-
-T3/T4 assert an abandoned write ends before `natural * f`, and `f` is 0.9 because `OPFSWriteAheadVFS` sat at 0.66 (CUT-RATIO, `mem:measurements`). The cause is fixed in our build since the #361 patch; the bound has not been re-measured and still carries the old slack.
-
 ## Two worker fallback messages carry the path (2026-09-23)
 
 `src/worker/worker.ts`'s open and delete fallbacks read `Failed to open ${file}` / `Failed to delete ${data.file}`, and since `feat/vfs-folders` the worker only knows the path (`.ad/name`). They fire only when something that is not an `Error` is thrown, and `startupError` forwards the text verbatim, so no client wrapping re-adds the logical name. Parked by the controller's ruling: the path is the only identifier the worker has. Reattaching the logical name would mean sending it to the worker or wrapping on the client side.
