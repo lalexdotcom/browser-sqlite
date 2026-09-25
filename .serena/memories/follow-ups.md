@@ -288,10 +288,25 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   the barrier there is no shared state left, and two tabs are two clients' workers to SQLite. The
   next step, if anyone chases it, is a reproduction of the three sightings' conditions (a loaded
   full run of the data probe), not a longer loop. Probes kept in `.scratchpad/barrier-spike-2026-09-25/`.
-- **`VACUUM` fails with `disk I/O error` on Firefox with two workers in one client (2026-09-25).**
-  Found by the BARRIER-DATA probe: DELETE of 20 000 rows then `VACUUM`, forced writer off index 0,
-  then two concurrent reads — 17 of 88 Firefox cells over both arms, never on Chromium, barrier
-  kept or not. Which statement raises it (the VACUUM or a read after it) was not isolated.
+- **`OPFSAnyContextVFS` releases its lock with a truncation still invisible — `disk I/O error` on
+  Firefox (2026-09-25). FIXED in our build by a `patches/` hunk, submitted upstream as
+  rhashimoto/wa-sqlite#363** (report `docs/upstream/2026-09-25-wa-sqlite-363-anycontext-unlock-truncate.md`).
+  When it merges: repin and drop the hunk, per `mem:stack-and-build`. Guarded here by `tests/browser/vacuum.test.ts` (need
+  `in-place-file`, added for it); upstream by `test/vfs_xUnlock.js` (8192 for 4096 on master). Full
+  matrix with the patch, 2026-09-25: 66/66 cells green (`.matrix/2026-09-25T15-18-33-368Z`). Seen as `VACUUM` + two concurrent reads failing
+  in one client with two workers; on Firefox `needs: ['two-workers']` resolves to
+  `OPFSAnyContextVFS` whatever the target, 8-12 of 20 per run, never on Chromium (20/20 on the same
+  pair). The failing statement is the READ on the other worker, `SQLITE_IOERR_READ` (266).
+  **A `BroadcastChannel` trace of the VFS shows the mechanism:** `jTruncate` opens a writable and
+  leaves it open; SQLite calls no `xSync` after the post-commit truncation, so the writer unlocks
+  with the truncation unpublished. The reader takes `SHARED`, `getFile()` returns the OLD file
+  (2 232 320 bytes against 8192), the writer then closes its writable for its own next read, and
+  the reader's `File` snapshot dies with `AbortError`. **Hypothesis tested:** closing a pending
+  writable in a `jUnlock` override, before `super.jUnlock`, gives 60/60 on Firefox (jspi and async)
+  and 20/20 on Chromium. Upstream master (`e98c65d`, our pin) has no such close; upstream issues not
+  searched (`gh` absent). Same shape as #361: an upstream PR plus a `patches/` carry. Probes and the
+  instrumented VFS in `.scratchpad/vacuum-ioerr-2026-09-25/`. Also worth knowing: in that window a
+  reader could read the pre-truncation file rather than fail, if its read wins the race.
 - **`long-query.test.ts`'s `interrupt()` falsifier was already inert at 14be4ee**, on Adaptive.
 - **Concurrency D-09 has no falsifier by construction.** Every VFS with an exclusive handle now runs
   one worker per client where that matters, so a second worker never reaches the init lock, and

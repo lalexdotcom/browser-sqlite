@@ -33,13 +33,16 @@ export type TestTarget = {
  *   `OPFSWriteAheadVFS`.
  * - `opfs-file`: the database is an OPFS file at its own name, so a test can
  *   put bytes there before anything opens it.
+ * - `in-place-file`: an `opfs-file` with no write-ahead files beside it, so
+ *   what its files occupy follows the database's own size.
  */
 export type Need =
   | 'two-workers'
   | 'interruptible'
   | 'shared-second-client'
   | 'shared-storage'
-  | 'opfs-file';
+  | 'opfs-file'
+  | 'in-place-file';
 
 /**
  * What this browser offers. A parameter, so the resolver runs in Node.
@@ -110,6 +113,11 @@ const holds = (need: Need, { vfs, build }: TestTarget, here: Here): boolean => {
       return sharesStorage(vfs);
     case 'opfs-file':
       return folderOf(vfs) !== undefined;
+    case 'in-place-file':
+      return (
+        folderOf(vfs) !== undefined &&
+        VFS_CAPABILITIES[vfs].extraFileSuffixes.length === 0
+      );
   }
 };
 

@@ -108,6 +108,44 @@ index 55a6dac2df169732236bf88a0d47c393108a5618..03aa8584e69a4558a532bff9a387c23e
      // Delete obsolete transactions no longer needed.
      const oldRange = IDBKeyRange.bound(
        [file.path, -Infinity], [file.path, oldestTxId],
+diff --git a/src/examples/OPFSAnyContextVFS.js b/src/examples/OPFSAnyContextVFS.js
+index 4a6b4f5a2b815b77e4417d5e2b2beaef6ab8dc2b..cb72cc3f2e2b57ec76a0ad709c685cd0856f6068 100644
+--- a/src/examples/OPFSAnyContextVFS.js
++++ b/src/examples/OPFSAnyContextVFS.js
+@@ -292,6 +292,33 @@ export class OPFSAnyContextVFS extends WebLocksMixin(FacadeVFS) {
+     return super.jLock(fileId, lockType);
+   }
+ 
++  /**
++   * @param {number} fileId 
++   * @param {number} lockType 
++   * @returns {Promise<number>}
++   */
++  async jUnlock(fileId, lockType) {
++    // Changes pending in an open writable are not visible to other contexts
++    // until it is closed. SQLite does not always call xSync after its last
++    // change, e.g. the truncation at the end of a VACUUM, so close it here,
++    // before another context can take the lock and read the file.
++    let rc = VFS.SQLITE_OK;
++    const file = this.mapIdToFile.get(fileId);
++    if (file?.writable) {
++      try {
++        await file.writable.close();
++      } catch (e) {
++        this.lastError = e;
++        rc = VFS.SQLITE_IOERR_UNLOCK;
++      }
++      file.writable = null;
++      file.blob = null;
++    }
++
++    const unlockResult = await super.jUnlock(fileId, lockType);
++    return rc === VFS.SQLITE_OK ? unlockResult : rc;
++  }
++
+   jGetLastError(zBuf) {
+     if (this.lastError) {
+       console.error(this.lastError);
 diff --git a/src/examples/OPFSCoopSyncVFS.js b/src/examples/OPFSCoopSyncVFS.js
 index 44028251d71987256171f3c3494925c516db023d..5a8b1997012c82c45db18b3cecea5c888b108e9c 100644
 --- a/src/examples/OPFSCoopSyncVFS.js
@@ -186,7 +224,7 @@ index 44028251d71987256171f3c3494925c516db023d..5a8b1997012c82c45db18b3cecea5c88
            this.log?.(`failed to create access handles for ${file.path}`, e);
            // Close any of the potentially opened access handles
 diff --git a/src/examples/WriteAhead.js b/src/examples/WriteAhead.js
-index 76bd4fac..559fd753 100644
+index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..559fd75319fa421c979b83dc01371ca24d372479 100644
 --- a/src/examples/WriteAhead.js
 +++ b/src/examples/WriteAhead.js
 @@ -6,6 +6,10 @@ const DEFAULT_BACKSTOP_INTERVAL = 30_000;

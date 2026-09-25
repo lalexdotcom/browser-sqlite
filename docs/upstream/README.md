@@ -14,6 +14,7 @@ merged, through [`patches/`](../../patches).
 | [wa-sqlite #353 — `IDBMirrorVFS` keeps every block a shrinking database leaves behind](2026-09-18-wa-sqlite-353-idb-mirror-block-leak.md) | Found by questioning a sentence in #352's report. Why the scenario a bug is found through is not always the one that demonstrates it. |
 | [wa-sqlite #357 — an open that fails asynchronously loses its cause](2026-09-21-wa-sqlite-357-coopsync-open-last-error.md) | The defect that made #350 findable only by hand. Why SQLite's own message cannot carry it, and why the test harness could not see it. |
 | [wa-sqlite #361 — a checkpoint that costs one call per page](2026-09-23-wa-sqlite-361-writeahead-checkpoint-coalesce.md) | Why `OPFSWriteAheadVFS` gave back only a third of an abandoned write. A threshold, `readwrite-unsafe` and a Chromium-only cause, all refuted before the real one. |
+| [wa-sqlite #363 — a lock released before the truncation it covers](2026-09-25-wa-sqlite-363-anycontext-unlock-truncate.md) | Found by a probe asking something else. Why a `VACUUM` on `OPFSAnyContextVFS` failed the next read on Firefox, traced one VFS call at a time. |
 
 [`repro/`](repro) holds the scripts, self-contained: each runs from a plain
 wa-sqlite checkout with nothing but Playwright installed.
