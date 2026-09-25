@@ -396,6 +396,9 @@ the table above are stale from here on; re-count before citing them.
   shared between a client's concurrent writes was proposed and rejected: with overlapping
   writes the count never reaches zero and that client starves every other tab.
 
-**The barrier is permanent architecture, not a stopgap awaiting a better VFS** —
-staleness is a property of the multi-connection setup, measured identical on every VFS
-and every build. Its measured domain and cost are in `mem:measurements`.
+**The staleness the barrier was built for was a defect of our worker, fixed since `aee3859`
+(spike 2026-09-25, `mem:follow-ups`).** The worker read column names before the first `step()`,
+so a statement SQLite re-prepared on a changed schema returned fresh rows under stale names — the
+"identical on every VFS and every build" measurement was that bug. Without the barrier, no schema
+scenario is stale today on any pair; data staleness and cross-tab were not probed. Its measured
+cost is in `mem:measurements`.

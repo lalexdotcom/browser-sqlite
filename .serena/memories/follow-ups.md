@@ -269,9 +269,21 @@ defect, and the scenario a defect is found through is often not the one that dem
 
 Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
 
-- **`barrier.test.ts` does not guard the barrier.** Deleting `BARRIER_SQL` in `applyBarrier` leaves
-  it green on `OPFSAdaptiveVFS` (Chromium, real multi-connection) and on `OPFSAnyContextVFS` alike —
-  pre-existing, not caused by the migration (checked by the task reviewer).
+- **`barrier.test.ts` does not guard the barrier — because nothing observable does (spike, 2026-09-25).**
+  Deleting the barrier statement leaves all six tests green on every declared pair, Chromium and
+  Firefox (44 cells), with a positive control proving the path is reached. Bisected in a worktree
+  holding today's `node_modules`: the two single-client tests went inert at `8bc0bf1` (last-writer
+  routing sends the read to the fresh writer), the two-client ones at `aee3859` (statement cache).
+  **`aee3859` is the real cause:** it moved `sqlite.column_names(stmt)` after the first `step()`.
+  The old worker read the names BEFORE stepping, so a statement prepared on the old schema and
+  re-prepared by SQLite at `step()` returned fresh rows under stale names — exactly the spec's
+  `{"old_col": 42}`. Reverse-mutated on today's code (names read before the step): all seven
+  schema scenarios go red without the barrier, and most stay red WITH it, since a cached statement
+  keeps its old prepare. **So the staleness the barrier was built for was our worker, not SQLite;
+  the tests are regression tests of the column-name capture, which is their real falsifier.**
+  Not covered by the spike: DATA staleness (only schema scenarios were run) and cross-tab. Whether
+  the barrier and the epoch/marker machinery behind it can go is the user's call, and would need
+  those probes first. Probes kept in `.scratchpad/barrier-spike-2026-09-25/`.
 - **`long-query.test.ts`'s `interrupt()` falsifier was already inert at 14be4ee**, on Adaptive.
 - **Concurrency D-09 has no falsifier by construction.** Every VFS with an exclusive handle now runs
   one worker per client where that matters, so a second worker never reaches the init lock, and
