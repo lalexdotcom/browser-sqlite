@@ -269,9 +269,29 @@ defect, and the scenario a defect is found through is often not the one that dem
 
 Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
 
-- **`barrier.test.ts` does not guard the barrier.** Deleting `BARRIER_SQL` in `applyBarrier` leaves
-  it green on `OPFSAdaptiveVFS` (Chromium, real multi-connection) and on `OPFSAnyContextVFS` alike —
-  pre-existing, not caused by the migration (checked by the task reviewer).
+- **`barrier.test.ts` does not guard the barrier — because nothing observable does (spike, 2026-09-25).**
+  Deleting the barrier statement leaves all six tests green on every declared pair, Chromium and
+  Firefox (44 cells), with a positive control proving the path is reached. Bisected in a worktree
+  holding today's `node_modules`: the two single-client tests went inert at `8bc0bf1` (last-writer
+  routing sends the read to the fresh writer), the two-client ones at `aee3859` (statement cache).
+  **`aee3859` is the real cause:** it moved `sqlite.column_names(stmt)` after the first `step()`.
+  The old worker read the names BEFORE stepping, so a statement prepared on the old schema and
+  re-prepared by SQLite at `step()` returned fresh rows under stale names — exactly the spec's
+  `{"old_col": 42}`. Reverse-mutated on today's code (names read before the step): all seven
+  schema scenarios go red without the barrier, and most stay red WITH it, since a cached statement
+  keeps its old prepare. **So the staleness the barrier was built for was our worker, not SQLite;
+  the tests are regression tests of the column-name capture, which is their real falsifier.**
+  **Data staleness, probed the same day (BARRIER-DATA, `mem:measurements`): 3 stale reads in 1232
+  without the barrier, 0 in 1232 with it, under incidental load; 0 / 480 in a focused loop, idle
+  and loaded, in both arms.** So the barrier may guard something rare and nothing reproduces it on
+  demand: it stays, and it still has no falsifier. Cross-tab needs no probe of its own — without
+  the barrier there is no shared state left, and two tabs are two clients' workers to SQLite. The
+  next step, if anyone chases it, is a reproduction of the three sightings' conditions (a loaded
+  full run of the data probe), not a longer loop. Probes kept in `.scratchpad/barrier-spike-2026-09-25/`.
+- **`VACUUM` fails with `disk I/O error` on Firefox with two workers in one client (2026-09-25).**
+  Found by the BARRIER-DATA probe: DELETE of 20 000 rows then `VACUUM`, forced writer off index 0,
+  then two concurrent reads — 17 of 88 Firefox cells over both arms, never on Chromium, barrier
+  kept or not. Which statement raises it (the VACUUM or a read after it) was not isolated.
 - **`long-query.test.ts`'s `interrupt()` falsifier was already inert at 14be4ee**, on Adaptive.
 - **Concurrency D-09 has no falsifier by construction.** Every VFS with an exclusive handle now runs
   one worker per client where that matters, so a second worker never reaches the init lock, and
