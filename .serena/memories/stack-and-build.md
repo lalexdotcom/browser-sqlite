@@ -26,8 +26,8 @@
   version is still `1.1.2`, so the `patchedDependencies` key did not move. **#330 also changes what a
   failed open reports** — SQLite's own `unable to open database file` instead of the function name
   (`mem:measurements`, WAL-COMPAT's neighbour in `mem:state`'s baseline; CHANGELOG under Changed).
-  **`patches/wa-sqlite@1.1.2.patch` carries FIVE upstream PRs since 2026-09-18 — seven hunks over three
-  files**, and is no longer deletable as a block. Each is independent and each has a report in
+  **`patches/wa-sqlite@1.1.2.patch` carries the upstream changes listed below, file by file**, and is
+  no longer deletable as a block. Each is independent and each has a report in
   `docs/upstream/`, which is where the mechanisms and measurements live:
   - `OPFSCoopSyncVFS.js` — #347 (hand-over deferred to a task, plus the temp-directory race),
     `@@ -77` and `@@ -434`; and #350 (`Promise.allSettled`, so a failed acquisition closes what
@@ -36,6 +36,11 @@
     starts at the offset), `@@ -271`.
   - `IDBMirrorVFS.js` — #352 (`pData.subarray()`: `pData` is a `Uint8ArrayProxy`, and `set()` on it
     stores zeroes) and #353 (drop the blocks past the end of the file, in the view and in the store).
+  - `WriteAhead.js` — #361 (checkpoint in contiguous runs).
+  - `OPFSAnyContextVFS.js` — a `jUnlock` that closes a pending writable before releasing the lock
+    (added 2026-09-25; **its upstream PR is not opened yet** — branch
+    `fix/anycontext-unlock-publishes-truncate` in `.work/wa-sqlite-anycontext`, body in
+    `.scratchpad/vacuum-ioerr-2026-09-25/pr-body.md`; replace this line with its number once it has one).
 
   **When one merges, repin and regenerate the patch WITHOUT that PR's hunks — do not delete the
   file.** The hunks sit in different regions and, for two of them, different files, so a selective

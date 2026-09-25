@@ -2,7 +2,11 @@ import { describe, expect, it } from '@rstest/core';
 import { missingFeature } from '../../src/capabilities';
 import { BUILD_CAPABILITIES, type SQLiteBuild } from '../../src/const/builds';
 import type { PlatformFeature } from '../../src/const/platform';
-import { type SQLiteVFS, VFS_CAPABILITIES } from '../../src/const/vfs';
+import {
+  folderOf,
+  type SQLiteVFS,
+  VFS_CAPABILITIES,
+} from '../../src/const/vfs';
 import {
   type Here,
   type Need,
@@ -117,6 +121,29 @@ describe('resolvePair', () => {
         WITH_UNSAFE,
       ),
     ).toEqual(pair('OPFSWriteAheadVFS', 'sync'));
+  });
+
+  it('moves an in-place-file test off OPFSWriteAheadVFS, whose write-ahead files keep their size', () => {
+    // Falsifiable: an `in-place-file` that reads only `folder` leaves this on
+    // OPFSWriteAheadVFS and turns it red.
+    const moved = resolvePair(
+      pair('OPFSWriteAheadVFS', 'sync'),
+      ['in-place-file'],
+      WITH_UNSAFE,
+    );
+    expect(moved).not.toBeNull();
+    expect(moved?.vfs).not.toBe('OPFSWriteAheadVFS');
+    expect(folderOf(moved?.vfs as SQLiteVFS)).toBeDefined();
+  });
+
+  it('keeps an in-place-file test on a VFS that writes its database in place', () => {
+    expect(
+      resolvePair(
+        pair('OPFSAnyContextVFS', 'async'),
+        ['in-place-file'],
+        WITH_UNSAFE,
+      ),
+    ).toEqual(pair('OPFSAnyContextVFS', 'async'));
   });
 
   it('never leaves a shared-second-client test on a VFS that isolates or refuses', () => {
