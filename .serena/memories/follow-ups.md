@@ -292,7 +292,8 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   Firefox (2026-09-25). FIXED in our build by a `patches/` hunk; the upstream PR is written and
   committed on the fork but NOT opened — opening it is the user's, then the report in
   `docs/upstream/` under its number.** Guarded here by `tests/browser/vacuum.test.ts` (need
-  `in-place-file`, added for it); upstream by `test/vfs_xUnlock.js` (8192 for 4096 on master). Seen as `VACUUM` + two concurrent reads failing
+  `in-place-file`, added for it); upstream by `test/vfs_xUnlock.js` (8192 for 4096 on master). Full
+  matrix with the patch, 2026-09-25: 66/66 cells green (`.matrix/2026-09-25T15-18-33-368Z`). Seen as `VACUUM` + two concurrent reads failing
   in one client with two workers; on Firefox `needs: ['two-workers']` resolves to
   `OPFSAnyContextVFS` whatever the target, 8-12 of 20 per run, never on Chromium (20/20 on the same
   pair). The failing statement is the READ on the other worker, `SQLITE_IOERR_READ` (266).
