@@ -21,7 +21,7 @@ const footprint = async (files: readonly string[]): Promise<number> =>
 describe('a VACUUM that shrinks the database', () => {
   // Another context reads the files as soon as the write resolves; on Firefox
   // a read at the stale size then fails with SQLITE_IOERR_READ. Falsifiable:
-  // drop the OPFSAnyContextVFS `jUnlock` hunk from
+  // drop the OPFSAnyContextVFS `jUnlock` hunk (rhashimoto/wa-sqlite#363) from
   // patches/wa-sqlite@1.1.2.patch — its file keeps its pre-VACUUM size.
   it('has shrunk its files in OPFS when the write resolves', async () => {
     const db = await createTestClient({ needs: ['in-place-file'] });

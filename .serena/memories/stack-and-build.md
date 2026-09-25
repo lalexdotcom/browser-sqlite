@@ -37,10 +37,8 @@
   - `IDBMirrorVFS.js` — #352 (`pData.subarray()`: `pData` is a `Uint8ArrayProxy`, and `set()` on it
     stores zeroes) and #353 (drop the blocks past the end of the file, in the view and in the store).
   - `WriteAhead.js` — #361 (checkpoint in contiguous runs).
-  - `OPFSAnyContextVFS.js` — a `jUnlock` that closes a pending writable before releasing the lock
-    (added 2026-09-25; **its upstream PR is not opened yet** — branch
-    `fix/anycontext-unlock-publishes-truncate` in `.work/wa-sqlite-anycontext`, body in
-    `.scratchpad/vacuum-ioerr-2026-09-25/pr-body.md`; replace this line with its number once it has one).
+  - `OPFSAnyContextVFS.js` — #363 (a `jUnlock` that closes a pending writable before releasing the
+    lock).
 
   **When one merges, repin and regenerate the patch WITHOUT that PR's hunks — do not delete the
   file.** The hunks sit in different regions and, for two of them, different files, so a selective

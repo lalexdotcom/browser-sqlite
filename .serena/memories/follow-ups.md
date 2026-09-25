@@ -289,9 +289,9 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   next step, if anyone chases it, is a reproduction of the three sightings' conditions (a loaded
   full run of the data probe), not a longer loop. Probes kept in `.scratchpad/barrier-spike-2026-09-25/`.
 - **`OPFSAnyContextVFS` releases its lock with a truncation still invisible — `disk I/O error` on
-  Firefox (2026-09-25). FIXED in our build by a `patches/` hunk; the upstream PR is written and
-  committed on the fork but NOT opened — opening it is the user's, then the report in
-  `docs/upstream/` under its number.** Guarded here by `tests/browser/vacuum.test.ts` (need
+  Firefox (2026-09-25). FIXED in our build by a `patches/` hunk, submitted upstream as
+  rhashimoto/wa-sqlite#363** (report `docs/upstream/2026-09-25-wa-sqlite-363-anycontext-unlock-truncate.md`).
+  When it merges: repin and drop the hunk, per `mem:stack-and-build`. Guarded here by `tests/browser/vacuum.test.ts` (need
   `in-place-file`, added for it); upstream by `test/vfs_xUnlock.js` (8192 for 4096 on master). Full
   matrix with the patch, 2026-09-25: 66/66 cells green (`.matrix/2026-09-25T15-18-33-368Z`). Seen as `VACUUM` + two concurrent reads failing
   in one client with two workers; on Firefox `needs: ['two-workers']` resolves to
