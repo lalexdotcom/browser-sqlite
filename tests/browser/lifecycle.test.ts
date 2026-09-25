@@ -308,29 +308,6 @@ function failWorkerAtIndex(n: number): Worker[] {
 }
 
 /**
- * Intercepts worker creation and makes workers from index `from` onwards fail.
- * Returns the array of created Worker instances in creation order.
- */
-function failWorkersFromIndex(from: number): Worker[] {
-  const created: Worker[] = [];
-  const Original = globalThis.Worker;
-  class Selective extends Original {
-    constructor(url: string | URL, options?: WorkerOptions) {
-      super(
-        created.length >= from ? '/definitely-missing-worker.js' : url,
-        options,
-      );
-      created.push(this);
-    }
-  }
-  globalThis.Worker = Selective as unknown as typeof Worker;
-  onTestFinished(() => {
-    globalThis.Worker = Original;
-  });
-  return created;
-}
-
-/**
  * Intercepts worker creation and makes workers from index `from` onward load
  * a SILENT module — one that starts successfully and never answers a message.
  * Returns the array of created Worker instances in creation order.
@@ -396,19 +373,18 @@ describe('worker lifecycle — startup readiness gate', () => {
     expect(lostIndices).toContain(0);
   });
 
-  // Falsifiable: remove the `pool.filter(Boolean).length === 0` check in
-  // onGateOpen (src/client.ts), relying only on the 'fail-client' supervisor
-  // verdict. Because supervisor returns 'restart' for the everReady slot 0
-  // before returning 'fail-client' for slot 1, and the iteration order puts
-  // slot 1 (inserted first) ahead of slot 0, the 'fail-client' verdict is
-  // never seen and the client does not fail — the Promise.race then resolves
-  // to 'HUNG' and the assertion fails.
+  // Falsifiable only by removing BOTH guards, each sufficient alone: the
+  // `pool.filter(Boolean).length === 0` check in onGateOpen (src/client.ts)
+  // and the supervisor's 'fail-client' verdict for 'lost' (src/supervisor.ts,
+  // return 'lost' unconditionally). The client then hangs and the race
+  // resolves to 'HUNG'.
   it('fails the client rather than hanging when all startup workers are gone', async () => {
-    // Worker 0 (slot 0): real URL — opens in round 1 and stays alive until we
-    //   kill it manually.
-    // Worker 1 (slot 1, round 1): bad URL — fails immediately.
-    // Worker 2 (slot 1, retry): bad URL — fails again.
-    const created = failWorkersFromIndex(1);
+    // Every failure here is dispatched by the test itself, not timed by the
+    // browser: slot 1 (silent) fails round 1; once slot 0 (real) has opened,
+    // slot 1's retry (also silent) is spawned; slot 0 is then killed while
+    // that retry is still open, and killing the retry leaves the pool empty
+    // at gate-open.
+    const created = silentWorkersFromIndex(1);
     const lostIndices: number[] = [];
     // The startup gate is about TWO slots, so the pair must keep two: a target
     // that caps the pool would refuse the client instead of exercising the gate
@@ -419,18 +395,22 @@ describe('worker lifecycle — startup readiness gate', () => {
       onWorkerLost: ({ index }) => lostIndices.push(index),
     });
 
-    // Poll until worker 2 (slot 1 retry) is created so we are reliably inside
-    // the retry round before worker 2's load error fires.
-    while (created.length < 3) await sleep(10);
-
-    // Kill slot 0 while the retry round is still open.  Combined with the
-    // failing slot 1 retry this leaves the pool entirely empty at gate-open.
-    created[0].dispatchEvent(
-      new ErrorEvent('error', { message: 'killed during retry' }),
+    // Slot 0 (real) and slot 1 (silent, round 1) have both been constructed.
+    while (created.length < 2) await sleep(10);
+    created[1].dispatchEvent(
+      new ErrorEvent('error', { message: 'slot 1 failed round 1' }),
     );
 
-    // Give the retry worker (worker 2) time to fail and the gate to open.
-    await sleep(500);
+    // Round 1 settles only once slot 0 has genuinely opened — only then does
+    // the retry spawn slot 1's silent replacement (worker index 2).
+    while (created.length < 3) await sleep(10);
+
+    created[0].dispatchEvent(
+      new ErrorEvent('error', { message: 'slot 0 killed during retry' }),
+    );
+    created[2].dispatchEvent(
+      new ErrorEvent('error', { message: 'slot 1 retry failed' }),
+    );
 
     // The gate is now open with 0 workers.  A subsequent query must reject, not
     // block indefinitely.  The bound of 8 s converts a hang into a test failure.

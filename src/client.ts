@@ -576,10 +576,7 @@ export const createSQLiteClient = (
         }
         startupLosses.clear();
         // Also fail the client when the pool is empty even if no verdict was
-        // 'fail-client'. This handles the case where supervisor returns
-        // 'restart' for an everReady slot (e.g., slot 0 opened in round 1 and
-        // died during the retry round) while slot 1's verdict depends on
-        // iteration order — the pool check is order-independent.
+        // 'fail-client': a second guard, independent of the supervisor's count.
         if (
           failClientError !== undefined ||
           pool.filter(Boolean).length === 0
