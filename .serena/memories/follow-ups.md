@@ -263,10 +263,6 @@ defect, and the scenario a defect is found through is often not the one that dem
   `AccessHandlePoolVFS` behaved that way before the branch too.
 - **`handleDeath`'s guard for a slot-0 loss before the probe has no test** — no path was found that reaches
   it with the probe unanswered; it is defensive (`a0373c0`).
-- **Three tests of `multi-client.test.ts` carry no falsifier** (their claims were run and refuted): "never
-  refuses a read-only transaction opened under a writer", "gives back a usable client after a transaction
-  is aborted mid-contention", "commits at most one more batch after a bulkWrite is aborted". Their comments
-  now say what was tried. Whether to find a real falsifier or delete them is the user's call.
 
 
 ## Three browser tests guard less than their comments said (2026-09-14)
