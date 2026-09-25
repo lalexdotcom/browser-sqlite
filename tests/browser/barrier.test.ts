@@ -4,10 +4,14 @@ import { BARRIER_SQL } from '../../src/epochs';
 import { createTestClient, removeDatabaseFiles } from './helpers';
 
 /**
- * The failing configuration is forced, not waited for: with the designation
- * forbidden on index 0 at poolSize 2, the writer is always w1 and reads always
- * land on w0. Unforced, this configuration occurs ~3 runs in 10 and the test
- * would pin nothing. Control before the barrier: 8/8 stale.
+ * With the designation forbidden on index 0 at poolSize 2, the writer is
+ * always w1, so which worker pays a barrier is deterministic.
+ *
+ * No test here can observe the barrier's absence: removing its statement
+ * leaves every one of them green on every pair (spike 2026-09-25,
+ * `mem:follow-ups`). The staleness it was built for came from the worker
+ * reading column names before the first step(). The schema tests below guard
+ * that capture; the count tests guard when the barrier is paid.
  */
 const forced = {
   // Writer spread: needs two live workers, so a target that caps the pool
@@ -27,16 +31,15 @@ const countBarrierStatements = (
     .filter((query) => query.sql === BARRIER_SQL).length;
 
 describe('commit-propagation barrier', () => {
-  // Falsifiable: delete the `worker.query(BARRIER_SQL, ...)` call in
-  // applyBarrier() in src/client.ts and this goes red every run.
+  // Falsifiable: in src/worker/worker.ts, read `column_names(stmt)` before the
+  // first step() — the statement cached before the rename reports old_col.
   it('sees a schema swap committed by another worker', async () => {
     const db = await createTestClient(forced);
 
     await db.write('CREATE TABLE t (old_col)');
     await db.write('INSERT INTO t (old_col) VALUES (42)');
 
-    // Primes w0: any earlier read on the connection that later serves the
-    // read is what freezes its cached page 1. output()'s sweep guarantees one.
+    // Caches the statement the read below reuses, prepared on the old schema.
     await db.read('SELECT * FROM t');
 
     await db.transaction(async (tx) => {
@@ -47,8 +50,8 @@ describe('commit-propagation barrier', () => {
     expect(rows[0]?.new_col).toBe(42);
   });
 
-  // Falsifiable: delete the `worker.query(BARRIER_SQL, ...)` call in
-  // applyBarrier() in src/client.ts and this goes red every run.
+  // Falsifiable: in src/worker/worker.ts, read `column_names(stmt)` before the
+  // first step() — the statement cached before the swap reports old_col.
   it('sees a table dropped and replaced with a different shape', async () => {
     const db = await createTestClient(forced);
 
@@ -74,9 +77,10 @@ describe('commit-propagation barrier', () => {
     const db = await createTestClient({ ...forced, debug: true });
 
     await db.write('CREATE TABLE t (a)');
-    await db.read('SELECT * FROM t'); // w0 pays its barrier here
+    // Both reads go to w1, the last writer, which is current.
+    await db.read('SELECT * FROM t');
     const before = countBarrierStatements(db);
-    await db.read('SELECT * FROM t'); // w0 is current — must pay nothing
+    await db.read('SELECT * FROM t'); // must pay nothing
     expect(countBarrierStatements(db)).toBe(before);
   });
 
@@ -107,15 +111,8 @@ describe('commit-propagation barrier', () => {
 const sharedFile = { vfs: 'OPFSAdaptiveVFS' as const };
 
 describe('barrier — two clients in one tab', () => {
-  // Falsifiable: replace the globalThis symbol registry in src/epochs.ts with
-  // a per-client counter and this goes red.
-  //
-  // NOTE: the test uses DDL (column rename) — not a pure INSERT — because
-  // SQLite refreshes data pages at the start of every read transaction (change
-  // counter check) but caches the schema from page 1 across queries. Without
-  // the barrier a primed worker's schema cache goes stale after a remote DDL
-  // commit; a pure INSERT leaves the schema unchanged so no barrier is needed
-  // to see it, making such a test vacuous.
+  // Falsifiable: in src/worker/worker.ts, read `column_names(stmt)` before the
+  // first step() — B's statement, cached before A's rename, reports old_col.
   it("client B observes client A's schema change", async () => {
     const dbName = `bsq-test-${crypto.randomUUID()}`;
     const a = createSQLiteClient(dbName, sharedFile);
@@ -140,16 +137,17 @@ describe('barrier — two clients in one tab', () => {
 
     await a.write('CREATE TABLE t (old_col)');
     await a.write('INSERT INTO t (old_col) VALUES (42)');
-    await b.read('SELECT * FROM t'); // primes B's reading worker with old schema
+    await b.read('SELECT * FROM t'); // caches B's statement on the old schema
     await a.write('ALTER TABLE t RENAME COLUMN old_col TO new_col');
 
     const rows = await b.read<{ new_col: number }>('SELECT * FROM t');
     expect(rows[0]?.new_col).toBe(42);
   });
 
-  // Falsifiable: delete the normalizeDatabaseFile call at the entry of
-  // createSQLiteClient and this goes red — the two clients key two counters
-  // so B's barrier never fires and B reads the stale schema.
+  // No falsifier in this library: making resolveDatabase skip
+  // normalizeDatabaseFile leaves it green, the VFS resolving './' to the same
+  // file on its own (spike 2026-09-25). The column-name mutation above turns
+  // it red, as it does the test before.
   it('treats two spellings of one file as one database', async () => {
     // './bsq-test-<uuid>' normalizes to the same 45-char name as `dbName`
     // (URL resolves './' away), well under the 56-char wa-sqlite path bound
@@ -178,7 +176,7 @@ describe('barrier — two clients in one tab', () => {
 
     await a.write('CREATE TABLE t (old_col)');
     await a.write('INSERT INTO t (old_col) VALUES (42)');
-    await b.read('SELECT * FROM t'); // primes B's reading worker with old schema
+    await b.read('SELECT * FROM t'); // caches B's statement on the old schema
     await a.write('ALTER TABLE t RENAME COLUMN old_col TO new_col');
 
     const rows = await b.read<{ new_col: number }>('SELECT * FROM t');
