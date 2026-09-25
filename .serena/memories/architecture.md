@@ -400,5 +400,6 @@ the table above are stale from here on; re-count before citing them.
 (spike 2026-09-25, `mem:follow-ups`).** The worker read column names before the first `step()`,
 so a statement SQLite re-prepared on a changed schema returned fresh rows under stale names — the
 "identical on every VFS and every build" measurement was that bug. Without the barrier, no schema
-scenario is stale today on any pair; data staleness and cross-tab were not probed. Its measured
+scenario is stale today on any pair; data reads were stale 3 times in 1232 and never with it
+(BARRIER-DATA, `mem:measurements`), so it stays. Its measured
 cost is in `mem:measurements`.

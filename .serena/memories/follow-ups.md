@@ -281,9 +281,17 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   schema scenarios go red without the barrier, and most stay red WITH it, since a cached statement
   keeps its old prepare. **So the staleness the barrier was built for was our worker, not SQLite;
   the tests are regression tests of the column-name capture, which is their real falsifier.**
-  Not covered by the spike: DATA staleness (only schema scenarios were run) and cross-tab. Whether
-  the barrier and the epoch/marker machinery behind it can go is the user's call, and would need
-  those probes first. Probes kept in `.scratchpad/barrier-spike-2026-09-25/`.
+  **Data staleness, probed the same day (BARRIER-DATA, `mem:measurements`): 3 stale reads in 1232
+  without the barrier, 0 in 1232 with it, under incidental load; 0 / 480 in a focused loop, idle
+  and loaded, in both arms.** So the barrier may guard something rare and nothing reproduces it on
+  demand: it stays, and it still has no falsifier. Cross-tab needs no probe of its own — without
+  the barrier there is no shared state left, and two tabs are two clients' workers to SQLite. The
+  next step, if anyone chases it, is a reproduction of the three sightings' conditions (a loaded
+  full run of the data probe), not a longer loop. Probes kept in `.scratchpad/barrier-spike-2026-09-25/`.
+- **`VACUUM` fails with `disk I/O error` on Firefox with two workers in one client (2026-09-25).**
+  Found by the BARRIER-DATA probe: DELETE of 20 000 rows then `VACUUM`, forced writer off index 0,
+  then two concurrent reads — 17 of 88 Firefox cells over both arms, never on Chromium, barrier
+  kept or not. Which statement raises it (the VACUUM or a read after it) was not isolated.
 - **`long-query.test.ts`'s `interrupt()` falsifier was already inert at 14be4ee**, on Adaptive.
 - **Concurrency D-09 has no falsifier by construction.** Every VFS with an exclusive handle now runs
   one worker per client where that matters, so a second worker never reaches the init lock, and

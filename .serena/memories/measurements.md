@@ -4,6 +4,32 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## BARRIER-DATA — data staleness without the barrier, 2026-09-25, this container
+
+Probe `.scratchpad/barrier-spike-2026-09-25/data-probe.test.ts`: seven scenarios (INSERT, UPDATE,
+DELETE without growth; DELETE + VACUUM; bulk INSERT; DROP + CREATE + INSERT read with other SQL
+text; a readOnly-transaction read), each in one client (forced writer off index 0, two concurrent
+observations so one lands on the primed non-writer) and in two clients. Two worktrees, barrier
+statement removed in one, every declared pair × {chromium, firefox}, two passes: 88 cells × 14
+tests per arm. **Positive control first:** with the barrier removed AND column names read before
+the first step, the DDL scenario goes red in both shapes, so the probe sees staleness when it exists.
+
+| arm | stale values | `disk I/O error` |
+| --- | ---: | ---: |
+| barrier removed | **3** / 1232 | 4 |
+| barrier kept | **0** / 1232 | 13 |
+
+The three stale reads were one observation of the two returning the value from before the write
+(`[1, 2]` for `[2, 2]`, `[23, 3]` for `[23, 23]`), on Chromium, first pass, INSERT or UPDATE, one
+and two clients; two of them resolved to `IDBBatchAtomicVFS/jspi`. The machine was loaded by
+other test runs at the time. **Not reproducible on demand:** a looped probe on that pair — INSERT,
+UPDATE, DELETE × one and two clients × 40 — gave **0 / 240 in both arms idle and 0 / 240 in both
+arms under sixteen busy loops**. 3 against 0 out of 1232 is not significant on its own (Fisher
+p ≈ 0.12): suggestive that the barrier guards something rare, not a proof.
+
+Every `disk I/O error` is the same test — one client, DELETE + VACUUM, two workers — on Firefox
+only, in both arms, so independent of the barrier (`mem:follow-ups`).
+
 ## VFS-PILES — the three product piles, cause and cost, 2026-09-18, this container
 
 Full matrix before: **62 cell-failures, 20 groups, 52/66 cells green** (2026-09-16). After the
