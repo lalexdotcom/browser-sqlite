@@ -17,9 +17,12 @@
 - **Runtime dependencies: none.** `wa-sqlite` is a devDependency only, vendored into
   `dist/worker/worker.js` at build time so it never reaches a consumer lockfile. **Pinned by commit
   SHA, not by tag, since 2026-09-15 (user):**
-  `github:rhashimoto/wa-sqlite#93b9230892a4c440ddbc06936bcd8500e2d6e6cf` since 2026-09-21, upstream
-  `master` with #344, #330 and #355 merged. Vendored, so a commit serves as well as a release and
-  nothing waits for one. **The 2026-09-21 repin was taken for two fixes by other contributors**:
+  `github:rhashimoto/wa-sqlite#5e98ac7641e637dddb2e0fadded89810f0eae60d` since 2026-09-26, upstream
+  `master` with our #347 and #348 merged that day (and #364, JSPI detection in upstream's tests
+  only). #347 left the patch with it; #348 (TEXT values cut at an embedded NUL) was never carried
+  and reaches the library through the pin. Before that `e98c65de` (2026-09-23, #359) and `93b9230`
+  (2026-09-21). Vendored, so a commit serves as well as a release and nothing waits for one.
+  **The 2026-09-21 repin was taken for two fixes by other contributors**:
   #330, which stops a failed `sqlite3_open_v2` leaking the database handle SQLite allocates for it —
   `openWithRetry` can make 25 attempts, each of which leaked before — and #355, race conditions in
   `OPFSWriteAheadVFS`. The patch applied to the new base unchanged, only line offsets, and upstream's
@@ -29,14 +32,14 @@
   **`patches/wa-sqlite@1.1.2.patch` carries the upstream changes listed below, file by file**, and is
   no longer deletable as a block. Each is independent and each has a report in
   `docs/upstream/`, which is where the mechanisms and measurements live:
-  - `OPFSCoopSyncVFS.js` — #347 (hand-over deferred to a task, plus the temp-directory race),
-    `@@ -77` and `@@ -434`; and #350 (`Promise.allSettled`, so a failed acquisition closes what
-    succeeded instead of leaking it), `@@ -522`.
+  - `OPFSCoopSyncVFS.js` — #350 (`Promise.allSettled`, so a failed acquisition closes what
+    succeeded instead of leaking it). #347 (hand-over deferred to a task, plus the temp-directory
+    race) is upstream since the 2026-09-26 repin. #357 is deliberately not carried.
   - `IDBBatchAtomicVFS.js` — #351 (`jWrite` walks the blocks a write covers instead of assuming one
     starts at the offset), `@@ -271`.
   - `IDBMirrorVFS.js` — #352 (`pData.subarray()`: `pData` is a `Uint8ArrayProxy`, and `set()` on it
     stores zeroes) and #353 (drop the blocks past the end of the file, in the view and in the store).
-  - `WriteAhead.js` — #361 (checkpoint in contiguous runs).
+  - `WriteAhead.js` — #361 (checkpoint plan with bounded buffer planners, upstream `68db49b3` since 2026-09-26; the first version held the whole checkpoint in memory).
   - `OPFSAnyContextVFS.js` — #363 (a `jUnlock` that closes a pending writable before releasing the
     lock).
 
@@ -53,6 +56,13 @@
     held. **After a change of patch key, `patch-commit` left `node_modules` unpatched** — the `.pnpm`
     directory had no patch-hash suffix and the lockfile no `patchedDependencies` — until a second
     `pnpm install`. Check both before trusting a run.
+  - **A repin rebuilds the patch from the PR heads, then checks it (2026-09-26).** In a detached
+    worktree of the new pin, apply each carried PR's `git diff $(merge-base) <head> -- src/` with
+    `git apply --3way`; write that diff as the patch, `pnpm install`, then round-trip it through
+    `pnpm patch` / `patch -p1` / `patch-commit` so pnpm writes it. Proof: `diff -r` of the worktree's
+    `src/` against `node_modules/wa-sqlite/src` (only build sources absent from the package may
+    differ) and of `dist/`. A stale `node_modules/.pnpm_patches/wa-sqlite@1.1.2` makes `pnpm patch`
+    refuse: pass `--edit-dir` elsewhere rather than deleting what is in it.
 
 ### TS 7 in the editor — known, do not re-diagnose
 

@@ -180,6 +180,13 @@ The upstream suite on Chromium, `master` and branch: 14 files, 2899 passing, 0 f
 
 **Careful with truncated logs.** A first reading of this gave 157/156/161 and "22x". That came from a pre-push hook run of the whole suite, whose tail belonged to `OPFSAdaptiveVFS` — a VFS with no checkpoint, sitting at the floor for free. The number was real and measured the wrong target.
 
+
+## CHECKPOINT-PLAN — #361 as reviewed: time kept, memory not what the bound says, 2026-09-26
+
+rhashimoto stopped #361 on memory: the first version read the whole checkpoint before writing. Rewritten on his design — a plan of reads and writes, pure planners `coalesceWrites` / `coalesceReads`, `checkpointBufferSize` 4 MiB — and measured on CHECKPOINT-DIRECT's recipe, arms interleaved, `integrity_check` after reload on every run. **Tables and method live in the report** (`docs/upstream/2026-09-23-wa-sqlite-361-…`, "Review"); raw files in `.scratchpad/checkpoint-plan-2026-09-26/`.
+
+- **Time, medians:** Chromium 7373 → 196 ms (38×), Firefox 2512 → 77 ms (33×); unbounded first version 40×. Writes coalesced alone: 2.6× / 3.8× — the reads carry the gain. The plan with no planner costs nothing. 1 MiB still ~30×.
+- **Memory, `RssAnon` rise over the browser tree:** Chromium 113 (`master`) / 194 (first version) / 146 (plan) MiB, Firefox 30 / 128 / 79. **The peak follows what the synchronous loop allocates, not what it holds** — `master` holds one page yet allocates 66 MB; the plan allocates ~2× the checkpoint. The live-set bound is real, the process does not see it (`mem:lessons`).
 ## CUT-RATIO — how late an abandoned write is cut, per pair, re-measured 2026-09-25, this container
 
 `tx-savepoint` T3/T4 assert that an abandoned write ends before `natural * f`. **`f` is 0.6 since

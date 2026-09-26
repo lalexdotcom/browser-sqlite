@@ -95,7 +95,7 @@ The recipe above, unchanged: 3 M rows, `PRAGMA wal_checkpoint` timed, defaults u
 
 - **The plan costs nothing:** with no planner it runs at `master`'s speed.
 - **His first step alone is 2.6× on Chromium and 3.8× on Firefox** — most calls are still one read per page.
-- **His second step is 38× and 33×**, against 40× unbounded. Bounding the buffer costs very little, and 1 MiB still gives about 30×.
+- **His second step is 38× and 33×**, against 40× unbounded. Bounding the buffer costs very little, and 1 MiB still gives 30× and 28×.
 
 ### Memory — the bound is not what the process sees
 
@@ -114,8 +114,8 @@ The recipe above, unchanged: 3 M rows, `PRAGMA wal_checkpoint` timed, defaults u
 
 ### Suggested in the reply, not pushed
 
-- **One allocation per checkpoint.** The executor allocates a single `bufferSize` region: reads fill it in sequence, the write takes the rest, and it resets after each write. That is his accounting realised directly, and it holds for both planners because every write retires all the reads before it. Allocation drops from about twice the checkpoint to `bufferSize`, which should put the executor below `master` in memory as well as in time. A planner keeping unretired reads across writes — his tighter example — would need a finer allocator or a fallback. Offered here or as a follow-up, his choice.
-- **The default buffer size**: 4 MiB and 1 MiB are within 20 % of each other on this workload.
+- **One allocation per checkpoint.** The executor would allocate a single `bufferSize` region: reads fill it in sequence, the write takes the rest, and it resets after each write. That is his accounting realised directly, and it holds for both planners because every write retires all the reads before it. Allocation drops from about twice the checkpoint to `bufferSize`, which should put the executor below `master` in memory as well as in time. A planner keeping unretired reads across writes — his tighter example — would need a finer allocator or a fallback. Offered here or as a follow-up, his choice.
+- **The default buffer size**: 1 MiB costs 24 % over 4 MiB on Chromium and 16 % on Firefox on this workload — the reply said "within 20 %", which holds for Firefox only.
 - **Scattered writes are still unmeasured.**
 
 ## Posted upstream

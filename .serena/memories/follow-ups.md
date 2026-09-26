@@ -526,3 +526,16 @@ here can discriminate.
 worker holds one lease at a time. Before the cache, breaking that would have produced
 confusing behaviour; now it is a `reset` on a statement another query is stepping. Nothing at
 the place where someone would break it says so.
+
+## #361: one allocation per checkpoint — waiting on rhashimoto (2026-09-26)
+
+Suggested in the reply to his review, not implemented: the plan executor allocates one `bufferSize` region per checkpoint instead of a buffer per read and per write. Holds for both planners (every write retires every read before it). Should bring the executor below `master` in memory, not only in time (CHECKPOINT-PLAN, `mem:measurements`). **His choice: this PR or a follow-up.** Until then the patch carries the per-call executor.
+
+## `open-retry` "succeeds once the holder lets go" times out on Firefox under matrix load (2026-09-26)
+
+Seen twice in the repin's matrix, on two unrelated cells (`OPFSCoopSyncVFS/async`, `IDBBatchAtomicVFS/jspi`): 30 s, no assertion reached. Never before in seven full matrices. Alone on the same tree: 20 of 20. The repin touches no code the test runs (VFS files byte-identical; only text encoding changed). Classified as load, not verified further — if it recurs, that is the time to look at how long the open retries while the holder is armed.
+
+## `test-matrix` shows a crashed cell as green-looking — seen 2026-09-26
+
+In the repin's matrix, Firefox `IDBMirrorVFS/async` reported **204/0/2**: "Browser page crashed while running `tests/browser/lifecycle.test.ts`", 38 of 57 test files run, `failedTests: 0`. The table prints pass/fail/skip only, so the cell reads as green; only the script's exit code (1) and the raw report's `"status": "fail"` said otherwise — and the exit code was blamed on the two `open-retry` timeouts. Caught by the whole-branch review, not by the monitor. Rerun alone three times: 370/0/2, 57 files, no crash. **Two things open:** the crash itself (once in every `.matrix/` run so far), and `test-matrix.mjs` should mark a cell whose report status is `fail` or whose file count falls short, whatever its failed-test count. Until then, a monitor must match the report status, not the counts.
+
