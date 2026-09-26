@@ -56,7 +56,7 @@ All notable changes to this project are documented here.
 ### Changed
 
 - **An omitted `build` is the first one the VFS declares that the browser supports, and `jspi` is now declared before `async` everywhere.** On browsers with JSPI (Chrome 137+, Firefox 153+, Safari 27+), `OPFSAdaptiveVFS`, `IDBBatchAtomicVFS`, `IDBMirrorVFS`, `OPFSAnyContextVFS` and `MemoryAsyncVFS` now load `jspi` instead of `async`; elsewhere they load `async` as before, and the other VFS keep `sync`. `db.build` reports the one loaded. Pass `build: 'async'` to keep the previous behaviour.
-- **The vendored wa-sqlite moves to upstream `e98c65d`**, which corrects how
+- **The vendored wa-sqlite moves to upstream `5e98ac7`**, which corrects how
   `OPFSWriteAheadVFS` tracks the size of its active write-ahead file across a
   switch between the two — the threshold that decides when to rotate them.
 - **A database name too long for SQLite now fails at the call**, with `INVALID_OPTION` naming the bound, from `createSQLiteClient`, `deleteDatabase` and `inspectDatabase` — it used to fail later, when the worker opened the file. The same call also now refuses a name that is empty once normalized (`''`, `'/'`, `'?x'`…) with `INVALID_OPTION`.
@@ -64,6 +64,7 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **A TEXT value containing a NUL character is no longer cut short.** A parameter bound with one, or a column returning one, lost everything from the first NUL: `'a\0b'` came back as `'a'`. The fix is wa-sqlite's, brought by the move to upstream `5e98ac7` (see *Changed*).
 - **On `OPFSAnyContextVFS`, a statement that shrinks the database, such as `VACUUM`, could make the next read on another worker or tab fail** with `disk I/O error` on Firefox, or read the file at its old size elsewhere. The VFS released its lock before the shrink reached the file; it now publishes it first. The fix is a change to wa-sqlite, carried in this package's build until wa-sqlite ships it.
 
 ## 1.0.0-rc.5 — 2026-09-22
