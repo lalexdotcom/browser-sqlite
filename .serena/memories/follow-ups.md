@@ -533,7 +533,7 @@ Suggested in the reply to his review, not implemented: the plan executor allocat
 
 ## `open-retry` "succeeds once the holder lets go" times out on Firefox under matrix load (2026-09-26)
 
-Seen twice in the repin's matrix, on two unrelated cells (`OPFSCoopSyncVFS/async`, `IDBBatchAtomicVFS/jspi`): 30 s, no assertion reached. Never before in seven full matrices. Alone on the same tree: 20 of 20. The repin touches no code the test runs (VFS files byte-identical; only text encoding changed). Classified as load, not verified further — if it recurs, that is the time to look at how long the open retries while the holder is armed.
+Seen twice in the repin's matrix, on two unrelated cells (`OPFSCoopSyncVFS/async`, `IDBBatchAtomicVFS/jspi`): 30 s, no assertion reached. Never before in seven full matrices. Alone on the same tree: 20 of 20. The repin touches no code the test runs (VFS files byte-identical; only text encoding changed). Then a third of the same shape, in the pre-merge hook's `pnpm test` with nothing else running: `pool-cap.test.ts :: … reports the storage error behind a failed open`, Firefox `OPFSAdaptiveVFS/jspi`, 30 s, no assertion. **A/B of the pins, `pnpm test:firefox` interleaved, 5 runs each: 10 of 10 green**, old and new alike — not reproduced, not attributable to the repin (which changes no open path). Three Firefox timeouts in one day, all an open against a held file, none in the seven matrices before: if it recurs, look at how long the open retries while the holder is armed, on Firefox.
 
 ## `test-matrix` shows a crashed cell as green-looking — seen 2026-09-26
 
