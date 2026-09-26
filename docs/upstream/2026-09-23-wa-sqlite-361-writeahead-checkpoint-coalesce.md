@@ -1,8 +1,10 @@
 # wa-sqlite #361 — a checkpoint that costs one call per page
 
-*2026-09-23 — measured on Chromium 151 and Firefox 153, in the container*
+*2026-09-23 — measured on Chromium 151 and Firefox 153, in the container. Review answered 2026-09-26.*
 
 [pr361]: https://github.com/rhashimoto/wa-sqlite/pull/361
+[review]: https://github.com/rhashimoto/wa-sqlite/pull/361#pullrequestreview-5297769022
+[reply]: https://github.com/rhashimoto/wa-sqlite/pull/361#issuecomment-5848983668
 
 **Why this is here.** `OPFSWriteAheadVFS` is one of the two VFS [browser-sqlite](../../README.md) names in its benchmark page, and it is the one whose abort was weakest: a statement cut short on it gave back a third of its time where every other VFS gave back 97 %. The cause is not in this library. It is in `WriteAhead.checkpoint()`, which moves the write-ahead into the database **one page at a time**, and that work occupies the worker after the commit — so an interrupt aimed at the next statement waits it out. Proposed upstream as [rhashimoto/wa-sqlite#361][pr361].
 
@@ -17,7 +19,7 @@ const nWritten = this.#dbHandle.write(pageData, { at: offset });
 
 `#writePage` keeps the bytes only for page 1 (`pageData: pageOffset === 0 ? pageData : undefined`), so every other page is re-read from the write-ahead file and then written to the database: **two synchronous access handle calls per page**, each carrying 4 KiB.
 
-The fix collects the pages first and then issues each run of adjacent pages as one call — reads and writes independently, each falling back to the existing path for a run of one. Frames are a fixed stride, so consecutive frames of equal page size are read into one buffer and sliced with `subarray`, without copying.
+The first version collected the pages first and then issued each run of adjacent pages as one call — reads and writes independently, each falling back to the existing path for a run of one. Frames are a fixed stride, so consecutive frames of equal page size were read into one buffer and sliced with `subarray`, without copying. **It held every page of the checkpoint in memory at once**, which the review caught; what the branch and our patch carry now is under [Review](#review-the-whole-checkpoint-in-memory-and-a-plan-instead).
 
 ## Three things that had to be refuted first
 
@@ -59,9 +61,62 @@ That the disarming takes effect is not assumed — it is read out of OPFS betwee
 
 ## Correctness
 
-The full upstream suite on Chromium, run on `master` and on the branch: **14 test files, 2899 passing, 0 failing** on both, with no `Short WAL read` and no `Checkpoint write failed` in either. No test accompanies the change, because it pins no behaviour — the same bytes go to the same offsets in the same order. The suite passing unchanged is the argument.
+The full upstream suite on Chromium, run on `master` and on the branch: **14 test files, 2899 passing, 0 failing** on both, with no `Short WAL read` and no `Checkpoint write failed` in either. No test accompanied the first version, because it pins no behaviour — the same bytes go to the same offsets in the same order. The suite passing unchanged was the argument. The rewrite after review does bring tests, for the planners it introduces.
 
-The debug log is unchanged too, which was a late correction: the first version replaced the per-page log line with a per-run one and silently dropped the `txId`. Since `this.log?.()` does not evaluate its arguments when `log` is null, there was no reason to trade it away — each page now carries the transaction it came from, and the message is upstream's, word for word.
+The debug log is unchanged too, which was a late correction: the first version replaced the per-page log line with a per-run one and silently dropped the `txId`. Since `this.log?.()` does not evaluate its arguments when `log` is null, there was no reason to trade it away — each page now carries the transaction it came from, and the message is upstream's, word for word. The rewrite gave that up: a plan names pages by WAL offset and knows nothing of transactions, so its log line reports each write — how many pages, at which offset.
+
+## Review: the whole checkpoint in memory, and a plan instead
+
+rhashimoto [reviewed][review] on 2026-09-25: he would merge if everything resolved, and one point stopped him. **The first version held the whole checkpoint in memory.** `#fetchPages` read every page before the first write; `MAX_RUN_SIZE` bounded a single run, not the total. That caps the size of a transaction, and hits far sooner than the other places where the VFS lets state grow. The PR description's "the transient buffer stays bounded" was false of that code — our [reply] says so first.
+
+**His design, taken as given.** A checkpoint becomes a *plan*: `{ pageSize, actions }`, each action a `read` of WAL pages or a `write` of them `at` a database offset, pages named by WAL offset with 2^52 added for the newer WAL file. A *planner* is a pure function from plan to plan — unit-testable, swappable, the identity a valid one. Buffer usage is his definition: the unretired reads plus the next write. He asked to start with writes coalesced over single reads, and "maybe after that" reads coalesced within one write; the fully optimal plan he called a research topic of its own.
+
+**What the branch carries now**, commit `68db49b3`:
+
+- `checkpoint()` builds the base plan — a single-page read and write per page, newest transaction first, a page a newer one wrote skipped — and runs it through `#executeCheckpointPlan`, which reads a whole span of frames in one call and decodes the WAL file from the 2^52 offset.
+- The planners are exported pure functions: `coalesceWrites(plan, { bufferSize })` is his first step, `coalesceReads(plan)` his second. Frames in different WAL files are never joined.
+- **The one design decision of ours:** `coalesceWrites` caps a run at `bufferSize / (2 * pageSize + FRAME_HEADER_SIZE)` pages, reserving room for the frame headers `coalesceReads` would read if it later joins that run's reads. `coalesceReads` therefore takes no budget and cannot overrun the one reserved.
+- `DEFAULT_CHECKPOINT_BUFFER_SIZE`, 4 MiB, as `checkpointBufferSize` in `WriteAheadOptions` — his line comment, word for word.
+- `test/WriteAheadCheckpointPlan.test.js` replays his SQL example: `coalesceWrites` at his buffer size produces his first plan exactly, `coalesceReads` his second, reads within a write in WAL order. On randomised plans, each planner writes the same pages as the base plan, and peak usage stays within `bufferSize`. Dropping the header reservation fails that bound — checked by mutation. Full upstream suite on Chromium: green.
+- **A new error path, flagged to him:** `checkpoint()` throws `Checkpoint page size mismatch` if a plan's pages differ in size. A plan has one `pageSize`, and the `newPageSize` break should already guarantee it — but it is new throwing code in something his sponsors run in production.
+
+### Time
+
+The recipe above, unchanged: 3 M rows, `PRAGMA wal_checkpoint` timed, defaults untouched. Arms interleaved within each round; every run then reloads the page without `reset` and passes `PRAGMA integrity_check` against the checkpointed file.
+
+| `PRAGMA wal_checkpoint` (ms) | Chromium | Firefox |
+| --- | ---: | ---: |
+| `master` | 7742 / 7373 / 7331 | 2512 / 2460 / 2516 |
+| first version (unbounded) | 187 / 183 / 166 | 62 / 53 / 64 |
+| base plan, no planner | 7228 / 7041 / 7219 | 2476 / 2571 / 2399 |
+| `coalesceWrites` | 2828 / 2787 / 2824 | 682 / 659 / 657 |
+| **`coalesceReads(coalesceWrites(…))`, 4 MiB** | **196 / 191 / 210** | **74 / 77 / 80** |
+| same, 1 MiB | 236 / 246 / 243 | 89 / 95 / 83 |
+
+- **The plan costs nothing:** with no planner it runs at `master`'s speed.
+- **His first step alone is 2.6× on Chromium and 3.8× on Firefox** — most calls are still one read per page.
+- **His second step is 38× and 33×**, against 40× unbounded. Bounding the buffer costs very little, and 1 MiB still gives about 30×.
+
+### Memory — the bound is not what the process sees
+
+`RssAnon` summed over the browser's process tree, sampled every 5 ms: the rise from the median just before the checkpoint to the peak during it. A Playwright harness of ours on the Linux container — a rough measure, and not one a maintainer reruns from the demo page.
+
+| RSS rise during checkpoint (MiB) | Chromium | Firefox |
+| --- | ---: | ---: |
+| `master` | 113 / 109 / 120 | 30 / 27 / 31 |
+| first version (unbounded) | 191 / 194 / 194 | 102 / 128 / 132 |
+| `coalesceReads(coalesceWrites(…))`, 4 MiB | 164 / 146 / 140 | 75 / 83 / 79 |
+| same, 1 MiB | 123 / 142 / 135 | 74 / 73 / 81 |
+
+**The peak follows what the checkpoint allocates, not what it holds.** The checkpoint is one synchronous loop, and garbage is not reclaimed while it runs. `master` holds one page at a time yet allocates a fresh `Uint8Array` for every page, 66 MB in all; the plan executor allocates a new buffer for every read and every write, roughly twice the checkpoint. A smaller buffer does not change the rise — the volume allocated stays the same.
+
+**So the saving against the first version is about 48 MiB on both engines, and the plan still sits above `master`.** This corrects a figure of ours: the "about 67 MB down to 4 MiB" given before measuring was computed from the live set, never measured — the same class of error as the 3365 ms above.
+
+### Suggested in the reply, not pushed
+
+- **One allocation per checkpoint.** The executor allocates a single `bufferSize` region: reads fill it in sequence, the write takes the rest, and it resets after each write. That is his accounting realised directly, and it holds for both planners because every write retires all the reads before it. Allocation drops from about twice the checkpoint to `bufferSize`, which should put the executor below `master` in memory as well as in time. A planner keeping unretired reads across writes — his tighter example — would need a finer allocator or a fallback. Offered here or as a follow-up, his choice.
+- **The default buffer size**: 4 MiB and 1 MiB are within 20 % of each other on this workload.
+- **Scattered writes are still unmeasured.**
 
 ## Posted upstream
 
@@ -73,9 +128,14 @@ Three things the PR says out loud rather than leaving for review to find: it is 
 
 It does not mention this library, per the standing rule: a stable library is not argued from an unstable one, and every figure in it is reproducible with wa-sqlite alone.
 
+**After review, 2026-09-26:** `68db49b3` pushed on top of the first commit, history untouched — against `e98c65de` the branch is now `+153 / −10` in `WriteAhead.js` and `+162` in the new `test/WriteAheadCheckpointPlan.test.js`. The [reply] went up the same day, with the tables above and the suggestions. Upstream CI on it is green — [run 36264556487](https://github.com/rhashimoto/wa-sqlite/actions/runs/36264556487).
+
+**Carried here:** `patches/wa-sqlite@1.1.2.patch` holds `68db49b3`'s `WriteAhead.js` byte for byte, in place of the first version; the test file stays upstream, the patch covering `src/` only.
+
 ## What stays ours
 
-Two levers this change does not touch, both still open and both recorded in `mem:follow-ups`:
+What this change leaves open:
 
-- **`autoCheckpoint` never reads the value it is given.** A separate, cheap correctness point — worth asking for on its own, not folded in here.
-- **`page_size`** is ours with no upstream at all. It is not yet a recommendation: bulk insert is the friendliest case for large pages, and a scattered-update workload has not been measured.
+- **The single allocation per checkpoint** waits on his answer — in this PR or after it. Until then the patch carries the executor that allocates per call.
+- **`autoCheckpoint` never reads the value it is given.** A separate, cheap correctness point — worth asking for on its own, not folded in here. In `mem:follow-ups`.
+- **`page_size`** is ours with no upstream at all. It is not yet a recommendation: bulk insert is the friendliest case for large pages, and a scattered-update workload has not been measured. In `mem:follow-ups`.
