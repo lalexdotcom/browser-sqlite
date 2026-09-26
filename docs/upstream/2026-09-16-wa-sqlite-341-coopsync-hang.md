@@ -2,9 +2,9 @@
 
 *2026-09-16 — 164 four-connection runs across two engines and three source trees*
 
-**Why this is here.** [browser-sqlite](../../README.md) carries a patch to
-`OPFSCoopSyncVFS` ([`patches/wa-sqlite@1.1.2.patch`](../../patches)) that is
-upstream as [rhashimoto/wa-sqlite#347][pr347]. Reading the open issues,
+**Why this is here.** [browser-sqlite](../../README.md) carried a patch to
+`OPFSCoopSyncVFS` ([`patches/wa-sqlite@1.1.2.patch`](../../patches)) that was
+upstream as [rhashimoto/wa-sqlite#347][pr347], merged on 2026-09-26. Reading the open issues,
 [#341][i341] — four connections migrating the same fresh OPFS file hang forever
 — looked like the same defect seen from the other end. It is. This file records
 what was measured, because the measurement is what the upstream maintainer had
@@ -126,3 +126,10 @@ Both on 2026-09-16: a comment on [#341][i341] carrying the reproduction, the
 numbers and the trace, and a section added to the [#347][pr347] description
 ending in `Fixes #341` — with the qualification that only the hang half is
 measured.
+
+**Merged 2026-09-26** by rhashimoto, squashed as `d685fef0`: "It took me a
+while to remember how all this worked (which is kind of a red flag), but in
+the end LGTM." His thanks also named the obsolete JSPI feature detection in
+wa-sqlite's tests, which he fixed in #364. browser-sqlite repinned on upstream
+`5e98ac7` the same day, and the patch no longer carries #347. #341 itself was
+still open when this was written.

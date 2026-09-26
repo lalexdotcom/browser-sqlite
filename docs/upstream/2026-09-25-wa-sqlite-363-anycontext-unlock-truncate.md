@@ -40,7 +40,7 @@ The PR is that override: close the writable, then release the lock; a failed clo
 
 ## Posted upstream
 
-PR [#363][pr363], opened 2026-09-25 from `lalexdotcom:fix/anycontext-unlock-publishes-truncate`, on `master` at `e98c65de` — our pin. **One commit, three files, +82 / −0.** Upstream CI on the head commit is green — [run 36159452292](https://github.com/rhashimoto/wa-sqlite/actions/runs/36159452292), `build (20.x)`, the only check.
+PR [#363][pr363], opened 2026-09-25 from `lalexdotcom:fix/anycontext-unlock-publishes-truncate`, on `master` at `e98c65de` — our pin at the time (it moved to `5e98ac7` on 2026-09-26, which does not touch `OPFSAnyContextVFS.js`). **One commit, three files, +82 / −0.** Upstream CI on the head commit is green — [run 36159452292](https://github.com/rhashimoto/wa-sqlite/actions/runs/36159452292), `build (20.x)`, the only check.
 
 It does not mention this library, per the standing rule: every figure in it is reproducible with wa-sqlite alone.
 

@@ -1117,3 +1117,8 @@ The spec named the docs to update — CHANGELOG, two `API.md` rows, `VFS.md`'s B
 ## A type claim checked outside the project's own `tsconfig` is not checked (2026-09-24, `feat/public-surface`)
 
 The spec claimed `createSQLiteClient`'s new `): SQLiteDB` return annotation "compiles as is", verified with a scratch `tsc --strict` run that carried no `exactOptionalPropertyTypes` — the project's own flag. Under the project config the annotation failed: `SQLiteDB.debug` was declared `debug?:` while the client always publishes that key, present or `undefined`, so the assignability check the annotation exists to add caught a real mismatch the scratch check could not see. **Check a type claim with `pnpm exec tsc --noEmit` on a file inside the project's `include`, or with the project's own flags copied verbatim — never with a `tsc` invocation assembled from memory.**
+
+## A bound on the live set is not a bound on the process (2026-09-26, #361)
+
+After rewriting the checkpoint around a bounded buffer, the reply said "about 67 MB down to 4 MiB" — computed from what the code holds, never measured. Measured (`RssAnon` over the browser tree, 5 ms samples): 48 MiB saved, and the plan still above upstream. A synchronous loop gives the GC no turn, so the peak follows the **volume allocated**, and upstream's one-page-at-a-time loop allocates 66 MB of garbage too. **A memory claim is a measurement or it is labelled as arithmetic** — same class as the 3365 ms of CHECKPOINT-DIRECT, a derived figure that read like a measured one.
+

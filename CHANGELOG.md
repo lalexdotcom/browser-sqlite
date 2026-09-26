@@ -48,22 +48,25 @@ All notable changes to this project are documented here.
   4 KiB each. The copy runs once the commit has returned and occupies the
   worker, so a `signal` or a `timeout` aimed at the next statement waited for it:
   an abandoned write gave back about a third of its time here, against 97 % on
-  every other VFS. Contiguous pages are now moved in single calls, which is
-  about 40× faster on the copy itself, on Chromium and on Firefox alike. The fix
-  is a change to wa-sqlite's write-ahead, carried in this package's build until
-  wa-sqlite ships it.
+  every other VFS. Contiguous pages are now moved a run at a time, through a
+  buffer of at most 4 MiB, which is 33× to 38× faster on the copy itself. Its
+  memory peak is higher than before: about 35 to 50 MiB more while copying a
+  64 MiB write-ahead. The fix is a change to wa-sqlite's write-ahead, carried in this
+  package's build until wa-sqlite ships it.
 
 ### Changed
 
 - **An omitted `build` is the first one the VFS declares that the browser supports, and `jspi` is now declared before `async` everywhere.** On browsers with JSPI (Chrome 137+, Firefox 153+, Safari 27+), `OPFSAdaptiveVFS`, `IDBBatchAtomicVFS`, `IDBMirrorVFS`, `OPFSAnyContextVFS` and `MemoryAsyncVFS` now load `jspi` instead of `async`; elsewhere they load `async` as before, and the other VFS keep `sync`. `db.build` reports the one loaded. Pass `build: 'async'` to keep the previous behaviour.
-- **The vendored wa-sqlite moves to upstream `e98c65d`**, which corrects how
+- **The vendored wa-sqlite moves to upstream `5e98ac7`**, which corrects how
   `OPFSWriteAheadVFS` tracks the size of its active write-ahead file across a
-  switch between the two — the threshold that decides when to rotate them.
+  switch between the two — the threshold that decides when to rotate them — and
+  keeps a TEXT value whole across an embedded NUL (see *Fixed*).
 - **A database name too long for SQLite now fails at the call**, with `INVALID_OPTION` naming the bound, from `createSQLiteClient`, `deleteDatabase` and `inspectDatabase` — it used to fail later, when the worker opened the file. The same call also now refuses a name that is empty once normalized (`''`, `'/'`, `'?x'`…) with `INVALID_OPTION`.
 - **`createSQLiteClient` is declared to return `SQLiteDB`**, instead of a copy of its members spelled out in the type declarations.
 
 ### Fixed
 
+- **A TEXT value containing a NUL character is no longer cut short.** A parameter bound with one, or a column returning one, lost everything from the first NUL: `'a\0b'` came back as `'a'`. The fix is wa-sqlite's, brought by the move to upstream `5e98ac7` (see *Changed*).
 - **On `OPFSAnyContextVFS`, a statement that shrinks the database, such as `VACUUM`, could make the next read on another worker or tab fail** with `disk I/O error` on Firefox, or read the file at its old size elsewhere. The VFS released its lock before the shrink reached the file; it now publishes it first. The fix is a change to wa-sqlite, carried in this package's build until wa-sqlite ships it.
 
 ## 1.0.0-rc.5 — 2026-09-22

@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-09-24.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-09-26.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one.
 
 **No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
@@ -17,17 +17,19 @@ obligations and unmeasured ground.
   for the tag. `package.json` sits at `1.0.0-rc.5` and stays there until the user calls the
   next bump; everything since lands in a new unreleased section of `CHANGELOG.md`, which
   **the user's instruction creates** — no automation opens one. **`## Unreleased` exists since
-  2026-09-23**, opened on that instruction, and carries the wa-sqlite repin, the checkpoint coalescing below, `db.ready` (Added, merged
+  2026-09-23**, opened on that instruction, and carries the wa-sqlite repins (the latest bringing the embedded-NUL TEXT fix, under Fixed), the checkpoint coalescing below, `db.ready` (Added, merged
   2026-09-23), and **per-VFS OPFS folders** (merged 2026-09-24, the section's first **Breaking**
   entries: `.ad/`, `.ac/`, `.cs/`, `.wa/`, `layout` and `VFSLayout` gone, the 52-character name bound
   on those four VFS; `db.files` Added; the path and empty-name refusals Changed — `mem:vfs`, CROSS-VFS;
   `mem:architecture`, "Two names per database"), and **the default build that follows the browser** (merged 2026-09-24: Changed, plus one Breaking entry — a `wasmUrl` serving only the `async` `.wasm`), and **the public surface** (merged 2026-09-24: Breaking — `VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` no longer exported, the `./worker` subpath gone; Changed — `createSQLiteClient` declared to return `SQLiteDB`).
-- **The vendored wa-sqlite sits at `e98c65de`** since 2026-09-23, up from `93b9230`, and
-  `patches/wa-sqlite@1.1.2.patch` carries **four** files since the same day: the three it already
-  had plus `src/examples/WriteAhead.js`, which is the exact diff of our PR #361 rather than a
-  rewrite of it. The old patch applied to the new source with no conflict.
-  The matrix this repin owed was run on 2026-09-23 with `feat/db-ready`: 66 of 66 cells green
-  (§ the verification baseline).
+- **The vendored wa-sqlite sits on upstream `master` of 2026-09-26** (`package.json` has the SHA),
+  which merged our #347 and #348 that day. `patches/wa-sqlite@1.1.2.patch` carries five files, one
+  open PR each or two: `OPFSCoopSyncVFS.js` (#350), `IDBBatchAtomicVFS.js` (#351), `IDBMirrorVFS.js`
+  (#352, #353), `WriteAhead.js` (#361 **as reviewed** — the checkpoint plan, not the first version)
+  and `OPFSAnyContextVFS.js` (#363). #357 is deliberately not carried. The installed `src/` was
+  checked equal to the pin plus those PR heads. **The repin's matrix: 63 of 66 cells green**; two
+  are one test timing out on Firefox under load, 20 of 20 alone, and one a Firefox page crash that
+  three reruns did not reproduce (`mem:follow-ups`, both).
 - **The release gate ran the full matrix for the first time, and it took four tags to get
   through.** 22/22 cells, `verify`, `consumer-smoke`, then `release`, with `untag` skipped.
   The three refusals before it were not test failures: `test-matrix.mjs` could not read a

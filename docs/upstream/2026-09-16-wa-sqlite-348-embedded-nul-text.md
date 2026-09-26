@@ -48,4 +48,6 @@ The 56 are 14 VFS × build combinations. Upstream CI (Chrome 129, which unlike C
 
 ## State
 
-Open, mergeable, awaiting review. Two commits, 4 files, +140/−18. browser-sqlite does not carry this one in [`patches/`](../../patches) — the truncation is a correctness bug, not something our own code works around.
+**Merged 2026-09-26** by rhashimoto, squashed as `69fa7287` — "Thanks for the PR! LGTM", then running `build-docs` himself, which he had meant to ask for. browser-sqlite repinned on upstream `5e98ac7` the same day, so the fix reaches the library through the pin, still with nothing in [`patches/`](../../patches).
+
+Until then: open, mergeable, awaiting review. Two commits, 4 files, +140/−18. browser-sqlite does not carry this one in [`patches/`](../../patches) — the truncation is a correctness bug, not something our own code works around.
