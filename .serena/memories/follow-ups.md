@@ -531,9 +531,13 @@ the place where someone would break it says so.
 
 Suggested in the reply to his review, not implemented: the plan executor allocates one `bufferSize` region per checkpoint instead of a buffer per read and per write. Holds for both planners (every write retires every read before it). Should bring the executor below `master` in memory, not only in time (CHECKPOINT-PLAN, `mem:measurements`). **His choice: this PR or a follow-up.** Until then the patch carries the per-call executor.
 
-## `close()` waits an uncuttable statement out on Firefox, not on Chromium (2026-09-27)
+## `aWorkerIsRunning` also matches the barrier, so an abort can land before the query is sent (2026-09-27)
 
-Measured on `OPFSWriteAheadVFS/sync`, not isolated, `longQuery(20_000_000)` aborted while running: the abort rejects in 0 ms on both engines and the next read waits the statement out on both (2.5 s Chromium, 22.3 s Firefox — the build is degraded everywhere, as declared). But `close()` called right after the rejection returned within ~0.2 s on Chromium and waited the statement's whole length on Firefox, up to `drainTimeout`. Not chased; the difference is inside `worker.close()` or the terminate path. It is what made `interrupt.test.ts`'s sync test time out under load on Firefox alone — fixed there with `drainTimeout: 2_000` and a name that says what it checks, 20/20 under sixteen busy loops (REUSE-LOAD).
+**Diagnosed by a trace of the whole abort path** (`.scratchpad/interrupt-drain-2026-09-27/`, instrumented copies of `pool.ts`, `queries.ts`, `client.ts`, reverted). On a fresh client the first statement a worker runs is the freshness barrier (`SELECT count(*) FROM sqlite_master`), and `aWorkerIsRunning` (`tests/browser/helpers.ts`) is true for ANY running statement. A test that waits for it and then aborts can therefore abort during the barrier: the rejection comes from the acquisition race, the barrier ends in milliseconds, and **the query under test is never sent**. The list of statements sent says so: at the abort, Chromium had sent only the barrier 6 times in 6; Firefox had usually sent the long query too, but not always (2 in 6).
+
+That is the whole "Firefox waits, Chromium does not" difference seen on `interrupt.test.ts`'s sync test: on Chromium the 20 M-row read never ran, so `close()` had nothing to wait for; on Firefox it usually ran, and `close()` waited it out (`ABORTING`, then the lease back at `done`, 22 s later — the correct behaviour). **No product defect; the earlier reading here, a worker lent back mid-statement, was wrong and is refuted by the same trace.**
+
+**What it leaves open:** every test that waits on `aWorkerIsRunning` before aborting may, on some engine, be testing an abort during acquisition rather than the one it names — `interrupt.test.ts` (six call sites, two after a priming query) and `isolated/abort-slot.test.ts` (three). Not yet re-checked one by one.
 
 ## `open-retry` "succeeds once the holder lets go" times out on Firefox under matrix load (2026-09-26)
 
