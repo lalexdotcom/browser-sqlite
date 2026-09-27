@@ -278,10 +278,19 @@ export const waitUntil = async (
   }
 };
 
-/** The worker has received the query and is executing it — i.e. status is RUNNING. */
-export const aWorkerIsRunning =
-  (db: Awaited<ReturnType<typeof createTestClient>>) => (): boolean =>
-    (db.debug?.workers ?? []).some((w) => w.status === 'RUNNING');
+/**
+ * A worker is executing `sql` itself. Not merely "a worker is RUNNING": a
+ * worker behind on the epoch runs the freshness barrier before the query, so
+ * an abort timed on any running statement can land during the barrier, and
+ * the query under test is then never sent.
+ */
+export const theQueryIsRunning =
+  (db: Awaited<ReturnType<typeof createTestClient>>, sql: string) =>
+  (): boolean =>
+    (db.debug?.workers ?? []).some(
+      (w) =>
+        w.status === 'RUNNING' && w.currentRequest?.currentQuery?.sql === sql,
+    );
 
 /**
  * A single very long `sqlite.step()` with no table to populate: SQLite must run

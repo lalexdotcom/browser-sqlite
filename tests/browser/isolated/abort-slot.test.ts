@@ -1,9 +1,9 @@
 import { describe, expect, it } from '@rstest/core';
 import {
-  aWorkerIsRunning,
   createTestClient,
   interceptWorkers,
   longQuery,
+  theQueryIsRunning,
   waitUntil,
 } from '../helpers';
 
@@ -34,7 +34,10 @@ describe('the sync build, isolated', () => {
         signal: controller.signal,
       });
       long.catch(() => {});
-      await waitUntil(aWorkerIsRunning(db), 'the query to be running');
+      await waitUntil(
+        theQueryIsRunning(db, longQuery(20_000_000)),
+        'the query to be running',
+      );
       // `started` is before the abort so the timer captures abort → drain →
       // SELECT 1. On the working path the SAB slot interrupts the step within
       // the first progress-handler call (~100 K VDBE ops); the full unaborted
@@ -71,7 +74,10 @@ describe('the sync build, isolated', () => {
         signal: controller.signal,
       });
       long.catch(() => {});
-      await waitUntil(aWorkerIsRunning(db), 'the query to be running');
+      await waitUntil(
+        theQueryIsRunning(db, longQuery(20_000_000)),
+        'the query to be running',
+      );
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
       const abortedCallId = records[0]?.posted.filter(
@@ -138,7 +144,7 @@ describe('statement cache, sync build isolated', () => {
       const controller = new AbortController();
       const aborting = db.read(sql, [], { signal: controller.signal });
       aborting.catch(() => {});
-      await waitUntil(aWorkerIsRunning(db), 'the query to be running');
+      await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
       controller.abort(new Error('cancelled'));
       await expect(aborting).rejects.toThrow('cancelled');
 

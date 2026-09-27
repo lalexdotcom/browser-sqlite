@@ -1,8 +1,9 @@
 import { describe, expect, it } from '@rstest/core';
 import {
-  aWorkerIsRunning,
   createTestClient,
   longQuery,
+  sleep,
+  theQueryIsRunning,
   waitUntil,
 } from './helpers';
 
@@ -31,7 +32,10 @@ describe('aborting a running statement', () => {
         signal: controller.signal,
       });
       long.catch(() => {});
-      await waitUntil(aWorkerIsRunning(db), 'the query to be running');
+      await waitUntil(
+        theQueryIsRunning(db, longQuery(10_000_000)),
+        'the query to be running',
+      );
       // `started` is before the abort so the timer captures abort → worker drain
       // → SELECT 1. On the working path the async progress handler yields via
       // gate.tick() and checks gate.isStopped(), interrupting the step at the
@@ -81,7 +85,10 @@ describe('aborting a running statement', () => {
           signal: primeCtrl.signal,
         });
         prime.catch(() => {});
-        await waitUntil(aWorkerIsRunning(db), 'prime query to start');
+        await waitUntil(
+          theQueryIsRunning(db, longQuery(20_000_000)),
+          'prime query to start',
+        );
         primeCtrl.abort();
         await expect(prime).rejects.toThrow();
       }
@@ -91,7 +98,10 @@ describe('aborting a running statement', () => {
         signal: controller.signal,
       });
       long.catch(() => {});
-      await waitUntil(aWorkerIsRunning(db), 'the query to be running');
+      await waitUntil(
+        theQueryIsRunning(db, longQuery(20_000_000)),
+        'the query to be running',
+      );
       const asked = performance.now();
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
@@ -122,7 +132,10 @@ describe('aborting a running statement', () => {
           signal: primeCtrl.signal,
         });
         prime.catch(() => {});
-        await waitUntil(aWorkerIsRunning(db), 'prime query to start');
+        await waitUntil(
+          theQueryIsRunning(db, longQuery(20_000_000)),
+          'prime query to start',
+        );
         primeCtrl.abort();
         await expect(prime).rejects.toThrow();
       }
@@ -132,7 +145,10 @@ describe('aborting a running statement', () => {
         signal: controller.signal,
       });
       long.catch(() => {});
-      await waitUntil(aWorkerIsRunning(db), 'the query to be running');
+      await waitUntil(
+        theQueryIsRunning(db, longQuery(20_000_000)),
+        'the query to be running',
+      );
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
       // The same SQL runs again: the statement the abort left behind is
@@ -152,7 +168,9 @@ describe('aborting a running statement', () => {
   // `needs: ['interruptible']`. OPFSAdaptiveVFS does not support `sync` at
   // all, so the pin moves to the recommended OPFSWriteAheadVFS (its default
   // build is `sync`), same precedent as isolated/abort-slot.test.ts.
-  it('rejects an aborted read at once on a sync build without isolation', async () => {
+  // Falsifiable: pin `build: 'async'`, which can cut the statement without
+  // isolation — the worker is then back to READY well within the 300 ms.
+  it('rejects an aborted read at once, and lets its statement run on, on a sync build without isolation', async () => {
     // The ordinary test host is NOT cross-origin isolated, so this is the
     // degraded row of the design's §6: the signal stops the wait, not the work.
     // `close()` would otherwise wait the uncuttable statement out, ~23 s on
@@ -170,9 +188,16 @@ describe('aborting a running statement', () => {
         signal: controller.signal,
       });
       long.catch(() => {});
-      await waitUntil(aWorkerIsRunning(db), 'the query to be running');
+      await waitUntil(
+        theQueryIsRunning(db, longQuery(20_000_000)),
+        'the query to be running',
+      );
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
+      // The statement is not cut: the pool asked it to stop and still waits
+      // for it, where the 20 M rows take seconds on either engine.
+      await sleep(300);
+      expect(db.debug?.workers[0]?.status).toBe('ABORTING');
     } finally {
       await db.close();
     }

@@ -537,7 +537,7 @@ Suggested in the reply to his review, not implemented: the plan executor allocat
 
 That is the whole "Firefox waits, Chromium does not" difference seen on `interrupt.test.ts`'s sync test: on Chromium the 20 M-row read never ran, so `close()` had nothing to wait for; on Firefox it usually ran, and `close()` waited it out (`ABORTING`, then the lease back at `done`, 22 s later — the correct behaviour). **No product defect; the earlier reading here, a worker lent back mid-statement, was wrong and is refuted by the same trace.**
 
-**What it leaves open:** every test that waits on `aWorkerIsRunning` before aborting may, on some engine, be testing an abort during acquisition rather than the one it names — `interrupt.test.ts` (six call sites, two after a priming query) and `isolated/abort-slot.test.ts` (three). Not yet re-checked one by one.
+**Fixed on `fix/abort-waits-for-its-query`:** `aWorkerIsRunning` is gone; `theQueryIsRunning(db, sql)` waits for a worker `RUNNING` on that very SQL (the debug state's current query). Every call site names its own query. Proved on the one test that started on a fresh client with a named falsifier — `abort-slot`'s "does not carry a dead worker's abort into its replacement": with the slot zeroing removed it stayed GREEN under the old helper and goes red under the new one. The sync test in `interrupt.test.ts` now also asserts the statement runs on (`ABORTING` 300 ms after the rejection); falsified by pinning `build: 'async'`, which is back to `READY` by then, on both engines.
 
 ## `open-retry` "succeeds once the holder lets go" times out on Firefox under matrix load (2026-09-26)
 
