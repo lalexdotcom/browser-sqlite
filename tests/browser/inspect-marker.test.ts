@@ -4,7 +4,7 @@ import type { SQLiteVFS } from '../../src/const/vfs';
 import { deleteDatabase } from '../../src/delete';
 import { createLocks, parseClientMarker } from '../../src/locks';
 import { databasePath } from '../../src/utils';
-import { pairFor } from './helpers';
+import { interceptWorkers, pairFor } from './helpers';
 
 // One VFS: two clients must share one database (the marker roster);
 // OPFSAdaptiveVFS shares it on every engine (see `secondClientOutcome`).
@@ -127,6 +127,73 @@ describe('the client liveness marker', () => {
     await new Promise<void>((r) => setTimeout(r, 50));
 
     // Without the fix: marker is leaked. With the fix: self-released.
+    expect(await markersFor(file, pair.vfs)).toHaveLength(0);
+  });
+
+  // Falsifiable: drop the marker release from failClient (src/client.ts) — a
+  // client that failed stays in the roster until the application closes it.
+  it('is gone once the client fails, before close', async () => {
+    const pair = shared();
+    const file = 'marker-failed.db';
+    interceptWorkers({ url: '/definitely-missing-worker.js' });
+    const db = createSQLiteClient(file, {
+      vfs: pair.vfs,
+      build: pair.build,
+    });
+    onTestFinished(async () => {
+      await db.close().catch(() => {});
+      await deleteDatabase(file, { vfs: pair.vfs }).catch(() => {});
+    });
+
+    await expect(db.ready).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+
+    expect(await markersFor(file, pair.vfs)).toHaveLength(0);
+  });
+
+  // Falsifiable: in failClient, release the marker without setting
+  // `markerClosed` — a grant landing after the failure is then kept.
+  it('releases the marker when the failure races the acquisition', async () => {
+    const pair = shared();
+    const file = 'marker-failed-race.db';
+    onTestFinished(async () => {
+      await deleteDatabase(file, { vfs: pair.vfs }).catch(() => {});
+    });
+
+    // Defers bsq:client: grants until signaled, as the close() race above.
+    const originalRequest = (
+      navigator.locks.request as (...args: unknown[]) => unknown
+    ).bind(navigator.locks);
+    let triggerGrant: () => void = () => {};
+    const grantDeferred = new Promise<void>((resolve) => {
+      triggerGrant = resolve;
+    });
+    (navigator.locks as unknown as Record<string, unknown>).request = (
+      name: string,
+      ...args: unknown[]
+    ) => {
+      if (name.startsWith('bsq:client:')) {
+        return grantDeferred.then(() => originalRequest(name, ...args));
+      }
+      return originalRequest(name, ...args);
+    };
+    onTestFinished(() => {
+      (navigator.locks as unknown as Record<string, unknown>).request =
+        originalRequest;
+    });
+
+    interceptWorkers({ url: '/definitely-missing-worker.js' });
+    const db = createSQLiteClient(file, {
+      vfs: pair.vfs,
+      build: pair.build,
+    });
+    onTestFinished(async () => {
+      await db.close().catch(() => {});
+    });
+    await expect(db.ready).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+
+    triggerGrant();
+    await new Promise<void>((r) => setTimeout(r, 50));
+
     expect(await markersFor(file, pair.vfs)).toHaveLength(0);
   });
 
