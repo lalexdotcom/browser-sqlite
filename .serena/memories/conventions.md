@@ -267,6 +267,10 @@ one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.
   *when*, a *where* or a *what*, check that choice against the code before proposing another
   one.**
 
+- **An upstream PR's title starts with the VFS it concerns (user, 2026-09-27):**
+  `OPFSWriteAheadVFS: read the WAL to its end when a read transaction begins`. Every PR from then
+  on, in the draft's suggested title as in the PR itself.
+
 - **Upstream contributions stand on upstream's own evidence (user, 2026-09-15).** A PR to
   wa-sqlite does not cite this library — a stable library is not argued from an unstable one — and
   its measurements must be reproducible with wa-sqlite alone, best as a test in its own suite that
