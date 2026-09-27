@@ -14,6 +14,17 @@ descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` clai
 shadow types that were never loaded, `W-types` a duplication already gone. Both would have
 been work on nothing.
 
+## Repin wa-sqlite: #350, #357 and #361 are merged upstream (user, 2026-09-27) — later
+
+The user reported all three merged on 2026-09-27, and deferred the repin and the patch update.
+When it is done: repin on the upstream commit that has them, then regenerate
+`patches/wa-sqlite@1.1.2.patch` WITHOUT their hunks — `OPFSCoopSyncVFS.js` (#350) and
+`WriteAhead.js` (#361) leave it; #357 was never carried, so it only arrives with the pin. Follow
+`mem:stack-and-build` ("When one merges"): `pnpm patch`, re-apply the old patch by hand first,
+check `node_modules` and the lockfile after `patch-commit`. Check what upstream merged against
+what we carry before dropping a hunk — #361 changed on review. Then the matrix, per
+`mem:conventions`, and the upstream reports in `docs/upstream/` for their merge.
+
 ## Designs owed — ideas, not scheduled work (user, 2026-09-03)
 
 **The user has said explicitly that the three below are not planned for the short or medium
