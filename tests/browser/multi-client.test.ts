@@ -2,7 +2,7 @@ import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { deleteDatabase } from '../../src/delete';
 import { poolFor } from '../conformance/helpers';
-import { createTestClient, pairFor } from './helpers';
+import { createTestClient, pairFor, type Skip } from './helpers';
 
 /**
  * What two clients writing at once actually do, on the pair this project
@@ -30,8 +30,8 @@ import { createTestClient, pairFor } from './helpers';
  */
 const NEEDS = ['shared-second-client'] as const;
 
-const twoClients = () => {
-  const { vfs, build } = pairFor(NEEDS);
+const twoClients = (skip: Skip) => {
+  const { vfs, build } = pairFor(NEEDS, skip);
   const dbName = `bsq-test-${crypto.randomUUID()}`;
   const options = { vfs, build, poolSize: poolFor(vfs) };
   const a = createSQLiteClient(dbName, options);
@@ -88,8 +88,8 @@ describe('two clients writing at once', () => {
   // OPFSAdaptiveVFS (Firefox): each rotates one exclusive OPFS handle
   // between the two clients regardless of our lock, which still
   // serializes the second write on its own (HANDLE-1, `mem:vfs`).
-  it('makes the second writer wait, on both regimes', async () => {
-    const { a, b } = twoClients();
+  it('makes the second writer wait, on both regimes', async ({ skip }) => {
+    const { a, b } = twoClients(skip);
     await a.write('CREATE TABLE t (n)');
 
     let settled = false;
@@ -127,8 +127,10 @@ describe('two clients writing at once', () => {
   // OPFSAdaptiveVFS, OPFSCoopSyncVFS, IDBBatchAtomicVFS, IDBMirrorVFS,
   // OPFSAnyContextVFS (Chromium); OPFSAdaptiveVFS, OPFSCoopSyncVFS,
   // IDBBatchAtomicVFS, IDBMirrorVFS, OPFSAnyContextVFS (Firefox).
-  it('never refuses a read-only transaction opened under a writer', async () => {
-    const { a, b } = twoClients();
+  it('never refuses a read-only transaction opened under a writer', async ({
+    skip,
+  }) => {
+    const { a, b } = twoClients(skip);
     await a.write('CREATE TABLE t (n)');
     await a.write('INSERT INTO t VALUES (1)');
 
@@ -159,8 +161,10 @@ describe('two clients writing at once', () => {
   // Falsifiable by its own middle assertion: if `bulkWrite` did not commit per
   // batch, the first batch would be invisible to A until `close()` and
   // `committed` would stay 0 through all hundred polls.
-  it('interleaves a bulkWrite with another client, refusing neither', async () => {
-    const { a, b } = twoClients();
+  it('interleaves a bulkWrite with another client, refusing neither', async ({
+    skip,
+  }) => {
+    const { a, b } = twoClients(skip);
     const keys = Array.from({ length: 16 }, (_, i) => `c${i}`);
     await a.write(`CREATE TABLE t (${keys.join(', ')})`);
 
@@ -214,8 +218,10 @@ describe('two clients writing at once', () => {
   // VFS times out at 30s waiting on B's write lock request, which A's
   // callback in turn is waiting on B to settle, since B's own abort no
   // longer cancels it.
-  it('gives back a usable client after a transaction is aborted mid-contention', async () => {
-    const { a, b } = twoClients();
+  it('gives back a usable client after a transaction is aborted mid-contention', async ({
+    skip,
+  }) => {
+    const { a, b } = twoClients(skip);
     await a.write('CREATE TABLE t (n)');
 
     let error: unknown;

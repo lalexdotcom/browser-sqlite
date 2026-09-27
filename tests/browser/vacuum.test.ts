@@ -23,8 +23,10 @@ describe('a VACUUM that shrinks the database', () => {
   // a read at the stale size then fails with SQLITE_IOERR_READ. Falsifiable:
   // drop the OPFSAnyContextVFS `jUnlock` hunk (rhashimoto/wa-sqlite#363) from
   // patches/wa-sqlite@1.1.2.patch — its file keeps its pre-VACUUM size.
-  it('has shrunk its files in OPFS when the write resolves', async () => {
-    const db = await createTestClient({ needs: ['in-place-file'] });
+  it('has shrunk its files in OPFS when the write resolves', async ({
+    skip,
+  }) => {
+    const db = await createTestClient({ needs: ['in-place-file'], skip });
     await db.write('CREATE TABLE t (a)');
     await db.write(
       'INSERT INTO t WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 20000) SELECT randomblob(100) FROM c',

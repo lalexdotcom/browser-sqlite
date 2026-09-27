@@ -221,3 +221,36 @@ describe('resolvePair', () => {
     ).toEqual(target);
   });
 });
+
+describe("resolvePair under 'skip'", () => {
+  it('skips a test whose need the target lacks, where fallback would move it', () => {
+    // Falsifiable: a resolver that falls back under 'skip' too turns this red
+    // — the matrix would again report a failure under the wrong pair's name.
+    const target = pair('OPFSAdaptiveVFS', 'async');
+    expect(resolvePair(target, ['two-workers'], WITHOUT_UNSAFE)).toEqual(
+      pair('OPFSAnyContextVFS', 'async'),
+    );
+    expect(resolvePair(target, ['two-workers'], WITHOUT_UNSAFE, 'skip')).toBe(
+      'skip',
+    );
+  });
+
+  it('keeps a test on the target that has its need', () => {
+    // Falsifiable: a 'skip' that skips whenever a need is declared turns this red.
+    const target = pair('OPFSAdaptiveVFS', 'async');
+    expect(resolvePair(target, ['two-workers'], WITH_UNSAFE, 'skip')).toEqual(
+      target,
+    );
+    expect(resolvePair(target, [], WITHOUT_UNSAFE, 'skip')).toEqual(target);
+  });
+
+  it('returns null, not a skip, for a target this browser cannot run', () => {
+    // Falsifiable: checking the needs before the target's own requirements
+    // turns this red — the matrix would call skipped a pair that never ran,
+    // instead of "not runnable here".
+    const target = pair('OPFSAdaptiveVFS', 'jspi');
+    const noJspi = here(['opfs', 'readwrite-unsafe', 'writable-stream']);
+    expect(resolvePair(target, ['two-workers'], noJspi, 'skip')).toBeNull();
+    expect(resolvePair(target, [], noJspi, 'skip')).toBeNull();
+  });
+});

@@ -16,7 +16,8 @@ import { createTestClient, removeDatabaseFiles } from './helpers';
 const forced = {
   // Writer spread: needs two live workers, so a target that caps the pool
   // without readwrite-unsafe (spec 2026-09-13, §10) falls back to a pair
-  // that keeps two, on every engine (spec 2026-09-15, A5).
+  // that keeps two, on every engine, or is skipped under the matrix (spec
+  // 2026-09-15, A5, A7).
   needs: ['two-workers'] as const,
   poolSize: 2,
   __unsafeTestWriterPolicy: (i: number) => i !== 0,
@@ -33,8 +34,8 @@ const countBarrierStatements = (
 describe('commit-propagation barrier', () => {
   // Falsifiable: in src/worker/worker.ts, read `column_names(stmt)` before the
   // first step() — the statement cached before the rename reports old_col.
-  it('sees a schema swap committed by another worker', async () => {
-    const db = await createTestClient(forced);
+  it('sees a schema swap committed by another worker', async ({ skip }) => {
+    const db = await createTestClient({ ...forced, skip });
 
     await db.write('CREATE TABLE t (old_col)');
     await db.write('INSERT INTO t (old_col) VALUES (42)');
@@ -52,8 +53,10 @@ describe('commit-propagation barrier', () => {
 
   // Falsifiable: in src/worker/worker.ts, read `column_names(stmt)` before the
   // first step() — the statement cached before the swap reports old_col.
-  it('sees a table dropped and replaced with a different shape', async () => {
-    const db = await createTestClient(forced);
+  it('sees a table dropped and replaced with a different shape', async ({
+    skip,
+  }) => {
+    const db = await createTestClient({ ...forced, skip });
 
     await db.write('CREATE TABLE t (old_col)');
     await db.write('INSERT INTO t (old_col) VALUES (1)');
@@ -73,8 +76,10 @@ describe('commit-propagation barrier', () => {
   // applyBarrier() — this is the test that explicitly pins conditionality.
   // The backpressure tests also go red as collateral (the extra barrier query
   // pushes their step-count limits), but only this one names the requirement.
-  it('does not repeat the barrier on a worker that is already current', async () => {
-    const db = await createTestClient({ ...forced, debug: true });
+  it('does not repeat the barrier on a worker that is already current', async ({
+    skip,
+  }) => {
+    const db = await createTestClient({ ...forced, skip, debug: true });
 
     await db.write('CREATE TABLE t (a)');
     // Both reads go to w1, the last writer, which is current.
@@ -92,8 +97,10 @@ describe('commit-propagation barrier', () => {
   // Falsifiable: delete the lastWriterIndex branch from takeAvailable() — the
   // read then lands on worker 0, whose epoch the INSERT left behind, and pays a
   // barrier.
-  it('sends a read to the worker that just wrote, which owes no barrier', async () => {
-    const db = await createTestClient({ ...forced, debug: true });
+  it('sends a read to the worker that just wrote, which owes no barrier', async ({
+    skip,
+  }) => {
+    const db = await createTestClient({ ...forced, skip, debug: true });
 
     await db.write('CREATE TABLE t (a)');
     await db.read('SELECT * FROM t');

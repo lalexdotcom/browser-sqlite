@@ -154,12 +154,18 @@ describe('statement cache', () => {
     await db.close();
   });
 
-  it('an aborted query leaves its cached statement reusable', async () => {
+  it('an aborted query leaves its cached statement reusable', async ({
+    skip,
+  }) => {
     // Needs interruptible: on a sync build outside cross-origin isolation the
     // abort cannot cut the statement, so the read below waits the whole query
     // out — past this test's 30 s on a CI runner (mem:measurements,
     // CI-QUERY-TIMEOUT).
-    const db = await createTestClient({ ...single, needs: ['interruptible'] });
+    const db = await createTestClient({
+      ...single,
+      needs: ['interruptible'],
+      skip,
+    });
     await db.write('CREATE TABLE t (a INTEGER)');
     await db.write('INSERT INTO t VALUES (1)');
 

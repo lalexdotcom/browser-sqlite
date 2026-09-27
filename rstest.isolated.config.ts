@@ -3,11 +3,13 @@ import { defineConfig, type ProjectConfig } from '@rstest/core';
 import { pluginSilenceWorkerHmrLogs } from './rstest.config';
 import {
   CHROMIUM_FEATURES,
+  onUnmetFromEnv,
   targetLabel,
   targetsFromEnv,
 } from './tests/target-projects.ts';
 
 const targets = targetsFromEnv(process.env.BSQ_TEST_TARGETS, CHROMIUM_FEATURES);
+const onUnmet = onUnmetFromEnv(process.env.BSQ_TEST_NEEDS);
 
 // Cross-origin isolation cannot be expressed through rstest's `defineConfig`
 // directly: a `server: { headers: ... }` key at the top level is silently
@@ -81,7 +83,10 @@ export default defineConfig({
     // See rstest.config.ts: a teardown drains, and drainTimeout is 60 s.
     hookTimeout: 60000,
     source: {
-      define: { __BSQ_TEST_TARGET__: JSON.stringify(target) },
+      define: {
+        __BSQ_TEST_TARGET__: JSON.stringify(target),
+        __BSQ_TEST_NEEDS__: JSON.stringify(onUnmet),
+      },
     },
   })),
 });

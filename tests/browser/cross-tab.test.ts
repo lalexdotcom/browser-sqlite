@@ -4,7 +4,7 @@ import { deleteDatabase } from '../../src/delete';
 import { BARRIER_SQL, epochLockName } from '../../src/epochs';
 import { databasePath } from '../../src/utils';
 import { poolFor } from '../conformance/helpers';
-import { pairFor } from './helpers';
+import { pairFor, type Skip } from './helpers';
 import { heldNamesIn, holdIn, makeRealm } from './helpers/realm';
 
 /**
@@ -15,8 +15,8 @@ import { heldNamesIn, holdIn, makeRealm } from './helpers/realm';
  */
 const NEEDS = ['shared-second-client'] as const;
 
-const oneClient = () => {
-  const { vfs, build } = pairFor(NEEDS);
+const oneClient = (skip: Skip) => {
+  const { vfs, build } = pairFor(NEEDS, skip);
   const dbName = `bsq-test-${crypto.randomUUID()}`;
   const db = createSQLiteClient(dbName, {
     vfs,
@@ -62,8 +62,10 @@ describe('an epoch published by another realm', () => {
   // on, on both engines. The same mutation also turns 'never lets the
   // target go backwards when the marker disappears' red on the same VFS,
   // since both rest on `applyBarrier` reading the foreign marker.
-  it('makes this client run the barrier it would otherwise skip', async () => {
-    const { vfs, build } = pairFor(NEEDS);
+  it('makes this client run the barrier it would otherwise skip', async ({
+    skip,
+  }) => {
+    const { vfs, build } = pairFor(NEEDS, skip);
     const dbName = `bsq-test-${crypto.randomUUID()}`;
     const db = createSQLiteClient(dbName, {
       vfs,
@@ -110,8 +112,10 @@ describe('an epoch published by another realm', () => {
     release();
   });
 
-  it('never lets the target go backwards when the marker disappears', async () => {
-    const { db, dbName, vfs } = oneClient();
+  it('never lets the target go backwards when the marker disappears', async ({
+    skip,
+  }) => {
+    const { db, dbName, vfs } = oneClient(skip);
     await db.write('CREATE TABLE t (n)');
 
     const realm = await makeRealm();
@@ -131,7 +135,9 @@ describe('an epoch published by another realm', () => {
     expect(published).toEqual([epochLockName(vfs, path, 4_243)]);
   });
 
-  it('blocks transaction() until the epoch marker is granted', async () => {
+  it('blocks transaction() until the epoch marker is granted', async ({
+    skip,
+  }) => {
     // Falsifiable: remove the `await` before `deps.afterWrite(worker)` in
     // transaction.ts's finally and this goes red — transaction() resolves
     // before publish() grants the shared lock, so txResolved is true while
@@ -169,7 +175,7 @@ describe('an epoch published by another realm', () => {
     // before starting the race, so the 400 ms budget measures only what it
     // claims — whether transaction() is blocked by the lock — not the write
     // round-trip time. Never use a wall-clock budget to order two async events.
-    const { db, dbName, vfs } = oneClient();
+    const { db, dbName, vfs } = oneClient(skip);
     const realm = await makeRealm();
     // The first commit in a fresh client publishes epoch 1.
     const marker = epochLockName(vfs, databasePath(vfs, dbName), 1);
@@ -217,8 +223,10 @@ describe('an epoch published by another realm', () => {
     }
   });
 
-  it('publishes exactly one marker per realm, whatever the pool size', async () => {
-    const { db, dbName, vfs } = oneClient();
+  it('publishes exactly one marker per realm, whatever the pool size', async ({
+    skip,
+  }) => {
+    const { db, dbName, vfs } = oneClient(skip);
     await db.write('CREATE TABLE t (n)');
     await db.write('INSERT INTO t VALUES (1)');
     await db.write('INSERT INTO t VALUES (2)');

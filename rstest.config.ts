@@ -2,11 +2,13 @@ import { withRslibConfig } from '@rstest/adapter-rslib';
 import { defineConfig, type ProjectConfig } from '@rstest/core';
 import {
   CHROMIUM_FEATURES,
+  onUnmetFromEnv,
   targetLabel,
   targetsFromEnv,
 } from './tests/target-projects.ts';
 
 const targets = targetsFromEnv(process.env.BSQ_TEST_TARGETS, CHROMIUM_FEATURES);
+const onUnmet = onUnmetFromEnv(process.env.BSQ_TEST_NEEDS);
 
 // Suppresses "window is not defined" noise from rsbuild's HMR client running
 // inside Web Worker bundles. The HMR client calls window.location.reload()
@@ -109,7 +111,10 @@ export default defineConfig({
       // CI runner, twice (long-query.test.ts, 2026-09-22).
       hookTimeout: 60000,
       source: {
-        define: { __BSQ_TEST_TARGET__: JSON.stringify(target) },
+        define: {
+          __BSQ_TEST_TARGET__: JSON.stringify(target),
+          __BSQ_TEST_NEEDS__: JSON.stringify(onUnmet),
+        },
       },
     })),
   ],

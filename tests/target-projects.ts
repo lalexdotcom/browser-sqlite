@@ -3,7 +3,7 @@ import { defaultBuildFor } from '../src/capabilities.ts';
 import type { SQLiteBuild } from '../src/const/builds.ts';
 import type { PlatformFeature } from '../src/const/platform.ts';
 import { type SQLiteVFS, VFS_CAPABILITIES } from '../src/const/vfs.ts';
-import type { TestTarget } from './browser/target.ts';
+import type { OnUnmetNeed, TestTarget } from './browser/target.ts';
 
 /**
  * What each engine the configs drive offers a build — the only features the
@@ -45,6 +45,19 @@ export const targetsFromEnv = (
     );
   }
   return env.split(',').map(parseTarget);
+};
+
+/**
+ * What a test whose need the target lacks does, read in Node by the same
+ * configs and injected beside the target as `__BSQ_TEST_NEEDS__` (spec
+ * 2026-09-15, A7). `BSQ_TEST_NEEDS` unset or `fallback`: A5's fallback, what
+ * `pnpm test` runs. `skip`: what `pnpm test:matrix` sets. Anything else throws,
+ * so a typo fails the run instead of silently falling back.
+ */
+export const onUnmetFromEnv = (env: string | undefined): OnUnmetNeed => {
+  if (env === undefined || env === 'fallback') return 'fallback';
+  if (env === 'skip') return 'skip';
+  throw new Error(`BSQ_TEST_NEEDS: "${env}" is neither "fallback" nor "skip"`);
 };
 
 /** `OPFSWriteAheadVFS/sync` — a project's name suffix, and the env syntax. */
