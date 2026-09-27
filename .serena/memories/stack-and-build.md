@@ -39,7 +39,7 @@
     starts at the offset), `@@ -271`.
   - `IDBMirrorVFS.js` — #352 (`pData.subarray()`: `pData` is a `Uint8ArrayProxy`, and `set()` on it
     stores zeroes) and #353 (drop the blocks past the end of the file, in the view and in the store).
-  - `WriteAhead.js` — #361 (checkpoint plan with bounded buffer planners, upstream `68db49b3` since 2026-09-26; the first version held the whole checkpoint in memory).
+  - `WriteAhead.js` — #361 (checkpoint plan with bounded buffer planners, upstream `68db49b3` since 2026-09-26; the first version held the whole checkpoint in memory; merged upstream 2026-09-27, carried until the repin) and #365 (a read transaction reads the WAL to its end, added 2026-09-27).
   - `OPFSAnyContextVFS.js` — #363 (a `jUnlock` that closes a pending writable before releasing the
     lock).
 
