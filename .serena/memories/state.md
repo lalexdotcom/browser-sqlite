@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-09-26.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-09-27.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one.
 
 **No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
@@ -21,7 +21,7 @@ obligations and unmeasured ground.
   2026-09-23), and **per-VFS OPFS folders** (merged 2026-09-24, the section's first **Breaking**
   entries: `.ad/`, `.ac/`, `.cs/`, `.wa/`, `layout` and `VFSLayout` gone, the 52-character name bound
   on those four VFS; `db.files` Added; the path and empty-name refusals Changed — `mem:vfs`, CROSS-VFS;
-  `mem:architecture`, "Two names per database"), and **the default build that follows the browser** (merged 2026-09-24: Changed, plus one Breaking entry — a `wasmUrl` serving only the `async` `.wasm`), and **the public surface** (merged 2026-09-24: Breaking — `VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` no longer exported, the `./worker` subpath gone; Changed — `createSQLiteClient` declared to return `SQLiteDB`).
+  `mem:architecture`, "Two names per database"), and **the default build that follows the browser** (merged 2026-09-24: Changed, plus one Breaking entry — a `wasmUrl` serving only the `async` `.wasm`), and **the public surface** (merged 2026-09-24: Breaking — `VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` no longer exported, the `./worker` subpath gone; Changed — `createSQLiteClient` declared to return `SQLiteDB`), and two more **Fixed** entries: `OPFSAnyContextVFS`'s `VACUUM` that failed the next read on Firefox (#363, merged 2026-09-25) and a failed client leaving `inspectDatabase()`'s roster at once (merged 2026-09-27).
 - **The vendored wa-sqlite sits on upstream `master` of 2026-09-26** (`package.json` has the SHA),
   which merged our #347 and #348 that day. `patches/wa-sqlite@1.1.2.patch` carries five files, one
   open PR each or two: `OPFSCoopSyncVFS.js` (#350), `IDBBatchAtomicVFS.js` (#351), `IDBMirrorVFS.js`
@@ -203,7 +203,7 @@ ABANDON-WEDGE).
 **A third gate is closed: the README was reworked on 2026-09-07** (§ below), which is what
 the 2026-09-05 entry in `mem:follow-ups` called for.
 
-**Nothing is in flight (2026-09-24).** `build/typecheck-scripts` is merged and its branch deleted: `tsc` and biome now cover `scripts/` (`mem:history`). No subject is set. `main` sits ahead of `origin/main` — the convention, not an oversight.
+**Nothing is in flight (2026-09-27).** The test-fragility list the user brought on 2026-09-25 is worked through (`mem:history`, the four rows of 2026-09-25/27); what is left of it is parked in `mem:follow-ups` — `pool-cap`'s surplus-slot flake, the Firefox reuse-guard load campaign, the barrier's data staleness (BARRIER-DATA) and `handleDeath`'s untested guard. rhashimoto/wa-sqlite#363 is open and carried in `patches/`. No subject is set. `main` sits ahead of `origin/main` — the convention, not an oversight.
 
 **The subject the user set on 2026-09-21 — the two `OPFSCoopSyncVFS` opens that failed on chromium — is CLOSED, and it was closed before it was started.** `mem:follow-ups` still described it as HANDLE-CORPSE on a path the retry misses; that entry had rotted. The cells failed at MATRIX-5 (2026-09-18 08:25) and the two fixes landed at 13:33 and 13:34 the same day: wa-sqlite #350 (the partial acquisition that leaks the handles beside the one that failed, which is what made every retry fail on `-journal`) and `exclusiveFileHandle` + `openWithRetry` on our side — `OPFSCoopSyncVFS` **is** declared `exclusiveFileHandle: true`, so `sqlite3_open_v2` does get the retry. Verified by measurement rather than by reading: eight consecutive runs of that cell, 8/8 green, plus the two full matrices since (COOPSYNC-OPEN-CLOSED, `mem:measurements`).
 
@@ -342,8 +342,9 @@ POOL-SIZE, DELETE-WA); VFS facts in `mem:vfs`.
   subject on one worker. So the bench no longer shows HANDLE-1 within a client off Chromium.
 
 **What it does NOT deliver.** Safari is checked at n=4 on one Mac and Firefox at n=3 in this
-container (SAFARI-CAP, `mem:measurements`): every cap holds. CoopSync writes can still take the transfer BUSY between clients; `barrier.test.ts` does
-not guard the barrier; D-09 has no falsifier by construction (`mem:follow-ups`). Orphan
+container (SAFARI-CAP, `mem:measurements`): every cap holds. CoopSync writes can still take the transfer BUSY between clients; nothing guards the barrier
+itself — `barrier.test.ts`'s schema tests guard the worker's column-name capture (spike
+2026-09-25) —; D-09 has no falsifier by construction (`mem:follow-ups`). Orphan
 `-wa0`/`-wa1` files left by deletions before the fix stay — harmless, by decision.
 
 ## The caught write abort — merged 2026-09-12

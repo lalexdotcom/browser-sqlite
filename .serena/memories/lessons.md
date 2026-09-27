@@ -1122,3 +1122,11 @@ The spec claimed `createSQLiteClient`'s new `): SQLiteDB` return annotation "com
 
 After rewriting the checkpoint around a bounded buffer, the reply said "about 67 MB down to 4 MiB" — computed from what the code holds, never measured. Measured (`RssAnon` over the browser tree, 5 ms samples): 48 MiB saved, and the plan still above upstream. A synchronous loop gives the GC no turn, so the peak follows the **volume allocated**, and upstream's one-page-at-a-time loop allocates 66 MB of garbage too. **A memory claim is a measurement or it is labelled as arithmetic** — same class as the 3365 ms of CHECKPOINT-DIRECT, a derived figure that read like a measured one.
 
+## A defect identical on every backend may live in the layer they all share — ours included (2026-09-25, `fix/barrier-falsifier`)
+
+The barrier's spec measured staleness "40 runs, 40 stale, across four VFS and three builds" and concluded "the common factor is wa-sqlite itself", so the barrier was declared permanent architecture. The common factor was also our own worker, and that is where it was: column names read before the first `step()`, so a statement SQLite re-prepared on a changed schema returned fresh rows under stale names. `aee3859` fixed it in passing, a month later, and the barrier's tests went inert without anyone noticing. **When a symptom does not vary with the backend, list every layer the backends share and suspect each, starting with the one you wrote.** And a test that stops failing when its mechanism is removed is telling you the mechanism is no longer what it guards: run the falsifier after every change to the code around it, not only the day the test is written.
+
+## A falsifier that stays green may be one guard of two (2026-09-25, `lifecycle.test.ts`)
+
+Removing the pool check in `onGateOpen` left "fails the client rather than hanging" green, before and after the test was rewritten. The supervisor's `'lost'` verdict had become a second, independent guard: either alone fails the client. Only removing both hung it. **Before calling a test inert, look for a second path to the same outcome; the honest comment then names the pair.**
+
