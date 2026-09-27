@@ -291,7 +291,14 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   current, 9/100 on the pre-#355 code. The barrier only buys time. **The race is traced** (BARRIER-DATA):
   the `tx` broadcast and the read's `query` take two channels with no ordering between them, and
   the stale reads are the ones where the query arrives first — present before #355, which only
-  widens it. **Open:** the fix — an upstream
+  widens it. **Upstream fix written and pushed, PR not opened yet (2026-09-27):** branch
+  `fix/writeahead-read-catches-up` on the fork (`.work/wa-sqlite-readfresh`, `1273bb48` on upstream
+  `e6e01ae1`): `isolateForRead()` reads the WAL to its end. Its test, in wa-sqlite's own suite,
+  is deterministic — a reader worker blocks its event loop while a writer worker commits, then
+  reads before its context delivers the broadcast: `1` for `2` on master, 8/8 runs, both builds.
+  Two connections in ONE context share a `WriteAhead` view and cannot reproduce it. Cost ≈ 5 µs
+  per read transaction on asyncify. Body in `.scratchpad/writeahead-read-freshness/pr-body.md`.
+  Once opened: carry it in `patches/`, then give the barrier its falsifier. **Open:** the fix — an upstream
   change to `WriteAhead.js` (a candidate PR, with a repro wa-sqlite can run) and/or a carry in
   `patches/` — and then a falsifier; the user decides which.
 - **`OPFSAnyContextVFS` releases its lock with a truncation still invisible — `disk I/O error` on
