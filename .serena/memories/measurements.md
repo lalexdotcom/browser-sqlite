@@ -10,7 +10,7 @@ The arm LEASE-QUIESCE left open: not one file under load but the whole Firefox c
 
 - **0 hits in 10 passes**, 7 453 tests passed, no page crash. ~200 s per pass.
 - **7 failures, two tests, both a 30 s timeout, neither the guard:** `interrupt.test.ts :: leaves a sync build degraded` in **6 of 10** passes (both projects — it pins `OPFSWriteAheadVFS/sync`, so the pair is the same), "completed 1 expect assertion"; and `open-retry :: succeeds once the holder lets go` once (`mem:follow-ups`).
-- **The `interrupt` one is the test's budget, not a defect:** alone on the idle machine it passes 3/3, and its file's test phase takes **22.6-23.0 s** — the 20 M-row query the `sync` build cannot cut runs to its end inside `close()`, against the 30 s default. 1.3× of margin, which the load eats.
+- **The `interrupt` one is the test's budget, not a defect:** alone on the idle machine it passes 3/3, and its file's test phase takes **22.6-23.0 s** — the 20 M-row query the `sync` build cannot cut runs to its end inside `close()`, against the 30 s default. 1.3× of margin, which the load eats. **Fixed the same day** by giving that client `drainTimeout: 2_000`, and renamed `rejects an aborted read at once on a sync build without isolation`: 3/3 idle per engine (Firefox 0.8-2.9 s, Chromium ~0.2 s), **20/20 under sixteen busy loops**, slowest 3.9 s — inside the 2 × 2 s the two bounded waits of `close()` allow.
 
 ## BARRIER-DATA — data staleness without the barrier, 2026-09-25, this container
 

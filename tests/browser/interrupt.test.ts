@@ -152,14 +152,17 @@ describe('aborting a running statement', () => {
   // `needs: ['interruptible']`. OPFSAdaptiveVFS does not support `sync` at
   // all, so the pin moves to the recommended OPFSWriteAheadVFS (its default
   // build is `sync`), same precedent as isolated/abort-slot.test.ts.
-  it('leaves a sync build degraded, and says so by behaving so', async () => {
+  it('rejects an aborted read at once on a sync build without isolation', async () => {
     // The ordinary test host is NOT cross-origin isolated, so this is the
     // degraded row of the design's §6: the signal stops the wait, not the work.
+    // `close()` would otherwise wait the uncuttable statement out, ~23 s on
+    // Firefox, which load pushed past the test's 30 s (REUSE-LOAD).
     const db = await createTestClient({
       vfs: 'OPFSWriteAheadVFS',
       build: 'sync',
       poolSize: 1,
       debug: true,
+      drainTimeout: 2_000,
     });
     try {
       const controller = new AbortController();

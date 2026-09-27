@@ -531,9 +531,9 @@ the place where someone would break it says so.
 
 Suggested in the reply to his review, not implemented: the plan executor allocates one `bufferSize` region per checkpoint instead of a buffer per read and per write. Holds for both planners (every write retires every read before it). Should bring the executor below `master` in memory, not only in time (CHECKPOINT-PLAN, `mem:measurements`). **His choice: this PR or a follow-up.** Until then the patch carries the per-call executor.
 
-## `interrupt.test.ts`'s degraded-sync test times out under load (2026-09-27)
+## `close()` waits an uncuttable statement out on Firefox, not on Chromium (2026-09-27)
 
-`leaves a sync build degraded, and says so by behaving so` pins `OPFSWriteAheadVFS/sync` and aborts `longQuery(20_000_000)`: the abort rejects at once, then `close()` waits the uncuttable statement out. Alone on an idle machine the file's test phase is 22.6-23.0 s against the 30 s default; under sixteen busy loops it timed out in 6 of 10 whole-config passes (REUSE-LOAD). A test budget, not a defect: a shorter query or an explicit timeout would do, and which is the user's call.
+Measured on `OPFSWriteAheadVFS/sync`, not isolated, `longQuery(20_000_000)` aborted while running: the abort rejects in 0 ms on both engines and the next read waits the statement out on both (2.5 s Chromium, 22.3 s Firefox — the build is degraded everywhere, as declared). But `close()` called right after the rejection returned within ~0.2 s on Chromium and waited the statement's whole length on Firefox, up to `drainTimeout`. Not chased; the difference is inside `worker.close()` or the terminate path. It is what made `interrupt.test.ts`'s sync test time out under load on Firefox alone — fixed there with `drainTimeout: 2_000` and a name that says what it checks, 20/20 under sixteen busy loops (REUSE-LOAD).
 
 ## `open-retry` "succeeds once the holder lets go" times out on Firefox under matrix load (2026-09-26)
 
