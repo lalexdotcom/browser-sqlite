@@ -259,8 +259,6 @@ defect, and the scenario a defect is found through is often not the one that dem
 
 ## Smaller things this branch left open (2026-09-15)
 
-- A **refused client still appears in `inspectDatabase().clients`** until it is closed —
-  `AccessHandlePoolVFS` behaved that way before the branch too.
 - **`handleDeath`'s guard for a slot-0 loss before the probe has no test** — no path was found that reaches
   it with the probe unanswered; it is defensive (`a0373c0`).
 

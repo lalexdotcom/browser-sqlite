@@ -773,14 +773,15 @@ export const createSQLiteClient = (
   let markerRelease: (() => void) | undefined;
   // Unlike `connLockPromise`, this acquisition is NOT awaited in `close()` —
   // the marker must never participate in the close path's timing. Instead, a
-  // flag lets a grant that lands after `close()` self-release immediately.
+  // flag lets a grant that lands after `close()` or `failClient` self-release
+  // immediately.
   let markerClosed = false;
   if (markerName !== undefined) {
     void locks
       .hold(markerName, { mode: 'shared' })
       .then((release) => {
         if (markerClosed) {
-          // `close()` already ran; release immediately so no phantom appears.
+          // The client closed or failed; release immediately so no phantom appears.
           release();
         } else {
           markerRelease = release;
@@ -1457,6 +1458,11 @@ export const createSQLiteClient = (
     readyDeferred.reject(fatal);
     void scheduler.shutdown(fatal);
     for (const dying of pool) dying?.terminate(fatal);
+    // The roster reports who is live, and nothing revives a failed client.
+    // Cleared so that `close()` does not release it a second time.
+    markerClosed = true;
+    markerRelease?.();
+    markerRelease = undefined;
   };
 
   const spawn = (index: number) => {

@@ -68,6 +68,7 @@ All notable changes to this project are documented here.
 
 - **A TEXT value containing a NUL character is no longer cut short.** A parameter bound with one, or a column returning one, lost everything from the first NUL: `'a\0b'` came back as `'a'`. The fix is wa-sqlite's, brought by the move to upstream `5e98ac7` (see *Changed*).
 - **On `OPFSAnyContextVFS`, a statement that shrinks the database, such as `VACUUM`, could make the next read on another worker or tab fail** with `disk I/O error` on Firefox, or read the file at its old size elsewhere. The VFS released its lock before the shrink reached the file; it now publishes it first. The fix is a change to wa-sqlite, carried in this package's build until wa-sqlite ships it.
+- **A client that failed no longer appears in `inspectDatabase()` and `db.inspect()`.** It stayed listed until `close()` although it holds nothing — a second client refused with `DATABASE_IN_USE`, or one whose workers all died. It now leaves the roster as soon as it fails; a client still retrying a worker stays in it.
 
 ## 1.0.0-rc.5 — 2026-09-22
 
