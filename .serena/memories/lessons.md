@@ -1130,3 +1130,7 @@ The barrier's spec measured staleness "40 runs, 40 stale, across four VFS and th
 
 Removing the pool check in `onGateOpen` left "fails the client rather than hanging" green, before and after the test was rewritten. The supervisor's `'lost'` verdict had become a second, independent guard: either alone fails the client. Only removing both hung it. **Before calling a test inert, look for a second path to the same outcome; the honest comment then names the pair.**
 
+## A readiness predicate that matches any activity lets a test act on the wrong event (2026-09-27, `fix/abort-waits-for-its-query`)
+
+`aWorkerIsRunning` was true for any running statement, and a fresh client's first one is the freshness barrier. Tests that waited on it and then aborted aborted the barrier on Chromium every time: the query they named was never sent, they passed, and one of them (`abort-slot`'s dead-worker test) was inert under its own falsifier. It also produced a fake engine difference that cost a wrong diagnosis ("a worker lent back mid-statement"), refuted only by listing the statements actually sent. **A wait before an action must identify the thing acted on, not a state it shares with something else.**
+
