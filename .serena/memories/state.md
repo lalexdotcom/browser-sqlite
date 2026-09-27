@@ -42,27 +42,27 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-24 on `feat/public-surface`
+## The verification baseline — compare against these, re-measured 2026-09-27 on `main`
 
-Not history: the numbers a regression is detected against. **Every figure below was read off a run in this container on 2026-09-24, on `feat/public-surface`** — none is arithmetic, and the table was read in ONE pass (`.scratchpad/public-surface/`). `tsc` and `pnpm test` were read on the branch's last commit and again by the merge hook, with identical counts; the other rows were read one commit of code earlier, and that last commit changes only the declared type of `SQLiteDB.debug`. **One exception, stated:** the matrix row is carried from `feat/default-build`, run the same day; `feat/public-surface` changes no VFS, build, pool or worker code, so `mem:conventions` ("When to run the full matrix") does not call for a new one.
+Not history: the numbers a regression is detected against. **Every figure below was read off a run in this container on 2026-09-27, on `main` after the failed-client roster fix merged** — none is arithmetic, and the table was read in ONE pass (`.scratchpad/baseline-2026-09-27/`), on the wa-sqlite pin `5e98ac7` with #363 carried. **One row was re-run, stated:** `pnpm test:consumer` first failed its three webpack stages on an npm 404 — `@peculiar/asn1-x509-attr@2.10.0`, published four minutes before the install, its tarball not yet served — and passed 24/24 on the re-run once the same pass had finished.
 
 | command | result |
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1263 tests / 83 files** (unit + the two chromium target projects, **8 skipped**), **742 / 56** (the two firefox target projects, **2 skipped**), **14 / 3** (the two isolated target projects, none skipped). The chromium and firefox targets are `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` since the default build follows the engine |
-| `pnpm exec rstest --project unit run` | **523** tests, 28 files |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1263 tests** (unit + the two chromium target projects, **8 skipped**), **746** (the two firefox target projects, **2 skipped**), **14** (the two isolated target projects, none skipped). The chromium and firefox targets are `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` since the default build follows the engine |
+| `pnpm exec rstest --project unit run` | **525** tests, 28 files |
 | `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are `chromium · <vfs>/<build>` and rstest's filter is anchored |
 | `pnpm test:conformance` | **TWO reports** — 97 tests / 3 files each: **Chromium 83 passed / 14 skipped, Firefox 79 / 18** — they differ by design since 2026-09-14. Each VFS runs on its default build for the engine, so the `jspi`-first VFS run `jspi` here |
 | `pnpm exec biome ci .` | exit 0 |
 | `pnpm docs:vfs` | leaves `VFS.md` unchanged (`git diff --exit-code`) |
-| `pnpm test:consumer` | 24/24 stages — every consumer app uses `OPFSAdaptiveVFS` with no `build`, so on Chromium each bundler now loads the `jspi` `.wasm` |
+| `pnpm test:consumer` | 24/24 stages (on the re-run above) |
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | `OK`, `"reasons": {}`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 159 files, 13 warnings, 1 info — the file count moves with the tree, **the warning count is the signal** |
+| `pnpm lint` | 160 files, 13 warnings, 1 info — the file count moves with the tree, **the warning count is the signal** |
 | `dependencies` in `package.json` | absent |
-| `pnpm test:matrix` | **66 of 66 cells green, 0 failing tests, 2570 s** (`.matrix/2026-09-24T09-53-39-415Z`). ~45 min. Per-cell detail in `mem:measurements` |
+| `pnpm test:matrix` | **66 of 66 cells green, 0 failing tests, 2478 s** (`.matrix/2026-09-27T12-06-11-356Z`). ~45 min. Per-cell detail in `mem:measurements` |
 
-Against the table before `feat/public-surface` — `pnpm test` 1264 / 742 / 14, unit 524 / 28 files — the chromium+unit report lost **1**: `tests/unit/exports.test.ts` replaced its per-name presence tests with one exact list of the runtime exports, plus a test on `package.json`'s `exports`. Nothing else moved. **The skip counts did not move, and that is the cell to watch** — a test that started skipping instead of running would vanish into a total without a trace.
+Against the table of 2026-09-24 — `pnpm test` 1263 / 742 / 14, unit 523 — the firefox report moved to 746 and unit to 525; the chromium+unit total did not move. Between the two, `main` gained `vacuum.test.ts`, two failed-client tests in `inspect-marker.test.ts`, two resolver unit tests, and another session's repin branch; the totals were not reconciled test by test. **The skip counts did not move, and that is the cell to watch** — a test that started skipping instead of running would vanish into a total without a trace.
 
 **Do not reconcile any of these by arithmetic; re-run.** A previous version of this table was
 measured on 2026-09-15 and went stale the next day, and another contradicted itself in September
