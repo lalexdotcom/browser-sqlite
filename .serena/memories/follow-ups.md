@@ -288,7 +288,10 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   transaction freezes the connection's view as the `BroadcastChannel` has left it, without reading
   the write-ahead to current as a write does; under load the writer's `tx` message is processed
   after the next read starts. 28/100 stale as shipped, 0/100 with `isolateForRead()` reading to
-  current, 9/100 on the pre-#355 code. The barrier only buys time. **Open:** the fix — an upstream
+  current, 9/100 on the pre-#355 code. The barrier only buys time. **The race is traced** (BARRIER-DATA):
+  the `tx` broadcast and the read's `query` take two channels with no ordering between them, and
+  the stale reads are the ones where the query arrives first — present before #355, which only
+  widens it. **Open:** the fix — an upstream
   change to `WriteAhead.js` (a candidate PR, with a repro wa-sqlite can run) and/or a carry in
   `patches/` — and then a falsifier; the user decides which.
 - **`OPFSAnyContextVFS` releases its lock with a truncation still invisible — `disk I/O error` on
