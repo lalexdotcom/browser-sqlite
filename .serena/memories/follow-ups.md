@@ -273,9 +273,13 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   **That reproduction was run on 2026-09-27 and it reproduces** (BARRIER-DATA, `mem:measurements`):
   under sixteen busy loops, 37 of 616 tests stale without the barrier, 0 of 616 with it, on the same
   cells — all on Chromium, every scenario, growth included. The barrier guards data freshness for
-  real. **Still open:** a falsifier (load is what exposes it, and the suite runs unloaded), and the
-  cause — why a connection without it reads a stale snapshot although SQLite checks the change
-  counter, and why Chromium alone.
+  real. **Cause found the same day (BARRIER-DATA): `OPFSWriteAheadVFS`'s read isolation.** A read
+  transaction freezes the connection's view as the `BroadcastChannel` has left it, without reading
+  the write-ahead to current as a write does; under load the writer's `tx` message is processed
+  after the next read starts. 28/100 stale as shipped, 0/100 with `isolateForRead()` reading to
+  current, 9/100 on the pre-#355 code. The barrier only buys time. **Open:** the fix — an upstream
+  change to `WriteAhead.js` (a candidate PR, with a repro wa-sqlite can run) and/or a carry in
+  `patches/` — and then a falsifier; the user decides which.
 - **`OPFSAnyContextVFS` releases its lock with a truncation still invisible — `disk I/O error` on
   Firefox (2026-09-25). FIXED in our build by a `patches/` hunk, submitted upstream as
   rhashimoto/wa-sqlite#363** (report `docs/upstream/2026-09-25-wa-sqlite-363-anycontext-unlock-truncate.md`).
