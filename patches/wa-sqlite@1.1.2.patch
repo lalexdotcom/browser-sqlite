@@ -182,7 +182,7 @@ index b69df1e4f6fe2da3cafb72dd16af3573b50e9c3b..5a8b1997012c82c45db18b3cecea5c88
            this.log?.(`failed to create access handles for ${file.path}`, e);
            // Close any of the potentially opened access handles
 diff --git a/src/examples/WriteAhead.js b/src/examples/WriteAhead.js
-index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..5aab29780f146954c6e5c64f446c8f92aa7658fc 100644
+index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..ec6eb8234c55a7153348c144862a6e487ad0b9fc 100644
 --- a/src/examples/WriteAhead.js
 +++ b/src/examples/WriteAhead.js
 @@ -2,10 +2,16 @@ import { Lock } from './Lock.js';
@@ -235,7 +235,30 @@ index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..5aab29780f146954c6e5c64f446c8f92
    };
  
    #zName;
-@@ -434,8 +455,9 @@ export class WriteAhead {
+@@ -165,8 +186,7 @@ export class WriteAhead {
+ 
+   /**
+    * Freeze our view of the database.
+-   * The view includes the transactions received so far but is not
+-   * guaranteed to be completely up to date. Unfreeze the view with rejoin().
++   * The view includes all transactions. Unfreeze the view with rejoin().
+    */
+   isolateForRead() {
+     if (this.#isolationState !== null) {
+@@ -177,6 +197,12 @@ export class WriteAhead {
+     // Disable backstop during isolation.
+     clearTimeout(this.#backstopTimer);
+     this.#backstopTimer = null;
++
++    // A transaction another connection committed before this read began may
++    // not have been broadcast here yet: the message and the request for this
++    // read arrive over different channels, in no guaranteed order. Read the
++    // WAL through its end so that such a transaction is part of the view.
++    this.#advanceTxId({ readToCurrent: true });
+   }
+ 
+   /**
+@@ -434,8 +460,9 @@ export class WriteAhead {
        }
  
        // Starting at ckptId and going backwards (higher to lower txId),
@@ -247,7 +270,7 @@ index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..5aab29780f146954c6e5c64f446c8f92
        const writtenOffsets = new Set();
        let dbFileSize = this.#dbHandle.getSize();
        for (let tx = this.#mapIdToTx.get(ckptId); tx; tx = this.#mapIdToTx.get(tx.id - 1)) {
-@@ -447,16 +469,16 @@ export class WriteAhead {
+@@ -447,16 +474,16 @@ export class WriteAhead {
  
          for (const [offset, pageEntry] of tx.pages) {
            if (offset < dbFileSize && !writtenOffsets.has(offset)) {
@@ -272,7 +295,7 @@ index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..5aab29780f146954c6e5c64f446c8f92
            }
          }
  
-@@ -470,6 +492,10 @@ export class WriteAhead {
+@@ -470,6 +497,10 @@ export class WriteAhead {
          }
        }
  
@@ -283,7 +306,7 @@ index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..5aab29780f146954c6e5c64f446c8f92
        // Ensure that database writes are durable.
        this.log?.(`%ccheckpoint flush database file`, 'color: black; background-color: lightgreen;');
        this.#dbHandle.flush();
-@@ -796,6 +822,53 @@ export class WriteAhead {
+@@ -796,6 +827,53 @@ export class WriteAhead {
      return pageData;
    }
  
@@ -337,7 +360,7 @@ index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..5aab29780f146954c6e5c64f446c8f92
    *#readAllTx() {
      while (true) {
        const tx = this.#readTx();
-@@ -1257,3 +1330,73 @@ class Checksum {
+@@ -1257,3 +1335,73 @@ class Checksum {
      return this.s0 === s0 && this.s1 === s1;
    }
  }

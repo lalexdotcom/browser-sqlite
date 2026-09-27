@@ -14,6 +14,10 @@ descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` clai
 shadow types that were never loaded, `W-types` a duplication already gone. Both would have
 been work on nothing.
 
+## `vfs-folders` "opens and persists a path exactly at the bound" failed once on Firefox IDBBatchAtomicVFS/jspi (2026-09-27)
+
+In the full matrix run to verify the #365 carry: `firefox · IDBBatchAtomicVFS/jspi` 371/1/2, the one failure `tests/browser/vfs-folders.test.ts :: … opens and persists a path exactly at the bound`, `expected +0 to be 1` — a client created a table and closed, a second client on the same name counted **0** tables. First failure since the test was added (2026-09-23); every earlier matrix had it green, including the morning's on the same pin without #365. Report kept: `.matrix/2026-09-27T20-34-42-649Z/firefox-IDBBatchAtomicVFS-jspi.txt`. **Not reproduced:** the test alone on that pair 10/10, the whole cell three times through `pnpm test:matrix --engine firefox --pair IDBBatchAtomicVFS/jspi`, 372/0/2 each. Unrelated to #365 as far as the code goes — `IDBBatchAtomicVFS` does not use `WriteAhead.js`. If it recurs: it would be a persistence loss between two clients of that VFS on Firefox, the name at the 52-character bound; keep the report and check whether the first client's close had finished its IndexedDB transaction before the second opened.
+
 ## Repin wa-sqlite: #350, #357 and #361 are merged upstream (user, 2026-09-27) — later
 
 The user reported all three merged on 2026-09-27, and deferred the repin and the patch update.
@@ -291,16 +295,16 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   current, 9/100 on the pre-#355 code. The barrier only buys time. **The race is traced** (BARRIER-DATA):
   the `tx` broadcast and the read's `query` take two channels with no ordering between them, and
   the stale reads are the ones where the query arrives first — present before #355, which only
-  widens it. **Upstream fix written and pushed, PR not opened yet (2026-09-27):** branch
+  widens it. **Submitted upstream as rhashimoto/wa-sqlite#365 on 2026-09-27** (report
+  `docs/upstream/2026-09-27-wa-sqlite-365-writeahead-read-freshness.md`); branch
   `fix/writeahead-read-catches-up` on the fork (`.work/wa-sqlite-readfresh`, `1273bb48` on upstream
   `e6e01ae1`): `isolateForRead()` reads the WAL to its end. Its test, in wa-sqlite's own suite,
   is deterministic — a reader worker blocks its event loop while a writer worker commits, then
   reads before its context delivers the broadcast: `1` for `2` on master, 8/8 runs, both builds.
   Two connections in ONE context share a `WriteAhead` view and cannot reproduce it. Cost ≈ 5 µs
-  per read transaction on asyncify. Body in `.scratchpad/writeahead-read-freshness/pr-body.md`.
-  Once opened: carry it in `patches/`, then give the barrier its falsifier. **Open:** the fix — an upstream
-  change to `WriteAhead.js` (a candidate PR, with a repro wa-sqlite can run) and/or a carry in
-  `patches/` — and then a falsifier; the user decides which.
+  per read transaction on asyncify. Body in
+  `.scratchpad/writeahead-read-freshness/pr-365-writeahead-read-freshness.md`. **Carried in
+  `patches/` since 2026-09-27; next, give the barrier its falsifier.**
 - **`OPFSAnyContextVFS` releases its lock with a truncation still invisible — `disk I/O error` on
   Firefox (2026-09-25). FIXED in our build by a `patches/` hunk, submitted upstream as
   rhashimoto/wa-sqlite#363** (report `docs/upstream/2026-09-25-wa-sqlite-363-anycontext-unlock-truncate.md`).
