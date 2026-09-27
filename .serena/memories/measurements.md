@@ -35,6 +35,8 @@ UPDATE, DELETE × one and two clients × 40 — gave **0 / 240 in both arms idle
 arms under sixteen busy loops**. 3 against 0 out of 1232 is not significant on its own (Fisher
 p ≈ 0.12): suggestive that the barrier guards something rare, not a proof.
 
+**Reproduced under load, 2026-09-27** (`.scratchpad/barrier-data-load-2026-09-27/`, `main` on pin `5e98ac7` with #363, a worktree): the same probe on every pair × {chromium, firefox}, one pass per arm, under sixteen busy loops. **Barrier removed: 37 of 616 tests stale, in 16 of 44 cells, all on Chromium. Barrier kept, same load, same cells: 0 of 616.** Every scenario shows it, in one and in two clients, `bulk INSERT, file grows` included — the growth that the barrier's spec said heals a connection does not. Values are whole pre-write states (`[1, 1]` for `[2, 2]`, `[2, 2]` for `[1, 1]` after a DELETE, `[23, 3]`). A second-pass cell interrupted by the stop was stale too. No `disk I/O error` in either arm (#363). **So the barrier does guard data freshness, and load is what exposes its absence; unloaded, the same probe had given 3 in 1232.** What is not known: why a connection without the barrier reads a stale snapshot at all — SQLite checks the change counter on every new read transaction — nor why Chromium alone.
+
 Every `disk I/O error` is the same test — one client, DELETE + VACUUM, two workers — on Firefox
 only, in both arms, so independent of the barrier (`mem:follow-ups`).
 

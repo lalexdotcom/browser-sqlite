@@ -270,6 +270,12 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   the barrier there is no shared state left, and two tabs are two clients' workers to SQLite. The
   next step, if anyone chases it, is a reproduction of the three sightings' conditions (a loaded
   full run of the data probe), not a longer loop. Probes kept in `.scratchpad/barrier-spike-2026-09-25/`.
+  **That reproduction was run on 2026-09-27 and it reproduces** (BARRIER-DATA, `mem:measurements`):
+  under sixteen busy loops, 37 of 616 tests stale without the barrier, 0 of 616 with it, on the same
+  cells — all on Chromium, every scenario, growth included. The barrier guards data freshness for
+  real. **Still open:** a falsifier (load is what exposes it, and the suite runs unloaded), and the
+  cause — why a connection without it reads a stale snapshot although SQLite checks the change
+  counter, and why Chromium alone.
 - **`OPFSAnyContextVFS` releases its lock with a truncation still invisible — `disk I/O error` on
   Firefox (2026-09-25). FIXED in our build by a `patches/` hunk, submitted upstream as
   rhashimoto/wa-sqlite#363** (report `docs/upstream/2026-09-25-wa-sqlite-363-anycontext-unlock-truncate.md`).
