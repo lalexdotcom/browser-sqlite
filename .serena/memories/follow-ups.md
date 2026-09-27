@@ -338,6 +338,8 @@ a consumer environment lacks it; an insecure context is the candidate. Pre-exist
 
 ## A timed-out read on Firefox can leave the next query meeting the reuse guard, under load (2026-09-14)
 
+**The missing arm was run on 2026-09-27: the whole Firefox config, ten times, under sixteen busy loops — 0 hits in 7 453 tests** (REUSE-LOAD, `mem:measurements`). With LEASE-QUIESCE's 0/40 that is both contexts, neither reproducing. Closing it is the user's call; nothing measured argues for keeping it open.
+
 `query-timeout.test.ts :: rejects with OPERATION_TIMEOUT and leaves the client usable` failed once
 in a pre-push `pnpm test` on a loaded machine, with "Worker 1 already has a query in flight".
 **What 2026-09-15 established about that test** (CI-QUERY-TIMEOUT, `mem:measurements`): it ran on
@@ -529,7 +531,13 @@ the place where someone would break it says so.
 
 Suggested in the reply to his review, not implemented: the plan executor allocates one `bufferSize` region per checkpoint instead of a buffer per read and per write. Holds for both planners (every write retires every read before it). Should bring the executor below `master` in memory, not only in time (CHECKPOINT-PLAN, `mem:measurements`). **His choice: this PR or a follow-up.** Until then the patch carries the per-call executor.
 
+## `interrupt.test.ts`'s degraded-sync test times out under load (2026-09-27)
+
+`leaves a sync build degraded, and says so by behaving so` pins `OPFSWriteAheadVFS/sync` and aborts `longQuery(20_000_000)`: the abort rejects at once, then `close()` waits the uncuttable statement out. Alone on an idle machine the file's test phase is 22.6-23.0 s against the 30 s default; under sixteen busy loops it timed out in 6 of 10 whole-config passes (REUSE-LOAD). A test budget, not a defect: a shorter query or an explicit timeout would do, and which is the user's call.
+
 ## `open-retry` "succeeds once the holder lets go" times out on Firefox under matrix load (2026-09-26)
+
+**A fourth sighting on 2026-09-27**, once in ten whole-config Firefox passes under sixteen busy loops (REUSE-LOAD).
 
 Seen twice in the repin's matrix, on two unrelated cells (`OPFSCoopSyncVFS/async`, `IDBBatchAtomicVFS/jspi`): 30 s, no assertion reached. Never before in seven full matrices. Alone on the same tree: 20 of 20. The repin touches no code the test runs (VFS files byte-identical; only text encoding changed). Then a third of the same shape, in the pre-merge hook's `pnpm test` with nothing else running: `pool-cap.test.ts :: … reports the storage error behind a failed open`, Firefox `OPFSAdaptiveVFS/jspi`, 30 s, no assertion. **A/B of the pins, `pnpm test:firefox` interleaved, 5 runs each: 10 of 10 green**, old and new alike — not reproduced, not attributable to the repin (which changes no open path). Three Firefox timeouts in one day, all an open against a held file, none in the seven matrices before: if it recurs, look at how long the open retries while the holder is armed, on Firefox.
 

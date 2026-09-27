@@ -4,6 +4,14 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## REUSE-LOAD — the whole Firefox config under load, 2026-09-27, this container
+
+The arm LEASE-QUIESCE left open: not one file under load but the whole Firefox config, the context of the single 2026-09-14 sighting. `rstest --config rstest.firefox.config.ts` (both Firefox target projects, every browser file) ten times in a row under sixteen busy loops (16 cores), `main` on pin `5e98ac7` with #363. Script and logs `.scratchpad/reuse-guard-load-2026-09-27/`. Detection: `WORKER_BUSY` or "already has a query in flight" anywhere in each report, which is where a query rejected by the guard lands.
+
+- **0 hits in 10 passes**, 7 453 tests passed, no page crash. ~200 s per pass.
+- **7 failures, two tests, both a 30 s timeout, neither the guard:** `interrupt.test.ts :: leaves a sync build degraded` in **6 of 10** passes (both projects — it pins `OPFSWriteAheadVFS/sync`, so the pair is the same), "completed 1 expect assertion"; and `open-retry :: succeeds once the holder lets go` once (`mem:follow-ups`).
+- **The `interrupt` one is the test's budget, not a defect:** alone on the idle machine it passes 3/3, and its file's test phase takes **22.6-23.0 s** — the 20 M-row query the `sync` build cannot cut runs to its end inside `close()`, against the 30 s default. 1.3× of margin, which the load eats.
+
 ## BARRIER-DATA — data staleness without the barrier, 2026-09-25, this container
 
 Probe `.scratchpad/barrier-spike-2026-09-25/data-probe.test.ts`: seven scenarios (INSERT, UPDATE,
