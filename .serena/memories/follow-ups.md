@@ -336,36 +336,6 @@ with `TypeError: undefined is not an object (evaluating
 Playwright's Linux WebKit was set aside earlier for limits of this kind (user). Unmeasured whether
 a consumer environment lacks it; an insecure context is the candidate. Pre-existing, not scheduled.
 
-## A timed-out read on Firefox can leave the next query meeting the reuse guard, under load (2026-09-14)
-
-**The missing arm was run on 2026-09-27: the whole Firefox config, ten times, under sixteen busy loops — 0 hits in 7 453 tests** (REUSE-LOAD, `mem:measurements`). With LEASE-QUIESCE's 0/40 that is both contexts, neither reproducing. Closing it is the user's call; nothing measured argues for keeping it open.
-
-`query-timeout.test.ts :: rejects with OPERATION_TIMEOUT and leaves the client usable` failed once
-in a pre-push `pnpm test` on a loaded machine, with "Worker 1 already has a query in flight".
-**What 2026-09-15 established about that test** (CI-QUERY-TIMEOUT, `mem:measurements`): it ran on
-`MemoryVFS`'s default `sync` build, which cannot cut a running statement without isolation, so the
-query it timed out kept its worker for its whole natural length — 22 s on Firefox, 60 s loaded.
-The follow-up read was racing a worker that was still busy. The test now runs on `async` and
-bounds that read.
-
-**Chased on 2026-09-21 with the busy-loop method, and the lease holds: 0 of 40** (LEASE-QUIESCE,
-`mem:measurements`). The shape was recreated deliberately — `firefox · MemoryVFS/sync`, no
-isolation, so the worker stays busy 22 s — and every run's follow-up read came back, which on that
-build is only possible by waiting the statement out. The detection path was proved with a positive
-control rather than assumed, so the zero is a statement and not a blind spot.
-
-**What keeps this entry open is narrow and stated: the sighting's context was a whole `pnpm test`,
-tens of pages in parallel, while the campaign ran one file under CPU load.** ABANDON-WEDGE's own
-lesson was that the reproducing context can be the full chain. The next arm is the whole Firefox
-config under load; nobody has run it. Reliability by the triage rule, still not scheduled — and now
-with one measured arm against it rather than nothing.
-
-**The sighting was at the CLIENT level, so the transaction queue does not close this** — that queue
-serialises a transaction's statements, while this was `db.read` through the scheduler. The guard it
-named was renamed `WORKER_BUSY` on 2026-09-22, and with the transaction serialised it now means one
-thing only: the scheduler handed a lease for a worker that was not idle. If this ever reproduces,
-that is the sentence to test.
-
 ## The pre-commit hook — three hooks since 2026-09-11 (user)
 
 Decided and installed on 2026-09-11, in `package.json` under `simple-git-hooks`:
@@ -425,6 +395,17 @@ What the entry established before the decision, kept for its evidence:
   consumer smoke.
 
 ## Notes, with nothing to fix
+
+### `WORKER_BUSY` seen once on 2026-09-14, never reproduced — closed by the user on 2026-09-27
+
+**The sighting.** `query-timeout.test.ts :: rejects with OPERATION_TIMEOUT and leaves the client usable` failed once in a pre-push `pnpm test` on a loaded machine, with "Worker 1 already has a query in flight" — the reuse guard, now `WORKER_BUSY` (`src/pool.ts`). The log was not kept. That test then ran on `MemoryVFS`'s default `sync` build, which cannot cut a statement without isolation, so the timed-out query kept its worker for its whole natural length (22 s on Firefox, 60 s loaded) while the follow-up read raced it; it has run on `async` with that read bounded since 2026-09-15 (CI-QUERY-TIMEOUT).
+
+**Chased twice, in both contexts, 0 each** — one file under sixteen busy loops, 0 of 40, with a positive control proving the detection path (LEASE-QUIESCE, 2026-09-21); the whole Firefox config ten times under sixteen busy loops, 0 in 7 453 tests (REUSE-LOAD, 2026-09-27). Both in `mem:measurements`.
+
+**If it is seen again:**
+- **Keep the whole `pnpm test` log** and note the engine, the target project and the test.
+- It was at the CLIENT level (`db.read` through the scheduler), so the transaction queue does not explain it. With transactions serialised the guard means one thing only: **the scheduler handed a lease for a worker that was not idle** — that is the sentence to test, starting from where the lease is returned (`quiesce()` in `onReadLease` and `streamWithRetry`, `src/client.ts`).
+- Before trusting a reproduction, check it aborts the statement it names: a wait on "a worker is running" once let aborts land on the freshness barrier (`mem:lessons`, 2026-09-27).
 
 ### An abort through the shared slot reports `done`, not `error` — and that is right
 
