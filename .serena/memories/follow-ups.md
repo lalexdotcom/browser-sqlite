@@ -164,22 +164,6 @@ WHAT REMAINS OPEN:
   Playwright's, not theirs. Then: `enter_bug.cgi?product=Core&component=Storage%3A%20Bucket%20File%20System`,
   blocks 1748667, keyword `hang`, and a `mozregression` range if it reproduces on stock.
 
-## `pool-cap`'s surplus-slot flake — margin widened, cure NOT demonstrated (2026-09-21)
-
-`tests/browser/pool-cap.test.ts :: a pool capped by its environment > a surplus slot that times
-out, then declines in the retry round, is not announced lost`. The coupling is fixed — `openTimeout`
-600 → 3000 with the delayed open 3000 → 15000 (`2be2ae6`) — and the mechanism is established:
-`openTimeout` is client-wide, so it governs slot 0's HEALTHY worker as well as the surplus slot,
-and under load it was the healthy one that missed. Squeezed on an idle machine, slot 0 needs some
-tens of ms: 10, 25 and 50 ms all fail with `Worker 1 did not become ready within N ms`, 100 ms
-passes. So 600 was ~10×, and 3000 is ~50×.
-
-**What stays open is the verdict.** The flake itself was NEVER reproduced: 64 busy loops leave the
-old and new budgets both green, and a full matrix is green exactly as it was on the days the flake
-did not show. If it returns, fiftyfold is still short and the next move is to stop scaling and give
-slot 0 a budget of its own — which needs a product change, since `openTimeout` is one knob for the
-whole client.
-
 ## The consumer docs are hard-wrapped at 80 columns (2026-09-18)
 
 `VFS.md` ~23 wrapped prose paragraphs, `README.md` ~9, `API.md` ~3; `CHANGELOG.md` is clean. The
@@ -395,6 +379,18 @@ What the entry established before the decision, kept for its evidence:
   consumer smoke.
 
 ## Notes, with nothing to fix
+
+### `pool-cap`'s surplus-slot flake — margin widened, never reproduced; closed by the user on 2026-09-27
+
+**The test.** `tests/browser/pool-cap.test.ts :: a pool capped by its environment > a surplus slot that times out, then declines in the retry round, is not announced lost` — Firefox only (`CAPPED`, no `readwrite-unsafe`). It holds slot 1's round-1 `open` back so round 1 gives up on it, then lets the retry decline, and asserts no `onWorkerLost`, a pool of 1, no warning.
+
+**The flake and its mechanism.** Seen under load as `Worker 1 did not become ready within 600 ms`: `openTimeout` is client-wide, so it also governs slot 0's HEALTHY worker, and it was that one that missed. Squeezed on an idle machine, slot 0 needs some tens of ms (10, 25, 50 ms fail; 100 ms passes). `2be2ae6` (2026-09-21) moved `openTimeout` 600 → 3000 (~10× → ~50×) and the held-back `open` 3000 → 15000.
+
+**Why it is closed although the cure is not demonstrated.** The flake was never reproduced, before or after — 64 busy loops left both budgets green — and on 2026-09-27 it ran in all ten whole-config Firefox passes under sixteen busy loops without failing (REUSE-LOAD, `mem:measurements`).
+
+**If it is seen again:**
+- Keep the whole run log and note the engine and the message — `did not become ready` means slot 0 missed the shared budget again.
+- **Do not scale the numbers a third time.** The next move is a budget of slot 0's own, which is a product change: `openTimeout` is one option for the whole client.
 
 ### `WORKER_BUSY` seen once on 2026-09-14, never reproduced — closed by the user on 2026-09-27
 
