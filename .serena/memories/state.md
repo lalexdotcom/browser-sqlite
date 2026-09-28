@@ -113,6 +113,7 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 ## Decisions the user owes
 
+- **Two product behaviours found on 2026-09-28 while testing, not decided** (facts in `mem:follow-ups`): a `chunk()`/`stream()` left early without a signal cannot cut its running step (make every generator read abortable?), and a writing pragma at open can meet `BUSY` against another client's write, init lock or not (which call raises it is not established).
 - **The second-client subject is CLOSED and MERGED** — `5661048`, 2026-09-18, `--no-ff`, branch deleted
   local and remote. What the user set
   the session on — the multi-client and cross-tab tests on every VFS — grew into the branch that ships:
