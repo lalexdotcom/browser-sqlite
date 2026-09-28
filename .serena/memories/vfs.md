@@ -191,8 +191,9 @@ it: only `NoModificationAllowedError` (a held file) is retried, any other refusa
 `OPFSWriteAheadVFS` and `OPFSAdaptiveVFS` out of the retry on an engine without
 `readwrite-unsafe` (Firefox), where a file held by a LIVE client — `pool-cap`'s T5 shape — would
 otherwise wait out 2.5 s for a holder that never lets go; `OPFSCoopSyncVFS` hands its handle over
-by protocol, so a held file is transient there. The name those two raise on Firefox is inferred
-from T5, not measured. For `AccessHandlePoolVFS` the `true` is inert in `openWithRetry` (its
+by protocol, so a held file is transient there. Measured, not inferred (HELD-LIVE,
+`mem:measurements`): both raise `NoModificationAllowedError` against a live exclusive holder, on
+Firefox AND Chromium, and fail in 39-71 ms because the declaration keeps them out. For `AccessHandlePoolVFS` the `true` is inert in `openWithRetry` (its
 handles are taken at instance creation, never in `xOpen`) but stays accurate. Where the error comes back from the call itself (instance creation)
 the retry tests it directly and needs no declaration.
 
