@@ -1,5 +1,7 @@
-import { describe, expect, it } from '@rstest/core';
-import { createTestClient } from './helpers';
+import { describe, expect, it, onTestFinished } from '@rstest/core';
+import { createSQLiteClient } from '../../src/client';
+import { deleteDatabase } from '../../src/delete';
+import { createTestClient, pairFor } from './helpers';
 
 /**
  * `poolSize: 1` throughout this file. At the default size two executions of
@@ -135,6 +137,41 @@ describe('statement cache', () => {
     // this is 1, because every call compiles the statement fresh.
     expect(runsOf(db, sql)[1]?.prepared).toBe(0);
     await db.close();
+  });
+
+  it('ends the read transaction of a statement abandoned by first()', async ({
+    skip,
+  }) => {
+    // first() leaves its statement at SQLITE_ROW, inside an implicit read
+    // transaction that only the reset in `settle` ends. An abort needs no
+    // reset: SQLite ends the transaction itself on SQLITE_INTERRUPT.
+    // Falsifiable: delete the `reset` call in `settle` — the reader's view
+    // stays frozen and it reads 1 on Chromium; on Firefox's pair the held
+    // transaction blocks the write until its timeout.
+    const { vfs, build } = pairFor(['shared-second-client'], skip);
+    const dbName = `bsq-test-${crypto.randomUUID()}`;
+    const reader = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
+    const writer = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
+    onTestFinished(async () => {
+      for (const client of [reader, writer]) {
+        try {
+          await client.close();
+        } catch {
+          /* a failed client has nothing to close */
+        }
+      }
+      try {
+        await deleteDatabase(dbName, { vfs, build });
+      } catch {
+        /* never created */
+      }
+    });
+    await reader.write('CREATE TABLE t (a)');
+    await reader.write('INSERT INTO t (a) VALUES (1), (2)');
+    await reader.first('SELECT a FROM t');
+    await writer.write('UPDATE t SET a = a * 10', [], { timeout: 5_000 });
+    const rows = await reader.read<{ a: number }>('SELECT min(a) AS a FROM t');
+    expect(rows[0]?.a).toBe(10);
   });
 
   it('sees a column added after the statement was cached', async () => {
