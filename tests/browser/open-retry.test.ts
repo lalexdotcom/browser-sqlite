@@ -1,6 +1,7 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { databasePath } from '../../src/utils';
+import { removeOpfsPath } from '../conformance/helpers';
 
 /**
  * A VFS that takes an EXCLUSIVE OPFS access handle inside `xOpen` fails the
@@ -264,5 +265,34 @@ describe('opening a database whose file is momentarily held', () => {
         // The client may already have failed; the assertion above reports it.
       });
     }
+  });
+});
+
+describe('opening a database whose file is refused for another reason', () => {
+  // Falsifiable: retry whatever the refusal — the open then waits out
+  // OPEN_RETRY_BUDGET_MS (2.5 s) before reporting what was never transient.
+  it('fails without waiting out the retry budget', async () => {
+    const dbName = `bsq-test-${crypto.randomUUID()}`;
+    const path = databasePath(VFS, dbName);
+    // A directory where the database file belongs: the VFS's getFileHandle
+    // refuses it with a TypeMismatchError, which no wait will change.
+    const segments = path.split('/');
+    let dir = await navigator.storage.getDirectory();
+    for (const segment of segments) {
+      dir = await dir.getDirectoryHandle(segment, { create: true });
+    }
+    onTestFinished(() => removeOpfsPath(path));
+
+    const db = createSQLiteClient(dbName, { vfs: VFS });
+    onTestFinished(() => db.close().catch(() => {}));
+    const started = performance.now();
+    const error = await db.read('SELECT 1').then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    const elapsed = performance.now() - started;
+
+    expect(error).toMatchObject({ code: 'WORKER_CRASHED' });
+    expect(elapsed).toBeLessThan(2_000);
   });
 });

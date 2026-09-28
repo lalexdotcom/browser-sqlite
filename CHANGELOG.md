@@ -64,6 +64,7 @@ All notable changes to this project are documented here.
   `OPFSCoopSyncVFS` open was refused (see *Fixed*), and copies the write-ahead
   a run of pages at a time (see *Performance*).
 - **A database name too long for SQLite now fails at the call**, with `INVALID_OPTION` naming the bound, from `createSQLiteClient`, `deleteDatabase` and `inspectDatabase` — it used to fail later, when the worker opened the file. The same call also now refuses a name that is empty once normalized (`''`, `'/'`, `'?x'`…) with `INVALID_OPTION`.
+- **On `OPFSCoopSyncVFS`, an open refused for any reason but a file held elsewhere fails at once.** It used to retry every refusal for 2.5 s before reporting it; only a held file, which another worker or tab can let go of, is retried now.
 - **`createSQLiteClient` is declared to return `SQLiteDB`**, instead of a copy of its members spelled out in the type declarations.
 
 ### Fixed

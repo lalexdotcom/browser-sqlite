@@ -183,8 +183,9 @@ both**, hence `exclusiveFileHandle` in `VFS_CAPABILITIES`, true for it and for
 **Declared rather than detected:** the retry decides on the failed `sqlite3_open_v2`, a bare
 `SQLITE_CANTOPEN`, and does not read `lastError`. Until wa-sqlite #357 (pinned 2026-09-28) `jOpen`
 swallowed the acquisition failure — `console.error`, an invalid `PersistentFile`, no `lastError`;
-since then the failure is kept there and becomes the open failure's cause, but the retry still
-retries whatever the refusal. Where the error comes back from the call itself (instance creation)
+since then the failure is kept there and becomes the open failure's cause, and the retry reads
+it: only `NoModificationAllowedError` (a held file) is retried, any other refusal fails at once
+(2026-09-28, `open-retry`'s "refused for another reason" test). Where the error comes back from the call itself (instance creation)
 the retry tests it directly and needs no declaration.
 
 **`SQLITE_CANTOPEN` does not mean "not there", and `deleteDatabase` used to read it that way.**

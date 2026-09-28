@@ -55,12 +55,11 @@ export type VFSCapability = {
    * `readwrite-unsafe` is used a second handle is granted regardless, and a
    * dead holder blocks nobody.
    *
-   * Declared rather than detected: the retry decides on the failed
-   * `sqlite3_open_v2`, which reports a bare `SQLITE_CANTOPEN`, and does not
-   * read the cause the VFS keeps in `lastError` — set by `OPFSCoopSyncVFS` on a
-   * failed acquisition since wa-sqlite #357. Where the error comes back from
-   * the call itself — VFS instantiation — `createVfsInstance` tests it directly
-   * and needs no declaration.
+   * Declared, and the cause checked as well: on a declared VFS the retry reads
+   * the `lastError` the VFS keeps — set by `OPFSCoopSyncVFS` on a failed
+   * acquisition since wa-sqlite #357 — and retries only a held file. Where the
+   * error comes back from the call itself — VFS instantiation —
+   * `createVfsInstance` tests it directly and needs no declaration.
    *
    * NOT declared for `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS`, which ask for
    * `readwrite-unsafe` and fall back to an exclusive handle only on an engine
