@@ -1,12 +1,17 @@
 import { describe, expect, it } from '@rstest/core';
-import { parseMatrixReport, runBounded } from '../../scripts/test-matrix.mjs';
+import {
+  formatCell,
+  parseMatrixReport,
+  runBounded,
+} from '../../scripts/test-matrix.mjs';
 
 /**
  * Fixtures are trimmed excerpts of real rstest 0.11.8 markdown reports,
  * captured 2026-09-15 by running `BSQ_TEST_TARGETS=OPFSAdaptiveVFS/async
  * pnpm exec rstest --project 'chromium*' run` (passing case) and a synthetic
- * failing `unit` project run (failing / not-runnable cases). Only the parts
- * `parseMatrixReport` actually reads are kept.
+ * failing `unit` project run (failing / not-runnable cases); the crashed case
+ * is the 2026-09-26 matrix's Firefox IDBMirrorVFS/async report. Only the
+ * parts `parseMatrixReport` actually reads are kept.
  */
 
 const PASSING_REPORT = `---
@@ -180,6 +185,52 @@ ready   built in 0.26s
 (browser process killed before it could print a report)
 `;
 
+const CRASHED_REPORT = `---
+tool: "@rstest/core@0.11.8"
+timestamp: "2026-09-26T20:18:23.753Z"
+runtime: {"node":"v24.13.0","platform":"linux","cwd":"/workspaces/wsqlite"}
+---
+
+# Rstest Test Execution Report
+
+## Summary
+
+\`\`\`json
+{
+  "status": "fail",
+  "counts": {
+    "testFiles": 38,
+    "failedFiles": 0,
+    "tests": 206,
+    "failedTests": 0,
+    "passedTests": 204,
+    "skippedTests": 2,
+    "todoTests": 0
+  },
+  "durationMs": {
+    "total": 19606,
+    "build": 19606,
+    "tests": 0
+  }
+}
+\`\`\`
+
+## Failures
+
+No test failures reported.
+
+## Unhandled Errors
+
+### Unhandled Error 1
+
+\`\`\`json
+{
+  "name": "Error",
+  "message": "Browser page crashed while running /workspaces/wsqlite/tests/browser/lifecycle.test.ts."
+}
+\`\`\`
+`;
+
 describe('parseMatrixReport', () => {
   it('reads a passing summary', () => {
     expect(parseMatrixReport(PASSING_REPORT)).toEqual({
@@ -188,6 +239,7 @@ describe('parseMatrixReport', () => {
       passed: 522,
       failed: 0,
       skipped: 4,
+      files: 48,
       seconds: 52,
     });
   });
@@ -201,6 +253,7 @@ describe('parseMatrixReport', () => {
       passed: 0,
       failed: 2,
       skipped: 0,
+      files: 1,
       seconds: 0,
     });
   });
@@ -218,6 +271,39 @@ describe('parseMatrixReport', () => {
     expect(parseMatrixReport(NO_SUMMARY_REPORT)).toEqual({
       status: 'timed-out',
     });
+  });
+  it('keeps the unhandled errors of a failing report whose tests all passed', () => {
+    // Firefox IDBMirrorVFS/async, matrix of 2026-09-26: the page crashed, 38 of
+    // 57 files ran, and not one test failed.
+    expect(parseMatrixReport(CRASHED_REPORT)).toEqual({
+      status: 'failed',
+      tests: 206,
+      passed: 204,
+      failed: 0,
+      skipped: 2,
+      files: 38,
+      seconds: 20,
+      // Relative to the report's own `cwd`, which differs on a CI runner.
+      unhandled: [
+        'Browser page crashed while running tests/browser/lifecycle.test.ts.',
+      ],
+    });
+  });
+});
+
+describe('formatCell', () => {
+  it('prints counts, files and time for a passing cell', () => {
+    expect(formatCell(parseMatrixReport(PASSING_REPORT))).toBe(
+      '522/0/4 · 48 files · 52s',
+    );
+  });
+
+  it('says FAIL, and why, for a failed cell with no failed test', () => {
+    // Falsifiable: print only the counts and this cell reads 204/0/2, which
+    // is how the crash of 2026-09-26 passed for green in the table.
+    expect(formatCell(parseMatrixReport(CRASHED_REPORT))).toBe(
+      '204/0/2 · 38 files · 20s · FAIL: Browser page crashed while running tests/browser/lifecycle.test.ts.',
+    );
   });
 });
 
