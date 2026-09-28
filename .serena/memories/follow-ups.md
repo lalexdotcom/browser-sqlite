@@ -14,6 +14,18 @@ descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` clai
 shadow types that were never loaded, `W-types` a duplication already gone. Both would have
 been work on nothing.
 
+## `open-retry` "succeeds once the holder lets go" times out on Firefox — to fix, not to log (user, 2026-09-28)
+
+**The user's priority: reproduce it on demand, then remove the cause, so that CI never fails on valid code.** It has already refused a merge (`test/needs-skip-in-matrix`, first attempt), and five sightings put it past noise. Done means a reproduction that fails on demand — under load, with a squeezed timing, or with an instrumented holder — the cause named, and the fix verified against that reproduction. A raised timeout or a retry of the test is not a fix.
+
+**Sightings, all Firefox, all 30 s with no assertion reached, all an open against a held file:**
+- 2026-09-26, the repin's matrix, twice on unrelated cells (`OPFSCoopSyncVFS/async`, `IDBBatchAtomicVFS/jspi`) — never before in seven full matrices. Alone on the same tree: 20 of 20. The repin touches no code the test runs (VFS files byte-identical; only text encoding changed).
+- 2026-09-26, the same shape in another test, in the pre-merge hook's `pnpm test` with nothing else running: `pool-cap.test.ts :: … reports the storage error behind a failed open`, `OPFSAdaptiveVFS/jspi`. **A/B of the pins, `pnpm test:firefox` interleaved, 5 runs each: 10 of 10 green**, old and new alike — not attributable to the repin.
+- 2026-09-27, once in ten whole-config Firefox passes under sixteen busy loops (REUSE-LOAD).
+- 2026-09-28, the pre-merge hook of `test/needs-skip-in-matrix` with nothing else running, `OPFSWriteAheadVFS/sync`. The branch touches no open path and the test declares no `needs`; the same cell had passed in the branch's `pnpm test` and full matrix hours before. Alone on that cell right after: 5 of 5 green; the merge passed on its second attempt.
+
+**The lead so far:** how long the open retries while the holder is armed, on Firefox — and whether the holder's release can land while no retry is waiting for it. Load raises the rate without being required (two sightings with nothing else running), so a reproduction probably has to control the timing rather than rely on busy loops.
+
 ## `vfs-folders` "opens and persists a path exactly at the bound" failed once on Firefox IDBBatchAtomicVFS/jspi (2026-09-27)
 
 In the full matrix run to verify the #365 carry: `firefox · IDBBatchAtomicVFS/jspi` 371/1/2, the one failure `tests/browser/vfs-folders.test.ts :: … opens and persists a path exactly at the bound`, `expected +0 to be 1` — a client created a table and closed, a second client on the same name counted **0** tables. First failure since the test was added (2026-09-23); every earlier matrix had it green, including the morning's on the same pin without #365. Report kept: `.matrix/2026-09-27T20-34-42-649Z/firefox-IDBBatchAtomicVFS-jspi.txt`. **Not reproduced:** the test alone on that pair 10/10, the whole cell three times through `pnpm test:matrix --engine firefox --pair IDBBatchAtomicVFS/jspi`, 372/0/2 each. Unrelated to #365 as far as the code goes — `IDBBatchAtomicVFS` does not use `WriteAhead.js`. If it recurs: it would be a persistence loss between two clients of that VFS on Firefox, the name at the 52-character bound; keep the report and check whether the first client's close had finished its IndexedDB transaction before the second opened.
@@ -550,14 +562,6 @@ Suggested in the reply to his review, not implemented: the plan executor allocat
 That is the whole "Firefox waits, Chromium does not" difference seen on `interrupt.test.ts`'s sync test: on Chromium the 20 M-row read never ran, so `close()` had nothing to wait for; on Firefox it usually ran, and `close()` waited it out (`ABORTING`, then the lease back at `done`, 22 s later — the correct behaviour). **No product defect; the earlier reading here, a worker lent back mid-statement, was wrong and is refuted by the same trace.**
 
 **Fixed on `fix/abort-waits-for-its-query`:** `aWorkerIsRunning` is gone; `theQueryIsRunning(db, sql)` waits for a worker `RUNNING` on that very SQL (the debug state's current query). Every call site names its own query. Proved on the one test that started on a fresh client with a named falsifier — `abort-slot`'s "does not carry a dead worker's abort into its replacement": with the slot zeroing removed it stayed GREEN under the old helper and goes red under the new one. The sync test in `interrupt.test.ts` now also asserts the statement runs on (`ABORTING` 300 ms after the rejection); falsified by pinning `build: 'async'`, which is back to `READY` by then, on both engines.
-
-## `open-retry` "succeeds once the holder lets go" times out on Firefox under matrix load (2026-09-26)
-
-**A fourth sighting on 2026-09-27**, once in ten whole-config Firefox passes under sixteen busy loops (REUSE-LOAD).
-
-**A fifth on 2026-09-28**, in the pre-merge hook of `test/needs-skip-in-matrix` with nothing else running, `firefox · OPFSWriteAheadVFS/sync`, 30 s, no assertion. The branch touches no open path and the test declares no `needs`; the same cell had passed in the branch's `pnpm test` and full matrix hours before. Alone on that cell right after: 5 of 5 green.
-
-Seen twice in the repin's matrix, on two unrelated cells (`OPFSCoopSyncVFS/async`, `IDBBatchAtomicVFS/jspi`): 30 s, no assertion reached. Never before in seven full matrices. Alone on the same tree: 20 of 20. The repin touches no code the test runs (VFS files byte-identical; only text encoding changed). Then a third of the same shape, in the pre-merge hook's `pnpm test` with nothing else running: `pool-cap.test.ts :: … reports the storage error behind a failed open`, Firefox `OPFSAdaptiveVFS/jspi`, 30 s, no assertion. **A/B of the pins, `pnpm test:firefox` interleaved, 5 runs each: 10 of 10 green**, old and new alike — not reproduced, not attributable to the repin (which changes no open path). Three Firefox timeouts in one day, all an open against a held file, none in the seven matrices before: if it recurs, look at how long the open retries while the holder is armed, on Firefox.
 
 ## `test-matrix` shows a crashed cell as green-looking — seen 2026-09-26
 
