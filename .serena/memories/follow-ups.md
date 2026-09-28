@@ -44,6 +44,10 @@ been work on nothing.
 
 In the full matrix run to verify the #365 carry: `firefox · IDBBatchAtomicVFS/jspi` 371/1/2, the one failure `tests/browser/vfs-folders.test.ts :: … opens and persists a path exactly at the bound`, `expected +0 to be 1` — a client created a table and closed, a second client on the same name counted **0** tables. First failure since the test was added (2026-09-23); every earlier matrix had it green, including the morning's on the same pin without #365. **Not reproduced:** the test alone on that pair 10/10, the whole cell three times through `pnpm test:matrix --engine firefox --pair IDBBatchAtomicVFS/jspi`, 372/0/2 each. Unrelated to #365 as far as the code goes — `IDBBatchAtomicVFS` does not use `WriteAhead.js`. If it recurs: it would be a persistence loss between two clients of that VFS on Firefox, the name at the 52-character bound; keep the report and check whether the first client's close had finished its IndexedDB transaction before the second opened.
 
+## wa-sqlite #351 could cite #262 — very low priority (user, 2026-09-28)
+
+rhashimoto's own #262 ("Fill in IDBBatchAtomicVFS blocks on writes past EOF", open since 2025-04, no description) is the other side of #351's gap case: a write past EOF stores only its block and leaves a hole, which a later write into it (the overwrite branch) failed on. #262 would prevent the hole; #351 lets `jWrite` cross it, as `jRead` does. #351's short-block case (a 512-byte journal header, then a full page) is unrelated to EOF. A reading inside a hole still returns `SQLITE_IOERR_SHORT_READ` and zeroes the rest of the buffer; only #262 would remove that. Neither PR cites the other. If ever done: a short comment on #351 pointing at #262, asking whether he wants it folded in. The user deferred it; do not raise it again unprompted.
+
 ## Designs owed — ideas, not scheduled work (user, 2026-09-03)
 
 **The user has said explicitly that the three below are not planned for the short or medium
