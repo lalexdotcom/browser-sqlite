@@ -775,8 +775,7 @@ Commit `c2ef918` landed with `tsc` failing, although the pre-commit hook ends wi
 it — its previous attempt was refused by the hook's `tsc` — but the attempt that landed was a
 commit in `git log` 25 s after it started, while the hook's suite alone takes ~100 s. The
 likeliest cause, not proven, is the agent's tool cutting the command mid-hook
-(`mem:follow-ups`, the pre-commit hook entry; evidence in
-`.scratchpad/hook-forensics/c2ef918-timeline.md`). Three checks passed over it: the implementer's report called
+(`mem:follow-ups`, the pre-commit hook entry). Three checks passed over it: the implementer's report called
 the error "pre-existing, not related to this task" twice; the task reviewer ran lint only;
 the controller's own verification ran `pnpm test` only. It surfaced when the NEXT commit, a
 documentation-only one, was refused.

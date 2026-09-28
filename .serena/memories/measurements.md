@@ -6,7 +6,7 @@ one. A number nobody can reproduce is a story, not a measurement — say so in t
 
 ## RSTEST-OTR — rstest's OPFS is off-the-record and ~250× dearer per call, 2026-09-28, Chromium, this container
 
-A pure OPFS micro-bench — 7 772 frames of 24 + 4096 bytes written, then read back as two `read()` calls per frame, then 2 000 `write()` calls — with no library and no wa-sqlite (`.scratchpad/365-lib-arms/io-probe.js`). Same source in every harness, three rounds, default and `readwrite-unsafe` handles, with and without a second handle open — none of those three variables moved it.
+A pure OPFS micro-bench — 7 772 frames of 24 + 4096 bytes written, then read back as two `read()` calls per frame, then 2 000 `write()` calls — with no library and no wa-sqlite. Same source in every harness, three rounds, default and `readwrite-unsafe` handles, with and without a second handle open — none of those three variables moved it.
 
 | harness | `read()` per call | `write()` per call |
 | --- | ---: | ---: |
@@ -15,11 +15,11 @@ A pure OPFS micro-bench — 7 772 frames of 24 + 4096 bytes written, then read b
 | Playwright `launchPersistentContext`, same binary | 0.55-0.62 µs | 2.35-3.05 µs |
 | Playwright `browser.newContext()`, same binary | 159-173 µs | 287-295 µs |
 
-rstest's browser provider calls `newContext()`, an off-the-record context (`.scratchpad/365-lib-arms/io-context.mjs`). Why that context is slow per call is not verified — Chromium keeping an off-the-record OPFS in memory in the browser process, one IPC per call, is the likely reading. Found because the pragma arm of 365-LIB cost 45× what wa-sqlite's runner measured: instrumented, the same 31.8 MB were scanned, the checksum took 40 ms and the `read()` calls 2.6 s; build (`sync`, `jspi`), headless shell and transpilation were each ruled out by a run of their own.
+rstest's browser provider calls `newContext()`, an off-the-record context. Why that context is slow per call is not verified — Chromium keeping an off-the-record OPFS in memory in the browser process, one IPC per call, is the likely reading. Found because the pragma arm of 365-LIB cost 45× what wa-sqlite's runner measured: instrumented, the same 31.8 MB were scanned, the checksum took 40 ms and the `read()` calls 2.6 s; build (`sync`, `jspi`), headless shell and transpilation were each ruled out by a run of their own.
 
 ## 365-LIB — `read_to_current` in the library: every read against the barrier's read, 2026-09-28, Chromium, this container
 
-`OPFSWriteAheadVFS/sync`, one client, two workers, arms applied as patches in turn (`.scratchpad/365-lib-arms/`, `run.sh`, `summary.txt`). Stale: one INSERT, two concurrent reads, 100 iterations, writer off index 0, sixteen busy loops (48 in the last column). Costs unloaded, medians over three rotated rounds. Every absolute time here is inflated by RSTEST-OTR; the arms share it.
+`OPFSWriteAheadVFS/sync`, one client, two workers, arms applied as patches in turn. Stale: one INSERT, two concurrent reads, 100 iterations, writer off index 0, sixteen busy loops (48 in the last column). Costs unloaded, medians over three rotated rounds. Every absolute time here is inflated by RSTEST-OTR; the arms share it.
 
 | arm | stale /16 | stale /48 | idle read | 2 reads after a write | read, 32 MB open | read, 128 MB open |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -33,11 +33,11 @@ The barrier arm measured three statements in three messages; what shipped sends 
 
 ## 365-WORST — reading the write-ahead to its end while a large write is open, 2026-09-28, Chromium, this container
 
-wa-sqlite's own runner (web-test-runner, Chromium 151), the fork at `.work/wa-sqlite-readfresh`, master against the unconditional first revision of #365, asyncify and jspi, three rounds alternating the order (`.work/worst/`, bench in `.work/worst/bench/`). Pages of 4 KiB, default cache, so a transaction spills into the WAL past ~2 MiB. A: a transaction open and idle in another worker, 30 `SELECT count(*)` read transactions, median per read — 0 MB ~0 ms both; 8 MB 12-13 ms against ~0; 32 MB 60-62 ms; 128 MB 252-265 ms (max 377). Builds within a few ms of each other; the `sync` build and the headless shell gave 60 ms at 32 MB too. B: a 128 MB transaction committed while another worker reads in a loop — writer ~1.0 s alone and ~1.05 s with the reader on either version; the reader completes ~51 000 reads on master and 130-240 with the change, some near 290 ms. So ~2 ms per MB open, paid by every read, since the median sits next to the maximum.
+wa-sqlite's own runner (web-test-runner, Chromium 151), the fork, master against the unconditional first revision of #365, asyncify and jspi, three rounds alternating the order. Pages of 4 KiB, default cache, so a transaction spills into the WAL past ~2 MiB. A: a transaction open and idle in another worker, 30 `SELECT count(*)` read transactions, median per read — 0 MB ~0 ms both; 8 MB 12-13 ms against ~0; 32 MB 60-62 ms; 128 MB 252-265 ms (max 377). Builds within a few ms of each other; the `sync` build and the headless shell gave 60 ms at 32 MB too. B: a 128 MB transaction committed while another worker reads in a loop — writer ~1.0 s alone and ~1.05 s with the reader on either version; the reader completes ~51 000 reads on master and 130-240 with the change, some near 290 ms. So ~2 ms per MB open, paid by every read, since the median sits next to the maximum.
 
 ## REUSE-LOAD — the whole Firefox config under load, 2026-09-27, this container
 
-The arm LEASE-QUIESCE left open: not one file under load but the whole Firefox config, the context of the single 2026-09-14 sighting. `rstest --config rstest.firefox.config.ts` (both Firefox target projects, every browser file) ten times in a row under sixteen busy loops (16 cores), `main` on pin `5e98ac7` with #363. Script and logs `.scratchpad/reuse-guard-load-2026-09-27/`. Detection: `WORKER_BUSY` or "already has a query in flight" anywhere in each report, which is where a query rejected by the guard lands.
+The arm LEASE-QUIESCE left open: not one file under load but the whole Firefox config, the context of the single 2026-09-14 sighting. `rstest --config rstest.firefox.config.ts` (both Firefox target projects, every browser file) ten times in a row under sixteen busy loops (16 cores), `main` on pin `5e98ac7` with #363. Detection: `WORKER_BUSY` or "already has a query in flight" anywhere in each report, which is where a query rejected by the guard lands.
 
 - **0 hits in 10 passes**, 7 453 tests passed, no page crash. ~200 s per pass.
 - **7 failures, two tests, both a 30 s timeout, neither the guard:** `interrupt.test.ts :: leaves a sync build degraded` in **6 of 10** passes (both projects — it pins `OPFSWriteAheadVFS/sync`, so the pair is the same), "completed 1 expect assertion"; and `open-retry :: succeeds once the holder lets go` once (`mem:follow-ups`).
@@ -45,7 +45,7 @@ The arm LEASE-QUIESCE left open: not one file under load but the whole Firefox c
 
 ## BARRIER-DATA — data staleness without the barrier, 2026-09-25, this container
 
-Probe `.scratchpad/barrier-spike-2026-09-25/data-probe.test.ts`: seven scenarios (INSERT, UPDATE,
+A throwaway data probe: seven scenarios (INSERT, UPDATE,
 DELETE without growth; DELETE + VACUUM; bulk INSERT; DROP + CREATE + INSERT read with other SQL
 text; a readOnly-transaction read), each in one client (forced writer off index 0, two concurrent
 observations so one lands on the primed non-writer) and in two clients. Two worktrees, barrier
@@ -66,9 +66,9 @@ UPDATE, DELETE × one and two clients × 40 — gave **0 / 240 in both arms idle
 arms under sixteen busy loops**. 3 against 0 out of 1232 is not significant on its own (Fisher
 p ≈ 0.12): suggestive that the barrier guards something rare, not a proof.
 
-**Reproduced under load, 2026-09-27** (`.scratchpad/barrier-data-load-2026-09-27/`, `main` on pin `5e98ac7` with #363, a worktree): the same probe on every pair × {chromium, firefox}, one pass per arm, under sixteen busy loops. **Barrier removed: 37 of 616 tests stale, in 16 of 44 cells, all on Chromium. Barrier kept, same load, same cells: 0 of 616.** Every scenario shows it, in one and in two clients, `bulk INSERT, file grows` included — the growth that the barrier's spec said heals a connection does not. Values are whole pre-write states (`[1, 1]` for `[2, 2]`, `[2, 2]` for `[1, 1]` after a DELETE, `[23, 3]`). A second-pass cell interrupted by the stop was stale too. No `disk I/O error` in either arm (#363). **So the barrier does guard data freshness, and load is what exposes its absence; unloaded, the same probe had given 3 in 1232.** **Cause found the same day (`.scratchpad/barrier-cause-2026-09-27/`).** Pinned per pair, one client, INSERT without growth, barrier removed, sixteen busy loops: **only `OPFSWriteAheadVFS/sync` goes stale** (3/30); `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `IDBBatchAtomicVFS` 0/30. The sweep's other stale cells were `needs` fallbacks: on Chromium `two-workers` resolves to `OPFSWriteAheadVFS/sync` for every target that cannot pool (CoopSync, AHP, IDBMirror, Memory), and `shared-second-client` too for AHP and Memory — except `IDBMirrorVFS`'s own two-client staleness, the documented exception (`mem:vfs`). Firefox is clean because `OPFSWriteAheadVFS` has one connection there. **Mechanism, read in `WriteAhead.js` and then measured:** a read transaction calls `isolateForRead()`, which freezes the connection's view as the `BroadcastChannel` `tx` messages have left it — "not guaranteed to be completely up to date" — while a write calls `isolateForWrite()`, which reads the write-ahead to current. A read issued before the reader's worker has processed the writer's `tx` message sees the state before it; load delays that processing. **A/B, 100 iterations each, same load:** as shipped **28/100** stale; `isolateForRead()` doing `#advanceTxId({ readToCurrent: true })` **0/100**; `WriteAhead.js` + `OPFSWriteAheadVFS.js` from before #355 (`07ad48c`, our pre-2026-09-21 pin) **9/100** — so the design predates our pins. **That 9 vs 28 was one run each, not interleaved, and it overstated the change. Re-measured as an interleaved bisect of `WriteAhead.js` alone** (`OPFSWriteAheadVFS.js` is identical across all four; `.scratchpad/wa-bisect-2026-09-27/`), three rounds in rotated order, 100 iterations per arm per round, same load: **A** before #355 (`07ad48c`) **45/300 = 15.0 %**; **B** with #355 (`afaf3cc7`) **84/300 = 28.0 %**; **C** B + `5b498e5`, upstream master **66/300 = 22.0 %**; **D** C + our #361 as carried **68/300 = 22.7 %**. #355 about doubles it (≈3.9 σ); `5b498e5` lowers it somewhat (≈1.7 σ, not significant); #361 is neutral. Round-to-round spread is ±7 points on one arm, which is why the first pair misled. How #355 moves the timing was not traced: it reorders when the connection opens its `BroadcastChannel` against the WAL load and where the file swap happens, none of it on the read-isolation path itself. The barrier hides it by timing only: one more round trip lets the message land.
+**Reproduced under load, 2026-09-27** (`main` on pin `5e98ac7` with #363, a worktree): the same probe on every pair × {chromium, firefox}, one pass per arm, under sixteen busy loops. **Barrier removed: 37 of 616 tests stale, in 16 of 44 cells, all on Chromium. Barrier kept, same load, same cells: 0 of 616.** Every scenario shows it, in one and in two clients, `bulk INSERT, file grows` included — the growth that the barrier's spec said heals a connection does not. Values are whole pre-write states (`[1, 1]` for `[2, 2]`, `[2, 2]` for `[1, 1]` after a DELETE, `[23, 3]`). A second-pass cell interrupted by the stop was stale too. No `disk I/O error` in either arm (#363). **So the barrier does guard data freshness, and load is what exposes its absence; unloaded, the same probe had given 3 in 1232.** **Cause found the same day.** Pinned per pair, one client, INSERT without growth, barrier removed, sixteen busy loops: **only `OPFSWriteAheadVFS/sync` goes stale** (3/30); `OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `IDBBatchAtomicVFS` 0/30. The sweep's other stale cells were `needs` fallbacks: on Chromium `two-workers` resolves to `OPFSWriteAheadVFS/sync` for every target that cannot pool (CoopSync, AHP, IDBMirror, Memory), and `shared-second-client` too for AHP and Memory — except `IDBMirrorVFS`'s own two-client staleness, the documented exception (`mem:vfs`). Firefox is clean because `OPFSWriteAheadVFS` has one connection there. **Mechanism, read in `WriteAhead.js` and then measured:** a read transaction calls `isolateForRead()`, which freezes the connection's view as the `BroadcastChannel` `tx` messages have left it — "not guaranteed to be completely up to date" — while a write calls `isolateForWrite()`, which reads the write-ahead to current. A read issued before the reader's worker has processed the writer's `tx` message sees the state before it; load delays that processing. **A/B, 100 iterations each, same load:** as shipped **28/100** stale; `isolateForRead()` doing `#advanceTxId({ readToCurrent: true })` **0/100**; `WriteAhead.js` + `OPFSWriteAheadVFS.js` from before #355 (`07ad48c`, our pre-2026-09-21 pin) **9/100** — so the design predates our pins. **That 9 vs 28 was one run each, not interleaved, and it overstated the change. Re-measured as an interleaved bisect of `WriteAhead.js` alone** (`OPFSWriteAheadVFS.js` is identical across all four), three rounds in rotated order, 100 iterations per arm per round, same load: **A** before #355 (`07ad48c`) **45/300 = 15.0 %**; **B** with #355 (`afaf3cc7`) **84/300 = 28.0 %**; **C** B + `5b498e5`, upstream master **66/300 = 22.0 %**; **D** C + our #361 as carried **68/300 = 22.7 %**. #355 about doubles it (≈3.9 σ); `5b498e5` lowers it somewhat (≈1.7 σ, not significant); #361 is neutral. Round-to-round spread is ±7 points on one arm, which is why the first pair misled. How #355 moves the timing was not traced: it reorders when the connection opens its `BroadcastChannel` against the WAL load and where the file swap happens, none of it on the read-isolation path itself. The barrier hides it by timing only: one more round trip lets the message land.
 
-**The race itself, traced on version A** (`.scratchpad/wa-cause-trace-2026-09-27/`: the writer's broadcast, the reader's `tx` arrival and `isolateForRead()`, the worker's `query` arrival, all posted with cross-context timestamps). Stale iteration, ms from the write: writer `tx-broadcast` 10.70 → page write resolved and reads issued 11.30 → reader `query` 11.80 → reader `isolate-read` with `viewTxId` 2 at 11.90 → reader `tx-arrived` txId 3 at 12.20 → read resolves `n = 1`. Fine iteration: broadcast 6.60, `tx-arrived` 7.60, reads issued 8.50, `isolate-read` `viewTxId` 3. **The `tx` message (writer → reader over `BroadcastChannel`) and the read (writer `done` → page → reader `query` over `postMessage`) travel two channels with no ordering between them**; when the second wins, the read freezes a view one transaction behind, and SQLite cannot notice because the VFS serves page 1, change counter included, from that same view.
+**The race itself, traced on version A** (the writer's broadcast, the reader's `tx` arrival and `isolateForRead()`, the worker's `query` arrival, all posted with cross-context timestamps). Stale iteration, ms from the write: writer `tx-broadcast` 10.70 → page write resolved and reads issued 11.30 → reader `query` 11.80 → reader `isolate-read` with `viewTxId` 2 at 11.90 → reader `tx-arrived` txId 3 at 12.20 → read resolves `n = 1`. Fine iteration: broadcast 6.60, `tx-arrived` 7.60, reads issued 8.50, `isolate-read` `viewTxId` 3. **The `tx` message (writer → reader over `BroadcastChannel`) and the read (writer `done` → page → reader `query` over `postMessage`) travel two channels with no ordering between them**; when the second wins, the read freezes a view one transaction behind, and SQLite cannot notice because the VFS serves page 1, change counter included, from that same view.
 
 Every `disk I/O error` is the same test — one client, DELETE + VACUUM, two workers — on Firefox
 only, in both arms, so independent of the barrier (`mem:follow-ups`).
@@ -184,7 +184,7 @@ Identical bytes in every arm; only the number of I/O calls changes, by 8x.
 
 ## CHECKPOINT-COALESCE — the fix, measured: 0.66 to 0.026 with nothing else changed, 2026-09-22, Chromium
 
-Following PAGE-SIZE: if the cost is call count, coalesce the calls. `checkpoint()` was rewritten in `node_modules` to collect the pages first and then issue contiguous runs as single calls, in two halves. Patch kept at `.scratchpad/wavfs-coalesce-2026-09-22/`.
+Following PAGE-SIZE: if the cost is call count, coalesce the calls. `checkpoint()` was rewritten in `node_modules` to collect the pages first and then issue contiguous runs as single calls, in two halves.
 
 | variant | `cut` (ms) | ratio |
 | --- | ---: | ---: |
@@ -204,7 +204,7 @@ Following PAGE-SIZE: if the cost is call count, coalesce the calls. `checkpoint(
 
 **Why this entry exists, and it is the lesson as much as the measurement:** every figure in CHECKPOINT-COALESCE above is a `cut / natural` ratio taken through OUR harness — rstest, our pool, our abort machinery. That metric cannot be *built* in wa-sqlite: no interrupt, no pool, no abortable statement in its `test/`. A PR carrying only those numbers asks a maintainer to weigh evidence they cannot check.
 
-The quantity underneath needs none of it. `PRAGMA wal_autocheckpoint=0`, bulk insert, then time `PRAGMA wal_checkpoint` on its own — the function the patch changes, called directly. It runs on upstream's own demo page (`demo/?build=default&config=OPFSWriteAheadVFS&reset=true`, two Executes), with **no new file and no build**: `WriteAhead.js` is served as a module and `dist/` is committed, so the two arms are one `git switch` apart. Driver kept at `.scratchpad/wavfs-coalesce-repro/measure.mjs`.
+The quantity underneath needs none of it. `PRAGMA wal_autocheckpoint=0`, bulk insert, then time `PRAGMA wal_checkpoint` on its own — the function the patch changes, called directly. It runs on upstream's own demo page (`demo/?build=default&config=OPFSWriteAheadVFS&reset=true`, two Executes), with **no new file and no build**: `WriteAhead.js` is served as a module and `dist/` is committed, so the two arms are one `git switch` apart.
 
 3 M rows leave a **66 840 704 byte** write-ahead and a **66 314 240 byte** database — 16 190 pages of 4 KiB, read out of OPFS rather than estimated. The disarming is verified the same way: the database is 0 bytes until the checkpoint runs.
 
@@ -226,7 +226,7 @@ The upstream suite on Chromium, `master` and branch: 14 files, 2899 passing, 0 f
 
 ## CHECKPOINT-PLAN — #361 as reviewed: time kept, memory not what the bound says, 2026-09-26
 
-rhashimoto stopped #361 on memory: the first version read the whole checkpoint before writing. Rewritten on his design — a plan of reads and writes, pure planners `coalesceWrites` / `coalesceReads`, `checkpointBufferSize` 4 MiB — and measured on CHECKPOINT-DIRECT's recipe, arms interleaved, `integrity_check` after reload on every run. **Tables and method live in the report** (`docs/upstream/2026-09-23-wa-sqlite-361-…`, "Review"); raw files in `.scratchpad/checkpoint-plan-2026-09-26/`.
+rhashimoto stopped #361 on memory: the first version read the whole checkpoint before writing. Rewritten on his design — a plan of reads and writes, pure planners `coalesceWrites` / `coalesceReads`, `checkpointBufferSize` 4 MiB — and measured on CHECKPOINT-DIRECT's recipe, arms interleaved, `integrity_check` after reload on every run. **Tables and method live in the report** (`docs/upstream/2026-09-23-wa-sqlite-361-…`, "Review").
 
 - **Time, medians:** Chromium 7373 → 196 ms (38×), Firefox 2512 → 77 ms (33×); unbounded first version 40×. Writes coalesced alone: 2.6× / 3.8× — the reads carry the gain. The plan with no planner costs nothing. 1 MiB still ~30×.
 - **Memory, `RssAnon` rise over the browser tree:** Chromium 113 (`master`) / 194 (first version) / 146 (plan) MiB, Firefox 30 / 128 / 79. **The peak follows what the synchronous loop allocates, not what it holds** — `master` holds one page yet allocates 66 MB; the plan allocates ~2× the checkpoint. The live-set bound is real, the process does not see it (`mem:lessons`).
@@ -237,7 +237,7 @@ rhashimoto stopped #361 on memory: the first version read the whole checkpoint b
 0.9 was forced by `OPFSWriteAheadVFS` on Chromium cutting at 0.63-0.81 (0.807 on CI), a cost the
 checkpoint coalescing of #361 removed (CHECKPOINT-COALESCE above).
 
-Method: a throwaway probe (`.scratchpad/cut-ratio-2026-09-25/`, script `run.sh`) copying T3 and T4
+Method: a throwaway probe copying T3 and T4
 exactly — fresh `poolSize: 1` client, `natural` uncut, `DELETE`, then the abandoned write — three
 runs of each, on every declared pair × {chromium, firefox}, idle machine. The values travel through
 a deliberately failing assertion (rstest forwards no console output). `AccessHandlePoolVFS` needs
@@ -275,7 +275,7 @@ hand a query to a worker still inside the previous one? Chased with the ABANDON-
 sixteen busy loops (the machine has 16 cores) around a single-file Firefox run, the load that once
 cut time-to-failure twentyfold.
 
-**Shape, recreated deliberately** (`.scratchpad/wedge-2026-09-21/`, run in a detached worktree so
+**Shape, recreated deliberately** (run in a detached worktree so
 nothing could land on `main`): `firefox · MemoryVFS/sync` outside cross-origin isolation, so a
 statement cannot be cut and the worker stays busy for the query's natural length — **22.4 s
 unloaded, measured**. Warm the worker and the statement, time a read out at 200 ms, then read again.
@@ -303,8 +303,8 @@ guard.
 wa-sqlite #355 adds a file-end flag to the WAL commit frame header, and a comment claims the end
 frame is still written and read "for readers that do not understand the commit [flag]". Measured
 instead of trusted, because rc.4 is published under `latest` and `OPFSWriteAheadVFS` is recommended,
-so consumer databases written by the OLD pin exist. Probe in
-`.scratchpad/wa-compat-2026-09-21/`: two detached worktrees of wa-sqlite — `07ad48c` and `93b9230` —
+so consumer databases written by the OLD pin exist. The probe:
+two detached worktrees of wa-sqlite — `07ad48c` and `93b9230` —
 served from ONE origin, a module worker per step, the `sync` build.
 
 | writer → reader | result |
@@ -347,7 +347,7 @@ Chromium 150, Firefox 154, Safari macOS/iPadOS/iOS, Chrome Android — and `true
 calibration (Chromium: 971 iterations against 953-979 on 2026-09-04), not the row (its body is
 unchanged since 2026-09-04).
 
-**The probe** — `.scratchpad/idb-long-2026-09-14/probe2.test.ts`, current `main`, pool 4, 4 000
+**The probe** — throwaway, current `main`, pool 4, 4 000
 rows, a self-join as the long query, a point read 50 ms in, 3 runs per arm, one variable: a
 `signal` on the queries.
 
@@ -375,7 +375,7 @@ measured the unsignalled path until `f4b3fd7` and the signalled one since.
 nor `timeout`, and is false for one with either. `IDBMirrorVFS` is not concerned: its SHARED lock
 opens no IndexedDB transaction, and it runs one worker.
 
-**The yield costs nothing measurable.** Probe `.scratchpad/idb-yield-cost-2026-09-14/probe.test.ts`,
+**The yield costs nothing measurable.** A throwaway probe,
 same day, `IDBBatchAtomicVFS` at `poolSize` 1, `async` and `jspi` builds, each workload with and
 without a never-aborted `signal`, order alternated, 1 warm-up + 5 measured, medians. Ratio
 signal / none:
@@ -396,7 +396,7 @@ same under concurrent connections; any other VFS under a yielding statement — 
 **Fixed on `fix/idb-long-read` (`133d51a`), 2026-09-14.** `yieldsDuringStatements`, true for this
 VFS only, makes the worker yield on every statement there. `tests/browser/idb-long-read.test.ts`
 failed before it on both engines and both builds, and passes after. **Safari 26.6.2 macOS, the
-user's console probe on preview `4340da6`** (`.scratchpad/idb-safari-yield-2026-09-14/safari-paste-v3.js`):
+user's console probe on preview `4340da6`**:
 a read issued 50 ms into an unsignalled self-join won 3/3, 2-3 ms against 343-355 ms. The worker
 tick costs 0.05 ms there (0.002-0.005 on Chromium and Firefox), and a signal adds nothing
 measurable to MemoryAsyncVFS (19-21 against 20-22 ms). Before a Safari restart the same probe
@@ -405,7 +405,7 @@ tab where an earlier probe had left a client stuck: the blocked-origin case ("A 
 blocks two columns", below), not the fix.
 
 **The bench's `null` on Safari, traced — an intermittent stall, not the fix.** Console probes on
-the user's Safari 26.6.2 (`.scratchpad/idb-safari-yield-2026-09-14/safari-paste-v4..v7.js`):
+the user's Safari 26.6.2:
 - **The yield costs Safari nothing.** The bench's own cross-join at bounds 25/50/100, preview
   (yields) against the rc.4 page (never yields): IDBBatchAtomicVFS 52/97/190 against 49/95/194 ms,
   MemoryAsyncVFS the same, signal or not — ~1.9 ms per bound unit, as on Chromium.
@@ -437,7 +437,7 @@ the user's Safari 26.6.2 (`.scratchpad/idb-safari-yield-2026-09-14/safari-paste-
 - **The bench answers on Safari since `5052d4f`.** Served from the container's `_site` on
   `localhost:8099`, Safari 26.6.2, IDBBatchAtomicVFS/async at `poolSize` 4:
   `reads-during-long-query` **true**, calibration 200 → 430 ms and 930 → 1 591 ms, no verification
-  run, `reasons` empty (`.bench/browser-sqlite-20260914181700-…`). Its label reads `a85c273`: the
+  run, `reasons` empty. Its label reads `a85c273`: the
   page was built before `5052d4f` was committed, from the same tree.
 - **It is the `async` build, not IndexedDB and not the library** (v10, `localhost:8099`, same
   Safari, pool 1, after the same writes, no signal anywhere, so no yield from us). Four ~1.5 s long
@@ -455,7 +455,7 @@ the user's Safari 26.6.2 (`.scratchpad/idb-safari-yield-2026-09-14/safari-paste-
   not a finding: JavaScriptCore moving the Asyncify module to a slower tier or bounds-checking mode.
   Untested: the `jspi` build, which has no Asyncify — Safari 27 has JSPI, 26.6 does not.
 - **`jspi` escapes it — Safari 27.0 macOS, the user's second Mac, preview `5052d4f`** (v11,
-  `.scratchpad/idb-safari-yield-2026-09-14/safari-paste-v11.js`, same shape, pool 1):
+  same shape, pool 1):
 
   | VFS / build | long reads, ms | scan before → after, ms |
   |---|---|---|
@@ -467,7 +467,7 @@ the user's Safari 26.6.2 (`.scratchpad/idb-safari-yield-2026-09-14/safari-paste-
 
   Milder than on 26.6.2, same shape: the `async` builds stay slow afterwards, the `jspi` builds'
   second scan is back at baseline — as on Chromium, whose first scan after long reads is also slow
-  once. **The bench on that Safari 27** (`.bench/browser-sqlite-20260914182334-…`):
+  once. **The bench on that Safari 27**:
   `reads-during-long-query` **true** on IDBBatchAtomicVFS/jspi (200 → 587, 681 → 1 612 ms) and
   OPFSAnyContextVFS/jspi (200 → 579, 691 → 1 619 ms); **null** on both `async` columns, whose
   per-unit cost climbed during the calibration itself — IDB 200 → 631, 634 → 4 425, verified 317 →
@@ -479,7 +479,7 @@ the user's Safari 26.6.2 (`.scratchpad/idb-safari-yield-2026-09-14/safari-paste-
 
 ## SAFARI-CAP — the pool caps hold on Safari and Firefox, 2026-09-14, the user's Mac + this container
 
-Bench exports in `.bench/`. Safari 26.6.2 macOS, `readwriteUnsafe: false`: one run at preview
+Safari 26.6.2 macOS, `readwriteUnsafe: false`: one run at preview
 `5db2c8b` (`…20260914142953…`), three at preview `29fbc71` (`…150411…`, `…150425…`, `…150436…`).
 Firefox 153 linux, this container: three at `main@29fbc71` (`…130632…`, `…130832…`, `…131030…`).
 `poolSize` **1** on every column of `OPFSWriteAheadVFS`, `OPFSAdaptiveVFS` and `OPFSCoopSyncVFS`,
@@ -512,7 +512,7 @@ both engines, build for build; transactions are close on Firefox.
 ## WORKER-LOST — why `OPFSWriteAheadVFS` lost workers off Chromium, 2026-09-13/14, this container + the user's devices
 
 Method and full tables: spec `docs/superpowers/specs/2026-09-13-pool-environment-cap-design.md`
-§6; probes and logs in `.scratchpad/worker-lost/`. Firefox 3 runs per probe, Chromium control.
+§6. Firefox 3 runs per probe, Chromium control.
 
 - **Structural, not a race:** `OPFSWriteAheadVFS` at `poolSize` 1/2/4 lost 0/1/3 workers on Firefox,
   3/3 runs, on all three builds; 0 on Chromium; `OPFSAdaptiveVFS` at 4 lost none anywhere. Which
@@ -530,7 +530,7 @@ Method and full tables: spec `docs/superpowers/specs/2026-09-13-pool-environment
 
 ## POOL-SIZE — a pool buys nothing on a rotated exclusive handle, 2026-09-14, this container
 
-Method and table: spec §10.1; probes in `.scratchpad/pool-size-probe/`. Fresh client per sample,
+Method and table: spec §10.1. Fresh client per sample,
 sizes 1/2/4 rotated per iteration, 2 warm-ups + 5 measured, 3 runs per engine, medians, 2 000 rows.
 
 - **Firefox `OPFSAdaptiveVFS` (reduced):** startup 70-76 ms @1 against 129-136 @4; five bursts of
@@ -547,7 +547,7 @@ sizes 1/2/4 rotated per iteration, 2 warm-ups + 5 measured, 3 runs per engine, m
 
 ## DELETE-WA — `deleteDatabase` left `OPFSWriteAheadVFS`'s write-ahead files, 2026-09-14, both engines
 
-Probe `.scratchpad/worker-lost/probe-delete.test.ts`: create, write, close, delete, list the OPFS
+A throwaway probe: create, write, close, delete, list the OPFS
 root. `OPFSWriteAheadVFS`: `(db)`, `-wa0`, `-wa1` before, **`-wa0`, `-wa1` after**;
 `OPFSAdaptiveVFS`: `(db)` before, nothing after. Each deletion also printed three console errors —
 its `jDelete` refuses every file but its own temporaries. Fixed by `extraFileSuffixes` and an
@@ -556,7 +556,7 @@ harmless: the VFS truncates them when it creates a database of that name.
 
 ## TX-M1M2 — a write stopped after its first row, and the savepoint premise, 2026-09-11, all three configurations
 
-**Method.** Throwaway probe `.scratchpad/savepoint-probe/m1m2.test.ts`, copied into
+**Method.** A throwaway probe, copied into
 `tests/browser/` (chromium project, firefox config) and `tests/browser/isolated/` (isolated
 project) for the run and deleted; logs `m1m2-*.log` beside it. `main` after `9479f4a`. Three
 runs per configuration: `OPFSAdaptiveVFS` `async` and `MemoryVFS` `sync` not isolated on both
@@ -575,7 +575,7 @@ engines, `MemoryVFS` `sync` isolated on Chromium. 50 000-row write from a recurs
 
 ## TX-SAVEPOINT — what approach A's savepoint round trips cost a write, 2026-09-11, this container, both engines
 
-**Method.** Throwaway probe `.scratchpad/savepoint-probe/probe.test.ts`, copied into
+**Method.** A throwaway probe, copied into
 `tests/browser/` for the run and deleted; the six logs sit beside it. `main` after `9479f4a`,
 chromium project and firefox config, **three runs each**. Every arm is ONE `db.transaction()`
 of K=20 writes, so BEGIN/COMMIT and the lease are constant; arms interleaved inside each of 15
@@ -631,10 +631,10 @@ from client `SQLite 2` — the file's second client, which is the `OPFSWriteAhea
 clients number in test order; the console block is repeated under each failing test, so the
 attribution is not confirmed. Never on Chromium. It cannot move these figures, since a
 transaction runs on one worker. The closure baseline cannot say whether the normal Firefox
-suite does the same: `.scratchpad/closure-baseline/test.txt` captured no console output.
+suite does the same: the closure baseline's log captured no console output.
 
-**M3 — the real B's cost, 2026-09-11, this container, both engines.** Method: probe
-`.scratchpad/savepoint-probe/probe-m3.test.ts`, copied to `tests/browser/zz-m3.test.ts` for
+**M3 — the real B's cost, 2026-09-11, this container, both engines.** Method: a throwaway probe,
+copied to `tests/browser/zz-m3.test.ts` for
 the run and deleted; six logs `m3-*.log` beside the others. Two arms only, same K=200, 15
 iterations after 2 warm-ups, three runs per engine as probe-b: `base` (`tx.write(INS)`) and
 `real` (`tx.write(INS, [], { timeout: 60_000 })` — a real timeout, so every write carries a
@@ -664,7 +664,7 @@ faster estimate was derived and why it was expected to be an overstatement.
 
 ## TX-AUTOCOMMIT — an interrupted write inside a transaction, 2026-09-10, this container, both engines
 
-**Method.** Throwaway probes `.scratchpad/probe-autocommit/persistent.test.ts` (chromium and
+**Method.** Throwaway probes, one (chromium and
 firefox projects) and `memory-isolated.test.ts` (the isolated project), run on
 `fix/tx-statement-timeout` BEFORE its fix — the code of `main` at the time. `poolSize: 1`,
 `debug: true`, a worker's replacement detected by a changed `creationTime`. Inside one
@@ -689,8 +689,7 @@ memory database. Natural duration of the insert outside any transaction, for sca
 
 ## TX-HANDLE — a `tx` handle used after its transaction ended, 2026-09-10, both engines
 
-**Method.** Throwaway probes `.scratchpad/probe-autocommit/rollback.test.ts` and
-`afterend.test.ts`, default `OPFSAdaptiveVFS`/`async`, `poolSize: 1` so the next transaction
+**Method.** Two throwaway probes (a rollback and an after-end one), default `OPFSAdaptiveVFS`/`async`, `poolSize: 1` so the next transaction
 lands on the same worker; transaction A ends, B writes `b1` and pauses between two
 statements, A's handle is used, B writes `b2` and commits. Three runs per arm, plus a control
 arm with no late call; identical across runs and engines.
@@ -709,7 +708,7 @@ had marked "read from the code, not measured". **Status:** fixed by merge `eeabe
 
 ## TX-M1 — an interrupted READ, and `SQLITE_FULL`, inside a transaction, 2026-09-10, both engines
 
-**Method.** Throwaway probe `.scratchpad/probe-autocommit/m1.test.ts`, three runs per case.
+**Method.** A throwaway probe, three runs per case.
 **Read:** `longQuery(20_000_000)` (seconds to complete) cut by its own signal at 30 ms, after
 warming a different statement; `OPFSAdaptiveVFS` and `MemoryVFS`, `async`. The read rejected
 in 32-39 ms and the transaction **survived**: it committed `[1, 2]`, no eviction. This is the
@@ -728,7 +727,7 @@ is 1 000 ms, and it is a story until someone times it.
 
 ## TX-QUIESCE — what the per-statement wait costs, 2026-09-10, this container, Chromium
 
-**Method.** Probe `.scratchpad/tx-quiesce-probe.test.ts`, run as a browser test on the
+**Method.** A throwaway probe, run as a browser test on the
 `chromium` project (NOT cross-origin isolated). Every arm runs the SAME shape — one
 `db.transaction()` per iteration — so BEGIN/COMMIT, the lease and the client are constant
 across arms and the difference between them IS the wait `settled` adds. Two warm-up
@@ -960,8 +959,7 @@ and nothing would have failed. The feature detection was validated by accident.
 
 Method: the packed tarball installed by npm into a temp dir **outside** the repo, then
 **both** the dev server and the production build driven with a real page load asserting
-`window.__SMOKE__`. A build that emits is not a pass; the page must read rows back. The
-throwaway harness that produced this lives at `.work/bundler-probe.mjs` (gitignored).
+`window.__SMOKE__`. A build that emits is not a pass; the page must read rows back.
 
 | bundler | versions passing | floor, and why it is there |
 |---|---|---|
@@ -1006,7 +1004,7 @@ no-bundler path and `dist/` copied to a CDN. Source maps carry `sourcesContent` 
 
 ## Safari campaign — 2026-08-27, real devices, `feat/safari-device-campaign` on Pages
 
-Four exports in `.bench/`: iOS Safari 26.6, macOS Safari 26.5.2, macOS Safari 27.0,
+Four bench exports: iOS Safari 26.6, macOS Safari 26.5.2, macOS Safari 27.0,
 iPadOS Safari 27.0. All four report `readwriteUnsafe: false`. **This is the first campaign
 that could measure `OPFSWriteAheadVFS` at all** — the page carried the same
 `cap.requires.includes('readwrite-unsafe')` skip the conformance suite did, so the column
@@ -1311,8 +1309,8 @@ read one — which is exactly why "not visible" cannot be used to argue "deletes
 ## VFS-MEDIAN — what settled the recommendation, 2026-09-08, n≥3 per cell
 
 **Method, and the two traps it had to avoid.** Medians per `(vfs, build)` per platform over
-the bench exports of the CURRENT metric schema, computed by `.scratchpad/vfs-medians.mjs`
-and `.scratchpad/vfs-table.mjs` (kept: they are what re-derives this).
+the bench exports of the CURRENT metric schema, computed by two throwaway scripts
+over the bench corpus.
 
 - **The corpus is split by SCHEMA, not only by date.** `mem:follow-ups` asked for the exports
   dated 2026-09-02 or later — that split was chosen for the deletion rewrite. It does not
@@ -1800,7 +1798,7 @@ raising n means opening more sessions; more rounds would add nothing.
 
 ## REOPEN-1 does not reproduce — device campaign, 2026-09-03 (user's hardware)
 
-**Method.** Seven exports in `.bench/`, taken from the published `/preview/` page — rc.5 code,
+**Method.** Seven bench exports, taken from the published `/preview/` page — rc.5 code,
 badge reading `development build`. Three iPadOS Safari 27.0, two macOS Safari 27.0, two macOS
 Chrome 150. The user confirmed the provenance; the export itself could NOT say, which is a gap
 now in `mem:follow-ups`.
@@ -1865,7 +1863,7 @@ right threshold is an observation; `mem:lessons` records the rule it cost.
 
 **Chromium cannot produce this case at all**: `deleteDatabase` on the `IDBBatchAtomicVFS`
 store immediately after that column returns `success` in **1 ms** and the database is gone
-(`.scratchpad/probe-idb-hold.mjs`, 2026-09-03).
+(2026-09-03).
 
 ### The unsafe-handle probe leaked its own file, on both engines — closed 2026-09-04
 
@@ -1876,8 +1874,7 @@ export carried it into `opfsRootAtStart`. One observation per engine had read as
 quirk — n=1 again.
 
 **The fix was measured against the defect, not asserted.** A throwaway harness ran the old
-and the new probe side by side, six fresh contexts each, Playwright, this container
-(`.scratchpad/probe-race/`, gitignored):
+and the new probe side by side, six fresh contexts each, Playwright, this container:
 
 | engine | old probe | new probe |
 |---|---|---|
@@ -2264,7 +2261,7 @@ precondition, not slow work.
 
 **Present in the published release.** A worktree of the `v1.0.0-rc.4` tag, same probe, same
 numbers — 1001 without a pause, 501 with. rc.3 carries the same three lines in `client.ts`,
-before `pool.ts` was extracted. Probes: `.scratchpad/chunk-drop/` (throwaway).
+before `pool.ts` was extracted.
 
 **A second measurement came out of the fix itself**, and is the reason the delivery loop
 consults its failure channels through flags: a loop that always has a queued chunk never
@@ -2276,7 +2273,7 @@ before the flag existed. Found by a test written for a different property.
 Full tables and their method are in the design,
 `docs/superpowers/specs/2026-09-04-query-interruption-design.md` §4.3 — it is the only place
 they are written out, and it was written from these runs. What follows is what a later
-session needs without opening it. Probes: `.scratchpad/interrupt-1/` (throwaway).
+session needs without opening it.
 
 **The mechanism, established before any code was written.** A non-zero return from
 `sqlite3_progress_handler` ends a running `step()` with `SQLITE_INTERRUPT` on all three
@@ -2312,7 +2309,7 @@ settled N.
   observed as the failure value under the feature-neutralising mutation, against a 500 ms
   bound.
 
-## The `sync` build against the `async` build — 2026-09-07, read off `.bench/`
+## The `sync` build against the `async` build — 2026-09-07, read off the bench exports
 
 **Not a new campaign: a reading of exports already in the repository.** Three files, all
 labelled `preview @ 45e67fa` — a commit that is on `main`, so this is near-current code and
@@ -2359,7 +2356,7 @@ project's own measurements and more than that on some engines".
 ## `deleteDatabase` hangs — the whole corpus, split by era, 2026-09-07
 
 **This supersedes the "six deletion timeouts sit on two VFS" reading above**, which was one
-campaign on one build. Every export in `.bench/` carries a `deleted-is-gone` row per
+campaign on one build. Every bench export carries a `deleted-is-gone` row per
 `(vfs, build)` pair in its `conformance` block — **86 files, 1 225 pair-rows**. Counted, not
 sampled.
 
@@ -2536,7 +2533,18 @@ holder also owns wa-sqlite's `ahp:<path>` Web Lock and a `retryOps` state machin
 carry their own. This measures the engine and nothing above it — which is what it was for: the
 engine is exonerated, so HANDLE-2's permanence lives in the hand-over protocol or in our pool.
 
-Probes: `.scratchpad/handle-2/` (throwaway), with a README mapping each to what it answered.
+The probes, question by question:
+
+| probe | question | answer |
+|---|---|---|
+| handle orphan | does Firefox release a terminated worker's sync access handle? | yes, 1-6 ms, idle or mid-spin, loaded or not |
+| wedge 1 | kill the handle's holder behind the client's back | no wedge; lock and handle both come back |
+| wedge 2 | kill it through `handleDeath`, with a peer contending | 0/10 wedges |
+| wedge 3 | `onPoisoned` and `drainTimeout` paths | drain path clean; the "wedge" was the probe's own never-resolving callback |
+| wedge 4 | six forms, discriminated | the stuck callback holds `bsq:write`; the crash is what makes `close()` lie |
+| write-lock wedge | breadth and permanence | same on Chromium and Firefox, on the recommended VFS, still held past 70 s |
+| after close | what a callback meets after `close()` | first statement HUNG, transaction never settled — both fixed since |
+| tab off | does a destroyed agent release its lock? | yes; closing the tab repairs the origin |
 
 Method note: the browser console is not forwarded by the rstest reporter, so the probe carried
 its values out through deliberate assertion failures. Anything measured this way must collect
@@ -2603,8 +2611,7 @@ handed to the timing helper, so every rejection came back as `ok` and a whole ru
 ## HANDLE-2 does not reproduce — 2026-09-09, ~70 attempts on `main`, 40 at the pre-fix commit
 
 Written because a negative that cost this much must not be re-paid. See `mem:vfs`, HANDLE-2.
-Probes: `.scratchpad/handle-2/` (throwaway) — the six shapes below are the files there, and
-its README says which answered what. The pre-fix runs used a git worktree at `94bfaac` with
+The pre-fix runs used a git worktree at `94bfaac` with
 `node_modules` symlinked from the main checkout, which is enough to run one browser config.
 
 On `main`, six shapes, Firefox, `OPFSCoopSyncVFS`, under sixteen busy loops, all with the OPFS
@@ -2631,8 +2638,7 @@ origin's write lock indefinitely").
 
 ## CI-QUERY-TIMEOUT — a statement the `sync` build cannot cut, and how long its neighbours wait, 2026-09-15, both engines
 
-**Method.** Throwaway probes `.scratchpad/ci-query-timeout-2026-09-15/probe.test.ts` and
-`probe2.test.ts`, copied into `tests/browser/` for a run and deleted; logs beside them. `MemoryVFS`,
+**Method.** Two throwaway probes, copied into `tests/browser/` for a run and deleted. `MemoryVFS`,
 `poolSize` 1, no cross-origin isolation, `main` at `87076f6`. "Loaded" is 32 busy loops on this
 16-core container. Asked by the first CI run of rc.5 that reached its tests (run 34950424311), where
 two `query-timeout.test.ts` tests timed out at 30 s after their assertions had passed.
@@ -2668,7 +2674,7 @@ slower than Chromium** — a bound calibrated on Chromium is a bound Firefox may
 
 ## SECOND-CLIENT — what a second client got before the guard, 2026-09-15, n=10 per build per shape
 
-**Method.** Throwaway probe (`.scratchpad/second-client-2026-09-15/second-client-probe.test.ts`, kept there):
+**Method.** A throwaway probe:
 two clients on one database, `openTimeout: 5000`, every declared build, two shapes — `together` (both
 built before either queries) and `after` (B built once A has written). Chromium 151 / Firefox 154.
 
@@ -2682,7 +2688,7 @@ built before either queries) and `after` (B built once A has written). Chromium 
 
 ## BEGIN-DEFERRED — `OPFSWriteAheadVFS` refuses a deferred write transaction, 2026-09-15, both engines
 
-**Method.** Four throwaway probes (`.scratchpad/second-client-2026-09-15/output-writeahead-probe{,2,3,4}.test.ts`),
+**Method.** Four throwaway probes,
 fresh database per case.
 
 - A transaction whose first statement READS, or writes nothing (`DROP TABLE IF EXISTS <missing>`), and
@@ -2702,7 +2708,7 @@ fresh database per case.
 ## MATRIX-1 — the whole browser suite on every (vfs, build) pair, 2026-09-15
 
 **Method.** `pnpm test:matrix`: 22 declared pairs × {chromium, firefox, isolated}, one rstest project per
-pair, 66 runs, each bounded at 600 s. 3447 s total, this container. Raw reports under `.matrix/<run>/`.
+pair, 66 runs, each bounded at 600 s. 3447 s total, this container.
 
 - **Green on every column:** `OPFSWriteAheadVFS` (sync/async/jspi), `OPFSAdaptiveVFS` (async/jspi),
   `OPFSAnyContextVFS` (async/jspi). The isolated column is green for all 22 pairs.
@@ -2722,7 +2728,7 @@ pair, 66 runs, each bounded at 600 s. 3447 s total, this container. Raw reports 
 
 ## MATRIX-2 — the whole browser suite on every (vfs, build) pair, 2026-09-16
 
-`pnpm test:matrix`, run `.matrix/2026-09-16T12-46-17-062Z`, 22 pairs × {chromium, firefox,
+`pnpm test:matrix`, 22 pairs × {chromium, firefox,
 isolated} = 66 cells, **2386 s** — 31 % faster than MATRIX-1's 3447 s, which is the per-cell
 redundancy removed when the five VFS-sweeping files started following the target.
 
@@ -2735,7 +2741,7 @@ redundancy removed when the five VFS-sweeping files started following the target
 - 989 failing tests, 143 distinct (file, test, error) groups. Only 690 of the 989 are listed in the
   reports — rstest truncates long lists — so the group counts under-report the widest causes.
 
-**The triage, 2026-09-16** (`.scratchpad/matrix-triage/`, `aggregate.mjs` + `triage-2026-09-16.md`):
+**The triage, 2026-09-16**:
 
 | Tas | cell-failures | what it is |
 | --- | ---: | --- |
@@ -2745,7 +2751,7 @@ redundancy removed when the five VFS-sweeping files started following the target
 
 ## MATRIX-3 — the same matrix after the test-cleanup fix, 2026-09-16
 
-`pnpm test:matrix`, run `.matrix/2026-09-16T13-50-57-796Z`, the same 66 cells, **2885 s**,
+`pnpm test:matrix`, the same 66 cells, **2885 s**,
 no cell timed out. The tree is MATRIX-2's plus `bbd0862` (`onTestFinished` + `close()` +
 `deleteDatabase` on the `opfs-pool` layout). Triaged with `scripts/matrix-triage.mjs`, whose
 output is the numbers below.
@@ -2779,7 +2785,7 @@ pnpm exec rstest --config <cfg> --project 'chromium*' run <one file>` first — 
 
 ## MATRIX-5 — the matrix after the dying-worker fix, 2026-09-18
 
-`.matrix/2026-09-18T08-25-56-316Z`, 66 cells, **3067 s**, no cell timed out. Triaged with
+The run of 2026-09-18, 66 cells, **3067 s**, no cell timed out. Triaged with
 `scripts/matrix-triage.mjs`. **This is the reference a matrix regression is read against.**
 
 | | M-2 (09-16) | +cleanup | +needs | **M-5** |
@@ -2854,7 +2860,7 @@ before.**
 
 ## MATRIX-DEFAULT-BUILD — the matrix after `jspi` moved before `async`, 2026-09-24
 
-`.matrix/2026-09-24T09-53-39-415Z`, `feat/default-build`, 2570 s, 66 of 66 cells green, 0 failing tests. Passed / failed / skipped per cell, identical across the builds of one VFS:
+The run of 2026-09-24, `feat/default-build`, 2570 s, 66 of 66 cells green, 0 failing tests. Passed / failed / skipped per cell, identical across the builds of one VFS:
 
 | VFS | chromium | firefox | isolated |
 |---|---|---|---|
@@ -2866,7 +2872,7 @@ Cells ran 22-79 s. In every row, on both engines, the `async` cell is the slowes
 
 ## ADAPTIVE-JSPI-SAFARI — `OPFSAdaptiveVFS` on `jspi` against `async`, Safari 27, read off banked exports 2026-09-24
 
-The measurement the default-build change required before `OPFSAdaptiveVFS` moved to `jspi`. It was already banked: 38 bench exports (`.bench/*safari-27*`, rc.3 and rc.4, 21 iPadOS and 17 macOS) carry both columns. Median of the per-run ratio `jspi / async`; below 1 favours `jspi`, except `read-burst-concurrency`, where higher is better. Extraction in `.scratchpad/adaptive-safari27.tsv`.
+The measurement the default-build change required before `OPFSAdaptiveVFS` moved to `jspi`. It was already banked: 38 bench exports (rc.3 and rc.4, 21 iPadOS and 17 macOS) carry both columns. Median of the per-run ratio `jspi / async`; below 1 favours `jspi`, except `read-burst-concurrency`, where higher is better.
 
 | metric | macOS | iPadOS |
 |---|---|---|
@@ -2884,7 +2890,7 @@ No median favours `async`. Single runs spread wider — bulk insert on iPadOS up
 
 Measured by the user in Safari 26's console on a `localhost` page (a secure context is required —
 with no page open, `navigator.storage` is undefined and every worker throws `TypeError`), running
-`.scratchpad/firefox-hang-2026-09-16/safari-console-probe.js`: 144 workers across 12 iframes × 3
+the Firefox hang's console probe: 144 workers across 12 iframes × 3
 rounds, each asking the OPFS root for one shared file and then two sync access handles on it.
 
 - **Safari does NOT honour `mode: 'readwrite-unsafe'`.** Every worker that got the file reported

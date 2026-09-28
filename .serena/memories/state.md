@@ -44,7 +44,7 @@ obligations and unmeasured ground.
 
 ## The verification baseline — compare against these, re-measured 2026-09-27 on `test/needs-skip-in-matrix`
 
-Not history: the numbers a regression is detected against. **Every figure below was read off a run in this container on 2026-09-27 night, on `test/needs-skip-in-matrix` (the matrix skips an unmet need, spec 2026-09-15 A7)** — none is arithmetic, and the table was read in ONE pass (`.scratchpad/needs-skip-2026-09-27/`), on the wa-sqlite pin `5e98ac7` with #363 and #365 carried. **Two rows are carried, not re-run, stated:** `pnpm test:consumer` and the bench check — the branch touches nothing under `src/` or the bench.
+Not history: the numbers a regression is detected against. **Every figure below was read off a run in this container on 2026-09-27 night, on `test/needs-skip-in-matrix` (the matrix skips an unmet need, spec 2026-09-15 A7)** — none is arithmetic, and the table was read in ONE pass, on the wa-sqlite pin `5e98ac7` with #363 and #365 carried. **Two rows are carried, not re-run, stated:** `pnpm test:consumer` and the bench check — the branch touches nothing under `src/` or the bench.
 
 | command | result |
 |---|---|
@@ -60,7 +60,7 @@ Not history: the numbers a regression is detected against. **Every figure below 
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | `OK`, `"reasons": {}` (carried from the previous pass); the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
 | `pnpm lint` | 160 files, 13 warnings, 1 info — the file count moves with the tree, **the warning count is the signal** |
 | `dependencies` in `package.json` | absent |
-| `pnpm test:matrix` | **66 of 66 cells green, 2304 s** (`.matrix/2026-09-27T21-55-04-964Z`), no re-run. ~40 min. **Every cell runs `BSQ_TEST_NEEDS=skip` since this branch**, so its skips are the tests whose need the pair lacks: chromium from 4 (`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`) to 71 (`MemoryVFS/sync`), firefox from 1 (`OPFSAnyContextVFS`) to 68, isolated 7/0/0 everywhere. Per-cell table in `.scratchpad/needs-skip-2026-09-27/matrix.txt` |
+| `pnpm test:matrix` | **66 of 66 cells green, 2304 s**, no re-run. ~40 min. **Every cell runs `BSQ_TEST_NEEDS=skip` since this branch**, so its skips are the tests whose need the pair lacks: chromium from 4 (`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`) to 71 (`MemoryVFS/sync`), firefox from 1 (`OPFSAnyContextVFS`) to 68, isolated 7/0/0 everywhere. |
 
 Against the previous table (2026-09-27 evening, `fix/writeahead-read-catches-up`): the chromium+unit total and unit moved by 4 — the four resolver and env unit tests of this branch; everything else in `pnpm test` and conformance is identical. **`pnpm test`'s skip counts did not move, and that is the cell to watch** — a test that started skipping instead of running would vanish into a total without a trace. **The matrix's skip counts are no longer that signal on their own:** they now carry every unmet need, so what to watch there is a cell's skip count moving without a `needs` or a declaration having changed.
 
@@ -413,7 +413,7 @@ step 2 is what that exposed. Invariants in `mem:architecture`; campaigns in
   fixed by `e45f566`; every other commit was proved green in clean worktrees. See
   `mem:lessons` before trusting a hook or a subagent's "pre-existing". How it got past — not
   a bypass; a commit created 25 s into a ~100 s hook — is traced in `mem:follow-ups` (the
-  pre-commit hook entry), with the evidence in `.scratchpad/hook-forensics/`.
+  pre-commit hook entry).
 
 **What it does NOT deliver.** The savepoint variant. An eviction for any other reason — a
 crashed worker — still loses a memory database, as it always has. Four review minors were

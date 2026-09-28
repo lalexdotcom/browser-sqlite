@@ -42,7 +42,7 @@ been work on nothing.
 
 ## `vfs-folders` "opens and persists a path exactly at the bound" failed once on Firefox IDBBatchAtomicVFS/jspi (2026-09-27)
 
-In the full matrix run to verify the #365 carry: `firefox · IDBBatchAtomicVFS/jspi` 371/1/2, the one failure `tests/browser/vfs-folders.test.ts :: … opens and persists a path exactly at the bound`, `expected +0 to be 1` — a client created a table and closed, a second client on the same name counted **0** tables. First failure since the test was added (2026-09-23); every earlier matrix had it green, including the morning's on the same pin without #365. Report kept: `.matrix/2026-09-27T20-34-42-649Z/firefox-IDBBatchAtomicVFS-jspi.txt`. **Not reproduced:** the test alone on that pair 10/10, the whole cell three times through `pnpm test:matrix --engine firefox --pair IDBBatchAtomicVFS/jspi`, 372/0/2 each. Unrelated to #365 as far as the code goes — `IDBBatchAtomicVFS` does not use `WriteAhead.js`. If it recurs: it would be a persistence loss between two clients of that VFS on Firefox, the name at the 52-character bound; keep the report and check whether the first client's close had finished its IndexedDB transaction before the second opened.
+In the full matrix run to verify the #365 carry: `firefox · IDBBatchAtomicVFS/jspi` 371/1/2, the one failure `tests/browser/vfs-folders.test.ts :: … opens and persists a path exactly at the bound`, `expected +0 to be 1` — a client created a table and closed, a second client on the same name counted **0** tables. First failure since the test was added (2026-09-23); every earlier matrix had it green, including the morning's on the same pin without #365. **Not reproduced:** the test alone on that pair 10/10, the whole cell three times through `pnpm test:matrix --engine firefox --pair IDBBatchAtomicVFS/jspi`, 372/0/2 each. Unrelated to #365 as far as the code goes — `IDBBatchAtomicVFS` does not use `WriteAhead.js`. If it recurs: it would be a persistence loss between two clients of that VFS on Firefox, the name at the 52-character bound; keep the report and check whether the first client's close had finished its IndexedDB transaction before the second opened.
 
 ## Repin wa-sqlite: #350, #357 and #361 are merged upstream (user, 2026-09-27) — later
 
@@ -186,7 +186,7 @@ WHAT REMAINS OPEN:
   every page still probes once. And the run no longer hangs either way, since `6560c9e` bounds it.
   What laziness would still buy is only that a module-scope throw becomes a named test failure.
 - **The lever that WOULD attack the trigger is one probe per run instead of one per page**, and it
-  is now designed rather than speculated. Measured 2026-09-21, all three in `.scratchpad/probe-2026-09-21/`:
+  is now designed rather than speculated. Measured 2026-09-21, all three:
   rstest 0.11.8 has **no per-run hook with browser access** (`setupFiles` runs before each FILE;
   `globalSetup` runs in Node, and beside `projects` at root level it is silently IGNORED — declared
   per project it runs once per project); the **injection channel works** — a value set in
@@ -204,7 +204,9 @@ WHAT REMAINS OPEN:
   `getDirectory` and `hang` there returns nothing of this shape. `Storage: Quota Manager`'s hangs
   are all shutdownhangs.
   **Two things block the report, and neither is the writing.** (1) The repro is not portable: the
-  console probe in `.scratchpad/firefox-hang-2026-09-16/` does NOT reproduce it (0 of 144), only
+  console probe — 12 same-origin iframes × 4 workers, 3 rounds released together, each worker walking
+  `getDirectory` → `getFileHandle` → two sync access handles, bounded — does NOT reproduce it (0 of 144;
+  48 workers from one page, 0 either), only
   the suite's shape does — ~50 pages each asking a worker for the OPFS root within a few seconds.
   (2) Every sighting is on **Playwright's Firefox 153.0** (BuildID 20260722045007), a patched
   build; Mozilla will ask first, so confirm on a stock Firefox before opening, or the bug is
@@ -266,7 +268,7 @@ defect, and the scenario a defect is found through is often not the one that dem
 
 **The fix is one line — `this.lastError = e` in that catch — and both consumers are already in place.** `src/worker/worker.ts` already reads `vfsInstanceSeen.lastError` and formats it as `name: message` into the open failure's `detail`. **What it does NOT buy, measured 2026-09-21 and refuting what this entry first claimed: SQLite's own message does not carry it.** Since wa-sqlite #330 a failed `open_v2` reports the connection's message rather than the function name — but that message is `unable to open database file`, identical with and without the fix, because SQLite does not fold `xGetLastError` into it here. Reading the VFS instance is not a shortcut, it is the only route. Nothing on our side changes, which is why this buys diagnosability and nothing else — the failure it used to hide is fixed.
 
-**Posted as rhashimoto/wa-sqlite#357 on 2026-09-21**, from `lalexdotcom:fix/coopsync-open-last-error`, rebased onto `master` at `93b92308` before opening. Two commits, four files. `test/vfs_open_last_error.js` fails on that master on the `default` and `asyncify` builds and passes with the fix; the whole upstream suite is 2905/14/0. Report and evidence: `docs/upstream/2026-09-21-wa-sqlite-357-coopsync-open-last-error.md`. Prepared in a worktree at `.work/wa-sqlite-lasterror`, kept in case review asks for an iteration.
+**Posted as rhashimoto/wa-sqlite#357 on 2026-09-21**, from `lalexdotcom:fix/coopsync-open-last-error`, rebased onto `master` at `93b92308` before opening. Two commits, four files. `test/vfs_open_last_error.js` fails on that master on the `default` and `asyncify` builds and passes with the fix; the whole upstream suite is 2905/14/0. Report and evidence: `docs/upstream/2026-09-21-wa-sqlite-357-coopsync-open-last-error.md`. The fork branch is kept in case review asks for an iteration.
 
 **The second finding, and it is the one a reviewer will weigh:** the upstream test harness cannot observe VFS state at all. `test/test-worker.js` proxies the VFS behind a getter that returns only functions, so `await vfs.lastError` answers `undefined` even after a path that DOES set it (probed directly). The test therefore carries a one-line harness change. Nothing depended on the old behaviour — every non-function property answered `undefined`.
 
@@ -316,7 +318,7 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   demand: it stays, and it still has no falsifier. Cross-tab needs no probe of its own — without
   the barrier there is no shared state left, and two tabs are two clients' workers to SQLite. The
   next step, if anyone chases it, is a reproduction of the three sightings' conditions (a loaded
-  full run of the data probe), not a longer loop. Probes kept in `.scratchpad/barrier-spike-2026-09-25/`.
+  full run of the data probe), not a longer loop.
   **That reproduction was run on 2026-09-27 and it reproduces** (BARRIER-DATA, `mem:measurements`):
   under sixteen busy loops, 37 of 616 tests stale without the barrier, 0 of 616 with it, on the same
   cells — all on Chromium, every scenario, growth included. The barrier guards data freshness for
@@ -329,13 +331,12 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   the stale reads are the ones where the query arrives first — present before #355, which only
   widens it. **Submitted upstream as rhashimoto/wa-sqlite#365 on 2026-09-27** (report
   `docs/upstream/2026-09-27-wa-sqlite-365-writeahead-read-freshness.md`); branch
-  `fix/writeahead-read-catches-up` on the fork (`.work/wa-sqlite-readfresh`, `1273bb48` on upstream
+  `fix/writeahead-read-catches-up` on the fork (`1273bb48` on upstream
   `e6e01ae1`): `isolateForRead()` reads the WAL to its end. Its test, in wa-sqlite's own suite,
   is deterministic — a reader worker blocks its event loop while a writer worker commits, then
   reads before its context delivers the broadcast: `1` for `2` on master, 8/8 runs, both builds.
   Two connections in ONE context share a `WriteAhead` view and cannot reproduce it. Cost ≈ 5 µs
-  per read transaction on asyncify. Body in
-  `.scratchpad/writeahead-read-freshness/pr-365-writeahead-read-freshness.md`. **Carried in
+  per read transaction on asyncify. **Carried in
   `patches/` since 2026-09-27.** **2026-09-28: answered "by design", now opt-in, and the library
   sets it in the barrier.** rhashimoto keeps reads eventually consistent on purpose: reading to
   the end scans the uncommitted frames of a large open write on every read (~2 ms per MB,
@@ -359,7 +360,7 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   rhashimoto/wa-sqlite#363** (report `docs/upstream/2026-09-25-wa-sqlite-363-anycontext-unlock-truncate.md`).
   When it merges: repin and drop the hunk, per `mem:stack-and-build`. Guarded here by `tests/browser/vacuum.test.ts` (need
   `in-place-file`, added for it); upstream by `test/vfs_xUnlock.js` (8192 for 4096 on master). Full
-  matrix with the patch, 2026-09-25: 66/66 cells green (`.matrix/2026-09-25T15-18-33-368Z`). Seen as `VACUUM` + two concurrent reads failing
+  matrix with the patch, 2026-09-25: 66/66 cells green. Seen as `VACUUM` + two concurrent reads failing
   in one client with two workers; on Firefox `needs: ['two-workers']` resolves to
   `OPFSAnyContextVFS` whatever the target, 8-12 of 20 per run, never on Chromium (20/20 on the same
   pair). The failing statement is the READ on the other worker, `SQLITE_IOERR_READ` (266).
@@ -370,8 +371,8 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   the reader's `File` snapshot dies with `AbortError`. **Hypothesis tested:** closing a pending
   writable in a `jUnlock` override, before `super.jUnlock`, gives 60/60 on Firefox (jspi and async)
   and 20/20 on Chromium. Upstream master (`e98c65d`, our pin) has no such close; upstream issues not
-  searched yet (`gh` is available since 2026-09-28). Same shape as #361: an upstream PR plus a `patches/` carry. Probes and the
-  instrumented VFS in `.scratchpad/vacuum-ioerr-2026-09-25/`. Also worth knowing: in that window a
+  searched yet (`gh` is available since 2026-09-28). Same shape as #361: an upstream PR plus a `patches/` carry.
+  Also worth knowing: in that window a
   reader could read the pre-truncation file rather than fail, if its read wins the race.
 - **`long-query.test.ts`'s `interrupt()` falsifier was already inert at 14be4ee**, on Adaptive.
 - **Concurrency D-09 has no falsifier by construction.** Every VFS with an exclusive handle now runs
@@ -441,15 +442,17 @@ What the entry established before the decision, kept for its evidence:
   Firefox in the hook (`mem:lessons`, "A test that waits for a TRANSIENT state").
 - **What it does not guarantee.** On 2026-09-10 commit `c2ef918` landed with a failing
   `tsc`, although the hook ends with `tsc`. Traced on 2026-09-11 from the implementer's
-  transcript — full evidence in `.scratchpad/hook-forensics/c2ef918-timeline.md`:
+  transcript:
   - **Nobody bypassed it.** No `--no-verify`, no `SKIP_SIMPLE_GIT_HOOKS` anywhere in the
     agent's commands. Its attempt at 15:11:52 was REFUSED by the hook's `tsc`.
   - **Its next attempt, started 15:13:40, was already a commit in `git log` at 15:14:05** —
     25 s in, when that hook's suite alone takes ~100 s; the captured output stops at the start
     of the suite. The hook cannot have reached `tsc`.
   - **Hypothesis, not proven:** the agent's tool cut or backgrounded the command mid-hook,
-    and the hook exited without failing. The timeline file says how to test it in a scratch
-    clone. If it holds, "the hook passed" is not evidence whenever the committer's shell can
+    and the hook exited without failing. To test it cold, in a throwaway clone and never in this
+    repository's `.git`: a pre-commit hook of `sleep 5; echo x; sleep 60; exit 1`, `git commit` under a
+    wrapper that closes the command's stdout or sends it SIGTERM/SIGHUP after 3 s, and see whether
+    the commit lands; then the same through the harness's own background mechanism. If it holds, "the hook passed" is not evidence whenever the committer's shell can
     drop a long command.
   - Separately, the hook runs `tsc` against the WORKING TREE, not the tree being committed,
     and honours `SKIP_SIMPLE_GIT_HOOKS=1` and `$SIMPLE_GIT_HOOKS_RC` — two more ways a green
@@ -594,7 +597,7 @@ Suggested in the reply to his review, not implemented: the plan executor allocat
 
 ## `aWorkerIsRunning` also matches the barrier, so an abort can land before the query is sent (2026-09-27)
 
-**Diagnosed by a trace of the whole abort path** (`.scratchpad/interrupt-drain-2026-09-27/`, instrumented copies of `pool.ts`, `queries.ts`, `client.ts`, reverted). On a fresh client the first statement a worker runs is the freshness barrier (`SELECT count(*) FROM sqlite_master`), and `aWorkerIsRunning` (`tests/browser/helpers.ts`) is true for ANY running statement. A test that waits for it and then aborts can therefore abort during the barrier: the rejection comes from the acquisition race, the barrier ends in milliseconds, and **the query under test is never sent**. The list of statements sent says so: at the abort, Chromium had sent only the barrier 6 times in 6; Firefox had usually sent the long query too, but not always (2 in 6).
+**Diagnosed by a trace of the whole abort path** (instrumented copies of `pool.ts`, `queries.ts`, `client.ts`, reverted). On a fresh client the first statement a worker runs is the freshness barrier (`SELECT count(*) FROM sqlite_master`), and `aWorkerIsRunning` (`tests/browser/helpers.ts`) is true for ANY running statement. A test that waits for it and then aborts can therefore abort during the barrier: the rejection comes from the acquisition race, the barrier ends in milliseconds, and **the query under test is never sent**. The list of statements sent says so: at the abort, Chromium had sent only the barrier 6 times in 6; Firefox had usually sent the long query too, but not always (2 in 6).
 
 That is the whole "Firefox waits, Chromium does not" difference seen on `interrupt.test.ts`'s sync test: on Chromium the 20 M-row read never ran, so `close()` had nothing to wait for; on Firefox it usually ran, and `close()` waited it out (`ABORTING`, then the lease back at `done`, 22 s later — the correct behaviour). **No product defect; the earlier reading here, a worker lent back mid-statement, was wrong and is refuted by the same trace.**
 
@@ -602,5 +605,5 @@ That is the whole "Firefox waits, Chromium does not" difference seen on `interru
 
 ## `test-matrix` shows a crashed cell as green-looking — seen 2026-09-26
 
-In the repin's matrix, Firefox `IDBMirrorVFS/async` reported **204/0/2**: "Browser page crashed while running `tests/browser/lifecycle.test.ts`", 38 of 57 test files run, `failedTests: 0`. The table prints pass/fail/skip only, so the cell reads as green; only the script's exit code (1) and the raw report's `"status": "fail"` said otherwise — and the exit code was blamed on the two `open-retry` timeouts. Caught by the whole-branch review, not by the monitor. Rerun alone three times: 370/0/2, 57 files, no crash. **Two things open:** the crash itself (once in every `.matrix/` run so far), and `test-matrix.mjs` should mark a cell whose report status is `fail` or whose file count falls short, whatever its failed-test count. Until then, a monitor must match the report status, not the counts.
+In the repin's matrix, Firefox `IDBMirrorVFS/async` reported **204/0/2**: "Browser page crashed while running `tests/browser/lifecycle.test.ts`", 38 of 57 test files run, `failedTests: 0`. The table prints pass/fail/skip only, so the cell reads as green; only the script's exit code (1) and the raw report's `"status": "fail"` said otherwise — and the exit code was blamed on the two `open-retry` timeouts. Caught by the whole-branch review, not by the monitor. Rerun alone three times: 370/0/2, 57 files, no crash. **Two things open:** the crash itself (once in every matrix run so far), and `test-matrix.mjs` should mark a cell whose report status is `fail` or whose file count falls short, whatever its failed-test count. Until then, a monitor must match the report status, not the counts.
 
