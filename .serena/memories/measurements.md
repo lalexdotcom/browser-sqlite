@@ -335,8 +335,8 @@ run alone they give 18 tests, 0 skipped.
 With the two full matrices since the fix (2026-09-18 15:50 and 2026-09-21) that is **ten clean runs
 of that cell**. It failed 5 times in 14 full-cell runs before (36 %, VFS-PILES above), which puts ten
 consecutive greens at ~1 % by luck. Cause and fix: wa-sqlite #350, the partial-acquisition leak, with
-`exclusiveFileHandle` and `openWithRetry` on our side. **What remains of the subject is
-diagnosability alone** — `jOpen` still swallows the cause (`mem:follow-ups`).
+`exclusiveFileHandle` and `openWithRetry` on our side. **What remained of the subject was
+diagnosability alone** — `jOpen` swallowed the cause — and wa-sqlite #357 settled it (pinned 2026-09-28).
 
 ## IDB-SIGNAL — a signal lets `IDBBatchAtomicVFS` serve a read during a long query, 2026-09-14, this container
 

@@ -17,11 +17,12 @@
 - **Runtime dependencies: none.** `wa-sqlite` is a devDependency only, vendored into
   `dist/worker/worker.js` at build time so it never reaches a consumer lockfile. **Pinned by commit
   SHA, not by tag, since 2026-09-15 (user):**
-  `github:rhashimoto/wa-sqlite#5e98ac7641e637dddb2e0fadded89810f0eae60d` since 2026-09-26, upstream
-  `master` with our #347 and #348 merged that day (and #364, JSPI detection in upstream's tests
-  only). #347 left the patch with it; #348 (TEXT values cut at an embedded NUL) was never carried
-  and reaches the library through the pin. Before that `e98c65de` (2026-09-23, #359) and `93b9230`
-  (2026-09-21). Vendored, so a commit serves as well as a release and nothing waits for one.
+  `github:rhashimoto/wa-sqlite#e6e01ae1c79f36aa7c5426c75bbd88712a9f0aaa` since 2026-09-28, upstream
+  `master` with our #350, #357 and #361 merged on 2026-09-27. #350 and #361 left the patch with it —
+  upstream's merged files were checked identical to what the patch carried; #357 (a failed
+  `OPFSCoopSyncVFS` acquisition recorded in `lastError`) was never carried and reaches the library
+  through the pin. Before that `5e98ac76` (2026-09-26, #347, #348, #364), `e98c65de` (2026-09-23,
+  #359) and `93b9230` (2026-09-21). Vendored, so a commit serves as well as a release and nothing waits for one.
   **The 2026-09-21 repin was taken for two fixes by other contributors**:
   #330, which stops a failed `sqlite3_open_v2` leaking the database handle SQLite allocates for it —
   `openWithRetry` can make 25 attempts, each of which leaked before — and #355, race conditions in
@@ -32,14 +33,11 @@
   **`patches/wa-sqlite@1.1.2.patch` carries the upstream changes listed below, file by file**, and is
   no longer deletable as a block. Each is independent and each has a report in
   `docs/upstream/`, which is where the mechanisms and measurements live:
-  - `OPFSCoopSyncVFS.js` — #350 (`Promise.allSettled`, so a failed acquisition closes what
-    succeeded instead of leaking it). #347 (hand-over deferred to a task, plus the temp-directory
-    race) is upstream since the 2026-09-26 repin. #357 is deliberately not carried.
   - `IDBBatchAtomicVFS.js` — #351 (`jWrite` walks the blocks a write covers instead of assuming one
     starts at the offset), `@@ -271`.
   - `IDBMirrorVFS.js` — #352 (`pData.subarray()`: `pData` is a `Uint8ArrayProxy`, and `set()` on it
     stores zeroes) and #353 (drop the blocks past the end of the file, in the view and in the store).
-  - `WriteAhead.js` — #361 (checkpoint plan with bounded buffer planners, upstream `68db49b3` since 2026-09-26; the first version held the whole checkpoint in memory; merged upstream 2026-09-27, carried until the repin) and #365 (a read transaction reads the WAL to its end, added 2026-09-27; since 2026-09-28 the opt-in revision, `readToCurrent` off by default).
+  - `WriteAhead.js` — #365 (a read transaction reads the WAL to its end, added 2026-09-27; since 2026-09-28 the opt-in revision, `readToCurrent` off by default). #361 (the checkpoint plan) is upstream since the 2026-09-28 repin.
   - `OPFSWriteAheadVFS.js` — #365's `PRAGMA read_to_current`, which sets that option per connection (2026-09-28). The library's barrier depends on it: without the hunk the pragma is an unknown one that SQLite ignores, and the barrier goes back to timing only.
   - `OPFSAnyContextVFS.js` — #363 (a `jUnlock` that closes a pending writable before releasing the
     lock).
@@ -392,7 +390,7 @@ aligned with it wholesale: the image, the Playwright engines and the Serena prer
   suite so a stale table fails fast. The render rewrites `VFS.md`'s generated spans in the working
   tree, so an UNCOMMITTED hand edit inside one is overwritten silently by a push. All
   bypassable with `--no-verify`. The agent's own verification at delivery is the gate (user),
-  CI the independent one. Details: `mem:follow-ups`, the pre-commit hook entry.
+  CI the independent one. Details: `mem:git-hooks`.
 - `tsconfig.build.json` (`include: ["src"]`, `rootDir: "src"`) drives declaration
   generation via `source.tsconfigPath`. Without it the root tsconfig pushes the common
   source root to the repo root: declarations would land in `dist/src/` while

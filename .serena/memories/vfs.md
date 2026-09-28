@@ -180,10 +180,12 @@ instance creation, where `createVfsInstance` covers it. **`OPFSCoopSyncVFS` is t
 both**, hence `exclusiveFileHandle` in `VFS_CAPABILITIES`, true for it and for
 `AccessHandlePoolVFS`.
 
-**Declared rather than detected, and that is forced:** wa-sqlite's `jOpen` swallows the acquisition
-failure — `console.error`, an invalid `PersistentFile`, and a bare `SQLITE_CANTOPEN` with no
-`lastError` — so nothing at the decision point can tell a held file from any other refusal. Where
-the error IS available (instance creation) the retry tests it directly and needs no declaration.
+**Declared rather than detected:** the retry decides on the failed `sqlite3_open_v2`, a bare
+`SQLITE_CANTOPEN`, and does not read `lastError`. Until wa-sqlite #357 (pinned 2026-09-28) `jOpen`
+swallowed the acquisition failure — `console.error`, an invalid `PersistentFile`, no `lastError`;
+since then the failure is kept there and becomes the open failure's cause, but the retry still
+retries whatever the refusal. Where the error comes back from the call itself (instance creation)
+the retry tests it directly and needs no declaration.
 
 **`SQLITE_CANTOPEN` does not mean "not there", and `deleteDatabase` used to read it that way.**
 `OPFSCoopSyncVFS` returns it for a file that exists and is **empty** — its `jOpen` only reaches a

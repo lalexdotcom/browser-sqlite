@@ -22,14 +22,14 @@ obligations and unmeasured ground.
   entries: `.ad/`, `.ac/`, `.cs/`, `.wa/`, `layout` and `VFSLayout` gone, the 52-character name bound
   on those four VFS; `db.files` Added; the path and empty-name refusals Changed — `mem:vfs`, CROSS-VFS;
   `mem:architecture`, "Two names per database"), and **the default build that follows the browser** (merged 2026-09-24: Changed, plus one Breaking entry — a `wasmUrl` serving only the `async` `.wasm`), and **the public surface** (merged 2026-09-24: Breaking — `VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` no longer exported, the `./worker` subpath gone; Changed — `createSQLiteClient` declared to return `SQLiteDB`), and two more **Fixed** entries: `OPFSAnyContextVFS`'s `VACUUM` that failed the next read on Firefox (#363, merged 2026-09-25) and a failed client leaving `inspectDatabase()`'s roster at once (merged 2026-09-27).
-- **The vendored wa-sqlite sits on upstream `master` of 2026-09-26** (`package.json` has the SHA),
-  which merged our #347 and #348 that day. `patches/wa-sqlite@1.1.2.patch` carries five files, one
-  open PR each or two: `OPFSCoopSyncVFS.js` (#350), `IDBBatchAtomicVFS.js` (#351), `IDBMirrorVFS.js`
-  (#352, #353), `WriteAhead.js` (#361 **as reviewed** — the checkpoint plan, not the first version)
-  and `OPFSAnyContextVFS.js` (#363). #357 is deliberately not carried. The installed `src/` was
-  checked equal to the pin plus those PR heads. **The repin's matrix: 63 of 66 cells green**; two
-  are one test timing out on Firefox under load, 20 of 20 alone, and one a Firefox page crash that
-  three reruns did not reproduce (`mem:follow-ups`, both).
+- **The vendored wa-sqlite sits on upstream `master` of 2026-09-27** (`e6e01ae1`, `package.json` has
+  the SHA), which merged our #350, #357 and #361 that day. `patches/wa-sqlite@1.1.2.patch` carries
+  five files, one open PR each or two: `IDBBatchAtomicVFS.js` (#351), `IDBMirrorVFS.js` (#352, #353),
+  `OPFSAnyContextVFS.js` (#363), and `WriteAhead.js` with `OPFSWriteAheadVFS.js` (#365, the opt-in
+  `PRAGMA read_to_current`). The installed `src/` was checked equal to the pin plus those PR heads,
+  and `dist/` equal to upstream's. **The repin's matrix (2026-09-28): 66 of 66 cells green, no
+  failure** (`.matrix/2026-09-28T14-26-49-300Z`). #357 changes what a refused `OPFSCoopSyncVFS` open
+  reports — probed both ways, CHANGELOG under Fixed.
 - **The release gate ran the full matrix for the first time, and it took four tags to get
   through.** 22/22 cells, `verify`, `consumer-smoke`, then `release`, with `untag` skipped.
   The three refusals before it were not test failures: `test-matrix.mjs` could not read a
@@ -71,7 +71,7 @@ been patched and the table had not been re-read. **Re-measure the whole table wh
 
 **`pnpm test` chains THREE configs** — chromium+unit, firefox, and the isolated project — so a
 green `pnpm test` covers what CI covers. Since 2026-09-11 a commit pays only the unit project; a merge or a push pays all three
-(`mem:follow-ups`, the pre-commit hook entry).
+(`mem:git-hooks`).
 **A green `pnpm test` is not a green tree: run `pnpm exec tsc --noEmit` beside it** — a commit
 on the last branch landed with a failing typecheck that no test run could show (`mem:lessons`).
 
@@ -336,7 +336,9 @@ POOL-SIZE, DELETE-WA); VFS facts in `mem:vfs`.
 - **Conformance no longer agrees across engines, by design** — Chromium skips 14, Firefox 18: on
   Firefox two invariants skip `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS`, which run one worker there.
 - **The bench shows `pool N → M`** in a column header once `db.ready` resolves on a capped pool,
-  and bounds the burst ranking by the effective size (2026-09-23); the export records `db.poolSize`. Since
+  and bounds the burst ranking by the effective size (2026-09-23); the export records `db.poolSize`.
+  Seen on all three engines: Safari 27 on 2026-09-28 exports `poolSize` 1 for the `OPFSAdaptiveVFS`
+  pairs, the `pool 4 → 1` expected. Since
   2026-09-14 it skips **three** rows on a one-worker column, not the two its commit message names:
   `reads-during-long-query` too — whether the other workers serve during a long query has no
   subject on one worker. So the bench no longer shows HANDLE-1 within a client off Chromium.
@@ -412,8 +414,7 @@ step 2 is what that exposed. Invariants in `mem:architecture`; campaigns in
 - **One commit on the branch, `c2ef918`, landed with a failing `tsc` past the hook** and was
   fixed by `e45f566`; every other commit was proved green in clean worktrees. See
   `mem:lessons` before trusting a hook or a subagent's "pre-existing". How it got past — not
-  a bypass; a commit created 25 s into a ~100 s hook — is traced in `mem:follow-ups` (the
-  pre-commit hook entry).
+  a bypass; a commit created 25 s into a ~100 s hook — is traced in `mem:git-hooks`.
 
 **What it does NOT deliver.** The savepoint variant. An eviction for any other reason — a
 crashed worker — still loses a memory database, as it always has. Four review minors were
