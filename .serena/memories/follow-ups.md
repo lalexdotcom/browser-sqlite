@@ -357,7 +357,6 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   searched yet (`gh` is available since 2026-09-28). Same shape as #361: an upstream PR plus a `patches/` carry.
   Also worth knowing: in that window a
   reader could read the pre-truncation file rather than fail, if its read wins the race.
-- **`drain()`'s `interrupt()` in `chunk()`'s `finally` (`src/queries.ts`) guards a path no test covers (2026-09-28).** With that call removed, the whole browser suite stays green on both engines. On an abort, `chunk()`'s abort listener reaches `reclaim()` first, and `reclaim()` interrupts too, so the `finally`'s call only matters when a consumer leaves WITHOUT a signal — a `break`/`return`/`throw` in a `for await` over `db.chunk`, or `firstWorker`. A falsifier needs the worker inside a long `step()` when the consumer leaves (on `sync`, only the abort slot reaches it): a fast first row, a slow second one, `chunkSize: 1`, break, then a bounded next read on a pool of one.
 - **Concurrency D-09 has no falsifier by construction.** Every VFS with an exclusive handle now runs
   one worker per client where that matters, so a second worker never reaches the init lock, and
   `OPFSAnyContextVFS` opens two connections at once without harm. The lock still serialises opens
