@@ -4,6 +4,8 @@
 
 [pr365]: https://github.com/rhashimoto/wa-sqlite/pull/365
 [answer]: https://github.com/rhashimoto/wa-sqlite/pull/365#issuecomment-5867434674
+[builds]: https://github.com/rhashimoto/wa-sqlite/pull/365#issuecomment-5874507146
+[others]: https://github.com/rhashimoto/wa-sqlite/pull/365#issuecomment-5874710379
 
 **Why this is here.** On `OPFSWriteAheadVFS`, one of the two VFS this library recommends, a read issued right after another worker's write resolved could return the database as it was before that write. The library's commit-propagation barrier hid it, but by timing only: remove the barrier and put the machine under load, and 37 of 616 probe tests read stale data on Chromium, against 0 with the barrier kept. The cause is in wa-sqlite's `WriteAhead.js`: a read transaction freezes a view that has not yet heard of the latest commit. Proposed upstream as [rhashimoto/wa-sqlite#365][pr365].
 
@@ -83,6 +85,14 @@ The bench is `test/zz-worst*` with its variants, kept outside the fork's tree in
 ### Revised: opt-in
 
 A second commit on the branch, `ac817fd6`, keeps master's behaviour by default. `WriteAhead` gains a `readToCurrent` option, `false` by default, and `isolateForRead()` reads the WAL to its end only when it is set; `PRAGMA read_to_current = 1` sets it per connection, and the bare pragma returns the current value, as `backstop_interval` does. The test sets the pragma in its worker. With it: 72 passed, 3 runs of 3, and the whole suite 5794 passed. With the pragma off, the test fails on both builds, `Expected 1 to be 2` — it still sees the race. Pushed and answered with the figures above in a [comment][answer], 2026-09-28.
+
+## Second exchange
+
+rhashimoto replied to the opt-in revision on 2026-09-28: he is thinking of renaming the pragma, and of how it should coexist with the backstop task, and will take time over it. Nothing is asked of us there; the library names the pragma in one place, `catchUpPragma`.
+
+He also asked why the timings covered asyncify and jspi but not the default, synchronous build, since `OPFSWriteAheadVFS` exposes only synchronous methods — and, if we took it for an asynchronous VFS, whether it has the retry problems we had found in `OPFSCoopSyncVFS`. The builds followed his suite: `OPFSWriteAheadVFS.test.js` runs asyncify and jspi only, and `api.test.js` and `sql.test.js` list this VFS under their async builds, so the default build never runs it upstream. Timed since on that build, same setup: at 32 MB open, ~60 ms per read with the first revision and ~0 on master, as on asyncify (one run). Adding the default build to the PR's test was offered. [Answered][builds] the same day.
+
+The retry question turned up #350's class of leak — something acquired beside a failed acquisition and never released — in `OPFSWriteAheadVFS`'s open of its WAL files, reported in that answer, then in `AccessHandlePoolVFS` and, on Firefox, `OPFSAdaptiveVFS`, [reported][others] with PRs offered. That is a separate subject: its reproductions and this library's exposure are in `mem:follow-ups`, and it gets a report of its own if PRs follow.
 
 ## What stays ours
 
