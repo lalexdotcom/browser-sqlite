@@ -132,14 +132,13 @@ const OPEN_RETRY_BUDGET_MS = 2_500;
  * handle inside `xOpen` — where `createVfsInstance`'s retry cannot reach,
  * because the handle is taken per file, long after the VFS instance exists.
  *
- * Retried blind, and that is not a shortcut: wa-sqlite's `jOpen` catches the
- * acquisition failure, logs it to the worker's console and returns
- * `SQLITE_CANTOPEN` with no `lastError`, so nothing here can tell a held file
- * from any other refusal (measured 2026-09-18). What narrows it instead is the
- * declaration: only a VFS holding an EXCLUSIVE handle can be blocked by a
- * context that answers nothing, and only those retry at all. The cost is borne
- * by a genuine open failure on those VFS alone, which waits out the budget
- * before reporting — an error path, and a bounded one.
+ * Retried whatever the refusal. What narrows it is the declaration: only a VFS
+ * holding an EXCLUSIVE handle can be blocked by a context that answers
+ * nothing, and only those retry at all. The cost is borne by a genuine open
+ * failure on those VFS alone, which waits out the budget before reporting — an
+ * error path, and a bounded one. The cause reaches the caller through the
+ * VFS's `lastError`, which `OPFSCoopSyncVFS` sets on a failed acquisition
+ * since wa-sqlite #357.
  */
 const openWithRetry = async (
   sqlite: { open_v2: (file: string) => Promise<number> },

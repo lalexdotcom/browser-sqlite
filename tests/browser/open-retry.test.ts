@@ -11,13 +11,11 @@ import { databasePath } from '../../src/utils';
  * `mem:measurements`), while its Web Locks are released at once — so the
  * replacement worker meets a file held by a context that no longer answers
  * anything. Measured 2026-09-18 on `chromium · OPFSCoopSyncVFS/sync`: the open
- * dies with `WORKER_CRASHED: sqlite3_open_v2` — the base message is SQLite's
- * own `unable to open database file` since wa-sqlite #330, the rest is
- * unchanged — and the cause never reaches the
- * caller because wa-sqlite swallows it — `jOpen`'s asynchronous phase logs the
- * `NoModificationAllowedError` to the console, stores an invalid
- * `PersistentFile`, and the retried open returns `SQLITE_CANTOPEN` with no
- * `lastError`. Instrumented, the census said `held=none pending=none` (no lock
+ * dies with `WORKER_CRASHED` — `jOpen`'s asynchronous phase meets the
+ * `NoModificationAllowedError`, stores an invalid `PersistentFile`, and the
+ * retried open returns `SQLITE_CANTOPEN`. The error then reached nobody but
+ * the console; since wa-sqlite #357 it is kept in `lastError` and becomes the
+ * failure's cause. Instrumented, the census said `held=none pending=none` (no lock
  * anywhere: the holder is dead) and a replayed attempt on the same VFS instance
  * succeeded in 4-14 ms, 4 times out of 4.
  *

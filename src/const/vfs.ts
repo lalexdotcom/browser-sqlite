@@ -55,11 +55,12 @@ export type VFSCapability = {
    * `readwrite-unsafe` is used a second handle is granted regardless, and a
    * dead holder blocks nobody.
    *
-   * Declared rather than detected, because the error is not available where the
-   * decision has to be made: wa-sqlite's `jOpen` swallows it (measured
-   * 2026-09-18) and SQLite reports a bare `SQLITE_CANTOPEN`. Where the error IS
-   * available — VFS instantiation — `createVfsInstance` tests it directly and
-   * needs no declaration.
+   * Declared rather than detected: the retry decides on the failed
+   * `sqlite3_open_v2`, which reports a bare `SQLITE_CANTOPEN`, and does not
+   * read the cause the VFS keeps in `lastError` — set by `OPFSCoopSyncVFS` on a
+   * failed acquisition since wa-sqlite #357. Where the error comes back from
+   * the call itself — VFS instantiation — `createVfsInstance` tests it directly
+   * and needs no declaration.
    *
    * NOT declared for `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS`, which ask for
    * `readwrite-unsafe` and fall back to an exclusive handle only on an engine
