@@ -3,11 +3,13 @@ import { defineConfig, type ProjectConfig } from '@rstest/core';
 import { pluginSilenceWorkerHmrLogs } from './rstest.config';
 import {
   FIREFOX_FEATURES,
+  onUnmetFromEnv,
   targetLabel,
   targetsFromEnv,
 } from './tests/target-projects.ts';
 
 const targets = targetsFromEnv(process.env.BSQ_TEST_TARGETS, FIREFOX_FEATURES);
+const onUnmet = onUnmetFromEnv(process.env.BSQ_TEST_NEEDS);
 
 /**
  * The Firefox half of the browser suite.
@@ -42,7 +44,10 @@ export default defineConfig({
       // See rstest.config.ts: a teardown drains, and drainTimeout is 60 s.
       hookTimeout: 60000,
       source: {
-        define: { __BSQ_TEST_TARGET__: JSON.stringify(target) },
+        define: {
+          __BSQ_TEST_TARGET__: JSON.stringify(target),
+          __BSQ_TEST_NEEDS__: JSON.stringify(onUnmet),
+        },
       },
     })),
   ],

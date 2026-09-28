@@ -15,15 +15,15 @@ import { holdIn, makeRealm } from './helpers/realm';
 // test rather than the whole file at load.
 
 describe('inspectDatabase', () => {
-  it('reports nobody on a database nothing holds', async () => {
-    const { vfs: VFS } = pairFor(['shared-storage']);
+  it('reports nobody on a database nothing holds', async ({ skip }) => {
+    const { vfs: VFS } = pairFor(['shared-storage'], skip);
     const result = await inspectDatabase('nobody.db', { vfs: VFS });
     expect(result.clients).toEqual([]);
     expect(result.tabs).toBe(0);
   });
 
-  it('normalizes the file the way the client does', async () => {
-    const { vfs: VFS, build: BUILD } = pairFor(['shared-storage']);
+  it('normalizes the file the way the client does', async ({ skip }) => {
+    const { vfs: VFS, build: BUILD } = pairFor(['shared-storage'], skip);
     const db = createSQLiteClient('norm.db', { vfs: VFS, build: BUILD });
     onTestFinished(async () => {
       await db.close().catch(() => {});
@@ -34,8 +34,10 @@ describe('inspectDatabase', () => {
     expect(viaDotSlash.clients).toHaveLength(1);
   });
 
-  it('separates tabs and marks only the caller as sameTab', async () => {
-    const { vfs: VFS, build: BUILD } = pairFor(['shared-storage']);
+  it('separates tabs and marks only the caller as sameTab', async ({
+    skip,
+  }) => {
+    const { vfs: VFS, build: BUILD } = pairFor(['shared-storage'], skip);
     const file = 'two-tabs.db';
     const db = createSQLiteClient(file, { vfs: VFS, build: BUILD });
     onTestFinished(async () => {
@@ -66,8 +68,10 @@ describe('inspectDatabase', () => {
     );
   });
 
-  it('drops a marker whose realm was torn down without closing', async () => {
-    const { vfs: VFS } = pairFor(['shared-storage']);
+  it('drops a marker whose realm was torn down without closing', async ({
+    skip,
+  }) => {
+    const { vfs: VFS } = pairFor(['shared-storage'], skip);
     const file = 'torn-down.db';
     const foreign = clientMarkerName(
       VFS,

@@ -1,7 +1,6 @@
 import { describe, expect, it } from '@rstest/core';
 import { SQLITE_CODES } from '../../src/const/sqlite';
-import { createTestClient } from './helpers';
-import type { Need } from './target';
+import { createTestClient, type Needing } from './helpers';
 
 /**
  * docs/superpowers/specs/2026-09-11-tx-savepoint-design.md: a statement the
@@ -22,7 +21,7 @@ type Debuggable = { debug: { workers: { creationTime: number }[] } };
 const workerIdentity = (db: unknown) =>
   (db as Debuggable).debug.workers.map((w) => w.creationTime).join(',');
 
-const setUp = async (options: { needs?: readonly Need[] } = {}) => {
+const setUp = async (options: Needing = {}) => {
   const db = await createTestClient({ ...options, poolSize: 1, debug: true });
   await db.write('CREATE TABLE t (a INTEGER)');
   await db.write('CREATE TABLE big (x INTEGER)');
@@ -205,8 +204,10 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
   // start the savepointed write with `{ ...given, signal: undefined }` in
   // `settled` — the death then cannot cut it and transaction() waits for the
   // whole write.
-  it('cuts the write, keeps nothing, and aborts tx.signal when the rejection escapes (T3)', async () => {
-    const db = await setUp({ needs: ['interruptible'] });
+  it('cuts the write, keeps nothing, and aborts tx.signal when the rejection escapes (T3)', async ({
+    skip,
+  }) => {
+    const db = await setUp({ needs: ['interruptible'], skip });
     try {
       const natural = await timed(() => db.write(HUGE_INSERT));
       await db.write('DELETE FROM big');
@@ -245,8 +246,10 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
   // the transaction rejects against its own 150 ms timeout, not whether the
   // background write was cut. `needs: ['interruptible']` stays: the subject is
   // a build that can cut a step.
-  it("cuts an abandoned write when the transaction's own timeout expires (T4)", async () => {
-    const db = await setUp({ needs: ['interruptible'] });
+  it("cuts an abandoned write when the transaction's own timeout expires (T4)", async ({
+    skip,
+  }) => {
+    const db = await setUp({ needs: ['interruptible'], skip });
     try {
       const natural = await timed(() => db.write(HUGE_INSERT));
       await db.write('DELETE FROM big');

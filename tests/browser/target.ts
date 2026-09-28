@@ -128,28 +128,51 @@ const pairsOf = (vfs: SQLiteVFS): TestTarget[] =>
   }));
 
 /**
- * The pair a test runs on, or `null`:
- *
- * 1. A target this browser cannot run is not runnable — `null`, no fallback.
- *    Otherwise a matrix would report green a pair that never ran.
- * 2. A target that has every need is the pair.
- * 3. Otherwise the first pair that runs here and has every need: the target's
- *    VFS on its other builds, then each recommended VFS, then every other VFS
- *    on the target's `storage`, then every remaining VFS — each group in
- *    `VFS_CAPABILITIES` order, each VFS on its builds in declared order. The
- *    `storage` step keeps an OPFS test on OPFS: without `readwrite-unsafe` a
- *    two-worker test lands on OPFSAnyContextVFS, not on IDBBatchAtomicVFS,
- *    which precedes it in key order.
- *
- * Never a skip: a test whose need the target lacks still runs, on the nearest
- * pair of this browser that has it.
+ * What a test whose need the target lacks does (spec 2026-09-15, A7):
+ * `fallback` runs it on the nearest pair of this browser that has the need,
+ * `skip` skips it. `pnpm test` falls back so that no engine loses coverage;
+ * the matrix skips, since every pair a fallback could reach is a cell of its
+ * own there, and a fallback would only report its failures under another name.
  */
-export const resolvePair = (
+export type OnUnmetNeed = 'fallback' | 'skip';
+
+/**
+ * The pair a test runs on, `'skip'`, or `null`:
+ *
+ * 1. A target this browser cannot run is not runnable — `null`, no fallback
+ *    and no skip. Otherwise a matrix would report green a pair that never ran.
+ * 2. A target that has every need is the pair.
+ * 3. Under `skip`, anything else is `'skip'`.
+ * 4. Under `fallback`, the first pair that runs here and has every need: the
+ *    target's VFS on its other builds, then each recommended VFS, then every
+ *    other VFS on the target's `storage`, then every remaining VFS — each
+ *    group in `VFS_CAPABILITIES` order, each VFS on its builds in declared
+ *    order. The `storage` step keeps an OPFS test on OPFS: without
+ *    `readwrite-unsafe` a two-worker test lands on OPFSAnyContextVFS, not on
+ *    IDBBatchAtomicVFS, which precedes it in key order.
+ */
+export function resolvePair(
   target: TestTarget,
   needs: readonly Need[],
   here: Here,
-): TestTarget | null => {
+  onUnmet?: 'fallback',
+): TestTarget | null;
+export function resolvePair(
+  target: TestTarget,
+  needs: readonly Need[],
+  here: Here,
+  onUnmet: OnUnmetNeed,
+): TestTarget | 'skip' | null;
+export function resolvePair(
+  target: TestTarget,
+  needs: readonly Need[],
+  here: Here,
+  onUnmet: OnUnmetNeed = 'fallback',
+): TestTarget | 'skip' | null {
   if (!runsHere(target, here)) return null;
+  const satisfies = (pair: TestTarget): boolean =>
+    runsHere(pair, here) && needs.every((need) => holds(need, pair, here));
+  if (onUnmet === 'skip') return satisfies(target) ? target : 'skip';
   const { storage } = VFS_CAPABILITIES[target.vfs];
   const sameStorage = ALL_VFS.filter(
     (vfs) => VFS_CAPABILITIES[vfs].storage === storage,
@@ -161,9 +184,6 @@ export const resolvePair = (
       ...RECOMMENDED_VFS.flatMap(pairsOf),
       ...sameStorage.flatMap(pairsOf),
       ...ALL_VFS.flatMap(pairsOf),
-    ].find(
-      (pair) =>
-        runsHere(pair, here) && needs.every((need) => holds(need, pair, here)),
-    ) ?? null
+    ].find(satisfies) ?? null
   );
-};
+}

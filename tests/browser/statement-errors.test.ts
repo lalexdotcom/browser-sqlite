@@ -5,7 +5,7 @@ import type { SQLiteVFS } from '../../src/const/vfs';
 import { SQLiteError } from '../../src/types/errors';
 import { databasePath } from '../../src/utils';
 import { removeOpfsPath } from '../conformance/helpers';
-import { createTestClient, pairFor } from './helpers';
+import { createTestClient, pairFor, type Skip } from './helpers';
 
 /**
  * docs/superpowers/specs/2026-09-14-statement-errors-design.md: a statement
@@ -225,7 +225,7 @@ describe('a file that is not a database', () => {
    * a memory one has nothing at all — on those three, the garbage is simply
    * never read and a healthy empty database opens instead.
    */
-  const opfsPair = () => pairFor(['opfs-file']);
+  const opfsPair = (skip: Skip) => pairFor(['opfs-file'], skip);
 
   /** An OPFS file of 4 KiB of 'A' — what a VFS with a folder opens at its path. */
   const garbageFile = async (vfs: SQLiteVFS) => {
@@ -247,8 +247,10 @@ describe('a file that is not a database', () => {
   // The target declares no default pragma, so a `pragmas` entry is what makes
   // the open read the file. Falsifiable: drop `sqliteCode` from the
   // WORKER_CRASHED built in startupError.
-  it('fails the open with WORKER_CRASHED carrying NOTADB when a pragma reads it', async () => {
-    const pair = opfsPair();
+  it('fails the open with WORKER_CRASHED carrying NOTADB when a pragma reads it', async ({
+    skip,
+  }) => {
+    const pair = opfsPair(skip);
     const { file, remove } = await garbageFile(pair.vfs);
     const db = createSQLiteClient(file, {
       vfs: pair.vfs,
@@ -270,8 +272,10 @@ describe('a file that is not a database', () => {
 
   // Without one, the open is lazy and succeeds: the first statement that
   // reads the schema is what fails.
-  it('fails the first statement with STATEMENT_FAILED when nothing reads it at open', async () => {
-    const pair = opfsPair();
+  it('fails the first statement with STATEMENT_FAILED when nothing reads it at open', async ({
+    skip,
+  }) => {
+    const pair = opfsPair(skip);
     const { file, remove } = await garbageFile(pair.vfs);
     const db = createSQLiteClient(file, {
       vfs: pair.vfs,

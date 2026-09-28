@@ -123,7 +123,12 @@ engine switch is ever reintroduced.
 **Since 2026-09-15 each browser config declares one project PER TARGET, not one project.** A target is a
 (vfs, build) pair, injected into the test code through `source.define` as `__BSQ_TEST_TARGET__`; a test
 that names no VFS runs on it, and `tests/browser/target.ts`'s `resolvePair` falls back to another pair
-when the test declares a `needs` the target cannot meet. `pnpm test` therefore runs
+when the test declares a `needs` the target cannot meet — **except under `BSQ_TEST_NEEDS=skip`, which
+`pnpm test:matrix` sets on every cell since 2026-09-27: there the test is skipped**, since every pair a
+fallback could reach is a cell of its own, and a fallback only reported its failures under another
+pair's name (spec 2026-09-15, A7). rstest skips a running test only through its own `ctx.skip()`, so a
+test that declares `needs` passes `skip` with them (`createTestClient({ needs, skip })`,
+`pairFor(needs, skip)`); the types refuse one without the other. `pnpm test` therefore runs
 `<engine> · OPFSWriteAheadVFS/sync` and `<engine> · OPFSAdaptiveVFS/async` per config —
 **project filters must be globs** (`--project 'chromium*'`), rstest's filter being anchored.
 `BSQ_TEST_TARGETS` overrides the list (`all`, or a comma list of `vfs/build`), and `pnpm test:matrix`

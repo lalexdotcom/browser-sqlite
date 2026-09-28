@@ -2,12 +2,15 @@ import { describe, expect, it } from '@rstest/core';
 import { createTestClient, longQuery } from './helpers';
 
 describe('query timeout', () => {
-  it('rejects with OPERATION_TIMEOUT and leaves the client usable', async () => {
+  it('rejects with OPERATION_TIMEOUT and leaves the client usable', async ({
+    skip,
+  }) => {
     // Needs interruptible: without it the next read would wait out the whole
     // query — 4 s on Chromium, 22 s on Firefox, past this test's 30 s on a CI
     // runner (mem:measurements, CI-QUERY-TIMEOUT).
     const db = await createTestClient({
       needs: ['interruptible'],
+      skip,
       poolSize: 1,
     });
     try {
@@ -36,11 +39,14 @@ describe('query timeout', () => {
     }
   });
 
-  it('spends the budget over the whole call, not per statement', async () => {
+  it('spends the budget over the whole call, not per statement', async ({
+    skip,
+  }) => {
     // Needs interruptible: so the write is really cut and close() does not
     // wait it out (mem:measurements, CI-QUERY-TIMEOUT).
     const db = await createTestClient({
       needs: ['interruptible'],
+      skip,
       poolSize: 1,
     });
     try {
@@ -89,11 +95,12 @@ describe('query timeout', () => {
     }
   });
 
-  it('lets the caller signal win, with its own reason', async () => {
+  it('lets the caller signal win, with its own reason', async ({ skip }) => {
     // Needs interruptible: the abandoned long query must not keep close()
     // waiting for its natural length after the signal wins.
     const db = await createTestClient({
       needs: ['interruptible'],
+      skip,
       poolSize: 1,
     });
     try {
@@ -115,7 +122,7 @@ describe('query timeout', () => {
     }
   });
 
-  it('spends the budget while the call is still queued', async () => {
+  it('spends the budget while the call is still queued', async ({ skip }) => {
     // Needs interruptible: a statement yields only when it is abortable, so an
     // unsignalled holder keeps its worker to its natural end without it, and
     // close() waits it out — 31.6 s on Firefox, 22 s on the `sync` build, past
@@ -123,6 +130,7 @@ describe('query timeout', () => {
     // the end, as in concurrency.test.ts.
     const db = await createTestClient({
       needs: ['interruptible'],
+      skip,
       poolSize: 1,
     });
     try {

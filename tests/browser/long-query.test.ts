@@ -18,13 +18,16 @@ describe('a long single step', () => {
   // Falsifiable: drop the abort from the race in chunk() and go back to testing
   // `aborted` after the await — the rejection then waits for the sort to finish
   // and this exceeds its budget.
-  it('gives the caller back control at the moment the signal fires', async () => {
+  it('gives the caller back control at the moment the signal fires', async ({
+    skip,
+  }) => {
     // A second worker must be free to answer while the first is inside the
     // long sort, so the pair has to keep two (spec 2026-09-15, A5).
     // Interruptible too: uncut, the teardown drains the whole 20M-row query.
     const db = await createTestClient({
       poolSize: 2,
       needs: ['two-workers', 'interruptible'],
+      skip,
     });
     const started = performance.now();
     await expect(
@@ -38,14 +41,16 @@ describe('a long single step', () => {
   // Falsifiable: remove the `interrupt()` call in chunk()'s finally — without
   // it the worker transitions RUNNING → READY without passing through ABORTING,
   // so the ABORTING status check fails.
-  it('does not terminate the worker it abandoned', async () => {
+  it('does not terminate the worker it abandoned', async ({ skip }) => {
     const records = interceptWorkers();
     const db = await createTestClient({
       // Both workers must stay alive: needs two-workers so a target that caps
       // the pool without readwrite-unsafe (spec 2026-09-13, §10) falls back to
-      // a pair that keeps two (spec 2026-09-15, A5).
+      // a pair that keeps two, or is skipped under the matrix (spec
+      // 2026-09-15, A5, A7).
       // Interruptible too: uncut, the teardown drains the whole 20M-row query.
       needs: ['two-workers', 'interruptible'],
+      skip,
       poolSize: 2,
       drainTimeout: 60_000,
       debug: true,

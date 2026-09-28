@@ -5,7 +5,8 @@ import { createTestClient, interceptWorkers, sleep } from './helpers';
  * Every test here drives two statements against two workers, so it declares
  * two-workers rather than merely asking for `poolSize: 2`: a target that caps
  * the pool without readwrite-unsafe (spec 2026-09-13, §10) falls back to a
- * pair of this browser that keeps two (spec 2026-09-15, A5). Pinning the size
+ * pair of this browser that keeps two, or is skipped under the matrix (spec
+ * 2026-09-15, A5, A7). Pinning the size
  * alone refused the client outright on the five capped VFS.
  */
 const TWO_WORKERS = { poolSize: 2, needs: ['two-workers'] } as const;
@@ -30,8 +31,8 @@ const SEED =
  * the trip is deterministic rather than a race.
  */
 describe('a statement following a short-circuited statement in the same callback', () => {
-  it('follows tx.first()', async () => {
-    const db = await createTestClient(TWO_WORKERS);
+  it('follows tx.first()', async ({ skip }) => {
+    const db = await createTestClient({ ...TWO_WORKERS, skip });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -55,8 +56,8 @@ describe('a statement following a short-circuited statement in the same callback
     }
   }, 30_000);
 
-  it('follows a tx.chunk() broken out of mid-callback', async () => {
-    const db = await createTestClient(TWO_WORKERS);
+  it('follows a tx.chunk() broken out of mid-callback', async ({ skip }) => {
+    const db = await createTestClient({ ...TWO_WORKERS, skip });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -84,8 +85,8 @@ describe('a statement following a short-circuited statement in the same callback
     }
   }, 30_000);
 
-  it('follows a tx.read() aborted by its own signal', async () => {
-    const db = await createTestClient(TWO_WORKERS);
+  it('follows a tx.read() aborted by its own signal', async ({ skip }) => {
+    const db = await createTestClient({ ...TWO_WORKERS, skip });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -139,8 +140,10 @@ describe('the boundary of that wait', () => {
    * would serve as well. Nothing signals a drop, which is why the
    * FinalizationRegistry exists and why it is documented as best effort.
    */
-  it('makes a statement after a dropped generator wait for its own bound', async () => {
-    const db = await createTestClient(TWO_WORKERS);
+  it('makes a statement after a dropped generator wait for its own bound', async ({
+    skip,
+  }) => {
+    const db = await createTestClient({ ...TWO_WORKERS, skip });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -172,8 +175,10 @@ describe('the boundary of that wait', () => {
    * close the dropped generator, and that runs at the end of a callback which
    * is itself waiting.
    */
-  it('bounds a tx.chunk() queued behind a dropped generator', async () => {
-    const db = await createTestClient(TWO_WORKERS);
+  it('bounds a tx.chunk() queued behind a dropped generator', async ({
+    skip,
+  }) => {
+    const db = await createTestClient({ ...TWO_WORKERS, skip });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -209,10 +214,10 @@ describe('the boundary of that wait', () => {
    */
   // Falsifiable: comment out both closeOpenStatements() call sites in
   // src/transaction.ts — a worker is then evicted.
-  it('fails cleanly when the drop is never caught', async () => {
+  it('fails cleanly when the drop is never caught', async ({ skip }) => {
     const records = interceptWorkers();
     // Both workers must stay alive and unevicted here, not merely exist.
-    const db = await createTestClient(TWO_WORKERS);
+    const db = await createTestClient({ ...TWO_WORKERS, skip });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);

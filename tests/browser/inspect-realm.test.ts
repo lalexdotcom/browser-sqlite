@@ -18,12 +18,12 @@ describe('resolveRealmId', () => {
     expect(first).not.toBe('');
   });
 
-  it('matches the realm holding our own client marker', async () => {
+  it('matches the realm holding our own client marker', async ({ skip }) => {
     const file = 'realm-id.db';
     // A marker only reaches the registry for a database that outlives the
     // worker holding it: on a memory VFS there is nothing to mark, so the
     // pair resolver supplies the nearest pair of this browser that shares.
-    const pair = pairFor(['shared-storage']);
+    const pair = pairFor(['shared-storage'], skip);
     const db = createSQLiteClient(file, {
       vfs: pair.vfs,
       build: pair.build,

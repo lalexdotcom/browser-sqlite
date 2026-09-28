@@ -12,7 +12,25 @@ import type { SQLiteError } from '../../src/types/errors';
 import { databaseFiles, databasePath } from '../../src/utils';
 import { AVAILABLE_FEATURES, removeOpfsPath } from '../conformance/helpers';
 import { targetLabel } from '../target-projects';
-import { type Here, type Need, resolvePair, type TestTarget } from './target';
+import {
+  type Here,
+  type Need,
+  type OnUnmetNeed,
+  resolvePair,
+  type TestTarget,
+} from './target';
+
+/**
+ * The running test's `ctx.skip`. rstest skips a running test only through its
+ * own context, so a test that declares `needs` hands it over with them (spec
+ * 2026-09-15, A7).
+ */
+export type Skip = () => never;
+
+/** `needs` and `skip` travel together: the types refuse one without the other. */
+export type Needing =
+  | { needs?: undefined; skip?: undefined }
+  | { needs: readonly Need[]; skip: Skip };
 
 /**
  * Options for createTestClient. `vfs` pins the test to one VFS; without it the
@@ -21,10 +39,10 @@ import { type Here, type Need, resolvePair, type TestTarget } from './target';
  */
 type TestClientOptions = Omit<InternalSQLiteClientOptions, 'name' | 'vfs'> & {
   vfs?: SQLiteVFS;
-  needs?: readonly Need[];
-};
+} & Needing;
 
 declare const __BSQ_TEST_TARGET__: TestTarget | undefined;
+declare const __BSQ_TEST_NEEDS__: OnUnmetNeed | undefined;
 
 /**
  * The target this project injects — `source.define` in the browser configs,
@@ -40,6 +58,20 @@ export const TEST_TARGET: TestTarget = (() => {
     );
   }
   return __BSQ_TEST_TARGET__;
+})();
+
+/**
+ * What a test whose need the target lacks does, injected beside the target —
+ * `fallback` unless `BSQ_TEST_NEEDS` says `skip`, which `pnpm test:matrix`
+ * does (spec 2026-09-15, A7). Missing is a configuration error, like the target.
+ */
+const ON_UNMET_NEED: OnUnmetNeed = (() => {
+  if (typeof __BSQ_TEST_NEEDS__ === 'undefined') {
+    throw new Error(
+      'ON_UNMET_NEED: this project injects no __BSQ_TEST_NEEDS__ (tests/target-projects.ts)',
+    );
+  }
+  return __BSQ_TEST_NEEDS__;
 })();
 
 /**
@@ -63,8 +95,9 @@ const HERE: Here = { features: AVAILABLE_FEATURES };
  * it runs on — two workers in the pool, an interruptible statement — is
  * declared in `needs`, never obtained by pinning: the test runs on the target
  * where the target has it here, otherwise on the nearest pair of this browser
- * that does (`resolvePair`, spec 2026-09-15, A5). No such pair is an error,
- * TARGET_NOT_RUNNABLE, never a skip.
+ * that does (`resolvePair`, spec 2026-09-15, A5), or is skipped under
+ * `BSQ_TEST_NEEDS=skip` (A7) — hence `skip` beside `needs`. A target this
+ * browser cannot run is an error, TARGET_NOT_RUNNABLE, never a skip.
  */
 /**
  * Removes a database file and every file a VFS keeps beside it — the three
@@ -84,30 +117,44 @@ export const removeDatabaseFiles = async (
 
 /**
  * The pair a test with these needs runs on — the target itself where it has
- * them, otherwise the nearest pair of this browser that does.
+ * them; otherwise the nearest pair of this browser that does, or a skip under
+ * `BSQ_TEST_NEEDS=skip`.
  *
  * Exported for the few tests that build their clients themselves (a foreign
  * realm, an intercepted worker, a pool size of its own): everything else takes
  * `createTestClient`, which calls this. Call it INSIDE the test, never at
  * module scope, so a target this browser cannot run fails that test with
- * TARGET_NOT_RUNNABLE instead of failing the file at load.
+ * TARGET_NOT_RUNNABLE instead of failing the file at load — and so that
+ * `skip` is the running test's own.
  */
-export const pairFor = (needs: readonly Need[] = []): TestTarget => {
-  const pair = resolvePair(TEST_TARGET, needs, HERE);
+export function pairFor(): TestTarget;
+export function pairFor(needs: readonly Need[], skip: Skip): TestTarget;
+export function pairFor(needs: readonly Need[] = [], skip?: Skip): TestTarget {
+  const pair = resolvePair(TEST_TARGET, needs, HERE, ON_UNMET_NEED);
   if (pair === null) {
     throw new Error(
       `TARGET_NOT_RUNNABLE: no pair of this browser runs ${targetLabel(TEST_TARGET)} with needs [${needs.join(', ')}]`,
     );
   }
-  return pair;
-};
+  if (pair !== 'skip') return pair;
+  // ctx.skip() takes no reason, so the report would not say why.
+  console.info(
+    `skipped: ${targetLabel(TEST_TARGET)} lacks [${needs.join(', ')}] here (BSQ_TEST_NEEDS=skip)`,
+  );
+  if (skip === undefined) {
+    throw new Error('pairFor: a need went unmet and no skip was handed over');
+  }
+  return skip();
+}
 
 export async function createTestClient(options: TestClientOptions = {}) {
   const dbName = `bsq-test-${crypto.randomUUID()}`;
-  const { needs = [], ...clientOptions } = options;
+  const { needs: _needs, skip: _skip, ...clientOptions } = options;
   const pair: TestTarget =
     options.vfs === undefined
-      ? pairFor(needs)
+      ? options.needs === undefined
+        ? pairFor()
+        : pairFor(options.needs, options.skip)
       : {
           vfs: options.vfs,
           build:

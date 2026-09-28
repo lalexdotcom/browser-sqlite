@@ -12,7 +12,8 @@
  *
  * Each cell is one `pnpm exec rstest --config <cfg> run` with
  * `BSQ_TEST_TARGETS=<vfs>/<build>` in the environment, which makes that config
- * build exactly one project for that pair. Raw output is kept under
+ * build exactly one project for that pair, and `BSQ_TEST_NEEDS=skip`, so that
+ * every test the cell reports ran on that pair. Raw output is kept under
  * `.matrix/<run>/<engine>-<vfs>-<build>.txt` (gitignored) for later reading;
  * the table only shows the parsed summary.
  *
@@ -237,7 +238,13 @@ function runOne(engine, pair, outFile) {
   ];
   return runBounded('pnpm', args, {
     cwd: ROOT,
-    env: { ...process.env, BSQ_TEST_TARGETS: `${pair.vfs}/${pair.build}` },
+    // `skip`: a test whose need this pair lacks is skipped rather than run on
+    // another pair, which is a cell of its own (spec 2026-09-15, A7).
+    env: {
+      ...process.env,
+      BSQ_TEST_TARGETS: `${pair.vfs}/${pair.build}`,
+      BSQ_TEST_NEEDS: 'skip',
+    },
     timeoutMs: RUN_TIMEOUT_MS,
   }).then(({ output, timedOut, error }) => {
     writeFileSync(outFile, output);

@@ -8,12 +8,15 @@ import {
 } from './helpers';
 
 describe('aborting a running statement', () => {
-  it('frees the worker, so the next query does not wait it out', async () => {
+  it('frees the worker, so the next query does not wait it out', async ({
+    skip,
+  }) => {
     // poolSize 1: the next query MUST land on the worker that was interrupted.
     const db = await createTestClient({
       poolSize: 1,
       debug: true,
       needs: ['interruptible'],
+      skip,
     });
     try {
       // Slow prime: run the query to completion so the statement is cached and
@@ -65,11 +68,14 @@ describe('aborting a running statement', () => {
     // `waitUntil` exists to prevent; the budget must not reintroduce it.
   }, 90_000);
 
-  it('still rejects immediately, without waiting for the worker', async () => {
+  it('still rejects immediately, without waiting for the worker', async ({
+    skip,
+  }) => {
     const db = await createTestClient({
       poolSize: 1,
       debug: true,
       needs: ['interruptible'],
+      skip,
     });
     try {
       // Fast-abort prime (same rationale as "frees the worker" above):
@@ -111,11 +117,12 @@ describe('aborting a running statement', () => {
     }
   });
 
-  it('leaves nothing broken behind', async () => {
+  it('leaves nothing broken behind', async ({ skip }) => {
     const db = await createTestClient({
       poolSize: 1,
       debug: true,
       needs: ['interruptible'],
+      skip,
     });
     try {
       await db.write('CREATE TABLE t (a INTEGER)');

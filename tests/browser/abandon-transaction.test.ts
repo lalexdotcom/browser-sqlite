@@ -10,7 +10,8 @@ import {
  * Every test here needs two workers alive and unevicted, so it declares
  * two-workers rather than merely asking for `poolSize: 2`: a target that caps
  * the pool without readwrite-unsafe (spec 2026-09-13, §10) falls back to a
- * pair of this browser that keeps two (spec 2026-09-15, A5). Pinning the size
+ * pair of this browser that keeps two, or is skipped under the matrix (spec
+ * 2026-09-15, A5, A7). Pinning the size
  * alone refused the client outright on the five capped VFS.
  */
 const TWO_WORKERS = { poolSize: 2, needs: ['two-workers'] } as const;
@@ -27,9 +28,9 @@ describe('an abandoned generator inside a transaction', () => {
   // ROLLBACK in turn, and gets the worker evicted — turning every assertion
   // below red. No CPU load and no flake needed: the trip is deterministic on
   // the current code, and its absence is deterministic with the fix.
-  it('commits, and evicts no worker', async () => {
+  it('commits, and evicts no worker', async ({ skip }) => {
     const records = interceptWorkers();
-    const db = await createTestClient(TWO_WORKERS);
+    const db = await createTestClient({ ...TWO_WORKERS, skip });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -60,8 +61,8 @@ describe('an abandoned generator inside a transaction', () => {
     }
   }, 30_000);
 
-  it('leaves a correct transaction untouched', async () => {
-    const db = await createTestClient(TWO_WORKERS);
+  it('leaves a correct transaction untouched', async ({ skip }) => {
+    const db = await createTestClient({ ...TWO_WORKERS, skip });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -87,11 +88,17 @@ describe('an abandoned generator inside a transaction', () => {
   // and no timeout is passed here, so nothing else cuts it: the transaction
   // never rejects, the lease never goes back, and the origin-wide write lock
   // is held throughout. This times out instead of finishing in seconds.
-  it('rejects when the callback leaves a next() in flight', async () => {
+  it('rejects when the callback leaves a next() in flight', async ({
+    skip,
+  }) => {
     // Short on purpose: the worker is inside one uninterruptible step() and
     // will answer no stop, so drainTimeout is what bounds the wait. That
     // bound is the whole point — see closeOpenStatements()'s JSDoc.
-    const db = await createTestClient({ ...TWO_WORKERS, drainTimeout: 2000 });
+    const db = await createTestClient({
+      ...TWO_WORKERS,
+      skip,
+      drainTimeout: 2000,
+    });
     try {
       const started = performance.now();
       await expect(

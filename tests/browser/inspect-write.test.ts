@@ -9,9 +9,9 @@ import { pairFor } from './helpers';
 // the target, declaring only that the database outlives its worker.
 
 describe('inspectDatabase write', () => {
-  it('is empty when nobody writes', async () => {
+  it('is empty when nobody writes', async ({ skip }) => {
     const result = await inspectDatabase('quiet.db', {
-      vfs: pairFor(['shared-storage']).vfs,
+      vfs: pairFor(['shared-storage'], skip).vfs,
     });
     expect(result.write).toEqual({ tab: null, sameTab: false, waiting: 0 });
   });
