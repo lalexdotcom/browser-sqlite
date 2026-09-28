@@ -26,6 +26,8 @@ been work on nothing.
 
 - 2026-09-28, in the reproduction campaign below: the real test once, `OPFSWriteAheadVFS/sync`, whole Firefox config with nothing else loaded.
 
+- 2026-09-28 evening, not seen: 30 whole Firefox config passes in a row on `main`, nothing else loaded, the stall report in place — 30 of 30 clean (the test ran 60 times, both targets).
+
 **Never on CI.** Green in every CI log since the test landed (2026-09-18); CI has not run since the last push (2026-09-22), and every sighting is later.
 
 **The hang is BEFORE the open under test (2026-09-28).** Both kept logs say `no expect assertions completed`, and the first `expect` is on `holder.take` — so what hangs is `creator.write`, `creator.close` or `holder.take`, never `db.read`/`openWithRetry` (whose 2.5 s budget would throw, not hang). The earlier lead — how long the open retries while the holder is armed — is refuted.
@@ -153,6 +155,8 @@ savepoint before opening its own.
 **Second sighting, same day, on `feat/vfs-folders`** — the same message on the same file in the Firefox leg of a full `pnpm test`, run by a subagent after the dot-folder change; the file alone 34/34, the full rerun green. **The log was not kept this time either.** Two sightings in one day, both under a full parallel run, both clean in isolation: the next one must be captured — keep `.scratchpad/` logs of every full run until it is.
 
 **Three more on 2026-09-28.** The whole Firefox config (its two default targets) with the `open-retry` probe files beside it, no busy loops: **3 crashes in 42 launches**, every one on `lifecycle.test.ts`, and each ends the whole run 20-50 s in, the remaining files never run. Where it can be told, the crashed page was `OPFSAdaptiveVFS/jspi` — the other target's `lifecycle` finished 17/17 in two of the three — and with the 2026-09-26 matrix cell on `IDBMirrorVFS/async` it is not tied to one VFS. In all three the file's last lines are in the "startup readiness gate" group, but both projects' lines interleave in one log, so which test was running when the page died is not established.
+
+**Not seen without the extra pages (2026-09-28 evening).** 30 whole Firefox config passes in a row on `main`, nothing beside them, `--reporter verbose --reporter md` to keep the per-test lines: 0 crashes in 30 (57 files, 750 passed each, 91-93 s). The 3 in 42 were all launched with the `open-retry` probe files beside the config — more pages at once — so page count, not the file, is the lead. To catch one with its context, re-add pages (copies of test files) under the same reporters.
 
 
 ## The rstest/Firefox silent hang — CAUSE FOUND 2026-09-16, fix not taken
