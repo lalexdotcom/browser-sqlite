@@ -44,7 +44,7 @@ const countBarrierStatements = (
   (db.debug?.workers ?? [])
     .flatMap((worker) => worker.requests)
     .flatMap((request) => request.queries)
-    .filter((query) => query.sql === BARRIER_SQL).length;
+    .filter((query) => query.sql.includes(BARRIER_SQL)).length;
 
 describe('an epoch published by another realm', () => {
   // poolSize: 1 makes the control direction deterministic: after the writes

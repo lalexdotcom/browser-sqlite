@@ -1,6 +1,7 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { BARRIER_SQL } from '../../src/epochs';
+import { HAS_UNSAFE_HANDLES } from '../conformance/helpers';
 import { createTestClient, removeDatabaseFiles } from './helpers';
 
 /**
@@ -29,7 +30,7 @@ const countBarrierStatements = (
   (db.debug?.workers ?? [])
     .flatMap((worker) => worker.requests)
     .flatMap((request) => request.queries)
-    .filter((query) => query.sql === BARRIER_SQL).length;
+    .filter((query) => query.sql.includes(BARRIER_SQL)).length;
 
 describe('commit-propagation barrier', () => {
   // Falsifiable: in src/worker/worker.ts, read `column_names(stmt)` before the
@@ -188,5 +189,43 @@ describe('barrier — two clients in one tab', () => {
 
     const rows = await b.read<{ new_col: number }>('SELECT * FROM t');
     expect(rows[0]?.new_col).toBe(42);
+  });
+});
+
+describe('catch-up pragma', () => {
+  // One VFS: the subject is OPFSWriteAheadVFS's catchUpPragma. A barrier needs
+  // a second worker, which this VFS has only with readwrite-unsafe.
+  // Falsifiable: drop the closing `PRAGMA read_to_current=0` in barrierSqlFor —
+  // the worker that paid the barrier then reads 1, and every later read on it
+  // scans the write-ahead to its end.
+  it('closes the pragma the barrier opens on OPFSWriteAheadVFS', async ({
+    skip,
+  }) => {
+    if (!HAS_UNSAFE_HANDLES) return skip();
+    const db = await createTestClient({
+      vfs: 'OPFSWriteAheadVFS',
+      poolSize: 2,
+      __unsafeTestWriterPolicy: (i: number) => i !== 0,
+      debug: true,
+    });
+
+    await db.write('CREATE TABLE t (a)');
+    // Two at once, so one lands on worker 0, which the write left behind.
+    const modes = await Promise.all([
+      db.read<Record<string, string>>('PRAGMA read_to_current'),
+      db.read<Record<string, string>>('PRAGMA read_to_current'),
+    ]);
+
+    expect(countBarrierStatements(db)).toBeGreaterThan(0);
+    const barriers = (db.debug?.workers ?? [])
+      .flatMap((worker) => worker.requests)
+      .flatMap((request) => request.queries)
+      .filter((query) => query.sql.includes(BARRIER_SQL));
+    for (const barrier of barriers)
+      expect(barrier.sql).toContain('PRAGMA read_to_current=1');
+    expect(modes.map((rows) => Object.values(rows[0] ?? {})[0])).toEqual([
+      '0',
+      '0',
+    ]);
   });
 });

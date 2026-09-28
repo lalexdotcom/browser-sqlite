@@ -13,7 +13,7 @@
  * changes — bumping it per release recreates the fragmentation it prevents.
  */
 
-import type { SQLiteVFS } from './const/vfs';
+import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import type { Locks } from './locks';
 
 /**
@@ -27,6 +27,20 @@ import type { Locks } from './locks';
  * the refresh still returns the stale result.
  */
 export const BARRIER_SQL = 'SELECT count(*) FROM sqlite_master';
+
+/**
+ * The barrier as this client sends it: bracketed by the VFS's catch-up pragma,
+ * so the one read that follows a commit sees it and user reads stay unaffected.
+ * A consumer who sets that pragma themselves keeps their choice.
+ */
+export const barrierSqlFor = (
+  vfs: SQLiteVFS,
+  pragmas: Readonly<Record<string, string>>,
+): string => {
+  const pragma = VFS_CAPABILITIES[vfs].catchUpPragma;
+  if (pragma === null || pragma in pragmas) return BARRIER_SQL;
+  return `PRAGMA ${pragma}=1; ${BARRIER_SQL}; PRAGMA ${pragma}=0`;
+};
 
 /**
  * The marker a realm holds to publish the epoch it last committed.
