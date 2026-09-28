@@ -48,6 +48,9 @@ import { databasePath } from '../../src/utils';
  * between the announcement and the release, so an open that gives up inside it
  * stays red. The measured need is far smaller (4-14 ms); nothing here argues
  * for a large budget.
+ *
+ * **A hang fails naming its step**, with the holder's progress and both pools'
+ * debug state; `mem:follow-ups` (`open-retry`) says what each step means.
  */
 
 const VFS = 'OPFSCoopSyncVFS';
@@ -57,6 +60,8 @@ const GRACE_MS = 30;
 const ANNOUNCE_TIMEOUT_MS = 1_000;
 /** How long the holder waits out a handle the previous client has not released. */
 const TAKE_BUDGET_MS = 3_000;
+/** Under the 30 s test timeout, so a hang fails naming its step, not bare. */
+const STALL_MS = 25_000;
 
 /**
  * Holds an exclusive OPFS access handle on a file until told to release it.
@@ -66,12 +71,14 @@ const TAKE_BUDGET_MS = 3_000;
 const exclusiveHolder = () => {
   const src = `
     let handle = null;
+    const step = (name) => self.postMessage({ step: name, t: performance.now() });
     const release = () => {
       if (!handle) return;
       try { handle.close(); } catch {}
       handle = null;
       self.postMessage('released');
     };
+    step('booted');
     self.onmessage = async (event) => {
       const { type, file, graceMs, timeoutMs, takeBudgetMs } = event.data;
       if (type !== 'take') return;
@@ -86,14 +93,19 @@ const exclusiveHolder = () => {
         try {
           const segments = file.split('/');
           const name = segments.pop();
+          step('getDirectory');
           let dir = await navigator.storage.getDirectory();
           for (const segment of segments) {
             dir = await dir.getDirectoryHandle(segment, { create: true });
           }
+          step('getFileHandle');
           const fileHandle = await dir.getFileHandle(name, { create: true });
+          step('createSyncAccessHandle');
           handle = await fileHandle.createSyncAccessHandle();
+          step('held');
           break;
         } catch (e) {
+          step('caught ' + e.name);
           if (e.name !== 'NoModificationAllowedError' || Date.now() >= deadline) {
             self.postMessage('failed: ' + e.name);
             return;
@@ -108,6 +120,7 @@ const exclusiveHolder = () => {
       const arm = () => {
         if (armed) return;
         armed = true;
+        step('armed');
         setTimeout(() => {
           channel.close();
           release();
@@ -122,15 +135,28 @@ const exclusiveHolder = () => {
     new Blob([src], { type: 'application/javascript' }),
   );
   const worker = new Worker(url);
+  // Each step the holder reaches, with the page's clock, for a stall's report.
+  const steps: string[] = [];
+  const t0 = performance.now();
+  worker.addEventListener(
+    'message',
+    (e: MessageEvent<string | { step: string; t: number }>) => {
+      if (typeof e.data !== 'string') {
+        steps.push(`${e.data.step} +${Math.round(performance.now() - t0)}ms`);
+      }
+    },
+  );
   const once = (): Promise<string> =>
     new Promise((resolve) => {
-      worker.addEventListener(
-        'message',
-        (e: MessageEvent<string>) => resolve(e.data),
-        { once: true },
-      );
+      const onMessage = (e: MessageEvent<unknown>) => {
+        if (typeof e.data !== 'string') return;
+        worker.removeEventListener('message', onMessage);
+        resolve(e.data);
+      };
+      worker.addEventListener('message', onMessage);
     });
   return {
+    steps,
     take: async (file: string) => {
       const answer = once();
       worker.postMessage({
@@ -149,23 +175,90 @@ const exclusiveHolder = () => {
   };
 };
 
+type Client = ReturnType<typeof createSQLiteClient>;
+
+/** A client's pool as its debug state sees it: which workers opened, and the queue. */
+const poolState = (client: Client | undefined): string => {
+  const state = client?.debug;
+  if (!state) return 'not created';
+  const workers = state.workers.map(
+    (w) =>
+      `worker ${w.index} ${w.status}` +
+      (w.initializationTime === undefined ? ', never initialized' : '') +
+      // `currentRequest` outlives its release, so only a missing `releaseTime`
+      // means the request is still running.
+      (w.currentRequest && w.currentRequest.releaseTime === undefined
+        ? ', a request in flight'
+        : ''),
+  );
+  const { read, write, gated } = state.queue;
+  return `${workers.join('; ') || 'no worker'}; queue read ${read} write ${write} gated ${gated}`;
+};
+
+/**
+ * Races each step against one deadline under the test timeout, so a hang
+ * fails with the step it hung in and `report()` taken at that moment.
+ */
+const stepsUnder = (report: () => string) => {
+  const deadline = performance.now() + STALL_MS;
+  const done: string[] = [];
+  return async <T>(name: string, work: Promise<T>): Promise<T> => {
+    const began = performance.now();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const stalled = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => {
+          const ms = Math.round(performance.now() - began);
+          const before = done.join(', ') || 'nothing';
+          reject(
+            new Error(
+              `stalled in ${name} for ${ms} ms; done: ${before}; ${report()}`,
+            ),
+          );
+        },
+        Math.max(0, deadline - began),
+      );
+    });
+    try {
+      const value = await Promise.race([work, stalled]);
+      done.push(`${name} ${Math.round(performance.now() - began)}ms`);
+      return value;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+};
+
 describe('opening a database whose file is momentarily held', () => {
   it('succeeds once the holder lets go', async () => {
     const dbName = `bsq-test-${crypto.randomUUID()}`;
+    let creator: Client | undefined;
+    let holder: ReturnType<typeof exclusiveHolder> | undefined;
+    let db: Client | undefined;
+    const step = stepsUnder(
+      () =>
+        `holder: ${holder ? holder.steps.join(' > ') || 'no step' : 'not started'}` +
+        `; creator: ${poolState(creator)}; db: ${poolState(db)}`,
+    );
 
     // Create the database, so the open under test is an ordinary reopen.
-    const creator = createSQLiteClient(dbName, { vfs: VFS });
-    await creator.write('CREATE TABLE t (a)');
-    await creator.close();
+    creator = createSQLiteClient(dbName, { vfs: VFS, debug: 'creator' });
+    await step('creator.write', creator.write('CREATE TABLE t (a)'));
+    await step('creator.close', creator.close());
 
-    const holder = exclusiveHolder();
-    expect(await holder.take(databasePath(VFS, dbName))).toBe('taken');
+    holder = exclusiveHolder();
+    expect(
+      await step('holder.take', holder.take(databasePath(VFS, dbName))),
+    ).toBe('taken');
 
-    const db = createSQLiteClient(dbName, { vfs: VFS });
+    db = createSQLiteClient(dbName, { vfs: VFS, debug: 'db' });
     // Not awaited before the holder is armed: the open has to start while the
     // handle is still held.
     try {
-      const rows = await db.read<{ n: number }>('SELECT 1 AS n');
+      const rows = await step(
+        'db.read',
+        db.read<{ n: number }>('SELECT 1 AS n'),
+      );
       expect(rows[0]?.n).toBe(1);
     } finally {
       holder.dispose();
