@@ -24,7 +24,21 @@ been work on nothing.
 - 2026-09-27, once in ten whole-config Firefox passes under sixteen busy loops (REUSE-LOAD).
 - 2026-09-28, the pre-merge hook of `test/needs-skip-in-matrix` with nothing else running, `OPFSWriteAheadVFS/sync`. The branch touches no open path and the test declares no `needs`; the same cell had passed in the branch's `pnpm test` and full matrix hours before. Alone on that cell right after: 5 of 5 green; the merge passed on its second attempt.
 
-**The lead so far:** how long the open retries while the holder is armed, on Firefox — and whether the holder's release can land while no retry is waiting for it. Load raises the rate without being required (two sightings with nothing else running), so a reproduction probably has to control the timing rather than rely on busy loops.
+- 2026-09-28, in the reproduction campaign below: the real test once, `OPFSWriteAheadVFS/sync`, whole Firefox config with nothing else loaded.
+
+**Never on CI.** Green in every CI log since the test landed (2026-09-18); CI has not run since the last push (2026-09-22), and every sighting is later.
+
+**The hang is BEFORE the open under test (2026-09-28).** Both kept logs say `no expect assertions completed`, and the first `expect` is on `holder.take` — so what hangs is `creator.write`, `creator.close` or `holder.take`, never `db.read`/`openWithRetry` (whose 2.5 s budget would throw, not hang). The earlier lead — how long the open retries while the holder is armed — is refuted.
+
+**Not reproducible on demand by volume** (`.scratchpad/open-retry-probe-2026-09-28/`): the test's body looped in one page, ~7 000 bounded cycles alone and beside the suite, 0 stalls; instrumented copies of the test (one run per page, its real place) beside the whole Firefox config, 240 runs, 0; the same under sixteen busy loops, 280 runs (copies and the real test), 0. One stall in ~590 real-shaped runs, and load did not raise it. Under load every step stays far inside its budget (`holder.take` p99 463 ms, max 1 005 ms; `creator.write` max 4.2 s).
+
+**The test now names its stall** (on `main` since 2026-09-28): every await raced against one deadline at 25 s, the failure reading `stalled in <step> … done: <steps before> … holder: <steps reached> … creator: … db: <pool debug state>`. Checked by sabotage — a `getDirectory` that never settles in the holder reports `stalled in holder.take … holder: booted > getDirectory`. **At the next sighting, read the step:**
+- `holder.take`, holder last at `getDirectory` — the Firefox engine hang (`getDirectory()` never settles in a worker, the rstest/Firefox silent hang entry). Test-side: the holder must bound its worker and replace it, as the conformance probe does (`6560c9e`).
+- `holder.take`, holder last at `createSyncAccessHandle` — Firefox neither grants nor rejects a handle the just-closed client still holds. Test-side: the holder bounds that wait itself.
+- `holder.take`, `no step` — the blob worker never booted.
+- `creator.write`, a worker `never initialized` — a fresh worker's open never finishes, and nothing in the client bounds a worker's startup (not verified beyond a grep): a consumer would hang the same way. Product-side — instrument the worker's boot next.
+- `creator.close` — the drain never ends; the close path.
+- `db.read` — the open under test after all; `openWithRetry` and `OPFSCoopSyncVFS`'s lock.
 
 ## `vfs-folders` "opens and persists a path exactly at the bound" failed once on Firefox IDBBatchAtomicVFS/jspi (2026-09-27)
 
@@ -118,11 +132,17 @@ savepoint before opening its own.
 
 `feat/db-ready` made each column header show the pool it ran on once `db.ready` resolves. `check.mjs` verified it on Chromium and Firefox (Firefox exports `poolSize` 1 for the `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` pairs). On Safari the `OPFSAdaptiveVFS` columns should read `pool 4 → 1`; the user has not run it yet (serve from the container, `mem:conventions`).
 
+## `db.debug`: a worker's `currentRequest` is never cleared (2026-09-28)
+
+`createClientDebug`'s `assign` sets `worker.currentRequest` when a request gets its worker (`src/debug.ts`), and nothing unsets it — the release only stamps `releaseTime` (`src/client.ts`). So an idle worker, and every worker of a closed client, reports its LAST request as current. Found building `open-retry`'s stall report, which read `a request in flight` on a client already closed; the test now counts a request as running only while `releaseTime` is unset. `db.debug` is public (`API.md`), so a consumer reading `currentRequest` gets the same wrong answer.
+
 ## Firefox page crash on `lifecycle.test.ts` under a full run (2026-09-23)
 
 **First sighting (2026-09-23).** The pre-merge `pnpm test` of `feat/db-ready` stopped with `Browser page crashed while running tests/browser/lifecycle.test.ts` on the Firefox config — no test failed, the file did not finish. Not reproduced: 10 of 10 runs of the file alone on Firefox clean, then the full `pnpm test` that concluded the merge green, and every earlier run that day (full suite, 22 Firefox matrix cells) clean. Unknown whether the new silent blob workers play a part — since 2026-09-25 the all-workers-gone test uses them too (`silentWorkersFromIndex`), so a second test of the file now spawns them; the next sighting should keep its `pnpm test` log.
 
 **Second sighting, same day, on `feat/vfs-folders`** — the same message on the same file in the Firefox leg of a full `pnpm test`, run by a subagent after the dot-folder change; the file alone 34/34, the full rerun green. **The log was not kept this time either.** Two sightings in one day, both under a full parallel run, both clean in isolation: the next one must be captured — keep `.scratchpad/` logs of every full run until it is.
+
+**Three more on 2026-09-28, logs kept** (`.scratchpad/open-retry-probe-2026-09-28/`: `suite-pass-1.log`, `suite2-pass-20.log`, `copies-pass-9.log`). The whole Firefox config (its two default targets) with the `open-retry` probe files beside it, no busy loops: **3 crashes in 42 launches**, every one on `lifecycle.test.ts`, and each ends the whole run 20-50 s in, the remaining files never run. Where it can be told, the crashed page was `OPFSAdaptiveVFS/jspi` — the other target's `lifecycle` finished 17/17 in two of the three — and with the 2026-09-26 matrix cell on `IDBMirrorVFS/async` it is not tied to one VFS. In all three the file's last lines are in the "startup readiness gate" group, but both projects' lines interleave in one log, so which test was running when the page died is not established.
 
 
 ## The rstest/Firefox silent hang — CAUSE FOUND 2026-09-16, fix not taken
