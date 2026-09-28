@@ -361,10 +361,7 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   searched yet (`gh` is available since 2026-09-28). Same shape as #361: an upstream PR plus a `patches/` carry.
   Also worth knowing: in that window a
   reader could read the pre-truncation file rather than fail, if its read wins the race.
-- **Concurrency D-09 has no falsifier by construction.** Every VFS with an exclusive handle now runs
-  one worker per client where that matters, so a second worker never reaches the init lock, and
-  `OPFSAnyContextVFS` opens two connections at once without harm. The lock still serialises opens
-  across clients and tabs; a two-client test is what would guard it. Its comment says so.
+- **Concurrency D-09 has no falsifier, and the open-side init lock guards nothing a test sees (2026-09-28).** With `locks.withLock(initLockName…)` removed from the worker's `open()`, `pnpm test`'s three configs stay green; the delete side is guarded (`delete.test.ts`, BUSY while the lock is held). Probe, two clients of `poolSize` 2 created in one task then each writing, 6 reps × 2 target projects per engine: no pragma and `journal_mode=truncate` never fail, with or without the lock; `user_version=7` gets `BUSY: database is locked` **with the lock too** — Chromium 1-3 of 12 per case intact against 5-6 without, Firefox 0-4 intact against 1-5 without, on `OPFSAnyContextVFS` and `IDBBatchAtomicVFS`. So the lock lowers the rate and does not remove it: a writing pragma at open is not serialised against another client's write (the origin write lock does not cover the open's pragmas). Not established: whether the BUSY is raised by the open or by the first `write`. A falsifier built on it would fail in both arms.
 
 ## What the `IDBBatchAtomicVFS` long-statement fix left open (2026-09-14)
 
