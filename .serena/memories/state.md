@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-09-27.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-09-28.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one.
 
 **No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
@@ -777,13 +777,12 @@ README warning.
     `BUSY` in 100 steps, 9 `NotFoundError` in 10 starts) and passes with them; upstream CI run #392
     green. The PR text is the user's. When it merges, repin to the merge commit and delete the patch —
     regenerated or removed through `pnpm patch` / `pnpm patch-commit`, never by hand.
-  - **Tooling, since `gh` is still not installed here:** PR bodies, comments and
-    Bugzilla all read fine through `WebFetch` on `api.github.com` and
-    `bugs.webkit.org`; the fork clone lives at `.work/wa-sqlite` and pushes
-    through the VS Code credential helper. Creating a fork or posting a comment
-    still needs the user — no token in this container. **Reading Actions logs
-    needs admin rights and is refused too**, so a failing run is diagnosed from
-    its check-run annotations, or by the user pasting the step.
+  - **Tooling: `gh` is installed and logged in as `lalexdotcom` since 2026-09-28** (scopes `repo`,
+    `read:org`, `workflow`, `gist`, `user`), seeded at each attach from the host's credential
+    (`mem:stack-and-build`, "Devcontainer"). The fork clone lives at `.work/wa-sqlite` and pushes
+    through the VS Code credential helper. Anything outward-facing through `gh` — a fork, a comment,
+    a PR — still waits for the user's go. Reading Actions logs through `gh` is untested; it was
+    refused without a token.
 
 ## The release path, now that it has run for real
 

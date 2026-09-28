@@ -333,7 +333,7 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   the reader's `File` snapshot dies with `AbortError`. **Hypothesis tested:** closing a pending
   writable in a `jUnlock` override, before `super.jUnlock`, gives 60/60 on Firefox (jspi and async)
   and 20/20 on Chromium. Upstream master (`e98c65d`, our pin) has no such close; upstream issues not
-  searched (`gh` absent). Same shape as #361: an upstream PR plus a `patches/` carry. Probes and the
+  searched yet (`gh` is available since 2026-09-28). Same shape as #361: an upstream PR plus a `patches/` carry. Probes and the
   instrumented VFS in `.scratchpad/vacuum-ioerr-2026-09-25/`. Also worth knowing: in that window a
   reader could read the pre-truncation file rather than fail, if its read wins the race.
 - **`long-query.test.ts`'s `interrupt()` falsifier was already inert at 14be4ee**, on Adaptive.

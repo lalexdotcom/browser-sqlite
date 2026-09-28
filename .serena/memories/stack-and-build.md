@@ -290,6 +290,31 @@ instead.
 - `scaffoldApp` returns false rather than throwing: one bundler failing to install must not
   cancel the other four.
 
+## Devcontainer
+
+Ported from `lalexdotcom/claude-scaffold` on 2026-09-28 (identity, `gh`, lifecycle split), not
+aligned with it wholesale: the image, the Playwright engines and the Serena prerelease flag are ours.
+
+- **Agent tooling in `on-create.sh`, project setup in `post-create.sh`.** The Claude Code
+  extension starts its MCPs and hooks when VS Code attaches, which is after `onCreateCommand`;
+  `waitFor: "postCreateCommand"` holds the window until the project is set up.
+- **Commit identity comes from `initializeCommand`, on the host.** VS Code copies the host
+  `~/.gitconfig` into the container **once, at creation** — later starts only rewrite its
+  `credential.helper` (seen 2026-09-28: a container built 2026-08-17 still held the host file of
+  that date). The host file now carries no identity, sets `useConfigOnly`, and delegates through
+  `includeIf "gitdir:~/Perso/Workspaces/"`, whose host path never matches in here. So
+  `initializeCommand` resolves `user.name`, `user.email` and `credential.https://github.com.username`
+  on the host and writes them to this clone's `.git/config`. Commits are `Alexandre LEGOUT`
+  since then; the older `my-lalex` ones stay as they are.
+- **`gh` gets no credential relay from VS Code; git does.** `post-attach.sh` asks
+  `git credential fill` for that account's token and pipes it to `gh auth login --with-token`, at
+  every attach, non-fatal.
+- **`mempalace init` needs `--auto-mine`: `--yes` answers the entity questions only**, and init
+  still asks "Mine this directory now?". During a rebuild stdin is a terminal, so the build waited
+  on a prompt that `2>/dev/null` hid. `--no-llm`: there is no Ollama here.
+- **There is no `serena index`, only `serena project index`.** The old line ran a missing command
+  behind `2>/dev/null || true` and indexed nothing.
+
 ## CI and hooks
 
 - `.github/workflows/ci.yaml` — two jobs on push to `main` and every PR; Chromium cached
