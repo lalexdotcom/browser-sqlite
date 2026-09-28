@@ -40,6 +40,10 @@ been work on nothing.
 - `creator.close` — the drain never ends; the close path.
 - `db.read` — the open under test after all; `openWithRetry` and `OPFSCoopSyncVFS`'s lock.
 
+## Firefox `pnpm test` skipped 4 on 2026-09-28, against 2 in the baseline (2026-09-28)
+
+Read off the firefox config's report (748 passed / 4 skipped of 752) in a mutation run on `test/falsifiers` whose only change was in `src/queries.ts`, which runs no skip logic. The baseline in `mem:state` (2026-09-27) reads 746 / 2. Not examined: tests added since the baseline may account for it; the skip count is the cell `mem:state` says to watch.
+
 ## `vfs-folders` "opens and persists a path exactly at the bound" failed once on Firefox IDBBatchAtomicVFS/jspi (2026-09-27)
 
 In the full matrix run to verify the #365 carry: `firefox · IDBBatchAtomicVFS/jspi` 371/1/2, the one failure `tests/browser/vfs-folders.test.ts :: … opens and persists a path exactly at the bound`, `expected +0 to be 1` — a client created a table and closed, a second client on the same name counted **0** tables. First failure since the test was added (2026-09-23); every earlier matrix had it green, including the morning's on the same pin without #365. **Not reproduced:** the test alone on that pair 10/10, the whole cell three times through `pnpm test:matrix --engine firefox --pair IDBBatchAtomicVFS/jspi`, 372/0/2 each. Unrelated to #365 as far as the code goes — `IDBBatchAtomicVFS` does not use `WriteAhead.js`. If it recurs: it would be a persistence loss between two clients of that VFS on Firefox, the name at the 52-character bound; keep the report and check whether the first client's close had finished its IndexedDB transaction before the second opened.
@@ -353,7 +357,7 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   searched yet (`gh` is available since 2026-09-28). Same shape as #361: an upstream PR plus a `patches/` carry.
   Also worth knowing: in that window a
   reader could read the pre-truncation file rather than fail, if its read wins the race.
-- **`long-query.test.ts`'s `interrupt()` falsifier was already inert at 14be4ee**, on Adaptive.
+- **`drain()`'s `interrupt()` in `chunk()`'s `finally` (`src/queries.ts`) guards a path no test covers (2026-09-28).** With that call removed, the whole browser suite stays green on both engines. On an abort, `chunk()`'s abort listener reaches `reclaim()` first, and `reclaim()` interrupts too, so the `finally`'s call only matters when a consumer leaves WITHOUT a signal — a `break`/`return`/`throw` in a `for await` over `db.chunk`, or `firstWorker`. A falsifier needs the worker inside a long `step()` when the consumer leaves (on `sync`, only the abort slot reaches it): a fast first row, a slow second one, `chunkSize: 1`, break, then a bounded next read on a pool of one.
 - **Concurrency D-09 has no falsifier by construction.** Every VFS with an exclusive handle now runs
   one worker per client where that matters, so a second worker never reaches the init lock, and
   `OPFSAnyContextVFS` opens two connections at once without harm. The lock still serialises opens
