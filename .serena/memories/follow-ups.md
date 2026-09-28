@@ -40,10 +40,6 @@ been work on nothing.
 - `creator.close` — the drain never ends; the close path.
 - `db.read` — the open under test after all; `openWithRetry` and `OPFSCoopSyncVFS`'s lock.
 
-## Firefox `pnpm test` skipped 4 on 2026-09-28, against 2 in the baseline (2026-09-28)
-
-Read off the firefox config's report (748 passed / 4 skipped of 752) in a mutation run on `test/falsifiers` whose only change was in `src/queries.ts`, which runs no skip logic. The baseline in `mem:state` (2026-09-27) reads 746 / 2. Not examined: tests added since the baseline may account for it; the skip count is the cell `mem:state` says to watch.
-
 ## Outside a transaction, a `chunk()`/`stream()` left early without a signal cannot cut its running step (2026-09-28)
 
 `chunk()` passes `abortable: signal !== undefined` (`src/queries.ts`), and the worker installs its progress handler only for an abortable statement (or a `yieldsDuringStatements` VFS, whose handler still answers 0 without a signal) — `src/worker/worker.ts`. So a `break` with no `signal`/`timeout` stops nothing in flight: on every build the worker finishes the step it is in (on `sync`, the chunk it is producing) before the lease comes back. Negligible for most queries; seconds for a query whose rows are far apart (a rare-match filter, an aggregate after a first row). Inside a transaction every statement is abortable (`src/transaction.ts`), so `API.md`'s "on every other build the statement is stopped" holds there; outside, `API.md` promises nothing either way. The cost of making every generator read abortable is measured as nothing on `async`/`jspi` (the yield, `mem:measurements`) and is an `Atomics.load` per 100 000 ops on isolated `sync`. Not decided by the user.
