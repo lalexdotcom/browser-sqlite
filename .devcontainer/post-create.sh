@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
+# postCreateCommand: project setup. Agent tooling goes in on-create.sh.
 set -euo pipefail
-
-sudo chown -R node:node /ai-tools
 
 pnpm install
 
@@ -33,31 +32,13 @@ pnpm install
 # cannot launch. https://rstest.rs/guide/browser-mode
 pnpm exec playwright install --with-deps chromium firefox
 
-uv tool install -p 3.13 "serena-agent==1.7.0" --prerelease=allow
-uv tool install mempalace
+# There is no top-level `serena index` and no `--project-root` flag. When it
+# creates .serena/project.yml, `project index` asks about each extra language it
+# detects, with no non-interactive flag, and fails on a closed stdin with an
+# empty error: the n's decline (the default). printf, not yes: yes dies of
+# SIGPIPE, which pipefail turns into a failure.
+printf 'n\n%.0s' {1..100} | serena project index "$PWD"
 
-claude plugin marketplace add anthropics/claude-plugins-official
-claude plugin install superpowers@claude-plugins-official --scope user
-
-claude plugin marketplace add MemPalace/mempalace
-claude plugin install mempalace@mempalace --scope user
-
-claude mcp remove serena --scope user 2>/dev/null || true
-claude mcp add serena --scope user -- serena start-mcp-server --context=claude-code --project-from-cwd
-
-serena index --project-root "$PWD" 2>/dev/null || true
-
-# Serena has `serena index` above; MemPalace had no equivalent, so a rebuilt
-# volume left it installed but empty. init is idempotent and writes
-# mempalace.yaml, which the workspace bind mount already keeps.
-mempalace init --yes "$PWD" 2>/dev/null || true
-
-# chromadb hardcodes its ONNX model cache to ~/.cache/chroma (no env var), and
-# that path is not on the persisted volume: a rebuild re-downloads 79 MB at the
-# container's download speed. Link it into /ai-tools instead.
-mkdir -p /ai-tools/.cache/chroma
-if [ ! -L "$HOME/.cache/chroma" ]; then
-  mkdir -p "$HOME/.cache"
-  [ -d "$HOME/.cache/chroma" ] && cp -a "$HOME/.cache/chroma/." /ai-tools/.cache/chroma/ && rm -rf "$HOME/.cache/chroma"
-  ln -s /ai-tools/.cache/chroma "$HOME/.cache/chroma"
-fi
+# --auto-mine fills the palace (--yes alone still prompts, and a closed stdin
+# declines); re-runs skip files already mined. --no-llm: no Ollama here.
+mempalace init --yes --auto-mine --no-llm "$PWD"
