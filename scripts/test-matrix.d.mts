@@ -11,13 +11,18 @@ export type MatrixResult =
       readonly passed: number;
       readonly failed: number;
       readonly skipped: number;
+      readonly files: number;
       readonly seconds: number;
+      /** The report's unhandled errors, paths relative to its `cwd`; absent when none. */
+      readonly unhandled?: readonly string[];
     }
   | { readonly status: 'not-runnable'; readonly seconds: number }
   | { readonly status: 'timed-out' }
   | { readonly status: 'error'; readonly message: string };
 
 export declare function parseMatrixReport(output: string): MatrixResult;
+
+export declare function formatCell(result: MatrixResult): string;
 
 export declare function allPairs(): { vfs: string; build: string }[];
 

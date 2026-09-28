@@ -60,8 +60,9 @@ export const allPairs = () =>
  *
  * rstest prints a `## Summary` section holding a fenced ```json block first
  * — `status`, `counts` and `durationMs.total` — followed by a `## Failures`
- * section listing each failure's `errors[].message`. This function reads
- * only those two things and nothing else about the report's layout.
+ * section listing each failure's `errors[].message`, then `## Unhandled
+ * Errors` when something failed outside a test. This function reads those,
+ * and the header's `cwd` to make their paths relative, and nothing else.
  *
  * - No ```json block at all: the run never got to print a report — killed by
  *   this script's own timer, or crashed before finishing a build. Reported
@@ -100,13 +101,30 @@ export function parseMatrixReport(output) {
     }
   }
 
+  // A crashed page fails the run with no failed test: the reason is only here.
+  const cwd = output.match(/"cwd":"([^"]*)"/)?.[1];
+  const unhandledIndex = output.indexOf('## Unhandled Errors');
+  const unhandled =
+    unhandledIndex === -1
+      ? []
+      : [
+          ...output
+            .slice(unhandledIndex)
+            .matchAll(/"message":\s*"((?:\\.|[^"\\])*)"/g),
+        ].map((m) => {
+          const message = JSON.parse(`"${m[1]}"`);
+          return cwd ? message.replaceAll(`${cwd}/`, '') : message;
+        });
+
   return {
     status: summary.status === 'pass' ? 'passed' : 'failed',
     tests: summary.counts.tests,
     passed: summary.counts.passedTests,
     failed: summary.counts.failedTests,
     skipped: summary.counts.skippedTests,
+    files: summary.counts.testFiles,
     seconds,
+    ...(unhandled.length > 0 ? { unhandled } : {}),
   };
 }
 
@@ -253,12 +271,18 @@ function runOne(engine, pair, outFile) {
   });
 }
 
-/** `522/0/4 · 52s`, or the status word for a cell that never produced counts. */
-function formatCell(result) {
+/**
+ * `522/0/4 · 57 files · 52s`, or the status word for a cell that never
+ * produced counts. A failed cell with no failed test says FAIL and why, or its
+ * counts read as green — a page crash looks exactly like that.
+ */
+export function formatCell(result) {
   if (result.status === 'not-runnable') return 'not runnable here';
   if (result.status === 'timed-out') return 'timed out';
   if (result.status === 'error') return `error: ${result.message}`;
-  return `${result.passed}/${result.failed}/${result.skipped} · ${result.seconds}s`;
+  const cell = `${result.passed}/${result.failed}/${result.skipped} · ${result.files} files · ${result.seconds}s`;
+  if (result.status !== 'failed' || result.failed > 0) return cell;
+  return `${cell} · FAIL: ${result.unhandled?.[0] ?? 'the report says fail'}`;
 }
 
 function printTable(pairs, engines, results) {
