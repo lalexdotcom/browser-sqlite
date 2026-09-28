@@ -38,9 +38,9 @@ describe('a long single step', () => {
     expect(performance.now() - started).toBeLessThan(3000);
   });
 
-  // Falsifiable: remove the `interrupt()` call in chunk()'s finally — without
-  // it the worker transitions RUNNING → READY without passing through ABORTING,
-  // so the ABORTING status check fails.
+  // Falsifiable: remove both `interrupt()` calls, in reclaim() and in drain()'s
+  // finally — the worker then goes RUNNING → READY without ABORTING. Either one
+  // alone keeps it green: the abort listener reclaims before the finally runs.
   it('does not terminate the worker it abandoned', async ({ skip }) => {
     const records = interceptWorkers();
     const db = await createTestClient({
