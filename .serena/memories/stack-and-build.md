@@ -408,6 +408,14 @@ a PR is the user's. Its suite runs with yarn 4 (PnP, pinned by `.yarnrc.yml`'s `
 web-test-runner test/OPFSCoopSyncVFS.test.js` — Chrome only; the whole suite is `yarn test`, ~40 s
 and 2 899 tests on 2026-09-15.
 
+**In that suite `'default'` names the synchronous build (`dist/wa-sqlite.mjs`)**, and it is
+`TestContext`'s default. `OPFSWriteAheadVFS`, like the IndexedDB VFS and `OPFSAdaptiveVFS`, runs
+only on `asyncify`/`jspi`: its own test file and `api.test.js`/`sql.test.js` list it under their
+async builds, although it exposes only synchronous methods and we run it on `sync` first. A test
+written for that VFS there covers the default build only if it adds it. For probes outside the
+suite (Firefox included), a Playwright `launchPersistentContext` script serving `.work/` works —
+`.scratchpad/365-lib-arms/reopen-runner.mjs`.
+
 **`npm install` works there too and is what four PRs of 2026-09-18 used** —
 `npx web-test-runner --config web-test-runner.config.mjs --files './test/<VFS>.test.js'`, same
 `CHROME_PATH`. Two traps paid for that day: `npm install` **rewrites `yarn.lock`** (restore it

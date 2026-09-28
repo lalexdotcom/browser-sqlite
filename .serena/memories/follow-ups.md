@@ -48,6 +48,17 @@ In the full matrix run to verify the #365 carry: `firefox · IDBBatchAtomicVFS/j
 
 rhashimoto's own #262 ("Fill in IDBBatchAtomicVFS blocks on writes past EOF", open since 2025-04, no description) is the other side of #351's gap case: a write past EOF stores only its block and leaves a hole, which a later write into it (the overwrite branch) failed on. #262 would prevent the hole; #351 lets `jWrite` cross it, as `jRead` does. #351's short-block case (a 512-byte journal header, then a full page) is unrelated to EOF. A reading inside a hole still returns `SQLITE_IOERR_SHORT_READ` and zeroes the rest of the buffer; only #262 would remove that. Neither PR cites the other. If ever done: a short comment on #351 pointing at #262, asking whether he wants it folded in. The user deferred it; do not raise it again unprompted.
 
+## wa-sqlite: a failed acquisition leaves what was acquired beside it — #350's class in other VFS (2026-09-28)
+
+Found answering rhashimoto's question on #365 ("does OPFSWriteAheadVFS have CoopSync's retry problems?"). Reproduced on upstream `e6e01ae1` with Playwright persistent profiles, 2 runs per case, sabotaged acquisition then reopen; each sketched fix made every case pass. Probes in `.work/worst/leak/`, runners in `.scratchpad/365-lib-arms/` (`reopen-runner.mjs`, `ahp-runner.mjs`, `adaptive-runner.mjs`).
+
+- **`OPFSWriteAheadVFS` `#retryOpen`** opens `-wa0`/`-wa1` with `Promise.all`; `openFile` registers its cleanup only once `createSyncAccessHandle` resolves, so a rejection runs the cleanup before the pending handle lands. `-wa1` stays open and orphaned (5/5, default and asyncify builds). Chromium: reopen works (`readwrite-unsafe` coexists). Firefox: every reopen fails `NoModificationAllowedError`, same worker or another, until the leaking worker terminates. Fix tested: `Promise.allSettled` + rethrow. **Reported on #365 (comment 5874507146), PR offered, no answer yet.**
+- **`AccessHandlePoolVFS` `#acquireAccessHandles()`** opens the whole pool with `Promise.all` and nothing cleans up on a rejection. After a failed `create()` (one pool file held elsewhere), every later `create()` fails `NoModificationAllowedError` in any worker until the leaking one terminates, both engines. Fix tested: `allSettled`, then `#releaseAccessHandles()` and rethrow. **Library exposure, untested:** `createVfsInstance` retries `create()` in the same worker for 10 s to wait out a dying worker; if that worker releases its handles one by one, a partial attempt leaks and every retry fails on its own handles.
+- **`OPFSAdaptiveVFS` `jOpen`, Firefox only** (the path without `readwrite-unsafe`): it takes the file's Web Lock, then the access handle; if the handle fails, the `catch` returns `SQLITE_CANTOPEN` with the lock still held (`navigator.locks.query()` shows `OPFS:/<file>`) and its `BroadcastChannel` open. Every later open of that file hangs, same worker or another, until the leaking worker terminates. Fix tested: release the lock, close the channel, drop the `mapIdToFile` entry in the `catch`. **Library exposure, untested:** a worker respawned by `handleDeath` while the dead one still holds the handle (~2 s measured for AHP) would take the lock, fail on the handle, and leave the database blocked. Adaptive is a recommended VFS.
+- **`OPFSCoopSyncVFS` `#initialize()`** (called by `create()`) opens its temporary files one by one with no cleanup on failure — read, not reproduced, left out of the #365 comment by the user. In a fresh private `.ahp-*` directory only a storage error (full quota) would trigger it. Possible consequence, from reading only: the directory's lock goes at GC with its handles still open, and the next instance's stale-directory sweep tolerates only `NotFoundError` on `removeEntry`, so every later `create()` on the origin might fail while the leaking worker lives. To reproduce it, force the failure (make the third `createSyncAccessHandle` throw in the worker); that shows the path, not that it happens.
+
+Not affected: `OPFSWriteAheadVFS`'s temporary files (each closed by a `FinalizationRegistry`), `OPFSPermutedVFS` and `OPFSAnyContextVFS` (one handle per open), `WriteAhead.js`'s `Promise.all` on lock waits, the IndexedDB and memory VFS. **Next:** rhashimoto's answer on #365 decides PRs; the two library exposures deserve a test in the library before anything is carried in `patches/`.
+
 ## Designs owed — ideas, not scheduled work (user, 2026-09-03)
 
 **The user has said explicitly that the three below are not planned for the short or medium
@@ -313,7 +324,10 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   that fails under load — the old timing-only barrier read 0/100 even under 48 busy loops, so
   the pragma's gain is shown by wa-sqlite's deterministic test, not by ours. When #365 merges
   (or is closed), repin or regenerate the patch per `mem:stack-and-build`; if upstream names the
-  pragma differently, `catchUpPragma` is the one place to change.
+  pragma differently, `catchUpPragma` is the one place to change — and he said on 2026-09-28 he
+  is thinking of renaming it and of how it should coexist with the backstop task, so expect
+  that. **Owed on the PR if he wants it:** the default (synchronous) build in its test — offered
+  in comment 5874507146; wa-sqlite's suite never runs this VFS on that build.
 - **rstest's pages are off-the-record: OPFS sync-access-handle calls cost 160-290 µs there against
   0.6-2.6 µs on a persistent profile (RSTEST-OTR, `mem:measurements`, 2026-09-28).** rstest opens
   pages with Playwright's `browser.newContext()`. Every absolute OPFS timing taken under rstest —
