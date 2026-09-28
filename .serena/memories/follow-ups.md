@@ -158,6 +158,8 @@ savepoint before opening its own.
 
 **Not seen without the extra pages (2026-09-28 evening).** 30 whole Firefox config passes in a row on `main`, nothing beside them, `--reporter verbose --reporter md` to keep the per-test lines: 0 crashes in 30 (57 files, 750 passed each, 91-93 s). The 3 in 42 were all launched with the `open-retry` probe files beside the config — more pages at once — so page count, not the file, is the lead. To catch one with its context, re-add pages (copies of test files) under the same reporters.
 
+**Reproduced with the extra pages, and narrowed (2026-09-28 night).** Same 30 passes with eight copies of `open-retry.test.ts` beside the config (16 more pages per pass): **3 crashes in 30**, 0 `open-retry` stalls in 30. All three on the `OPFSAdaptiveVFS/jspi` target's page, all in `lifecycle.test.ts`'s "startup readiness gate" group, and each time the page's last log is at or just before a test that kills the REAL slot-0 worker (it has opened, so it holds OPFS handles) by a dispatched `error` during the retry round and leaves the pool empty: twice after or inside "rejects db.ready when the pool is empty at gate-open, although the gate opened", once right after "fails the client rather than hanging when all startup workers are gone"; the next test never logged. Those tests declare `needs: ['two-workers']`, which Firefox's `OPFSAdaptiveVFS` lacks, so they run on the fallback pair. Nothing in the logs names a cause on Firefox's side. **Next:** loop that group alone on that target with the extra pages to get a fast reproduction, then bisect by test; then ask whether terminating a worker that holds sync access handles is what the content process dies on.
+
 
 ## The rstest/Firefox silent hang — CAUSE FOUND 2026-09-16, fix not taken
 
