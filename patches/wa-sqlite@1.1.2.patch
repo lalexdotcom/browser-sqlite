@@ -146,41 +146,6 @@ index 4a6b4f5a2b815b77e4417d5e2b2beaef6ab8dc2b..cb72cc3f2e2b57ec76a0ad709c685cd0
    jGetLastError(zBuf) {
      if (this.lastError) {
        console.error(this.lastError);
-diff --git a/src/examples/OPFSCoopSyncVFS.js b/src/examples/OPFSCoopSyncVFS.js
-index b69df1e4f6fe2da3cafb72dd16af3573b50e9c3b..5a8b1997012c82c45db18b3cecea5c888b108e9c 100644
---- a/src/examples/OPFSCoopSyncVFS.js
-+++ b/src/examples/OPFSCoopSyncVFS.js
-@@ -538,13 +538,23 @@ export class OPFSCoopSyncVFS extends FacadeVFS {
-         try {
-           // Get access handles for the database and releated files in parallel.
-           this.log?.(`creating access handles for ${file.path}`)
--          await Promise.all(DB_RELATED_FILE_SUFFIXES.map(async suffix => {
--            const persistentFile = this.persistentFiles.get(file.path + suffix);
--            if (persistentFile) {
--              persistentFile.accessHandle =
--                await persistentFile.fileHandle.createSyncAccessHandle();
--            }
--          }));
-+          // Settle them all before reporting a failure: Promise.all rejects as
-+          // soon as one does, while the others are still in flight, so the
-+          // cleanup in the catch below runs too early to see them. Those
-+          // acquisitions then complete and assign to persistent files nothing
-+          // will close, leaking one access handle per attempt - which makes
-+          // every later open of the same database fail on a sidecar file it
-+          // holds itself.
-+          const results = await Promise.allSettled(
-+            DB_RELATED_FILE_SUFFIXES.map(async suffix => {
-+              const persistentFile = this.persistentFiles.get(file.path + suffix);
-+              if (persistentFile) {
-+                persistentFile.accessHandle =
-+                  await persistentFile.fileHandle.createSyncAccessHandle();
-+              }
-+            }));
-+          const failure = results.find(result => result.status === 'rejected');
-+          if (failure) throw failure.reason;
-         } catch (e) {
-           this.log?.(`failed to create access handles for ${file.path}`, e);
-           // Close any of the potentially opened access handles
 diff --git a/src/examples/OPFSWriteAheadVFS.js b/src/examples/OPFSWriteAheadVFS.js
 index df738d396763b5c12ef08c3740a9c56f44d4b14c..c0a52c6c32f5418fad43f75c805a107074891f23 100644
 --- a/src/examples/OPFSWriteAheadVFS.js
@@ -206,63 +171,26 @@ index df738d396763b5c12ef08c3740a9c56f44d4b14c..c0a52c6c32f5418fad43f75c805a1070
                // Track SQLite synchronous mode. Write-ahead transactions
                // trade durability for performance on values 1 (NORMAL) or
 diff --git a/src/examples/WriteAhead.js b/src/examples/WriteAhead.js
-index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..07dd5d45d52aca9a088393f321538e1af20685d4 100644
+index 5aab29780f146954c6e5c64f446c8f92aa7658fc..07dd5d45d52aca9a088393f321538e1af20685d4 100644
 --- a/src/examples/WriteAhead.js
 +++ b/src/examples/WriteAhead.js
-@@ -2,10 +2,16 @@ import { Lock } from './Lock.js';
- 
- const DEFAULT_JOURNAL_SIZE_LIMIT = 1000;
- const DEFAULT_BACKSTOP_INTERVAL = 30_000;
-+const DEFAULT_CHECKPOINT_BUFFER_SIZE = 4 * 1024 * 1024;
- 
- const MAGIC = 0x377f0684;
- const FILE_HEADER_SIZE = 32;
- const FRAME_HEADER_SIZE = 32;
-+
-+// A checkpoint plan names a WAL page by its offset in its WAL file, plus
-+// this value for the newer WAL file.
-+const WAL2_KEY_OFFSET = 2 ** 52;
-+
- const FRAME_TYPE_PAGE = 0;
- const FRAME_TYPE_COMMIT = 1;
- const FRAME_TYPE_END = 2;
-@@ -30,11 +36,26 @@ const FRAME_COMMIT_CHANGE_FILE_MASK = 1 << 1;
-  * @property {number} waOffsetEnd
-  */
- 
-+/**
-+ * @typedef CheckpointAction
-+ * @property {'read'|'write'} action
-+ * @property {number[]} pages WAL page keys
-+ * @property {number} [at] database file offset of a write
-+ */
-+
-+/**
-+ * @typedef CheckpointPlan
-+ * @property {number} pageSize
-+ * @property {CheckpointAction[]} actions
-+ */
-+
- /**
-  * @typedef WriteAheadOptions
-  * @property {number} [autoCheckpoint]
+@@ -55,6 +55,7 @@ const FRAME_COMMIT_CHANGE_FILE_MASK = 1 << 1;
   * @property {number} [backstopInterval]
-+ * @property {number} [checkpointBufferSize]
+  * @property {number} [checkpointBufferSize]
   * @property {number} [journalSizeLimit]
 + * @property {boolean} [readToCurrent]
   */
  
  export class WriteAhead {
-@@ -44,6 +65,8 @@ export class WriteAhead {
-     autoCheckpoint: 1,
+@@ -65,6 +66,7 @@ export class WriteAhead {
      backstopInterval: DEFAULT_BACKSTOP_INTERVAL,
      journalSizeLimit: DEFAULT_JOURNAL_SIZE_LIMIT,
-+    checkpointBufferSize: DEFAULT_CHECKPOINT_BUFFER_SIZE,
+     checkpointBufferSize: DEFAULT_CHECKPOINT_BUFFER_SIZE,
 +    readToCurrent: false,
    };
  
    #zName;
-@@ -166,7 +189,8 @@ export class WriteAhead {
+@@ -187,7 +189,8 @@ export class WriteAhead {
    /**
     * Freeze our view of the database.
     * The view includes the transactions received so far but is not
@@ -272,7 +200,7 @@ index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..07dd5d45d52aca9a088393f321538e1a
     */
    isolateForRead() {
      if (this.#isolationState !== null) {
-@@ -177,6 +201,12 @@ export class WriteAhead {
+@@ -198,6 +201,12 @@ export class WriteAhead {
      // Disable backstop during isolation.
      clearTimeout(this.#backstopTimer);
      this.#backstopTimer = null;
@@ -285,179 +213,3 @@ index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..07dd5d45d52aca9a088393f321538e1a
    }
  
    /**
-@@ -434,8 +464,9 @@ export class WriteAhead {
-       }
- 
-       // Starting at ckptId and going backwards (higher to lower txId),
--      // write transaction pages to the main database file. Do not overwrite
--      // a page written by a more recent transaction.
-+      // plan writing transaction pages to the main database file. Do not
-+      // overwrite a page written by a more recent transaction.
-+      /** @type {CheckpointPlan} */ const plan = { pageSize: 0, actions: [] };
-       const writtenOffsets = new Set();
-       let dbFileSize = this.#dbHandle.getSize();
-       for (let tx = this.#mapIdToTx.get(ckptId); tx; tx = this.#mapIdToTx.get(tx.id - 1)) {
-@@ -447,16 +478,16 @@ export class WriteAhead {
- 
-         for (const [offset, pageEntry] of tx.pages) {
-           if (offset < dbFileSize && !writtenOffsets.has(offset)) {
--            // Fetch the page data from the WAL file if not cached.
--            const pageData = pageEntry.pageData ?? this.#fetchPage(pageEntry);
--
--            // Write the page to the database file.
--            const nWritten = this.#dbHandle.write(pageData, { at: offset });
--            if (nWritten !== pageData.byteLength) {
--              throw new Error('Checkpoint write failed');
-+            if (plan.pageSize && plan.pageSize !== pageEntry.pageSize) {
-+              throw new Error('Checkpoint page size mismatch');
-             }
-+            plan.pageSize = pageEntry.pageSize;
-+
-+            const page = this.#getPageKey(pageEntry);
-+            plan.actions.push(
-+              { action: 'read', pages: [page] },
-+              { action: 'write', at: offset, pages: [page] });
-             writtenOffsets.add(offset);
--            this.log?.(`%ccheckpoint wrote txId ${tx.id} page at ${offset} to database`, 'color: black; background-color: lightgreen;');
-           }
-         }
- 
-@@ -470,6 +501,10 @@ export class WriteAhead {
-         }
-       }
- 
-+      // Coalesce the plan's pages into fewer calls, within a bounded buffer.
-+      const { checkpointBufferSize: bufferSize } = this.options;
-+      this.#executeCheckpointPlan(coalesceReads(coalesceWrites(plan, { bufferSize })));
-+
-       // Ensure that database writes are durable.
-       this.log?.(`%ccheckpoint flush database file`, 'color: black; background-color: lightgreen;');
-       this.#dbHandle.flush();
-@@ -796,6 +831,53 @@ export class WriteAhead {
-     return pageData;
-   }
- 
-+  /**
-+   * @param {PageEntry} pageEntry
-+   * @returns {number} checkpoint plan key
-+   */
-+  #getPageKey(pageEntry) {
-+    const accessHandle = this.#waHandles[pageEntry.waSalt1 & 1];
-+    return pageEntry.waOffset + (accessHandle === this.#activeHandle ? WAL2_KEY_OFFSET : 0);
-+  }
-+
-+  /**
-+   * @param {CheckpointPlan} plan
-+   */
-+  #executeCheckpointPlan({ pageSize, actions }) {
-+    /** @type {Map<number, Uint8Array>} */ const mapKeyToData = new Map();
-+    for (const { action, pages, at } of actions) {
-+      if (action === 'read') {
-+        // One call reads every frame between the first and last page.
-+        const first = Math.min(...pages);
-+        const data = new Uint8Array(Math.max(...pages) - first + pageSize);
-+        const accessHandle = first < WAL2_KEY_OFFSET ?
-+          this.#getInactiveHandle() :
-+          this.#activeHandle;
-+        const nBytesRead = accessHandle.read(data, { at: first % WAL2_KEY_OFFSET });
-+        if (nBytesRead !== data.byteLength) {
-+          throw new Error(`Short WAL read: expected ${data.byteLength} bytes, got ${nBytesRead}`);
-+        }
-+        for (const page of pages) {
-+          mapKeyToData.set(page, data.subarray(page - first, page - first + pageSize));
-+        }
-+      } else {
-+        const data = pages.length === 1 ?
-+          mapKeyToData.get(pages[0]) :
-+          new Uint8Array(pages.length * pageSize);
-+        if (pages.length > 1) {
-+          pages.forEach((page, i) => data.set(mapKeyToData.get(page), i * pageSize));
-+        }
-+
-+        const nWritten = this.#dbHandle.write(data, { at });
-+        if (nWritten !== data.byteLength) {
-+          throw new Error('Checkpoint write failed');
-+        }
-+        pages.forEach(page => mapKeyToData.delete(page));
-+        this.log?.(`%ccheckpoint wrote ${pages.length} page(s) at ${at} to database`, 'color: black; background-color: lightgreen;');
-+      }
-+    }
-+  }
-+
-   *#readAllTx() {
-     while (true) {
-       const tx = this.#readTx();
-@@ -1257,3 +1339,73 @@ class Checksum {
-     return this.s0 === s0 && this.s1 === s1;
-   }
- }
-+
-+// Checkpoint planners take a plan and return an equivalent one. The base
-+// plan reads and writes one page at a time. A plan's buffer usage is its
-+// unretired reads plus the next write.
-+
-+/**
-+ * Write pages contiguous in the database file with one call. A run is
-+ * sized so that its reads still fit in bufferSize if coalesceReads later
-+ * joins them, frame headers included.
-+ * @param {CheckpointPlan} plan
-+ * @param {{bufferSize: number}} options
-+ * @returns {CheckpointPlan}
-+ */
-+export function coalesceWrites({ pageSize, actions }, { bufferSize }) {
-+  /** @type {Map<number, number>} */ const mapOffsetToPage = new Map();
-+  for (const { action, pages, at } of actions) {
-+    if (action === 'write') {
-+      pages.forEach((page, i) => mapOffsetToPage.set(at + i * pageSize, page));
-+    }
-+  }
-+
-+  const maxRunPages = Math.max(1, Math.floor(bufferSize / (2 * pageSize + FRAME_HEADER_SIZE)));
-+  const offsets = [...mapOffsetToPage.keys()].sort((a, b) => a - b);
-+  /** @type {CheckpointAction[]} */ const result = [];
-+  for (let i = 0; i < offsets.length;) {
-+    let end = i + 1;
-+    while (end < offsets.length &&
-+           end - i < maxRunPages &&
-+           offsets[end] === offsets[end - 1] + pageSize) {
-+      end++;
-+    }
-+
-+    const pages = offsets.slice(i, end).map(offset => mapOffsetToPage.get(offset));
-+    result.push(...pages.map(page => ({ action: /** @type {const} */ ('read'), pages: [page] })));
-+    result.push({ action: 'write', at: offsets[i], pages });
-+    i = end;
-+  }
-+  return { pageSize, actions: result };
-+}
-+
-+/**
-+ * Read pages in consecutive WAL frames with one call, when they supply
-+ * the same write.
-+ * @param {CheckpointPlan} plan
-+ * @returns {CheckpointPlan}
-+ */
-+export function coalesceReads({ pageSize, actions }) {
-+  const stride = FRAME_HEADER_SIZE + pageSize;
-+  /** @type {CheckpointAction[]} */ const result = [];
-+  /** @type {number[]} */ let pending = [];
-+  for (const action of [...actions, null]) {
-+    if (action?.action === 'read') {
-+      pending.push(...action.pages);
-+      continue;
-+    }
-+
-+    pending.sort((a, b) => a - b);
-+    for (let i = 0; i < pending.length;) {
-+      let end = i + 1;
-+      while (end < pending.length && pending[end] === pending[end - 1] + stride) {
-+        end++;
-+      }
-+      result.push({ action: 'read', pages: pending.slice(i, end) });
-+      i = end;
-+    }
-+    pending = [];
-+    if (action) result.push(action);
-+  }
-+  return { pageSize, actions: result };
-+}

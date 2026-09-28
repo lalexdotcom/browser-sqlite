@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   wa-sqlite@1.1.2:
-    hash: b500bf9a0d4b45d3b7474f2a33dac178069feedca6c5cc8a0d0db35fc2dbebf2
+    hash: 0bdf0d759a77c98ab37d7ad1627f975bbbbd639c8951b28834d0ed713905f0bf
     path: patches/wa-sqlite@1.1.2.patch
 
 importers:
@@ -47,8 +47,8 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
       wa-sqlite:
-        specifier: github:rhashimoto/wa-sqlite#5e98ac7641e637dddb2e0fadded89810f0eae60d
-        version: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/5e98ac7641e637dddb2e0fadded89810f0eae60d(patch_hash=b500bf9a0d4b45d3b7474f2a33dac178069feedca6c5cc8a0d0db35fc2dbebf2)
+        specifier: github:rhashimoto/wa-sqlite#e6e01ae1c79f36aa7c5426c75bbd88712a9f0aaa
+        version: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/e6e01ae1c79f36aa7c5426c75bbd88712a9f0aaa(patch_hash=0bdf0d759a77c98ab37d7ad1627f975bbbbd639c8951b28834d0ed713905f0bf)
 
 packages:
 
@@ -802,8 +802,8 @@ packages:
     resolution: {integrity: sha512-wH590V9VNgYH9g3lH9wWjTrUoKsjLF6sGLjhR4sH1LWpLmCOH0Zf7PukhDA8BiS7KHe4oPNkcTHqYkj7SOGUOw==}
     engines: {node: '>=20'}
 
-  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/5e98ac7641e637dddb2e0fadded89810f0eae60d:
-    resolution: {tarball: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/5e98ac7641e637dddb2e0fadded89810f0eae60d}
+  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/e6e01ae1c79f36aa7c5426c75bbd88712a9f0aaa:
+    resolution: {tarball: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/e6e01ae1c79f36aa7c5426c75bbd88712a9f0aaa}
     version: 1.1.2
 
   which@2.0.2:
@@ -1439,7 +1439,7 @@ snapshots:
 
   unicorn-magic@0.4.0: {}
 
-  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/5e98ac7641e637dddb2e0fadded89810f0eae60d(patch_hash=b500bf9a0d4b45d3b7474f2a33dac178069feedca6c5cc8a0d0db35fc2dbebf2): {}
+  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/e6e01ae1c79f36aa7c5426c75bbd88712a9f0aaa(patch_hash=0bdf0d759a77c98ab37d7ad1627f975bbbbd639c8951b28834d0ed713905f0bf): {}
 
   which@2.0.2:
     dependencies:

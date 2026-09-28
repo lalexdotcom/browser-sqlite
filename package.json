@@ -77,7 +77,7 @@
 		"playwright": "1.62.1",
 		"simple-git-hooks": "^2.13.1",
 		"typescript": "^7.0.2",
-		"wa-sqlite": "github:rhashimoto/wa-sqlite#5e98ac7641e637dddb2e0fadded89810f0eae60d"
+		"wa-sqlite": "github:rhashimoto/wa-sqlite#e6e01ae1c79f36aa7c5426c75bbd88712a9f0aaa"
 	},
 	"lint-staged": {
 		"*.{js,ts,jsx,tsx,mjs,cjs}": [
