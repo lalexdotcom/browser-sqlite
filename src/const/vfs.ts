@@ -149,6 +149,12 @@ export type VFSCapability = {
    */
   readonly defaultPragmas: Readonly<Record<string, string>>;
   /**
+   * A boolean PRAGMA that makes a read transaction see every committed
+   * transaction, for a VFS whose reads may start one behind. The barrier sets it
+   * for its own read only (`barrierSqlFor`); `null` where reads are current.
+   */
+  readonly catchUpPragma: string | null;
+  /**
    * Whether this VFS enforces an origin-wide exclusive connection lock for the
    * client's lifetime.
    *
@@ -231,6 +237,9 @@ export const VFS_CAPABILITIES = {
     exclusiveConnection: false,
     exclusiveConnectionWithout: ['readwrite-unsafe'],
     defaultPragmas: {},
+    // Our wa-sqlite#365, carried in patches/: a read otherwise freezes the view
+    // the BroadcastChannel has delivered, which can lag a commit.
+    catchUpPragma: 'read_to_current',
   },
   OPFSAdaptiveVFS: {
     builds: ['jspi', 'async'],
@@ -250,6 +259,7 @@ export const VFS_CAPABILITIES = {
     exclusiveConnection: false,
     exclusiveConnectionWithout: [],
     defaultPragmas: {},
+    catchUpPragma: null,
   },
   OPFSCoopSyncVFS: {
     builds: ['sync', 'jspi', 'async'],
@@ -271,6 +281,7 @@ export const VFS_CAPABILITIES = {
     exclusiveConnection: false,
     exclusiveConnectionWithout: [],
     defaultPragmas: {},
+    catchUpPragma: null,
   },
   AccessHandlePoolVFS: {
     builds: ['sync', 'jspi', 'async'],
@@ -302,6 +313,7 @@ export const VFS_CAPABILITIES = {
     // either way — SQLite removes the -wal on a clean close, so it costs no
     // slot at rest. `mem:measurements`.
     defaultPragmas: { locking_mode: 'exclusive', journal_mode: 'wal' },
+    catchUpPragma: null,
   },
   IDBBatchAtomicVFS: {
     builds: ['jspi', 'async'],
@@ -320,6 +332,7 @@ export const VFS_CAPABILITIES = {
     exclusiveConnection: false,
     exclusiveConnectionWithout: [],
     defaultPragmas: {},
+    catchUpPragma: null,
   },
   IDBMirrorVFS: {
     builds: ['jspi', 'async'],
@@ -357,6 +370,7 @@ export const VFS_CAPABILITIES = {
     exclusiveConnection: false,
     exclusiveConnectionWithout: [],
     defaultPragmas: {},
+    catchUpPragma: null,
   },
   OPFSAnyContextVFS: {
     builds: ['jspi', 'async'],
@@ -376,6 +390,7 @@ export const VFS_CAPABILITIES = {
     exclusiveConnection: false,
     exclusiveConnectionWithout: [],
     defaultPragmas: {},
+    catchUpPragma: null,
   },
   MemoryVFS: {
     builds: ['sync', 'jspi', 'async'],
@@ -395,6 +410,7 @@ export const VFS_CAPABILITIES = {
     exclusiveConnection: false,
     exclusiveConnectionWithout: [],
     defaultPragmas: {},
+    catchUpPragma: null,
   },
   MemoryAsyncVFS: {
     builds: ['jspi', 'async'],
@@ -414,6 +430,7 @@ export const VFS_CAPABILITIES = {
     exclusiveConnection: false,
     exclusiveConnectionWithout: [],
     defaultPragmas: {},
+    catchUpPragma: null,
   },
 } as const satisfies Record<string, VFSCapability>;
 

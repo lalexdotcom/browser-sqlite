@@ -1,6 +1,8 @@
 import { describe, expect, it } from '@rstest/core';
 import {
   advanceSeen,
+  BARRIER_SQL,
+  barrierSqlFor,
   epochLockName,
   epochsFor,
   maxEpochIn,
@@ -178,5 +180,34 @@ describe('advanceSeen', () => {
 
   it('does not advance a worker that never caught up', () => {
     expect(advanceSeen(-1, 3, 4)).toBe(-1);
+  });
+});
+
+describe('barrierSqlFor', () => {
+  it('is the bare barrier on a VFS whose reads see every commit', () => {
+    // Falsifiable: give OPFSAdaptiveVFS a catchUpPragma and this is bracketed.
+    expect(barrierSqlFor('OPFSAdaptiveVFS', {})).toBe(BARRIER_SQL);
+  });
+
+  it('brackets the barrier with the catch-up pragma on OPFSWriteAheadVFS', () => {
+    // Its reads freeze a view as the BroadcastChannel has left it; the pragma
+    // makes this one read the write-ahead to its end. Switched off after, so
+    // user reads never scan a large uncommitted write.
+    // Falsifiable: empty OPFSWriteAheadVFS's catchUpPragma and this is bare.
+    expect(barrierSqlFor('OPFSWriteAheadVFS', {})).toBe(
+      `PRAGMA read_to_current=1; ${BARRIER_SQL}; PRAGMA read_to_current=0`,
+    );
+  });
+
+  it('leaves the pragma to a consumer who names it', () => {
+    // Naming a key is how a default is refused (`resolvePragmas`): with the
+    // pragma set either way, the barrier must not overwrite their choice.
+    // Falsifiable: ignore the consumer's pragmas and both are bracketed.
+    expect(barrierSqlFor('OPFSWriteAheadVFS', { read_to_current: '1' })).toBe(
+      BARRIER_SQL,
+    );
+    expect(barrierSqlFor('OPFSWriteAheadVFS', { read_to_current: '0' })).toBe(
+      BARRIER_SQL,
+    );
   });
 });

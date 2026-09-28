@@ -10,7 +10,7 @@ import type { SQLiteBuild } from './const/builds';
 import type { PlatformFeature } from './const/platform';
 import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { createClientDebug } from './debug';
-import { advanceSeen, BARRIER_SQL, epochsFor } from './epochs';
+import { advanceSeen, barrierSqlFor, epochsFor } from './epochs';
 import {
   type ClientInspection,
   type DatabaseInspection,
@@ -456,6 +456,7 @@ export const createSQLiteClient = (
   // later site reads THIS, never `clientOptions.pragmas` — including the debug
   // state, so what `db.debug` reports is what the workers actually ran.
   const pragmas = resolvePragmas(vfs, clientOptions.pragmas);
+  const barrierSql = barrierSqlFor(vfs, pragmas);
 
   // Fail at construction, not inside the first unrelated query. The merged set
   // is what gets validated: a bad default would otherwise reach a worker.
@@ -831,7 +832,7 @@ export const createSQLiteClient = (
     // transaction that refreshes page 1. noServed: true prevents the barrier
     // from resetting the supervisor's restart counter — it is a synthetic probe,
     // not user work.
-    const barrierIter = worker.query(BARRIER_SQL, undefined, {
+    const barrierIter = worker.query(barrierSql, undefined, {
       noServed: true,
     });
     while (!(await barrierIter.next()).done) {
