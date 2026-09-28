@@ -477,6 +477,8 @@ const open = (file: string, options: OpenOptions) => {
   // counter cannot interleave. Reset by the `query` case, read by its reply.
   let prepared = 0;
 
+  // Unlocked for the same reason: a second query would reset a statement the
+  // first is stepping. `WORKER_BUSY` in pool.ts is what refuses one.
   const cache = createStatementCache({
     maxEntries: options.statementCacheSize ?? 0,
     maxBytes: options.statementCacheBytes ?? 0,

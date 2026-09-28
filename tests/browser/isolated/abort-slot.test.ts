@@ -3,6 +3,7 @@ import {
   createTestClient,
   interceptWorkers,
   longQuery,
+  sleep,
   theQueryIsRunning,
   waitUntil,
 } from '../helpers';
@@ -46,6 +47,44 @@ describe('the sync build, isolated', () => {
       const started = performance.now();
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
+      expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+      expect(performance.now() - started).toBeLessThan(500);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('stops a running statement when the consumer leaves a chunk early', async () => {
+    // A consumer that breaks out of db.chunk() while its signal never fired:
+    // only chunk()'s own finally interrupts then, since the abort listener
+    // never runs. Without a signal the query is not abortable at all, and on
+    // async or jspi the `stop` message would cut it anyway — hence a signal,
+    // the sync build and isolation.
+    // Falsifiable: remove the `interrupt()` in drain()'s finally
+    // (src/queries.ts) — the count then runs to its end, seconds, before
+    // SELECT 1 gets the worker.
+    // One VFS: same reason as above — the sync build's abort-slot mechanism.
+    const db = await createTestClient({
+      vfs: 'OPFSWriteAheadVFS',
+      build: 'sync',
+      poolSize: 1,
+    });
+    try {
+      // The first row is immediate; the second is a 20 M-row count, one long
+      // step (~4 343 ms unaborted, measured for the test above).
+      const sql = `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 20000000) SELECT 0 AS n UNION ALL SELECT count(*) FROM c`;
+      const signal = new AbortController().signal;
+      for await (const rows of db.chunk<{ n: number }>(sql, [], {
+        signal,
+        chunkSize: 1,
+      })) {
+        expect(rows).toEqual([{ n: 0 }]);
+        // The credit window lets the worker go straight into the count; this
+        // leaves it time to be inside that step before the break.
+        await sleep(100);
+        break;
+      }
+      const started = performance.now();
       expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
       expect(performance.now() - started).toBeLessThan(500);
     } finally {

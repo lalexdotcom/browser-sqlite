@@ -40,6 +40,10 @@ been work on nothing.
 - `creator.close` — the drain never ends; the close path.
 - `db.read` — the open under test after all; `openWithRetry` and `OPFSCoopSyncVFS`'s lock.
 
+## Outside a transaction, a `chunk()`/`stream()` left early without a signal cannot cut its running step (2026-09-28)
+
+`chunk()` passes `abortable: signal !== undefined` (`src/queries.ts`), and the worker installs its progress handler only for an abortable statement (or a `yieldsDuringStatements` VFS, whose handler still answers 0 without a signal) — `src/worker/worker.ts`. So a `break` with no `signal`/`timeout` stops nothing in flight: on every build the worker finishes the step it is in (on `sync`, the chunk it is producing) before the lease comes back. Negligible for most queries; seconds for a query whose rows are far apart (a rare-match filter, an aggregate after a first row). Inside a transaction every statement is abortable (`src/transaction.ts`), so `API.md`'s "on every other build the statement is stopped" holds there; outside, `API.md` promises nothing either way. The cost of making every generator read abortable is measured as nothing on `async`/`jspi` (the yield, `mem:measurements`) and is an `Atomics.load` per 100 000 ops on isolated `sync`. Not decided by the user.
+
 ## `vfs-folders` "opens and persists a path exactly at the bound" failed once on Firefox IDBBatchAtomicVFS/jspi (2026-09-27)
 
 In the full matrix run to verify the #365 carry: `firefox · IDBBatchAtomicVFS/jspi` 371/1/2, the one failure `tests/browser/vfs-folders.test.ts :: … opens and persists a path exactly at the bound`, `expected +0 to be 1` — a client created a table and closed, a second client on the same name counted **0** tables. First failure since the test was added (2026-09-23); every earlier matrix had it green, including the morning's on the same pin without #365. **Not reproduced:** the test alone on that pair 10/10, the whole cell three times through `pnpm test:matrix --engine firefox --pair IDBBatchAtomicVFS/jspi`, 372/0/2 each. Unrelated to #365 as far as the code goes — `IDBBatchAtomicVFS` does not use `WriteAhead.js`. If it recurs: it would be a persistence loss between two clients of that VFS on Firefox, the name at the 52-character bound; keep the report and check whether the first client's close had finished its IndexedDB transaction before the second opened.
@@ -57,7 +61,13 @@ Found answering rhashimoto's question on #365 ("does OPFSWriteAheadVFS have Coop
 - **`OPFSAdaptiveVFS` `jOpen`, Firefox only** (the path without `readwrite-unsafe`): it takes the file's Web Lock, then the access handle; if the handle fails, the `catch` returns `SQLITE_CANTOPEN` with the lock still held (`navigator.locks.query()` shows `OPFS:/<file>`) and its `BroadcastChannel` open. Every later open of that file hangs, same worker or another, until the leaking worker terminates. Fix tested: release the lock, close the channel, drop the `mapIdToFile` entry in the `catch`. **Library exposure, untested:** a worker respawned by `handleDeath` while the dead one still holds the handle (~2 s measured for AHP) would take the lock, fail on the handle, and leave the database blocked. Adaptive is a recommended VFS.
 - **`OPFSCoopSyncVFS` `#initialize()`** (called by `create()`) opens its temporary files one by one with no cleanup on failure — read, not reproduced, left out of the #365 comment by the user. In a fresh private `.ahp-*` directory only a storage error (full quota) would trigger it. Possible consequence, from reading only: the directory's lock goes at GC with its handles still open, and the next instance's stale-directory sweep tolerates only `NotFoundError` on `removeEntry`, so every later `create()` on the origin might fail while the leaking worker lives. To reproduce it, force the failure (make the third `createSyncAccessHandle` throw in the worker); that shows the path, not that it happens.
 
-Not affected: `OPFSWriteAheadVFS`'s temporary files (each closed by a `FinalizationRegistry`), `OPFSPermutedVFS` and `OPFSAnyContextVFS` (one handle per open), `WriteAhead.js`'s `Promise.all` on lock waits, the IndexedDB and memory VFS. **Next:** rhashimoto's answer on #365 decides PRs; the two library exposures deserve a test in the library before anything is carried in `patches/`.
+Not affected: `OPFSWriteAheadVFS`'s temporary files (each closed by a `FinalizationRegistry`), `OPFSPermutedVFS` and `OPFSAnyContextVFS` (one handle per open), `WriteAhead.js`'s `Promise.all` on lock waits, the IndexedDB and memory VFS. **rhashimoto welcomed the PRs (2026-09-28); our reply (comment 5876552104) said they come separately, one per VFS. Ready, NOT opened — the user opens them once he validates that reply in principle.** One worktree per PR, off upstream `e6e01ae1`, two commits each (fix, then test), author `my-lalex <lalex@lalex.com>`, pushed to `lalexdotcom/wa-sqlite` on 2026-09-28 with no PR opened; title/body drafts with the licence box unticked in `.scratchpad/upstream-leak-prs/pr-*.md` (the `Title:`/`Branch:` lines are for us, not the body). Each test fails on master and passes 3/3 with its fix; whole suite green on each branch:
+  - `fix/writeahead-open-leak` (`.work/wa-sqlite-wa-open-leak`) — `vfs_open_cleanup.js`, a directory named `demo-wa0` makes the first WAL open reject; `Expected 'NoModificationAllowedError' to be 'free'` on master; 5792 passed.
+  - `fix/ahp-acquire-leak` (`.work/wa-sqlite-ahp-leak`) — `vfs_pool_recovery.js` + its worker (a failing `create()` never reaches `TestContext`'s ready message, so own workers); three builds; 5797 passed.
+  - `fix/adaptive-open-lock-leak` (`.work/wa-sqlite-adaptive-lock`) — `vfs_open_lock_recovery.js` + worker, which deletes `FileSystemSyncAccessHandle.prototype.mode` before importing the VFS so Chromium takes the no-`readwrite-unsafe` path; reopen bounded at 5 s, `'hung'` on master; 5792 passed.
+  - `test/writeahead-default-build` (`.work/wa-sqlite-wa-default-build`) — `OPFSWriteAheadVFS` moved to `ALL_BUILDS` in `api.test.js` and `sql.test.js` only (user, 2026-09-28: `OPFSWriteAheadVFS.test.js` gets `'default'` in #365 instead); all pass on the default build; 5965 passed.
+
+  The first and third branches both export `createHolder` from `vfs_handle_recovery.js`, the same one-line change, so they merge in either order. After a PR opens: its report in `docs/upstream/` with its number, per `mem:conventions`. The two library exposures still deserve a test in the library before anything is carried in `patches/`.
 
 ## Designs owed — ideas, not scheduled work (user, 2026-09-03)
 
@@ -326,8 +336,11 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   (or is closed), repin or regenerate the patch per `mem:stack-and-build`; if upstream names the
   pragma differently, `catchUpPragma` is the one place to change — and he said on 2026-09-28 he
   is thinking of renaming it and of how it should coexist with the backstop task, so expect
-  that. **Owed on the PR if he wants it:** the default (synchronous) build in its test — offered
-  in comment 5874507146; wa-sqlite's suite never runs this VFS on that build.
+  that. **Owed on the PR after his review (he asked for it, "no rush, you can wait for the
+  review"):** rename the pragma as he decides, and add `'default'` to `BUILDS` in
+  `OPFSWriteAheadVFS.test.js` on `fix/writeahead-read-catches-up` — which also runs the rest of
+  that file on the default build; `api`/`sql` are the separate `test/writeahead-default-build`
+  branch. Replied 2026-09-28 (comment 5876552104).
 - **rstest's pages are off-the-record: OPFS sync-access-handle calls cost 160-290 µs there against
   0.6-2.6 µs on a persistent profile (RSTEST-OTR, `mem:measurements`, 2026-09-28).** rstest opens
   pages with Playwright's `browser.newContext()`. Every absolute OPFS timing taken under rstest —
@@ -353,11 +366,7 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   searched yet (`gh` is available since 2026-09-28). Same shape as #361: an upstream PR plus a `patches/` carry.
   Also worth knowing: in that window a
   reader could read the pre-truncation file rather than fail, if its read wins the race.
-- **`long-query.test.ts`'s `interrupt()` falsifier was already inert at 14be4ee**, on Adaptive.
-- **Concurrency D-09 has no falsifier by construction.** Every VFS with an exclusive handle now runs
-  one worker per client where that matters, so a second worker never reaches the init lock, and
-  `OPFSAnyContextVFS` opens two connections at once without harm. The lock still serialises opens
-  across clients and tabs; a two-client test is what would guard it. Its comment says so.
+- **Concurrency D-09 has no falsifier, and the open-side init lock guards nothing a test sees (2026-09-28).** With `locks.withLock(initLockName…)` removed from the worker's `open()`, `pnpm test`'s three configs stay green; the delete side is guarded (`delete.test.ts`, BUSY while the lock is held). Probe, two clients of `poolSize` 2 created in one task then each writing, 6 reps × 2 target projects per engine: no pragma and `journal_mode=truncate` never fail, with or without the lock; `user_version=7` gets `BUSY: database is locked` **with the lock too** — Chromium 1-3 of 12 per case intact against 5-6 without, Firefox 0-4 intact against 1-5 without, on `OPFSAnyContextVFS` and `IDBBatchAtomicVFS`. So the lock lowers the rate and does not remove it: a writing pragma at open is not serialised against another client's write (the origin write lock does not cover the open's pragmas). Not established: whether the BUSY is raised by the open or by the first `write`. A falsifier built on it would fail in both arms.
 
 ## What the `IDBBatchAtomicVFS` long-statement fix left open (2026-09-14)
 
@@ -495,7 +504,7 @@ differ and must **not** be aligned: the page returns `'blocked'` where invariant
 not); and the page reopens the column's client after `survives-reopen` and `close-settles`,
 because it runs every row against one client where the suite gets a fresh one per `it()`.
 
-## Three things about the statement cache that no test can see
+## What no test can see about the statement cache
 
 **The drain before `close` is falsifiable by nothing.** Deleting it leaves the whole suite
 green: `sqlite3_close` returns `SQLITE_BUSY`, the close path's `catch` swallows it, and the
@@ -505,22 +514,6 @@ database. The test comment says so plainly rather than claiming a falsifier. The
 whole-branch review's verdict on that swallowing `catch`: **not a defect** — a worker that
 failed to open has nothing to close, and the worker dies either way. Reopen only if a future
 close path must tell "nothing to close" from "close refused".
-
-**An abandoned statement's read transaction is unobservable.** `settle` resets the statement
-on every non-error exit, and the reset is what ends its implicit read transaction. That an
-aborted query leaves its statement cached and reusable **is** tested, with a verified
-falsifier. That it leaves no read transaction open is not. With the reset removed, a second
-client writing the same file still succeeds and a later read still observes it — in
-`journal_mode=DELETE` and in WAL. Either the statement had already reached `SQLITE_DONE`
-before the abort landed, or the lock goes back on some other path; nobody has established
-which. **The prior question, if this is ever chased:** can the abort be made to land strictly
-inside a `step()` that has not yet returned `DONE`? Until that is answerable, no assertion
-here can discriminate.
-
-**The one-query-per-worker invariant became load-bearing.** The cache needs no lock because a
-worker holds one lease at a time. Before the cache, breaking that would have produced
-confusing behaviour; now it is a `reset` on a statement another query is stepping. Nothing at
-the place where someone would break it says so.
 
 ## `test-matrix` shows a crashed cell as green-looking — seen 2026-09-26
 

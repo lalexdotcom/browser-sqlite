@@ -76,9 +76,9 @@ green `pnpm test` covers what CI covers. Since 2026-09-11 a commit pays only the
 on the last branch landed with a failing typecheck that no test run could show (`mem:lessons`).
 
 
-**The browser skips are expected: 4 per Chromium project, 1 per Firefox project.** Each config
+**The browser skips are expected: 4 per Chromium project, 2 per Firefox project since 2026-09-28** (1 before: `barrier.test.ts`'s "closes the pragma the barrier opens on OPFSWriteAheadVFS" skips without `readwrite-unsafe`; the baseline table above predates it). Each config
 now builds ONE project per target, so the table's per-config totals are twice those: **8** on the
-chromium report and **2** on the firefox one. Count per project before comparing. One, on both, is
+chromium report and **4** on the firefox one. Count per project before comparing. One, on both, is
 `tests/browser/abandon-gc.test.ts`: it pins the `FinalizationRegistry` path and needs
 `--expose-gc`, which cannot go into `rstest.config.ts` without changing the launch arguments every
 other browser test runs under, so it skips under `pnpm test` and in CI and its header carries the
