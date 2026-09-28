@@ -1,8 +1,9 @@
 # wa-sqlite #365 — a read that starts before the news of a commit
 
-*2026-09-27 — measured on Chromium 151, in the container*
+*2026-09-27 — measured on Chromium 151, in the container. Revised 2026-09-28: the maintainer keeps eventual consistency by design, and the change is now opt-in, `PRAGMA read_to_current`.*
 
 [pr365]: https://github.com/rhashimoto/wa-sqlite/pull/365
+[answer]: https://github.com/rhashimoto/wa-sqlite/pull/365#issuecomment-5867434674
 
 **Why this is here.** On `OPFSWriteAheadVFS`, one of the two VFS this library recommends, a read issued right after another worker's write resolved could return the database as it was before that write. The library's commit-propagation barrier hid it, but by timing only: remove the barrier and put the machine under load, and 37 of 616 probe tests read stale data on Chromium, against 0 with the barrier kept. The cause is in wa-sqlite's `WriteAhead.js`: a read transaction freezes a view that has not yet heard of the latest commit. Proposed upstream as [rhashimoto/wa-sqlite#365][pr365].
 
@@ -54,8 +55,48 @@ PR [#365][pr365], opened 2026-09-27 from `lalexdotcom:fix/writeahead-read-catche
 
 It does not mention this library, per the standing rule: every figure in it is reproducible with wa-sqlite alone, and the load figures above are not quoted there.
 
+## The maintainer's answer: by design
+
+rhashimoto replied the same day: read transactions being only eventually synced is the intended design, not a leftover. The selling point of write-ahead is that a write transaction, even a large and slow one such as a network sync, does not hold up reads on other connections. A read that scans the WAL to its end may read megabytes of frames of that write only to find no commit — and again on the next read. He chose less synchronization over that crosstalk, called the choice debatable, and suggested it could be a setting.
+
+The code bears him out. `OPFSWriteAheadVFS` declares `SQLITE_IOCAP_BATCH_ATOMIC`, so a transaction writes its pages at commit — unless it outgrows SQLite's page cache (2 MiB by default), which then spills pages into the WAL through `#writePage` while the transaction is still open. `#readTx()` reads frame after frame from `#activeOffset` until a commit frame, and `#activeOffset` moves only past a complete transaction, so every read restarts from the same frame.
+
+### The worst case, measured
+
+Chromium 151, wa-sqlite's own runner, master against the unconditional change, both builds, three rounds alternating the order. Every build and round agrees within a few milliseconds.
+
+**A — a transaction open and idle in another context**, pages of 4 KiB, default cache; 30 read transactions (`SELECT count(*)` on a one-row table), median per read:
+
+| open transaction | master | read to current |
+| ---: | ---: | ---: |
+| 0 MB | ~0 ms | ~0 ms |
+| 8 MB | ~0 ms | 12–13 ms |
+| 32 MB | ~0 ms | 60–62 ms |
+| 128 MB | ~0 ms | 252–265 ms, max 377 ms |
+
+About 2 ms per MB open, paid by every read, since the median sits next to the maximum.
+
+**B — a 128 MB transaction committed while another context reads in a loop.** The writer takes about 1.0 s alone and about 1.05 s with the reader, on either version: the writer does not pay. The reader completes about 51 000 reads on master and 130 to 240 with the change, some of them near 290 ms.
+
+The bench is `test/zz-worst*` with its variants, kept outside the fork's tree in `.work/worst/bench/`, its logs in `.work/worst/`.
+
+### Revised: opt-in
+
+A second commit on the branch, `ac817fd6`, keeps master's behaviour by default. `WriteAhead` gains a `readToCurrent` option, `false` by default, and `isolateForRead()` reads the WAL to its end only when it is set; `PRAGMA read_to_current = 1` sets it per connection, and the bare pragma returns the current value, as `backstop_interval` does. The test sets the pragma in its worker. With it: 72 passed, 3 runs of 3, and the whole suite 5794 passed. With the pragma off, the test fails on both builds, `Expected 1 to be 2` — it still sees the race. Pushed and answered with the figures above in a [comment][answer], 2026-09-28.
+
 ## What stays ours
 
-- **The carry.** In [`patches/`](../../patches) since 2026-09-27, to be dropped at the repin that brings it. With it, the probe above reads **0/100** stale under the same load, barrier removed, against 28/100 before.
+- **The carry.** In [`patches/`](../../patches) since 2026-09-27, to be dropped at the repin that brings it; since 2026-09-28 it carries the opt-in revision, which touches `OPFSWriteAheadVFS.js` as well as `WriteAhead.js`. With the pragma on, the probe above reads **0/100** stale under the same load, barrier removed, against 28/100 before.
+- **Where the library sets it: in the barrier, 2026-09-28.** On `OPFSWriteAheadVFS` the barrier's read runs as `PRAGMA read_to_current=1; SELECT count(*) FROM sqlite_master; PRAGMA read_to_current=0` (`catchUpPragma` in `VFS_CAPABILITIES`, `barrierSqlFor` in `src/epochs.ts`). The barrier runs only on a worker behind the commit epoch, so only the first read after a commit catches up, and reads during a large open transaction scan nothing; a consumer who sets `read_to_current` keeps their setting. Chosen over turning the pragma on for every read, measured in the library on Chromium, one client, two workers (`.scratchpad/365-lib-arms/`):
+
+  | | stale, 16 busy loops | read, idle | 2 reads after a write | read, 32 MB open | read, 128 MB open |
+  | --- | ---: | ---: | ---: | ---: | ---: |
+  | no barrier, no pragma | 25/100, 26/100 | | | | |
+  | pragma on every read, no barrier | 0/100, 0/100 | | | | |
+  | barrier, as before | 0/100, 0/100 | 0.20 ms | 0.6–0.9 ms | 0.20 ms | 0.20 ms |
+  | barrier with the pragma | 0/100, 0/100 | 0.20 ms | 0.9–1.0 ms | 0.2–0.3 ms | 0.20 ms |
+  | pragma on every read | 0/100, 0/100 | 0.30 ms | 1.0 ms | 2.8–3.1 s | 11.4–11.8 s |
+
+  Under 48 busy loops the barrier as before still read 0/100, so no load we could produce shows it failing; what the pragma adds is an ordering by construction, which wa-sqlite's deterministic test shows. The seconds in the last row are inflated by the test harness: rstest opens pages with Playwright's `newContext()`, an off-the-record context, where an OPFS sync-access-handle call costs 160–170 µs to read and about 290 µs to write, against 0.6 and 2.6 µs on a persistent profile with the same binary. The code is not transpiled and the volume scanned is the same as in wa-sqlite's runner; the time is in the `read()` calls. On an ordinary profile the cost would be wa-sqlite's ~2 ms per MB — still paid by every read while a large write is open, which the barrier avoids.
 - **The barrier's falsifier.** With the race understood it can be provoked on purpose, which the unloaded suite never did — the barrier has had no test that sees its absence.
 - **The matrix's `needs` fallback**, which made a VFS's cell report another VFS's failures: whether the matrix should skip instead is the user's decision, open.

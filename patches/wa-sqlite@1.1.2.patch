@@ -181,8 +181,32 @@ index b69df1e4f6fe2da3cafb72dd16af3573b50e9c3b..5a8b1997012c82c45db18b3cecea5c88
          } catch (e) {
            this.log?.(`failed to create access handles for ${file.path}`, e);
            // Close any of the potentially opened access handles
+diff --git a/src/examples/OPFSWriteAheadVFS.js b/src/examples/OPFSWriteAheadVFS.js
+index df738d396763b5c12ef08c3740a9c56f44d4b14c..c0a52c6c32f5418fad43f75c805a107074891f23 100644
+--- a/src/examples/OPFSWriteAheadVFS.js
++++ b/src/examples/OPFSWriteAheadVFS.js
+@@ -612,6 +612,19 @@ export class OPFSWriteAheadVFS extends FacadeVFS {
+                 }
+               }
+               break;
++            case 'read_to_current':
++              // A setting of 1 makes each read transaction include every
++              // committed transaction, at the cost of scanning the WAL.
++              if (value !== null) {
++                file.writeAhead.options.readToCurrent = parseInt(value) !== 0;
++              } else {
++                // Return current setting.
++                const s = file.writeAhead.options.readToCurrent ? '1' : '0';
++                const ptr = this._module._sqlite3_malloc64(s.length + 1);
++                this._module.stringToUTF8(s, ptr, s.length + 1);
++                pArg.setUint32(0, ptr, true);
++              }
++              return VFS.SQLITE_OK;
+             case 'synchronous':
+               // Track SQLite synchronous mode. Write-ahead transactions
+               // trade durability for performance on values 1 (NORMAL) or
 diff --git a/src/examples/WriteAhead.js b/src/examples/WriteAhead.js
-index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..ec6eb8234c55a7153348c144862a6e487ad0b9fc 100644
+index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..07dd5d45d52aca9a088393f321538e1af20685d4 100644
 --- a/src/examples/WriteAhead.js
 +++ b/src/examples/WriteAhead.js
 @@ -2,10 +2,16 @@ import { Lock } from './Lock.js';
@@ -202,7 +226,7 @@ index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..ec6eb8234c55a7153348c144862a6e48
  const FRAME_TYPE_PAGE = 0;
  const FRAME_TYPE_COMMIT = 1;
  const FRAME_TYPE_END = 2;
-@@ -30,10 +36,24 @@ const FRAME_COMMIT_CHANGE_FILE_MASK = 1 << 1;
+@@ -30,11 +36,26 @@ const FRAME_COMMIT_CHANGE_FILE_MASK = 1 << 1;
   * @property {number} waOffsetEnd
   */
  
@@ -225,40 +249,43 @@ index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..ec6eb8234c55a7153348c144862a6e48
   * @property {number} [backstopInterval]
 + * @property {number} [checkpointBufferSize]
   * @property {number} [journalSizeLimit]
++ * @property {boolean} [readToCurrent]
   */
  
-@@ -44,6 +64,7 @@ export class WriteAhead {
+ export class WriteAhead {
+@@ -44,6 +65,8 @@ export class WriteAhead {
      autoCheckpoint: 1,
      backstopInterval: DEFAULT_BACKSTOP_INTERVAL,
      journalSizeLimit: DEFAULT_JOURNAL_SIZE_LIMIT,
 +    checkpointBufferSize: DEFAULT_CHECKPOINT_BUFFER_SIZE,
++    readToCurrent: false,
    };
  
    #zName;
-@@ -165,8 +186,7 @@ export class WriteAhead {
- 
+@@ -166,7 +189,8 @@ export class WriteAhead {
    /**
     * Freeze our view of the database.
--   * The view includes the transactions received so far but is not
+    * The view includes the transactions received so far but is not
 -   * guaranteed to be completely up to date. Unfreeze the view with rejoin().
-+   * The view includes all transactions. Unfreeze the view with rejoin().
++   * guaranteed to be completely up to date, unless the readToCurrent
++   * option is set. Unfreeze the view with rejoin().
     */
    isolateForRead() {
      if (this.#isolationState !== null) {
-@@ -177,6 +197,12 @@ export class WriteAhead {
+@@ -177,6 +201,12 @@ export class WriteAhead {
      // Disable backstop during isolation.
      clearTimeout(this.#backstopTimer);
      this.#backstopTimer = null;
 +
-+    // A transaction another connection committed before this read began may
-+    // not have been broadcast here yet: the message and the request for this
-+    // read arrive over different channels, in no guaranteed order. Read the
-+    // WAL through its end so that such a transaction is part of the view.
-+    this.#advanceTxId({ readToCurrent: true });
++    if (this.options.readToCurrent) {
++      // Include transactions committed but not yet received. This scans
++      // any uncommitted frames of a write in progress, on every read.
++      this.#advanceTxId({ readToCurrent: true });
++    }
    }
  
    /**
-@@ -434,8 +460,9 @@ export class WriteAhead {
+@@ -434,8 +464,9 @@ export class WriteAhead {
        }
  
        // Starting at ckptId and going backwards (higher to lower txId),
@@ -270,7 +297,7 @@ index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..ec6eb8234c55a7153348c144862a6e48
        const writtenOffsets = new Set();
        let dbFileSize = this.#dbHandle.getSize();
        for (let tx = this.#mapIdToTx.get(ckptId); tx; tx = this.#mapIdToTx.get(tx.id - 1)) {
-@@ -447,16 +474,16 @@ export class WriteAhead {
+@@ -447,16 +478,16 @@ export class WriteAhead {
  
          for (const [offset, pageEntry] of tx.pages) {
            if (offset < dbFileSize && !writtenOffsets.has(offset)) {
@@ -295,7 +322,7 @@ index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..ec6eb8234c55a7153348c144862a6e48
            }
          }
  
-@@ -470,6 +497,10 @@ export class WriteAhead {
+@@ -470,6 +501,10 @@ export class WriteAhead {
          }
        }
  
@@ -306,7 +333,7 @@ index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..ec6eb8234c55a7153348c144862a6e48
        // Ensure that database writes are durable.
        this.log?.(`%ccheckpoint flush database file`, 'color: black; background-color: lightgreen;');
        this.#dbHandle.flush();
-@@ -796,6 +827,53 @@ export class WriteAhead {
+@@ -796,6 +831,53 @@ export class WriteAhead {
      return pageData;
    }
  
@@ -360,7 +387,7 @@ index 76bd4fac5dac94fb968f9ccb51ffa063438d8e49..ec6eb8234c55a7153348c144862a6e48
    *#readAllTx() {
      while (true) {
        const tx = this.#readTx();
-@@ -1257,3 +1335,73 @@ class Checksum {
+@@ -1257,3 +1339,73 @@ class Checksum {
      return this.s0 === s0 && this.s1 === s1;
    }
  }
