@@ -1134,3 +1134,11 @@ Removing the pool check in `onGateOpen` left "fails the client rather than hangi
 
 `aWorkerIsRunning` was true for any running statement, and a fresh client's first one is the freshness barrier. Tests that waited on it and then aborted aborted the barrier on Chromium every time: the query they named was never sent, they passed, and one of them (`abort-slot`'s dead-worker test) was inert under its own falsifier. It also produced a fake engine difference that cost a wrong diagnosis ("a worker lent back mid-statement"), refuted only by listing the statements actually sent. **A wait before an action must identify the thing acted on, not a state it shares with something else.**
 
+## Two harnesses disagreeing by 45× is a harness finding until a pure probe says otherwise (2026-09-28, `fix/writeahead-read-to-current`)
+
+The same `WriteAhead` scan cost 60 ms in wa-sqlite's runner and 2.8 s in ours. Build, binary and transpilation were ruled out one run each; instrumenting the scan put the time in `read()` calls, and a probe with no library at all reproduced the gap — rstest's pages are off-the-record (RSTEST-OTR). The first reading, "the library makes it dearer", would have sent the fix to the wrong layer. **When one harness's absolute number is out of line, run the same dependency-free probe in both before blaming the code under test.**
+
+## Before calling a design new work, look for the mechanism already there (2026-09-28, `fix/writeahead-read-to-current`)
+
+Asked whether the library could decide when a read catches up, the answer given was "possible, but it needs a write epoch per client and per worker in the pool". Both existed: the epoch barrier runs a read exactly on a worker behind a commit, origin-wide. That misjudgement tilted the first recommendation towards a default pragma that measured seconds per read during a large write. **When a proposal needs state, grep for who already keeps it.**
+

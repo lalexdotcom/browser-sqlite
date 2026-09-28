@@ -316,7 +316,24 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   Two connections in ONE context share a `WriteAhead` view and cannot reproduce it. Cost ≈ 5 µs
   per read transaction on asyncify. Body in
   `.scratchpad/writeahead-read-freshness/pr-365-writeahead-read-freshness.md`. **Carried in
-  `patches/` since 2026-09-27; next, give the barrier its falsifier.**
+  `patches/` since 2026-09-27.** **2026-09-28: answered "by design", now opt-in, and the library
+  sets it in the barrier.** rhashimoto keeps reads eventually consistent on purpose: reading to
+  the end scans the uncommitted frames of a large open write on every read (~2 ms per MB,
+  365-WORST, `mem:measurements`). The PR's second commit `ac817fd6` makes it
+  `PRAGMA read_to_current`, off by default; the patch carries that revision. Our barrier on
+  `OPFSWriteAheadVFS` runs its read between `read_to_current=1` and `=0` (`catchUpPragma`,
+  `barrierSqlFor`), so the reads after a commit are current by construction and reads during a
+  large open write scan nothing (365-LIB). **What is still open:** the barrier has no falsifier
+  that fails under load — the old timing-only barrier read 0/100 even under 48 busy loops, so
+  the pragma's gain is shown by wa-sqlite's deterministic test, not by ours. When #365 merges
+  (or is closed), repin or regenerate the patch per `mem:stack-and-build`; if upstream names the
+  pragma differently, `catchUpPragma` is the one place to change.
+- **rstest's pages are off-the-record: OPFS sync-access-handle calls cost 160-290 µs there against
+  0.6-2.6 µs on a persistent profile (RSTEST-OTR, `mem:measurements`, 2026-09-28).** rstest opens
+  pages with Playwright's `browser.newContext()`. Every absolute OPFS timing taken under rstest —
+  the checkpoint and page-size campaigns included — carries that per-call cost; ratios between
+  arms of one run still compare. Not acted on: whether to measure OPFS in a persistent context
+  (wa-sqlite's runner, or a Playwright `launchPersistentContext` harness) is the user's call.
 - **`OPFSAnyContextVFS` releases its lock with a truncation still invisible — `disk I/O error` on
   Firefox (2026-09-25). FIXED in our build by a `patches/` hunk, submitted upstream as
   rhashimoto/wa-sqlite#363** (report `docs/upstream/2026-09-25-wa-sqlite-363-anycontext-unlock-truncate.md`).

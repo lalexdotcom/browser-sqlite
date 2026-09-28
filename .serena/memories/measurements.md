@@ -4,6 +4,37 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## RSTEST-OTR — rstest's OPFS is off-the-record and ~250× dearer per call, 2026-09-28, Chromium, this container
+
+A pure OPFS micro-bench — 7 772 frames of 24 + 4096 bytes written, then read back as two `read()` calls per frame, then 2 000 `write()` calls — with no library and no wa-sqlite (`.scratchpad/365-lib-arms/io-probe.js`). Same source in every harness, three rounds, default and `readwrite-unsafe` handles, with and without a second handle open — none of those three variables moved it.
+
+| harness | `read()` per call | `write()` per call |
+| --- | ---: | ---: |
+| rstest browser mode | 152-166 µs | 268-280 µs |
+| web-test-runner (chrome-launcher, persistent profile) | 0.57-0.66 µs | 2.05-2.45 µs |
+| Playwright `launchPersistentContext`, same binary | 0.55-0.62 µs | 2.35-3.05 µs |
+| Playwright `browser.newContext()`, same binary | 159-173 µs | 287-295 µs |
+
+rstest's browser provider calls `newContext()`, an off-the-record context (`.scratchpad/365-lib-arms/io-context.mjs`). Why that context is slow per call is not verified — Chromium keeping an off-the-record OPFS in memory in the browser process, one IPC per call, is the likely reading. Found because the pragma arm of 365-LIB cost 45× what wa-sqlite's runner measured: instrumented, the same 31.8 MB were scanned, the checksum took 40 ms and the `read()` calls 2.6 s; build (`sync`, `jspi`), headless shell and transpilation were each ruled out by a run of their own.
+
+## 365-LIB — `read_to_current` in the library: every read against the barrier's read, 2026-09-28, Chromium, this container
+
+`OPFSWriteAheadVFS/sync`, one client, two workers, arms applied as patches in turn (`.scratchpad/365-lib-arms/`, `run.sh`, `summary.txt`). Stale: one INSERT, two concurrent reads, 100 iterations, writer off index 0, sixteen busy loops (48 in the last column). Costs unloaded, medians over three rotated rounds. Every absolute time here is inflated by RSTEST-OTR; the arms share it.
+
+| arm | stale /16 | stale /48 | idle read | 2 reads after a write | read, 32 MB open | read, 128 MB open |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| no barrier, no pragma | 25, 26 | | | | | |
+| no barrier, pragma on every read | 0, 0 | | | | | |
+| barrier as before | 0, 0 | 0 | 0.20 ms | 0.6-0.9 ms | 0.20 ms | 0.20 ms |
+| barrier with the pragma | 0, 0 | 0 | 0.20 ms | 0.9-1.0 ms | 0.2-0.3 ms | 0.20 ms |
+| pragma on every read, barrier kept | 0, 0 | | 0.30 ms | 1.0 ms | 2.8-3.1 s | 11.4-11.8 s |
+
+The barrier arm measured three statements in three messages; what shipped sends them in one, re-checked the same day: 0/100 under sixteen loops. The 32/128 MB transactions took 4.5-5.4 s and 19.8-22.3 s to write, against 0.23 s and ~1 s in wa-sqlite's runner — RSTEST-OTR again.
+
+## 365-WORST — reading the write-ahead to its end while a large write is open, 2026-09-28, Chromium, this container
+
+wa-sqlite's own runner (web-test-runner, Chromium 151), the fork at `.work/wa-sqlite-readfresh`, master against the unconditional first revision of #365, asyncify and jspi, three rounds alternating the order (`.work/worst/`, bench in `.work/worst/bench/`). Pages of 4 KiB, default cache, so a transaction spills into the WAL past ~2 MiB. A: a transaction open and idle in another worker, 30 `SELECT count(*)` read transactions, median per read — 0 MB ~0 ms both; 8 MB 12-13 ms against ~0; 32 MB 60-62 ms; 128 MB 252-265 ms (max 377). Builds within a few ms of each other; the `sync` build and the headless shell gave 60 ms at 32 MB too. B: a 128 MB transaction committed while another worker reads in a loop — writer ~1.0 s alone and ~1.05 s with the reader on either version; the reader completes ~51 000 reads on master and 130-240 with the change, some near 290 ms. So ~2 ms per MB open, paid by every read, since the median sits next to the maximum.
+
 ## REUSE-LOAD — the whole Firefox config under load, 2026-09-27, this container
 
 The arm LEASE-QUIESCE left open: not one file under load but the whole Firefox config, the context of the single 2026-09-14 sighting. `rstest --config rstest.firefox.config.ts` (both Firefox target projects, every browser file) ten times in a row under sixteen busy loops (16 cores), `main` on pin `5e98ac7` with #363. Script and logs `.scratchpad/reuse-guard-load-2026-09-27/`. Detection: `WORKER_BUSY` or "already has a query in flight" anywhere in each report, which is where a query rejected by the guard lands.
