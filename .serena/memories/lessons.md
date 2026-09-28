@@ -1141,3 +1141,7 @@ The same `WriteAhead` scan cost 60 ms in wa-sqlite's runner and 2.8 s in ours. B
 
 Asked whether the library could decide when a read catches up, the answer given was "possible, but it needs a write epoch per client and per worker in the pool". Both existed: the epoch barrier runs a read exactly on a worker behind a commit, origin-wide. That misjudgement tilted the first recommendation towards a default pragma that measured seconds per read during a large write. **When a proposal needs state, grep for who already keeps it.**
 
+
+## A mutation run covers the three configs, and a mutant that survives is traced before it is called untested (2026-09-28, `test/falsifiers`)
+
+`pnpm test:browser` runs Chromium and Firefox, not `rstest.isolated.config.ts` — the only project with cross-origin isolation, hence the only one where the `sync` build's abort slot works. A mutation of `drain()`'s `interrupt()` was declared "unguarded" after `test:browser` alone; the path it serves exists only in the isolated project. Mutate against `pnpm test`'s three configs, or name the config left out. And a surviving mutant is not yet a missing test: here the obvious scenario (a `break` without a signal) could not fail either, because such a query is not abortable at all — reading which path the mutated line serves came before writing the test that finally failed 10 of 10.
