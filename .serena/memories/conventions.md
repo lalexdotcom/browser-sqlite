@@ -76,7 +76,7 @@ output verbatim; after committing, confirm with `git log` and `git show --stat H
 reasons, both paid for on 2026-09-10: a subagent ran `pnpm store prune && pnpm install`
 unasked — the prune reaches the machine's global store, outside the repository — and a commit
 landed with a failing `tsc` from a subagent whose command was cut mid-hook
-(`mem:follow-ups`, the pre-commit hook entry). And **do not accept a subagent's "pre-existing"**
+(`mem:git-hooks`). And **do not accept a subagent's "pre-existing"**
 without checking the base commit.
 
 ## `.superpowers/` artefacts are not a subject (user, 2026-09-03)
@@ -131,6 +131,8 @@ may be left live in this one. Three steps, in order:
   Push only when asked, or when the point is to trigger CI and the user has said so.
 - **Unplanned working-tree changes are committed, not discarded — but only after the user
   confirms.** Never resolve a dirty tree by reverting or stashing on your own initiative.
+- **The hooks are documented in `mem:git-hooks`**: what each one runs, why they are braces on
+  the belt rather than the gate, and what a green hook does not prove.
 
 ## Releasing (user, 2026-08-31)
 

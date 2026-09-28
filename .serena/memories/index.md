@@ -1,6 +1,6 @@
 # Memory index — `browser-sqlite`
 
-Nine memories, each small enough to read whole. Start with `mem:state`.
+Each memory is small enough to read whole. Start with `mem:state`.
 
 | Memory | What it holds | How often it changes |
 |---|---|---|
@@ -12,6 +12,7 @@ Nine memories, each small enough to read whole. Start with `mem:state`.
 | `mem:follow-ups` | The open backlog, one short entry each | ongoing |
 | `mem:lessons` | Lessons paid for once; do not relearn them | append only |
 | `mem:conventions` | Working rules not already in `AGENTS.md` | rarely |
+| `mem:git-hooks` | The three git hooks, what they run, what a green hook does not prove | rarely |
 | `mem:history` | What each wave/branch shipped, in one line | append only |
 
 ## Rules for keeping these usable

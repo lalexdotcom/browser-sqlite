@@ -1,6 +1,7 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
 import { databasePath } from '../../src/utils';
+import { removeOpfsPath } from '../conformance/helpers';
 
 /**
  * A VFS that takes an EXCLUSIVE OPFS access handle inside `xOpen` fails the
@@ -11,13 +12,11 @@ import { databasePath } from '../../src/utils';
  * `mem:measurements`), while its Web Locks are released at once — so the
  * replacement worker meets a file held by a context that no longer answers
  * anything. Measured 2026-09-18 on `chromium · OPFSCoopSyncVFS/sync`: the open
- * dies with `WORKER_CRASHED: sqlite3_open_v2` — the base message is SQLite's
- * own `unable to open database file` since wa-sqlite #330, the rest is
- * unchanged — and the cause never reaches the
- * caller because wa-sqlite swallows it — `jOpen`'s asynchronous phase logs the
- * `NoModificationAllowedError` to the console, stores an invalid
- * `PersistentFile`, and the retried open returns `SQLITE_CANTOPEN` with no
- * `lastError`. Instrumented, the census said `held=none pending=none` (no lock
+ * dies with `WORKER_CRASHED` — `jOpen`'s asynchronous phase meets the
+ * `NoModificationAllowedError`, stores an invalid `PersistentFile`, and the
+ * retried open returns `SQLITE_CANTOPEN`. The error then reached nobody but
+ * the console; since wa-sqlite #357 it is kept in `lastError` and becomes the
+ * failure's cause. Instrumented, the census said `held=none pending=none` (no lock
  * anywhere: the holder is dead) and a replayed attempt on the same VFS instance
  * succeeded in 4-14 ms, 4 times out of 4.
  *
@@ -266,5 +265,34 @@ describe('opening a database whose file is momentarily held', () => {
         // The client may already have failed; the assertion above reports it.
       });
     }
+  });
+});
+
+describe('opening a database whose file is refused for another reason', () => {
+  // Falsifiable: retry whatever the refusal — the open then waits out
+  // OPEN_RETRY_BUDGET_MS (2.5 s) before reporting what was never transient.
+  it('fails without waiting out the retry budget', async () => {
+    const dbName = `bsq-test-${crypto.randomUUID()}`;
+    const path = databasePath(VFS, dbName);
+    // A directory where the database file belongs: the VFS's getFileHandle
+    // refuses it with a TypeMismatchError, which no wait will change.
+    const segments = path.split('/');
+    let dir = await navigator.storage.getDirectory();
+    for (const segment of segments) {
+      dir = await dir.getDirectoryHandle(segment, { create: true });
+    }
+    onTestFinished(() => removeOpfsPath(path));
+
+    const db = createSQLiteClient(dbName, { vfs: VFS });
+    onTestFinished(() => db.close().catch(() => {}));
+    const started = performance.now();
+    const error = await db.read('SELECT 1').then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    const elapsed = performance.now() - started;
+
+    expect(error).toMatchObject({ code: 'WORKER_CRASHED' });
+    expect(elapsed).toBeLessThan(2_000);
   });
 });

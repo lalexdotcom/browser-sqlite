@@ -132,19 +132,17 @@ const OPEN_RETRY_BUDGET_MS = 2_500;
  * handle inside `xOpen` — where `createVfsInstance`'s retry cannot reach,
  * because the handle is taken per file, long after the VFS instance exists.
  *
- * Retried blind, and that is not a shortcut: wa-sqlite's `jOpen` catches the
- * acquisition failure, logs it to the worker's console and returns
- * `SQLITE_CANTOPEN` with no `lastError`, so nothing here can tell a held file
- * from any other refusal (measured 2026-09-18). What narrows it instead is the
- * declaration: only a VFS holding an EXCLUSIVE handle can be blocked by a
- * context that answers nothing, and only those retry at all. The cost is borne
- * by a genuine open failure on those VFS alone, which waits out the budget
- * before reporting — an error path, and a bounded one.
+ * Retried only when the VFS's `lastError` names a held file (`HELD_ELSEWHERE`),
+ * which `OPFSCoopSyncVFS` records on a failed acquisition since wa-sqlite
+ * #357; any other refusal is reported at once, with that error as its cause.
+ * The declaration narrows it further: only a VFS holding an EXCLUSIVE handle
+ * can be blocked by a context that answers nothing, and only those retry.
  */
 const openWithRetry = async (
   sqlite: { open_v2: (file: string) => Promise<number> },
   file: string,
   vfs: SQLiteVFS,
+  lastError: () => unknown,
 ): Promise<number> => {
   if (!VFS_CAPABILITIES[vfs].exclusiveFileHandle) {
     return sqlite.open_v2(file);
@@ -154,7 +152,13 @@ const openWithRetry = async (
     try {
       return await sqlite.open_v2(file);
     } catch (error) {
-      if (Date.now() >= deadline) throw error;
+      if (
+        (lastError() as { name?: string } | undefined)?.name !==
+          HELD_ELSEWHERE ||
+        Date.now() >= deadline
+      ) {
+        throw error;
+      }
       await new Promise((resolve) =>
         setTimeout(resolve, ACQUIRE_RETRY_INTERVAL_MS),
       );
@@ -415,7 +419,12 @@ const open = (file: string, options: OpenOptions) => {
           // (measured: broke all 96 browser tests on 56-char names). The VFS
           // normalizes internally, so 'data' and '/data' open the same OPFS file.
           return locks.withLock(initLockName(vfs, file), async () => {
-            const db = await openWithRetry(sqlite, file, vfs);
+            const db = await openWithRetry(
+              sqlite,
+              file,
+              vfs,
+              () => vfsInstanceSeen?.lastError,
+            );
             for (const statement of renderPragmas(pragmas)) {
               for await (const stmt of sqlite.statements(db, statement)) {
                 while ((await sqlite.step(stmt)) === SQLITE_ROW) {}

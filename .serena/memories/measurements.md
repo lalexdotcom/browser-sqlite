@@ -335,8 +335,8 @@ run alone they give 18 tests, 0 skipped.
 With the two full matrices since the fix (2026-09-18 15:50 and 2026-09-21) that is **ten clean runs
 of that cell**. It failed 5 times in 14 full-cell runs before (36 %, VFS-PILES above), which puts ten
 consecutive greens at ~1 % by luck. Cause and fix: wa-sqlite #350, the partial-acquisition leak, with
-`exclusiveFileHandle` and `openWithRetry` on our side. **What remains of the subject is
-diagnosability alone** — `jOpen` still swallows the cause (`mem:follow-ups`).
+`exclusiveFileHandle` and `openWithRetry` on our side. **What remained of the subject was
+diagnosability alone** — `jOpen` swallowed the cause — and wa-sqlite #357 settled it (pinned 2026-09-28).
 
 ## IDB-SIGNAL — a signal lets `IDBBatchAtomicVFS` serve a read during a long query, 2026-09-14, this container
 
@@ -2928,3 +2928,23 @@ rounds, each asking the OPFS root for one shared file and then two sync access h
 - Consequence to check before relying on it: handle starvation is asserted for Firefox only
   (`tests/browser/firefox/handle-starvation.test.ts`). If Safari 27 queues, its starvation shape
   is neither Firefox's nor Chromium's, and nothing measures it.
+
+## HELD-LIVE — a file held by a live context, on the VFS that do not declare `exclusiveFileHandle`, 2026-09-28, this container
+
+**Method.** A throwaway browser test (deleted after the run): a dedicated worker takes a plain
+`createSyncAccessHandle()` on the database file and keeps it; a client with `poolSize: 1` then runs
+`SELECT 1`. One run per engine, target `OPFSWriteAheadVFS/sync` (the test names its VFS), on branch
+`chore/wa-sqlite-repin` after `91ea0a8`, Playwright's Chromium and Firefox.
+
+| VFS | engine | outcome | cause name | time to fail |
+|---|---|---|---|---:|
+| `OPFSWriteAheadVFS` | Firefox | `WORKER_CRASHED` | `NoModificationAllowedError` | 71 ms |
+| `OPFSAdaptiveVFS` | Firefox | `WORKER_CRASHED` | `NoModificationAllowedError` | 61 ms |
+| `OPFSWriteAheadVFS` | Chromium | `WORKER_CRASHED` | `NoModificationAllowedError` | 43 ms |
+| `OPFSAdaptiveVFS` | Chromium | `WORKER_CRASHED` | `NoModificationAllowedError` | 39 ms |
+
+**Reading.** The cause is the held-file name `openWithRetry` retries on, on both engines — on
+Chromium too, since a `readwrite-unsafe` request still conflicts with an exclusive holder. Only the
+`exclusiveFileHandle` declaration keeps these opens from waiting out the 2.5 s budget against a
+holder that is alive and will not let go (`mem:vfs`).
+

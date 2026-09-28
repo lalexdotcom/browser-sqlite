@@ -44,16 +44,9 @@ been work on nothing.
 
 In the full matrix run to verify the #365 carry: `firefox · IDBBatchAtomicVFS/jspi` 371/1/2, the one failure `tests/browser/vfs-folders.test.ts :: … opens and persists a path exactly at the bound`, `expected +0 to be 1` — a client created a table and closed, a second client on the same name counted **0** tables. First failure since the test was added (2026-09-23); every earlier matrix had it green, including the morning's on the same pin without #365. **Not reproduced:** the test alone on that pair 10/10, the whole cell three times through `pnpm test:matrix --engine firefox --pair IDBBatchAtomicVFS/jspi`, 372/0/2 each. Unrelated to #365 as far as the code goes — `IDBBatchAtomicVFS` does not use `WriteAhead.js`. If it recurs: it would be a persistence loss between two clients of that VFS on Firefox, the name at the 52-character bound; keep the report and check whether the first client's close had finished its IndexedDB transaction before the second opened.
 
-## Repin wa-sqlite: #350, #357 and #361 are merged upstream (user, 2026-09-27) — later
+## wa-sqlite #351 could cite #262 — very low priority (user, 2026-09-28)
 
-The user reported all three merged on 2026-09-27, and deferred the repin and the patch update.
-When it is done: repin on the upstream commit that has them, then regenerate
-`patches/wa-sqlite@1.1.2.patch` WITHOUT their hunks — `OPFSCoopSyncVFS.js` (#350) and
-`WriteAhead.js` (#361) leave it; #357 was never carried, so it only arrives with the pin. Follow
-`mem:stack-and-build` ("When one merges"): `pnpm patch`, re-apply the old patch by hand first,
-check `node_modules` and the lockfile after `patch-commit`. Check what upstream merged against
-what we carry before dropping a hunk — #361 changed on review. Then the matrix, per
-`mem:conventions`, and the upstream reports in `docs/upstream/` for their merge.
+rhashimoto's own #262 ("Fill in IDBBatchAtomicVFS blocks on writes past EOF", open since 2025-04, no description) is the other side of #351's gap case: a write past EOF stores only its block and leaves a hole, which a later write into it (the overwrite branch) failed on. #262 would prevent the hole; #351 lets `jWrite` cross it, as `jRead` does. #351's short-block case (a 512-byte journal header, then a full page) is unrelated to EOF. A reading inside a hole still returns `SQLITE_IOERR_SHORT_READ` and zeroes the rest of the buffer; only #262 would remove that. Neither PR cites the other. If ever done: a short comment on #351 pointing at #262, asking whether he wants it folded in. The user deferred it; do not raise it again unprompted.
 
 ## Designs owed — ideas, not scheduled work (user, 2026-09-03)
 
@@ -127,10 +120,6 @@ savepoint before opening its own.
 ## `db.debug` — for the documentation review session (user, 2026-09-24)
 
 `API.md` has no `## *client*.debug` section: the property appears only in the options table (`debug` row: "the `db.debug` introspection tree"), which advertises it without saying what it holds or when it is `undefined`. Meanwhile `SQLiteDB.debug` is tagged `@internal` in `src/api.ts` ("Not part of the stable public API. Shape is subject to change without notice."), yet no `stripInternal` is set, so it ships in `dist/api.d.ts` with `ClientDebugState`. The docs and the tag disagree on whether it is public; the review settles which, and documents it or stops advertising it. Its type is also only partly readonly (`workers`, `requests`, `queries`, `currentRequest` and every `QueryDebugState` field are mutable).
-
-## The bench's `pool N → M` header has not been seen on Safari (2026-09-23)
-
-`feat/db-ready` made each column header show the pool it ran on once `db.ready` resolves. `check.mjs` verified it on Chromium and Firefox (Firefox exports `poolSize` 1 for the `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` pairs). On Safari the `OPFSAdaptiveVFS` columns should read `pool 4 → 1`; the user has not run it yet (serve from the container, `mem:conventions`).
 
 ## `db.debug`: a worker's `currentRequest` is never cleared (2026-09-28)
 
@@ -262,30 +251,6 @@ fix, as `output()` did.
 **The lesson the three shared, and it is in `mem:lessons`: a pile's twelve subjects can be one
 defect, and the scenario a defect is found through is often not the one that demonstrates it.**
 
-## wa-sqlite's `jOpen` swallows the cause of a failed open — upstream candidate (2026-09-21)
-
-`OPFSCoopSyncVFS.jOpen`'s asynchronous phase catches its error, stores an invalid `PersistentFile` as the only signal and calls `console.error(e)` — it never sets `this.lastError` (the catch inside the `retryOps` push, `node_modules/wa-sqlite/src/examples/OPFSCoopSyncVFS.js`). The retried open then reads `!persistentFile.fileHandle` and returns `SQLITE_CANTOPEN`, so a caller cannot tell a file held by a dead context from one that does not exist. That is what made the two matrix cells report a bare `WORKER_CRASHED: sqlite3_open_v2`, and instrumenting that catch by hand is what produced the `NoModificationAllowedError` the #350 diagnosis rests on. The #350 report already names it a separate subject.
-
-**The fix is one line — `this.lastError = e` in that catch — and both consumers are already in place.** `src/worker/worker.ts` already reads `vfsInstanceSeen.lastError` and formats it as `name: message` into the open failure's `detail`. **What it does NOT buy, measured 2026-09-21 and refuting what this entry first claimed: SQLite's own message does not carry it.** Since wa-sqlite #330 a failed `open_v2` reports the connection's message rather than the function name — but that message is `unable to open database file`, identical with and without the fix, because SQLite does not fold `xGetLastError` into it here. Reading the VFS instance is not a shortcut, it is the only route. Nothing on our side changes, which is why this buys diagnosability and nothing else — the failure it used to hide is fixed.
-
-**Posted as rhashimoto/wa-sqlite#357 on 2026-09-21**, from `lalexdotcom:fix/coopsync-open-last-error`, rebased onto `master` at `93b92308` before opening. Two commits, four files. `test/vfs_open_last_error.js` fails on that master on the `default` and `asyncify` builds and passes with the fix; the whole upstream suite is 2905/14/0. Report and evidence: `docs/upstream/2026-09-21-wa-sqlite-357-coopsync-open-last-error.md`. The fork branch is kept in case review asks for an iteration.
-
-**The second finding, and it is the one a reviewer will weigh:** the upstream test harness cannot observe VFS state at all. `test/test-worker.js` proxies the VFS behind a getter that returns only functions, so `await vfs.lastError` answers `undefined` even after a path that DOES set it (probed directly). The test therefore carries a one-line harness change. Nothing depended on the old behaviour — every non-function property answered `undefined`.
-
-**Not carried in `patches/`** — deliberately: it fixes no failure, it makes one legible. Carrying it would put `NoModificationAllowedError` into our open failures' `detail`; that is the user's call and it is not taken.
-
-## wa-sqlite's `autoCheckpoint` never reads the value it is given — upstream candidate (2026-09-22)
-
-`#autoCheckpoint()` (`WriteAhead.js`) tests `this.options.autoCheckpoint > 0` and nothing else, so 1, 100 and 1000 all mean "after every transaction" — the option is a boolean wearing a number. The pragma parses a real integer (`OPFSWriteAheadVFS.js`, `case 'wal_autocheckpoint'`) and then nobody compares against it. Upstream's own comment says as much: *"A setting greater than zero enables automatic checkpoints"*. That case ends on `break` rather than `return SQLITE_OK`, so it falls through to `SQLITE_NOTFOUND` and SQLite processes the pragma too — inert, this VFS implementing its write-ahead below SQLite.
-
-**A cheap correctness point, and it is NOT a performance fix** — the threshold was measured and refuted as one (AUTOCHECKPOINT-THRESHOLD, `mem:measurements`): the response is a step, not a curve, and the knee belongs to the workload. Worth asking for on its own; **the checkpoint cost is already addressed** by #361 (`docs/upstream/2026-09-23-…`), submitted and carried in `patches/`.
-
-**Three things block a drive-by threshold**, kept because they are true of the code: `journalSizeLimit` already defaults to 1000 pages and is a *rotation* threshold evaluated in the same commit function, so equal values collide; `#backstop()` does not checkpoint, so nothing drains an idle connection once the threshold rises; and `=0` stops rotation for ever, since `#isInactiveFileEmpty()` short-circuits on a `#mapIdToTx` that only a checkpoint drains.
-
-## `page_size` on `OPFSWriteAheadVFS` — a lever we hold, not yet advice (2026-09-22)
-
-32 KiB instead of 4 KiB made the whole bulk insert 3.25× faster on Chromium, 1.18× on Firefox (PAGE-SIZE, `mem:measurements`). No upstream dependency at all. **Not a recommendation yet:** bulk insert is the friendliest case for large pages, and a scattered-update workload has never been measured. Measure that before it goes anywhere near the docs.
-
 ## Two worker fallback messages carry the path (2026-09-23)
 
 `src/worker/worker.ts`'s open and delete fallbacks read `Failed to open ${file}` / `Failed to delete ${data.file}`, and since `feat/vfs-folders` the worker only knows the path (`.ad/name`). They fire only when something that is not an `Error` is thrown, and `startupError` forwards the text verbatim, so no client wrapping re-adds the logical name. Parked by the controller's ruling: the path is the only identifier the worker has. Reattaching the logical name would mean sending it to the worker or wrapping on the client side.
@@ -405,67 +370,19 @@ with `TypeError: undefined is not an object (evaluating
 Playwright's Linux WebKit was set aside earlier for limits of this kind (user). Unmeasured whether
 a consumer environment lacks it; an insecure context is the candidate. Pre-existing, not scheduled.
 
-## The pre-commit hook — three hooks since 2026-09-11 (user)
-
-Decided and installed on 2026-09-11, in `package.json` under `simple-git-hooks`:
-
-- `pre-commit` — `tsc`, then `lint-staged`, then the unit project: ~1.5 s. **While concluding a
-  merge that stopped on a conflict** (`MERGE_HEAD` exists) it runs `pnpm test` instead of the
-  unit project, because the commit that concludes such a merge fires `pre-commit` and never
-  `pre-merge-commit`.
-- `pre-merge-commit` — `tsc`, `biome ci .`, `pnpm test`. Every merge here is `--no-ff`, so
-  every merge into `main` pays the full suite.
-- `pre-push` — the same, as the backstop for commits made directly on `main` before anything
-  reaches CI. Since 2026-09-15 it also runs CI's VFS table check, `pnpm docs:vfs && git diff
-  --exit-code VFS.md` (user), after a hand edit inside a generated span of `VFS.md` failed the
-  first CI run of rc.5 before it reached a single test.
-
-Verified in a scratch repository: an ordinary commit, a clean `--no-ff` merge, a conflicted
-merge concluded by `git commit` and by `git merge --continue`, and a push each fire the
-expected hook and only it.
-
-**The user's principle: the agent runs the full verification when it delivers; the hooks are
-braces on the belt, not the gate** (`mem:conventions`). The full suite cost ~80 s per commit —
-chromium+unit 19 s, firefox 49 s, isolated 12.5 s, measured 2026-09-11 — against under 2 s for
-`tsc`, biome and the unit project together.
-
-What the change gives up, knowingly: a browser-only regression on a feature branch surfaces
-at the merge, not at the commit that caused it; a flake is sampled once per merge rather than
-once per commit; a direct commit on `main` can sit red locally until the next push. And every
-hook still checks the working tree, not the staged tree.
-
-What the entry established before the decision, kept for its evidence:
-
-- **What it has caught.** A one-in-eighteen Firefox flake at a closure, after every task
-  review had passed (`mem:lessons`, "A pre-merge verification is not ceremony"); and a
-  Firefox-only flake that CI alone had shown as noise for weeks, once the per-engine split put
-  Firefox in the hook (`mem:lessons`, "A test that waits for a TRANSIENT state").
-- **What it does not guarantee.** On 2026-09-10 commit `c2ef918` landed with a failing
-  `tsc`, although the hook ends with `tsc`. Traced on 2026-09-11 from the implementer's
-  transcript:
-  - **Nobody bypassed it.** No `--no-verify`, no `SKIP_SIMPLE_GIT_HOOKS` anywhere in the
-    agent's commands. Its attempt at 15:11:52 was REFUSED by the hook's `tsc`.
-  - **Its next attempt, started 15:13:40, was already a commit in `git log` at 15:14:05** —
-    25 s in, when that hook's suite alone takes ~100 s; the captured output stops at the start
-    of the suite. The hook cannot have reached `tsc`.
-  - **Hypothesis, not proven:** the agent's tool cut or backgrounded the command mid-hook,
-    and the hook exited without failing. To test it cold, in a throwaway clone and never in this
-    repository's `.git`: a pre-commit hook of `sleep 5; echo x; sleep 60; exit 1`, `git commit` under a
-    wrapper that closes the command's stdout or sends it SIGTERM/SIGHUP after 3 s, and see whether
-    the commit lands; then the same through the harness's own background mechanism. If it holds, "the hook passed" is not evidence whenever the committer's shell can
-    drop a long command.
-  - Separately, the hook runs `tsc` against the WORKING TREE, not the tree being committed,
-    and honours `SKIP_SIMPLE_GIT_HOOKS=1` and `$SIMPLE_GIT_HOOKS_RC` — two more ways a green
-    hook can differ from a green commit. Only a per-commit check in a clean worktree proved the
-    rest of that branch.
-- **The hook file is rewritten by design, and that is harmless.** `"prepare":
-  "simple-git-hooks"` reinstalls `.git/hooks/pre-commit` — same content — on every
-  `pnpm install` and every `pnpm pack`, so `pnpm test:consumer` rewrites it (its first stage
-  packs). A changed mtime on that file is not evidence of tampering: on 2026-09-10 at 15:02:52
-  it was a subagent's unasked `pnpm store prune && pnpm install`; on 2026-09-11 it was the
-  consumer smoke.
-
 ## Notes, with nothing to fix
+
+### `page_size` on `OPFSWriteAheadVFS` — not pursued, closed by the user on 2026-09-28
+
+32 KiB pages made a bulk insert 3.25× faster on Chromium and 1.18× on Firefox (PAGE-SIZE, `mem:measurements`), but only that workload was measured. The user set the lever aside: no advice in the docs, no follow-up.
+
+### wa-sqlite's `autoCheckpoint` treats any positive value as "after every transaction" — deliberate, closed by the user on 2026-09-28
+
+`#autoCheckpoint()` (`WriteAhead.js`) tests `autoCheckpoint > 0` only. The author says so explicitly in a comment; the user keeps it that way. Do not propose it upstream again.
+
+### #361's executor allocates per read and per write, not once per checkpoint — declined upstream, closed by the user on 2026-09-28
+
+The single allocation was suggested in the reply to rhashimoto's review (2026-09-26). His answer: "Not necessary as far as I'm concerned. I don't care so much about achieving a strict memory cap, only that there is a way to tune memory usage up or down if needed" — which `checkpointBufferSize` gives. In the same comment he declined a tighter planner (unretired reads kept across writes) on complexity: "It can be a lot more complicated but it can't get that much faster." #361 merged without either. The user holds to his call.
 
 ### `pool-cap`'s surplus-slot flake — margin widened, never reproduced; closed by the user on 2026-09-27
 
@@ -590,18 +507,6 @@ here can discriminate.
 worker holds one lease at a time. Before the cache, breaking that would have produced
 confusing behaviour; now it is a `reset` on a statement another query is stepping. Nothing at
 the place where someone would break it says so.
-
-## #361: one allocation per checkpoint — waiting on rhashimoto (2026-09-26)
-
-Suggested in the reply to his review, not implemented: the plan executor allocates one `bufferSize` region per checkpoint instead of a buffer per read and per write. Holds for both planners (every write retires every read before it). Should bring the executor below `master` in memory, not only in time (CHECKPOINT-PLAN, `mem:measurements`). **His choice: this PR or a follow-up.** Until then the patch carries the per-call executor.
-
-## `aWorkerIsRunning` also matches the barrier, so an abort can land before the query is sent (2026-09-27)
-
-**Diagnosed by a trace of the whole abort path** (instrumented copies of `pool.ts`, `queries.ts`, `client.ts`, reverted). On a fresh client the first statement a worker runs is the freshness barrier (`SELECT count(*) FROM sqlite_master`), and `aWorkerIsRunning` (`tests/browser/helpers.ts`) is true for ANY running statement. A test that waits for it and then aborts can therefore abort during the barrier: the rejection comes from the acquisition race, the barrier ends in milliseconds, and **the query under test is never sent**. The list of statements sent says so: at the abort, Chromium had sent only the barrier 6 times in 6; Firefox had usually sent the long query too, but not always (2 in 6).
-
-That is the whole "Firefox waits, Chromium does not" difference seen on `interrupt.test.ts`'s sync test: on Chromium the 20 M-row read never ran, so `close()` had nothing to wait for; on Firefox it usually ran, and `close()` waited it out (`ABORTING`, then the lease back at `done`, 22 s later — the correct behaviour). **No product defect; the earlier reading here, a worker lent back mid-statement, was wrong and is refuted by the same trace.**
-
-**Fixed on `fix/abort-waits-for-its-query`:** `aWorkerIsRunning` is gone; `theQueryIsRunning(db, sql)` waits for a worker `RUNNING` on that very SQL (the debug state's current query). Every call site names its own query. Proved on the one test that started on a fresh client with a named falsifier — `abort-slot`'s "does not carry a dead worker's abort into its replacement": with the slot zeroing removed it stayed GREEN under the old helper and goes red under the new one. The sync test in `interrupt.test.ts` now also asserts the statement runs on (`ABORTING` 300 ms after the rejection); falsified by pinning `build: 'async'`, which is back to `READY` by then, on both engines.
 
 ## `test-matrix` shows a crashed cell as green-looking — seen 2026-09-26
 

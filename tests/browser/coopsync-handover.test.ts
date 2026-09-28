@@ -1,15 +1,14 @@
 /**
  * `OPFSCoopSyncVFS` hands its one OPFS access handle to another connection on
- * request. Unpatched, it did so at the first `jUnlock(NONE)` it saw — and
+ * request. Before wa-sqlite #347, it did so at the first `jUnlock(NONE)` it saw — and
  * SQLite can lock, unlock and lock again inside a single `step`, when it
  * re-prepares a cached statement whose schema went stale. The handle left at
  * the inner unlock, the relock returned `SQLITE_BUSY`, and wa-sqlite's
- * `retry()` gives a call two tries only: the BUSY reached the caller. The
- * patch in `patches/wa-sqlite@1.1.1.patch` defers the hand-over until the call
- * has returned.
+ * `retry()` gives a call two tries only: the BUSY reached the caller. #347
+ * defers the hand-over until the call has returned.
  *
  * Measured 2026-09-15 (COOPSYNC-HANDOVER, `mem:measurements`), 20 attempts per
- * shape, before the patch and with a lock trace on: two clients opened
+ * shape, before the fix and with a lock trace on: two clients opened
  * together failed a write 4-6/20 on Chromium and 15/20 on Firefox, always on
  * the barrier statement one client had prepared before its own CREATE TABLE;
  * a write following another client's CREATE TABLE failed 17-18/20 on Firefox
@@ -23,7 +22,7 @@
  * `jspi`. With a task, 720 probe attempts — three builds, two engines — saw
  * no BUSY at all, the reads `readWithRetry` used to absorb included.
  *
- * The same patch makes `#initialize` tolerate a temporary directory another
+ * #347 also makes `#initialize` tolerate a temporary directory another
  * instance deleted first: two CoopSync workers starting together both tried to
  * delete the same orphaned `.ahp-*` directory, and the loser's `removeEntry`
  * threw `NotFoundError`, failing the whole client with `WORKER_CRASHED`.
@@ -113,7 +112,7 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', () =
       expect(failures).toEqual([]);
     }, 120000);
 
-    // Discriminates on Firefox only: Chromium never failed this shape unpatched.
+    // Discriminates on Firefox only: Chromium never failed this shape before #347.
     it(`a write following another client's schema change does not fail (${build})`, async () => {
       const failures: string[] = [];
       for (let attempt = 0; attempt < ATTEMPTS; attempt++) {

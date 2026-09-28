@@ -51,22 +51,26 @@ All notable changes to this project are documented here.
   every other VFS. Contiguous pages are now moved a run at a time, through a
   buffer of at most 4 MiB, which is 33× to 38× faster on the copy itself. Its
   memory peak is higher than before: about 35 to 50 MiB more while copying a
-  64 MiB write-ahead. The fix is a change to wa-sqlite's write-ahead, carried in this
-  package's build until wa-sqlite ships it.
+  64 MiB write-ahead. The fix is wa-sqlite's, brought by the move to upstream
+  `e6e01ae` (see *Changed*).
 
 ### Changed
 
 - **An omitted `build` is the first one the VFS declares that the browser supports, and `jspi` is now declared before `async` everywhere.** On browsers with JSPI (Chrome 137+, Firefox 153+, Safari 27+), `OPFSAdaptiveVFS`, `IDBBatchAtomicVFS`, `IDBMirrorVFS`, `OPFSAnyContextVFS` and `MemoryAsyncVFS` now load `jspi` instead of `async`; elsewhere they load `async` as before, and the other VFS keep `sync`. `db.build` reports the one loaded. Pass `build: 'async'` to keep the previous behaviour.
-- **The vendored wa-sqlite moves to upstream `5e98ac7`**, which corrects how
+- **The vendored wa-sqlite moves to upstream `e6e01ae`**, which corrects how
   `OPFSWriteAheadVFS` tracks the size of its active write-ahead file across a
-  switch between the two — the threshold that decides when to rotate them — and
-  keeps a TEXT value whole across an embedded NUL (see *Fixed*).
+  switch between the two — the threshold that decides when to rotate them —
+  keeps a TEXT value whole across an embedded NUL, reports why an
+  `OPFSCoopSyncVFS` open was refused (see *Fixed*), and copies the write-ahead
+  a run of pages at a time (see *Performance*).
 - **A database name too long for SQLite now fails at the call**, with `INVALID_OPTION` naming the bound, from `createSQLiteClient`, `deleteDatabase` and `inspectDatabase` — it used to fail later, when the worker opened the file. The same call also now refuses a name that is empty once normalized (`''`, `'/'`, `'?x'`…) with `INVALID_OPTION`.
+- **On `OPFSCoopSyncVFS`, an open refused for any reason but a file held elsewhere fails at once.** It used to retry every refusal for 2.5 s before reporting it; only a held file, which another worker or tab can let go of, is retried now.
 - **`createSQLiteClient` is declared to return `SQLiteDB`**, instead of a copy of its members spelled out in the type declarations.
 
 ### Fixed
 
-- **A TEXT value containing a NUL character is no longer cut short.** A parameter bound with one, or a column returning one, lost everything from the first NUL: `'a\0b'` came back as `'a'`. The fix is wa-sqlite's, brought by the move to upstream `5e98ac7` (see *Changed*).
+- **A TEXT value containing a NUL character is no longer cut short.** A parameter bound with one, or a column returning one, lost everything from the first NUL: `'a\0b'` came back as `'a'`. The fix is wa-sqlite's, brought by the move to upstream `e6e01ae` (see *Changed*).
+- **On `OPFSCoopSyncVFS`, an open refused because another worker or tab holds the file now says so.** Once the open has retried for its 2.5 s, the `WORKER_CRASHED` it raises reads `unable to open database file: NoModificationAllowedError: …` and its `cause` is that storage error; it used to read `unable to open database file` alone, with no cause behind it. The fix is wa-sqlite's, brought by the move to upstream `e6e01ae` (see *Changed*).
 - **On `OPFSAnyContextVFS`, a statement that shrinks the database, such as `VACUUM`, could make the next read on another worker or tab fail** with `disk I/O error` on Firefox, or read the file at its old size elsewhere. The VFS released its lock before the shrink reached the file; it now publishes it first. The fix is a change to wa-sqlite, carried in this package's build until wa-sqlite ships it.
 - **A client that failed no longer appears in `inspectDatabase()` and `db.inspect()`.** It stayed listed until `close()` although it holds nothing — a second client refused with `DATABASE_IN_USE`, or one whose workers all died. It now leaves the roster as soon as it fails; a client still retrying a worker stays in it.
 - **On `OPFSWriteAheadVFS`, a read made right after another worker's or tab's write resolved could, on Chromium, see the database as it was before that write.** The VFS learned of other connections' commits asynchronously and could start a read before hearing of the latest one. The library's read-after-write barrier hid it — no stale read was measured with the barrier in place — but only by timing. The barrier's own read now catches up with the write-ahead, so the reads after a commit are current by construction; other reads are left as they were, so a large write in progress does not slow them down. The catch-up is an opt-in added to wa-sqlite (`PRAGMA read_to_current`), carried in this package's build until wa-sqlite ships it.
