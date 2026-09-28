@@ -508,7 +508,7 @@ differ and must **not** be aligned: the page returns `'blocked'` where invariant
 not); and the page reopens the column's client after `survives-reopen` and `close-settles`,
 because it runs every row against one client where the suite gets a fresh one per `it()`.
 
-## Three things about the statement cache that no test can see
+## What no test can see about the statement cache
 
 **The drain before `close` is falsifiable by nothing.** Deleting it leaves the whole suite
 green: `sqlite3_close` returns `SQLITE_BUSY`, the close path's `catch` swallows it, and the
@@ -518,17 +518,6 @@ database. The test comment says so plainly rather than claiming a falsifier. The
 whole-branch review's verdict on that swallowing `catch`: **not a defect** — a worker that
 failed to open has nothing to close, and the worker dies either way. Reopen only if a future
 close path must tell "nothing to close" from "close refused".
-
-**An abandoned statement's read transaction is unobservable.** `settle` resets the statement
-on every non-error exit, and the reset is what ends its implicit read transaction. That an
-aborted query leaves its statement cached and reusable **is** tested, with a verified
-falsifier. That it leaves no read transaction open is not. With the reset removed, a second
-client writing the same file still succeeds and a later read still observes it — in
-`journal_mode=DELETE` and in WAL. Either the statement had already reached `SQLITE_DONE`
-before the abort landed, or the lock goes back on some other path; nobody has established
-which. **The prior question, if this is ever chased:** can the abort be made to land strictly
-inside a `step()` that has not yet returned `DONE`? Until that is answerable, no assertion
-here can discriminate.
 
 **The one-query-per-worker invariant became load-bearing.** The cache needs no lock because a
 worker holds one lease at a time. Before the cache, breaking that would have produced
