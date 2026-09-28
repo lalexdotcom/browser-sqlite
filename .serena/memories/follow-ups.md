@@ -65,7 +65,13 @@ Found answering rhashimoto's question on #365 ("does OPFSWriteAheadVFS have Coop
 - **`OPFSAdaptiveVFS` `jOpen`, Firefox only** (the path without `readwrite-unsafe`): it takes the file's Web Lock, then the access handle; if the handle fails, the `catch` returns `SQLITE_CANTOPEN` with the lock still held (`navigator.locks.query()` shows `OPFS:/<file>`) and its `BroadcastChannel` open. Every later open of that file hangs, same worker or another, until the leaking worker terminates. Fix tested: release the lock, close the channel, drop the `mapIdToFile` entry in the `catch`. **Library exposure, untested:** a worker respawned by `handleDeath` while the dead one still holds the handle (~2 s measured for AHP) would take the lock, fail on the handle, and leave the database blocked. Adaptive is a recommended VFS.
 - **`OPFSCoopSyncVFS` `#initialize()`** (called by `create()`) opens its temporary files one by one with no cleanup on failure — read, not reproduced, left out of the #365 comment by the user. In a fresh private `.ahp-*` directory only a storage error (full quota) would trigger it. Possible consequence, from reading only: the directory's lock goes at GC with its handles still open, and the next instance's stale-directory sweep tolerates only `NotFoundError` on `removeEntry`, so every later `create()` on the origin might fail while the leaking worker lives. To reproduce it, force the failure (make the third `createSyncAccessHandle` throw in the worker); that shows the path, not that it happens.
 
-Not affected: `OPFSWriteAheadVFS`'s temporary files (each closed by a `FinalizationRegistry`), `OPFSPermutedVFS` and `OPFSAnyContextVFS` (one handle per open), `WriteAhead.js`'s `Promise.all` on lock waits, the IndexedDB and memory VFS. **Next:** rhashimoto's answer on #365 decides PRs; the two library exposures deserve a test in the library before anything is carried in `patches/`.
+Not affected: `OPFSWriteAheadVFS`'s temporary files (each closed by a `FinalizationRegistry`), `OPFSPermutedVFS` and `OPFSAnyContextVFS` (one handle per open), `WriteAhead.js`'s `Promise.all` on lock waits, the IndexedDB and memory VFS. **rhashimoto welcomed the PRs (2026-09-28); our reply (comment 5876552104) said they come separately, one per VFS. Ready, NOT opened — the user opens them once he validates that reply in principle.** One worktree per PR, off upstream `e6e01ae1`, two commits each (fix, then test), author `my-lalex <lalex@lalex.com>`, pushed to `lalexdotcom/wa-sqlite` on 2026-09-28 with no PR opened; title/body drafts with the licence box unticked in `.scratchpad/upstream-leak-prs/pr-*.md` (the `Title:`/`Branch:` lines are for us, not the body). Each test fails on master and passes 3/3 with its fix; whole suite green on each branch:
+  - `fix/writeahead-open-leak` (`.work/wa-sqlite-wa-open-leak`) — `vfs_open_cleanup.js`, a directory named `demo-wa0` makes the first WAL open reject; `Expected 'NoModificationAllowedError' to be 'free'` on master; 5792 passed.
+  - `fix/ahp-acquire-leak` (`.work/wa-sqlite-ahp-leak`) — `vfs_pool_recovery.js` + its worker (a failing `create()` never reaches `TestContext`'s ready message, so own workers); three builds; 5797 passed.
+  - `fix/adaptive-open-lock-leak` (`.work/wa-sqlite-adaptive-lock`) — `vfs_open_lock_recovery.js` + worker, which deletes `FileSystemSyncAccessHandle.prototype.mode` before importing the VFS so Chromium takes the no-`readwrite-unsafe` path; reopen bounded at 5 s, `'hung'` on master; 5792 passed.
+  - `test/writeahead-default-build` (`.work/wa-sqlite-wa-default-build`) — `OPFSWriteAheadVFS` moved to `ALL_BUILDS` in `api.test.js` and `sql.test.js` only (user, 2026-09-28: `OPFSWriteAheadVFS.test.js` gets `'default'` in #365 instead); all pass on the default build; 5965 passed.
+
+  The first and third branches both export `createHolder` from `vfs_handle_recovery.js`, the same one-line change, so they merge in either order. After a PR opens: its report in `docs/upstream/` with its number, per `mem:conventions`. The two library exposures still deserve a test in the library before anything is carried in `patches/`.
 
 ## Designs owed — ideas, not scheduled work (user, 2026-09-03)
 
@@ -334,8 +340,11 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   (or is closed), repin or regenerate the patch per `mem:stack-and-build`; if upstream names the
   pragma differently, `catchUpPragma` is the one place to change — and he said on 2026-09-28 he
   is thinking of renaming it and of how it should coexist with the backstop task, so expect
-  that. **Owed on the PR if he wants it:** the default (synchronous) build in its test — offered
-  in comment 5874507146; wa-sqlite's suite never runs this VFS on that build.
+  that. **Owed on the PR after his review (he asked for it, "no rush, you can wait for the
+  review"):** rename the pragma as he decides, and add `'default'` to `BUILDS` in
+  `OPFSWriteAheadVFS.test.js` on `fix/writeahead-read-catches-up` — which also runs the rest of
+  that file on the default build; `api`/`sql` are the separate `test/writeahead-default-build`
+  branch. Replied 2026-09-28 (comment 5876552104).
 - **rstest's pages are off-the-record: OPFS sync-access-handle calls cost 160-290 µs there against
   0.6-2.6 µs on a persistent profile (RSTEST-OTR, `mem:measurements`, 2026-09-28).** rstest opens
   pages with Playwright's `browser.newContext()`. Every absolute OPFS timing taken under rstest —
