@@ -185,7 +185,15 @@ both**, hence `exclusiveFileHandle` in `VFS_CAPABILITIES`, true for it and for
 swallowed the acquisition failure — `console.error`, an invalid `PersistentFile`, no `lastError`;
 since then the failure is kept there and becomes the open failure's cause, and the retry reads
 it: only `NoModificationAllowedError` (a held file) is retried, any other refusal fails at once
-(2026-09-28, `open-retry`'s "refused for another reason" test). Where the error comes back from the call itself (instance creation)
+(2026-09-28, `open-retry`'s "refused for another reason" test).
+
+**The declaration stays although the cause is now checked (user, 2026-09-28).** It still keeps
+`OPFSWriteAheadVFS` and `OPFSAdaptiveVFS` out of the retry on an engine without
+`readwrite-unsafe` (Firefox), where a file held by a LIVE client — `pool-cap`'s T5 shape — would
+otherwise wait out 2.5 s for a holder that never lets go; `OPFSCoopSyncVFS` hands its handle over
+by protocol, so a held file is transient there. The name those two raise on Firefox is inferred
+from T5, not measured. For `AccessHandlePoolVFS` the `true` is inert in `openWithRetry` (its
+handles are taken at instance creation, never in `xOpen`) but stays accurate. Where the error comes back from the call itself (instance creation)
 the retry tests it directly and needs no declaration.
 
 **`SQLITE_CANTOPEN` does not mean "not there", and `deleteDatabase` used to read it that way.**
