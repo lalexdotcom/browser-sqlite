@@ -276,7 +276,8 @@ one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.
 - **Upstream contributions stand on upstream's own evidence (user, 2026-09-15).** A PR to
   wa-sqlite does not cite this library — a stable library is not argued from an unstable one — and
   its measurements must be reproducible with wa-sqlite alone, best as a test in its own suite that
-  fails on its master. Claude's part is disclosed (the commits are co-signed anyway). **Claude ticks
+  fails on its master. **Claude's part is never stated in a PR body, comment or issue (user,
+  2026-09-29):** Claude co-signs every commit, and that is disclosure enough. **Claude ticks
   the licence checkboxes of its PR template itself when submitting (user, 2026-09-29)** — until
   then they were the user's to tick. Drafts go in `.scratchpad/`.
 
