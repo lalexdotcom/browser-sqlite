@@ -30,7 +30,7 @@ And `test/OPFSWriteAheadVFS.test.js` with `'default'`, on #365's branch: 108 tes
 
 ## Posted upstream
 
-PR [#366][pr366], opened 2026-09-29 from `lalexdotcom:test/writeahead-default-build`, on `master` at `e6e01ae1`. **One commit, two files, +2 / −2.** `master` has moved one commit since, #365's merge, which touches none of those files. Upstream CI on the head commit was pending when this was written.
+PR [#366][pr366], opened 2026-09-29 from `lalexdotcom:test/writeahead-default-build`, on `master` at `e6e01ae1`. **One commit, two files, +2 / −2.** `master` has moved one commit since, #365's merge, which touches none of those files. Upstream CI on the head commit is green — [run 36525037491](https://github.com/rhashimoto/wa-sqlite/actions/runs/36525037491), `build (20.x)`, the only check.
 
 It does not mention this library, per the standing rule.
 
