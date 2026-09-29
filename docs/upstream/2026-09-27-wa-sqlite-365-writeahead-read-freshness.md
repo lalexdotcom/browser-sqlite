@@ -98,6 +98,8 @@ The retry question turned up #350's class of leak — something acquired beside 
 
 rhashimoto requested changes on 2026-09-28: the pragma becomes `PRAGMA wal_read_latest`, and the default build is tested; the backstop stays as it is, since a connection that only checkpoints still needs it. Done in a third commit, `7d16633b`: the pragma renamed and moved beside the other `wal_` pragmas, the internal option left as `readToCurrent` — the name `#advanceTxId` already uses — and `OPFSWriteAheadVFS.test.js` run on the default build too, 108 tests there, the whole suite 5830; with the pragma off, the read-freshness test fails on all three builds. The library followed the same day: `catchUpPragma` and the patch carry the new name.
 
+**Merged on 2026-09-29** by rhashimoto, as `5be9cd14` on `master`.
+
 ## What stays ours
 
 - **The carry.** In [`patches/`](../../patches) since 2026-09-27, to be dropped at the repin that brings it; since 2026-09-28 it carries the opt-in revision, which touches `OPFSWriteAheadVFS.js` as well as `WriteAhead.js`. With the pragma on, the probe above reads **0/100** stale under the same load, barrier removed, against 28/100 before.
