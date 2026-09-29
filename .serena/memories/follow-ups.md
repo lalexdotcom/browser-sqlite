@@ -328,9 +328,9 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   the `tx` broadcast and the read's `query` take two channels with no ordering between them, and
   the stale reads are the ones where the query arrives first — present before #355, which only
   widens it. **Submitted upstream as rhashimoto/wa-sqlite#365 on 2026-09-27** (report
-  `docs/upstream/2026-09-27-wa-sqlite-365-writeahead-read-freshness.md`); branch
-  `fix/writeahead-read-catches-up` on the fork (`1273bb48` on upstream
-  `e6e01ae1`): `isolateForRead()` reads the WAL to its end. Its test, in wa-sqlite's own suite,
+  `docs/upstream/2026-09-27-wa-sqlite-365-writeahead-read-freshness.md`); its fork branch
+  `fix/writeahead-read-catches-up` was deleted after the merge, remote and local, 2026-09-29
+  (first commit `1273bb48` on upstream `e6e01ae1`): `isolateForRead()` reads the WAL to its end. Its test, in wa-sqlite's own suite,
   is deterministic — a reader worker blocks its event loop while a writer worker commits, then
   reads before its context delivers the broadcast: `1` for `2` on master, 8/8 runs, both builds.
   Two connections in ONE context share a `WriteAhead` view and cannot reproduce it. Cost ≈ 5 µs
