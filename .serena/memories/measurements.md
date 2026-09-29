@@ -4,6 +4,24 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## RETRY-OPS — wa-sqlite's shared `retryOps` list, upstream and in the library, 2026-09-29, Chromium 151 / Firefox 153, this container
+
+**Upstream, standalone Playwright probes** against `5be9cd14` (`.work/wa-sqlite-master`), default build unless named, 20 runs per cell, fresh files per run, 12 s hang deadline. A worker that gets an error rolls back and gives up on that database. "BUSY" = `database is locked` reached the application. F1 = `retry()` removes only the ops it awaited; F3 = each call its own list (the fork's `fix/retry-per-call-ops`).
+
+| shape | master BUSY / hang | F1 | F3 |
+| --- | --- | --- | --- |
+| 1 worker × 2 databases, concurrent (`OPFSCoopSyncVFS`) | 20 / 0, both engines | 0 / 0 | 0 / 0 |
+| same, `OPFSWriteAheadVFS` | 20 / 0, both engines | 0 / 0 | 0 / 0 |
+| 4 workers × 2 databases | 20 / 17 Chromium, 20 / 20 Firefox | 0 / 7 Chromium (ABBA), 0 / 0 Firefox | 0 / 0 (+40/40 Chromium) |
+| 4 workers × 3 databases | 20 / 20 both | 0 / 7 Chromium | 0 / 0 |
+| 4 × 2 + one injected `createSyncAccessHandle` failure | 20 / 18-20 | both databases fail, 14-20 hang | only the sabotaged one fails, 0 hang |
+| controls: 4 × 1 database; 2 calls in flight on one connection | 0 / 0 | 0 / 0 | 0 / 0 |
+| 4 × 2, application retries on BUSY (5 ms, ≤200) | 0 / 0, counts right | — | — |
+
+Asyncify showed the same BUSY on master; JSPI broke the harness ("too many columns on t") — two calls in flight in an Asyncify/JSPI module are unsupported (#104), so neither build is evidence. Upstream suite: master and F3 all pass (5830); an earlier variant reading the list at `f()`'s return failed `vfs_read_freshness` on jspi and took 373 s. The fork's test `vfs_concurrent_databases` (own worker — through Comlink it passed on master) fails 3/3 on master for both VFS, passes 3/3 with F3; suite 5834. Probes and raw results: `.scratchpad/341-trigger/`.
+
+**In the library, F3 carried in `patches/` on `test/retry-per-call-ops` (`12f931d`):** `tsc`, `biome ci`, `pnpm test` (1279/8, 750/4, 16/0), conformance (83/14, 79/18), consumer 24/24, and the matrix **66/66 in 2420 s — per cell identical in tests, failures and skips to `main`'s matrix of the same day on the same pin** (`.matrix/2026-09-29T06-27-47-062Z` against `.matrix/2026-09-29T12-26-56-661Z`, compared with `matrix-triage.mjs`). The library does not change behaviour with the fix — expected if it never has two calls in flight in one module, not verified in its code.
+
 ## RSTEST-OTR — rstest's OPFS is off-the-record and ~250× dearer per call, 2026-09-28, Chromium, this container
 
 A pure OPFS micro-bench — 7 772 frames of 24 + 4096 bytes written, then read back as two `read()` calls per frame, then 2 000 `write()` calls — with no library and no wa-sqlite. Same source in every harness, three rounds, default and `readwrite-unsafe` handles, with and without a second handle open — none of those three variables moved it.

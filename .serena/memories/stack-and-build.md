@@ -56,6 +56,8 @@
   - **Upstream's tags do not follow its versions.** `v1.1.2` points at `2bf1c59`, whose
     `package.json` says `1.1.1`; the bump to `1.1.2` and #344 came after it. The patch key is the
     `version` field of the resolved commit — `wa-sqlite@1.1.2` today. Verify by commit.
+  - **A branch switch that changes the patch reinstalls by itself since 2026-09-29** — the
+    `post-checkout` hook (`mem:git-hooks`), with its trap for branches that predate it.
   - **`pnpm patch` (10.31) does NOT re-apply the existing patch** in its edit directory: apply it by
     hand (`patch -p1 < patches/…`) before editing, or `patch-commit` silently drops what the old patch
     held. **After a change of patch key, `patch-commit` left `node_modules` unpatched** — the `.pnpm`

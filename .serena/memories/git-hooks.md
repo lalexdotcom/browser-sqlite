@@ -3,7 +3,13 @@
 The local hooks, why they are not the gate, and what a green hook does not prove. Moved out of
 `mem:follow-ups` on 2026-09-28 (user): the hooks are settled, and this is reference, not backlog.
 
-## The three hooks (user, 2026-09-11)
+## `post-checkout` — `node_modules` follows the branch (user, 2026-09-29)
+
+`pnpm install` when a branch switch (`$3 = 1`) changes `package.json`, `pnpm-lock.yaml` or `patches/` between the two commits; nothing on a switch to the same commit. Without it a switch left `node_modules` with the previous branch's wa-sqlite patch, and a run on `main` measured the other branch (found after `test/retry-per-call-ops`). ~0.3 s per switch.
+
+**A branch that predates the hook uninstalls it.** `pnpm install` runs `prepare: simple-git-hooks`, which installs the ARRIVING branch's `simple-git-hooks` config and removes hooks absent from it — so the hook fires once into such a branch, then is gone, and the switch back does not reinstall. Measured on the first round trip. Fixed there by cherry-picking the hook commit (`e22d0f2` on `main`) onto the branch; do the same for any older branch before switching to it, or run `pnpm install` by hand after coming back.
+
+## The three commit/push hooks (user, 2026-09-11)
 
 Decided and installed on 2026-09-11, in `package.json` under `simple-git-hooks`:
 
