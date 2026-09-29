@@ -69,7 +69,7 @@ Not affected: `OPFSWriteAheadVFS`'s temporary files (each closed by a `Finalizat
   - `fix/adaptive-open-lock-leak` (`.work/wa-sqlite-adaptive-lock`) — **OPENED as rhashimoto/wa-sqlite#369 on 2026-09-29** (report `docs/upstream/2026-09-29-wa-sqlite-369-adaptive-open-lock.md`; merges cleanly with master and #367). `vfs_open_lock_recovery.js` + worker, which deletes `FileSystemSyncAccessHandle.prototype.mode` before importing the VFS so Chromium takes the no-`readwrite-unsafe` path; reopen bounded at 5 s, `'hung'` on master; 5792 passed.
   - `test/writeahead-default-build` (`.work/wa-sqlite-wa-default-build`) — **OPENED as rhashimoto/wa-sqlite#366 on 2026-09-29** (report `docs/upstream/2026-09-29-wa-sqlite-366-writeahead-default-build.md`). `OPFSWriteAheadVFS` moved to `ALL_BUILDS` in `api.test.js` and `sql.test.js` only (user, 2026-09-28: `OPFSWriteAheadVFS.test.js` gets `'default'` in #365 instead); all pass on the default build; 5965 passed.
 
-  The first and third branches both export `createHolder` from `vfs_handle_recovery.js`, the same one-line change, so they merge in either order. After a PR opens: its report in `docs/upstream/` with its number, per `mem:conventions`. The two library exposures still deserve a test in the library before anything is carried in `patches/`.
+  The first and third branches both export `createHolder` from `vfs_handle_recovery.js`, the same one-line change, so they merge in either order. After a PR opens: its report in `docs/upstream/` with its number, per `mem:conventions`. **#367, #368 and #369 are carried in `patches/` since the 2026-09-29 repin** (user). The library exposures — `createVfsInstance`'s same-worker retry for `AccessHandlePoolVFS`, a respawned worker on `OPFSAdaptiveVFS` under Firefox — are still untested in the library itself.
 
 ## Designs owed — ideas, not scheduled work (user, 2026-09-03)
 
@@ -340,9 +340,8 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   large open write scan nothing (365-LIB). **What is still open:** the barrier has no falsifier
   that fails under load — the old timing-only barrier read 0/100 even under 48 busy loops, so
   the pragma's gain is shown by wa-sqlite's deterministic test, not by ours. **#365 was MERGED on 2026-09-29 as `5be9cd14`, byte-identical to our PR head `7d16633b`**
-  (`PRAGMA wal_read_latest`, the default build in `OPFSWriteAheadVFS.test.js`). **Owed: repin on
-  `5be9cd14` or later and drop #365's two files from the patch**, per `mem:stack-and-build` — the
-  installed code does not change. `catchUpPragma` already names `wal_read_latest`.
+  (`PRAGMA wal_read_latest`, the default build in `OPFSWriteAheadVFS.test.js`). The pin is on
+  `5be9cd14` since 2026-09-29 and the patch no longer carries it (`mem:stack-and-build`).
 - **rstest's pages are off-the-record: OPFS sync-access-handle calls cost 160-290 µs there against
   0.6-2.6 µs on a persistent profile (RSTEST-OTR, `mem:measurements`, 2026-09-28).** rstest opens
   pages with Playwright's `browser.newContext()`. Every absolute OPFS timing taken under rstest —

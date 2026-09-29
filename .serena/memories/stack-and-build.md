@@ -17,11 +17,10 @@
 - **Runtime dependencies: none.** `wa-sqlite` is a devDependency only, vendored into
   `dist/worker/worker.js` at build time so it never reaches a consumer lockfile. **Pinned by commit
   SHA, not by tag, since 2026-09-15 (user):**
-  `github:rhashimoto/wa-sqlite#e6e01ae1c79f36aa7c5426c75bbd88712a9f0aaa` since 2026-09-28, upstream
-  `master` with our #350, #357 and #361 merged on 2026-09-27. #350 and #361 left the patch with it —
-  upstream's merged files were checked identical to what the patch carried; #357 (a failed
-  `OPFSCoopSyncVFS` acquisition recorded in `lastError`) was never carried and reaches the library
-  through the pin. Before that `5e98ac76` (2026-09-26, #347, #348, #364), `e98c65de` (2026-09-23,
+  `github:rhashimoto/wa-sqlite#5be9cd143f9497e3085f1129053551dd094ee2f6` since 2026-09-29, upstream
+  `master` with our #365 merged that day, byte-identical to its PR head; #365 left the patch with
+  it. Before that `e6e01ae1` (2026-09-28, our #350, #357 and #361 merged on 2026-09-27; #350 and
+  #361 left the patch, #357 was never carried), `5e98ac76` (2026-09-26, #347, #348, #364), `e98c65de` (2026-09-23,
   #359) and `93b9230` (2026-09-21). Vendored, so a commit serves as well as a release and nothing waits for one.
   **The 2026-09-21 repin was taken for two fixes by other contributors**:
   #330, which stops a failed `sqlite3_open_v2` leaking the database handle SQLite allocates for it —
@@ -37,10 +36,17 @@
     starts at the offset), `@@ -271`.
   - `IDBMirrorVFS.js` — #352 (`pData.subarray()`: `pData` is a `Uint8ArrayProxy`, and `set()` on it
     stores zeroes) and #353 (drop the blocks past the end of the file, in the view and in the store).
-  - `WriteAhead.js` — #365 (a read transaction reads the WAL to its end, added 2026-09-27; since 2026-09-28 the opt-in revision, `readToCurrent` off by default). #361 (the checkpoint plan) is upstream since the 2026-09-28 repin.
-  - `OPFSWriteAheadVFS.js` — #365's `PRAGMA wal_read_latest` (named `read_to_current` until review, 2026-09-28), which sets that option per connection. The library's barrier depends on it: without the hunk the pragma is an unknown one that SQLite ignores, and the barrier goes back to timing only.
   - `OPFSAnyContextVFS.js` — #363 (a `jUnlock` that closes a pending writable before releasing the
     lock).
+  - `OPFSWriteAheadVFS.js` — #367 (the two write-ahead files opened with `Promise.allSettled`, so a
+    failed open closes the one acquired beside it), since 2026-09-29.
+  - `AccessHandlePoolVFS.js` — #368 (a failed `create()` releases the pool handles it took), since
+    2026-09-29.
+  - `OPFSAdaptiveVFS.js` — #369 (a failed open releases the file's lock and channel; Firefox path),
+    since 2026-09-29.
+
+  `WriteAhead.js` is no longer patched: #365 (`PRAGMA wal_read_latest`, which the library's barrier
+  sets) and #361 are upstream. #366 changes tests only and is not carried.
 
   **When one merges, repin and regenerate the patch WITHOUT that PR's hunks — do not delete the
   file.** The hunks sit in different regions and, for two of them, different files, so a selective
