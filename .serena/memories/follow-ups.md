@@ -332,21 +332,20 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   `patches/` since 2026-09-27.** **2026-09-28: answered "by design", now opt-in, and the library
   sets it in the barrier.** rhashimoto keeps reads eventually consistent on purpose: reading to
   the end scans the uncommitted frames of a large open write on every read (~2 ms per MB,
-  365-WORST, `mem:measurements`). The PR's second commit `ac817fd6` makes it
-  `PRAGMA read_to_current`, off by default; the patch carries that revision. Our barrier on
-  `OPFSWriteAheadVFS` runs its read between `read_to_current=1` and `=0` (`catchUpPragma`,
+  365-WORST, `mem:measurements`). The PR's second commit `ac817fd6` makes it an
+  opt-in pragma, off by default; review renamed it `PRAGMA wal_read_latest` (third commit
+  `7d16633b`, 2026-09-28), and the patch carries that head. Our barrier on
+  `OPFSWriteAheadVFS` runs its read between `wal_read_latest=1` and `=0` (`catchUpPragma`,
   `barrierSqlFor`), so the reads after a commit are current by construction and reads during a
   large open write scan nothing (365-LIB). **What is still open:** the barrier has no falsifier
   that fails under load — the old timing-only barrier read 0/100 even under 48 busy loops, so
   the pragma's gain is shown by wa-sqlite's deterministic test, not by ours. When #365 merges
-  (or is closed), repin or regenerate the patch per `mem:stack-and-build`; if upstream names the
-  pragma differently, `catchUpPragma` is the one place to change — and he said on 2026-09-28 he
-  is thinking of renaming it and of how it should coexist with the backstop task, so expect
-  that. **Owed on the PR after his review (he asked for it, "no rush, you can wait for the
-  review"):** rename the pragma as he decides, and add `'default'` to `BUILDS` in
-  `OPFSWriteAheadVFS.test.js` on `fix/writeahead-read-catches-up` — which also runs the rest of
-  that file on the default build; `api`/`sql` are the separate `test/writeahead-default-build`
-  branch. Replied 2026-09-28 (comment 5876552104).
+  (or is closed), repin or regenerate the patch per `mem:stack-and-build`; `catchUpPragma` is the
+  one place that names the pragma. **Review (2026-09-28, changes requested) is answered:**
+  pragma renamed, `'default'` added to `OPFSWriteAheadVFS.test.js` (and to the freshness
+  worker), the backstop left alone at his word, internal `readToCurrent` kept; pushed and
+  replied (comment 5880453418). Waiting for his approval; `api`/`sql` on the default build are
+  the separate `test/writeahead-default-build` branch.
 - **rstest's pages are off-the-record: OPFS sync-access-handle calls cost 160-290 µs there against
   0.6-2.6 µs on a persistent profile (RSTEST-OTR, `mem:measurements`, 2026-09-28).** rstest opens
   pages with Playwright's `browser.newContext()`. Every absolute OPFS timing taken under rstest —
