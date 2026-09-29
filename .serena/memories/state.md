@@ -27,8 +27,8 @@ obligations and unmeasured ground.
   open PR each or two: `IDBBatchAtomicVFS.js` (#351), `IDBMirrorVFS.js` (#352, #353),
   `OPFSAnyContextVFS.js` (#363), `OPFSWriteAheadVFS.js` (#367), `AccessHandlePoolVFS.js` (#368),
   `OPFSAdaptiveVFS.js` (#369). The installed `src/` was checked equal to the pin plus those PR
-  heads, and `dist/` equal to upstream's. The previous repin's matrix (2026-09-28, `e6e01ae1`): 66
-  of 66 cells green (`.matrix/2026-09-28T14-26-49-300Z`). #357 changes what a refused `OPFSCoopSyncVFS` open
+  heads, and `dist/` equal to upstream's. **The repin's matrix (2026-09-29): 66 of 66 cells green,
+  no failure** (`.matrix/2026-09-29T06-27-47-062Z`, 2495 s). #357 changes what a refused `OPFSCoopSyncVFS` open
   reports — probed both ways, CHANGELOG under Fixed.
 - **The release gate ran the full matrix for the first time, and it took four tags to get
   through.** 22/22 cells, `verify`, `consumer-smoke`, then `release`, with `untag` skipped.
