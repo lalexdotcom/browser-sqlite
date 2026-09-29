@@ -38,7 +38,7 @@
   - `IDBMirrorVFS.js` — #352 (`pData.subarray()`: `pData` is a `Uint8ArrayProxy`, and `set()` on it
     stores zeroes) and #353 (drop the blocks past the end of the file, in the view and in the store).
   - `WriteAhead.js` — #365 (a read transaction reads the WAL to its end, added 2026-09-27; since 2026-09-28 the opt-in revision, `readToCurrent` off by default). #361 (the checkpoint plan) is upstream since the 2026-09-28 repin.
-  - `OPFSWriteAheadVFS.js` — #365's `PRAGMA read_to_current`, which sets that option per connection (2026-09-28). The library's barrier depends on it: without the hunk the pragma is an unknown one that SQLite ignores, and the barrier goes back to timing only.
+  - `OPFSWriteAheadVFS.js` — #365's `PRAGMA wal_read_latest` (named `read_to_current` until review, 2026-09-28), which sets that option per connection. The library's barrier depends on it: without the hunk the pragma is an unknown one that SQLite ignores, and the barrier goes back to timing only.
   - `OPFSAnyContextVFS.js` — #363 (a `jUnlock` that closes a pending writable before releasing the
     lock).
 

@@ -1,6 +1,6 @@
 # wa-sqlite #365 — a read that starts before the news of a commit
 
-*2026-09-27 — measured on Chromium 151, in the container. Revised 2026-09-28: the maintainer keeps eventual consistency by design, and the change is now opt-in, `PRAGMA read_to_current`.*
+*2026-09-27 — measured on Chromium 151, in the container. Revised 2026-09-28: the maintainer keeps eventual consistency by design, and the change is now opt-in, `PRAGMA wal_read_latest` since review (first named `read_to_current`).*
 
 [pr365]: https://github.com/rhashimoto/wa-sqlite/pull/365
 [answer]: https://github.com/rhashimoto/wa-sqlite/pull/365#issuecomment-5867434674
@@ -94,10 +94,16 @@ He also asked why the timings covered asyncify and jspi but not the default, syn
 
 The retry question turned up #350's class of leak — something acquired beside a failed acquisition and never released — in `OPFSWriteAheadVFS`'s open of its WAL files, reported in that answer, then in `AccessHandlePoolVFS` and, on Firefox, `OPFSAdaptiveVFS`, [reported][others] with PRs offered. That is a separate subject: its reproductions and this library's exposure are in `mem:follow-ups`, and it gets a report of its own if PRs follow.
 
+## Review
+
+rhashimoto requested changes on 2026-09-28: the pragma becomes `PRAGMA wal_read_latest`, and the default build is tested; the backstop stays as it is, since a connection that only checkpoints still needs it. Done in a third commit, `7d16633b`: the pragma renamed and moved beside the other `wal_` pragmas, the internal option left as `readToCurrent` — the name `#advanceTxId` already uses — and `OPFSWriteAheadVFS.test.js` run on the default build too, 108 tests there, the whole suite 5830; with the pragma off, the read-freshness test fails on all three builds. The library followed the same day: `catchUpPragma` and the patch carry the new name.
+
+**Merged on 2026-09-29** by rhashimoto, as `5be9cd14` on `master`.
+
 ## What stays ours
 
 - **The carry.** In [`patches/`](../../patches) since 2026-09-27, to be dropped at the repin that brings it; since 2026-09-28 it carries the opt-in revision, which touches `OPFSWriteAheadVFS.js` as well as `WriteAhead.js`. With the pragma on, the probe above reads **0/100** stale under the same load, barrier removed, against 28/100 before.
-- **Where the library sets it: in the barrier, 2026-09-28.** On `OPFSWriteAheadVFS` the barrier's read runs as `PRAGMA read_to_current=1; SELECT count(*) FROM sqlite_master; PRAGMA read_to_current=0` (`catchUpPragma` in `VFS_CAPABILITIES`, `barrierSqlFor` in `src/epochs.ts`). The barrier runs only on a worker behind the commit epoch, so only the first read after a commit catches up, and reads during a large open transaction scan nothing; a consumer who sets `read_to_current` keeps their setting. Chosen over turning the pragma on for every read, measured in the library on Chromium, one client, two workers (`.scratchpad/365-lib-arms/`):
+- **Where the library sets it: in the barrier, 2026-09-28.** On `OPFSWriteAheadVFS` the barrier's read runs as `PRAGMA wal_read_latest=1; SELECT count(*) FROM sqlite_master; PRAGMA wal_read_latest=0` (`catchUpPragma` in `VFS_CAPABILITIES`, `barrierSqlFor` in `src/epochs.ts`). The barrier runs only on a worker behind the commit epoch, so only the first read after a commit catches up, and reads during a large open transaction scan nothing; a consumer who sets `read_to_current` keeps their setting. Chosen over turning the pragma on for every read, measured in the library on Chromium, one client, two workers (`.scratchpad/365-lib-arms/`):
 
   | | stale, 16 busy loops | read, idle | 2 reads after a write | read, 32 MB open | read, 128 MB open |
   | --- | ---: | ---: | ---: | ---: | ---: |

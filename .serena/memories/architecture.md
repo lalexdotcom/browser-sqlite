@@ -407,7 +407,7 @@ cost is in `mem:measurements`.
 **On `OPFSWriteAheadVFS` the barrier's read catches up by construction (2026-09-28).** That VFS
 freezes a read's view as its `BroadcastChannel` has delivered commits, which can lag the reply
 that triggered the read. `VFS_CAPABILITIES[vfs].catchUpPragma` names a pragma that makes a read
-current (`read_to_current`, our wa-sqlite#365 carried in `patches/`); `barrierSqlFor` wraps the
+current (`wal_read_latest`, our wa-sqlite#365 carried in `patches/`); `barrierSqlFor` wraps the
 barrier as `PRAGMA x=1; <barrier>; PRAGMA x=0` in one message, computed once per client. User
 reads keep the pragma off, so a large open write does not make them scan — turning it on for
 every read was measured and rejected (365-LIB). The view of a `WriteAhead` only advances, so the

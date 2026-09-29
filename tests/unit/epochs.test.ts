@@ -195,7 +195,7 @@ describe('barrierSqlFor', () => {
     // user reads never scan a large uncommitted write.
     // Falsifiable: empty OPFSWriteAheadVFS's catchUpPragma and this is bare.
     expect(barrierSqlFor('OPFSWriteAheadVFS', {})).toBe(
-      `PRAGMA read_to_current=1; ${BARRIER_SQL}; PRAGMA read_to_current=0`,
+      `PRAGMA wal_read_latest=1; ${BARRIER_SQL}; PRAGMA wal_read_latest=0`,
     );
   });
 
@@ -203,10 +203,10 @@ describe('barrierSqlFor', () => {
     // Naming a key is how a default is refused (`resolvePragmas`): with the
     // pragma set either way, the barrier must not overwrite their choice.
     // Falsifiable: ignore the consumer's pragmas and both are bracketed.
-    expect(barrierSqlFor('OPFSWriteAheadVFS', { read_to_current: '1' })).toBe(
+    expect(barrierSqlFor('OPFSWriteAheadVFS', { wal_read_latest: '1' })).toBe(
       BARRIER_SQL,
     );
-    expect(barrierSqlFor('OPFSWriteAheadVFS', { read_to_current: '0' })).toBe(
+    expect(barrierSqlFor('OPFSWriteAheadVFS', { wal_read_latest: '0' })).toBe(
       BARRIER_SQL,
     );
   });

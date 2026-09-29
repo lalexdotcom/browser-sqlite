@@ -195,7 +195,7 @@ describe('barrier — two clients in one tab', () => {
 describe('catch-up pragma', () => {
   // One VFS: the subject is OPFSWriteAheadVFS's catchUpPragma. A barrier needs
   // a second worker, which this VFS has only with readwrite-unsafe.
-  // Falsifiable: drop the closing `PRAGMA read_to_current=0` in barrierSqlFor —
+  // Falsifiable: drop the closing `PRAGMA wal_read_latest=0` in barrierSqlFor —
   // the worker that paid the barrier then reads 1, and every later read on it
   // scans the write-ahead to its end.
   it('closes the pragma the barrier opens on OPFSWriteAheadVFS', async ({
@@ -212,8 +212,8 @@ describe('catch-up pragma', () => {
     await db.write('CREATE TABLE t (a)');
     // Two at once, so one lands on worker 0, which the write left behind.
     const modes = await Promise.all([
-      db.read<Record<string, string>>('PRAGMA read_to_current'),
-      db.read<Record<string, string>>('PRAGMA read_to_current'),
+      db.read<Record<string, string>>('PRAGMA wal_read_latest'),
+      db.read<Record<string, string>>('PRAGMA wal_read_latest'),
     ]);
 
     expect(countBarrierStatements(db)).toBeGreaterThan(0);
@@ -222,7 +222,7 @@ describe('catch-up pragma', () => {
       .flatMap((request) => request.queries)
       .filter((query) => query.sql.includes(BARRIER_SQL));
     for (const barrier of barriers)
-      expect(barrier.sql).toContain('PRAGMA read_to_current=1');
+      expect(barrier.sql).toContain('PRAGMA wal_read_latest=1');
     expect(modes.map((rows) => Object.values(rows[0] ?? {})[0])).toEqual([
       '0',
       '0',
