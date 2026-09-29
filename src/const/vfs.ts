@@ -239,7 +239,7 @@ export const VFS_CAPABILITIES = {
     defaultPragmas: {},
     // Our wa-sqlite#365, carried in patches/: a read otherwise freezes the view
     // the BroadcastChannel has delivered, which can lag a commit.
-    catchUpPragma: 'read_to_current',
+    catchUpPragma: 'wal_read_latest',
   },
   OPFSAdaptiveVFS: {
     builds: ['jspi', 'async'],

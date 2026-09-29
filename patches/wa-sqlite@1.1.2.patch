@@ -147,14 +147,14 @@ index 4a6b4f5a2b815b77e4417d5e2b2beaef6ab8dc2b..cb72cc3f2e2b57ec76a0ad709c685cd0
      if (this.lastError) {
        console.error(this.lastError);
 diff --git a/src/examples/OPFSWriteAheadVFS.js b/src/examples/OPFSWriteAheadVFS.js
-index df738d396763b5c12ef08c3740a9c56f44d4b14c..c0a52c6c32f5418fad43f75c805a107074891f23 100644
+index df738d396763b5c12ef08c3740a9c56f44d4b14c..09362e3ac9e99ff1ea6c39cd7530b00bcca8d6a8 100644
 --- a/src/examples/OPFSWriteAheadVFS.js
 +++ b/src/examples/OPFSWriteAheadVFS.js
-@@ -612,6 +612,19 @@ export class OPFSWriteAheadVFS extends FacadeVFS {
-                 }
+@@ -683,6 +683,19 @@ export class OPFSWriteAheadVFS extends FacadeVFS {
+                 pArg.setUint32(0, ptr, true);
                }
-               break;
-+            case 'read_to_current':
+               return VFS.SQLITE_OK;
++            case 'wal_read_latest':
 +              // A setting of 1 makes each read transaction include every
 +              // committed transaction, at the cost of scanning the WAL.
 +              if (value !== null) {
@@ -167,9 +167,9 @@ index df738d396763b5c12ef08c3740a9c56f44d4b14c..c0a52c6c32f5418fad43f75c805a1070
 +                pArg.setUint32(0, ptr, true);
 +              }
 +              return VFS.SQLITE_OK;
-             case 'synchronous':
-               // Track SQLite synchronous mode. Write-ahead transactions
-               // trade durability for performance on values 1 (NORMAL) or
+             case 'lazy_lock':
+               // Lazy locks don't actually release their Web Lock until
+               // they receive a message requesting it. Typically a setting
 diff --git a/src/examples/WriteAhead.js b/src/examples/WriteAhead.js
 index 5aab29780f146954c6e5c64f446c8f92aa7658fc..07dd5d45d52aca9a088393f321538e1af20685d4 100644
 --- a/src/examples/WriteAhead.js
