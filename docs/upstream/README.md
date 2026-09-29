@@ -17,6 +17,9 @@ merged, through [`patches/`](../../patches).
 | [wa-sqlite #363 — a lock released before the truncation it covers](2026-09-25-wa-sqlite-363-anycontext-unlock-truncate.md) | Found by a probe asking something else. Why a `VACUUM` on `OPFSAnyContextVFS` failed the next read on Firefox, traced one VFS call at a time. |
 | [wa-sqlite #365 — a read that starts before the news of a commit](2026-09-27-wa-sqlite-365-writeahead-read-freshness.md) | Merged 2026-09-29 as an opt-in, `PRAGMA wal_read_latest`. Why `OPFSWriteAheadVFS` could read one transaction behind: a broadcast and a query on two unordered channels, traced. What the barrier was really hiding, and why the first test could not fail. Why the maintainer kept eventual consistency, and what the worst case costs. |
 | [wa-sqlite #366 — the build `OPFSWriteAheadVFS` works best with, never tested](2026-09-29-wa-sqlite-366-writeahead-default-build.md) | Found answering the maintainer's question on #365. Two test lists moved, and a first run on that build: all green. |
+| [wa-sqlite #367 — a write-ahead file left open by a failed open](2026-09-29-wa-sqlite-367-writeahead-open-leak.md) | #350's leak in `OPFSWriteAheadVFS`, found by the maintainer's question. Why it costs a handle on Chromium and the whole database on Firefox, measured per reopen. |
+| [wa-sqlite #368 — a pool that one failed creation blocks for good](2026-09-29-wa-sqlite-368-ahp-acquire-leak.md) | #350's leak in `AccessHandlePoolVFS`, on both engines. Why a pool file held for a moment was enough, and why the test cannot use the harness. |
+| [wa-sqlite #369 — an open lock kept by an open that failed](2026-09-29-wa-sqlite-369-adaptive-open-lock.md) | The same family in `OPFSAdaptiveVFS`, on Firefox only. Why Chromium never shows it, and how the test makes it take Firefox's path. |
 
 [`repro/`](repro) holds the scripts, self-contained: each runs from a plain
 wa-sqlite checkout with nothing but Playwright installed.
