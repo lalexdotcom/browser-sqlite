@@ -462,9 +462,9 @@ export type SQLiteDB = SQLiteQueryAPI & {
    */
   inspect: () => Promise<ClientInspection>;
   /**
-   * Internal diagnostic handle. Not part of the stable public API.
-   * Shape is subject to change without notice.
-   * @internal
+   * The live introspection tree, `undefined` unless the `debug` option is set.
+   * One object updated in place: keep the reference and poll it. Its shape is
+   * outside semver and may change in any release.
    */
   debug?: ClientDebugState | undefined;
 };
