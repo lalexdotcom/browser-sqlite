@@ -150,10 +150,6 @@ back to it. Not designed. It will sit on the savepoint machinery merged on 2026-
 `mem:architecture`): a new entry point must go through the facade, which concludes the library's
 savepoint before opening its own.
 
-## Commit conventions are stated and not enforced (user, 2026-09-30)
-
-`AGENTS.md` states them since 2026-09-30: Conventional Commits, the allowed types, a breaking change marked with `!` **and** a `BREAKING CHANGE:` footer. Before that they were practice only: 1082 of the 1097 non-merge commits on `main` read `type(scope): subject`, 17 carry the `!`, none has the footer, and commits behind entries the CHANGELOG files as breaking lack the `!` (`1672aa4`, `2c5a036`, `158551f`, `76660d6`). Still open: nothing checks a message — no commitlint, no `commit-msg` hook, no CI step — and the types in use include two the list does not have (`release`, `probe`). Whether to enforce, and by what, is not designed.
-
 ## The `.mjs` scripts are not type-checked (2026-09-24)
 
 `tsc` covers `scripts/*.ts` since 2026-09-24, but no `allowJs`/`checkJs` is set, so the `.mjs` files are only linted and formatted by biome. Measured with `checkJs` and `@types/node` on 2026-09-24: **84 errors** — `consumer-smoke.mjs` 44, `bench/check.mjs` 19, `bench/dev.mjs` 12, `matrix-triage.mjs` 5, `static-server.mjs` 2, `bench/assemble.mjs` 1, `bounded.mjs` 1. Not triaged: how many are JSDoc-less inference noise and how many real is unknown.
