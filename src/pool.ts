@@ -25,9 +25,9 @@ export type PoolWorkerQueryOptions = {
    * When true, the query's completion does not call `deps.onServed`. Set for
    * the commit-propagation barrier: it is a synthetic probe, not user work, and
    * must not reset the supervisor's restart counter.
-   * `createQueryDebugState` is intentionally NOT suppressed: barrier statements
-   * still appear in the debug request tree, and a browser test counts them there
-   * to prove the barrier stays conditional.
+   * The debug worker handle's `query` is intentionally NOT suppressed: barrier
+   * statements still appear in the debug request tree, and a browser test
+   * counts them there to prove the barrier stays conditional.
    */
   noServed?: boolean;
   /**
@@ -268,13 +268,6 @@ export const createPoolWorker = (deps: {
   createWorkerDebugState?:
     | ((index: number, name: string) => WorkerDebugHandle)
     | undefined;
-  createQueryDebugState?:
-    | ((
-        index: number,
-        sql: string,
-        params?: unknown[],
-      ) => QueryDebugHandle | undefined)
-    | undefined;
   logger: Logger;
   abortSlots?: SharedArrayBuffer | undefined;
   declineWithout?: readonly PlatformFeature[] | undefined;
@@ -297,7 +290,7 @@ export const createPoolWorker = (deps: {
     statementCacheSize,
     statementCacheBytes,
   } = deps;
-  const { createWorkerDebugState, createQueryDebugState, logger } = deps;
+  const { createWorkerDebugState, logger } = deps;
   const { abortSlots } = deps;
   const { declineWithout, probeFirst } = deps;
 
@@ -440,6 +433,9 @@ export const createPoolWorker = (deps: {
   const poison = (error: SQLiteError) => {
     if (dead) return false;
     dead = true;
+    // Ends the query in flight: a worker death sends neither `done` nor
+    // `error`, and without this its request would read as still running.
+    debugQuery?.failed(error);
     worker.status = 'DEAD';
     deathDeferred.reject(error);
     deferredInit.reject(error); // no-op once resolved
@@ -682,7 +678,7 @@ export const createPoolWorker = (deps: {
         );
       }
 
-      debugQuery = createQueryDebugState?.(index, sql, params);
+      debugQuery = debugWorker?.query(sql, params);
 
       // Extract query options
       const {

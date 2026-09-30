@@ -149,7 +149,14 @@ export type ClientDebugState = {
   readonly requests: readonly RequestDebugState[];
 };
 
-export type WorkerDebugHandle = { readonly initialized: () => void };
+export type WorkerDebugHandle = {
+  readonly initialized: () => void;
+  /** Attaches to the slot's active request only if it is still this worker's own generation. */
+  readonly query: (
+    sql: string,
+    params?: unknown[],
+  ) => QueryDebugHandle | undefined;
+};
 
 export type RequestDebugHandle = {
   readonly locked: () => void;
@@ -248,6 +255,45 @@ export const createClientDebug = (
       initialized: () => {
         worker.initializationTime = Date.now();
       },
+      query: (sql, params) => {
+        // Bound to this worker's own generation: a stale handle from a dead
+        // worker must not attach to the replacement's request.
+        const request = active[index];
+        if (!request || request.generation !== generation) return undefined;
+        const query: Writable<QueryDebugState> = {
+          sql,
+          params,
+          startTime: Date.now(),
+          affected: 0,
+          rows: 0,
+          prepared: 0,
+        };
+        if (request.queries.length >= DEBUG_QUERIES_PER_REQUEST)
+          request.queries.shift();
+        request.queries.push(query);
+        return {
+          chunk: (rows) => {
+            // A worker's death can post its failure after the message that
+            // already ended this query; a finished query is not rewritten.
+            if (query.endTime !== undefined) return;
+            query.firstRowTime ??= Date.now();
+            query.rows += rows;
+            request.rows += rows;
+          },
+          done: (affected, prepared) => {
+            if (query.endTime !== undefined) return;
+            query.affected = affected;
+            query.prepared = prepared;
+            query.endTime = Date.now();
+            request.affected += affected;
+          },
+          failed: (error) => {
+            if (query.endTime !== undefined) return;
+            query.error = error;
+            query.endTime = Date.now();
+          },
+        };
+      },
     };
   };
 
@@ -291,47 +337,9 @@ export const createClientDebug = (
     };
   };
 
-  const createQueryDebugState = (
-    index: number,
-    sql: string,
-    params?: unknown[],
-  ): QueryDebugHandle | undefined => {
-    const request = active[index];
-    if (!request) return undefined;
-    const query: Writable<QueryDebugState> = {
-      sql,
-      params,
-      startTime: Date.now(),
-      affected: 0,
-      rows: 0,
-      prepared: 0,
-    };
-    if (request.queries.length >= DEBUG_QUERIES_PER_REQUEST)
-      request.queries.shift();
-    request.queries.push(query);
-    return {
-      chunk: (rows) => {
-        query.firstRowTime ??= Date.now();
-        query.rows += rows;
-        request.rows += rows;
-      },
-      done: (affected, prepared) => {
-        query.affected = affected;
-        query.prepared = prepared;
-        query.endTime = Date.now();
-        request.affected += affected;
-      },
-      failed: (error) => {
-        query.error = error;
-        query.endTime = Date.now();
-      },
-    };
-  };
-
   return {
     state,
     createWorkerDebugState,
     createRequestDebugState,
-    createQueryDebugState,
   } as const;
 };

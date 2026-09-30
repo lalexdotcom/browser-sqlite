@@ -102,9 +102,7 @@ describe('the pool-level request history', () => {
     hold.release();
     await Promise.all([hold.done, queued]);
     const read = db.debug!.requests.findLast((r) => r.kind === 'read')!;
-    // GreaterThanOrEqual, not GreaterThan: Date.now() is coarse enough that
-    // the queue-to-grant gap can land in the same millisecond (observed
-    // failing intermittently with toBeGreaterThan on a clean tree).
+    // Date.now() has millisecond resolution: the two stamps can be equal.
     expect(read.acquireTime).toBeGreaterThanOrEqual(read.startTime);
     expect(read.endTime).toBeDefined();
   });
@@ -156,6 +154,11 @@ describe('the pool-level request history', () => {
     )!;
     expect(crashed).toMatchObject({ worker: 0, generation: 0 });
     expect(crashed.endTime).toBeDefined();
+    const query = crashed.queries.find((q) =>
+      q.sql.includes('WITH RECURSIVE'),
+    )!;
+    expect(query.endTime).toBeDefined();
+    expect(query.error).toMatchObject({ code: 'WORKER_CRASHED' });
     expect(requests.at(-1)).toMatchObject({ worker: 0, generation: 1 });
   });
 

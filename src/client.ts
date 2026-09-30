@@ -1038,17 +1038,16 @@ export const createSQLiteClient = (
    * acquired lease before the caller sees it — the lease atomically covers the
    * barrier statement and the real query together.
    */
-  const acquireInstrumented = async (
+  const acquireInstrumented = (
     kind: 'read' | 'write',
     signal?: AbortSignal,
   ) => {
     const request = clientDebug?.createRequestDebugState(kind);
-    try {
-      return await acquireLease(kind, signal, request);
-    } catch (error) {
-      request?.failed(error);
+    if (!request) return acquireLease(kind, signal, undefined);
+    return acquireLease(kind, signal, request).catch((error: unknown) => {
+      request.failed(error);
       throw error;
-    }
+    });
   };
 
   /**
@@ -1533,7 +1532,6 @@ export const createSQLiteClient = (
       },
       drainTimeout,
       createWorkerDebugState: clientDebug?.createWorkerDebugState,
-      createQueryDebugState: clientDebug?.createQueryDebugState,
       logger,
       abortSlots,
       // Slot 0 never declines; only surplus workers may. Where a probe is owed,

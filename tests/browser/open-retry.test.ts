@@ -180,10 +180,11 @@ type Client = ReturnType<typeof createSQLiteClient>;
 const poolState = (client: Client | undefined): string => {
   const state = client?.debug;
   if (!state) return 'not created';
-  const running = (index: number) =>
+  const running = (w: (typeof state.workers)[number]) =>
     state.requests.some(
       (r) =>
-        r.worker === index &&
+        r.worker === w.index &&
+        r.generation === w.generation &&
         r.acquireTime !== undefined &&
         r.endTime === undefined,
     );
@@ -191,7 +192,7 @@ const poolState = (client: Client | undefined): string => {
     (w) =>
       `worker ${w.index} ${w.status}` +
       (w.initializationTime === undefined ? ', never initialized' : '') +
-      (running(w.index) ? ', a request in flight' : ''),
+      (running(w) ? ', a request in flight' : ''),
   );
   const { read, write, gated } = state.queue;
   return `${workers.join('; ') || 'no worker'}; queue read ${read} write ${write} gated ${gated}`;

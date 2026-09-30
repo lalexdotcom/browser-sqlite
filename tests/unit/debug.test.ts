@@ -214,19 +214,19 @@ describe('the pool-level request history', () => {
 
   it('attaches a query to its slot active request, and to nothing after the release', () => {
     const debug = make([], 2);
-    debug.createWorkerDebugState(0, 'w0');
-    debug.createWorkerDebugState(1, 'w1');
+    const w0 = debug.createWorkerDebugState(0, 'w0');
+    const w1 = debug.createWorkerDebugState(1, 'w1');
     const zero = debug.createRequestDebugState('read');
     zero.acquired(0);
     const one = debug.createRequestDebugState('read');
     one.acquired(1);
-    debug.createQueryDebugState(1, 'SELECT 1');
+    w1.query('SELECT 1');
     expect(debug.state.requests[0]!.queries).toEqual([]);
     expect(debug.state.requests[1]!.queries.map((q) => q.sql)).toEqual([
       'SELECT 1',
     ]);
     one.released();
-    expect(debug.createQueryDebugState(1, 'SELECT 2')).toBeUndefined();
+    expect(w1.query('SELECT 2')).toBeUndefined();
     expect(debug.state.requests[1]!.queries.length).toBe(1);
   });
 
@@ -235,11 +235,27 @@ describe('the pool-level request history', () => {
     debug.createWorkerDebugState(0, 'w0');
     const dead = debug.createRequestDebugState('read');
     dead.acquired(0);
-    debug.createWorkerDebugState(0, 'w0'); // replaced while the lease is out
+    const fresh = debug.createWorkerDebugState(0, 'w0'); // replaced while the lease is out
     const live = debug.createRequestDebugState('read');
     live.acquired(0);
     dead.released(); // the old caller's finally, arriving late
-    debug.createQueryDebugState(0, 'SELECT 1');
+    fresh.query('SELECT 1');
+    expect(debug.state.requests[1]!.queries.map((q) => q.sql)).toEqual([
+      'SELECT 1',
+    ]);
+  });
+
+  it('binds a query to the worker handle generation, not the live slot', () => {
+    const debug = make();
+    const old = debug.createWorkerDebugState(0, 'w0');
+    const r1 = debug.createRequestDebugState('write');
+    r1.acquired(0);
+    const fresh = debug.createWorkerDebugState(0, 'w0'); // slot 0 replaced
+    const r2 = debug.createRequestDebugState('write');
+    r2.acquired(0);
+    expect(old.query('ROLLBACK')).toBeUndefined();
+    expect(debug.state.requests[1]!.queries).toEqual([]);
+    fresh.query('SELECT 1');
     expect(debug.state.requests[1]!.queries.map((q) => q.sql)).toEqual([
       'SELECT 1',
     ]);
@@ -247,13 +263,13 @@ describe('the pool-level request history', () => {
 
   it('adds rows and affected up from the query to the request', () => {
     const debug = make();
-    debug.createWorkerDebugState(0, 'w0');
+    const w0 = debug.createWorkerDebugState(0, 'w0');
     debug.createRequestDebugState('write').acquired(0);
-    const first = debug.createQueryDebugState(0, 'SELECT a FROM t')!;
+    const first = w0.query('SELECT a FROM t')!;
     first.chunk(500);
     first.chunk(20);
     first.done(0, 1);
-    const second = debug.createQueryDebugState(0, 'UPDATE t SET a = 1')!;
+    const second = w0.query('UPDATE t SET a = 1')!;
     second.done(7, 0);
     const request = debug.state.requests[0]!;
     expect(request.queries[0]).toMatchObject({
@@ -273,20 +289,45 @@ describe('the pool-level request history', () => {
 
   it('records a failed query with its error', () => {
     const debug = make();
-    debug.createWorkerDebugState(0, 'w0');
+    const w0 = debug.createWorkerDebugState(0, 'w0');
     debug.createRequestDebugState('read').acquired(0);
     const error = new Error('no such table');
-    debug.createQueryDebugState(0, 'SELECT x FROM missing')!.failed(error);
+    w0.query('SELECT x FROM missing')!.failed(error);
     const query = debug.state.requests[0]!.queries[0]!;
     expect(query.error).toBe(error);
     expect(query.endTime).toBeGreaterThan(0);
   });
 
+  it('keeps a done query done when a late failure arrives', () => {
+    const debug = make();
+    const w0 = debug.createWorkerDebugState(0, 'w0');
+    debug.createRequestDebugState('read').acquired(0);
+    const q = w0.query('SELECT 1')!;
+    q.done(0, 1);
+    q.failed(new Error('worker crashed'));
+    const query = debug.state.requests[0]!.queries[0]!;
+    expect(query.affected).toBe(0);
+    expect(query.error).toBeUndefined();
+  });
+
+  it('keeps a failed query failed when a late done arrives', () => {
+    const debug = make();
+    const w0 = debug.createWorkerDebugState(0, 'w0');
+    debug.createRequestDebugState('read').acquired(0);
+    const q = w0.query('SELECT 1')!;
+    const error = new Error('worker crashed');
+    q.failed(error);
+    q.done(3, 1);
+    const query = debug.state.requests[0]!.queries[0]!;
+    expect(query.error).toBe(error);
+    expect(query.affected).toBe(0);
+  });
+
   it('bounds the per-request query history at exactly the maximum', () => {
     const debug = make();
-    debug.createWorkerDebugState(0, 'w0');
+    const w0 = debug.createWorkerDebugState(0, 'w0');
     debug.createRequestDebugState('read').acquired(0);
-    for (let i = 0; i < 200; i++) debug.createQueryDebugState(0, `SELECT ${i}`);
+    for (let i = 0; i < 200; i++) w0.query(`SELECT ${i}`);
     expect(debug.state.requests[0]!.queries.length).toBe(50);
   });
 
@@ -314,9 +355,9 @@ describe('the pool-level request history', () => {
   it('survives structuredClone, capturing the current status', () => {
     const fakeWorker = { status: 'RUNNING' } as any;
     const debug = make([fakeWorker]);
-    debug.createWorkerDebugState(0, 'w0');
+    const w0 = debug.createWorkerDebugState(0, 'w0');
     debug.createRequestDebugState('read').acquired(0);
-    debug.createQueryDebugState(0, 'SELECT ?', [1]);
+    w0.query('SELECT ?', [1]);
     const snapshot = structuredClone(debug.state);
     expect(snapshot.workers[0]!.status).toBe('RUNNING');
     expect(snapshot.requests[0]!.queries[0]!.params).toEqual([1]);
