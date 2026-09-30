@@ -653,8 +653,8 @@ export const createSQLiteClient = (
    * every VFS that shares storage — exclusive or shared, decided at
    * construction or after worker 0's probe (spec 2026-09-15, §3.2). Its
    * absence does not mean refusal: it is also absent before the lock is
-   * decided, on the memory VFS, and on a client that failed or closed before
-   * its lock was decided. A refusal is `connRefused` (A3).
+   * decided, on the memory VFS, on a client that closed before its lock was
+   * decided, and on one that failed. A refusal is `connRefused` (A3).
    */
   let connRelease: (() => void) | undefined;
   /**
@@ -729,6 +729,11 @@ export const createSQLiteClient = (
         ...(exclusive ? { ifAvailable: true } : {}),
       }) as Promise<(() => void) | undefined>
     ).then((release) => {
+      if (fatal !== undefined) {
+        // The client failed while the request was pending: it takes nothing.
+        release?.();
+        return;
+      }
       connRelease = release;
       connRefused = release === undefined;
     });
@@ -1464,6 +1469,10 @@ export const createSQLiteClient = (
     markerClosed = true;
     markerRelease?.();
     markerRelease = undefined;
+    // The workers are gone and nothing revives a failed client, so it keeps
+    // neither the next client nor `deleteDatabase` out.
+    connRelease?.();
+    connRelease = undefined;
   };
 
   const spawn = (index: number) => {
