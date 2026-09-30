@@ -24,7 +24,7 @@ obligations and unmeasured ground.
   `mem:architecture`, "Two names per database"), and **the default build that follows the browser** (merged 2026-09-24: Changed, plus one Breaking entry — a `wasmUrl` serving only the `async` `.wasm`), and **the public surface** (merged 2026-09-24: Breaking — `VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` no longer exported, the `./worker` subpath gone; Changed — `createSQLiteClient` declared to return `SQLiteDB`), and two more **Fixed** entries: `OPFSAnyContextVFS`'s `VACUUM` that failed the next read on Firefox (#363, merged 2026-09-25) and a failed client leaving `inspectDatabase()`'s roster at once (merged 2026-09-27).
 - **The vendored wa-sqlite sits on upstream `master` of 2026-09-29** (`5be9cd14`, `package.json` has
   the SHA), which merged our #365 that day. `patches/wa-sqlite@1.1.2.patch` carries six files, one
-  open PR each or two: `IDBBatchAtomicVFS.js` (#351, at its revised head `8fa53500` since 2026-09-30), `IDBMirrorVFS.js` (#352 and #353, at their heads revised in review, `fb327093` and `dd9a514b`, since 2026-09-30),
+  open PR each or two: `IDBBatchAtomicVFS.js` (#351, at its revised head `8fa53500` since 2026-09-30), `IDBMirrorVFS.js` (#352 and #353, as revised in review since 2026-09-30; heads in `mem:stack-and-build`),
   `OPFSAnyContextVFS.js` (#363), `OPFSWriteAheadVFS.js` (#367), `AccessHandlePoolVFS.js` (#368),
   `OPFSAdaptiveVFS.js` (#369). The installed `src/` was checked equal to the pin plus those PR
   heads, and `dist/` equal to upstream's. **The repin's matrix (2026-09-29): 66 of 66 cells green,
@@ -42,9 +42,9 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-09-30 on `chore/patch-352-353-review`
+## The verification baseline — compare against these, re-measured 2026-09-30
 
-Not history: the numbers a regression is detected against. **Every figure below was read off a run in this container on 2026-09-30, on `chore/patch-352-353-review`** — none is arithmetic, and the table was read in ONE pass, on the wa-sqlite pin `5be9cd14` with #351, #352, #353, #363, #367, #368 and #369 carried. **One row is carried, not re-run, stated:** the bench check — the branch touches nothing under `src/` or the bench.
+Not history: the numbers a regression is detected against. **Every figure below was read off a run in this container on 2026-09-30, on the tree that carries #352 and #353 as revised in review** — none is arithmetic, and the table was read in ONE pass, on the wa-sqlite pin `5be9cd14` with #351, #352, #353, #363, #367, #368 and #369 carried. **One row is carried, not re-run, stated:** the bench check — the branch touches nothing under `src/` or the bench.
 
 | command | result |
 |---|---|
@@ -62,7 +62,7 @@ Not history: the numbers a regression is detected against. **Every figure below 
 | `dependencies` in `package.json` | absent |
 | `pnpm test:matrix` | **66 of 66 cells green, 2421 s**, no re-run. ~40 min. **Every cell runs `BSQ_TEST_NEEDS=skip`**, so its skips are the tests whose need the pair lacks: chromium from 4 (`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`) to 72 (`MemoryVFS/sync`), firefox from 2 (`OPFSAnyContextVFS`) to 70 (`MemoryVFS/sync`), isolated 8/0/0 everywhere. Identical per cell — status, tests, failed, skipped — to the run made the same morning before the patch changed. |
 
-Against the previous table (2026-09-27 night, `test/needs-skip-in-matrix`): the `pnpm test` totals grew with the tests added since — unit 529 → 535, isolated 14 → 16, the matrix's isolated cells 7 → 8 — and the firefox skips went from 2 to 4, the `barrier` test described below. The chromium skips did not move; conformance, lint and the consumer smoke are identical. **`pnpm test`'s skip counts are the cell to watch** — a test that started skipping instead of running would vanish into a total without a trace. **The matrix's skip counts are not that signal on their own:** they carry every unmet need, so what to watch there is a cell's skip count moving without a `needs` or a declaration having changed.
+Against the previous table (2026-09-27 night): the `pnpm test` totals grew with the tests added since — unit 529 → 535, isolated 14 → 16, the matrix's isolated cells 7 → 8 — and the firefox skips went from 2 to 4, the `barrier` test described below. The chromium skips did not move; conformance, lint and the consumer smoke are identical. **`pnpm test`'s skip counts are the cell to watch** — a test that started skipping instead of running would vanish into a total without a trace. **The matrix's skip counts are not that signal on their own:** they carry every unmet need, so what to watch there is a cell's skip count moving without a `needs` or a declaration having changed.
 
 **Do not reconcile any of these by arithmetic; re-run.** A previous version of this table was
 measured on 2026-09-15 and went stale the next day, and another contradicted itself in September

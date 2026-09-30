@@ -6,7 +6,7 @@ one. A number nobody can reproduce is a story, not a measurement — say so in t
 
 ## 352-353-REVIEW — wa-sqlite's suite on the revised heads of #352 and #353, 2026-09-30, Playwright's Chromium, this container
 
-**Method.** `npx web-test-runner` in a worktree of each branch after upstream master (`fa111290`) was merged in, `CHROME_PATH` set, `node_modules` from `.work/wa-sqlite`. The runner's totals are assertions, not tests. The red arm is the same commit with `master`'s `IDBMirrorVFS.js` checked out over it, in a detached worktree.
+**Method.** `npx web-test-runner` in a worktree of each branch after upstream master (`fa111290`) was merged in, `CHROME_PATH` set, `node_modules` shared with the fork's main clone. The runner's totals are assertions, not tests. The red arm is the same commit with `master`'s `IDBMirrorVFS.js` checked out over it, in a detached worktree.
 
 | | #352 `fb327093` | #353 `dd9a514b` |
 |---|---|---|

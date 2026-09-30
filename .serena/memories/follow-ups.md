@@ -62,7 +62,7 @@ Pushed on 2026-09-30: upstream master merged into `fix/idb-sparse-write`, the se
 
 Pushed and answered on 2026-09-30, review re-requested by the user: the comments he asked for, #353's rounding removed, upstream master merged into both branches. The patch carries those heads. What each answer calls for:
 - **He merges one**: repin and regenerate the patch without that PR's part of `IDBMirrorVFS.js`; both PRs touch that one file, in different regions, and it leaves the patch only when both are merged.
-- **He asks for more**: answer in the thread, with a friendly word (`mem:conventions`); the worktrees are `.work/wa-sqlite-352` and `.work/wa-sqlite`.
+- **He asks for more**: answer in the thread, with a friendly word (`mem:conventions`); each branch has its own worktree of the fork.
 - **Both descriptions still say "the full suite is 13 files"**; it is 15 since master was merged in. Not edited, the user has not asked.
 
 ## wa-sqlite #362: `OPFSCoopSyncVFS.create()` fails after a back/forward-cache navigation — PR not decided
