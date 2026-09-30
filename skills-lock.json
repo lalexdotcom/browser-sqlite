@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "changelog-maintenance": {
+      "source": "lalexdotcom/skills",
+      "sourceType": "github",
+      "skillPath": "skills/changelog-maintenance/SKILL.md",
+      "computedHash": "086152e658f70830397bec9f10d43e6655019041cd6440e17e5ef7262f511149"
+    }
+  }
+}
