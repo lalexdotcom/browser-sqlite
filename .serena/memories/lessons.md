@@ -1145,3 +1145,35 @@ Asked whether the library could decide when a read catches up, the answer given 
 ## A mutation run covers the three configs, and a mutant that survives is traced before it is called untested (2026-09-28, `test/falsifiers`)
 
 `pnpm test:browser` runs Chromium and Firefox, not `rstest.isolated.config.ts` — the only project with cross-origin isolation, hence the only one where the `sync` build's abort slot works. A mutation of `drain()`'s `interrupt()` was declared "unguarded" after `test:browser` alone; the path it serves exists only in the isolated project. Mutate against `pnpm test`'s three configs, or name the config left out. And a surviving mutant is not yet a missing test: here the obvious scenario (a `break` without a signal) could not fail either, because such a query is not abortable at all — reading which path the mutated line serves came before writing the test that finally failed 10 of 10.
+
+## A PR description says what was observed, and labels what was constructed (2026-09-30, wa-sqlite #351)
+
+The description said "SQLite writes a 512-byte journal header, then a full page at the same offset". SQLite does not; the sequence was our own VFS-level test, written to force a shape we had only deduced. The maintainer asked how that could be, and answering cost more than a day of measurement. **For each sentence of the form "SQLite does X", name the trace that shows it.** A shape reached only by calling the VFS directly is written as such, and the description says whether SQLite is known to reach it.
+
+## A reservation written down is a probe not yet run (2026-09-30, wa-sqlite #351)
+
+The first report closed on "one reservation, and no test will lift it": the new block might shadow a block further along. It was excused by analogy — the extension branch "has the same property" — and the analogy was false: that branch writes past the end of the file, where nothing can start. The reservation was the defect, and one direct `jWrite`/`jRead` test shows it. **Before posting, turn every stated reservation into a test or a measurement; an argument for why it is harmless is a claim to falsify, not a reason to skip.**
+
+## A suite count says nothing about the builds that were skipped (2026-09-30, wa-sqlite #351)
+
+"2910 passing" was reported for a PR whose branch predated upstream's fix to its JSPI detection: every JSPI test was skipped, silently, and the count looked complete. **Before quoting a suite result, check that each build it claims appears in the output, and measure on a branch that contains current master.**
+
+## A VFS fix is not verified until SQLite has been run through it (2026-09-30, wa-sqlite #351)
+
+Upstream's suite was green on a fix that threw `DataError` on a one-byte write, which SQLite makes to invalidate a stale journal header, and green on a fix that left overlapping blocks. Both were found by driving real SQL through the VFS with three checks: a byte-exact copy of what SQLite writes compared with what it reads back, a content hash before a transaction and after its `ROLLBACK`, and a randomised sequence of statements and cache sizes. **Run that probe on the fix before trusting the unit suite, and vary the journal mode: `DELETE` hides what `PERSIST` shows.**
+
+## Wrong bytes in the store are not wrong bytes read (2026-09-30, wa-sqlite #351)
+
+The first comparison found thousands of journal bytes that did not read back, and the draft for upstream was heading for "corruption". Splitting the reads SQLite actually makes between the transaction in flight and leftovers of earlier ones gave 0 for the first, in every run. **Measure what the consumer of the data reads before naming the consequence**; say "the store returns something other than what was written" when that is all that is shown.
+
+## The traps of a page-level VFS probe (2026-09-30, wa-sqlite #351)
+
+Each cost a wrong result or a lost quarter of an hour:
+
+- `jWrite` and `jRead` receive a `Uint8ArrayProxy` over the WASM heap: `typedArray.set(proxy)` copies zeroes. Take `pData.slice()` first. (The same trap as IDBMirrorVFS's #352.)
+- A wrapper around a VFS method must be `async` exactly when the original is: `FacadeVFS` decides from the function's kind and throws "unexpected Promise" otherwise.
+- A reference copy of a file must be dropped on `jDelete`, or a `DELETE`-mode journal compares against the previous transaction.
+- Read a file back by the runs SQLite wrote, not by fixed chunks: `jRead` short-reads across a range never written and zeroes the rest of the chunk, which reads as loss.
+- A `Promise.race` against a `setTimeout` deadline keeps Node alive until the timer fires, long after the result printed. End the script with `process.exit`.
+- `pkill -f <pattern>` kills the shell that runs it when the pattern is in its own command line; and a progress stream piped into `tail` shows nothing until the process ends.
+- A session slower than the harness's budget reads as a hang. Replay it alone, with a trace and a longer budget, on the fix and on the baseline, before calling it one.

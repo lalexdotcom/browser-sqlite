@@ -4,9 +4,46 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## 351-PERSIST — `IDBBatchAtomicVFS` with a persistent journal, wa-sqlite #351's two fixes, 2026-09-30, Chromium 151 / Firefox 153, this container
+
+**Method.** Standalone Playwright pages on a wa-sqlite checkout, asyncify build, a fresh IndexedDB database per run. `jWrite`, `jRead`, `jTruncate`, `jDelete` and `jClose` wrapped from the page: a byte-exact copy of what SQLite writes to every file but the main database; each `jRead` SQLite makes compared with that copy, split between bytes written in the transaction in flight and older ones; at each close the file read back by written runs; every block listed from IndexedDB at the end to count overlaps. "First fix" = #351's head until 2026-09-30 (`5acda54d`); "second fix" = the head since (`8fa53500`, measured replayed on `5be9cd14`, the file byte-identical on the merged branch).
+
+**SQLite does write longer than the block at the start, with `journal_mode=PERSIST`.** Default cache, `INSERT` of 3000 rows then three `UPDATE`s: 895 such journal writes and 4 into an unwritten range. Larger workload, `PERSIST`: 9 046 (default cache) and 11 309 (`cache_size=16`). `DELETE` and `TRUNCATE`: 0. On master (`5be9cd14`) the short sequence logs `RangeError: offset is out of bounds` and the call never settles, Chromium and Firefox.
+
+| scenario, 8 commit-then-rollback rounds | first fix: overlaps / bytes wrong at close | second fix | rollbacks right, either fix |
+| --- | --- | --- | --- |
+| `PERSIST`, default cache | 10 / 10 125 | 0 / 0 | 8 of 8 |
+| `PERSIST`, `cache_size=10` | 707 / 252 528 | 0 / 0 | 8 of 8 |
+| `PERSIST`, `journal_size_limit=1000000` | 1 / 3 686 | 0 / 0 | 8 of 8 |
+| `PERSIST`, limit 100000, `cache_size=10` | 9 / 3 682 | 0 / 0 | 8 of 8 |
+| `DELETE`, `cache_size=10` (control) | 0 / 0 | 0 / 0 | 8 of 8 |
+
+Both engines give the same figures for the second fix. Every overlap under the first fix had its outer block created by the walk's "no block reaches this offset" path; 16 `journal_size_limit` truncations created none.
+
+**What SQLite read.** Bytes of the transaction in flight read wrong: **0**, under either fix, in every run. Under the first fix the wrong bytes were leftovers of earlier transactions, in two places: the 8-byte probe `syncJournal` makes at the next header's offset, and a rollback whose last segment has `nRec` = 0 (SQLite then counts records from the file size and walks stale ones, skipping those whose page number is past the database, until a read is short). Under the second fix only the second remains, and only as `jRead`'s short read across a range never written — master's behaviour, untouched.
+
+**Randomised search** (random `page_size`, `cache_size`, statement mix; 25 rounds a session, each a commit then a verified `ROLLBACK`). First fix: 850 rounds (Chromium 525, Firefox 325), 1 033 023 journal reads, 105 671 wrong bytes, all old, no rollback wrong. Second fix: 725 rounds, 947 752 reads, 0 overlap, 0 byte wrong at close, 0 wrong byte from a read that succeeded. One Firefox session exceeded the 300 s session budget on both fixes alike (about 11 min): slow, not hung.
+
+**At the VFS level**, the first fix fails a direct test: after a 512-byte write filling a gap before a block, a read 8 bytes in returns the old block and one 16 bytes in is short. Both builds.
+
+**Upstream suite, Chromium.** `IDBBatchAtomicVFS` tests: first fix 112 pass and 6 fail (the new case, asyncify and JSPI); second fix 128 pass. Full suite on the merged branch (`fa111290` + PR): 6067 passing. The "2910 passing" reported for the first fix on 2026-09-18 ran no JSPI test: the branch predated upstream's `51784ebf`, and its detection used `WebAssembly.Function`.
+
+**Cost of the second fix**, three alternated runs each, whole workload, quiet machine except the last Firefox pair:
+
+| | first fix, s | second fix, s | median |
+| --- | --- | --- | --- |
+| Chromium, `PERSIST` spill (~46 000 journal overwrites) | 66.1, 71.5, 68.9 | 73.3, 78.6, 74.2 | +7.7% |
+| Chromium, `DELETE` spill | 50.2, 55.8, 54.7 | 50.7, 54.7, 58.1 | 0% |
+| Firefox, `PERSIST` spill | 74.7, 74.3, 86.1 | 85.0, 85.3, 97.3 | +14.2% |
+| Firefox, `DELETE` spill | 95.2, 61.5, 60.9 | 61.7, 66.4, 86.6 | not usable: two outliers |
+
+**In the library**, patch regenerated on 2026-09-30 for that one file (installed file equal to the PR head, other hunks byte-identical): see `mem:history` for the suite and matrix figures.
+
 ## RETRY-OPS — wa-sqlite's shared `retryOps` list, upstream and in the library, 2026-09-29, Chromium 151 / Firefox 153, this container
 
-**Upstream, standalone Playwright probes** against `5be9cd14` (`.work/wa-sqlite-master`), default build unless named, 20 runs per cell, fresh files per run, 12 s hang deadline. A worker that gets an error rolls back and gives up on that database. "BUSY" = `database is locked` reached the application. F1 = `retry()` removes only the ops it awaited; F3 = each call its own list (the fork's `fix/retry-per-call-ops`).
+**Upstream, standalone Playwright probes** against `5be9cd14` (`.work/wa-sqlite-master`), default build unless named, 20 runs per cell, fresh files per run, 12 s hang deadline. A worker that gets an error rolls back and gives up on that database. "BUSY" = `database is locked` reached the application. F1 = `retry()` removes only the ops it awaited; F3 = each call its own list (the diff posted on #341).
+
+**Outcome (2026-09-29):** rhashimoto declined — a call that awaits between retries is still in flight, so two databases in one module is outside the supported case, and the retry mechanism may not outlive JSPI. The fork branch (`784ca1ca` fix, `fe06f806` test) and the library branch (`12f931d`) were deleted; nothing is carried in `patches/`.
 
 | shape | master BUSY / hang | F1 | F3 |
 | --- | --- | --- | --- |
@@ -20,7 +57,7 @@ one. A number nobody can reproduce is a story, not a measurement — say so in t
 
 Asyncify showed the same BUSY on master; JSPI broke the harness ("too many columns on t") — two calls in flight in an Asyncify/JSPI module are unsupported (#104), so neither build is evidence. Upstream suite: master and F3 all pass (5830); an earlier variant reading the list at `f()`'s return failed `vfs_read_freshness` on jspi and took 373 s. The fork's test `vfs_concurrent_databases` (own worker — through Comlink it passed on master) fails 3/3 on master for both VFS, passes 3/3 with F3; suite 5834. Probes and raw results: `.scratchpad/341-trigger/`.
 
-**In the library, F3 carried in `patches/` on `test/retry-per-call-ops` (`12f931d`):** `tsc`, `biome ci`, `pnpm test` (1279/8, 750/4, 16/0), conformance (83/14, 79/18), consumer 24/24, and the matrix **66/66 in 2420 s — per cell identical in tests, failures and skips to `main`'s matrix of the same day on the same pin** (`.matrix/2026-09-29T06-27-47-062Z` against `.matrix/2026-09-29T12-26-56-661Z`, compared with `matrix-triage.mjs`). The library does not change behaviour with the fix — expected if it never has two calls in flight in one module, not verified in its code.
+**In the library, F3 carried in `patches/` on a throwaway branch (`12f931d`):** `tsc`, `biome ci`, `pnpm test` (1279/8, 750/4, 16/0), conformance (83/14, 79/18), consumer 24/24, and the matrix **66/66 in 2420 s — per cell identical in tests, failures and skips to `main`'s matrix of the same day on the same pin** (`.matrix/2026-09-29T06-27-47-062Z` against `.matrix/2026-09-29T12-26-56-661Z`, compared with `matrix-triage.mjs`). The library does not change behaviour with the fix, as expected: it never has two calls in flight in one module (verified in the code, `mem:architecture`).
 
 ## RSTEST-OTR — rstest's OPFS is off-the-record and ~250× dearer per call, 2026-09-28, Chromium, this container
 

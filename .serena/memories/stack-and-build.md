@@ -33,7 +33,8 @@
   no longer deletable as a block. Each is independent and each has a report in
   `docs/upstream/`, which is where the mechanisms and measurements live:
   - `IDBBatchAtomicVFS.js` — #351 (`jWrite` walks the blocks a write covers instead of assuming one
-    starts at the offset), `@@ -271`.
+    starts at the offset, and bounds each piece at the next block's start so that blocks never
+    overlap), `@@ -271`. PR head `8fa53500` since 2026-09-30.
   - `IDBMirrorVFS.js` — #352 (`pData.subarray()`: `pData` is a `Uint8ArrayProxy`, and `set()` on it
     stores zeroes) and #353 (drop the blocks past the end of the file, in the view and in the store).
   - `OPFSAnyContextVFS.js` — #363 (a `jUnlock` that closes a pending writable before releasing the
