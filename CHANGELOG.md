@@ -1,12 +1,19 @@
 # Changelog
 
-All notable changes to this project are documented here.
+All notable changes to this project are documented in this file.
 
-## Unreleased
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-### Breaking
+## [Unreleased]
 
-- **`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` keep each database in a folder of their own** — `.ad/`, `.ac/`, `.cs/` and `.wa/` in the OPFS root; the leading dot keeps these folders apart from an application's own OPFS entries. Until now all four resolved one name to one file at the root, so deleting through any of them destroyed what the others created. A database created by an earlier release is not found: move its files into the folder once, before opening it. `name` below is the normalized name `db.file` reports — e.g. `'caf%C3%A9'` for `'café'` —
+### Added
+
+- **`db.ready` says when the pool has started.** It resolves once every worker has opened or been declined by the environment — from then on `db.poolSize` is the size you got — and rejects with the error that failed the client, or `CLIENT_CLOSED` if you close it first. Queries never need it: they wait for the pool as before.
+- **`db.files`** lists every name the database's files may have — the database, `-journal`, `-wal` and the VFS's own extra files — as OPFS paths on the VFS that keep a folder.
+
+### Changed
+
+- **Breaking:** **`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` keep each database in a folder of their own** — `.ad/`, `.ac/`, `.cs/` and `.wa/` in the OPFS root; the leading dot keeps these folders apart from an application's own OPFS entries. Until now all four resolved one name to one file at the root, so deleting through any of them destroyed what the others created. A database created by an earlier release is not found: move its files into the folder once, before opening it. `name` below is the normalized name `db.file` reports — e.g. `'caf%C3%A9'` for `'café'` —
 
   ```js
   // `name` as `db.file` reports it — e.g. 'caf%C3%A9' for 'café'.
@@ -30,18 +37,18 @@ All notable changes to this project are documented here.
   ```
 
   A name containing `/` keeps its subfolders inside the VFS folder. The database file moves last, after its journal. The other VFS are unaffected.
-- **A database name on those VFS may be 52 characters instead of 56**, once normalized — the folder takes four.
-- **A `wasmUrl` callback that ignores its argument can hand the wrong `.wasm` to the VFS that now default to `jspi` (see *Changed*)** when no `build` is passed and the browser has JSPI: the callback now receives `'jspi'`. Return the file for the build it receives, or pass `build`. A string `wasmUrl` names a directory, which must now also serve `wa-sqlite-jspi.wasm` — or pass `build`.
-- **`VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` are no longer exported.** `db.build` reports the build a client resolved; `SQLiteVFS` and `SQLiteBuild` still name the options, and `PlatformFeature` what `detectFeatures()` returns.
-- **The `browser-sqlite/worker` subpath is gone.** The client starts its worker itself, and no option accepts one.
-
-### Added
-
-- **`db.ready` says when the pool has started.** It resolves once every worker has opened or been declined by the environment — from then on `db.poolSize` is the size you got — and rejects with the error that failed the client, or `CLIENT_CLOSED` if you close it first. Queries never need it: they wait for the pool as before.
-- **`db.files`** lists every name the database's files may have — the database, `-journal`, `-wal` and the VFS's own extra files — as OPFS paths on the VFS that keep a folder.
-
-### Performance
-
+- **Breaking:** **A database name on those VFS may be 52 characters instead of 56**, once normalized — the folder takes four.
+- **Breaking:** **A `wasmUrl` callback that ignores its argument can hand the wrong `.wasm` to the VFS that now default to `jspi` (see below)** when no `build` is passed and the browser has JSPI: the callback now receives `'jspi'`. Return the file for the build it receives, or pass `build`. A string `wasmUrl` names a directory, which must now also serve `wa-sqlite-jspi.wasm` — or pass `build`.
+- **An omitted `build` is the first one the VFS declares that the browser supports, and `jspi` is now declared before `async` everywhere.** On browsers with JSPI (Chrome 137+, Firefox 153+, Safari 27+), `OPFSAdaptiveVFS`, `IDBBatchAtomicVFS`, `IDBMirrorVFS`, `OPFSAnyContextVFS` and `MemoryAsyncVFS` now load `jspi` instead of `async`; elsewhere they load `async` as before, and the other VFS keep `sync`. `db.build` reports the one loaded. Pass `build: 'async'` to keep the previous behaviour.
+- **The vendored wa-sqlite moves to upstream `e6e01ae`**, which corrects how
+  `OPFSWriteAheadVFS` tracks the size of its active write-ahead file across a
+  switch between the two — the threshold that decides when to rotate them —
+  keeps a TEXT value whole across an embedded NUL, reports why an
+  `OPFSCoopSyncVFS` open was refused (see *Fixed*), and copies the write-ahead
+  a run of pages at a time (see below).
+- **A database name too long for SQLite now fails at the call**, with `INVALID_OPTION` naming the bound, from `createSQLiteClient`, `deleteDatabase` and `inspectDatabase` — it used to fail later, when the worker opened the file. The same call also now refuses a name that is empty once normalized (`''`, `'/'`, `'?x'`…) with `INVALID_OPTION`.
+- **On `OPFSCoopSyncVFS`, an open refused for any reason but a file held elsewhere fails at once.** It used to retry every refusal for 2.5 s before reporting it; only a held file, which another worker or tab can let go of, is retried now.
+- **`createSQLiteClient` is declared to return `SQLiteDB`**, instead of a copy of its members spelled out in the type declarations.
 - **Aborting a statement on `OPFSWriteAheadVFS` gives its time back.** That VFS
   writes its own write-ahead below SQLite and copied it into the database one
   page at a time, after every transaction — two synchronous file calls per page,
@@ -52,20 +59,12 @@ All notable changes to this project are documented here.
   buffer of at most 4 MiB, which is 33× to 38× faster on the copy itself. Its
   memory peak is higher than before: about 35 to 50 MiB more while copying a
   64 MiB write-ahead. The fix is wa-sqlite's, brought by the move to upstream
-  `e6e01ae` (see *Changed*).
+  `e6e01ae` (see above).
 
-### Changed
+### Removed
 
-- **An omitted `build` is the first one the VFS declares that the browser supports, and `jspi` is now declared before `async` everywhere.** On browsers with JSPI (Chrome 137+, Firefox 153+, Safari 27+), `OPFSAdaptiveVFS`, `IDBBatchAtomicVFS`, `IDBMirrorVFS`, `OPFSAnyContextVFS` and `MemoryAsyncVFS` now load `jspi` instead of `async`; elsewhere they load `async` as before, and the other VFS keep `sync`. `db.build` reports the one loaded. Pass `build: 'async'` to keep the previous behaviour.
-- **The vendored wa-sqlite moves to upstream `e6e01ae`**, which corrects how
-  `OPFSWriteAheadVFS` tracks the size of its active write-ahead file across a
-  switch between the two — the threshold that decides when to rotate them —
-  keeps a TEXT value whole across an embedded NUL, reports why an
-  `OPFSCoopSyncVFS` open was refused (see *Fixed*), and copies the write-ahead
-  a run of pages at a time (see *Performance*).
-- **A database name too long for SQLite now fails at the call**, with `INVALID_OPTION` naming the bound, from `createSQLiteClient`, `deleteDatabase` and `inspectDatabase` — it used to fail later, when the worker opened the file. The same call also now refuses a name that is empty once normalized (`''`, `'/'`, `'?x'`…) with `INVALID_OPTION`.
-- **On `OPFSCoopSyncVFS`, an open refused for any reason but a file held elsewhere fails at once.** It used to retry every refusal for 2.5 s before reporting it; only a held file, which another worker or tab can let go of, is retried now.
-- **`createSQLiteClient` is declared to return `SQLiteDB`**, instead of a copy of its members spelled out in the type declarations.
+- **Breaking:** **`VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` are no longer exported.** `db.build` reports the build a client resolved; `SQLiteVFS` and `SQLiteBuild` still name the options, and `PlatformFeature` what `detectFeatures()` returns.
+- **Breaking:** **The `browser-sqlite/worker` subpath is gone.** The client starts its worker itself, and no option accepts one.
 
 ### Fixed
 
@@ -79,7 +78,7 @@ All notable changes to this project are documented here.
 
 - **On `AccessHandlePoolVFS`, an open that found one file of its pool held no longer gives up after that file is released.** The open retries for 10 s while something else holds the pool; its first attempt kept the pool files it had taken, so every retry failed on them with `NoModificationAllowedError`. It now opens as soon as the file is free. The fix is wa-sqlite's, carried in this package's build until wa-sqlite ships it, along with the same fix for `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` — where a failed open kept a lock or a file of its own, and this library was not affected, since it replaces a worker whose open failed.
 
-## 1.0.0-rc.5 — 2026-09-22
+## [1.0.0-rc.5] - 2026-09-22
 
 Everything below lands between rc.4 (2026-08-31) and rc.5. Reliability was this
 release's whole job: the concurrency defects here were found by going looking
@@ -526,7 +525,7 @@ themselves and the text of one error message.
   syntax, with nothing to install. The transaction section says where `tx`'s
   querying surface stops matching the client's.
 
-## 1.0.0-rc.4 — 2026-08-31
+## [1.0.0-rc.4] - 2026-08-31
 
 Everything below lands between rc.3 (2026-03-26) and rc.4. The library was
 rewritten around a leased worker pool in that interval; the public surface moved
@@ -776,6 +775,11 @@ with it.
 - Database names are normalized once, which also fixes `OPFSWriteAheadVFS`
   throwing on a relative path.
 
-## 1.0.0-rc.3 — 2026-03-26
+## [1.0.0-rc.3] - 2026-03-26
 
 First published release line.
+
+[Unreleased]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.5...HEAD
+[1.0.0-rc.5]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.4...v1.0.0-rc.5
+[1.0.0-rc.4]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.3...v1.0.0-rc.4
+[1.0.0-rc.3]: https://github.com/lalexdotcom/browser-sqlite/releases/tag/v1.0.0-rc.3
