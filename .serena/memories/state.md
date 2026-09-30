@@ -16,7 +16,7 @@ obligations and unmeasured ground.
   (verified on the registry), and as a GitHub prerelease whose body is the CHANGELOG section
   for the tag. `package.json` sits at `1.0.0-rc.5` and stays there until the user calls the
   next bump; everything since lands in a new unreleased section of `CHANGELOG.md`, which
-  **the user's instruction creates** — no automation opens one. **`## Unreleased` exists since
+  **the user's instruction creates** — no automation opens one. **`## [Unreleased]` (Keep a Changelog since 2026-09-30, `mem:conventions`) exists since
   2026-09-23**, opened on that instruction, and carries the wa-sqlite repins (the latest bringing the embedded-NUL TEXT fix, under Fixed), the checkpoint coalescing below, `db.ready` (Added, merged
   2026-09-23), and **per-VFS OPFS folders** (merged 2026-09-24, the section's first **Breaking**
   entries: `.ad/`, `.ac/`, `.cs/`, `.wa/`, `layout` and `VFSLayout` gone, the 52-character name bound

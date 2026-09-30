@@ -27,6 +27,11 @@ only what `AGENTS.md` does not say.**
 
 ## Phase workflow (user, 2026-08-17)
 
+**`AGENTS.md` states the git rules since 2026-09-30 and overrides what follows where they differ:**
+every piece of work on its own branch off `main`, never a commit on `main` directly; a small
+self-contained request may go inline on the branch in progress; Conventional Commits, a breaking
+change with `!` and a `BREAKING CHANGE:` footer; never push unasked.
+
 Each wave or phase is implemented **on its own feature branch, by a subagent** — not on
 `main`, not inline in the main session.
 
@@ -138,8 +143,21 @@ may be left live in this one. Three steps, in order:
 
 **No automation writes to `CHANGELOG.md`.** The workflow reads it; the action
 receives a file path and never learns where it came from. Dating a heading,
-opening a new `## Unreleased`, and consolidating the rc sections into a final
-`## 1.0.0 — <date>` are all instructed acts, never scripted ones.
+opening a new `## [Unreleased]`, and consolidating the rc sections into a final
+`## [1.0.0] - <date>` are all instructed acts, never scripted ones — done through
+the `changelog-maintenance` skill (`AGENTS.md`).
+
+**`CHANGELOG.md` follows Keep a Changelog since 2026-09-30 (user).** Headings are
+`## [<version>] - <date>`, each with a link definition at the end of the file
+(`compare/v<previous>...v<version>`, `[Unreleased]` against `HEAD`). Only the
+format's own types are used. **A breaking change goes under `Changed` or `Removed`,
+prefixed `**Breaking:**` and listed first** — there is no `Breaking` section;
+performance and documentation changes go under `Changed` (user, same day). **The
+sections published before that date keep their own subsections and text** — only
+their headings changed; the consolidation into `1.0.0` rewrites them. The release
+workflow finds a section by the prefix `## [<version>] - `, refuses an undated
+heading or a missing link definition, and stops the body at the next heading or at
+the link definitions.
 
 **The bump is one commit, then a tag.** `package.json` and the dated CHANGELOG
 heading must be true of the same tree, because the release workflow refuses a

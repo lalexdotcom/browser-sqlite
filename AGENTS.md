@@ -25,6 +25,32 @@ ALWAYS use **French** language for chat. Everything else: **English**.
 
 Run the project's linter/formatter after every modification if one is configured.
 
+## Git
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/):
+`<type>(<optional scope>): <description>`, e.g. `fix(devcontainer): export PATH
+in lifecycle scripts`. Types: `feat`, `fix`, `docs`, `style`, `refactor`,
+`perf`, `test`, `build`, `ci`, `chore`, `revert`. A breaking change takes a `!`
+after the type/scope and a `BREAKING CHANGE:` footer. The body explains why, not
+what.
+
+Every piece of work is delivered on its own branch off `main`, never committed
+to `main` directly. A small, self-contained request (a config tweak, a rule, a
+one-file chore) may instead be committed inline on the branch in progress.
+
+Closing a piece of work means, in order: format, lint, typecheck and tests all
+green; Serena memories updated; then `git merge --no-ff` into `main` and the
+branch deleted.
+
+Never push — branch, `main` or tag — unless explicitly asked.
+
+## Changelog
+
+`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Every user-visible change adds an entry under `## [Unreleased]`, on the branch
+that makes the change. Entries and releases go through the
+`changelog-maintenance` skill.
+
 ## Tooling — Serena (symbol-aware MCP)
 
 Serena's symbolic tools are PRIMARY for code; built-in Read/Glob/Grep/Edit are
