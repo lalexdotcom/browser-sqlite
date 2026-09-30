@@ -32,14 +32,19 @@ describe('debug subsystem (B6)', () => {
 
     // Not "a query with SELECT": the freshness barrier itself is a SELECT and
     // can land on a write's own request too, on a worker's first call.
-    const request = state!.requests.find((r) => r.kind === 'read')!;
+    const request = state?.requests.find((r) => r.kind === 'read');
+    if (!request) throw new Error('no read request recorded');
     expect(request).toBeDefined();
     expect(request.kind).toBe('read');
     expect(request.worker).toBeDefined();
+    if (request.acquireTime === undefined)
+      throw new Error('acquireTime not set');
     expect(request.acquireTime).toBeGreaterThanOrEqual(request.startTime);
-    expect(request.endTime).toBeGreaterThanOrEqual(request.acquireTime!);
+    if (request.endTime === undefined) throw new Error('endTime not set');
+    expect(request.endTime).toBeGreaterThanOrEqual(request.acquireTime);
 
-    const query = request.queries.at(-1)!;
+    const query = request.queries.at(-1);
+    if (!query) throw new Error('no query in request');
     expect(query.sql).toContain('SELECT');
     expect(query.endTime).toBeGreaterThan(0);
     expect(query.firstRowTime).toBeGreaterThan(0);
@@ -53,8 +58,8 @@ describe('debug subsystem (B6)', () => {
 
   it('reads queue depths live from the scheduler', async () => {
     const db = await createTestClient({ debug: 'probe' });
-    expect(db.debug!.queue.read).toBe(0);
-    expect(db.debug!.queue.write).toBe(0);
+    expect(db.debug?.queue.read).toBe(0);
+    expect(db.debug?.queue.write).toBe(0);
     await db.close();
   });
 
@@ -93,15 +98,16 @@ describe('the pool-level request history', () => {
     const queued = db.read('SELECT a FROM t');
     await waitUntil(
       () =>
-        db.debug!.requests.some(
+        db.debug?.requests.some(
           (r) => r.kind === 'read' && r.acquireTime === undefined,
-        ),
+        ) ?? false,
       'the queued read in requests',
     );
 
     hold.release();
     await Promise.all([hold.done, queued]);
-    const read = db.debug!.requests.findLast((r) => r.kind === 'read')!;
+    const read = db.debug?.requests.findLast((r) => r.kind === 'read');
+    if (!read) throw new Error('no read request found');
     // Date.now() has millisecond resolution: the two stamps can be equal.
     expect(read.acquireTime).toBeGreaterThanOrEqual(read.startTime);
     expect(read.endTime).toBeDefined();
@@ -120,13 +126,14 @@ describe('the pool-level request history', () => {
       signal: controller.signal,
     });
     await waitUntil(
-      () => db.debug!.requests.some((r) => r.kind === 'read'),
+      () => db.debug?.requests.some((r) => r.kind === 'read') ?? false,
       'the waiting read in requests',
     );
     controller.abort(new Error('gave up'));
     await expect(aborted).rejects.toBeDefined();
 
-    const read = db.debug!.requests.find((r) => r.kind === 'read')!;
+    const read = db.debug?.requests.find((r) => r.kind === 'read');
+    if (!read) throw new Error('no read request found');
     expect(read.acquireTime).toBeUndefined();
     expect(read.endTime).toBeDefined();
     expect(read.error).toBeDefined();
@@ -143,20 +150,24 @@ describe('the pool-level request history', () => {
 
     const running = db.read(longQuery(20_000_000));
     await sleep(100);
-    records[0]!.worker.dispatchEvent(new ErrorEvent('error'));
+    const record = records[0];
+    if (!record) throw new Error('no worker record');
+    record.worker.dispatchEvent(new ErrorEvent('error'));
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
     await db.read('SELECT 1 AS n');
 
-    const { requests, workers } = db.debug!;
-    expect(workers[0]!.generation).toBe(1);
+    const debug = db.debug;
+    if (!debug) throw new Error('debug not available');
+    const { requests, workers } = debug;
+    expect(workers[0]?.generation).toBe(1);
     const crashed = requests.find((r) =>
       r.queries.some((q) => q.sql.includes('WITH RECURSIVE')),
-    )!;
+    );
+    if (!crashed) throw new Error('no crashed request found');
     expect(crashed).toMatchObject({ worker: 0, generation: 0 });
     expect(crashed.endTime).toBeDefined();
-    const query = crashed.queries.find((q) =>
-      q.sql.includes('WITH RECURSIVE'),
-    )!;
+    const query = crashed.queries.find((q) => q.sql.includes('WITH RECURSIVE'));
+    if (!query) throw new Error('query not found in crashed request');
     expect(query.endTime).toBeDefined();
     expect(query.error).toMatchObject({ code: 'WORKER_CRASHED' });
     expect(requests.at(-1)).toMatchObject({ worker: 0, generation: 1 });
@@ -173,15 +184,17 @@ describe('the pool-level request history', () => {
     await db.read('SELECT a FROM t');
     await db.first('SELECT a FROM t');
 
-    const reads = db.debug!.requests.filter((r) =>
+    const dbDebug = db.debug;
+    if (!dbDebug) throw new Error('debug not available');
+    const reads = dbDebug.requests.filter((r) =>
       r.queries.some((q) => q.sql === 'SELECT a FROM t'),
     );
-    const [all, first] = reads.map(
-      (r) => r.queries.find((q) => q.sql === 'SELECT a FROM t')!,
+    const [all, first] = reads.map((r) =>
+      r.queries.find((q) => q.sql === 'SELECT a FROM t'),
     );
-    expect(all!.rows).toBe(1000);
-    expect(first!.rows).toBeGreaterThanOrEqual(1);
-    expect(first!.rows).toBeLessThan(1000);
+    expect(all?.rows).toBe(1000);
+    expect(first?.rows).toBeGreaterThanOrEqual(1);
+    expect(first?.rows).toBeLessThan(1000);
   });
 });
 
@@ -217,17 +230,21 @@ describe('the cross-tab write lock in the history', () => {
 
     const blocked = b.write('INSERT INTO t VALUES (1)');
     await waitUntil(
-      () => b.debug!.requests.some((r) => r.kind === 'write'),
+      () => b.debug?.requests.some((r) => r.kind === 'write') ?? false,
       'the blocked write in requests',
     );
     await sleep(50);
-    const waiting = b.debug!.requests.find((r) => r.kind === 'write')!;
+    const waiting = b.debug?.requests.find((r) => r.kind === 'write');
+    if (!waiting) throw new Error('no waiting write request');
     expect(waiting.lockTime).toBeUndefined();
 
     gate.resolve();
     await Promise.all([holding, blocked]);
-    const write = b.debug!.requests.find((r) => r.kind === 'write')!;
+    const write = b.debug?.requests.find((r) => r.kind === 'write');
+    if (!write) throw new Error('no write request found');
     expect(write.lockTime).toBeDefined();
-    expect(write.acquireTime).toBeGreaterThanOrEqual(write.lockTime!);
+    if (write.lockTime === undefined) throw new Error('lockTime not set');
+    if (write.acquireTime === undefined) throw new Error('acquireTime not set');
+    expect(write.acquireTime).toBeGreaterThanOrEqual(write.lockTime);
   });
 });
