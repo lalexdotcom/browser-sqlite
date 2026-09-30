@@ -44,3 +44,9 @@ Measured in both directions before the fix: 93 blocks with #352 applied, 93 with
 ## Posted upstream
 
 PR [#353][pr353] on 2026-09-18, two commits: the fix, then the test. Explicitly independent of #352 — it applies to `master` as it stands, and its test fails there for the right reason, so the maintainer can take them in either order.
+
+## Revised in review
+
+rhashimoto reviewed it on 2026-09-29. The comments were cut to one sentence each, and the fix lost a computation he called unnecessary: both places rounded the file size up to a block boundary before comparing, and a database file is always a whole number of pages. The comparison is now with the file size itself — which selects the same blocks in any case, since a block's offset is a multiple of the block size. The guards on `blockSize` existed only to keep that division away from zero and went with it.
+
+Pushed on 2026-09-30 with upstream `master` merged into the branch, so that its JSPI tests run there: the branch predated upstream's fix to its JSPI detection, and skipped them without saying so. `test/vfs_leak.js` fails on `master`'s file on both builds, 531 blocks against 2, and passes with the revised fix; the patch here carries that head.

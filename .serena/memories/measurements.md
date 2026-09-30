@@ -4,6 +4,18 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## 352-353-REVIEW — wa-sqlite's suite on the revised heads of #352 and #353, 2026-09-30, Playwright's Chromium, this container
+
+**Method.** `npx web-test-runner` in a worktree of each branch after upstream master (`fa111290`) was merged in, `CHROME_PATH` set, `node_modules` from `.work/wa-sqlite`. The runner's totals are assertions, not tests. The red arm is the same commit with `master`'s `IDBMirrorVFS.js` checked out over it, in a detached worktree.
+
+| | #352 `fb327093` | #353 `dd9a514b` |
+|---|---|---|
+| `test/IDBMirrorVFS.test.js` | 70 passed, 0 failed | 68 passed, 0 failed |
+| same file, `master`'s VFS | 66 passed, 2 failed: `asyncify` and `jspi`, `database disk image is malformed` | 66 passed, 2 failed: `asyncify` and `jspi`, `Expected 531 to equal 2` |
+| whole suite, 15 files | 6011 passed, 0 failed, 80.5 s | 6009 passed, 0 failed, 78.7 s |
+
+Before the merge #353's file read 34 passed, twice: the `asyncify` build alone, `jspi` skipped without a word. Upstream CI (`build (20.x)`) green on both heads.
+
 ## 351-PERSIST — `IDBBatchAtomicVFS` with a persistent journal, wa-sqlite #351's two fixes, 2026-09-30, Chromium 151 / Firefox 153, this container
 
 **Method.** Standalone Playwright pages on a wa-sqlite checkout, asyncify build, a fresh IndexedDB database per run. `jWrite`, `jRead`, `jTruncate`, `jDelete` and `jClose` wrapped from the page: a byte-exact copy of what SQLite writes to every file but the main database; each `jRead` SQLite makes compared with that copy, split between bytes written in the transaction in flight and older ones; at each close the file read back by written runs; every block listed from IndexedDB at the end to count overlaps. "First fix" = #351's head until 2026-09-30 (`5acda54d`); "second fix" = the head since (`8fa53500`, measured replayed on `5be9cd14`, the file byte-identical on the merged branch).

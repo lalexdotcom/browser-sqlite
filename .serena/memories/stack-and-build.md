@@ -37,6 +37,7 @@
     overlap), `@@ -271`. PR head `8fa53500` since 2026-09-30.
   - `IDBMirrorVFS.js` — #352 (`pData.subarray()`: `pData` is a `Uint8ArrayProxy`, and `set()` on it
     stores zeroes) and #353 (drop the blocks past the end of the file, in the view and in the store).
+    PR heads `fb327093` and `dd9a514b` since 2026-09-30, both revised in review.
   - `OPFSAnyContextVFS.js` — #363 (a `jUnlock` that closes a pending writable before releasing the
     lock).
   - `OPFSWriteAheadVFS.js` — #367 (the two write-ahead files opened with `Promise.allSettled`, so a
@@ -416,6 +417,8 @@ a PR is the user's. Its suite runs with yarn 4 (PnP, pinned by `.yarnrc.yml`'s `
 `yarn install`, then `CHROME_PATH=~/.cache/ms-playwright/chromium-1234/chrome-linux/chrome yarn
 web-test-runner test/OPFSCoopSyncVFS.test.js` — Chrome only; the whole suite is `yarn test`, ~40 s
 and 2 899 tests on 2026-09-15.
+
+**What that runner prints, read on 2026-09-30.** Its totals count assertions, not tests, and it names a test only when it fails — `summaryReporter` prints `undefined`, the jasmine adapter passes no names. So a green total cannot show which builds ran, and a branch older than upstream's `51784ebf` skips every `jspi` test silently (`mem:lessons`). **The proof that a build ran is a red arm**: the same test file against `master`'s VFS, in a detached worktree, fails once per build and names it. The whole suite was 15 files in 80 s that day, both builds running (`mem:measurements`, 352-353-REVIEW). A worktree of the fork needs `node_modules` linked to `.work/wa-sqlite`'s, and the clone has no git identity of its own: pass the library's with `git -c user.name=… -c user.email=…`.
 
 **In that suite `'default'` names the synchronous build (`dist/wa-sqlite.mjs`)**, and it is
 `TestContext`'s default. `OPFSWriteAheadVFS`, like the IndexedDB VFS and `OPFSAdaptiveVFS`, runs

@@ -297,6 +297,12 @@ one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.
   belong before the PR: the branch, the test that fails on upstream's master, and the PR body
   draft in `.scratchpad/`.
 
+- **A reply to a maintainer's review carries a friendly word (user, 2026-09-30).** Not a bare
+  "Done": thank him and answer his own tone — *"un petit message sympa quand-même"*. And nothing the
+  dates contradict: "so quickly" was cut from a reply to a review that came eleven days after the
+  PR. Every body is shown to the user before it is posted, and the re-request of the review is
+  the user's click (`mem:state`, Tooling).
+
 - **Open questions stay in the backlog; each wave's own brainstorming raises them when it
   gets there** (user, 2026-08-17). Do not front-load a decision session for a wave that is
   not the next one.
