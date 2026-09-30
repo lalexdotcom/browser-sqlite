@@ -6,7 +6,7 @@
 [pr365]: https://github.com/rhashimoto/wa-sqlite/pull/365
 [pr350]: 2026-09-18-wa-sqlite-350-coopsync-access-handle-leak.md
 
-**Why this is here.** `OPFSAdaptiveVFS` is one of the two VFS this library recommends. On Firefox, an open that fails because the database file is held elsewhere keeps the file's Web Lock, and every later open of that file then hangs, in any worker, until the worker that failed terminates. The likely trigger in this library is the one `createVfsInstance`'s comment already describes for another VFS: a worker respawned while the dead one's handle is not reclaimed yet. Same family as [#350][pr350] — something acquired beside a failed acquisition and never released — without its `Promise.all`. Not carried in [`patches/`](../../patches) yet: the exposure in this library is unmeasured.
+**Why this is here.** `OPFSAdaptiveVFS` is one of the two VFS this library recommends. On Firefox, an open that fails because the database file is held elsewhere keeps the file's Web Lock, and every later open of that file then hangs, in any worker, until the worker that failed terminates. Same family as [#350][pr350] — something acquired beside a failed acquisition and never released — without its `Promise.all`. Carried in [`patches/`](../../patches) since 2026-09-29; measured since, this library is not exposed to it (below).
 
 ## How it was found
 
@@ -50,5 +50,5 @@ It does not mention this library, per the standing rule.
 
 ## What stays ours
 
-- **The exposure, untested.** On Firefox this library runs `OPFSAdaptiveVFS` without `readwrite-unsafe`, so on this path. A worker respawned by `handleDeath` while the dead worker's handle is still held (~2 s measured for `AccessHandlePoolVFS`) would take the lock, fail on the handle, and leave the database blocked for the life of that worker. Not reproduced in the library. Whether to carry the fix before it merges is open.
-- **`OPFSCoopSyncVFS`'s `#initialize()`** has the same pattern by reading, not reproduced, kept in `mem:follow-ups`.
+- **No exposure here, measured 2026-09-30.** On Firefox this library runs `OPFSAdaptiveVFS` without `readwrite-unsafe`, so on this path — but a worker whose open fails is terminated, and the lock it kept goes with it. With the fix reversed, a client opened after the failed one succeeded 7 times of 7, the failed client closed first or not (`mem:measurements`, LEAK-LIB).
+- **`OPFSCoopSyncVFS`'s `#initialize()`** has the same pattern by reading. Forced on 2026-09-30, it keeps the handles and the lock of the failed instance and blocks nothing: every later `create()` succeeds (`mem:measurements`, LEAK-LIB). No PR.

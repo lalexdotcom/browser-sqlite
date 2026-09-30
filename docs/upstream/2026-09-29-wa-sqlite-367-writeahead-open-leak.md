@@ -6,7 +6,7 @@
 [pr365]: https://github.com/rhashimoto/wa-sqlite/pull/365
 [pr350]: 2026-09-18-wa-sqlite-350-coopsync-access-handle-leak.md
 
-**Why this is here.** `OPFSWriteAheadVFS` is one of the two VFS this library recommends. When opening a database fails at the wrong moment, it keeps one of its two write-ahead files open for the life of the worker. On Firefox that handle is exclusive, so every later open of the database fails until the worker is replaced — and this library's `openWithRetry` retries in the same worker. It is the class of leak [#350][pr350] fixed in `OPFSCoopSyncVFS`, in a VFS that had not been checked for it. Not carried in [`patches/`](../../patches) yet: the exposure in this library is unmeasured.
+**Why this is here.** `OPFSWriteAheadVFS` is one of the two VFS this library recommends. When opening a database fails at the wrong moment, it keeps one of its two write-ahead files open for the life of the worker. On Firefox that handle is exclusive, so every later open of the database fails until the worker is replaced. It is the class of leak [#350][pr350] fixed in `OPFSCoopSyncVFS`, in a VFS that had not been checked for it. Carried in [`patches/`](../../patches) since 2026-09-29; measured since, this library is not exposed to it (below).
 
 ## How it was found
 
@@ -60,5 +60,5 @@ It does not mention this library, per the standing rule.
 
 ## What stays ours
 
-- **The exposure, untested.** On Firefox this library runs `OPFSWriteAheadVFS` on one worker; a failed open of the kind above would make every retry of `openWithRetry` fail until the worker is replaced. What would make one write-ahead file fail and not the other in practice is not established — the sabotage is artificial. Whether to carry the fix in `patches/` before it merges is open.
-- **The siblings.** The same question found the class in `AccessHandlePoolVFS` (both engines) and `OPFSAdaptiveVFS`'s open lock (Firefox); both are reproduced, fixed and tested on fork branches, PRs drafted and not opened. `OPFSCoopSyncVFS`'s `#initialize()` has the pattern by reading only. `mem:follow-ups` has all of it.
+- **No exposure here, measured 2026-09-30.** This library does not retry this VFS's open inside a worker: a worker whose open fails is terminated, and the handle it kept goes with it. With the fix reversed, on Firefox, a client opened after the failed one was closed succeeded 30 times of 30, whichever of the database file, `-wa0` and `-wa1` was held (`mem:measurements`, LEAK-LIB). What would make one write-ahead file fail and not the other in practice is not established — the sabotage is artificial.
+- **The siblings.** The same question found the class in `AccessHandlePoolVFS` (both engines) and `OPFSAdaptiveVFS`'s open lock (Firefox); both are reproduced, fixed and tested, and opened as [#368](2026-09-29-wa-sqlite-368-ahp-acquire-leak.md) and [#369](2026-09-29-wa-sqlite-369-adaptive-open-lock.md). `OPFSCoopSyncVFS`'s `#initialize()` has the pattern by reading; forced on 2026-09-30, it blocks nothing (`mem:measurements`, LEAK-LIB).
