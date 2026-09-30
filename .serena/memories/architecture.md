@@ -135,6 +135,13 @@ finalise a handle that query still holds — a use-after-free on a `sqlite3_stmt
 Before the cache this was merely confusing. The consequence is written where someone would
 break it, on the `available` declaration in `scheduler.ts`, not only in the worker.
 
+**wa-sqlite's retrying VFS depend on the same rule** (`OPFSCoopSyncVFS`, `OPFSWriteAheadVFS`):
+`Module.retryOps` is one list per module, so two `retry()`-wrapped calls (`open_v2`, prepare,
+`step`) in flight in one module give a spurious `SQLITE_BUSY` and can strand the access handle
+(wa-sqlite #341, RETRY-OPS in `mem:measurements`). The library holds it: one database per
+worker (`open()` refuses a second), one query per connection, a query awaits `openedDB` so
+it never meets the open's pragmas, and `close` waits for `idleUntilQueryEnds()`.
+
 **The extended result code is read where the statement fails, never when the reply is built
 (spec 2026-09-14, §5.1).** `sqlite3_extended_errcode` reports the connection's MOST RECENT call,
 and the error path runs more calls: `settle`'s reset or finalize, and after a failed savepoint
