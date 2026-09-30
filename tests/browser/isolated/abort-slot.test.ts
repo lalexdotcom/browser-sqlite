@@ -152,8 +152,7 @@ describe('statement cache, sync build isolated', () => {
     db: Awaited<ReturnType<typeof createTestClient>>,
     sql: string,
   ) =>
-    (db.debug?.workers ?? [])
-      .flatMap((w) => w.requests)
+    (db.debug?.requests ?? [])
       .flatMap((r) => r.queries)
       .filter((q) => q.sql === sql);
 

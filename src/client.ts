@@ -9,7 +9,7 @@ import {
 import type { SQLiteBuild } from './const/builds';
 import type { PlatformFeature } from './const/platform';
 import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
-import { createClientDebug } from './debug';
+import { createClientDebug, type RequestDebugHandle } from './debug';
 import { advanceSeen, barrierSqlFor, epochsFor } from './epochs';
 import {
   type ClientInspection,
@@ -621,6 +621,7 @@ export const createSQLiteClient = (
           vfs,
           pragmas,
           name: clientName,
+          poolSize,
         },
         () => scheduler.stats(),
       )
@@ -863,31 +864,6 @@ export const createSQLiteClient = (
   };
 
   /**
-   * Debug-stamps the acquisition with request timing. Extracted from
-   * acquireInstrumented so the barrier wrapper can cover both paths uniformly.
-   */
-  const acquireWithDebug = async (
-    kind: 'read' | 'write',
-    signal?: AbortSignal,
-  ) => {
-    // Called only when clientDebug is set — cast to NonNullable to avoid the
-    // forbidden non-null assertion operator while preserving the correct type.
-    const request = (
-      clientDebug as NonNullable<typeof clientDebug>
-    ).createRequestDebugState();
-    const lease = await scheduler.acquire(kind, signal);
-    request.assign(lease.worker.index);
-
-    return {
-      worker: lease.worker,
-      release: () => {
-        request.state.releaseTime = Date.now();
-        lease.release();
-      },
-    };
-  };
-
-  /**
    * Turns a bare `OPERATION_TIMEOUT` spent on the write lock into one that says
    * who was holding it.
    *
@@ -917,19 +893,10 @@ export const createSQLiteClient = (
     });
   };
 
-  /**
-   * The single owner of the request level of the debug tree.
-   *
-   * There are six acquisition sites; instrumenting each is six chances to
-   * miss one. This wrapper stamps `acquireTime` (through `assign`) and
-   * `releaseTime`, and is a pass-through when debug is off. Nothing outside it
-   * calls `scheduler.acquire`. The barrier runs on the acquired lease before
-   * the caller sees it — the lease atomically covers the barrier statement and
-   * the real query together.
-   */
-  const acquireInstrumented = async (
+  const acquireLease = async (
     kind: 'read' | 'write',
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined,
+    request: RequestDebugHandle | undefined,
   ) => {
     // Connection guard — first thing, before any pool or lock interaction.
     //
@@ -981,6 +948,7 @@ export const createSQLiteClient = (
       }
       releaseMerge();
       heldWriteLocks.add(webRelease);
+      request?.locked();
       // Idempotent both ways: `close()` must not release a lock a lease has
       // already handed back, and a lease must not release one `close()` has
       // already reclaimed.
@@ -992,12 +960,21 @@ export const createSQLiteClient = (
 
     let lease: Awaited<ReturnType<typeof scheduler.acquire>>;
     try {
-      lease = clientDebug
-        ? await acquireWithDebug(kind, signal)
-        : await scheduler.acquire(kind, signal);
+      lease = await scheduler.acquire(kind, signal);
     } catch (error) {
       releaseWrite?.();
       throw error;
+    }
+    if (request) {
+      request.acquired(lease.worker.index);
+      const lent = lease;
+      lease = {
+        worker: lent.worker,
+        release: () => {
+          request.released();
+          lent.release();
+        },
+      };
     }
 
     try {
@@ -1049,6 +1026,29 @@ export const createSQLiteClient = (
         void publishing.then(releaseWrite, releaseWrite);
       },
     };
+  };
+
+  /**
+   * The single owner of the request level of the debug tree.
+   *
+   * Every acquisition goes through here — nothing else calls
+   * `scheduler.acquire` — so the request is recorded at the call, before the
+   * connection guard and the write lock, and ends at the release or at the
+   * first failure. A pass-through when debug is off. The barrier runs on the
+   * acquired lease before the caller sees it — the lease atomically covers the
+   * barrier statement and the real query together.
+   */
+  const acquireInstrumented = async (
+    kind: 'read' | 'write',
+    signal?: AbortSignal,
+  ) => {
+    const request = clientDebug?.createRequestDebugState(kind);
+    try {
+      return await acquireLease(kind, signal, request);
+    } catch (error) {
+      request?.failed(error);
+      throw error;
+    }
   };
 
   /**

@@ -27,8 +27,7 @@ const forced = {
 const countBarrierStatements = (
   db: Awaited<ReturnType<typeof createTestClient>>,
 ): number =>
-  (db.debug?.workers ?? [])
-    .flatMap((worker) => worker.requests)
+  (db.debug?.requests ?? [])
     .flatMap((request) => request.queries)
     .filter((query) => query.sql.includes(BARRIER_SQL)).length;
 
@@ -217,8 +216,7 @@ describe('catch-up pragma', () => {
     ]);
 
     expect(countBarrierStatements(db)).toBeGreaterThan(0);
-    const barriers = (db.debug?.workers ?? [])
-      .flatMap((worker) => worker.requests)
+    const barriers = (db.debug?.requests ?? [])
       .flatMap((request) => request.queries)
       .filter((query) => query.sql.includes(BARRIER_SQL));
     for (const barrier of barriers)

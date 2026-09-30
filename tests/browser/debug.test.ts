@@ -19,25 +19,23 @@ describe('debug subsystem (B6)', () => {
     const state = db.debug;
     expect(state).toBeDefined();
 
-    const worker = state!.workers.find((w) => w?.requests.length);
-    expect(worker).toBeDefined();
-
-    // Find the request that served the SELECT — multiple requests exist because
-    // the writes above each create one. assign() stamps acquireTime and links
-    // worker.currentRequest, so a missing assign() leaves acquireTime undefined
-    // and this test fails.
-    const request = worker!.requests.find((r) =>
-      r?.queries.some((q) => q.sql.includes('SELECT')),
-    )!;
-    // The request level is what wave 1 lost entirely — see spec §3.1.
+    // Not "a query with SELECT": the freshness barrier itself is a SELECT and
+    // can land on a write's own request too, on a worker's first call.
+    const request = state!.requests.find((r) => r.kind === 'read')!;
     expect(request).toBeDefined();
-    expect(request.acquireTime).toBeGreaterThan(0);
-    expect(request.releaseTime).toBeGreaterThan(0);
+    expect(request.kind).toBe('read');
+    expect(request.worker).toBeDefined();
+    expect(request.acquireTime).toBeGreaterThanOrEqual(request.startTime);
+    expect(request.endTime).toBeGreaterThanOrEqual(request.acquireTime!);
 
-    const query = request.queries[0]!;
+    const query = request.queries.at(-1)!;
     expect(query.sql).toContain('SELECT');
     expect(query.endTime).toBeGreaterThan(0);
     expect(query.firstRowTime).toBeGreaterThan(0);
+    expect(query.rows).toBe(1);
+    expect(request.rows).toBe(
+      request.queries.reduce((sum, q) => sum + q.rows, 0),
+    );
 
     await db.close();
   });

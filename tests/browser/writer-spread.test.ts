@@ -6,10 +6,12 @@ type TestClient = Awaited<ReturnType<typeof createTestClient>>;
 /** Worker indices that served at least one statement matching `pattern`. */
 const workersServing = (db: TestClient, pattern: RegExp): Set<number> => {
   const indices = new Set<number>();
-  for (const worker of db.debug?.workers ?? [])
-    for (const request of worker.requests)
-      for (const query of request.queries)
-        if (pattern.test(query.sql)) indices.add(worker.index);
+  for (const request of db.debug?.requests ?? [])
+    if (
+      request.worker !== undefined &&
+      request.queries.some((query) => pattern.test(query.sql))
+    )
+      indices.add(request.worker);
   return indices;
 };
 

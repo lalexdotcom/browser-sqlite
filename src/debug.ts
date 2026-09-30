@@ -86,40 +86,52 @@ export const debugSQLQuery = (sql: string, params?: unknown[]) => {
   }
 };
 
-type QueryDebugState = {
-  sql: string;
-  params?: unknown[] | undefined;
-  startTime: number;
-  firstRowTime?: number;
-  endTime?: number;
-  error?: unknown;
-  affectedRows: number;
-  prepared: number;
+export type QueryDebugState = {
+  readonly sql: string;
+  readonly params?: unknown[] | undefined;
+  readonly startTime: number;
+  readonly firstRowTime?: number;
+  readonly endTime?: number;
+  readonly error?: unknown;
+  readonly affected: number;
+  /** Rows delivered to the pool: a `first()` or an abandoned `stream()` stops short. */
+  readonly rows: number;
+  /** Statements SQLite compiled for this call — 0 when the statement cache served it. */
+  readonly prepared: number;
 };
 
-type RequestDebugState = {
-  startTime: number;
-  acquireTime?: number;
-  releaseTime?: number;
-  affectedRows: number;
-  queries: QueryDebugState[];
-  currentQuery?: QueryDebugState;
+export type RequestDebugState = {
+  readonly kind: 'read' | 'write';
+  /** At the call, before the connection guard and the cross-tab write lock. */
+  readonly startTime: number;
+  /** The cross-tab write lock was granted — a write on a VFS that shares storage. */
+  readonly lockTime?: number;
+  readonly acquireTime?: number;
+  /** The worker went back to the pool, or the request failed before getting one. */
+  readonly endTime?: number;
+  readonly worker?: number;
+  readonly generation?: number;
+  /** Why the request ended before the caller received its worker. */
+  readonly error?: unknown;
+  readonly affected: number;
+  readonly rows: number;
+  readonly queries: readonly QueryDebugState[];
 };
 
-type WorkerDebugState = {
-  index: number;
-  name: string;
-  creationTime: number;
-  initializationTime?: number;
-  requests: RequestDebugState[];
-  currentRequest?: RequestDebugState;
+export type WorkerDebugState = {
+  readonly index: number;
+  /** 0 for the slot's first worker, +1 per replacement. */
+  readonly generation: number;
+  readonly name: string;
+  readonly creationTime: number;
+  readonly initializationTime?: number;
   readonly status: string;
 };
 
 export type ClientDebugState = {
   readonly file: string;
   readonly vfs: SQLiteVFS;
-  readonly pragmas: Record<string, string>;
+  readonly pragmas: Readonly<Record<string, string>>;
   readonly name: string;
   readonly queue: {
     readonly read: number;
@@ -132,21 +144,44 @@ export type ClientDebugState = {
      */
     readonly gated: number;
   };
-  workers: WorkerDebugState[];
+  readonly workers: readonly WorkerDebugState[];
+  /** Every request of the client, by `startTime`; only finished ones are evicted. */
+  readonly requests: readonly RequestDebugState[];
 };
 
-const MAX_QUERY_HISTORY_LENGTH = 50;
-const MAX_REQUEST_HISTORY_LENGTH = 50;
+export type WorkerDebugHandle = { readonly initialized: () => void };
+
+export type RequestDebugHandle = {
+  readonly locked: () => void;
+  readonly acquired: (index: number) => void;
+  /** Ends the request at once unless it holds a worker; then `released` does. */
+  readonly failed: (error: unknown) => void;
+  readonly released: () => void;
+};
+
+export type QueryDebugHandle = {
+  readonly chunk: (rows: number) => void;
+  readonly done: (affected: number, prepared: number) => void;
+  readonly failed: (error: unknown) => void;
+};
+
+/** A published type as this module alone holds it: writable, arrays included. */
+type Writable<T> = {
+  -readonly [K in keyof T]: T[K] extends readonly (infer E)[] ? E[] : T[K];
+};
+
+const DEBUG_QUERIES_PER_REQUEST = 50;
+const DEBUG_REQUESTS_PER_WORKER = 50;
 
 export const createClientDebug = (
   file: string,
-  pool: (PoolWorker | undefined)[],
+  pool: readonly (PoolWorker | undefined)[],
   clientOptions: Required<
     Pick<CreateSQLiteClientOptions, 'vfs' | 'pragmas' | 'name'>
-  >,
+  > & { poolSize: number },
   stats: () => { read: number; write: number; gated: number },
 ) => {
-  const { vfs, pragmas, name } = clientOptions;
+  const { vfs, pragmas, name, poolSize } = clientOptions;
 
   // Read through to the scheduler: the old counters were incremented by hand at
   // every acquire/release site and went stale the moment one was missed.
@@ -162,85 +197,139 @@ export const createClientDebug = (
     },
   };
 
-  const clientState: ClientDebugState = {
+  const workers: WorkerDebugState[] = [];
+  const requests: Writable<RequestDebugState>[] = [];
+  const state: ClientDebugState = {
     file,
     vfs,
     pragmas,
     name,
     queue,
-    workers: [],
+    workers,
+    requests,
   };
 
-  const createWorkerDebugState = (index: number, name: string) => {
-    const state: WorkerDebugState = new Proxy(
-      {
-        index,
-        name,
-        requests: [],
-        status: pool[index]?.status ?? 'EMPTY',
-        creationTime: Date.now(),
-      },
-      {
-        get: (target, prop) => {
-          if (prop === 'status') {
-            return pool[index]?.status ?? 'EMPTY';
-          }
-          return target[prop as keyof typeof target];
-        },
-      },
-    );
-    clientState.workers[index] = state;
-    return state;
+  // Per slot, outside the published tree: the generation of its worker and the
+  // request its lease serves, which is how a query finds its request.
+  const generations: number[] = [];
+  const active: (Writable<RequestDebugState> | undefined)[] = [];
+
+  // Runs on append and on end, so the list returns to the bound as a queue drains.
+  const evict = () => {
+    let excess = requests.length - poolSize * DEBUG_REQUESTS_PER_WORKER;
+    for (let i = 0; excess > 0 && i < requests.length; ) {
+      if (requests[i]?.endTime === undefined) {
+        i++;
+      } else {
+        requests.splice(i, 1);
+        excess--;
+      }
+    }
   };
 
-  const createRequestDebugState = () => {
-    const state: RequestDebugState = {
-      queries: [],
+  const createWorkerDebugState = (
+    index: number,
+    workerName: string,
+  ): WorkerDebugHandle => {
+    const previous = generations[index];
+    const generation = previous === undefined ? 0 : previous + 1;
+    generations[index] = generation;
+    const worker: Writable<WorkerDebugState> = {
+      index,
+      generation,
+      name: workerName,
+      creationTime: Date.now(),
+      get status() {
+        return pool[index]?.status ?? 'EMPTY';
+      },
+    };
+    workers[index] = worker;
+    return {
+      initialized: () => {
+        worker.initializationTime = Date.now();
+      },
+    };
+  };
+
+  const createRequestDebugState = (
+    kind: 'read' | 'write',
+  ): RequestDebugHandle => {
+    const request: Writable<RequestDebugState> = {
+      kind,
       startTime: Date.now(),
-      affectedRows: 0,
+      affected: 0,
+      rows: 0,
+      queries: [],
+    };
+    requests.push(request);
+    evict();
+    const end = () => {
+      if (request.endTime !== undefined) return;
+      request.endTime = Date.now();
+      evict();
     };
     return {
-      state,
-      assign: (index: number) => {
-        const worker = clientState.workers[index];
-        if (worker) {
-          state.acquireTime = Date.now();
-          // Bounded: this array is pushed to on EVERY request and used to grow
-          // with the client's total query count (D5 §1.3, the blocking fix).
-          if (worker.requests.length >= MAX_REQUEST_HISTORY_LENGTH)
-            worker.requests.shift();
-          worker.requests.push(state);
-          worker.currentRequest = state;
-        }
+      locked: () => {
+        request.lockTime = Date.now();
+      },
+      acquired: (index) => {
+        request.acquireTime = Date.now();
+        request.worker = index;
+        request.generation = generations[index] ?? 0;
+        active[index] = request;
+      },
+      failed: (error) => {
+        request.error = error;
+        if (request.acquireTime === undefined) end();
+      },
+      released: () => {
+        // A dead worker's lease can come back after its slot was re-lent.
+        if (request.worker !== undefined && active[request.worker] === request)
+          active[request.worker] = undefined;
+        end();
       },
     };
   };
 
   const createQueryDebugState = (
-    workerIndex: number,
+    index: number,
     sql: string,
     params?: unknown[],
-  ) => {
-    const state: QueryDebugState = {
+  ): QueryDebugHandle | undefined => {
+    const request = active[index];
+    if (!request) return undefined;
+    const query: Writable<QueryDebugState> = {
       sql,
       params,
       startTime: Date.now(),
-      affectedRows: 0,
+      affected: 0,
+      rows: 0,
       prepared: 0,
     };
-    const worker = clientState.workers[workerIndex];
-    if (worker?.currentRequest) {
-      if (worker.currentRequest.queries.length >= MAX_QUERY_HISTORY_LENGTH) {
-        worker.currentRequest.queries.shift();
-      }
-      worker.currentRequest.queries.push(state);
-      worker.currentRequest.currentQuery = state;
-    }
-    return state;
+    if (request.queries.length >= DEBUG_QUERIES_PER_REQUEST)
+      request.queries.shift();
+    request.queries.push(query);
+    return {
+      chunk: (rows) => {
+        query.firstRowTime ??= Date.now();
+        query.rows += rows;
+        request.rows += rows;
+      },
+      done: (affected, prepared) => {
+        query.affected = affected;
+        query.prepared = prepared;
+        query.endTime = Date.now();
+        request.affected += affected;
+      },
+      failed: (error) => {
+        query.error = error;
+        query.endTime = Date.now();
+      },
+    };
   };
 
   return {
-    state: clientState,
+    state,
     createWorkerDebugState,
     createRequestDebugState,
     createQueryDebugState,

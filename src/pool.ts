@@ -3,6 +3,7 @@ import type { PlatformFeature } from './const/platform';
 import type { SQLiteResultCode } from './const/sqlite';
 import type { SQLiteVFS } from './const/vfs';
 import { DEFAULT_CREDIT_WINDOW } from './credits';
+import type { QueryDebugHandle, WorkerDebugHandle } from './debug';
 import type { Logger } from './logger';
 import { SQLiteError, type SQLiteErrorCode } from './types/errors';
 import type {
@@ -264,9 +265,15 @@ export const createPoolWorker = (deps: {
   onDeath?: (index: number, error: SQLiteError) => void;
   onServed?: (index: number) => void;
   drainTimeout: number;
-  createWorkerDebugState?: ((index: number, name: string) => any) | undefined;
+  createWorkerDebugState?:
+    | ((index: number, name: string) => WorkerDebugHandle)
+    | undefined;
   createQueryDebugState?:
-    | ((index: number, sql: string, params?: unknown[]) => any)
+    | ((
+        index: number,
+        sql: string,
+        params?: unknown[],
+      ) => QueryDebugHandle | undefined)
     | undefined;
   logger: Logger;
   abortSlots?: SharedArrayBuffer | undefined;
@@ -310,9 +317,12 @@ export const createPoolWorker = (deps: {
   if (abortSlots) new Int32Array(abortSlots)[index] = 0;
   logger.info(`worker ${index + 1} created`);
 
-  const state = createWorkerDebugState?.(index, workerName);
+  const debugWorker = createWorkerDebugState?.(index, workerName);
 
   let currentCallId = 0;
+  // The debug record of the query in flight; replaced at every post, like
+  // `deferredChunk`, so the callId check below also guards it.
+  let debugQuery: QueryDebugHandle | undefined;
 
   // Deferred promise for streaming query results one chunk at a time
   let deferredChunk: PromiseWithResolvers<unknown[] | number> | undefined;
@@ -505,7 +515,7 @@ export const createPoolWorker = (deps: {
         if (callId === 0) {
           ready = true;
           worker.status = 'READY';
-          if (state) state.initializationTime = Date.now();
+          debugWorker?.initialized();
           logger.info(`worker ${index + 1} ready`);
           deferredInit.resolve(worker);
         }
@@ -554,9 +564,7 @@ export const createPoolWorker = (deps: {
       case 'chunk': {
         const { callId } = data;
         if (deferredChunk && callId === currentCallId) {
-          if (state?.currentRequest?.currentQuery) {
-            state.currentRequest.currentQuery.firstRowTime ??= Date.now();
-          }
+          debugQuery?.chunk(data.data.length);
           // Queue first, then wake. The resolution may reach nobody — that is
           // the whole defect the inbox exists for — but the chunk is kept.
           inbox.push(data.data);
@@ -570,12 +578,7 @@ export const createPoolWorker = (deps: {
         if (deferredChunk && callId === currentCallId) {
           worker.inTransaction = data.inTransaction;
           const affected = data.affected;
-          if (state?.currentRequest?.currentQuery) {
-            state.currentRequest.currentQuery.affectedRows = affected;
-            state.currentRequest.currentQuery.prepared = data.prepared;
-            state.currentRequest.affectedRows += affected;
-            state.currentRequest.currentQuery.endTime = Date.now();
-          }
+          debugQuery?.done(affected, data.prepared);
           // The affected count is the last thing the generator yields, so it
           // queues behind whatever chunks are still waiting — a `done` that
           // jumped the queue would truncate them.
@@ -595,10 +598,7 @@ export const createPoolWorker = (deps: {
         if (deferredChunk && callId === currentCallId) {
           worker.inTransaction = data.inTransaction;
           const error = statementError(data);
-          if (state?.currentRequest?.currentQuery) {
-            state.currentRequest.currentQuery.error = error;
-            state.currentRequest.currentQuery.endTime = Date.now();
-          }
+          debugQuery?.failed(error);
           deferredChunk.reject(error);
           // Deliberately NOT `failure = error`, which is what a `messageerror`
           // and a death do. Those two mean the transport is broken, so nothing
@@ -682,10 +682,7 @@ export const createPoolWorker = (deps: {
         );
       }
 
-      if (state?.currentRequest) {
-        const queryState = createQueryDebugState?.(index, sql, params);
-        state.currentRequest.currentQuery = queryState;
-      }
+      debugQuery = createQueryDebugState?.(index, sql, params);
 
       // Extract query options
       const {

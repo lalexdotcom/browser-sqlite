@@ -41,8 +41,7 @@ const oneClient = (skip: Skip) => {
 const countBarrierStatements = (
   db: ReturnType<typeof createSQLiteClient>,
 ): number =>
-  (db.debug?.workers ?? [])
-    .flatMap((worker) => worker.requests)
+  (db.debug?.requests ?? [])
     .flatMap((request) => request.queries)
     .filter((query) => query.sql.includes(BARRIER_SQL)).length;
 
