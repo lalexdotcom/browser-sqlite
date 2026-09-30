@@ -2,7 +2,7 @@
 
 Every method, property and option of [browser-sqlite](README.md).
 
-[*client*.id](#clientid) · [*client*.name](#clientname) · [*client*.file](#clientfile) · [*client*.files](#clientfiles) · [*client*.vfs](#clientvfs) · [*client*.build](#clientbuild) · [*client*.poolSize](#clientpoolsize) · [*client*.ready](#clientready)
+[*client*.id](#clientid) · [*client*.name](#clientname) · [*client*.file](#clientfile) · [*client*.files](#clientfiles) · [*client*.vfs](#clientvfs) · [*client*.build](#clientbuild) · [*client*.poolSize](#clientpoolsize) · [*client*.ready](#clientready) · [*client*.debug](#clientdebug)
 
 [createSQLiteClient()](#createsqliteclient) · [*client*.read()](#clientread) · [*client*.write()](#clientwrite) · [*client*.stream()](#clientstream) · [*client*.chunk()](#clientchunk) · [*client*.first()](#clientfirst) · [*client*.transaction()](#clienttransaction) · [*client*.bulkWrite()](#clientbulkwrite) · [*client*.output()](#clientoutput) · [*client*.inspect()](#clientinspect) · [*client*.close()](#clientclose) · [deleteDatabase()](#deletedatabase) · [inspectDatabase()](#inspectdatabase)
 
@@ -301,7 +301,7 @@ After the client's own [`close()`](#clientclose) it throws `CLIENT_CLOSED`, like
 
 `ClientDebugState | undefined`, readonly. The pool as it is right now, when the [`debug`](#options) option is set; `undefined` otherwise. **Its shape is outside semver: any release may change it.**
 
-It is one object, updated in place: keep the reference and read it as often as you like. To keep a moment of it, `structuredClone(db.debug)` — or `JSON.stringify`, which loses nothing either.
+It is one object, updated in place: keep the reference and read it as often as you like. To keep a moment of it, `structuredClone(db.debug)` keeps the shape but an `error` comes back as a plain `Error` without its `code`, and it throws if an `error` or a `param` is not cloneable (an abort reason you passed, for instance); `JSON.stringify` keeps `code` but drops an error's `message`, and throws on a `bigint` param.
 
 | Field | What it holds |
 |---|---|
@@ -316,11 +316,11 @@ It is one object, updated in place: keep the reference and read it as often as y
 |---|---|---|---|---|
 | — | — | — | — | waiting: on another tab's write lock for a write on a shared VFS, on the pool otherwise |
 | set | — | — | — | waiting on the pool |
-| | set | — | — | running |
-| | set | set | — | done |
-| | | set | set | failed before your code received its worker |
+| any | set | — | — | running |
+| any | set | set | — | done |
+| any | any | set | set | failed before your code received its worker |
 
-**A query is one SQL text sent during a request**: `sql`, `params`, `startTime`, `firstRowTime`, `endTime`, `error`, `affected`, `rows` and `prepared` (statements SQLite had to compile; 0 when the statement cache served it). `rows` counts the rows sent to your code, so a `first()` or a `stream()` you left early stops at what it received. A request may begin with a statement of this library's own, which makes a worker see what another one committed, before yours. A request's `rows` and `affected` add up all its queries, that one included.
+**A query is one SQL text sent during a request**: `sql`, `params`, `startTime`, `firstRowTime`, `endTime`, `error`, `affected`, `rows` and `prepared` (statements SQLite had to compile; 0 when the statement cache served it). `affected` is SQLite's change count after the statement, which a statement that changes nothing (a `SELECT`, `BEGIN`, `COMMIT`) leaves at the previous statement's value — so a request's `affected` can count one change several times. `rows` counts the rows the client received; a `first()` or a `stream()` you left early stops at what had arrived, which may be a chunk more than you read. A request can hold statements of this library's own — one that makes a worker see what another committed, before yours, and a transaction's `BEGIN` and `COMMIT` or `ROLLBACK`. A request's `rows` and `affected` add up all its queries, those included.
 
 The history keeps 50 requests per worker of the pool, and 50 queries per request; a request still waiting or running is never dropped. **It keeps `params` in memory** — the values you bound, for every query it holds. One call can make several requests: a `stream()` that meets `BUSY` takes a new lease for each attempt, and nothing links them.
 
