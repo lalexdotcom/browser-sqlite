@@ -1189,3 +1189,11 @@ A probe reporting through a thrown message fails by design, so an error in its `
 ## A green arm needs an arm that must go red in the same harness (2026-09-30, wa-sqlite #362)
 
 The first back/forward-cache run was green on both engines and both arms — because no page was cached at all: Playwright's headless shell never uses the cache, and its Firefox disables it by a preference. The arm running wa-sqlite alone, which the issue says must fail, is what showed it. A scenario that depends on a browser feature gets a control that proves the feature was on.
+
+## Find a request in `db.debug` by what it is, never by sniffing its SQL (2026-09-30)
+
+A fresh worker's first request carries the freshness barrier, `SELECT count(*) FROM sqlite_master`, whether it is a read or a write. A test that found "the read" as the first request with a query containing `SELECT` found the `CREATE TABLE` write instead — and the pre-branch version of that test had been inspecting the barrier of that write all along, passing because it asserted only `sql.includes('SELECT')`. Match a request by `kind`, and a query by its exact text.
+
+## A sabotage reverted with `git checkout -- <file>` also reverts the uncommitted work (2026-09-30)
+
+A plan that says "apply the sabotage, see the test fail, revert with `git checkout -- src`" assumes the real change is already committed. An implementer who sabotaged before committing lost its whole uncommitted change to `pool.ts` that way, and had to reapply it. Commit (or `git stash`) the real change before any sabotage, and write plans with that order.

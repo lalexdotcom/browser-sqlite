@@ -154,13 +154,9 @@ savepoint before opening its own.
 
 `tsc` covers `scripts/*.ts` since 2026-09-24, but no `allowJs`/`checkJs` is set, so the `.mjs` files are only linted and formatted by biome. Measured with `checkJs` and `@types/node` on 2026-09-24: **84 errors** — `consumer-smoke.mjs` 44, `bench/check.mjs` 19, `bench/dev.mjs` 12, `matrix-triage.mjs` 5, `static-server.mjs` 2, `bench/assemble.mjs` 1, `bounded.mjs` 1. Not triaged: how many are JSDoc-less inference noise and how many real is unknown.
 
-## `db.debug` — for the documentation review session (user, 2026-09-24)
+## `affected` is SQLite's `changes()` after each statement, stale after a statement that changes nothing (2026-09-30)
 
-`API.md` has no `## *client*.debug` section: the property appears only in the options table (`debug` row: "the `db.debug` introspection tree"), which advertises it without saying what it holds or when it is `undefined`. Meanwhile `SQLiteDB.debug` is tagged `@internal` in `src/api.ts` ("Not part of the stable public API. Shape is subject to change without notice."), yet no `stripInternal` is set, so it ships in `dist/api.d.ts` with `ClientDebugState`. The docs and the tag disagree on whether it is public; the review settles which, and documents it or stops advertising it. Its type is also only partly readonly (`workers`, `requests`, `queries`, `currentRequest` and every `QueryDebugState` field are mutable).
-
-## `db.debug`: a worker's `currentRequest` is never cleared (2026-09-28)
-
-`createClientDebug`'s `assign` sets `worker.currentRequest` when a request gets its worker (`src/debug.ts`), and nothing unsets it — the release only stamps `releaseTime` (`src/client.ts`). So an idle worker, and every worker of a closed client, reports its LAST request as current. Found building `open-retry`'s stall report, which read `a request in flight` on a client already closed; the test now counts a request as running only while `releaseTime` is unset. `db.debug` is public (`API.md`), so a consumer reading `currentRequest` gets the same wrong answer.
+The worker returns `sqlite3_changes(db)` after every statement (`src/worker/worker.ts`), and SQLite leaves that value at the previous statement's count after a `SELECT`, `BEGIN` or `COMMIT` — checked with `node:sqlite`: an INSERT of 3 rows, then a SELECT and a COMMIT each report 3. So `write()` returns a stale count for a statement that changes nothing (a DDL after an INSERT), and in `db.debug` a request's `affected` sums the same change several times (the barrier and a transaction's `BEGIN`/`COMMIT` repeat it). Found by the final review of `feat/debug-request-history`; `API.md` now states it for `db.debug`, the code is unchanged. The real fix is a delta of `sqlite3_total_changes` per statement, which changes `write()`'s public return — the user's call.
 
 ## Firefox page crash on `lifecycle.test.ts` under a full run (2026-09-23)
 
