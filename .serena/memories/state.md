@@ -208,7 +208,7 @@ the 2026-09-05 entry in `mem:follow-ups` called for.
 
 **The subject the user set on 2026-09-21 — the two `OPFSCoopSyncVFS` opens that failed on chromium — is CLOSED, and it was closed before it was started.** `mem:follow-ups` still described it as HANDLE-CORPSE on a path the retry misses; that entry had rotted. The cells failed at MATRIX-5 (2026-09-18 08:25) and the two fixes landed at 13:33 and 13:34 the same day: wa-sqlite #350 (the partial acquisition that leaks the handles beside the one that failed, which is what made every retry fail on `-journal`) and `exclusiveFileHandle` + `openWithRetry` on our side — `OPFSCoopSyncVFS` **is** declared `exclusiveFileHandle: true`, so `sqlite3_open_v2` does get the retry. Verified by measurement rather than by reading: eight consecutive runs of that cell, 8/8 green, plus the two full matrices since (COOPSYNC-OPEN-CLOSED, `mem:measurements`).
 
-**What survives of it is diagnosability, and only that:** `jOpen`'s asynchronous phase never sets `this.lastError`, so an open blocked by a dead context is indistinguishable from a missing file. One line upstream, both consumers already in place, unscheduled — `mem:follow-ups`. Everything else there stays unscheduled; the default build it named shipped on 2026-09-24. Upstream, rhashimoto/wa-sqlite#347 is open (§ Pending).
+**What survives of it is diagnosability, and only that:** `jOpen`'s asynchronous phase never sets `this.lastError`, so an open blocked by a dead context is indistinguishable from a missing file. One line upstream, both consumers already in place, unscheduled — `mem:follow-ups`. Everything else there stays unscheduled; the default build it named shipped on 2026-09-24. Upstream, rhashimoto/wa-sqlite#347 was merged on 2026-09-26 (§ Pending).
 
 **HANDLE-2 was investigated on 2026-09-09 and came apart under measurement.** Its stated cause
 is false — Firefox releases a killed worker's sync access handle in 1-6 ms (HANDLE-ORPHAN) — and
@@ -246,7 +246,7 @@ No spec: investigated with systematic debugging, the fix designed in chat and ap
 - **wa-sqlite is pinned by SHA (user).** Vendored, so a commit serves as well as a release: upstream
   HEAD `07ad48c` at the time — `93b9230` since 2026-09-21 — which carries #344, so the patch held the
   CoopSync change only, under the key
-  `wa-sqlite@1.1.2`. When #347 merges, repin to its merge commit and delete the patch.
+  `wa-sqlite@1.1.2`. #347 merged on 2026-09-26 and the pin carries it: that change left the patch.
 - **#347's evidence is wa-sqlite's own suite, never this library** (user: a stable library is not
   argued from an unstable one — `mem:conventions`). Its `jspi` claim rests on our measurements: that
   suite skips `jspi` on current Chrome.
@@ -773,12 +773,10 @@ README warning.
     exact case and the report itself names `.slice()` as the workaround, so the
     patch is the sanctioned fix, not a guess. A second reporter extended it to
     `DataView` on 2026-08-24. No WebKit PR touches it.
-  - **Open upstream: rhashimoto/wa-sqlite#347** (2026-09-15), the `OPFSCoopSyncVFS` hand-over fix,
-    from `lalexdotcom:fix/coopsync-deferred-handle-release`: the two changes of
-    `patches/wa-sqlite@1.1.2.patch` plus `test/vfs_handover.js`, which fails on its master (47 and 46
-    `BUSY` in 100 steps, 9 `NotFoundError` in 10 starts) and passes with them; upstream CI run #392
-    green. The PR text is the user's. When it merges, repin to the merge commit and delete the patch —
-    regenerated or removed through `pnpm patch` / `pnpm patch-commit`, never by hand.
+  - **rhashimoto/wa-sqlite#347 is MERGED (2026-09-26, `d685fef0`)**, the `OPFSCoopSyncVFS` hand-over fix
+    with its test `test/vfs_handover.js`. The pin carries it and the patch holds nothing for that VFS.
+    What is open upstream is in `mem:follow-ups` and `mem:stack-and-build`; a patch is regenerated or
+    removed through `pnpm patch` / `pnpm patch-commit`, never by hand.
   - **Tooling: `gh` is installed and logged in as `lalexdotcom` since 2026-09-28** (scopes `repo`,
     `read:org`, `workflow`, `gist`, `user`), seeded at each attach from the host's credential
     (`mem:stack-and-build`, "Devcontainer"). The fork clone lives at `.work/wa-sqlite` and pushes
