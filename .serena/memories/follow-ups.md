@@ -58,6 +58,13 @@ Pushed on 2026-09-30: upstream master merged into `fix/idb-sparse-write`, the se
 - **He picks up #262** (fill blocks on writes past EOF): it would also remove `jRead`'s short read across an unwritten range, which #351 leaves as on master.
 - **He merges**: repin and drop the `IDBBatchAtomicVFS.js` hunk from the patch.
 
+## wa-sqlite #352 and #353: revised, waiting on rhashimoto (2026-09-30)
+
+Pushed and answered on 2026-09-30, review re-requested by the user: the comments he asked for, #353's rounding removed, upstream master merged into both branches. The patch carries those heads. What each answer calls for:
+- **He merges one**: repin and regenerate the patch without that PR's part of `IDBMirrorVFS.js`; both PRs touch that one file, in different regions, and it leaves the patch only when both are merged.
+- **He asks for more**: answer in the thread, with a friendly word (`mem:conventions`); the worktrees are `.work/wa-sqlite-352` and `.work/wa-sqlite`.
+- **Both descriptions still say "the full suite is 13 files"**; it is 15 since master was merged in. Not edited, the user has not asked.
+
 ## wa-sqlite #362: `OPFSCoopSyncVFS.create()` fails after a back/forward-cache navigation — PR not decided
 
 Open issue by jwaltz, 2026-09-25, no PR: `OPFSCoopSyncVFS.create()` fails with `NoModificationAllowedError` after a back/forward-cache navigation — the `.ahp-*` sweep in `#initialize()` gets the lock while the cached page's worker still holds its temp handles, and `removeEntry` throws; only `NotFoundError` is tolerated there, since our #347. An immediate retry succeeds; his suggested fix (try/catch around the sweep's `removeEntry`) gave 0/48. Same sweep as the `#initialize()` item below: one tolerant sweep covers both. The library probably masks it already — `createVfsInstance` retries on `NoModificationAllowedError` — untested. A PR for #362 was proposed to the user, not decided.
