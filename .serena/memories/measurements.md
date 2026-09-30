@@ -4,6 +4,47 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## LEAK-LIB — what #350's class of leak costs this library, per VFS, 2026-09-30, Chromium 151 / Firefox 153, this container
+
+**Method.** rstest pages, each VFS on its builds. A blob worker holds one file with an exclusive `createSyncAccessHandle`. The red arm is the installed wa-sqlite with one PR's change reversed — `patch -R` of that file's part of `patches/wa-sqlite@1.1.2.patch`, and of upstream `5113ecb2` for #350 — then restored and compared byte for byte.
+
+| scenario | with the fix | fix reversed |
+|---|---|---|
+| `AccessHandlePoolVFS` (#368): one pool file held at the first `create()`, released once another pool file is seen taken | the read resolves 168-701 ms after the client is created, 8 of 8; `vfs-create-retry.test.ts` alone 52 of 52 | `WORKER_CRASHED`, cause `NoModificationAllowedError`, after 10.1-10.4 s, 12 of 12, both engines |
+| `OPFSCoopSyncVFS` (#350): `open-retry.test.ts`, "succeeds once the holder lets go" | green (the baseline) | red 8 of 8, both engines: `unable to open database file: NoModificationAllowedError` |
+| `OPFSAdaptiveVFS` (#369), Firefox: the database file held, a client fails, the holder lets go, a new client opens | opens | opens, 7 of 7 (`jspi` 4, `async` 3), the failed client closed first or not |
+| `OPFSWriteAheadVFS` (#367), Firefox: the database file, `-wa0` or `-wa1` held, a client fails and is closed, a new client opens | opens | opens, 30 of 30, the three builds |
+| the same two VFS on Chromium | opens | opens, every case |
+| wa-sqlite #362 simulated: a stale `.ahp-*` directory whose file is held 1.5 s while an `OPFSCoopSyncVFS` client opens | the read resolves 1554-1631 ms after the client is created, 8 of 8, both engines; the directory is gone afterwards | the same, 8 of 8 — the sweep involves none of these fixes |
+
+**Why two VFS have no exposure.** A worker whose open fails posts `open-error`, and `handleDeath` terminates it: the Web Lock and the handle it kept go with it. Only `createVfsInstance` and `openWithRetry` try again inside one worker, which is `AccessHandlePoolVFS` and `OPFSCoopSyncVFS`. On `OPFSAdaptiveVFS` the kept lock `OPFS:/<path>` was listed by `navigator.locks.query()` right after the failure in one run of seven, and the reopen went through all the same.
+
+**A failed client kept its connection lock until `close()` — fixed the same day (user's decision): `failClient` now releases it, guarded by `tests/browser/failed-client.test.ts`.** What follows is the behaviour before the fix. `failClient` released the client's roster marker and not `connRelease`. On Firefox, where `OPFSWriteAheadVFS` takes that lock exclusively, the client created after a failed one that was not closed gets `DATABASE_IN_USE`: 6 of 6 with the fixes in place (`sync` and `jspi`), 6 of 6 with them reversed; it opens once the failed one is closed. On Chromium, where the lock is shared, it opens, 6 of 6. `deleteDatabase` asks for the lock exclusively, so it is refused on both engines: `DATABASE_IN_USE` 12 of 12 after a failed client that was not closed (`OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi`, 3 each per engine), while `inspectDatabase()` answers `clients: []`, `tabs: 0`; it succeeds once the failed client is closed, 12 of 12.
+
+**How a killed worker lets go of the pool, and whether the library meets it.** A client on `AccessHandlePoolVFS/sync`, its worker killed through a dispatched `error` (the library terminates it), idle or inside `longQuery(40_000_000)`; a blob worker then replays the pool's acquisition — every file at once — about every 3 ms until all six are granted. Ten runs per case.
+
+| | released | an attempt granted only part of the pool |
+|---|---|---|
+| Chromium, idle | all six at the first attempt or by 3 ms | 0 of 10 |
+| Chromium, inside the statement | none for 2.00 s, then all six at 2001-2006 ms | 0 of 10, ~680 attempts each |
+| Firefox, idle or inside the statement | all six by 1-6 ms | 5 of 20, one or three files |
+| Firefox, the same under sixteen busy loops | all six by 21 ms at most | 7 of 40, one to five files |
+
+So Firefox releases them one by one and Chromium at once. Chromium's 2.00 s is Blink's `kForcibleTerminationDelay` (`base::Seconds(2)`, `third_party/blink/renderer/core/workers/worker_thread.cc`): the grace given to a worker still running script before it is terminated by force — the engine's, neither wa-sqlite's nor this library's. The library never met the partial hold: with a restart allowed, the read after the kill answered on the replacement worker 100 times of 100 **with #368's change reversed** — Chromium 43-55 ms idle and 2077-2098 ms inside the statement (10 each), Firefox 49-60 ms (40), Firefox under the busy loops 105-197 ms (40). The replacement's first `create()` comes long after the window. With the change, the same figures (Chromium 43-50 and 2076-2095 ms, Firefox 50-57 ms, 10 each).
+
+**`OPFSCoopSyncVFS` `#initialize()` with a temporary file that fails.** Upstream `5be9cd14` alone, Playwright persistent profiles, a worker whose third `.tmp` `createSyncAccessHandle` rejects once with `QuotaExceededError`; 17 scenarios per engine. `create()` fails, its directory keeps the files created and its Web Lock stays held. Every later `create()` succeeded: in another worker, in the same worker, after a collection, after the worker terminates. On Chromium (`gc()` exposed) the collection releases the lock and the next `create()` sweeps the directory, so the handles went with the instance. On Firefox the collection could not be forced: the lock stays, the directory is skipped as in use, and it is swept once the worker is gone. The consequence read in the code — a lock released with its handles still open, and every later `create()` failing on the sweep — did not occur.
+
+**`close()` then `deleteDatabase()` at once on `AccessHandlePoolVFS`**, the other caller of `createVfsInstance`, with #368's change reversed: the deletion succeeded 60 times of 60 — Chromium 35-48 ms, Firefox 50-85 ms, Firefox under sixteen busy loops 97-213 ms, 20 each.
+
+**wa-sqlite #362 with the real navigation.** A page opens `OPFSCoopSyncVFS`, keeps it open and navigates to itself, ten runs, two passes; Playwright persistent profile. The back/forward cache needs the full Chromium build: `channel: 'chromium'` with `--disable-back-forward-cache` removed from the default arguments. The headless shell never caches (`BackForwardCacheDisabledForDelegate`), and every run then passes for the wrong reason. Each page left with `pagehide.persisted === true`.
+
+| after a cached page | first open | |
+|---|---|---|
+| wa-sqlite alone (upstream `5be9cd14`), as in the issue | fails 18 of 18, `NoModificationAllowedError` on `removeEntry`, 21-35 ms in | a second worker then opens, 18 of 18 |
+| this library's built `dist/` | succeeds 18 of 18, in 135-144 ms against 55-58 ms with no cached page | the rows written by the earlier pages are read back |
+
+The ~85 ms added is one turn of `createVfsInstance`'s retry. On Firefox the condition does not arise: with its cache enabled (`fission.bfcacheInParent: true` and `browser.sessionhistory.max_total_viewers: 4` in `firefoxUserPrefs` — Playwright's build sets the first to `false` — after which a page with nothing in it leaves with `persisted === true`), a page holding the database open still leaves with `persisted === false`, and the next page's first open succeeds, 9 of 9 for wa-sqlite alone and 9 of 9 for the library (53-73 ms).
+
 ## 352-353-REVIEW — wa-sqlite's suite on the revised heads of #352 and #353, 2026-09-30, Playwright's Chromium, this container
 
 **Method.** `npx web-test-runner` in a worktree of each branch after upstream master (`fa111290`) was merged in, `CHROME_PATH` set, `node_modules` shared with the fork's main clone. The runner's totals are assertions, not tests. The red arm is the same commit with `master`'s `IDBMirrorVFS.js` checked out over it, in a detached worktree.

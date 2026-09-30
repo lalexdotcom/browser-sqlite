@@ -303,6 +303,13 @@ one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.
   PR. Every body is shown to the user before it is posted, and the re-request of the review is
   the user's click (`mem:state`, Tooling).
 
+- **A report does not end on "not measured" for something that bears on the subject (user,
+  2026-09-30).** *"Pourquoi tu gardes du non-mesuré si c'est pertinent ?"* — asked after a campaign
+  delivered with three items tagged unmeasured, each of which took minutes. Measure it, or say what
+  blocks the measurement and what was tried; a harness limit is tried before it is declared.
+- **In chat, a PR or issue number is a link to it (user, 2026-09-30)**, every occurrence —
+  `[#368](https://github.com/rhashimoto/wa-sqlite/pull/368)`. Files keep their own conventions.
+
 - **Open questions stay in the backlog; each wave's own brainstorming raises them when it
   gets there** (user, 2026-08-17). Do not front-load a decision session for a wave that is
   not the next one.

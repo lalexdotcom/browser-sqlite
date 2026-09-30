@@ -1177,3 +1177,15 @@ Each cost a wrong result or a lost quarter of an hour:
 - A `Promise.race` against a `setTimeout` deadline keeps Node alive until the timer fires, long after the result printed. End the script with `process.exit`.
 - `pkill -f <pattern>` kills the shell that runs it when the pattern is in its own command line; and a progress stream piped into `tail` shows nothing until the process ends.
 - A session slower than the harness's budget reads as a hang. Replay it alone, with a trace and a longer budget, on the fix and on the baseline, before calling it one.
+
+## A defect of a VFS is not an exposure of the library until the library's path is followed (2026-09-30)
+
+Three wa-sqlite leaks were recorded as "library exposure, untested", and the backlog recommended one as the next thing to do. Measured with each fix reversed, two of the three cannot reach a consumer: a worker whose open fails is terminated by `handleDeath`, and what it kept goes with it. Only a VFS the library retries inside one worker was exposed. The CHANGELOG had already told consumers that opens "waited forever". Before writing "exposure", follow the failure through the library's own code — who retries, who terminates — and reverse the fix.
+
+## A probe that always throws hides its own cleanup (2026-09-30)
+
+A probe reporting through a thrown message fails by design, so an error in its `onTestFinished` never shows. The test written from it failed at once, in the cleanup: two `AccessHandlePoolVFS` clients in one test, and the first one's `deleteDatabase` running while the second was still open. `onTestFinished` handlers run in registration order. Turn a probe into a test by running it green, not by copying it.
+
+## A green arm needs an arm that must go red in the same harness (2026-09-30, wa-sqlite #362)
+
+The first back/forward-cache run was green on both engines and both arms — because no page was cached at all: Playwright's headless shell never uses the cache, and its Firefox disables it by a preference. The arm running wa-sqlite alone, which the issue says must fail, is what showed it. A scenario that depends on a browser feature gets a control that proves the feature was on.
