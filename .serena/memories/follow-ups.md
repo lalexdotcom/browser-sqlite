@@ -150,13 +150,9 @@ back to it. Not designed. It will sit on the savepoint machinery merged on 2026-
 `mem:architecture`): a new entry point must go through the facade, which concludes the library's
 savepoint before opening its own.
 
-## Commit conventions are followed and not enforced — to reinforce (user, 2026-09-30)
+## Commit conventions are stated and not enforced (user, 2026-09-30)
 
-Conventional commits are the practice: on 2026-09-30, 1082 of the 1097 non-merge commits on `main` read `type(scope): subject`. The exceptions are the `release: <version>` commits, two home-made types (`probe(...)`, `docs+test(...)`) and the commits of March 2026. **The `!` is used and not systematic:** it marks 17 commits, no commit carries a `BREAKING CHANGE:` footer, and commits behind entries the CHANGELOG files under *Breaking* lack it — since rc.5 one commit has it for five *Breaking* entries (`1672aa4`, `2c5a036`, `158551f` and `76660d6` do not). Nothing enforces any of it: no commitlint, no `commit-msg` hook, and nothing reads the commit types — the CHANGELOG is written by hand and a release starts from the tag. The user wants the conventions reinforced; by what — a hook, a CI check, the list of allowed types, how a breaking change must be marked — is not designed.
-
-## `CHANGELOG.md` does not follow Keep a Changelog — to bring in line (user, 2026-09-30)
-
-The user wants the file to follow Keep a Changelog, **link references at the end of the file included**. Where it stands on 2026-09-30: the headings are `## Unreleased` and `## 1.0.0-rc.5 — 2026-09-22` — no bracketed version, an em dash; the file ends with no link reference at all; the introduction names neither the format nor the versioning scheme; and the sections include names the format does not have — `Breaking`, `Performance`, `Documentation`, `Known limitation, unchanged and now more visible` — beside `Added`, `Changed` and `Fixed`. **The headings cannot change alone:** `release-and-publish.yaml` finds a version's section by the literal prefix `## <version> — ` and refuses an undated one, so that step and the headings move together (`mem:conventions`, Releasing); the compare links are built on the tags, `v1.0.0-rc.N`. Not decided: what becomes of `Breaking` and `Performance`, and whether the released sections, which are history, are restructured.
+`AGENTS.md` states them since 2026-09-30: Conventional Commits, the allowed types, a breaking change marked with `!` **and** a `BREAKING CHANGE:` footer. Before that they were practice only: 1082 of the 1097 non-merge commits on `main` read `type(scope): subject`, 17 carry the `!`, none has the footer, and commits behind entries the CHANGELOG files as breaking lack the `!` (`1672aa4`, `2c5a036`, `158551f`, `76660d6`). Still open: nothing checks a message — no commitlint, no `commit-msg` hook, no CI step — and the types in use include two the list does not have (`release`, `probe`). Whether to enforce, and by what, is not designed.
 
 ## The `.mjs` scripts are not type-checked (2026-09-24)
 
