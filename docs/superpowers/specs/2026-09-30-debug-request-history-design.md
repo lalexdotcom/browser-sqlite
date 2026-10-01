@@ -185,3 +185,15 @@ Under `## [Unreleased]`:
 - `Fixed` — a worker no longer reports its last request as current once it has finished.
 
 `src/pool.ts` is touched, so the full verification adds `pnpm test:matrix` to `pnpm test`, `pnpm exec tsc --noEmit` and `biome ci` (`mem:conventions`, "When to run the full matrix"). The two `db.debug` entries of `mem:follow-ups` are deleted at the closure.
+
+## 6. Amendment (2026-10-01): `affected` that is never stale, and internal statements
+
+Decided in chat after the final review, on the same branch.
+
+### 6.1 `affected` is 0 for a statement that changes nothing
+
+The worker reported `sqlite3_changes(db)` after every statement, which SQLite leaves at the previous `INSERT`/`UPDATE`/`DELETE`'s count after a `SELECT`, `BEGIN`, `COMMIT` or DDL. So `write()` returned a stale count, and so did every query of `db.debug`. The worker now reads `sqlite3_total_changes(db)` before and after the statement (exported by all three builds, called directly on the module like `_sqlite3_stmt_status`): if it did not move, `affected` is 0; if it moved, `affected` is `sqlite3_changes(db)`, current by then. **The meaning of `affected` is unchanged** — the rows the statement changed directly, as `changes()` counts them, excluding trigger and foreign-key side effects; only the stale case is fixed. A multi-statement string keeps reporting the count of its last `INSERT`/`UPDATE`/`DELETE`. `write()`'s return changes accordingly (a fix, under `Fixed`), and `bulkWrite()`/`output()` totals with it.
+
+### 6.2 Internal statements are traced, flagged, and left out of the sums
+
+`QueryDebugState` gains `readonly internal: boolean` — `true` for a statement the library sends on its own: the freshness barrier, and a transaction's `BEGIN` (or `BEGIN IMMEDIATE`), `COMMIT` and `ROLLBACK`. They stay in `queries` (the barrier's cost stays visible, and tests count barriers there), but a request's `rows` and `affected` add up only the queries that are not internal. The flag travels as a pool query option `internal?: boolean`, beside `noServed`, and reaches `WorkerDebugHandle.query`. Savepoints the worker runs inside a caller's statement are not separate queries and are unaffected.
