@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **`db.ready` says when the pool has started.** It resolves once every worker has opened or been declined by the environment — from then on `db.poolSize` is the size you got — and rejects with the error that failed the client, or `CLIENT_CLOSED` if you close it first. Queries never need it: they wait for the pool as before.
 - **`db.files`** lists every name the database's files may have — the database, `-journal`, `-wal` and the VFS's own extra files — as OPFS paths on the VFS that keep a folder.
-- **`db.debug` shows a request from the call on**: waiting on another tab's write lock (`lockTime`), on the pool (`acquireTime`), running, done, or failed before it ran (`error`), with the `worker` and `generation` that served it — so the requests of a replaced worker stay readable. Queries and requests count the `rows` they delivered. The tree can be copied with `structuredClone`, and its types — `ClientDebugState`, `WorkerDebugState`, `RequestDebugState`, `QueryDebugState` — are exported.
+- **`db.debug` shows a request from the call on**: waiting on another tab's write lock (`lockTime`), on the pool (`acquireTime`), running, done, or failed before it ran (`error`), with the `worker` and `generation` that served it — so the requests of a replaced worker stay readable. Queries and requests count the `rows` they delivered; a query flagged `internal` is the library's own and is left out of its request's `rows` and `affected`. The tree can be copied with `structuredClone`, and its types — `ClientDebugState`, `WorkerDebugState`, `RequestDebugState`, `QueryDebugState` — are exported.
 
 ### Changed
 

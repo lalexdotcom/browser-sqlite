@@ -219,8 +219,10 @@ describe('catch-up pragma', () => {
     const barriers = (db.debug?.requests ?? [])
       .flatMap((request) => request.queries)
       .filter((query) => query.sql.includes(BARRIER_SQL));
-    for (const barrier of barriers)
+    for (const barrier of barriers) {
       expect(barrier.sql).toContain('PRAGMA wal_read_latest=1');
+      expect(barrier.internal).toBe(true);
+    }
     expect(modes.map((rows) => Object.values(rows[0] ?? {})[0])).toEqual([
       '0',
       '0',

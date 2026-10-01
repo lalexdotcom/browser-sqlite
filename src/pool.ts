@@ -24,12 +24,15 @@ export type PoolWorkerQueryOptions = {
   /**
    * When true, the query's completion does not call `deps.onServed`. Set for
    * the commit-propagation barrier: it is a synthetic probe, not user work, and
-   * must not reset the supervisor's restart counter.
-   * The debug worker handle's `query` is intentionally NOT suppressed: barrier
-   * statements still appear in the debug request tree, and a browser test
-   * counts them there to prove the barrier stays conditional.
+   * must not reset the supervisor's restart counter. See `internal` for how it
+   * still appears in the debug tree.
    */
   noServed?: boolean;
+  /**
+   * The statement is the library's own, not the caller's; `db.debug` flags it
+   * and leaves it out of the request's `rows` and `affected`.
+   */
+  internal?: boolean;
   /**
    * Read exactly once, when the query is POSTED — below the reuse guard,
    * never when the query is created. A transaction hands its pending savepoint
@@ -678,18 +681,19 @@ export const createPoolWorker = (deps: {
         );
       }
 
-      debugQuery = debugWorker?.query(sql, params);
-
       // Extract query options
       const {
         chunkSize = 500,
         credits = DEFAULT_CREDIT_WINDOW,
         noServed = false,
+        internal = false,
         timeout,
         abortable,
         savepoint,
       } = options ?? {};
       suppressServed = noServed;
+
+      debugQuery = debugWorker?.query(sql, params, internal);
 
       // Prepare for streaming chunks
       inbox = [];

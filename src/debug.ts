@@ -98,6 +98,8 @@ export type QueryDebugState = {
   readonly rows: number;
   /** Statements SQLite compiled for this call — 0 when the statement cache served it. */
   readonly prepared: number;
+  /** True for a statement the library sends on its own — the freshness barrier, a transaction's BEGIN, COMMIT and ROLLBACK. */
+  readonly internal: boolean;
 };
 
 export type RequestDebugState = {
@@ -155,6 +157,7 @@ export type WorkerDebugHandle = {
   readonly query: (
     sql: string,
     params?: unknown[],
+    internal?: boolean,
   ) => QueryDebugHandle | undefined;
 };
 
@@ -255,7 +258,7 @@ export const createClientDebug = (
       initialized: () => {
         worker.initializationTime = Date.now();
       },
-      query: (sql, params) => {
+      query: (sql, params, internal = false) => {
         // Bound to this worker's own generation: a stale handle from a dead
         // worker must not attach to the replacement's request.
         const request = active[index];
@@ -263,6 +266,7 @@ export const createClientDebug = (
         const query: Writable<QueryDebugState> = {
           sql,
           params,
+          internal,
           startTime: Date.now(),
           affected: 0,
           rows: 0,
@@ -278,14 +282,14 @@ export const createClientDebug = (
             if (query.endTime !== undefined) return;
             query.firstRowTime ??= Date.now();
             query.rows += rows;
-            request.rows += rows;
+            if (!internal) request.rows += rows;
           },
           done: (affected, prepared) => {
             if (query.endTime !== undefined) return;
             query.affected = affected;
             query.prepared = prepared;
             query.endTime = Date.now();
-            request.affected += affected;
+            if (!internal) request.affected += affected;
           },
           failed: (error) => {
             if (query.endTime !== undefined) return;

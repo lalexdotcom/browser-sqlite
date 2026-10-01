@@ -49,9 +49,8 @@ describe('debug subsystem (B6)', () => {
     expect(query.endTime).toBeGreaterThan(0);
     expect(query.firstRowTime).toBeGreaterThan(0);
     expect(query.rows).toBe(1);
-    expect(request.rows).toBe(
-      request.queries.reduce((sum, q) => sum + q.rows, 0),
-    );
+    // The barrier, if it ran in this request, is internal and does not count.
+    expect(request.rows).toBe(1);
 
     await db.close();
   });
@@ -229,6 +228,10 @@ describe('the pool-level request history', () => {
     expect(begin.affected).toBe(0);
     expect(commit.affected).toBe(0);
     expect(insert.affected).toBe(3);
+    expect(begin.internal).toBe(true);
+    expect(commit.internal).toBe(true);
+    expect(insert.internal).toBe(false);
+    expect(request.affected).toBe(3);
 
     db.close();
   });

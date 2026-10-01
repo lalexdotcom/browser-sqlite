@@ -298,6 +298,38 @@ describe('the pool-level request history', () => {
     expect(request).toMatchObject({ rows: 520, affected: 7 });
   });
 
+  it('flags an internal query, keeps its own sums, and leaves the request untouched', () => {
+    const debug = make();
+    const w0 = debug.createWorkerDebugState(0, 'w0');
+    debug.createRequestDebugState('write').acquired(0);
+    const q = w0.query('BEGIN', undefined, true);
+    if (!q) throw new Error('query not recorded');
+    q.chunk(3);
+    q.done(5, 1);
+    const request = debug.state.requests[0];
+    if (!request) throw new Error('no request recorded');
+    expect(request.queries[0]).toMatchObject({
+      internal: true,
+      rows: 3,
+      affected: 5,
+    });
+    expect(request).toMatchObject({ rows: 0, affected: 0 });
+  });
+
+  it('defaults a query to not internal, counting in the request sums', () => {
+    const debug = make();
+    const w0 = debug.createWorkerDebugState(0, 'w0');
+    debug.createRequestDebugState('write').acquired(0);
+    const q = w0.query('INSERT INTO t VALUES (1)');
+    if (!q) throw new Error('query not recorded');
+    q.chunk(1);
+    q.done(1, 1);
+    const request = debug.state.requests[0];
+    if (!request) throw new Error('no request recorded');
+    expect(request.queries[0]).toMatchObject({ internal: false });
+    expect(request).toMatchObject({ rows: 1, affected: 1 });
+  });
+
   it('records a failed query with its error', () => {
     const debug = make();
     const w0 = debug.createWorkerDebugState(0, 'w0');

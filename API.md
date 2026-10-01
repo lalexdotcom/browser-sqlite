@@ -320,7 +320,9 @@ It is one object, updated in place: keep the reference and read it as often as y
 | any | set | set | — | done |
 | any | any | set | set | failed before your code received its worker |
 
-**A query is one SQL text sent during a request**: `sql`, `params`, `startTime`, `firstRowTime`, `endTime`, `error`, `affected`, `rows` and `prepared` (statements SQLite had to compile; 0 when the statement cache served it). `rows` counts the rows the client received; a `first()` or a `stream()` you left early stops at what had arrived, which may be a chunk more than you read. A request can hold statements of this library's own — one that makes a worker see what another committed, before yours, and a transaction's `BEGIN` and `COMMIT` or `ROLLBACK`. A request's `rows` and `affected` add up all its queries, those included.
+**A query is one SQL text sent during a request**: `sql`, `params`, `startTime`, `firstRowTime`, `endTime`, `error`, `affected`, `rows`, `prepared` (statements SQLite had to compile; 0 when the statement cache served it) and `internal`. `rows` counts the rows the client received; a `first()` or a `stream()` you left early stops at what had arrived, which may be a chunk more than you read.
+
+The library's own statements — the one that makes a worker see what another committed, and a transaction's `BEGIN` and `COMMIT` or `ROLLBACK` — appear among the queries with `internal: true`. A request's `rows` and `affected` count only yours.
 
 The history keeps 50 requests per worker of the pool, and 50 queries per request; a request still waiting or running is never dropped. **It keeps `params` in memory** — the values you bound, for every query it holds. One call can make several requests: a `stream()` that meets `BUSY` takes a new lease for each attempt, and nothing links them.
 

@@ -26,9 +26,21 @@ import {
 } from './utils';
 
 // Drains a statement that returns no rows (BEGIN, COMMIT, ROLLBACK) without
-// the chunkSize-1 + break overhead of firstWorker.
+// the chunkSize-1 + break overhead of firstWorker. The facade marks it
+// internal, as `via` does for `savepoint` — `readWorker`'s options are the
+// public `SQLiteChunkOptions` and cannot carry the flag themselves.
 const exec = async (worker: PoolWorker, sql: string): Promise<void> => {
-  await readWorker(worker, sql);
+  const facade: PoolWorker = Object.create(worker);
+  facade.query = ((
+    sql: string,
+    params?: unknown[],
+    options?: PoolWorkerQueryOptions,
+  ) =>
+    worker.query(sql, params, {
+      ...options,
+      internal: true,
+    })) as PoolWorker['query'];
+  await readWorker(facade, sql);
 };
 
 /**

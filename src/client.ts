@@ -837,9 +837,10 @@ export const createSQLiteClient = (
     // Drained, not just dispatched: it is the opening AND closing of the read
     // transaction that refreshes page 1. noServed: true prevents the barrier
     // from resetting the supervisor's restart counter — it is a synthetic probe,
-    // not user work.
+    // not user work; internal: true keeps it out of the request's sums.
     const barrierIter = worker.query(barrierSql, undefined, {
       noServed: true,
+      internal: true,
     });
     while (!(await barrierIter.next()).done) {
       /* discard rows */

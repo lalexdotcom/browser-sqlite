@@ -156,7 +156,7 @@ describe('affected', () => {
     db.close();
   });
 
-  it('counts only the direct changes, not a trigger’s', async () => {
+  it("counts only the direct changes, not a trigger's", async () => {
     const db = await createTestClient();
 
     await db.write('CREATE TABLE t (a)');
