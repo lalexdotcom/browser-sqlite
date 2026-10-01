@@ -484,13 +484,21 @@ const detailFor = (name: string, cap: VFSCapability): string => {
     ...(clients ? [clients] : []),
     `**RAM:** ${MEMORY_SHORT[cap.memoryModel]}${noteRef(`ram-${cap.memoryModel}`)}`,
   ];
-  // Shown only when there are any: an empty "Default PRAGMAs: —" on six of the
-  // nine VFS is a line the reader learns to skip, which costs the three that
-  // do carry one.
+  // Shown only when there are any: an empty "Default PRAGMAs: —" on most VFS
+  // is a line the reader learns to skip, which costs the ones that do carry
+  // one.
   const pragmas = Object.entries(cap.defaultPragmas);
   if (pragmas.length) {
     facts.push(
       `**Default PRAGMAs:** ${pragmas.map(([k, v]) => `\`${k}=${v}\``).join(', ')}`,
+    );
+  }
+  // Same rule: the reason comes with the name, since a refusal without one
+  // reads as an oversight.
+  const refused = Object.entries(cap.refusedPragmas);
+  if (refused.length) {
+    facts.push(
+      `**Refused PRAGMAs:** ${refused.map(([k, why]) => `\`${k}\` — ${why}`).join('; ')}`,
     );
   }
   // Same rule, and the same declaration deleteDatabase reads: the files a VFS

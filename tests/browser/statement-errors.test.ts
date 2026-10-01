@@ -244,9 +244,10 @@ describe('a file that is not a database', () => {
     return { file, remove: () => removeOpfsPath(path) };
   };
 
-  // The target declares no default pragma, so a `pragmas` entry is what makes
-  // the open read the file. Falsifiable: drop `sqliteCode` from the
-  // WORKER_CRASHED built in startupError.
+  // `cache_size` reads the schema, so the open reads the file; a default such
+  // as `busy_timeout` does not, and a pragma that writes runs later, as a
+  // write. Falsifiable: drop `sqliteCode` from the WORKER_CRASHED built in
+  // startupError.
   it('fails the open with WORKER_CRASHED carrying NOTADB when a pragma reads it', async ({
     skip,
   }) => {
@@ -256,7 +257,7 @@ describe('a file that is not a database', () => {
       vfs: pair.vfs,
       build: pair.build,
       poolSize: 1,
-      pragmas: { user_version: '1' },
+      pragmas: { cache_size: '-2000' },
     });
     onTestFinished(async () => {
       await db.close();

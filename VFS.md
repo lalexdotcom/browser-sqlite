@@ -106,7 +106,7 @@ Bulk loading is what it is fastest at, on every engine measured.
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+<sup><a href="#reduced-mode">[reduced]</a></sup>, Safari 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>, Android 109+/?, iOS 15.4+/27+<sup><a href="#reduced-mode">[reduced]</a></sup>
 
-**Pool size:** Any, 1 without `readwrite-unsafe` · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
+**Pool size:** Any, 1 without `readwrite-unsafe` · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup> · **Default PRAGMAs:** `busy_timeout=5000`
 
 <!-- END GENERATED OPFSAdaptiveVFS -->
 
@@ -128,7 +128,7 @@ tabs, which is what the lazy close and reopen is for.
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+, Safari 15.4+/27+, Android 109+/?, iOS 15.4+/27+
 
-**Pool size:** **1**<sup><a href="#fn-4">[4]</a></sup> · **Shared:** yes · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
+**Pool size:** **1**<sup><a href="#fn-4">[4]</a></sup> · **Shared:** yes · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup> · **Refused PRAGMAs:** `busy_timeout` — its BUSY asks wa-sqlite to await the access handle's transfer, which a busy wait inside the worker never lets arrive
 
 <!-- END GENERATED OPFSCoopSyncVFS -->
 
@@ -168,7 +168,7 @@ cannot be imported or exported directly — which is what buys it
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
-**Pool size:** Any · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
+**Pool size:** Any · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup> · **Default PRAGMAs:** `busy_timeout=5000`
 
 <!-- END GENERATED IDBBatchAtomicVFS -->
 
@@ -218,7 +218,7 @@ database in memory per worker and propagates commits asynchronously. See
 
 **Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 111+/153+, Safari 26+/27+, Android 109+/?, iOS 26+/27+
 
-**Pool size:** Any · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup>
+**Pool size:** Any · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup> · **Default PRAGMAs:** `busy_timeout=5000`
 
 <!-- END GENERATED OPFSAnyContextVFS -->
 

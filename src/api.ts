@@ -447,8 +447,9 @@ export type SQLiteDB = SQLiteQueryAPI & {
   readonly poolSize: number;
   /**
    * Settles once the pool has started: every worker has opened, declined, or
-   * failed its one retry. Resolves when at least one worker serves the database;
-   * rejects with the error that failed the client otherwise, and with
+   * failed its one retry. Resolves when at least one worker serves the database
+   * and the pragmas that write the database are applied; rejects with the error
+   * that failed the client otherwise, and with
    * `CLIENT_CLOSED` when `close()` comes first. Never needs awaiting — queries
    * wait on their own — and never raises an unhandled rejection when unread.
    */

@@ -102,6 +102,8 @@ export const createTransaction =
      * on the caller's transaction instead of opening a BEGIN SQLite does not
      * allow.
      */
+    /** Throws for a statement the VFS refuses, before it reaches a worker. */
+    checkStatement: (sql: string) => void;
     bulkFor: (target: {
       read: ReadFn;
       write: WriteFn;
@@ -192,6 +194,7 @@ export const createTransaction =
       const worker = lease.worker;
 
       const checksql = (sql: string): string => {
+        deps.checkStatement(sql);
         if (readOnly && isWriteQuery(sql))
           throw new SQLiteError(
             'READ_ONLY_TRANSACTION',
