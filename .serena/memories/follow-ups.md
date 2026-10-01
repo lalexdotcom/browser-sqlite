@@ -46,26 +46,12 @@ been work on nothing.
 
 `chunk()` passes `abortable: signal !== undefined` (`src/queries.ts`), and the worker installs its progress handler only for an abortable statement (or a `yieldsDuringStatements` VFS, whose handler still answers 0 without a signal) — `src/worker/worker.ts`. So a `break` with no `signal`/`timeout` stops nothing in flight: on every build the worker finishes the step it is in (on `sync`, the chunk it is producing) before the lease comes back. Negligible for most queries; seconds for a query whose rows are far apart (a rare-match filter, an aggregate after a first row). Inside a transaction every statement is abortable (`src/transaction.ts`), so `API.md`'s "on every other build the statement is stopped" holds there; outside, `API.md` promises nothing either way. The cost of making every generator read abortable is measured as nothing on `async`/`jspi` (the yield, `mem:measurements`) and is an `Atomics.load` per 100 000 ops on isolated `sync`. Not decided by the user.
 
-## A second client counts 0 tables on `IDBBatchAtomicVFS`, Firefox and now Chromium (2026-09-27, 2026-10-01)
+## wa-sqlite #370: opened, waiting on rhashimoto (2026-10-01)
 
-**Third sighting, 2026-10-01 morning, on Chromium and reproducible alone** — the full matrix of `feat/debug-request-history` at `1953804`: `chromium · IDBBatchAtomicVFS/jspi` failed `vfs-folders` "opens and persists a path exactly at the bound", `/async` failed `failed-client` "lets a new client open, before close", both `expected +0 to be 1`; 64 of 66 cells green. **No longer matrix-only:** the two cells alone, `pnpm test:matrix --engine chromium --pair …`, failed 2 of 6 (`vfs-folders` both times). **Bisected in a separate worktree, 12 lone cells per arm:** without the branch's worker change (`3022f29`, the `sqlite3_total_changes` read) 1 of 12 failed (`vfs-folders`); with the patch from before #351's second-review head (`663cb52^`) 1 of 12 failed (`failed-client`). So neither is required for it; the samples (2/6 against 1/12 and 1/12) cannot tell whether either raises the rate. The matrix of `511cec6` the evening before (neither change, one pass per cell) was green, which a rate near one in ten per cell does not contradict. Reports under `.matrix/2026-10-01T08-34-00-797Z` and the reruns after it. **Next, when this is taken up:** the cause, not the rate — what the first client's `close()` leaves in IndexedDB when the second opens.
-
-**Second sighting, 2026-10-01**, in the full matrix verifying #351's second-review head: `firefox · IDBBatchAtomicVFS/jspi` and `/async` both 379/1/6, the one failure in each `tests/browser/failed-client.test.ts :: a client that failed > lets a new client open, before close`, `expected +0 to be 1` — a client wrote `CREATE TABLE`, its only worker was killed, and a new client counted 0 tables in `sqlite_master`. The night before, a full matrix with #351's previous head had passed that test on both cells (380/0/6). **Not reproduced:** the test alone on `/jspi` 10/10, the whole cell three times 380/0/6. The library does not relax `synchronous`, so `IDBBatchAtomicVFS` stays `full` with strict durability and its `jSync` awaits the IndexedDB commit. Not attributed to #351's change, since the first sighting predates it; what is common to both is that engine and VFS, a write followed by another client's read, and a full matrix around it.
-
-**First sighting, below.**
-
-### `vfs-folders` "opens and persists a path exactly at the bound" failed once on Firefox IDBBatchAtomicVFS/jspi (2026-09-27)
-
-In the full matrix run to verify the #365 carry: `firefox · IDBBatchAtomicVFS/jspi` 371/1/2, the one failure `tests/browser/vfs-folders.test.ts :: … opens and persists a path exactly at the bound`, `expected +0 to be 1` — a client created a table and closed, a second client on the same name counted **0** tables. First failure since the test was added (2026-09-23); every earlier matrix had it green, including the morning's on the same pin without #365. **Not reproduced:** the test alone on that pair 10/10, the whole cell three times through `pnpm test:matrix --engine firefox --pair IDBBatchAtomicVFS/jspi`, 372/0/2 each. Unrelated to #365 as far as the code goes — `IDBBatchAtomicVFS` does not use `WriteAhead.js`. If it recurs: it would be a persistence loss between two clients of that VFS on Firefox, the name at the 52-character bound; keep the report and check whether the first client's close had finished its IndexedDB transaction before the second opened.
-
-## wa-sqlite #351: revised twice, waiting on rhashimoto (2026-10-01)
-
-Pushed on 2026-09-30: upstream master merged into `fix/idb-sparse-write`, the second fix (`a5715669`) and its tests (`8fa53500`), the description rewritten, a comment pointing him at #262. His second review was answered on 2026-10-01 (`3e581623`): his comments as written, the open lower bound, and a TODO for one `getAll()` — which cannot be a single call, since the block covering the start of a write may begin before it. The patch carries that head. What each answer calls for:
-- **He wants the single fetch now**: one `get()` for the block covering `iOffset` plus one `getAll()` for the blocks starting inside the write, the loop working from memory; remeasure the cost.
-- **He minds the cost** (+8% Chromium, +14% Firefox on a journal-heavy `PERSIST` workload, one extra `getAllKeys` per overwrite): the offer on the table is a single cursor replacing `get` + `getAllKeys`, one request in the common case. Do not skip the query when the first block covers the write: a block straddling a truncation can still be overlapped by the extension branch.
-- **He asks for changes to the comments or tests**: his rule is a comment that says how the code is, not what changed — he cut #353's to one sentence, and asked #351 for a paragraph on why blocks must not overlap.
-- **He picks up #262** (fill blocks on writes past EOF): it would also remove `jRead`'s short read across an unwritten range, which #351 leaves as on master.
-- **He merges**: repin and drop the `IDBBatchAtomicVFS.js` hunk from the patch.
+`IDBBatchAtomicVFS.jDelete` now honours `syncDir` (a `strict` transaction and `sync(true)`), so a journal's deletion commits before SQLite goes on; on master a context ending right after a commit left a hot journal and the next connection rolled the transaction back (the first of a new database, or any larger than the page cache). Report `docs/upstream/2026-10-01-wa-sqlite-370-idb-journal-delete.md`, numbers in `mem:measurements` (IDB-JOURNAL). Branch `fix/idb-journal-delete` on the fork, rebased on `7a4b4241` before opening, CI green; the patch carries its head `57305f73`. Fix A (`sync()` no longer forgetting) stays local on `backup/idb-journal-sync-a`. What each answer calls for:
+- **He asks about the cost**: +0.4 ms per journal deletion (first transaction of a new database), none on a batch atomic commit; three-arm table in the report.
+- **He prefers fixing `IDBContext.sync()`** (A): it cures termination but leaves the deletion at `default` durability, which SQLite's `extraSync` comment says a power loss can resurrect; offer both together if he wants.
+- **He merges**: repin and drop the `IDBBatchAtomicVFS.js` hunk from the patch; the file is then no longer patched.
 
 ## wa-sqlite #363: questioned, answered, waiting on rhashimoto (2026-10-01)
 
@@ -74,13 +60,6 @@ He doubted the description's "the truncation at the end of a `VACUUM` comes afte
 - **He wants the test**: two contexts in wa-sqlite's runner, A sets `synchronous`, creates a table, inserts 3 rows and stays open, B counts; red on master for `OFF` only.
 - **He wants another publication point**: `SQLITE_FCNTL_COMMIT_PHASETWO` comes after the truncation and is sent even with `synchronous=OFF`, but only at a commit; the unlock covers whatever the lock covered. Unmeasured.
 - **He merges**: repin and drop the `OPFSAnyContextVFS.js` hunk from the patch.
-
-## wa-sqlite #352 and #353: revised, waiting on rhashimoto (2026-09-30)
-
-Pushed and answered on 2026-09-30, review re-requested by the user: the comments he asked for, #353's rounding removed, upstream master merged into both branches. The patch carries those heads. What each answer calls for:
-- **He merges one**: repin and regenerate the patch without that PR's part of `IDBMirrorVFS.js`; both PRs touch that one file, in different regions, and it leaves the patch only when both are merged.
-- **He asks for more**: answer in the thread, with a friendly word (`mem:conventions`); each branch has its own worktree of the fork.
-- **Both descriptions still say "the full suite is 13 files"**; it is 15 since master was merged in. Not edited, the user has not asked.
 
 ## wa-sqlite #362: `OPFSCoopSyncVFS.create()` fails after a back/forward-cache navigation — PR not decided
 

@@ -17,9 +17,10 @@
 - **Runtime dependencies: none.** `wa-sqlite` is a devDependency only, vendored into
   `dist/worker/worker.js` at build time so it never reaches a consumer lockfile. **Pinned by commit
   SHA, not by tag, since 2026-09-15 (user):**
-  `github:rhashimoto/wa-sqlite#5be9cd143f9497e3085f1129053551dd094ee2f6` since 2026-09-29, upstream
-  `master` with our #365 merged that day, byte-identical to its PR head; #365 left the patch with
-  it. Before that `e6e01ae1` (2026-09-28, our #350, #357 and #361 merged on 2026-09-27; #350 and
+  `github:rhashimoto/wa-sqlite#7a4b4241ba7c61ee19121aacd6c93892234ce1a1` since 2026-10-01, upstream
+  `master` with our #351, #352 and #353 merged, each byte-identical to the head the patch carried, so
+  their hunks left it and the installed `src/`/`dist/` did not change (66/66 matrix the same day).
+  Before that `5be9cd14` (2026-09-29, #365 merged and left the patch), `e6e01ae1` (2026-09-28, our #350, #357 and #361 merged on 2026-09-27; #350 and
   #361 left the patch, #357 was never carried), `5e98ac76` (2026-09-26, #347, #348, #364), `e98c65de` (2026-09-23,
   #359) and `93b9230` (2026-09-21). Vendored, so a commit serves as well as a release and nothing waits for one.
   **The 2026-09-21 repin was taken for two fixes by other contributors**:
@@ -32,13 +33,9 @@
   **`patches/wa-sqlite@1.1.2.patch` carries the upstream changes listed below, file by file**, and is
   no longer deletable as a block. Each is independent and each has a report in
   `docs/upstream/`, which is where the mechanisms and measurements live:
-  - `IDBBatchAtomicVFS.js` — #351 (`jWrite` walks the blocks a write covers instead of assuming one
-    starts at the offset, and bounds each piece at the next block's start so that blocks never
-    overlap), `@@ -271`. PR head `3e581623` since 2026-10-01: the reviewer's comments, an open
-    lower bound on the `getAllKeys` range and no special case for a one-byte write.
-  - `IDBMirrorVFS.js` — #352 (`pData.subarray()`: `pData` is a `Uint8ArrayProxy`, and `set()` on it
-    stores zeroes) and #353 (drop the blocks past the end of the file, in the view and in the store).
-    PR heads `fb327093` and `dd9a514b` since 2026-09-30, both revised in review.
+  - `IDBBatchAtomicVFS.js` — #370 (`jDelete` honours `syncDir` with a `strict` transaction and a
+    durable sync, so a journal's deletion commits before SQLite goes on), head `57305f73` since
+    2026-10-01. `IDBMirrorVFS.js` is no longer patched (#352 and #353 merged).
   - `OPFSAnyContextVFS.js` — #363 (a `jUnlock` that closes a pending writable before releasing the
     lock). PR head `87f687b8` since 2026-10-01, upstream master merged in; the change itself is the
     one carried since 2026-09-25.
