@@ -54,7 +54,7 @@ In the full matrix run to verify the #365 carry: `firefox · IDBBatchAtomicVFS/j
 
 Pushed on 2026-09-30: upstream master merged into `fix/idb-sparse-write`, the second fix (`a5715669`) and its tests (`8fa53500`), the description rewritten, a comment pointing him at #262. The patch carries that head. What each answer calls for:
 - **He minds the cost** (+8% Chromium, +14% Firefox on a journal-heavy `PERSIST` workload, one extra `getAllKeys` per overwrite): the offer on the table is a single cursor replacing `get` + `getAllKeys`, one request in the common case. Do not skip the query when the first block covers the write: a block straddling a truncation can still be overlapped by the extension branch.
-- **He asks for changes to the comments or tests**: one sentence per comment is his rule (#353).
+- **He asks for changes to the comments or tests**: his rule is a comment that says how the code is, not what changed — he cut #353's to one sentence, and asked #351 for a paragraph on why blocks must not overlap.
 - **He picks up #262** (fill blocks on writes past EOF): it would also remove `jRead`'s short read across an unwritten range, which #351 leaves as on master.
 - **He merges**: repin and drop the `IDBBatchAtomicVFS.js` hunk from the patch.
 
