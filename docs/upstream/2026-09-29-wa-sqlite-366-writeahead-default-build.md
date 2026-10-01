@@ -36,4 +36,8 @@ It does not mention this library, per the standing rule.
 
 ## What stays ours
 
-Nothing to carry and nothing to drop at a repin. Three sibling branches wait on the fork for the leaks found answering the same question — `OPFSWriteAheadVFS`'s write-ahead files, `AccessHandlePoolVFS`'s pool, `OPFSAdaptiveVFS`'s open lock — with PRs drafted and not opened; `mem:follow-ups` has them.
+Nothing to carry and nothing to drop at a repin. The leaks found answering the same question went up the same day as their own PRs — [#367](2026-09-29-wa-sqlite-367-writeahead-open-leak.md) for `OPFSWriteAheadVFS`'s write-ahead files, [#368](2026-09-29-wa-sqlite-368-ahp-acquire-leak.md) for `AccessHandlePoolVFS`'s pool, [#369](2026-09-29-wa-sqlite-369-adaptive-open-lock.md) for `OPFSAdaptiveVFS`'s open lock.
+
+## Merged
+
+**Merged on 2026-09-29** by rhashimoto, as `f5b40a22` on `master`.

@@ -50,3 +50,7 @@ PR [#353][pr353] on 2026-09-18, two commits: the fix, then the test. Explicitly 
 rhashimoto reviewed it on 2026-09-29. The comments were cut to one sentence each, and the fix lost a computation he called unnecessary: both places rounded the file size up to a block boundary before comparing, and a database file is always a whole number of pages. The comparison is now with the file size itself — which selects the same blocks in any case, since a block's offset is a multiple of the block size. The guards on `blockSize` existed only to keep that division away from zero and went with it.
 
 Pushed on 2026-09-30 with upstream `master` merged into the branch, so that its JSPI tests run there: the branch predated upstream's fix to its JSPI detection, and skipped them without saying so. `test/vfs_leak.js` fails on `master`'s file on both builds, 531 blocks against 2, and passes with the revised fix; the patch here carries that head.
+
+## Merged
+
+**Merged on 2026-09-30** by rhashimoto, as `54c04364` on `master`, right after [#352](2026-09-18-wa-sqlite-352-idb-mirror-proxy-write.md). Both left [`patches/`](../../patches) at the repin of 2026-10-01 to `7a4b4241`, their `IDBMirrorVFS.js` byte for byte the heads the patch carried; that file is no longer patched.

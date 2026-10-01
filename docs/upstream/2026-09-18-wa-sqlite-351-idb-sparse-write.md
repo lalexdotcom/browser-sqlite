@@ -103,3 +103,7 @@ rhashimoto reviewed the revised head the same evening and asked for retouches, n
 Another was the key range of the `getAllKeys` query: `-(iOffset + data.byteLength)` with an open lower bound instead of `- 1` and a closed one. It also removed the special case for a one-byte write, which skipped the query because equal bounds with an open end make `IDBKeyRange.bound()` throw; with both ends open the bounds always differ and the range is simply empty. A red arm checked that: the guard removed with the closed bound kept fails the single-byte test on asyncify and JSPI, with the open bound it passes. The last was an idea — one `getAll()` instead of a `get()` per piece — that he did not require; it cannot be a single call, since the block covering the start of the write may begin before it, so it went in as a TODO.
 
 **Posted** on 2026-10-01 (`3e581623`): `IDBBatchAtomicVFS` tests 128 passing, full suite 6067 passing, upstream CI green. The patch here carries that head since the same day.
+
+## Merged
+
+**Merged on 2026-10-01** by rhashimoto, as `7a4b4241` on `master`; its `IDBBatchAtomicVFS.js` is byte for byte the head the patch carried. The pin moved to it the same day and the hunk left [`patches/`](../../patches). The TODO for a single `getAll()` stays upstream's.

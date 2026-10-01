@@ -58,3 +58,7 @@ PR [#352][pr352] on 2026-09-18, two commits: the fix, then the test. The PR body
 rhashimoto reviewed it on 2026-09-29 and asked for one thing: the comment above the line said what the code used to do wrong, and he wanted it to say what the line needs. It now reads *"pData is a Uint8ArrayProxy that has no indexed access, which set() requires, so use subarray() to get a real Uint8Array over the same bytes."* The code did not move.
 
 Pushed on 2026-09-30 with upstream `master` merged into the branch, so that its JSPI tests run there: the branch predated upstream's fix to its JSPI detection, and skipped them without saying so. The test fails on `master`'s file on both builds, and the patch here carries the revised head.
+
+## Merged
+
+**Merged on 2026-09-30** by rhashimoto, as `7c9fa8d7` on `master`, with [#353](2026-09-18-wa-sqlite-353-idb-mirror-block-leak.md) right after it. Both left [`patches/`](../../patches) at the repin of 2026-10-01 to `7a4b4241`, their `IDBMirrorVFS.js` byte for byte the heads the patch carried; that file is no longer patched.
