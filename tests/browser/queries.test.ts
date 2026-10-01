@@ -114,6 +114,65 @@ describe('db.write() (INT-04)', () => {
 });
 
 /**
+ * `affected` is 0 for a statement that changes nothing (spec 2026-10-01, §6.1):
+ * sqlite3_changes() is left at the previous INSERT/UPDATE/DELETE's count by a
+ * SELECT, BEGIN, COMMIT or DDL, so the worker must read sqlite3_total_changes()
+ * before and after to tell a stale count from a current one.
+ */
+describe('affected', () => {
+  it('is 0 for a DDL statement after an INSERT', async () => {
+    const db = await createTestClient();
+
+    await db.write('CREATE TABLE t (a)');
+    await db.write('INSERT INTO t VALUES (1),(2),(3)');
+    const result = await db.write('CREATE TABLE u (a)');
+
+    expect(result.affected).toBe(0);
+
+    db.close();
+  });
+
+  it('is 0 for a SELECT after an INSERT', async () => {
+    const db = await createTestClient();
+
+    await db.write('CREATE TABLE t (a)');
+    await db.write('INSERT INTO t VALUES (1),(2),(3)');
+    const result = await db.write('SELECT 1');
+
+    expect(result.affected).toBe(0);
+
+    db.close();
+  });
+
+  it('still reports an UPDATE of 2 rows', async () => {
+    const db = await createTestClient();
+
+    await db.write('CREATE TABLE t (a)');
+    await db.write('INSERT INTO t VALUES (1),(2),(3)');
+    const result = await db.write('UPDATE t SET a = a + 1 WHERE a <= 2');
+
+    expect(result.affected).toBe(2);
+
+    db.close();
+  });
+
+  it("counts only the direct changes, not a trigger's", async () => {
+    const db = await createTestClient();
+
+    await db.write('CREATE TABLE t (a)');
+    await db.write('CREATE TABLE log (a)');
+    await db.write(
+      'CREATE TRIGGER tr AFTER INSERT ON t BEGIN INSERT INTO log VALUES (new.a); END',
+    );
+    const result = await db.write('INSERT INTO t VALUES (9)');
+
+    expect(result.affected).toBe(1);
+
+    db.close();
+  });
+});
+
+/**
  * INT-05: db.stream() yields rows in chunks respecting chunkSize
  */
 describe('db.chunk() (INT-05)', () => {

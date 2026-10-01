@@ -2,8 +2,15 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from '@rstest/core';
-import type { SQLiteDB, SQLiteTransactionDB } from '../../src/api';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
+import type {
+  ClientDebugState,
+  QueryDebugState,
+  RequestDebugState,
+  SQLiteDB,
+  SQLiteTransactionDB,
+  WorkerDebugState,
+} from '../../src/index';
 import * as api from '../../src/index';
 
 /**
@@ -44,6 +51,17 @@ type _PinClientToTx = _Assert<
 type _PinTxToClient = _Assert<
   _SharedOfTransaction extends _SharedOfClient ? true : false
 >;
+
+/**
+ * The debug tree's types are importable from the entry, so a consumer can type
+ * a polling function. Falsifiable: drop the export from src/index.ts.
+ */
+type _DebugTypesExported = [
+  ClientDebugState,
+  WorkerDebugState,
+  RequestDebugState,
+  QueryDebugState,
+];
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 

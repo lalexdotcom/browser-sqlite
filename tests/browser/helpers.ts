@@ -334,10 +334,16 @@ export const waitUntil = async (
 export const theQueryIsRunning =
   (db: Awaited<ReturnType<typeof createTestClient>>, sql: string) =>
   (): boolean =>
-    (db.debug?.workers ?? []).some(
-      (w) =>
-        w.status === 'RUNNING' && w.currentRequest?.currentQuery?.sql === sql,
-    );
+    (db.debug?.requests ?? []).some((request) => {
+      const query = request.queries.at(-1);
+      return (
+        request.worker !== undefined &&
+        request.endTime === undefined &&
+        db.debug?.workers[request.worker]?.status === 'RUNNING' &&
+        query?.sql === sql &&
+        query.endTime === undefined
+      );
+    });
 
 /**
  * A single very long `sqlite.step()` with no table to populate: SQLite must run

@@ -27,8 +27,7 @@ const forced = {
 const countBarrierStatements = (
   db: Awaited<ReturnType<typeof createTestClient>>,
 ): number =>
-  (db.debug?.workers ?? [])
-    .flatMap((worker) => worker.requests)
+  (db.debug?.requests ?? [])
     .flatMap((request) => request.queries)
     .filter((query) => query.sql.includes(BARRIER_SQL)).length;
 
@@ -88,6 +87,20 @@ describe('commit-propagation barrier', () => {
     const before = countBarrierStatements(db);
     await db.read('SELECT * FROM t'); // must pay nothing
     expect(countBarrierStatements(db)).toBe(before);
+
+    // w1's first acquisition — the CREATE TABLE above — is where it paid the
+    // barrier every worker owes once (spec 2026-10-01, §6.2); runs on every
+    // pair, unlike the OPFSWriteAheadVFS test below. The barrier's own row
+    // (`SELECT count(*)`) must not count toward that request's `rows`, which
+    // otherwise holds only the DDL's 0.
+    const first = db.debug?.requests.find((r) =>
+      r.queries.some((q) => q.internal),
+    );
+    if (!first) throw new Error('no request with a barrier found');
+    const ownRows = first.queries
+      .filter((q) => !q.internal)
+      .reduce((sum, q) => sum + q.rows, 0);
+    expect(first.rows).toBe(ownRows);
   });
 
   // The point of lastWriterIndex, stated as a count rather than a duration: the
@@ -217,15 +230,31 @@ describe('catch-up pragma', () => {
     ]);
 
     expect(countBarrierStatements(db)).toBeGreaterThan(0);
-    const barriers = (db.debug?.workers ?? [])
-      .flatMap((worker) => worker.requests)
+    const barriers = (db.debug?.requests ?? [])
       .flatMap((request) => request.queries)
       .filter((query) => query.sql.includes(BARRIER_SQL));
-    for (const barrier of barriers)
+    for (const barrier of barriers) {
       expect(barrier.sql).toContain('PRAGMA wal_read_latest=1');
+      expect(barrier.internal).toBe(true);
+    }
     expect(modes.map((rows) => Object.values(rows[0] ?? {})[0])).toEqual([
       '0',
       '0',
     ]);
+
+    // The request that paid the barrier also carries the caller's own
+    // `PRAGMA wal_read_latest` read; the barrier's own row (`count(*)`) must
+    // not inflate that request's `rows` past the caller's.
+    const withBarrier = (db.debug?.requests ?? []).find(
+      (r) =>
+        r.queries.some((q) => q.internal) &&
+        r.queries.some((q) => q.sql === 'PRAGMA wal_read_latest'),
+    );
+    if (!withBarrier)
+      throw new Error('no request paired a barrier with the caller read');
+    const ownRows = withBarrier.queries
+      .filter((q) => !q.internal)
+      .reduce((sum, q) => sum + q.rows, 0);
+    expect(withBarrier.rows).toBe(ownRows);
   });
 });

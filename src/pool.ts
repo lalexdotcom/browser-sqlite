@@ -3,6 +3,7 @@ import type { PlatformFeature } from './const/platform';
 import type { SQLiteResultCode } from './const/sqlite';
 import type { SQLiteVFS } from './const/vfs';
 import { DEFAULT_CREDIT_WINDOW } from './credits';
+import type { QueryDebugHandle, WorkerDebugHandle } from './debug';
 import type { Logger } from './logger';
 import { SQLiteError, type SQLiteErrorCode } from './types/errors';
 import type {
@@ -23,12 +24,15 @@ export type PoolWorkerQueryOptions = {
   /**
    * When true, the query's completion does not call `deps.onServed`. Set for
    * the commit-propagation barrier: it is a synthetic probe, not user work, and
-   * must not reset the supervisor's restart counter.
-   * `createQueryDebugState` is intentionally NOT suppressed: barrier statements
-   * still appear in the debug request tree, and a browser test counts them there
-   * to prove the barrier stays conditional.
+   * must not reset the supervisor's restart counter. See `internal` for how it
+   * still appears in the debug tree.
    */
   noServed?: boolean;
+  /**
+   * The statement is the library's own, not the caller's; `db.debug` flags it
+   * and leaves it out of the request's `rows` and `affected`.
+   */
+  internal?: boolean;
   /**
    * Read exactly once, when the query is POSTED — below the reuse guard,
    * never when the query is created. A transaction hands its pending savepoint
@@ -264,9 +268,8 @@ export const createPoolWorker = (deps: {
   onDeath?: (index: number, error: SQLiteError) => void;
   onServed?: (index: number) => void;
   drainTimeout: number;
-  createWorkerDebugState?: ((index: number, name: string) => any) | undefined;
-  createQueryDebugState?:
-    | ((index: number, sql: string, params?: unknown[]) => any)
+  createWorkerDebugState?:
+    | ((index: number, name: string) => WorkerDebugHandle)
     | undefined;
   logger: Logger;
   abortSlots?: SharedArrayBuffer | undefined;
@@ -290,7 +293,7 @@ export const createPoolWorker = (deps: {
     statementCacheSize,
     statementCacheBytes,
   } = deps;
-  const { createWorkerDebugState, createQueryDebugState, logger } = deps;
+  const { createWorkerDebugState, logger } = deps;
   const { abortSlots } = deps;
   const { declineWithout, probeFirst } = deps;
 
@@ -310,9 +313,12 @@ export const createPoolWorker = (deps: {
   if (abortSlots) new Int32Array(abortSlots)[index] = 0;
   logger.info(`worker ${index + 1} created`);
 
-  const state = createWorkerDebugState?.(index, workerName);
+  const debugWorker = createWorkerDebugState?.(index, workerName);
 
   let currentCallId = 0;
+  // The debug record of the query in flight; replaced at every post, like
+  // `deferredChunk`, so the callId check below also guards it.
+  let debugQuery: QueryDebugHandle | undefined;
 
   // Deferred promise for streaming query results one chunk at a time
   let deferredChunk: PromiseWithResolvers<unknown[] | number> | undefined;
@@ -430,6 +436,9 @@ export const createPoolWorker = (deps: {
   const poison = (error: SQLiteError) => {
     if (dead) return false;
     dead = true;
+    // Ends the query in flight: a worker death sends neither `done` nor
+    // `error`, and without this its request would read as still running.
+    debugQuery?.failed(error);
     worker.status = 'DEAD';
     deathDeferred.reject(error);
     deferredInit.reject(error); // no-op once resolved
@@ -505,7 +514,7 @@ export const createPoolWorker = (deps: {
         if (callId === 0) {
           ready = true;
           worker.status = 'READY';
-          if (state) state.initializationTime = Date.now();
+          debugWorker?.initialized();
           logger.info(`worker ${index + 1} ready`);
           deferredInit.resolve(worker);
         }
@@ -554,9 +563,7 @@ export const createPoolWorker = (deps: {
       case 'chunk': {
         const { callId } = data;
         if (deferredChunk && callId === currentCallId) {
-          if (state?.currentRequest?.currentQuery) {
-            state.currentRequest.currentQuery.firstRowTime ??= Date.now();
-          }
+          debugQuery?.chunk(data.data.length);
           // Queue first, then wake. The resolution may reach nobody — that is
           // the whole defect the inbox exists for — but the chunk is kept.
           inbox.push(data.data);
@@ -570,12 +577,7 @@ export const createPoolWorker = (deps: {
         if (deferredChunk && callId === currentCallId) {
           worker.inTransaction = data.inTransaction;
           const affected = data.affected;
-          if (state?.currentRequest?.currentQuery) {
-            state.currentRequest.currentQuery.affectedRows = affected;
-            state.currentRequest.currentQuery.prepared = data.prepared;
-            state.currentRequest.affectedRows += affected;
-            state.currentRequest.currentQuery.endTime = Date.now();
-          }
+          debugQuery?.done(affected, data.prepared);
           // The affected count is the last thing the generator yields, so it
           // queues behind whatever chunks are still waiting — a `done` that
           // jumped the queue would truncate them.
@@ -595,10 +597,7 @@ export const createPoolWorker = (deps: {
         if (deferredChunk && callId === currentCallId) {
           worker.inTransaction = data.inTransaction;
           const error = statementError(data);
-          if (state?.currentRequest?.currentQuery) {
-            state.currentRequest.currentQuery.error = error;
-            state.currentRequest.currentQuery.endTime = Date.now();
-          }
+          debugQuery?.failed(error);
           deferredChunk.reject(error);
           // Deliberately NOT `failure = error`, which is what a `messageerror`
           // and a death do. Those two mean the transport is broken, so nothing
@@ -682,21 +681,19 @@ export const createPoolWorker = (deps: {
         );
       }
 
-      if (state?.currentRequest) {
-        const queryState = createQueryDebugState?.(index, sql, params);
-        state.currentRequest.currentQuery = queryState;
-      }
-
       // Extract query options
       const {
         chunkSize = 500,
         credits = DEFAULT_CREDIT_WINDOW,
         noServed = false,
+        internal = false,
         timeout,
         abortable,
         savepoint,
       } = options ?? {};
       suppressServed = noServed;
+
+      debugQuery = debugWorker?.query(sql, params, internal);
 
       // Prepare for streaming chunks
       inbox = [];

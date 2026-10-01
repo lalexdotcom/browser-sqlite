@@ -180,15 +180,19 @@ type Client = ReturnType<typeof createSQLiteClient>;
 const poolState = (client: Client | undefined): string => {
   const state = client?.debug;
   if (!state) return 'not created';
+  const running = (w: (typeof state.workers)[number]) =>
+    state.requests.some(
+      (r) =>
+        r.worker === w.index &&
+        r.generation === w.generation &&
+        r.acquireTime !== undefined &&
+        r.endTime === undefined,
+    );
   const workers = state.workers.map(
     (w) =>
       `worker ${w.index} ${w.status}` +
       (w.initializationTime === undefined ? ', never initialized' : '') +
-      // `currentRequest` outlives its release, so only a missing `releaseTime`
-      // means the request is still running.
-      (w.currentRequest && w.currentRequest.releaseTime === undefined
-        ? ', a request in flight'
-        : ''),
+      (running(w) ? ', a request in flight' : ''),
   );
   const { read, write, gated } = state.queue;
   return `${workers.join('; ') || 'no worker'}; queue read ${read} write ${write} gated ${gated}`;

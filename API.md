@@ -2,7 +2,7 @@
 
 Every method, property and option of [browser-sqlite](README.md).
 
-[*client*.id](#clientid) · [*client*.name](#clientname) · [*client*.file](#clientfile) · [*client*.files](#clientfiles) · [*client*.vfs](#clientvfs) · [*client*.build](#clientbuild) · [*client*.poolSize](#clientpoolsize) · [*client*.ready](#clientready)
+[*client*.id](#clientid) · [*client*.name](#clientname) · [*client*.file](#clientfile) · [*client*.files](#clientfiles) · [*client*.vfs](#clientvfs) · [*client*.build](#clientbuild) · [*client*.poolSize](#clientpoolsize) · [*client*.ready](#clientready) · [*client*.debug](#clientdebug)
 
 [createSQLiteClient()](#createsqliteclient) · [*client*.read()](#clientread) · [*client*.write()](#clientwrite) · [*client*.stream()](#clientstream) · [*client*.chunk()](#clientchunk) · [*client*.first()](#clientfirst) · [*client*.transaction()](#clienttransaction) · [*client*.bulkWrite()](#clientbulkwrite) · [*client*.output()](#clientoutput) · [*client*.inspect()](#clientinspect) · [*client*.close()](#clientclose) · [deleteDatabase()](#deletedatabase) · [inspectDatabase()](#inspectdatabase)
 
@@ -42,7 +42,7 @@ const db = createSQLiteClient('myapp.sqlite', {
 | `maxWorkerRestarts` | `number` | `1` | How many times a slot may be restarted after it dies. |
 | `openTimeout` | `number` (ms) | `30_000` | How long a worker has to report ready after `open` is sent. |
 | `drainTimeout` | `number` (ms) | `60_000` | How long the drain loop may run before the worker is presumed dead. |
-| `debug` | `string \| boolean` | `undefined` | Lifecycle logging, and the `db.debug` introspection tree. |
+| `debug` | `string \| boolean` | `undefined` | Lifecycle logging, and the [`db.debug`](#clientdebug) introspection tree. |
 | `onWorkerLost` | `(event: WorkerLostEvent) => void` | `undefined` | Called when a worker is lost for good. |
 
 **`poolSize` delays your first query.** Nothing is served until every worker has opened, and the opens are serialized across the origin, so the wait grows with the pool. Two things cap it. A VFS that holds a single connection, or gains nothing from a second one, caps it at `1` and throws if you pass more — `OPFSCoopSyncVFS` is one, since it hands a single access handle from connection to connection; omitting it never throws. And wherever `readwrite-unsafe` is missing — every engine but Chromium, for now — `OPFSWriteAheadVFS` and `OPFSAdaptiveVFS` run on one worker, because a second one could not open or would only wait for the handle: there the pool is capped without an error, and warns once only if you passed `poolSize`. [`poolSize`](#clientpoolsize) tells you the size you got.
@@ -121,7 +121,7 @@ See [Writing queries](#writing-queries).
 
 ## *client*.write
 
-Sends a write query and returns how many rows it affected.
+Sends a write query and returns how many rows it affected — 0 for a statement that changes nothing.
 
 ```typescript
 const { affected } = await db.write(
@@ -296,6 +296,35 @@ const { self, siblings, tabs, write } = await db.inspect();
 It is the same census as [`inspectDatabase`](#inspectdatabase), where the semantics and the caveats are documented. The difference is only the split: `db.inspect()` separates `self`, this client's own entry, from `siblings`, everyone else, where `inspectDatabase` returns one `clients` list. `self` is `null` when this client's own marker is not in the snapshot.
 
 After the client's own [`close()`](#clientclose) it throws `CLIENT_CLOSED`, like every other method on it. [`inspectDatabase`](#inspectdatabase) answers the same question afterwards — `inspectDatabase(db.file, { vfs: db.vfs })`, which is what those two properties are for.
+
+## *client*.debug
+
+`ClientDebugState | undefined`, readonly. The pool as it is right now, when the [`debug`](#options) option is set; `undefined` otherwise. **Its shape is outside semver: any release may change it.**
+
+It is one object, updated in place: keep the reference and read it as often as you like. To keep a moment of it, `structuredClone(db.debug)` keeps the shape but an `error` comes back as a plain `Error` without its `code`, and it throws if an `error` or a `param` is not cloneable (an abort reason you passed, for instance); `JSON.stringify` keeps `code` but drops an error's `message`, and throws on a `bigint` param.
+
+| Field | What it holds |
+|---|---|
+| `file`, `vfs`, `pragmas`, `name` | What the client opened, and the name its log lines carry. |
+| `queue` | Callers waiting for a worker (`read`, `write`), and for the pool to exist (`gated`). |
+| `workers` | One entry per slot: `index`, `generation` (0 for the slot's first worker, +1 per replacement), `name`, `creationTime`, `initializationTime`, `status`. |
+| `requests` | The client's recent requests, oldest first. |
+
+**A request is one lease of a worker**: a `read()` is one, and so is a whole transaction. It carries `kind` (`'read'` or `'write'`), `startTime` (the call), `lockTime` (the cross-tab write lock was granted — a write on a VFS whose storage other tabs share), `acquireTime` (a worker was lent), `endTime` (the worker went back, or the request failed before getting one), `worker` and `generation` (who served it), `error` (why it ended before running), `affected`, `rows` and `queries`. Its state is in its timestamps:
+
+| `lockTime` | `acquireTime` | `endTime` | `error` | The request is |
+|---|---|---|---|---|
+| — | — | — | — | waiting: on another tab's write lock for a write on a shared VFS, on the pool otherwise |
+| set | — | — | — | waiting on the pool |
+| any | set | — | — | running |
+| any | set | set | — | done |
+| any | any | set | set | failed before your code received its worker |
+
+**A query is one SQL text sent during a request**: `sql`, `params`, `startTime`, `firstRowTime`, `endTime`, `error`, `affected`, `rows`, `prepared` (statements SQLite had to compile; 0 when the statement cache served it) and `internal`. `rows` counts the rows the client received; a `first()` or a `stream()` you left early stops at what had arrived, which may be a chunk more than you read.
+
+The library's own statements — the one that makes a worker see what another committed, and a transaction's `BEGIN` and `COMMIT` or `ROLLBACK` — appear among the queries with `internal: true`. A request's `rows` and `affected` count only yours.
+
+The history keeps 50 requests per worker of the pool, and 50 queries per request; a request still waiting or running is never dropped. **It keeps `params` in memory** — the values you bound, for every query it holds. One call can make several requests: a `stream()` that meets `BUSY` takes a new lease for each attempt, and nothing links them.
 
 ## *client*.close
 

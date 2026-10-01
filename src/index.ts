@@ -13,6 +13,12 @@ export {
   type SQLiteResultCode,
 } from './const/sqlite';
 export type { SQLiteVFS } from './const/vfs';
+export type {
+  ClientDebugState,
+  QueryDebugState,
+  RequestDebugState,
+  WorkerDebugState,
+} from './debug';
 export * from './delete';
 export {
   type ClientInspection,

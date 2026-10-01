@@ -44,6 +44,16 @@ PR [#363][pr363], opened 2026-09-25 from `lalexdotcom:fix/anycontext-unlock-publ
 
 It does not mention this library, per the standing rule: every figure in it is reproducible with wa-sqlite alone.
 
+## The maintainer's question, 2026-10-01
+
+rhashimoto quoted the description's "the truncation at the end of a `VACUUM` comes after the last `xSync`" and answered that this should not happen. He then reproduced it with SQLite's own CLI and VFS tracing, and asked on the [SQLite forum](https://sqlite.org/forum/forumpost/9b3877d98959eabbaa9884b51dae697acd3dae21ca3ca2e6f3cc5e8d7e669e84) whether a crash between the journal's deletion and the truncation is repaired.
+
+**It is deliberate, and sourced at the version wa-sqlite builds.** Its `Makefile` builds SQLite 3.53.0. In that version's `src/pager.c`, `pager_end_transaction()` shrinks the file in rollback-journal mode after the journal is finalized, while EXCLUSIVE is still held, with no sync after it; its own comment says so (L2145-2152). Growing happens in `sqlite3PagerCommitPhaseOne()`, before the sync. On the forum, Nuno Cruces answered that the mismatch is irrelevant — SQLite ignores data past the database's size — and that the truncation happens under the exclusive lock.
+
+**What that leaves of the case, and the stronger one found by checking.** On Chromium a reader that sees the old size loses nothing, since the excess is ignored; on Firefox the reader's `File` dies with `AbortError`, which is `SQLITE_IOERR_READ`. But the VFS cannot count on an `xSync` after the last change at all: with `PRAGMA synchronous=OFF`, `sqlite3PagerSetFlags()` sets `noSync` and SQLite never calls `xSync`. A two-context probe in wa-sqlite's own runner — A sets `synchronous`, creates a table, inserts 3 rows and stays open, B counts them — gives on upstream master **0 rows with `OFF`**, on asyncify and JSPI, twice, and 3 with `NORMAL` and `FULL`; with the PR, 3 in every case. That is committed rows invisible to another context, unrelated to any truncation.
+
+**Answered** on 2026-10-01 with those sources and that probe, offering the test to the PR. Upstream master was merged into the branch the same day (`87f687b8`), so its test runs on JSPI too: red on master's VFS on both builds, full suite 6031 passing. The description lost its sentence about JSPI being skipped, and its figures were remeasured. The patch did not change: the merge brought nothing to `OPFSAnyContextVFS.js`.
+
 ## What stays ours
 
 The same hunk is carried in [`patches/`](../../patches) until wa-sqlite ships it, and guarded here by `tests/browser/vacuum.test.ts`: the footprint of the database's files in OPFS the moment the `VACUUM` resolves — 2 232 320 bytes without the hunk, on Chromium and Firefox alike. That test needs a pair whose database is written in place, a need (`in-place-file`) added for it: `OPFSWriteAheadVFS` keeps its write-ahead files at their size by design, so a footprint says nothing there.

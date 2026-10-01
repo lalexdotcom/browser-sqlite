@@ -25,11 +25,12 @@ const SLOW_INSERT =
   `(SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${SLOW_INSERT_ROWS}) ` +
   'SELECT x FROM c';
 
-/** The worker is holding a request it has not released — i.e. a write is live. */
+/** A request holds a worker it has not handed back — i.e. a write is live. */
 const aRequestIsInFlight =
   (db: Awaited<ReturnType<typeof createTestClient>>) => () =>
-    (db.debug?.workers ?? []).some(
-      (w) => w.currentRequest && !w.currentRequest.releaseTime,
+    (db.debug?.requests ?? []).some(
+      (request) =>
+        request.acquireTime !== undefined && request.endTime === undefined,
     );
 
 describe('close()', () => {

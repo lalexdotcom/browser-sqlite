@@ -10,9 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **`db.ready` says when the pool has started.** It resolves once every worker has opened or been declined by the environment — from then on `db.poolSize` is the size you got — and rejects with the error that failed the client, or `CLIENT_CLOSED` if you close it first. Queries never need it: they wait for the pool as before.
 - **`db.files`** lists every name the database's files may have — the database, `-journal`, `-wal` and the VFS's own extra files — as OPFS paths on the VFS that keep a folder.
+- **`db.debug` shows a request from the call on**: waiting on another tab's write lock (`lockTime`), on the pool (`acquireTime`), running, done, or failed before it ran (`error`), with the `worker` and `generation` that served it — so the requests of a replaced worker stay readable. Queries and requests count the `rows` they delivered; a query flagged `internal` is the library's own and is left out of its request's `rows` and `affected`. The tree can be copied with `structuredClone`, and its types — `ClientDebugState`, `WorkerDebugState`, `RequestDebugState`, `QueryDebugState` — are exported.
 
 ### Changed
 
+- **Breaking:** **`db.debug` keeps one request history for the whole pool.** `db.debug.requests` replaces each worker's `requests` and `currentRequest`; `currentQuery` is gone — a request's state is in its timestamps; `releaseTime` is now `endTime` and `affectedRows` is `affected`, on requests and queries. `db.debug` is documented, and its shape is outside semver.
 - **Breaking:** **`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` keep each database in a folder of their own** — `.ad/`, `.ac/`, `.cs/` and `.wa/` in the OPFS root; the leading dot keeps these folders apart from an application's own OPFS entries. Until now all four resolved one name to one file at the root, so deleting through any of them destroyed what the others created. A database created by an earlier release is not found: move its files into the folder once, before opening it. `name` below is the normalized name `db.file` reports — e.g. `'caf%C3%A9'` for `'café'` —
 
   ```js
@@ -68,6 +70,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- A worker no longer reports its last request as current once that request has finished.
 - **`IDBBatchAtomicVFS` with `journal_mode: 'persist'` no longer stores overlapping blocks in its journal.** Since rc.5, a journal write that crossed a range never written was stored over a block left by an earlier transaction, and a read starting inside that block returned its old bytes. No rollback was seen to go wrong; the journal now reads back what was written. The fix is wa-sqlite's, carried in the patch ([#351](https://github.com/rhashimoto/wa-sqlite/pull/351)).
 - **A TEXT value containing a NUL character is no longer cut short.** A parameter bound with one, or a column returning one, lost everything from the first NUL: `'a\0b'` came back as `'a'`. The fix is wa-sqlite's, brought by the move to upstream `e6e01ae` (see *Changed*).
 - **On `OPFSCoopSyncVFS`, an open refused because another worker or tab holds the file now says so.** Once the open has retried for its 2.5 s, the `WORKER_CRASHED` it raises reads `unable to open database file: NoModificationAllowedError: …` and its `cause` is that storage error; it used to read `unable to open database file` alone, with no cause behind it. The fix is wa-sqlite's, brought by the move to upstream `e6e01ae` (see *Changed*).
@@ -77,6 +80,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **On `OPFSWriteAheadVFS`, a read made right after another worker's or tab's write resolved could, on Chromium, see the database as it was before that write.** The VFS learned of other connections' commits asynchronously and could start a read before hearing of the latest one. The library's read-after-write barrier hid it — no stale read was measured with the barrier in place — but only by timing. The barrier's own read now catches up with the write-ahead, so the reads after a commit are current by construction; other reads are left as they were, so a large write in progress does not slow them down. The catch-up is an opt-in added to wa-sqlite (`PRAGMA wal_read_latest`), which this package now takes from upstream `5be9cd1`.
 
 - **On `AccessHandlePoolVFS`, an open that found one file of its pool held no longer gives up after that file is released.** The open retries for 10 s while something else holds the pool; its first attempt kept the pool files it had taken, so every retry failed on them with `NoModificationAllowedError`. It now opens as soon as the file is free. The fix is wa-sqlite's, carried in this package's build until wa-sqlite ships it, along with the same fix for `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` — where a failed open kept a lock or a file of its own, and this library was not affected, since it replaces a worker whose open failed.
+- **`write()` no longer reports a stale `affected` count for a statement that changes nothing.** A DDL statement, a `PRAGMA` or a `SELECT` left `affected` at the count of the previous `INSERT`/`UPDATE`/`DELETE`; it now reports 0. `bulkWrite()` and `output()`'s totals follow, since they sum what `write()` returns.
 
 ## [1.0.0-rc.5] - 2026-09-22
 

@@ -236,7 +236,8 @@ export type SQLiteQueryAPI = {
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional query options (`signal`).
    * @returns Promise resolving to `{ result: T[], affected: number }` where
-   *   `affected` is the SQLite `changes()` count for the statement.
+   *   `affected` is the SQLite `changes()` count for the statement, 0 for one
+   *   that changes nothing.
    */
   write: <T extends Record<string, unknown>>(
     sql: string,
@@ -462,9 +463,9 @@ export type SQLiteDB = SQLiteQueryAPI & {
    */
   inspect: () => Promise<ClientInspection>;
   /**
-   * Internal diagnostic handle. Not part of the stable public API.
-   * Shape is subject to change without notice.
-   * @internal
+   * The live introspection tree, `undefined` unless the `debug` option is set.
+   * One object updated in place: keep the reference and poll it. Its shape is
+   * outside semver and may change in any release.
    */
   debug?: ClientDebugState | undefined;
 };

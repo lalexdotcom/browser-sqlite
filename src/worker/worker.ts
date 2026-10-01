@@ -494,6 +494,9 @@ const open = (file: string, options: OpenOptions) => {
 
     const { sqlite, db, module } = await openedDB;
     const { chunkSize = 1 } = options ?? {};
+    // sqlite3_changes() keeps the last write's count across a statement that
+    // changes nothing; the total does not move then.
+    const totalBefore = module._sqlite3_total_changes(db);
 
     const buffer: Record<string, unknown>[] = [];
 
@@ -695,7 +698,9 @@ const open = (file: string, options: OpenOptions) => {
         }
       }
 
-      yield sqlite.changes(db);
+      yield module._sqlite3_total_changes(db) === totalBefore
+        ? 0
+        : sqlite.changes(db);
     } catch (e) {
       // Only the uncacheable branch can still reach here unstamped: its
       // prepare failures come straight from wa-sqlite's own statements()
