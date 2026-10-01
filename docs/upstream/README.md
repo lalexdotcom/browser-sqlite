@@ -20,6 +20,7 @@ merged, through [`patches/`](../../patches).
 | [wa-sqlite #367 — a write-ahead file left open by a failed open](2026-09-29-wa-sqlite-367-writeahead-open-leak.md) | #350's leak in `OPFSWriteAheadVFS`, found by the maintainer's question. Why it costs a handle on Chromium and the whole database on Firefox, measured per reopen. |
 | [wa-sqlite #368 — a pool that one failed creation blocks for good](2026-09-29-wa-sqlite-368-ahp-acquire-leak.md) | #350's leak in `AccessHandlePoolVFS`, on both engines. Why a pool file held for a moment was enough, and why the test cannot use the harness. |
 | [wa-sqlite #369 — an open lock kept by an open that failed](2026-09-29-wa-sqlite-369-adaptive-open-lock.md) | The same family in `OPFSAdaptiveVFS`, on Firefox only. Why Chromium never shows it, and how the test makes it take Firefox's path. |
+| [wa-sqlite #370 — a journal deletion the lock did not wait for](2026-10-01-wa-sqlite-370-idb-journal-delete.md) | Why a second client on `IDBBatchAtomicVFS` counted 0 tables: it rolled back a committed transaction from a journal whose deletion died with its worker. Why SQLite asks for `syncDir` there, two fixes and the one sent, and the other VFS checked. |
 
 [`repro/`](repro) holds the scripts, self-contained: each runs from a plain
 wa-sqlite checkout with nothing but Playwright installed.
