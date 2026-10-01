@@ -45,6 +45,24 @@ So Firefox releases them one by one and Chromium at once. Chromium's 2.00 s is B
 
 The ~85 ms added is one turn of `createVfsInstance`'s retry. On Firefox the condition does not arise: with its cache enabled (`fission.bfcacheInParent: true` and `browser.sessionhistory.max_total_viewers: 4` in `firefoxUserPrefs` — Playwright's build sets the first to `false` — after which a page with nothing in it leaves with `persisted === true`), a page holding the database open still leaves with `persisted === false`, and the next page's first open succeeds, 9 of 9 for wa-sqlite alone and 9 of 9 for the library (53-73 ms).
 
+## 363-SYNC-OFF — another context and `PRAGMA synchronous`, `OPFSAnyContextVFS`, 2026-10-01, Playwright's Chromium, this container
+
+**Method.** A test in wa-sqlite's own runner, wired into `OPFSAnyContextVFS.test.js` in throwaway worktrees of upstream master `fa111290`, with and without #363's `src/` change. Context A sets `synchronous`, creates a table, inserts 3 rows and stays open (closing it would publish its writable); context B, created without reset, counts the rows. Two runs per arm.
+
+| `synchronous` | master | master + #363 |
+|---|---|---|
+| `OFF` | **B counts 0**, asyncify and jspi, both runs | 3 |
+| `NORMAL` | 3 | 3 |
+| `FULL` | 3 | 3 |
+
+The table exists for B (A's next transaction began with a read, which closed the writable); its rows do not. Cause, read in SQLite 3.53.0's `pager.c`: `synchronous=OFF` sets `noSync` (L3617) and no `xSync` is ever called, so nothing closes the writable before the unlock.
+
+On the branch with master merged in (`87f687b8`): `OPFSAnyContextVFS` tests 90 passed; master's VFS fails `vfs_xUnlock` on asyncify and jspi (`Expected 8192 to equal 4096`); full suite 15 files, 6031 passed, 80 s.
+
+## 351-REVIEW-2 — #351's second-review head, 2026-10-01, Playwright's Chromium, this container
+
+`3e581623` (open lower bound on the `getAllKeys` range, no one-byte special case): `IDBBatchAtomicVFS` tests 128 passed. Red arm, the guard removed but the closed bound kept: the single-byte test fails on asyncify and jspi, one run: the byte reads back unwritten (`Expected $[0] = 0 to equal 1`) and a read returns 266, `SQLITE_IOERR_READ` (`Expected 266 to equal 0`). Full suite 15 files, 6067 passed, 79 s. Upstream CI green.
+
 ## 352-353-REVIEW — wa-sqlite's suite on the revised heads of #352 and #353, 2026-09-30, Playwright's Chromium, this container
 
 **Method.** `npx web-test-runner` in a worktree of each branch after upstream master (`fa111290`) was merged in, `CHROME_PATH` set, `node_modules` shared with the fork's main clone. The runner's totals are assertions, not tests. The red arm is the same commit with `master`'s `IDBMirrorVFS.js` checked out over it, in a detached worktree.

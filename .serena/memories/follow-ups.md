@@ -46,17 +46,32 @@ been work on nothing.
 
 `chunk()` passes `abortable: signal !== undefined` (`src/queries.ts`), and the worker installs its progress handler only for an abortable statement (or a `yieldsDuringStatements` VFS, whose handler still answers 0 without a signal) — `src/worker/worker.ts`. So a `break` with no `signal`/`timeout` stops nothing in flight: on every build the worker finishes the step it is in (on `sync`, the chunk it is producing) before the lease comes back. Negligible for most queries; seconds for a query whose rows are far apart (a rare-match filter, an aggregate after a first row). Inside a transaction every statement is abortable (`src/transaction.ts`), so `API.md`'s "on every other build the statement is stopped" holds there; outside, `API.md` promises nothing either way. The cost of making every generator read abortable is measured as nothing on `async`/`jspi` (the yield, `mem:measurements`) and is an `Atomics.load` per 100 000 ops on isolated `sync`. Not decided by the user.
 
-## `vfs-folders` "opens and persists a path exactly at the bound" failed once on Firefox IDBBatchAtomicVFS/jspi (2026-09-27)
+## A second client counts 0 tables on Firefox `IDBBatchAtomicVFS`, in full matrices only (2026-09-27, 2026-10-01)
+
+**Second sighting, 2026-10-01**, in the full matrix verifying #351's second-review head: `firefox · IDBBatchAtomicVFS/jspi` and `/async` both 379/1/6, the one failure in each `tests/browser/failed-client.test.ts :: a client that failed > lets a new client open, before close`, `expected +0 to be 1` — a client wrote `CREATE TABLE`, its only worker was killed, and a new client counted 0 tables in `sqlite_master`. The night before, a full matrix with #351's previous head had passed that test on both cells (380/0/6). **Not reproduced:** the test alone on `/jspi` 10/10, the whole cell three times 380/0/6. The library does not relax `synchronous`, so `IDBBatchAtomicVFS` stays `full` with strict durability and its `jSync` awaits the IndexedDB commit. Not attributed to #351's change, since the first sighting predates it; what is common to both is that engine and VFS, a write followed by another client's read, and a full matrix around it.
+
+**First sighting, below.**
+
+### `vfs-folders` "opens and persists a path exactly at the bound" failed once on Firefox IDBBatchAtomicVFS/jspi (2026-09-27)
 
 In the full matrix run to verify the #365 carry: `firefox · IDBBatchAtomicVFS/jspi` 371/1/2, the one failure `tests/browser/vfs-folders.test.ts :: … opens and persists a path exactly at the bound`, `expected +0 to be 1` — a client created a table and closed, a second client on the same name counted **0** tables. First failure since the test was added (2026-09-23); every earlier matrix had it green, including the morning's on the same pin without #365. **Not reproduced:** the test alone on that pair 10/10, the whole cell three times through `pnpm test:matrix --engine firefox --pair IDBBatchAtomicVFS/jspi`, 372/0/2 each. Unrelated to #365 as far as the code goes — `IDBBatchAtomicVFS` does not use `WriteAhead.js`. If it recurs: it would be a persistence loss between two clients of that VFS on Firefox, the name at the 52-character bound; keep the report and check whether the first client's close had finished its IndexedDB transaction before the second opened.
 
-## wa-sqlite #351: revised, waiting on rhashimoto (2026-09-30)
+## wa-sqlite #351: revised twice, waiting on rhashimoto (2026-10-01)
 
-Pushed on 2026-09-30: upstream master merged into `fix/idb-sparse-write`, the second fix (`a5715669`) and its tests (`8fa53500`), the description rewritten, a comment pointing him at #262. The patch carries that head. What each answer calls for:
+Pushed on 2026-09-30: upstream master merged into `fix/idb-sparse-write`, the second fix (`a5715669`) and its tests (`8fa53500`), the description rewritten, a comment pointing him at #262. His second review was answered on 2026-10-01 (`3e581623`): his comments as written, the open lower bound, and a TODO for one `getAll()` — which cannot be a single call, since the block covering the start of a write may begin before it. The patch carries that head. What each answer calls for:
+- **He wants the single fetch now**: one `get()` for the block covering `iOffset` plus one `getAll()` for the blocks starting inside the write, the loop working from memory; remeasure the cost.
 - **He minds the cost** (+8% Chromium, +14% Firefox on a journal-heavy `PERSIST` workload, one extra `getAllKeys` per overwrite): the offer on the table is a single cursor replacing `get` + `getAllKeys`, one request in the common case. Do not skip the query when the first block covers the write: a block straddling a truncation can still be overlapped by the extension branch.
 - **He asks for changes to the comments or tests**: his rule is a comment that says how the code is, not what changed — he cut #353's to one sentence, and asked #351 for a paragraph on why blocks must not overlap.
 - **He picks up #262** (fill blocks on writes past EOF): it would also remove `jRead`'s short read across an unwritten range, which #351 leaves as on master.
 - **He merges**: repin and drop the `IDBBatchAtomicVFS.js` hunk from the patch.
+
+## wa-sqlite #363: questioned, answered, waiting on rhashimoto (2026-10-01)
+
+He doubted the description's "the truncation at the end of a `VACUUM` comes after the last `xSync`", reproduced it with the CLI, and asked the SQLite forum whether a crash before the truncation is repaired; Nuno Cruces answered there that the excess is ignored and that the truncation runs under the exclusive lock. Our answer cites SQLite 3.53.0's `pager.c` and the `synchronous=OFF` probe (`mem:measurements`, 363-SYNC-OFF), and offers that probe as a test. What each answer calls for:
+- **He finds the `VACUUM` case harmless** (the reader's stale size is ignored): on Firefox it is not a stale size but `AbortError`, and `synchronous=OFF` hides committed rows — that probe becomes the PR's main test.
+- **He wants the test**: two contexts in wa-sqlite's runner, A sets `synchronous`, creates a table, inserts 3 rows and stays open, B counts; red on master for `OFF` only.
+- **He wants another publication point**: `SQLITE_FCNTL_COMMIT_PHASETWO` comes after the truncation and is sent even with `synchronous=OFF`, but only at a commit; the unlock covers whatever the lock covered. Unmeasured.
+- **He merges**: repin and drop the `OPFSAnyContextVFS.js` hunk from the patch.
 
 ## wa-sqlite #352 and #353: revised, waiting on rhashimoto (2026-09-30)
 

@@ -319,7 +319,16 @@ one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.
   "Done": thank him and answer his own tone — *"un petit message sympa quand-même"*. And nothing the
   dates contradict: "so quickly" was cut from a reply to a review that came eleven days after the
   PR. Every body is shown to the user before it is posted, and the re-request of the review is
-  the user's click (`mem:state`, Tooling).
+  the user's click (`mem:state`, Tooling). **But sparingly (user, 2026-10-01): "vas-y molo sur
+  les thanks"** — one thank-you in a set of replies, not one per thread; "Taken as written." is a
+  whole reply.
+
+- **An argument goes upstream only once measured, and SQLite is cited at the version wa-sqlite
+  builds (user, 2026-10-01).** *"Fais plutôt la vérification avant histoire de répondre avec des
+  infos fiables"* — a claim read off SQLite's source is probed before it is posted. The version is
+  `SQLITE_VERSION` in wa-sqlite's `Makefile` at upstream's head (3.53.0 on that date), and the
+  links go to the `sqlite/sqlite` GitHub mirror at that tag: sqlite.org's source pages answer a
+  script with a robot check, so what they show cannot be verified before linking.
 
 - **A report does not end on "not measured" for something that bears on the subject (user,
   2026-09-30).** *"Pourquoi tu gardes du non-mesuré si c'est pertinent ?"* — asked after a campaign

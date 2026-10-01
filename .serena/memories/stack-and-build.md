@@ -34,12 +34,14 @@
   `docs/upstream/`, which is where the mechanisms and measurements live:
   - `IDBBatchAtomicVFS.js` — #351 (`jWrite` walks the blocks a write covers instead of assuming one
     starts at the offset, and bounds each piece at the next block's start so that blocks never
-    overlap), `@@ -271`. PR head `8fa53500` since 2026-09-30.
+    overlap), `@@ -271`. PR head `3e581623` since 2026-10-01: the reviewer's comments, an open
+    lower bound on the `getAllKeys` range and no special case for a one-byte write.
   - `IDBMirrorVFS.js` — #352 (`pData.subarray()`: `pData` is a `Uint8ArrayProxy`, and `set()` on it
     stores zeroes) and #353 (drop the blocks past the end of the file, in the view and in the store).
     PR heads `fb327093` and `dd9a514b` since 2026-09-30, both revised in review.
   - `OPFSAnyContextVFS.js` — #363 (a `jUnlock` that closes a pending writable before releasing the
-    lock).
+    lock). PR head `87f687b8` since 2026-10-01, upstream master merged in; the change itself is the
+    one carried since 2026-09-25.
   - `OPFSWriteAheadVFS.js` — #367 (the two write-ahead files opened with `Promise.allSettled`, so a
     failed open closes the one acquired beside it), since 2026-09-29.
   - `AccessHandlePoolVFS.js` — #368 (a failed `create()` releases the pool handles it took), since
