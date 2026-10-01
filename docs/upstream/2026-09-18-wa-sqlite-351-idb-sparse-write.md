@@ -95,3 +95,11 @@ The first fix stored everything no block covered as one new block, so it ran ove
 **What is left as it was.** A read that crosses a range never written returns `SQLITE_IOERR_SHORT_READ` and zeroes the rest of the buffer, even when blocks exist further on. That is `jRead` on master, and upstream's #262 would remove those ranges at the source.
 
 **Posted** on 2026-09-30: upstream master merged into the branch (it needed the JSPI detection fix), then the fix and the tests. The patch here carries the new head since the same day.
+
+## Second review, 2026-09-30 — comments and a key range
+
+rhashimoto reviewed the revised head the same evening and asked for retouches, none of them on the fix itself. He wrote out the comments he wanted: why blocks in IndexedDB must never overlap and how a write into a gap is bounded, and what limits each iteration of the loop. Both are in the code as he wrote them. The rule they show is not brevity — on #353 he had cut a comment to one sentence — but a comment that says how the code is rather than how it changed.
+
+Another was the key range of the `getAllKeys` query: `-(iOffset + data.byteLength)` with an open lower bound instead of `- 1` and a closed one. It also removed the special case for a one-byte write, which skipped the query because equal bounds with an open end make `IDBKeyRange.bound()` throw; with both ends open the bounds always differ and the range is simply empty. A red arm checked that: the guard removed with the closed bound kept fails the single-byte test on asyncify and JSPI, with the open bound it passes. The last was an idea — one `getAll()` instead of a `get()` per piece — that he did not require; it cannot be a single call, since the block covering the start of the write may begin before it, so it went in as a TODO.
+
+**Posted** on 2026-10-01 (`3e581623`): `IDBBatchAtomicVFS` tests 128 passing, full suite 6067 passing, upstream CI green. The patch here carries that head since the same day.
