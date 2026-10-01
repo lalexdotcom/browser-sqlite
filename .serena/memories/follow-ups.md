@@ -53,11 +53,10 @@ been work on nothing.
 - **He prefers fixing `IDBContext.sync()`** (A): it cures termination but leaves the deletion at `default` durability, which SQLite's `extraSync` comment says a power loss can resurrect; offer both together if he wants.
 - **He merges**: repin and drop the `IDBBatchAtomicVFS.js` hunk from the patch; the file is then no longer patched.
 
-## wa-sqlite #363: questioned, answered, waiting on rhashimoto (2026-10-01)
+## wa-sqlite #363: premise conceded, test declined, waiting on rhashimoto (2026-10-01)
 
-He doubted the description's "the truncation at the end of a `VACUUM` comes after the last `xSync`", reproduced it with the CLI, and asked the SQLite forum whether a crash before the truncation is repaired; Nuno Cruces answered there that the excess is ignored and that the truncation runs under the exclusive lock. Our answer cites SQLite 3.53.0's `pager.c` and the `synchronous=OFF` probe (`mem:measurements`, 363-SYNC-OFF), and offers that probe as a test. What each answer calls for:
-- **He finds the `VACUUM` case harmless** (the reader's stale size is ignored): on Firefox it is not a stale size but `AbortError`, and `synchronous=OFF` hides committed rows — that probe becomes the PR's main test.
-- **He wants the test**: two contexts in wa-sqlite's runner, A sets `synchronous`, creates a table, inserts 3 rows and stays open, B counts; red on master for `OFF` only.
+He agreed the truncation after the last sync is deliberate (the forum concurred), which is the PR's case, and declined the `synchronous=OFF` test as a performance setting this VFS is not for. Our reply (2026-10-01): it is the only OPFS VFS with concurrent reads without `readwrite-unsafe`, so an app may pick it and still set `OFF`, and on master that hides commits from other contexts — a correctness test, left out unless he wants it. No review decision yet. Report: `docs/upstream/2026-09-25-wa-sqlite-363-anycontext-unlock-truncate.md`. What each answer calls for:
+- **He wants the test after all**: two contexts in wa-sqlite's runner, A sets `synchronous`, creates a table, inserts 3 rows and stays open, B counts; red on master for `OFF` only (363-SYNC-OFF).
 - **He wants another publication point**: `SQLITE_FCNTL_COMMIT_PHASETWO` comes after the truncation and is sent even with `synchronous=OFF`, but only at a commit; the unlock covers whatever the lock covered. Unmeasured.
 - **He merges**: repin and drop the `OPFSAnyContextVFS.js` hunk from the patch.
 

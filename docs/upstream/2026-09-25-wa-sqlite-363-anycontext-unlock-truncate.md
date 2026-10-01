@@ -54,6 +54,12 @@ rhashimoto quoted the description's "the truncation at the end of a `VACUUM` com
 
 **Answered** on 2026-10-01 with those sources and that probe, offering the test to the PR. Upstream master was merged into the branch the same day (`87f687b8`), so its test runs on JSPI too: red on master's VFS on both builds, full suite 6031 passing. The description lost its sentence about JSPI being skipped, and its figures were remeasured. The patch did not change: the merge brought nothing to `OPFSAnyContextVFS.js`.
 
+## Second exchange, 2026-10-01
+
+rhashimoto agreed that the truncation after the last sync is deliberate — "a response on the forum by someone knowledgeable concurs" — which is the case the PR handles. He declined the `synchronous=OFF` test: `OFF` is only for write performance, this is not the VFS for that, and with the calls made in unlock anyway it would not get faster. No review decision came with it; the PR stays open.
+
+**Answered** the same day, in one paragraph: the VFS is not the one for write speed, but it is the only OPFS VFS that serves concurrent reads without `readwrite-unsafe` (the bench's `reads-during-long-query`, Firefox 154 and Safari 27, `mem:measurements`), so an application can pick it for that and still set `OFF` for speed — and on master that hides its commits from other contexts, so a test would guard correctness rather than performance; left out unless he wants it. A sentence the user proposed — that no two VFS store files alike, so one cannot write with one and read with another — was dropped after checking: `OPFSAdaptiveVFS` and `OPFSAnyContextVFS` keep a database as the same plain OPFS file, and one read what the other wrote (CROSS-VFS, 2026-09-02). Whether they can share a database at the same time was not measured.
+
 ## What stays ours
 
 The same hunk is carried in [`patches/`](../../patches) until wa-sqlite ships it, and guarded here by `tests/browser/vacuum.test.ts`: the footprint of the database's files in OPFS the moment the `VACUUM` resolves — 2 232 320 bytes without the hunk, on Chromium and Firefox alike. That test needs a pair whose database is written in place, a need (`in-place-file`) added for it: `OPFSWriteAheadVFS` keeps its write-ahead files at their size by design, so a footprint says nothing there.
