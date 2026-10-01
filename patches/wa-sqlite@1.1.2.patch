@@ -26,10 +26,29 @@ index 1a7638af599d896fe34eb55d3ea3ae1014ef5e30..5fef21d999cf5e4bfd2919486a9d79c4
  
    #releaseAccessHandles() {
 diff --git a/src/examples/IDBBatchAtomicVFS.js b/src/examples/IDBBatchAtomicVFS.js
-index 86353cdda6ccd599e22bb1a531f473d414c5a8d2..2987d9b0a5b17f687925b9edb28be81294151462 100644
+index 86353cdda6ccd599e22bb1a531f473d414c5a8d2..4b9193705ba5e5525f3e77af64c47b4507200503 100644
 --- a/src/examples/IDBBatchAtomicVFS.js
 +++ b/src/examples/IDBBatchAtomicVFS.js
-@@ -271,18 +271,66 @@ export class IDBBatchAtomicVFS extends WebLocksMixin(FacadeVFS) {
+@@ -121,14 +121,16 @@ export class IDBBatchAtomicVFS extends WebLocksMixin(FacadeVFS) {
+       const url = new URL(zName, 'file://');
+       const path = url.pathname;
+ 
++      // SQLite sets syncDir when deleting a journal on a batch atomic VFS,
++      // and a journal that survives the commit would roll it back.
+       this.#idb.q(({ metadata, blocks }) => {
+         const range = IDBKeyRange.bound([path, -Infinity], [path, Infinity]);
+         blocks.delete(range);
+         metadata.delete(path);
+-      }, 'rw');
++      }, 'rw', syncDir ? { durability: 'strict' } : {});
+ 
+       if (syncDir) {
+-        await this.#idb.sync(false);
++        await this.#idb.sync(true);
+       }
+       return VFS.SQLITE_OK;
+     } catch (e) {
+@@ -271,18 +273,66 @@ export class IDBBatchAtomicVFS extends WebLocksMixin(FacadeVFS) {
          }, 'rw', file.txOptions);
        } else {
          this.#idb.q(async ({ blocks }) => {
