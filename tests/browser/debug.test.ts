@@ -196,6 +196,42 @@ describe('the pool-level request history', () => {
     expect(first?.rows).toBeGreaterThanOrEqual(1);
     expect(first?.rows).toBeLessThan(1000);
   });
+
+  // `affected` is never stale (spec 2026-10-01, §6.1): a transaction's own
+  // BEGIN and COMMIT must not inherit the row count of a write that ran
+  // earlier on the same connection.
+  it('reports affected: 0 for BEGIN and COMMIT, even after a bigger write', async () => {
+    const db = await createTestClient({ poolSize: 1, debug: true });
+    await db.write('CREATE TABLE t (a)');
+    await db.write('INSERT INTO t VALUES (1),(2),(3),(4),(5)');
+    await db.write('UPDATE t SET a = a + 1');
+
+    await db.transaction(async (tx) => {
+      await tx.write('INSERT INTO t VALUES (6),(7),(8)');
+    });
+
+    const dbDebug = db.debug;
+    if (!dbDebug) throw new Error('debug not available');
+    const request = dbDebug.requests.findLast((r) =>
+      r.queries.some((q) => q.sql.includes('INSERT INTO t VALUES (6)')),
+    );
+    if (!request) throw new Error('no transaction request found');
+
+    const begin = request.queries.find((q) => q.sql.startsWith('BEGIN'));
+    const commit = request.queries.find((q) => q.sql === 'COMMIT');
+    const insert = request.queries.find((q) =>
+      q.sql.includes('INSERT INTO t VALUES (6)'),
+    );
+    if (!begin) throw new Error('no BEGIN query found');
+    if (!commit) throw new Error('no COMMIT query found');
+    if (!insert) throw new Error('no INSERT query found');
+
+    expect(begin.affected).toBe(0);
+    expect(commit.affected).toBe(0);
+    expect(insert.affected).toBe(3);
+
+    db.close();
+  });
 });
 
 describe('the cross-tab write lock in the history', () => {

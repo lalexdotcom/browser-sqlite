@@ -494,6 +494,15 @@ const open = (file: string, options: OpenOptions) => {
 
     const { sqlite, db, module } = await openedDB;
     const { chunkSize = 1 } = options ?? {};
+    // Read as close to the caller's statement as the code allows: for the
+    // caller's own call this is after the savepoint control statements
+    // above have run (query's own `prepared = 0` point); for a savepoint
+    // control call it is this call's own start — those statements change no
+    // rows, so where inside them this reads makes no difference. SQLite
+    // leaves sqlite3_changes() at the previous INSERT/UPDATE/DELETE's count
+    // after a SELECT, BEGIN, COMMIT or DDL, so `affected` is 0 unless the
+    // total moved.
+    const totalBefore = module._sqlite3_total_changes(db);
 
     const buffer: Record<string, unknown>[] = [];
 
@@ -695,7 +704,9 @@ const open = (file: string, options: OpenOptions) => {
         }
       }
 
-      yield sqlite.changes(db);
+      yield module._sqlite3_total_changes(db) === totalBefore
+        ? 0
+        : sqlite.changes(db);
     } catch (e) {
       // Only the uncacheable branch can still reach here unstamped: its
       // prepare failures come straight from wa-sqlite's own statements()

@@ -42,6 +42,15 @@ type WASQLiteModule = {
    * 2026-09-14, §5.1).
    */
   _sqlite3_extended_errcode: (db: number) => number;
+  /**
+   * `sqlite3_total_changes`. Exported by all three builds (checked
+   * 2026-10-01 in `node_modules/wa-sqlite/dist/wa-sqlite.mjs`, `-async.mjs`
+   * and `-jspi.mjs`); unwrapped by the JS façade, like `_sqlite3_stmt_status`.
+   * Unlike `sqlite3_changes`, it only ever increases, so `worker.ts` reads it
+   * before and after a statement to tell whether `changes()` is current or
+   * stale from an earlier write (spec 2026-10-01, §6.1).
+   */
+  _sqlite3_total_changes: (db: number) => number;
 };
 
 /**

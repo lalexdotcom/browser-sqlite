@@ -169,10 +169,6 @@ savepoint before opening its own.
 
 `tsc` covers `scripts/*.ts` since 2026-09-24, but no `allowJs`/`checkJs` is set, so the `.mjs` files are only linted and formatted by biome. Measured with `checkJs` and `@types/node` on 2026-09-24: **84 errors** — `consumer-smoke.mjs` 44, `bench/check.mjs` 19, `bench/dev.mjs` 12, `matrix-triage.mjs` 5, `static-server.mjs` 2, `bench/assemble.mjs` 1, `bounded.mjs` 1. Not triaged: how many are JSDoc-less inference noise and how many real is unknown.
 
-## `affected` is SQLite's `changes()` after each statement, stale after a statement that changes nothing (2026-09-30)
-
-The worker returns `sqlite3_changes(db)` after every statement (`src/worker/worker.ts`), and SQLite leaves that value at the previous statement's count after a `SELECT`, `BEGIN` or `COMMIT` — checked with `node:sqlite`: an INSERT of 3 rows, then a SELECT and a COMMIT each report 3. So `write()` returns a stale count for a statement that changes nothing (a DDL after an INSERT), and in `db.debug` a request's `affected` sums the same change several times (the barrier and a transaction's `BEGIN`/`COMMIT` repeat it). Found by the final review of `feat/debug-request-history`; `API.md` now states it for `db.debug`, the code is unchanged. The real fix is a delta of `sqlite3_total_changes` per statement, which changes `write()`'s public return — the user's call.
-
 ## Firefox page crash on `lifecycle.test.ts` under a full run (2026-09-23)
 
 **First sighting (2026-09-23).** The pre-merge `pnpm test` of `feat/db-ready` stopped with `Browser page crashed while running tests/browser/lifecycle.test.ts` on the Firefox config — no test failed, the file did not finish. Not reproduced: 10 of 10 runs of the file alone on Firefox clean, then the full `pnpm test` that concluded the merge green, and every earlier run that day (full suite, 22 Firefox matrix cells) clean. Unknown whether the new silent blob workers play a part — since 2026-09-25 the all-workers-gone test uses them too (`silentWorkersFromIndex`), so a second test of the file now spawns them; the next sighting should keep its `pnpm test` log.

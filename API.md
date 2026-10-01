@@ -121,7 +121,7 @@ See [Writing queries](#writing-queries).
 
 ## *client*.write
 
-Sends a write query and returns how many rows it affected.
+Sends a write query and returns how many rows it affected — 0 for a statement that changes nothing.
 
 ```typescript
 const { affected } = await db.write(
@@ -320,7 +320,7 @@ It is one object, updated in place: keep the reference and read it as often as y
 | any | set | set | — | done |
 | any | any | set | set | failed before your code received its worker |
 
-**A query is one SQL text sent during a request**: `sql`, `params`, `startTime`, `firstRowTime`, `endTime`, `error`, `affected`, `rows` and `prepared` (statements SQLite had to compile; 0 when the statement cache served it). `affected` is SQLite's change count after the statement, which a statement that changes nothing (a `SELECT`, `BEGIN`, `COMMIT`) leaves at the previous statement's value — so a request's `affected` can count one change several times. `rows` counts the rows the client received; a `first()` or a `stream()` you left early stops at what had arrived, which may be a chunk more than you read. A request can hold statements of this library's own — one that makes a worker see what another committed, before yours, and a transaction's `BEGIN` and `COMMIT` or `ROLLBACK`. A request's `rows` and `affected` add up all its queries, those included.
+**A query is one SQL text sent during a request**: `sql`, `params`, `startTime`, `firstRowTime`, `endTime`, `error`, `affected`, `rows` and `prepared` (statements SQLite had to compile; 0 when the statement cache served it). `rows` counts the rows the client received; a `first()` or a `stream()` you left early stops at what had arrived, which may be a chunk more than you read. A request can hold statements of this library's own — one that makes a worker see what another committed, before yours, and a transaction's `BEGIN` and `COMMIT` or `ROLLBACK`. A request's `rows` and `affected` add up all its queries, those included.
 
 The history keeps 50 requests per worker of the pool, and 50 queries per request; a request still waiting or running is never dropped. **It keeps `params` in memory** — the values you bound, for every query it holds. One call can make several requests: a `stream()` that meets `BUSY` takes a new lease for each attempt, and nothing links them.
 

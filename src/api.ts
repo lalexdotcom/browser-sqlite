@@ -236,7 +236,8 @@ export type SQLiteQueryAPI = {
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional query options (`signal`).
    * @returns Promise resolving to `{ result: T[], affected: number }` where
-   *   `affected` is the SQLite `changes()` count for the statement.
+   *   `affected` is the SQLite `changes()` count for the statement, 0 for one
+   *   that changes nothing.
    */
   write: <T extends Record<string, unknown>>(
     sql: string,
