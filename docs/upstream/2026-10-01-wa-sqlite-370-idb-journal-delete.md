@@ -75,7 +75,7 @@ An OPFS `removeEntry()` that has been issued completes even when its worker is t
 
 ## Posted upstream
 
-PR [#370][pr370], opened 2026-10-01 from `lalexdotcom:fix/idb-journal-delete`, two commits — the fix (`1ec87548`), then the tests (`57305f73`) — on `master` at `7a4b4241`, which is [#351][pr351]'s merge: the branch was rebased onto it before opening, the two PRs adding their tests at the same line of `IDBBatchAtomicVFS.test.js`.
+PR [#370][pr370], opened 2026-10-01 from `lalexdotcom:fix/idb-journal-delete`, two commits — the fix (`1ec87548`), then the tests (`57305f73`) — on `master` at `7a4b4241`, which is [#351][pr351]'s merge: the branch was rebased onto it before opening, the two PRs adding their tests at the same line of `IDBBatchAtomicVFS.test.js`. Upstream CI on the head commit is green — [run 36882381550](https://github.com/rhashimoto/wa-sqlite/actions/runs/36882381550), `build (20.x)`, the only check.
 
 It does not mention this library, per the standing rule; the impact is told as a usage example.
 

@@ -4,6 +4,18 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## IDB-JOURNAL — a journal deletion lost with its worker, `IDBBatchAtomicVFS`, 2026-10-01, Playwright's Chromium and Firefox, this container
+
+**In the library.** Whole `chromium · IDBBatchAtomicVFS` cells, `jspi`/`async` alternated: **3 failed in 21** without a fix (`vfs-folders` "…exactly at the bound", `failed-client` "…before close", `expected +0 to be 1`); **30 of 30** green with fix A, **30 of 30** with fix B. A page-side dump of IndexedDB before the second open: failing runs held the database intact AND a 512-byte `-journal`; passing runs, no journal, 20 of 20. Full matrix with B after the repin: 66/66, 2332 s.
+
+**Upstream's runner, `master`**, a worker commits, replies, holds its thread 1 s and is terminated: `CREATE TABLE` in a new database lost 5/5 per build; 2000 × 2000 B in one transaction on an existing database, default cache, lost 5/5 (2000 rows → 0); terminated on the reply without the hold, 12/20. Fixes A and B: 0/5 everywhere.
+
+**Persistent profiles, both engines** (`.work/worst/journal/`, `.scratchpad/journal-probe/`), kill on the reply, 40 runs: master **27/40 lost on Chromium, 40/40 on Firefox**; a writer that closes and a reader that opens at once, 0/40. `OPFSAdaptiveVFS` and `OPFSAnyContextVFS` (`syncDir` 0, `removeEntry()` not awaited) 0/40 and no journal ever left; `OPFSWriteAheadVFS` (`syncDir` 1) 0/5 in every case.
+
+**Cost**, Chrome, medians of 10 interleaved rounds, idle: new database open + `CREATE TABLE` + close 4.3 ms (master) → 4.7–4.8 ms (A, B); 200 autocommit INSERTs, no journal deleted, 310–321 ms in all three; a 4 MB transaction past the cache 140–147 ms in all three.
+
+**Why `syncDir`.** `sqlite3PagerSetFlags` (SQLite 3.53.0) sets `extraSync` on any VFS reporting `SQLITE_IOCAP_BATCH_ATOMIC`, even at `synchronous=FULL`; a disk journal appears for the first transaction of a new database (`jrnlBufferSize` needs `dbSize > 0`), a cache spill (`pagerStress`), a multi-database commit and a failed batch write.
+
 ## LEAK-LIB — what #350's class of leak costs this library, per VFS, 2026-09-30, Chromium 151 / Firefox 153, this container
 
 **Method.** rstest pages, each VFS on its builds. A blob worker holds one file with an exclusive `createSyncAccessHandle`. The red arm is the installed wa-sqlite with one PR's change reversed — `patch -R` of that file's part of `patches/wa-sqlite@1.1.2.patch`, and of upstream `5113ecb2` for #350 — then restored and compared byte for byte.

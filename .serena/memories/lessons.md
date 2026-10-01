@@ -1197,3 +1197,7 @@ A fresh worker's first request carries the freshness barrier, `SELECT count(*) F
 ## A sabotage reverted with `git checkout -- <file>` also reverts the uncommitted work (2026-09-30)
 
 A plan that says "apply the sabotage, see the test fail, revert with `git checkout -- src`" assumes the real change is already committed. An implementer who sabotaged before committing lost its whole uncommitted change to `pool.ts` that way, and had to reapply it. Commit (or `git stash`) the real change before any sabotage, and write plans with that order.
+
+## A reader that finds nothing may be the one that erased it (2026-10-01)
+
+"A second client counts 0 tables" read as data the first client never persisted. A dump of the store taken just before the second open showed the opposite: the data was there, beside a journal that should not have been, and the second client's own open rolled it back. When a reader sees missing data, snapshot the storage before the reader touches it; a recovery path (hot journal, `pendingVersion` cleanup) is a writer too.
