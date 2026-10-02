@@ -44,6 +44,40 @@ describe('scripts/bounded.mjs', () => {
     expect(stderr).toContain('without finishing');
   }, 20_000);
 
+  // `pnpm exec rstest` is such a command: the deadline killed the pnpm launcher
+  // and left rstest and its browser running under init (2026-10-01).
+  // Falsifiable: signal the child alone (`child.kill`) and the grandchild
+  // outlives the run.
+  it('kills what the command started too, not only the command', async () => {
+    const { code, stderr } = await run([
+      '1',
+      'node',
+      '-e',
+      [
+        "const { spawn } = require('node:child_process');",
+        "const g = spawn('node', ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+        "console.error('GRANDCHILD ' + g.pid);",
+        'setInterval(() => {}, 1000);',
+      ].join(' '),
+    ]);
+    const pid = Number(/GRANDCHILD (\d+)/.exec(stderr)?.[1]);
+    expect(code).toBe(124);
+    expect(pid).toBeGreaterThan(0);
+    const alive = () => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    try {
+      expect(alive()).toBe(false);
+    } finally {
+      if (alive()) process.kill(pid, 'SIGKILL');
+    }
+  }, 20_000);
+
   it('reports a command that does not exist rather than hanging', async () => {
     const { code, stderr } = await run(['10', 'definitely-not-a-command-here']);
     expect(code).toBe(127);

@@ -32,14 +32,32 @@ if (!Number.isFinite(seconds) || seconds <= 0 || command.length === 0) {
   process.exit(2);
 }
 
+// Its own process group, so that a deadline or a signal reaches what the
+// command started too: `pnpm exec rstest` killed through its launcher alone
+// left rstest and its browser running under init (2026-10-01). A background
+// group that read the terminal would be stopped, hence no stdin. POSIX only.
+const grouped = process.platform !== 'win32';
+
 const child = spawn(command[0], command.slice(1), {
-  stdio: 'inherit',
+  stdio: grouped ? ['ignore', 'inherit', 'inherit'] : 'inherit',
+  detached: grouped,
   // The command comes from package.json, never from user input; no shell, so
   // an argument with a space cannot become two.
   shell: false,
 });
 
+/** Signals the command and everything it started; a group already gone is fine. */
+const killAll = (signal) => {
+  if (!grouped) return child.kill(signal);
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    // ESRCH: nothing left in the group.
+  }
+};
+
 let killedByDeadline = false;
+let forwarded = false;
 
 const deadline = setTimeout(() => {
   killedByDeadline = true;
@@ -49,14 +67,17 @@ const deadline = setTimeout(() => {
   console.error(
     '[bounded] A run that hangs outside a test body reports nothing by itself: read the last lines above for the file that was still running.',
   );
-  child.kill('SIGTERM');
+  killAll('SIGTERM');
   // A wedged browser process can ignore SIGTERM; do not wait for ever for it.
-  setTimeout(() => child.kill('SIGKILL'), 10_000).unref();
+  setTimeout(() => killAll('SIGKILL'), 10_000).unref();
 }, seconds * 1000);
 
 // Ctrl-C and a CI cancellation must reach the child, not just this wrapper.
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => child.kill(signal));
+  process.on(signal, () => {
+    forwarded = true;
+    killAll(signal);
+  });
 }
 
 child.on('error', (error) => {
@@ -67,6 +88,8 @@ child.on('error', (error) => {
 
 child.on('exit', (code, signal) => {
   clearTimeout(deadline);
+  // What the command started may outlive it; a run we ended leaves nothing.
+  if (killedByDeadline || forwarded) killAll('SIGKILL');
   if (killedByDeadline) process.exit(124);
   if (code !== null) process.exit(code);
   // Killed by a signal we did not send: report it the way a shell does.
