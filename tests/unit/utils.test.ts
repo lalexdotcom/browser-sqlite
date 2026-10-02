@@ -1,7 +1,10 @@
 import { describe, expect, it } from '@rstest/core';
 import type { SQLiteBuild } from '../../src/const/builds';
+import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import { SQLiteError } from '../../src/types/errors';
 import {
+  assertPragmasAllowed,
+  assertStatementAllowed,
   databaseFiles,
   databasePath,
   isTransactionControl,
@@ -11,6 +14,7 @@ import {
   resolveDatabase,
   resolvePragmas,
   resolveWasmLocation,
+  splitPragmas,
   sqlParams,
 } from '../../src/utils';
 
@@ -51,6 +55,21 @@ describe('isWriteQuery', () => {
     });
     it('returns true for DETACH', () => {
       expect(isWriteQuery('DETACH other')).toBe(true);
+    });
+    // These take no value and no argument, so they look like a lookup; each
+    // writes the file (a write lock measured on 2026-10-01 for the first, and
+    // `sqlite3BeginWriteOperation` in SQLite's pragma.c for all three).
+    // Falsifiability: drop them from WRITING_PRAGMAS and read() accepts them.
+    it('returns true for a bare PRAGMA that writes the database', () => {
+      expect(isWriteQuery('PRAGMA incremental_vacuum')).toBe(true);
+      expect(isWriteQuery('PRAGMA optimize')).toBe(true);
+      expect(isWriteQuery('PRAGMA wal_checkpoint;')).toBe(true);
+      expect(isWriteQuery('PRAGMA main.incremental_vacuum')).toBe(true);
+      expect(isWriteQuery('pragma OPTIMIZE')).toBe(true);
+    });
+    it('returns false for a bare PRAGMA that only reads', () => {
+      expect(isWriteQuery('PRAGMA user_version')).toBe(false);
+      expect(isWriteQuery('PRAGMA main.journal_mode')).toBe(false);
     });
   });
 
@@ -322,9 +341,9 @@ describe('mergeSignals', () => {
 
 describe('resolvePragmas', () => {
   it("returns the consumer's pragmas untouched on a VFS that declares none", () => {
-    // Falsifiability: give OPFSAdaptiveVFS a defaultPragmas entry and this
+    // Falsifiability: give OPFSCoopSyncVFS a defaultPragmas entry and this
     // gains a key.
-    expect(resolvePragmas('OPFSAdaptiveVFS', { foreign_keys: 'ON' })).toEqual({
+    expect(resolvePragmas('OPFSCoopSyncVFS', { foreign_keys: 'ON' })).toEqual({
       foreign_keys: 'ON',
     });
   });
@@ -335,6 +354,24 @@ describe('resolvePragmas', () => {
       locking_mode: 'exclusive',
       journal_mode: 'wal',
     });
+  });
+
+  // First, so that it covers the pragmas applied after it at open.
+  // Falsifiability: spread the consumer's pragmas first and foreign_keys
+  // comes first.
+  it('puts busy_timeout ahead of the consumer pragmas where it is a default', () => {
+    expect(
+      Object.keys(resolvePragmas('OPFSAdaptiveVFS', { foreign_keys: 'ON' })),
+    ).toEqual(['busy_timeout', 'foreign_keys']);
+  });
+
+  it('keeps busy_timeout first when the consumer sets its value', () => {
+    const pragmas = resolvePragmas('OPFSAdaptiveVFS', {
+      user_version: '7',
+      busy_timeout: '0',
+    });
+    expect(Object.keys(pragmas)).toEqual(['busy_timeout', 'user_version']);
+    expect(pragmas.busy_timeout).toBe('0');
   });
 
   it('keeps the defaults when the consumer sets an unrelated pragma', () => {
@@ -363,6 +400,107 @@ describe('resolvePragmas', () => {
     expect(resolvePragmas('AccessHandlePoolVFS', {})).toEqual(
       resolvePragmas('AccessHandlePoolVFS', undefined),
     );
+  });
+});
+
+// Only where WebLocksMixin gives BUSY its meaning — another connection holds
+// the lock, so waiting helps. Measured on 2026-10-01: it removed the BUSY two
+// clients met there, and blocked OPFSCoopSyncVFS, whose BUSY asks wa-sqlite to
+// await a handle transfer.
+describe('busy_timeout by VFS', () => {
+  it('is a default on the three VFS built on WebLocksMixin only', () => {
+    const withDefault = Object.entries(VFS_CAPABILITIES)
+      .filter(([, cap]) => 'busy_timeout' in cap.defaultPragmas)
+      .map(([vfs]) => vfs)
+      .sort();
+    expect(withDefault).toEqual([
+      'IDBBatchAtomicVFS',
+      'OPFSAdaptiveVFS',
+      'OPFSAnyContextVFS',
+    ]);
+  });
+
+  it('is refused on OPFSCoopSyncVFS, naming the VFS', () => {
+    expect(() =>
+      assertPragmasAllowed('OPFSCoopSyncVFS', { busy_timeout: '100' }),
+    ).toThrow(
+      expect.objectContaining({
+        code: 'INVALID_PRAGMA',
+        message: expect.stringContaining('OPFSCoopSyncVFS'),
+      }),
+    );
+    expect(() =>
+      assertPragmasAllowed('OPFSCoopSyncVFS', { BUSY_TIMEOUT: '100' }),
+    ).toThrow(expect.objectContaining({ code: 'INVALID_PRAGMA' }));
+  });
+
+  it('is accepted where it is a default', () => {
+    expect(() =>
+      assertPragmasAllowed('OPFSAdaptiveVFS', { busy_timeout: '0' }),
+    ).not.toThrow();
+  });
+
+  it('is refused in a statement that sets it, and read freely', () => {
+    expect(() =>
+      assertStatementAllowed('OPFSCoopSyncVFS', 'PRAGMA busy_timeout = 10'),
+    ).toThrow(expect.objectContaining({ code: 'INVALID_PRAGMA' }));
+    expect(() =>
+      assertStatementAllowed('OPFSCoopSyncVFS', 'pragma main.BUSY_TIMEOUT(10)'),
+    ).toThrow(expect.objectContaining({ code: 'INVALID_PRAGMA' }));
+    expect(() =>
+      assertStatementAllowed('OPFSCoopSyncVFS', 'PRAGMA busy_timeout'),
+    ).not.toThrow();
+    expect(() =>
+      assertStatementAllowed('OPFSAdaptiveVFS', 'PRAGMA busy_timeout = 10'),
+    ).not.toThrow();
+  });
+});
+
+describe('splitPragmas', () => {
+  // The database pragmas write the file (a write lock measured on 2026-10-01
+  // for each of the first five; SQLite's pragma.c for optimize and
+  // wal_checkpoint), so they run once per client through the write path; the
+  // rest configure a connection and run on every worker at open.
+  // Falsifiability: drop a name from WRITING_PRAGMAS and it moves to
+  // `connection`.
+  it('puts the pragmas that write the file in database, the rest in connection', () => {
+    expect(
+      splitPragmas({
+        busy_timeout: '5000',
+        user_version: '7',
+        foreign_keys: 'ON',
+        application_id: '5',
+        schema_version: '3',
+        auto_vacuum: 'incremental',
+        journal_mode: 'delete',
+        incremental_vacuum: '10',
+        optimize: '0x10002',
+        wal_checkpoint: 'passive',
+        cache_size: '-4000',
+      }),
+    ).toEqual({
+      connection: {
+        busy_timeout: '5000',
+        foreign_keys: 'ON',
+        journal_mode: 'delete',
+        cache_size: '-4000',
+      },
+      database: {
+        user_version: '7',
+        application_id: '5',
+        schema_version: '3',
+        auto_vacuum: 'incremental',
+        incremental_vacuum: '10',
+        optimize: '0x10002',
+        wal_checkpoint: 'passive',
+      },
+    });
+  });
+
+  it('classifies a pragma name whatever its case', () => {
+    expect(splitPragmas({ USER_VERSION: '7' }).database).toEqual({
+      USER_VERSION: '7',
+    });
   });
 });
 

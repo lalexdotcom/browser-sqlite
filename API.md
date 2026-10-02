@@ -21,7 +21,7 @@ const db = createSQLiteClient('myapp.sqlite', {
   poolSize: 2,                    // number of worker threads (default: 2)
   vfs: 'OPFSAdaptiveVFS',         // required — see Browser compatibility
   build: 'async',                 // wa-sqlite build (default: the first the browser supports)
-  pragmas: {                      // SQLite PRAGMAs applied on open
+  pragmas: {                      // SQLite PRAGMAs (see the table below)
     journal_mode: 'WAL',
     synchronous: 'NORMAL',
   },
@@ -38,7 +38,7 @@ const db = createSQLiteClient('myapp.sqlite', {
 | `vfs` | `SQLiteVFS` | — (required) | Where the database is stored.<br>See [Recommendations](VFS.md#recommendations). |
 | `build` | `SQLiteBuild` | first build the VFS declares that the browser supports | Which wa-sqlite WebAssembly build to load.<br>See [Builds reference](VFS.md#builds-reference). |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Where the workers fetch their `.wasm`. |
-| `pragmas` | `Record<string, string>` | `undefined` | SQLite PRAGMAs applied to each worker connection on open. |
+| `pragmas` | `Record<string, string>` | `undefined` | SQLite PRAGMAs, merged over the VFS's defaults. Those that configure a connection are applied on every worker as it opens; those that write the database — `user_version`, `application_id`, `schema_version`, `auto_vacuum`, `incremental_vacuum`, `optimize`, `wal_checkpoint` — once, as a write, before the client's first query. A VFS may declare defaults — `busy_timeout=5000` on the three built on Web Locks — and refuse a pragma, as `OPFSCoopSyncVFS` refuses `busy_timeout` ([VFS.md](VFS.md)): it is then refused here and in any statement that sets it, with `INVALID_PRAGMA`. |
 | `maxWorkerRestarts` | `number` | `1` | How many times a slot may be restarted after it dies. |
 | `openTimeout` | `number` (ms) | `30_000` | How long a worker has to report ready after `open` is sent. |
 | `drainTimeout` | `number` (ms) | `60_000` | How long the drain loop may run before the worker is presumed dead. |
@@ -91,7 +91,7 @@ A database name may be 56 characters once normalized — 52 on `OPFSAdaptiveVFS`
 
 ## *client*.ready
 
-`Promise<void>`, readonly. Settles once the pool has started: every worker has opened, been declined by the environment, or failed its one retry. It resolves when at least one worker serves the database, and [`poolSize`](#clientpoolsize) is final from then on. It rejects with the error that failed the client — `WORKER_CRASHED` when no worker could open, `DATABASE_IN_USE` when another client holds the database exclusively — and with `CLIENT_CLOSED` when `close()` comes first.
+`Promise<void>`, readonly. Settles once the pool has started: every worker has opened, been declined by the environment, or failed its one retry. It resolves when at least one worker serves the database, and the [pragmas](#options) that write the database are applied; [`poolSize`](#clientpoolsize) is final from then on. It rejects with the error that failed the client — `WORKER_CRASHED` when no worker could open, `DATABASE_IN_USE` when another client holds the database exclusively, `STATEMENT_FAILED` when SQLite refused one of those pragmas — and with `CLIENT_CLOSED` when `close()` comes first.
 
 You never need to await it: queries wait for the pool on their own. It settles once — a worker lost later is reported by [`onWorkerLost`](#options), not here — and leaving it unread never raises an unhandled rejection.
 
@@ -542,7 +542,7 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 
 | Code | When it is thrown |
 |------|------------------|
-| `NOT_A_READ_QUERY` | `read()`, `chunk()`, `stream()`, or `first()` was called with a statement that is not a provably readable query. A bare read pragma (`PRAGMA journal_mode`) is accepted; a pragma that assigns a value or takes an argument must go through `write()`. |
+| `NOT_A_READ_QUERY` | `read()`, `chunk()`, `stream()`, or `first()` was called with a statement that is not a provably readable query. A bare read pragma (`PRAGMA journal_mode`) is accepted; a pragma that assigns a value or takes an argument, and `PRAGMA optimize`, `incremental_vacuum` and `wal_checkpoint`, which write, must go through `write()`. |
 | `CLIENT_CLOSED` | A query was queued after `close()` was called. |
 | `WORKER_CRASHED` | A pool worker died and the supervisor decided not to restart it. All queued and in-flight work on that slot is rejected. When SQLite refused to open the database — a file that is not a database, a `pragmas` entry it rejected — `sqliteCode` carries its result code. |
 | `TIMEOUT` | A worker did not post `ready` within `openTimeout` milliseconds. The most common cause is a database held under an exclusive lock by another tab or client. |
@@ -551,7 +551,7 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 | `STATEMENT_FAILED` | SQLite refused or failed a statement for any reason other than a lock conflict: a constraint, a syntax error, a full disk, a file that is not a database. `message` is SQLite's own; `sqliteCode` carries its result code, and `sqliteExtendedCode` its subtype when SQLite reports one. |
 | `BUSY` | A transient conflict, worth retrying. Either SQLite reported a lock conflict — `SQLITE_BUSY` or `SQLITE_LOCKED`, with its result code on `sqliteCode` and, when SQLite reports one, its subtype on `sqliteExtendedCode` — or a database was being opened or deleted elsewhere at that moment. **A read that SQLite reported busy is retried once for you**; if it reaches you, the retry failed too. Writes are never retried, and neither is a `BUSY` without a `sqliteCode`. |
 | `INVALID_OPTION` | An option was refused at the call, before any worker ran: `vfs` missing or unknown, a `(vfs, build)` pair the VFS does not support, a `poolSize` above what the VFS allows, a `wasmUrl` that is not a URL, a database name too long once normalized, a database name that is empty once normalized, or `inspectDatabase` on a memory VFS. The message names the option and what it accepts. |
-| `INVALID_PRAGMA` | A `pragmas` entry could not be rendered. The name must be a bare word; the value must be an integer, a bare word such as `WAL`, or a quoted SQL literal. |
+| `INVALID_PRAGMA` | A `pragmas` entry could not be rendered — the name must be a bare word; the value must be an integer, a bare word such as `WAL`, or a quoted SQL literal — or the VFS refuses it, in `pragmas` or in a statement that sets it ([VFS.md](VFS.md)). |
 | `INVALID_IDENTIFIER` | A name or type handed to `output()` or `bulkWrite()` cannot be used as written: an empty name, a name containing a NUL, a column type that is not a word with optional numeric arguments, or a generated expression that is not parenthesised and free of `;`. |
 | `BULK_WRITE_FAILED` | A batch failed inside `bulkWrite().close()` or `output().close()`. The error is a `SQLiteBulkWriteError`, carrying `rowsWritten` and `rowsNotWritten`. |
 | `DATABASE_IN_USE` | A client still holds the database, in this tab or another. Retrying will not help: close every client on it first. Raised by `deleteDatabase`, and by any method on a second client where the VFS supports one connection at a time. |
@@ -586,7 +586,7 @@ try {
 ```
 
 
-**Read methods reject write statements.** `read()`, `chunk()`, `stream()`, and `first()` reject any statement that is not a provably readable query, throwing `NOT_A_READ_QUERY`. A bare read pragma (`PRAGMA journal_mode`) is accepted; a pragma that assigns a value or takes an argument must go through `write()`.
+**Read methods reject write statements.** `read()`, `chunk()`, `stream()`, and `first()` reject any statement that is not a provably readable query, throwing `NOT_A_READ_QUERY`. A bare read pragma (`PRAGMA journal_mode`) is accepted; a pragma that assigns a value or takes an argument, and `PRAGMA optimize`, `incremental_vacuum` and `wal_checkpoint`, which write, must go through `write()`.
 
 ---
 

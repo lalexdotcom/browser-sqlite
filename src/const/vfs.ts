@@ -146,8 +146,18 @@ export type VFSCapability = {
    * data, not their milliseconds. And `cache_size`, because raising it changes
    * a mode without a measurable gain — Firefox showed none at all, and the
    * heap it can then reach is never given back (measured 2026-09-02).
+   *
+   * `busy_timeout` clears it on the VFS built on WebLocksMixin, where a `BUSY`
+   * means another connection holds the lock: two clients, one setting a pragma
+   * that writes, met `BUSY` in up to 10 runs of 12 without it and in none with
+   * it (2026-10-01). Declared first, so that it covers the pragmas after it.
    */
   readonly defaultPragmas: Readonly<Record<string, string>>;
+  /**
+   * PRAGMAs a client may not set on this VFS, each with the reason it is given
+   * when one does — in `pragmas`, or in a statement that sets it.
+   */
+  readonly refusedPragmas: Readonly<Record<string, string>>;
   /**
    * A boolean PRAGMA that makes a read transaction see every committed
    * transaction, for a VFS whose reads may start one behind. The barrier sets it
@@ -237,6 +247,7 @@ export const VFS_CAPABILITIES = {
     exclusiveConnection: false,
     exclusiveConnectionWithout: ['readwrite-unsafe'],
     defaultPragmas: {},
+    refusedPragmas: {},
     // Our wa-sqlite#365, carried in patches/: a read otherwise freezes the view
     // the BroadcastChannel has delivered, which can lag a commit.
     catchUpPragma: 'wal_read_latest',
@@ -258,7 +269,8 @@ export const VFS_CAPABILITIES = {
     yieldsDuringStatements: false,
     exclusiveConnection: false,
     exclusiveConnectionWithout: [],
-    defaultPragmas: {},
+    defaultPragmas: { busy_timeout: '5000' },
+    refusedPragmas: {},
     catchUpPragma: null,
   },
   OPFSCoopSyncVFS: {
@@ -281,6 +293,10 @@ export const VFS_CAPABILITIES = {
     exclusiveConnection: false,
     exclusiveConnectionWithout: [],
     defaultPragmas: {},
+    refusedPragmas: {
+      busy_timeout:
+        "its BUSY asks wa-sqlite to await the access handle's transfer, which a busy wait inside the worker never lets arrive",
+    },
     catchUpPragma: null,
   },
   AccessHandlePoolVFS: {
@@ -313,6 +329,7 @@ export const VFS_CAPABILITIES = {
     // either way — SQLite removes the -wal on a clean close, so it costs no
     // slot at rest. `mem:measurements`.
     defaultPragmas: { locking_mode: 'exclusive', journal_mode: 'wal' },
+    refusedPragmas: {},
     catchUpPragma: null,
   },
   IDBBatchAtomicVFS: {
@@ -331,7 +348,8 @@ export const VFS_CAPABILITIES = {
     yieldsDuringStatements: true,
     exclusiveConnection: false,
     exclusiveConnectionWithout: [],
-    defaultPragmas: {},
+    defaultPragmas: { busy_timeout: '5000' },
+    refusedPragmas: {},
     catchUpPragma: null,
   },
   IDBMirrorVFS: {
@@ -370,6 +388,7 @@ export const VFS_CAPABILITIES = {
     exclusiveConnection: false,
     exclusiveConnectionWithout: [],
     defaultPragmas: {},
+    refusedPragmas: {},
     catchUpPragma: null,
   },
   OPFSAnyContextVFS: {
@@ -389,7 +408,8 @@ export const VFS_CAPABILITIES = {
     yieldsDuringStatements: false,
     exclusiveConnection: false,
     exclusiveConnectionWithout: [],
-    defaultPragmas: {},
+    defaultPragmas: { busy_timeout: '5000' },
+    refusedPragmas: {},
     catchUpPragma: null,
   },
   MemoryVFS: {
@@ -410,6 +430,7 @@ export const VFS_CAPABILITIES = {
     exclusiveConnection: false,
     exclusiveConnectionWithout: [],
     defaultPragmas: {},
+    refusedPragmas: {},
     catchUpPragma: null,
   },
   MemoryAsyncVFS: {
@@ -430,6 +451,7 @@ export const VFS_CAPABILITIES = {
     exclusiveConnection: false,
     exclusiveConnectionWithout: [],
     defaultPragmas: {},
+    refusedPragmas: {},
     catchUpPragma: null,
   },
 } as const satisfies Record<string, VFSCapability>;

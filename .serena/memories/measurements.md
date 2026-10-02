@@ -4,6 +4,18 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## PRAGMA-BUSY — a pragma that writes, applied at open, against another client's write, 2026-10-01, Playwright's Chromium and Firefox, this container
+
+**Attribution.** Two clients created in one task, each then writing, 12 runs per case, on `OPFSAnyContextVFS`, `IDBBatchAtomicVFS`, `OPFSAdaptiveVFS`. Never with one client, never without a writing pragma (`journal_mode=truncate` included). With `user_version=7` or `application_id=5`, two faces of one collision: the other client's user write rejected `BUSY: database is locked` (its own worker READY at generation 0, the barrier then its `CREATE TABLE` failing — the opening worker held RESERVED outside `bsq:write`), or the opening worker failed and was restarted (generation > 0). Two clients, pool 2, Chromium: 4-7 runs of 12 failing per VFS; Firefox `OPFSAnyContextVFS` up to 8/12 (pool 1), `IDBBatchAtomicVFS` 0-2/12, `OPFSAdaptiveVFS` 0/12.
+
+**`busy_timeout=5000` placed first, same cases, both engines:** 0/12 everywhere on `jspi` and `async` of the three VFS, against up to 10/12 without; slowest pair of writes 75-258 ms with it, 61-245 without. `OPFSWriteAheadVFS/sync`: 0/12 with or without on Chromium, 12/12 `DATABASE_IN_USE` on Firefox (by design).
+
+**Which pragmas write.** Two wa-sqlite connections on `IDBBatchAtomicVFS`, `lockPolicy: 'shared'`, A holding RESERVED (`BEGIN IMMEDIATE`), B running each assignable pragma, a fresh VFS per pragma (one shared instance skewed the second half), new database and database with a table: `BUSY` for `user_version`, `application_id`, `schema_version`, `incremental_vacuum` in both, `auto_vacuum = full|incremental` on the new one only; every other pragma ok in both. `optimize` and `wal_checkpoint` write only when they find work (SQLite 3.53.0 pragma.c), `journal_mode` only to or from WAL.
+
+**`busy_timeout` forced on every VFS:** `coopsync-handover` hung for minutes on `OPFSCoopSyncVFS`, `sync` and `jspi`, and `coopsync-retry` took ~60 s; `OPFSWriteAheadVFS` (`sync`, `jspi`) and `IDBMirrorVFS` (`jspi`, `async`) passed their whole browser suite apart from an unrelated test the change had moved.
+
+**Routing cost** of the new `isReadQuery` (`exec` + a `Set`) against the old (`test`), 2 M calls, Node: short `SELECT` 68 → 73 ns, 2 KB `SELECT` unchanged, `PRAGMA user_version` 31 → 65 ns, `INSERT` 21 → 28 ns.
+
 ## IDB-JOURNAL — a journal deletion lost with its worker, `IDBBatchAtomicVFS`, 2026-10-01, Playwright's Chromium and Firefox, this container
 
 **In the library.** Whole `chromium · IDBBatchAtomicVFS` cells, `jspi`/`async` alternated: **3 failed in 21** without a fix (`vfs-folders` "…exactly at the bound", `failed-client` "…before close", `expected +0 to be 1`); **30 of 30** green with fix A, **30 of 30** with fix B. A page-side dump of IndexedDB before the second open: failing runs held the database intact AND a 512-byte `-journal`; passing runs, no journal, 20 of 20. Full matrix with B after the repin: 66/66, 2332 s.

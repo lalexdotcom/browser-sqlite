@@ -43,13 +43,16 @@ import { createSupervisor } from './supervisor';
 import { createTransaction } from './transaction';
 import { SQLiteError } from './types/errors';
 import {
+  assertPragmasAllowed,
   assertReadable,
+  assertStatementAllowed,
   databaseFiles,
   mergeSignals,
   renderPragmas,
   resolveDatabase,
   resolvePragmas,
   resolveWasmLocation,
+  splitPragmas,
   withDeadline,
 } from './utils';
 
@@ -217,10 +220,15 @@ export type CreateSQLiteClientOptions = {
   wasmUrl?: string | ((build: SQLiteBuild) => string);
 
   /**
-   * SQLite PRAGMAs applied to each worker's database connection on open.
+   * SQLite PRAGMAs for this client, merged over the VFS's defaults.
    * Keys are PRAGMA names, values are their string representations.
    * Example: `{ journal_mode: 'WAL', synchronous: 'NORMAL' }`.
-   * If omitted, no PRAGMAs are applied beyond SQLite defaults.
+   *
+   * Those that configure a connection are applied on every worker as it opens.
+   * Those that write the database — `user_version`, `application_id`,
+   * `schema_version`, `auto_vacuum`, `incremental_vacuum`, `optimize`,
+   * `wal_checkpoint` — are applied once, as a write, before the client's first
+   * query. A VFS may declare defaults and refuse a pragma; see VFS.md.
    */
   pragmas?: Record<string, string>;
 
@@ -456,11 +464,16 @@ export const createSQLiteClient = (
   // later site reads THIS, never `clientOptions.pragmas` — including the debug
   // state, so what `db.debug` reports is what the workers actually ran.
   const pragmas = resolvePragmas(vfs, clientOptions.pragmas);
+  // A worker applies only the connection pragmas at open; those that write the
+  // file run once, through the write path (`databaseSetup`).
+  const { connection: connectionPragmas, database: databasePragmas } =
+    splitPragmas(pragmas);
   const barrierSql = barrierSqlFor(vfs, pragmas);
 
   // Fail at construction, not inside the first unrelated query. The merged set
   // is what gets validated: a bad default would otherwise reach a worker.
   renderPragmas(pragmas);
+  assertPragmasAllowed(vfs, pragmas);
 
   // TEST-ONLY, UNSUPPORTED. Read once here, validated, and converted to a
   // typed internal value so no `any` travels further. Absent from the public
@@ -591,8 +604,13 @@ export const createSQLiteClient = (
               ),
           );
         }
-        // A no-op when failClient above has already rejected it.
-        readyDeferred.resolve();
+        // A no-op when failClient above has already rejected it. With database
+        // pragmas, not before they are applied: their failure fails the client.
+        if (databaseSetup) {
+          void databaseSetup.then(() => readyDeferred.resolve());
+        } else {
+          readyDeferred.resolve();
+        }
       };
 
       return writerPolicy
@@ -894,10 +912,14 @@ export const createSQLiteClient = (
     });
   };
 
+  /** Settles once the client's database pragmas are applied; see below. */
+  let databaseSetup: Promise<void> | undefined;
+
   const acquireLease = async (
     kind: 'read' | 'write',
     signal: AbortSignal | undefined,
     request: RequestDebugHandle | undefined,
+    setup = false,
   ) => {
     // Connection guard — first thing, before any pool or lock interaction.
     //
@@ -915,6 +937,9 @@ export const createSQLiteClient = (
       await connLockPromise;
       if (connRefused) throw inUse();
     }
+
+    // The client's database pragmas are in force before any of its queries.
+    if (!setup && databaseSetup) await databaseSetup;
 
     // Lock BEFORE the lease, never after. The reverse holds a pool worker
     // while blocked on a cross-tab lock: at poolSize 2, two queued writes
@@ -1042,14 +1067,53 @@ export const createSQLiteClient = (
   const acquireInstrumented = (
     kind: 'read' | 'write',
     signal?: AbortSignal,
+    setup = false,
   ) => {
     const request = clientDebug?.createRequestDebugState(kind);
-    if (!request) return acquireLease(kind, signal, undefined);
-    return acquireLease(kind, signal, request).catch((error: unknown) => {
-      request.failed(error);
-      throw error;
-    });
+    if (!request) return acquireLease(kind, signal, undefined, setup);
+    return acquireLease(kind, signal, request, setup).catch(
+      (error: unknown) => {
+        request.failed(error);
+        throw error;
+      },
+    );
   };
+
+  /**
+   * The pragmas that write the file, applied once for the client, under the
+   * origin write lock like any write. Applied at open on every worker, they
+   * took SQLite's write lock outside the library's and met another client's
+   * write with `BUSY` (`mem:measurements`, PRAGMA-BUSY). A failure here fails
+   * the client.
+   */
+  if (Object.keys(databasePragmas).length > 0) {
+    databaseSetup = (async () => {
+      const lease = await acquireInstrumented('write', undefined, true);
+      try {
+        for (const statement of renderPragmas(databasePragmas)) {
+          const rows = lease.worker.query(statement, undefined, {
+            internal: true,
+          });
+          while (!(await rows.next()).done) {
+            /* discard rows */
+          }
+        }
+      } finally {
+        await afterWrite(lease.worker);
+        void lease.worker.quiesce().then(
+          () => lease.release(),
+          () => lease.release(),
+        );
+      }
+    })().catch((error: unknown) => {
+      if (closeAbort.signal.aborted) return;
+      failClient(
+        error instanceof SQLiteError
+          ? error
+          : new SQLiteError('WORKER_CRASHED', String(error), { cause: error }),
+      );
+    });
+  }
 
   /**
    * A `BUSY` SQLite itself reported, as opposed to one this library minted to
@@ -1273,6 +1337,7 @@ export const createSQLiteClient = (
     params?: unknown[],
     options?: SQLiteQueryOptions,
   ) => {
+    assertStatementAllowed(vfs, sql);
     const { signal, release } = withDeadline(options, 'write');
     try {
       const lease = await acquireInstrumented('write', signal);
@@ -1344,6 +1409,7 @@ export const createSQLiteClient = (
     onPoisoned: (index, error) => handleDeath(index, error),
     closeSignal: closeAbort.signal,
     bulkFor,
+    checkStatement: (sql) => assertStatementAllowed(vfs, sql),
     logger,
   });
 
@@ -1524,7 +1590,7 @@ export const createSQLiteClient = (
       vfs,
       build,
       wasm,
-      pragmas,
+      pragmas: connectionPragmas,
       statementCacheSize: DEFAULT_STATEMENT_CACHE_SIZE,
       statementCacheBytes,
       onDeath: handleDeath,

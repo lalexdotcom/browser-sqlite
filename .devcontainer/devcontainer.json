@@ -28,7 +28,9 @@
 	"containerEnv": {
 		"CLAUDE_CONFIG_DIR": "/ai-tools/.claude",
 		"MEMPALACE_PALACE_PATH": "/ai-tools/.mempalace",
-		"SERENA_HOME": "/ai-tools/.serena"
+		"SERENA_HOME": "/ai-tools/.serena",
+		// The generic opt-out (consoledonottrack.com): Claude Code reads it as DISABLE_TELEMETRY.
+		"DO_NOT_TRACK": "1"
 	},
 	"customizations": {
 		"vscode": {

@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-10-01.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-10-02.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one.
 
 **No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
@@ -113,7 +113,7 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 ## Decisions the user owes
 
-- **Two product behaviours found on 2026-09-28 while testing, not decided** (facts in `mem:follow-ups`): a `chunk()`/`stream()` left early without a signal cannot cut its running step (make every generator read abortable?), and a writing pragma at open can meet `BUSY` against another client's write, init lock or not (which call raises it is not established).
+- **A product behaviour found on 2026-09-28 while testing, not decided** (facts in `mem:follow-ups`): a `chunk()`/`stream()` left early without a signal cannot cut its running step (make every generator read abortable?). The other one of that day — a writing pragma at open meeting `BUSY` — was fixed on 2026-10-02 (`fix/open-pragma-busy`, `mem:history`).
 - **The second-client subject is CLOSED and MERGED** — `5661048`, 2026-09-18, `--no-ff`, branch deleted
   local and remote. What the user set
   the session on — the multi-client and cross-tab tests on every VFS — grew into the branch that ships:

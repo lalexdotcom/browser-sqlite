@@ -64,10 +64,41 @@ const WRITE_KEYWORDS =
  * free — `PRAGMA journal_mode; DROP TABLE t` does not match, and neither does
  * `PRAGMA journal_mode=WAL`, whose `=` breaks the match.
  */
-const READ_PRAGMA = /^\s*PRAGMA\s+(\w+\.)?\w+\s*;?\s*$/i;
+const READ_PRAGMA = /^\s*PRAGMA\s+(?:\w+\.)?(\w+)\s*;?\s*$/i;
+
+/**
+ * The pragmas that write the database file, with a value or without one.
+ * Measured on 2026-10-01 — each took a write lock where the others never did —
+ * except `optimize` and `wal_checkpoint`, which write only when they find
+ * work, per SQLite's pragma.c.
+ */
+const WRITING_PRAGMAS = new Set([
+  'user_version',
+  'application_id',
+  'schema_version',
+  'auto_vacuum',
+  'incremental_vacuum',
+  'optimize',
+  'wal_checkpoint',
+]);
+
+const isWritingPragma = (name: string) =>
+  WRITING_PRAGMAS.has(name.toLowerCase());
+
+/** Those of them that write with no value at all, so look like a lookup. */
+const BARE_WRITING_PRAGMAS = new Set([
+  'incremental_vacuum',
+  'optimize',
+  'wal_checkpoint',
+]);
+
+const isReadPragma = (sql: string) => {
+  const name = READ_PRAGMA.exec(sql)?.[1];
+  return name !== undefined && !BARE_WRITING_PRAGMAS.has(name.toLowerCase());
+};
 
 export const isReadQuery = (sql: string) =>
-  READ_PRAGMA.test(sql) ||
+  isReadPragma(sql) ||
   (/^\s*(SELECT|EXPLAIN|VALUES|WITH)\b/i.test(sql) &&
     !WRITE_KEYWORDS.test(sql));
 
@@ -168,8 +199,8 @@ export const withDeadline = (
  * Throws before a lease is taken, so a rejected statement costs no pool capacity.
  *
  * A bare read pragma (`PRAGMA journal_mode`) is accepted; a pragma that assigns
- * (`PRAGMA journal_mode=WAL`), takes an argument, or is followed by anything
- * else must go through `write()`.
+ * (`PRAGMA journal_mode=WAL`), takes an argument, is followed by anything else,
+ * or writes with no value (`PRAGMA optimize`) must go through `write()`.
  */
 export const assertReadable = (sql: string, method: string): void => {
   if (isReadQuery(sql)) return;
@@ -177,7 +208,7 @@ export const assertReadable = (sql: string, method: string): void => {
   throw new SQLiteError(
     'NOT_A_READ_QUERY',
     `${method}() only accepts statements that are provably reads; "${keyword}" must go through write(). ` +
-      `Note that a PRAGMA that assigns a value or takes an argument is a write.`,
+      `Note that a PRAGMA that assigns a value or takes an argument is a write, and so are PRAGMA optimize, incremental_vacuum and wal_checkpoint.`,
   );
 };
 
@@ -271,7 +302,9 @@ const PRAGMA_LITERAL = /^'([^']|'')*'$/;
  * they set anything at all. A key they DO set always wins, which is how a
  * default is refused: pass `journal_mode` yourself and yours is what runs.
  *
- * Order matters and is the whole function: spread the defaults first.
+ * Order matters and is the whole function: spread the defaults first. A
+ * default keeps its place when the consumer sets its value, which is what
+ * keeps `busy_timeout`, declared first, ahead of the pragmas it covers.
  */
 export const resolvePragmas = (
   vfs: SQLiteVFS,
@@ -280,6 +313,62 @@ export const resolvePragmas = (
   ...VFS_CAPABILITIES[vfs].defaultPragmas,
   ...pragmas,
 });
+
+const refusal = (vfs: SQLiteVFS, name: string): string | undefined => {
+  const refused: Readonly<Record<string, string>> =
+    VFS_CAPABILITIES[vfs].refusedPragmas;
+  const key = Object.keys(refused).find(
+    (k) => k.toLowerCase() === name.toLowerCase(),
+  );
+  return key === undefined ? undefined : refused[key];
+};
+
+const refusedError = (vfs: SQLiteVFS, name: string, reason: string) =>
+  new SQLiteError(
+    'INVALID_PRAGMA',
+    `PRAGMA ${name} is refused on ${vfs}: ${reason}`,
+  );
+
+/** Throws when a client's pragmas set one the VFS refuses. */
+export const assertPragmasAllowed = (
+  vfs: SQLiteVFS,
+  pragmas: Record<string, string>,
+): void => {
+  for (const name of Object.keys(pragmas)) {
+    const reason = refusal(vfs, name);
+    if (reason !== undefined) throw refusedError(vfs, name, reason);
+  }
+};
+
+/** A pragma statement that sets a value: `PRAGMA x = v` or `PRAGMA x(v)`. */
+const SET_PRAGMA = /^\s*PRAGMA\s+(?:\w+\.)?(\w+)\s*[=(]/i;
+
+/** Throws when a statement sets a pragma the VFS refuses. */
+export const assertStatementAllowed = (vfs: SQLiteVFS, sql: string): void => {
+  const name = SET_PRAGMA.exec(sql)?.[1];
+  if (name === undefined) return;
+  const reason = refusal(vfs, name);
+  if (reason !== undefined) throw refusedError(vfs, name, reason);
+};
+
+/**
+ * Splits a client's pragmas into those that configure a connection, applied on
+ * every worker at open, and those that write the database, applied once per
+ * client through the write path, under the origin write lock.
+ */
+export const splitPragmas = (
+  pragmas: Record<string, string>,
+): {
+  connection: Record<string, string>;
+  database: Record<string, string>;
+} => {
+  const connection: Record<string, string> = {};
+  const database: Record<string, string> = {};
+  for (const [key, value] of Object.entries(pragmas)) {
+    (isWritingPragma(key) ? database : connection)[key] = value;
+  }
+  return { connection, database };
+};
 
 export const renderPragmas = (pragmas: Record<string, string>): string[] =>
   Object.entries(pragmas).map(([key, value]) => {

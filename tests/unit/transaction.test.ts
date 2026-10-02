@@ -90,6 +90,7 @@ const harness = (
     afterWrite: overrides.afterWrite ?? (() => Promise.resolve()),
     onPoisoned: (index: number) => poisoned.push(index),
     closeSignal: overrides.closeSignal ?? new AbortController().signal,
+    checkStatement: () => {},
     bulkFor: () => ({
       bulkWrite: () => ({ enqueue: async () => {}, close: async () => 0 }),
       output: () => ({ enqueue: async () => {}, close: async () => 0 }),
