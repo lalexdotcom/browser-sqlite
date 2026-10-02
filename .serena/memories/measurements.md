@@ -2806,10 +2806,11 @@ starts in 43-73 ms and the long statement always runs — the read waits 4.2 s (
 budget rejects the call while it is still queued and nothing runs. A single loaded run of the file
 passed for exactly that reason.
 
-**`async` alone is not enough.** A statement yields only when it is abortable (`wantsSignal`) or
-its VFS declares `yieldsDuringStatements`, so an unsignalled long read on `MemoryVFS` holds its
-worker on `async` too, and `close()` waits it out: the queued test still failed on Firefox until
-its holder carried a signal.
+**`async` alone was not enough (until 2026-10-02).** A statement yielded only when it was abortable
+(`wantsSignal`) or its VFS declared `yieldsDuringStatements`, so an unsignalled long read on
+`MemoryVFS` held its worker on `async` too, and `close()` waited it out: the queued test still failed
+on Firefox until its holder carried a signal. Every statement yields since `feat/always-abortable`
+(GEN-ABORT).
 
 **What it settled.** The tests pinned no interruption: the rejection is immediate by contract,
 and the statement ran on regardless. They now run on `async`, warmed, every statement they expect
@@ -3098,3 +3099,46 @@ Chromium too, since a `readwrite-unsafe` request still conflicts with an exclusi
 `exclusiveFileHandle` declaration keeps these opens from waiting out the 2.5 s budget against a
 holder that is alive and will not let go (`mem:vfs`).
 
+## GEN-ABORT — every statement abortable: cost, benefit, concurrency, 2026-10-02, this container
+
+**Method.** A throwaway worktree of `main` (`223d472`) where a page flag forced `abortable` on in
+`chunk()` and `writeWorker`, so the "on" arm was exactly the change `feat/always-abortable` then
+made, with no signal and no abort race, and "off" was `main`. rstest probe files, one run per
+(engine, pair): every declared pair on Chromium 151 and Firefox, plus the four `sync` pairs on
+Chromium cross-origin isolated — 48 cells for reads, 48 for writes. Arms alternated, results posted
+to a local collector. Workloads calibrated per cell to ~400 ms (Firefox recursion is 4-5× slower).
+
+**Benefit** — the next `SELECT 1` on a `poolSize: 1` client after leaving a ~1 s step (median of 4):
+
+| exit | off | on |
+|---|---|---|
+| `first()` on row 1 of 2, `chunk()` `break`, `stream()` `break` — `async`/`jspi`, every VFS, Chromium | ~1 000 ms | 1-2 ms |
+| same, Firefox | ~1 000 ms | 4-10 ms |
+| same, `sync` isolated (the slot poll) | ~1 000 ms | 1 ms |
+| same, `sync` without isolation | ~1 000 ms | ~1 000 ms |
+| `chunk()` `break` on short rows, default `chunkSize` | 0-6 ms | 0-6 ms |
+
+**Read cost** (7 alternated rounds): compute without rows, cached self-join, `stream()` and `read()`
+of 100 000 rows — every ratio 0.93-1.04, sign varying. The 2-5 % on pure computation recorded in
+September did not reproduce (0.97-1.02). **Per statement** (2 000-statement batches, 15 rounds):
+-10 to +13 µs; re-runs of the one cell that leaned one way (`OPFSWriteAheadVFS/jspi`, Chromium)
+gave 0 to +4 µs — at most a few µs, ≤ 2 % of a statement that does nothing.
+
+**Write cost** (insert in one statement, CPU-bound write, `UPDATE` of 100 000 rows, 100 single
+`write()`, `bulkWrite` of 150 000 rows): median paired ratio 1.002 over 233 workloads; 13 outside
+±5 %, in both directions, including `MemoryVFS/sync` without isolation where the change does
+nothing (0.92). Two artefacts to know before reading such a table again: `AccessHandlePoolVFS`
+alternates slow/fast run by run (~760/~430 ms on an insert into a freshly recreated table, the same
+on `sync` where the arms are identical by construction), and `IDBBatchAtomicVFS` drifts upward
+across runs. An A/A control (both arms off, 15 rounds) spread 0.87-1.03 on `IDBBatchAtomicVFS`,
+which is what its 1.12-1.14 in the matrix was.
+
+**Concurrency.** A ~2 s read, then a ~2 s write, on one worker, while the client's other worker
+(where the pool has two) and a second client ran 10-12 reads and writes: 464 write rounds and every
+read round, both arms — no error, no partial state seen (a count of the table being written was
+always 0 or the total), row counts, snapshot sums, final sums and `integrity_check` all correct.
+**`OPFSAdaptiveVFS` (Firefox) and `OPFSCoopSyncVFS` do not hand their handle over mid-statement**:
+the second client waits the statement out in both arms. Latencies equal between arms.
+
+**Not measured.** Safari: Playwright's WebKit here needs root-installed system libraries (gstreamer,
+gtk4…). A second tab: equivalent at the VFS level to a second client, which was measured.

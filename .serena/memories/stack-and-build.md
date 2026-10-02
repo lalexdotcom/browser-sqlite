@@ -102,8 +102,9 @@ placeholder `undefined` must keep a callable union type.
 
 Four projects. `pnpm test` runs the first two.
 
-**Both engines are installed locally** — `~/.cache/ms-playwright` carries chromium, firefox
-and webkit. WebKit is not offered anywhere: the Linux build ships without OPFS, so every VFS
+**Both engines are installed locally** — `~/.cache/ms-playwright` carries chromium and firefox.
+WebKit was absent on 2026-10-02; `playwright install webkit` downloads it but it cannot launch here
+without system libraries (gstreamer, gtk4…) that need root. WebKit is not offered anywhere: the Linux build ships without OPFS, so every VFS
 this library uses is missing there and the suite would report a platform gap as a failure.
 **There is no engine environment variable any more (2026-09-03).** `TEST_BROWSER` and
 `CONFORMANCE_BROWSER` are both gone: each suite has one config file per engine, and its

@@ -42,10 +42,6 @@ been work on nothing.
 - `creator.close` — the drain never ends; the close path.
 - `db.read` — the open under test after all; `openWithRetry` and `OPFSCoopSyncVFS`'s lock.
 
-## Outside a transaction, a `chunk()`/`stream()` left early without a signal cannot cut its running step (2026-09-28)
-
-`chunk()` passes `abortable: signal !== undefined` (`src/queries.ts`), and the worker installs its progress handler only for an abortable statement (or a `yieldsDuringStatements` VFS, whose handler still answers 0 without a signal) — `src/worker/worker.ts`. So a `break` with no `signal`/`timeout` stops nothing in flight: on every build the worker finishes the step it is in (on `sync`, the chunk it is producing) before the lease comes back. Negligible for most queries; seconds for a query whose rows are far apart (a rare-match filter, an aggregate after a first row). Inside a transaction every statement is abortable (`src/transaction.ts`), so `API.md`'s "on every other build the statement is stopped" holds there; outside, `API.md` promises nothing either way. The cost of making every generator read abortable is measured as nothing on `async`/`jspi` (the yield, `mem:measurements`) and is an `Atomics.load` per 100 000 ops on isolated `sync`. Not decided by the user.
-
 ## wa-sqlite #370: opened, waiting on rhashimoto (2026-10-01)
 
 `IDBBatchAtomicVFS.jDelete` now honours `syncDir` (a `strict` transaction and `sync(true)`), so a journal's deletion commits before SQLite goes on; on master a context ending right after a commit left a hot journal and the next connection rolled the transaction back (the first of a new database, or any larger than the page cache). Report `docs/upstream/2026-10-01-wa-sqlite-370-idb-journal-delete.md`, numbers in `mem:measurements` (IDB-JOURNAL). Branch `fix/idb-journal-delete` on the fork, rebased on `7a4b4241` before opening, CI green; the patch carries its head `57305f73`. Fix A (`sync()` no longer forgetting) stays local on `backup/idb-journal-sync-a`. What each answer calls for:
@@ -158,6 +154,8 @@ savepoint before opening its own.
 **Three more on 2026-09-28.** The whole Firefox config (its two default targets) with the `open-retry` probe files beside it, no busy loops: **3 crashes in 42 launches**, every one on `lifecycle.test.ts`, and each ends the whole run 20-50 s in, the remaining files never run. Where it can be told, the crashed page was `OPFSAdaptiveVFS/jspi` — the other target's `lifecycle` finished 17/17 in two of the three — and with the 2026-09-26 matrix cell on `IDBMirrorVFS/async` it is not tied to one VFS. In all three the file's last lines are in the "startup readiness gate" group, but both projects' lines interleave in one log, so which test was running when the page died is not established.
 
 **Not seen without the extra pages (2026-09-28 evening).** 30 whole Firefox config passes in a row on `main`, nothing beside them, `--reporter verbose --reporter md` to keep the per-test lines: 0 crashes in 30 (57 files, 750 passed each, 91-93 s). The 3 in 42 were all launched with the `open-retry` probe files beside the config — more pages at once — so page count, not the file, is the lead. To catch one with its context, re-add pages (copies of test files) under the same reporters.
+
+**A sighting in a plain matrix (2026-10-02, `feat/always-abortable`).** The cell `firefox · IDBBatchAtomicVFS/async` of `pnpm test:matrix` — one project per run, no extra pages — crashed on `lifecycle.test.ts` after 32 of 61 files, 158 passed, no test failed; the 65 other cells green. The cell alone, three times in a row: 392 passed, no crash. So a single page can crash too; page count is a lead, not the condition. The report holds nothing more than the crash message and the counts above.
 
 **Reproduced with the extra pages; it is a Firefox segfault (2026-09-28 night).** With eight copies of `open-retry.test.ts` beside the config (16 more pages per pass): **3 crashes in 30** whole Firefox passes, 0 `open-retry` stalls. All on the `OPFSAdaptiveVFS/jspi` target's page, in `lifecycle.test.ts`'s "startup readiness gate" group, each time at or just after a test that kills the real slot-0 worker (already opened) by a dispatched `error` during the retry round. Those tests need `two-workers`, so on Firefox they run on the fallback `OPFSAnyContextVFS`, which holds no sync access handle — the crash is not about sync handles.
 
@@ -386,9 +384,6 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   that Safari the bench's two `jspi` columns answer `true` where both `async` ones stay `null`.
   Since 2026-09-24 an omitted `build` loads `jspi` wherever the engine has it, so Safari 27+ escapes
   it by default; `VFS.md`'s `async` note says so. Still open: an upstream report (wa-sqlite or WebKit).
-- **Whether a yielding statement lets a rotated OPFS handle move between clients.** HANDLE-1 says a
-  long statement never returns to its event loop; an abortable one on `async`/`jspi` now does,
-  every 100 000 VM ops. Unmeasured.
 
 ## wa-sqlite's `OPFSAdaptiveVFS.js` reads `FileSystemSyncAccessHandle.prototype` at module load (2026-09-14)
 

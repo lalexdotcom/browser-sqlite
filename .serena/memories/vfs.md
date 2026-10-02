@@ -218,12 +218,12 @@ outside the store.
 
 **Without `readwrite-unsafe` there is one exclusive OPFS access handle, rotated between
 connections over a `BroadcastChannel`.** A worker inside a single long `sqlite3_step()`
-never returns to its event loop, so it can never answer the hand-over request. (Since `f4b3fd7`
-an abortable statement — `signal` or `timeout` — on `async`/`jspi` does return to it, every
-100 000 VM ops; whether that lets the handle move mid-statement is unmeasured — IDB-SIGNAL,
-`mem:measurements`.) **One
-abandoned long query degrades the entire pool to serial for its full duration**, and since
-a `step()` cannot be cut short there is no remedy at our layer.
+never returns to its event loop, so it can never answer the hand-over request. (Since
+2026-10-02 every statement on `async`/`jspi` returns to it every 100 000 VM ops, and the handle
+still does not move mid-statement: a second client waits the statement out, read or write —
+GEN-ABORT, `mem:measurements`.) **A long statement serializes the pool for its whole
+duration.** An abandoned one — a `break`, a `first()`, an abort — is cut on `async`, `jspi` and
+isolated `sync`; on `sync` without isolation it runs to its end.
 
 **The dividing line is the synchronous access handle, not `readwrite-unsafe`** — so the
 obvious "just use CoopSync on Firefox" is wrong: CoopSync rotates one exclusive handle too.
