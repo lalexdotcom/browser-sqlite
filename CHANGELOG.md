@@ -8,16 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **`db.ready` says when the pool has started.** It resolves once every worker has opened or been declined by the environment, and the pragmas that write the database are applied — from then on `db.poolSize` is the size you got — and rejects with the error that failed the client, or `CLIENT_CLOSED` if you close it first. Queries never need it: they wait for the pool as before.
+- **`db.ready`** resolves once the pool has started and rejects with the error that failed the client. Queries don't need it.
 - **`db.files`** lists every name the database's files may have — the database, `-journal`, `-wal` and the VFS's own extra files — as OPFS paths on the VFS that keep a folder.
-- **`db.debug` shows a request from the call on**: waiting on another tab's write lock (`lockTime`), on the pool (`acquireTime`), running, done, or failed before it ran (`error`), with the `worker` and `generation` that served it — so the requests of a replaced worker stay readable. Queries and requests count the `rows` they delivered; a query flagged `internal` is the library's own and is left out of its request's `rows` and `affected`. The tree can be copied with `structuredClone`, and its types — `ClientDebugState`, `WorkerDebugState`, `RequestDebugState`, `QueryDebugState` — are exported.
+- **`db.debug` follows each request from the call to its end** — lock wait, pool wait, run, error — with the worker that served it. Its types are exported.
 
 ### Changed
 
 - **Breaking:** **`read()`, `chunk()`, `stream()` and `first()` refuse `PRAGMA optimize`, `PRAGMA incremental_vacuum` and `PRAGMA wal_checkpoint`** with `NOT_A_READ_QUERY`, as they already refused a pragma that assigns a value. These write the database with no value given; they went to the read workers without the origin write lock. Pass them to `write()`.
 - **The `pragmas` that write the database — `user_version`, `application_id`, `schema_version`, `auto_vacuum`, `incremental_vacuum`, `optimize`, `wal_checkpoint` — are applied once per client, as a write, before its first query,** instead of on every worker as it opens; a replacement worker no longer applies them again. A refusal from SQLite now fails the client with that statement's `STATEMENT_FAILED`, where the worker used to fail to open with `WORKER_CRASHED`.
 - **`busy_timeout` defaults to 5000 ms on `OPFSAdaptiveVFS`, `OPFSAnyContextVFS` and `IDBBatchAtomicVFS`**, applied before your own pragmas. Pass your own value in `pragmas` to change it.
-- **Breaking:** **`OPFSCoopSyncVFS` refuses `busy_timeout`**, in `pragmas` and in a statement that sets it, with `INVALID_PRAGMA`. Its `BUSY` asks wa-sqlite to wait for the access handle to be handed over, and a busy wait inside the worker keeps it from ever arriving: a write after another client's schema change hung.
+- **Breaking:** **`OPFSCoopSyncVFS` refuses `busy_timeout`**, in `pragmas` and in a statement that sets it, with `INVALID_PRAGMA`: on this VFS it could make a write hang.
 - **Breaking:** **`db.debug` keeps one request history for the whole pool.** `db.debug.requests` replaces each worker's `requests` and `currentRequest`; `currentQuery` is gone — a request's state is in its timestamps; `releaseTime` is now `endTime` and `affectedRows` is `affected`, on requests and queries. `db.debug` is documented, and its shape is outside semver.
 - **Breaking:** **`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`, `OPFSCoopSyncVFS` and `OPFSWriteAheadVFS` keep each database in a folder of their own** — `.ad/`, `.ac/`, `.cs/` and `.wa/` in the OPFS root; the leading dot keeps these folders apart from an application's own OPFS entries. Until now all four resolved one name to one file at the root, so deleting through any of them destroyed what the others created. A database created by an earlier release is not found: move its files into the folder once, before opening it. `name` below is the normalized name `db.file` reports — e.g. `'caf%C3%A9'` for `'café'` —
 
@@ -46,27 +46,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Breaking:** **A database name on those VFS may be 52 characters instead of 56**, once normalized — the folder takes four.
 - **Breaking:** **A `wasmUrl` callback that ignores its argument can hand the wrong `.wasm` to the VFS that now default to `jspi` (see below)** when no `build` is passed and the browser has JSPI: the callback now receives `'jspi'`. Return the file for the build it receives, or pass `build`. A string `wasmUrl` names a directory, which must now also serve `wa-sqlite-jspi.wasm` — or pass `build`.
 - **An omitted `build` is the first one the VFS declares that the browser supports, and `jspi` is now declared before `async` everywhere.** On browsers with JSPI (Chrome 137+, Firefox 153+, Safari 27+), `OPFSAdaptiveVFS`, `IDBBatchAtomicVFS`, `IDBMirrorVFS`, `OPFSAnyContextVFS` and `MemoryAsyncVFS` now load `jspi` instead of `async`; elsewhere they load `async` as before, and the other VFS keep `sync`. `db.build` reports the one loaded. Pass `build: 'async'` to keep the previous behaviour.
-- **The vendored wa-sqlite moves to upstream `7a4b424`**, which corrects how
-  `OPFSWriteAheadVFS` tracks the size of its active write-ahead file across a
-  switch between the two — the threshold that decides when to rotate them —
-  keeps a TEXT value whole across an embedded NUL, reports why an
-  `OPFSCoopSyncVFS` open was refused, keeps `IDBBatchAtomicVFS`'s journal
-  blocks from overlapping (see *Fixed*), and copies the write-ahead a run of
-  pages at a time (see below).
+- **The bundled wa-sqlite is updated.** The fixes it brings are listed under *Fixed*.
 - **A database name too long for SQLite now fails at the call**, with `INVALID_OPTION` naming the bound, from `createSQLiteClient`, `deleteDatabase` and `inspectDatabase` — it used to fail later, when the worker opened the file. The same call also now refuses a name that is empty once normalized (`''`, `'/'`, `'?x'`…) with `INVALID_OPTION`.
 - **On `OPFSCoopSyncVFS`, an open refused for any reason but a file held elsewhere fails at once.** It used to retry every refusal for 2.5 s before reporting it; only a held file, which another worker or tab can let go of, is retried now.
 - **`createSQLiteClient` is declared to return `SQLiteDB`**, instead of a copy of its members spelled out in the type declarations.
-- **Aborting a statement on `OPFSWriteAheadVFS` gives its time back.** That VFS
-  writes its own write-ahead below SQLite and copied it into the database one
-  page at a time, after every transaction — two synchronous file calls per page,
-  4 KiB each. The copy runs once the commit has returned and occupies the
-  worker, so a `signal` or a `timeout` aimed at the next statement waited for it:
-  an abandoned write gave back about a third of its time here, against 97 % on
-  every other VFS. Contiguous pages are now moved a run at a time, through a
-  buffer of at most 4 MiB, which is 33× to 38× faster on the copy itself. Its
-  memory peak is higher than before: about 35 to 50 MiB more while copying a
-  64 MiB write-ahead. The fix is wa-sqlite's, brought by the move to upstream
-  `7a4b424` (see above).
+- **Aborting a write on `OPFSWriteAheadVFS` frees its worker sooner.** The copy of the write-ahead into the database after each transaction is much faster, at the cost of more memory while it runs.
+- **A `first()`, or a `stream()`/`chunk()` left with `break` or `return()`, now stops its running statement without a `signal`** on `async`, `jspi`, and `sync` when cross-origin isolated.
 
 ### Removed
 
@@ -75,19 +60,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- **Two clients on one database no longer fail with `BUSY` when one of them sets a pragma that writes the database, such as `user_version`.** Applied as each worker opened, that pragma took SQLite's write lock without the origin write lock, so it collided with another client's write: that write failed with `BUSY: database is locked`, or the opening worker failed and was restarted — in up to 10 runs of 12 with two clients on `OPFSAnyContextVFS`, `OPFSAdaptiveVFS` and `IDBBatchAtomicVFS`. Those pragmas now run as a write, under the origin write lock (see *Changed*).
+- **Two clients on one database no longer fail with `BUSY` when one of them sets a pragma that writes the database**, such as `user_version`.
 - A worker no longer reports its last request as current once that request has finished.
-- **`IDBBatchAtomicVFS` with `journal_mode: 'persist'` no longer stores overlapping blocks in its journal.** Since rc.5, a journal write that crossed a range never written was stored over a block left by an earlier transaction, and a read starting inside that block returned its old bytes. No rollback was seen to go wrong; the journal now reads back what was written. The fix is wa-sqlite's ([#351](https://github.com/rhashimoto/wa-sqlite/pull/351)), brought by the move to upstream `7a4b424` (see *Changed*).
-- **A TEXT value containing a NUL character is no longer cut short.** A parameter bound with one, or a column returning one, lost everything from the first NUL: `'a\0b'` came back as `'a'`. The fix is wa-sqlite's, brought by the move to upstream `7a4b424` (see *Changed*).
-- **On `OPFSCoopSyncVFS`, an open refused because another worker or tab holds the file now says so.** Once the open has retried for its 2.5 s, the `WORKER_CRASHED` it raises reads `unable to open database file: NoModificationAllowedError: …` and its `cause` is that storage error; it used to read `unable to open database file` alone, with no cause behind it. The fix is wa-sqlite's, brought by the move to upstream `7a4b424` (see *Changed*).
-- **On `OPFSAnyContextVFS`, a statement that shrinks the database, such as `VACUUM`, could make the next read on another worker or tab fail** with `disk I/O error` on Firefox, or read the file at its old size elsewhere. The VFS released its lock before the shrink reached the file; it now publishes it first. The fix is a change to wa-sqlite, carried in this package's build until wa-sqlite ships it.
+- **On `IDBBatchAtomicVFS` with `journal_mode: 'persist'`, the journal no longer stores overlapping blocks.**
+- **A TEXT value containing a NUL character is no longer cut short.** A parameter bound with one, or a column returning one, lost everything from the first NUL: `'a\0b'` came back as `'a'`.
+- **On `OPFSCoopSyncVFS`, an open refused because another worker or tab holds the file now says so** in its error and its `cause`.
+- **On `OPFSAnyContextVFS`, a statement that shrinks the database, such as `VACUUM`, could make the next read on another worker or tab fail** with `disk I/O error` on Firefox, or read the file at its old size elsewhere.
 - **A client that failed no longer appears in `inspectDatabase()` and `db.inspect()`.** It stayed listed until `close()` although it holds nothing — a second client refused with `DATABASE_IN_USE`, or one whose workers all died. It now leaves the roster as soon as it fails; a client still retrying a worker stays in it.
 - **A client that failed no longer keeps the database.** Until it was closed, `deleteDatabase` was refused with `DATABASE_IN_USE`, and so was the next client where the VFS supports one connection at a time — while `inspectDatabase()` listed nobody. It now releases the database as it fails; calling `close()` on it afterwards is still fine.
-- **On `OPFSWriteAheadVFS`, a read made right after another worker's or tab's write resolved could, on Chromium, see the database as it was before that write.** The VFS learned of other connections' commits asynchronously and could start a read before hearing of the latest one. The library's read-after-write barrier hid it — no stale read was measured with the barrier in place — but only by timing. The barrier's own read now catches up with the write-ahead, so the reads after a commit are current by construction; other reads are left as they were, so a large write in progress does not slow them down. The catch-up is an opt-in added to wa-sqlite (`PRAGMA wal_read_latest`), which this package now takes from upstream `7a4b424`.
-
-- **On `AccessHandlePoolVFS`, an open that found one file of its pool held no longer gives up after that file is released.** The open retries for 10 s while something else holds the pool; its first attempt kept the pool files it had taken, so every retry failed on them with `NoModificationAllowedError`. It now opens as soon as the file is free. The fix is wa-sqlite's, carried in this package's build until wa-sqlite ships it, along with the same fix for `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` — where a failed open kept a lock or a file of its own, and this library was not affected, since it replaces a worker whose open failed.
+- **On `OPFSWriteAheadVFS`, a read right after another worker's or tab's write is always current.** On Chromium it could see the database as it was before that write.
+- **On `AccessHandlePoolVFS`, an open that waited for a held pool file now succeeds once the file is released.**
 - **`write()` no longer reports a stale `affected` count for a statement that changes nothing.** A DDL statement, a `PRAGMA` or a `SELECT` left `affected` at the count of the previous `INSERT`/`UPDATE`/`DELETE`; it now reports 0. `bulkWrite()` and `output()`'s totals follow, since they sum what `write()` returns.
-- **On `IDBBatchAtomicVFS`, a committed transaction could be undone by the next client to open the database** — the first transaction of a new database, or any transaction larger than SQLite's page cache (2 MB by default). Those transactions write a rollback journal, and the VFS released its lock before the journal's deletion was committed; when the worker ended right after — `close()`, or a worker that crashed — the deletion was lost, and the next client rolled the transaction back. The VFS now commits the deletion before going on. The fix is a change to wa-sqlite, carried in this package's build until wa-sqlite ships it ([#370](https://github.com/rhashimoto/wa-sqlite/pull/370)).
+- **On `IDBBatchAtomicVFS`, a committed transaction could be undone by the next client to open the database**, after a `close()` or a crashed worker.
 
 ## [1.0.0-rc.5] - 2026-09-22
 
