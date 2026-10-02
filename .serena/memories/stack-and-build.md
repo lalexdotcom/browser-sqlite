@@ -150,7 +150,11 @@ when it kills one, the code `test:matrix` already uses. It exists because a run 
 `testTimeout` and `hookTimeout` cannot reach — a module-scope `await` that never settles means no
 test is running, so nothing times out (`mem:follow-ups`). `timeout(1)` is absent from a stock
 macOS, hence a script rather than a shell word; `tests/unit/bounded.test.ts` proves the deadline
-actually kills.
+actually kills. **Since 2026-10-02 it kills the whole process group** (`detached`, then
+`process.kill(-pid)`, and a `SIGKILL` to the group once the command exits): signalling the
+direct child alone left `pnpm exec rstest`'s real pnpm, rstest and its browser running under
+init. The command gets no stdin, since a background group that read the terminal would be
+stopped; on Windows it falls back to the direct child.
 
 **No test file enumerates VFS** since 2026-09-16: a file states what its subject needs of the pair
 (`needs: ['two-workers' | 'interruptible' | 'shared-second-client']`) and the matrix supplies the

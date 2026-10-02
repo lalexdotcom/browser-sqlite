@@ -145,10 +145,6 @@ back to it. Not designed. It will sit on the savepoint machinery merged on 2026-
 `mem:architecture`): a new entry point must go through the facade, which concludes the library's
 savepoint before opening its own.
 
-## `bounded.mjs` leaves `pnpm exec rstest` running when it kills a run (2026-10-01)
-
-Running `node scripts/bounded.mjs 180 pnpm exec rstest …` against a hung test, the deadline fired (exit 124) and the run went on: a `pnpm exec rstest` and its `rstest.js` child were found 8 minutes later with parent `init`, their browser still in the hung test. The deadline kills its direct child, not the process group the `pnpm exec` wrapper starts. The `package.json` scripts call `bounded.mjs` on `rstest` directly, which may not show it; not checked. Harm: an orphan holds a browser and CPU, and a later run in the same checkout competes with it.
-
 ## The `.mjs` scripts are not type-checked (2026-09-24)
 
 `tsc` covers `scripts/*.ts` since 2026-09-24, but no `allowJs`/`checkJs` is set, so the `.mjs` files are only linted and formatted by biome. Measured with `checkJs` and `@types/node` on 2026-09-24: **84 errors** — `consumer-smoke.mjs` 44, `bench/check.mjs` 19, `bench/dev.mjs` 12, `matrix-triage.mjs` 5, `static-server.mjs` 2, `bench/assemble.mjs` 1, `bounded.mjs` 1. Not triaged: how many are JSDoc-less inference noise and how many real is unknown.
