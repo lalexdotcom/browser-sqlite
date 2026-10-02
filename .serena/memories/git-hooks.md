@@ -7,6 +7,8 @@ The local hooks, why they are not the gate, and what a green hook does not prove
 
 `pnpm install` when a branch switch (`$3 = 1`) changes `package.json`, `pnpm-lock.yaml` or `patches/` between the two commits; nothing on a switch to the same commit. Without it a switch left `node_modules` with the previous branch's wa-sqlite patch, and a run on `main` measured the other branch (found after `test/retry-per-call-ops`). ~0.3 s per switch.
 
+**A merge does not reinstall, and the switch before it reinstalls the old side (2026-10-01).** Concluding a branch that changes the patch runs `git switch main` — which installs `main`'s patch, the one before the merge — then `git merge`, which fires no `post-checkout`. `node_modules` then holds the previous pin under a lockfile naming the new one; found the next day with `readlink -f node_modules/wa-sqlite`. Run `pnpm install` after any merge that touches `package.json`, `pnpm-lock.yaml` or `patches/`.
+
 **A branch that predates the hook uninstalls it.** `pnpm install` runs `prepare: simple-git-hooks`, which installs the ARRIVING branch's `simple-git-hooks` config and removes hooks absent from it — so the hook fires once into such a branch, then is gone, and the switch back does not reinstall. Measured on the first round trip. Fixed there by cherry-picking the hook commit (`e22d0f2` on `main`) onto the branch; do the same for any older branch before switching to it, or run `pnpm install` by hand after coming back.
 
 ## The three commit/push hooks (user, 2026-09-11)

@@ -145,6 +145,10 @@ back to it. Not designed. It will sit on the savepoint machinery merged on 2026-
 `mem:architecture`): a new entry point must go through the facade, which concludes the library's
 savepoint before opening its own.
 
+## `bounded.mjs` leaves `pnpm exec rstest` running when it kills a run (2026-10-01)
+
+Running `node scripts/bounded.mjs 180 pnpm exec rstest …` against a hung test, the deadline fired (exit 124) and the run went on: a `pnpm exec rstest` and its `rstest.js` child were found 8 minutes later with parent `init`, their browser still in the hung test. The deadline kills its direct child, not the process group the `pnpm exec` wrapper starts. The `package.json` scripts call `bounded.mjs` on `rstest` directly, which may not show it; not checked. Harm: an orphan holds a browser and CPU, and a later run in the same checkout competes with it.
+
 ## The `.mjs` scripts are not type-checked (2026-09-24)
 
 `tsc` covers `scripts/*.ts` since 2026-09-24, but no `allowJs`/`checkJs` is set, so the `.mjs` files are only linted and formatted by biome. Measured with `checkJs` and `@types/node` on 2026-09-24: **84 errors** — `consumer-smoke.mjs` 44, `bench/check.mjs` 19, `bench/dev.mjs` 12, `matrix-triage.mjs` 5, `static-server.mjs` 2, `bench/assemble.mjs` 1, `bounded.mjs` 1. Not triaged: how many are JSDoc-less inference noise and how many real is unknown.
@@ -372,7 +376,7 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   searched yet (`gh` is available since 2026-09-28). Same shape as #361: an upstream PR plus a `patches/` carry.
   Also worth knowing: in that window a
   reader could read the pre-truncation file rather than fail, if its read wins the race.
-- **Concurrency D-09 has no falsifier, and the open-side init lock guards nothing a test sees (2026-09-28).** With `locks.withLock(initLockName…)` removed from the worker's `open()`, `pnpm test`'s three configs stay green; the delete side is guarded (`delete.test.ts`, BUSY while the lock is held). Probe, two clients of `poolSize` 2 created in one task then each writing, 6 reps × 2 target projects per engine: no pragma and `journal_mode=truncate` never fail, with or without the lock; `user_version=7` gets `BUSY: database is locked` **with the lock too** — Chromium 1-3 of 12 per case intact against 5-6 without, Firefox 0-4 intact against 1-5 without, on `OPFSAnyContextVFS` and `IDBBatchAtomicVFS`. So the lock lowers the rate and does not remove it: a writing pragma at open is not serialised against another client's write (the origin write lock does not cover the open's pragmas). Not established: whether the BUSY is raised by the open or by the first `write`. A falsifier built on it would fail in both arms.
+- **The open-side init lock guards nothing a test sees (2026-09-28).** With `locks.withLock(initLockName…)` removed from the worker's `open()`, `pnpm test`'s three configs stay green; the delete side is guarded (`delete.test.ts`, BUSY while the lock is held). What it seemed to guard — a writing pragma at open against another client's write — was a defect of its own, fixed by running those pragmas through the write path (PRAGMA-BUSY, `mem:vfs`); since then the open applies only connection pragmas, and the lock serialises opens with nothing left to protect that a test has found.
 
 ## What the `IDBBatchAtomicVFS` long-statement fix left open (2026-09-14)
 

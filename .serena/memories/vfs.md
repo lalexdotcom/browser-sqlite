@@ -31,11 +31,21 @@ Numbers live in `mem:measurements`.
   RESERVED → EXCLUSIVE also waits. The one polling acquisition is SHARED → RESERVED
   (`POLL_EXCLUSIVE`), which returns `SQLITE_BUSY` when another connection already holds
   RESERVED — two would-be writers, and upstream's comment there says the loser "must retry".
-  **rc.5's origin-wide write lock closes that path**: writers are serialized across every
-  client and tab, so two connections cannot both be in that transition. Hence **a default
-  `busy_timeout` has no path to act on for the eight VFS that use the mixin**, and it was
-  dropped for that reason rather than on taste. `OPFSCoopSyncVFS` does not extend the mixin
-  and none of this applies to it.
+  **rc.5's origin-wide write lock closes that path for every write the library issues** —
+  but the consumer's pragmas that write the file (`user_version`, `application_id`…) were
+  applied at open on every worker, outside that lock, and two clients met `BUSY` there
+  (PRAGMA-BUSY, `mem:measurements`, 2026-10-01). **Since `fix/open-pragma-busy` those
+  pragmas run once per client through the write path** (`splitPragmas`, `databaseSetup` in
+  `src/client.ts`), which restores the invariant, **and `busy_timeout=5000` is a default on
+  the three VFS built on the mixin** (`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`,
+  `IDBBatchAtomicVFS`) as a backstop: there it removed every `BUSY` the probe saw.
+  **`OPFSCoopSyncVFS` refuses `busy_timeout`** (`refusedPragmas`): it does not extend the
+  mixin, and its `BUSY` asks wa-sqlite's `retry()` to await a handle transfer, which
+  SQLite's busy wait inside the worker never lets arrive — `coopsync-handover` hung, and
+  `coopsync-retry` took a minute. `OPFSWriteAheadVFS` and `IDBMirrorVFS` also return `BUSY`
+  from their own code (an open retry; a stale view that only `jUnlock` refreshes): with
+  `busy_timeout` forced on, their whole suite stayed green, so they neither default nor
+  refuse it.
 
   Upstream also exposes **`lockTimeout`** beside `lockPolicy` — it aborts the Web Lock request
   through an `AbortController`, so the waiting happens at the locks layer, asynchronously,

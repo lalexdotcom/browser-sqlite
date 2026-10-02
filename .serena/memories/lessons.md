@@ -1201,3 +1201,7 @@ A plan that says "apply the sabotage, see the test fail, revert with `git checko
 ## A reader that finds nothing may be the one that erased it (2026-10-01)
 
 "A second client counts 0 tables" read as data the first client never persisted. A dump of the store taken just before the second open showed the opposite: the data was there, beside a journal that should not have been, and the second client's own open rolled it back. When a reader sees missing data, snapshot the storage before the reader touches it; a recovery path (hot journal, `pendingVersion` cleanup) is a writer too.
+
+## A backstop applied everywhere can break the VFS that use the signal it swallows (2026-10-01)
+
+`busy_timeout` cured the `BUSY` two clients met on the WebLocksMixin VFS, where it means "another connection holds the lock". Applied library-wide, it hung `OPFSCoopSyncVFS`, whose `BUSY` means "give the event loop back so wa-sqlite can await the handle" — SQLite's busy wait inside the worker never returned there. One status code, two meanings by VFS: a setting that changes how SQLite answers a status goes per VFS, and the suite's full run, not a targeted probe, is what showed it.
