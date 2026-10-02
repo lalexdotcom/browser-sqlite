@@ -42,27 +42,27 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-10-01
+## The verification baseline — compare against these, re-measured 2026-10-02
 
-Not history: the numbers a regression is detected against. **Every figure below was read off ONE run in this container on 2026-10-01, in the morning, on `feat/debug-request-history` at `1953804`** — none is arithmetic, on the wa-sqlite pin `5be9cd14` with #351 (second-review head), #352, #353, #363, #367, #368 and #369 carried.
+Not history: the numbers a regression is detected against. **Every figure below was read off ONE run in this container on 2026-10-02, in the afternoon, on `main` at `438625e`** (the merge of `feat/always-abortable`) — none is arithmetic, on the wa-sqlite pin `7a4b4241` with #363, #367, #368, #369 and #370 carried.
 
 | command | result |
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1333 tests, 1325 passed, 8 skipped** (unit + the two chromium target projects), **782 tests, 778 passed, 4 skipped** (the two firefox target projects), **16 tests, none skipped** (the two isolated target projects). The chromium and firefox targets are `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` since the default build follows the engine |
-| `pnpm exec rstest --project unit run` | **553** tests, 28 files |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1358 tests, 1350 passed, 8 skipped** (unit + the two chromium target projects), **796 tests, 792 passed, 4 skipped** (the two firefox target projects), **18 tests, none skipped** (the two isolated target projects). The chromium and firefox targets are `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` since the default build follows the engine |
+| `pnpm exec rstest --project unit run` | **564** tests, 28 files |
 | `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are `chromium · <vfs>/<build>` and rstest's filter is anchored |
 | `pnpm test:conformance` | **TWO reports** — 97 tests / 3 files each: **Chromium 83 passed / 14 skipped, Firefox 79 / 18** — they differ by design since 2026-09-14. Each VFS runs on its default build for the engine, so the `jspi`-first VFS run `jspi` here |
 | `pnpm exec biome ci .` | exit 0 |
 | `pnpm docs:vfs` | leaves `VFS.md` unchanged (`git diff --exit-code`) |
 | `pnpm test:consumer` | 24/24 stages |
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | `OK`, `"reasons": {}`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 162 files, **4 warnings**, 1 info — the file count moves with the tree, **the warning count is the signal** |
+| `pnpm lint` | 164 files, **4 warnings**, 1 info — the file count moves with the tree, **the warning count is the signal** |
 | `dependencies` in `package.json` | absent |
-| `pnpm test:matrix` | **64 of 66 cells green, 2440 s**, no re-run inside it. ~40 min. **The two red cells are `chromium · IDBBatchAtomicVFS/jspi` and `/async`, one failure each, the intermittent "second client counts 0 tables" of `mem:follow-ups`** — reproducible alone 2 of 6, and bisected off this branch's changes there. **Every cell runs `BSQ_TEST_NEEDS=skip`**, so its skips are the tests whose need the pair lacks: chromium from 4 (`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`) to 76 (`MemoryVFS/sync`), firefox from 2 (`OPFSAnyContextVFS`) to 74 (`MemoryVFS/sync`), isolated 8/0/0 everywhere. Against the previous evening's run, per cell: five more passed on 42 cells (the four `affected` tests in `queries.test.ts`, the transaction test in `debug.test.ts`), four more passed and one failed on the two `IDBBatchAtomicVFS` cells, the 22 isolated cells did not move; no skip count moved. |
+| `pnpm test:matrix` | **66 of 66 cells green, 2485 s**, no re-run inside it. ~40 min. **Every cell runs `BSQ_TEST_NEEDS=skip`**, so its skips are the tests whose need the pair lacks: chromium from 4 (`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`) to 81 (`MemoryVFS/sync`), firefox from 2 (`OPFSAnyContextVFS`) to 79 (`MemoryVFS/sync`), isolated 9/0/0 everywhere. The Firefox `lifecycle.test.ts` page crash of `mem:follow-ups` did not occur in this run; it did in the matrix of the same day's branch. |
 
-Against the previous table (2026-09-30 evening): unit 551 → 553 and each browser report of `pnpm test` +12 / +10 (two unit tests, five browser tests on each target project) with no skip added; isolated, conformance, lint and the consumer smoke are identical; the matrix lost two cells to the `IDBBatchAtomicVFS` intermittent. **`pnpm test`'s skip counts are the cell to watch** — a test that started skipping instead of running would vanish into a total without a trace. **The matrix's skip counts are not that signal on their own:** they carry every unmet need, so what to watch there is a cell's skip count moving without a `needs` or a declaration having changed.
+Against the previous table (2026-10-01 morning): unit 553 → 564, `pnpm test` +25 / +14 / +2 passed (the new `early-exit.test.ts` and the isolated `first()` case among them) with no skip added; conformance, lint warnings and the consumer smoke are identical; the matrix went from 64 to 66 green — the two `IDBBatchAtomicVFS` cells it lost were the intermittent fixed by #370 — and isolated cells from 8 to 9 tests.
 
 **Do not reconcile any of these by arithmetic; re-run.** A previous version of this table was
 measured on 2026-09-15 and went stale the next day, and another contradicted itself in September
