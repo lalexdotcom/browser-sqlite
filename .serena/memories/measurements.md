@@ -30,6 +30,21 @@ Identical on Chromium and Firefox, asyncify and jspi, both passes. A's next read
 
 His `locking_mode=EXCLUSIVE` argument holds: with `OFF` the PR alone loses the commit when the context dies. His `VACUUM` saving does not happen in this VFS: `pager_truncate` calls `xFileSize` before truncating (pager.c L2669), and `jFileSize` closes the writable, so the truncation opens a second one whatever the publication points. Trace on every variant: `OVERWRITE`, journal synced twice (`FULL`), main-db writable created, `SYNC`, `jSync`, `truncate`, a new writable, `PHASETWO`.
 
+## 369-XCLOSE — what releases `OPFSAdaptiveVFS`'s open lock, 2026-10-02, Playwright's Chromium and Firefox (1.62.1), this container
+
+**Why.** rhashimoto on #369 (2026-10-02): SQLite does call `xClose` after a failed `xOpen` — his trace shows `jClose` from `sqlite3_open_v2()` — so the primary defect is `jClose` not releasing `openLockReleaser`. Read: wa-sqlite's `libvfs_xOpen` sets `pMethods` whatever the JS `xOpen` returns (`src/libvfs.c` L122-146), and SQLite's `sqlite3OsClose` calls `xClose` whenever `pMethods` is set (os.c L81), e.g. from `sqlite3PagerOpen`'s failure cleanup (pager.c L5033). Our PR's sentence "SQLite does not call xClose after a failed xOpen" is wrong.
+
+**Method.** wa-sqlite's runner, the #363 throwaway worktree (its `OPFSAdaptiveVFS.js` is upstream master's, identical from `e6e01ae1` to `7a4b4241`). One worker per context with `FileSystemSyncAccessHandle.prototype.mode` deleted (the path without `readwrite-unsafe`), `jOpen`/`jRead`/`jClose` traced, every call bounded at 5 s. Variants: master; the PR (`744f4221`); `closeLock` — master whose `jClose` calls `openLockReleaser`; `closeAll` — `jClose` also releases `handleLockReleaser` and closes the channel. Both builds, both engines, two passes, all cells identical.
+
+| scenario | master | PR | closeLock | closeAll |
+|---|---|---|---|---|
+| open fails on a held file, the file is released, reopen in the same worker | **hung** | ok | ok | ok |
+| open, close, reopen (same worker, other worker); open + `SELECT 1` or a query, close, open in another worker | ok | ok | ok | ok |
+
+- `jClose` is called after the failed open on every variant (trace: `open -> 14`, then `close`).
+- Opening and closing with no statement does not keep the lock: `sqlite3_open_v2` reads the header (`read @0`), which releases it.
+- A first `jClose` variant that closed the channel without releasing `handleLockReleaser` made the next open in another worker hang after any read. Master's `jClose` leaves the channel open and the handle lock held, and a later request on that channel is what releases the lock.
+
 ## IDBMIRROR-COMMIT-ABORT — an IndexedDB commit that aborts inside `IDBMirrorVFS`'s `#commitTx`, 2026-10-02, Playwright's Chromium and Firefox (1.62.1), this container
 
 **Why.** Checking whether 363-ERROR-PATH applies to `IDBMirrorVFS`. Its main-db writes go to an in-memory `txActive` and cannot fail in practice; the publication point that can fail is `#commitTx`, whose IndexedDB transaction may abort (quota). Read: it calls `#acceptTx`/`#setView` before the IndexedDB transaction completes, awaits it only with `synchronous=full`, and on failure neither drops `txActive` nor rolls the view back (`#dropTx` only on `ROLLBACK_ATOMIC_WRITE`).

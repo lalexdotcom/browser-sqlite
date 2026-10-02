@@ -30,6 +30,10 @@ obligations and unmeasured ground.
   checked equal to the pin plus those heads, and to the previous install — the repin changed no
   executed code. **The full matrix on that head (2026-10-01): 66 of 66 cells green, no failure**
   (`.matrix/2026-10-01T15-20-52-232Z`, 2332 s).
+  **Upstream moved on 2026-10-02 to `5bde491c`**, which merged #367 and #368, byte-identical to
+  our heads. The pin has not moved yet. A repin would drop those two hunks and take #369's revised
+  head `71537545`, whose `jClose` now releases the open lock. Proposed to the user, not started
+  (`mem:follow-ups`).
 - **The release gate ran the full matrix for the first time, and it took four tags to get
   through.** 22/22 cells, `verify`, `consumer-smoke`, then `release`, with `untag` skipped.
   The three refusals before it were not test failures: `test-matrix.mjs` could not read a
