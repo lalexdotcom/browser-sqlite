@@ -506,6 +506,12 @@ const rows = await db.read('SELECT * FROM large_table', [], {
 > Which builds a VFS offers, and which one it defaults to, are in the
 > [VFS reference](VFS.md#vfs-reference).
 
+**Leaving a call early stops its statement the same way, with no `signal` needed**: a
+[`first()`](#clientfirst) once it has its row, a [`stream()`](#clientstream) or
+[`chunk()`](#clientchunk) you `break` out of or `return()` from. Where the abort reaches the
+statement, the worker is free for your next call at once; elsewhere that call waits for the
+statement to end.
+
 **`timeout` counts wall clock from the call, and your own time counts against it**: the wait for
 a free pool worker, the wait for another tab's write lock, and every pause you take yourself —
 between two chunks of a `stream()`, inside a `transaction()` callback, between two `enqueue()`

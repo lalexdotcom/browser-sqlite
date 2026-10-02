@@ -2209,8 +2209,8 @@
            *
            * **Two columns have moved since.** IDBBatchAtomicVFS serves since
            * 2026-09-14: it holds no handle, and its readers were waiting on an
-           * IndexedDB transaction that now commits mid-statement
-           * (`yieldsDuringStatements`). And a VFS whose pool runs one worker
+           * IndexedDB transaction that now commits mid-statement (the worker
+           * yields during every statement). And a VFS whose pool runs one worker
            * here — OPFSWriteAheadVFS and OPFSAdaptiveVFS without RWU,
            * OPFSCoopSyncVFS everywhere — skips the row (`applies`).
            *
@@ -2242,13 +2242,13 @@
               // the short reads are issued. Its rejection is swallowed.
               //
               // **No signal, deliberately** — neither the row's nor any other.
-              // The row asks what a consumer's plain read does, and a signal
-              // can change the answer: an abortable statement hands its worker
-              // back to the event loop, which is what let IDBBatchAtomicVFS
-              // serve this row's reads from `f4b3fd7` until
-              // `yieldsDuringStatements` made every statement there yield. The
-              // row passed its signal then, and reported the signalled path
-              // without saying so (`mem:measurements`, IDB-SIGNAL).
+              // The row asks what a consumer's plain read does. Until the worker
+              // yielded during every statement, a signal changed the answer: only
+              // a signalled statement handed its worker back to the event loop,
+              // which is what let IDBBatchAtomicVFS serve this row's reads from
+              // `f4b3fd7`. The row passed its signal then, and reported the
+              // signalled path without saying so (`mem:measurements`,
+              // IDB-SIGNAL).
               //
               // So it cannot be cancelled once the verdict is in — and need not
               // be: the next row would only contend with the cross-join

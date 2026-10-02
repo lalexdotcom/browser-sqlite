@@ -44,7 +44,6 @@ import { createStatementCache } from './statement-cache';
 type SQLOptions = {
   chunkSize?: number;
   signal?: AbortSignal;
-  abortable?: boolean;
 };
 
 /**
@@ -612,14 +611,11 @@ const open = (file: string, options: OpenOptions) => {
       }
     };
 
-    const { abortable } = options ?? {};
-    const wantsSignal = abortable === true;
-    const canYield = currentBuild !== 'sync';
-    // A VFS that must yield gets the task turn on every statement; only an
-    // abortable statement may be stopped by it (`yieldsDuringStatements`).
-    const yields =
-      canYield && (wantsSignal || VFS_CAPABILITIES[vfs].yieldsDuringStatements);
-    const polls = !canYield && wantsSignal && slot !== undefined;
+    // Every statement gets the handler its build allows: the yielding one on
+    // `async`/`jspi`, the slot poll on an isolated `sync`, none on a `sync`
+    // without a slot.
+    const yields = currentBuild !== 'sync';
+    const polls = !yields && slot !== undefined;
     const abortedHere = () =>
       slot !== undefined && Atomics.load(slot, abortIndex as number) === callId;
     if (yields || polls) {
@@ -631,7 +627,7 @@ const open = (file: string, options: OpenOptions) => {
               // The task turn is what lets a queued `stop` be delivered, and
               // what lets IDBBatchAtomicVFS's IndexedDB transaction commit.
               await gate.tick();
-              return wantsSignal && gate.isStopped() ? 1 : 0;
+              return gate.isStopped() ? 1 : 0;
             }
           : () => (abortedHere() ? 1 : 0),
         null,

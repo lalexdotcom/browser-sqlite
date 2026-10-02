@@ -4,9 +4,10 @@
  *
  * Its `jLock` opens a readwrite IndexedDB transaction on reaching SHARED, and
  * an IndexedDB transaction commits only once its thread returns to the event
- * loop. A worker inside one long statement never did unless the statement was
- * abortable, so every other connection's SHARED lock queued behind it until the
+ * loop. A worker inside one long statement never did unless a progress handler
+ * yielded, so every other connection's SHARED lock queued behind it until the
  * statement ended — measured on both engines, `mem:measurements` IDB-SIGNAL.
+ * The worker installs that handler on every statement.
  */
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
@@ -21,10 +22,8 @@ const LONG = 'SELECT count(*) AS n FROM t a JOIN t b ON a.id < b.id';
 
 describe('IDBBatchAtomicVFS during a long statement', () => {
   for (const build of ['async', 'jspi'] as const) {
-    // Falsifiable: declare `yieldsDuringStatements: false` for
-    // IDBBatchAtomicVFS, or install the yielding progress handler for abortable
-    // queries only, as before — the read then waits the self-join out and
-    // loses the race.
+    // Falsifiable: stop installing the yielding progress handler in worker.ts
+    // — the read then waits the self-join out and loses the race.
     it(`serves a read from another worker without a signal (${build})`, async () => {
       // One VFS: the subject is IDBBatchAtomicVFS's own yield-during-a-long-
       // statement behaviour (see file header, IDB-SIGNAL).

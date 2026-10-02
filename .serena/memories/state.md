@@ -113,7 +113,6 @@ one machine and one build; slower CI hardware may still surface timing the campa
 
 ## Decisions the user owes
 
-- **A product behaviour found on 2026-09-28 while testing, not decided** (facts in `mem:follow-ups`): a `chunk()`/`stream()` left early without a signal cannot cut its running step (make every generator read abortable?). The other one of that day — a writing pragma at open meeting `BUSY` — was fixed on 2026-10-02 (`fix/open-pragma-busy`, `mem:history`).
 - **The second-client subject is CLOSED and MERGED** — `5661048`, 2026-09-18, `--no-ff`, branch deleted
   local and remote. What the user set
   the session on — the multi-client and cross-tab tests on every VFS — grew into the branch that ships:
@@ -296,9 +295,10 @@ the VFS fact in `mem:vfs`; what is left in `mem:follow-ups`.
 - **The bench measured the library's option, not the VFS.** Its long query carried the row's
   signal; when a signal started reaching the worker (`f4b3fd7`), the verdict flipped with no change
   to the row. It now issues the long query bare (`mem:lessons`).
-- **`yieldsDuringStatements` is about IndexedDB, not about the handle.** `jLock` opens a readwrite
+- **The yield during a statement is about IndexedDB, not about the handle.** `jLock` opens a readwrite
   IndexedDB transaction per statement, which commits only when the worker returns to its event loop.
-  The yield runs on every statement of that VFS and stops one only when it is abortable.
+  `yieldsDuringStatements` granted that yield to `IDBBatchAtomicVFS` alone; since 2026-10-02
+  (`feat/always-abortable`) every statement on `async`/`jspi` yields, and the flag is gone.
 - **The calibration verifies only a bound it did not time.** Re-running a timed bound ran Safari's
   `async` build down its slowdown and voided the IDB column; `longQueryCalibration` exports every
   timing, so a `null` explains itself.
