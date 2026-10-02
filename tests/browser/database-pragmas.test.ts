@@ -1,5 +1,6 @@
 import { describe, expect, it, onTestFinished } from '@rstest/core';
 import { createSQLiteClient } from '../../src/client';
+import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import { deleteDatabase } from '../../src/delete';
 import { pairFor, sleep } from './helpers';
 
@@ -13,8 +14,9 @@ import { pairFor, sleep } from './helpers';
  */
 describe('a pragma that writes the database', () => {
   // Falsifiable: apply every pragma at open again (pass `pragmas` whole to the
-  // workers) — B's worker meets A's open transaction, waits its 100 ms
-  // busy_timeout, gets BUSY, and with no restart left B fails.
+  // workers) — B's worker meets A's open transaction, waits its busy_timeout
+  // (100 ms, or none where the VFS refuses it), gets BUSY, and with no restart
+  // left B fails.
   it("waits for another client's write instead of failing", async ({
     skip,
   }) => {
@@ -34,6 +36,12 @@ describe('a pragma that writes the database', () => {
       wrote.resolve();
       await held.promise;
     });
+    // Released and settled whatever fails below, so that closing A does not
+    // reject a transaction nobody awaits.
+    onTestFinished(async () => {
+      held.resolve();
+      await transaction.catch(() => {});
+    });
     await wrote.promise;
 
     const b = createSQLiteClient(name, {
@@ -41,7 +49,12 @@ describe('a pragma that writes the database', () => {
       poolSize: 1,
       maxWorkerRestarts: 0,
       // Below A's hold, so that busy_timeout alone cannot be what passes.
-      pragmas: { busy_timeout: '100', user_version: '7' },
+      pragmas: {
+        ...('busy_timeout' in VFS_CAPABILITIES[pair.vfs].refusedPragmas
+          ? {}
+          : { busy_timeout: '100' }),
+        user_version: '7',
+      },
     });
     onTestFinished(() => b.close().catch(() => {}));
     const read = b.read<{ user_version: number }>('PRAGMA user_version');
