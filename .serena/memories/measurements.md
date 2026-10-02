@@ -4,6 +4,49 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## 363-ERROR-PATH — a write error leaves `OPFSAnyContextVFS`'s writable open at unlock, 2026-10-02, Playwright's Chromium and Firefox (1.62.1), this container
+
+**Why.** rhashimoto's review of #363 (2026-10-02) asks to close the writable on `SQLITE_FCNTL_SYNC` (skipped after `SQLITE_FCNTL_OVERWRITE`), `SQLITE_FCNTL_COMMIT_PHASETWO` and `jSync`, not in `jUnlock`. Read in SQLite 3.53.0: every normal path ends in one of those, but an I/O error does not. A failed cache spill puts the pager in `ERROR` (`pagerStress` → `pager_error`, pager.c L4656), `sqlite3PagerRollback` then returns at once without playback (L6768), and `pager_unlock` releases the lock; a failed commit write whose rollback playback fails too skips the playback's `sqlite3PagerSync` (L2977) and ends the same way (L6811).
+
+**Method.** wa-sqlite's runner, a throwaway detached worktree of #363's head `87f687b8`, three variants of the VFS: master's (`fa111290`), the PR's, and his design written as a subclass of master's (flag set on `OVERWRITE`, close on `SYNC` unless set, close and clear on `PHASETWO`, `jSync` skipped for an overwritten main db). Each context is its own worker whose VFS subclass fails main-db `jWrite`s with `SQLITE_IOERR_WRITE` on a plan and logs unpublished writes at `jUnlock`. A creates 200 rows of `randomblob(500)`, then fails: **commit** — `UPDATE t SET x = randomblob(500)`, writes 1-3 pass, 4 fails, the rollback's next 2 pass, the rest fail; **spill** — `cache_size = 10`, a 2000-row insert in one transaction, writes 1-5 pass, every later one fails. B then counts, inserts one row and commits; A counts once more; C runs `integrity_check`, counts, and compares the first 8 bytes of every original row with A's before the failure. Both builds, two passes per browser.
+
+| variant | at A's unlock | B after its commit | C: count, B's row | integrity |
+|---|---|---|---|---|
+| master | 2 (commit) / 5 (spill) writes unpublished, writable open | 201 | **200, lost** | ok |
+| his design | the same | 201 | **200, lost** | ok |
+| PR (`jUnlock` closes) | published, writable closed | 201 | 201, kept | ok |
+
+Identical on Chromium and Firefox, asyncify and jspi, both passes. A's next read closes its stale writable, which replaces the whole file with A's copy: B's committed transaction is gone. No original row came back changed and `integrity_check` stayed ok, so what was observed is a lost commit, not a corrupted file.
+
+**Same day, a fourth variant — his design plus the PR's `jUnlock` close ("both") — and more scenarios**, same method, both builds, both engines, two passes each, every cell identical across them:
+
+| scenario | master | PR | his design | both |
+|---|---|---|---|---|
+| write error, commit or spill: B's commit kept | no | yes | no | yes |
+| `synchronous=OFF`, 3 rows inserted, A stays open: B counts | 200 | 203 | 203 | 203 |
+| `locking_mode=EXCLUSIVE` + `OFF`, 3 rows inserted, A's worker terminated unclosed: B counts | 200 | **200** | 203 | 203 |
+| the same with `NORMAL` | 203 | 203 | 203 | 203 |
+| `VACUUM` after deleting half the rows: `createWritable` on the main db | 2 | 2 | 2 | 2 |
+
+His `locking_mode=EXCLUSIVE` argument holds: with `OFF` the PR alone loses the commit when the context dies. His `VACUUM` saving does not happen in this VFS: `pager_truncate` calls `xFileSize` before truncating (pager.c L2669), and `jFileSize` closes the writable, so the truncation opens a second one whatever the publication points. Trace on every variant: `OVERWRITE`, journal synced twice (`FULL`), main-db writable created, `SYNC`, `jSync`, `truncate`, a new writable, `PHASETWO`.
+
+## IDBMIRROR-COMMIT-ABORT — an IndexedDB commit that aborts inside `IDBMirrorVFS`'s `#commitTx`, 2026-10-02, Playwright's Chromium and Firefox (1.62.1), this container
+
+**Why.** Checking whether 363-ERROR-PATH applies to `IDBMirrorVFS`. Its main-db writes go to an in-memory `txActive` and cannot fail in practice; the publication point that can fail is `#commitTx`, whose IndexedDB transaction may abort (quota). Read: it calls `#acceptTx`/`#setView` before the IndexedDB transaction completes, awaits it only with `synchronous=full`, and on failure neither drops `txActive` nor rolls the view back (`#dropTx` only on `ROLLBACK_ATOMIC_WRITE`).
+
+**Method.** wa-sqlite's runner, the same throwaway worktree (upstream `IDBMirrorVFS.js` unchanged, pin `7a4b4241`), one worker per context, a fresh IndexedDB database per case. The worker patches `IDBTransaction.prototype.commit` so that, once armed, the next `readwrite` transaction calls `abort()` instead. A and B open, A creates 200 rows; A inserts 3 rows with the next commit aborted; A and B count; A inserts 1 row normally; B counts, checks, inserts 1 row; A counts; both close; a fresh C counts and checks. Both builds, both engines, two passes — every cell identical.
+
+| | `synchronous=full` (the default) | `synchronous=normal` |
+|---|---|---|
+| A's failed insert | `SQLITE_IOERR` | **`ok`** — an unhandled rejection in the worker, nothing else |
+| A then counts | 203 — its failed rows | 203 |
+| B counts | 200 | 200 |
+| after A's next commit, B counts | **204: the 3 rows of the failed insert came back** with it | 200 |
+| B's own insert | ok | `SQLITE_BUSY`, once (not chased) |
+| fresh C, from IndexedDB | 205, `integrity_check` ok | **200, `integrity_check`: "Page 28: never used"** |
+
+So with `full` a commit SQLite reported as failed becomes durable with the next one; with `normal` the failure is silent and the stored database ends up corrupt.
+
 ## PRAGMA-BUSY — a pragma that writes, applied at open, against another client's write, 2026-10-01, Playwright's Chromium and Firefox, this container
 
 **Attribution.** Two clients created in one task, each then writing, 12 runs per case, on `OPFSAnyContextVFS`, `IDBBatchAtomicVFS`, `OPFSAdaptiveVFS`. Never with one client, never without a writing pragma (`journal_mode=truncate` included). With `user_version=7` or `application_id=5`, two faces of one collision: the other client's user write rejected `BUSY: database is locked` (its own worker READY at generation 0, the barrier then its `CREATE TABLE` failing — the opening worker held RESERVED outside `bsq:write`), or the opening worker failed and was restarted (generation > 0). Two clients, pool 2, Chromium: 4-7 runs of 12 failing per VFS; Firefox `OPFSAnyContextVFS` up to 8/12 (pool 1), `IDBBatchAtomicVFS` 0-2/12, `OPFSAdaptiveVFS` 0/12.

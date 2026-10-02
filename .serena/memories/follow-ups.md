@@ -49,11 +49,26 @@ been work on nothing.
 - **He prefers fixing `IDBContext.sync()`** (A): it cures termination but leaves the deletion at `default` durability, which SQLite's `extraSync` comment says a power loss can resurrect; offer both together if he wants.
 - **He merges**: repin and drop the `IDBBatchAtomicVFS.js` hunk from the patch; the file is then no longer patched.
 
-## wa-sqlite #363: premise conceded, test declined, waiting on rhashimoto (2026-10-01)
+## wa-sqlite #363: changes requested, our proposal posted, waiting on rhashimoto (2026-10-02)
 
-He agreed the truncation after the last sync is deliberate (the forum concurred), which is the PR's case, and declined the `synchronous=OFF` test as a performance setting this VFS is not for. Our reply (2026-10-01): it is the only OPFS VFS with concurrent reads without `readwrite-unsafe`, so an app may pick it and still set `OFF`, and on master that hides commits from other contexts — a correctness test, left out unless he wants it. No review decision yet. Report: `docs/upstream/2026-09-25-wa-sqlite-363-anycontext-unlock-truncate.md`. What each answer calls for:
-- **He wants the test after all**: two contexts in wa-sqlite's runner, A sets `synchronous`, creates a table, inserts 3 rows and stays open, B counts; red on master for `OFF` only (363-SYNC-OFF).
-- **He wants another publication point**: `SQLITE_FCNTL_COMMIT_PHASETWO` comes after the truncation and is sent even with `synchronous=OFF`, but only at a commit; the unlock covers whatever the lock covered. Unmeasured.
+History in short (report: `docs/upstream/2026-09-25-wa-sqlite-363-anycontext-unlock-truncate.md`):
+- 2026-10-01: he conceded the premise (the truncation after the last sync is deliberate) and declined a `synchronous=OFF` test.
+- 2026-10-02: he requested changes. He wants `IDBMirrorVFS`'s design instead of `jUnlock`: close on `SQLITE_FCNTL_SYNC` (skipped after `SQLITE_FCNTL_OVERWRITE`), on `SQLITE_FCNTL_COMMIT_PHASETWO`, and in `jSync` for files other than the main db. His reasons: `jUnlock` misses `locking_mode=EXCLUSIVE`, and locks must not be read as transaction boundaries.
+
+Measured the same day (363-ERROR-PATH):
+- his `EXCLUSIVE` point holds: with `OFF`, the PR alone loses the commit when the context dies;
+- after a write error (failed cache spill, or a failed commit whose rollback fails too), his design, like master, hands the lock over with the writable open, and the context's next read wipes another context's commit;
+- his design plus our `jUnlock` close was the only variant that kept every commit;
+- the single `VACUUM` copy he expects does not happen here: `jFileSize`, called by `pager_truncate`, closes the writable first;
+- his summary clears the overwrite flag on `SYNC`, which would let `jSync` close anyway; `IDBMirrorVFS` clears it on `PHASETWO`.
+
+**Our reply, posted 2026-10-02 (comment 5959910105).** It proposes his design plus the `jUnlock` close as a backstop and a test for the error path. It asks whether a `jFileSize` that answers without closing (size tracked through writes and truncations) belongs in this PR. It points out where the flag should be cleared, and offers a separate PR for `IDBMirrorVFS` (IDBMIRROR-COMMIT-ABORT). The PR is unchanged and the patch carries its head.
+
+What each answer calls for:
+- **He agrees**: rework the branch to his design plus the `jUnlock` close. The test injects `SQLITE_IOERR_WRITE` in a VFS subclass inside a dedicated worker, with two contexts: A fails, B recovers and commits, A reads, B's row must survive. Then rerun the whole suite, update the description and the patch.
+- **He wants the `jFileSize` change too**: track the size so `jFileSize` need not close; measure `createWritable` calls during a `VACUUM` before and after.
+- **He refuses the backstop**: his design alone; the error-path loss stays upstream's call, and the patch could keep the backstop locally (the user decides).
+- **He wants the `IDBMirrorVFS` PR**: new branch off upstream master. The fix should drop `txActive` and restore the view when `#commitTx` fails, and report a `normal`-mode abort. Its test aborts the IndexedDB commit by patching `IDBTransaction.prototype.commit`.
 - **He merges**: repin and drop the `OPFSAnyContextVFS.js` hunk from the patch.
 
 ## wa-sqlite #362: `OPFSCoopSyncVFS.create()` fails after a back/forward-cache navigation — PR not decided
