@@ -792,16 +792,11 @@ export const createTransaction =
        * carry no signal, so nothing else would cut it and the transaction would
        * neither reject nor give its worker back.
        *
-       * **What this can cost, and what decides it is the BUILD.** An earlier
-       * version of this comment said a transaction carrying no `signal` and no
-       * `timeout` passes `abortable: false`. That is wrong: `withSignal` merges
-       * the transaction's signal into every statement, `mergeSignals` returns
-       * the surviving side when one is absent, and `closeSignal` is always
-       * defined — so a statement inside a transaction is ALWAYS abortable, and
-       * worker.ts always installs its progress handler. Measured on 2026-09-10:
-       * `first()` on a query whose second row costs a 3 M-row recursion returns
-       * in 2.4 ms on the async build, against 683 ms for the same query on the
-       * client path, which passes no signal and is genuinely not abortable.
+       * **What this can cost, and what decides it is the BUILD.** worker.ts
+       * installs its progress handler on every statement, so this cuts the
+       * running step on `async`, `jspi` and an isolated `sync`: `first()` on a
+       * query whose second row costs a 3 M-row recursion returns in 2.4 ms on
+       * the async build (measured 2026-09-10).
        *
        * What is left is the case worker.ts cannot serve: on the `sync` build
        * WITHOUT cross-origin isolation it installs no progress handler at all —

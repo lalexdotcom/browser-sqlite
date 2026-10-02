@@ -90,7 +90,6 @@ export const chunk = <
   const iterator = worker.query<T>(sql, params, {
     chunkSize,
     credits,
-    abortable: signal !== undefined,
   });
   onTransport?.(iterator);
   const state: AbandonState = { done: false };
@@ -258,9 +257,7 @@ export const writeWorker = async <
   if (signal?.aborted) throw signal.reason;
 
   const { aborted, teardown } = makeAbortRace(signal);
-  const iterator = worker.query<T>(sql, params, {
-    abortable: signal !== undefined,
-  });
+  const iterator = worker.query<T>(sql, params);
   const result: T[] = [];
   let affected = 0;
   try {

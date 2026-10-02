@@ -123,11 +123,11 @@ describe('query timeout', () => {
   });
 
   it('spends the budget while the call is still queued', async ({ skip }) => {
-    // Needs interruptible: a statement yields only when it is abortable, so an
-    // unsignalled holder keeps its worker to its natural end without it, and
-    // close() waits it out — 31.6 s on Firefox, 22 s on the `sync` build, past
-    // this test's 30 s (mem:measurements, CI-QUERY-TIMEOUT). It is abandoned at
-    // the end, as in concurrency.test.ts.
+    // Needs interruptible: on a build that cannot stop a statement, the holder
+    // keeps its worker to its natural end, and close() waits it out — 31.6 s on
+    // Firefox, 22 s on the `sync` build, past this test's 30 s
+    // (mem:measurements, CI-QUERY-TIMEOUT). It is abandoned at the end, as in
+    // concurrency.test.ts.
     const db = await createTestClient({
       needs: ['interruptible'],
       skip,

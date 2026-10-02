@@ -57,9 +57,8 @@ describe('the sync build, isolated', () => {
   it('stops a running statement when the consumer leaves a chunk early', async () => {
     // A consumer that breaks out of db.chunk() while its signal never fired:
     // only chunk()'s own finally interrupts then, since the abort listener
-    // never runs. Without a signal the query is not abortable at all, and on
-    // async or jspi the `stop` message would cut it anyway — hence a signal,
-    // the sync build and isolation.
+    // never runs. A signal is still passed so the test pins that path, on the
+    // sync build under isolation; the signal-less case is the next test.
     // Falsifiable: remove the `interrupt()` in drain()'s finally
     // (src/queries.ts) — the count then runs to its end, seconds, before
     // SELECT 1 gets the worker.
@@ -84,6 +83,30 @@ describe('the sync build, isolated', () => {
         await sleep(100);
         break;
       }
+      const started = performance.now();
+      expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+      expect(performance.now() - started).toBeLessThan(500);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('stops a running statement when first() leaves it, with no signal', async () => {
+    // No signal and no timeout anywhere: the sync build polls the abort slot
+    // for every statement, so first() cuts the step it left running.
+    // Falsifiable: poll the slot only for a statement that was given a signal —
+    // the count then runs to its end, seconds, before SELECT 1 gets the worker.
+    // One VFS: same reason as above — the sync build's abort-slot mechanism.
+    const db = await createTestClient({
+      vfs: 'OPFSWriteAheadVFS',
+      build: 'sync',
+      poolSize: 1,
+    });
+    try {
+      await db.read('SELECT 1');
+      // The second row is a 20 M-row count, one long step (~4 343 ms unaborted).
+      const sql = `SELECT 1 AS n UNION ALL SELECT (${longQuery(20_000_000)})`;
+      expect(await db.first<{ n: number }>(sql)).toEqual({ n: 1 });
       const started = performance.now();
       expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
       expect(performance.now() - started).toBeLessThan(500);
@@ -127,12 +150,11 @@ describe('the sync build, isolated', () => {
       // Kill the worker the abort was written for, then run past the callId
       // the slot still holds on its replacement.
       records[0]?.worker.dispatchEvent(new ErrorEvent('error'));
-      // Each query needs a signal (so abortable=true, so the progress handler is
-      // installed, so abortedHere() is called). The controller is never aborted;
-      // its only job is to set abortable=true. The queries must also do enough
-      // work to trigger the handler (PROGRESS_OPS = 100 000 VDBE instructions):
-      // SELECT 1 completes in ~10 instructions and the handler never fires.
+      // The queries must do enough work to trigger the handler (PROGRESS_OPS =
+      // 100 000 VDBE instructions), so that abortedHere() is called: SELECT 1
+      // completes in ~10 instructions and the handler never fires.
       // longQuery(200_000) crosses the threshold in < 30 ms and completes fine.
+      // The controller is never aborted.
       const neverAborted = new AbortController();
       for (let i = 0; i < 8; i++) {
         expect(
