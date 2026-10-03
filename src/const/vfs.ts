@@ -233,7 +233,7 @@ export const VFS_CAPABILITIES = {
     exclusiveConnectionWithout: ['readwrite-unsafe'],
     defaultPragmas: {},
     refusedPragmas: {},
-    // Our wa-sqlite#365, carried in patches/: a read otherwise freezes the view
+    // Our wa-sqlite#365, upstream: a read otherwise freezes the view
     // the BroadcastChannel has delivered, which can lag a commit.
     catchUpPragma: 'wal_read_latest',
   },
