@@ -55,7 +55,7 @@ Not history: the numbers a regression is detected against. **Every figure below 
 | `pnpm exec biome ci .` | exit 0 |
 | `pnpm docs:vfs` | leaves `VFS.md` unchanged (`git diff --exit-code`) |
 | `pnpm test:consumer` | 24/24 stages |
-| `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.mjs chromium --all` | `OK`, `"reasons": {}`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
+| `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.ts chromium --all` | `OK`, `"reasons": {}`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
 | `pnpm lint` | 164 files, **4 warnings**, 1 info — the file count moves with the tree, **the warning count is the signal** |
 | `dependencies` in `package.json` | absent |
 | `pnpm test:matrix` | **66 of 66 cells green, 2485 s**, no re-run inside it. ~40 min. **Every cell runs `BSQ_TEST_NEEDS=skip`**, so its skips are the tests whose need the pair lacks: chromium from 4 (`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`) to 81 (`MemoryVFS/sync`), firefox from 2 (`OPFSAnyContextVFS`) to 79 (`MemoryVFS/sync`), isolated 9/0/0 everywhere. The Firefox `lifecycle.test.ts` page crash did not occur in this run; it did in the matrix of the same day's branch (cause found and fixed on 2026-10-03, `mem:history`). |
@@ -349,7 +349,7 @@ failures established that no reading would have.
     deletion came back `skipped`); the cancellation itself was never staged.
   - Exposure kept deliberately (2026-08-26, user): putting a branch on a real device without
     merging is worth it — which is what makes the page's "development build" banner
-    load-bearing. `buildRef()` in `scripts/bench/assemble.mjs` is not decoration. The preview
+    load-bearing. `buildRef()` in `scripts/bench/assemble.ts` is not decoration. The preview
     half is assembled with `--ref "preview @ <sha>"` and no `--release`, so its exports carry
     that label in `preview`.
 - **The pinned Vite 6 consumer fixture is the only thing verifying the README's one

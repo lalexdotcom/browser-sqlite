@@ -232,7 +232,7 @@ Not for documentation, memories, or a test change confined to what `pnpm test` a
 **Two things about reading a red cell, both paid for on 2026-09-22.** A timing-sensitive failure
 may be LOAD rather than a defect: re-run the cell alone before diagnosing — `tx-savepoint`'s T4 went
 0/3 alone against 2/4 in the full cell. And the cause may be a test you just added: a matrix cell is
-one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.mjs` regroups any
+one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.ts` regroups any
 `.matrix/<run>/`.
 
 ## Working with the user
@@ -241,7 +241,7 @@ one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.
   battery in one paste, each written for the case where the previous came back clean. Four
   round trips were burned on one-hypothesis-at-a-time before they called it.
 - **For Safari, serve the bench from the container (user, 2026-09-14).** `node
-  scripts/static-server.mjs _site 8099` (after `pnpm bench:build` if the page changed) and the user
+  scripts/static-server.ts _site 8099` (after `pnpm bench:build` if the page changed) and the user
   opens `http://localhost:8099/`: VS Code forwards the port to their Mac, localhost is a secure
   context, and the origin is apart from `lalexdotcom.github.io`, whose tabs can block IndexedDB.
   Moving `preview` costs a pre-push `pnpm test` and a Pages deploy per iteration; do it only for a
