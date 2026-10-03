@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-10-02.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-10-03.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one.
 
 **No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
@@ -30,10 +30,7 @@ obligations and unmeasured ground.
   checked equal to the pin plus those heads, and to the previous install — the repin changed no
   executed code. **The full matrix on that head (2026-10-01): 66 of 66 cells green, no failure**
   (`.matrix/2026-10-01T15-20-52-232Z`, 2332 s).
-  **Upstream moved on 2026-10-02 to `5bde491c`**, which merged #367 and #368, byte-identical to
-  our heads. The pin has not moved yet. A repin would drop those two hunks and take #369's revised
-  head `87ed5aaf` (2026-10-03), whose `jClose` releases both locks and closes the channel. #363's head moved too: `345791b3` (2026-10-03), his design + the `jUnlock` backstop + `jFileSize` size tracking, which the repin must take. Deferred by the user: a branch is already open
-  (`mem:follow-ups`).
+  **Upstream moved on 2026-10-03 to `7fcc30df`**, which merged every PR the patch carries (#363, #367, #368, #369, #370). **Next, asked by the user on 2026-10-03: repin to it, so that the patch carries only #371** (`IDBMirrorVFS`, opened that day, `mem:follow-ups`). Check each merged file against the head the patch carried before dropping its hunk.
 - **The release gate ran the full matrix for the first time, and it took four tags to get
   through.** 22/22 cells, `verify`, `consumer-smoke`, then `release`, with `untag` skipped.
   The three refusals before it were not test failures: `test-matrix.mjs` could not read a

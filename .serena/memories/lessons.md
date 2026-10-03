@@ -1211,3 +1211,19 @@ A plan that says "apply the sabotage, see the test fail, revert with `git checko
 Ten days of sightings at ~3 % never named the Firefox `lifecycle.test.ts` crash, and a 40-pass A/B on the original condition saw none at all. Looping the suspect file 40 times in one page made it 10/10 in under a minute, and every later question — which test, which step, which delay — was answered in a few passes each. When a failure is rare, raise its rate first; an A/B at 3 % costs hours and concludes nothing.
 
 **A library-free reproduction must match the library's shape before it clears the library.** Classic workers crashed without the library, and that was briefly reported as "the library is out". The library's workers are module workers, which did not crash on that schedule in a plain page; the real trigger — terminating any worker in its first milliseconds — was only found by bisecting the library's own sequence. Check the obvious attributes (worker type, how the script is served, timing) before concluding.
+
+## A VFS that fails a write inside SQLite's batch window gets a journal it never asked for (2026-10-03, wa-sqlite #371)
+
+Failing every `IDBMirrorVFS` call after an aborted commit looked like the safe, minimal fix — `OPFSPermutedVFS` does it. It corrupted the store on the next open. `sqlite3PagerCommitPhaseOne` (3.53.0) retries a batch-atomic commit with a rollback journal when the batch fails with any `IOERR`-class code but `IOERR_NOMEM`; that journal stayed in the VFS's memory and was played back over the store. **When a VFS must refuse a commit, refuse it where SQLite expects failure and keeps no journal (`SQLITE_FCNTL_SYNC`, outside the batch), and let writes that only reach memory succeed.** Found only because a reopen in the same VFS instance was probed; a fresh worker would have hidden it.
+
+## Reload a VFS's view only where SQLite revalidates or discards its cache — and never under a journal written on the old view (2026-10-03, wa-sqlite #371)
+
+Safe points, measured: `SHARED` from `NONE` (SQLite rechecks the change counter) and right after a commit SQLite saw fail (`pager_unlock` resets the cache, exclusive mode too). Unsafe, measured: the same reload when the refused transaction had spilled to a journal — SQLite rolls back through the handle it already holds and writes the old view's pages over the new one (12/12 corrupt). Removing the journal from the VFS's map does not help; the handle is open.
+
+## `IDBTransaction.abort()` throws once `commit()` was called (2026-10-03, wa-sqlite #371)
+
+So an aborted transaction cannot cancel the ones queued after it from its `onabort`; the first idea (cascade aborts) silently did nothing behind a `try`. What works: give the later transaction a first request — it runs only after the earlier overlapping ones finished, so its callback sees the abort and can still abort its own transaction. Use it only while another commit is pending: on every commit it cost 15-30 % on exclusive `full`.
+
+## Remove each part of a multi-part fix once before sending it (2026-10-03, wa-sqlite #371)
+
+Ten ablations of a nine-part fix: three parts made no test and no probe change and were dropped; one (journal removal on close) looked useless until a scenario was written for exactly what it guards, then failed 12/12 without it. **A part with no falsifier is either dead code or an untested case — find out which before posting.** The PR body's ablation table came straight from this.
