@@ -143,3 +143,37 @@ A separate defect, to be offered as its own PR. Details in `mem:measurements` (I
 - the `IDBMirrorVFS` finding, offered as a separate PR.
 
 The PR's code is unchanged until he answers.
+
+## His answer, and the rework, 2026-10-02/03
+
+rhashimoto replied on 2026-10-02:
+
+- **The `jUnlock` backstop.** He had considered it but found no path to it; the error path convinced him.
+- **The `jFileSize` change.** Not something he wants, since write speed is not a priority for this VFS, but he would review it. The user chose to include it, to close the subject.
+- **The overwrite flag.** He agreed to clear it on `COMMIT_PHASETWO`. His worry about a failed `VACUUM` he called weak: the next commit's `PHASETWO` clears it anyway.
+- **The `IDBMirrorVFS` PR.** "Yes, please."
+
+**The rework, 2026-10-03.**
+
+- **`0c7ee16d`**, the fix:
+  - `jFileControl` closes the stream on `SQLITE_FCNTL_SYNC` unless `SQLITE_FCNTL_OVERWRITE` set the flag, and on `SQLITE_FCNTL_COMMIT_PHASETWO`, which clears it;
+  - `jSync` closes the stream unless the flag is set;
+  - `jUnlock` keeps its close as the backstop;
+  - `File.writableSize` is set when a stream opens and kept by `jWrite` and `jTruncate`, so `jFileSize` answers without closing.
+- **`c9208072`**, the test: `test/vfs_publication.js` and its own worker, which subclasses the VFS to fail database writes and counts `createWritable` calls. It holds three cases: a failed cache spill, `EXCLUSIVE` with `OFF` and a terminated worker, and a single-stream `VACUUM` with the file's size checked from the page before A does anything else. `vfs_xUnlock.js` stays as the direct check of the backstop.
+- **`345791b3`**, a merge of upstream master `5bde491c`.
+
+**Measured.** The file's 120 tests pass 3 runs of 3 on Chromium and once on Firefox; the whole suite has 6142 passed. Red arms, Chromium, both builds:
+
+| | failed spill | `EXCLUSIVE` | `VACUUM` | `vfs_xUnlock` |
+|---|---|---|---|---|
+| master's VFS | 200 ≠ 201 | 200 ≠ 201 | 2 streams, 110592 ≠ 61440 bytes | 8192 ≠ 4096 |
+| the previous head (`jUnlock` only) | ok | 200 ≠ 201 | 2 streams | ok |
+| this head without the backstop | 200 ≠ 201 | ok | ok | 8192 ≠ 4096 |
+
+The first version of the `VACUUM` test passed on master's VFS. Its `PRAGMA page_count` read the database, which closed the stream before the size was checked.
+
+**Published.** The title became "OPFSAnyContextVFS: publish writes where SQLite ends them", and the description was rewritten around the three cases. [Comment 5966506685](https://github.com/rhashimoto/wa-sqlite/pull/363#issuecomment-5966506685) answered, and said the `IDBMirrorVFS` PR comes separately.
+
+**Not done yet.** `patches/` still carries the previous head's hunk, and waits for the repin. The `IDBMirrorVFS` PR (IDBMIRROR-COMMIT-ABORT) is to write.
+

@@ -32,7 +32,7 @@ obligations and unmeasured ground.
   (`.matrix/2026-10-01T15-20-52-232Z`, 2332 s).
   **Upstream moved on 2026-10-02 to `5bde491c`**, which merged #367 and #368, byte-identical to
   our heads. The pin has not moved yet. A repin would drop those two hunks and take #369's revised
-  head `87ed5aaf` (2026-10-03), whose `jClose` releases both locks and closes the channel. Deferred by the user: a branch is already open
+  head `87ed5aaf` (2026-10-03), whose `jClose` releases both locks and closes the channel. #363's head moved too: `345791b3` (2026-10-03), his design + the `jUnlock` backstop + `jFileSize` size tracking, which the repin must take. Deferred by the user: a branch is already open
   (`mem:follow-ups`).
 - **The release gate ran the full matrix for the first time, and it took four tags to get
   through.** 22/22 cells, `verify`, `consumer-smoke`, then `release`, with `untag` skipped.
