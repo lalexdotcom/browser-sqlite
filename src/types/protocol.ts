@@ -102,8 +102,23 @@ export type ClientMessageData =
       wasm?: WasmLocation;
     };
 
+/**
+ * The step a worker's open has reached, posted as each one begins. Internal: a
+ * test reads it to name where an open that never finishes stopped.
+ */
+export type BootStage =
+  | 'waiting for the client'
+  | 'loading the build'
+  | 'instantiating wasm'
+  | 'loading the VFS module'
+  | 'creating the VFS'
+  | 'waiting for the open lock'
+  | 'opening the database'
+  | 'applying pragmas';
+
 export type WorkerMessageData =
   | { type: 'ready'; callId: number }
+  | { type: 'boot'; callId: number; stage: BootStage }
   /**
    * The worker found a feature of `declineWithout` missing and opened nothing:
    * the environment caps the pool (spec 2026-09-13).

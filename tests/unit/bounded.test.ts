@@ -1,5 +1,11 @@
 import { spawn } from 'node:child_process';
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from '@rstest/core';
+
+// The runs of this file are kept apart from the real ones in `.test-runs/`.
+const runsDir = mkdtempSync(join(tmpdir(), 'bounded-runs-'));
 
 /**
  * `scripts/bounded.mjs` is what keeps a hung run from sitting for ever — in a
@@ -12,6 +18,7 @@ const run = (args: string[]): Promise<{ code: number; stderr: string }> =>
   new Promise((resolve) => {
     const child = spawn('node', ['scripts/bounded.mjs', ...args], {
       stdio: ['ignore', 'ignore', 'pipe'],
+      env: { ...process.env, BOUNDED_RUNS_DIR: runsDir },
     });
     let stderr = '';
     child.stderr.on('data', (chunk: Buffer) => {
@@ -29,6 +36,18 @@ describe('scripts/bounded.mjs', () => {
     expect(await run(['10', 'node', '-e', 'process.exit(3)'])).toMatchObject({
       code: 3,
     });
+  });
+
+  it("keeps the run's output in a log", async () => {
+    // Falsifiable: stop writing the child's output to the log and this goes red.
+    // Assembled by the child, so the command line in the log cannot match it.
+    const half = `marker-${Date.now()}`;
+    const marker = `${half}${half}`;
+    await run(['10', 'node', '-e', `console.log('${half}'.repeat(2))`]);
+    const logs = readdirSync(runsDir).map((name) =>
+      readFileSync(join(runsDir, name), 'utf8'),
+    );
+    expect(logs.some((log) => log.includes(marker))).toBe(true);
   });
 
   it('kills a command that passes its deadline and exits 124', async () => {

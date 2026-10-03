@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **`db.ready`** resolves once the pool has started and rejects with the error that failed the client. Queries don't need it.
 - **`db.files`** lists every name the database's files may have — the database, `-journal`, `-wal` and the VFS's own extra files — as OPFS paths on the VFS that keep a folder.
-- **`db.debug` follows each request from the call to its end** — lock wait, pool wait, run, error — with the worker that served it. Its types are exported.
+- **`db.debug` follows each request from the call to its end** — lock wait, pool wait, run, error — with the worker that served it, and each worker's open step by step: a worker's `boot` names the step its open has reached, so an open that never finishes says where it stopped. Its types are exported.
 
 ### Changed
 

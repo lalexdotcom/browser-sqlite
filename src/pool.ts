@@ -518,6 +518,10 @@ export const createPoolWorker = (deps: {
         }
         break;
       }
+      case 'boot': {
+        if (data.callId === 0) debugWorker?.boot(data.stage);
+        break;
+      }
       case 'open-error': {
         const { callId } = data;
         if (callId === 0) {

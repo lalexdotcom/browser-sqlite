@@ -1,6 +1,6 @@
 # Follow-ups — the open backlog
 
-One short entry each, and every entry OPEN. Anything closed is deleted from here —
+One short entry each, and every entry OPEN. **An entry marked DORMANT waits for an event and needs no action until it comes: it is not part of the backlog and is not listed when the user asks for it (user, 2026-10-03).** Anything closed is deleted from here —
 `CHANGELOG.md` and `git log` record what was fixed, `mem:measurements` holds the numbers,
 `mem:vfs` the VFS behaviour, `mem:lessons` what a closure taught.
 
@@ -14,9 +14,11 @@ descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` clai
 shadow types that were never loaded, `W-types` a duplication already gone. Both would have
 been work on nothing.
 
-## `open-retry` "succeeds once the holder lets go" times out on Firefox — to fix, not to log (user, 2026-09-28)
+## `open-retry` "succeeds once the holder lets go" times out on Firefox — DORMANT until the next sighting (user, 2026-10-03)
 
-**The user's priority: reproduce it on demand, then remove the cause, so that CI never fails on valid code.** It has already refused a merge (`test/needs-skip-in-matrix`, first attempt), and five sightings put it past noise. Done means a reproduction that fails on demand — under load, with a squeezed timing, or with an instrumented holder — the cause named, and the fix verified against that reproduction. A raised timeout or a retry of the test is not a fix.
+**DORMANT: no action until it happens again (user, 2026-10-03).** Reproduction attempts are over (below), and nothing since the test names its stall: 13 full matrices of 22 Firefox cells each and every hook's `pnpm test`, 2026-09-28 to 2026-10-03, all clean. The release will make test runs rarer; the capture and the tree below are what makes a late sighting usable. **Where a sighting lands:** every run through `scripts/bounded.mjs` (`pnpm test`, the hooks, conformance) is kept in `.test-runs/` since 2026-10-03, the newest 30, so a failure is still readable after a green rerun; a matrix keeps its own in `.matrix/`. Read its `stalled in` line and follow the tree.
+
+**When it returns, the user's priority stands: reproduce it on demand, then remove the cause, so that CI never fails on valid code.** It has already refused a merge (`test/needs-skip-in-matrix`, first attempt), and five sightings put it past noise. Done means a reproduction that fails on demand — under load, with a squeezed timing, or with an instrumented holder — the cause named, and the fix verified against that reproduction. A raised timeout or a retry of the test is not a fix.
 
 **Sightings, all Firefox, all 30 s with no assertion reached, all an open against a held file:**
 - 2026-09-26, the repin's matrix, twice on unrelated cells (`OPFSCoopSyncVFS/async`, `IDBBatchAtomicVFS/jspi`) — never before in seven full matrices. Alone on the same tree: 20 of 20. The repin touches no code the test runs (VFS files byte-identical; only text encoding changed).
@@ -40,7 +42,7 @@ been work on nothing.
 - `holder.take`, holder last at `getDirectory` — the Firefox engine hang (`getDirectory()` never settles in a worker, the rstest/Firefox silent hang entry). Test-side: the holder must bound its worker and replace it, as the conformance probe does (`6560c9e`).
 - `holder.take`, holder last at `createSyncAccessHandle` — Firefox neither grants nor rejects a handle the just-closed client still holds. Test-side: the holder bounds that wait itself.
 - `holder.take`, `no step` — the blob worker never booted.
-- `creator.write`, a worker `never initialized` — a fresh worker's open never finishes, and nothing in the client bounds a worker's startup (not verified beyond a grep): a consumer would hang the same way. Product-side — instrument the worker's boot next.
+- `creator.write`, a worker `never initialized (boot: <step>)` — a fresh worker's open never finishes, and nothing in the client bounds a worker's startup (not verified beyond a grep): a consumer would hang the same way. Product-side. The step is `db.debug`'s `boot` since 2026-10-03, verified by holding the open lock from the page (`boot: waiting for the open lock`, both engines): `waiting for the client`, the `proceed` after the probe never came; `loading the build`, `instantiating wasm`, `loading the VFS module`, the engine never delivered a module; `creating the VFS`, `createVfsInstance` (its own retry is bounded, so a hang is inside the VFS's `create()`); `waiting for the open lock`, another worker or client holds `bsq:init`; `opening the database`, `openWithRetry`; `applying pragmas`, a pragma blocked; `no step`, the worker never ran `open`.
 - `creator.close` — the drain never ends; the close path.
 - `db.read` — the open under test after all; `openWithRetry` and `OPFSCoopSyncVFS`'s lock.
 

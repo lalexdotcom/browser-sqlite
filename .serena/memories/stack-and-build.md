@@ -152,7 +152,7 @@ actually kills. **Since 2026-10-02 it kills the whole process group** (`detached
 `process.kill(-pid)`, and a `SIGKILL` to the group once the command exits): signalling the
 direct child alone left `pnpm exec rstest`'s real pnpm, rstest and its browser running under
 init. The command gets no stdin, since a background group that read the terminal would be
-stopped; on Windows it falls back to the direct child.
+stopped; on Windows it falls back to the direct child. **It also keeps every run's output in `.test-runs/` (gitignored) since 2026-10-03, the newest 30, so a failure seen once survives a green rerun** (open-retry, `mem:follow-ups`); the command writes to a pipe as a result, as in CI, and `close` (or `exit` plus 2 s, should something it started hold the pipe) ends the wait. `BOUNDED_RUNS_DIR` moves the folder, for the script's own unit test.
 
 **No test file enumerates VFS** since 2026-09-16: a file states what its subject needs of the pair
 (`needs: ['two-workers' | 'interruptible' | 'shared-second-client']`) and the matrix supplies the

@@ -1,6 +1,7 @@
 import type { CreateSQLiteClientOptions } from './client';
 import type { SQLiteVFS } from './const/vfs';
 import type { PoolWorker } from './pool';
+import type { BootStage } from './types/protocol';
 
 export const debugSQLQuery = (sql: string, params?: unknown[]) => {
   if (!params || params.length === 0) return sql;
@@ -127,6 +128,12 @@ export type WorkerDebugState = {
   readonly name: string;
   readonly creationTime: number;
   readonly initializationTime?: number;
+  /**
+   * The step the worker's open has reached, set as each one begins; it stays
+   * at the last one once the worker is ready. Where an open never finishes,
+   * it names the step that did not.
+   */
+  readonly boot?: BootStage;
   readonly status: string;
 };
 
@@ -153,6 +160,7 @@ export type ClientDebugState = {
 
 export type WorkerDebugHandle = {
   readonly initialized: () => void;
+  readonly boot: (stage: BootStage) => void;
   /** Attaches to the slot's active request only if it is still this worker's own generation. */
   readonly query: (
     sql: string,
@@ -257,6 +265,9 @@ export const createClientDebug = (
     return {
       initialized: () => {
         worker.initializationTime = Date.now();
+      },
+      boot: (stage) => {
+        worker.boot = stage;
       },
       query: (sql, params, internal = false) => {
         // Bound to this worker's own generation: a stale handle from a dead
