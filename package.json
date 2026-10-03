@@ -59,7 +59,7 @@
 		"test:conformance": "node scripts/bounded.ts 900 rstest --config rstest.conformance.config.ts && node scripts/bounded.ts 900 rstest --config rstest.conformance.firefox.config.ts",
 		"test:conformance:chromium": "node scripts/bounded.ts 900 rstest --config rstest.conformance.config.ts",
 		"test:conformance:firefox": "node scripts/bounded.ts 900 rstest --config rstest.conformance.firefox.config.ts",
-		"test:matrix": "node scripts/test-matrix.mjs",
+		"test:matrix": "node scripts/test-matrix.ts",
 		"docs:vfs": "node scripts/render-vfs-matrix.ts",
 		"bench:build": "pnpm build && node scripts/bench/assemble.ts _site",
 		"bench:serve": "npx --yes kill-port 8099 && pnpm bench:build && node scripts/static-server.ts _site 8099",

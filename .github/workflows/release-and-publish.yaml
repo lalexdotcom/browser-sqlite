@@ -18,7 +18,7 @@ jobs:
 
   # `pnpm test` covers two of the 22 declared pairs; the rest are only seen
   # here, on the tag itself. One job per pair: ~10 min instead of ~70. Each
-  # shard goes through test-matrix.mjs, which owns the per-cell timer.
+  # shard goes through test-matrix.ts, which owns the per-cell timer.
   pairs:
     runs-on: ubuntu-latest
     outputs:
@@ -36,7 +36,7 @@ jobs:
       # eaten by bash before node saw them.
       - id: list
         run: |
-          PAIRS=$(node --experimental-strip-types -e 'import("./scripts/test-matrix.mjs").then(({ allPairs }) => console.log(JSON.stringify(allPairs().map((p) => p.vfs + "/" + p.build))))')
+          PAIRS=$(node --experimental-strip-types -e 'import("./scripts/test-matrix.ts").then(({ allPairs }) => console.log(JSON.stringify(allPairs().map((p) => p.vfs + "/" + p.build))))')
           echo "pairs=$PAIRS" >> "$GITHUB_OUTPUT"
 
   cells:
@@ -67,7 +67,7 @@ jobs:
       - name: Install browsers
         run: pnpm exec playwright install --with-deps chromium firefox
       - name: Matrix ${{ matrix.pair }}
-        run: node scripts/test-matrix.mjs --pair ${{ matrix.pair }}
+        run: node scripts/test-matrix.ts --pair ${{ matrix.pair }}
       # The script writes each run's output to .matrix/ and prints only a
       # verdict, so a red cell otherwise explains nothing — and "diagnose it
       # locally" fails when the cell is green locally, which is how rc.5 went.
