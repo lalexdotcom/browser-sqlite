@@ -85,7 +85,7 @@ The worker lets pending commits finish before closing. Closing right after a `no
 
 ## Posted upstream
 
-PR [#371][pr371], opened 2026-10-03 from `lalexdotcom:fix/idb-mirror-commit-abort`. It has two commits on `master` at `7fcc30df` (#370's merge): the fix (`1844c761`), then the tests (`1f7b2533`). The branch had first held the fail-every-call commits, pushed but never proposed. It was rebuilt from `master` and force-pushed before opening (user, 2026-10-03). The body explains each choice and its rejected alternative, and opens with "This one turned out trickier than I expected 😅" (user). It does not mention this library.
+PR [#371][pr371], opened 2026-10-03 from `lalexdotcom:fix/idb-mirror-commit-abort`. It has two commits on `master` at `7fcc30df` (#370's merge): the fix (`1844c761`), then the tests (`1f7b2533`). The branch had first held the fail-every-call commits, pushed but never proposed. It was rebuilt from `master` and force-pushed before opening (user, 2026-10-03). The body explains each choice and its rejected alternative, and opens with "This one turned out trickier than I expected 😅" (user). It does not mention this library. Upstream CI on the head commit is green: [run 37137339446](https://github.com/rhashimoto/wa-sqlite/actions/runs/37137339446), `build (20.x)`, the only check.
 
 ## What stays ours
 
