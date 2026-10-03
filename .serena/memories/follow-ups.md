@@ -378,6 +378,7 @@ Line 9, `globalThis.FileSystemSyncAccessHandle.prototype.hasOwnProperty('mode')`
 Before the 1.0, reread the consumer docs (`README.md`, `API.md`, `VFS.md` and its generator) as a whole. Already known to go in it:
 - **An "https required: ✅ / ❌" row in the VFS table, or in each VFS's own section** (user): ❌ for `MemoryVFS` and `MemoryAsyncVFS`, ✅ for every other VFS, which needs OPFS or the Web Locks API, both withheld outside a secure context. `VFS.md` is generated (`scripts/render-vfs-matrix.ts`), so the row comes from `VFS_CAPABILITIES` (`requires` holds `opfs` or `web-locks`), not by hand.
 - The 80-column hard wrap of the consumer docs (entry above).
+- **`VFS.md` gives the OPFS VFS a Chrome floor that is too low.** `FEATURE_SUPPORT.opfs` in the generator holds one version per browser, `getDirectory`'s (Chrome 86), and its comment says `createSyncAccessHandle` gives the same versions; browser-compat-data says otherwise: `FileSystemFileHandle.createSyncAccessHandle` and `FileSystemSyncAccessHandle` are Chrome 102, Chrome Android 109, Firefox 111, Safari 15.2 (checked 2026-10-03). The four VFS that open sync access handles (`OPFSAdaptiveVFS`, `OPFSCoopSyncVFS`, `OPFSWriteAheadVFS`, `AccessHandlePoolVFS`) show Chrome 92+ where 102+ is true; `OPFSAnyContextVFS` writes through `createWritable` and may be right. Likely a separate feature (`sync-access-handle`) in the generator.
 
 ## Notes, with nothing to fix
 
