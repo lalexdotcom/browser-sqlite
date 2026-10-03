@@ -44,24 +44,6 @@ been work on nothing.
 - `creator.close` — the drain never ends; the close path.
 - `db.read` — the open under test after all; `openWithRetry` and `OPFSCoopSyncVFS`'s lock.
 
-## wa-sqlite #370: MERGED upstream as `7fcc30df` (seen 2026-10-03); repin owed
-
-`IDBBatchAtomicVFS.jDelete` now honours `syncDir` (a `strict` transaction and `sync(true)`), so a journal's deletion commits before SQLite goes on; on master a context ending right after a commit left a hot journal and the next connection rolled the transaction back (the first of a new database, or any larger than the page cache). Report `docs/upstream/2026-10-01-wa-sqlite-370-idb-journal-delete.md`, numbers in `mem:measurements` (IDB-JOURNAL). Branch `fix/idb-journal-delete` on the fork, rebased on `7a4b4241` before opening, CI green; the patch carries its head `57305f73`. Fix A (`sync()` no longer forgetting) stays local on `backup/idb-journal-sync-a`. What each answer calls for:
-- **He asks about the cost**: +0.4 ms per journal deletion (first transaction of a new database), none on a batch atomic commit; three-arm table in the report.
-- **He prefers fixing `IDBContext.sync()`** (A): it cures termination but leaves the deletion at `default` durability, which SQLite's `extraSync` comment says a power loss can resurrect; offer both together if he wants.
-- **He merges**: repin and drop the `IDBBatchAtomicVFS.js` hunk from the patch; the file is then no longer patched.
-
-## wa-sqlite #363: MERGED upstream as `27a6a0b6` (seen 2026-10-03); repin owed
-
-History is in the report (`docs/upstream/2026-09-25-wa-sqlite-363-anycontext-unlock-truncate.md`). He accepted the `jUnlock` backstop after our error-path demonstration, would review the `jFileSize` size tracking (the user chose to include it), agreed on clearing the overwrite flag on `PHASETWO`, and asked for the `IDBMirrorVFS` PR.
-
-**Head `345791b3`, pushed 2026-10-03**, made of `0c7ee16d` (the fix), `c9208072` (`test/vfs_publication.js` and its worker) and a merge of upstream `5bde491c`. The file's 120 tests pass 3 of 3 on Chromium and on Firefox; the suite has 6142 passed. Each new test is red on master's VFS, and each fails on a variant missing its part (363-ERROR-PATH, the report's table). Title, description and comment 5966506685 posted.
-
-What each answer calls for:
-- **He asks for changes**: in the same worktree (`.work/wa-sqlite-anycontext`); the red arms are rerun by swapping in master's file, the previous head's, or this head without `jUnlock`.
-- **He merges**: the repin (deferred by the user) drops the `OPFSAnyContextVFS.js` hunk instead of updating it.
-- **Alongside**: the `IDBMirrorVFS` PR, its own entry below.
-
 ## wa-sqlite #371: `IDBMirrorVFS` commit-abort — OPENED 2026-10-03, waiting on rhashimoto
 
 Offered on #363; rhashimoto: "Yes, please, if you're up for that." Defect: IDBMIRROR-COMMIT-ABORT; designs compared: IDBMIRROR-ABORT-JOURNAL, IDBMIRROR-ABORT-DESIGNS (`mem:measurements`).
@@ -77,6 +59,12 @@ Evidence: 6 tests red on master both builds both engines; 190 tests 3/3 on Chrom
 With `synchronous=normal`, closing right after a commit made `oncomplete` post on the channel `jClose` had closed (`InvalidStateError`, uncaught), and — the real defect — the other connections never got the transaction: one that only reads stays on its old view until it writes, whose first attempt gets `SQLITE_BUSY`. Same when the context is terminated right after close (no error then). Fix sent: `jClose` awaits the commits in flight (`File.commitsInFlight`) before closing the channel. Skipping the broadcast once closed silenced the error and kept the stale readers; posting on a fresh channel missed terminated workers (IDBMIRROR-CLOSE-BROADCAST, `mem:measurements`). In this library: a second client stale and `BUSY` on its next write after the first client's `close()`, the error reaching the page on Chromium; gone with the carried patch.
 
 `lalexdotcom:fix/idb-mirror-close-broadcast` = `a9811d75` (fix) + `69e00270` (tests), on `master` `7fcc30df`, **opened as rhashimoto/wa-sqlite#372** on the user's go. Based on master, not on #371, so the maintainer picks the merge order; the body names the conflict with #371 (`File` constructor, `jClose`, end of `#commitTx`) and promises to rebase whichever lands second (user). Carried in `patches/` merged with #371 (`mem:stack-and-build`). Upstream CI green on `69e00270` (run 37147812971). Report `docs/upstream/2026-10-03-wa-sqlite-372-idb-mirror-close-broadcast.md`. What each answer calls for: review changes → worktree `.work/wa-sqlite-close-broadcast`, rerun `test/IDBMirrorVFS.test.js` on both engines; #371 merges first → rebase #372 onto it (resolution: wait for commits in flight, then #371's journal removal) and drop `commitsFinished()` from #371's test worker if wanted; either merge → repin.
+
+## wa-sqlite's own suite on Firefox: two failures on `master`, one unexplained (2026-10-03)
+
+Upstream CI runs Chromium only, so neither shows there. Seen running the suite on Firefox (Playwright 1.62.1) for #372; both on `master` `7fcc30df` alike.
+- **`vfs_read_freshness` on `OPFSWriteAheadVFS` — explained.** Default, asyncify and jspi fail with `unable to open database file` when the test opens its second connection. The test is ours (#365); on Firefox, without `readwrite-unsafe`, the VFS keeps its access handles for a connection's life, so a second connection cannot open (`mem:vfs`). A Chromium-only assumption, not a VFS defect: skip that test where the second open is refused, if upstream wants the suite green on Firefox.
+- **`sql.test.js` hangs — cause unknown.** On `master` alone it was still running after 6 min, Firefox at ~5 % CPU (waiting, not computing); in another `master` run, together with `OPFSWriteAheadVFS.test.js`, it finished. Twice over 120 s on #372's branch. Its `IDBMirrorVFS` configurations pass in 7-8 s, 3 of 3, on both, so another configuration hangs. Next: run it one configuration at a time on Firefox (a copy of the file with `CONFIGS` cut to one entry, as done for `IDBMirrorVFS`), several runs each, and see whether a VFS this library ships is the one. **Not measured whether the library is affected.**
 
 ## wa-sqlite #362: `OPFSCoopSyncVFS.create()` fails after a back/forward-cache navigation — PR not decided
 
