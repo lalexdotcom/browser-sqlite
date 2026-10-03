@@ -21,6 +21,9 @@
  * code `timeout(1)` uses, and what `pnpm test:matrix` already reports.
  */
 import { spawn } from 'node:child_process';
+import { mkdirSync, openSync, readdirSync, rmSync, writeSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const [rawSeconds, ...command] = process.argv.slice(2);
 const seconds = Number(rawSeconds);
@@ -32,6 +35,45 @@ if (!Number.isFinite(seconds) || seconds <= 0 || command.length === 0) {
   process.exit(2);
 }
 
+// Every run's output is also kept in `.test-runs/` (gitignored), the newest
+// KEEP_RUNS of them: a failure seen once — in a hook, then rerun green — can
+// still be read afterwards (open-retry's stall, `mem:follow-ups`). The command
+// writes to a pipe rather than a terminal as a result, as it does in CI.
+const KEEP_RUNS = 30;
+// BOUNDED_RUNS_DIR is for this script's own unit test, whose runs must not
+// push real ones out.
+const runsDir =
+  process.env.BOUNDED_RUNS_DIR ??
+  join(dirname(fileURLToPath(import.meta.url)), '..', '.test-runs');
+mkdirSync(runsDir, { recursive: true });
+const label = command
+  .join(' ')
+  .replace(/[^\w.-]+/g, '-')
+  .slice(0, 80);
+const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+const log = openSync(join(runsDir, `${stamp}-${label}.log`), 'a');
+writeSync(log, `$ ${command.join(' ')}\n`);
+for (const old of readdirSync(runsDir)
+  .filter((name) => name.endsWith('.log'))
+  .sort()
+  .slice(0, -KEEP_RUNS)) {
+  rmSync(join(runsDir, old), { force: true });
+}
+
+/** Prints a line of this wrapper's own and keeps it in the run's log. */
+const note = (line) => {
+  console.error(line);
+  writeSync(log, `${line}\n`);
+};
+
+/** Exits once what was written to stdout and stderr has been flushed. */
+const exit = (code) => {
+  writeSync(log, `[bounded] exit ${code}\n`);
+  process.stdout.write('', () =>
+    process.stderr.write('', () => process.exit(code)),
+  );
+};
+
 // Its own process group, so that a deadline or a signal reaches what the
 // command started too: `pnpm exec rstest` killed through its launcher alone
 // left rstest and its browser running under init (2026-10-01). A background
@@ -39,12 +81,22 @@ if (!Number.isFinite(seconds) || seconds <= 0 || command.length === 0) {
 const grouped = process.platform !== 'win32';
 
 const child = spawn(command[0], command.slice(1), {
-  stdio: grouped ? ['ignore', 'inherit', 'inherit'] : 'inherit',
+  stdio: [grouped ? 'ignore' : 'inherit', 'pipe', 'pipe'],
   detached: grouped,
   // The command comes from package.json, never from user input; no shell, so
   // an argument with a space cannot become two.
   shell: false,
 });
+
+for (const [from, to] of [
+  [child.stdout, process.stdout],
+  [child.stderr, process.stderr],
+]) {
+  from.on('data', (chunk) => {
+    to.write(chunk);
+    writeSync(log, chunk);
+  });
+}
 
 /** Signals the command and everything it started; a group already gone is fine. */
 const killAll = (signal) => {
@@ -61,10 +113,10 @@ let forwarded = false;
 
 const deadline = setTimeout(() => {
   killedByDeadline = true;
-  console.error(
+  note(
     `\n[bounded] \`${command.join(' ')}\` passed ${seconds}s without finishing — killing it.`,
   );
-  console.error(
+  note(
     '[bounded] A run that hangs outside a test body reports nothing by itself: read the last lines above for the file that was still running.',
   );
   killAll('SIGTERM');
@@ -82,16 +134,26 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 
 child.on('error', (error) => {
   clearTimeout(deadline);
-  console.error(`[bounded] could not run \`${command[0]}\`: ${error.message}`);
-  process.exit(127);
+  note(`[bounded] could not run \`${command[0]}\`: ${error.message}`);
+  exit(127);
 });
 
-child.on('exit', (code, signal) => {
+let finished = false;
+const finish = (code, signal) => {
+  if (finished) return;
+  finished = true;
   clearTimeout(deadline);
   // What the command started may outlive it; a run we ended leaves nothing.
   if (killedByDeadline || forwarded) killAll('SIGKILL');
-  if (killedByDeadline) process.exit(124);
-  if (code !== null) process.exit(code);
+  if (killedByDeadline) return exit(124);
+  if (code !== null) return exit(code);
   // Killed by a signal we did not send: report it the way a shell does.
-  process.exit(signal === 'SIGINT' ? 130 : 1);
-});
+  exit(signal === 'SIGINT' ? 130 : 1);
+};
+
+// `close` comes once the child's output has been read to the end. A process
+// the command left behind may hold that output open: then `exit` decides.
+child.on('close', finish);
+child.on('exit', (code, signal) =>
+  setTimeout(() => finish(code, signal), 2000),
+);

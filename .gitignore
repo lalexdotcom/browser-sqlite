@@ -32,6 +32,10 @@ doc_build/
 # Raw reports from `pnpm test:matrix`, one run per timestamped directory.
 .matrix/
 
+# Every run that goes through scripts/bounded.mjs (`pnpm test` and the hooks),
+# the newest 30 kept, so a failure seen once can be read after a green rerun.
+.test-runs/
+
 # Probes, fixtures and throwaway harnesses. In the project so they are visible
 # in the editor, ignored so they never ship. Never referenced by src/ or by CI.
 .scratchpad/
