@@ -3,7 +3,7 @@ import {
   formatCell,
   parseMatrixReport,
   runBounded,
-} from '../../scripts/test-matrix.mjs';
+} from '../../scripts/test-matrix.ts';
 
 /**
  * Fixtures are trimmed excerpts of real rstest 0.11.8 markdown reports,

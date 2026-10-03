@@ -17,7 +17,7 @@
  *
  * Set KEEP_TMP=1 to keep the scaffolded app for inspection.
  */
-import { execFileSync, spawn } from 'node:child_process';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import {
   cpSync,
   mkdtempSync,
@@ -46,14 +46,17 @@ const PARCEL_SERVE_PORT = 5189;
 // binds IPv4, so every request would hang.
 const HOST = '127.0.0.1';
 
-const results = [];
+type StageResult = { name: string; ok: boolean; detail: string };
+/** What the fixture page leaves on `window.__SMOKE__`. */
+type Smoke = { ok: boolean; detail: string };
+type SmokeWindow = Window & { __SMOKE__?: Smoke };
+
+const results: StageResult[] = [];
 
 /** execFileSync puts the useful half on either stream depending on the tool. */
-function errText(error) {
-  return (
-    [error.stdout, error.stderr].filter(Boolean).join('\n').trim() ||
-    error.message
-  );
+function errText(error: unknown) {
+  const e = error as Error & { stdout?: string; stderr?: string };
+  return [e.stdout, e.stderr].filter(Boolean).join('\n').trim() || e.message;
 }
 
 /**
@@ -61,15 +64,15 @@ function errText(error) {
  * not relative, root-absolute or a URL is unresolvable in a bare browser and
  * pushes a dependency into the consumer's lockfile.
  */
-function assertNoBareSpecifiers(distDir) {
-  const offenders = [];
+function assertNoBareSpecifiers(distDir: string): string[] {
+  const offenders: string[] = [];
   const patterns = [
     /\bfrom\s*["']([^"']+)["']/g,
     /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
     /\bimport\s+["']([^"']+)["']/g,
   ];
 
-  const walk = (dir) => {
+  const walk = (dir: string) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
@@ -94,21 +97,21 @@ function assertNoBareSpecifiers(distDir) {
   return offenders;
 }
 
-function stage(name) {
+function stage(name: string) {
   process.stdout.write(`\n▶ ${name}\n`);
   return {
     pass: (detail = '') => {
       results.push({ name, ok: true, detail });
       process.stdout.write(`  ✓ ${detail}\n`);
     },
-    fail: (detail) => {
+    fail: (detail: string) => {
       results.push({ name, ok: false, detail });
       process.stdout.write(`  ✗ ${detail}\n`);
     },
   };
 }
 
-function run(cmd, args, cwd, timeout = 300_000) {
+function run(cmd: string, args: string[], cwd: string, timeout = 300_000) {
   return execFileSync(cmd, args, {
     cwd,
     timeout,
@@ -117,7 +120,7 @@ function run(cmd, args, cwd, timeout = 300_000) {
   });
 }
 
-async function waitForServer(url, timeoutMs = 60_000) {
+async function waitForServer(url: string, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -131,37 +134,37 @@ async function waitForServer(url, timeoutMs = 60_000) {
   throw new Error(`server at ${url} did not come up within ${timeoutMs}ms`);
 }
 
-function startServer(args, cwd) {
+function startServer(args: string[], cwd: string) {
   const [cmd, ...rest] = args[0] === 'node' ? args : ['npx', ...args];
   // `detached` puts the child in its own process group. Killing the direct
   // child is not enough: `npx` and the rsbuild/vite CLIs fork the actual
   // server, which survives, holds the port, and makes the NEXT run fail with
   // "port is occupied" — a failure that looks like a packaging defect and is
   // not one. `stopServer` signals the whole group instead.
-  const child = spawn(cmd, rest, {
+  const child = spawn(cmd as string, rest, {
     cwd,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,
   });
-  const log = [];
+  const log: string[] = [];
   child.stdout.on('data', (d) => log.push(String(d)));
   child.stderr.on('data', (d) => log.push(String(d)));
   return { child, log };
 }
 
 /** Signals the child's whole process group; falls back to the child alone. */
-function stopServer(child) {
+function stopServer(child: ChildProcess) {
   try {
-    process.kill(-child.pid, 'SIGTERM');
+    process.kill(-(child.pid as number), 'SIGTERM');
   } catch {
     child.kill('SIGTERM');
   }
 }
 
 /** Loads the fixture and returns what `window.__SMOKE__` ended up holding. */
-async function driveBrowser(url) {
+async function driveBrowser(url: string) {
   const browser = await chromium.launch();
-  const noise = [];
+  const noise: string[] = [];
   try {
     const page = await browser.newPage();
     page.on('console', (m) => {
@@ -176,19 +179,31 @@ async function driveBrowser(url) {
     });
 
     await page.goto(url, { waitUntil: 'load' });
-    await page.waitForFunction(() => window.__SMOKE__ !== undefined, null, {
-      timeout: 45_000,
-    });
-    const smoke = await page.evaluate(() => window.__SMOKE__);
+    await page.waitForFunction(
+      () => (window as SmokeWindow).__SMOKE__ !== undefined,
+      null,
+      {
+        timeout: 45_000,
+      },
+    );
+    const smoke = await page.evaluate(() => (window as SmokeWindow).__SMOKE__);
     return { smoke, noise };
   } catch (error) {
-    return { smoke: undefined, noise: [...noise, `driver: ${error.message}`] };
+    return {
+      smoke: undefined,
+      noise: [...noise, `driver: ${(error as Error).message}`],
+    };
   } finally {
     await browser.close();
   }
 }
 
-async function checkMode(name, serverArgs, url, appDir) {
+async function checkMode(
+  name: string,
+  serverArgs: string[],
+  url: string,
+  appDir: string,
+) {
   const s = stage(name);
   const { child, log } = startServer(serverArgs, appDir);
   try {
@@ -204,21 +219,26 @@ async function checkMode(name, serverArgs, url, appDir) {
       s.fail(detail);
     }
   } catch (error) {
-    s.fail(`${error.message}\n    ${log.join('').trim()}`);
+    s.fail(`${(error as Error).message}\n    ${log.join('').trim()}`);
   } finally {
     stopServer(child);
   }
 }
 
 /** The packed tarball every consumer app installs. Set by the pack stage. */
-let tarball;
+let tarball: string | undefined;
 
 /**
  * Copies a fixture outside the repo and installs the tarball into it. Returns
  * false rather than throwing: one bundler failing to install must not cancel
  * the others, or a single npm hiccup hides the whole matrix.
  */
-function scaffoldApp(label, fixture, dir, nested) {
+function scaffoldApp(
+  label: string,
+  fixture: string,
+  dir: string,
+  nested?: Record<string, string>,
+) {
   const s = stage(`scaffold and install the ${label} consumer app`);
   try {
     cpSync(join(ROOT, 'tests', fixture), dir, { recursive: true });
@@ -228,7 +248,7 @@ function scaffoldApp(label, fixture, dir, nested) {
     // npm, not pnpm, and outside the repo: nothing can resolve
     // `browser-sqlite` back to the local sources.
     run('npm', ['install', '--no-audit', '--no-fund'], dir);
-    run('npm', ['install', '--no-audit', '--no-fund', tarball], dir);
+    run('npm', ['install', '--no-audit', '--no-fund', tarball as string], dir);
     s.pass(dir);
     return true;
   } catch (error) {
@@ -238,7 +258,7 @@ function scaffoldApp(label, fixture, dir, nested) {
 }
 
 /** Runs a production build and reports whether there is output worth serving. */
-function buildStage(label, args, dir) {
+function buildStage(label: string, args: string[], dir: string) {
   const s = stage(label);
   try {
     run('npx', args, dir);
@@ -251,14 +271,14 @@ function buildStage(label, args, dir) {
 }
 
 /** A mode that never ran still owes the summary a line, with the reason. */
-function skipped(name, why) {
+function skipped(name: string, why: string) {
   results.push({ name, ok: false, detail: `skipped — ${why}` });
 }
 
 /** Serves a built directory with the repo's own static server. */
-const staticServe = (dir, port) => [
+const staticServe = (dir: string, port: number) => [
   'node',
-  join(ROOT, 'scripts', 'static-server.mjs'),
+  join(ROOT, 'scripts', 'static-server.ts'),
   dir,
   String(port),
 ];

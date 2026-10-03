@@ -15,7 +15,7 @@
  * fired mid-run would destroy the measurement in progress and the visitor
  * would never know why. It prints when the rebuild lands, and you refresh.
  *
- * Usage: node scripts/bench/dev.mjs [port]
+ * Usage: node scripts/bench/dev.ts [port]
  */
 import { spawn } from 'node:child_process';
 import { watch } from 'node:fs';
@@ -26,8 +26,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const port = process.argv[2] ?? '8099';
 const OUT = '_site';
 
-const run = (command, args) =>
-  new Promise((resolveRun, rejectRun) => {
+const run = (command: string, args: string[]) =>
+  new Promise<void>((resolveRun, rejectRun) => {
     const child = spawn(command, args, { cwd: root, stdio: 'inherit' });
     child.on('error', rejectRun);
     child.on('exit', (code) =>
@@ -39,7 +39,7 @@ const run = (command, args) =>
 
 const buildLibrary = () => run('pnpm', ['build']);
 const assemble = () =>
-  run(process.execPath, ['scripts/bench/assemble.mjs', OUT]);
+  run(process.execPath, ['scripts/bench/assemble.ts', OUT]);
 
 const stamp = () => new Date().toLocaleTimeString('en-GB', { hour12: false });
 
@@ -49,11 +49,13 @@ const stamp = () => new Date().toLocaleTimeString('en-GB', { hour12: false });
  * arriving while a page-only rebuild runs upgrades the queued one rather than
  * being lost.
  */
-let running = false;
-let queued = null;
-let timer;
+type Kind = 'full' | 'page';
 
-const rebuild = async (kind) => {
+let running = false;
+let queued: Kind | null = null;
+let timer: ReturnType<typeof setTimeout> | undefined;
+
+const rebuild = async (kind: Kind) => {
   running = true;
   const started = Date.now();
   try {
@@ -64,7 +66,9 @@ const rebuild = async (kind) => {
     );
   } catch (error) {
     // A broken build must not kill the watcher: fix the source and save again.
-    process.stdout.write(`[${stamp()}] build failed: ${error.message}\n`);
+    process.stdout.write(
+      `[${stamp()}] build failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
   } finally {
     running = false;
     if (queued) {
@@ -75,7 +79,7 @@ const rebuild = async (kind) => {
   }
 };
 
-const request = (kind) => {
+const request = (kind: Kind) => {
   // 'full' outranks 'page': a library change still needs the library built.
   if (running) {
     queued = queued === 'full' || kind === 'full' ? 'full' : 'page';
@@ -92,7 +96,7 @@ await assemble();
 
 const server = spawn(
   process.execPath,
-  [join(root, 'scripts/static-server.mjs'), join(root, OUT), port],
+  [join(root, 'scripts/static-server.ts'), join(root, OUT), port],
   { cwd: root, stdio: 'inherit' },
 );
 server.on('exit', (code) => {
@@ -111,7 +115,7 @@ process.stdout.write(
     'Ctrl-C to stop.\n\n',
 );
 
-for (const signal of ['SIGINT', 'SIGTERM']) {
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     server.kill();
     process.exit(0);

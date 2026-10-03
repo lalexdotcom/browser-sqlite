@@ -164,7 +164,7 @@ matter: it is not a secure context, so browsers withhold OPFS and the Web Locks
 API there, and only `MemoryVFS` and `MemoryAsyncVFS` run. A tunnel (or the
 published page) is the way to test a real device.
 
-`node scripts/bench/check.mjs [chromium|firefox] [--all]` drives the page under
+`node scripts/bench/check.ts [chromium|firefox] [--all]` drives the page under
 Playwright and asserts that it still works — it is run by hand and deliberately
 not wired into CI. It checks the *page*, never that a VFS passes: a red cell can
 be a correct report about the engine you are on.

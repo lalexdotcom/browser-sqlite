@@ -124,7 +124,7 @@ engine switch is ever reintroduced.
 | `chromium` | `tests/browser/*.test.ts` + `tests/browser/chromium/**` | Real Chromium via Playwright. `pnpm test:chromium`. `createTestClient(options?)` gives a unique OPFS name and an `afterEach` cleanup |
 | `firefox` | the same shared files + `tests/browser/firefox/**` | `rstest.firefox.config.ts`, `pnpm test:firefox`. The shared glob is NON-recursive so neither project sees the other's directory. `firefox/` holds what cannot pass on Chromium — handle starvation; `chromium/` is declared and does not exist yet |
 | `conformance` | `tests/conformance/` | On demand: every declared (vfs, build) pair through six invariants. `pnpm test:conformance` runs BOTH engines from two configs; no per-engine directory, deliberately — the value is the same invariants on both |
-| `consumer` | `scripts/consumer-smoke.mjs` | On demand: packs the tarball into **five** temp app dirs **outside** the repo and drives **dev and build for each** — Vite, Vite 6 (pinned), rsbuild, webpack, Parcel — plus no-bundler static serve and a bare-specifier assertion over `dist/**/*.js`. **24 stages.** `pnpm test:consumer` |
+| `consumer` | `scripts/consumer-smoke.ts` | On demand: packs the tarball into **five** temp app dirs **outside** the repo and drives **dev and build for each** — Vite, Vite 6 (pinned), rsbuild, webpack, Parcel — plus no-bundler static serve and a bare-specifier assertion over `dist/**/*.js`. **24 stages.** `pnpm test:consumer` |
 
 **Since 2026-09-15 each browser config declares one project PER TARGET, not one project.** A target is a
 (vfs, build) pair, injected into the test code through `source.define` as `__BSQ_TEST_TARGET__`; a test
@@ -138,10 +138,10 @@ test that declares `needs` passes `skip` with them (`createTestClient({ needs, s
 `<engine> · OPFSWriteAheadVFS/sync` and `<engine> · OPFSAdaptiveVFS/async` per config —
 **project filters must be globs** (`--project 'chromium*'`), rstest's filter being anchored.
 `BSQ_TEST_TARGETS` overrides the list (`all`, or a comma list of `vfs/build`), and `pnpm test:matrix`
-(`scripts/test-matrix.mjs`) runs every declared pair on the three configs, bounding each run itself,
+(`scripts/test-matrix.ts`) runs every declared pair on the three configs, bounding each run itself,
 keeping raw reports under `.matrix/<run>/` and exiting non-zero on any failed or timed-out cell.
 
-**Every browser script runs under a deadline since 2026-09-16** — `node scripts/bounded.mjs
+**Every browser script runs under a deadline since 2026-09-16** — `node scripts/bounded.ts
 <seconds> <command>` wraps each leg of `test`, `test:browser`, `test:chromium`, `test:firefox`,
 `test:isolated` and `test:conformance` (900 s per leg, 600 s for the isolated one), and exits 124
 when it kills one, the code `test:matrix` already uses. It exists because a run CAN hang where
@@ -360,18 +360,19 @@ aligned with it wholesale: the image, the Playwright engines and the Serena prer
   `fatal: invalid refspec '+refs/heads/{"message":"Not Found"…'`. **Gate on the exit status**
   — `if VAR=$(gh api …); then` — and shape-check anything that reaches a checkout.
 
-  Five things bite, all of them silent:
-  - **Order.** `assemble.mjs` opens with `rmSync(target, …)`, so the root must be assembled
+  What bites, all of it silent:
+  - **Order.** `assemble.ts` opens with `rmSync(target, …)`, so the root must be assembled
     BEFORE the preview that sits inside it. The reverse deletes the preview.
   - **The root's ASSEMBLER is copied in from the triggering checkout; only its content comes
-    from the release tag.** Otherwise the step runs the released tag's own `assemble.mjs`,
+    from the release tag.** Otherwise the step runs the released tag's own assembler,
     frozen at whatever shipped, which predates the flags and falls back to the environment —
     and the environment names the TRIGGER. On 2026-09-03 that made the root label itself
     `preview`; harmless only because the badge does not print the ref when `IS_RELEASE` is
     true, and a lie the moment a `delete` run sets REF_TYPE to `branch` and the real release
     shows "development build". The copy degrades to a no-op once a release ships a script
     that takes the flags.
-  - **The build label is passed to `assemble.mjs` as an ARGUMENT — `--ref` and `--release` —
+  - **The preview step runs the preview tree's OWN assembler, and its name depends on the tag**: `assemble.mjs` before 2026-10-03, `assemble.ts` since. The step takes whichever exists; hard-coding one name fails on a preview tag from the other side of the rename.
+  - **The build label is passed to `assemble.ts` as an ARGUMENT — `--ref` and `--release` —
     never through the environment.** Actions reposes the `GITHUB_*` variables for every step
     and IGNORES a step-level `env:` that tries to override them, so a run building a ref
     other than its trigger cannot describe itself that way. Overriding them was tried and

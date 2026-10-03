@@ -167,9 +167,7 @@ workflow instead.
 
 **The two repositories cannot be updated together.**
 `lalexdotcom/action-release-and-publish` releases itself on push to `main` from
-conventional commits, and we consume it by SHA, so its change must be pushed and
-released before the pin in `release-and-publish.yaml` can be repointed. The
-clone lives at `.work/action-release-and-publish`.
+conventional commits, and we consume it by its major tag (`@v3`, user, 2026-10-03: the action is ours and follows semver), so a minor or patch reaches the next release once it is pushed and released, with no commit here; a major needs the tag in `release-and-publish.yaml` moved. The clone lives at `.work/action-release-and-publish`. **Since v3 the action manages the dist-tags itself**: `latest` only moves forward, `next` stays on the highest rc above it, and a `latest` that moves removes the tags left on older prereleases. So the 1.0.0 release publishes straight to `latest`, creates no `stable` tag, and removes `rc` and `next` — `npm i browser-sqlite@rc` stops resolving instead of installing an old rc.
 
 **The GitHub Release is created before `npm publish`**, inside the action. That
 ordering is the whole reason a failed release costs a retag rather than a burnt
@@ -232,7 +230,7 @@ Not for documentation, memories, or a test change confined to what `pnpm test` a
 **Two things about reading a red cell, both paid for on 2026-09-22.** A timing-sensitive failure
 may be LOAD rather than a defect: re-run the cell alone before diagnosing — `tx-savepoint`'s T4 went
 0/3 alone against 2/4 in the full cell. And the cause may be a test you just added: a matrix cell is
-one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.mjs` regroups any
+one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.ts` regroups any
 `.matrix/<run>/`.
 
 ## Working with the user
@@ -241,7 +239,7 @@ one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.
   battery in one paste, each written for the case where the previous came back clean. Four
   round trips were burned on one-hypothesis-at-a-time before they called it.
 - **For Safari, serve the bench from the container (user, 2026-09-14).** `node
-  scripts/static-server.mjs _site 8099` (after `pnpm bench:build` if the page changed) and the user
+  scripts/static-server.ts _site 8099` (after `pnpm bench:build` if the page changed) and the user
   opens `http://localhost:8099/`: VS Code forwards the port to their Mac, localhost is a secure
   context, and the origin is apart from `lalexdotcom.github.io`, whose tabs can block IndexedDB.
   Moving `preview` costs a pre-push `pnpm test` and a Pages deploy per iteration; do it only for a

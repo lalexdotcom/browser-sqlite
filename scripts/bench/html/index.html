@@ -290,7 +290,7 @@
       import { VFS_CAPABILITIES } from './vfs-capabilities.js';
 
       // ── Identity ────────────────────────────────────────────────────────
-      // Substituted by scripts/bench/assemble.mjs. Opening the page source
+      // Substituted by scripts/bench/assemble.ts. Opening the page source
       // straight from the repo leaves the placeholder, which is why the guard
       // tests for it rather than trusting the value.
       const RAW_VERSION = '__LIB_VERSION__';
@@ -475,7 +475,7 @@
         `<span class="${ok ? '' : 'no'}"><b>${label}</b> ${ok ? '✅' : '❌'}</span>`;
 
       /**
-       * Both substituted by scripts/bench/assemble.mjs. A build is a release
+       * Both substituted by scripts/bench/assemble.ts. A build is a release
        * only when it came from a tag, which is the one case where this page and
        * the published package are the same code.
        */
@@ -3090,7 +3090,7 @@
         `${PAIRS.length} declared pairs, ` +
         `${PAIRS.filter((p) => !missingFor(p)).length} runnable here`;
 
-      // Read by scripts/bench/check.mjs. IS_RELEASE is exposed so the driver
+      // Read by scripts/bench/check.ts. IS_RELEASE is exposed so the driver
       // can assert the one thing `preview` promises: present exactly when this
       // is not the released build.
       window.__BENCH__ = {

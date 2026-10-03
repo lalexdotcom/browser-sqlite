@@ -16,7 +16,7 @@ been work on nothing.
 
 ## `open-retry` "succeeds once the holder lets go" times out on Firefox — DORMANT until the next sighting (user, 2026-10-03)
 
-**DORMANT: no action until it happens again (user, 2026-10-03).** Reproduction attempts are over (below), and nothing since the test names its stall: 13 full matrices of 22 Firefox cells each and every hook's `pnpm test`, 2026-09-28 to 2026-10-03, all clean. The release will make test runs rarer; the capture and the tree below are what makes a late sighting usable. **Where a sighting lands:** every run through `scripts/bounded.mjs` (`pnpm test`, the hooks, conformance) is kept in `.test-runs/` since 2026-10-03, the newest 30, so a failure is still readable after a green rerun; a matrix keeps its own in `.matrix/`. Read its `stalled in` line and follow the tree.
+**DORMANT: no action until it happens again (user, 2026-10-03).** Reproduction attempts are over (below), and nothing since the test names its stall: 13 full matrices of 22 Firefox cells each and every hook's `pnpm test`, 2026-09-28 to 2026-10-03, all clean. The release will make test runs rarer; the capture and the tree below are what makes a late sighting usable. **Where a sighting lands:** every run through `scripts/bounded.ts` (`pnpm test`, the hooks, conformance) is kept in `.test-runs/` since 2026-10-03, the newest 30, so a failure is still readable after a green rerun; a matrix keeps its own in `.matrix/`. Read its `stalled in` line and follow the tree.
 
 **When it returns, the user's priority stands: reproduce it on demand, then remove the cause, so that CI never fails on valid code.** It has already refused a merge (`test/needs-skip-in-matrix`, first attempt), and five sightings put it past noise. Done means a reproduction that fails on demand — under load, with a squeezed timing, or with an instrumented holder — the cause named, and the fix verified against that reproduction. A raised timeout or a retry of the test is not a fix.
 
@@ -138,10 +138,6 @@ back to it. Not designed. It will sit on the savepoint machinery merged on 2026-
 `mem:architecture`): a new entry point must go through the facade, which concludes the library's
 savepoint before opening its own.
 
-## The `.mjs` scripts are not type-checked (2026-09-24)
-
-`tsc` covers `scripts/*.ts` since 2026-09-24, but no `allowJs`/`checkJs` is set, so the `.mjs` files are only linted and formatted by biome. Measured with `checkJs` and `@types/node` on 2026-09-24: **84 errors** — `consumer-smoke.mjs` 44, `bench/check.mjs` 19, `bench/dev.mjs` 12, `matrix-triage.mjs` 5, `static-server.mjs` 2, `bench/assemble.mjs` 1, `bounded.mjs` 1. Not triaged: how many are JSDoc-less inference noise and how many real is unknown.
-
 ## Move to Playwright 1.64.0 as soon as it is released stable — its Firefox fixes the young-worker segfault (user, 2026-10-03)
 
 Playwright's Firefox loses the page's content process when a worker is `terminate()`d a few ms after `new Worker(...)` (LIFECYCLE-SEGV, `mem:measurements`). **Already fixed upstream, no issue to open:** it is microsoft/playwright#42565 (a worker torn down while its script compiles, a regression of 1.62.0's `firefox-1538`), fixed by the Gecko patch rolled in #42631 (`r1544`, 2026-09-09). Checked 2026-10-03 with a one-spec reproduction (`about:blank`, two blob workers terminated 0-6 ms after creation, 150 rounds): Playwright 1.63.0 (`firefox-1543`, Firefox 155.0) 5/5 `Target crashed`, and its binary launched alone 10/10, against Mozilla's Firefox 155.0 10/10 clean; `@playwright/test@1.64.0-alpha-2026-10-03` (`firefox-1554`) 10/10 clean on Firefox. **To do when 1.64.0 is released stable** (not an alpha; `npm view playwright dist-tags` → `latest`): bump `playwright` in `package.json` (pinned at 1.62.1), then **make sure the Firefox actually used is the new build**, `firefox-1554` or later:
@@ -182,7 +178,7 @@ directly — a second `createSyncAccessHandle` on a held file REJECTS at once on
 **Guarded 2026-09-16 (`6560c9e`), not cured.** Each probe attempt is bounded at 10 s, a wedged
 worker is terminated and replaced, three times, and the third failure THROWS rather than answering
 — a silent `false` would flip `readwrite-unsafe` on Chromium and make tests pass for the wrong
-reason. `scripts/bounded.mjs` now gives every browser script a deadline (exit 124), because the
+reason. `scripts/bounded.ts` now gives every browser script a deadline (exit 124), because the
 next hang of this shape will not be this one.
 
 WHAT REMAINS OPEN:
@@ -245,7 +241,7 @@ existence, not an open), `IDBBatchAtomicVFS` → #351, `IDBMirrorVFS` → #352 a
 
 Kept for its method rather than its content — the original entry, now closed:
 
-Numbers in `mem:measurements`. `scripts/matrix-triage.mjs` regenerates the grouping from any
+Numbers in `mem:measurements`. `scripts/matrix-triage.ts` regenerates the grouping from any
 `.matrix/<run>/`.
 
 **Everything the triage called test work is done.** 989 cell-failures → 500 (the dead cleanup)
@@ -293,6 +289,7 @@ Line 9, `globalThis.FileSystemSyncAccessHandle.prototype.hasOwnProperty('mode')`
 Before the 1.0, reread the consumer docs (`README.md`, `API.md`, `VFS.md` and its generator) as a whole. Already known to go in it:
 - **An "https required: ✅ / ❌" row in the VFS table, or in each VFS's own section** (user): ❌ for `MemoryVFS` and `MemoryAsyncVFS`, ✅ for every other VFS, which needs OPFS or the Web Locks API, both withheld outside a secure context. `VFS.md` is generated (`scripts/render-vfs-matrix.ts`), so the row comes from `VFS_CAPABILITIES` (`requires` holds `opfs` or `web-locks`), not by hand.
 - The 80-column hard wrap of the consumer docs (entry above).
+- **No counts where the number is not the point (user, 2026-10-03)**: `README.md` says `pnpm test:consumer` "drives four bundler modes" while the smoke runs five bundlers plus the bundler-free mode — a count that went stale because it was written down. "several bundler modes", or naming them, says the same and cannot drift. Sweep the consumer docs for the same shape.
 - **`VFS.md` gives the OPFS VFS a Chrome floor that is too low.** `FEATURE_SUPPORT.opfs` in the generator holds one version per browser, `getDirectory`'s (Chrome 86), and its comment says `createSyncAccessHandle` gives the same versions; browser-compat-data says otherwise: `FileSystemFileHandle.createSyncAccessHandle` and `FileSystemSyncAccessHandle` are Chrome 102, Chrome Android 109, Firefox 111, Safari 15.2 (checked 2026-10-03). The four VFS that open sync access handles (`OPFSAdaptiveVFS`, `OPFSCoopSyncVFS`, `OPFSWriteAheadVFS`, `AccessHandlePoolVFS`) show Chrome 92+ where 102+ is true; `OPFSAnyContextVFS` writes through `createWritable` and may be right. Likely a separate feature (`sync-access-handle`) in the generator.
 
 ## Notes, with nothing to fix

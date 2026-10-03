@@ -28,12 +28,38 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { VFS_CAPABILITIES } from '../src/const/vfs.ts';
+import { type SQLiteVFS, VFS_CAPABILITIES } from '../src/const/vfs.ts';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 /** One column of the matrix: which config to run and how to select it. */
-const ENGINES = [
+type Engine = { name: string; config: string; extraArgs: string[] };
+type Pair = { vfs: string; build: string };
+
+export type MatrixResult =
+  | {
+      readonly status: 'passed' | 'failed';
+      readonly tests: number;
+      readonly passed: number;
+      readonly failed: number;
+      readonly skipped: number;
+      readonly files: number;
+      readonly seconds: number;
+      /** The report's unhandled errors, paths relative to its `cwd`; absent when none. */
+      readonly unhandled?: readonly string[];
+    }
+  | { readonly status: 'not-runnable'; readonly seconds: number }
+  | { readonly status: 'timed-out' }
+  | { readonly status: 'error'; readonly message: string };
+
+/** What `runBounded` resolves with — never rejects, so every outcome round-trips through here. */
+export type BoundedResult = {
+  readonly output: string;
+  readonly timedOut: boolean;
+  readonly error: (Error & { readonly code?: string }) | null;
+};
+
+const ENGINES: Engine[] = [
   {
     name: 'chromium',
     config: 'rstest.config.ts',
@@ -50,7 +76,7 @@ const RUN_TIMEOUT_MS = 600_000;
 const TAIL_LINES = 60;
 
 /** Every declared (vfs, build) pair, in `VFS_CAPABILITIES` key order. */
-export const allPairs = () =>
+export const allPairs = (): Pair[] =>
   Object.entries(VFS_CAPABILITIES).flatMap(([vfs, cap]) =>
     cap.builds.map((build) => ({ vfs, build })),
   );
@@ -76,9 +102,9 @@ export const allPairs = () =>
  *   present, and `not-runnable` must never hide one.
  * - Otherwise: `passed`.
  *
- * @param {string} output combined stdout+stderr of one rstest run.
+ * @param output combined stdout+stderr of one rstest run.
  */
-export function parseMatrixReport(output) {
+export function parseMatrixReport(output: string): MatrixResult {
   const summaryMatch = output.match(/```json\n([\s\S]*?)\n```/);
   if (!summaryMatch) {
     return { status: 'timed-out' };
@@ -92,7 +118,7 @@ export function parseMatrixReport(output) {
       failuresIndex === -1 ? '' : output.slice(failuresIndex);
     const messages = [
       ...failuresSection.matchAll(/"message":\s*"((?:\\.|[^"\\])*)"/g),
-    ].map((m) => JSON.parse(`"${m[1]}"`));
+    ].map((m): string => JSON.parse(`"${m[1]}"`));
     if (
       messages.length > 0 &&
       messages.every((m) => m.startsWith('TARGET_NOT_RUNNABLE'))
@@ -112,7 +138,7 @@ export function parseMatrixReport(output) {
             .slice(unhandledIndex)
             .matchAll(/"message":\s*"((?:\\.|[^"\\])*)"/g),
         ].map((m) => {
-          const message = JSON.parse(`"${m[1]}"`);
+          const message: string = JSON.parse(`"${m[1]}"`);
           return cwd ? message.replaceAll(`${cwd}/`, '') : message;
         });
 
@@ -129,9 +155,9 @@ export function parseMatrixReport(output) {
 }
 
 /** `--engine <name>` (repeatable) and `--pair <vfs>/<build>` (repeatable). */
-function parseArgs(argv) {
-  const engines = [];
-  const pairs = [];
+function parseArgs(argv: string[]) {
+  const engines: string[] = [];
+  const pairs: Pair[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--engine') {
@@ -149,7 +175,9 @@ function parseArgs(argv) {
         !vfs ||
         !build ||
         !Object.hasOwn(VFS_CAPABILITIES, vfs) ||
-        !VFS_CAPABILITIES[vfs].builds.includes(build)
+        !(
+          VFS_CAPABILITIES[vfs as SQLiteVFS].builds as readonly string[]
+        ).includes(build)
       ) {
         throw new Error(
           `test-matrix: --pair "${label}" is not a declared vfs/build pair`,
@@ -178,7 +206,7 @@ function parseArgs(argv) {
  *
  * - The child starts but outlives `timeoutMs`: the whole process group is
  *   killed (`detached: true` + `process.kill(-pid, 'SIGKILL')` — the same
- *   pattern `scripts/consumer-smoke.mjs` uses, because `pnpm exec rstest`
+ *   pattern `scripts/consumer-smoke.ts` uses, because `pnpm exec rstest`
  *   forks the actual Playwright-driven runner and browser, which survive
  *   killing only the direct child) and `timedOut: true` is returned.
  * - The child never starts at all (`ENOENT`, `EACCES`, …): Node emits
@@ -191,12 +219,20 @@ function parseArgs(argv) {
  * A `settled` guard makes the two mutually exclusive: Node's own contract
  * still allows a `'close'` after an `'error'` for the same child, and only
  * the first of the two may resolve the promise.
- *
- * @param {string} command
- * @param {readonly string[]} args
- * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, timeoutMs: number }} options
  */
-export function runBounded(command, args, { cwd, env, timeoutMs }) {
+export function runBounded(
+  command: string,
+  args: readonly string[],
+  {
+    cwd,
+    env,
+    timeoutMs,
+  }: {
+    readonly cwd?: string;
+    readonly env?: NodeJS.ProcessEnv;
+    readonly timeoutMs: number;
+  },
+): Promise<BoundedResult> {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd,
@@ -210,7 +246,7 @@ export function runBounded(command, args, { cwd, env, timeoutMs }) {
     const timer = setTimeout(() => {
       timedOut = true;
       try {
-        process.kill(-child.pid, 'SIGKILL');
+        process.kill(-(child.pid as number), 'SIGKILL');
       } catch {
         child.kill('SIGKILL');
       }
@@ -237,7 +273,11 @@ export function runBounded(command, args, { cwd, env, timeoutMs }) {
 }
 
 /** Runs one (engine, pair) cell via `runBounded`, translating its result into a matrix cell. */
-function runOne(engine, pair, outFile) {
+function runOne(
+  engine: Engine,
+  pair: Pair,
+  outFile: string,
+): Promise<MatrixResult> {
   // `--reporter md` is what `parseMatrixReport` reads, and leaving it unpinned
   // let rstest choose: it defaults to `md` when it detects an agent — Claude
   // Code sets AI_AGENT — and to `default` otherwise. The report therefore
@@ -276,7 +316,7 @@ function runOne(engine, pair, outFile) {
  * produced counts. A failed cell with no failed test says FAIL and why, or its
  * counts read as green — a page crash looks exactly like that.
  */
-export function formatCell(result) {
+export function formatCell(result: MatrixResult): string {
   if (result.status === 'not-runnable') return 'not runnable here';
   if (result.status === 'timed-out') return 'timed out';
   if (result.status === 'error') return `error: ${result.message}`;
@@ -285,19 +325,26 @@ export function formatCell(result) {
   return `${cell} · FAIL: ${result.unhandled?.[0] ?? 'the report says fail'}`;
 }
 
-function printTable(pairs, engines, results) {
-  const pairLabel = ({ vfs, build }) => `${vfs}/${build}`;
+function printTable(
+  pairs: Pair[],
+  engines: Engine[],
+  results: Map<string, MatrixResult>,
+) {
+  const pairLabel = ({ vfs, build }: Pair) => `${vfs}/${build}`;
   const header = ['pair', ...engines.map((e) => e.name)];
   const rows = pairs.map((pair) => [
     pairLabel(pair),
     ...engines.map((engine) =>
-      formatCell(results.get(`${engine.name}:${pairLabel(pair)}`)),
+      formatCell(
+        results.get(`${engine.name}:${pairLabel(pair)}`) as MatrixResult,
+      ),
     ),
   ]);
   const widths = header.map((h, i) =>
     Math.max(h.length, ...rows.map((r) => r[i].length)),
   );
-  const line = (cells) => cells.map((c, i) => c.padEnd(widths[i])).join('  ');
+  const line = (cells: string[]) =>
+    cells.map((c, i) => c.padEnd(widths[i])).join('  ');
   console.log(line(header));
   console.log(widths.map((w) => '-'.repeat(w)).join('  '));
   for (const row of rows) console.log(line(row));
@@ -309,7 +356,7 @@ async function main() {
   const runDir = join(ROOT, '.matrix', runId);
   mkdirSync(runDir, { recursive: true });
 
-  const results = new Map();
+  const results = new Map<string, MatrixResult>();
   const start = Date.now();
   for (const engine of engines) {
     for (const pair of pairs) {
