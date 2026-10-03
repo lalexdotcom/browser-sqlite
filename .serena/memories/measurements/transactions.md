@@ -467,3 +467,24 @@ the second client waits the statement out in both arms. Latencies equal between 
 
 **Not measured.** Safari: Playwright's WebKit here needs root-installed system libraries (gstreamer,
 gtk4…). A second tab: equivalent at the VFS level to a second client, which was measured.
+
+## TX-CONTROL-GUARD — refusing transaction control: the authorizer against a check on each statement's head — 2026-10-03, this container, Chromium 151.0.7922.34 / Firefox 153 (Playwright `firefox-1538`)
+
+For the `tx.savepoint()` brainstorm: the library would refuse `BEGIN`/`COMMIT`/`END`/`ROLLBACK`/`SAVEPOINT`/`RELEASE` from the consumer, outside `transaction()` and inside it. Two mechanisms compared, both letting SQLite split the string rather than a regex over it.
+
+**Method.** wa-sqlite at the pin (`7fcc30df`), loaded directly in a module worker, `MemoryVFS` so no I/O enters; one worker per arm, because `Module.set_authorizer` keeps ONE authorizer per module (`pAsyncFlags` is module-scoped in the glue). Arms: `none`; `wrapped` — `sqlite3.set_authorizer`, a sync callback denying actions 22 (`SQLITE_TRANSACTION`) and 32 (`SQLITE_SAVEPOINT`); `raw` — `Module.set_authorizer` with raw pointers, strings decoded only for 22/32; `head` — after each prepare, `sqlite.sql(stmt)` tested against `^(?:\s+|--…|/*…*/)*(BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE)\b/i`. Workloads per batch of 1000: `wide` = prepare + finalize of a distinct 50-column `SELECT` (52 authorizer calls each); `insert` = a distinct one-row `INSERT` prepared and run (1 call); `cached` = one statement stepped and reset (no prepare). Arms interleaved in random order, 9 rounds after a warm-up, median; 3 pages per (engine, build). µs per statement, median of the 3 pages; ranges were within ±3 %. Probe: `.scratchpad/authorizer-cost-2026-10-03/`.
+
+| engine/build | wide: none / wrapped / raw / head | insert: none / wrapped / head |
+|---|---|---|
+| Chromium sync | 14.3 / 19.9 / 17.0 / 14.9 | 25.6 / 24.7 / 24.8 |
+| Chromium async | 19.8 / 25.5 / 22.6 / 20.5 | 27.7 / 26.9 / 27.8 |
+| Chromium jspi | 14.8 / 24.9 / 21.7 / 16.0 | 28.7 / 29.1 / 30.0 |
+| Firefox sync | 112.7 / 132.9 / 126.8 / 113.1 | 82.0 / 81.4 / 81.6 |
+| Firefox async | 137.6 / 157.6 / 154.8 / 140.6 | 89.8 / 90.3 / 89.2 |
+| **Firefox jspi** | **124.0 / 770.9 / 768.9 / 125.3** | 380.8 / 393.0 / 383.0 |
+
+- **The authorizer costs one wasm→JS crossing per action of every prepare**: 0.1-0.2 µs per call on Chromium, 0.3-0.4 µs on Firefox sync/async, **≈ 12.4 µs on Firefox jspi** — 6.2× the whole prepare of a 50-column `SELECT`, and the default build on Firefox for `OPFSAdaptiveVFS`. Decoding the strings is not the cost: `raw` saves little, and nothing on Firefox jspi. Why a callback costs that much under JSPI on Firefox was not investigated.
+- **The head check costs 0.4-1.2 µs per prepared statement, on every build**, inside the noise for a one-row `INSERT`. Neither costs anything on a cache hit, as expected (`cached` flat).
+- **Both refuse `BEGIN` on every build** (`SQLITE_AUTH`, 23, for the authorizer).
+
+**What SQLite's split gives the head check** (Chromium, sync; the parser is the same on every build): `sqlite3_sql` returns each statement as SQLite isolated it, leading comments and whitespace included, a compound's `;` kept on the first — `"INSERT …; SAVEPOINT y"` → `"INSERT …;"` and `" SAVEPOINT y"`. `CASE … END`, `INSERT OR ROLLBACK`, `CREATE TRIGGER … BEGIN …; END` and `SELECT ';BEGIN'` stay one statement with a non-control head, and the authorizer sees no control action in them either. `EXPLAIN BEGIN` differs: the authorizer reports `TX:BEGIN` for it, the head check sees `EXPLAIN` — it runs nothing, either answer is harmless. The authorizer reports `END` as `COMMIT` and `ROLLBACK TO x` as a savepoint `ROLLBACK`.
