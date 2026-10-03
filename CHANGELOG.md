@@ -72,6 +72,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **On `AccessHandlePoolVFS`, an open that waited for a held pool file now succeeds once the file is released.**
 - **`write()` no longer reports a stale `affected` count for a statement that changes nothing.** A DDL statement, a `PRAGMA` or a `SELECT` left `affected` at the count of the previous `INSERT`/`UPDATE`/`DELETE`; it now reports 0. `bulkWrite()` and `output()`'s totals follow, since they sum what `write()` returns.
 - **On `IDBBatchAtomicVFS`, a committed transaction could be undone by the next client to open the database**, after a `close()` or a crashed worker.
+- **On `IDBMirrorVFS`, a commit that IndexedDB refuses — on a full storage quota, for instance — no longer comes back with the next commit or corrupts the database.** It still fails, and its rows no longer reappear with the next commit. With `synchronous` set to `NORMAL` in `pragmas`, SQLite has already reported it done: it is lost, and the database stays as it was before it. The client carries on without being reopened.
 
 ## [1.0.0-rc.5] - 2026-09-22
 

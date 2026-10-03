@@ -22,15 +22,12 @@ obligations and unmeasured ground.
   entries: `.ad/`, `.ac/`, `.cs/`, `.wa/`, `layout` and `VFSLayout` gone, the 52-character name bound
   on those four VFS; `db.files` Added; the path and empty-name refusals Changed — `mem:vfs`, CROSS-VFS;
   `mem:architecture`, "Two names per database"), and **the default build that follows the browser** (merged 2026-09-24: Changed, plus one Breaking entry — a `wasmUrl` serving only the `async` `.wasm`), and **the public surface** (merged 2026-09-24: Breaking — `VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` no longer exported, the `./worker` subpath gone; Changed — `createSQLiteClient` declared to return `SQLiteDB`), and two more **Fixed** entries: `OPFSAnyContextVFS`'s `VACUUM` that failed the next read on Firefox (#363, merged 2026-09-25) and a failed client leaving `inspectDatabase()`'s roster at once (merged 2026-09-27).
-- **The vendored wa-sqlite sits on upstream `master` of 2026-10-01** (`7a4b4241`, `package.json` has
-  the SHA), which merged our #351, #352 and #353, each byte-identical to the head the patch carried.
-  `patches/wa-sqlite@1.1.2.patch` carries five files, one open PR each: `IDBBatchAtomicVFS.js` (#370),
-  `OPFSAnyContextVFS.js` (#363), `OPFSWriteAheadVFS.js` (#367), `AccessHandlePoolVFS.js` (#368),
-  `OPFSAdaptiveVFS.js` (#369); heads in `mem:stack-and-build`. The installed `src/` and `dist/` were
-  checked equal to the pin plus those heads, and to the previous install — the repin changed no
-  executed code. **The full matrix on that head (2026-10-01): 66 of 66 cells green, no failure**
-  (`.matrix/2026-10-01T15-20-52-232Z`, 2332 s).
-  **Upstream moved on 2026-10-03 to `7fcc30df`**, which merged every PR the patch carries (#363, #367, #368, #369, #370). **Next, asked by the user on 2026-10-03: repin to it, so that the patch carries only #371** (`IDBMirrorVFS`, opened that day, `mem:follow-ups`). Check each merged file against the head the patch carried before dropping its hunk.
+- **The vendored wa-sqlite sits on upstream `master` of 2026-10-03** (`7fcc30df`, `package.json` has the
+  SHA), which merged every PR the patch carried (#363, #367, #368, #369, #370). **`patches/wa-sqlite@1.1.2.patch`
+  carries one file, `IDBMirrorVFS.js`, for #371** (open upstream); head in `mem:stack-and-build`. The installed
+  `src/` was checked equal to the pin plus #371's head, `dist/` to the pin's. #363 and #369 merged at heads
+  later than the patch held, so this repin changed executed code in `OPFSAnyContextVFS` and `OPFSAdaptiveVFS`
+  besides #371. Verification of the repin: see the baseline below and `mem:history`.
 - **The release gate ran the full matrix for the first time, and it took four tags to get
   through.** 22/22 cells, `verify`, `consumer-smoke`, then `release`, with `untag` skipped.
   The three refusals before it were not test failures: `test-matrix.mjs` could not read a

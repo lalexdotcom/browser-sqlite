@@ -5,7 +5,7 @@
 [pr371]: https://github.com/rhashimoto/wa-sqlite/pull/371
 [pr363]: 2026-09-25-wa-sqlite-363-anycontext-unlock-truncate.md
 
-**Why this is here.** On `IDBMirrorVFS`, a commit whose IndexedDB transaction aborts (a quota error, for instance) was never undone. With `synchronous=full` its rows came back with the connection's next commit. With `synchronous=normal` the next commit was stored on top of a state that never existed, and the database was left corrupt. In this library, that is any client on `IDBMirrorVFS` that hits its storage quota. Not carried in [`patches/`](../../patches) yet; whether to carry it before the merge is open.
+**Why this is here.** On `IDBMirrorVFS`, a commit whose IndexedDB transaction aborts (a quota error, for instance) was never undone. With `synchronous=full` its rows came back with the connection's next commit. With `synchronous=normal` the next commit was stored on top of a state that never existed, and the database was left corrupt. In this library, that is any client on `IDBMirrorVFS` that hits its storage quota. Carried in [`patches/`](../../patches) since the repin of 2026-10-03.
 
 ## How it was found
 
@@ -104,6 +104,6 @@ Sent as `3367cb65` on 2026-10-03, on the user's go, with [comment 5971457674](ht
 
 ## What stays ours
 
-- **The carry.** Undecided: `IDBMirrorVFS.js` is not in [`patches/`](../../patches) for this.
+- **The carry.** Since the repin of 2026-10-03 to `7fcc30df`, [`patches/`](../../patches) carries this PR alone: `IDBMirrorVFS.js` at head `3367cb65`.
 - **The broadcast on a closed channel.** A separate defect, a possible separate PR.
 - **The probes.** Throwaway, kept outside git; the numbers are in `mem:measurements` (IDBMIRROR-COMMIT-ABORT, IDBMIRROR-ABORT-JOURNAL, IDBMIRROR-ABORT-DESIGNS).

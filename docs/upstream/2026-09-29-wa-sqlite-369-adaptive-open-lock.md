@@ -85,5 +85,7 @@ rhashimoto asked whether there was a reason not to release the access-handle loc
 
 The description's "The change" now names both locks and the channel, and [comment 5966329411](https://github.com/rhashimoto/wa-sqlite/pull/369#issuecomment-5966329411) answered.
 
-**Not done yet: the patch.** `patches/` still carries the first head's hunk. Since #367 and #368 merged, the convention is a repin to `5bde491c` that drops their hunks and takes #369's latest head. Deferred by the user, a branch being already open.
+## Merged
+
+**Merged on 2026-10-03** by rhashimoto, as `d7e7d6b1` on `master`, its `OPFSAdaptiveVFS.js` byte for byte the PR's last head `87ed5aaf`. The patch had still carried the first head's hunk; the repin of 2026-10-03 to `7fcc30df` brought the last head into the pin and dropped the hunk.
 
