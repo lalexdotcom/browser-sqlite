@@ -187,7 +187,7 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      # THE ROOT, and it must come FIRST. `assemble.mjs` opens with
+      # THE ROOT, and it must come FIRST. The assembler opens with
       # `rmSync(target, { recursive: true, force: true })`, so assembling the
       # root after the preview would delete the preview that sits inside it.
       #
@@ -200,7 +200,7 @@ jobs:
       # `/preview/` included, in the one place the bench page's own comments say
       # a stranger cannot check.
       # THE ASSEMBLER COMES FROM HERE, THE CONTENT FROM THE RELEASE. Without
-      # the copy this step runs the released tag's OWN assemble.mjs, which
+      # the copy this step runs the released tag's OWN assembler, which
       # predates `--ref`/`--release` and falls back to the environment — and the
       # environment says `preview`, because that is what triggered the run. The
       # root then labels itself from the trigger: harmless while `IS_RELEASE`
@@ -218,16 +218,17 @@ jobs:
         working-directory: release
         run: |
           set -euo pipefail
-          cp "$GITHUB_WORKSPACE/scripts/bench/assemble.mjs" scripts/bench/assemble.mjs
+          cp "$GITHUB_WORKSPACE/scripts/bench/assemble.ts" scripts/bench/assemble.ts
           pnpm install --frozen-lockfile
           pnpm build
-          node scripts/bench/assemble.mjs "$GITHUB_WORKSPACE/_site" \
+          node scripts/bench/assemble.ts "$GITHUB_WORKSPACE/_site" \
             --ref "${{ steps.tags.outputs.release }}" --release
 
       # THE PREVIEW, second, inside the root. No `--release`, which is the whole
-      # point: `preview` IS a tag, and without an explicit label assemble.mjs
+      # point: `preview` IS a tag, and without an explicit label the assembler
       # takes any tag for a release tag and hands the page an npm link for code
-      # that is not on npm.
+      # that is not on npm. It is the preview tree's own, `.mjs` before
+      # 2026-10-03 and `.ts` since.
       - name: Build the preview, from the preview tag
         if: steps.tags.outputs.preview == 'true'
         working-directory: preview
@@ -236,7 +237,9 @@ jobs:
           SHORT=$(echo "${{ steps.tags.outputs.preview_sha }}" | cut -c1-7)
           pnpm install --frozen-lockfile
           pnpm build
-          node scripts/bench/assemble.mjs "$GITHUB_WORKSPACE/_site/preview" \
+          ASSEMBLE=scripts/bench/assemble.ts
+          [ -f "$ASSEMBLE" ] || ASSEMBLE=scripts/bench/assemble.mjs
+          node "$ASSEMBLE" "$GITHUB_WORKSPACE/_site/preview" \
             --ref "preview @ $SHORT"
           echo "Preview served at <page-url>/preview/"
 

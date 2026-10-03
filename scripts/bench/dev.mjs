@@ -39,7 +39,7 @@ const run = (command, args) =>
 
 const buildLibrary = () => run('pnpm', ['build']);
 const assemble = () =>
-  run(process.execPath, ['scripts/bench/assemble.mjs', OUT]);
+  run(process.execPath, ['scripts/bench/assemble.ts', OUT]);
 
 const stamp = () => new Date().toLocaleTimeString('en-GB', { hour12: false });
 
