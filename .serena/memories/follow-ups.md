@@ -369,14 +369,15 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   Since 2026-09-24 an omitted `build` loads `jspi` wherever the engine has it, so Safari 27+ escapes
   it by default; `VFS.md`'s `async` note says so. Still open: an upstream report (wa-sqlite or WebKit).
 
-## wa-sqlite's `OPFSAdaptiveVFS.js` reads `FileSystemSyncAccessHandle.prototype` at module load (2026-09-14)
+## wa-sqlite: `OPFSAdaptiveVFS.js` reads `FileSystemSyncAccessHandle.prototype` at module load — carried, upstream PR to open (user, 2026-10-03)
 
-Line 9, unguarded, and it is bundled into the one worker file, so where the interface is missing no
-VFS loads at all, memory VFS included: Playwright's Linux WebKit 26.5 failed every column's `opens`
-with `TypeError: undefined is not an object (evaluating
-'globalThis.FileSystemSyncAccessHandle.prototype')`. Safari on macOS has the interface, and
-Playwright's Linux WebKit was set aside earlier for limits of this kind (user). Unmeasured whether
-a consumer environment lacks it; an insecure context is the candidate. Pre-existing, not scheduled.
+Line 9, `globalThis.FileSystemSyncAccessHandle.prototype.hasOwnProperty('mode')`, unguarded. Every VFS is bundled into the one worker file, so where the interface is missing the worker cannot load at all, memory VFS included. **Measured 2026-10-03 (INSECURE-CONTEXT, `mem:measurements`): outside a secure context, once the library's own `crypto.randomUUID` was gone, every client failed `WORKER_CRASHED` on that line, Chromium and Firefox.** Fixed in our build by a one-character guard (`?.`), carried in `patches/` with #371 and #372 since 2026-10-03. **To do, the user's decision: a one-line PR upstream** — a branch off `master` in the fork, the guard, and a test whose worker deletes `FileSystemSyncAccessHandle` before importing the VFS (the trick #369's test used for `.prototype.mode`), red on master; text shown to the user before anything is pushed or opened.
+
+## Full documentation pass before the release (user, 2026-10-03)
+
+Before the 1.0, reread the consumer docs (`README.md`, `API.md`, `VFS.md` and its generator) as a whole. Already known to go in it:
+- **An "https required: ✅ / ❌" row in the VFS table, or in each VFS's own section** (user): ❌ for `MemoryVFS` and `MemoryAsyncVFS`, ✅ for every other VFS, which needs OPFS or the Web Locks API, both withheld outside a secure context. `VFS.md` is generated (`scripts/render-vfs-matrix.ts`), so the row comes from `VFS_CAPABILITIES` (`requires` holds `opfs` or `web-locks`), not by hand.
+- The 80-column hard wrap of the consumer docs (entry above).
 
 ## Notes, with nothing to fix
 
