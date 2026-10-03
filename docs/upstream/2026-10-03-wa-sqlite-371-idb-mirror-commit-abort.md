@@ -87,6 +87,21 @@ The worker lets pending commits finish before closing. Closing right after a `no
 
 PR [#371][pr371], opened 2026-10-03 from `lalexdotcom:fix/idb-mirror-commit-abort`. It has two commits on `master` at `7fcc30df` (#370's merge): the fix (`1844c761`), then the tests (`1f7b2533`). The branch had first held the fail-every-call commits, pushed but never proposed. It was rebuilt from `master` and force-pushed before opening (user, 2026-10-03). The body explains each choice and its rejected alternative, and opens with "This one turned out trickier than I expected 😅" (user). It does not mention this library. Upstream CI on the head commit is green: [run 37137339446](https://github.com/rhashimoto/wa-sqlite/actions/runs/37137339446), `build (20.x)`, the only check.
 
+## Revised the same day: exclusive `normal` recovers too
+
+As opened, the PR left one avoidable cost: in exclusive locking mode with `synchronous=normal`, the connection failed every commit until it was reopened. The lock is never released there, so the view is never reloaded at `SHARED`. But SQLite discards its cache after a refused commit's `SQLITE_IOERR`, in exclusive mode too, which allows a reload at that point. Measured on 12 runs per cell (2 builds × 2 engines × 3), with an immediate or a delayed abort, and with and without a transaction larger than the cache:
+
+| arm | refused ordinary commit | refused transaction that had spilled to a journal |
+| --- | --- | --- |
+| as opened | dead until reopen | dead until reopen |
+| reload at every refusal | one `SQLITE_IOERR`, then recovers | **aborted rows stored, or "malformed" / "Page 28: never used", 12 of 12** |
+| the same, and the journal removed on reload | same | same corruption |
+| **reload unless the database has a journal (sent)** | **one `SQLITE_IOERR`, then recovers** | dead until reopen; store clean |
+
+The corruption comes from SQLite rolling the refused transaction back through the journal it already holds open. That writes the lost view's pages over the reloaded one, and the next commit stores them. Removing the journal from the VFS's map does not stop a rollback through an open handle.
+
+Sent as `3367cb65` on 2026-10-03, on the user's go, with [comment 5971457674](https://github.com/rhashimoto/wa-sqlite/pull/371#issuecomment-5971457674). The description's costs, change list and ablation table were updated to match. The exclusive `normal` test now expects the next insert to succeed without a reopen. It fails without the commit, and the journal test fails without the journal condition. The file's 190 tests pass 3 of 3 on both engines, the suite passes (6274), and the matrix shows 0 stores corrupt out of 168. The same day, the description's sentence on lost commits was narrowed to exclusive mode (user).
+
 ## What stays ours
 
 - **The carry.** Undecided: `IDBMirrorVFS.js` is not in [`patches/`](../../patches) for this.
