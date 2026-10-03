@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process';
  *
  * Usage:
  *   pnpm bench:build
- *   node scripts/bench/check.mjs [chromium|firefox] [--all]
+ *   node scripts/bench/check.ts [chromium|firefox] [--all]
  */
 import { readFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,12 +19,12 @@ import { fileURLToPath } from 'node:url';
 import playwright from 'playwright';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const engine = process.argv[2] ?? 'chromium';
+const engine = (process.argv[2] ?? 'chromium') as 'chromium' | 'firefox';
 const all = process.argv.includes('--all');
 /**
  * 8099 is what `bench:serve` and `bench:dev` use, so the default collides with
  * a page the developer is testing by hand — and this driver kills whatever
- * holds the port. `BENCH_PORT=8199 node scripts/bench/check.mjs …` keeps the
+ * holds the port. `BENCH_PORT=8199 node scripts/bench/check.ts …` keeps the
  * two out of each other's way.
  */
 const PORT = Number(process.env.BENCH_PORT ?? 8099);
@@ -39,7 +39,26 @@ const server = spawn(
   { stdio: 'inherit' },
 );
 
-const fail = (message) => {
+/** What the page publishes on `window.__BENCH__` for this driver. */
+type BenchInfo = {
+  LIB_VERSION: string;
+  PAIRS: unknown[];
+  IS_RELEASE: boolean;
+  BUILD_REF: string;
+  done: boolean;
+  results: unknown;
+};
+type BenchWindow = Window & { __BENCH__?: BenchInfo };
+
+/** The downloaded export, as far as this driver reads it. */
+type BenchExport = {
+  lib: string;
+  preview?: string;
+  sweep: { partial: boolean; listed: number; left: string[] };
+  measurements: Record<string, Record<string, unknown>>;
+};
+
+const fail = (message: string): never => {
   process.stderr.write(`FAIL — ${message}\n`);
   server.kill();
   process.exit(1);
@@ -50,18 +69,23 @@ try {
   const context = await browser.newContext({ acceptDownloads: true });
   const page = await context.newPage();
 
-  const problems = [];
+  const problems: string[] = [];
   page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
   page.on('console', (m) => {
     if (m.type() === 'error') problems.push(`console.error: ${m.text()}`);
   });
 
   await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'load' });
-  await page.waitForFunction(() => window.__BENCH__ !== undefined, {
-    timeout: 30_000,
-  });
+  await page.waitForFunction(
+    () => (window as BenchWindow).__BENCH__ !== undefined,
+    {
+      timeout: 30_000,
+    },
+  );
 
-  const info = await page.evaluate(() => window.__BENCH__);
+  const info = (await page.evaluate(
+    () => (window as BenchWindow).__BENCH__,
+  )) as BenchInfo;
   process.stdout.write(
     `${engine}: browser-sqlite ${info.LIB_VERSION}, ` +
       `${info.PAIRS.length} declared pairs\n`,
@@ -74,12 +98,12 @@ try {
   // The picker is collapsed by default and Playwright will not act on what it
   // cannot see.
   await page.evaluate(() => {
-    document.getElementById('picker').open = true;
+    (document.getElementById('picker') as HTMLDetailsElement).open = true;
   });
 
   const runnable = await page.$$eval(
     '#picker-list input[data-pair]:not([disabled])',
-    (els) => els.map((e) => e.dataset.pair),
+    (els) => els.map((e) => (e as HTMLElement).dataset.pair),
   );
   if (runnable.length === 0) fail('no runnable pair on this engine');
   process.stdout.write(`runnable: ${runnable.join(', ')}\n`);
@@ -104,9 +128,13 @@ try {
   if (problems.length) fail(problems.join('\n'));
 
   await page.click('#start');
-  await page.waitForFunction(() => window.__BENCH__.done === true, null, {
-    timeout: 10 * 60_000,
-  });
+  await page.waitForFunction(
+    () => (window as BenchWindow).__BENCH__?.done === true,
+    null,
+    {
+      timeout: 10 * 60_000,
+    },
+  );
 
   const stuck = await page.$$eval(
     '#results td',
@@ -117,7 +145,10 @@ try {
   const columns = await page.$$eval('#head-row th', (th) => th.length - 1);
   if (columns === 0) fail('no column was rendered');
 
-  const enabled = await page.$eval('#download', (b) => !b.disabled);
+  const enabled = await page.$eval(
+    '#download',
+    (b) => !(b as HTMLButtonElement).disabled,
+  );
   if (!enabled) fail('download button never enabled');
 
   // Capture the download headlessly — no display needed.
@@ -139,7 +170,7 @@ try {
 
   const savePath = join(tmpdir(), filename);
   await download.saveAs(savePath);
-  let payload;
+  let payload: BenchExport;
   try {
     payload = JSON.parse(readFileSync(savePath, 'utf8'));
   } finally {
@@ -194,7 +225,10 @@ try {
 
   // The page and the export must not disagree about the floor: a partial sweep
   // that only the JSON knows about is the silent case this note exists to end.
-  const noteShown = await page.$eval('#sweep-note', (el) => !el.hidden);
+  const noteShown = await page.$eval(
+    '#sweep-note',
+    (el) => !(el as HTMLElement).hidden,
+  );
   if (noteShown !== payload.sweep.partial) {
     fail(
       `sweep note ${noteShown ? 'shown' : 'hidden'} but export says ` +
@@ -221,7 +255,7 @@ try {
   process.stdout.write(
     `${columns} columns, results:\n` +
       JSON.stringify(
-        await page.evaluate(() => window.__BENCH__.results),
+        await page.evaluate(() => (window as BenchWindow).__BENCH__?.results),
         null,
         2,
       ) +
