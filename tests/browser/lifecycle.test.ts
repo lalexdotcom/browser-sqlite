@@ -7,6 +7,7 @@ import {
   longQuery,
   removeDatabaseFiles,
   sleep,
+  waitUntil,
 } from './helpers';
 
 describe('worker lifecycle — crash detection', () => {
@@ -313,7 +314,7 @@ function failWorkerAtIndex(n: number): Worker[] {
  * Intercepts worker creation and makes workers from index `from` onward load
  * a SILENT module — one that starts successfully and never answers a message.
  * Returns the created Worker instances in creation order, and `booted`, which
- * settles once a silent worker's module has run.
+ * settles once a silent worker's module has run (bounded by `waitUntil`).
  *
  * Kill a silent worker only after it booted: Playwright's Firefox crashes the
  * page when a worker is terminated in its first milliseconds.
@@ -323,19 +324,22 @@ function silentWorkersFromIndex(from: number): {
   booted: (worker: Worker) => Promise<void>;
 } {
   const created: Worker[] = [];
-  const boots = new Map<Worker, Promise<void>>();
-  const waiting = new Map<string, () => void>();
+  const silent = new Map<string, Worker>();
+  const up = new Set<Worker>();
   const urls: string[] = [];
   const channel = new BroadcastChannel(`bsq-silent-${crypto.randomUUID()}`);
-  channel.onmessage = (event: MessageEvent<string>) =>
-    waiting.get(event.data)?.();
+  channel.onmessage = (event: MessageEvent<string>) => {
+    const worker = silent.get(event.data);
+    if (worker) up.add(worker);
+  };
   const Original = globalThis.Worker;
   class Silent extends Original {
     constructor(url: string | URL, options?: WorkerOptions) {
-      const id = crypto.randomUUID();
+      const id = created.length >= from ? crypto.randomUUID() : undefined;
       const silentUrl =
-        created.length >= from
-          ? URL.createObjectURL(
+        id === undefined
+          ? undefined
+          : URL.createObjectURL(
               new Blob(
                 [
                   `new BroadcastChannel(${JSON.stringify(channel.name)}).postMessage(${JSON.stringify(id)});`,
@@ -343,15 +347,11 @@ function silentWorkersFromIndex(from: number): {
                 ],
                 { type: 'text/javascript' },
               ),
-            )
-          : undefined;
+            );
       super(silentUrl ?? url, options);
-      if (silentUrl) {
+      if (id !== undefined && silentUrl !== undefined) {
         urls.push(silentUrl);
-        boots.set(
-          this,
-          new Promise((resolve) => waiting.set(id, () => resolve())),
-        );
+        silent.set(id, this);
       }
       created.push(this);
     }
@@ -362,8 +362,14 @@ function silentWorkersFromIndex(from: number): {
     channel.close();
     for (const url of urls) URL.revokeObjectURL(url);
   });
-  const booted = (worker: Worker) =>
-    boots.get(worker) ?? Promise.reject(new Error('not a silent worker'));
+  const booted = async (worker: Worker) => {
+    if (![...silent.values()].includes(worker))
+      throw new Error(`worker ${created.indexOf(worker)} is not silent`);
+    await waitUntil(
+      () => up.has(worker),
+      `silent worker ${created.indexOf(worker)} to boot`,
+    );
+  };
   return { created, booted };
 }
 
