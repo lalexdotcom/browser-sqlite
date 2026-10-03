@@ -100,7 +100,7 @@ As opened, the PR left one avoidable cost: in exclusive locking mode with `synch
 
 The corruption comes from SQLite rolling the refused transaction back through the journal it already holds open. That writes the lost view's pages over the reloaded one, and the next commit stores them. Removing the journal from the VFS's map does not stop a rollback through an open handle.
 
-Sent as `3367cb65` on 2026-10-03, on the user's go, with [comment 5971457674](https://github.com/rhashimoto/wa-sqlite/pull/371#issuecomment-5971457674). The description's costs, change list and ablation table were updated to match. The exclusive `normal` test now expects the next insert to succeed without a reopen. It fails without the commit, and the journal test fails without the journal condition. The file's 190 tests pass 3 of 3 on both engines, the suite passes (6274), and the matrix shows 0 stores corrupt out of 168. The same day, the description's sentence on lost commits was narrowed to exclusive mode (user).
+Sent as `3367cb65` on 2026-10-03, on the user's go, with [comment 5971457674](https://github.com/rhashimoto/wa-sqlite/pull/371#issuecomment-5971457674). The description's costs, change list and ablation table were updated to match. The exclusive `normal` test now expects the next insert to succeed without a reopen. It fails without the commit, and the journal test fails without the journal condition. The file's 190 tests pass 3 of 3 on both engines, the suite passes (6274), and the matrix shows 0 stores corrupt out of 168. Upstream CI on `3367cb65` is green: [run 37139391822](https://github.com/rhashimoto/wa-sqlite/actions/runs/37139391822). The same day, the description's sentence on lost commits was narrowed to exclusive mode (user).
 
 ## What stays ours
 
