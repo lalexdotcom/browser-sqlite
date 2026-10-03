@@ -404,7 +404,7 @@ the table above are stale from here on; re-count before citing them.
   writes the count never reaches zero and that client starves every other tab.
 
 **The staleness the barrier was built for was a defect of our worker, fixed since `aee3859`
-(spike 2026-09-25, `mem:follow-ups`).** The worker read column names before the first `step()`,
+(spike 2026-09-25, `mem:history`).** The worker read column names before the first `step()`,
 so a statement SQLite re-prepared on a changed schema returned fresh rows under stale names — the
 "identical on every VFS and every build" measurement was that bug. Without the barrier, no schema
 scenario is stale today on any pair; data reads were stale 3 times in 1232 and never with it
@@ -414,7 +414,7 @@ cost is in `mem:measurements`.
 **On `OPFSWriteAheadVFS` the barrier's read catches up by construction (2026-09-28).** That VFS
 freezes a read's view as its `BroadcastChannel` has delivered commits, which can lag the reply
 that triggered the read. `VFS_CAPABILITIES[vfs].catchUpPragma` names a pragma that makes a read
-current (`wal_read_latest`, our wa-sqlite#365 carried in `patches/`); `barrierSqlFor` wraps the
+current (`wal_read_latest`, our wa-sqlite#365, merged and in the pin); `barrierSqlFor` wraps the
 barrier as `PRAGMA x=1; <barrier>; PRAGMA x=0` in one message, computed once per client. User
 reads keep the pragma off, so a large open write does not make them scan — turning it on for
 every read was measured and rejected (365-LIB). The view of a `WriteAhead` only advances, so the
