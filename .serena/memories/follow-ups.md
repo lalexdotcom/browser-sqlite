@@ -271,10 +271,6 @@ fix, as `output()` did.
 **The lesson the three shared, and it is in `mem:lessons`: a pile's twelve subjects can be one
 defect, and the scenario a defect is found through is often not the one that demonstrates it.**
 
-## Two worker fallback messages carry the path (2026-09-23)
-
-`src/worker/worker.ts`'s open and delete fallbacks read `Failed to open ${file}` / `Failed to delete ${data.file}`, and since `feat/vfs-folders` the worker only knows the path (`.ad/name`). They fire only when something that is not an `Error` is thrown, and `startupError` forwards the text verbatim, so no client wrapping re-adds the logical name. Parked by the controller's ruling: the path is the only identifier the worker has. Reattaching the logical name would mean sending it to the worker or wrapping on the client side.
-
 ## What the `IDBBatchAtomicVFS` long-statement fix left open (2026-09-14)
 
 - **On Safari, wa-sqlite's `async` (Asyncify) build slows down after a few long statements, and
@@ -300,6 +296,10 @@ Before the 1.0, reread the consumer docs (`README.md`, `API.md`, `VFS.md` and it
 - **`VFS.md` gives the OPFS VFS a Chrome floor that is too low.** `FEATURE_SUPPORT.opfs` in the generator holds one version per browser, `getDirectory`'s (Chrome 86), and its comment says `createSyncAccessHandle` gives the same versions; browser-compat-data says otherwise: `FileSystemFileHandle.createSyncAccessHandle` and `FileSystemSyncAccessHandle` are Chrome 102, Chrome Android 109, Firefox 111, Safari 15.2 (checked 2026-10-03). The four VFS that open sync access handles (`OPFSAdaptiveVFS`, `OPFSCoopSyncVFS`, `OPFSWriteAheadVFS`, `AccessHandlePoolVFS`) show Chrome 92+ where 102+ is true; `OPFSAnyContextVFS` writes through `createWritable` and may be right. Likely a separate feature (`sync-access-handle`) in the generator.
 
 ## Notes, with nothing to fix
+
+### Two worker fallback messages carry the path — kept, 2026-10-03
+
+`src/worker/worker.ts`'s open and delete fallbacks read `Failed to open ${file}` / `Failed to delete ${data.file}`, a path such as `.ad/name`, and `startupError` forwards it verbatim. They fire only when the chain throws something that is not an `Error`, and every `throw` in wa-sqlite's sources is an `Error`, a `SQLiteError` or a rethrown `Error`/`DOMException` (read, not measured). The path is the form `db.files` already makes public, and the thrown value travels in `cause`. Replacing the path with `String(error)` would be the only change worth making; no test can pin it without injecting a non-`Error` throw into the open chain.
 
 ### The barrier has no falsifier of ours — by decision, 2026-10-03
 
