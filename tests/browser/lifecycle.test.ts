@@ -312,28 +312,59 @@ function failWorkerAtIndex(n: number): Worker[] {
 /**
  * Intercepts worker creation and makes workers from index `from` onward load
  * a SILENT module — one that starts successfully and never answers a message.
- * Returns the array of created Worker instances in creation order.
+ * Returns the created Worker instances in creation order, and `booted`, which
+ * settles once a silent worker's module has run.
+ *
+ * Kill a silent worker only after it booted: Playwright's Firefox crashes the
+ * page when a worker is terminated in its first milliseconds.
  */
-function silentWorkersFromIndex(from: number): Worker[] {
+function silentWorkersFromIndex(from: number): {
+  created: Worker[];
+  booted: (worker: Worker) => Promise<void>;
+} {
   const created: Worker[] = [];
+  const boots = new Map<Worker, Promise<void>>();
+  const waiting = new Map<string, () => void>();
+  const urls: string[] = [];
+  const channel = new BroadcastChannel(`bsq-silent-${crypto.randomUUID()}`);
+  channel.onmessage = (event: MessageEvent<string>) =>
+    waiting.get(event.data)?.();
   const Original = globalThis.Worker;
-  const silentUrl = URL.createObjectURL(
-    new Blob(['self.onmessage = () => {};'], { type: 'text/javascript' }),
-  );
-  onTestFinished(() => {
-    URL.revokeObjectURL(silentUrl);
-  });
   class Silent extends Original {
     constructor(url: string | URL, options?: WorkerOptions) {
-      super(created.length >= from ? silentUrl : url, options);
+      const id = crypto.randomUUID();
+      const silentUrl =
+        created.length >= from
+          ? URL.createObjectURL(
+              new Blob(
+                [
+                  `new BroadcastChannel(${JSON.stringify(channel.name)}).postMessage(${JSON.stringify(id)});`,
+                  'self.onmessage = () => {};',
+                ],
+                { type: 'text/javascript' },
+              ),
+            )
+          : undefined;
+      super(silentUrl ?? url, options);
+      if (silentUrl) {
+        urls.push(silentUrl);
+        boots.set(
+          this,
+          new Promise((resolve) => waiting.set(id, () => resolve())),
+        );
+      }
       created.push(this);
     }
   }
   globalThis.Worker = Silent as unknown as typeof Worker;
   onTestFinished(() => {
     globalThis.Worker = Original;
+    channel.close();
+    for (const url of urls) URL.revokeObjectURL(url);
   });
-  return created;
+  const booted = (worker: Worker) =>
+    boots.get(worker) ?? Promise.reject(new Error('not a silent worker'));
+  return { created, booted };
 }
 
 describe('worker lifecycle — startup readiness gate', () => {
@@ -391,7 +422,7 @@ describe('worker lifecycle — startup readiness gate', () => {
     // slot 1's retry (also silent) is spawned; slot 0 is then killed while
     // that retry is still open, and killing the retry leaves the pool empty
     // at gate-open.
-    const created = silentWorkersFromIndex(1);
+    const { created, booted } = silentWorkersFromIndex(1);
     const lostIndices: number[] = [];
     // The startup gate is about TWO slots, so the pair must keep two: a target
     // that caps the pool would refuse the client instead of exercising the gate
@@ -405,6 +436,7 @@ describe('worker lifecycle — startup readiness gate', () => {
 
     // Slot 0 (real) and slot 1 (silent, round 1) have both been constructed.
     while (created.length < 2) await sleep(10);
+    await booted(created[1]);
     created[1].dispatchEvent(
       new ErrorEvent('error', { message: 'slot 1 failed round 1' }),
     );
@@ -412,6 +444,7 @@ describe('worker lifecycle — startup readiness gate', () => {
     // Round 1 settles only once slot 0 has genuinely opened — only then does
     // the retry spawn slot 1's silent replacement (worker index 2).
     while (created.length < 3) await sleep(10);
+    await booted(created[2]);
 
     created[0].dispatchEvent(
       new ErrorEvent('error', { message: 'slot 0 killed during retry' }),
@@ -510,7 +543,7 @@ describe('worker lifecycle — startup readiness gate', () => {
     // that retry is still open; killing the retry settles the gate on an
     // empty pool — onGateOpen must fail the client there, before `ready` is
     // allowed to resolve.
-    const created = silentWorkersFromIndex(1);
+    const { created, booted } = silentWorkersFromIndex(1);
     const db = await createTestClient({
       poolSize: 2,
       needs: ['two-workers'],
@@ -519,6 +552,7 @@ describe('worker lifecycle — startup readiness gate', () => {
 
     // Slot 0 (real) and slot 1 (silent, round 1) have both been constructed.
     while (created.length < 2) await sleep(10);
+    await booted(created[1]);
     created[1].dispatchEvent(
       new ErrorEvent('error', { message: 'slot 1 failed round 1' }),
     );
@@ -526,6 +560,7 @@ describe('worker lifecycle — startup readiness gate', () => {
     // Round 1 settles only once slot 0 has genuinely opened — only then does
     // the retry spawn slot 1's silent replacement (worker index 2).
     while (created.length < 3) await sleep(10);
+    await booted(created[2]);
 
     // Kill slot 0 while the retry round is still open.
     created[0].dispatchEvent(
