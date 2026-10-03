@@ -2,7 +2,7 @@
 /**
  * Runs a command with a deadline, so no suite can sit for ever.
  *
- *   node scripts/bounded.mjs <seconds> <command> [args...]
+ *   node scripts/bounded.ts <seconds> <command> [args...]
  *
  * Why it exists: a test run CAN hang outside any test body, where the runner's
  * own `testTimeout` and `hookTimeout` cannot reach it. One is established — on
@@ -29,9 +29,7 @@ const [rawSeconds, ...command] = process.argv.slice(2);
 const seconds = Number(rawSeconds);
 
 if (!Number.isFinite(seconds) || seconds <= 0 || command.length === 0) {
-  console.error(
-    'usage: node scripts/bounded.mjs <seconds> <command> [args...]',
-  );
+  console.error('usage: node scripts/bounded.ts <seconds> <command> [args...]');
   process.exit(2);
 }
 
@@ -61,13 +59,13 @@ for (const old of readdirSync(runsDir)
 }
 
 /** Prints a line of this wrapper's own and keeps it in the run's log. */
-const note = (line) => {
+const note = (line: string) => {
   console.error(line);
   writeSync(log, `${line}\n`);
 };
 
 /** Exits once what was written to stdout and stderr has been flushed. */
-const exit = (code) => {
+const exit = (code: number) => {
   writeSync(log, `[bounded] exit ${code}\n`);
   process.stdout.write('', () =>
     process.stderr.write('', () => process.exit(code)),
@@ -91,7 +89,7 @@ const child = spawn(command[0], command.slice(1), {
 for (const [from, to] of [
   [child.stdout, process.stdout],
   [child.stderr, process.stderr],
-]) {
+] as const) {
   from.on('data', (chunk) => {
     to.write(chunk);
     writeSync(log, chunk);
@@ -99,8 +97,9 @@ for (const [from, to] of [
 }
 
 /** Signals the command and everything it started; a group already gone is fine. */
-const killAll = (signal) => {
+const killAll = (signal: NodeJS.Signals) => {
   if (!grouped) return child.kill(signal);
+  if (child.pid === undefined) return;
   try {
     process.kill(-child.pid, signal);
   } catch {
@@ -125,7 +124,7 @@ const deadline = setTimeout(() => {
 }, seconds * 1000);
 
 // Ctrl-C and a CI cancellation must reach the child, not just this wrapper.
-for (const signal of ['SIGINT', 'SIGTERM']) {
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     forwarded = true;
     killAll(signal);
@@ -139,7 +138,7 @@ child.on('error', (error) => {
 });
 
 let finished = false;
-const finish = (code, signal) => {
+const finish = (code: number | null, signal: NodeJS.Signals | null) => {
   if (finished) return;
   finished = true;
   clearTimeout(deadline);

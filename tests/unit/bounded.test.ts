@@ -8,7 +8,7 @@ import { describe, expect, it } from '@rstest/core';
 const runsDir = mkdtempSync(join(tmpdir(), 'bounded-runs-'));
 
 /**
- * `scripts/bounded.mjs` is what keeps a hung run from sitting for ever — in a
+ * `scripts/bounded.ts` is what keeps a hung run from sitting for ever — in a
  * pre-push hook or a CI job, that is the difference between a failed run and a
  * lost runner. It is exercised here rather than trusted: a bound nobody proves
  * is a bound nobody has.
@@ -16,7 +16,7 @@ const runsDir = mkdtempSync(join(tmpdir(), 'bounded-runs-'));
 
 const run = (args: string[]): Promise<{ code: number; stderr: string }> =>
   new Promise((resolve) => {
-    const child = spawn('node', ['scripts/bounded.mjs', ...args], {
+    const child = spawn('node', ['scripts/bounded.ts', ...args], {
       stdio: ['ignore', 'ignore', 'pipe'],
       env: { ...process.env, BOUNDED_RUNS_DIR: runsDir },
     });
@@ -27,7 +27,7 @@ const run = (args: string[]): Promise<{ code: number; stderr: string }> =>
     child.on('exit', (code) => resolve({ code: code ?? -1, stderr }));
   });
 
-describe('scripts/bounded.mjs', () => {
+describe('scripts/bounded.ts', () => {
   it('passes a finished command its own exit code', async () => {
     // Falsifiable: map the child's code to 0 and this goes red.
     expect(await run(['10', 'node', '-e', 'process.exit(0)'])).toMatchObject({
