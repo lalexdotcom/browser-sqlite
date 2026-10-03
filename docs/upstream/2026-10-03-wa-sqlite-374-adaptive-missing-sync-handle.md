@@ -20,7 +20,7 @@ In `test/OPFSAdaptiveVFS.test.js`, build-independent: the test page is a main th
 
 ## Posted upstream
 
-PR [#374][pr374], opened 2026-10-03 from `lalexdotcom:fix/adaptive-missing-sync-handle`, on `master` at `7fcc30df`: the fix (`39e7e1ff`), then the test (`80934a52`). The body names the three cases (a main thread or Node, a page that is not a secure context, older browsers) and the worker that bundles several VFS, in words; it does not mention this library. It touches no file #371 or #372 changes.
+PR [#374][pr374], opened 2026-10-03 from `lalexdotcom:fix/adaptive-missing-sync-handle`, on `master` at `7fcc30df`: the fix (`39e7e1ff`), then the test (`80934a52`). The body names the three cases (a main thread or Node, a page that is not a secure context, older browsers) and the worker that bundles several VFS, in words; it does not mention this library. It touches no file #371 or #372 changes. Upstream CI on the head commit is green: [run 37157798485](https://github.com/rhashimoto/wa-sqlite/actions/runs/37157798485), `build (20.x)`, the only check.
 
 ## What stays ours
 
