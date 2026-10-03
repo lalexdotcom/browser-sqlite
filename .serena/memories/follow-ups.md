@@ -58,7 +58,21 @@ History is in the report (`docs/upstream/2026-09-25-wa-sqlite-363-anycontext-unl
 What each answer calls for:
 - **He asks for changes**: in the same worktree (`.work/wa-sqlite-anycontext`); the red arms are rerun by swapping in master's file, the previous head's, or this head without `jUnlock`.
 - **He merges**: the repin (deferred by the user) drops the `OPFSAnyContextVFS.js` hunk instead of updating it.
-- **Owed**: the `IDBMirrorVFS` PR (IDBMIRROR-COMMIT-ABORT). On a new branch off upstream master: drop `txActive` and restore the view when `#commitTx` fails, and report an abort under `synchronous=normal`. Its test aborts the IndexedDB commit by patching `IDBTransaction.prototype.commit`.
+- **Owed alongside**: the `IDBMirrorVFS` PR, its own entry below.
+
+## wa-sqlite: `IDBMirrorVFS` commit-abort PR — owed, not started (2026-10-03)
+
+Offered on #363 on 2026-10-02; rhashimoto answered "Yes, please, if you're up for that." Not opened.
+
+**The defect** (IDBMIRROR-COMMIT-ABORT, `mem:measurements`). `#commitTx` calls `#acceptTx`/`#setView` before its IndexedDB transaction completes. It awaits that transaction only with `synchronous=full`, and when it aborts (quota, for instance) it neither drops `txActive` nor restores the view; `#dropTx` runs only on `ROLLBACK_ATOMIC_WRITE`.
+- With `full`, the commit returns `SQLITE_IOERR`, but its rows come back with the context's next commit.
+- With `normal`, the commit returns `ok` (an unhandled rejection is the only trace), and the database stored in IndexedDB ends up failing `integrity_check` ("Page 28: never used").
+
+**To do.**
+- A new branch off upstream master, in its own worktree.
+- The fix: on failure, restore the view, drop `txActive`, and report the failure. Under `normal` the abort cannot fail the commit already returned, so it needs a decision: poison the next call, or at least never let a later commit build on the lost one. Read `#commitTx`, `#acceptTx`, `#setView` and the broadcast path first.
+- The test: two contexts in a dedicated worker that patches `IDBTransaction.prototype.commit` to `abort()` the next read-write transaction, as the probe did. Red on master for both modes.
+- No mention of this library, per `mem:conventions`; a report in `docs/upstream/` once opened.
 
 ## wa-sqlite #362: `OPFSCoopSyncVFS.create()` fails after a back/forward-cache navigation — PR not decided
 
