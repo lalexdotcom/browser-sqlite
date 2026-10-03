@@ -45,7 +45,7 @@ On both engines with persistent profiles (Playwright, `.work/worst/journal/`, ru
 - **A — `sync()` no longer forgets.** `sync(false)` keeps the pending transaction, so the next `sync(true)` waits for it. It cures the termination case, but the deletion stays in a `default`-durability transaction, so after a power loss the journal could still come back — the case SQLite's comment names.
 - **B — `jDelete` honours `syncDir`.** The deletion runs in a `strict` transaction and `jDelete` waits for it with `sync(true)`. Two lines in one method, doing what SQLite asks; in `synchronous=full` `jDelete` is the only caller of `sync(false)`, so A would add nothing on top.
 
-Chosen: B (user, 2026-10-01). A was implemented, verified and carried for a few hours first; its commits stay in the fork clone, branch `backup/idb-journal-sync-a`.
+Chosen: B (user, 2026-10-01). A was implemented, verified and carried for a few hours first; its commits stayed on a local branch of the fork clone, deleted on 2026-10-03 after #370 merged.
 
 Cost, medians of 10 interleaved rounds on Chrome, idle machine — the three arms side by side:
 
