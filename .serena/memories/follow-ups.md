@@ -148,9 +148,13 @@ Playwright's Firefox loses the page's content process when a worker is `terminat
 - locally, `.devcontainer/post-create.sh` installs browsers only when the container is created, so run `pnpm exec playwright install --with-deps chromium firefox` by hand; the old `firefox-1538` stays in `~/.cache/ms-playwright` and is simply no longer chosen;
 - check with `node -e "console.log(require('playwright').firefox.executablePath())"` that the path names the new revision and exists, and that rstest runs on it (the browser provider uses the project's `playwright`);
 - in CI the browser cache is keyed on `pnpm-lock.yaml` (`ci.yaml`, `release-and-publish.yaml`), so the bump renews it by itself;
-- then rerun the Firefox config, and the one-spec reproduction above if in doubt. The test-side guard in `lifecycle.test.ts` (kill a silent worker only after its boot signal) stays either way. The `DOM Worker` thread leak of the same builds (WORKER-LEAK) was not re-measured on `firefox-1554`; it never reaches the 512-worker cap in the suite.
+- then rerun the Firefox config, and the one-spec reproduction above if in doubt;
+- **and remeasure the rstest/Firefox `getDirectory()` hang** (its entry below, same level: what each result calls for is there). The test-side guard in `lifecycle.test.ts` (kill a silent worker only after its boot signal) stays either way. The `DOM Worker` thread leak of the same builds (WORKER-LEAK) was not re-measured on `firefox-1554`; it never reaches the 512-worker cap in the suite.
 
-## The rstest/Firefox silent hang — CAUSE FOUND 2026-09-16, fix not taken
+## The rstest/Firefox silent hang — CAUSE FOUND 2026-09-16, fix not taken — waits for the Playwright 1.64 bump (user, 2026-10-03)
+
+**Tied to the Playwright 1.64.0 entry above, at the same level: nothing to do before that bump, then remeasure (user, 2026-10-03).** Every sighting is on Playwright's patched Firefox, whose young-worker segfault turned out to be the build's own and is fixed in 1.64, so this may be the same story. After the bump: the unguarded probe arm, Firefox, `OPFSWriteAheadVFS/sync`, 24 runs, against 4/24 then. **Gone** → close this entry: it was the build's, and the library was never concerned. **Still there** → try a stock Firefox: if stock hangs too, the library is exposed for real — its workers call `getDirectory()` in every OPFS VFS's `create()` and in `worker.ts`'s delete and inspect paths, and nothing in the client bounds a worker's startup (`db.debug`'s `boot` would read `creating the VFS`) — so the question becomes bounding worker startup in the client, then the one-probe-per-run design below for the tests, and the Mozilla report.
+
 
 **`navigator.storage.getDirectory()` inside a dedicated worker sometimes never settles on Firefox
 — no resolve, no reject — under concurrent OPFS access from many pages.** That call sits at
