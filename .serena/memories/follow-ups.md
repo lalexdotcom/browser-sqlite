@@ -275,7 +275,12 @@ defect, and the scenario a defect is found through is often not the one that dem
 
 `src/worker/worker.ts`'s open and delete fallbacks read `Failed to open ${file}` / `Failed to delete ${data.file}`, and since `feat/vfs-folders` the worker only knows the path (`.ad/name`). They fire only when something that is not an `Error` is thrown, and `startupError` forwards the text verbatim, so no client wrapping re-adds the logical name. Parked by the controller's ruling: the path is the only identifier the worker has. Reattaching the logical name would mean sending it to the worker or wrapping on the client side.
 
-## Three browser tests guard less than their comments said (2026-09-14)
+## Three browser tests guard less than their comments said (2026-09-14) — next to discuss (user, 2026-10-03)
+
+**Resume here (triage of 2026-10-03).** The title no longer fits: three subjects remain, each with a recommendation for the user to decide on.
+- **The barrier** (first bullet): `barrier.test.ts` guards the column-name capture, not the barrier; the barrier's real effect, data freshness on `OPFSWriteAheadVFS`, is now `PRAGMA wal_read_latest` and has wa-sqlite's deterministic test, none of ours. Recommended: reword those tests' comments to say what they guard, and leave the barrier without a falsifier of ours rather than build a timing one.
+- **RSTEST-OTR** (second bullet): a note on measurement method, nothing to fix. Recommended: move it to "Notes, with nothing to fix".
+- **The open-side init lock** (third bullet): no test sees what it guards since the writing pragmas moved to the write path. To decide: keep it as cheap defence (and move the bullet to Notes) or remove it from `open()` (the delete side stays guarded by `delete.test.ts`).
 
 Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
 
@@ -335,25 +340,6 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
   the checkpoint and page-size campaigns included — carries that per-call cost; ratios between
   arms of one run still compare. Not acted on: whether to measure OPFS in a persistent context
   (wa-sqlite's runner, or a Playwright `launchPersistentContext` harness) is the user's call.
-- **`OPFSAnyContextVFS` releases its lock with a truncation still invisible — `disk I/O error` on
-  Firefox (2026-09-25). FIXED in our build by a `patches/` hunk, submitted upstream as
-  rhashimoto/wa-sqlite#363** (report `docs/upstream/2026-09-25-wa-sqlite-363-anycontext-unlock-truncate.md`).
-  Merged upstream (`27a6a0b6`, seen 2026-10-03); the repin to `7fcc30df` dropped the hunk. Guarded here by `tests/browser/vacuum.test.ts` (need
-  `in-place-file`, added for it); upstream by `test/vfs_xUnlock.js` (8192 for 4096 on master). Full
-  matrix with the patch, 2026-09-25: 66/66 cells green. Seen as `VACUUM` + two concurrent reads failing
-  in one client with two workers; on Firefox `needs: ['two-workers']` resolves to
-  `OPFSAnyContextVFS` whatever the target, 8-12 of 20 per run, never on Chromium (20/20 on the same
-  pair). The failing statement is the READ on the other worker, `SQLITE_IOERR_READ` (266).
-  **A `BroadcastChannel` trace of the VFS shows the mechanism:** `jTruncate` opens a writable and
-  leaves it open; SQLite calls no `xSync` after the post-commit truncation, so the writer unlocks
-  with the truncation unpublished. The reader takes `SHARED`, `getFile()` returns the OLD file
-  (2 232 320 bytes against 8192), the writer then closes its writable for its own next read, and
-  the reader's `File` snapshot dies with `AbortError`. **Hypothesis tested:** closing a pending
-  writable in a `jUnlock` override, before `super.jUnlock`, gives 60/60 on Firefox (jspi and async)
-  and 20/20 on Chromium. Upstream master (`e98c65d`, our pin) has no such close; upstream issues not
-  searched yet (`gh` is available since 2026-09-28). Same shape as #361: an upstream PR plus a `patches/` carry.
-  Also worth knowing: in that window a
-  reader could read the pre-truncation file rather than fail, if its read wins the race.
 - **The open-side init lock guards nothing a test sees (2026-09-28).** With `locks.withLock(initLockName…)` removed from the worker's `open()`, `pnpm test`'s three configs stay green; the delete side is guarded (`delete.test.ts`, BUSY while the lock is held). What it seemed to guard — a writing pragma at open against another client's write — was a defect of its own, fixed by running those pragmas through the write path (PRAGMA-BUSY, `mem:vfs`); since then the open applies only connection pragmas, and the lock serialises opens with nothing left to protect that a test has found.
 
 ## What the `IDBBatchAtomicVFS` long-statement fix left open (2026-09-14)
@@ -371,7 +357,7 @@ Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
 
 ## wa-sqlite: `OPFSAdaptiveVFS.js` reads `FileSystemSyncAccessHandle.prototype` at module load — carried, opened as #374 (2026-10-03)
 
-Line 9, `globalThis.FileSystemSyncAccessHandle.prototype.hasOwnProperty('mode')`, unguarded. Every VFS is bundled into the one worker file, so where the interface is missing the worker cannot load at all, memory VFS included. **Measured 2026-10-03 (INSECURE-CONTEXT, `mem:measurements`): outside a secure context, once the library's own `crypto.randomUUID` was gone, every client failed `WORKER_CRASHED` on that line, Chromium and Firefox.** Fixed in our build by a one-character guard (`?.`), carried in `patches/` with #371 and #372 since 2026-10-03. **PR (2026-10-03):** `lalexdotcom:fix/adaptive-missing-sync-handle` on `master` `7fcc30df`, pushed: the guard (`39e7e1ff`, byte-identical to the carried one) and a test (`80934a52`) that imports the module from the test page, a main thread where the interface is undefined — red on master on Chromium and Firefox, the file's 72 tests 3/3 green with the fix, suite 6158 on Chromium. (An `expectAsync(import(...)).toBeResolved()` form hung the page on master instead of failing; the test catches the import error itself.) Its case: main thread and Node, insecure pages, and browsers older than the interface (Chrome < 102, Android < 109, Firefox < 111), where a worker bundling several VFS fails as a whole. **Opened as rhashimoto/wa-sqlite#374 on 2026-10-03**, body as validated by the user; report `docs/upstream/2026-10-03-wa-sqlite-374-adaptive-missing-sync-handle.md`. What each answer calls for: review changes → the worktree `.work/wa-sqlite-adaptive-guard`, rerun `test/OPFSAdaptiveVFS.test.js` red on master and green with the change, both engines, and update the carried line; merge → repin and drop the line from the patch.
+Line 9, `globalThis.FileSystemSyncAccessHandle.prototype.hasOwnProperty('mode')`, unguarded. Every VFS is bundled into the one worker file, so where the interface is missing the worker cannot load at all, memory VFS included. **Measured 2026-10-03 (INSECURE-CONTEXT, `mem:measurements`): outside a secure context, once the library's own `crypto.randomUUID` was gone, every client failed `WORKER_CRASHED` on that line, Chromium and Firefox.** Fixed in our build by a one-character guard (`?.`), carried in `patches/` with #371 and #372 since 2026-10-03. **PR (2026-10-03):** `lalexdotcom:fix/adaptive-missing-sync-handle` on `master` `7fcc30df`, pushed: the guard (`39e7e1ff`, byte-identical to the carried one) and a test (`80934a52`) that imports the module from the test page, a main thread where the interface is undefined — red on master on Chromium and Firefox, the file's 72 tests 3/3 green with the fix, suite 6158 on Chromium. (An `expectAsync(import(...)).toBeResolved()` form hung the page on master instead of failing; the test catches the import error itself.) Its case: main thread and Node, insecure pages, and browsers older than the interface (Chrome < 102, Android < 109, Firefox < 111), where a worker bundling several VFS fails as a whole. **Opened as rhashimoto/wa-sqlite#374 on 2026-10-03**, body as validated by the user; its CI (run 37157798485, `build (20.x)`) was still pending at the end of that session — record its result in this entry and in the report; report `docs/upstream/2026-10-03-wa-sqlite-374-adaptive-missing-sync-handle.md`. What each answer calls for: review changes → the worktree `.work/wa-sqlite-adaptive-guard`, rerun `test/OPFSAdaptiveVFS.test.js` red on master and green with the change, both engines, and update the carried line; merge → repin and drop the line from the patch.
 
 ## Full documentation pass before the release (user, 2026-10-03)
 
