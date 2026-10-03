@@ -14,7 +14,7 @@ Checking the other VFS for #350's pattern, after the maintainer asked on [#365][
 
 ## The mechanism
 
-Without `readwrite-unsafe` handles — the module decides at load, from `FileSystemSyncAccessHandle.prototype.hasOwnProperty('mode')` — `jOpen` opens a `BroadcastChannel`, takes the file's Web Lock, then creates the access handle. If that handle fails, the `catch` sets `lastError` and returns `SQLITE_CANTOPEN`. SQLite does not call `xClose` after a failed `xOpen`, so the lock's releaser and the channel are never touched again. The next open of the file, in the same worker or another, asks for the lock and waits.
+Without `readwrite-unsafe` handles — the module decides at load, from `FileSystemSyncAccessHandle.prototype.hasOwnProperty('mode')` — `jOpen` opens a `BroadcastChannel`, takes the file's Web Lock, then creates the access handle. If that handle fails, the `catch` sets `lastError` and returns `SQLITE_CANTOPEN`. SQLite then calls `xClose` on the file, since wa-sqlite's `libvfs_xOpen` sets `pMethods` whatever the JavaScript `xOpen` returns. But `jClose` only closes the access handle: the lock's releaser and the channel are never touched again. (The PR first said SQLite does not call `xClose` here; the maintainer corrected it, see below.) The next open of the file, in the same worker or another, asks for the lock and waits.
 
 ## Reproduced
 
@@ -52,3 +52,38 @@ It does not mention this library, per the standing rule.
 
 - **No exposure here, measured 2026-09-30.** On Firefox this library runs `OPFSAdaptiveVFS` without `readwrite-unsafe`, so on this path — but a worker whose open fails is terminated, and the lock it kept goes with it. With the fix reversed, a client opened after the failed one succeeded 7 times of 7, the failed client closed first or not (`mem:measurements`, LEAK-LIB).
 - **`OPFSCoopSyncVFS`'s `#initialize()`** has the same pattern by reading. Forced on 2026-09-30, it keeps the handles and the lock of the failed instance and blocks nothing: every later `create()` succeeds (`mem:measurements`, LEAK-LIB). No PR.
+
+## The maintainer's answer, 2026-10-02
+
+rhashimoto quoted the description's "SQLite does not call xClose after a failed xOpen". He made his local `jOpen` fail at once, and showed `jClose` called from `sqlite3_open_v2()`. From that, he found the primary defect in `jClose`, which never calls `openLockReleaser`, and said the `jOpen` change was still a good idea in addition.
+
+**He was right, measured the same day** (369-XCLOSE in `mem:measurements`):
+
+- **The source.** `libvfs_xOpen` sets `pMethods` regardless of the result (`src/libvfs.c` L122-146). SQLite's `sqlite3OsClose` calls `xClose` whenever `pMethods` is set (os.c L81), for instance from `sqlite3PagerOpen`'s failure cleanup (pager.c L5033).
+- **The trace.** `jClose` follows the failed open on Chromium and Firefox, on both builds.
+- **The fix.** A `jClose` that calls `openLockReleaser` recovers on its own, like the original change.
+- **No other case.** An open closed with no statement does not keep the lock, because `sqlite3_open_v2` reads the header, which releases it.
+- **One trap.** A `jClose` that also closes the request channel, without releasing the access-handle lock, made the next open in another worker hang. Master leaves that channel open after a close, and a later request on it is what releases the lock.
+
+**Revised and answered the same day.** The branch got:
+
+- `dd5a5c98`, where `jClose` releases the open lock and the `jOpen` comment no longer claims `xClose` is skipped;
+- a merge of upstream master (`5bde491c`, with #367 and #368, byte-identical to our heads), as `71537545`.
+
+The PR's test fails with master's VFS on both builds and passes 3 runs of 3. The whole suite has 6092 passed, 0 failed. The description now explains the mechanism through `jClose` and drops the merge-order note, since #367 brought the holder's export.
+
+[Comment 5960176392](https://github.com/rhashimoto/wa-sqlite/pull/369#issuecomment-5960176392) concedes the error, describes the move, and says why `jClose` leaves the channel alone.
+
+## Second exchange, 2026-10-03
+
+rhashimoto asked whether there was a reason not to release the access-handle lock, if held, and close the channel in `jClose`. There was none beyond keeping the change small: 369-XCLOSE had already measured that variant (`closeAll`) green everywhere.
+
+`87ed5aaf` does it: after closing the handle, `jClose` releases both locks and closes the channel. Measured:
+
+- **wa-sqlite's suite** (Chromium, `readwrite-unsafe` path): the PR's test passes 3 runs of 3, and the whole suite has 6092 passed, 0 failed.
+- **The 369-XCLOSE probe on the branch's exact file**, Chromium and Firefox, both builds, two passes: every scenario ok. Master still hangs after the failed open.
+
+The description's "The change" now names both locks and the channel, and [comment 5966329411](https://github.com/rhashimoto/wa-sqlite/pull/369#issuecomment-5966329411) answered.
+
+**Not done yet: the patch.** `patches/` still carries the first head's hunk. Since #367 and #368 merged, the convention is a repin to `5bde491c` that drops their hunks and takes #369's latest head. Deferred by the user, a branch being already open.
+

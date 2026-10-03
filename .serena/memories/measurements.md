@@ -4,6 +4,64 @@
 taken on. Correct an entry in place when it is re-measured; do not append a contradicting
 one. A number nobody can reproduce is a story, not a measurement — say so in the entry.
 
+## 363-ERROR-PATH — a write error leaves `OPFSAnyContextVFS`'s writable open at unlock, 2026-10-02, Playwright's Chromium and Firefox (1.62.1), this container
+
+**Why.** rhashimoto's review of #363 (2026-10-02) asks to close the writable on `SQLITE_FCNTL_SYNC` (skipped after `SQLITE_FCNTL_OVERWRITE`), `SQLITE_FCNTL_COMMIT_PHASETWO` and `jSync`, not in `jUnlock`. Read in SQLite 3.53.0: every normal path ends in one of those, but an I/O error does not. A failed cache spill puts the pager in `ERROR` (`pagerStress` → `pager_error`, pager.c L4656), `sqlite3PagerRollback` then returns at once without playback (L6768), and `pager_unlock` releases the lock; a failed commit write whose rollback playback fails too skips the playback's `sqlite3PagerSync` (L2977) and ends the same way (L6811).
+
+**Method.** wa-sqlite's runner, a throwaway detached worktree of #363's head `87f687b8`, three variants of the VFS: master's (`fa111290`), the PR's, and his design written as a subclass of master's (flag set on `OVERWRITE`, close on `SYNC` unless set, close and clear on `PHASETWO`, `jSync` skipped for an overwritten main db). Each context is its own worker whose VFS subclass fails main-db `jWrite`s with `SQLITE_IOERR_WRITE` on a plan and logs unpublished writes at `jUnlock`. A creates 200 rows of `randomblob(500)`, then fails: **commit** — `UPDATE t SET x = randomblob(500)`, writes 1-3 pass, 4 fails, the rollback's next 2 pass, the rest fail; **spill** — `cache_size = 10`, a 2000-row insert in one transaction, writes 1-5 pass, every later one fails. B then counts, inserts one row and commits; A counts once more; C runs `integrity_check`, counts, and compares the first 8 bytes of every original row with A's before the failure. Both builds, two passes per browser.
+
+| variant | at A's unlock | B after its commit | C: count, B's row | integrity |
+|---|---|---|---|---|
+| master | 2 (commit) / 5 (spill) writes unpublished, writable open | 201 | **200, lost** | ok |
+| his design | the same | 201 | **200, lost** | ok |
+| PR (`jUnlock` closes) | published, writable closed | 201 | 201, kept | ok |
+
+Identical on Chromium and Firefox, asyncify and jspi, both passes. A's next read closes its stale writable, which replaces the whole file with A's copy: B's committed transaction is gone. No original row came back changed and `integrity_check` stayed ok, so what was observed is a lost commit, not a corrupted file.
+
+**Same day, a fourth variant — his design plus the PR's `jUnlock` close ("both") — and more scenarios**, same method, both builds, both engines, two passes each, every cell identical across them:
+
+| scenario | master | PR | his design | both |
+|---|---|---|---|---|
+| write error, commit or spill: B's commit kept | no | yes | no | yes |
+| `synchronous=OFF`, 3 rows inserted, A stays open: B counts | 200 | 203 | 203 | 203 |
+| `locking_mode=EXCLUSIVE` + `OFF`, 3 rows inserted, A's worker terminated unclosed: B counts | 200 | **200** | 203 | 203 |
+| the same with `NORMAL` | 203 | 203 | 203 | 203 |
+| `VACUUM` after deleting half the rows: `createWritable` on the main db | 2 | 2 | 2 | 2 |
+
+His `locking_mode=EXCLUSIVE` argument holds: with `OFF` the PR alone loses the commit when the context dies. His `VACUUM` saving does not happen in this VFS: `pager_truncate` calls `xFileSize` before truncating (pager.c L2669), and `jFileSize` closes the writable, so the truncation opens a second one whatever the publication points. Trace on every variant: `OVERWRITE`, journal synced twice (`FULL`), main-db writable created, `SYNC`, `jSync`, `truncate`, a new writable, `PHASETWO`.
+
+## 369-XCLOSE — what releases `OPFSAdaptiveVFS`'s open lock, 2026-10-02, Playwright's Chromium and Firefox (1.62.1), this container
+
+**Why.** rhashimoto on #369 (2026-10-02): SQLite does call `xClose` after a failed `xOpen` — his trace shows `jClose` from `sqlite3_open_v2()` — so the primary defect is `jClose` not releasing `openLockReleaser`. Read: wa-sqlite's `libvfs_xOpen` sets `pMethods` whatever the JS `xOpen` returns (`src/libvfs.c` L122-146), and SQLite's `sqlite3OsClose` calls `xClose` whenever `pMethods` is set (os.c L81), e.g. from `sqlite3PagerOpen`'s failure cleanup (pager.c L5033). Our PR's sentence "SQLite does not call xClose after a failed xOpen" is wrong.
+
+**Method.** wa-sqlite's runner, the #363 throwaway worktree (its `OPFSAdaptiveVFS.js` is upstream master's, identical from `e6e01ae1` to `7a4b4241`). One worker per context with `FileSystemSyncAccessHandle.prototype.mode` deleted (the path without `readwrite-unsafe`), `jOpen`/`jRead`/`jClose` traced, every call bounded at 5 s. Variants: master; the PR (`744f4221`); `closeLock` — master whose `jClose` calls `openLockReleaser`; `closeAll` — `jClose` also releases `handleLockReleaser` and closes the channel. Both builds, both engines, two passes, all cells identical.
+
+| scenario | master | PR | closeLock | closeAll |
+|---|---|---|---|---|
+| open fails on a held file, the file is released, reopen in the same worker | **hung** | ok | ok | ok |
+| open, close, reopen (same worker, other worker); open + `SELECT 1` or a query, close, open in another worker | ok | ok | ok | ok |
+
+- `jClose` is called after the failed open on every variant (trace: `open -> 14`, then `close`).
+- Opening and closing with no statement does not keep the lock: `sqlite3_open_v2` reads the header (`read @0`), which releases it.
+- A first `jClose` variant that closed the channel without releasing `handleLockReleaser` made the next open in another worker hang after any read. Master's `jClose` leaves the channel open and the handle lock held, and a later request on that channel is what releases the lock.
+
+## IDBMIRROR-COMMIT-ABORT — an IndexedDB commit that aborts inside `IDBMirrorVFS`'s `#commitTx`, 2026-10-02, Playwright's Chromium and Firefox (1.62.1), this container
+
+**Why.** Checking whether 363-ERROR-PATH applies to `IDBMirrorVFS`. Its main-db writes go to an in-memory `txActive` and cannot fail in practice; the publication point that can fail is `#commitTx`, whose IndexedDB transaction may abort (quota). Read: it calls `#acceptTx`/`#setView` before the IndexedDB transaction completes, awaits it only with `synchronous=full`, and on failure neither drops `txActive` nor rolls the view back (`#dropTx` only on `ROLLBACK_ATOMIC_WRITE`).
+
+**Method.** wa-sqlite's runner, the same throwaway worktree (upstream `IDBMirrorVFS.js` unchanged, pin `7a4b4241`), one worker per context, a fresh IndexedDB database per case. The worker patches `IDBTransaction.prototype.commit` so that, once armed, the next `readwrite` transaction calls `abort()` instead. A and B open, A creates 200 rows; A inserts 3 rows with the next commit aborted; A and B count; A inserts 1 row normally; B counts, checks, inserts 1 row; A counts; both close; a fresh C counts and checks. Both builds, both engines, two passes — every cell identical.
+
+| | `synchronous=full` (the default) | `synchronous=normal` |
+|---|---|---|
+| A's failed insert | `SQLITE_IOERR` | **`ok`** — an unhandled rejection in the worker, nothing else |
+| A then counts | 203 — its failed rows | 203 |
+| B counts | 200 | 200 |
+| after A's next commit, B counts | **204: the 3 rows of the failed insert came back** with it | 200 |
+| B's own insert | ok | `SQLITE_BUSY`, once (not chased) |
+| fresh C, from IndexedDB | 205, `integrity_check` ok | **200, `integrity_check`: "Page 28: never used"** |
+
+So with `full` a commit SQLite reported as failed becomes durable with the next one; with `normal` the failure is silent and the stored database ends up corrupt.
+
 ## PRAGMA-BUSY — a pragma that writes, applied at open, against another client's write, 2026-10-01, Playwright's Chromium and Firefox, this container
 
 **Attribution.** Two clients created in one task, each then writing, 12 runs per case, on `OPFSAnyContextVFS`, `IDBBatchAtomicVFS`, `OPFSAdaptiveVFS`. Never with one client, never without a writing pragma (`journal_mode=truncate` included). With `user_version=7` or `application_id=5`, two faces of one collision: the other client's user write rejected `BUSY: database is locked` (its own worker READY at generation 0, the barrier then its `CREATE TABLE` failing — the opening worker held RESERVED outside `bsq:write`), or the opening worker failed and was restarted (generation > 0). Two clients, pool 2, Chromium: 4-7 runs of 12 failing per VFS; Firefox `OPFSAnyContextVFS` up to 8/12 (pool 1), `IDBBatchAtomicVFS` 0-2/12, `OPFSAdaptiveVFS` 0/12.
@@ -3142,3 +3200,35 @@ the second client waits the statement out in both arms. Latencies equal between 
 
 **Not measured.** Safari: Playwright's WebKit here needs root-installed system libraries (gstreamer,
 gtk4…). A second tab: equivalent at the VFS level to a second client, which was measured.
+
+## LIFECYCLE-SEGV — the Firefox page crash on `lifecycle.test.ts`, 2026-10-02/03, this container
+
+Playwright 1.62.1, `firefox-1538`, target `OPFSAdaptiveVFS/jspi` (the two-worker tests fall back to `OPFSAnyContextVFS`). "Amplified" = the file's top-level describes wrapped in a 40-round loop in one page, `bounds` skipped, alone in its config.
+
+| Run | SIGSEGV |
+|---|---|
+| Whole Firefox config + eight `open-retry` copies (the 2026-09-28 condition), as is / without the two silent-worker tests | 0/20 / 0/20 |
+| Amplified, whole file | 10/10, 4-73 s in |
+| Amplified, without the two tests using `silentWorkersFromIndex` | 0/10 |
+| Amplified, one of the two only / both without the slot-0-kill test | 2/5, 3/5 / 4/5 |
+| Amplified, helper on the real `worker.js` made deaf (`postMessage` dropped) | 10/10 |
+| The gate sequence alone ×100 (own client, no `createTestClient`): full / no cleanup / no slot-0 kill | 4/4 / 4/4 / 4/4 |
+| … without killing the retry's replacement / round-1 kill only / round-1 kill then 200 ms | 0/4 / 0/4 / 0/4 |
+| … the same kills on REAL workers (no silent one) | 4/4 |
+| … HMR and live reload off (`dev.hmr: false`, `liveReload: false`) | 7/8 |
+| `spawnWorker` alone ×150, `terminate()` at once / 0-6 ms / 20-60 ms after | 0/3 / 3/3 / 0/3 |
+| **Amplified, with the fix (kill a silent worker only after its boot signal)** | **0/10**, 640 passed each |
+
+The killed replacement is spawned by the retry and killed within the test's 10 ms poll — inside the window. `pnpm test` with the fix: 1350 / 792 / 18 passed, 0 failed. **Outside rstest (2026-10-03).** A plain page creating classic workers two at a time — `new Worker(url)` ×2, `await sleep(i % 7)`, `terminate()`, `await sleep(i % 3)`, `terminate()`, 150 iterations: Playwright's Firefox 20/20 (`blob:` or static script, with or without `postMessage`, also the `firefox-1538` binary launched alone without Playwright, 6/6); the same loop with module workers (`blob:`, static, or the real `dist/worker/worker.js`, with or without a message) 0/58; any worker held 50-500 ms before `terminate()` 0/18. Stock Firefox 153.0 (build 20260715202819, linux-aarch64, headless, crash reporter on; a manual `kill -SEGV` of a content process is seen as a dead process and a minidump), the same page at 600 iterations: 0/20 classic, `blob:` or static. Detection there: a 200 ms heartbeat to the page's server and the content processes' PIDs, not the crash reporter (which wrote nothing for `about:crashcontent` from the command line).
+
+**The other test files, 2026-10-03.** A setup file loaded into every page recorded each `terminate()`: the worker's age and whether it had posted anything. Age alone does not mark the window — the fixed silent workers are killed 5-11 ms old, after their boot signal, and never crash — so "young (< 30 ms) and silent" only names suspects. Whole Firefox config: 1750 terminations, 34 suspects in 13 tests; every Firefox target (`BSQ_TEST_TARGETS=all`): 16346 terminations, 7893 passed, 0 crashes, the suspects in the same four files — `lifecycle`, `failed-client` (1 test), `inspect-marker` (2), `second-client` (2, killed 0-5 ms old); Firefox conformance: 180 terminations, no suspect. The three other files amplified ×40: 0 crashes in 5 passes each on the default targets and in 1 pass each on every Firefox target (1800 / 4497 / 3520 passed; `inspect-marker`'s failures are all its `ledger N` label, a per-page counter the loop advances).
+
+## WORKER-LEAK — Firefox `DOM Worker` threads that outlive `terminate()`, 2026-09-29 and 2026-10-02, this container
+
+Playwright's Firefox (`firefox-1538`); threads counted from `/proc/<pid>/task/*/comm == "DOM Worker"` of every Firefox process.
+
+**2026-09-29**, a standalone page (no rstest) replaying the scenarios in same-origin iframes recreated every round — `open-retry`'s holder on `OPFSCoopSyncVFS`, and the slot-0 kill on `OPFSAnyContextVFS` with a missing-URL or a silent blob worker: no crash in ~480 rounds, but a **freeze** at 513 live `DOM Worker` threads in the content process — Firefox's 512-workers-per-domain cap, after which no new worker starts. Per 20 rounds × 2 lifecycle frames: missing-URL variant 0 threads left, silent-blob variant 11-19 (revoking the blob URL or not changes nothing), `open-retry`'s holder 0. The library calls the native `terminate()` on every worker it declares dead (`handleDeath` → pool `terminate` → `nativeTerminate`), and the threads outlive their iframe's destruction. Without the library, terminating a just-created blob worker: 3 left in 200 at 0 ms, 0 at ≥10 ms.
+
+**2026-10-02**, iframe per round, 2 workers per round, 40 rounds, counted 3 s and 10 s after (identical both times). Without the library: silent blob + dispatched `error` + `terminate()` at 0 ms — 0/80 then 1/80 on a second run; at 10 ms 0/80; a worker writing OPFS through `createWritable`, `terminate()`d once open, 0/80; a worker holding a compiled `wa-sqlite-jspi.wasm`, 0/80; a silent blob **never terminated**, its iframe removed, 45/80 then 33/80 alive at 10 s. Through `dist/index.js` (`OPFSAnyContextVFS`, pool of 2): open-write-close 0, the same without `close()` 0, the missing-URL slot-0-kill sequence 0, the silent-blob gate sequence **4** (40 rounds, 80 silent + 40 real workers). The leaked threads are in the page's own content process.
+
+The 2026-10-03 SIGSEGV cause (LIFECYCLE-SEGV: a worker terminated before its script runs) does not explain the leak, and the leak was not re-measured with the boot-signal fix.

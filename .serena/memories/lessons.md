@@ -1205,3 +1205,9 @@ A plan that says "apply the sabotage, see the test fail, revert with `git checko
 ## A backstop applied everywhere can break the VFS that use the signal it swallows (2026-10-01)
 
 `busy_timeout` cured the `BUSY` two clients met on the WebLocksMixin VFS, where it means "another connection holds the lock". Applied library-wide, it hung `OPFSCoopSyncVFS`, whose `BUSY` means "give the event loop back so wa-sqlite can await the handle" — SQLite's busy wait inside the worker never returned there. One status code, two meanings by VFS: a setting that changes how SQLite answers a status goes per VFS, and the suite's full run, not a targeted probe, is what showed it.
+
+## A rare crash is amplified, not waited for (2026-10-03)
+
+Ten days of sightings at ~3 % never named the Firefox `lifecycle.test.ts` crash, and a 40-pass A/B on the original condition saw none at all. Looping the suspect file 40 times in one page made it 10/10 in under a minute, and every later question — which test, which step, which delay — was answered in a few passes each. When a failure is rare, raise its rate first; an A/B at 3 % costs hours and concludes nothing.
+
+**A library-free reproduction must match the library's shape before it clears the library.** Classic workers crashed without the library, and that was briefly reported as "the library is out". The library's workers are module workers, which did not crash on that schedule in a plain page; the real trigger — terminating any worker in its first milliseconds — was only found by bisecting the library's own sequence. Check the obvious attributes (worker type, how the script is served, timing) before concluding.
