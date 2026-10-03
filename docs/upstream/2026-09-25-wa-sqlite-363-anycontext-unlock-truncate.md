@@ -175,5 +175,7 @@ The first version of the `VACUUM` test passed on master's VFS. Its `PRAGMA page_
 
 **Published.** The title became "OPFSAnyContextVFS: publish writes where SQLite ends them", and the description was rewritten around the three cases. [Comment 5966506685](https://github.com/rhashimoto/wa-sqlite/pull/363#issuecomment-5966506685) answered, and said the `IDBMirrorVFS` PR comes separately.
 
-**Not done yet.** `patches/` still carries the previous head's hunk, and waits for the repin. The `IDBMirrorVFS` PR (IDBMIRROR-COMMIT-ABORT) is to write.
+## Merged
+
+**Merged on 2026-10-03** by rhashimoto, as `27a6a0b6` on `master`, its `OPFSAnyContextVFS.js` byte for byte the PR's last head `345791b3`. The patch had still carried the previous head's hunk; the repin of 2026-10-03 to `7fcc30df` brought the last head into the pin and dropped the hunk. The `IDBMirrorVFS` PR became [#371](2026-10-03-wa-sqlite-371-idb-mirror-commit-abort.md).
 

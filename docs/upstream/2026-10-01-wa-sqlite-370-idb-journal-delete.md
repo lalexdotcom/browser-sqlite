@@ -84,3 +84,7 @@ It does not mention this library, per the standing rule; the impact is told as a
 - **The carry.** Hunk B in [`patches/`](../../patches) since 2026-10-01; it leaves at the repin that brings #370.
 - **Verified in the library.** The same whole cells, 30 of 30 green with the fix (A, then B), against 3 failures in 21 without; `pnpm test` green on the three configs.
 - **No deterministic test here.** `vfs-folders` and `failed-client` catch it only under load, about once in seven cells; the deterministic test is upstream's.
+
+## Merged
+
+**Merged on 2026-10-03** by rhashimoto, as `7fcc30df` on `master`, its `IDBBatchAtomicVFS.js` byte for byte the head the patch carried. It left [`patches/`](../../patches) at the repin of 2026-10-03 to `7fcc30df`.

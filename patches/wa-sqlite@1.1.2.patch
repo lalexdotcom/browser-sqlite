@@ -1,133 +1,263 @@
-diff --git a/src/examples/AccessHandlePoolVFS.js b/src/examples/AccessHandlePoolVFS.js
-index 1a7638af599d896fe34eb55d3ea3ae1014ef5e30..5fef21d999cf5e4bfd2919486a9d79c40e545c41 100644
---- a/src/examples/AccessHandlePoolVFS.js
-+++ b/src/examples/AccessHandlePoolVFS.js
-@@ -303,7 +303,9 @@ export class AccessHandlePoolVFS extends FacadeVFS {
-     }
+diff --git a/src/examples/IDBMirrorVFS.js b/src/examples/IDBMirrorVFS.js
+index 3de1296bd9a8634339accdfa1c66970b23efa892..4dde7de57c46ef0d040cf5ddc530c6a4a6537aff 100644
+--- a/src/examples/IDBMirrorVFS.js
++++ b/src/examples/IDBMirrorVFS.js
+@@ -56,6 +56,8 @@ class File {
+       this.broadcastReceived = [];
+       this.lockState = VFS.SQLITE_LOCK_NONE;
+       this.locks = {};
++      this.abortController = new AbortController();
++      this.commitsPending = 0;
+       this.txActive = null;
+       this.txWriteHint = false;
+       this.txOverwrite = false;
+@@ -141,39 +143,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+           }
+         }
+   
+-        // Load pages into memory from IndexedDB.
+-        await new Promise((resolve, reject) => {
+-          const range = IDBKeyRange.bound([path, 0], [path, Infinity]);
+-          const request = blocks.openCursor(range);
+-          request.onsuccess = () => {
+-            const cursor = request.result;
+-            if (cursor) {
+-              const { offset, data } = cursor.value;
+-              file.blocks.set(offset, data);
+-              cursor.continue();
+-            } else {
+-              resolve();
+-            }
+-          };
+-          request.onerror = () => reject(request.error);
+-        });
+-        file.blockSize = file.blocks.get(0)?.byteLength ?? 0;
+-
+-        // Get the last transaction id.
+-        const transactions = idbTx.objectStore('tx');
+-        file.viewTx = await new Promise((resolve, reject) => {
+-          const range = IDBKeyRange.bound([path, 0], [path, Infinity]);
+-          const request = transactions.openCursor(range, 'prev');
+-          request.onsuccess = () => {
+-            const cursor = request.result;
+-            if (cursor) {
+-              resolve(cursor.value);
+-            } else {
+-              resolve({ txId: 0 });
+-            }
+-          };
+-          request.onerror = () => reject(request.error);
+-        });
++        await this.#loadFile(file, idbTx);
  
-     // Open access handles in parallel, separating associated and unassociated.
--    await Promise.all(files.map(async ([name, handle]) => {
-+    // Settle them all before reporting a failure, so that the handles
-+    // acquired beside the one that failed are closed rather than kept.
-+    const results = await Promise.allSettled(files.map(async ([name, handle]) => {
-       const accessHandle = await handle.createSyncAccessHandle();
-       this.#mapAccessHandleToName.set(accessHandle, name);
-       const path = this.#getAssociatedPath(accessHandle);
-@@ -313,6 +315,11 @@ export class AccessHandlePoolVFS extends FacadeVFS {
-         this.#availableAccessHandles.add(accessHandle);
+         // Publish our view of the database. This prevents other connections
+         // from overwriting file data we still need.
+@@ -263,6 +233,10 @@ export class IDBMirrorVFS extends FacadeVFS {
+       this.#mapIdToFile.delete(fileId);
+ 
+       if (file?.flags & VFS.SQLITE_OPEN_MAIN_DB) {
++        if (file.abortController.signal.aborted) {
++          // The journal belongs to a view that was never stored.
++          this.#mapPathToFile.delete(file.path + '-journal');
++        }
+         file.broadcastChannel.close();
+         file.viewReleaser?.();
        }
-     }));
-+    const failure = results.find(result => result.status === 'rejected');
-+    if (failure) {
-+      this.#releaseAccessHandles();
-+      throw failure.reason;
+@@ -418,6 +392,11 @@ export class IDBMirrorVFS extends FacadeVFS {
+     if (lockType <= file.lockState) return VFS.SQLITE_OK;
+     switch (lockType) {
+       case VFS.SQLITE_LOCK_SHARED:
++        if (file.abortController.signal.aborted) {
++          // SQLite validates its cache against the file here, so this is
++          // where a view including an aborted commit can be replaced.
++          await this.#reloadFile(file);
++        }
+         if (file.txWriteHint) {
+             // xFileControl() has hinted that this transaction will
+             // write. Acquire the hint lock, which is required to reach
+@@ -471,6 +450,12 @@ export class IDBMirrorVFS extends FacadeVFS {
+         }
+ 
+         console.assert(entries[0]?.txId === file.viewTx.txId || !file.viewTx.txId);
++        if (file.abortController.signal.aborted) {
++          // Our view includes a commit that was never stored. Make the
++          // transaction start over, which reloads the file.
++          file.locks.reserved();
++          return VFS.SQLITE_BUSY;
++        }
+         break;
+       case VFS.SQLITE_LOCK_EXCLUSIVE:
+         await this.#lock(file, 'write');
+@@ -670,6 +655,17 @@ export class IDBMirrorVFS extends FacadeVFS {
+    * @param {File} file 
+    */
+   async #commitTx(file) {
++    if (file.abortController.signal.aborted) {
++      // This transaction was built on a commit that was never stored.
++      // SQLite discards its cache after this error, so the view can be
++      // reloaded, unless SQLite rolls back from a journal written on it.
++      this.#dropTx(file);
++      if (!this.#mapPathToFile.has(file.path + '-journal')) {
++        await this.#reloadFile(file);
++      }
++      throw new Error('an earlier commit was aborted');
 +    }
-   }
- 
-   #releaseAccessHandles() {
-diff --git a/src/examples/IDBBatchAtomicVFS.js b/src/examples/IDBBatchAtomicVFS.js
-index 2987d9b0a5b17f687925b9edb28be81294151462..4b9193705ba5e5525f3e77af64c47b4507200503 100644
---- a/src/examples/IDBBatchAtomicVFS.js
-+++ b/src/examples/IDBBatchAtomicVFS.js
-@@ -121,14 +121,16 @@ export class IDBBatchAtomicVFS extends WebLocksMixin(FacadeVFS) {
-       const url = new URL(zName, 'file://');
-       const path = url.pathname;
- 
-+      // SQLite sets syncDir when deleting a journal on a batch atomic VFS,
-+      // and a journal that survives the commit would roll it back.
-       this.#idb.q(({ metadata, blocks }) => {
-         const range = IDBKeyRange.bound([path, -Infinity], [path, Infinity]);
-         blocks.delete(range);
-         metadata.delete(path);
--      }, 'rw');
-+      }, 'rw', syncDir ? { durability: 'strict' } : {});
- 
-       if (syncDir) {
--        await this.#idb.sync(false);
-+        await this.#idb.sync(true);
-       }
-       return VFS.SQLITE_OK;
-     } catch (e) {
-diff --git a/src/examples/OPFSAdaptiveVFS.js b/src/examples/OPFSAdaptiveVFS.js
-index 7deaa2e018bb33e86b724814757de401ed02a62e..1b3e79f9d53a7f63f03fc158ca1f59d3456a1b19 100644
---- a/src/examples/OPFSAdaptiveVFS.js
-+++ b/src/examples/OPFSAdaptiveVFS.js
-@@ -124,6 +124,13 @@ export class OPFSAdaptiveVFS extends WebLocksMixin(FacadeVFS) {
-       return VFS.SQLITE_OK;
-     } catch (e) {
-       this.lastError = e;
 +
-+      // SQLite does not call xClose after a failed xOpen, so release here
-+      // whatever this open acquired before it failed.
-+      const file = this.mapIdToFile.get(fileId);
-+      file?.openLockReleaser?.();
-+      file?.handleRequestChannel?.close();
-+      this.mapIdToFile.delete(fileId);
-       return VFS.SQLITE_CANTOPEN;
+     // Advance our own view. Even if we received our own broadcasts (we
+     // don't), we want our view to be updated synchronously.
+     this.#acceptTx(file, file.txActive);
+@@ -677,47 +673,127 @@ export class IDBMirrorVFS extends FacadeVFS {
+ 
+     const oldestTxId = await this.#getOldestTxInUse(file);
+ 
+-    // Update IndexedDB page data.
++    const tx = file.txActive;
+     const idbTx = this.#idb.transaction(['blocks', 'tx'], 'readwrite');
+-    const blocks = idbTx.objectStore('blocks');
+-    for (const [offset, data] of file.txActive.blocks) {
+-      blocks.put({ path: file.path, offset, data });
+-    }
+-
+-    // Delete blocks past the end of the file.
+-    blocks.delete(IDBKeyRange.bound(
+-      [file.path, file.txActive.fileSize], [file.path, Infinity]));
+-
+-    // Delete obsolete transactions no longer needed.
+-    const oldRange = IDBKeyRange.bound(
+-      [file.path, -Infinity], [file.path, oldestTxId],
+-      false, true);
+-    idbTx.objectStore('tx').delete(oldRange);
+-
+-    // Save transaction object. Omit page data as an optimization.
+-    const txSansData = Object.assign({}, file.txActive);
+-    txSansData.blocks = new Map(Array.from(file.txActive.blocks, ([k]) => [k, null]));
+-    idbTx.objectStore('tx').put(txSansData);
+-
+-    // Broadcast transaction once it commits.
++    const gated = file.commitsPending++ > 0;
+     const complete = new Promise((resolve, reject) => {
+-      const message = file.txActive;
+       idbTx.oncomplete = () => {
+-        file.broadcastChannel.postMessage(message);
++        file.commitsPending--;
++        file.broadcastChannel.postMessage(tx);
+         resolve();
+       };
+-      idbTx.onabort = () => reject(idbTx.error);
+-      idbTx.commit();
++      idbTx.onabort = () => {
++        // Our view includes this transaction, so it must be reloaded.
++        file.commitsPending--;
++        file.abortController.abort();
++        reject(idbTx.error);
++      };
++
++      const write = () => {
++        if (file.abortController.signal.aborted) {
++          idbTx.abort();
++          return;
++        }
++
++        // Update IndexedDB page data.
++        const blocks = idbTx.objectStore('blocks');
++        for (const [offset, data] of tx.blocks) {
++          blocks.put({ path: file.path, offset, data });
++        }
++
++        // Delete blocks past the end of the file.
++        blocks.delete(IDBKeyRange.bound(
++          [file.path, tx.fileSize], [file.path, Infinity]));
++
++        // Delete obsolete transactions no longer needed.
++        const oldRange = IDBKeyRange.bound(
++          [file.path, -Infinity], [file.path, oldestTxId],
++          false, true);
++        idbTx.objectStore('tx').delete(oldRange);
++
++        // Save transaction object. Omit page data as an optimization.
++        const txSansData = Object.assign({}, tx);
++        txSansData.blocks = new Map(Array.from(tx.blocks, ([k]) => [k, null]));
++        idbTx.objectStore('tx').put(txSansData);
++        idbTx.commit();
++      };
++
++      if (gated) {
++        // A request runs only after the earlier commits have finished,
++        // so the check above sees whether one of them was aborted.
++        idbTx.objectStore('tx').get([file.path, -1]).onsuccess = write;
++      } else {
++        write();
++      }
+     });
+ 
+     if (file.synchronous === 'full') {
+-      await complete;
++      try {
++        await complete;
++      } catch (e) {
++        // SQLite discards its cache after this error, so the view can be
++        // reloaded now, even in exclusive locking mode.
++        await this.#reloadFile(file);
++        throw e;
++      }
++    } else {
++      // A failure is handled by the next transaction.
++      complete.catch(() => {});
      }
-   }
-diff --git a/src/examples/OPFSAnyContextVFS.js b/src/examples/OPFSAnyContextVFS.js
-index 4a6b4f5a2b815b77e4417d5e2b2beaef6ab8dc2b..cb72cc3f2e2b57ec76a0ad709c685cd0856f6068 100644
---- a/src/examples/OPFSAnyContextVFS.js
-+++ b/src/examples/OPFSAnyContextVFS.js
-@@ -292,6 +292,33 @@ export class OPFSAnyContextVFS extends WebLocksMixin(FacadeVFS) {
-     return super.jLock(fileId, lockType);
+ 
+     file.txActive = null;
+     file.txWriteHint = false;
    }
  
 +  /**
-+   * @param {number} fileId 
-+   * @param {number} lockType 
-+   * @returns {Promise<number>}
++   * Load the stored blocks and the last transaction into a main database.
++   * @param {File} file 
++   * @param {IDBTransaction} idbTx 
 +   */
-+  async jUnlock(fileId, lockType) {
-+    // Changes pending in an open writable are not visible to other contexts
-+    // until it is closed. SQLite does not always call xSync after its last
-+    // change, e.g. the truncation at the end of a VACUUM, so close it here,
-+    // before another context can take the lock and read the file.
-+    let rc = VFS.SQLITE_OK;
-+    const file = this.mapIdToFile.get(fileId);
-+    if (file?.writable) {
-+      try {
-+        await file.writable.close();
-+      } catch (e) {
-+        this.lastError = e;
-+        rc = VFS.SQLITE_IOERR_UNLOCK;
-+      }
-+      file.writable = null;
-+      file.blob = null;
-+    }
++  async #loadFile(file, idbTx) {
++    const blocks = new Map();
++    await new Promise((resolve, reject) => {
++      const range = IDBKeyRange.bound([file.path, 0], [file.path, Infinity]);
++      const request = idbTx.objectStore('blocks').openCursor(range);
++      request.onsuccess = () => {
++        const cursor = request.result;
++        if (cursor) {
++          const { offset, data } = cursor.value;
++          blocks.set(offset, data);
++          cursor.continue();
++        } else {
++          resolve();
++        }
++      };
++      request.onerror = () => reject(request.error);
++    });
 +
-+    const unlockResult = await super.jUnlock(fileId, lockType);
-+    return rc === VFS.SQLITE_OK ? unlockResult : rc;
++    const viewTx = await new Promise((resolve, reject) => {
++      const range = IDBKeyRange.bound([file.path, 0], [file.path, Infinity]);
++      const request = idbTx.objectStore('tx').openCursor(range, 'prev');
++      request.onsuccess = () => resolve(request.result?.value ?? { txId: 0 });
++      request.onerror = () => reject(request.error);
++    });
++
++    file.blocks = blocks;
++    file.blockSize = blocks.get(0)?.byteLength ?? 0;
++    file.viewTx = viewTx;
 +  }
 +
-   jGetLastError(zBuf) {
-     if (this.lastError) {
-       console.error(this.lastError);
-diff --git a/src/examples/OPFSWriteAheadVFS.js b/src/examples/OPFSWriteAheadVFS.js
-index 09362e3ac9e99ff1ea6c39cd7530b00bcca8d6a8..0fa347f56ff6ebebd97328a3ddd2b81dac9c2320 100644
---- a/src/examples/OPFSWriteAheadVFS.js
-+++ b/src/examples/OPFSWriteAheadVFS.js
-@@ -948,8 +948,10 @@ export class OPFSWriteAheadVFS extends FacadeVFS {
-         // Open the main database OPFS file.
-         const accessHandle = await openFile(dbName, { create });
- 
--        // Open WAL files.
--        const waHandles = await Promise.all([0, 1].map(async i => {
-+        // Open WAL files. Settle both before reporting a failure, so that
-+        // the cleanup below also closes a handle acquired after the other
-+        // open had already failed.
-+        const results = await Promise.allSettled([0, 1].map(async i => {
-           const waName = this.#getWriteAheadNameFromDbName(dbName, i);
-           const waHandle = await openFile(waName, { create: true });
-           if (isNewDatabase) {
-@@ -957,6 +959,9 @@ export class OPFSWriteAheadVFS extends FacadeVFS {
-           }
-           return waHandle;
-         }));
-+        const failure = results.find(result => result.status === 'rejected');
-+        if (failure) throw failure.reason;
-+        const waHandles = results.map(result => result.value);
-         return { accessHandle, waHandles };
-       });
- 
++  /**
++   * Replace a view that includes an aborted commit with the stored one.
++   * @param {File} file 
++   */
++  async #reloadFile(file) {
++    await this.#loadFile(file, this.#idb.transaction(['blocks', 'tx']));
++    file.txActive = null;
++    file.abortController = new AbortController();
++    await this.#setView(file, file.viewTx);
++    if (file.lockState === VFS.SQLITE_LOCK_NONE) {
++      this.#processBroadcasts(file);
++    }
++  }
++
+   /**
+    * @param {File} file 
+    */
