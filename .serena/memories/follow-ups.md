@@ -275,12 +275,6 @@ defect, and the scenario a defect is found through is often not the one that dem
 
 `src/worker/worker.ts`'s open and delete fallbacks read `Failed to open ${file}` / `Failed to delete ${data.file}`, and since `feat/vfs-folders` the worker only knows the path (`.ad/name`). They fire only when something that is not an `Error` is thrown, and `startupError` forwards the text verbatim, so no client wrapping re-adds the logical name. Parked by the controller's ruling: the path is the only identifier the worker has. Reattaching the logical name would mean sending it to the worker or wrapping on the client side.
 
-## Smaller things this branch left open (2026-09-15)
-
-- **`handleDeath`'s guard for a slot-0 loss before the probe has no test** — no path was found that reaches
-  it with the probe unanswered; it is defensive (`a0373c0`).
-
-
 ## Three browser tests guard less than their comments said (2026-09-14)
 
 Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
@@ -385,6 +379,17 @@ Playwright's Linux WebKit was set aside earlier for limits of this kind (user). 
 a consumer environment lacks it; an insecure context is the candidate. Pre-existing, not scheduled.
 
 ## Notes, with nothing to fix
+
+### What no test can see about the statement cache
+
+**The drain before `close` is falsifiable by nothing.** Deleting it leaves the whole suite
+green: `sqlite3_close` returns `SQLITE_BUSY`, the close path's `catch` swallows it, and the
+pool terminates the worker regardless, releasing every OPFS handle. Two observations were
+tried and neither sees it — `deleteDatabase` after `close()`, and reopening the same
+database. The test comment says so plainly rather than claiming a falsifier. The
+whole-branch review's verdict on that swallowing `catch`: **not a defect** — a worker that
+failed to open has nothing to close, and the worker dies either way. Reopen only if a future
+close path must tell "nothing to close" from "close refused".
 
 ### `page_size` on `OPFSWriteAheadVFS` — not pursued, closed by the user on 2026-09-28
 
@@ -494,14 +499,3 @@ differ and must **not** be aligned: the page returns `'blocked'` where invariant
 `console.warn` and passes (a table has somewhere to render a third state, a suite does
 not); and the page reopens the column's client after `survives-reopen` and `close-settles`,
 because it runs every row against one client where the suite gets a fresh one per `it()`.
-
-## What no test can see about the statement cache
-
-**The drain before `close` is falsifiable by nothing.** Deleting it leaves the whole suite
-green: `sqlite3_close` returns `SQLITE_BUSY`, the close path's `catch` swallows it, and the
-pool terminates the worker regardless, releasing every OPFS handle. Two observations were
-tried and neither sees it — `deleteDatabase` after `close()`, and reopening the same
-database. The test comment says so plainly rather than claiming a falsifier. The
-whole-branch review's verdict on that swallowing `catch`: **not a defect** — a worker that
-failed to open has nothing to close, and the worker dies either way. Reopen only if a future
-close path must tell "nothing to close" from "close refused".
