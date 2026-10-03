@@ -3200,3 +3200,23 @@ the second client waits the statement out in both arms. Latencies equal between 
 
 **Not measured.** Safari: Playwright's WebKit here needs root-installed system libraries (gstreamer,
 gtk4…). A second tab: equivalent at the VFS level to a second client, which was measured.
+
+## LIFECYCLE-SEGV — the Firefox page crash on `lifecycle.test.ts`, 2026-10-02/03, this container
+
+Playwright 1.62.1, `firefox-1538`, target `OPFSAdaptiveVFS/jspi` (the two-worker tests fall back to `OPFSAnyContextVFS`). "Amplified" = the file's top-level describes wrapped in a 40-round loop in one page, `bounds` skipped, alone in its config.
+
+| Run | SIGSEGV |
+|---|---|
+| Whole Firefox config + eight `open-retry` copies (the 2026-09-28 condition), as is / without the two silent-worker tests | 0/20 / 0/20 |
+| Amplified, whole file | 10/10, 4-73 s in |
+| Amplified, without the two tests using `silentWorkersFromIndex` | 0/10 |
+| Amplified, one of the two only / both without the slot-0-kill test | 2/5, 3/5 / 4/5 |
+| Amplified, helper on the real `worker.js` made deaf (`postMessage` dropped) | 10/10 |
+| The gate sequence alone ×100 (own client, no `createTestClient`): full / no cleanup / no slot-0 kill | 4/4 / 4/4 / 4/4 |
+| … without killing the retry's replacement / round-1 kill only / round-1 kill then 200 ms | 0/4 / 0/4 / 0/4 |
+| … the same kills on REAL workers (no silent one) | 4/4 |
+| … HMR and live reload off (`dev.hmr: false`, `liveReload: false`) | 7/8 |
+| `spawnWorker` alone ×150, `terminate()` at once / 0-6 ms / 20-60 ms after | 0/3 / 3/3 / 0/3 |
+| **Amplified, with the fix (kill a silent worker only after its boot signal)** | **0/10**, 640 passed each |
+
+The killed replacement is spawned by the retry and killed within the test's 10 ms poll — inside the window. `pnpm test` with the fix: 1350 / 792 / 18 passed, 0 failed. The plain-page and stock-Firefox numbers are in `mem:follow-ups` (the Playwright entry).
