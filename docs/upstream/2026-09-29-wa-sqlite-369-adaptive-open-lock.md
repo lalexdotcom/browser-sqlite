@@ -74,5 +74,16 @@ The PR's test fails with master's VFS on both builds and passes 3 runs of 3. The
 
 [Comment 5960176392](https://github.com/rhashimoto/wa-sqlite/pull/369#issuecomment-5960176392) concedes the error, describes the move, and says why `jClose` leaves the channel alone.
 
-**Not done yet: the patch.** `patches/` still carries the first head's hunk. Since #367 and #368 merged, the convention is a repin to `5bde491c` that drops their hunks and takes #369's new head.
+## Second exchange, 2026-10-03
+
+rhashimoto asked whether there was a reason not to release the access-handle lock, if held, and close the channel in `jClose`. There was none beyond keeping the change small: 369-XCLOSE had already measured that variant (`closeAll`) green everywhere.
+
+`87ed5aaf` does it: after closing the handle, `jClose` releases both locks and closes the channel. Measured:
+
+- **wa-sqlite's suite** (Chromium, `readwrite-unsafe` path): the PR's test passes 3 runs of 3, and the whole suite has 6092 passed, 0 failed.
+- **The 369-XCLOSE probe on the branch's exact file**, Chromium and Firefox, both builds, two passes: every scenario ok. Master still hangs after the failed open.
+
+The description's "The change" now names both locks and the channel, and [comment 5966329411](https://github.com/rhashimoto/wa-sqlite/pull/369#issuecomment-5966329411) answered.
+
+**Not done yet: the patch.** `patches/` still carries the first head's hunk. Since #367 and #368 merged, the convention is a repin to `5bde491c` that drops their hunks and takes #369's latest head. Deferred by the user, a branch being already open.
 
