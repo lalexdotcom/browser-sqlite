@@ -165,9 +165,9 @@ jobs:
           echo "file=$FILE" >> "$GITHUB_OUTPUT"
           echo "Release body: $HEADING ($(wc -l < "$FILE") lines)"
 
-      # Pinned to a SHA, not the mutable v2 tag: this job holds NPM_TOKEN, and
-      # whoever can move that tag can move what runs with the token.
-      - uses: lalexdotcom/action-release-and-publish@16508679dc3c231d6e17f3801e7a786cf0117b69 # v2.0.0
+      # The major tag, not a SHA: the action is ours and follows semver, so its
+      # minor and patch releases are taken as they ship. A major is moved here.
+      - uses: lalexdotcom/action-release-and-publish@v3
         with:
           npm-token: ${{ secrets.NPM_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}

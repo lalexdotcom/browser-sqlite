@@ -167,9 +167,7 @@ workflow instead.
 
 **The two repositories cannot be updated together.**
 `lalexdotcom/action-release-and-publish` releases itself on push to `main` from
-conventional commits, and we consume it by SHA, so its change must be pushed and
-released before the pin in `release-and-publish.yaml` can be repointed. The
-clone lives at `.work/action-release-and-publish`.
+conventional commits, and we consume it by its major tag (`@v3`, user, 2026-10-03: the action is ours and follows semver), so a minor or patch reaches the next release once it is pushed and released, with no commit here; a major needs the tag in `release-and-publish.yaml` moved. The clone lives at `.work/action-release-and-publish`. **Since v3 the action manages the dist-tags itself**: `latest` only moves forward, `next` stays on the highest rc above it, and a `latest` that moves removes the tags left on older prereleases. So the 1.0.0 release publishes straight to `latest`, creates no `stable` tag, and removes `rc` and `next` — `npm i browser-sqlite@rc` stops resolving instead of installing an old rc.
 
 **The GitHub Release is created before `npm publish`**, inside the action. That
 ordering is the whole reason a failed release costs a retag rather than a burnt
