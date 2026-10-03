@@ -3223,7 +3223,7 @@ The killed replacement is spawned by the retry and killed within the test's 10 m
 
 **The other test files, 2026-10-03.** A setup file loaded into every page recorded each `terminate()`: the worker's age and whether it had posted anything. Age alone does not mark the window — the fixed silent workers are killed 5-11 ms old, after their boot signal, and never crash — so "young (< 30 ms) and silent" only names suspects. Whole Firefox config: 1750 terminations, 34 suspects in 13 tests; every Firefox target (`BSQ_TEST_TARGETS=all`): 16346 terminations, 7893 passed, 0 crashes, the suspects in the same four files — `lifecycle`, `failed-client` (1 test), `inspect-marker` (2), `second-client` (2, killed 0-5 ms old); Firefox conformance: 180 terminations, no suspect. The three other files amplified ×40: 0 crashes in 5 passes each on the default targets and in 1 pass each on every Firefox target (1800 / 4497 / 3520 passed; `inspect-marker`'s failures are all its `ledger N` label, a per-page counter the loop advances).
 
-## WORKER-LEAK — Firefox `DOM Worker` threads that outlive `terminate()`, 2026-09-29 and 2026-10-02, this container
+## WORKER-LEAK — Firefox `DOM Worker` threads that outlive `terminate()`, 2026-09-29 to 2026-10-03, this container
 
 Playwright's Firefox (`firefox-1538`); threads counted from `/proc/<pid>/task/*/comm == "DOM Worker"` of every Firefox process.
 
@@ -3231,4 +3231,16 @@ Playwright's Firefox (`firefox-1538`); threads counted from `/proc/<pid>/task/*/
 
 **2026-10-02**, iframe per round, 2 workers per round, 40 rounds, counted 3 s and 10 s after (identical both times). Without the library: silent blob + dispatched `error` + `terminate()` at 0 ms — 0/80 then 1/80 on a second run; at 10 ms 0/80; a worker writing OPFS through `createWritable`, `terminate()`d once open, 0/80; a worker holding a compiled `wa-sqlite-jspi.wasm`, 0/80; a silent blob **never terminated**, its iframe removed, 45/80 then 33/80 alive at 10 s. Through `dist/index.js` (`OPFSAnyContextVFS`, pool of 2): open-write-close 0, the same without `close()` 0, the missing-URL slot-0-kill sequence 0, the silent-blob gate sequence **4** (40 rounds, 80 silent + 40 real workers). The leaked threads are in the page's own content process.
 
-The 2026-10-03 SIGSEGV cause (LIFECYCLE-SEGV: a worker terminated before its script runs) does not explain the leak, and the leak was not re-measured with the boot-signal fix.
+**2026-10-03, stock against Playwright, same harness.** Each binary launched alone (no Playwright driving), headless; a page runs the iframe rounds unattended and reports, per frame, the workers created and the distinct workers given a native `terminate()` (`Worker.prototype.terminate` wrapped); threads counted before the rounds and 10 s after.
+
+| Variant | created / terminated | Stock Firefox 153.0 | `firefox-1538` |
+|---|---|---|---|
+| control, 0 rounds | 0 / 0 | +1 (an internal worker Firefox starts on its own) | 0 |
+| never terminated, iframe removed | 80 / 0 | +1 | **43** |
+| silent classic blob, `terminate()` at 0 / 50 ms | 400 / 400 each | +1 / +1 | 0 / 0 |
+| silent module blob, `terminate()` at 0 / 50 ms | 400 / 400 each | +1 / +1 | 1 / 0 |
+| `dist/index.js`, open-write-close | 120 / 120 | +1 | 0 |
+| `dist/index.js`, missing-URL slot-0-kill sequence | 180 / 180 | +1 | 0 |
+| `dist/index.js`, silent-blob gate sequence | **300 / 300** | **+1** | **17** |
+
+**Verdict: the leak is the Playwright build's, not the library's.** Every worker the library creates is given its `terminate()`, and the threads that survive it do so on `firefox-1538` only; stock Firefox reaps them all, even workers never terminated. The library's gate sequence triggers it far more often than a bare blob (17/300 against 0-1/400) — it ends module workers at varied points of their startup — without being its cause. Not established: Playwright's patches or a Firefox change between the two build dates (20260715 stock, 20260722 Playwright's).
