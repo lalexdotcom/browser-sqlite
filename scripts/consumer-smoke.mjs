@@ -258,7 +258,7 @@ function skipped(name, why) {
 /** Serves a built directory with the repo's own static server. */
 const staticServe = (dir, port) => [
   'node',
-  join(ROOT, 'scripts', 'static-server.mjs'),
+  join(ROOT, 'scripts', 'static-server.ts'),
   dir,
   String(port),
 ];

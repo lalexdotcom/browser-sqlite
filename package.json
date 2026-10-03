@@ -62,7 +62,7 @@
 		"test:matrix": "node scripts/test-matrix.mjs",
 		"docs:vfs": "node scripts/render-vfs-matrix.ts",
 		"bench:build": "pnpm build && node scripts/bench/assemble.ts _site",
-		"bench:serve": "npx --yes kill-port 8099 && pnpm bench:build && node scripts/static-server.mjs _site 8099",
+		"bench:serve": "npx --yes kill-port 8099 && pnpm bench:build && node scripts/static-server.ts _site 8099",
 		"bench:dev": "npx --yes kill-port 8099 && node scripts/bench/dev.mjs 8099"
 	},
 	"devDependencies": {

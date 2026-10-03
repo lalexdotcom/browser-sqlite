@@ -92,7 +92,7 @@ await assemble();
 
 const server = spawn(
   process.execPath,
-  [join(root, 'scripts/static-server.mjs'), join(root, OUT), port],
+  [join(root, 'scripts/static-server.ts'), join(root, OUT), port],
   { cwd: root, stdio: 'inherit' },
 );
 server.on('exit', (code) => {

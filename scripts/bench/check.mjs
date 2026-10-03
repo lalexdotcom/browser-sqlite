@@ -32,7 +32,7 @@ const PORT = Number(process.env.BENCH_PORT ?? 8099);
 const server = spawn(
   process.execPath,
   [
-    resolve(root, 'scripts/static-server.mjs'),
+    resolve(root, 'scripts/static-server.ts'),
     resolve(root, '_site'),
     String(PORT),
   ],

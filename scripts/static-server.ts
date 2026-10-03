@@ -4,7 +4,7 @@
  * dependency, no transform, no resolution:
  * whatever the tarball shipped is what the browser gets.
  *
- * Usage: node scripts/static-server.mjs <rootDir> <port>
+ * Usage: node scripts/static-server.ts <rootDir> <port>
  */
 import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -12,11 +12,11 @@ import { extname, join, normalize } from 'node:path';
 
 const [, , rootDir, portArg] = process.argv;
 if (!rootDir || !portArg) {
-  process.stderr.write('usage: static-server.mjs <rootDir> <port>\n');
+  process.stderr.write('usage: static-server.ts <rootDir> <port>\n');
   process.exit(2);
 }
 
-const TYPES = {
+const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
@@ -26,7 +26,7 @@ const TYPES = {
 
 createServer((req, res) => {
   const urlPath = decodeURIComponent(
-    new URL(req.url, 'http://localhost').pathname,
+    new URL(req.url ?? '/', 'http://localhost').pathname,
   );
   const relative = normalize(urlPath === '/' ? '/index.html' : urlPath).replace(
     /^(\.\.[/\\])+/,
