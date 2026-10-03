@@ -191,7 +191,9 @@ const poolState = (client: Client | undefined): string => {
   const workers = state.workers.map(
     (w) =>
       `worker ${w.index} ${w.status}` +
-      (w.initializationTime === undefined ? ', never initialized' : '') +
+      (w.initializationTime === undefined
+        ? `, never initialized (boot: ${w.boot ?? 'no step'})`
+        : '') +
       (running(w) ? ', a request in flight' : ''),
   );
   const { read, write, gated } = state.queue;

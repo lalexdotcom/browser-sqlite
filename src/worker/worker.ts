@@ -31,6 +31,7 @@ import {
 import { createLocks, initLockName } from '../locks';
 import type { SQLiteErrorCode } from '../types/errors';
 import type {
+  BootStage,
   ClientMessageData,
   WasmLocation,
   WorkerMessageData,
@@ -390,10 +391,27 @@ const open = (file: string, options: OpenOptions) => {
   // means the value cannot be stale.
   let vfsInstanceSeen: { lastError?: unknown } | undefined;
 
+  // Each step announced as it begins, so an open that never finishes names
+  // the step it stopped in (tests/browser/open-retry.test.ts).
+  const boot = (stage: BootStage) =>
+    self.postMessage({
+      type: 'boot',
+      callId: 0,
+      stage,
+    } satisfies WorkerMessageData);
+  if (proceedGate) boot('waiting for the client');
+
   openedDB = (proceedGate?.promise ?? Promise.resolve())
-    .then(() => WA_SQLITE_BUILDS[build]())
-    .then(({ default: factory }) => factory(wasmModuleArg(wasm)))
+    .then(() => {
+      boot('loading the build');
+      return WA_SQLITE_BUILDS[build]();
+    })
+    .then(({ default: factory }) => {
+      boot('instantiating wasm');
+      return factory(wasmModuleArg(wasm));
+    })
     .then((module) => {
+      boot('loading the VFS module');
       const sqlite = SQLite.Factory(module);
       return vfsConfig.fs().then((vfsModule) => ({
         sqlite,
@@ -402,10 +420,12 @@ const open = (file: string, options: OpenOptions) => {
       }));
     })
     .then(({ sqlite, module, vfsModule }) => {
+      boot('creating the VFS');
       return (createVfsInstance(vfsModule, vfs, module) as Promise<any>).then(
         (vfsInstance: any) => {
           vfsInstanceSeen = vfsInstance;
           sqlite.vfs_register(vfsInstance, true);
+          boot('waiting for the open lock');
           // One lock for open + pragmas. withLock releases on throw too, which
           // is what the explicit unlock() in the old .catch existed to do.
           //
@@ -418,12 +438,14 @@ const open = (file: string, options: OpenOptions) => {
           // (measured: broke all 96 browser tests on 56-char names). The VFS
           // normalizes internally, so 'data' and '/data' open the same OPFS file.
           return locks.withLock(initLockName(vfs, file), async () => {
+            boot('opening the database');
             const db = await openWithRetry(
               sqlite,
               file,
               vfs,
               () => vfsInstanceSeen?.lastError,
             );
+            boot('applying pragmas');
             for (const statement of renderPragmas(pragmas)) {
               for await (const stmt of sqlite.statements(db, statement)) {
                 while ((await sqlite.step(stmt)) === SQLITE_ROW) {}
