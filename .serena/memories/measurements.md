@@ -80,6 +80,25 @@ So with `full` a commit SQLite reported as failed becomes durable with the next 
 
 Side observation, not checked on master: under `normal`, closing right after a commit can throw `InvalidStateError` from `BroadcastChannel.postMessage` in `#commitTx`'s `oncomplete` (channel closed by `jClose`), seen on Chromium jspi in the in-flight-read probe.
 
+## IDBMIRROR-ABORT-DESIGNS — five fixes for an aborted `IDBMirrorVFS` commit, measured side by side, 2026-10-03, Playwright 1.62.1 Chromium + Firefox, asyncify + jspi, this container
+
+**Method.** Same harness as IDBMIRROR-ABORT-JOURNAL: one worker per connection, `IDBTransaction.prototype.commit` patched to abort the next read-write transaction (optionally kept alive 300 ms first). Eleven scenarios × `full`/`normal` (one-connection continue with and without `busy_timeout`, a read transaction in flight, reopen in the same VFS, `locking_mode=EXCLUSIVE`, exclusive with commits queued behind a delayed abort, `synchronous=off`, a spilling transaction aborted, a spilling transaction after the abort, exclusive with no abort as control, close right after a commit), 2 runs each: 168 probes per arm. Each probe ends with a fresh connection counting tagged rows and running `integrity_check`. Perf: 300 single-row commits in one `exec`, 9 runs interleaved with master.
+
+**Arms.** M = upstream `5bde491c`. P = the pushed branch (poison `jRead`/`jWrite`/`jTruncate`/`jFileSize` on abort). P′ = poison reads only, writes never fail, refuse in `#commitTx` (checked before and after its `await`), a gate request when a previous commit is pending, journal deleted on `jClose` of an aborted file. E4 = P′'s safety pieces without the read poison, plus reload of blocks + `viewTx` at the next SHARED from `NONE` and in `full`'s abort path (journal deleted on reload), and `SQLITE_BUSY` at RESERVED while aborted. E2 = E4 with `await` of the previous commit instead of the gate; E3 = E4 with the gate on every commit.
+
+| | stores corrupt | `full`: refused rows stored | connection after the abort | exclusive `normal` perf |
+|---|---|---|---|---|
+| M | 48 / 168 | 48 | keeps going on a lost view | baseline |
+| P | 8 (reopen, `normal`) | 0 | dead until reopen | = M |
+| P′ | 0 | 0 | dead until reopen; reopen clean | (not timed; same commit path as E4) |
+| E2 | 0 | 0 | self-heals; exclusive `normal` dead until reopen | ~1.7× slower on Chromium (114→196 ms asyncify, 82→160 jspi) |
+| E3 | 0 | 0 | as E2 | = M; but `full` exclusive +15-30 % (gate on every commit) |
+| E4 | 0 | 0 | as E2 | = M everywhere (medians within IQR) |
+
+**E4 behaviour, per case.** `full`: the aborted commit returns `IOERR`, the next statement already sees the reloaded store. `normal`: the next write gets `SQLITE_BUSY` once (7-8 of 8) or succeeds if the abort was already known at SHARED; with `busy_timeout=1000` it succeeds 8/8 (SQLite releases to `NONE` and retries, which reloads). A read transaction in flight keeps a consistent view (203, 203) and reloads after `COMMIT` (200). Exclusive `normal`: commits returned before the abort was known are lost (normal's contract), every later commit `IOERR` until reopen, reads keep the lost view (204) meanwhile. Suite on E4: Chromium 6113 passed, 7 failed, Firefox IDBMirror files 124 passed, 6 failed — every failure in `vfs_commit_abort`, whose expectations encode P's dead connection.
+
+**Facts found on the way.** `IDBTransaction.abort()` throws once `commit()` was called, so later queued commits cannot be cancelled from the earlier one's `onabort`; a gate request (the first request of a transaction runs only after earlier overlapping ones finished) can. Master `normal` + an aborted spilling commit gives "database disk image is malformed" (8/8). The `BroadcastChannel` `InvalidStateError` on close right after a `normal` commit happens on master too (C10, 6 of 8 runs). A `SQLITE_BUSY` inside an explicit `BEGIN` leaves the transaction open with no lock: a probe's later insert then lived only in that transaction.
+
 ## PRAGMA-BUSY — a pragma that writes, applied at open, against another client's write, 2026-10-01, Playwright's Chromium and Firefox, this container
 
 **Attribution.** Two clients created in one task, each then writing, 12 runs per case, on `OPFSAnyContextVFS`, `IDBBatchAtomicVFS`, `OPFSAdaptiveVFS`. Never with one client, never without a writing pragma (`journal_mode=truncate` included). With `user_version=7` or `application_id=5`, two faces of one collision: the other client's user write rejected `BUSY: database is locked` (its own worker READY at generation 0, the barrier then its `CREATE TABLE` failing — the opening worker held RESERVED outside `bsq:write`), or the opening worker failed and was restarted (generation > 0). Two clients, pool 2, Chromium: 4-7 runs of 12 failing per VFS; Firefox `OPFSAnyContextVFS` up to 8/12 (pool 1), `IDBBatchAtomicVFS` 0-2/12, `OPFSAdaptiveVFS` 0/12.
