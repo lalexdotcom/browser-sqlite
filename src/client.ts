@@ -48,6 +48,7 @@ import {
   assertStatementAllowed,
   databaseFiles,
   mergeSignals,
+  randomId,
   renderPragmas,
   resolveDatabase,
   resolvePragmas,
@@ -380,7 +381,7 @@ export const createSQLiteClient = (
   const clientName = `${clientOptions.name ?? 'SQLite'} ${clientIndex}`;
   // Identity for the roster: `clientName` is a label two tabs can both produce,
   // this is what tells two clients apart across the origin.
-  const clientUuid = crypto.randomUUID();
+  const clientUuid = randomId();
 
   const vfs = clientOptions.vfs;
   // Probed once: the default build, the abort channel and the guard below read it.
@@ -455,7 +456,7 @@ export const createSQLiteClient = (
   if (absent) {
     throw new SQLiteError(
       'INVALID_OPTION',
-      describeMissing(vfs, build, absent),
+      describeMissing(vfs, build, absent, available),
     );
   }
 

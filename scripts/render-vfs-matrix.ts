@@ -24,6 +24,9 @@ import { RECOMMENDED_VFS } from './recommended-vfs.ts';
  *   source, the `mode` sub-feature. Firefox and Safari are recorded `false`.
  * - `cross-origin-isolated` (the `crossOriginIsolated` global): MDN
  *   browser-compat-data, `api.crossOriginIsolated`, checked 2026-09-24.
+ * - `web-locks` (`navigator.locks`, `LockManager.request`): MDN
+ *   browser-compat-data, `api.Navigator.locks` and `api.LockManager.request`,
+ *   checked 2026-10-03. Both give the same versions.
  *
  * This is documentation data with a shelf life. Re-check it against those
  * sources rather than trusting it a year from now.
@@ -81,6 +84,15 @@ const FEATURE_SUPPORT = {
     Safari: '15.2',
     iOS: '15.2',
   },
+  // Every VFS that stores outside memory locks through it, and browsers
+  // withhold it outside a secure context, like OPFS.
+  'web-locks': {
+    Chrome: '69',
+    Android: '69',
+    Firefox: '96',
+    Safari: '15.4',
+    iOS: '15.4',
+  },
 } as const satisfies Record<PlatformFeature, Record<string, Support>>;
 
 /** Desktop first, then mobile. Order is deliberate and shared by both tables. */
@@ -136,7 +148,7 @@ const BCD_KEY: Record<Browser, string> = {
  */
 const LIB_REQUIRES: Record<string, { __compat?: { support: object } }> = {
   'Array.prototype.at': bcd.javascript.builtins.Array.at,
-  'crypto.randomUUID': bcd.api.Crypto.randomUUID,
+  'crypto.getRandomValues': bcd.api.Crypto.getRandomValues,
   FinalizationRegistry: bcd.javascript.builtins.FinalizationRegistry,
   MessageChannel: bcd.api.MessageChannel,
 };

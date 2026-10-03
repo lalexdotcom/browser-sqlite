@@ -7,7 +7,7 @@ import {
   writeLockName,
 } from './locks';
 import { SQLiteError } from './types/errors';
-import { databasePath, resolveDatabase } from './utils';
+import { databasePath, randomId, resolveDatabase } from './utils';
 
 /**
  * The Web Locks `clientId` of THIS realm.
@@ -37,7 +37,7 @@ export const resolveRealmId = async (
     }
   }
 
-  const nonce = `bsq:realm:${crypto.randomUUID()}`;
+  const nonce = `bsq:realm:${randomId()}`;
   const release = await locks.hold(nonce, { mode: 'shared' });
   try {
     const fresh = await locks.entries();

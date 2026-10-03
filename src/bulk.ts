@@ -19,6 +19,7 @@ import {
   assertColumnType,
   assertGeneratedExpression,
   quoteIdent,
+  randomId,
   withDeadline,
 } from './utils';
 
@@ -407,7 +408,7 @@ export const createBulk = (shared: {
         options,
         'output',
       );
-      const staging = stagingTableName(crypto.randomUUID());
+      const staging = stagingTableName(randomId());
 
       const normalizedSchema = Object.entries(schema).map(([k, v]) => {
         const type = assertColumnType(typeof v === 'string' ? v : v.type, k);

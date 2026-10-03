@@ -24,6 +24,10 @@ const PROBES: Partial<Record<PlatformFeature, () => boolean>> = {
     typeof FileSystemFileHandle !== 'undefined' &&
     typeof FileSystemFileHandle.prototype.createWritable === 'function',
   'cross-origin-isolated': () => globalThis.crossOriginIsolated === true,
+  // Withheld outside a secure context, like OPFS.
+  'web-locks': () =>
+    typeof navigator !== 'undefined' &&
+    typeof navigator.locks?.request === 'function',
 };
 
 /**
@@ -46,6 +50,7 @@ const FEATURE_LABEL: Record<PlatformFeature, string> = {
   'writable-stream': 'FileSystemWritableFileStream',
   'readwrite-unsafe': 'readwrite-unsafe access handles',
   'cross-origin-isolated': 'cross-origin isolation',
+  'web-locks': 'the Web Locks API',
 };
 
 /**
@@ -116,6 +121,7 @@ export const describeMissing = (
   vfs: SQLiteVFS,
   build: SQLiteBuild,
   feature: PlatformFeature,
+  available?: ReadonlySet<PlatformFeature>,
 ): string => {
   const label = FEATURE_LABEL[feature];
 
@@ -131,14 +137,27 @@ export const describeMissing = (
     return `This browser does not support ${label}, which the '${build}' build requires.${suffix}`;
   }
 
+  // Only the VFS that would run here: outside a secure context, OPFS and Web
+  // Locks are both withheld, so the IndexedDB VFS are no alternative to OPFS.
   const alternatives = (Object.keys(VFS_CAPABILITIES) as SQLiteVFS[]).filter(
-    (name) =>
-      !(VFS_CAPABILITIES[name].requires as readonly PlatformFeature[]).includes(
-        feature,
-      ),
+    (name) => {
+      const requires = VFS_CAPABILITIES[name]
+        .requires as readonly PlatformFeature[];
+      if (requires.includes(feature)) return false;
+      return (
+        !available ||
+        requires.every((f) => UNPROBEABLE.has(f) || available.has(f))
+      );
+    },
   );
   const suffix = alternatives.length
     ? ` Without it, these store elsewhere: ${alternatives.join(', ')}.`
     : '';
-  return `This browser does not support ${label}, which ${vfs} requires.${suffix}`;
+  // Browsers withhold OPFS and Web Locks from a page served over plain http
+  // (localhost aside): the browser has them, this page does not.
+  const insecure =
+    globalThis.isSecureContext === false
+      ? ' This page is not a secure context (https or localhost), where browsers withhold it.'
+      : '';
+  return `This browser does not support ${label}, which ${vfs} requires.${insecure}${suffix}`;
 };

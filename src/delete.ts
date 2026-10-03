@@ -1,4 +1,9 @@
-import { defaultBuildFor, detectFeatures } from './capabilities';
+import {
+  defaultBuildFor,
+  describeMissing,
+  detectFeatures,
+  missingFeature,
+} from './capabilities';
 import type { SQLiteBuild } from './const/builds';
 import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { connectionLockName, createLocks, initLockName } from './locks';
@@ -66,7 +71,8 @@ export const deleteDatabase = async (
   }
 
   const vfs = options.vfs;
-  const build = options.build ?? defaultBuildFor(vfs, detectFeatures());
+  const available = detectFeatures();
+  const build = options.build ?? defaultBuildFor(vfs, available);
   const capability = VFS_CAPABILITIES[vfs];
 
   if (!(capability.builds as readonly SQLiteBuild[]).includes(build)) {
@@ -81,6 +87,17 @@ export const deleteDatabase = async (
   // Nothing was ever persisted, so there is nothing to delete and no worker
   // worth spawning to say so.
   if (capability.storage === 'memory') return;
+
+  // As at construction: a VFS that cannot run here — outside a secure context,
+  // browsers withhold OPFS and Web Locks — fails with the reason, not inside
+  // a worker.
+  const absent = missingFeature(vfs, build, available);
+  if (absent) {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      describeMissing(vfs, build, absent, available),
+    );
+  }
 
   const wasm = resolveWasmLocation(options.wasmUrl, build, location.href);
 

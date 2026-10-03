@@ -3,6 +3,26 @@ import { folderOf, type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { SQLiteError } from './types/errors';
 import type { WasmLocation } from './types/protocol';
 
+/**
+ * A random UUID v4. Not `crypto.randomUUID()`, which browsers withhold outside
+ * a secure context, where the memory VFS still run.
+ */
+export const randomId = (): string => {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0'));
+  return [
+    hex.slice(0, 4),
+    hex.slice(4, 6),
+    hex.slice(6, 8),
+    hex.slice(8, 10),
+    hex.slice(10),
+  ]
+    .map((group) => group.join(''))
+    .join('-');
+};
+
 export const sqlParams = () => {
   // `unknown`, not `any`: these are SQL bind values and they are never
   // inspected here — only counted, de-duplicated by identity, and handed on.

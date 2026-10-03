@@ -122,17 +122,32 @@ describe('platform requirements', () => {
   it('reports the first missing feature a pair requires', () => {
     // OPFSAdaptiveVFS requires opfs; the jspi build requires jspi.
     expect(missingFeature('OPFSAdaptiveVFS', 'async', new Set())).toBe('opfs');
-    expect(missingFeature('OPFSAdaptiveVFS', 'jspi', new Set(['opfs']))).toBe(
-      'jspi',
+    expect(
+      missingFeature('OPFSAdaptiveVFS', 'jspi', new Set(['opfs', 'web-locks'])),
+    ).toBe('jspi');
+    expect(missingFeature('OPFSAdaptiveVFS', 'async', new Set(['opfs']))).toBe(
+      'web-locks',
     );
     expect(
-      missingFeature('OPFSAdaptiveVFS', 'async', new Set(['opfs'])),
+      missingFeature(
+        'OPFSAdaptiveVFS',
+        'async',
+        new Set(['opfs', 'web-locks']),
+      ),
     ).toBeNull();
   });
 
-  it('needs nothing for a VFS that requires nothing', () => {
-    // IDBBatchAtomicVFS declares `requires: []`.
-    expect(missingFeature('IDBBatchAtomicVFS', 'async', new Set())).toBeNull();
+  // Falsifiable: drop 'web-locks' from an IndexedDB VFS's `requires`. Outside
+  // a secure context it fails on its first lock instead of being refused.
+  it('requires Web Locks for the IndexedDB VFS, and nothing for the memory VFS', () => {
+    expect(missingFeature('IDBBatchAtomicVFS', 'async', new Set())).toBe(
+      'web-locks',
+    );
+    expect(missingFeature('IDBMirrorVFS', 'async', new Set())).toBe(
+      'web-locks',
+    );
+    expect(missingFeature('MemoryVFS', 'sync', new Set())).toBeNull();
+    expect(missingFeature('MemoryAsyncVFS', 'async', new Set())).toBeNull();
   });
 
   it('requires writable-stream for OPFSAnyContextVFS', () => {
@@ -144,7 +159,11 @@ describe('platform requirements', () => {
   // Falsifiable: remove 'readwrite-unsafe' from UNPROBEABLE.
   it('never reports readwrite-unsafe, which has no synchronous probe', () => {
     expect(
-      missingFeature('OPFSWriteAheadVFS', 'sync', new Set(['opfs'])),
+      missingFeature(
+        'OPFSWriteAheadVFS',
+        'sync',
+        new Set(['opfs', 'web-locks']),
+      ),
     ).toBeNull();
   });
 
@@ -158,6 +177,28 @@ describe('platform requirements', () => {
     const message = describeMissing('OPFSAdaptiveVFS', 'async', 'opfs');
     expect(message).toContain('OPFSAdaptiveVFS requires');
     expect(message).toContain('IDBBatchAtomicVFS');
+  });
+
+  // Falsifiable: drop the availability filter on the alternatives, or the
+  // secure-context sentence.
+  it('outside a secure context, names only the memory VFS as alternatives', () => {
+    const global = globalThis as { isSecureContext?: boolean };
+    const before = global.isSecureContext;
+    global.isSecureContext = false;
+    try {
+      const message = describeMissing(
+        'OPFSAdaptiveVFS',
+        'async',
+        'opfs',
+        new Set(),
+      );
+      expect(message).toContain('not a secure context (https or localhost)');
+      expect(message).toContain('MemoryVFS, MemoryAsyncVFS');
+      expect(message).not.toContain('IDBBatchAtomicVFS');
+    } finally {
+      if (before === undefined) delete global.isSecureContext;
+      else global.isSecureContext = before;
+    }
   });
 
   it('detects nothing in Node, where none of the globals exist', () => {
