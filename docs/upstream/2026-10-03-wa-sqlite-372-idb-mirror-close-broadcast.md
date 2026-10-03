@@ -69,7 +69,7 @@ The worker error reaches the page because the pool's `worker.onerror` does not c
 
 ## Posted upstream
 
-PR [#372][pr372], opened 2026-10-03 from `lalexdotcom:fix/idb-mirror-close-broadcast`, on `master` at `7fcc30df`: the fix (`a9811d75`), then the tests (`69e00270`). Based on `master` rather than on #371 so that the maintainer chooses the merge order (user). The description states the conflict with #371 — the `File` constructor, `jClose` and the end of `#commitTx` — and that we rebase whichever is merged second (user). It does not mention this library.
+PR [#372][pr372], opened 2026-10-03 from `lalexdotcom:fix/idb-mirror-close-broadcast`, on `master` at `7fcc30df`: the fix (`a9811d75`), then the tests (`69e00270`). Based on `master` rather than on #371 so that the maintainer chooses the merge order (user). The description states the conflict with #371 — the `File` constructor, `jClose` and the end of `#commitTx` — and that we rebase whichever is merged second (user). It does not mention this library. Upstream CI on the head commit is green: [run 37147812971](https://github.com/rhashimoto/wa-sqlite/actions/runs/37147812971), `build (20.x)`, the only check.
 
 ## Carried with #371
 
