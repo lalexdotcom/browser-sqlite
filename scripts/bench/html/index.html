@@ -3090,7 +3090,7 @@
         `${PAIRS.length} declared pairs, ` +
         `${PAIRS.filter((p) => !missingFor(p)).length} runnable here`;
 
-      // Read by scripts/bench/check.mjs. IS_RELEASE is exposed so the driver
+      // Read by scripts/bench/check.ts. IS_RELEASE is exposed so the driver
       // can assert the one thing `preview` promises: present exactly when this
       // is not the released build.
       window.__BENCH__ = {

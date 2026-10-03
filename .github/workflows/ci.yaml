@@ -119,7 +119,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # Same key and same list as verify, on purpose — see the note there.
-      # scripts/consumer-smoke.mjs imports { chromium } and drives nothing
+      # scripts/consumer-smoke.ts imports { chromium } and drives nothing
       # else, so Firefox is dead weight here; sharing one cache entry and one
       # list across both jobs is worth that, because a per-job list is a pair
       # that has to stay in agreement forever.

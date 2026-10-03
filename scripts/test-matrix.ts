@@ -206,7 +206,7 @@ function parseArgs(argv: string[]) {
  *
  * - The child starts but outlives `timeoutMs`: the whole process group is
  *   killed (`detached: true` + `process.kill(-pid, 'SIGKILL')` — the same
- *   pattern `scripts/consumer-smoke.mjs` uses, because `pnpm exec rstest`
+ *   pattern `scripts/consumer-smoke.ts` uses, because `pnpm exec rstest`
  *   forks the actual Playwright-driven runner and browser, which survive
  *   killing only the direct child) and `timedOut: true` is returned.
  * - The child never starts at all (`ENOENT`, `EACCES`, …): Node emits

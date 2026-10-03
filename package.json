@@ -55,7 +55,7 @@
 		"test:browser": "node scripts/bounded.ts 900 rstest --project 'chromium*' && node scripts/bounded.ts 900 rstest --config rstest.firefox.config.ts",
 		"test:chromium": "node scripts/bounded.ts 900 rstest --project 'chromium*'",
 		"test:firefox": "node scripts/bounded.ts 900 rstest --config rstest.firefox.config.ts",
-		"test:consumer": "node scripts/consumer-smoke.mjs",
+		"test:consumer": "node scripts/consumer-smoke.ts",
 		"test:conformance": "node scripts/bounded.ts 900 rstest --config rstest.conformance.config.ts && node scripts/bounded.ts 900 rstest --config rstest.conformance.firefox.config.ts",
 		"test:conformance:chromium": "node scripts/bounded.ts 900 rstest --config rstest.conformance.config.ts",
 		"test:conformance:firefox": "node scripts/bounded.ts 900 rstest --config rstest.conformance.firefox.config.ts",
