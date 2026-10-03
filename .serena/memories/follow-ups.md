@@ -307,7 +307,7 @@ Before the 1.0, reread the consumer docs (`README.md`, `API.md`, `VFS.md` and it
 
 ### rstest's pages are off-the-record — a measurement caveat (2026-09-28)
 
-**rstest's pages are off-the-record: OPFS sync-access-handle calls cost 160-290 µs there against 0.6-2.6 µs on a persistent profile (RSTEST-OTR, `mem:measurements`, 2026-09-28).** rstest opens pages with Playwright's `browser.newContext()`. Every absolute OPFS timing taken under rstest — the checkpoint and page-size campaigns included — carries that per-call cost; ratios between arms of one run still compare. Not acted on: whether to measure OPFS in a persistent context (wa-sqlite's runner, or a Playwright `launchPersistentContext` harness) is the user's call.
+**rstest's pages are off-the-record: OPFS sync-access-handle calls cost 160-290 µs there against 0.6-2.6 µs on a persistent profile (RSTEST-OTR, `mem:measurements`, 2026-09-28).** rstest opens pages with Playwright's `browser.newContext()`. Every absolute OPFS timing taken under rstest — the checkpoint and page-size campaigns included — carries that per-call cost; only ratios between arms of one run compare. No persistent-context harness is planned (user, 2026-10-03).
 
 ### The open-side init lock is kept as defence (2026-10-03)
 
