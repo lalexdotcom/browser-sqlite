@@ -37,8 +37,11 @@
   `docs/upstream/`, which is where the mechanisms and measurements live:
   - `IDBMirrorVFS.js` — #371 (a commit whose IndexedDB transaction aborts: commits built on it refused
     or dropped, the view reloaded from IndexedDB, `SQLITE_BUSY` at RESERVED, the journal of an aborted
-    view removed on close), head `3367cb65` since 2026-10-03. It is the only file patched: every other
-    PR the patch carried has merged.
+    view removed on close), head `3367cb65` since 2026-10-03; and #372 (`jClose` waits for the commits in
+    flight before closing the `BroadcastChannel`), head `69e00270` since 2026-10-03. The two PRs conflict
+    in `jClose` only: the patch waits for the commits in flight first, then removes an aborted view's
+    journal. Both PRs' tests pass on the merged file (226, 3/3, both engines). It is the only file
+    patched: every other PR the patch carried has merged.
 
   `WriteAhead.js` is no longer patched: #365 (`PRAGMA wal_read_latest`, which the library's barrier
   sets) and #361 are upstream. #366 changes tests only and is not carried.
