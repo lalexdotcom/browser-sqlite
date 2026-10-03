@@ -275,73 +275,6 @@ defect, and the scenario a defect is found through is often not the one that dem
 
 `src/worker/worker.ts`'s open and delete fallbacks read `Failed to open ${file}` / `Failed to delete ${data.file}`, and since `feat/vfs-folders` the worker only knows the path (`.ad/name`). They fire only when something that is not an `Error` is thrown, and `startupError` forwards the text verbatim, so no client wrapping re-adds the logical name. Parked by the controller's ruling: the path is the only identifier the worker has. Reattaching the logical name would mean sending it to the worker or wrapping on the client side.
 
-## Three browser tests guard less than their comments said (2026-09-14) — next to discuss (user, 2026-10-03)
-
-**Resume here (triage of 2026-10-03).** The title no longer fits: three subjects remain, each with a recommendation for the user to decide on.
-- **The barrier** (first bullet): `barrier.test.ts` guards the column-name capture, not the barrier; the barrier's real effect, data freshness on `OPFSWriteAheadVFS`, is now `PRAGMA wal_read_latest` and has wa-sqlite's deterministic test, none of ours. Recommended: reword those tests' comments to say what they guard, and leave the barrier without a falsifier of ours rather than build a timing one.
-- **RSTEST-OTR** (second bullet): a note on measurement method, nothing to fix. Recommended: move it to "Notes, with nothing to fix".
-- **The open-side init lock** (third bullet): no test sees what it guards since the writing pragmas moved to the write path. To decide: keep it as cheap defence (and move the bullet to Notes) or remove it from `open()` (the delete side stays guarded by `delete.test.ts`).
-
-Found by `fix/pool-environment-cap`'s Task 10 and its reviews:
-
-- **`barrier.test.ts` does not guard the barrier — because nothing observable does (spike, 2026-09-25).**
-  Deleting the barrier statement leaves all six tests green on every declared pair, Chromium and
-  Firefox (44 cells), with a positive control proving the path is reached. Bisected in a worktree
-  holding today's `node_modules`: the two single-client tests went inert at `8bc0bf1` (last-writer
-  routing sends the read to the fresh writer), the two-client ones at `aee3859` (statement cache).
-  **`aee3859` is the real cause:** it moved `sqlite.column_names(stmt)` after the first `step()`.
-  The old worker read the names BEFORE stepping, so a statement prepared on the old schema and
-  re-prepared by SQLite at `step()` returned fresh rows under stale names — exactly the spec's
-  `{"old_col": 42}`. Reverse-mutated on today's code (names read before the step): all seven
-  schema scenarios go red without the barrier, and most stay red WITH it, since a cached statement
-  keeps its old prepare. **So the staleness the barrier was built for was our worker, not SQLite;
-  the tests are regression tests of the column-name capture, which is their real falsifier.**
-  **Data staleness, probed the same day (BARRIER-DATA, `mem:measurements`): 3 stale reads in 1232
-  without the barrier, 0 in 1232 with it, under incidental load; 0 / 480 in a focused loop, idle
-  and loaded, in both arms.** So the barrier may guard something rare and nothing reproduces it on
-  demand: it stays, and it still has no falsifier. Cross-tab needs no probe of its own — without
-  the barrier there is no shared state left, and two tabs are two clients' workers to SQLite. The
-  next step, if anyone chases it, is a reproduction of the three sightings' conditions (a loaded
-  full run of the data probe), not a longer loop.
-  **That reproduction was run on 2026-09-27 and it reproduces** (BARRIER-DATA, `mem:measurements`):
-  under sixteen busy loops, 37 of 616 tests stale without the barrier, 0 of 616 with it, on the same
-  cells — all on Chromium, every scenario, growth included. The barrier guards data freshness for
-  real. **Cause found the same day (BARRIER-DATA): `OPFSWriteAheadVFS`'s read isolation.** A read
-  transaction freezes the connection's view as the `BroadcastChannel` has left it, without reading
-  the write-ahead to current as a write does; under load the writer's `tx` message is processed
-  after the next read starts. 28/100 stale as shipped, 0/100 with `isolateForRead()` reading to
-  current, 9/100 on the pre-#355 code. The barrier only buys time. **The race is traced** (BARRIER-DATA):
-  the `tx` broadcast and the read's `query` take two channels with no ordering between them, and
-  the stale reads are the ones where the query arrives first — present before #355, which only
-  widens it. **Submitted upstream as rhashimoto/wa-sqlite#365 on 2026-09-27** (report
-  `docs/upstream/2026-09-27-wa-sqlite-365-writeahead-read-freshness.md`); its fork branch
-  `fix/writeahead-read-catches-up` was deleted after the merge, remote and local, 2026-09-29
-  (first commit `1273bb48` on upstream `e6e01ae1`): `isolateForRead()` reads the WAL to its end. Its test, in wa-sqlite's own suite,
-  is deterministic — a reader worker blocks its event loop while a writer worker commits, then
-  reads before its context delivers the broadcast: `1` for `2` on master, 8/8 runs, both builds.
-  Two connections in ONE context share a `WriteAhead` view and cannot reproduce it. Cost ≈ 5 µs
-  per read transaction on asyncify. **Carried in
-  `patches/` since 2026-09-27.** **2026-09-28: answered "by design", now opt-in, and the library
-  sets it in the barrier.** rhashimoto keeps reads eventually consistent on purpose: reading to
-  the end scans the uncommitted frames of a large open write on every read (~2 ms per MB,
-  365-WORST, `mem:measurements`). The PR's second commit `ac817fd6` makes it an
-  opt-in pragma, off by default; review renamed it `PRAGMA wal_read_latest` (third commit
-  `7d16633b`, 2026-09-28), and the patch carries that head. Our barrier on
-  `OPFSWriteAheadVFS` runs its read between `wal_read_latest=1` and `=0` (`catchUpPragma`,
-  `barrierSqlFor`), so the reads after a commit are current by construction and reads during a
-  large open write scan nothing (365-LIB). **What is still open:** the barrier has no falsifier
-  that fails under load — the old timing-only barrier read 0/100 even under 48 busy loops, so
-  the pragma's gain is shown by wa-sqlite's deterministic test, not by ours. **#365 was MERGED on 2026-09-29 as `5be9cd14`, byte-identical to our PR head `7d16633b`**
-  (`PRAGMA wal_read_latest`, the default build in `OPFSWriteAheadVFS.test.js`). The pin is on
-  `5be9cd14` since 2026-09-29 and the patch no longer carries it (`mem:stack-and-build`).
-- **rstest's pages are off-the-record: OPFS sync-access-handle calls cost 160-290 µs there against
-  0.6-2.6 µs on a persistent profile (RSTEST-OTR, `mem:measurements`, 2026-09-28).** rstest opens
-  pages with Playwright's `browser.newContext()`. Every absolute OPFS timing taken under rstest —
-  the checkpoint and page-size campaigns included — carries that per-call cost; ratios between
-  arms of one run still compare. Not acted on: whether to measure OPFS in a persistent context
-  (wa-sqlite's runner, or a Playwright `launchPersistentContext` harness) is the user's call.
-- **The open-side init lock guards nothing a test sees (2026-09-28).** With `locks.withLock(initLockName…)` removed from the worker's `open()`, `pnpm test`'s three configs stay green; the delete side is guarded (`delete.test.ts`, BUSY while the lock is held). What it seemed to guard — a writing pragma at open against another client's write — was a defect of its own, fixed by running those pragmas through the write path (PRAGMA-BUSY, `mem:vfs`); since then the open applies only connection pragmas, and the lock serialises opens with nothing left to protect that a test has found.
-
 ## What the `IDBBatchAtomicVFS` long-statement fix left open (2026-09-14)
 
 - **On Safari, wa-sqlite's `async` (Asyncify) build slows down after a few long statements, and
@@ -367,6 +300,18 @@ Before the 1.0, reread the consumer docs (`README.md`, `API.md`, `VFS.md` and it
 - **`VFS.md` gives the OPFS VFS a Chrome floor that is too low.** `FEATURE_SUPPORT.opfs` in the generator holds one version per browser, `getDirectory`'s (Chrome 86), and its comment says `createSyncAccessHandle` gives the same versions; browser-compat-data says otherwise: `FileSystemFileHandle.createSyncAccessHandle` and `FileSystemSyncAccessHandle` are Chrome 102, Chrome Android 109, Firefox 111, Safari 15.2 (checked 2026-10-03). The four VFS that open sync access handles (`OPFSAdaptiveVFS`, `OPFSCoopSyncVFS`, `OPFSWriteAheadVFS`, `AccessHandlePoolVFS`) show Chrome 92+ where 102+ is true; `OPFSAnyContextVFS` writes through `createWritable` and may be right. Likely a separate feature (`sync-access-handle`) in the generator.
 
 ## Notes, with nothing to fix
+
+### The barrier has no falsifier of ours — by decision, 2026-10-03
+
+`barrier.test.ts` pins when and how the barrier is sent, and the worker's column-name capture: the staleness the barrier was first built for was our worker reading names before the first `step()` (spike 2026-09-25, `mem:history`). Nothing of ours fails when its effect is gone. That effect, data freshness on `OPFSWriteAheadVFS`, is real — 37 of 616 tests stale without it under sixteen busy loops, 0 with it (BARRIER-DATA, `mem:measurements`) — and is `PRAGMA wal_read_latest`, whose falsifier is wa-sqlite's deterministic test for #365. A timing falsifier of ours was not built: the old timing-only barrier read 0/100 even under 48 busy loops.
+
+### rstest's pages are off-the-record — a measurement caveat (2026-09-28)
+
+**rstest's pages are off-the-record: OPFS sync-access-handle calls cost 160-290 µs there against 0.6-2.6 µs on a persistent profile (RSTEST-OTR, `mem:measurements`, 2026-09-28).** rstest opens pages with Playwright's `browser.newContext()`. Every absolute OPFS timing taken under rstest — the checkpoint and page-size campaigns included — carries that per-call cost; ratios between arms of one run still compare. Not acted on: whether to measure OPFS in a persistent context (wa-sqlite's runner, or a Playwright `launchPersistentContext` harness) is the user's call.
+
+### The open-side init lock is kept as defence (2026-10-03)
+
+**The open-side init lock guards nothing a test sees (2026-09-28).** With `locks.withLock(initLockName…)` removed from the worker's `open()`, `pnpm test`'s three configs stay green; the delete side is guarded (`delete.test.ts`, BUSY while the lock is held). What it seemed to guard — a writing pragma at open against another client's write — was a defect of its own, fixed by running those pragmas through the write path (PRAGMA-BUSY, `mem:vfs`); since then the open applies only connection pragmas, and the lock serialises opens with nothing left to protect that a test has found. Kept anyway: removing it buys nothing measured; the delete side takes the same lock, so without it a deletion would no longer exclude an open in progress (read, not measured); and it gives `db.debug`'s `boot` its `waiting for the open lock` step, which the `open-retry` entry reads.
 
 ### What no test can see about the statement cache
 

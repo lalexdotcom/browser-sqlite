@@ -8,11 +8,9 @@ import { createTestClient, removeDatabaseFiles } from './helpers';
  * With the designation forbidden on index 0 at poolSize 2, the writer is
  * always w1, so which worker pays a barrier is deterministic.
  *
- * No test here can observe the barrier's absence: removing its statement
- * leaves every one of them green on every pair (spike 2026-09-25,
- * `mem:follow-ups`). The staleness it was built for came from the worker
- * reading column names before the first step(). The schema tests below guard
- * that capture; the count tests guard when the barrier is paid.
+ * These tests pin when and how the barrier is sent, and the worker's
+ * column-name capture. None observes its effect, data freshness on
+ * OPFSWriteAheadVFS; wa-sqlite's own test for #365 does.
  */
 const forced = {
   // Writer spread: needs two live workers, so a target that caps the pool
