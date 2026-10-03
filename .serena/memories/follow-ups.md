@@ -60,21 +60,15 @@ History is in the report (`docs/upstream/2026-09-25-wa-sqlite-363-anycontext-unl
 What each answer calls for:
 - **He asks for changes**: in the same worktree (`.work/wa-sqlite-anycontext`); the red arms are rerun by swapping in master's file, the previous head's, or this head without `jUnlock`.
 - **He merges**: the repin (deferred by the user) drops the `OPFSAnyContextVFS.js` hunk instead of updating it.
-- **Owed alongside**: the `IDBMirrorVFS` PR, its own entry below.
+- **Alongside**: the `IDBMirrorVFS` PR, its own entry below (branch pushed, not opened).
 
-## wa-sqlite: `IDBMirrorVFS` commit-abort PR — owed, not started (2026-10-03)
+## wa-sqlite: `IDBMirrorVFS` commit-abort PR — branch pushed, NOT opened, waiting on the user's go (2026-10-03)
 
-Offered on #363 on 2026-10-02; rhashimoto answered "Yes, please, if you're up for that." Not opened.
+Offered on #363 on 2026-10-02; rhashimoto answered "Yes, please, if you're up for that." The defect is IDBMIRROR-COMMIT-ABORT (`mem:measurements`): `#commitTx` advances the view before its IndexedDB transaction completes and undoes nothing on abort — `full` carries the failed rows into the next commit, `normal` stores a corrupt database.
 
-**The defect** (IDBMIRROR-COMMIT-ABORT, `mem:measurements`). `#commitTx` calls `#acceptTx`/`#setView` before its IndexedDB transaction completes. It awaits that transaction only with `synchronous=full`, and when it aborts (quota, for instance) it neither drops `txActive` nor restores the view; `#dropTx` runs only on `ROLLBACK_ATOMIC_WRITE`.
-- With `full`, the commit returns `SQLITE_IOERR`, but its rows come back with the context's next commit.
-- With `normal`, the commit returns `ok` (an unhandled rejection is the only trace), and the database stored in IndexedDB ends up failing `integrity_check` ("Page 28: never used").
+**Design chosen by the user (2026-10-03): fail the connection, as `OPFSPermutedVFS` does.** The `abortController` that `File` declared but never created is created; the `onabort` of `#commitTx` aborts it; `jRead`, `jWrite`, `jTruncate`, `jFileSize` throw from then on, so the connection returns errors until reopened. A restore-the-view design (snapshot, restore deferred to `LOCK_NONE`, `BUSY` at RESERVED while pending) was proposed first and dropped for this one: the precedent is the author's, the patch is a few lines. Cost stated in the body: the connection must be reopened; under `normal` the aborted commit is lost, the store stays consistent. `OPFSPermutedVFS` is deprecated upstream (#317) and we never touched it; the body cites its behaviour, not as an authority.
 
-**To do.**
-- A new branch off upstream master, in its own worktree.
-- The fix: on failure, restore the view, drop `txActive`, and report the failure. Under `normal` the abort cannot fail the commit already returned, so it needs a decision: poison the next call, or at least never let a later commit build on the lost one. Read `#commitTx`, `#acceptTx`, `#setView` and the broadcast path first.
-- The test: two contexts in a dedicated worker that patches `IDBTransaction.prototype.commit` to `abort()` the next read-write transaction, as the probe did. Red on master for both modes.
-- No mention of this library, per `mem:conventions`; a report in `docs/upstream/` once opened.
+Branch `fix/idb-mirror-commit-abort` (`.work/wa-sqlite-mirror-abort`) off upstream `5bde491c`, pushed to the fork: `d64ffdf2` (fix), `fc1581d2` (`test/vfs_commit_abort.js` + worker, wired into `IDBMirrorVFS.test.js`). Red on master on both builds, both modes, Chromium and Firefox; the file's 104 tests green 3/3 on both engines; Chromium suite 6120 passed. Firefox suite: 3 `OPFSWriteAheadVFS` `vfs_read_freshness` failures and `sql.test.js` not finishing, neither ours — `sql.test.js` restricted to `IDBMirrorVFS` passes 26/26 on Firefox on both master and the branch. Body draft: `.scratchpad/upstream-mirror-abort/pr.md`. After it opens: the report in `docs/upstream/`, the patch decision.
 
 ## wa-sqlite #362: `OPFSCoopSyncVFS.create()` fails after a back/forward-cache navigation — PR not decided
 
