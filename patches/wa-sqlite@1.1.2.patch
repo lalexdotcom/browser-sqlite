@@ -276,3 +276,16 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..fb07590bd795a654f607d24a7eab06cc
    /**
     * @param {File} file 
     */
+diff --git a/src/examples/OPFSAdaptiveVFS.js b/src/examples/OPFSAdaptiveVFS.js
+index 07405d7ebcb935110692bf40e8fc273b79b1fa46..38ff140c9642759971aed46b359f8de413e42daa 100644
+--- a/src/examples/OPFSAdaptiveVFS.js
++++ b/src/examples/OPFSAdaptiveVFS.js
+@@ -6,7 +6,7 @@ import { WebLocksMixin } from '../WebLocksMixin.js';
+ const LOCK_NOTIFY_INTERVAL = 1000;
+ 
+ const hasUnsafeAccessHandle =
+-  globalThis.FileSystemSyncAccessHandle.prototype.hasOwnProperty('mode');
++  globalThis.FileSystemSyncAccessHandle?.prototype.hasOwnProperty('mode');
+ 
+ /**
+  * @param {string} pathname 

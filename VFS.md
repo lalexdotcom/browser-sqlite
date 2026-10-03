@@ -166,7 +166,7 @@ cannot be imported or exported directly — which is what buys it
 
 **Builds:** [`jspi`](#build-jspi), [`async`](#build-async)
 
-**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
+**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 96+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
 **Pool size:** Any · **RAM:** Page cache<sup><a href="#fn-2">[2]</a></sup> · **Default PRAGMAs:** `busy_timeout=5000`
 
@@ -196,7 +196,7 @@ apply to it, and it serves a read while a long query runs, on every engine. See
 
 **Builds:** [`jspi`](#build-jspi), [`async`](#build-async)
 
-**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
+**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 96+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
 **Pool size:** **1**<sup><a href="#fn-6">[6]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
 
@@ -238,7 +238,7 @@ so it suits read-only or nearly read-only databases.
 
 **Builds:** [`sync`](#build-sync), [`jspi`](#build-jspi), [`async`](#build-async)
 
-**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
+**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 90+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
 **Pool size:** **1**<sup><a href="#fn-7">[7]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
 
@@ -254,7 +254,7 @@ performance, not as storage.
 
 **Builds:** [`jspi`](#build-jspi), [`async`](#build-async)
 
-**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 95+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
+**Browsers:**<sup><a href="#fn-1">[1]</a></sup> Chrome 92+/137+, Firefox 90+/153+, Safari 15.4+/27+, Android 92+/?, iOS 15.4+/27+
 
 **Pool size:** **1**<sup><a href="#fn-7">[7]</a></sup> · **RAM:** Whole database<sup><a href="#fn-3">[3]</a></sup>
 

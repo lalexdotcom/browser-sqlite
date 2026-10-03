@@ -24,9 +24,14 @@ const pair = (vfs: SQLiteVFS, build: SQLiteBuild): TestTarget => ({
 });
 
 /** Firefox as the suite meets it: OPFS, no `readwrite-unsafe`, not isolated. */
-const WITHOUT_UNSAFE = here(['opfs', 'writable-stream']);
+const WITHOUT_UNSAFE = here(['opfs', 'writable-stream', 'web-locks']);
 /** Chromium as the suite meets it, not isolated. */
-const WITH_UNSAFE = here(['opfs', 'readwrite-unsafe', 'writable-stream']);
+const WITH_UNSAFE = here([
+  'opfs',
+  'readwrite-unsafe',
+  'writable-stream',
+  'web-locks',
+]);
 
 describe('resolvePair', () => {
   it('returns the target itself when it runs here and nothing is needed', () => {
@@ -171,7 +176,7 @@ describe('resolvePair', () => {
       resolvePair(
         pair('MemoryVFS', 'sync'),
         ['interruptible', 'two-workers'],
-        here(['readwrite-unsafe']),
+        here(['readwrite-unsafe', 'web-locks']),
       ),
     ).toEqual(pair('IDBBatchAtomicVFS', 'async'));
 
@@ -205,7 +210,12 @@ describe('resolvePair', () => {
     // another pair turns this red — and a matrix would then report green a
     // pair that never ran.
     const target = pair('OPFSAdaptiveVFS', 'jspi');
-    const noJspi = here(['opfs', 'readwrite-unsafe', 'writable-stream']);
+    const noJspi = here([
+      'opfs',
+      'readwrite-unsafe',
+      'writable-stream',
+      'web-locks',
+    ]);
     expect(missingFeature(target.vfs, target.build, noJspi.features)).toBe(
       BUILD_CAPABILITIES.jspi.requires[0],
     );
@@ -249,7 +259,12 @@ describe("resolvePair under 'skip'", () => {
     // turns this red — the matrix would call skipped a pair that never ran,
     // instead of "not runnable here".
     const target = pair('OPFSAdaptiveVFS', 'jspi');
-    const noJspi = here(['opfs', 'readwrite-unsafe', 'writable-stream']);
+    const noJspi = here([
+      'opfs',
+      'readwrite-unsafe',
+      'writable-stream',
+      'web-locks',
+    ]);
     expect(resolvePair(target, ['two-workers'], noJspi, 'skip')).toBeNull();
     expect(resolvePair(target, [], noJspi, 'skip')).toBeNull();
   });

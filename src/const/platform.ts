@@ -9,4 +9,5 @@ export type PlatformFeature =
   | 'readwrite-unsafe'
   | 'jspi'
   | 'writable-stream'
-  | 'cross-origin-isolated';
+  | 'cross-origin-isolated'
+  | 'web-locks';

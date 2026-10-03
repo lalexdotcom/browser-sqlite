@@ -160,8 +160,9 @@ pnpm bench:build    # assemble _site/ only
 
 `http://127.0.0.1` is a secure context, so OPFS works with no certificate — no
 TLS setup is needed to develop against it. A phone on the LAN is a different
-matter: it is not a secure context, so OPFS is unavailable there and a tunnel
-(or the published page) is the way to test a real device.
+matter: it is not a secure context, so browsers withhold OPFS and the Web Locks
+API there, and only `MemoryVFS` and `MemoryAsyncVFS` run. A tunnel (or the
+published page) is the way to test a real device.
 
 `node scripts/bench/check.mjs [chromium|firefox] [--all]` drives the page under
 Playwright and asserts that it still works — it is run by hand and deliberately

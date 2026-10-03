@@ -11,6 +11,7 @@ import {
   isWriteQuery,
   mergeSignals,
   normalizeDatabaseFile,
+  randomId,
   resolveDatabase,
   resolvePragmas,
   resolveWasmLocation,
@@ -651,5 +652,18 @@ describe('resolveDatabase — an empty name', () => {
       file: '.hidden',
       path: '.ad/.hidden',
     });
+  });
+});
+
+// Falsifiable: return anything but a v4 UUID, or a constant.
+describe('randomId', () => {
+  it('returns distinct v4 UUIDs without crypto.randomUUID', () => {
+    const ids = new Set(Array.from({ length: 100 }, () => randomId()));
+    expect(ids.size).toBe(100);
+    for (const id of ids) {
+      expect(id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+    }
   });
 });
