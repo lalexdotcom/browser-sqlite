@@ -99,6 +99,21 @@ Side observation, not checked on master: under `normal`, closing right after a c
 
 **Facts found on the way.** `IDBTransaction.abort()` throws once `commit()` was called, so later queued commits cannot be cancelled from the earlier one's `onabort`; a gate request (the first request of a transaction runs only after earlier overlapping ones finished) can. Master `normal` + an aborted spilling commit gives "database disk image is malformed" (8/8). The `BroadcastChannel` `InvalidStateError` on close right after a `normal` commit happens on master too (C10, 6 of 8 runs). A `SQLITE_BUSY` inside an explicit `BEGIN` leaves the transaction open with no lock: a probe's later insert then lived only in that transaction.
 
+## IDBMIRROR-ABORT-RELOAD-ON-REFUSAL — can exclusive `normal` recover without a reopen? 2026-10-03, Playwright 1.62.1 Chromium + Firefox, asyncify + jspi
+
+**Question.** In #371 (F3), exclusive `synchronous=normal` fails every commit after an abort until reopen. Reload the view at the refusal in `#commitTx`, as the `full` error path does (SQLite discards its cache after the error, exclusive mode too)?
+
+**Method.** Recovery probe: exclusive `normal`, abort, then three inserts (the first a 2000-row transaction past `cache_size=10` in the spill arm), abort immediate (then 200 ms) or kept alive 300 ms; 3 runs × 2 builds × 2 engines = 12 per cell; fresh connection counts and `integrity_check`. Plus #371's test file and the 168-probe matrix.
+
+| arm | ordinary commit | refused transaction had spilled to a journal | #371 tests |
+| --- | --- | --- | --- |
+| F3 (#371 as opened) | dead until reopen; store ok | dead until reopen; store ok | green |
+| R1 reload at refusal | one `IOERR`, then recovers; store ok | **aborted rows stored (12/12), or "malformed" / "Page 28: never used" (12/12)** | journal test red |
+| R2 = R1 + journal removed on reload | same as R1 | same corruption | journal test red |
+| **R3 reload at refusal unless the database has a journal in the VFS** | one `IOERR`, then recovers; store ok (24/24) | dead until reopen; store ok (24/24) | green 3/3 both engines; matrix 0/168 unclean |
+
+**Why R1/R2 corrupt.** After the refused commit SQLite rolls the transaction back through the journal it already holds open, writing the lost view's pre-images onto the reloaded view; the next commit stores them. Removing the journal from the VFS map does not stop a rollback through an open handle.
+
 ## PRAGMA-BUSY — a pragma that writes, applied at open, against another client's write, 2026-10-01, Playwright's Chromium and Firefox, this container
 
 **Attribution.** Two clients created in one task, each then writing, 12 runs per case, on `OPFSAnyContextVFS`, `IDBBatchAtomicVFS`, `OPFSAdaptiveVFS`. Never with one client, never without a writing pragma (`journal_mode=truncate` included). With `user_version=7` or `application_id=5`, two faces of one collision: the other client's user write rejected `BUSY: database is locked` (its own worker READY at generation 0, the barrier then its `CREATE TABLE` failing — the opening worker held RESERVED outside `bsq:write`), or the opening worker failed and was restarted (generation > 0). Two clients, pool 2, Chromium: 4-7 runs of 12 failing per VFS; Firefox `OPFSAnyContextVFS` up to 8/12 (pool 1), `IDBBatchAtomicVFS` 0-2/12, `OPFSAdaptiveVFS` 0/12.
