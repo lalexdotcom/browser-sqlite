@@ -78,7 +78,7 @@ So with `full` a commit SQLite reported as failed becomes durable with the next 
 
 **Cause, traced.** The next write's batch fails (`jWrite` → 778), `ROLLBACK_ATOMIC_WRITE`, then SQLite opens `<db>-journal`, writes it and fails on the database; the journal stays in the VFS. The next SHARED (reload) or open (same VFS) sees it hot and replays pages 1 and 28 from the lost view, then `SYNC` stores them. `pager.c` 3.53.0, `sqlite3PagerCommitPhaseOne`: an `IOERR`-class error other than `IOERR_NOMEM` from the batch triggers `sqlite3JournalCreate` and a non-batch retry; any other error closes the journal. `pager_unlock`: outside exclusive mode an error releases to `NO_LOCK` and resets the cache; in exclusive mode the cache is reset but the VFS sees no unlock.
 
-Side observation, not checked on master: under `normal`, closing right after a commit can throw `InvalidStateError` from `BroadcastChannel.postMessage` in `#commitTx`'s `oncomplete` (channel closed by `jClose`), seen on Chromium jspi in the in-flight-read probe.
+Side observation: under `normal`, closing right after a commit can throw `InvalidStateError` from `BroadcastChannel.postMessage` in `#commitTx`'s `oncomplete` (channel closed by `jClose`). On master too: IDBMIRROR-CLOSE-BROADCAST.
 
 ## IDBMIRROR-ABORT-DESIGNS — five fixes for an aborted `IDBMirrorVFS` commit, measured side by side, 2026-10-03, Playwright 1.62.1 Chromium + Firefox, asyncify + jspi, this container
 
@@ -113,6 +113,25 @@ Side observation, not checked on master: under `normal`, closing right after a c
 | **R3 reload at refusal unless the database has a journal in the VFS** | one `IOERR`, then recovers; store ok (24/24) | dead until reopen; store ok (24/24) | green 3/3 both engines; matrix 0/168 unclean |
 
 **Why R1/R2 corrupt.** After the refused commit SQLite rolls the transaction back through the journal it already holds open, writing the lost view's pre-images onto the reloaded view; the next commit stores them. Removing the journal from the VFS map does not stop a rollback through an open handle.
+
+## IDBMIRROR-CLOSE-BROADCAST — a `synchronous=normal` commit still in flight when its connection closes, 2026-10-03, Playwright 1.62.1 Chromium + Firefox, asyncify + jspi, this container
+
+**Upstream probe** (wa-sqlite `7fcc30df`, its runner, one worker per connection). A sets `normal`, inserts and closes in one worker message; B, open all along, only reads; C counts afterwards. 6 runs × 2 builds × 2 engines = 24 per cell. K1: A's worker lives on; K2: terminated right after the close reply.
+
+| arm | K1 uncaught error | B sees the row, K1 | B sees the row, K2 | stored |
+| --- | --- | --- | --- | --- |
+| M master | 24/24 `InvalidStateError` | 0/24 | 0/24 | 48/48 |
+| S skip the broadcast once closed | 0 | 0/24 | 0/24 | 48/48 |
+| D post on a new channel from `oncomplete` | 0 | 24/24 | 10/24 | 48/48 |
+| **W `jClose` awaits commits in flight (sent, #372)** | 0 | 24/24 | 24/24 | 48/48 |
+
+B stayed stale at 300 ms and 1.3 s on M; on D and W it saw the row at 300 ms. A stale B's write on M: `database is locked` once then success with no busy timeout (K3 plain insert, K4 `BEGIN IMMEDIATE`, 24/24 each), success at once with `busy_timeout=1000`; then 3 rows, no update lost.
+
+**Close cost**, idle machine, M and W interleaved 3 runs × 15 = 45 per cell, median ms (Firefox rounds to 1 ms): one row then close 0.5→0.5 / 0.3→0.4 (Chromium asyncify / jspi), 0→0 Firefox; close 300 ms later, no change; 2000 × 500-byte rows then close 0.4→34.6 / 0.2→27.0 Chromium, 0→10 / 0→9 Firefox. Statement times unchanged; statement + close with W ≈ the statement with `full` (Chromium 38-52 vs 43-50 ms, Firefox 73-77 vs 75-77).
+
+**Library probe** (`createSQLiteClient`, client A `pragmas: { synchronous }`, client B reading, A writes then `close()`; 8 runs per cell, Chromium jspi + async, Firefox async; a client C counts before B writes). The library's `close()` terminates the worker after `closed`: K2's shape. Pin `7fcc30df` + #371 only: `normal` B stale 8/24 (Chromium 7/16, Firefox 1/8), B's next write `BUSY: database is locked` in those 8, `InvalidStateError` as an uncaught error in the page 4/16 on Chromium (0 Firefox); C counted A's row 48/48; `full` 0/24. W on top of #371 (alias in the probe's rstest config): 0/24 everything. Carried patch installed (#371 + #372 merged, no alias): 0/24 stale, writes all succeed, no page error, both engines.
+
+**Upstream test** (`test/vfs_close_broadcast.js`): master fails the 4 `normal` tests on both builds and engines, `full` passes; with W 108 tests 3/3 both engines; whole suite Chromium 6192 passed. Firefox whole suite on master and branch alike: 3 `OPFSWriteAheadVFS` `vfs_read_freshness` failures (cannot open the second connection) and `sql.test.js` hanging (seen on master alone, Firefox at ~5 % CPU); its `IDBMirrorVFS` part passes in 7-8 s, 3/3 on both.
 
 ## PRAGMA-BUSY — a pragma that writes, applied at open, against another client's write, 2026-10-01, Playwright's Chromium and Firefox, this container
 

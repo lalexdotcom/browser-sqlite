@@ -1,9 +1,20 @@
 diff --git a/src/examples/IDBMirrorVFS.js b/src/examples/IDBMirrorVFS.js
-index 3de1296bd9a8634339accdfa1c66970b23efa892..4dde7de57c46ef0d040cf5ddc530c6a4a6537aff 100644
+index 3de1296bd9a8634339accdfa1c66970b23efa892..fb07590bd795a654f607d24a7eab06cc08da2d9c 100644
 --- a/src/examples/IDBMirrorVFS.js
 +++ b/src/examples/IDBMirrorVFS.js
-@@ -56,6 +56,8 @@ class File {
+@@ -31,6 +31,7 @@ class File {
+ 
+   /** @type {BroadcastChannel} */ broadcastChannel;
+   /** @type {Transaction[]} */ broadcastReceived;
++  /** @type {Set<Promise<void>>} */ commitsInFlight;
+ 
+   /** @type {number} */ lockState;
+   /** @type {{write?: function, reserved?: function, hint?: function}} */ locks;
+@@ -54,8 +55,11 @@ class File {
+       this.viewReleaser = null;
+       this.broadcastChannel = new BroadcastChannel('mirror:' + pathname);
        this.broadcastReceived = [];
++      this.commitsInFlight = new Set();
        this.lockState = VFS.SQLITE_LOCK_NONE;
        this.locks = {};
 +      this.abortController = new AbortController();
@@ -11,7 +22,7 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..4dde7de57c46ef0d040cf5ddc530c6a4
        this.txActive = null;
        this.txWriteHint = false;
        this.txOverwrite = false;
-@@ -141,39 +143,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -141,39 +145,7 @@ export class IDBMirrorVFS extends FacadeVFS {
            }
          }
    
@@ -52,10 +63,12 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..4dde7de57c46ef0d040cf5ddc530c6a4
  
          // Publish our view of the database. This prevents other connections
          // from overwriting file data we still need.
-@@ -263,6 +233,10 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -263,6 +235,12 @@ export class IDBMirrorVFS extends FacadeVFS {
        this.#mapIdToFile.delete(fileId);
  
        if (file?.flags & VFS.SQLITE_OPEN_MAIN_DB) {
++        // Commits still in flight broadcast on this channel when they complete.
++        await Promise.allSettled(file.commitsInFlight);
 +        if (file.abortController.signal.aborted) {
 +          // The journal belongs to a view that was never stored.
 +          this.#mapPathToFile.delete(file.path + '-journal');
@@ -63,7 +76,7 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..4dde7de57c46ef0d040cf5ddc530c6a4
          file.broadcastChannel.close();
          file.viewReleaser?.();
        }
-@@ -418,6 +392,11 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -418,6 +396,11 @@ export class IDBMirrorVFS extends FacadeVFS {
      if (lockType <= file.lockState) return VFS.SQLITE_OK;
      switch (lockType) {
        case VFS.SQLITE_LOCK_SHARED:
@@ -75,7 +88,7 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..4dde7de57c46ef0d040cf5ddc530c6a4
          if (file.txWriteHint) {
              // xFileControl() has hinted that this transaction will
              // write. Acquire the hint lock, which is required to reach
-@@ -471,6 +450,12 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -471,6 +454,12 @@ export class IDBMirrorVFS extends FacadeVFS {
          }
  
          console.assert(entries[0]?.txId === file.viewTx.txId || !file.viewTx.txId);
@@ -88,7 +101,7 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..4dde7de57c46ef0d040cf5ddc530c6a4
          break;
        case VFS.SQLITE_LOCK_EXCLUSIVE:
          await this.#lock(file, 'write');
-@@ -670,6 +655,17 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -670,6 +659,17 @@ export class IDBMirrorVFS extends FacadeVFS {
     * @param {File} file 
     */
    async #commitTx(file) {
@@ -106,7 +119,7 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..4dde7de57c46ef0d040cf5ddc530c6a4
      // Advance our own view. Even if we received our own broadcasts (we
      // don't), we want our view to be updated synchronously.
      this.#acceptTx(file, file.txActive);
-@@ -677,47 +673,127 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -677,47 +677,129 @@ export class IDBMirrorVFS extends FacadeVFS {
  
      const oldestTxId = await this.#getOldestTxInUse(file);
  
@@ -190,6 +203,8 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..4dde7de57c46ef0d040cf5ddc530c6a4
 +      }
      });
  
++    file.commitsInFlight.add(complete);
++    complete.finally(() => file.commitsInFlight.delete(complete)).catch(() => {});
      if (file.synchronous === 'full') {
 -      await complete;
 +      try {

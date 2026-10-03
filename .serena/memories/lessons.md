@@ -1227,3 +1227,11 @@ So an aborted transaction cannot cancel the ones queued after it from its `onabo
 ## Remove each part of a multi-part fix once before sending it (2026-10-03, wa-sqlite #371)
 
 Ten ablations of a nine-part fix: three parts made no test and no probe change and were dropped; one (journal removal on close) looked useless until a scenario was written for exactly what it guards, then failed 12/12 without it. **A part with no falsifier is either dead code or an untested case — find out which before posting.** The PR body's ablation table came straight from this.
+
+## A probe summary that drops a field can invent a defect (2026-10-03, wa-sqlite #372)
+
+The library probe printed B's count after its write and a fresh client's count, not B's write result. `2` where `3` was expected read as a lost update — a stale writer overwriting a stored commit — and was announced as such. B's write had failed with `BUSY`; nothing was overwritten. A trace showed it, and a count taken before B wrote (A's row there, 48/48) settled it. **Before naming an outcome, print every step's own result, the failures above all; an aggregate that omits one cannot tell "lost" from "refused".**
+
+## `pkill -f` with a pattern from your own command line kills your own shell (2026-10-03)
+
+`pkill -f "wtr-ff.config.mjs --files ./test/sql.test.js"` matched the `bash -c` that ran it (exit 144) and left the runner alive, while the background loop moved on to its next run. **Stop a background run by PID**, read off `ps`, children included; and stop the loop's own shell first, or it starts the next iteration.

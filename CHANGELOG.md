@@ -73,6 +73,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`write()` no longer reports a stale `affected` count for a statement that changes nothing.** A DDL statement, a `PRAGMA` or a `SELECT` left `affected` at the count of the previous `INSERT`/`UPDATE`/`DELETE`; it now reports 0. `bulkWrite()` and `output()`'s totals follow, since they sum what `write()` returns.
 - **On `IDBBatchAtomicVFS`, a committed transaction could be undone by the next client to open the database**, after a `close()` or a crashed worker.
 - **On `IDBMirrorVFS`, a commit that IndexedDB refuses — on a full storage quota, for instance — no longer comes back with the next commit or corrupts the database.** It still fails, and its rows no longer reappear with the next commit. With `synchronous` set to `NORMAL` in `pragmas`, SQLite has already reported it done: it is lost, and the database stays as it was before it. The client carries on without being reopened.
+- **On `IDBMirrorVFS` with `synchronous` set to `NORMAL` in `pragmas`, closing a client right after a write no longer leaves the other clients of the database on stale data.** Another tab kept reading the database as it was before that write until it wrote itself, and that write failed with `BUSY`; on Chromium, an `InvalidStateError` could also reach the page as an uncaught error. `close()` now returns once the last write is stored and shared with the other clients: after a large write, that takes about as long as the write would have taken with `FULL`.
 
 ## [1.0.0-rc.5] - 2026-09-22
 
