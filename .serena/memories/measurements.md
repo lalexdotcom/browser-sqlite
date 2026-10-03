@@ -62,6 +62,24 @@ His `locking_mode=EXCLUSIVE` argument holds: with `OFF` the PR alone loses the c
 
 So with `full` a commit SQLite reported as failed becomes durable with the next one; with `normal` the failure is silent and the stored database ends up corrupt.
 
+## IDBMIRROR-ABORT-JOURNAL — an aborted `IDBMirrorVFS` commit, then the next write, a reopen or exclusive mode, 2026-10-03, Playwright 1.62.1 Chromium (and Firefox for P1-P3), this container
+
+**Method.** wa-sqlite's runner on branch `fix/idb-mirror-commit-abort` (upstream `5bde491c` + the poison fix), throwaway probes, one worker per connection, the worker patching `IDBTransaction.prototype.commit` to abort the next read-write transaction (optionally after keeping it alive N ms). VFS calls traced by wrapping the instance's `j*` methods. Arms: the pushed fix ("poison": `jRead`/`jWrite`/`jTruncate`/`jFileSize` throw after the abort) and a prototype that only blocks writes and reloads blocks + `viewTx` from IndexedDB at the next SHARED from `NONE`.
+
+| case | pushed fix | reload prototype |
+|---|---|---|
+| `full`, keep using A | A dead; store ok | A recovers (next insert ok); store ok, 12/12 both engines |
+| `normal`, keep using A | A dead after one failed write; store ok | next write `IOERR` once, then ok — **store corrupt** ("Page 28: never used"), 12/12 |
+| `normal`, read transaction in flight when the abort lands | — | reads consistent (203, 203), reload after `COMMIT` (200), store ok, 12/12 |
+| `normal`, A reopens in the same VFS | **store corrupt**, 4/4 Chromium | (same journal path) |
+| `full`, A reopens in the same VFS | ok, 4/4 | ok, 4/4 |
+| `locking_mode=EXCLUSIVE`, `full` | every statement `IOERR`; store ok | same |
+| `locking_mode=EXCLUSIVE`, `normal` | **next commit returns ok and is stored on top of the lost one** (tx 4 stored, tx 3 absent); `integrity_check` ok only because it touched page 28, beyond the header's 27 | same |
+
+**Cause, traced.** The next write's batch fails (`jWrite` → 778), `ROLLBACK_ATOMIC_WRITE`, then SQLite opens `<db>-journal`, writes it and fails on the database; the journal stays in the VFS. The next SHARED (reload) or open (same VFS) sees it hot and replays pages 1 and 28 from the lost view, then `SYNC` stores them. `pager.c` 3.53.0, `sqlite3PagerCommitPhaseOne`: an `IOERR`-class error other than `IOERR_NOMEM` from the batch triggers `sqlite3JournalCreate` and a non-batch retry; any other error closes the journal. `pager_unlock`: outside exclusive mode an error releases to `NO_LOCK` and resets the cache; in exclusive mode the cache is reset but the VFS sees no unlock.
+
+Side observation, not checked on master: under `normal`, closing right after a commit can throw `InvalidStateError` from `BroadcastChannel.postMessage` in `#commitTx`'s `oncomplete` (channel closed by `jClose`), seen on Chromium jspi in the in-flight-read probe.
+
 ## PRAGMA-BUSY — a pragma that writes, applied at open, against another client's write, 2026-10-01, Playwright's Chromium and Firefox, this container
 
 **Attribution.** Two clients created in one task, each then writing, 12 runs per case, on `OPFSAnyContextVFS`, `IDBBatchAtomicVFS`, `OPFSAdaptiveVFS`. Never with one client, never without a writing pragma (`journal_mode=truncate` included). With `user_version=7` or `application_id=5`, two faces of one collision: the other client's user write rejected `BUSY: database is locked` (its own worker READY at generation 0, the barrier then its `CREATE TABLE` failing — the opening worker held RESERVED outside `bsq:write`), or the opening worker failed and was restarted (generation > 0). Two clients, pool 2, Chromium: 4-7 runs of 12 failing per VFS; Firefox `OPFSAnyContextVFS` up to 8/12 (pool 1), `IDBBatchAtomicVFS` 0-2/12, `OPFSAdaptiveVFS` 0/12.
