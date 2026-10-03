@@ -98,9 +98,9 @@ const poolFiles = async (): Promise<string[]> => {
 };
 
 describe('creating a VFS whose files are partly held', () => {
-  // Falsifiable: drop the AccessHandlePoolVFS hunk (rhashimoto/wa-sqlite#368)
-  // from patches/wa-sqlite@1.1.2.patch — the first attempt keeps what it
-  // acquired beside the held file, and the open fails once the 10 s are spent.
+  // Falsifiable: revert rhashimoto/wa-sqlite#368 in the vendored wa-sqlite
+  // with a `pnpm patch` of AccessHandlePoolVFS.js — the first attempt keeps what
+  // it acquired beside the held file, and the open fails once the 10 s are spent.
   it('opens once the held file is let go', async () => {
     // A first client, so the pool exists before anything holds one of its files.
     const creator = await createTestClient({ vfs: VFS });
