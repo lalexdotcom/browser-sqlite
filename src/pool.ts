@@ -38,6 +38,10 @@ export type PoolWorkerQueryOptions = {
    * (spec 2026-09-11, §4).
    */
   savepoint?: (() => SavepointOp | undefined) | undefined;
+  /** Forwarded as the protocol's `control`: see `SQLOptions` in `types/protocol.ts`. */
+  control?: boolean;
+  /** Forwarded as the protocol's `uncached`: see `SQLOptions` in `types/protocol.ts`. */
+  uncached?: boolean;
 };
 
 /**
@@ -691,6 +695,8 @@ export const createPoolWorker = (deps: {
         internal = false,
         timeout,
         savepoint,
+        control = false,
+        uncached = false,
       } = options ?? {};
       suppressServed = noServed;
 
@@ -729,6 +735,8 @@ export const createPoolWorker = (deps: {
           credits,
           timeout,
           ...(op ? { savepoint: op } : {}),
+          ...(control ? { control: true as const } : {}),
+          ...(uncached ? { uncached: true as const } : {}),
         },
       });
       worker.status = 'RUNNING';

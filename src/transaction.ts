@@ -25,11 +25,17 @@ import {
   withDeadline,
 } from './utils';
 
-// Drains a statement that returns no rows (BEGIN, COMMIT, ROLLBACK) without
-// the chunkSize-1 + break overhead of firstWorker. The facade marks it
-// internal, as `via` does for `savepoint` — `readWorker`'s options are the
-// public `SQLiteChunkOptions` and cannot carry the flag themselves.
-const exec = async (worker: PoolWorker, sql: string): Promise<void> => {
+// Drains a statement that returns no rows (BEGIN, COMMIT, ROLLBACK, a
+// savepoint operation) without the chunkSize-1 + break overhead of
+// firstWorker. Every one is the library's own transaction control: the facade
+// marks it `internal` for db.debug and `control` for the worker's authorizer
+// (spec 2026-10-04, § 4) — `readWorker`'s options are the public
+// `SQLiteChunkOptions` and cannot carry either flag themselves.
+const exec = async (
+  worker: PoolWorker,
+  sql: string,
+  extra: { uncached?: boolean } = {},
+): Promise<void> => {
   const facade: PoolWorker = Object.create(worker);
   facade.query = ((
     sql: string,
@@ -39,6 +45,8 @@ const exec = async (worker: PoolWorker, sql: string): Promise<void> => {
     worker.query(sql, params, {
       ...options,
       internal: true,
+      control: true,
+      ...(extra.uncached ? { uncached: true } : {}),
     })) as PoolWorker['query'];
   await readWorker(facade, sql);
 };

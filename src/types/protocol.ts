@@ -33,6 +33,14 @@ type SQLOptions = {
   credits?: number;
   /** See `SavepointOp`. */
   savepoint?: SavepointOp;
+  /**
+   * The library's own transaction control — BEGIN, COMMIT, ROLLBACK, a
+   * consumer's savepoint operation. The worker's authorizer refuses
+   * transaction control on any message without it (spec 2026-10-04, § 4).
+   */
+  control?: true;
+  /** Prepared afresh and never cached (spec 2026-10-04, D9). */
+  uncached?: true;
 };
 
 /**

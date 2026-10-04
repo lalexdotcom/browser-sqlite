@@ -22,9 +22,11 @@ const fakeWorker = (
   leaveOn: string[] = [],
 ) => {
   const executed: string[] = [];
+  const flags: { sql: string; control: boolean; uncached: boolean }[] = [];
   const worker = {
     index: 3,
     executed,
+    flags,
     inTransaction: undefined as boolean | undefined,
     query: async function* (
       sql: string,
@@ -33,6 +35,8 @@ const fakeWorker = (
         savepoint?: () =>
           | { conclude?: 'release' | 'undo'; open?: true }
           | undefined;
+        control?: boolean;
+        uncached?: boolean;
       },
     ) {
       // As the real worker (spec 2026-09-11, §4): the conclusion, then the
@@ -43,6 +47,11 @@ const fakeWorker = (
       if (savepoint?.conclude) executed.push('RELEASE __bsq_sp');
       if (savepoint?.open) executed.push('SAVEPOINT __bsq_sp');
       executed.push(sql);
+      flags.push({
+        sql,
+        control: options?.control === true,
+        uncached: options?.uncached === true,
+      });
       const fails = failOn.some((needle) => sql.startsWith(needle));
       try {
         for (const [needle, hook] of Object.entries(hooks))
@@ -1037,6 +1046,36 @@ describe('transaction — BEGIN announces write intent (spec 2026-09-15, A4)', (
       { readOnly: true },
     );
     expect(readOnlyWorker.executed[0]).toBe('BEGIN');
+  });
+});
+
+describe('transaction — the control flag (spec 2026-10-04, § 4)', () => {
+  // Falsifiable: drop `control: true` from exec() in src/transaction.ts.
+  it('marks BEGIN and COMMIT as control, and nothing the callback runs', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    await transaction(async (tx) => {
+      await tx.write('INSERT INTO t VALUES (1)');
+    });
+    expect(worker.flags).toEqual([
+      { sql: 'BEGIN IMMEDIATE', control: true, uncached: false },
+      { sql: 'INSERT INTO t VALUES (1)', control: false, uncached: false },
+      { sql: 'COMMIT', control: true, uncached: false },
+    ]);
+  });
+
+  // Falsifiable: send rollbackNow()'s ROLLBACK through a path that skips exec().
+  it('marks the teardown ROLLBACK as control', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    await transaction(async () => {
+      throw new Error('roll it back');
+    }).catch(() => {});
+    expect(worker.flags.at(-1)).toEqual({
+      sql: 'ROLLBACK',
+      control: true,
+      uncached: false,
+    });
   });
 });
 
