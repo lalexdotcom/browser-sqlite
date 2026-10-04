@@ -41,7 +41,8 @@ export type SQLiteErrorCode =
   | 'UNSUPPORTED'
   | 'WORKER_BUSY'
   | 'OPERATION_TIMEOUT'
-  | 'TRANSACTION_CLOSED';
+  | 'TRANSACTION_CLOSED'
+  | 'SAVEPOINT_CLOSED';
 
 export class SQLiteError extends Error {
   readonly code: SQLiteErrorCode;
