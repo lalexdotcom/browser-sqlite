@@ -70,6 +70,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - WRITELOCK-STUCK
 - GEN-ABORT
 - TX-CONTROL-GUARD
+- SAVEPOINT-STACK
 
 ## `mem:measurements/cross-tab-and-delete` — cross-tab coordination, Web Locks, deletion
 
