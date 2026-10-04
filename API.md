@@ -136,7 +136,7 @@ const { affected } = await db.write(
 | `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`.<br>See [Interrupting a call](#interrupting-a-call). |
 | `timeout` | `number` (ms) | — | Milliseconds before it is aborted and rejected with `OPERATION_TIMEOUT`.<br>See [Interrupting a call](#interrupting-a-call). |
 
-**Transaction control is refused.** `BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` reject with `STATEMENT_FAILED` and `sqliteCode` `23` (`SQLITE_CODES.AUTH`), on the client and inside a transaction alike: each call may run on a different connection, so a transaction opened this way could never be closed. Use [`transaction()`](#clienttransaction), and `tx.savepoint()` inside it. In a string of several statements, the ones before the refused statement have run — outside a transaction, they are committed.
+**Transaction control is refused.** `BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` reject with `STATEMENT_FAILED` and `sqliteCode` `23` (`SQLITE_CODES.AUTH`), on the client and inside a transaction alike. On the client, each call may run on a different connection, so a transaction opened this way could never be closed; inside a transaction, the library owns the transaction and its savepoints. Use [`transaction()`](#clienttransaction), and `tx.savepoint()` inside it. In a string of several statements, the ones before the refused statement have run — outside a transaction, they are committed.
 
 See [Writing queries](#writing-queries).
 
@@ -348,7 +348,7 @@ It is one object, updated in place: keep the reference and read it as often as y
 
 **A query is one SQL text sent during a request**: `sql`, `params`, `startTime`, `firstRowTime`, `endTime`, `error`, `affected`, `rows`, `prepared` (statements SQLite had to compile; 0 when the statement cache served it) and `internal`. `rows` counts the rows the client received; a `first()` or a `stream()` you left early stops at what had arrived, which may be a chunk more than you read.
 
-The library's own statements — the one that makes a worker see what another committed, and a transaction's `BEGIN` and `COMMIT` or `ROLLBACK` — appear among the queries with `internal: true`. A request's `rows` and `affected` count only yours.
+The library's own statements — the one that makes a worker see what another committed, a transaction's `BEGIN` and `COMMIT` or `ROLLBACK`, and the `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` that `tx.savepoint()` and its handle send — appear among the queries with `internal: true`. A request's `rows` and `affected` count only yours.
 
 The history keeps 50 requests per worker of the pool, and 50 queries per request; a request still waiting or running is never dropped. **It keeps `params` in memory** — the values you bound, for every query it holds. One call can make several requests: a `stream()` that meets `BUSY` takes a new lease for each attempt, and nothing links them.
 
@@ -593,7 +593,7 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 | `UNSUPPORTED` | The platform cannot answer. Raised by `inspectDatabase` and `db.inspect()` where the Web Locks API is unavailable — reporting zero clients there would be indistinguishable from a database nobody holds. |
 | `WORKER_BUSY` | A statement reached a worker that still had a query in flight. You should never see it: a statement holds its worker until it is idle, and a transaction queues its statements. If you do, that serialisation was broken — please report it. |
 | `READ_ONLY_TRANSACTION` | raised when a write statement, `bulkWrite()`, `output()` or `tx.savepoint()` is used inside a transaction opened with `readOnly: true`. |
-| `TRANSACTION_CLOSED` | A statement, `commit()`, `bulkWrite()` or `output()` was used on a transaction object whose transaction is over. `error.cause` is the reason the transaction was abandoned; it is absent when the transaction committed or rolled back. |
+| `TRANSACTION_CLOSED` | A statement, `commit()`, `bulkWrite()`, `output()`, `tx.savepoint()` or a savepoint handle's `release()` or `rollback()` was used on a transaction object whose transaction is over. `error.cause` is the reason the transaction was abandoned; it is absent when the transaction committed or rolled back. |
 | `SAVEPOINT_CLOSED` | `release()` on a savepoint already rolled back, or `rollback()` on one already released — by itself or along with a savepoint it was nested in. `error.cause` is `{ by, savepoint }`: the operation that closed it and the savepoint it addressed. |
 
 Discriminate on `error.code` or `error.name` — they carry the same value, so `err.name` reads the way `'AbortError'` does on a DOM `AbortError`.
