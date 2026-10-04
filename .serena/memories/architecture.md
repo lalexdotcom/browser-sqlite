@@ -96,7 +96,7 @@ added to one and forgotten on the other. `SQLiteDB` adds `transaction` / `close`
 actually runs: the option, capped by the VFS and by the environment, exact once `ready` resolves) — and
 `ready: Promise<void>`, which settles once the pool has started,
 which exist so a module handed a client can describe it without also being handed its options;
-`SQLiteTransactionDB` adds `commit` / `rollback`. `signal` on every method **except `inspect`**,
+`SQLiteTransactionDB` adds `commit` / `rollback`. `signal` on every method **except `inspect`** and the transaction controls `commit` / `rollback` (no options at all, like BEGIN and COMMIT on the wire; `tx.savepoint()` and its handle follow them, user 2026-10-04) —
 a documented exception: `navigator.locks.query()` takes no lock and waits for nothing, so the
 parameter could only abort the `.then()`.
 and `chunkSize` on the three that stream. Client options: `name`, `poolSize`,
