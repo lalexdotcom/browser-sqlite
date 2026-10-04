@@ -50,6 +50,30 @@ describe('transaction control through the client (spec 2026-10-04, B7)', () => {
     }
   });
 
+  // Falsifiable: remove the `extendedCode` assignment on the cache-hit refusal
+  // in src/worker/worker.ts — the error then carries the UNIQUE violation's
+  // extended code, left on the connection by the previous statement.
+  it('carries no stale extended code when a cached statement is refused', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    try {
+      await db.write('CREATE TABLE t (a INTEGER PRIMARY KEY)');
+      await db.transaction(async (tx) => {
+        await tx.write('INSERT INTO t VALUES (1)');
+      });
+      await db.write('INSERT INTO t VALUES (1)').catch(() => {});
+      const refused = await db.write('BEGIN IMMEDIATE').catch((e) => e);
+      expect(refused).toMatchObject({
+        code: 'STATEMENT_FAILED',
+        sqliteCode: SQLITE_CODES.AUTH,
+      });
+      expect(
+        (refused as { sqliteExtendedCode?: number }).sqliteExtendedCode,
+      ).toBeUndefined();
+    } finally {
+      await db.close();
+    }
+  });
+
   it('refuses it inside a compound string, after running what precedes it', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {

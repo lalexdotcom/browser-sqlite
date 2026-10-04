@@ -728,7 +728,11 @@ const open = (file: string, options: OpenOptions) => {
         const keyword = controlSql.get(sql);
         if (keyword !== undefined && !allowControl) {
           denied = keyword;
-          throw new SQLite.SQLiteError('not authorized', SQLITE_AUTH);
+          // No SQLite call failed, so the connection's extended code is some
+          // earlier statement's: stamp it here, `stamped` keeps the first.
+          const refusal = new SQLite.SQLiteError('not authorized', SQLITE_AUTH);
+          (refusal as { extendedCode?: number }).extendedCode = SQLITE_AUTH;
+          throw refusal;
         }
         let failed = false;
         try {
