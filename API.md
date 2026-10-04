@@ -594,7 +594,7 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 | `WORKER_BUSY` | A statement reached a worker that still had a query in flight. You should never see it: a statement holds its worker until it is idle, and a transaction queues its statements. If you do, that serialisation was broken — please report it. |
 | `READ_ONLY_TRANSACTION` | raised when a write statement, `bulkWrite()`, `output()` or `tx.savepoint()` is used inside a transaction opened with `readOnly: true`. |
 | `TRANSACTION_CLOSED` | A statement, `commit()`, `bulkWrite()`, `output()`, `tx.savepoint()` or a savepoint handle's `release()` or `rollback()` was used on a transaction object whose transaction is over. `error.cause` is the reason the transaction was abandoned; it is absent when the transaction committed or rolled back. |
-| `SAVEPOINT_CLOSED` | `release()` on a savepoint already rolled back, or `rollback()` on one already released — by itself or along with a savepoint it was nested in. `error.cause` is `{ by, savepoint }`: the operation that closed it and the savepoint it addressed. |
+| `SAVEPOINT_CLOSED` | `release()` on a savepoint already rolled back, `rollback()` on one already released, or `rollback({ release: false })` on one already rolled back and closed (it promises an open savepoint) — by itself or along with a savepoint it was nested in. `error.cause` is `{ by, savepoint }`: the operation that closed it and the savepoint it addressed. |
 
 Discriminate on `error.code` or `error.name` — they carry the same value, so `err.name` reads the way `'AbortError'` does on a DOM `AbortError`.
 
