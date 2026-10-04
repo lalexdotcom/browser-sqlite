@@ -113,6 +113,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - CACHE-BYTES settled
 - Performance backlog closed
 - The `sync` build against the `async` build
+- JSPI-SYNC-RELAYS
 
 ## `mem:measurements/bench-and-devices` — the bench page, devices, browsers, bundlers
 

@@ -436,3 +436,24 @@ these rows do not pass, so the ratios are expected to hold — **expected, not r
 The README cites this reading in `Known Limitations` → `Aborting a call`, deliberately
 without figures: "may take significantly longer, on the order of twice as long in this
 project's own measurements and more than that on some engines".
+
+## JSPI-SYNC-RELAYS — the `jspi` build makes every synchronous callback pay a suspension on Firefox — 2026-10-04, this container, Chromium 151.0.7922.34 / Firefox 153 (Playwright `firefox-1538`)
+
+Found while pricing the authorizer (TX-CONTROL-GUARD, `mem:measurements/transactions`). **Cause, read from wa-sqlite's source at the pin:** each relay exists twice, `SIG` and `SIG_async`, and the C side already picks one per callback (`CALL_JS`/`VFS_JS`: the `_async` one only when the JS method is an `AsyncFunction` — `FacadeVFS.hasAsyncMethod`, `instanceof AsyncFunction` in `libauthorizer.js`, `libhook.js`, `libprogress.js`, `libfunction.js`). But `src/asyncify_imports.json`, which the Makefile passes to the JSPI build as well, lists BOTH variants, so the glue's `importPattern` wraps the synchronous relays in `WebAssembly.Suspending` too. The wrapping is done in the JS glue (`dist/wa-sqlite-jspi.mjs`), not in the `.wasm`.
+
+**Engine cost** (hand-written wasm, a loop calling one empty import, dedicated worker, median of 7, 3 pages per engine): plain import 0.004 µs on both; `Suspending` import whose function returns at once **2.2-2.4 µs on Firefox**, 0.055-0.06 µs on Chromium; a real suspension 2.7-3.0 µs on Firefox. Firefox charges a `Suspending` import almost a real suspension.
+
+**The fix, measured without rebuilding:** a copy of the glue whose `importPattern` is `/^([a-z]+_async|invoke_.*|__asyncjs__.*)$/` (`.scratchpad/authorizer-cost-2026-10-03/wa-sqlite-jspi-patched.mjs`), same `.wasm`. Same probe as TX-CONTROL-GUARD, µs per statement, median of 3 pages, ranges within a few %:
+
+| Firefox | `async` | `jspi` | `jspi` patched |
+|---|---|---|---|
+| `MemoryVFS`, one-row `INSERT` | 87.4 | 363.0 | **95.0** |
+| `MemoryVFS`, cached `step` | 22.3 | 81.1 | **28.0** |
+| `MemoryVFS`, 50-column prepare, authorizer on | 154.8 | 745.6 | **144.5** |
+| `OPFSAdaptiveVFS`, one-row `INSERT` (autocommit) | 2 698 | 2 956 | **2 659** |
+| `OPFSAdaptiveVFS`, cached `step` | 449 | 445 | 425 |
+| `OPFSAdaptiveVFS`, 50-column prepare | 134.3 | 118.8 | 118.5 |
+
+`OPFSAdaptiveVFS` was created with `lockPolicy: 'shared'`, n = 200 per batch, 5 rounds; its `jLock`/`jUnlock`/`jOpen`/`jClose`/`jDelete`/`jAccess` are `async` and stay suspending, `jRead`/`jWrite`/`jSync`/`jFileSize`/`jFileControl` are sync and stop paying. On Chromium nothing moves (jspi 5 546 / patched 5 600 µs per insert, inside the ranges). **The ~10 % that `jspi` lost to `async` on Firefox writes is gone with the patch** — the same size as the bench corpus's Firefox `transaction-throughput` 1.06 and `overwrite-throughput` 1.08 (`jspi / async`, `OPFSAdaptiveVFS`, 8 exports), which the default-build spec of 2026-09-24 read as "equal". Absolute OPFS timings come from Playwright's off-the-record pages (RSTEST-OTR); the ratios are what this entry claims.
+
+**Risk of the change:** a callback or VFS method that is a plain function returning a Promise works on today's `jspi` build (the `Suspending` wrapper tolerates it) and would break — as it already breaks on the `async` build, where the sync relay cannot await. Every VFS this library ships runs on `async` in the matrix (66/66), so none does that. **Not measured:** the patched glue under the library's suite or matrix; the `async` build, whose Asyncify instrumentation is also driven by that list (needs an emsdk rebuild).
