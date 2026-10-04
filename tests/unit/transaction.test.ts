@@ -1,5 +1,5 @@
 import { describe, expect, it, rstest } from '@rstest/core';
-import type { SQLiteTransactionDB } from '../../src/api';
+import type { SQLiteSavepoint, SQLiteTransactionDB } from '../../src/api';
 import { createTransaction } from '../../src/transaction';
 import { SQLiteError } from '../../src/types/errors';
 
@@ -60,7 +60,7 @@ const fakeWorker = (
         yield [] as Record<string, unknown>[];
       } finally {
         if (!fails && sql.startsWith('BEGIN')) worker.inTransaction = true;
-        else if (!fails && /^(COMMIT|ROLLBACK)/.test(sql))
+        else if (!fails && /^(COMMIT|ROLLBACK(?!\s+TO\b))/.test(sql))
           worker.inTransaction = false;
         if (leaveOn.some((needle) => sql.startsWith(needle)))
           worker.inTransaction = false;
@@ -859,6 +859,7 @@ describe('transaction — a savepointed write, and the message after it (spec 20
       'SELECT 2',
     ],
     ['commit', (tx) => tx.commit(), 'COMMIT'],
+    ['savepoint', (tx) => tx.savepoint('u'), 'SAVEPOINT "u"'],
   ];
   for (const [name, entry, sql] of entries) {
     it(`${name}() concludes the abandoned write's savepoint, with an undo, first`, async () => {
@@ -870,6 +871,51 @@ describe('transaction — a savepointed write, and the message after it (spec 20
         'ROLLBACK TO __bsq_sp',
         'RELEASE __bsq_sp',
         sql,
+      ]);
+    });
+  }
+
+  // T7 for the handle (spec 2026-10-04, U1). Falsifiable, each: run that
+  // operation through exec(worker, …) instead of exec(via(false), …).
+  for (const [name, end, sql] of [
+    ['release', (sp: SQLiteSavepoint) => sp.release(), 'RELEASE "u"'],
+    [
+      'rollback',
+      (sp: SQLiteSavepoint) => sp.rollback(),
+      'ROLLBACK TO "u"; RELEASE "u"',
+    ],
+  ] as const) {
+    it(`a savepoint's ${name}() concludes the abandoned write's savepoint first`, async () => {
+      const reached = deferred();
+      const gate = deferred();
+      const worker = fakeWorker([], {
+        'INSERT INTO t VALUES (1)': async () => {
+          reached.resolve();
+          await gate.promise;
+        },
+      });
+      const { transaction } = harness(worker);
+      const own = new AbortController();
+      await transaction(async (tx) => {
+        const sp = await tx.savepoint('u');
+        const write = tx.write('INSERT INTO t VALUES (1)', [], {
+          signal: own.signal,
+        });
+        await reached.promise;
+        own.abort(new Error('this write only'));
+        await write.catch(() => {});
+        gate.resolve();
+        await end(sp);
+      });
+      expect(worker.executed).toEqual([
+        'BEGIN IMMEDIATE',
+        'SAVEPOINT "u"',
+        'SAVEPOINT __bsq_sp',
+        'INSERT INTO t VALUES (1)',
+        'ROLLBACK TO __bsq_sp',
+        'RELEASE __bsq_sp',
+        sql,
+        'COMMIT',
       ]);
     });
   }
@@ -1116,5 +1162,207 @@ describe('transaction — the statement queue advisory', () => {
     } finally {
       rstest.useRealTimers();
     }
+  });
+});
+
+describe('tx.savepoint() — what reaches the worker (spec 2026-10-04, U2, U6)', () => {
+  // Falsifiable: call exec() without `{ uncached: true }` in runControl().
+  it('sends each operation as uncached control', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    await transaction(async (tx) => {
+      const sp = await tx.savepoint('u');
+      await sp.rollback({ release: false });
+      await sp.release();
+    });
+    expect(worker.flags.slice(1, -1)).toEqual([
+      { sql: 'SAVEPOINT "u"', control: true, uncached: true },
+      { sql: 'ROLLBACK TO "u"', control: true, uncached: true },
+      { sql: 'RELEASE "u"', control: true, uncached: true },
+    ]);
+  });
+
+  it('names unnamed savepoints __bsq_sp_<n>, from 1 in every transaction', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    const names: string[] = [];
+    await transaction(async (tx) => {
+      names.push((await tx.savepoint()).name, (await tx.savepoint()).name);
+    });
+    await transaction(async (tx) => {
+      names.push((await tx.savepoint()).name);
+    });
+    expect(names).toEqual(['__bsq_sp_1', '__bsq_sp_2', '__bsq_sp_1']);
+    expect(worker.executed).toContain('SAVEPOINT "__bsq_sp_2"');
+  });
+});
+
+describe('tx.savepoint() — refusals at the call (spec 2026-10-04, E1-E8, U3)', () => {
+  it('refuses on a transaction that is over, and so does a handle kept after it (E1)', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    let kept: SQLiteTransactionDB | undefined;
+    let sp: SQLiteSavepoint | undefined;
+    await transaction(async (tx) => {
+      kept = tx;
+      sp = await tx.savepoint('u');
+    });
+    const sent = worker.executed.length;
+    await expect(kept?.savepoint()).rejects.toMatchObject({
+      code: 'TRANSACTION_CLOSED',
+    });
+    await expect(sp?.release()).rejects.toMatchObject({
+      code: 'TRANSACTION_CLOSED',
+    });
+    await expect(sp?.rollback()).rejects.toMatchObject({
+      code: 'TRANSACTION_CLOSED',
+    });
+    expect(worker.executed.length).toBe(sent);
+  });
+
+  it('refuses in a read-only transaction (E2)', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    await transaction(
+      async (tx) => {
+        await expect(tx.savepoint()).rejects.toMatchObject({
+          code: 'READ_ONLY_TRANSACTION',
+        });
+      },
+      { readOnly: true },
+    );
+    expect(worker.executed).toEqual(['BEGIN', 'COMMIT']);
+  });
+
+  it('refuses a name already open and sends nothing (E4)', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    await transaction(async (tx) => {
+      await tx.savepoint('u');
+      await expect(tx.savepoint('U')).rejects.toMatchObject({
+        code: 'INVALID_IDENTIFIER',
+      });
+    });
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'SAVEPOINT "u"',
+      'COMMIT',
+    ]);
+  });
+
+  it("refuses a child's rollback after the parent's release, and sends nothing for it (E5, E7)", async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    await transaction(async (tx) => {
+      const parent = await tx.savepoint('p');
+      const child = await tx.savepoint('c');
+      await parent.release();
+      await child.release();
+      await expect(child.rollback()).rejects.toMatchObject({
+        code: 'SAVEPOINT_CLOSED',
+        cause: { by: 'release', savepoint: 'p' },
+      });
+    });
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'SAVEPOINT "p"',
+      'SAVEPOINT "c"',
+      'RELEASE "p"',
+      'COMMIT',
+    ]);
+  });
+
+  // Falsifiable: in waitFor() (src/transaction.ts), drop `if (ending) throw closedError(ending);`.
+  it('never sends an operation queued behind commit() (E8)', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    let late: Promise<unknown> | undefined;
+    await transaction(
+      async (tx) => {
+        const commit = tx.commit();
+        late = tx.savepoint('late').catch((e) => e);
+        await commit;
+      },
+      { autoCommit: false },
+    );
+    expect(await late).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+    expect(worker.executed).toEqual(['BEGIN IMMEDIATE', 'COMMIT']);
+  });
+
+  // Falsifiable: update the stack copy after runControl() resolves instead of at the call.
+  it('opens a savepoint issued without await before the write that follows it', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    await transaction(async (tx) => {
+      const sp = tx.savepoint('u');
+      const write = tx.write('INSERT INTO t VALUES (1)');
+      await Promise.all([sp, write]);
+    });
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'SAVEPOINT "u"',
+      'INSERT INTO t VALUES (1)',
+      'COMMIT',
+    ]);
+  });
+});
+
+describe('tx.savepoint() — failures and endings (spec 2026-10-04, E12, D5, U4, U5)', () => {
+  // Falsifiable: drop die(e) from runControl().
+  it('kills the transaction when an operation fails, and the teardown concludes nothing (E12)', async () => {
+    const worker = fakeWorker(['RELEASE "u"']);
+    const { transaction } = harness(worker);
+    let caught: unknown;
+    const outcome = await transaction(async (tx) => {
+      const sp = await tx.savepoint('u');
+      caught = await sp.release().catch((e) => e);
+      await tx.write('INSERT INTO t VALUES (1)');
+    }).catch((e) => e);
+    expect(outcome).toBe(caught);
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'SAVEPOINT "u"',
+      'RELEASE "u"',
+      'ROLLBACK',
+    ]);
+  });
+
+  it('commits open savepoints with the transaction, without a RELEASE, and closes their handles (D5)', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    let sp: SQLiteSavepoint | undefined;
+    await transaction(async (tx) => {
+      sp = await tx.savepoint('a');
+      await tx.savepoint('b');
+    });
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'SAVEPOINT "a"',
+      'SAVEPOINT "b"',
+      'COMMIT',
+    ]);
+    await expect(sp?.release()).rejects.toMatchObject({
+      code: 'TRANSACTION_CLOSED',
+    });
+  });
+
+  it('rolls everything back under autoCommit: false with no commit()', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    let sp: SQLiteSavepoint | undefined;
+    await transaction(
+      async (tx) => {
+        sp = await tx.savepoint('a');
+      },
+      { autoCommit: false },
+    );
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'SAVEPOINT "a"',
+      'ROLLBACK',
+    ]);
+    await expect(sp?.rollback()).rejects.toMatchObject({
+      code: 'TRANSACTION_CLOSED',
+    });
   });
 });

@@ -2,6 +2,7 @@ import type {
   Interruptible,
   SQLiteChunkOptions,
   SQLiteQueryAPI,
+  SQLiteSavepoint,
   SQLiteTransactionDB,
   SQLiteTransactionOptions,
 } from './api';
@@ -16,12 +17,14 @@ import {
   streamRows,
   writeWorker,
 } from './queries';
+import { createSavepointStack, type SavepointEntry } from './savepoints';
 import type { Scheduler } from './scheduler';
 import { SQLiteError } from './types/errors';
 import {
   isTransactionControl,
   isWriteQuery,
   mergeSignals,
+  quoteIdent,
   withDeadline,
 } from './utils';
 
@@ -261,6 +264,35 @@ export const createTransaction =
        * abandoned by its own signal"), where the read must run on and be judged.
        */
       let tail: Promise<void> | undefined;
+
+      /** The library's copy of this transaction's savepoint stack (spec 2026-10-04, § 5). */
+      const savepoints = createSavepointStack();
+
+      /**
+       * Runs one savepoint operation as the library's own control statement:
+       * in its place in the queue, after an abandoned write has been judged,
+       * through `via` so it concludes a pending `__bsq_sp` first, and uncached
+       * (spec 2026-10-04, D9). A failure leaves the stack copy unprovable, so
+       * it kills the transaction, whose teardown rolls everything back (E12).
+       */
+      const runControl = async (sql: string): Promise<void> => {
+        const prior = tail;
+        const mine = Promise.withResolvers<void>();
+        tail = mine.promise;
+        try {
+          if (prior) await queueWait(prior, signal);
+          if (abandoned) await entryWait(signal);
+          try {
+            await exec(via(false), sql, { uncached: true });
+          } catch (e) {
+            die(e);
+            throw e;
+          }
+        } finally {
+          if (tail === mine.promise) tail = undefined;
+          mine.resolve(prior);
+        }
+      };
 
       // The SQL ends, for the transaction's own use. BEGIN, COMMIT and
       // ROLLBACK carry no signal, so a death can land while one is in flight.
@@ -1051,6 +1083,52 @@ export const createTransaction =
             if (tail === mine.promise) tail = undefined;
             mine.resolve(prior);
           }
+        },
+        savepoint: (name?: string) => {
+          if (ending) return Promise.reject(closedError(ending));
+          if (readOnly)
+            return Promise.reject(
+              new SQLiteError(
+                'READ_ONLY_TRANSACTION',
+                'Cannot open a savepoint in a read-only transaction: nothing in it can be written.',
+              ),
+            );
+          let entry: SavepointEntry;
+          try {
+            entry = savepoints.open(name);
+          } catch (e) {
+            return Promise.reject(e);
+          }
+          const quoted = quoteIdent(entry.name);
+          const handle: SQLiteSavepoint = {
+            name: entry.name,
+            release: () => {
+              if (ending) return Promise.reject(closedError(ending));
+              try {
+                return savepoints.release(entry) === 'send'
+                  ? runControl(`RELEASE ${quoted}`)
+                  : Promise.resolve();
+              } catch (e) {
+                return Promise.reject(e);
+              }
+            },
+            rollback: (options) => {
+              if (ending) return Promise.reject(closedError(ending));
+              const release = options?.release ?? true;
+              try {
+                return savepoints.rollback(entry, release) === 'send'
+                  ? runControl(
+                      release
+                        ? `ROLLBACK TO ${quoted}; RELEASE ${quoted}`
+                        : `ROLLBACK TO ${quoted}`,
+                    )
+                  : Promise.resolve();
+              } catch (e) {
+                return Promise.reject(e);
+              }
+            },
+          };
+          return runControl(`SAVEPOINT ${quoted}`).then(() => handle);
         },
         // The merged signal itself (spec §4): it aborts on every cause of death with the cause as
         // reason, and the outer finally only detaches it, so a normal end leaves it un-aborted for good.

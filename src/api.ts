@@ -475,6 +475,17 @@ export type SQLiteTransactionDB = SQLiteQueryAPI & {
   commit: () => Promise<void>;
   rollback: () => Promise<void>;
   /**
+   * Opens a savepoint: a point inside this transaction you can roll back to
+   * without abandoning the transaction. Savepoints nest, in the order they
+   * are opened; rolling back or releasing one closes those opened after it.
+   * `name` is optional — a name already open, empty, or starting with
+   * `__bsq_` is refused with `INVALID_IDENTIFIER`. Refused with
+   * `READ_ONLY_TRANSACTION` in a read-only transaction. Takes no signal, like
+   * `commit()` and `rollback()`. A savepoint still open when the transaction
+   * commits is committed with it.
+   */
+  savepoint: (name?: string) => Promise<SQLiteSavepoint>;
+  /**
    * Aborted when this transaction fails or is abandoned — its own signal or
    * timeout, close(), an abandoned write, or an error the callback lets
    * escape — with the value `transaction()` rejects with. Never aborted when
@@ -482,4 +493,23 @@ export type SQLiteTransactionDB = SQLiteQueryAPI & {
    * `fetch`, so that work stops with the transaction.
    */
   readonly signal: AbortSignal;
+};
+
+/** A savepoint opened by `tx.savepoint()`. */
+export type SQLiteSavepoint = {
+  /** The name given, or the one generated (`__bsq_sp_<n>`) — what `db.debug` shows. */
+  readonly name: string;
+  /**
+   * Keeps what was written since the savepoint and closes it. Resolves
+   * without sending anything when it is already released; rejects with
+   * `SAVEPOINT_CLOSED` when it was rolled back.
+   */
+  release: () => Promise<void>;
+  /**
+   * Undoes what was written since the savepoint. Closes it unless
+   * `release: false`, which keeps it open to roll back to again. Resolves
+   * without sending anything when it is already rolled back; rejects with
+   * `SAVEPOINT_CLOSED` when it was released.
+   */
+  rollback: (options?: { release?: boolean }) => Promise<void>;
 };
