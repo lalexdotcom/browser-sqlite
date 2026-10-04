@@ -128,16 +128,6 @@ commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
 
-## `tx.savepoint()` returning a rollback callback — for rc.6 (user, 2026-09-11)
-
-A feature, so rc.6 by the triage rule. Raised while settling rc.5's savepoint rule: three writes
-in one `try`, the third times out — rc.5 keeps the first two, as SQLite does for any statement
-error. A consumer who wants the three all-or-nothing without abandoning the whole transaction
-needs a nested block; the user's shape is a `tx.savepoint()` that returns a callback rolling
-back to it. Not designed. It will sit on the savepoint machinery merged on 2026-09-12 (`via`, `__bsq_sp`,
-`mem:architecture`): a new entry point must go through the facade, which concludes the library's
-savepoint before opening its own.
-
 ## Move to Playwright 1.64.0 as soon as it is released stable — its Firefox fixes the young-worker segfault (user, 2026-10-03)
 
 Playwright's Firefox loses the page's content process when a worker is `terminate()`d a few ms after `new Worker(...)` (LIFECYCLE-SEGV, `mem:measurements`). **Already fixed upstream, no issue to open:** it is microsoft/playwright#42565 (a worker torn down while its script compiles, a regression of 1.62.0's `firefox-1538`), fixed by the Gecko patch rolled in #42631 (`r1544`, 2026-09-09). Checked 2026-10-03 with a one-spec reproduction (`about:blank`, two blob workers terminated 0-6 ms after creation, 150 rounds): Playwright 1.63.0 (`firefox-1543`, Firefox 155.0) 5/5 `Target crashed`, and its binary launched alone 10/10, against Mozilla's Firefox 155.0 10/10 clean; `@playwright/test@1.64.0-alpha-2026-10-03` (`firefox-1554`) 10/10 clean on Firefox. **To do when 1.64.0 is released stable** (not an alpha; `npm view playwright dist-tags` → `latest`): bump `playwright` in `package.json` (pinned at 1.62.1), then **make sure the Firefox actually used is the new build**, `firefox-1554` or later:

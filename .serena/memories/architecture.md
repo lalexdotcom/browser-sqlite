@@ -28,6 +28,7 @@ Stack, build output and test tooling: `mem:stack-and-build`. VFS: `mem:vfs`.
 | `supervisor.ts` | 94 | Pure per-slot restart policy, zero imports. A slot holds a worker **from `spawned`, not from `ready`** — that is SUP-1's fix. Restart counter resets on a request actually served; eviction leaving no live slot fails the client; `evicted` is permanent against a late `ready`. |
 | `queries.ts` | 167 | `chunk()` — the single query primitive and **the only place an `AbortSignal` is read** — plus `streamRows`/`readWorker`/`firstWorker`/`writeWorker` and `makeAbortRace`. |
 | `transaction.ts` | 200 | `transaction()` over a single lease held for its whole lifetime. Evicts a worker whose fallback `ROLLBACK` failed. |
+| `savepoints.ts` | — | **Pure** — the savepoint-stack copy and its decision table, unit-tested in Node. `release()` and `rollback()` on a handle are decided against the stack; a method on a closed handle resolves when what it promises is already true and rejects with `SAVEPOINT_CLOSED` otherwise, and `rollback({ release: false })` on a savepoint already rolled back and closed rejects with `SAVEPOINT_CLOSED`. |
 | `bulk.ts` | 334 | `bulkWrite()` + `output()`. Calls the **public** `write` — one lease per batch, worker released between batches. Do not consolidate it into one held lease; multi-tab safety depends on it. |
 | `credits.ts` | 94 | The pure credit gate. `createCreditGate(tick)`, `createMessageChannelTick`, `DEFAULT_CREDIT_WINDOW = 2`. |
 | `epochs.ts` | — | The barrier's state. The realm-wide symbol registry (`Symbol.for('browser-sqlite.epochs.v1')`) is still there and every client in a tab shares it — but since rc.5 it is a **floor**, not the authority: `originMax()` reads `max(n)` over held `bsq:epoch:<ns>:<file>:<n>` lock names and `raiseTo` can only lift the cell. **`Symbol.for` is shared across realms; `globalThis` is not** — measured, and that is where the per-realm separation actually comes from, not from the symbol. `current`/`bump`/`raiseTo` are synchronous and must stay so; only `originMax`/`publish` are async. |
@@ -228,12 +229,9 @@ transaction would fail and evict a healthy worker through `onPoisoned`. A new st
 method that calls a query helper with the raw worker instead of `via(…)` breaks the undo
 silently — its first message carries no pending conclusion, so a savepoint opened by an
 earlier abandoned write is never
-resolved. `tests/unit/transaction.test.ts` T7 is parameterised over the methods to catch it.
+resolved. `tests/unit/transaction.test.ts` T7 is parameterised over the methods to catch it. `tx.savepoint()`, `release()` and `rollback()` go through `via(false)` in `runControl`, and T7 covers them.
 
-**Transaction-control statements are never wrapped in a savepoint** (`isTransactionControl`,
-spec D8) — `opensSavepoint` in `transaction.ts` excludes them. A consumer's own `RELEASE u`
-running with its own timeout would otherwise pop `__bsq_sp` along with `u`, undoing more
-than the abandoned write it was meant to guard.
+**The worker's authorizer is the only guard against transaction control (spec 2026-10-04, § 4).** It denies `SQLITE_TRANSACTION` and `SQLITE_SAVEPOINT` unless the message carries `control`, which only `transaction.ts`'s `exec` and the worker's own `__bsq_sp` `control()` set; `controlSql` remembers the control statements it allowed so a cache hit cannot bypass it; savepoint operations run `uncached`. A new library path that sends transaction control without `exec` is refused with `AUTH`. Transaction control is allowed while a statement is stepping — VACUUM runs its own BEGIN/COMMIT during its step; a consumer's control statement is refused at its own prepare, or by `controlSql` on a cache hit, always before any step. The cache-hit refusal sets `extendedCode = SQLITE_AUTH` itself, because no SQLite call failed and `stamped` would otherwise read a stale code.
 
 **A load's batches are savepointed individually, not the load as a whole.** `bulk.ts`'s
 `runBatch` issues one `tx.write()` per batch, each independently savepointed by `withSignal`
