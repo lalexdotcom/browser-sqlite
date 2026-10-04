@@ -2,6 +2,8 @@
 
 **Date:** 2026-10-04 · **Status:** approved in chat section by section, spec under review · **Target:** rc.6 (`## [Unreleased]`) · **Branch:** `feat/tx-savepoint`
 
+**Amended 2026-10-04 (plan):** `sqliteCode` is numeric — `SQLITE_CODES.AUTH`, 23 — wherever this spec writes `'AUTH'`. E19 is timing-dependent: `output()` creates its staging table after `sweepOnce()`, which may wait on a Web Lock, so a rollback issued while a load is open lands before or after the `CREATE`; the load either fails visibly or lands in the parent scope. The documented rule is to close a load before ending its savepoint, and B6 pins that shape. § 4 also allows transaction control while a statement is stepping: VACUUM runs its own BEGIN and COMMIT during its step, and a consumer's control statement is refused at its own prepare — or, cached, before its step — so it never reaches a step.
+
 Backlog entry "`tx.savepoint()` returning a rollback callback — for rc.6" (user, 2026-09-11). Raised while settling rc.5's savepoint rule (spec 2026-09-11, D1): three writes in one `try`, the third fails — the first two stay, as SQLite does for any statement error. A consumer who wants the three all-or-nothing without abandoning the whole transaction needs a nested block. This design gives it, and closes the hole it exposed: nothing stops a consumer from sending `BEGIN`, `COMMIT`, `SAVEPOINT` or `RELEASE` as SQL, inside a transaction or outside one.
 
 **Amends** `docs/superpowers/specs/2026-09-11-tx-savepoint-design.md`: its D8 (transaction-control statements are never wrapped in `__bsq_sp`, and a consumer may send them) is superseded by § 4 here; that spec gets a dated amendment pointing here.
@@ -73,7 +75,7 @@ A method resolves only when what it promises is true: `release()` when the savep
 
 **The cache.** A cache hit prepares nothing, so it never meets the authorizer: after the library's first `BEGIN IMMEDIATE`, a consumer's `db.write('BEGIN IMMEDIATE')` would find that entry and run. So an entry whose prepare made the authorizer see action 22 or 32 is marked as control, and a hit on a marked entry by a message without the flag is refused before `step()`, with the same error.
 
-**The error.** The callback records the action and its argument; the worker rejects with `STATEMENT_FAILED`, `sqliteCode: 'AUTH'`, and a message chosen by `sqlite3_get_autocommit`: outside a transaction it points to `db.transaction()`, inside one to `tx.savepoint()`. The library owns the connection, so `AUTH` comes from nothing else.
+**The error.** The callback records the action and its argument; the worker rejects with `STATEMENT_FAILED`, `sqliteCode: 23`, and a message chosen by `sqlite3_get_autocommit`: outside a transaction it points to `db.transaction()`, inside one to `tx.savepoint()`. The library owns the connection, so `AUTH` comes from nothing else.
 
 **Coverage.** Every statement of every client. A grep of `src/` finds transaction control in two places only, `transaction.ts` and the worker's `control()`, so nothing else needs the flag.
 
@@ -176,7 +178,7 @@ Each with the mutation that turns it red.
 
 ## 8. Documentation
 
-- **`API.md`** — a `tx.savepoint()` section under `transaction()`: signature and `SQLiteSavepoint`, the states table in consumer terms, the naming rules, no `signal` (as for `commit()`/`rollback()`), an open savepoint committed with the transaction, the `readOnly` refusal. In *Inside a transaction*, beside the queue paragraph: savepoints are a stack in call order, interleaved branches undo each other, a `bulkWrite()` left open spills into the parent scope (E18), an `output()` across a rollback fails (E19). In `write()` and its siblings: transaction control is refused, use `transaction()` / `tx.savepoint()`, plus the compound-string property. In the error table: `SAVEPOINT_CLOSED`, and `STATEMENT_FAILED` with `sqliteCode: 'AUTH'` for refused control.
+- **`API.md`** — a `tx.savepoint()` section under `transaction()`: signature and `SQLiteSavepoint`, the states table in consumer terms, the naming rules, no `signal` (as for `commit()`/`rollback()`), an open savepoint committed with the transaction, the `readOnly` refusal. In *Inside a transaction*, beside the queue paragraph: savepoints are a stack in call order, interleaved branches undo each other, a `bulkWrite()` left open spills into the parent scope (E18), an `output()` across a rollback fails (E19). In `write()` and its siblings: transaction control is refused, use `transaction()` / `tx.savepoint()`, plus the compound-string property. In the error table: `SAVEPOINT_CLOSED`, and `STATEMENT_FAILED` with `sqliteCode: 23` for refused control.
 - **`CHANGELOG.md`, `## [Unreleased]`**, through the `changelog-maintenance` skill — *Added*: `tx.savepoint()`, `SQLiteSavepoint`, `SAVEPOINT_CLOSED`. *Breaking*: `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` sent as SQL inside a transaction are refused; use `tx.savepoint()`. *Fixed*: `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT` and `RELEASE` through `db.write()` and its siblings are refused, where they used to leave a transaction open on a pooled connection.
 - **`src/api.ts`** — JSDoc on `savepoint` and `SQLiteSavepoint`, public by construction; the `SQLiteErrorCode` union gains `SAVEPOINT_CLOSED`.
 - **The 2026-09-11 spec** — a dated amendment: D8 superseded by § 4 here.

@@ -185,7 +185,8 @@ const openWithRetry = async (
  * The one savepoint this library opens inside a transaction (spec 2026-09-11,
  * D7). One at a time — the next message concludes it before anything else —
  * so a fixed name suffices, and its three statements stay in the statement
- * cache. A consumer's own savepoints never sit above it.
+ * cache. A `tx.savepoint()` is only opened between messages, so it never sits
+ * above it.
  */
 const LIBRARY_SAVEPOINT = '__bsq_sp';
 
