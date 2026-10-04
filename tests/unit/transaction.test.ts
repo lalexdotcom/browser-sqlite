@@ -1296,9 +1296,14 @@ describe('tx.savepoint() — refusals at the call (spec 2026-10-04, E1-E8, U3)',
     const { transaction } = harness(worker);
     await transaction(async (tx) => {
       const first = tx.savepoint('u');
-      await expect(tx.savepoint('U')).rejects.toMatchObject({
-        code: 'INVALID_IDENTIFIER',
-      });
+      const second = tx.savepoint('U').catch((e) => e);
+      // The refusal settles before the first savepoint's reply arrives.
+      const settledFirst = await Promise.race([
+        first.then(() => 'first'),
+        second.then(() => 'second'),
+      ]);
+      expect(settledFirst).toBe('second');
+      expect(await second).toMatchObject({ code: 'INVALID_IDENTIFIER' });
       await first;
     });
   });
