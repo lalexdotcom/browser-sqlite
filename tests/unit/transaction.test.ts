@@ -1054,22 +1054,6 @@ describe('transaction — a savepointed write, and the message after it (spec 20
       'ROLLBACK',
     ]);
   });
-
-  // D8. Falsifiable: drop `!isTransactionControl(sql)` from opensSavepoint().
-  it('never wraps a transaction-control statement, even with its own timeout', async () => {
-    const worker = fakeWorker([]);
-    const { transaction } = harness(worker);
-    await transaction(async (tx) => {
-      await tx.write('SAVEPOINT u');
-      await tx.write('RELEASE u', [], { timeout: 60_000 });
-    });
-    expect(worker.executed).toEqual([
-      'BEGIN IMMEDIATE',
-      'SAVEPOINT u',
-      'RELEASE u',
-      'COMMIT',
-    ]);
-  });
 });
 
 describe('transaction — BEGIN announces write intent (spec 2026-09-15, A4)', () => {

@@ -20,13 +20,7 @@ import {
 import { createSavepointStack, type SavepointEntry } from './savepoints';
 import type { Scheduler } from './scheduler';
 import { SQLiteError } from './types/errors';
-import {
-  isTransactionControl,
-  isWriteQuery,
-  mergeSignals,
-  quoteIdent,
-  withDeadline,
-} from './utils';
+import { isWriteQuery, mergeSignals, quoteIdent, withDeadline } from './utils';
 
 // Drains a statement that returns no rows (BEGIN, COMMIT, ROLLBACK, a
 // savepoint operation) without the chunkSize-1 + break overhead of
@@ -456,17 +450,13 @@ export const createTransaction =
        * Whether a statement runs inside the library's savepoint (spec
        * 2026-09-11, R1): a write the caller may abandon alone — it carries its
        * own signal or timeout, not already aborted at the call. Only those pay
-       * (D4). Never a transaction-control statement (D8).
+       * (D4). A consumer's transaction control is refused by the worker's authorizer (spec 2026-10-04, § 4).
        */
       const opensSavepoint = (
         sql: string,
         own: AbortSignal | undefined,
         abortedAtCall: boolean,
-      ) =>
-        own !== undefined &&
-        !abortedAtCall &&
-        isWriteQuery(sql) &&
-        !isTransactionControl(sql);
+      ) => own !== undefined && !abortedAtCall && isWriteQuery(sql);
 
       /**
        * Kills the transaction when the connection reports it is no longer in
