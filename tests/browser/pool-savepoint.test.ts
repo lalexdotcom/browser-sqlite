@@ -35,6 +35,10 @@ const spawn = async (): Promise<{ worker: PoolWorker; file: string }> => {
   return { worker: opened, file };
 };
 
+// Transaction control carries the flag, as transaction.ts's exec sends it:
+// the worker's authorizer refuses it otherwise.
+const CONTROL: PoolWorkerQueryOptions = { control: true };
+
 const run = async (
   worker: PoolWorker,
   sql: string,
@@ -53,7 +57,7 @@ describe('the worker concludes, then opens, a savepoint before the statement', (
     const { worker, file } = await spawn();
     try {
       await run(worker, 'CREATE TABLE t (a INTEGER)');
-      await run(worker, 'BEGIN');
+      await run(worker, 'BEGIN', CONTROL);
       await run(worker, 'INSERT INTO t VALUES (1)');
       await run(worker, 'INSERT INTO t VALUES (2)', {
         savepoint: () => ({ open: true }),
@@ -61,7 +65,7 @@ describe('the worker concludes, then opens, a savepoint before the statement', (
       await run(worker, 'INSERT INTO t VALUES (3)', {
         savepoint: () => ({ conclude: 'undo' }),
       });
-      await run(worker, 'COMMIT');
+      await run(worker, 'COMMIT', CONTROL);
       expect(await run(worker, 'SELECT a FROM t ORDER BY a')).toEqual([
         { a: 1 },
         { a: 3 },
@@ -79,7 +83,7 @@ describe('the worker concludes, then opens, a savepoint before the statement', (
     const { worker, file } = await spawn();
     try {
       await run(worker, 'CREATE TABLE t (a INTEGER)');
-      await run(worker, 'BEGIN');
+      await run(worker, 'BEGIN', CONTROL);
       await run(worker, 'INSERT INTO t VALUES (1)');
       await run(worker, 'INSERT INTO t VALUES (2)', {
         savepoint: () => ({ open: true }),
@@ -87,9 +91,11 @@ describe('the worker concludes, then opens, a savepoint before the statement', (
       await run(worker, 'SELECT 1', {
         savepoint: () => ({ conclude: 'release' }),
       });
-      const refused = await run(worker, 'ROLLBACK TO __bsq_sp').catch((e) => e);
+      const refused = await run(worker, 'ROLLBACK TO __bsq_sp', CONTROL).catch(
+        (e) => e,
+      );
       expect((refused as Error).message).toMatch(/no such savepoint/);
-      await run(worker, 'COMMIT');
+      await run(worker, 'COMMIT', CONTROL);
       expect(await run(worker, 'SELECT a FROM t ORDER BY a')).toEqual([
         { a: 1 },
         { a: 2 },
@@ -147,7 +153,7 @@ describe('the worker concludes, then opens, a savepoint before the statement', (
     const { worker, file } = await spawn();
     try {
       await run(worker, 'CREATE TABLE t (a INTEGER)');
-      await run(worker, 'BEGIN');
+      await run(worker, 'BEGIN', CONTROL);
       await run(worker, 'INSERT INTO t VALUES (1)');
       // No __bsq_sp is open: the conclusion fails, with no statement of its
       // own ever reaching SQLite.
@@ -162,9 +168,9 @@ describe('the worker concludes, then opens, a savepoint before the statement', (
       ]);
       // And the connection is free to open a new one, proving it is not
       // stuck inside the old transaction.
-      await run(worker, 'BEGIN');
+      await run(worker, 'BEGIN', CONTROL);
       await run(worker, 'INSERT INTO t VALUES (3)');
-      await run(worker, 'COMMIT');
+      await run(worker, 'COMMIT', CONTROL);
       expect(await run(worker, 'SELECT a FROM t')).toEqual([{ a: 3 }]);
     } finally {
       await worker.close();

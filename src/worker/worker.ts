@@ -430,6 +430,12 @@ const open = (file: string, options: OpenOptions) => {
   const controlSql = new Map<string, string>();
   /** The keyword the authorizer last refused, for the message. */
   let denied: string | undefined;
+  /**
+   * True while a statement steps. What SQLite prepares then is its own: VACUUM
+   * runs a BEGIN of its own during its step. A consumer's control statement is
+   * refused at its own prepare, or by the `controlSql` check, before any step.
+   */
+  let stepping = false;
   const authorize = (
     _: unknown,
     action: number,
@@ -449,6 +455,7 @@ const open = (file: string, options: OpenOptions) => {
       if (preparing !== undefined) controlSql.set(preparing, keyword);
       return SQLITE_OK;
     }
+    if (stepping) return SQLITE_OK;
     denied = keyword;
     return SQLITE_DENY;
   };
@@ -610,6 +617,7 @@ const open = (file: string, options: OpenOptions) => {
 
         let result: number;
         try {
+          stepping = true;
           result = await sqlite.step(stmt);
         } catch (e) {
           if ((e as { code?: number })?.code === SQLITE_INTERRUPT) {
@@ -621,6 +629,8 @@ const open = (file: string, options: OpenOptions) => {
             break;
           }
           throw stamped(e);
+        } finally {
+          stepping = false;
         }
         if (gate.isStopped()) break;
 
