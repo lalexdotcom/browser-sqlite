@@ -1273,7 +1273,7 @@ describe('tx.savepoint() — refusals at the call (spec 2026-10-04, E1-E8, U3)',
     expect(worker.executed).toEqual(['BEGIN IMMEDIATE', 'COMMIT']);
   });
 
-  // Falsifiable: update the stack copy after runControl() resolves instead of at the call.
+  // Falsifiable: make runControl() join the queue after an await instead of synchronously.
   it('opens a savepoint issued without await before the write that follows it', async () => {
     const worker = fakeWorker([]);
     const { transaction } = harness(worker);
@@ -1288,6 +1288,19 @@ describe('tx.savepoint() — refusals at the call (spec 2026-10-04, E1-E8, U3)',
       'INSERT INTO t VALUES (1)',
       'COMMIT',
     ]);
+  });
+
+  // Falsifiable: in savepoint(), call savepoints.open(name) only after runControl() resolves.
+  it('has the stack know a savepoint issued without await at once', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    await transaction(async (tx) => {
+      const first = tx.savepoint('u');
+      await expect(tx.savepoint('U')).rejects.toMatchObject({
+        code: 'INVALID_IDENTIFIER',
+      });
+      await first;
+    });
   });
 });
 

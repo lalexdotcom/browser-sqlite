@@ -57,10 +57,17 @@ type SQLOptions = {
 const controlRefusedMessage = (
   keyword: string,
   inTransaction: boolean | undefined,
-) =>
-  inTransaction
+) => {
+  if (!inTransaction)
+    return `${keyword} is not allowed: the library manages transactions. Use db.transaction().`;
+  const savepointControl =
+    keyword === 'SAVEPOINT' ||
+    keyword === 'RELEASE' ||
+    keyword === 'ROLLBACK TO';
+  return savepointControl
     ? `${keyword} is not allowed inside a transaction: the library manages it. Use tx.savepoint() for a block you can roll back on its own.`
-    : `${keyword} is not allowed: the library manages transactions. Use db.transaction().`;
+    : `${keyword} is not allowed inside a transaction: the library manages it. Use tx.commit() or tx.rollback() to end it.`;
+};
 
 /**
  * VM instructions between two progress-handler calls. Measured 2026-09-04 on

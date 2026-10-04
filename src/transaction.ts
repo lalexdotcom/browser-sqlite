@@ -450,7 +450,8 @@ export const createTransaction =
        * Whether a statement runs inside the library's savepoint (spec
        * 2026-09-11, R1): a write the caller may abandon alone — it carries its
        * own signal or timeout, not already aborted at the call. Only those pay
-       * (D4). A consumer's transaction control is refused by the worker's authorizer (spec 2026-10-04, § 4).
+       * (D4). A consumer's transaction control is refused by the worker's
+       * authorizer (spec 2026-10-04, § 4).
        */
       const opensSavepoint = (
         sql: string,
@@ -1104,8 +1105,8 @@ export const createTransaction =
             },
             rollback: (options) => {
               if (ending) return Promise.reject(closedError(ending));
-              const release = options?.release ?? true;
               try {
+                const release = options?.release ?? true;
                 return savepoints.rollback(entry, release) === 'send'
                   ? runControl(
                       release

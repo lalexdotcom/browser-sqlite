@@ -99,7 +99,7 @@ export type QueryDebugState = {
   readonly rows: number;
   /** Statements SQLite compiled for this call — 0 when the statement cache served it. */
   readonly prepared: number;
-  /** True for a statement the library sends on its own — the freshness barrier, a transaction's BEGIN, COMMIT and ROLLBACK. */
+  /** True for a statement the library sends on its own — the freshness barrier, a transaction's BEGIN, COMMIT and ROLLBACK, and the savepoint operations. */
   readonly internal: boolean;
 };
 

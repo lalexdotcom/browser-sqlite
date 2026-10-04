@@ -109,7 +109,11 @@ export const createSavepointStack = () => {
   };
 
   const rollback = (entry: SavepointEntry, release: boolean): SavepointStep => {
-    if (entry.state === 'rolled-back') return 'noop';
+    // `release: false` promises an open savepoint, which a closed one is not.
+    if (entry.state === 'rolled-back') {
+      if (release) return 'noop';
+      throw closedError(entry, 'rolled back');
+    }
     if (entry.state === 'released') throw closedError(entry, 'rolled back');
     const index = stack.indexOf(entry);
     const closure: SavepointClosure = {

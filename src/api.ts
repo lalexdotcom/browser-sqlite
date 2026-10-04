@@ -509,7 +509,8 @@ export type SQLiteSavepoint = {
    * Undoes what was written since the savepoint. Closes it unless
    * `release: false`, which keeps it open to roll back to again. Resolves
    * without sending anything when it is already rolled back; rejects with
-   * `SAVEPOINT_CLOSED` when it was released.
+   * `SAVEPOINT_CLOSED` when it was released, or, with `release: false`, when
+   * it is already closed.
    */
   rollback: (options?: { release?: boolean }) => Promise<void>;
 };

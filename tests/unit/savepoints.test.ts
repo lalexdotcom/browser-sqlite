@@ -78,6 +78,33 @@ describe('savepoint stack — what each operation sends (spec 2026-10-04, § 3)'
     );
   });
 
+  // Falsifiable: in rollback(), return 'noop' for a rolled-back entry whatever `release` is.
+  it('refuses rollback without release on a closed savepoint, which promises an open one', () => {
+    const stack = createSavepointStack();
+    const sp = stack.open('a');
+    stack.rollback(sp, true);
+    expect(() => stack.rollback(sp, false)).toThrow(
+      expect.objectContaining({
+        code: 'SAVEPOINT_CLOSED',
+        cause: { by: 'rollback', savepoint: 'a' },
+      }),
+    );
+    expect(stack.rollback(sp, true)).toBe('noop');
+  });
+
+  it('refuses rollback without release on a child its parent rolled back', () => {
+    const stack = createSavepointStack();
+    const parent = stack.open('p');
+    const child = stack.open('c');
+    stack.rollback(parent, false);
+    expect(() => stack.rollback(child, false)).toThrow(
+      expect.objectContaining({
+        code: 'SAVEPOINT_CLOSED',
+        cause: { by: 'rollback', savepoint: 'p' },
+      }),
+    );
+  });
+
   it('refuses to release a rolled-back savepoint with SAVEPOINT_CLOSED', () => {
     const stack = createSavepointStack();
     const sp = stack.open('a');

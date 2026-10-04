@@ -124,6 +124,7 @@ describe('transaction control inside a transaction (spec 2026-10-04, B7)', () =>
       ];
       const results: [string, string][] = [];
       let message = '';
+      let commitMessage = '';
       await db.transaction(async (tx) => {
         for (const sql of inside)
           results.push([sql, await outcome(tx.write(sql))]);
@@ -131,10 +132,15 @@ describe('transaction control inside a transaction (spec 2026-10-04, B7)', () =>
           () => '',
           (e: Error) => e.message,
         );
+        commitMessage = await tx.write('COMMIT').then(
+          () => '',
+          (e: Error) => e.message,
+        );
         await tx.write('INSERT INTO t VALUES (1)');
       });
       expect(results).toEqual(inside.map((sql) => [sql, REFUSED]));
       expect(message).toMatch(/tx\.savepoint\(\)/);
+      expect(commitMessage).toMatch(/tx\.commit\(\)/);
       expect(await db.read('SELECT a FROM t')).toEqual([{ a: 1 }]);
     } finally {
       await db.close();
