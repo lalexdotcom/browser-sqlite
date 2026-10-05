@@ -207,3 +207,7 @@ Three wa-sqlite leaks were recorded as "library exposure, untested", and the bac
 ## Remove each part of a multi-part fix once before sending it (2026-10-03, wa-sqlite #371)
 
 Ten ablations of a nine-part fix: three parts made no test and no probe change and were dropped; one (journal removal on close) looked useless until a scenario was written for exactly what it guards, then failed 12/12 without it. **A part with no falsifier is either dead code or an untested case — find out which before posting.** The PR body's ablation table came straight from this.
+
+## A platform gap measured with one tool version is a fact about that version (2026-10-05, Discussion #373)
+
+"Playwright's WebKit on Linux has no OPFS" was measured once, on Playwright 1.62's WebKit, and written as a property of the Linux port — into `post-create.sh`, three memories and an upstream discussion. The maintainer's question (private mode?) sent us to measure again: 1.63's WebKit has OPFS in a persistent context, and the absence had been fixed upstream a month before. **Record a missing capability with the tool version it was measured on, and re-measure before repeating it to someone else** — the more often a claim is copied, the less anyone rereads where it came from.

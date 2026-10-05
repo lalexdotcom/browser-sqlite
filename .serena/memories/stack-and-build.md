@@ -100,9 +100,7 @@ placeholder `undefined` must keep a callable union type.
 Four projects. `pnpm test` runs the first two.
 
 **Both engines are installed locally** — `~/.cache/ms-playwright` carries chromium and firefox.
-WebKit was absent on 2026-10-02; `playwright install webkit` downloads it but it cannot launch here
-without system libraries (gstreamer, gtk4…) that need root. WebKit is not offered anywhere: the Linux build ships without OPFS, so every VFS
-this library uses is missing there and the suite would report a platform gap as a failure.
+WebKit is not installed by `post-create.sh` and not offered by any config. **It can run here** (2026-10-05): its system libraries install with `sudo` — the `node` user has it, the agent's sudo needs the user's approval — and Playwright 1.63+ has OPFS in a persistent context (WA-WEBKIT-SUITE, `mem:measurements/wa-sqlite-prs`); 1.62.1, our pin, has none. What blocks a WebKit project of ours is rstest's ephemeral context (`mem:follow-ups`, the rstest entry). Install a WebKit beside the pinned browsers with `PLAYWRIGHT_SKIP_BROWSER_GC=1`, or `playwright install` deletes browsers no installed Playwright references.
 **There is no engine environment variable any more (2026-09-03).** `TEST_BROWSER` and
 `CONFORMANCE_BROWSER` are both gone: each suite has one config file per engine, and its
 `pnpm` script chains them, so `pnpm test` and `pnpm test:conformance` each cover both engines
@@ -397,9 +395,9 @@ aligned with it wholesale: the image, the Playwright engines and the Serena prer
   down. `feat/*` was dropped — no branch deploys any more.
 - Local hooks (simple-git-hooks), three since 2026-09-11: `pre-commit` runs `tsc`,
   `lint-staged` and the unit project (~1.5 s), or `pnpm test` while concluding a conflicted
-  merge; `pre-merge-commit` runs `tsc`, `biome ci .` and `pnpm test`; `pre-push` the same, plus since
+  merge; `pre-merge-commit` runs `tsc`, `biome ci .` and `pnpm test`; `pre-push` runs those three too, plus since
   2026-09-15 CI's VFS table check (`pnpm docs:vfs && git diff --exit-code VFS.md`), before the
-  suite so a stale table fails fast. The render rewrites `VFS.md`'s generated spans in the working
+  suite so a stale table fails fast. Since 2026-10-05 the two merge paths (`pre-merge-commit`, and `pre-commit` concluding a conflicted merge) first run `pnpm install --frozen-lockfile` when the merge changes the dependencies (`mem:git-hooks`). The render rewrites `VFS.md`'s generated spans in the working
   tree, so an UNCOMMITTED hand edit inside one is overwritten silently by a push. All
   bypassable with `--no-verify`. The agent's own verification at delivery is the gate (user),
   CI the independent one. Details: `mem:git-hooks`.

@@ -8,6 +8,8 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 
 ## `mem:measurements/wa-sqlite-prs` — the campaigns behind wa-sqlite PRs
 
+- WEBKIT-IDB-TERMINATE
+- WA-WEBKIT-SUITE
 - 363-ERROR-PATH
 - 369-XCLOSE
 - IDBMIRROR-COMMIT-ABORT
