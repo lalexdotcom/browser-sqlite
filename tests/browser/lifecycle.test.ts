@@ -57,7 +57,13 @@ describe('worker lifecycle — crash detection', () => {
       await sleep(100);
       records[attempt].worker.dispatchEvent(new ErrorEvent('error'));
       await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
-      if (attempt === 0) await sleep(300); // let the replacement reach ready
+      // Killing the replacement before its ready leaves the open lock to its
+      // termination, and the cleanup's deleteDatabase answers BUSY.
+      if (attempt === 0)
+        await waitUntil(
+          () => records[1]?.received.includes('ready') ?? false,
+          'the replacement to be ready',
+        );
     }
 
     await expect(db.read('SELECT 1')).rejects.toMatchObject({

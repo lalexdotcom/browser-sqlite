@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-10-03.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-10-05.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one.
 
 **No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
@@ -22,12 +22,8 @@ obligations and unmeasured ground.
   entries: `.ad/`, `.ac/`, `.cs/`, `.wa/`, `layout` and `VFSLayout` gone, the 52-character name bound,
   on every VFS since 2026-10-05; `db.files` Added; the path and empty-name refusals Changed — `mem:vfs`, CROSS-VFS;
   `mem:architecture`, "Two names per database"), and **the default build that follows the browser** (merged 2026-09-24: Changed, plus one Breaking entry — a `wasmUrl` serving only the `async` `.wasm`), and **the public surface** (merged 2026-09-24: Breaking — `VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` no longer exported, the `./worker` subpath gone; Changed — `createSQLiteClient` declared to return `SQLiteDB`), and two more **Fixed** entries: `OPFSAnyContextVFS`'s `VACUUM` that failed the next read on Firefox (#363, merged 2026-09-25) and a failed client leaving `inspectDatabase()`'s roster at once (merged 2026-09-27). Since 2026-10-04 it also carries **`tx.savepoint()`** (Added, with `SAVEPOINT_CLOSED`) and **transaction control refused when sent as SQL** — a Breaking entry for raw savepoint SQL inside a transaction, a Fixed one for `BEGIN`/`COMMIT` through the client (`mem:history`, `mem:architecture`).
-- **The vendored wa-sqlite sits on upstream `master` of 2026-10-03** (`7fcc30df`, `package.json` has the
-  SHA), which merged every PR the patch carried (#363, #367, #368, #369, #370). **`patches/wa-sqlite@1.1.2.patch`
-  carries `IDBMirrorVFS.js` for #371 and #372** (both open upstream, conflicting in `jClose`), **and a one-line guard in `OPFSAdaptiveVFS.js` for #374** (open upstream), **and the `jspi` glue of #375** (open upstream, 2026-10-05); heads and the merge in `mem:stack-and-build`. The installed
-  `src/` was checked equal to the pin plus #371 and #372 merged, `dist/` to the pin's at that repin (since 2026-10-05 the patch also replaces `dist/wa-sqlite-jspi.mjs`, #375). #363 and #369 merged at heads
-  later than the patch held, so this repin changed executed code in `OPFSAnyContextVFS` and `OPFSAdaptiveVFS`
-  besides #371. Verification of the repin: see the baseline below and `mem:history`.
+- **The vendored wa-sqlite sits on upstream `master` of 2026-10-05** (`96d91182`, `package.json` has the
+  SHA), which merged #375, the last PR carried in `dist/`. **`patches/wa-sqlite@1.1.2.patch` carries `IDBMirrorVFS.js` for #371 and #372** (both open upstream, conflicting in `jClose`), **and a one-line guard in `OPFSAdaptiveVFS.js` for #374** (open upstream); heads and the merge in `mem:stack-and-build`. The installed `src/` was checked equal to the pin plus the patch (build sources aside), `dist/` to the pin's. The repin changed executed code in the `async` build — its glue and `.wasm`, which the patch had not carried from #375 — and the matrix's one red cell was traced to a test race, not to it (`mem:history`, 2026-10-05).
 - **The release gate ran the full matrix for the first time, and it took four tags to get
   through.** 22/22 cells, `verify`, `consumer-smoke`, then `release`, with `untag` skipped.
   The three refusals before it were not test failures: `test-matrix.mjs` could not read a
@@ -40,27 +36,27 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-10-02
+## The verification baseline — compare against these, re-measured 2026-10-05
 
-Not history: the numbers a regression is detected against. **Every figure below was read off ONE run in this container on 2026-10-02, in the afternoon, on `main` at `438625e`** (the merge of `feat/always-abortable`) — none is arithmetic, on the wa-sqlite pin `7a4b4241` with #363, #367, #368, #369 and #370 carried.
+Not history: the numbers a regression is detected against. **Every figure below was read off ONE run in this container on 2026-10-05, in the evening, on `build/repin-wa-sqlite-96d9118`** (merged into `main` the same day) — none is arithmetic, on the wa-sqlite pin `96d91182` with #371, #372 and #374 carried.
 
 | command | result |
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1358 tests, 1350 passed, 8 skipped** (unit + the two chromium target projects), **796 tests, 792 passed, 4 skipped** (the two firefox target projects), **18 tests, none skipped** (the two isolated target projects). The chromium and firefox targets are `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` since the default build follows the engine |
-| `pnpm exec rstest --project unit run` | **564** tests, 28 files |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1419 tests, 1411 passed, 8 skipped** (unit + the two chromium target projects), **822 tests, 818 passed, 4 skipped** (the two firefox target projects), **18 tests, none skipped** (the two isolated target projects). The chromium and firefox targets are `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` since the default build follows the engine |
+| `pnpm exec rstest --project unit run` | **599** tests, 29 files |
 | `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are `chromium · <vfs>/<build>` and rstest's filter is anchored |
 | `pnpm test:conformance` | **TWO reports** — 97 tests / 3 files each: **Chromium 83 passed / 14 skipped, Firefox 79 / 18** — they differ by design since 2026-09-14. Each VFS runs on its default build for the engine, so the `jspi`-first VFS run `jspi` here |
 | `pnpm exec biome ci .` | exit 0 |
 | `pnpm docs:vfs` | leaves `VFS.md` unchanged (`git diff --exit-code`) |
 | `pnpm test:consumer` | 24/24 stages |
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.ts chromium --all` | `OK`, `"reasons": {}`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 164 files, **4 warnings**, 1 info — the file count moves with the tree, **the warning count is the signal** |
+| `pnpm lint` | 167 files, **4 warnings**, 1 info — the file count moves with the tree, **the warning count is the signal** |
 | `dependencies` in `package.json` | absent |
-| `pnpm test:matrix` | **66 of 66 cells green, 2485 s**, no re-run inside it. ~40 min. **Every cell runs `BSQ_TEST_NEEDS=skip`**, so its skips are the tests whose need the pair lacks: chromium from 4 (`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`) to 81 (`MemoryVFS/sync`), firefox from 2 (`OPFSAnyContextVFS`) to 79 (`MemoryVFS/sync`), isolated 9/0/0 everywhere. The Firefox `lifecycle.test.ts` page crash did not occur in this run; it did in the matrix of the same day's branch (cause found and fixed on 2026-10-03, `mem:history`). |
+| `pnpm test:matrix` | **65 of 66 cells green, 2470 s**, no re-run inside it. ~40 min. The red cell, `chromium · AccessHandlePoolVFS/async`, lost one test to a race in `lifecycle.test.ts`, fixed in the test the same day (`mem:history`, 2026-10-05); 66 of 66 is the expected reading. **Every cell runs `BSQ_TEST_NEEDS=skip`**, so its skips are the tests whose need the pair lacks: chromium from 4 (`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`) to 81 (`MemoryVFS/sync`), firefox from 2 (`OPFSAnyContextVFS`) to 79 (`MemoryVFS/sync`), isolated 9/0/0 everywhere. No Firefox page crash in this run. |
 
-Against the previous table (2026-10-01 morning): unit 553 → 564, `pnpm test` +25 / +14 / +2 passed (the new `early-exit.test.ts` and the isolated `first()` case among them) with no skip added; conformance, lint warnings and the consumer smoke are identical; the matrix went from 64 to 66 green — the two `IDBBatchAtomicVFS` cells it lost were the intermittent fixed by #370 — and isolated cells from 8 to 9 tests.
+Against the previous table (2026-10-02): unit 564 → 599, `pnpm test` +61 / +26 passed and the isolated config unchanged (`tx.savepoint()`, the transaction-control guard, the name bound and the sync-handle requirement among them) with no skip added; conformance, lint warnings and the consumer smoke are identical; the matrix read 65 instead of 66 for the race above.
 
 **Do not reconcile any of these by arithmetic; re-run.** A previous version of this table was
 measured on 2026-09-15 and went stale the next day, and another contradicted itself in September

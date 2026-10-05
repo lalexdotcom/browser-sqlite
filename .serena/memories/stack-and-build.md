@@ -17,8 +17,11 @@
 - **Runtime dependencies: none.** `wa-sqlite` is a devDependency only, vendored into
   `dist/worker/worker.js` at build time so it never reaches a consumer lockfile. **Pinned by commit
   SHA, not by tag, since 2026-09-15 (user):**
-  `github:rhashimoto/wa-sqlite#7fcc30df39d0b1d8fe168351a870f2f912f991ee` since 2026-10-03, upstream
-  `master` with our #363, #367, #368, #369 and #370 merged. #367, #368 and #370 were byte-identical to the
+  `github:rhashimoto/wa-sqlite#96d91182bf958d1c9fce2d851f66198378d8dbf1` since 2026-10-05, upstream
+  `master` with our #375 merged, byte-identical to the head the patch carried; the repin also brought what the
+  patch had left out of #375, the `async` glue and a rebuilt `wa-sqlite-async.wasm` (no `asyncify_imports.json` any
+  more), so `async` executes new code since. Before that `7fcc30df` (2026-10-03, our #363, #367, #368, #369 and #370
+  merged). #367, #368 and #370 were byte-identical to the
   heads the patch carried; #363 and #369 merged at later heads (`345791b3`, `87ed5aaf`) than the patch held,
   so that repin changed executed code in `OPFSAnyContextVFS.js` and `OPFSAdaptiveVFS.js`; `dist/` unchanged.
   Before that `7a4b4241` (2026-10-01, #351, #352, #353 merged and left the patch),
@@ -41,8 +44,8 @@
     flight before closing the `BroadcastChannel`), head `69e00270` since 2026-10-03; and #374, `OPFSAdaptiveVFS.js`'s line 9 guarded (`FileSystemSyncAccessHandle?.prototype`), without which no worker loads outside a secure context (INSECURE-CONTEXT). The two PRs conflict
     in `jClose` only: the patch waits for the commits in flight first, then removes an aborted view's
     journal. Both PRs' tests pass on the merged file (226, 3/3, both engines).
-  - `dist/wa-sqlite-jspi.mjs` — #375 (the `jspi` glue no longer wraps the synchronous relays in `WebAssembly.Suspending`), byte-identical to the PR's head `54c7eea3` since 2026-10-05. The glue is one minified line, so this hunk repeats it twice (~250 KB). **After any change to it, clear `node_modules/.cache/rspack` and check the pattern in `dist/worker/worker.js`**: the forced build cache served the previous glue once.
-  - `IDBMirrorVFS.js`, that line and that glue are all the patch holds: every other PR it carried has merged.
+  - `dist/wa-sqlite-jspi.mjs` was carried for #375 from 2026-10-05 until its merge the same day. **After any change to a carried `dist/` glue, clear `node_modules/.cache/rspack` and check the pattern in `dist/worker/worker.js`**: the forced build cache served the previous glue once.
+  - `IDBMirrorVFS.js` and that line are all the patch holds: every other PR it carried has merged.
 
   `WriteAhead.js` is no longer patched: #365 (`PRAGMA wal_read_latest`, which the library's barrier
   sets) and #361 are upstream. #366 changes tests only and is not carried.

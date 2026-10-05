@@ -237,3 +237,18 @@ Playwright's Firefox (`firefox-1538`); threads counted from `/proc/<pid>/task/*/
 **Verdict: the leak is the Playwright build's, not the library's.** Every worker the library creates is given its `terminate()`, and the threads that survive it do so on `firefox-1538` only; stock Firefox reaps them all, even workers never terminated. The library's gate sequence triggers it far more often than a bare blob (17/300 against 0-1/400) — it ends module workers at varied points of their startup — without being its cause. Not established: Playwright's patches or a Firefox change between the two build dates (20260715 stock, 20260722 Playwright's).
 
 **Can the leak reach the 512-worker cap in the suite? (2026-10-03)** `DOM Worker` threads of every `firefox-1538` process sampled every 3 s during a whole Firefox config run: default targets, 104 s, 792 passed, 85 content processes, peak 4 threads in one process; every Firefox target (`BSQ_TEST_TARGETS=all`), 716 s, 7893 passed, 795 content processes, peak 5 in one process, 25 across all processes at once. rstest gives each test page its own content process, so leaked threads never accumulate toward the cap; the 2026-09-29 freeze needed ~480 rounds in one page.
+
+## LIFECYCLE-INIT-RACE — a `BUSY` at cleanup after the restart budget is spent, 2026-10-05, Chromium, this container
+
+The repin to `96d91182` (which changed the `async` build) read 65/66: `chromium · AccessHandlePoolVFS/async` lost `lifecycle.test.ts :: fails the client permanently once the restart budget is spent`, the cleanup's `deleteDatabase` answering `BUSY` — `bsq:init`, the open lock, still held. A/B against `7fcc30df` in a detached worktree, arms alternated:
+
+| | `96d91182` | `7fcc30df` |
+|---|---|---|
+| that file alone, idle | 20/20 green | 20/20 |
+| that file under sixteen busy loops | 50/50 | 50/50 |
+| the whole cell (62 files) | 10/10 | 10/10 |
+| replacement's `ready` after the first kill, idle (n=60) | 70-89 ms | 71-89 ms |
+| same under sixteen busy loops (n=60) | median 191, max 288 ms | median 191, max 260 ms |
+| replacement killed on its `opening the database` signal, then `deleteDatabase` at once | `BUSY` 15/15, lock free after 76-91 ms | `BUSY` 15/15, 77-87 ms |
+
+**The mechanism, forced on both pins:** a worker holds `bsq:init` from `opening the database` to `ready` (open and pragmas, ~40 ms of its boot); `terminate()` releases it asynchronously, ~80 ms later. The test killed the replacement 300 + 100 ms after the first kill, assuming it ready, so a replacement late by more than ~300 ms is killed inside the lock and the cleanup lands in those 80 ms. **What delayed it in the matrix is not known** — 288 ms was the worst measured, and the failing report prints no boot trace; nothing ties it to the pin. Fixed in the test: wait for the replacement's `ready` instead of the 300 ms.
