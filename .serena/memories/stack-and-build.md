@@ -40,8 +40,9 @@
     view removed on close), head `3367cb65` since 2026-10-03; and #372 (`jClose` waits for the commits in
     flight before closing the `BroadcastChannel`), head `69e00270` since 2026-10-03; and #374, `OPFSAdaptiveVFS.js`'s line 9 guarded (`FileSystemSyncAccessHandle?.prototype`), without which no worker loads outside a secure context (INSECURE-CONTEXT). The two PRs conflict
     in `jClose` only: the patch waits for the commits in flight first, then removes an aborted view's
-    journal. Both PRs' tests pass on the merged file (226, 3/3, both engines). `IDBMirrorVFS.js` and that line
-    are all the patch holds: every other PR it carried has merged.
+    journal. Both PRs' tests pass on the merged file (226, 3/3, both engines).
+  - `dist/wa-sqlite-jspi.mjs` — #375 (the `jspi` glue no longer wraps the synchronous relays in `WebAssembly.Suspending`), byte-identical to the PR's head `54c7eea3` since 2026-10-05. The glue is one minified line, so this hunk repeats it twice (~250 KB). **After any change to it, clear `node_modules/.cache/rspack` and check the pattern in `dist/worker/worker.js`**: the forced build cache served the previous glue once.
+  - `IDBMirrorVFS.js`, that line and that glue are all the patch holds: every other PR it carried has merged.
 
   `WriteAhead.js` is no longer patched: #365 (`PRAGMA wal_read_latest`, which the library's barrier
   sets) and #361 are upstream. #366 changes tests only and is not carried.
