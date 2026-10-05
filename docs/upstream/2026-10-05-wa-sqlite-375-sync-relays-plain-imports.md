@@ -52,3 +52,7 @@ PR [#375][pr375], opened 2026-10-05 from `lalexdotcom:sync-relays-plain-imports`
 
 - **The carry.** The patch holds `dist/wa-sqlite-jspi.mjs` byte-identical to the PR's. The rest of the PR is not carried: `wa-sqlite-async.mjs`'s pattern is inert at run time, and `wa-sqlite-async.wasm` is a binary that measured no change. Because the glue is minified onto one line, the hunk repeats that line twice and the patch grows by about 250 KB until the repin drops it.
 - **A build cache that served the previous glue.** After the patch changed, `pnpm build` kept emitting the earlier glue until `node_modules/.cache/rspack` was cleared — the case `rslib.config.ts`'s comment on the forced build cache warns of. Check the emitted pattern in `dist/worker/worker.js` after any change to the patch.
+
+## Merged
+
+**Merged on 2026-10-05** by rhashimoto, as `96d91182` on `master`, byte for byte the head `54c7eea3`. It left [`patches/`](../../patches) at the repin to `96d91182` the same day. That repin also brought the rest of the PR, which the patch had not carried: `wa-sqlite-async.mjs`, whose import pattern no longer lists the synchronous relays, and the rebuilt `wa-sqlite-async.wasm`.
