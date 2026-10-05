@@ -8,6 +8,7 @@ import {
   databaseFiles,
   databasePath,
   isWriteQuery,
+  MAX_DATABASE_NAME,
   mergeSignals,
   normalizeDatabaseFile,
   randomId,
@@ -560,21 +561,27 @@ describe('resolveDatabase', () => {
   });
 });
 
-describe('resolveDatabase — the path bound', () => {
+describe('resolveDatabase — the name bound', () => {
   const name = (length: number) => 'n'.repeat(length);
 
-  it('accepts a path of exactly 56 characters, folder included', () => {
+  it('accepts a name of exactly 52 characters, with or without a folder', () => {
+    // Falsifiable: a bound on the path, folder included, lets a VFS without a
+    // folder take 56 — the per-VFS bound this replaced.
+    expect(MAX_DATABASE_NAME).toBe(52);
     expect(resolveDatabase(name(52), 'OPFSAdaptiveVFS').path).toHaveLength(56);
-    expect(resolveDatabase(name(56), 'IDBBatchAtomicVFS').path).toHaveLength(
-      56,
+    expect(resolveDatabase(name(52), 'IDBBatchAtomicVFS').path).toHaveLength(
+      52,
     );
   });
 
-  it('refuses one character more with INVALID_OPTION', () => {
+  it('refuses one character more with INVALID_OPTION, on every VFS', () => {
     expect(() => resolveDatabase(name(53), 'OPFSAdaptiveVFS')).toThrow(
       expect.objectContaining({ code: 'INVALID_OPTION' }),
     );
-    expect(() => resolveDatabase(name(57), 'IDBBatchAtomicVFS')).toThrow(
+    expect(() => resolveDatabase(name(53), 'IDBBatchAtomicVFS')).toThrow(
+      expect.objectContaining({ code: 'INVALID_OPTION' }),
+    );
+    expect(() => resolveDatabase(name(53), 'MemoryVFS')).toThrow(
       expect.objectContaining({ code: 'INVALID_OPTION' }),
     );
   });
@@ -592,9 +599,9 @@ describe('resolveDatabase — the path bound', () => {
     );
   });
 
-  it('names the bound for that VFS', () => {
-    expect(() => resolveDatabase(name(60), 'OPFSWriteAheadVFS')).toThrow(
-      /OPFSWriteAheadVFS accepts at most 52/,
+  it('names the bound', () => {
+    expect(() => resolveDatabase(name(60), 'MemoryVFS')).toThrow(
+      /may have at most 52/,
     );
   });
 });
