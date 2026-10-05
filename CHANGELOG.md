@@ -52,7 +52,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **On `OPFSCoopSyncVFS`, an open refused for any reason but a file held elsewhere fails at once.** It used to retry every refusal for 2.5 s before reporting it; only a held file, which another worker or tab can let go of, is retried now.
 - **`createSQLiteClient` is declared to return `SQLiteDB`**, instead of a copy of its members spelled out in the type declarations.
 - **Aborting a write on `OPFSWriteAheadVFS` frees its worker sooner.** The copy of the write-ahead into the database after each transaction is much faster, at the cost of more memory while it runs.
-- **The `jspi` build is faster on Firefox.** Each synchronous call from SQLite into JavaScript — a VFS read or write, the authorizer, a user function, a hook — cost there nearly as much as a suspension; it now costs a plain call. Writes on `OPFSAdaptiveVFS`, which loads `jspi` by default on Firefox, are no longer slower than on `async`.
+- **The `jspi` build is faster on Firefox.** Each synchronous call from SQLite into JavaScript — a VFS read or write, the checks the client runs on each statement — cost there nearly as much as a suspension; it now costs a plain call. Writes on `OPFSAdaptiveVFS`, which loads `jspi` by default on Firefox, are no longer slower than on `async`.
 - **A `first()`, or a `stream()`/`chunk()` left with `break` or `return()`, now stops its running statement without a `signal`** on `async`, `jspi`, and `sync` when cross-origin isolated.
 - **Breaking:** **`SAVEPOINT`, `RELEASE` and `ROLLBACK TO` sent as SQL inside a transaction are refused with `STATEMENT_FAILED`** (`sqliteCode` 23); use `tx.savepoint()`.
 

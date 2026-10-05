@@ -25,7 +25,7 @@ obligations and unmeasured ground.
 - **The vendored wa-sqlite sits on upstream `master` of 2026-10-03** (`7fcc30df`, `package.json` has the
   SHA), which merged every PR the patch carried (#363, #367, #368, #369, #370). **`patches/wa-sqlite@1.1.2.patch`
   carries `IDBMirrorVFS.js` for #371 and #372** (both open upstream, conflicting in `jClose`), **and a one-line guard in `OPFSAdaptiveVFS.js` for #374** (open upstream), **and the `jspi` glue of #375** (open upstream, 2026-10-05); heads and the merge in `mem:stack-and-build`. The installed
-  `src/` was checked equal to the pin plus #371 and #372 merged, `dist/` to the pin's. #363 and #369 merged at heads
+  `src/` was checked equal to the pin plus #371 and #372 merged, `dist/` to the pin's at that repin (since 2026-10-05 the patch also replaces `dist/wa-sqlite-jspi.mjs`, #375). #363 and #369 merged at heads
   later than the patch held, so this repin changed executed code in `OPFSAnyContextVFS` and `OPFSAdaptiveVFS`
   besides #371. Verification of the repin: see the baseline below and `mem:history`.
 - **The release gate ran the full matrix for the first time, and it took four tags to get
