@@ -78,9 +78,8 @@ export default defineConfig({
     // covered both — the exact path by which a Firefox-only failure reaches
     // anyone late. `pnpm test` now runs both engines and CI needs no variable.
     //
-    // Only Firefox joins Chromium: Playwright installs WebKit too, but the
-    // Linux build ships without OPFS, so every VFS this library uses is
-    // unavailable there and the suite would report a platform gap as a failure.
+    // Only Firefox joins Chromium: WebKit has OPFS only from Playwright 1.63
+    // and only in a persistent context, which rstest's browser mode never opens.
     //
     // The shared glob is NON-recursive on purpose. `tests/browser/**` would
     // make this project pick up `tests/browser/firefox/`, which is the whole

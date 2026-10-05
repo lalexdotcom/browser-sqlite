@@ -85,8 +85,8 @@
 		]
 	},
 	"simple-git-hooks": {
-		"pre-commit": "if [ -f \"$(git rev-parse --git-path MERGE_HEAD)\" ] && ! git diff --cached --quiet HEAD -- package.json pnpm-lock.yaml patches/; then pnpm install; fi && pnpm exec tsc --noEmit && npx lint-staged && if [ -f \"$(git rev-parse --git-path MERGE_HEAD)\" ]; then pnpm test; else pnpm test:unit; fi",
-		"pre-merge-commit": "if ! git diff --cached --quiet HEAD -- package.json pnpm-lock.yaml patches/; then pnpm install; fi && pnpm exec tsc --noEmit && pnpm exec biome ci . && pnpm test",
+		"pre-commit": "if [ -f \"$(git rev-parse --git-path MERGE_HEAD)\" ] && ! git diff --cached --quiet HEAD -- package.json pnpm-lock.yaml patches/; then SKIP_INSTALL_SIMPLE_GIT_HOOKS=1 pnpm install --frozen-lockfile; fi && pnpm exec tsc --noEmit && npx lint-staged && if [ -f \"$(git rev-parse --git-path MERGE_HEAD)\" ]; then pnpm test; else pnpm test:unit; fi",
+		"pre-merge-commit": "if ! git diff --cached --quiet HEAD -- package.json pnpm-lock.yaml patches/; then SKIP_INSTALL_SIMPLE_GIT_HOOKS=1 pnpm install --frozen-lockfile; fi && pnpm exec tsc --noEmit && pnpm exec biome ci . && pnpm test",
 		"pre-push": "pnpm exec tsc --noEmit && pnpm exec biome ci . && pnpm docs:vfs && git diff --exit-code VFS.md && pnpm test",
 		"post-checkout": "if [ \"$3\" = 1 ] && ! git diff --quiet \"$1\" \"$2\" -- package.json pnpm-lock.yaml patches/ 2>/dev/null; then pnpm install; fi"
 	},
