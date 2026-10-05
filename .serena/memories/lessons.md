@@ -75,6 +75,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - A reservation written down is a probe not yet run (2026-09-30, wa-sqlite #351)
 - A defect of a VFS is not an exposure of the library until the library's path is followed (2026-09-30)
 - Remove each part of a multi-part fix once before sending it (2026-10-03, wa-sqlite #371)
+- A platform gap measured with one tool version is a fact about that version (2026-10-05, Discussion #373)
 
 ## `mem:lessons/process` — process, tooling, memory, git
 
