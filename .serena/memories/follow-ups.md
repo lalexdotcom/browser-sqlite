@@ -73,6 +73,16 @@ Upstream CI runs Chromium only, so neither shows there. Seen running the suite o
 
 Open issue by jwaltz, 2026-09-25, no PR: `OPFSCoopSyncVFS.create()` fails with `NoModificationAllowedError` after a back/forward-cache navigation — the `.ahp-*` sweep in `#initialize()` gets the lock while the cached page's worker still holds its temp handles, and `removeEntry` throws; only `NotFoundError` is tolerated there, since our #347. An immediate retry succeeds; his suggested fix (try/catch around the sweep's `removeEntry`) gave 0/48. The library masks it: `createVfsInstance` retries `create()` on `NoModificationAllowedError`. With the real navigation on Chromium, wa-sqlite alone fails its first open 18 times of 18 and the library's succeeds 18 of 18, ~85 ms later than without a cached page (LEAK-LIB, `mem:measurements`). A PR for #362 was proposed to the user, not decided.
 
+## rstest: browser mode cannot open a persistent context — issue/PR to send upstream (user, 2026-10-05)
+
+`@rstest/browser` creates every context with `browser.newContext()`, an ephemeral one, hard-coded in `launchPlaywrightBrowser` (0.11.8, ours, and 0.12.3, latest on 2026-10-05). `browser.providerOptions` ([web-infra-dev/rstest#1041](https://github.com/web-infra-dev/rstest/pull/1041)) only passes `launch` to `browserType.launch()` and `context` to `newContext()`'s options: the context's nature cannot be changed. Searched 2026-10-05 (issues, PRs, discussions: persistent, `launchPersistentContext`, `userDataDir`, OPFS, incognito, `newContext`): nothing upstream raises it; [#1799](https://github.com/web-infra-dev/rstest/pull/1799)'s `contextOptions` is the Node-side `@rstest/playwright`, browser mode untouched.
+
+Two measured costs to put in the issue:
+- **WebKit has no OPFS in an ephemeral context.** Playwright's docs: "OPFS is currently not supported in ephemeral WebKit contexts". Probed on GitHub Actions (ubuntu, 2026-10-05, a dedicated worker on `http://localhost`): Playwright 1.63.0 (WebKit 26.6) ephemeral → `getDirectory()` rejects `UnknownError`; persistent → `getDirectory()`, `createSyncAccessHandle` write/read and `createWritable` all work. 1.62.1 (WebKit 26.5, our pin) has no `navigator.storage` in either context — the August finding behind dropping WebKit was the version, not the Linux port; the fix is microsoft/playwright#41984 (WebKit r2339, shipped in 1.63.0).
+- **Chromium's ephemeral OPFS costs ~250× per call** (RSTEST-OTR, `mem:measurements/suite-and-matrix`).
+
+What to send: an issue proposing an opt-in persistent context for the Playwright provider (e.g. `providerOptions.persistentContext`, one fresh temporary profile per context through `browserType.launchPersistentContext`), with both measurements and a minimal reproduction; offer the PR. Outward-facing: waits for the user's go. Until it lands, a `pnpm patch` of `@rstest/browser` doing the same is what a WebKit project of our own would need (the WebKit-in-our-tests idea of 2026-10-05: Playwright 1.63+, WebKit installed with `PLAYWRIGHT_SKIP_BROWSER_GC=1` so the other revisions survive, persistent context for WebKit first).
+
 ## Designs owed — ideas, not scheduled work (user, 2026-09-03)
 
 **The user has said explicitly that the three below are not planned for the short or medium
