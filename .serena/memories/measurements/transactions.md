@@ -488,3 +488,15 @@ For the `tx.savepoint()` brainstorm: the library would refuse `BEGIN`/`COMMIT`/`
 - **Both refuse `BEGIN` on every build** (`SQLITE_AUTH`, 23, for the authorizer).
 
 **What SQLite's split gives the head check** (Chromium, sync; the parser is the same on every build): `sqlite3_sql` returns each statement as SQLite isolated it, leading comments and whitespace included, a compound's `;` kept on the first — `"INSERT …; SAVEPOINT y"` → `"INSERT …;"` and `" SAVEPOINT y"`. `CASE … END`, `INSERT OR ROLLBACK`, `CREATE TRIGGER … BEGIN …; END` and `SELECT ';BEGIN'` stay one statement with a non-control head, and the authorizer sees no control action in them either. `EXPLAIN BEGIN` differs: the authorizer reports `TX:BEGIN` for it, the head check sees `EXPLAIN` — it runs nothing, either answer is harmless. The authorizer reports `END` as `COMMIT` and `ROLLBACK TO x` as a savepoint `ROLLBACK`.
+
+## SAVEPOINT-STACK — open savepoints cost quadratically — 2026-10-03, this container, Node 24.13.0 `node:sqlite` (SQLite 3.50.4, native)
+
+For the `tx.savepoint()` design: whether `release()` is worth exposing. One transaction (`BEGIN IMMEDIATE`) on a file database, default journal; per iteration `SAVEPOINT s<i>`, one `INSERT` of a 200-byte `randomblob`, then `RELEASE s<i>` in one arm and nothing in the other; `COMMIT`. Median of 3 per cell.
+
+| savepoints | released as they go | left open until `COMMIT` |
+|---|---|---|
+| 1 000 | 1.4 ms | 5.5 ms |
+| 4 000 | 4.6 ms | 32.3 ms |
+| 16 000 | 20.6 ms | 282.8 ms |
+
+Linear released, quadratic open: every page write walks the open savepoints (`pager.c`, from memory, not re-read). Native, not WASM; not measured in a browser, where it can only be slower in absolute terms.

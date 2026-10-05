@@ -6,6 +6,8 @@
 bullets), R5 and D1 are superseded by this design; everything else in it stands. That spec
 gets a dated amendment pointing here.
 
+**Amended 2026-10-04:** D8 is superseded by `docs/superpowers/specs/2026-10-04-tx-savepoint-design.md` § 4 — a consumer's transaction-control statement is now refused by the worker's authorizer, so it never reaches `__bsq_sp`.
+
 **Not breaking for any released version.** The rule this replaces — "a write abandoned while
 it runs abandons its transaction" — was introduced by merge `eeabe06` and has never been
 released. In `1.0.0-rc.4` the same case produced the autocommit defect of that spec's §1.1.

@@ -14,11 +14,16 @@
  */
 import * as SQLite from 'wa-sqlite/src/sqlite-api.js';
 import {
+  SQLITE_AUTH,
   SQLITE_CANTOPEN,
+  SQLITE_DENY,
   SQLITE_INTERRUPT,
+  SQLITE_OK,
   SQLITE_OPEN_READWRITE,
   SQLITE_PREPARE_PERSISTENT,
   SQLITE_ROW,
+  SQLITE_SAVEPOINT,
+  SQLITE_TRANSACTION,
 } from 'wa-sqlite/src/sqlite-constants.js';
 import type { SQLiteBuild } from '../const/builds';
 import type { PlatformFeature } from '../const/platform';
@@ -45,6 +50,23 @@ import { createStatementCache } from './statement-cache';
 type SQLOptions = {
   chunkSize?: number;
   signal?: AbortSignal;
+  uncached?: boolean;
+};
+
+/** The message of a refused transaction-control statement (spec 2026-10-04, § 4). */
+const controlRefusedMessage = (
+  keyword: string,
+  inTransaction: boolean | undefined,
+) => {
+  if (!inTransaction)
+    return `${keyword} is not allowed: the library manages transactions. Use db.transaction().`;
+  const savepointControl =
+    keyword === 'SAVEPOINT' ||
+    keyword === 'RELEASE' ||
+    keyword === 'ROLLBACK TO';
+  return savepointControl
+    ? `${keyword} is not allowed inside a transaction: the library manages it. Use tx.savepoint() for a block you can roll back on its own.`
+    : `${keyword} is not allowed inside a transaction: the library manages it. Use tx.commit() or tx.rollback() to end it.`;
 };
 
 /**
@@ -170,7 +192,8 @@ const openWithRetry = async (
  * The one savepoint this library opens inside a transaction (spec 2026-09-11,
  * D7). One at a time — the next message concludes it before anything else —
  * so a fixed name suffices, and its three statements stay in the statement
- * cache. A consumer's own savepoints never sit above it.
+ * cache. A `tx.savepoint()` is only opened between messages, so it never sits
+ * above it.
  */
 const LIBRARY_SAVEPOINT = '__bsq_sp';
 
@@ -401,6 +424,50 @@ const open = (file: string, options: OpenOptions) => {
     } satisfies WorkerMessageData);
   if (proceedGate) boot('waiting for the client');
 
+  // Spec 2026-10-04, § 4: SQLite's authorizer refuses transaction control
+  // unless the message carries the library's `control` flag. One query runs
+  // at a time per worker, so plain variables cannot interleave.
+  let allowControl = false;
+  /** The SQL being prepared, so an allowed control statement is remembered. */
+  let preparing: string | undefined;
+  /**
+   * Control statements the library ran, with their keyword. A cache hit
+   * prepares nothing, so the authorizer never sees it: without this a
+   * consumer's `BEGIN IMMEDIATE` would reuse the library's cached one.
+   */
+  const controlSql = new Map<string, string>();
+  /** The keyword the authorizer last refused, for the message. */
+  let denied: string | undefined;
+  /**
+   * True while a statement steps. What SQLite prepares then is its own: VACUUM
+   * runs a BEGIN of its own during its step. A consumer's control statement is
+   * refused at its own prepare, or by the `controlSql` check, before any step.
+   */
+  let stepping = false;
+  const authorize = (
+    _: unknown,
+    action: number,
+    operation: string | null,
+  ): number => {
+    if (action !== SQLITE_TRANSACTION && action !== SQLITE_SAVEPOINT)
+      return SQLITE_OK;
+    const keyword =
+      action === SQLITE_TRANSACTION
+        ? (operation ?? 'BEGIN')
+        : operation === 'BEGIN'
+          ? 'SAVEPOINT'
+          : operation === 'ROLLBACK'
+            ? 'ROLLBACK TO'
+            : 'RELEASE';
+    if (allowControl) {
+      if (preparing !== undefined) controlSql.set(preparing, keyword);
+      return SQLITE_OK;
+    }
+    if (stepping) return SQLITE_OK;
+    denied = keyword;
+    return SQLITE_DENY;
+  };
+
   openedDB = (proceedGate?.promise ?? Promise.resolve())
     .then(() => {
       boot('loading the build');
@@ -451,6 +518,9 @@ const open = (file: string, options: OpenOptions) => {
                 while ((await sqlite.step(stmt)) === SQLITE_ROW) {}
               }
             }
+            // After the pragmas, which are not control. A plain function: an
+            // async one would take wa-sqlite's `_async` relay.
+            sqlite.set_authorizer(db, authorize, null);
             return { sqlite, module, db };
           });
         },
@@ -555,6 +625,7 @@ const open = (file: string, options: OpenOptions) => {
 
         let result: number;
         try {
+          stepping = true;
           result = await sqlite.step(stmt);
         } catch (e) {
           if ((e as { code?: number })?.code === SQLITE_INTERRUPT) {
@@ -566,6 +637,8 @@ const open = (file: string, options: OpenOptions) => {
             break;
           }
           throw stamped(e);
+        } finally {
+          stepping = false;
         }
         if (gate.isStopped()) break;
 
@@ -655,10 +728,20 @@ const open = (file: string, options: OpenOptions) => {
         null,
       );
     }
+    preparing = options?.uncached ? undefined : sql;
     try {
-      const cached = cache.get(sql);
+      const cached = options?.uncached ? 'uncacheable' : cache.get(sql);
 
       if (typeof cached === 'number') {
+        const keyword = controlSql.get(sql);
+        if (keyword !== undefined && !allowControl) {
+          denied = keyword;
+          // No SQLite call failed, so the connection's extended code is some
+          // earlier statement's: stamp it here, `stamped` keeps the first.
+          const refusal = new SQLite.SQLiteError('not authorized', SQLITE_AUTH);
+          (refusal as { extendedCode?: number }).extendedCode = SQLITE_AUTH;
+          throw refusal;
+        }
         let failed = false;
         try {
           yield* run(cached);
@@ -730,6 +813,7 @@ const open = (file: string, options: OpenOptions) => {
       // catch, so `??=` makes this a no-op for those.
       throw stamped(e);
     } finally {
+      preparing = undefined;
       if (yields || polls) sqlite.progress_handler(db, 0, () => 0, null);
     }
   };
@@ -739,6 +823,8 @@ const open = (file: string, options: OpenOptions) => {
     switch (data.type) {
       case 'query': {
         const { callId, sql, params, options } = data;
+        denied = undefined;
+        allowControl = options?.control === true;
         try {
           // Reset the credit gate for this call. pool.ts sets the worker's
           // status to RUNNING after posting the query.
@@ -756,8 +842,14 @@ const open = (file: string, options: OpenOptions) => {
           const savepoint = options?.savepoint;
           if (savepoint) {
             const control = async (statement: string) => {
-              for await (const _ of query(callId, statement, [])) {
-                // Savepoint statements return no rows.
+              const own = allowControl;
+              allowControl = true;
+              try {
+                for await (const _ of query(callId, statement, [])) {
+                  // Savepoint statements return no rows.
+                }
+              } finally {
+                allowControl = own;
               }
             };
             try {
@@ -815,6 +907,12 @@ const open = (file: string, options: OpenOptions) => {
             });
           }
         } catch (e) {
+          if (denied !== undefined && sqliteCodeOf(e) === SQLITE_AUTH) {
+            (e as Error).message = controlRefusedMessage(
+              denied,
+              await connectionInTransaction(),
+            );
+          }
           // Only for wa-sqlite's own SQLiteError (sqliteCodeOf), never any
           // numeric `code`. Without this the code dies at the postMessage
           // boundary and the client can only string-match the message.
@@ -841,6 +939,7 @@ const open = (file: string, options: OpenOptions) => {
             inTransaction: await connectionInTransaction(),
           });
         } finally {
+          allowControl = false;
           queryRunning?.resolve();
           queryRunning = undefined;
         }

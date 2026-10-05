@@ -7,7 +7,6 @@ import {
   assertStatementAllowed,
   databaseFiles,
   databasePath,
-  isTransactionControl,
   isWriteQuery,
   mergeSignals,
   normalizeDatabaseFile,
@@ -502,32 +501,6 @@ describe('splitPragmas', () => {
     expect(splitPragmas({ USER_VERSION: '7' }).database).toEqual({
       USER_VERSION: '7',
     });
-  });
-});
-
-describe('isTransactionControl', () => {
-  it('recognises the statements that manage a transaction or its savepoints', () => {
-    for (const sql of [
-      'SAVEPOINT u',
-      'release u',
-      '  ROLLBACK TO u',
-      'ROLLBACK',
-      'BEGIN IMMEDIATE',
-      'COMMIT',
-      'END',
-    ])
-      expect(isTransactionControl(sql)).toBe(true);
-  });
-
-  it('refuses everything else', () => {
-    for (const sql of [
-      'INSERT INTO t VALUES (1)',
-      'UPDATE t SET a = 1',
-      'WITH c AS (SELECT 1) INSERT INTO t SELECT * FROM c',
-      'SELECT 1',
-      'RELEASED',
-    ])
-      expect(isTransactionControl(sql)).toBe(false);
   });
 });
 

@@ -1,5 +1,4 @@
 import { describe, expect, it } from '@rstest/core';
-import { SQLITE_CODES } from '../../src/const/sqlite';
 import { createTestClient, type Needing } from './helpers';
 
 /**
@@ -353,80 +352,29 @@ describe('a load the callback abandons (spec 2026-09-11, R4, D6)', () => {
   }, 60_000);
 });
 
-describe("a consumer's own savepoints (spec 2026-09-11, D7, D8)", () => {
-  // Falsifiable: drop `!isTransactionControl(sql)` from opensSavepoint() — the
-  // timed RELEASE u then runs inside __bsq_sp and pops it, and the COMMIT's
-  // RELEASE __bsq_sp fails.
-  it('undoes to the consumer savepoint across a caught abandoned write (T8)', async () => {
-    const db = await setUp();
-    try {
-      await db.transaction(async (tx) => {
-        await tx.write('SAVEPOINT u');
-        await tx.write('INSERT INTO t VALUES (1)');
-        await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
-        await tx.write('INSERT INTO t VALUES (2)');
-        await tx.write('ROLLBACK TO u');
-        await tx.write('INSERT INTO t VALUES (3)');
-        await tx.write('RELEASE u', [], { timeout: 5_000 });
-      });
-      expect(await rowsOf(db)).toEqual([0, 3]);
-      expect(await bigCount(db)).toBe(0);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
-
-  // F2 (2026-09-11 final review): the reachable scenario the controller
-  // ruling names. D8 checks only the LEADING keyword of the whole
-  // statement, so this abandoned write — `BIG_INSERT; RELEASE u` — still
-  // counts as savepointed; run to its end (R1), its trailing `RELEASE u`
-  // pops __bsq_sp along with `u` (RELEASE releases every savepoint opened
-  // after the named one too), so the next message's `ROLLBACK TO __bsq_sp`
-  // fails with "no such savepoint". Before this fix only that one statement
-  // rejected and the callback's own catch swallowed it, so COMMIT kept the
-  // abandoned rows; the worker's own ROLLBACK now takes the whole
-  // transaction down through D6 instead. Falsifiable: remove the worker's
-  // ROLLBACK from the conclude/open catch in src/worker/worker.ts — the
-  // transaction then resolves and the abandoned rows are committed.
-  it('dies when an abandoned write pops a consumer savepoint along with __bsq_sp', async () => {
+describe('a consumer savepoint and an abandoned write (spec 2026-10-04)', () => {
+  // The former F2, after the guard: a RELEASE riding on an abandoned write is
+  // refused at its prepare, so it cannot pop __bsq_sp, and the write is undone.
+  // Falsifiable: delete the set_authorizer call in src/worker/worker.ts — the
+  // RELEASE pops __bsq_sp with u, the next conclusion fails and the
+  // transaction dies.
+  it('refuses a RELEASE riding on an abandoned write, and undoes the write', async () => {
     const db = await setUp();
     try {
       const before = workerIdentity(db);
-      let firstCaught: unknown;
-      let secondCaught: unknown;
-      const outcome = await db
-        .transaction(async (tx) => {
-          await tx.write('SAVEPOINT u');
-          await tx.write('INSERT INTO t VALUES (1)');
-          firstCaught = await tx
-            .write(`${BIG_INSERT}; RELEASE u`, [], { timeout: 30 })
-            .catch((e) => e);
-          secondCaught = await tx
-            .write('INSERT INTO t VALUES (2)')
-            .catch((e) => e);
-        })
-        .catch((e) => e);
-      expect(firstCaught).toMatchObject({
-        code: 'OPERATION_TIMEOUT',
-        timeout: 30,
+      let first: unknown;
+      await db.transaction(async (tx) => {
+        const sp = await tx.savepoint('u');
+        await tx.write('INSERT INTO t VALUES (1)');
+        first = await tx
+          .write(`${BIG_INSERT}; RELEASE u`, [], { timeout: 30 })
+          .catch((e) => e);
+        await tx.write('INSERT INTO t VALUES (2)');
+        await sp.release();
       });
-      expect((secondCaught as Error).message).toMatch(/no such savepoint/);
-      // Spec 2026-09-14 §5.1: the worker issues a ROLLBACK after this failure
-      // and before replying, which resets the connection's error code to 0.
-      // "no such savepoint" has no subtype, so a correct read equals
-      // sqliteCode and D9 drops it. Falsifiable: read sqlite3_extended_errcode
-      // while building the reply instead of stamping it where the statement
-      // failed — it finds 0, which differs from 1 and is kept.
-      expect(secondCaught).toMatchObject({
-        code: 'STATEMENT_FAILED',
-        sqliteCode: SQLITE_CODES.ERROR,
-      });
-      expect(
-        (secondCaught as { sqliteExtendedCode?: number }).sqliteExtendedCode,
-      ).toBeUndefined();
-      expect(outcome).toBe(secondCaught);
+      expect(first).toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 30 });
+      expect(await rowsOf(db)).toEqual([0, 1, 2]);
       expect(await bigCount(db)).toBe(0);
-      expect(await rowsOf(db)).toEqual([0]);
       expect(workerIdentity(db)).toBe(before);
     } finally {
       await db.close();

@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`db.ready`** resolves once the pool has started and rejects with the error that failed the client. Queries don't need it.
 - **`db.files`** lists every name the database's files may have — the database, `-journal`, `-wal` and the VFS's own extra files — as OPFS paths on the VFS that keep a folder.
 - **`db.debug` follows each request from the call to its end** — lock wait, pool wait, run, error — with the worker that served it, and each worker's open step by step: a worker's `boot` names the step its open has reached, so an open that never finishes says where it stopped. Its types are exported.
+- **`tx.savepoint(name?)`, a block a transaction can roll back on its own,** with the `SQLiteSavepoint` type and the `SAVEPOINT_CLOSED` error code.
 
 ### Changed
 
@@ -52,6 +53,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`createSQLiteClient` is declared to return `SQLiteDB`**, instead of a copy of its members spelled out in the type declarations.
 - **Aborting a write on `OPFSWriteAheadVFS` frees its worker sooner.** The copy of the write-ahead into the database after each transaction is much faster, at the cost of more memory while it runs.
 - **A `first()`, or a `stream()`/`chunk()` left with `break` or `return()`, now stops its running statement without a `signal`** on `async`, `jspi`, and `sync` when cross-origin isolated.
+- **Breaking:** **`SAVEPOINT`, `RELEASE` and `ROLLBACK TO` sent as SQL inside a transaction are refused with `STATEMENT_FAILED`** (`sqliteCode` 23); use `tx.savepoint()`.
 
 ### Removed
 
@@ -75,6 +77,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **On `IDBMirrorVFS`, a commit that IndexedDB refuses — on a full storage quota, for instance — no longer comes back with the next commit or corrupts the database.** It still fails, and its rows no longer reappear with the next commit. With `synchronous` set to `NORMAL` in `pragmas`, SQLite has already reported it done: it is lost, and the database stays as it was before it. The client carries on without being reopened.
 - **On `IDBMirrorVFS` with `synchronous` set to `NORMAL` in `pragmas`, closing a client right after a write no longer leaves the other clients of the database on stale data.** Another tab kept reading the database as it was before that write until it wrote itself, and that write failed with `BUSY`; on Chromium, an `InvalidStateError` could also reach the page as an uncaught error. `close()` now returns once the last write is stored and shared with the other clients: after a large write, that takes about as long as the write would have taken with `FULL`.
 - **Outside a secure context — a page served over plain `http` from anything but `localhost`, such as a phone on the LAN — `MemoryVFS` and `MemoryAsyncVFS` now work.** Every client failed there with `TypeError: crypto.randomUUID is not a function`, and the worker could not load at all. The other VFS need OPFS or the Web Locks API, which browsers withhold outside a secure context: `createSQLiteClient` and `deleteDatabase` now refuse them with `INVALID_OPTION`, naming what is missing and the VFS that run there, where they failed inside the worker before. `detectFeatures()` and `PlatformFeature` gain `web-locks`.
+- **`BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT` and `RELEASE` sent through `db.write()` and its siblings are refused.** They used to leave a transaction open on a pooled connection, blocking every other writer.
 
 ## [1.0.0-rc.5] - 2026-09-22
 

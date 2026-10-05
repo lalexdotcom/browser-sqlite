@@ -136,6 +136,8 @@ const { affected } = await db.write(
 | `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`.<br>See [Interrupting a call](#interrupting-a-call). |
 | `timeout` | `number` (ms) | — | Milliseconds before it is aborted and rejected with `OPERATION_TIMEOUT`.<br>See [Interrupting a call](#interrupting-a-call). |
 
+**Transaction control is refused.** `BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` reject with `STATEMENT_FAILED` and `sqliteCode` `23` (`SQLITE_CODES.AUTH`), on the client and inside a transaction alike. On the client, each call may run on a different connection, so a transaction opened this way could never be closed; inside a transaction, the library owns the transaction and its savepoints. Use [`transaction()`](#clienttransaction), and `tx.savepoint()` inside it. In a string of several statements, the ones before the refused statement have run — outside a transaction, they are committed.
+
 See [Writing queries](#writing-queries).
 
 ## *client*.stream
@@ -221,7 +223,31 @@ const orders = await db.transaction(async (tx) => {
 | `signal` | `AbortSignal` | — | Abandons the transaction. Rolls back and rejects with `signal.reason`; never commits.<br>See [Interrupting a call](#interrupting-a-call). |
 | `timeout` | `number` (ms) | — | Milliseconds before the transaction is abandoned. Rolls back and rejects with `OPERATION_TIMEOUT`.<br>See [Interrupting a call](#interrupting-a-call). |
 
-**One worker serves the whole callback**, so the transaction is genuinely isolated rather than merely wrapped in `BEGIN`. `tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit`, `rollback`, and `signal`. `signal` aborts whenever `transaction()` rejects; see [Inside a transaction](#inside-a-transaction).
+**One worker serves the whole callback**, so the transaction is genuinely isolated rather than merely wrapped in `BEGIN`. `tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit`, `rollback`, `savepoint` and `signal`. `signal` aborts whenever `transaction()` rejects; see [Inside a transaction](#inside-a-transaction).
+
+**`tx.savepoint(name?)` opens a block you can undo without abandoning the transaction.** It resolves to a handle with `name`, `release()` and `rollback({ release = true })`:
+
+```typescript
+await db.transaction(async (tx) => {
+  for (const order of orders) {
+    const sp = await tx.savepoint();
+    try {
+      await tx.write('INSERT INTO orders (id, total) VALUES (?, ?)', [order.id, order.total]);
+      await tx.write('UPDATE stock SET qty = qty - 1 WHERE id = ?', [order.item]);
+      await sp.release();
+    } catch {
+      await sp.rollback(); // this order only
+    }
+  }
+});
+```
+
+- `rollback()` undoes everything written since the savepoint and closes it; `rollback({ release: false })` undoes it and keeps the savepoint open, to roll back to again. `release()` keeps what was written and closes it — nothing is durable before the transaction commits.
+- Savepoints nest in the order they are opened. Releasing or rolling back one closes every savepoint opened after it; a method on a closed handle resolves when what it promises is already true and rejects with `SAVEPOINT_CLOSED` otherwise.
+- `name` is optional; one is generated otherwise (`__bsq_sp_1`, `__bsq_sp_2`…). A name already open, empty, or starting with `__bsq_` is refused with `INVALID_IDENTIFIER`.
+- A savepoint still open when the transaction commits is committed with it. Once the transaction is over, the handle rejects with `TRANSACTION_CLOSED`.
+- `tx.savepoint()`, `release()` and `rollback()` take no `signal`, like `commit()` and `rollback()`. A read-only transaction refuses `tx.savepoint()` with `READ_ONLY_TRANSACTION`.
+- Close every savepoint you open in a loop: an open savepoint makes every later write in the transaction slower, and thousands of them add up.
 
 > [!WARNING]
 > **A write transaction holds the only writing slot in the origin for as long as
@@ -322,7 +348,7 @@ It is one object, updated in place: keep the reference and read it as often as y
 
 **A query is one SQL text sent during a request**: `sql`, `params`, `startTime`, `firstRowTime`, `endTime`, `error`, `affected`, `rows`, `prepared` (statements SQLite had to compile; 0 when the statement cache served it) and `internal`. `rows` counts the rows the client received; a `first()` or a `stream()` you left early stops at what had arrived, which may be a chunk more than you read.
 
-The library's own statements — the one that makes a worker see what another committed, and a transaction's `BEGIN` and `COMMIT` or `ROLLBACK` — appear among the queries with `internal: true`. A request's `rows` and `affected` count only yours.
+The library's own statements — the one that makes a worker see what another committed, a transaction's `BEGIN` and `COMMIT` or `ROLLBACK`, and the `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` that `tx.savepoint()` and its handle send — appear among the queries with `internal: true`. A request's `rows` and `affected` count only yours.
 
 The history keeps 50 requests per worker of the pool, and 50 queries per request; a request still waiting or running is never dropped. **It keeps `params` in memory** — the values you bound, for every query it holds. One call can make several requests: a `stream()` that meets `BUSY` takes a new lease for each attempt, and nothing links them.
 
@@ -466,6 +492,8 @@ await db.transaction(async (tx) => {
 
 **Statements share one connection and run one at a time, in the order you issue them.** Creating several without awaiting each in turn is fine — `await Promise.all([tx.read(…), tx.read(…)])` runs them back to back, in the order you called them, not the order they resolve. `commit()` takes its place in that queue like any other statement, and so does each batch a `bulkWrite()` flushes. A statement aborted by its own `signal` or `timeout` while it is still waiting its turn never reaches the database and rejects alone; the ones behind it keep their order.
 
+**Savepoints follow the same order.** They form a stack in the order `tx.savepoint()`, `release()` and `rollback()` are called, not in the shape of your code. Two async branches that open savepoints in the same transaction undo each other's writes: a branch rolling back its savepoint also undoes what the other branch wrote after that savepoint opened. A `bulkWrite()` still open when its savepoint closes sends its later batches to the enclosing scope, and an `output()` must be closed before the savepoint that contains it ends — its staging table is created asynchronously, so a rollback issued while it is open may or may not undo it. Close a load before you end its savepoint.
+
 **A generator you have stopped pulling holds the connection, and everything issued after it waits.** That is the one case where waiting does not end on its own: the library cannot tell a generator you have abandoned from one whose loop body is merely slow, so it does not decide for you — it warns on the console after a few seconds and keeps waiting. Close your generators, and give a `timeout` to the statements that follow one if a consumer might not.
 
 **A generator you simply drop is the exception.** Closing one is what the transaction can wait for — exhaust it, `break` out of it, call its `return()`, or use `await using`. One that is neither closed nor exhausted still holds the connection, so the next statement in the same callback waits for it — including an explicit `tx.commit()`.
@@ -554,18 +582,19 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 | `TIMEOUT` | A worker did not post `ready` within `openTimeout` milliseconds. The most common cause is a database held under an exclusive lock by another tab or client. |
 | `OPERATION_TIMEOUT` | The `timeout` set on a call was spent. The error carries it as `error.timeout`. Deliberately not `TIMEOUT`, which means a deadline this library imposed on itself — a worker that never became ready, a deletion that did not complete. |
 | `PROTOCOL_ERROR` | A message was received from a worker that could not be deserialized (`messageerror`). The worker survives; only the in-flight request is rejected. |
-| `STATEMENT_FAILED` | SQLite refused or failed a statement for any reason other than a lock conflict: a constraint, a syntax error, a full disk, a file that is not a database. `message` is SQLite's own; `sqliteCode` carries its result code, and `sqliteExtendedCode` its subtype when SQLite reports one. |
+| `STATEMENT_FAILED` | SQLite refused or failed a statement for any reason other than a lock conflict: a constraint, a syntax error, a full disk, a file that is not a database. `message` is SQLite's own; `sqliteCode` carries its result code, and `sqliteExtendedCode` its subtype when SQLite reports one. Transaction control sent as SQL is refused with `sqliteCode` `23` (`SQLITE_AUTH`); see [*client*.write](#clientwrite). |
 | `BUSY` | A transient conflict, worth retrying. Either SQLite reported a lock conflict — `SQLITE_BUSY` or `SQLITE_LOCKED`, with its result code on `sqliteCode` and, when SQLite reports one, its subtype on `sqliteExtendedCode` — or a database was being opened or deleted elsewhere at that moment. **A read that SQLite reported busy is retried once for you**; if it reaches you, the retry failed too. Writes are never retried, and neither is a `BUSY` without a `sqliteCode`. |
 | `INVALID_OPTION` | An option was refused at the call, before any worker ran: `vfs` missing or unknown, a `(vfs, build)` pair the VFS does not support, a `poolSize` above what the VFS allows, a `wasmUrl` that is not a URL, a database name too long once normalized, a database name that is empty once normalized, or `inspectDatabase` on a memory VFS. The message names the option and what it accepts. |
 | `INVALID_PRAGMA` | A `pragmas` entry could not be rendered — the name must be a bare word; the value must be an integer, a bare word such as `WAL`, or a quoted SQL literal — or the VFS refuses it, in `pragmas` or in a statement that sets it ([VFS.md](VFS.md)). |
-| `INVALID_IDENTIFIER` | A name or type handed to `output()` or `bulkWrite()` cannot be used as written: an empty name, a name containing a NUL, a column type that is not a word with optional numeric arguments, or a generated expression that is not parenthesised and free of `;`. |
+| `INVALID_IDENTIFIER` | A name or type handed to `output()`, `bulkWrite()` or `tx.savepoint()` cannot be used as written: an empty name, a name containing a NUL, a column type that is not a word with optional numeric arguments, or a generated expression that is not parenthesised and free of `;`. For `tx.savepoint()`: a name starting with `__bsq_`, or one already open. |
 | `BULK_WRITE_FAILED` | A batch failed inside `bulkWrite().close()` or `output().close()`. The error is a `SQLiteBulkWriteError`, carrying `rowsWritten` and `rowsNotWritten`. |
 | `DATABASE_IN_USE` | A client still holds the database, in this tab or another. Retrying will not help: close every client on it first. Raised by `deleteDatabase`, and by any method on a second client where the VFS supports one connection at a time. |
 | `DATABASE_NOT_FOUND` | There is nothing at that name to delete. Raised by `deleteDatabase` alone — `createSQLiteClient` creates a database that is absent, so it has no such case. The likeliest cause is a `vfs` that is not the one the database was created with. |
 | `UNSUPPORTED` | The platform cannot answer. Raised by `inspectDatabase` and `db.inspect()` where the Web Locks API is unavailable — reporting zero clients there would be indistinguishable from a database nobody holds. |
 | `WORKER_BUSY` | A statement reached a worker that still had a query in flight. You should never see it: a statement holds its worker until it is idle, and a transaction queues its statements. If you do, that serialisation was broken — please report it. |
-| `READ_ONLY_TRANSACTION` | raised when a write statement, `bulkWrite()` or `output()` is used inside a transaction opened with `readOnly: true`. |
-| `TRANSACTION_CLOSED` | A statement, `commit()`, `bulkWrite()` or `output()` was used on a transaction object whose transaction is over. `error.cause` is the reason the transaction was abandoned; it is absent when the transaction committed or rolled back. |
+| `READ_ONLY_TRANSACTION` | raised when a write statement, `bulkWrite()`, `output()` or `tx.savepoint()` is used inside a transaction opened with `readOnly: true`. |
+| `TRANSACTION_CLOSED` | A statement, `commit()`, `bulkWrite()`, `output()`, `tx.savepoint()` or a savepoint handle's `release()` or `rollback()` was used on a transaction object whose transaction is over. `error.cause` is the reason the transaction was abandoned; it is absent when the transaction committed or rolled back. |
+| `SAVEPOINT_CLOSED` | `release()` on a savepoint already rolled back, `rollback()` on one already released, or `rollback({ release: false })` on one already rolled back and closed (it promises an open savepoint) — by itself or along with a savepoint it was nested in. `error.cause` is `{ by, savepoint }`: the operation that closed it and the savepoint it addressed. |
 
 Discriminate on `error.code` or `error.name` — they carry the same value, so `err.name` reads the way `'AbortError'` does on a DOM `AbortError`.
 
