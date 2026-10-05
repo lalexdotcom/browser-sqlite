@@ -437,6 +437,19 @@ The README cites this reading in `Known Limitations` → `Aborting a call`, deli
 without figures: "may take significantly longer, on the order of twice as long in this
 project's own measurements and more than that on some engines".
 
+## JSPI-VS-SYNC — `jspi` walks rows as fast as `sync`; `async` pays 1.2-1.8× — 2026-10-05, this container
+
+Bench page from `docs/release-pass` (main `0d08385` + doc work; wa-sqlite pin `7fcc30df` with #375's `jspi` glue carried, checked in the built `worker.js`: the jspi glue's `importPattern` is `^(invoke_.*|__asyncjs__.*`, the `async` glue is upstream's). Driver `.scratchpad/jspi-vs-sync/run.ts`: Playwright `chromium-1234` and `firefox-1538`, **persistent contexts** (RSTEST-OTR), `OPFSWriteAheadVFS` and `MemoryVFS` × `sync`/`async`/`jspi`, 9 rounds per engine, engine order alternated, 0 page errors. Medians, ratio to `sync` on the same VFS (both VFS as a range):
+
+| metric | Chromium `async` | Chromium `jspi` | Firefox `async` | Firefox `jspi` |
+|---|---|---|---|---|
+| `full-scan` | 1.56–1.68× | 0.98× | 1.42–1.44× | 1.02× |
+| `list-page-p50` | 1.70–1.76× | 1.01–1.06× | 1.19–1.29× | 0.97–1.09× |
+| `bulk-insert-dataset` | 1.27–1.35× | 0.93–0.97× | 1.20–1.28× | 1.01× |
+| `point-read-p50`, `write-latency-p50` | 1.00–1.15× | 1.00–1.12× | 1.00–1.13× | 1.00–1.14× |
+
+`jspi`'s per-round ratio on the row-walking metrics stays within roughly ±10 % of 1 on both engines. One cell stands out without a pattern: `transaction-throughput` on `OPFSWriteAheadVFS`/Chromium, `jspi` 1.27× (rounds 1.03-1.94×), against 0.87× on `MemoryVFS`. Absolute medians, `sync`: Chromium `full-scan` 6.0 / 6.6 ms, Firefox 52 / 52 ms (`OPFSWriteAheadVFS` / `MemoryVFS`). Safari not measured (no Safari here). The async÷sync ratios agree with the 2026-09-07 reading above, now since every statement installs its interrupt handler (`feat/always-abortable`).
+
 ## JSPI-SYNC-RELAYS — the `jspi` build makes every synchronous callback pay a suspension on Firefox — 2026-10-04, this container, Chromium 151.0.7922.34 / Firefox 153 (Playwright `firefox-1538`)
 
 Found while pricing the authorizer (TX-CONTROL-GUARD, `mem:measurements/transactions`). **Cause, read from wa-sqlite's source at the pin:** each relay exists twice, `SIG` and `SIG_async`, and the C side already picks one per callback (`CALL_JS`/`VFS_JS`: the `_async` one only when the JS method is an `AsyncFunction` — `FacadeVFS.hasAsyncMethod`, `instanceof AsyncFunction` in `libauthorizer.js`, `libhook.js`, `libprogress.js`, `libfunction.js`). But `src/asyncify_imports.json`, which the Makefile passes to the JSPI build as well, lists BOTH variants, so the glue's `importPattern` wraps the synchronous relays in `WebAssembly.Suspending` too. The wrapping is done in the JS glue (`dist/wa-sqlite-jspi.mjs`), not in the `.wasm`.

@@ -329,9 +329,11 @@ locks two databases of one folder against each other.
 - **`file` is what the public surface reports**: `db.file`, `InspectionBase.file`, error messages.
   `db.file` is documented as what to hand back to `inspectDatabase` / `deleteDatabase`; carrying the
   path would double the folder. `inspectWith` takes the logical name and derives the path itself.
-- **`resolveDatabase` refuses**, with `INVALID_OPTION`, a path over `MAX_DATABASE_PATH` = 64 − 8 = 56
-  (SQLite's `nPathname + 8 > mxPathname` before `xOpen`; 52 for the name on a folder VFS), counted on
-  the normalized path — and a name empty once normalized (`''`, `'/'`, `'?x'`…).
+- **`resolveDatabase` refuses**, with `INVALID_OPTION`, a normalized name over `MAX_DATABASE_NAME`
+  = 52 on every VFS (user, 2026-10-05): `MAX_DATABASE_PATH` = 64 − 8 = 56 (SQLite's
+  `nPathname + 8 > mxPathname` before `xOpen`) less the longest folder prefix, derived from
+  `VFS_CAPABILITIES`. One bound so a name valid on one VFS is valid on all; the VFS without a folder
+  gave up 56. Also a name empty once normalized (`''`, `'/'`, `'?x'`…).
 - **The worker is not touched by the folder**: the four VFS create intermediate directories with
   `{ create }`, and `opfsEntryExists` / `removeOpfsEntry` walk the path's segments.
 - **`db.files`** is derived, not observed — `databaseFiles(vfs, path)` — so it lists a `-journal` an
