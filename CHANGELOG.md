@@ -54,6 +54,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Aborting a write on `OPFSWriteAheadVFS` frees its worker sooner.** The copy of the write-ahead into the database after each transaction is much faster, at the cost of more memory while it runs.
 - **The `jspi` build is faster on Firefox.** Each synchronous call from SQLite into JavaScript — a VFS read or write, the checks the client runs on each statement — cost there nearly as much as a suspension; it now costs a plain call. Writes on `OPFSAdaptiveVFS`, which loads `jspi` by default on Firefox, are no longer slower than on `async`.
 - **A `first()`, or a `stream()`/`chunk()` left with `break` or `return()`, now stops its running statement without a `signal`** on `async`, `jspi`, and `sync` when cross-origin isolated.
+- **`VFS.md` gives Chrome 102+ for `OPFSWriteAheadVFS`, `OPFSAdaptiveVFS`, `OPFSCoopSyncVFS` and `AccessHandlePoolVFS`**, instead of 92+: they need OPFS sync access handles. `PlatformFeature` gains `sync-access-handle`, which they require.
+- **`VFS.md` says which VFS need a secure context** — HTTPS, or `localhost` — and the README states the choices the library makes for you.
 - **Breaking:** **`SAVEPOINT`, `RELEASE` and `ROLLBACK TO` sent as SQL inside a transaction are refused with `STATEMENT_FAILED`** (`sqliteCode` 23); use `tx.savepoint()`.
 
 ### Removed

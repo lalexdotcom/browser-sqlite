@@ -2,6 +2,7 @@ import { describe, expect, it } from '@rstest/core';
 import { detectFeatures, missingFeature } from '../../src/capabilities';
 import { BUILD_CAPABILITIES } from '../../src/const/builds';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
+import { AVAILABLE_FEATURES } from '../conformance/helpers';
 import { TEST_TARGET } from './helpers';
 
 /**
@@ -18,25 +19,30 @@ import { TEST_TARGET } from './helpers';
 describe('detectFeatures, in the engine', () => {
   it('finds every feature the running pair requires', () => {
     const found = detectFeatures();
-    // No VFS lists `readwrite-unsafe` in `requires` — it decides exclusivity,
-    // not whether a VFS loads — so every feature here has a page probe.
+    // `AVAILABLE_FEATURES` is `found` plus what only a worker can probe —
+    // `sync-access-handle` among the requirements — so a page probe that
+    // misses its feature still fails here.
     const required = [
       ...VFS_CAPABILITIES[TEST_TARGET.vfs].requires,
       ...BUILD_CAPABILITIES[TEST_TARGET.build].requires,
     ];
 
     for (const feature of required) {
-      expect(`${feature}: ${found.has(feature)}`).toBe(`${feature}: true`);
+      expect(`${feature}: ${AVAILABLE_FEATURES.has(feature)}`).toBe(
+        `${feature}: true`,
+      );
     }
     expect(
       missingFeature(TEST_TARGET.vfs, TEST_TARGET.build, found),
     ).toBeNull();
   });
 
-  it('never reports readwrite-unsafe, which no page can probe', () => {
-    // A worker answers that one (src/worker/probes.ts), and the second-client
-    // guard is built on its answer. From the page, WebIDL drops the unknown
-    // `mode` member without complaining, so a page probe would always say yes.
+  it('never reports what no page can probe', () => {
+    // A worker answers these (src/worker/probes.ts, the conformance probe): sync
+    // access handles exist in dedicated workers only, and from the page WebIDL
+    // drops the unknown `mode` member without complaining, so a page probe of
+    // `readwrite-unsafe` would always say yes.
+    expect(detectFeatures().has('sync-access-handle')).toBe(false);
     expect(detectFeatures().has('readwrite-unsafe')).toBe(false);
   });
 });
