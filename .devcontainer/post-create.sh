@@ -13,14 +13,10 @@ pnpm install
 # degraded path. Measured 2026-08-24 — a second handle on the same file
 # throws NoModificationAllowedError, and the suite still passes 102/104.
 #
-# WebKit was installed on 2026-08-24 and removed the same day. Playwright's
-# WebKit on Linux exposes no `navigator.storage` at all — no OPFS, no
-# FileSystemHandle, no showDirectoryPicker, only indexedDB — so it cannot
-# exercise a single VFS this library ships. It reported 9/104 for one cause,
-# not 95 defects. This is a limitation of the Linux port, not of the engine:
-# OPFS has been Baseline since March 2023 and shipping Safari has it. A real
-# WebKit signal would need Playwright on macOS. Do not re-add it here without
-# re-running that check.
+# WebKit is not installed. Playwright 1.62's WebKit has no OPFS at all;
+# 1.63+ has it in a persistent context only, and rstest's browser mode opens
+# ephemeral ones, so a WebKit project needs both a newer Playwright and a
+# persistent context before it can exercise any OPFS VFS.
 #
 # Caveat that stands for Firefox: Playwright's build is patched and is not
 # the branded browser. See https://playwright.dev/docs/browsers
