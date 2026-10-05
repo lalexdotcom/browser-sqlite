@@ -397,7 +397,8 @@ aligned with it wholesale: the image, the Playwright engines and the Serena prer
   down. `feat/*` was dropped — no branch deploys any more.
 - Local hooks (simple-git-hooks), three since 2026-09-11: `pre-commit` runs `tsc`,
   `lint-staged` and the unit project (~1.5 s), or `pnpm test` while concluding a conflicted
-  merge; `pre-merge-commit` runs `tsc`, `biome ci .` and `pnpm test`; `pre-push` the same, plus since
+  merge; `pre-merge-commit` runs `tsc`, `biome ci .` and `pnpm test`; both merge paths run
+  `pnpm install` first when the merge changes the dependencies (since 2026-10-05); `pre-push` the same, plus since
   2026-09-15 CI's VFS table check (`pnpm docs:vfs && git diff --exit-code VFS.md`), before the
   suite so a stale table fails fast. The render rewrites `VFS.md`'s generated spans in the working
   tree, so an UNCOMMITTED hand edit inside one is overwritten silently by a push. All
