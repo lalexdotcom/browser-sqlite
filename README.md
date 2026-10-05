@@ -39,7 +39,7 @@ export default defineConfig({
 
 Another bundler will likely work — the worker and its `.wasm` are reached through plain, statically analysable URLs — but may need configuration of its own.
 
-The `.wasm` are read from beside `worker.js`. If a build separates them, or you move them by hand, point at them with [`wasmUrl`](API.md#options).
+The `.wasm` are read from beside `worker.js`. If a build separates them, or you move them by hand, point at them with [`wasmUrl`](API.md#wasmurl).
 </details>
 
 ## Browser support
