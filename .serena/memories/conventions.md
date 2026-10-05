@@ -198,6 +198,13 @@ three.
 - **`CHANGELOG.md` lists what changes — no detailed description (user, 2026-10-02).** No commit SHA, no measured figures, no internal mechanism in an entry: what changed for the consumer, in a sentence or two. Migrations are documented in `API.md`/`README.md`/`VFS.md` only between stable versions; until 1.0 ships, a migration that must be written down stays in the CHANGELOG entry.
 - **Do not explain compatibility in prose.** Version numbers in the tables are enough. A
   Requirements subsection arguing *why* each API mattered was cut for exactly this reason.
+- **Settled in the 2026-10-05 review of `README.md` and `API.md` (user):**
+  - A paragraph that opens with a bold sentence breaks the line right after it: `**Whole sentence.**<br>Rest of the paragraph`, on one line. The bold lead is a whole sentence; one that ran on with `:`, `,` or `—` is reworded so it ends there and the next sentence carries the rest.
+  - `API.md` speaks of what a VFS can do, not of VFS by name — the detail per VFS lives in `VFS.md`. Code examples still name one.
+  - An option table gives one line per option, and a `[More info](#option)` link to a `####` subsection where it needs more.
+  - No measured figures and no "as fast as X in our measurements": the choice and its cost in a few words; the numbers stay in `mem:measurements`.
+  - The README lists the library's choices first ("Opinionated by design"), and explains no mechanism: what a consumer can act on, nothing under the hood.
+  - `VFS.md`'s per-VFS facts sit on lines of their own (`<br>` between them, one paragraph), and the memory line is labelled `Memory usage`.
 - **Consumer documentation is edited iteratively — do not commit each pass.** Several round
   trips are normal; committing after every one forces the user to brake. Make the edit, show
   what changed, wait.

@@ -34,18 +34,23 @@ const PROBES: Partial<Record<PlatformFeature, () => boolean>> = {
  * Features with no synchronous probe FROM THE PAGE. Declared, never merely
  * omitted.
  *
- * WebIDL ignores an unknown dictionary member, so passing `readwrite-unsafe`
- * and seeing no error proves nothing. `FileSystemSyncAccessHandle`, whose
- * `mode` attribute would tell, is exposed to dedicated workers only — so the
- * pool's own workers probe it (`src/worker/probes.ts`), and the benchmark page
- * opens two handles in a worker of its own. A feature in neither table is a
- * mistake, and `tests/unit/capabilities.test.ts` says so.
+ * `FileSystemSyncAccessHandle` and `createSyncAccessHandle` are exposed to
+ * dedicated workers only, so the page sees neither. WebIDL also ignores an
+ * unknown dictionary member, so passing `readwrite-unsafe` and seeing no error
+ * proves nothing — the pool's own workers probe the handle's `mode` attribute
+ * (`src/worker/probes.ts`), and the benchmark page opens two handles in a
+ * worker of its own. A feature in neither table is a mistake, and
+ * `tests/unit/capabilities.test.ts` says so.
  */
-const UNPROBEABLE = new Set<PlatformFeature>(['readwrite-unsafe']);
+const UNPROBEABLE = new Set<PlatformFeature>([
+  'sync-access-handle',
+  'readwrite-unsafe',
+]);
 
 /** Human-readable names for the error messages. */
 const FEATURE_LABEL: Record<PlatformFeature, string> = {
   opfs: 'OPFS',
+  'sync-access-handle': 'OPFS sync access handles',
   jspi: 'JSPI',
   'writable-stream': 'FileSystemWritableFileStream',
   'readwrite-unsafe': 'readwrite-unsafe access handles',

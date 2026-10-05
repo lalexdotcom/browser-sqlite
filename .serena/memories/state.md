@@ -19,8 +19,8 @@ obligations and unmeasured ground.
   **the user's instruction creates** — no automation opens one. **`## [Unreleased]` (Keep a Changelog since 2026-09-30, `mem:conventions`) exists since
   2026-09-23**, opened on that instruction, and carries the wa-sqlite repins (the latest bringing the embedded-NUL TEXT fix, under Fixed), the checkpoint coalescing below, `db.ready` (Added, merged
   2026-09-23), and **per-VFS OPFS folders** (merged 2026-09-24, the section's first **Breaking**
-  entries: `.ad/`, `.ac/`, `.cs/`, `.wa/`, `layout` and `VFSLayout` gone, the 52-character name bound
-  on those four VFS; `db.files` Added; the path and empty-name refusals Changed — `mem:vfs`, CROSS-VFS;
+  entries: `.ad/`, `.ac/`, `.cs/`, `.wa/`, `layout` and `VFSLayout` gone, the 52-character name bound,
+  on every VFS since 2026-10-05; `db.files` Added; the path and empty-name refusals Changed — `mem:vfs`, CROSS-VFS;
   `mem:architecture`, "Two names per database"), and **the default build that follows the browser** (merged 2026-09-24: Changed, plus one Breaking entry — a `wasmUrl` serving only the `async` `.wasm`), and **the public surface** (merged 2026-09-24: Breaking — `VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` no longer exported, the `./worker` subpath gone; Changed — `createSQLiteClient` declared to return `SQLiteDB`), and two more **Fixed** entries: `OPFSAnyContextVFS`'s `VACUUM` that failed the next read on Firefox (#363, merged 2026-09-25) and a failed client leaving `inspectDatabase()`'s roster at once (merged 2026-09-27). Since 2026-10-04 it also carries **`tx.savepoint()`** (Added, with `SAVEPOINT_CLOSED`) and **transaction control refused when sent as SQL** — a Breaking entry for raw savepoint SQL inside a transaction, a Fixed one for `BEGIN`/`COMMIT` through the client (`mem:history`, `mem:architecture`).
 - **The vendored wa-sqlite sits on upstream `master` of 2026-10-03** (`7fcc30df`, `package.json` has the
   SHA), which merged every PR the patch carried (#363, #367, #368, #369, #370). **`patches/wa-sqlite@1.1.2.patch`

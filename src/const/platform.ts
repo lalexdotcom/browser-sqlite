@@ -6,6 +6,7 @@
  */
 export type PlatformFeature =
   | 'opfs'
+  | 'sync-access-handle'
   | 'readwrite-unsafe'
   | 'jspi'
   | 'writable-stream'

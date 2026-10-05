@@ -466,12 +466,27 @@ export const databaseFiles = (
 export const MAX_DATABASE_PATH = 64 - 8;
 
 /**
+ * The longest database name once normalized, on every VFS: the path bound less
+ * the longest folder prefix (`.<folder>/`). One bound for all of them, so a
+ * name that opens on one VFS opens on any other.
+ */
+export const MAX_DATABASE_NAME =
+  MAX_DATABASE_PATH -
+  Math.max(
+    ...(Object.keys(VFS_CAPABILITIES) as SQLiteVFS[]).map((vfs) => {
+      const folder = folderOf(vfs);
+      return folder === undefined ? 0 : folder.length + 2;
+    }),
+  );
+
+/**
  * A database's two names, computed once at each entry point: `file`, what the
  * consumer wrote, normalized — reported by `db.file`, inspections and error
  * messages; and `path`, the identity every lock, the epoch registry, the
  * workers and the VFS use.
  *
- * Refuses a name that is empty once normalized.
+ * Refuses a name that is empty once normalized, or longer than
+ * `MAX_DATABASE_NAME`.
  */
 export const resolveDatabase = (
   file: string,
@@ -484,14 +499,13 @@ export const resolveDatabase = (
       `'${file}' is empty once normalized: a database name needs at least one character that is not '/', '.', or part of a '?query' or '#fragment'.`,
     );
   }
-  const path = databasePath(vfs, normalized);
-  if (path.length > MAX_DATABASE_PATH) {
+  if (normalized.length > MAX_DATABASE_NAME) {
     throw new SQLiteError(
       'INVALID_OPTION',
-      `'${file}' is ${normalized.length} characters once normalized; ${vfs} accepts at most ${MAX_DATABASE_PATH - (path.length - normalized.length)}.`,
+      `'${file}' is ${normalized.length} characters once normalized; a database name may have at most ${MAX_DATABASE_NAME}.`,
     );
   }
-  return { file: normalized, path };
+  return { file: normalized, path: databasePath(vfs, normalized) };
 };
 
 /**

@@ -24,10 +24,16 @@ const pair = (vfs: SQLiteVFS, build: SQLiteBuild): TestTarget => ({
 });
 
 /** Firefox as the suite meets it: OPFS, no `readwrite-unsafe`, not isolated. */
-const WITHOUT_UNSAFE = here(['opfs', 'writable-stream', 'web-locks']);
+const WITHOUT_UNSAFE = here([
+  'opfs',
+  'sync-access-handle',
+  'writable-stream',
+  'web-locks',
+]);
 /** Chromium as the suite meets it, not isolated. */
 const WITH_UNSAFE = here([
   'opfs',
+  'sync-access-handle',
   'readwrite-unsafe',
   'writable-stream',
   'web-locks',
@@ -212,6 +218,7 @@ describe('resolvePair', () => {
     const target = pair('OPFSAdaptiveVFS', 'jspi');
     const noJspi = here([
       'opfs',
+      'sync-access-handle',
       'readwrite-unsafe',
       'writable-stream',
       'web-locks',
@@ -261,6 +268,7 @@ describe("resolvePair under 'skip'", () => {
     const target = pair('OPFSAdaptiveVFS', 'jspi');
     const noJspi = here([
       'opfs',
+      'sync-access-handle',
       'readwrite-unsafe',
       'writable-stream',
       'web-locks',

@@ -16,10 +16,11 @@ import { RECOMMENDED_VFS } from './recommended-vfs.ts';
  * engine does not implement it at all.
  *
  * Sources, checked 2026-08-24 — nothing enters this map without one:
- * - `opfs` (`StorageManager.getDirectory` and
- *   `FileSystemFileHandle.createSyncAccessHandle`): MDN browser-compat-data,
- *   `api/StorageManager.json` and `api/FileSystemFileHandle.json`. Both give
- *   the same versions.
+ * - `opfs` (`StorageManager.getDirectory`): MDN browser-compat-data,
+ *   `api.StorageManager.getDirectory`.
+ * - `sync-access-handle` (`FileSystemFileHandle.createSyncAccessHandle`): same
+ *   source, `api.FileSystemFileHandle.createSyncAccessHandle`, checked
+ *   2026-10-05. Chrome shipped it well after `getDirectory`.
  * - `readwrite-unsafe` (the `mode` option on `createSyncAccessHandle`): same
  *   source, the `mode` sub-feature. Firefox and Safari are recorded `false`.
  * - `cross-origin-isolated` (the `crossOriginIsolated` global): MDN
@@ -42,6 +43,13 @@ type Support = string | 'yes' | null;
 const FEATURE_SUPPORT = {
   opfs: {
     Chrome: '86',
+    Android: '109',
+    Firefox: '111',
+    Safari: '15.2',
+    iOS: '15.2',
+  },
+  'sync-access-handle': {
+    Chrome: '102',
     Android: '109',
     Firefox: '111',
     Safari: '15.2',
@@ -94,6 +102,22 @@ const FEATURE_SUPPORT = {
     iOS: '15.4',
   },
 } as const satisfies Record<PlatformFeature, Record<string, Support>>;
+
+/**
+ * Whether browsers expose a feature only in a secure context — HTTPS, or
+ * `localhost`. A record rather than a set, so a new feature cannot be added
+ * without deciding. Every interface behind these is `[SecureContext]` in its
+ * spec; `crossOriginIsolated` is exposed everywhere but is only ever true there.
+ */
+const SECURE_CONTEXT_ONLY = {
+  opfs: true,
+  'sync-access-handle': true,
+  'readwrite-unsafe': true,
+  'writable-stream': true,
+  jspi: false,
+  'cross-origin-isolated': true,
+  'web-locks': true,
+} as const satisfies Record<PlatformFeature, boolean>;
 
 /** Desktop first, then mobile. Order is deliberate and shared by both tables. */
 const BROWSERS = ['Chrome', 'Firefox', 'Safari', 'Android', 'iOS'] as const;
@@ -362,7 +386,7 @@ const MEMORY_LABEL = {
 } as const satisfies Record<VFSMemoryModel, string>;
 
 /**
- * What a per-VFS header shows on its `RAM:` line. The full sentence goes to a
+ * What a per-VFS header shows on its `Memory usage:` line. The full sentence goes to a
  * footnote instead, so the line stays scannable across nine fiches — and the
  * footnote text IS `MEMORY_LABEL`, so the short form can never say something
  * the long form does not.
@@ -390,6 +414,11 @@ const MEMORY_SHORT = {
  * so a hand-written note among them would renumber the rest the day it moved.
  */
 const FOOTNOTES: readonly { readonly id: string; readonly text: string }[] = [
+  // First: the VFS table that calls it comes before every per-VFS header.
+  {
+    id: 'https',
+    text: 'Served over HTTPS, or from `localhost`: browsers withhold OPFS and the Web Locks API from any other page.',
+  },
   {
     id: 'browsers',
     text:
@@ -494,7 +523,7 @@ const detailFor = (name: string, cap: VFSCapability): string => {
     `**Pool size:** ${pool}`,
     ...(shared ? [shared] : []),
     ...(clients ? [clients] : []),
-    `**RAM:** ${MEMORY_SHORT[cap.memoryModel]}${noteRef(`ram-${cap.memoryModel}`)}`,
+    `**Memory usage:** ${MEMORY_SHORT[cap.memoryModel]}${noteRef(`ram-${cap.memoryModel}`)}`,
   ];
   // Shown only when there are any: an empty "Default PRAGMAs: —" on most VFS
   // is a line the reader learns to skip, which costs the ones that do carry
@@ -527,7 +556,7 @@ const detailFor = (name: string, cap: VFSCapability): string => {
     // written once at the foot of the file. Its `[^browsers]` definition is
     // hand-written there — do not delete it, the references would render raw.
     `**Browsers:**${noteRef('browsers')} ${compat}`,
-    facts.join(' · '),
+    facts.join('<br>'),
   ].join('\n\n');
 };
 
@@ -619,12 +648,13 @@ const rows = Object.entries(VFS_CAPABILITIES).map(([name, cap]) => {
       'readwrite-unsafe',
     ),
   );
-  return `| ${label} | ${builds} | ${yes(cap.maxPoolSize === null)} | ${yes(cap.persistent)} | ${unsafe} |`;
+  const https = yes(cap.requires.some((f) => SECURE_CONTEXT_ONLY[f]));
+  return `| ${label} | ${builds} | ${yes(cap.maxPoolSize === null)} | ${yes(cap.persistent)} | ${https} | ${unsafe} |`;
 });
 
 const table = [
-  `| VFS | ${BUILDS.map((b) => `[\`${b}\`](#build-${b})`).join(' | ')} | Pool | Persistent | \`readwrite-unsafe\` |`,
-  `|---|${BUILDS.map(() => '---').join('|')}|---|---|---|`,
+  `| VFS | ${BUILDS.map((b) => `[\`${b}\`](#build-${b})`).join(' | ')} | Pool | Persistent | HTTPS${noteRef('https')} | \`readwrite-unsafe\` |`,
+  `|---|${BUILDS.map(() => '---').join('|')}|---|---|---|---|`,
   ...rows,
 ].join('\n');
 

@@ -44,7 +44,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   ```
 
   A name containing `/` keeps its subfolders inside the VFS folder. The database file moves last, after its journal. The other VFS are unaffected.
-- **Breaking:** **A database name on those VFS may be 52 characters instead of 56**, once normalized — the folder takes four.
+- **Breaking:** **A database name may be 52 characters instead of 56**, once normalized, on every VFS — the folder of the VFS above takes four.
 - **Breaking:** **A `wasmUrl` callback that ignores its argument can hand the wrong `.wasm` to the VFS that now default to `jspi` (see below)** when no `build` is passed and the browser has JSPI: the callback now receives `'jspi'`. Return the file for the build it receives, or pass `build`. A string `wasmUrl` names a directory, which must now also serve `wa-sqlite-jspi.wasm` — or pass `build`.
 - **An omitted `build` is the first one the VFS declares that the browser supports, and `jspi` is now declared before `async` everywhere.** On browsers with JSPI (Chrome 137+, Firefox 153+, Safari 27+), `OPFSAdaptiveVFS`, `IDBBatchAtomicVFS`, `IDBMirrorVFS`, `OPFSAnyContextVFS` and `MemoryAsyncVFS` now load `jspi` instead of `async`; elsewhere they load `async` as before, and the other VFS keep `sync`. `db.build` reports the one loaded. Pass `build: 'async'` to keep the previous behaviour.
 - **The bundled wa-sqlite is updated.** The fixes it brings are listed under *Fixed*.
@@ -54,6 +54,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Aborting a write on `OPFSWriteAheadVFS` frees its worker sooner.** The copy of the write-ahead into the database after each transaction is much faster, at the cost of more memory while it runs.
 - **The `jspi` build is faster on Firefox.** Each synchronous call from SQLite into JavaScript — a VFS read or write, the checks the client runs on each statement — cost there nearly as much as a suspension; it now costs a plain call. Writes on `OPFSAdaptiveVFS`, which loads `jspi` by default on Firefox, are no longer slower than on `async`.
 - **A `first()`, or a `stream()`/`chunk()` left with `break` or `return()`, now stops its running statement without a `signal`** on `async`, `jspi`, and `sync` when cross-origin isolated.
+- **`VFS.md` gives Chrome 102+ for `OPFSWriteAheadVFS`, `OPFSAdaptiveVFS`, `OPFSCoopSyncVFS` and `AccessHandlePoolVFS`**, instead of 92+: they need OPFS sync access handles. `PlatformFeature` gains `sync-access-handle`, which they require.
+- **`VFS.md` says which VFS need a secure context** — HTTPS, or `localhost` — and the README states the choices the library makes for you.
 - **Breaking:** **`SAVEPOINT`, `RELEASE` and `ROLLBACK TO` sent as SQL inside a transaction are refused with `STATEMENT_FAILED`** (`sqliteCode` 23); use `tx.savepoint()`.
 
 ### Removed

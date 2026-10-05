@@ -225,7 +225,7 @@ export const VFS_CAPABILITIES = {
     // (spec 2026-09-13). `requires` used to name readwrite-unsafe, which made
     // the conformance suite skip the very pairs that would have falsified it.
     // Safari behaves as Firefox — observed 2026-09-13, InvalidStateError.
-    requires: ['opfs', 'web-locks'],
+    requires: ['opfs', 'sync-access-handle', 'web-locks'],
     degradesWithout: ['readwrite-unsafe'],
     singleConnectionWithout: ['readwrite-unsafe'],
     extraFileSuffixes: ['-wa0', '-wa1'],
@@ -247,7 +247,7 @@ export const VFS_CAPABILITIES = {
     storage: 'opfs',
     folder: 'ad',
     exclusiveFileHandle: false,
-    requires: ['opfs', 'web-locks'],
+    requires: ['opfs', 'sync-access-handle', 'web-locks'],
     degradesWithout: ['readwrite-unsafe'],
     singleConnectionWithout: ['readwrite-unsafe'],
     extraFileSuffixes: [],
@@ -269,7 +269,7 @@ export const VFS_CAPABILITIES = {
     storage: 'opfs',
     folder: 'cs',
     exclusiveFileHandle: true,
-    requires: ['opfs', 'web-locks'],
+    requires: ['opfs', 'sync-access-handle', 'web-locks'],
     degradesWithout: [],
     singleConnectionWithout: [],
     extraFileSuffixes: [],
@@ -291,7 +291,7 @@ export const VFS_CAPABILITIES = {
     memoryModel: 'page-cache',
     storage: 'opfs',
     exclusiveFileHandle: true,
-    requires: ['opfs', 'web-locks'],
+    requires: ['opfs', 'sync-access-handle', 'web-locks'],
     degradesWithout: [],
     singleConnectionWithout: [],
     extraFileSuffixes: [],

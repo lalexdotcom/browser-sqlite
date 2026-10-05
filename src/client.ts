@@ -326,8 +326,9 @@ const exclusivityProbes = new Map<
  * `poolSize` Web Worker threads and begins asynchronous database
  * initialization. Workers become queryable once they emit a `ready` message.
  *
- * @param file - SQLite database file name within the OPFS origin.
- *   Each distinct name corresponds to a separate database file.
+ * @param file - The database name — at most 52 characters once normalized,
+ *   where a non-ASCII character counts three per UTF-8 byte. Each distinct
+ *   name is a separate database.
  * @param clientOptions - Pool and VFS configuration. Required: `vfs` has no
  *   default, because a VFS decides where the database is written.
  *   See {@link CreateSQLiteClientOptions} for field defaults.
@@ -337,6 +338,8 @@ const exclusivityProbes = new Map<
  * @throws {SQLiteError} With code `INVALID_OPTION` when `build` is not one of
  *   the builds the chosen `vfs` supports. The message names the supported
  *   builds.
+ * @throws {SQLiteError} With code `INVALID_OPTION` when `file` is longer than
+ *   52 characters, or empty, once normalized.
  * @throws {SQLiteError} With code `INVALID_OPTION` when `poolSize` exceeds the
  *   cap the chosen `vfs` declares. The message names the cap and the reason
  *   for it.

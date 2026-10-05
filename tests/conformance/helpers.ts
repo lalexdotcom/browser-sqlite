@@ -10,32 +10,38 @@ import { databaseFiles, databasePath } from '../../src/utils';
 export const ALL_VFS = Object.keys(VFS_CAPABILITIES) as SQLiteVFS[];
 
 /**
- * Probes for `mode: 'readwrite-unsafe'` OPFS access handle support by
+ * Probes for OPFS sync access handles, then for `mode: 'readwrite-unsafe'`, by
  * attempting to open two handles on the same file. createSyncAccessHandle is
  * only available in dedicated workers, so we spawn an inline blob worker and
- * relay the result back. Returns false for any error — missing OPFS, denied
- * permissions, or a browser that ignores the mode and enforces exclusive
- * locking (which blocks the second open).
+ * relay the result back. `sync` is whether the first handle opened, `unsafe`
+ * whether the second did too; any error leaves the rest false — missing OPFS,
+ * denied permissions, or a browser that ignores the mode and enforces
+ * exclusive locking (which blocks the second open).
  */
 /**
  * One attempt. Resolves `'wedged'` rather than an answer when the worker does
- * not report inside `PROBE_BOUND_MS` — see `probeUnsafeHandles` for why that
+ * not report inside `PROBE_BOUND_MS` — see `probeHandles` for why that
  * case exists at all.
  */
-function probeOnce(attempt: number): Promise<boolean | 'wedged'> {
-  return new Promise<boolean | 'wedged'>((resolve) => {
+/** What the probe worker found: one sync access handle, then a second one. */
+type HandleProbe = { readonly sync: boolean; readonly unsafe: boolean };
+
+function probeOnce(attempt: number): Promise<HandleProbe | 'wedged'> {
+  return new Promise<HandleProbe | 'wedged'>((resolve) => {
     const src = `
       self.onmessage = async () => {
         let h1;
+        let sync = false;
         try {
           const root = await navigator.storage.getDirectory();
           const fh = await root.getFileHandle('__probe_unsafe_handles', { create: true });
           h1 = await fh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
+          sync = true;
           const h2 = await fh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
           h2.close();
-          self.postMessage(true);
+          self.postMessage({ sync, unsafe: true });
         } catch {
-          self.postMessage(false);
+          self.postMessage({ sync, unsafe: false });
         } finally {
           try { h1?.close(); } catch {}
           try {
@@ -64,14 +70,14 @@ function probeOnce(attempt: number): Promise<boolean | 'wedged'> {
       );
       resolve('wedged');
     }, PROBE_BOUND_MS);
-    worker.onmessage = (e: MessageEvent<boolean>) => {
+    worker.onmessage = (e: MessageEvent<HandleProbe>) => {
       clearTimeout(bound);
       resolve(e.data);
       URL.revokeObjectURL(url);
     };
     worker.onerror = () => {
       clearTimeout(bound);
-      resolve(false);
+      resolve({ sync: false, unsafe: false });
       worker.terminate();
       URL.revokeObjectURL(url);
     };
@@ -110,27 +116,31 @@ const PROBE_ATTEMPTS = 3;
  * Chromium would flip `readwrite-unsafe` for the whole run and make tests pass
  * for the wrong reason.
  */
-async function probeUnsafeHandles(): Promise<boolean> {
+async function probeHandles(): Promise<HandleProbe> {
   for (let attempt = 1; attempt <= PROBE_ATTEMPTS; attempt++) {
     const answer = await probeOnce(attempt);
     if (answer !== 'wedged') return answer;
   }
   throw new Error(
-    `readwrite-unsafe probe: ${PROBE_ATTEMPTS} workers in a row failed to report within ${PROBE_BOUND_MS} ms each. On Firefox this is navigator.storage.getDirectory() never settling inside a worker (mem:follow-ups). The suite refuses to guess the answer.`,
+    `OPFS handle probe: ${PROBE_ATTEMPTS} workers in a row failed to report within ${PROBE_BOUND_MS} ms each. On Firefox this is navigator.storage.getDirectory() never settling inside a worker (mem:follow-ups). The suite refuses to guess the answer.`,
   );
 }
 
-export const HAS_UNSAFE_HANDLES = await probeUnsafeHandles();
+const HANDLES = await probeHandles();
+
+export const HAS_UNSAFE_HANDLES = HANDLES.unsafe;
 
 /**
  * Every platform feature this engine has. The probeable ones come from the
  * shipped guard, so a feature added to `PlatformFeature` is answered here with
- * no edit in this file; `readwrite-unsafe` has no synchronous probe — which is
- * why `detectFeatures` cannot report it — and comes from the async probe above.
+ * no edit in this file; `sync-access-handle` and `readwrite-unsafe` have no
+ * probe from the page — which is why `detectFeatures` cannot report them — and
+ * come from the worker probe above.
  */
 export const AVAILABLE_FEATURES: ReadonlySet<PlatformFeature> = new Set([
   ...detectFeatures(),
-  ...(HAS_UNSAFE_HANDLES ? (['readwrite-unsafe'] as const) : []),
+  ...(HANDLES.sync ? (['sync-access-handle'] as const) : []),
+  ...(HANDLES.unsafe ? (['readwrite-unsafe'] as const) : []),
 ]);
 
 /**

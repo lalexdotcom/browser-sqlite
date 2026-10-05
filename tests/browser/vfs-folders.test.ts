@@ -3,7 +3,7 @@ import { createSQLiteClient } from '../../src/client';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import { deleteDatabase } from '../../src/delete';
 import { inspectDatabase } from '../../src/inspect';
-import { databasePath, MAX_DATABASE_PATH } from '../../src/utils';
+import { databasePath, MAX_DATABASE_NAME } from '../../src/utils';
 import { TEST_TARGET } from './helpers';
 
 const { vfs, build } = TEST_TARGET;
@@ -48,10 +48,9 @@ describe('the name a consumer uses', () => {
   );
 
   (persistent ? it : it.skip)(
-    'opens and persists a path exactly at the bound',
+    'opens and persists a name exactly at the bound',
     async () => {
-      const folder = databasePath(vfs, '').length; // 4 on a folder VFS, 0 elsewhere
-      const name = 'b'.repeat(MAX_DATABASE_PATH - folder);
+      const name = 'b'.repeat(MAX_DATABASE_NAME);
       onTestFinished(() =>
         deleteDatabase(name, { vfs, build }).catch(() => {}),
       );
