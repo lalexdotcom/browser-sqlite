@@ -251,6 +251,8 @@ The spec claimed `createSQLiteClient`'s new `): SQLiteDB` return annotation "com
 
 A plan that says "apply the sabotage, see the test fail, revert with `git checkout -- src`" assumes the real change is already committed. An implementer who sabotaged before committing lost its whole uncommitted change to `pool.ts` that way, and had to reapply it. Commit (or `git stash`) the real change before any sabotage, and write plans with that order.
 
+**It recurred on 2026-10-04 (`feat/tx-savepoint`, Task 3)** because the plan, written by the controller, still put the falsifier step before the commit step; the implementer reverted whole directories and re-applied everything from the brief. A plan puts the commit BEFORE any sabotage step, and each revert names one file.
+
 ## `pkill -f` with a pattern from your own command line kills your own shell (2026-10-03)
 
 `pkill -f "wtr-ff.config.mjs --files ./test/sql.test.js"` matched the `bash -c` that ran it (exit 144) and left the runner alive, while the background loop moved on to its next run. **Stop a background run by PID**, read off `ps`, children included; and stop the loop's own shell first, or it starts the next iteration.
