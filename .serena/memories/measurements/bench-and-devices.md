@@ -157,7 +157,7 @@ Playwright's own builds: Chromium 151, Firefox 153, WebKit 26.5, all arm64/Linux
 - **Firefox is ~5.5× slower than Chromium** on the same CPU-bound query: 4192 ms vs 755 ms
   for `longQuery(3_000_000)`. **Every Chromium-calibrated timing constant in the suite is
   suspect.**
-- **WebKit on Linux has no `navigator.storage` at all** — not a partial OPFS, the whole
+- **Playwright 1.62's WebKit on Linux has no `navigator.storage` at all** — not a partial OPFS, the whole
   StorageManager is missing. It cannot exercise any VFS this library ships and was removed
   from CI and the devcontainer (`ee2e9f3`). Its 9/104 was one missing API, not 95 defects.
   **Corrected 2026-10-05: this was Playwright 1.62's WebKit, not the Linux port.** Playwright

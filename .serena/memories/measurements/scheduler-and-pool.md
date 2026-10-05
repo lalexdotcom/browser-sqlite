@@ -314,9 +314,10 @@ either direction, on either engine.
 `OPFSCoopSyncVFS` blocked on both, which is what the README's Known Limitations
 entry claims — defensible at n=3 per engine now. The other two OPFS VFS blocked
 on Firefox only: the reduced-mode signature, not a property of those VFS.
-**The WebKit flip is NOT covered here** — Linux WebKit exposes no
-`navigator.storage`, so the platform where the 2026-08-27 campaign saw it cannot
-be reached from this container at all; it needs the user's Apple hardware, whose
+**The WebKit flip is NOT covered here** — Playwright 1.62's Linux WebKit, the one
+measured then, exposes no `navigator.storage` (1.63 does, in a persistent context:
+WA-WEBKIT-SUITE), so the platform where the 2026-08-27 campaign saw it was not
+reachable from this container; it needs the user's Apple hardware, whose
 Safari has moved to 26.6.2 since, making that campaign a stale baseline rather
 than a comparison. It gates no published sentence, so nothing is owed on it —
 this table is where it is recorded, and there is no backlog entry.
