@@ -41,7 +41,8 @@
 		"dist",
 		"NOTICE",
 		"API.md",
-		"VFS.md"
+		"VFS.md",
+		"CHANGELOG.md"
 	],
 	"scripts": {
 		"build": "rslib build",

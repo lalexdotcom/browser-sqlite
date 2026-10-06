@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **`CHANGELOG.md` ships in the package**, beside `API.md` and `VFS.md`.
+
 ## [1.0.0-rc.7] - 2026-10-06
 
 ### Added
