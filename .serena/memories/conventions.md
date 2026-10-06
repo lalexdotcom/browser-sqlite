@@ -162,6 +162,8 @@ workflow finds a section by the prefix `## [<version>] - `, refuses an undated
 heading or a missing link definition, and stops the body at the next heading or at
 the link definitions.
 
+**Push `main` and the tag in ONE command (`git push origin main v<version>`)**: two pushes run the `pre-push` hook — the whole `pnpm test` — twice on the same commit (rc.7, 2026-10-06). GitHub still runs `ci.yaml` on `main` and the release's own `verify` on the tag, one event per ref; the user keeps that as it is (2026-10-06).
+
 **The bump is one commit, then a tag.** `package.json` and the dated CHANGELOG
 heading must be true of the same tree, because the release workflow refuses a
 tag that disagrees with either. `upversion` is **not** used for this package —

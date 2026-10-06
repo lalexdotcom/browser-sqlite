@@ -12,13 +12,12 @@ obligations and unmeasured ground.
 
 ## Standing facts about the repository
 
-- **`1.0.0-rc.6` is published**, on 2026-10-06: on npm under `rc`, `next` and `latest`
-  (verified on the registry, about two minutes after `npm publish` reported it), with
-  provenance, and as a GitHub prerelease whose body is the CHANGELOG section for the tag.
-  `package.json` sits at `1.0.0-rc.6` until the user calls the next bump. Its section is
-  everything that landed between rc.5 (2026-09-22) and rc.6 — `CHANGELOG.md` and `mem:history`
-  say what. **`## [Unreleased]` was reopened empty the same day**, as the
-  `changelog-maintenance` skill does at every release (`mem:conventions`).
+- **`1.0.0-rc.7` is published**, on 2026-10-06 (rc.6 the same morning): on npm under `rc`, `next` and `latest`
+  (verified on the registry after the run), with provenance, and as a GitHub prerelease whose body is the CHANGELOG section for the tag.
+  `package.json` sits at `1.0.0-rc.7` until the user calls the next bump. Its section is
+  what landed after rc.6 — the object/Date/JSONB conversion of `bulkWrite()`/`output()` and the docs shipped in the package.
+  **`## [Unreleased]` was reopened empty in the bump commit**, as the `changelog-maintenance` skill does at every release (`mem:conventions`).
+  The release gate ran green first time: `verify`, `consumer-smoke`, 22/22 cells, then `release`.
 - **The vendored wa-sqlite sits on upstream `master` of 2026-10-05** (`96d91182`, `package.json` has the
   SHA), which merged #375, the last PR carried in `dist/`. **`patches/wa-sqlite@1.1.2.patch` carries `IDBMirrorVFS.js` for #371 and #372** (both open upstream, conflicting in `jClose`), **and a one-line guard in `OPFSAdaptiveVFS.js` for #374** (open upstream); heads and the merge in `mem:stack-and-build`. The installed `src/` was checked equal to the pin plus the patch (build sources aside), `dist/` to the pin's. The repin changed executed code in the `async` build — its glue and `.wasm`, which the patch had not carried from #375 — and the matrix's one red cell was traced to a test race, not to it (`mem:history`, 2026-10-05).
 - **The release gate ran the full matrix for the first time, and it took four tags to get
@@ -282,7 +281,7 @@ failures established that no reading would have.
   fallback; and the `release` job has `id-token: write`. **rc.6 (2026-10-06) was its first release:**
   `npm publish` went through OIDC (log: "trusted publishing (OIDC), npm-token as fallback",
   provenance published), but the two `npm dist-tag add` printed npm's notice on 2FA-bypass
-  tokens, so they most likely used `NPM_TOKEN`. Whether dist-tags work through OIDC alone is
+  tokens, so they most likely used `NPM_TOKEN`; rc.7 printed the same notice on both. Whether dist-tags work through OIDC alone is
   therefore still open; a release without the token answers it. **Once that is shown:** drop
   `npm-token` from the workflow, delete the `NPM_TOKEN` secret, and switch the package's
   publishing access to "disallow bypass 2fa tokens" (both the user's). Until then the token is
