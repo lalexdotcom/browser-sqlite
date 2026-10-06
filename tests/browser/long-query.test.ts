@@ -29,6 +29,8 @@ describe('a long single step', () => {
       needs: ['two-workers', 'interruptible'],
       skip,
     });
+    // Booted first: the bound is on the abort, not on the pool's startup.
+    await db.read('SELECT 1');
     const started = performance.now();
     await expect(
       db.read(longQuery(20_000_000), [], {

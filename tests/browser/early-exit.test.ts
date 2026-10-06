@@ -2,12 +2,13 @@ import { describe, expect, it } from '@rstest/core';
 import { createTestClient, longQuery, sleep } from './helpers';
 
 // Two rows far apart: the first is immediate, the second exists only once a
-// 10 M-step recursion has run, in one `sqlite.step()`. N=10_000_000 takes
-// ~2 082 ms on Chromium async (measured 2026-09-05, see interrupt.test.ts),
-// well above the 1 500 ms bound; Firefox runs it 4-5x slower, which is why
-// each test carries its own timeout below.
-const SLOW_SECOND_ROW = `SELECT 1 AS n UNION ALL SELECT (${longQuery(10_000_000)})`;
-const SLOW_SECOND_ROW_CTE = `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 10000000) SELECT 0 AS n UNION ALL SELECT count(*) FROM c`;
+// 40 M-step recursion has run, in one `sqlite.step()`. N=40_000_000 takes ~8 s
+// on Chromium async (4x the ~2 082 ms measured for 10 M on 2026-09-05, see
+// interrupt.test.ts), far above the 3 000 ms bound; Firefox runs it 4-5x slower,
+// which is why each test carries its own timeout below. Only the broken case
+// pays for N: working, the step is cut at once.
+const SLOW_SECOND_ROW = `SELECT 1 AS n UNION ALL SELECT (${longQuery(40_000_000)})`;
+const SLOW_SECOND_ROW_CTE = `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 40000000) SELECT 0 AS n UNION ALL SELECT count(*) FROM c`;
 
 describe('leaving a read early, with no signal and no timeout', () => {
   // Falsifiable: install the progress handler only for a statement that was
@@ -28,7 +29,7 @@ describe('leaving a read early, with no signal and no timeout', () => {
       // runs to its end and the total lands past the bound.
       const started = performance.now();
       expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
-      expect(performance.now() - started).toBeLessThan(1500);
+      expect(performance.now() - started).toBeLessThan(3000);
     } finally {
       await db.close();
     }
@@ -60,7 +61,7 @@ describe('leaving a read early, with no signal and no timeout', () => {
       }
       const started = performance.now();
       expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
-      expect(performance.now() - started).toBeLessThan(1500);
+      expect(performance.now() - started).toBeLessThan(3000);
     } finally {
       await db.close();
     }

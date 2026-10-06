@@ -103,8 +103,10 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
 
     expect(error).toBeInstanceOf(SQLiteError);
     expect((error as SQLiteError).code).toBe('DATABASE_IN_USE');
-    // Must be fast — well under the default 30-second open timeout.
-    expect(elapsed).toBeLessThan(3000);
+    // Must be fast — well under the default 30-second open timeout. The span
+    // includes the second client's worker boot, which alone has taken ~3 s on
+    // a CI runner: the bound sits between that and the stall it rules out.
+    expect(elapsed).toBeLessThan(10_000);
   });
 
   // -------------------------------------------------------------------------

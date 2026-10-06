@@ -141,11 +141,14 @@ may be left live in this one. Three steps, in order:
 
 ## Releasing (user, 2026-08-31)
 
-**No automation writes to `CHANGELOG.md`.** The workflow reads it; the action
-receives a file path and never learns where it came from. Dating a heading,
-opening a new `## [Unreleased]`, and consolidating the rc sections into a final
-`## [1.0.0] - <date>` are all instructed acts, never scripted ones — done through
-the `changelog-maintenance` skill (`AGENTS.md`).
+**The `changelog-maintenance` skill is the authority on `CHANGELOG.md` (user,
+2026-10-06)**: what goes in `[Unreleased]`, cutting a release, consolidating the rc
+sections into `## [1.0.0] - <date>`. Where this file and the skill differ, the skill
+wins — this section predates it. So a release reopens an empty `## [Unreleased]`
+with its link at once, as the skill does; rc.6 was cut without one by following
+the old wording here, and it was reopened the same day. No automation writes the
+file: the workflow reads it, and the action receives a file path and never learns
+where it came from.
 
 **`CHANGELOG.md` follows Keep a Changelog since 2026-09-30 (user).** Headings are
 `## [<version>] - <date>`, each with a link definition at the end of the file

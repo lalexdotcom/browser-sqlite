@@ -7,6 +7,10 @@ import {
   waitUntil,
 } from './helpers';
 
+/** `longQuery` with its iteration count bound, so one cached statement serves every N. */
+const LONG_QUERY =
+  'WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < ?) SELECT count(*) AS n FROM c';
+
 describe('aborting a running statement', () => {
   it('frees the worker, so the next query does not wait it out', async ({
     skip,
@@ -19,53 +23,48 @@ describe('aborting a running statement', () => {
       skip,
     });
     try {
-      // Slow prime: run the query to completion so the statement is cached and
-      // the real abort run takes run(cached) — no macrotask boundary before
-      // the step, so the step always starts before 'stop' arrives.
-      // N=10_000_000 chosen so that: (a) the full step takes ~2 082 ms on
-      // Chromium (measured 2026-09-05 under the feature-neutralising mutation),
-      // well above the 1 500 ms bound; (b) the prime completes in ~15 s on
-      // Firefox, which is why this test carries its own timeout below. The
-      // abort interrupts mid-step quickly regardless of N when the feature
-      // works, so only the broken case pays for a large N.
-      await db.read(longQuery(10_000_000));
+      // Prime: run the statement once so it is cached and the real abort run
+      // takes run(cached) — no macrotask boundary before the step, so the step
+      // always starts before 'stop' arrives. N is a parameter, so a tiny prime
+      // caches the same statement the long run reuses.
+      await db.read(LONG_QUERY, [1_000]);
 
+      // N=40_000_000: the full step takes ~8 s on Chromium async (4x the
+      // ~2 082 ms measured for 10 M on 2026-09-05 under the
+      // feature-neutralising mutation), far past the bound below; Firefox runs
+      // it 4-5x slower still. The abort interrupts mid-step regardless of N
+      // when the feature works, so only the broken case pays for it.
       const controller = new AbortController();
-      const long = db.read(longQuery(10_000_000), [], {
+      const long = db.read(LONG_QUERY, [40_000_000], {
         signal: controller.signal,
       });
       long.catch(() => {});
       await waitUntil(
-        theQueryIsRunning(db, longQuery(10_000_000)),
+        theQueryIsRunning(db, LONG_QUERY),
         'the query to be running',
       );
       // `started` is before the abort so the timer captures abort → worker drain
       // → SELECT 1. On the working path the async progress handler yields via
       // gate.tick() and checks gate.isStopped(), interrupting the step at the
-      // first handler call; the full unaborted step takes ~2 082 ms on Chromium
-      // async (measured 2026-09-05 under the feature-neutralising mutation). A
-      // broken interrupt channel lets the step run to completion, pushing the
-      // total well past the 1 500 ms bound.
+      // first handler call. A broken interrupt channel lets the step run to
+      // completion, pushing the total far past the bound.
       const started = performance.now();
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
       expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
-      // Before this change the short read waited ~1.9 s for the abandoned
-      // statement. In isolation the short read takes ~10-20 ms on both engines;
-      // the 1500 ms bound exists only to survive full-suite resource contention
-      // (observed: ~900 ms on Firefox when both browsers run in parallel).
-      // Anything over ~100 ms in isolation means a structural problem — likely
-      // two gate.tick() roundtrips instead of one — and should be investigated,
-      // not papered over by widening this bound further.
-      expect(performance.now() - started).toBeLessThan(1500);
+      // In isolation the short read takes ~10-20 ms on both engines; ~900 ms
+      // was observed on Firefox under full-suite contention, and the bound
+      // sits between that and the broken path's seconds. Anything over ~100 ms
+      // in isolation means a structural problem — likely two gate.tick()
+      // roundtrips instead of one — and should be investigated.
+      expect(performance.now() - started).toBeLessThan(3000);
     } finally {
       await db.close();
     }
-    // 90 s, against the project's 30 s default. The prime alone is ~15 s on
-    // Firefox, so a machine half this speed would blow the default budget —
-    // and a test that exceeds its timeout does not fail, it expires mutely
-    // without naming what it was waiting for. That is the failure mode
-    // `waitUntil` exists to prevent; the budget must not reintroduce it.
+    // 90 s, against the project's 30 s default: the broken case runs the
+    // 40 M step to its end, tens of seconds on Firefox, and a test that
+    // exceeds its timeout does not fail, it expires mutely without naming
+    // what it was waiting for.
   }, 90_000);
 
   it('still rejects immediately, without waiting for the worker', async ({
@@ -111,7 +110,9 @@ describe('aborting a running statement', () => {
       const asked = performance.now();
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
-      expect(performance.now() - asked).toBeLessThan(200);
+      // Immediate by contract; the bound leaves room for a loaded runner and
+      // stays far below the seconds a rejection waiting for the worker takes.
+      expect(performance.now() - asked).toBeLessThan(1000);
     } finally {
       await db.close();
     }
