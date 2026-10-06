@@ -277,6 +277,11 @@ describe('opening a database whose file is momentarily held', () => {
 describe('opening a database whose file is refused for another reason', () => {
   // Falsifiable: retry whatever the refusal — the open then waits out
   // OPEN_RETRY_BUDGET_MS (2.5 s) before reporting what was never transient.
+  //
+  // Timed from the worker's `opening the database` to the rejection: the
+  // worker's boot before it is the engine's, not the subject, and on a CI
+  // runner it alone has gone past a whole-call bound. A failure prints the
+  // boot, so it says where the time went.
   it('fails without waiting out the retry budget', async () => {
     const dbName = `bsq-test-${crypto.randomUUID()}`;
     const path = databasePath(VFS, dbName);
@@ -289,16 +294,48 @@ describe('opening a database whose file is refused for another reason', () => {
     }
     onTestFinished(() => removeOpfsPath(path));
 
+    const boot: { worker: number; stage: string; t: number }[] = [];
+    const Original = globalThis.Worker;
+    let workers = 0;
+    class Recording extends Original {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        const worker = workers++;
+        this.addEventListener('message', (event: MessageEvent) => {
+          const data = event.data as { type?: string; stage?: string };
+          if (data?.type === 'boot' || data?.type === 'open-error') {
+            boot.push({
+              worker,
+              stage: data.stage ?? data.type,
+              t: performance.now(),
+            });
+          }
+        });
+      }
+    }
+    globalThis.Worker = Recording as unknown as typeof Worker;
+    onTestFinished(() => {
+      globalThis.Worker = Original;
+    });
+
+    const started = performance.now();
     const db = createSQLiteClient(dbName, { vfs: VFS });
     onTestFinished(() => db.close().catch(() => {}));
-    const started = performance.now();
     const error = await db.read('SELECT 1').then(
       () => undefined,
       (e: unknown) => e,
     );
-    const elapsed = performance.now() - started;
+    const ended = performance.now();
 
     expect(error).toMatchObject({ code: 'WORKER_CRASHED' });
-    expect(elapsed).toBeLessThan(2_000);
+    const opening = boot.find((b) => b.stage === 'opening the database');
+    const timeline = boot
+      .map((b) => `w${b.worker} ${b.stage} @${Math.round(b.t - started)}`)
+      .join(', ');
+    expect(opening, `no open began: ${timeline}`).toBeDefined();
+    expect(
+      ended - (opening?.t ?? started),
+      `open to rejection, ms (boot: ${timeline}, rejected @${Math.round(ended - started)})`,
+    ).toBeLessThan(2_000);
   });
 });
