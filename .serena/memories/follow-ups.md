@@ -16,6 +16,10 @@ descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` clai
 shadow types that were never loaded, `W-types` a duplication already gone. Both would have
 been work on nothing.
 
+## Firefox keeps every streamed chunk until the worker dies — found 2026-10-06, not fixed
+
+`src/pool.ts`'s chunk wait races `deferredChunk` against the worker-lifetime `deathDeferred`, and the `chunk` handler resolves `deferredChunk` with the rows its loop never reads: on Firefox a 500 MiB `stream()` holds +2.3 GB until `close()`. Resolving without a value removed the retention in a spike (STREAM-FF, `mem:measurements/footprint`). The `signal` races in `src/queries.ts` (`aborted` against `iterator.next()`) and `src/transaction.ts:751` have the same shape and are unmeasured. The user has not decided yet.
+
 ## wa-sqlite #371: `IDBMirrorVFS` commit-abort — OPENED 2026-10-03, waiting on rhashimoto
 
 Offered on #363; rhashimoto: "Yes, please, if you're up for that." Defect: IDBMIRROR-COMMIT-ABORT; designs compared: IDBMIRROR-ABORT-JOURNAL, IDBMIRROR-ABORT-DESIGNS (`mem:measurements`).

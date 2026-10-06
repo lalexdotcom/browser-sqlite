@@ -132,7 +132,7 @@ So: reads neutral; small writes 2-9 % slower — a few µs per query (Chromium 0
 
 **Memory of large params on an ordinary query** (same day, separate browser per run, n=3, `OPFSAdaptiveVFS`): 200 writes of a 1 MiB text in one transaction, page-process PSS peak over the phase start — Chromium **100 MB cloned (87-116) against 27 binary (26-28)**; Firefox 59 (57-60) against 53 (50-84).
 
-## STREAM-FF — reading many rows holds ~4.5× the data on Firefox until the worker dies, 2026-10-06
+## STREAM-FF — reading many rows holds ~4.5× the data on Firefox until the worker dies (cause found, below), 2026-10-06
 
 `stream('SELECT id, v FROM t')` over 500 MiB (512 000 rows of 1 KiB text), rows discarded as they arrive, `OPFSAdaptiveVFS`, default `chunkSize`, page-process PSS over the phase start. **Chromium: +55 MB (51-60), flat, 1.6 s.** **Firefox: +2 290-2 400 MB, linear over the whole 40 s read**, in every run — 3 of the campaign, plus diagnostics. **Pre-existing**: the same on `main`'s `dist` (+2 245). Back-pressure is not the cause: the worker runs `DEFAULT_CREDIT_WINDOW = 2` chunks ahead and the client credits a chunk once consumed.
 
@@ -141,4 +141,21 @@ So: reads neutral; small writes 2-9 % slower — a few µs per query (Chromium 0
 - **`close()` returns it, late**: back to baseline 15-45 s after `close()` in 5 runs of 6 (`stream()` and `chunk()` alike); the sixth, slowed to a 98 s read by 8 parallel browsers, had not returned 55 s after `close()`. So it goes with the worker.
 - `chunk()` reads the same in 17 s against 40 s for `stream()`, peak +2 070.
 
-**Cause not established.** Fits the record of Firefox workers collecting only on GC-heap allocation triggers (bugzilla 718100) if what accumulates is malloc-held — the text of the rows' strings, which `JSGC_MAX_BYTES` does not cap — but neither that nor which thread holds it has been confirmed.
+**Cause found the same evening: the pool's chunk wait retains every chunk on Firefox.** `src/pool.ts`'s read loop awaits `Promise.race([waiting.promise, stopRequested.promise, lost.promise, deathDeferred.promise])` once per chunk, and the `chunk` handler resolves `deferredChunk` WITH the rows although the loop only compares the outcome to `STOP`. `deathDeferred` lives as long as the worker; each race leaves a reaction on it that keeps the race's promise, and so the rows, alive. Ruled out first: the OPFS read path (`SELECT count(*), sum(length(v))` over the same 500 MiB: +18 MB), the VFS (`IDBBatchAtomicVFS` +2 313), the worker's strings (the binary return below holds as much).
+- **Pure-JS reproduction**, no library: 1 024 races against a never-settling promise, each resolved with 512 rows, PSS 15 s later — **Firefox 185 MB with the value, 11 without; Chromium 36 and 21**. SpiderMonkey keeps a resolved race's value through a reaction on a pending promise; V8 barely does.
+- **Spike fix — `deferredChunk` resolved without a value** (Firefox, 500 MiB `stream()`, n=3): peak +1 343 MB cloned / +1 504 binary, a GC sawtooth (up to ~1 GB, down to ~300, up again) instead of a linear climb; **10 s after the read +16 to +56 MB** (one run of three had not collected yet) instead of +2 100 held until `close()`.
+- **Same shape elsewhere, not measured**: `src/queries.ts:164` and `:269` race `iterator.next()` against `aborted`, and `src/transaction.ts:751` does the same, whenever the caller passes a `signal` — which lives as long as the caller keeps it.
+
+## RESULT-BINARY — rows encoded in the worker: faster on Chromium, slower on Firefox, 2026-10-06
+
+Spike: with `binaryRows` in the query options the worker encodes each row from SQLite's column API (`_sqlite3_column_type/int64/double/text/blob/bytes`, an integer as its two 32-bit halves) into transferred 1 MiB chunks, no JS string in the worker; `pool.ts` decodes them into the same objects (`TextDecoder` for text, `slice()` for blobs, wa-sqlite's `cvt32x2AsSafe` rule for integers). **Correctness**: `read`, `stream` (chunkSize 333), `chunk` (1 000) and `first` give the same SHA-256 encoded and not, on Chromium and Firefox, two VFS — integers at ±2^53 and ±2^63, floats, Unicode and empty text, empty and non-empty blobs, null, a duplicated column name, 300 KB values spanning chunks.
+
+500 MiB `stream()`, `OPFSAdaptiveVFS`, n=3, without the fix above:
+
+| chunkSize | Chromium read s, clone → binary | Chromium peak MB | Firefox read s | Firefox peak MB |
+|---|---|---|---|---|
+| 50 | 1.9 → 1.6 | 63 → 47 | 52 → 80 | 2 294 → 2 396 |
+| 500 (default) | 1.7 → **1.1** | 61 → 78 | 41 → 51 | 2 291 → 2 397 |
+| 5000 | 2.0 → **1.1** | 178 → **105** | 39 → 47 | 2 299 → 2 450 |
+
+Chromium: up to 45 % faster, and less memory once chunks are large. Firefox: 20-55 % slower and no memory gain. Firefox timings overlapped with other Firefox runs at times (the fix and diagnostic runs), so the slowdown is consistent across chunk sizes but its size is approximate.
