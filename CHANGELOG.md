@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
 ## [1.0.0-rc.6] - 2026-10-06
 
 ### Added
@@ -783,6 +785,7 @@ with it.
 
 First published release line.
 
+[Unreleased]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.6...HEAD
 [1.0.0-rc.6]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.5...v1.0.0-rc.6
 [1.0.0-rc.5]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.4...v1.0.0-rc.5
 [1.0.0-rc.4]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.3...v1.0.0-rc.4

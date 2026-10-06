@@ -12,16 +12,13 @@ obligations and unmeasured ground.
 
 ## Standing facts about the repository
 
-- **`1.0.0-rc.5` is published**, on 2026-09-22: on npm under `rc`, `next` and `latest`
-  (verified on the registry), and as a GitHub prerelease whose body is the CHANGELOG section
-  for the tag. `package.json` sits at `1.0.0-rc.5` and stays there until the user calls the
-  next bump; everything since lands in a new unreleased section of `CHANGELOG.md`, which
-  **the user's instruction creates** — no automation opens one. **`## [Unreleased]` (Keep a Changelog since 2026-09-30, `mem:conventions`) exists since
-  2026-09-23**, opened on that instruction, and carries the wa-sqlite repins (the latest bringing the embedded-NUL TEXT fix, under Fixed), the checkpoint coalescing below, `db.ready` (Added, merged
-  2026-09-23), and **per-VFS OPFS folders** (merged 2026-09-24, the section's first **Breaking**
-  entries: `.ad/`, `.ac/`, `.cs/`, `.wa/`, `layout` and `VFSLayout` gone, the 52-character name bound,
-  on every VFS since 2026-10-05; `db.files` Added; the path and empty-name refusals Changed — `mem:vfs`, CROSS-VFS;
-  `mem:architecture`, "Two names per database"), and **the default build that follows the browser** (merged 2026-09-24: Changed, plus one Breaking entry — a `wasmUrl` serving only the `async` `.wasm`), and **the public surface** (merged 2026-09-24: Breaking — `VFS_CAPABILITIES`, `VFSCapability`, `VFSLayout`, `VFSStorage`, `VFSMemoryModel` and `defaultBuildFor` no longer exported, the `./worker` subpath gone; Changed — `createSQLiteClient` declared to return `SQLiteDB`), and two more **Fixed** entries: `OPFSAnyContextVFS`'s `VACUUM` that failed the next read on Firefox (#363, merged 2026-09-25) and a failed client leaving `inspectDatabase()`'s roster at once (merged 2026-09-27). Since 2026-10-04 it also carries **`tx.savepoint()`** (Added, with `SAVEPOINT_CLOSED`) and **transaction control refused when sent as SQL** — a Breaking entry for raw savepoint SQL inside a transaction, a Fixed one for `BEGIN`/`COMMIT` through the client (`mem:history`, `mem:architecture`).
+- **`1.0.0-rc.6` is published**, on 2026-10-06: on npm under `rc`, `next` and `latest`
+  (verified on the registry, about two minutes after `npm publish` reported it), with
+  provenance, and as a GitHub prerelease whose body is the CHANGELOG section for the tag.
+  `package.json` sits at `1.0.0-rc.6` until the user calls the next bump. Its section is
+  everything that landed between rc.5 (2026-09-22) and rc.6 — `CHANGELOG.md` and `mem:history`
+  say what. **`## [Unreleased]` was reopened empty the same day**, as the
+  `changelog-maintenance` skill does at every release (`mem:conventions`).
 - **The vendored wa-sqlite sits on upstream `master` of 2026-10-05** (`96d91182`, `package.json` has the
   SHA), which merged #375, the last PR carried in `dist/`. **`patches/wa-sqlite@1.1.2.patch` carries `IDBMirrorVFS.js` for #371 and #372** (both open upstream, conflicting in `jClose`), **and a one-line guard in `OPFSAdaptiveVFS.js` for #374** (open upstream); heads and the merge in `mem:stack-and-build`. The installed `src/` was checked equal to the pin plus the patch (build sources aside), `dist/` to the pin's. The repin changed executed code in the `async` build — its glue and `.wasm`, which the patch had not carried from #375 — and the matrix's one red cell was traced to a test race, not to it (`mem:history`, 2026-10-05).
 - **The release gate ran the full matrix for the first time, and it took four tags to get
@@ -282,8 +279,11 @@ failures established that no reading would have.
   trusted publisher on npmjs.com (`lalexdotcom/browser-sqlite`, `release-and-publish.yaml`, no
   environment, `npm publish` and `npm dist-tag` allowed); the action at `v3.1.0` publishes
   through OIDC when the job has `id-token: write`, upgrading npm when needed, `npm-token` as the
-  fallback; and the `release` job has `id-token: write`. **Untested until a real release** —
-  the validation step's log says which path it took. **Once one has gone through OIDC:** drop
+  fallback; and the `release` job has `id-token: write`. **rc.6 (2026-10-06) was its first release:**
+  `npm publish` went through OIDC (log: "trusted publishing (OIDC), npm-token as fallback",
+  provenance published), but the two `npm dist-tag add` printed npm's notice on 2FA-bypass
+  tokens, so they most likely used `NPM_TOKEN`. Whether dist-tags work through OIDC alone is
+  therefore still open; a release without the token answers it. **Once that is shown:** drop
   `npm-token` from the workflow, delete the `NPM_TOKEN` secret, and switch the package's
   publishing access to "disallow bypass 2fa tokens" (both the user's). Until then the token is
   the fallback, and it **runs out around 2026-11-29** (renewed for 90 days at rc.4's release,
