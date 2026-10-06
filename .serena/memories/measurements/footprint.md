@@ -118,3 +118,14 @@ Page-process PSS peak, MB, median of 3, 500 MiB, normal configuration (no forced
 Load time unchanged or shorter (Chromium Adaptive and CoopSync 3 → 2 s, WriteAhead 5 → 4 s; Firefox 32-54 s in every mode). **On Chromium the transfer does the work and `enqueue` adds 2-8 %; on Firefox encoding at `enqueue()` is what counts** (−13 to −27 % at `flush`, −38 to −43 % at `enqueue`). Both beat the forced GC of BULK-GC (210 on Adaptive). What stays on `OPFSWriteAheadVFS` under Chromium is its own: CDP saw up to 156 MB of ArrayBuffers in its worker. Wasm heap 24.3 MiB per worker, as before; `close()` + 31 s back to baseline in every mode.
 
 **What generalising it to every query would have to handle**, read from the code: `readWithRetry`/`streamWithRetry` re-post the same `params` once on a SQLite `BUSY` (`OPFSCoopSyncVFS`'s handle transfer), so a query must be encoded at each send, not ahead; a write is never retried, so `bulkWrite` may encode at `enqueue()`. `debugSQLQuery` reads `params` to inline values in the debug log. A transferred buffer comes back usable only if the worker transfers it back (ownership round trip), which is how chunks could be recycled — not measured. A `SharedArrayBuffer` would need COOP/COEP, which the library deliberately does not require.
+
+**Generalised to every query, small payloads cost a little and gain nothing (2026-10-06).** Spike extended: when asked, `pool.ts` encodes any query's `params` at send time into one buffer sized for the worst case and transfers it (retry-safe). Measured per query, the mode alternating at every query, isolated page for a fine clock, 8 rounds, `jspi`; ratio binary / clone of the summed per-query times (per-round range):
+
+| workload | Chromium Memory | Chromium Adaptive | Firefox Memory | Firefox Adaptive |
+|---|---|---|---|---|
+| 2000 point reads, 1 int param | 1.03 (1.01-1.07) | 0.98 (0.97-1.03) | 1.01 (0.99-1.07) | 0.98 (0.95-1.06) |
+| 2000 small writes in a tx, 3 short values | **1.05 (1.02-1.10)** | **1.09 (1.04-1.14)** | 1.07 (1.00-1.20) | 1.02 (0.92-1.09) |
+| 500 writes of 10 KB text | 1.11 (0.99-1.25) | 1.00 (0.88-1.07) | 0.93 (0.73-1.20) | 1.05 (0.99-1.16) |
+| 50 writes of a 1 MiB blob | 0.94 (0.88-1.16) | 0.96 (0.90-1.04) | 1.02 (0.93-1.12) | 1.02 (0.99-1.04) |
+
+So: reads neutral; small writes 2-9 % slower — a few µs per query (Chromium 0.07 ms per small write); large params neutral in time, their memory gain not measured. A first attempt timing whole workloads per mode was useless on Firefox (the same workload spread 680-5 590 ms between rounds); interleaving per query removed it.
