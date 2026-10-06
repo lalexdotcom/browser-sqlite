@@ -129,3 +129,16 @@ Load time unchanged or shorter (Chromium Adaptive and CoopSync 3 → 2 s, WriteA
 | 50 writes of a 1 MiB blob | 0.94 (0.88-1.16) | 0.96 (0.90-1.04) | 1.02 (0.93-1.12) | 1.02 (0.99-1.04) |
 
 So: reads neutral; small writes 2-9 % slower — a few µs per query (Chromium 0.07 ms per small write); large params neutral in time, their memory gain not measured. A first attempt timing whole workloads per mode was useless on Firefox (the same workload spread 680-5 590 ms between rounds); interleaving per query removed it.
+
+**Memory of large params on an ordinary query** (same day, separate browser per run, n=3, `OPFSAdaptiveVFS`): 200 writes of a 1 MiB text in one transaction, page-process PSS peak over the phase start — Chromium **100 MB cloned (87-116) against 27 binary (26-28)**; Firefox 59 (57-60) against 53 (50-84).
+
+## STREAM-FF — reading many rows holds ~4.5× the data on Firefox until the worker dies, 2026-10-06
+
+`stream('SELECT id, v FROM t')` over 500 MiB (512 000 rows of 1 KiB text), rows discarded as they arrive, `OPFSAdaptiveVFS`, default `chunkSize`, page-process PSS over the phase start. **Chromium: +55 MB (51-60), flat, 1.6 s.** **Firefox: +2 290-2 400 MB, linear over the whole 40 s read**, in every run — 3 of the campaign, plus diagnostics. **Pre-existing**: the same on `main`'s `dist` (+2 245). Back-pressure is not the cause: the worker runs `DEFAULT_CREDIT_WINDOW = 2` chunks ahead and the client credits a chunk once consumed.
+
+- **Not the JS heap the pref caps**: `javascript.options.mem.max=256` changes nothing and nothing fails.
+- **Client open, it stays**: +2 100 MB still 80 s after the read (n=2).
+- **`close()` returns it, late**: back to baseline 15-45 s after `close()` in 5 runs of 6 (`stream()` and `chunk()` alike); the sixth, slowed to a 98 s read by 8 parallel browsers, had not returned 55 s after `close()`. So it goes with the worker.
+- `chunk()` reads the same in 17 s against 40 s for `stream()`, peak +2 070.
+
+**Cause not established.** Fits the record of Firefox workers collecting only on GC-heap allocation triggers (bugzilla 718100) if what accumulates is malloc-held — the text of the rows' strings, which `JSGC_MAX_BYTES` does not cap — but neither that nor which thread holds it has been confirmed.
