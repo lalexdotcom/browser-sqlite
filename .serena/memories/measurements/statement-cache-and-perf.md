@@ -470,3 +470,21 @@ Found while pricing the authorizer (TX-CONTROL-GUARD, `mem:measurements/transact
 `OPFSAdaptiveVFS` was created with `lockPolicy: 'shared'`, n = 200 per batch, 5 rounds; its `jLock`/`jUnlock`/`jOpen`/`jClose`/`jDelete`/`jAccess` are `async` and stay suspending, `jRead`/`jWrite`/`jSync`/`jFileSize`/`jFileControl` are sync and stop paying. On Chromium nothing moves (jspi 5 546 / patched 5 600 µs per insert, inside the ranges). **The ~10 % that `jspi` lost to `async` on Firefox writes is gone with the patch** — the same size as the bench corpus's Firefox `transaction-throughput` 1.06 and `overwrite-throughput` 1.08 (`jspi / async`, `OPFSAdaptiveVFS`, 8 exports), which the default-build spec of 2026-09-24 read as "equal". Absolute OPFS timings come from Playwright's off-the-record pages (RSTEST-OTR); the ratios are what this entry claims.
 
 **Risk of the change:** a callback or VFS method that is a plain function returning a Promise works on today's `jspi` build (the `Suspending` wrapper tolerates it) and would break — as it already breaks on the `async` build, where the sync relay cannot await. Every VFS this library ships runs on `async` in the matrix (66/66), so none does that. **Measured since (2026-10-05):** the carried glue — wa-sqlite #375's, whose pattern drops every relay and keeps the `_async` ones wrapped through `isAsync` — under `pnpm test` and the full 66-cell matrix, green; and the `async` build rebuilt without the list: no change on either engine (`docs/upstream/2026-10-05-wa-sqlite-375-sync-relays-plain-imports.md`).
+
+## BULK-VALUES — what converting cells in `enqueue()` costs (2026-10-06, `feat/bulk-object-values`)
+
+Method: one browser test file per run, `BSQ_TEST_TARGETS` set to one pair at a time, `AI_AGENT`/`CLAUDECODE` stripped so rstest prints the page's console; Playwright 1.62.1 Chromium and Firefox, this container. 100 000 rows, 5 columns (`id INTEGER, label TEXT, n INTEGER, x REAL, flag|meta`), 1 warm-up + 7 runs, median ms, each run on a fresh table dropped after. Baseline: a worktree of `main` at 92d5610 running the same file. W1 = scalars, no transaction (16 batch commits); W2 = scalars inside `transaction()`; W3 = W2 with one object column (`{ tags: ['a','b','c'], score, active }`) converted by the library; W4 = W3 with that column `types: { meta: 'JSONB' }` into a BLOB column; W5 = W3's rows with `JSON.stringify(meta)` done by the caller in the enqueue loop — what a consumer does on `main`, where an object is stored as NULL.
+
+| pair, engine | W1 main → branch | W2 main → branch | W5 main | W3 branch | W4 branch |
+|---|---|---|---|---|---|
+| `OPFSWriteAheadVFS`/sync, Chromium | 674 → 655 | 599 → 590 | 1722 | 1475–1540 | 1227 |
+| `OPFSAdaptiveVFS`/jspi, Chromium | 529 → 492 | 376 → 356 | 871 | 837–847 | 773 |
+| `OPFSWriteAheadVFS`/sync, Firefox | 488 → 490 | 470 → 468 | 1043 | 961–1005 | 1261 |
+| `OPFSAdaptiveVFS`/jspi, Firefox | 468 → 443 | 400 → 377 | 711 | 706–736 | 1062 |
+
+W3 is the range of its two runs (first campaign, then the W5 campaign). Spreads were under 10 % except W5 on `main` WriteAhead/Chromium (1537–1799). Readings:
+- **Scalar loads pay nothing**: the branch is equal or up to 7 % faster on every cell. The first campaign ran the branch first and the W5 campaign ran `main` first; the order did not flip the sign. Likely the buffer holding flat arrays instead of row objects read back at flush — not isolated.
+- **Letting the library stringify costs nothing against doing it yourself**: W3 is within noise of, or below, W5 on every cell.
+- **JSONB is an engine-dependent trade**: `jsonb(?)` is 9–20 % faster than JSON text on Chromium and 26–44 % slower on Firefox. No design consequence; worth a line if a consumer asks which to pick.
+
+The probe files were scratch, not committed: the workloads above are their whole content.

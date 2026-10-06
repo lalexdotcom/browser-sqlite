@@ -223,3 +223,86 @@ describe('bulkWrite() and output() abort (ABORT-1)', () => {
     db.close();
   });
 });
+
+describe('bulkWrite() values', () => {
+  const at = new Date(Date.UTC(2026, 9, 6, 12, 34, 56, 789));
+
+  it('stores objects and arrays as JSON text and a Uint8Array as a BLOB', async () => {
+    const db = await createTestClient();
+    await db.write('CREATE TABLE bulk_json (doc TEXT, list TEXT, bytes BLOB)');
+    const bulk = db.bulkWrite('bulk_json', ['doc', 'list', 'bytes']);
+    bulk.enqueue({
+      doc: { a: 1, b: [true, null] },
+      list: [1, 2, 300],
+      bytes: Uint8Array.of(1, 2, 44),
+    });
+    await bulk.close();
+    const [row] = await db.read<Record<string, unknown>>(
+      'SELECT doc, list, typeof(list) AS lt, typeof(bytes) AS bt, hex(bytes) AS bh FROM bulk_json',
+    );
+    expect(row).toEqual({
+      doc: '{"a":1,"b":[true,null]}',
+      list: '[1,2,300]',
+      lt: 'text',
+      bt: 'blob',
+      bh: '01022C',
+    });
+    db.close();
+  });
+
+  it('stores a Date in the format SQLite produces', async () => {
+    const db = await createTestClient();
+    await db.write('CREATE TABLE bulk_date (at TEXT)');
+    const bulk = db.bulkWrite('bulk_date', ['at']);
+    bulk.enqueue({ at });
+    await bulk.close();
+    const [row] = await db.read<{ at: string; same: number }>(
+      "SELECT at, at = strftime('%Y-%m-%d %H:%M:%f', '2026-10-06T12:34:56.789Z') AS same FROM bulk_date",
+    );
+    expect(row).toEqual({ at: '2026-10-06 12:34:56.789', same: 1 });
+    db.close();
+  });
+
+  it('stores a JSONB column through jsonb()', async () => {
+    const db = await createTestClient();
+    await db.write('CREATE TABLE bulk_jsonb (id INTEGER, doc BLOB)');
+    const bulk = db.bulkWrite('bulk_jsonb', ['id', 'doc'], {
+      types: { doc: 'JSONB' },
+    });
+    bulk.enqueue({ id: 1, doc: { a: 1 } });
+    bulk.enqueue({ id: 2, doc: '{"b":2}' });
+    bulk.enqueue({ id: 3, doc: 'abc' });
+    bulk.enqueue({ id: 4, doc: null });
+    bulk.enqueue({ id: 5, doc: true });
+    bulk.enqueue({ id: 6, doc: at });
+    bulk.enqueue({ id: 7, doc: 5 });
+    await bulk.close();
+    const rows = await db.read<{ t: string; j: string | null }>(
+      'SELECT typeof(doc) AS t, json(doc) AS j FROM bulk_jsonb ORDER BY id',
+    );
+    expect(rows).toEqual([
+      { t: 'blob', j: '{"a":1}' },
+      { t: 'blob', j: '"{\\"b\\":2}"' },
+      { t: 'blob', j: '"abc"' },
+      { t: 'null', j: null },
+      { t: 'blob', j: 'true' },
+      { t: 'blob', j: '"2026-10-06T12:34:56.789Z"' },
+      { t: 'blob', j: '5' },
+    ]);
+    db.close();
+  });
+
+  it('fails the batch on a BLOB that is not valid JSONB in a JSONB column', async () => {
+    const db = await createTestClient();
+    await db.write('CREATE TABLE bulk_jsonb_bad (doc BLOB)');
+    const bulk = db.bulkWrite('bulk_jsonb_bad', ['doc'], {
+      types: { doc: 'JSONB' },
+    });
+    bulk.enqueue({ doc: Uint8Array.of(255, 0) });
+    await expect(bulk.close()).rejects.toMatchObject({
+      code: 'BULK_WRITE_FAILED',
+      rowsNotWritten: 1,
+    });
+    db.close();
+  });
+});

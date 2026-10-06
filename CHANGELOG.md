@@ -8,7 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **`bulkWrite()` takes `types` to store columns as JSONB,** and `output()` stores a column typed `JSONB` the same way.
 - **`API.md` and `VFS.md` ship in the package**, beside the README whose links point to them.
+
+### Changed
+
+- **Breaking:** **`bulkWrite()` and `output()` store an array as JSON text instead of a BLOB of its elements.** Pass a `Uint8Array` to store bytes.
+
+### Fixed
+
+- **`bulkWrite()` and `output()` no longer store an object as `NULL`:** an object is stored as JSON text and a `Date` as `YYYY-MM-DD HH:MM:SS.SSS` in UTC.
+- **A row object changed or reused after `enqueue()` no longer changes the rows already queued in `bulkWrite()` and `output()`:** they used to be read only when their batch was written.
 
 ## [1.0.0-rc.6] - 2026-10-06
 

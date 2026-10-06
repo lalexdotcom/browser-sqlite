@@ -375,3 +375,21 @@ describe('output() atomicity and sweep', () => {
     expect(target[0].id).toBe(1);
   });
 });
+
+describe('output() values', () => {
+  it('stores a JSONB schema column through jsonb() and an object elsewhere as JSON text', async () => {
+    const db = await createTestClient();
+    const out = db.output('out_json', {
+      id: 'INTEGER',
+      doc: 'JSONB',
+      raw: 'TEXT',
+    });
+    out.enqueue({ id: 1, doc: { a: [1] }, raw: { b: 2 } });
+    await out.close();
+    const [row] = await db.read<Record<string, unknown>>(
+      'SELECT typeof(doc) AS t, json(doc) AS j, raw FROM out_json',
+    );
+    expect(row).toEqual({ t: 'blob', j: '{"a":[1]}', raw: '{"b":2}' });
+    db.close();
+  });
+});

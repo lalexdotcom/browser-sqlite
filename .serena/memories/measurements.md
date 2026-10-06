@@ -118,6 +118,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - The `sync` build against the `async` build
 - JSPI-VS-SYNC — `jspi` walks rows as fast as `sync`
 - JSPI-SYNC-RELAYS
+- BULK-VALUES — converting cells in `enqueue()` costs nothing; JSONB faster on Chromium, slower on Firefox
 
 ## `mem:measurements/bench-and-devices` — the bench page, devices, browsers, bundlers
 

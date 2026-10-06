@@ -187,6 +187,13 @@ Today the one-writer invariant rests on the client's routing regex (`isReadQuery
 
 Measured on 2026-10-05 (JSPI-VS-SYNC, `mem:measurements/statement-cache-and-perf`): `jspi` runs row walks as fast as `sync` on Chromium and Firefox, where `async` pays 1.2-1.8×, and it interrupts a running statement with no cross-origin isolation. So declaring `jspi` first on the VFS that list `sync` first (`OPFSWriteAheadVFS`, `OPFSCoopSyncVFS`, `AccessHandlePoolVFS`, `MemoryVFS`) would make the default interruptible where the browser has JSPI, at no measured cost. To weigh before deciding: Safari 27 is not measured; the Firefox figure rests on #375's glue, merged upstream and in the pin since 2026-10-05; `transaction-throughput` on `OPFSWriteAheadVFS`/Chromium read 1.27× with a 1.03-1.94× spread (`MemoryVFS` 0.87×), to re-measure; the open path and memory of `jspi` against `sync` are not measured; and a changed default is a consumer-visible change (CHANGELOG, `VFS.md`'s Builds and Recommendations, the `build` JSDoc — `mem:lessons/claims-and-docs`, "A changed default is described in more places than the spec lists").
 
+## Template queries with JSON parameters — not designed (user, 2026-10-06)
+
+`query()`, `write()` and the other parameterised methods still bind an object as `NULL` and an array as bytes (wa-sqlite's `sqlite3.bind`); `feat/bulk-object-values` fixed it for `bulkWrite()`/`output()` only (spec 2026-10-06, D1). The user's direction: tagged templates, `` sql`SELECT … WHERE id = ${o}` `` serialising objects as JSON text, and a JSONB variant whose form is open — `` sql('jsonb')`…` `` or `` jsonb`…` `` (loses the "SQL" reading), `` jsonbSql`…` `` judged too verbose. The form is settled during that work.
+
+## More `types` values for `bulkWrite()` — not designed (user, 2026-10-06)
+
+`types` accepts only `'JSONB'` (spec 2026-10-06, D7). The user sees it later carrying conversions such as `string → number`.
 
 ## Notes, with nothing to fix
 
