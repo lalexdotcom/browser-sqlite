@@ -766,3 +766,99 @@ describe('bulkWrite back-pressure', () => {
     expect(second()).toBe(false);
   });
 });
+
+describe('bulkWrite values and types', () => {
+  const capture = () => {
+    const calls: { sql: string; params: unknown[] | undefined }[] = [];
+    const write = async (sql: string, params?: unknown[]) => {
+      calls.push({ sql, params });
+      return { result: [] as unknown[], affected: params?.length ?? 0 };
+    };
+    const read = async () => [] as unknown[];
+    const transaction = async <T>(cb: (db: any) => Promise<T>) =>
+      cb({ write, read });
+    const target = createBulk({
+      file: 'app.db',
+      vfs: 'OPFSAdaptiveVFS',
+      locks: noOpLocks,
+      logger: noopLogger,
+    })({ read, write, transaction });
+    return { calls, target };
+  };
+
+  it('keeps the SQL of a load without types byte-identical', async () => {
+    const { calls, target } = capture();
+    const bulk = target.bulkWrite('t', ['a', 'b']);
+    bulk.enqueue({ a: 1, b: 'x' });
+    bulk.enqueue({ a: 2, b: 'y' });
+    await bulk.close();
+    expect(calls[0].sql).toBe('INSERT INTO "t" ("a","b") VALUES (?,?),(?,?)');
+    expect(calls[0].params).toEqual([1, 'x', 2, 'y']);
+  });
+
+  it('converts objects, arrays and Dates in enqueue order', async () => {
+    const { calls, target } = capture();
+    const at = new Date(Date.UTC(2026, 9, 6, 12, 34, 56, 789));
+    const bulk = target.bulkWrite('t', ['o', 'l', 'd']);
+    bulk.enqueue({ o: { a: 1 }, l: [1, 2, 300], d: at });
+    await bulk.close();
+    expect(calls[0].params).toEqual([
+      '{"a":1}',
+      '[1,2,300]',
+      '2026-10-06 12:34:56.789',
+    ]);
+  });
+
+  it('wraps a JSONB column in jsonb(?) on every row', async () => {
+    const { calls, target } = capture();
+    const bulk = target.bulkWrite('t', ['id', 'doc'], {
+      types: { doc: 'JSONB' },
+    });
+    bulk.enqueue({ id: 1, doc: { a: 1 } });
+    bulk.enqueue({ id: 2, doc: null });
+    await bulk.close();
+    expect(calls[0].sql).toBe(
+      'INSERT INTO "t" ("id","doc") VALUES (?,jsonb(?)),(?,jsonb(?))',
+    );
+    expect(calls[0].params).toEqual([1, '{"a":1}', 2, null]);
+  });
+
+  it('refuses a bad types at the call, before any write', () => {
+    const { calls, target } = capture();
+    let error: unknown;
+    try {
+      target.bulkWrite('t', ['a'], { types: { b: 'JSONB' } as any });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toMatchObject({ code: 'INVALID_OPTION' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('does not buffer a row whose conversion throws', async () => {
+    const { calls, target } = capture();
+    const bulk = target.bulkWrite('t', ['a']);
+    bulk.enqueue({ a: 1 });
+    expect(() => bulk.enqueue({ a: { n: 1n } })).toThrow(TypeError);
+    bulk.enqueue({ a: 2 });
+    expect(await bulk.close()).toBe(2);
+    expect(calls[0].params).toEqual([1, 2]);
+  });
+
+  it('does not mutate the row it is given', async () => {
+    const { target } = capture();
+    const row = { a: { x: 1 } };
+    const bulk = target.bulkWrite('t', ['a']);
+    bulk.enqueue(row);
+    await bulk.close();
+    expect(row).toEqual({ a: { x: 1 } });
+  });
+
+  it('infers KEYS from keys alone, so a misspelt types key does not compile', () => {
+    const { target } = capture();
+    const make = () =>
+      // @ts-expect-error 'dco' is not one of the keys
+      target.bulkWrite('t', ['id', 'doc'], { types: { dco: 'JSONB' } });
+    expect(make).toThrow();
+  });
+});

@@ -154,10 +154,13 @@ export type SQLiteOutputOptions<SCHEMA extends Schema> = Interruptible<{
  * 1 is raised to 1: a batch always holds at least one row, so a lower cap could
  * never be satisfied.
  */
-export type SQLiteBulkWriteOptions = Interruptible<{
-  /** Rows queued for writing above which `enqueue()` defers. */
-  queueSize?: number | undefined;
-}>;
+export type SQLiteBulkWriteOptions<KEYS extends string = string> =
+  Interruptible<{
+    /** Rows queued for writing above which `enqueue()` defers. */
+    queueSize?: number | undefined;
+    /** Columns stored as JSONB: each receives `jsonb(?)` on every row. */
+    types?: Partial<Record<NoInfer<KEYS>, 'JSONB'>> | undefined;
+  }>;
 
 /** A row for `output()`: generated columns are computed, never supplied. */
 export type SQLiteOutputRow<SCHEMA extends Schema> = {
@@ -329,13 +332,15 @@ export type SQLiteQueryAPI = {
    * (synchronous build) and ~5.3 ms (Asyncify build) per commit on Chromium.
    * A load wrapped in `transaction()` commits once and buys the rest back.
    *
+   * An object or an array is stored as `JSON.stringify` text, a `Date` as `YYYY-MM-DD HH:MM:SS.SSS` in UTC, a `Uint8Array` as a BLOB.
+   *
    * @param table - Target table name.
    * @param keys - Column names for the INSERT statement.
    * @param options - `signal` aborts the load between batches. `close()` then
    *   rejects with `signal.reason`. **The batches already flushed stay
    *   written** — `bulkWrite()` is not atomic outside a transaction, so an
    *   abort stops the load, it does not undo it. Run it inside `transaction()`
-   *   when abandoning must mean rolling back.
+   *   when abandoning must mean rolling back. `types` declares JSONB columns.
    * @returns Object with:
    *   - `enqueue(data)` — buffers a row, flushing automatically when the buffer fills.
    *   - `close()` — flushes remaining rows and resolves with total affected row count.
@@ -343,7 +348,7 @@ export type SQLiteQueryAPI = {
   bulkWrite: <KEYS extends string>(
     table: string,
     keys: KEYS[],
-    options?: SQLiteBulkWriteOptions,
+    options?: SQLiteBulkWriteOptions<KEYS>,
   ) => SQLiteBulkWriter<KEYS>;
 
   /**

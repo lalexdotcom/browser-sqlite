@@ -22,6 +22,7 @@ import {
   randomId,
   withDeadline,
 } from './utils';
+import { jsonbColumns, toBindable } from './values';
 
 // Structural, and deliberately narrower than SQLiteQueryAPI: bulk needs only
 // these three calls, and requiring the full surface would make every unit test
@@ -137,10 +138,13 @@ export const createBulk = (shared: {
     const bulkWrite = <KEYS extends string>(
       table: string,
       keys: KEYS[],
-      options?: SQLiteBulkWriteOptions,
+      options?: SQLiteBulkWriteOptions<KEYS>,
       /** Internal: awaited before the first batch. `output()` passes its staging DDL. */
       before?: Promise<unknown>,
     ) => {
+      // First, before withDeadline: a throw after it would leave the deadline timer armed.
+      const jsonb = jsonbColumns(keys, options?.types);
+      const rowTemplate = `(${keys.map((_, i) => (jsonb[i] ? 'jsonb(?)' : '?')).join(',')})`;
       const { signal, release: releaseDeadline } = withDeadline(
         options,
         'bulkWrite',
@@ -159,7 +163,7 @@ export const createBulk = (shared: {
       // worst case is the behaviour that predates this option.
       const queueSize = Math.max(1, options?.queueSize ?? 2 * maxBufferSize);
 
-      const buffer: { [K in KEYS]: any }[] = [];
+      const buffer: unknown[][] = [];
 
       let writePromise = Promise.resolve<number>(0);
       let failure: unknown;
@@ -231,8 +235,8 @@ export const createBulk = (shared: {
             // hand-over that never comes — left this chain pending for ever,
             // and close() with it. Observed on macOS Safari 27.0.
             const { affected } = await write(
-              `INSERT INTO ${quoteIdent(table)} (${keys.map(quoteIdent).join(',')}) VALUES ${toInsert.map(() => `(${keys.map(() => '?')})`)}`,
-              toInsert.flatMap((data) => keys.map((k) => data[k])),
+              `INSERT INTO ${quoteIdent(table)} (${keys.map(quoteIdent).join(',')}) VALUES ${toInsert.map(() => rowTemplate).join(',')}`,
+              toInsert.flat(),
               { signal },
             );
             rowsWritten += toInsert.length;
@@ -282,7 +286,8 @@ export const createBulk = (shared: {
           // report about rows they stopped caring about.
           signal?.throwIfAborted();
           if (failure) throw fail();
-          buffer.push(data);
+          // Converted before it is buffered: a value that cannot be leaves the buffer as it was.
+          buffer.push(keys.map((k, i) => toBindable(data[k], jsonb[i])));
           if (buffer.length >= maxBufferSize) flush();
           if (queuedRows < queueSize) return ADMITTED;
           // One deferred for every caller while the queue is full: enqueue() is
