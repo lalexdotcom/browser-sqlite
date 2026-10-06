@@ -273,19 +273,21 @@ failures established that no reading would have.
   `lalexdotcom/action-release-and-publish` would make a partial failure replayable;
   it is not written.
 - **`NPM_TOKEN` is a long-lived secret that expired unnoticed** and is what failed
-  the second attempt. **Trusted publishing was examined and closed by the user on
-  2026-09-03, without being adopted**: npm's OIDC covers `npm publish` only, and
-  `npm dist-tag add` — which the action runs twice, for `latest` and `next` — still
-  needs a token ([npm/cli#8547](https://github.com/npm/cli/issues/8547), open).
-  A token would survive the change, so the change was not worth its cost. **Do not
-  re-propose it while the `rc`/`next`/`latest` triplet stands**; the only thing that
-  would reopen the question is npm supporting dist-tags over OIDC. The remaining
-  guard against a silent expiry is watching the token's expiry date by hand —
-  **and it was renewed for 90 days at rc.4's release, so it runs out around
-  2026-11-29** (user, 2026-09-05; the date is derived from that renewal, not read
-  off npm). rc.5 is comfortably inside it. A release planned after that window
-  checks the token FIRST: this is the failure that cost rc.4 its second attempt,
-  and it announces itself only at `npm publish`, after the GitHub Release exists.
+  the second attempt. **Trusted publishing (OIDC) is adopted since 2026-10-06 (user)**, reversing
+  the 2026-09-03 refusal, whose only reason — `npm dist-tag` outside OIDC — was lifted by
+  [npm/cli#10038](https://github.com/npm/cli/pull/10038) (npm 11.21.0 / 12.2.0, closing
+  [npm/cli#8547](https://github.com/npm/cli/issues/8547)); and npm withdraws 2FA-bypass tokens
+  (management since August 2026, direct publish targeted for January 2027,
+  [community#201329](https://github.com/orgs/community/discussions/201329)). In place: the
+  trusted publisher on npmjs.com (`lalexdotcom/browser-sqlite`, `release-and-publish.yaml`, no
+  environment, `npm publish` and `npm dist-tag` allowed); the action at `v3.1.0` publishes
+  through OIDC when the job has `id-token: write`, upgrading npm when needed, `npm-token` as the
+  fallback; and the `release` job has `id-token: write`. **Untested until a real release** —
+  the validation step's log says which path it took. **Once one has gone through OIDC:** drop
+  `npm-token` from the workflow, delete the `NPM_TOKEN` secret, and switch the package's
+  publishing access to "disallow bypass 2fa tokens" (both the user's). Until then the token is
+  the fallback, and it **runs out around 2026-11-29** (renewed for 90 days at rc.4's release,
+  user 2026-09-05; derived, not read off npm).
 
 ## Unmeasured ground — what a claim here would be inventing
 

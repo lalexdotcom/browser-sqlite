@@ -106,6 +106,9 @@ jobs:
     needs: [verify, cells]
     permissions:
       contents: write
+      # npm trusted publishing: the action publishes and moves dist-tags
+      # through OIDC, NPM_TOKEN being its fallback.
+      id-token: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
