@@ -426,6 +426,15 @@ export const createBulk = (shared: {
         return { name: k, type, unique, notnull, generated };
       });
 
+      const types = Object.fromEntries(
+        normalizedSchema
+          .filter(
+            ({ type, generated }) =>
+              !generated && type.toUpperCase() === 'JSONB',
+          )
+          .map(({ name }) => [name, 'JSONB' as const]),
+      );
+
       // Held for as long as the staging table exists: this is what tells another
       // tab's sweep that the table is in flight and must not be collected.
       const lockHeld = locks.hold(stagingLockName(file, staging));
@@ -448,7 +457,7 @@ export const createBulk = (shared: {
         Object.keys(schema).filter(
           (col) => typeof schema[col] !== 'object' || !schema[col].generated,
         ),
-        { signal, queueSize: options?.queueSize },
+        { signal, queueSize: options?.queueSize, types },
         createStaging,
       );
 

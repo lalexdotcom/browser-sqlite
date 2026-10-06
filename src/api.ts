@@ -366,6 +366,7 @@ export type SQLiteQueryAPI = {
    * @param table - Table name to drop and recreate.
    * @param schema - Column definition map. Values are SQL type strings or
    *   objects with `{ type, required?, unique?, generated? }`.
+   *   A column typed `JSONB` (any case) is stored through `jsonb(?)`.
    * @param options - `indexes` array for index creation after the swap, and
    *   `signal` to abort the load. An aborted `output()` leaves the previous
    *   target intact and untouched.

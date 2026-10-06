@@ -861,4 +861,21 @@ describe('bulkWrite values and types', () => {
       target.bulkWrite('t', ['id', 'doc'], { types: { dco: 'JSONB' } });
     expect(make).toThrow();
   });
+
+  it('output() wraps a schema JSONB column, any case, and skips generated ones', async () => {
+    const { calls, target } = capture();
+    const out = target.output('t', {
+      id: 'INTEGER',
+      doc: ' jsonb ',
+      sized: 'JSONB(10)',
+      g: { type: 'JSONB', generated: '(json_object())' },
+    });
+    out.enqueue({ id: 1, doc: { a: 1 }, sized: { b: 2 } });
+    await out.close();
+    const insert = calls.find((c) => c.sql.startsWith('INSERT'));
+    expect(insert?.sql).toMatch(
+      /\("id","doc","sized"\) VALUES \(\?,jsonb\(\?\),\?\)$/,
+    );
+    expect(insert?.params).toEqual([1, '{"a":1}', '{"b":2}']);
+  });
 });
