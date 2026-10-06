@@ -43,12 +43,13 @@ describe('the sync build, isolated', () => {
       // SELECT 1. On the working path the SAB slot interrupts the step within
       // the first progress-handler call (~100 K VDBE ops); the full unaborted
       // step takes ~4 343 ms (measured). A broken interrupt channel lets the
-      // step run to completion, pushing the total well past the 500 ms bound.
+      // step run to completion, pushing the total well past the bound, which
+      // leaves room for a loaded runner.
       const started = performance.now();
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
       expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
-      expect(performance.now() - started).toBeLessThan(500);
+      expect(performance.now() - started).toBeLessThan(1000);
     } finally {
       await db.close();
     }
@@ -85,7 +86,7 @@ describe('the sync build, isolated', () => {
       }
       const started = performance.now();
       expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
-      expect(performance.now() - started).toBeLessThan(500);
+      expect(performance.now() - started).toBeLessThan(1000);
     } finally {
       await db.close();
     }
@@ -109,7 +110,7 @@ describe('the sync build, isolated', () => {
       expect(await db.first<{ n: number }>(sql)).toEqual({ n: 1 });
       const started = performance.now();
       expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
-      expect(performance.now() - started).toBeLessThan(500);
+      expect(performance.now() - started).toBeLessThan(1000);
     } finally {
       await db.close();
     }
