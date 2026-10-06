@@ -39,7 +39,9 @@
 	"types": "./dist/index.d.ts",
 	"files": [
 		"dist",
-		"NOTICE"
+		"NOTICE",
+		"API.md",
+		"VFS.md"
 	],
 	"scripts": {
 		"build": "rslib build",
