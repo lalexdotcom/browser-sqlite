@@ -102,3 +102,19 @@ The page and the worker each hold about half of the garbage; the gains add up.
 **Per batch the page builds**: one array per row (`keys.map(toBindable)`), a copy of the buffer (`[...buffer]`), a flattened array of 32 766 values (`toInsert.flat()`), the SQL text — all alive until the batch is posted, then the structured clone. **`queueSize` does not shrink a batch** (`maxBufferSize = floor(32766 / keys)` is fixed); below one batch it only means one batch in flight.
 
 **No normal-configuration way to trigger a GC was found** (web search, same day): `gc()` needs `--expose-gc`; V8's memory reducer starts a GC only once the allocation rate is low (`kShortDelayMs = 500`, watchdog `kWatchdogDelayMs = 100000`, `src/heap/memory-reducer.cc`); Firefox gives each worker a shrinking GC 5 s after it goes idle and a normal GC every 30 s while busy (bugzilla 718100, 2012); wasm `memory.discard` is still a Phase 1 proposal. What others report doing instead: transfer ArrayBuffers rather than clone, bound the queue, terminate a worker to free its whole heap.
+
+## BULK-BINARY — a transferred binary batch cuts the peak by up to 70 %, 2026-10-06
+
+**The spike** (throwaway branch, not merged): `bulkWrite` still sends a `query` message with its INSERT through `write()`; only `params` changes. The page encodes the batch's values into 1 MiB `ArrayBuffer` chunks — tag byte then payload: null, int32, float64, int64, text (u32 length + UTF-8 through `TextEncoder.encodeInto`), blob — a value never straddling two chunks; `params` becomes one object holding the chunks, passed to `postMessage` as transferables (pool.ts). The worker copies the chunks into one `sqlite3_malloc` block and binds every value from it with `SQLITE_STATIC` through `module._sqlite3_bind_*`, freeing the block after `settle()` has cleared the bindings. Same binding semantics as wa-sqlite's `bind` (an integer outside int32 goes as a double, a boolean as an int). Two placements: **`flush`** encodes when the batch is sent, **`enqueue`** encodes each row as it arrives, so the rows die young. **Correctness**: 40 000 rows × 11 columns (int, float, bigint, null, undefined, Unicode text, empty text, JSON, Date, blob, boolean) read back with `typeof()` and `hex()`: the same SHA-256 for the three modes, on three VFS, on both engines.
+
+Page-process PSS peak, MB, median of 3, 500 MiB, normal configuration (no forced GC, no heap cap), 0 errors in 54 runs:
+
+| VFS | Chromium clone / flush / enqueue | Firefox clone / flush / enqueue |
+|---|---|---|
+| `OPFSAdaptiveVFS` | 401 / 131 / **121** | 301 / 247 / **173** |
+| `OPFSWriteAheadVFS` | 515 / 349 / **331** | 284 / 206 / **175** |
+| `OPFSCoopSyncVFS` | 401 / 171 / **164** | 294 / 255 / **172** |
+
+Load time unchanged or shorter (Chromium Adaptive and CoopSync 3 → 2 s, WriteAhead 5 → 4 s; Firefox 32-54 s in every mode). **On Chromium the transfer does the work and `enqueue` adds 2-8 %; on Firefox encoding at `enqueue()` is what counts** (−13 to −27 % at `flush`, −38 to −43 % at `enqueue`). Both beat the forced GC of BULK-GC (210 on Adaptive). What stays on `OPFSWriteAheadVFS` under Chromium is its own: CDP saw up to 156 MB of ArrayBuffers in its worker. Wasm heap 24.3 MiB per worker, as before; `close()` + 31 s back to baseline in every mode.
+
+**What generalising it to every query would have to handle**, read from the code: `readWithRetry`/`streamWithRetry` re-post the same `params` once on a SQLite `BUSY` (`OPFSCoopSyncVFS`'s handle transfer), so a query must be encoded at each send, not ahead; a write is never retried, so `bulkWrite` may encode at `enqueue()`. `debugSQLQuery` reads `params` to inline values in the debug log. A transferred buffer comes back usable only if the worker transfers it back (ownership round trip), which is how chunks could be recycled — not measured. A `SharedArrayBuffer` would need COOP/COEP, which the library deliberately does not require.
