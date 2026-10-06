@@ -279,10 +279,7 @@ failures established that no reading would have.
   environment, `npm publish` and `npm dist-tag` allowed); the action at `v3.1.0` publishes
   through OIDC when the job has `id-token: write`, upgrading npm when needed, `npm-token` as the
   fallback; and the `release` job has `id-token: write`. **rc.6 (2026-10-06) was its first release:**
-  `npm publish` went through OIDC (log: "trusted publishing (OIDC), npm-token as fallback",
-  provenance published), but the two `npm dist-tag add` printed npm's notice on 2FA-bypass
-  tokens, so they most likely used `NPM_TOKEN`; rc.7 printed the same notice on both. Whether dist-tags work through OIDC alone is
-  therefore still open; a release without the token answers it. **Once that is shown:** drop
+  `npm publish` went through OIDC — **proven by the registry, not by the log**: `npm view browser-sqlite@<v> _npmUser` reads `GitHub Actions <npm-oidc-no-reply@github.com>` for rc.6 and rc.7, against `lalexdotcom` for rc.5 (checked 2026-10-06). The action's "trusted publishing (OIDC), npm-token as fallback" line only says OIDC is AVAILABLE. **npm's notice on 2FA-bypass tokens proves nothing either**: rc.7 printed it during `npm publish` too, which the registry shows went through OIDC — it appears whenever a token is configured, used or not. So what the two `npm dist-tag add` authenticated with is unknown: the registry records no publisher for a dist-tag. A release without the token answers it. **Once that is shown:** drop
   `npm-token` from the workflow, delete the `NPM_TOKEN` secret, and switch the package's
   publishing access to "disallow bypass 2fa tokens" (both the user's). Until then the token is
   the fallback, and it **runs out around 2026-11-29** (renewed for 90 days at rc.4's release,
