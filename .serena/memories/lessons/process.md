@@ -256,3 +256,7 @@ A plan that says "apply the sabotage, see the test fail, revert with `git checko
 ## `pkill -f` with a pattern from your own command line kills your own shell (2026-10-03)
 
 `pkill -f "wtr-ff.config.mjs --files ./test/sql.test.js"` matched the `bash -c` that ran it (exit 144) and left the runner alive, while the background loop moved on to its next run. **Stop a background run by PID**, read off `ps`, children included; and stop the loop's own shell first, or it starts the next iteration.
+
+## A stub on `PATH` is checked before the script under test runs (2026-10-06)
+
+Testing the action's npm-upgrade step against a fake `npm`, the stub's directory was mistyped in `PATH`; the real npm answered, and the step under test ran a real `npm install -g npm@^11.21.0`, upgrading the container's global npm (left so, user's choice). **Assert `type -P <tool>` names the stub before running the script**, and keep the real tool out of reach (`env -i PATH=<stubs>:/usr/bin:/bin`) when the script under test can install or delete.

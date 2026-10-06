@@ -676,11 +676,13 @@ const splice = (
   const stop = source.indexOf(end);
   if (start === -1 || stop === -1) {
     throw new Error(
-      `VFS.md markers not found (${begin.slice(0, 40)}…) — see scripts/render-vfs-matrix.ts`,
+      `markers not found (${begin.slice(0, 40)}…) — see scripts/render-vfs-matrix.ts`,
     );
   }
   if (stop < start) {
-    throw new Error('VFS.md END marker precedes its BEGIN marker');
+    throw new Error(
+      `END marker precedes its BEGIN marker (${begin.slice(0, 40)}…)`,
+    );
   }
   return (
     source.slice(0, start + begin.length) +
@@ -716,6 +718,24 @@ doc = splice(
 );
 writeFileSync(path, doc);
 
+// README.md's Browser support table is the library's own floor: the LIB_FLOOR
+// every VFS cell above is raised to, desktop columns only.
+const README_BROWSERS = ['Chrome', 'Firefox', 'Safari'] as const;
+const readmePath = new URL('../README.md', import.meta.url);
+writeFileSync(
+  readmePath,
+  splice(
+    readFileSync(readmePath, 'utf8'),
+    '<!-- BEGIN GENERATED BROWSER SUPPORT — run `pnpm docs:vfs` -->',
+    '<!-- END GENERATED BROWSER SUPPORT -->',
+    [
+      `| ${README_BROWSERS.join(' | ')} |`,
+      `|${'---|'.repeat(README_BROWSERS.length)}`,
+      `| ${README_BROWSERS.map((b) => `${LIB_FLOOR[b]}+`).join(' | ')} |`,
+    ].join('\n'),
+  ),
+);
+
 console.log(
-  `Rendered ${rows.length} VFS rows, ${rows.length} VFS headers and ${BUILDS.length} build sections into VFS.md`,
+  `Rendered ${rows.length} VFS rows, ${rows.length} VFS headers and ${BUILDS.length} build sections into VFS.md, and the browser floor into README.md`,
 );

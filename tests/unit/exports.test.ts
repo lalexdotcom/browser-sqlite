@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from '@rstest/core';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import type {
+  BootStage,
   ClientDebugState,
   QueryDebugState,
   RequestDebugState,
@@ -57,6 +58,7 @@ type _PinTxToClient = _Assert<
  * a polling function. Falsifiable: drop the export from src/index.ts.
  */
 type _DebugTypesExported = [
+  BootStage,
   ClientDebugState,
   WorkerDebugState,
   RequestDebugState,

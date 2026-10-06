@@ -14,6 +14,7 @@ export {
 } from './const/sqlite';
 export type { SQLiteVFS } from './const/vfs';
 export type {
+  BootStage,
   ClientDebugState,
   QueryDebugState,
   RequestDebugState,

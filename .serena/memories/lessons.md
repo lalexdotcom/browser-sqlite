@@ -96,6 +96,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - A type claim checked outside the project's own `tsconfig` is not checked (2026-09-24, `feat/public-surface`)
 - A sabotage reverted with `git checkout -- <file>` also reverts the uncommitted work (2026-09-30)
 - `pkill -f` with a pattern from your own command line kills your own shell (2026-10-03)
+- A stub on `PATH` is checked before the script under test runs (2026-10-06)
 
 ## `mem:lessons/design` — design of the library
 

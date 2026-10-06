@@ -26,7 +26,9 @@ Decided and installed on 2026-09-11, in `package.json` under `simple-git-hooks`:
 - `pre-push` — the same, as the backstop for commits made directly on `main` before anything
   reaches CI. Since 2026-09-15 it also runs CI's VFS table check, `pnpm docs:vfs && git diff
   --exit-code VFS.md` (user), after a hand edit inside a generated span of `VFS.md` failed the
-  first CI run of rc.5 before it reached a single test.
+  first CI run of rc.5 before it reached a single test. Since 2026-10-06 the same check covers
+  `README.md`, whose Browser support table `pnpm docs:vfs` generates (`git diff --exit-code
+  VFS.md README.md`, in CI too).
 
 Verified in a scratch repository: an ordinary commit, a clean `--no-ff` merge, a conflicted
 merge concluded by `git commit` and by `git merge --continue`, and a push each fire the
