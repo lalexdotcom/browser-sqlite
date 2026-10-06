@@ -2,6 +2,8 @@
 
 **Date:** 2026-10-06 · **Status:** approved in chat section by section, spec under review · **Target:** `## [Unreleased]` · **Branch:** `feat/bulk-object-values`
 
+**Amended 2026-10-06 (user):** a string in a JSONB column is stored as a JSON string through `JSON.stringify`, no longer read as JSON text, so only a `Uint8Array` that is not valid JSONB fails a batch (D6, § 2, § 6).
+
 Today `bulkWrite()` and `output()` hand every cell to wa-sqlite's `sqlite3.bind` untouched. That function binds a plain object, a `Date`, a `Map` or any other non-`Uint8Array` object as `NULL` with a `console.warn` in the worker, and binds an `Array` as a BLOB whose bytes are each element coerced to a `uint8` (`[1, 2, 300]` → `01 02 2C`). An object is lost without an error; an array is corrupted without one. This design gives both methods a defined conversion for every value, and a way to store JSONB.
 
 ---
@@ -13,7 +15,7 @@ Today `bulkWrite()` and `output()` hand every cell to wa-sqlite's `sqlite3.bind`
 - **D3 — Arrays follow objects.** An array is bound as JSON text, not as a BLOB. **This is breaking**: a `number[]` meant as bytes must become a `Uint8Array`. No `arrayMode` option: with JSONB columns it would have needed its own `'jsonb'` value, and the BLOB path only preserved a truncation hazard nothing in this library relies on or documents.
 - **D4 — A top-level `Date` is bound in SQLite's own format**, `YYYY-MM-DD HH:MM:SS.SSS` in UTC — what `datetime('now', 'subsec')` and `strftime('%Y-%m-%d %H:%M:%f')` produce. The milliseconds are always present, so every such date has the same length and sorts as text. Chosen over `toISOString()` so that a text comparison with SQLite's own dates is right: `'2026-10-06T01:00:00.000Z' > '2026-10-06 23:00:00'` is true. Inside a JSON value a `Date` stays what `JSON.stringify` makes of it (`toJSON()`, ISO with `Z`): there it is known to be JSON.
 - **D5 — JSONB is a column declaration, never a value inspection.** `bulkWrite()` takes `types: Partial<Record<KEYS, 'JSONB'>>`; `output()` reads it from the schema, a column whose type is `JSONB` once trimmed and compared case-insensitively. A JSONB column gets `jsonb(?)` on every row, so the generated SQL depends only on the row count, as today, and the statement cache — sized for `bulkWrite` (`client.ts`, 8 MB for three concurrent writers) — keeps working. Inspecting each batch to decide was designed and dropped: a nullable JSON column with a batch of only `NULL`s, or a column mixing objects and strings, would vary the SQL and cancel the cache.
-- **D6 — A JSONB column takes valid JSON.** Its values are converted by JSON's rules, not by the ordinary column's (§ 2): a string is read as JSON text, and one that is not valid JSON fails the batch.
+- **D6 — A JSONB column stores every JS value as JSON.** Its values are converted by JSON's rules, not by the ordinary column's (§ 2): a string is stored as a JSON string, so `JSON.parse(json(col))` returns it. Only a `Uint8Array` that is not valid JSONB fails the batch.
 - **D7 — `types` accepts only `'JSONB'` for now.** `'JSON'` would change nothing against the default. Other values — conversions such as `string → number` — are a later evolution (§ 7).
 - **D8 — No new error code.** A value `JSON.stringify` refuses (a nested `bigint`, a cycle) or an invalid `Date` in an ordinary column (in a JSONB column `JSON.stringify` stores it as JSON `null`, as § 2 says) throws the engine's own `TypeError` or `RangeError` from `enqueue()`. A malformed `types` is `INVALID_OPTION`.
 - **D9 — The changelog carries three entries:** `Fixed` (an object is no longer stored as `NULL`), `Added` (`types` and JSONB columns), `Changed` with `**Breaking:**` first (arrays are stored as JSON, migration to `Uint8Array`).
@@ -22,7 +24,7 @@ Today `bulkWrite()` and `output()` hand every cell to wa-sqlite's `sqlite3.bind`
 
 | Value | Ordinary column (`?`) | JSONB column (`jsonb(?)`) |
 |---|---|---|
-| `string` | unchanged | unchanged, read by SQLite as JSON text |
+| `string` | unchanged | `JSON.stringify` → a JSON string |
 | `number`, `bigint` | unchanged | unchanged, SQLite makes a JSONB number |
 | `boolean` | unchanged (`1` / `0`) | `JSON.stringify` → `true` / `false` |
 | `null`, `undefined` | unchanged (`NULL`) | unchanged (`jsonb(NULL)` is `NULL`) |
@@ -63,7 +65,7 @@ bulkWrite: <KEYS extends string>(
 ## 5. Tests
 
 - **Unit** (`tests/unit/`): `toBindable` for every row of § 2 in both columns, `toSQLiteDate` on a known instant, an invalid `Date`, a nested `bigint`.
-- **Browser** (`tests/browser/bulk-write.test.ts` and `output()`'s tests): an object and an array read back as JSON text; a `Uint8Array` still read as a BLOB; a top-level `Date` read back in D4's format; a `types` JSONB column with `typeof(col) = 'blob'` and `json(col)` equal to the input; a string that is not valid JSON failing the batch with `SQLiteBulkWriteError`; `INVALID_OPTION` for an unknown key; a schema `JSONB` column in `output()`.
+- **Browser** (`tests/browser/bulk-write.test.ts` and `output()`'s tests): an object and an array read back as JSON text; a `Uint8Array` still read as a BLOB; a top-level `Date` read back in D4's format; a `types` JSONB column with `typeof(col) = 'blob'` and `json(col)` equal to the input; a string stored as a JSON string, and a `Uint8Array` that is not valid JSONB failing the batch with `SQLiteBulkWriteError`; `INVALID_OPTION` for an unknown key; a schema `JSONB` column in `output()`.
 - `pnpm test` covers it: the change touches neither the pool nor the worker, so the full matrix is not due (`mem:conventions`).
 - **Measurement:** the existing `bulkWrite` bench, before and after, on rows of scalars only, to confirm in a browser that the per-cell check in `enqueue()` costs nothing (in Node the difference is within noise: 37.6 ms vs 32.7 ms for 1 M rows of 5 scalars).
 

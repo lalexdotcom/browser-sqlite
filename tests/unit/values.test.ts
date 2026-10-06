@@ -55,14 +55,16 @@ describe('toBindable, ordinary column', () => {
 });
 
 describe('toBindable, JSONB column', () => {
-  it('passes strings, numbers, bigint, null, undefined and Uint8Array through', () => {
+  it('passes numbers, bigint, null, undefined and Uint8Array through', () => {
     const bytes = Uint8Array.of(1);
-    for (const v of ['{"a":1}', 5, 10n, null, undefined, bytes]) {
+    for (const v of [5, 10n, null, undefined, bytes]) {
       expect(toBindable(v, true)).toBe(v);
     }
   });
 
-  it('stringifies booleans, Dates, objects and arrays', () => {
+  it('stringifies strings, booleans, Dates, objects and arrays', () => {
+    expect(toBindable('abc', true)).toBe('"abc"');
+    expect(toBindable('{"a":1}', true)).toBe('"{\\"a\\":1}"');
     expect(toBindable(true, true)).toBe('true');
     expect(toBindable(false, true)).toBe('false');
     expect(toBindable(instant, true)).toBe('"2026-10-06T12:34:56.789Z"');

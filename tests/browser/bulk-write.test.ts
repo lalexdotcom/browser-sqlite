@@ -271,17 +271,19 @@ describe('bulkWrite() values', () => {
     });
     bulk.enqueue({ id: 1, doc: { a: 1 } });
     bulk.enqueue({ id: 2, doc: '{"b":2}' });
-    bulk.enqueue({ id: 3, doc: null });
-    bulk.enqueue({ id: 4, doc: true });
-    bulk.enqueue({ id: 5, doc: at });
-    bulk.enqueue({ id: 6, doc: 5 });
+    bulk.enqueue({ id: 3, doc: 'abc' });
+    bulk.enqueue({ id: 4, doc: null });
+    bulk.enqueue({ id: 5, doc: true });
+    bulk.enqueue({ id: 6, doc: at });
+    bulk.enqueue({ id: 7, doc: 5 });
     await bulk.close();
     const rows = await db.read<{ t: string; j: string | null }>(
       'SELECT typeof(doc) AS t, json(doc) AS j FROM bulk_jsonb ORDER BY id',
     );
     expect(rows).toEqual([
       { t: 'blob', j: '{"a":1}' },
-      { t: 'blob', j: '{"b":2}' },
+      { t: 'blob', j: '"{\\"b\\":2}"' },
+      { t: 'blob', j: '"abc"' },
       { t: 'null', j: null },
       { t: 'blob', j: 'true' },
       { t: 'blob', j: '"2026-10-06T12:34:56.789Z"' },
@@ -290,13 +292,13 @@ describe('bulkWrite() values', () => {
     db.close();
   });
 
-  it('fails the batch on a string that is not JSON in a JSONB column', async () => {
+  it('fails the batch on a BLOB that is not valid JSONB in a JSONB column', async () => {
     const db = await createTestClient();
     await db.write('CREATE TABLE bulk_jsonb_bad (doc BLOB)');
     const bulk = db.bulkWrite('bulk_jsonb_bad', ['doc'], {
       types: { doc: 'JSONB' },
     });
-    bulk.enqueue({ doc: 'abc' });
+    bulk.enqueue({ doc: Uint8Array.of(255, 0) });
     await expect(bulk.close()).rejects.toMatchObject({
       code: 'BULK_WRITE_FAILED',
       rowsNotWritten: 1,

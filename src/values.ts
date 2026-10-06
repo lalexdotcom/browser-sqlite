@@ -11,10 +11,11 @@ export const toSQLiteDate = (date: Date): string =>
 
 /**
  * A primitive or a Uint8Array is bound as given; a JSONB column takes JSON
- * text, so its booleans and Dates go through `JSON.stringify` too.
+ * text, so its strings, booleans and Dates go through `JSON.stringify` too.
  */
 export const toBindable = (value: unknown, jsonb: boolean): unknown => {
-  if (typeof value === 'boolean') return jsonb ? JSON.stringify(value) : value;
+  if (typeof value === 'boolean' || typeof value === 'string')
+    return jsonb ? JSON.stringify(value) : value;
   if (typeof value !== 'object' || value === null) return value;
   if (value instanceof Uint8Array) return value;
   if (value instanceof Date && !jsonb) return toSQLiteDate(value);
