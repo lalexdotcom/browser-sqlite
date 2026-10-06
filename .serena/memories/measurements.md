@@ -141,6 +141,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - FOOTPRINT-DISK
 - BULK-RELEASE
 - BULK-PLATEAU
+- BULK-GC
 
 ## `mem:measurements/suite-and-matrix` — the test suite, the matrix, the Firefox harness
 

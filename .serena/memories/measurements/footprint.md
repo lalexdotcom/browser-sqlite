@@ -73,3 +73,32 @@ Page process, PSS delta, MB, median (Chromium / Firefox):
 ## BULK-PLATEAU — the peak does not track the volume, and is not proven bounded
 
 Timelines of the 500 MiB loads lasting ≥ 20 s (Chromium: `IDBBatchAtomicVFS`, `OPFSAnyContextVFS`; Firefox: every VFS). The page process oscillates in a GC sawtooth — 200-420 MB on the VFS that do not keep the database — with no visible climb: per-third maxima such as 252 / 267 / 266 (Firefox WriteAhead) or 367 / 308 / 321 (Chromium AnyContext, a 109 s load). **But a least-squares slope over the load is small and mostly positive: −0.4 to +2.4 MB/s, against 4-19 MiB/s written.** 50 → 500 MiB took Chromium's peak from ~195 to ~400-510 MB, not ×10. So the peak does not scale with the data, and the live set is bounded by back-pressure; **that the sawtooth's top saturates is not established** — a load several times longer would settle it. The whole-database VFS climb at +17 to +36 MB/s, which is the database itself.
+
+## BULK-GC — the peak is collectable garbage, and pacing the GC halves it, 2026-10-06
+
+Same harness, 500 MiB `bulkWrite`, n=3 per arm, 0 errors. Page-process PSS peak, MB, median; load time unchanged in every arm unless noted.
+
+**Heap cap** (measurement-only flags). Chromium `--max-old-space-size`:
+
+| VFS | default | 128 MB | 64 MB |
+|---|---|---|---|
+| `OPFSWriteAheadVFS` | 540 | 457 | **229** |
+| `OPFSAdaptiveVFS` | 404 | 325 | **194** (load 3 → 4 s) |
+| `OPFSCoopSyncVFS` | 406 | 319 | **179** |
+
+So under a constrained heap V8 collects earlier and the load completes: the excess is slack, not need. **Firefox `javascript.options.mem.max` (MB, applied to workers as `JSGC_MAX_BYTES`): no effect at 128 or 64** — 276-312 MB in every arm, no failure. It is a hard maximum, not a trigger, and Firefox's peak (~280) already sits below Chromium's default.
+
+**Forced GC at batch boundaries** (Chromium, `--expose-gc`; `gc()` in the page every 16 383 rows, and/or in the worker after each `done` reply, through the hook wrapping `self.postMessage`):
+
+| VFS | none | page | worker | both |
+|---|---|---|---|---|
+| `OPFSAdaptiveVFS` | 418 | 303 | 307 | **210** |
+| `OPFSWriteAheadVFS` | 551 | 459 | 389 | **314** |
+
+The page and the worker each hold about half of the garbage; the gains add up.
+
+**Where it lives** — CDP `Runtime.getHeapUsage` per target, sampled every 500 ms, no GC (Chromium, n=2): during the load the page's V8 heap holds 40-109 MB used / 90-150 committed, each busy worker 13-74 used / 60-113 committed, and `OPFSWriteAheadVFS`'s worker up to 156 MB of ArrayBuffer backing stores. **20 s after the load nothing has run**: the page still counts 58 MB used / 106-122 committed, where a forced GC leaves 1 MB live.
+
+**Per batch the page builds**: one array per row (`keys.map(toBindable)`), a copy of the buffer (`[...buffer]`), a flattened array of 32 766 values (`toInsert.flat()`), the SQL text — all alive until the batch is posted, then the structured clone. **`queueSize` does not shrink a batch** (`maxBufferSize = floor(32766 / keys)` is fixed); below one batch it only means one batch in flight.
+
+**No normal-configuration way to trigger a GC was found** (web search, same day): `gc()` needs `--expose-gc`; V8's memory reducer starts a GC only once the allocation rate is low (`kShortDelayMs = 500`, watchdog `kWatchdogDelayMs = 100000`, `src/heap/memory-reducer.cc`); Firefox gives each worker a shrinking GC 5 s after it goes idle and a normal GC every 30 s while busy (bugzilla 718100, 2012); wasm `memory.discard` is still a Phase 1 proposal. What others report doing instead: transfer ArrayBuffers rather than clone, bound the queue, terminate a worker to free its whole heap.
