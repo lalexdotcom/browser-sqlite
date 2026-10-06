@@ -111,8 +111,9 @@ export type ClientMessageData =
     };
 
 /**
- * The step a worker's open has reached, posted as each one begins. Internal: a
- * test reads it to name where an open that never finishes stopped.
+ * The step a worker's open has reached, posted as each one begins. Public as
+ * the type of `WorkerDebugState.boot`, which names where an open that never
+ * finishes stopped.
  */
 export type BootStage =
   | 'waiting for the client'

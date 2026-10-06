@@ -3,6 +3,10 @@ import type { SQLiteVFS } from './const/vfs';
 import type { PoolWorker } from './pool';
 import type { BootStage } from './types/protocol';
 
+// Public as the type of `WorkerDebugState.boot`; the rest of the protocol
+// stays internal.
+export type { BootStage };
+
 export const debugSQLQuery = (sql: string, params?: unknown[]) => {
   if (!params || params.length === 0) return sql;
 

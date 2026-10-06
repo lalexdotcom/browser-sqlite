@@ -66,13 +66,14 @@ jobs:
       - name: Lint and format check
         run: pnpm exec biome ci .
 
-      # VFS.md's VFS table is generated from VFS_CAPABILITIES. Regenerate
-      # and fail on any diff: the table cannot drift from the declarations,
-      # while the conformance job proves the declarations are true.
+      # VFS.md's VFS table is generated from VFS_CAPABILITIES, and README.md's
+      # browser floor from the same data. Regenerate and fail on any diff: the
+      # tables cannot drift from the declarations, while the conformance job
+      # proves the declarations are true.
       - name: VFS table is current
         run: |
           pnpm docs:vfs
-          git diff --exit-code VFS.md
+          git diff --exit-code VFS.md README.md
 
       - name: Type check
         run: pnpm exec tsc --noEmit

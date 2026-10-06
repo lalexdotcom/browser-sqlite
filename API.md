@@ -398,7 +398,7 @@ await deleteDatabase('myapp.sqlite', { vfs: 'OPFSAdaptiveVFS' });
 
 Deleting a database that is not there throws — most often because `vfs` is not the one it was created with.
 
-What a VFS keeps for itself is left alone — the IndexedDB store shared by every database that VFS holds on this origin, and the `AccessHandlePoolVFS` directory whose files are its reusable capacity. The deleted database's own bytes are freed in both cases.
+What a VFS keeps for itself is left alone — an IndexedDB store it shares between its databases, or a pool of files it keeps as reusable capacity. The deleted database's own bytes are freed in both cases.
 
 **The database must not be open, in this tab or any other.**<br>`DATABASE_IN_USE` says a client still holds it, and retrying will not help — closing every client on it is what releases it. A client your application stopped using but never closed keeps blocking until its tab goes, and this library cannot revoke a connection it did not open: another library or native code on the same origin is invisible to it.
 
@@ -443,7 +443,7 @@ It answers from code that holds no client — opening one to learn who holds the
 
 **Polling is on the call.**<br>Nothing is kept between two calls, and there is no event to subscribe to. A call makes no worker round trip, and the tab's identity is resolved and cached once, so subsequent calls take no lock — polling cannot slow a query down. Do not stack calls: a background tab has its timers throttled, and an interval that fires without awaiting the previous answer will queue them up.
 
-`MemoryVFS` and `MemoryAsyncVFS` throw `INVALID_OPTION`: their pages live in the worker that opened them, so two clients are two databases and there is nothing to share. Where the Web Locks API is missing, `inspectDatabase` and `db.inspect()` throw `UNSUPPORTED` rather than report zero.
+A memory VFS throws `INVALID_OPTION`: its pages live in the worker that opened them, so two clients are two databases and there is nothing to share. Where the Web Locks API is missing, `inspectDatabase` and `db.inspect()` throw `UNSUPPORTED` rather than report zero.
 
 ## Queries
 

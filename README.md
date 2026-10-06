@@ -44,9 +44,13 @@ The `.wasm` are read from beside `worker.js`. If a build separates them, or you 
 
 ## Browser support
 
+<!-- BEGIN GENERATED BROWSER SUPPORT — run `pnpm docs:vfs` -->
+
 | Chrome | Firefox | Safari |
 |---|---|---|
 | 92+ | 90+ | 15.4+ |
+
+<!-- END GENERATED BROWSER SUPPORT -->
 
 Cross-origin isolation is worth adding where you control your headers: it is what lets an aborted call stop a running statement when using a VFS with `sync` build. See [Aborting a call](#aborting-a-call).
 

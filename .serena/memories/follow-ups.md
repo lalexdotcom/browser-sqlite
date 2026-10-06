@@ -187,13 +187,6 @@ Today the one-writer invariant rests on the client's routing regex (`isReadQuery
 
 Measured on 2026-10-05 (JSPI-VS-SYNC, `mem:measurements/statement-cache-and-perf`): `jspi` runs row walks as fast as `sync` on Chromium and Firefox, where `async` pays 1.2-1.8×, and it interrupts a running statement with no cross-origin isolation. So declaring `jspi` first on the VFS that list `sync` first (`OPFSWriteAheadVFS`, `OPFSCoopSyncVFS`, `AccessHandlePoolVFS`, `MemoryVFS`) would make the default interruptible where the browser has JSPI, at no measured cost. To weigh before deciding: Safari 27 is not measured; the Firefox figure rests on #375's glue, merged upstream and in the pin since 2026-10-05; `transaction-throughput` on `OPFSWriteAheadVFS`/Chromium read 1.27× with a 1.03-1.94× spread (`MemoryVFS` 0.87×), to re-measure; the open path and memory of `jspi` against `sync` are not measured; and a changed default is a consumer-visible change (CHANGELOG, `VFS.md`'s Builds and Recommendations, the `build` JSDoc — `mem:lessons/claims-and-docs`, "A changed default is described in more places than the spec lists").
 
-## Documentation pass before the release — three leftovers (user, 2026-10-03)
-
-The consumer docs were reread as a whole before the 1.0: `README.md` and `API.md` reviewed by the user and merged on 2026-10-05 (`docs/release-pass`, `mem:history`), **`VFS.md` reviewed by the user and approved as it stands on 2026-10-06**. The rules the review settled are in `mem:conventions`, "Writing for the consumer". Left open:
-- **`API.md` still names VFS in two places**, against the rule that it speaks of capabilities: `deleteDatabase` (the `AccessHandlePoolVFS` directory) and `inspectDatabase` (`MemoryVFS` and `MemoryAsyncVFS`). Proposed and not validated: "an IndexedDB store it shares between its databases, or a pool of files it keeps as reusable capacity", and "A memory VFS throws `INVALID_OPTION`: its pages live…".
-- **`README.md`'s Browser support table is hand-written** while `VFS.md` derives the same floors (`LIB_FLOOR` in the generator); it had drifted to Firefox 95 (`crypto.randomUUID`, no longer used) and was corrected by hand.
-- **`BootStage` is not exported** from `src/index.ts`, though `WorkerDebugState.boot` is typed with it: a consumer reads the value but cannot name its type.
-
 
 ## Notes, with nothing to fix
 
