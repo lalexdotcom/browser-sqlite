@@ -39,37 +39,95 @@ const captureWarnings = () => {
  * handle. Returns the engine's own error name for that probe (the oracle
  * used to assert on the cause below), or null where it doesn't conflict.
  * Registers its own release/cleanup via onTestFinished.
+ *
+ * The holder reports each step it reaches and any error it catches, and the
+ * wait is bounded under the 30 s test timeout, so a stall fails naming its
+ * step (`mem:follow-ups/dormant`, the held-file stall on Firefox).
  */
+const HOLDER_STALL_MS = 20_000;
+
 const holdFileExclusively = async (path: string): Promise<string | null> => {
   const src = `
       let held;
+      const step = (name) => self.postMessage({ step: name });
+      step('booted');
       self.onmessage = async (e) => {
-        if (e.data === 'release') { held?.close(); self.postMessage('released'); return; }
-        const segments = e.data.split('/');
-        const name = segments.pop();
-        let dir = await navigator.storage.getDirectory();
-        for (const segment of segments) dir = await dir.getDirectoryHandle(segment, { create: true });
-        const fh = await dir.getFileHandle(name, { create: true });
-        held = await fh.createSyncAccessHandle();
         try {
-          const again = await fh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
-          again.close();
-          self.postMessage(null);
+          if (e.data === 'release') { held?.close(); self.postMessage({ answer: 'released' }); return; }
+          const segments = e.data.split('/');
+          const name = segments.pop();
+          step('getDirectory');
+          let dir = await navigator.storage.getDirectory();
+          step('getDirectoryHandle');
+          for (const segment of segments) dir = await dir.getDirectoryHandle(segment, { create: true });
+          step('getFileHandle');
+          const fh = await dir.getFileHandle(name, { create: true });
+          step('createSyncAccessHandle');
+          held = await fh.createSyncAccessHandle();
+          step('held');
+          try {
+            const again = await fh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
+            again.close();
+            self.postMessage({ answer: null });
+          } catch (err) {
+            self.postMessage({ answer: err.name });
+          }
         } catch (err) {
-          self.postMessage(err.name);
+          self.postMessage({ failed: err.name + ': ' + err.message });
         }
       };`;
   const holder = new Worker(
     URL.createObjectURL(new Blob([src], { type: 'text/javascript' })),
   );
-  const ask = (message: string) =>
-    new Promise<unknown>((resolve) => {
-      holder.onmessage = (e) => resolve(e.data);
+  // Each step the holder reaches, with the page's clock, for a stall's report.
+  const steps: string[] = [];
+  const t0 = performance.now();
+  holder.addEventListener('message', (e: MessageEvent<{ step?: string }>) => {
+    if (e.data.step) {
+      steps.push(`${e.data.step} +${Math.round(performance.now() - t0)}ms`);
+    }
+  });
+  holder.addEventListener('error', (e) => {
+    steps.push(`worker error: ${e.message}`);
+  });
+  const ask = (message: string, label: string) =>
+    new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        holder.removeEventListener('message', onMessage);
+        reject(
+          new Error(
+            `holder stalled in ${label} for ${HOLDER_STALL_MS} ms; steps: ${steps.join(' > ') || 'no step'}`,
+          ),
+        );
+      }, HOLDER_STALL_MS);
+      const onMessage = (
+        e: MessageEvent<{ step?: string; answer?: unknown; failed?: string }>,
+      ) => {
+        if (e.data.step) return;
+        clearTimeout(timer);
+        holder.removeEventListener('message', onMessage);
+        if (e.data.failed !== undefined) {
+          reject(
+            new Error(
+              `holder failed in ${label}: ${e.data.failed}; steps: ${steps.join(' > ')}`,
+            ),
+          );
+        } else {
+          resolve(e.data.answer);
+        }
+      };
+      holder.addEventListener('message', onMessage);
       holder.postMessage(message);
     });
-  const oracle = (await ask(path)) as string | null;
+  let oracle: string | null;
+  try {
+    oracle = (await ask(path, 'take')) as string | null;
+  } catch (error) {
+    holder.terminate();
+    throw error;
+  }
   onTestFinished(async () => {
-    await ask('release');
+    await ask('release', 'release');
     holder.terminate();
     await removeOpfsPath(path);
   });
