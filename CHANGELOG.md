@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.0-rc.7] - 2026-10-06
+
 ### Added
 
 - **`bulkWrite()` takes `types` to store columns as JSONB,** and `output()` stores a column typed `JSONB` the same way.
@@ -799,7 +801,8 @@ with it.
 
 First published release line.
 
-[Unreleased]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.6...HEAD
+[Unreleased]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.7...HEAD
+[1.0.0-rc.7]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.6...v1.0.0-rc.7
 [1.0.0-rc.6]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.5...v1.0.0-rc.6
 [1.0.0-rc.5]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.4...v1.0.0-rc.5
 [1.0.0-rc.4]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.3...v1.0.0-rc.4
