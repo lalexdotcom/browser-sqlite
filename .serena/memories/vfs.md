@@ -373,3 +373,7 @@ candidate *per criterion* and never an aggregate score.
 Footprint earns a declared field anyway, for a narrower reason: it is the one axis a
 consumer cannot otherwise see at all, where builds, concurrency and persistence are at
 least discoverable.
+
+**Measured 2026-10-06** (`mem:measurements/footprint`): `memoryModel` holds for the
+`whole-database` VFS. `OPFSAnyContextVFS`, declared `page-cache`, grows with the data outside
+the JS heap, and `IDBBatchAtomicVFS` carries its cost in the browser's other processes.

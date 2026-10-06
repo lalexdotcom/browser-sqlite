@@ -134,6 +134,14 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - REOPEN-1 does not reproduce
 - BENCH-SWEEP campaign
 
+## `mem:measurements/footprint` — memory and disk per VFS, `bulkWrite` release
+
+- FOOTPRINT-METHOD
+- FOOTPRINT-REST
+- FOOTPRINT-DISK
+- BULK-RELEASE
+- BULK-PLATEAU
+
 ## `mem:measurements/suite-and-matrix` — the test suite, the matrix, the Firefox harness
 
 - LIFECYCLE-INIT-RACE
