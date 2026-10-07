@@ -1260,7 +1260,7 @@ export const createSQLiteClient = (
     T extends Record<string, unknown> = Record<string, unknown>,
   >(
     sql: string,
-    params?: unknown[] | EncodedParams,
+    params?: unknown[],
     options?: SQLiteChunkOptions,
   ) => {
     assertReadable(sql, 'read');
@@ -1285,11 +1285,7 @@ export const createSQLiteClient = (
    */
   const chunk = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
-  >(
-    sql: string,
-    params?: unknown[] | EncodedParams,
-    options?: SQLiteChunkOptions,
-  ) {
+  >(sql: string, params?: unknown[], options?: SQLiteChunkOptions) {
     assertReadable(sql, 'chunk');
     const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'chunk');
@@ -1318,11 +1314,7 @@ export const createSQLiteClient = (
    */
   const stream = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
-  >(
-    sql: string,
-    params?: unknown[] | EncodedParams,
-    options?: SQLiteChunkOptions,
-  ) {
+  >(sql: string, params?: unknown[], options?: SQLiteChunkOptions) {
     assertReadable(sql, 'stream');
     const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'stream');
@@ -1397,7 +1389,7 @@ export const createSQLiteClient = (
     T extends Record<string, unknown> = Record<string, unknown>,
   >(
     sql: string,
-    params?: unknown[] | EncodedParams,
+    params?: unknown[],
     options?: SQLiteQueryOptions,
   ) => {
     assertReadable(sql, 'first');

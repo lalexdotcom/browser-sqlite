@@ -157,7 +157,11 @@ export const encodeParams = (values: readonly Bindable[]): EncodedParams => {
     else if (v instanceof Uint8Array) bytes += 5 + v.byteLength;
     else bytes += 9;
   }
-  const w = new ParamsWriter(Math.max(16, Math.min(bytes, CHUNK_BYTES)));
+  // Beyond one chunk the first chunk opens lazily, at the size of the value
+  // that needs it, instead of a chunk this call would drop.
+  const w = new ParamsWriter(
+    bytes > CHUNK_BYTES ? undefined : Math.max(16, bytes),
+  );
   for (const v of values) w.value(v);
   return w.finish();
 };

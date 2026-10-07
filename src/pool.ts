@@ -692,6 +692,19 @@ export const createPoolWorker = (deps: {
         );
       }
 
+      // Encoded here, before the worker is claimed: a throw (an allocation
+      // failure, a second send) rejects this query and leaves the worker as it
+      // was, whereas after the claim the `finally` would post a `stop` nothing
+      // answers. Once per send: a retried read re-sends the caller's converted
+      // values, and a transferred buffer is gone from the page.
+      const encoded =
+        params instanceof EncodedParams
+          ? params
+          : params?.length
+            ? encodeParams(params)
+            : undefined;
+      const block = encoded?.toMessage();
+
       // Extract query options
       const {
         chunkSize = 500,
@@ -738,15 +751,6 @@ export const createPoolWorker = (deps: {
       // query, so a transaction's pending conclusion leaves only with a message
       // that is actually sent (spec 2026-09-11, §4).
       const op = savepoint?.();
-      // Encoded at each send: a retried read re-sends the caller's converted
-      // values, and a transferred buffer is gone from the page.
-      const encoded =
-        params instanceof EncodedParams
-          ? params
-          : params?.length
-            ? encodeParams(params)
-            : undefined;
-      const block = encoded?.toMessage();
       worker.postMessage(
         {
           type: 'query',

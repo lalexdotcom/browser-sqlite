@@ -77,6 +77,7 @@ describe('encodeParams', () => {
     const p = encodeParams([big]);
     expect(p.chunks).toHaveLength(1);
     expect(p.used[0]).toBeGreaterThan(0);
+    expect((p.chunks[0] as ArrayBuffer).byteLength).toBe(5 + big.length * 3);
   });
 
   it('refuses to be sent twice', () => {

@@ -43,7 +43,7 @@ export type WriteFn = (
 
 export type ReadFn = (
   sql: string,
-  params?: unknown[] | EncodedParams,
+  params?: unknown[],
   options?: BulkCallOptions,
 ) => Promise<unknown[]>;
 
