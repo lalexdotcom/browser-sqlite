@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - **On Firefox, `stream()`, `chunk()` and `tx.stream()` no longer keep the rows you have already consumed in memory:** every chunk stayed in memory until the client was closed, so a 500 MiB read peaked at about 2 GB. Consumed rows can now be collected as the read goes on.
+- **On Firefox, a query no longer leaves memory behind until the client is closed:** each one kept about 1 KB, so 200 000 queries on one worker held about 180 MB.
 
 ## [1.0.0-rc.7] - 2026-10-06
 
