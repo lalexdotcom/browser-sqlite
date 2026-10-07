@@ -98,6 +98,19 @@ describe('params', () => {
     await db.close();
   });
 
+  it("binds NULL, not the previous call's value, to a cached statement re-run with fewer values", async () => {
+    // Fails if `settle()` in worker.ts stops calling `clear_bindings`: the
+    // second run would still carry the first run's `'y'` in the second slot.
+    const db = await createTestClient({ poolSize: 1 });
+    expect(await db.read('SELECT ? AS a, ? AS b', ['x', 'y'])).toEqual([
+      { a: 'x', b: 'y' },
+    ]);
+    expect(await db.read('SELECT ? AS a, ? AS b', ['x'])).toEqual([
+      { a: 'x', b: null },
+    ]);
+    await db.close();
+  });
+
   it('binds the same params to each statement of a multi-statement string', async () => {
     const db = await createTestClient();
     await db.write('CREATE TABLE m (v)');
