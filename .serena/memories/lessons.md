@@ -58,6 +58,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - Reload a VFS's view only where SQLite revalidates or discards its cache
 - `IDBTransaction.abort()` throws once `commit()` was called (2026-10-03, wa-sqlite #371)
 - A probe summary that drops a field can invent a defect (2026-10-03, wa-sqlite #372)
+- Playwright's Firefox is not a neutral place to measure memory (2026-10-07)
 
 ## `mem:lessons/claims-and-docs` — claims, documentation, upstream
 

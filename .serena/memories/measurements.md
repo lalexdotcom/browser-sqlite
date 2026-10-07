@@ -144,6 +144,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - BULK-GC
 - BULK-BINARY
 - STREAM-FF
+- FF-JUGGLER
 - RESULT-BINARY
 
 ## `mem:measurements/suite-and-matrix` — the test suite, the matrix, the Firefox harness

@@ -132,27 +132,42 @@ So: reads neutral; small writes 2-9 % slower — a few µs per query (Chromium 0
 
 **Memory of large params on an ordinary query** (same day, separate browser per run, n=3, `OPFSAdaptiveVFS`): 200 writes of a 1 MiB text in one transaction, page-process PSS peak over the phase start — Chromium **100 MB cloned (87-116) against 27 binary (26-28)**; Firefox 59 (57-60) against 53 (50-84).
 
-## STREAM-FF — reading many rows holds ~4.5× the data on Firefox until the worker dies (cause found, below), 2026-10-06
+## STREAM-FF — Firefox holds every streamed chunk: two retentions found, two fixes measured, 2026-10-06/07
 
-`stream('SELECT id, v FROM t')` over 500 MiB (512 000 rows of 1 KiB text), rows discarded as they arrive, `OPFSAdaptiveVFS`, default `chunkSize`, page-process PSS over the phase start. **Chromium: +55 MB (51-60), flat, 1.6 s.** **Firefox: +2 290-2 400 MB, linear over the whole 40 s read**, in every run — 3 of the campaign, plus diagnostics. **Pre-existing**: the same on `main`'s `dist` (+2 245). Back-pressure is not the cause: the worker runs `DEFAULT_CREDIT_WINDOW = 2` chunks ahead and the client credits a chunk once consumed.
+**Measure Firefox memory WITHOUT Playwright** (FF-JUGGLER below): every figure in this section that says "direct" comes from Playwright's Firefox 153 binary launched by hand (`--headless --no-remote --profile`), the page running itself from its query string and posting marks to the harness, PSS read from `/proc` by profile path, chunk liveness read in the page with a `FinalizationRegistry` (tenured witnesses prove a major GC ran). Same data throughout: `OPFSAdaptiveVFS`, 500 MiB (512 000 rows of 1 KiB text), rows discarded as they arrive, default `chunkSize`.
 
-- **Not the JS heap the pref caps**: `javascript.options.mem.max=256` changes nothing and nothing fails.
-- **Client open, it stays**: +2 100 MB still 80 s after the read (n=2).
-- **`close()` returns it, late**: back to baseline 15-45 s after `close()` in 5 runs of 6 (`stream()` and `chunk()` alike); the sixth, slowed to a 98 s read by 8 parallel browsers, had not returned 55 s after `close()`. So it goes with the worker.
-- `chunk()` reads the same in 17 s against 40 s for `stream()`, peak +2 070.
+**Direct, n=3 per arm, 0 errors** — page-process PSS peak over the phase start, and chunks finalized DURING the read:
 
-**Cause found the same evening: the pool's chunk wait retains every chunk on Firefox.** `src/pool.ts`'s read loop awaits `Promise.race([waiting.promise, stopRequested.promise, lost.promise, deathDeferred.promise])` once per chunk, and the `chunk` handler resolves `deferredChunk` WITH the rows although the loop only compares the outcome to `STOP`. `deathDeferred` lives as long as the worker; each race leaves a reaction on it that keeps the race's promise, and so the rows, alive. Ruled out first: the OPFS read path (`SELECT count(*), sum(length(v))` over the same 500 MiB: +18 MB), the VFS (`IDBBatchAtomicVFS` +2 313), the worker's strings (the binary return below holds as much).
-- **Pure-JS reproduction**, no library: 1 024 races against a never-settling promise, each resolved with 512 rows, PSS 15 s later — **Firefox 185 MB with the value, 11 without; Chromium 36 and 21**. SpiderMonkey keeps a resolved race's value through a reaction on a pending promise; V8 barely does.
-- **Spike fix — `deferredChunk` resolved without a value** (Firefox, 500 MiB `stream()`, n=3): peak +1 343 MB cloned / +1 504 binary, a GC sawtooth (up to ~1 GB, down to ~300, up again) instead of a linear climb; **10 s after the read +16 to +56 MB** (one run of three had not collected yet) instead of +2 100 held until `close()`.
-- **Same shape with a `signal` or a `timeout` — measured 2026-10-07.** `src/queries.ts:164`/`:269` race `iterator.next()` against `makeAbortRace`'s `aborted` once per chunk, and `src/transaction.ts:751` does the same; a `timeout` becomes a signal through `withDeadline`, and **a transaction always hands its statements a signal of its own** (`withSignal` → `st.options`/`st.driving`), so `tx.stream()` races per chunk even without one from the caller. `teardown()` removes the listener at the end of the query, so the retention lasts the query, not the signal's life. Firefox, 500 MiB, pool fix on, n=3, page-process peak MB: `stream()` none **1 344**, + signal **2 290**, + timeout **2 291**; `tx.stream()` none **2 311**, + signal **2 308**. Chromium, same arms: 54-74 everywhere.
-- **Candidate fix for those races** (spike `raceAbort`): one `abort` listener per wait, removed when the wait settles, and `signal.aborted` tested first so an abort already fired still wins. With it: `stream()` + signal **1 353**, + timeout **1 328** (back to the control), `tx.stream()` none **1 809**, + signal **1 453** — tx improved, not to the control; and with a signal kept alive, 2 tx runs of 3 still held ~800-900 MB 50 s after the read, gone 40 s after the signal was dropped. Whether the signal holds something in the transaction path or the GC was merely late is not settled.
-- **`chunk()` is a separate open question.** It climbs linearly to ~2 070 MB with no GC in every arm — no signal, signal, the fix, slowed to 42 s (40 ms per chunk), with the consumer allocating 50 000 short-lived objects per chunk — and is back to baseline 50 s after the read. `stream()` goes through `chunk()` itself (`streamRows`), so the two differ only in what the consumer pulls. A pure-JS replica of the generator stack on Firefox kept 184 MB (`chunk`-shaped) and 415 MB (`stream`-shaped) 15 s after the end, Chromium 18 and 54: it does not reproduce the library's difference. Cause unknown.
+| arm | peak MB | freed during | after the read |
+|---|---|---|---|
+| `stream()` today | 2 134 (2 125-2 140) | 0 / 1 000 | +2 084 at +38 s |
+| `chunk()` today | 2 083 (2 083-2 084) | 0 / 1 024 | +2 069 at +38 s |
+| `stream()`, pool fix | **539** (293-592) | 779-968 | +175 |
+| `chunk()`, pool fix | **803** (713-1 001) | 627-920 | +40 |
+| `stream()` + signal, pool fix | 2 131 (2 113-2 138) | 0 | freed after the query, timing varies (-7 to +2 137 at +38 s) |
+| `stream()` + timeout, pool fix | 2 132 (2 130-2 139) | 0 | +78 |
+| `chunk()` + signal, pool fix | 2 083 (2 062-2 086) | 0 | +148 |
+| `tx.stream()`, no caller signal, pool fix | 2 129 (2 099-2 134) | 0 | -14 to +2 063 |
+| `stream()` + signal, both fixes | **562** (520-576) | 914-959 | +162 |
+| `stream()` + timeout, both fixes | **529** (399-544) | 778-928 | +27 |
+| `chunk()` + signal, both fixes | **732** (303-755) | 648-919 | -26 |
+| `tx.stream()`, both fixes | **699** (540-734) | 742-971 | +117 |
+
+Read time 17-21 s in every arm: neither fix costs time. **Chromium is not affected** (Playwright, which is neutral there): 54-74 MB on every arm, with or without signal, in a transaction or not.
+
+**Retention 1 — the pool's chunk wait.** `src/pool.ts`'s read loop awaits `Promise.race([waiting.promise, stopRequested.promise, lost.promise, deathDeferred.promise])` once per chunk, and the `chunk` handler resolves `deferredChunk` WITH the rows although the loop only compares the outcome to `STOP`. `deathDeferred` lives as long as the worker; each race leaves a reaction on it that keeps the race's result — the rows — alive until the worker dies. **Fix: resolve `deferredChunk` without a value.** Pure-JS reproduction, direct Firefox, n=2: 1 024 races against a never-settling promise, PSS 15 s later, **201-203 MB resolved with 512 rows, 19-22 MB without** (Chromium under Playwright: 36 / 21). Ruled out on the way, under Playwright: the OPFS read path (a full scan returning no row +18 MB), the VFS (`IDBBatchAtomicVFS` the same), the JS heap cap (`javascript.options.mem.max` changes nothing), the worker's strings (the binary return holds as much).
+
+**Retention 2 — the abort races.** `src/queries.ts:164`/`:269` race `iterator.next()` against `makeAbortRace`'s `aborted`, and `src/transaction.ts:751` does the same, once per chunk. `aborted` lives as long as the query, so the whole result is held for the query's duration — with a caller `signal`, with a `timeout` (`withDeadline` makes it a signal), and in **every** `tx.stream()`: a transaction hands its statements a signal of its own (`withSignal` → `st.options`/`st.driving`). `teardown()` detaches the listener at the end, so it does not outlive the query. **Fix (spike `raceAbort`): one `abort` listener per wait, removed when the wait settles, `signal.aborted` tested first so an abort already fired still wins** — what putting `aborted` first in the array did.
+
+## FF-JUGGLER — Playwright's Firefox retains every value consumed by `for await`, 2026-10-07
+
+Found because `chunk()` under Playwright climbed to ~2 GB even with both fixes. Pure JS, 600 chunks of 512 rows, each chunk registered in a `FinalizationRegistry`, a 20-chunk ring of tenured witnesses proving major GCs run: **under Playwright, 0 of 600 chunks are ever finalized** whenever they are consumed through `for await` — one async generator, a stack shaped like the library's, or a hand-written async iterator with no generator at all — while a plain loop with the same awaits frees 523-563 and a sync generator 523. **The same binary launched without Playwright frees 509-513** for the generator and the hand-written iterator alike. Chromium frees them under Playwright. So it is Juggler's instrumentation, not SpiderMonkey. Consequences: every Firefox figure under Playwright for a path the page consumes with `for await` (`stream()`, `chunk()`, `tx.stream()`) overstates memory — the 2026-10-06 STREAM-FF numbers (+2.3 GB, then +1.34 GB "with the fix", the `chunk()` "open question") were all inflated by it — and **Juggler roughly halves Firefox's speed** here (the same read: 40-54 s under Playwright, 17-21 s direct). Paths without `for await` in the page (`bulkWrite`, `read()`) were not re-measured directly.
 
 ## RESULT-BINARY — rows encoded in the worker: faster on Chromium, slower on Firefox, 2026-10-06
 
 Spike: with `binaryRows` in the query options the worker encodes each row from SQLite's column API (`_sqlite3_column_type/int64/double/text/blob/bytes`, an integer as its two 32-bit halves) into transferred 1 MiB chunks, no JS string in the worker; `pool.ts` decodes them into the same objects (`TextDecoder` for text, `slice()` for blobs, wa-sqlite's `cvt32x2AsSafe` rule for integers). **Correctness**: `read`, `stream` (chunkSize 333), `chunk` (1 000) and `first` give the same SHA-256 encoded and not, on Chromium and Firefox, two VFS — integers at ±2^53 and ±2^63, floats, Unicode and empty text, empty and non-empty blobs, null, a duplicated column name, 300 KB values spanning chunks.
 
-500 MiB `stream()`, `OPFSAdaptiveVFS`, n=3, without the fix above:
+500 MiB `stream()`, `OPFSAdaptiveVFS`, n=3, without the fixes above, **under Playwright** — so the Firefox columns carry FF-JUGGLER's retention and slowdown, and the binary-vs-clone comparison on Firefox should be redone directly before it is trusted:
 
 | chunkSize | Chromium read s, clone → binary | Chromium peak MB | Firefox read s | Firefox peak MB |
 |---|---|---|---|---|

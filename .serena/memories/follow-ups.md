@@ -16,9 +16,12 @@ descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` clai
 shadow types that were never loaded, `W-types` a duplication already gone. Both would have
 been work on nothing.
 
-## Firefox keeps every streamed chunk until the worker dies — found 2026-10-06, not fixed
+## Firefox holds every streamed chunk — two retentions, fixes measured, not applied (2026-10-07)
 
-`src/pool.ts`'s chunk wait races `deferredChunk` against the worker-lifetime `deathDeferred`, and the `chunk` handler resolves `deferredChunk` with the rows its loop never reads: on Firefox a 500 MiB `stream()` holds +2.3 GB until `close()`. Resolving without a value removed the retention in a spike (STREAM-FF, `mem:measurements/footprint`). **The `signal` races retain too (measured 2026-10-07)**: `src/queries.ts:164`/`:269` and `src/transaction.ts:751` hold the whole result for the query's duration with a `signal` or a `timeout`, and in every `tx.stream()`; a per-wait listener fixes `stream()`, improves `tx.stream()` only partly. Still open: `chunk()` climbs to ~2 GB on Firefox whatever the signal, cause unknown. The user has not decided yet.
+To be handled in a fresh session (user, 2026-10-07). Numbers and mechanisms: STREAM-FF, `mem:measurements/footprint`; measured in a Firefox launched WITHOUT Playwright (FF-JUGGLER).
+1. **`src/pool.ts`**: the `chunk` handler resolves `deferredChunk` with the rows, and the read loop races it against the worker-lifetime `deathDeferred` → every chunk held until the worker dies. Fix: resolve without a value (the loop only compares to `STOP`).
+2. **`src/queries.ts:164`/`:269`, `src/transaction.ts:751`**: a per-chunk race against the query-long `aborted` → the whole result held for the query with a `signal`, a `timeout`, and in every `tx.stream()`. Fix: one `abort` listener per wait, `signal.aborted` checked first.
+Both fixes exist as switches on branch `spike/bulk-binary` (commit `6e79a17`, `__bsqWakeEmpty`, `__bsqRaceFix`); direct Firefox, 500 MiB: peaks 2.1 GB → 0.5-0.8 GB, no time cost; Chromium unaffected. Still to do: tests that fail without each fix (they need a Firefox WITHOUT Playwright, or a `FinalizationRegistry` assertion that survives Juggler — to be found), CHANGELOG. The same branch holds the binary `bulkWrite` batches (BULK-BINARY, measured, worth it on both engines) and the binary result rows (RESULT-BINARY, to be re-measured directly on Firefox).
 
 ## wa-sqlite #371: `IDBMirrorVFS` commit-abort — OPENED 2026-10-03, waiting on rhashimoto
 

@@ -309,6 +309,8 @@ failures established that no reading would have.
 
 ## Known live exposures
 
+- **Every published version holds a read's whole result on Firefox (found 2026-10-07).** `stream()`, `chunk()` and `tx.stream()` keep every chunk alive — until the worker dies for the pool's chunk wait, for the query's duration with a `signal`/`timeout` and in every transaction: ~2.1 GB for a 500 MiB read, measured in a Firefox launched without Playwright. Chromium is not affected. Both fixes are measured, not applied; the user will take them in a fresh session — `mem:follow-ups`, STREAM-FF in `mem:measurements/footprint`.
+
 - **`1.0.0-rc.4` is published under `latest` with a silent data-loss defect, and that is a
   decision, not an oversight (user, 2026-09-04).** `stream()` and `chunk()` drop rows for
   any consumer that awaits between chunks — 501 of 1001 at the default settings, measured
