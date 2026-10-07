@@ -323,8 +323,8 @@ export const createPoolWorker = (deps: {
   let debugQuery: QueryDebugHandle | undefined;
 
   // Wakes the read loop when a message arrives. Resolved without a value: the
-  // rows travel through `inbox`, and Firefox keeps whatever this resolves with
-  // alive through the loop's race against the worker-lifetime `deathDeferred`.
+  // rows travel through `inbox`, and Firefox keeps a race's result alive while
+  // any of its inputs is pending.
   let deferredChunk: PromiseWithResolvers<void> | undefined;
 
   /**
@@ -419,8 +419,8 @@ export const createPoolWorker = (deps: {
   let dead = false;
   let ready = false;
   const deathDeferred = Promise.withResolvers<never>();
-  // Nothing awaits this until a query runs; without a sink an early death is an
-  // unhandled rejection. The sink is also where the delivery loop learns of a
+  // Nothing awaits this; without a sink a death is an unhandled rejection. The
+  // sink is also where the delivery loop learns of a
   // death it is not currently awaiting — see `failure`.
   deathDeferred.promise.catch((error) => {
     failure ??= error;
@@ -428,7 +428,7 @@ export const createPoolWorker = (deps: {
 
   // Per-query channel for a message that never arrived (onmessageerror). The
   // worker is alive, so the request rejects but the transport stays intact and
-  // the generator's finally still stops and drains it.
+  // the generator's finally still stops and drains it. A death rejects it too.
   let lost: PromiseWithResolvers<never> | undefined;
 
   /**
@@ -445,6 +445,8 @@ export const createPoolWorker = (deps: {
     debugQuery?.failed(error);
     worker.status = 'DEAD';
     deathDeferred.reject(error);
+    // The delivery loop's wait: it races `lost`, never `deathDeferred`.
+    lost?.reject(error);
     deferredInit.reject(error); // no-op once resolved
     // A dead worker can never send the 'closed' reply close() is awaiting —
     // it either never received the 'close' message or is gone before it could
@@ -718,6 +720,8 @@ export const createPoolWorker = (deps: {
       lost.promise.catch((error) => {
         failure ??= error;
       });
+      // `poison` rejects the query in flight; one posted after the death too.
+      if (dead) deathDeferred.promise.catch(lost.reject);
       idle = Promise.withResolvers<void>();
       freed = Promise.withResolvers<void>();
       stopRequested = Promise.withResolvers<typeof STOP>();
@@ -757,8 +761,9 @@ export const createPoolWorker = (deps: {
           const outcome = await Promise.race([
             waiting.promise,
             stopRequested.promise,
+            // No worker-lifetime promise here: Firefox keeps each race's
+            // reaction on it until it settles. A death arrives through `lost`.
             lost.promise,
-            deathDeferred.promise,
           ]);
           if (outcome === STOP) break;
           continue;
