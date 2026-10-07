@@ -550,14 +550,15 @@ Every method that takes `params` — and `bulkWrite()`'s rows — converts each 
 | `undefined` | `NULL` | `NULL` |
 | boolean | `1` / `0` | `true` / `false` |
 | `Uint8Array` | BLOB | read as JSONB already encoded |
+| `ArrayBuffer`, `DataView`, a typed array other than `Uint8Array` | BLOB of its bytes | read as JSONB already encoded |
 | `Date` | `YYYY-MM-DD HH:MM:SS.SSS`, UTC | JSON string, `"YYYY-MM-DDTHH:MM:SS.SSSZ"` |
 | any other object, arrays included | `JSON.stringify` text | `JSON.stringify` |
 
 **Objects follow `JSON.stringify`'s rules, at every depth.**<br>A `Map` or a `Set` gives `{}`, a class instance its own properties or its `toJSON()`, and a nested `Date` its ISO string.
 
-**A value no rule can bind is refused before anything is sent.**<br>A `Symbol`, a function, a `bigint` outside SQLite's 64-bit range, an invalid `Date`, or a value `JSON.stringify` refuses — a nested `bigint`, a cycle — throws `INVALID_VALUE`, naming the param or the column. In `bulkWrite()` it is thrown by `enqueue()`, and that row alone is not written.
+**A value no rule can bind is refused before anything is sent.**<br>A `Symbol`, a function, a `bigint` outside SQLite's 64-bit range, an invalid `Date` in an ordinary column, or a value `JSON.stringify` refuses — a nested `bigint`, a cycle — throws `INVALID_VALUE`, naming the param or the column; so does `params` that is not an array. In `bulkWrite()` it is thrown by `enqueue()`, and that row alone is not written. In a `JSONB` column, or nested in an object, an invalid `Date` is stored as JSON `null`.
 
-**An array is stored as JSON.**<br>Pass a `Uint8Array` to store bytes.
+**An array is stored as JSON.**<br>Pass a `Uint8Array` to store bytes. A typed array, a `DataView` or an `ArrayBuffer` stores the bytes of its own range, in the platform's byte order.
 
 **A `Date` is stored in SQLite's own format, so it compares as text with SQLite's dates.**<br>`datetime('now', 'subsec')` gives the same shape. `CURRENT_TIMESTAMP` has no milliseconds: `'2026-10-06 12:34:56.000'` sorts after `'2026-10-06 12:34:56'`, the same instant.
 
@@ -579,7 +580,7 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 | `BUSY` | A transient conflict, worth retrying. Either SQLite reported a lock conflict — `SQLITE_BUSY` or `SQLITE_LOCKED`, with its result code on `sqliteCode` and, when SQLite reports one, its subtype on `sqliteExtendedCode` — or a database was being opened or deleted elsewhere at that moment. **A read that SQLite reported busy is retried once for you**; if it reaches you, the retry failed too. Writes are never retried, and neither is a `BUSY` without a `sqliteCode`. |
 | `INVALID_OPTION` | An option was refused at the call, before any worker ran: `vfs` missing or unknown, a `(vfs, build)` pair the VFS does not support, a `poolSize` above what the VFS allows, a `wasmUrl` that is not a URL, a database name too long once normalized, a database name that is empty once normalized, a `bulkWrite()` `types` naming a column it does not write or a type other than `'JSONB'`, or `inspectDatabase` on a memory VFS. The message names the option and what it accepts. |
 | `INVALID_PRAGMA` | A `pragmas` entry could not be rendered — the name must be a bare word; the value must be an integer, a bare word such as `WAL`, or a quoted SQL literal — or the VFS refuses it, in `pragmas` or in a statement that sets it ([VFS.md](VFS.md)). |
-| `INVALID_VALUE` | A param, or a cell given to `bulkWrite()`, has no SQLite value: a `Symbol`, a function, a `bigint` outside the 64-bit range, an invalid `Date`, or a value `JSON.stringify` refuses. Raised before any worker runs; the message names the param or the column, and when a conversion failed, `cause` carries its error. |
+| `INVALID_VALUE` | A param, or a cell given to `bulkWrite()`, has no SQLite value: a `Symbol`, a function, a `bigint` outside the 64-bit range, an invalid `Date` in an ordinary column, or a value `JSON.stringify` refuses; or `params` is not an array. Raised before any worker runs; the message names the param or the column, and when a conversion failed, `cause` carries its error. |
 | `INVALID_IDENTIFIER` | A name or type handed to `output()`, `bulkWrite()` or `tx.savepoint()` cannot be used as written: an empty name, a name containing a NUL, a column type that is not a word with optional numeric arguments, or a generated expression that is not parenthesised and free of `;`. For `tx.savepoint()`: a name starting with `__bsq_`, or one already open. |
 | `BULK_WRITE_FAILED` | A batch failed inside `bulkWrite().close()` or `output().close()`. The error is a `SQLiteBulkWriteError`, carrying `rowsWritten` and `rowsNotWritten`. |
 | `DATABASE_IN_USE` | A client still holds the database, in this tab or another. Retrying will not help: close every client on it first. Raised by `deleteDatabase`, and by any method on a second client where the VFS supports one connection at a time. |
@@ -644,7 +645,7 @@ It is one object, updated in place: keep the reference and read it as often as y
 
 The library's own statements — the one that makes a worker see what another committed, a transaction's `BEGIN` and `COMMIT` or `ROLLBACK`, and the `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` that `tx.savepoint()` and its handle send — appear among the queries with `internal: true`. A request's `rows` and `affected` count only yours.
 
-The history keeps 50 requests per worker of the pool, and 50 queries per request; a request still waiting or running is never dropped. **It keeps `params` in memory** — the values you bound, for every query it holds. One call can make several requests: a `stream()` that meets `BUSY` takes a new lease for each attempt, and nothing links them.
+The history keeps 50 requests per worker of the pool, and 50 queries per request; a request still waiting or running is never dropped. **It keeps `params` in memory** — the values you bound, for every query it holds. A `bulkWrite()` batch is recorded as its `INSERT … VALUES ` head, with no params. One call can make several requests: a `stream()` that meets `BUSY` takes a new lease for each attempt, and nothing links them.
 
 ---
 

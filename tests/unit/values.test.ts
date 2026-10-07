@@ -30,6 +30,45 @@ describe('toBindable, ordinary column', () => {
     }
   });
 
+  it('binds an ArrayBuffer, a DataView and other typed arrays as their bytes', () => {
+    const f32 = Float32Array.of(1, 2);
+    const kinds: [string, unknown, number[]][] = [
+      ['ArrayBuffer', Uint8Array.of(7, 8, 9).buffer, [7, 8, 9]],
+      ['Float32Array', f32, [0, 0, 128, 63, 0, 0, 0, 64]],
+      ['Int16Array', Int16Array.of(1, -2), [1, 0, 254, 255]],
+      ['Uint8ClampedArray', Uint8ClampedArray.of(5, 6), [5, 6]],
+      ['BigInt64Array', BigInt64Array.of(1n), [1, 0, 0, 0, 0, 0, 0, 0]],
+      ['DataView', new DataView(Uint8Array.of(3, 4).buffer), [3, 4]],
+    ];
+    for (const [name, v, bytes] of kinds) {
+      for (const jsonb of [false, true]) {
+        const bound = toBindable(v, jsonb);
+        expect(bound, name).toBeInstanceOf(Uint8Array);
+        expect([...(bound as Uint8Array)], name).toEqual(bytes);
+      }
+    }
+  });
+
+  it('binds the range a sub-view covers, not its whole buffer', () => {
+    const buf = Uint8Array.of(0, 1, 2, 3, 4, 5, 6, 7).buffer;
+    const view = new DataView(buf, 2, 3);
+    expect([...(toBindable(view, false) as Uint8Array)]).toEqual([2, 3, 4]);
+    const i16 = new Int16Array(buf, 4, 2);
+    expect([...(toBindable(i16, true) as Uint8Array)]).toEqual([4, 5, 6, 7]);
+    const u8 = new Uint8Array(buf, 1, 2);
+    expect(toBindable(u8, false)).toBe(u8);
+  });
+
+  it('binds the bytes of a view over a SharedArrayBuffer', () => {
+    const sab = new SharedArrayBuffer(4);
+    new Uint8Array(sab).set([9, 8, 7, 6]);
+    const bound = toBindable(new Int16Array(sab, 2, 1), false) as Uint8Array;
+    expect([...bound]).toEqual([7, 6]);
+    const target = new Uint8Array(2);
+    target.set(bound);
+    expect([...target]).toEqual([7, 6]);
+  });
+
   it('stringifies objects and arrays', () => {
     expect(toBindable({ a: 1, b: [true, null] }, false)).toBe(
       '{"a":1,"b":[true,null]}',
@@ -96,6 +135,34 @@ describe('toBindable refusals', () => {
     ).toBeInstanceOf(RangeError);
   });
 
+  it('keeps the cause of a toJSON that throws a non-Error', () => {
+    const e = refused(() =>
+      toBindable(
+        {
+          toJSON: () => {
+            throw 'x';
+          },
+        },
+        false,
+      ),
+    );
+    expect(e.code).toBe('INVALID_VALUE');
+    expect(e.message).toContain('x');
+    expect(e.cause).toBe('x');
+    const n = refused(() =>
+      toBindable(
+        {
+          toJSON: () => {
+            throw null;
+          },
+        },
+        false,
+      ),
+    );
+    expect(n.code).toBe('INVALID_VALUE');
+    expect(n.cause).toBeNull();
+  });
+
   it('refuses a Symbol and a function, in both column kinds', () => {
     for (const jsonb of [false, true]) {
       expect(refused(() => toBindable(Symbol('s'), jsonb)).code).toBe(
@@ -116,6 +183,29 @@ describe('toBindable refusals', () => {
     expect(refused(() => toBindable(-(2n ** 63n) - 1n, true)).code).toBe(
       'INVALID_VALUE',
     );
+  });
+});
+
+describe('convertParams', () => {
+  it('converts an array and passes undefined through', () => {
+    expect(convertParams(undefined)).toBeUndefined();
+    expect(convertParams([1, true, 'a'])).toEqual([1, true, 'a']);
+  });
+
+  it('refuses params that are not an array', () => {
+    for (const bad of [{ ':a': 1 }, 5, 'x', null]) {
+      let error: unknown;
+      try {
+        convertParams(bad as never);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(SQLiteError);
+      expect((error as SQLiteError).code).toBe('INVALID_VALUE');
+      expect((error as SQLiteError).message).toContain(
+        'params must be an array',
+      );
+    }
   });
 });
 

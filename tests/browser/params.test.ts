@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
+import { encodeParams } from '../../src/encode';
 import { createLogger } from '../../src/logger';
 import { createPoolWorker, type PoolWorker } from '../../src/pool';
 import { databasePath } from '../../src/utils';
@@ -82,6 +83,37 @@ describe('params', () => {
       .flatMap((r) => r.queries)
       .filter((q) => q.sql === 'SELECT ?');
     expect(sent).toHaveLength(0);
+    await db.close();
+  });
+
+  it('binds an ArrayBuffer, a DataView and a typed array as the BLOB of their bytes', async () => {
+    const db = await createTestClient();
+    await db.write('CREATE TABLE p (v)');
+    const buf = Uint8Array.of(0, 1, 2, 3, 4, 5, 6, 7).buffer;
+    const values: unknown[] = [
+      Float32Array.of(1, 2),
+      Uint8Array.of(9, 8).buffer,
+      new DataView(buf, 2, 3),
+      new Int16Array(buf, 4, 2),
+    ];
+    for (const v of values) await db.write('INSERT INTO p VALUES (?)', [v]);
+    expect(await db.read(typed)).toEqual([
+      { t: 'blob', q: "X'0000803F00000040'" },
+      { t: 'blob', q: "X'0908'" },
+      { t: 'blob', q: "X'020304'" },
+      { t: 'blob', q: "X'04050607'" },
+    ]);
+    expect(
+      await db.read('SELECT hex(?) AS h', [new Float32Array([1])]),
+    ).toEqual([{ h: '0000803F' }]);
+    await db.close();
+  });
+
+  it('refuses params that are not an array', async () => {
+    const db = await createTestClient();
+    await expect(
+      db.read('SELECT :a', { ':a': 1 } as never),
+    ).rejects.toMatchObject({ code: 'INVALID_VALUE' });
     await db.close();
   });
 
@@ -178,6 +210,42 @@ describe('one converted params array, sent twice', () => {
           if (typeof c !== 'number') rows.push(...c);
         expect(rows).toEqual([{ a: 1, b: 'two' }]);
       }
+    } finally {
+      await worker.close();
+      worker.terminate();
+      await removeDatabaseFiles(file, TEST_TARGET.vfs);
+    }
+  });
+
+  it('rejects at once when encoding throws, and leaves the worker usable', async () => {
+    const file = `prm-${Date.now().toString(36)}`;
+    const opened = await createPoolWorker({
+      index: 0,
+      pool: [] as (PoolWorker | undefined)[],
+      clientName: 'params',
+      file: databasePath(TEST_TARGET.vfs, file),
+      vfs: TEST_TARGET.vfs,
+      build: TEST_TARGET.build,
+      drainTimeout: 20_000,
+      logger: createLogger('test', false),
+    });
+    if ('declined' in opened)
+      throw new Error(`worker declined: ${opened.declined}`);
+    const worker = opened;
+    const drain = async (params?: Parameters<PoolWorker['query']>[1]) => {
+      const rows: unknown[] = [];
+      for await (const c of worker.query('SELECT ? AS a', params))
+        if (typeof c !== 'number') rows.push(...c);
+      return rows;
+    };
+    try {
+      const encoded = encodeParams([1]);
+      expect(await drain(encoded)).toEqual([{ a: 1 }]);
+      const started = performance.now();
+      // A second send makes `toMessage()` throw, before anything is posted.
+      await expect(drain(encoded)).rejects.toThrow(/already sent/);
+      expect(performance.now() - started).toBeLessThan(5000);
+      expect(await drain([2])).toEqual([{ a: 2 }]);
     } finally {
       await worker.close();
       worker.terminate();

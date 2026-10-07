@@ -1,8 +1,9 @@
 import { SQLiteError } from './types/errors';
 
 /**
- * How `bulkWrite()` and `output()` turn a cell into a value wa-sqlite binds
- * faithfully: its `bind` stores any other object as NULL and an Array as bytes.
+ * How every param and every `bulkWrite()` cell (and `output()`'s) becomes a
+ * value the worker binds faithfully: wa-sqlite's own `bind` stores any other
+ * object as NULL and an Array as bytes.
  */
 
 /** `YYYY-MM-DD HH:MM:SS.SSS` in UTC, what `strftime('%Y-%m-%d %H:%M:%f')` gives. */
@@ -27,12 +28,17 @@ const convert = (value: unknown, jsonb: boolean): unknown => {
     return jsonb ? JSON.stringify(value) : value;
   if (typeof value !== 'object' || value === null) return value;
   if (value instanceof Uint8Array) return value;
+  // The bytes of the value's own range, whatever the element type.
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value))
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
   if (value instanceof Date && !jsonb) return toSQLiteDate(value);
   return JSON.stringify(value);
 };
 
 /**
- * A primitive or a Uint8Array is bound as given; a JSONB column takes JSON
+ * A primitive or a Uint8Array is bound as given, and so are the bytes of an
+ * ArrayBuffer, a DataView or another typed array; a JSONB column takes JSON
  * text, so its strings, booleans and Dates go through `JSON.stringify` too.
  * Anything else throws `INVALID_VALUE`, naming `what`.
  */
@@ -47,7 +53,7 @@ export const toBindable = (
   } catch (cause) {
     throw new SQLiteError(
       'INVALID_VALUE',
-      `${what} cannot be converted: ${(cause as Error).message}`,
+      `${what} cannot be converted: ${cause instanceof Error ? cause.message : String(cause)}`,
       { cause },
     );
   }
@@ -77,8 +83,15 @@ export const toBindable = (
 /** Every parameterised method's params, converted as an ordinary column. */
 export const convertParams = (
   params: readonly unknown[] | undefined,
-): Bindable[] | undefined =>
-  params?.map((v, i) => toBindable(v, false, `param ${i + 1}`));
+): Bindable[] | undefined => {
+  if (params === undefined) return undefined;
+  if (!Array.isArray(params))
+    throw new SQLiteError(
+      'INVALID_VALUE',
+      `params must be an array, got ${params === null ? 'null' : typeof params}`,
+    );
+  return params.map((v, i) => toBindable(v, false, `param ${i + 1}`));
+};
 
 /** One flag per key, in `keys` order: whether the column takes `jsonb(?)`. */
 export const jsonbColumns = (
