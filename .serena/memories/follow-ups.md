@@ -4,7 +4,7 @@ One short entry each, and every entry OPEN. **An entry marked DORMANT waits for 
 `CHANGELOG.md` and `git log` record what was fixed, `mem:measurements` holds the numbers,
 `mem:vfs` the VFS behaviour, `mem:lessons` what a closure taught.
 
-**Entries waiting on an event live in `mem:follow-ups/dormant`** — `open-retry` on Firefox and the rstest/Firefox `getDirectory()` hang, moved there on 2026-10-05 to keep this file under 40 000 characters.
+**Entries waiting on an event live in `mem:follow-ups/dormant`** — `open-retry` on Firefox, wa-sqlite #297 `trace_v2`, and the rstest/Firefox `getDirectory()` hang, moved there on 2026-10-05 to keep this file under 40 000 characters.
 
 **Delete, never annotate.** No struck-through lines, no "shipped and merged", no headstone
 saying an entry is gone, no verdict on an entry: what is written here is the backlog, not a
