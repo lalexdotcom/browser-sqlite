@@ -17,6 +17,8 @@ only what `AGENTS.md` does not say.**
   not a summary of it, when picking up designed-but-unbuilt work.
 - The agent framework is **superpowers**. A `.planning/` directory from a previous
   framework was deleted on 2026-08-17 — do not recreate it or trust anything quoting it.
+- **These memories are the ONLY memory (user, 2026-10-07).** Claude Code's own auto-memory (`MEMORY.md` and its files under `~/.claude/projects/…/memory/`) is not used: every rule, preference and fact goes here, through Serena.
+- **No git worktree for this repository (user, 2026-10-07).** A piece of work is its branch checked out in the main checkout (`/workspaces/wsqlite`), and it is done there, as `AGENTS.md`'s branch-and-merge rule implies — spikes included. When a skill asks for an isolated workspace (superpowers `using-git-worktrees`, subagent-driven-development's setup), use the main checkout on the feature branch and say so. The guard against another session switching the checkout is checking the branch in the same command as each commit, never a worktree. `.work/` worktrees and clones are for external repositories only (wa-sqlite, the release action). On 2026-10-07 a branch and two spikes were run from `.work/` worktrees and the user found the main checkout on `main`.
 - **Probes and fixtures go in `.scratchpad/` (user, 2026-08-31)**, gitignored, at the
   repository root rather than in the session's own temp directory — the user wants to
   open them. Nothing in `src/`, `tests/` or CI may depend on anything there. `.work/` is
