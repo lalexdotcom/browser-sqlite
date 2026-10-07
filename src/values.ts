@@ -32,6 +32,11 @@ const convert = (value: unknown, jsonb: boolean): unknown => {
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   if (ArrayBuffer.isView(value))
     return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  if (
+    typeof SharedArrayBuffer !== 'undefined' &&
+    value instanceof SharedArrayBuffer
+  )
+    return new Uint8Array(value);
   if (value instanceof Date && !jsonb) return toSQLiteDate(value);
   return JSON.stringify(value);
 };

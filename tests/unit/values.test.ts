@@ -69,6 +69,21 @@ describe('toBindable, ordinary column', () => {
     expect([...target]).toEqual([7, 6]);
   });
 
+  it('binds a bare SharedArrayBuffer as its bytes, in both column kinds', () => {
+    const sab = new SharedArrayBuffer(3);
+    new Uint8Array(sab).set([4, 5, 6]);
+    for (const jsonb of [false, true]) {
+      const bound = toBindable(sab, jsonb);
+      expect(bound, `bare SharedArrayBuffer in jsonb=${jsonb}`).toBeInstanceOf(
+        Uint8Array,
+      );
+      expect(
+        [...(bound as Uint8Array)],
+        `bare SharedArrayBuffer in jsonb=${jsonb}`,
+      ).toEqual([4, 5, 6]);
+    }
+  });
+
   it('stringifies objects and arrays', () => {
     expect(toBindable({ a: 1, b: [true, null] }, false)).toBe(
       '{"a":1,"b":[true,null]}',

@@ -18,10 +18,9 @@ export const bindBlock = (
   stmt: number,
   block: ParamsBlock,
 ): number => {
-  const m = module;
   let total = 0;
   for (const n of block.used) total += n;
-  const ptr: number = m._sqlite3_malloc(Math.max(1, total));
+  const ptr: number = module._sqlite3_malloc(Math.max(1, total));
   if (!ptr)
     throw new SQLite.SQLiteError('out of memory binding params', SQLITE_NOMEM);
   try {
@@ -29,28 +28,31 @@ export const bindBlock = (
     for (let k = 0; k < block.chunks.length; k++) {
       const n = block.used[k] as number;
       // HEAPU8 is read at each use: a malloc may have grown the heap.
-      m.HEAPU8.set(new Uint8Array(block.chunks[k] as ArrayBuffer, 0, n), at);
+      module.HEAPU8.set(
+        new Uint8Array(block.chunks[k] as ArrayBuffer, 0, n),
+        at,
+      );
       at += n;
     }
     const bound = Math.min(block.count, sqlite.bind_parameter_count(stmt));
-    let heap: Uint8Array = m.HEAPU8;
+    let heap: Uint8Array = module.HEAPU8;
     let dv = new DataView(heap.buffer);
     let off = ptr;
     for (let i = 1; i <= bound; i++) {
-      if (heap.buffer !== m.HEAPU8.buffer) {
-        heap = m.HEAPU8;
+      if (heap.buffer !== module.HEAPU8.buffer) {
+        heap = module.HEAPU8;
         dv = new DataView(heap.buffer);
       }
       const tag = heap[off];
       let rc: number;
       if (tag === 0) {
-        rc = m._sqlite3_bind_null(stmt, i);
+        rc = module._sqlite3_bind_null(stmt, i);
         off += 1;
       } else if (tag === 1) {
-        rc = m._sqlite3_bind_int(stmt, i, dv.getInt32(off + 1, true));
+        rc = module._sqlite3_bind_int(stmt, i, dv.getInt32(off + 1, true));
         off += 5;
       } else if (tag === 2) {
-        rc = m._sqlite3_bind_double(stmt, i, dv.getFloat64(off + 1, true));
+        rc = module._sqlite3_bind_double(stmt, i, dv.getFloat64(off + 1, true));
         off += 9;
       } else if (tag === 5) {
         rc = sqlite.bind_int64(stmt, i, dv.getBigInt64(off + 1, true));
@@ -59,8 +61,8 @@ export const bindBlock = (
         const n = dv.getUint32(off + 1, true);
         rc =
           tag === 3
-            ? m._sqlite3_bind_text(stmt, i, off + 5, n, 0)
-            : m._sqlite3_bind_blob(stmt, i, off + 5, n, 0);
+            ? module._sqlite3_bind_text(stmt, i, off + 5, n, 0)
+            : module._sqlite3_bind_blob(stmt, i, off + 5, n, 0);
         off += 5 + n;
       } else {
         throw new SQLite.SQLiteError(
@@ -72,7 +74,7 @@ export const bindBlock = (
         throw new SQLite.SQLiteError(`binding parameter ${i} failed`, rc);
     }
   } catch (e) {
-    m._sqlite3_free(ptr);
+    module._sqlite3_free(ptr);
     throw e;
   }
   return ptr;

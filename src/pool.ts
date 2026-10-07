@@ -816,14 +816,15 @@ export const createPoolWorker = (deps: {
       // `inbox`, `idle`, `status` — belongs to whatever query is in flight NOW,
       // so a stale transport running it would post a `stop` under someone
       // else's call id, drop their queued chunks and hand their worker back
-      // mid-query. Two transports reach here without owning the worker: one
-      // that never claimed it (the reuse guard above threw) and one whose query
-      // ended while it stayed suspended at a `yield`, resumed arbitrarily later
-      // by the abandonment cleanup's `return()`. Both owe nothing: they hold no
-      // state of their own, all of it having been per-worker and reassigned.
+      // mid-query. Three transports reach here without owning the worker: one
+      // whose reuse guard threw, one whose params encoding failed, and one whose
+      // query ended while it stayed suspended at a `yield`, resumed arbitrarily
+      // later by the abandonment cleanup's `return()`. All owe nothing: they hold
+      // no state of their own, all of it having been per-worker and reassigned.
       //
       // NOTE: an `if`, and never an early `return` — a `return` in a `finally`
-      // discards the pending throw, which here is the reuse guard's own error.
+      // discards the pending throw, which here is either the reuse guard's error
+      // or an encoding failure.
       if (servingQuery === self.gen) {
         // If the consumer left early (break / return / throw) the worker is still
         // stepping rows. Tell it to stop, then wait for the reply it always sends,
