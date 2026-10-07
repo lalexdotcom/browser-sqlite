@@ -816,11 +816,11 @@ export const createPoolWorker = (deps: {
       // `inbox`, `idle`, `status` — belongs to whatever query is in flight NOW,
       // so a stale transport running it would post a `stop` under someone
       // else's call id, drop their queued chunks and hand their worker back
-      // mid-query. Three transports reach here without owning the worker: one
-      // whose reuse guard threw, one whose params encoding failed, and one whose
-      // query ended while it stayed suspended at a `yield`, resumed arbitrarily
-      // later by the abandonment cleanup's `return()`. All owe nothing: they hold
-      // no state of their own, all of it having been per-worker and reassigned.
+      // mid-query. A transport reaches here without owning the worker when its
+      // reuse guard threw, when its params encoding failed, or when its query
+      // ended while it stayed suspended at a `yield`, resumed arbitrarily later
+      // by the abandonment cleanup's `return()`. None owes anything: they hold no
+      // state of their own, all of it having been per-worker and reassigned.
       //
       // NOTE: an `if`, and never an early `return` — a `return` in a `finally`
       // discards the pending throw, which here is either the reuse guard's error
