@@ -6,6 +6,7 @@ import {
   reclaim,
 } from './abandon';
 import type { SQLiteChunkOptions, SQLiteQueryOptions } from './api';
+import type { QueryParams } from './encode';
 import type { PoolWorker } from './pool';
 
 /**
@@ -107,7 +108,7 @@ export const chunk = <
 >(
   worker: PoolWorker,
   sql: string,
-  params?: unknown[],
+  params?: QueryParams,
   options?: InternalChunkOptions,
 ): AsyncGenerator<T[]> => {
   const {
@@ -220,7 +221,7 @@ export const streamRows = async function* <
 >(
   worker: PoolWorker,
   sql: string,
-  params?: unknown[],
+  params?: QueryParams,
   options?: InternalChunkOptions,
 ): AsyncGenerator<T> {
   for await (const rows of chunk<T>(worker, sql, params, options)) {
@@ -233,7 +234,7 @@ export const readWorker = async <
 >(
   worker: PoolWorker,
   sql: string,
-  params?: unknown[],
+  params?: QueryParams,
   options?: SQLiteChunkOptions,
 ): Promise<T[]> => {
   const result: T[] = [];
@@ -255,7 +256,7 @@ export const firstWorker = async <
 >(
   worker: PoolWorker,
   sql: string,
-  params?: unknown[],
+  params?: QueryParams,
   options?: SQLiteQueryOptions,
 ): Promise<T | undefined> => {
   for await (const rows of chunk<T>(worker, sql, params, {
@@ -276,7 +277,7 @@ export const writeWorker = async <
 >(
   worker: PoolWorker,
   sql: string,
-  params?: unknown[],
+  params?: QueryParams,
   options?: SQLiteQueryOptions,
 ): Promise<{ result: T[]; affected: number }> => {
   const { signal } = options ?? {};

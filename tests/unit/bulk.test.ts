@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@rstest/core';
 import { createBulk } from '../../src/bulk';
+import { EncodedParams } from '../../src/encode';
 import { type Locks, noOpLocks } from '../../src/locks';
 import { createLogger } from '../../src/logger';
 import { SQLiteBulkWriteError } from '../../src/types/errors';
@@ -770,7 +771,9 @@ describe('bulkWrite back-pressure', () => {
 describe('bulkWrite values and types', () => {
   const capture = () => {
     const calls: { sql: string; params: unknown[] | undefined }[] = [];
-    const write = async (sql: string, params?: unknown[]) => {
+    const write = async (sql: string, params?: unknown[] | EncodedParams) => {
+      if (params instanceof EncodedParams)
+        throw new Error('bulkWrite sends a flat array here');
       calls.push({ sql, params });
       return { result: [] as unknown[], affected: params?.length ?? 0 };
     };

@@ -107,7 +107,10 @@ export type ClientMessageData =
       type: 'query';
       callId: number;
       sql: string;
-      params: unknown[];
+      /** Absent when the query has no params. */
+      params?: ParamsBlock;
+      /** Repeated `params.rows` times, comma-joined, after `sql`. */
+      pattern?: string;
       options?: SQLOptions;
     }
   | { type: 'close'; callId: number }

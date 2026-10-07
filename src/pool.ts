@@ -4,6 +4,7 @@ import type { SQLiteResultCode } from './const/sqlite';
 import type { SQLiteVFS } from './const/vfs';
 import { DEFAULT_CREDIT_WINDOW } from './credits';
 import type { QueryDebugHandle, WorkerDebugHandle } from './debug';
+import { EncodedParams, encodeParams, type QueryParams } from './encode';
 import type { Logger } from './logger';
 import { SQLiteError, type SQLiteErrorCode } from './types/errors';
 import type {
@@ -79,7 +80,7 @@ export type PoolWorker = Worker & {
   inTransaction?: boolean | undefined;
   query: <T extends Record<string, unknown> = Record<string, unknown>>(
     sql: string,
-    params?: unknown[],
+    params?: QueryParams,
     options?: PoolWorkerQueryOptions,
   ) => AsyncGenerator<T[] | number>;
   /**
@@ -663,7 +664,7 @@ export const createPoolWorker = (deps: {
   >(
     self: { gen?: AsyncGenerator<T[] | number> },
     sql: string,
-    params?: unknown[],
+    params?: QueryParams,
     options?: PoolWorkerQueryOptions,
   ): AsyncGenerator<T[] | number> {
     try {
@@ -704,7 +705,13 @@ export const createPoolWorker = (deps: {
       } = options ?? {};
       suppressServed = noServed;
 
-      debugQuery = debugWorker?.query(sql, params, internal);
+      debugQuery = debugWorker?.query(
+        sql,
+        params instanceof EncodedParams
+          ? undefined
+          : (params as unknown[] | undefined),
+        internal,
+      );
 
       // Prepare for streaming chunks
       inbox = [];
@@ -731,20 +738,35 @@ export const createPoolWorker = (deps: {
       // query, so a transaction's pending conclusion leaves only with a message
       // that is actually sent (spec 2026-09-11, §4).
       const op = savepoint?.();
-      worker.postMessage({
-        type: 'query',
-        callId: ++currentCallId,
-        sql,
-        params,
-        options: {
-          chunkSize,
-          credits,
-          timeout,
-          ...(op ? { savepoint: op } : {}),
-          ...(control ? { control: true as const } : {}),
-          ...(uncached ? { uncached: true as const } : {}),
+      // Encoded at each send: a retried read re-sends the caller's converted
+      // values, and a transferred buffer is gone from the page.
+      const encoded =
+        params instanceof EncodedParams
+          ? params
+          : params?.length
+            ? encodeParams(params)
+            : undefined;
+      const block = encoded?.toMessage();
+      worker.postMessage(
+        {
+          type: 'query',
+          callId: ++currentCallId,
+          sql,
+          ...(block ? { params: block } : {}),
+          ...(encoded?.pattern !== undefined
+            ? { pattern: encoded.pattern }
+            : {}),
+          options: {
+            chunkSize,
+            credits,
+            timeout,
+            ...(op ? { savepoint: op } : {}),
+            ...(control ? { control: true as const } : {}),
+            ...(uncached ? { uncached: true as const } : {}),
+          },
         },
-      });
+        block ? block.chunks : [],
+      );
       worker.status = 'RUNNING';
 
       // Stream chunks until the query completes AND the inbox is empty. The
@@ -875,7 +897,7 @@ export const createPoolWorker = (deps: {
    */
   const query = <T extends Record<string, unknown> = Record<string, unknown>>(
     sql: string,
-    params?: unknown[],
+    params?: QueryParams,
     options?: PoolWorkerQueryOptions,
   ): AsyncGenerator<T[] | number> => {
     const self: { gen?: AsyncGenerator<T[] | number> } = {};

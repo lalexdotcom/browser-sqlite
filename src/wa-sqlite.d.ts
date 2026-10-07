@@ -51,6 +51,8 @@ type WASQLiteModule = {
    * stale from an earlier write (spec 2026-10-01, §6.1).
    */
   _sqlite3_total_changes: (db: number) => number;
+  /** `sqlite3_free`: releases what `bindBlock` (`src/worker/bind.ts`) allocated. */
+  _sqlite3_free: (ptr: number) => void;
 };
 
 /**

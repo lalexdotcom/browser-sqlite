@@ -6,6 +6,7 @@ import type {
   SQLiteTransactionOptions,
 } from './api';
 import type { SQLiteVFS } from './const/vfs';
+import type { EncodedParams } from './encode';
 import {
   type Locks,
   stagingLockName,
@@ -36,13 +37,13 @@ type BulkCallOptions = { signal?: AbortSignal | undefined };
 
 export type WriteFn = (
   sql: string,
-  params?: unknown[],
+  params?: unknown[] | EncodedParams,
   options?: BulkCallOptions,
 ) => Promise<{ result: unknown[]; affected: number }>;
 
 export type ReadFn = (
   sql: string,
-  params?: unknown[],
+  params?: unknown[] | EncodedParams,
   options?: BulkCallOptions,
 ) => Promise<unknown[]>;
 
@@ -50,7 +51,7 @@ export type TransactionFn = <T>(
   callback: (db: {
     write: (
       sql: string,
-      params?: unknown[],
+      params?: unknown[] | EncodedParams,
       options?: BulkCallOptions,
     ) => Promise<{ result: unknown[]; affected: number }>;
   }) => Promise<T>,
