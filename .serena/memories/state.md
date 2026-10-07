@@ -32,27 +32,27 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-10-06
+## The verification baseline — compare against these, re-measured 2026-10-07
 
-Not history: the numbers a regression is detected against. **Every figure below was read off ONE run in this container on 2026-10-06, late morning, on the branch that made `bulkWrite()`/`output()` convert objects** (merged into `main` the same day) — none is arithmetic, on the wa-sqlite pin `96d91182` with #371, #372 and #374 carried.
+Not history: the numbers a regression is detected against. **Every figure below was read off ONE run in this container on 2026-10-07, 18:10-18:17, on `feat/binary-protocol` at its closing head** (the code merged into `main` the same evening) — none is arithmetic, on the wa-sqlite pin `96d91182` with #371, #372 and #374 carried — **except the matrix row**, read the same afternoon at `b41e924`, which differs from the closing head only by `null` params taken as none (`8eb5645`) and memory commits.
 
 | command | result |
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1449 tests, 1441 passed, 8 skipped** (unit + the two chromium target projects), **832 tests, 828 passed, 4 skipped** (the two firefox target projects), **18 tests, none skipped** (the two isolated target projects). The chromium and firefox targets are `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` since the default build follows the engine |
-| `pnpm exec rstest --project unit run` | **619** tests, 30 files |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1508 tests, 1500 passed, 8 skipped** (unit + the two chromium target projects), **874 tests, 870 passed, 4 skipped** (the two firefox target projects), **18 tests, none skipped** (the two isolated target projects). The chromium and firefox targets are `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` since the default build follows the engine |
+| `pnpm exec rstest --project unit run` | **648** tests, 32 files |
 | `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are `chromium · <vfs>/<build>` and rstest's filter is anchored |
 | `pnpm test:conformance` | **TWO reports** — 97 tests / 3 files each: **Chromium 83 passed / 14 skipped, Firefox 79 / 18** — they differ by design since 2026-09-14. Each VFS runs on its default build for the engine, so the `jspi`-first VFS run `jspi` here |
 | `pnpm exec biome ci .` | exit 0 |
 | `pnpm docs:vfs` | leaves `VFS.md` unchanged (`git diff --exit-code`) |
 | `pnpm test:consumer` | 24/24 stages |
-| `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.ts chromium --all` | `OK`, `"reasons": {}`; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 169 files, **4 warnings**, 1 info — the file count moves with the tree, **the warning count is the signal** |
+| `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.ts chromium --all` | `OK`, `"reasons": {}`, 22 declared pairs runnable; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
+| `pnpm lint` | 178 files, **4 warnings**, 1 info — the file count moves with the tree, **the warning count is the signal** |
 | `dependencies` in `package.json` | absent |
-| `pnpm test:matrix` | **66 of 66 cells green, 2410 s**, no re-run inside it. ~40 min. **Every cell runs `BSQ_TEST_NEEDS=skip`**, so its skips are the tests whose need the pair lacks: chromium from 4 (`OPFSAdaptiveVFS`, `OPFSAnyContextVFS`) to 81 (`MemoryVFS/sync`), firefox from 2 (`OPFSAnyContextVFS`) to 79 (`MemoryVFS/sync`), isolated 9/0/0 everywhere. No Firefox page crash in this run. On the 42 cells compared one by one with the 2026-10-05 run, 6 % slower in total, no cell more than a few seconds. |
+| `pnpm test:matrix` | **65 of 66 cells green, 2555 s**, no re-run inside it. ~43 min. **Every cell runs `BSQ_TEST_NEEDS=skip`**. The red cell is chromium `IDBMirrorVFS/async`, one test, `multi-client` "interleaves a bulkWrite with another client" — not reproducible afterwards (2 failures in 33 cell runs on the branch, 0 in 20 on `main`), recorded in `mem:follow-ups` and left by the user's decision. Another session's Firefox was loading the machine during that run |
 
-Against the previous table (2026-10-05): unit 599 → 619 (one file added, `values.test.ts`), `pnpm test` +30 / +10 tests and passed with no skip added (the value conversion of `bulkWrite()`/`output()`), the isolated config, conformance, lint warnings, the consumer smoke and the matrix's skip ranges unchanged; the matrix is 66 of 66 again.
+Against the previous table (2026-10-06): unit 619 → 648 and 30 → 32 files (`encode.test.ts` is this branch's; the new `values` cases add the rest), `pnpm test` +59 / +38 tests passed with no skip added (the binary protocol's tests), lint files 169 → 178 with the warning count unchanged, conformance, consumer smoke and the isolated config unchanged; the matrix 66 → 65 of 66 by the one flake above.
 
 **Do not reconcile any of these by arithmetic; re-run.** A previous version of this table was
 measured on 2026-09-15 and went stale the next day, and another contradicted itself in September
@@ -308,6 +308,8 @@ failures established that no reading would have.
   what they immediately caught: `mem:measurements`.
 
 ## Known live exposures
+
+- **`## [Unreleased]` carries a breaking change since 2026-10-07**: an array passed as a param binds as JSON text, no longer as bytes (`feat/binary-protocol`, with `INVALID_VALUE` and the page → worker binary protocol). Nothing to do but release, when the user calls it.
 
 - **Every published version up to `1.0.0-rc.7` holds memory on Firefox that the next release frees (fixed on `main` 2026-10-07, unreleased).** `stream()`, `chunk()` and `tx.stream()` keep every chunk until the client closes (~2 GB for a 500 MiB read), and every query of any kind keeps ~0.9 KB for its worker's life (~180 MB per 200 000 queries on one worker); measured in a Firefox launched without Playwright, Chromium not affected. Both are `### Fixed` in `## [Unreleased]`; numbers in STREAM-FF, `mem:measurements/footprint`. Nothing to do but release.
 

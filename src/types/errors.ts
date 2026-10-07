@@ -17,6 +17,7 @@
  * but a lock conflict — a constraint, a syntax error, a full disk. `message` is
  * SQLite's own; `sqliteCode` carries its result code, and `sqliteExtendedCode`
  * its subtype when SQLite reports one.
+ * `INVALID_VALUE` is a param or a `bulkWrite()` cell no rule can bind — refused on the page, before any worker sees it.
  */
 import type {
   SQLiteExtendedResultCode,
@@ -32,6 +33,7 @@ export type SQLiteErrorCode =
   | 'INVALID_IDENTIFIER'
   | 'INVALID_OPTION'
   | 'INVALID_PRAGMA'
+  | 'INVALID_VALUE'
   | 'BULK_WRITE_FAILED'
   | 'BUSY'
   | 'STATEMENT_FAILED'

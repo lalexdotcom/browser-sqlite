@@ -7,6 +7,7 @@ import type {
   SQLiteTransactionOptions,
 } from './api';
 import type { ReadFn, TransactionFn, WriteFn } from './bulk';
+import { type EncodedParams, prepareParams, type QueryParams } from './encode';
 import type { Logger } from './logger';
 import type { PoolWorker, PoolWorkerQueryOptions } from './pool';
 import {
@@ -23,6 +24,13 @@ import type { Scheduler } from './scheduler';
 import { SQLiteError } from './types/errors';
 import { isWriteQuery, mergeSignals, quoteIdent, withDeadline } from './utils';
 
+/**
+ * The transaction object as the library's own code sees it: `write` also takes
+ * the encoded params that `bulkWrite` builds, which no consumer can construct.
+ * Assignable to `SQLiteTransactionDB`.
+ */
+type InternalTransactionDB = SQLiteTransactionDB & { write: WriteFn };
+
 // Drains a statement that returns no rows (BEGIN, COMMIT, ROLLBACK, a
 // savepoint operation) without the chunkSize-1 + break overhead of
 // firstWorker. Every one is the library's own transaction control: the facade
@@ -37,7 +45,7 @@ const exec = async (
   const facade: PoolWorker = Object.create(worker);
   facade.query = ((
     sql: string,
-    params?: unknown[],
+    params?: QueryParams,
     options?: PoolWorkerQueryOptions,
   ) =>
     worker.query(sql, params, {
@@ -128,7 +136,7 @@ export const createTransaction =
     logger: Pick<Logger, 'always'>;
   }) =>
   async <T = void>(
-    callback: (db: SQLiteTransactionDB) => Promise<T>,
+    callback: (db: InternalTransactionDB) => Promise<T>,
     options?: SQLiteTransactionOptions,
   ): Promise<T> => {
     const { readOnly = false, autoCommit = true } = options ?? {};
@@ -326,7 +334,7 @@ export const createTransaction =
         const facade: PoolWorker = Object.create(worker);
         facade.query = ((
           sql: string,
-          params?: unknown[],
+          params?: QueryParams,
           options?: PoolWorkerQueryOptions,
         ) =>
           worker.query(sql, params, {
@@ -879,20 +887,22 @@ export const createTransaction =
             read: (sql, params, given) => {
               if (ending) return Promise.reject(closedError(ending));
               const query = checksql(sql);
+              const bound = prepareParams(params);
               const { settled } = withSignal(given, 'read', query);
               return settled((target, options) =>
-                readWorker(target, query, params, options),
+                readWorker(target, query, bound, options),
               );
             },
             write: (sql, params, given) => {
               if (ending) return Promise.reject(closedError(ending));
               const query = checksql(sql);
+              const bound = prepareParams(params);
               // Not queued: `flush()` took the slot synchronously, the moment
               // the batch was committed to. Asking for a second one here would
               // wait for the first.
               const { settled } = withSignal(given, 'write', query, false);
               return settled((target, options) =>
-                writeWorker(target, query, params, options),
+                writeWorker(target, query, bound, options),
               );
             },
             /**
@@ -923,7 +933,7 @@ export const createTransaction =
             transaction: (fn) => fn(db),
           });
 
-      const db: SQLiteTransactionDB = {
+      const db: InternalTransactionDB = {
         read: <T extends Record<string, unknown>>(
           sql: string,
           params?: unknown[],
@@ -931,22 +941,24 @@ export const createTransaction =
         ) => {
           if (ending) return Promise.reject(closedError(ending));
           const query = checksql(sql);
+          const bound = prepareParams(params);
           const { settled } = withSignal(given, 'read', query);
           return settled((target, options) =>
-            readWorker<T>(target, query, params, options),
+            readWorker<T>(target, query, bound, options),
           );
         },
 
         write: <T extends Record<string, unknown>>(
           sql: string,
-          params?: unknown[],
+          params?: unknown[] | EncodedParams,
           given?: Interruptible,
         ) => {
           if (ending) return Promise.reject(closedError(ending));
           const query = checksql(sql);
+          const bound = prepareParams(params);
           const { settled } = withSignal(given, 'write', query);
           return settled((target, options) =>
-            writeWorker<T>(target, query, params, options),
+            writeWorker<T>(target, query, bound, options),
           );
         },
 
@@ -956,6 +968,7 @@ export const createTransaction =
           given?: SQLiteChunkOptions,
         ) => {
           const query = checksql(sql);
+          const bound = prepareParams(params);
           const st = withSignal(given, 'chunk', query);
           const entry: OpenStatement = {};
           // No lease work here: the transaction owns the lease, and
@@ -964,7 +977,7 @@ export const createTransaction =
           const source = chunkWorker<T>(
             via(st.savepointed, st.mark),
             query,
-            params,
+            bound,
             {
               ...(st.savepointed ? st.driving : st.options),
               onAbandon: st.release,
@@ -982,6 +995,7 @@ export const createTransaction =
           given?: SQLiteChunkOptions,
         ) => {
           const query = checksql(sql);
+          const bound = prepareParams(params);
           const st = withSignal(given, 'stream', query);
           // streamRows forwards its options straight to chunk(), but it is a
           // generator itself: the transport lands in `entry` on the first
@@ -993,7 +1007,7 @@ export const createTransaction =
           const source = streamRows<T>(
             via(st.savepointed, st.mark),
             query,
-            params,
+            bound,
             {
               ...(st.savepointed ? st.driving : st.options),
               onAbandon: st.release,
@@ -1012,9 +1026,10 @@ export const createTransaction =
         ) => {
           if (ending) return Promise.reject(closedError(ending));
           const query = checksql(sql);
+          const bound = prepareParams(params);
           const { settled } = withSignal(given, 'first', query);
           return settled((target, options) =>
-            firstWorker<T>(target, query, params, options),
+            firstWorker<T>(target, query, bound, options),
           );
         },
 

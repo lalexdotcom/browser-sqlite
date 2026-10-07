@@ -51,6 +51,31 @@ type WASQLiteModule = {
    * stale from an earlier write (spec 2026-10-01, §6.1).
    */
   _sqlite3_total_changes: (db: number) => number;
+  /** `sqlite3_free`: releases what `bindBlock` (`src/worker/bind.ts`) allocated. */
+  _sqlite3_free: (ptr: number) => void;
+  /** `sqlite3_malloc`: the allocation `bindBlock` copies a params block into. */
+  _sqlite3_malloc: (bytes: number) => number;
+  /** The `sqlite3_bind_*` entry points `bindBlock` calls on pointers into its allocation. */
+  _sqlite3_bind_null: (stmt: number, index: number) => number;
+  _sqlite3_bind_int: (stmt: number, index: number, value: number) => number;
+  _sqlite3_bind_double: (stmt: number, index: number, value: number) => number;
+  /** `destructor` is 0 (SQLITE_STATIC): the allocation outlives the binding. */
+  _sqlite3_bind_text: (
+    stmt: number,
+    index: number,
+    ptr: number,
+    length: number,
+    destructor: number,
+  ) => number;
+  _sqlite3_bind_blob: (
+    stmt: number,
+    index: number,
+    ptr: number,
+    length: number,
+    destructor: number,
+  ) => number;
+  /** The wasm heap; replaced by a new view when it grows. */
+  HEAPU8: Uint8Array;
 };
 
 /**

@@ -4,7 +4,7 @@ One short entry each, and every entry OPEN. **An entry marked DORMANT waits for 
 `CHANGELOG.md` and `git log` record what was fixed, `mem:measurements` holds the numbers,
 `mem:vfs` the VFS behaviour, `mem:lessons` what a closure taught.
 
-**Entries waiting on an event live in `mem:follow-ups/dormant`** — `open-retry` on Firefox and the rstest/Firefox `getDirectory()` hang, moved there on 2026-10-05 to keep this file under 40 000 characters.
+**Entries waiting on an event live in `mem:follow-ups/dormant`** — `open-retry` on Firefox, wa-sqlite #297 `trace_v2`, and the rstest/Firefox `getDirectory()` hang, moved there on 2026-10-05 to keep this file under 40 000 characters.
 
 **Delete, never annotate.** No struck-through lines, no "shipped and merged", no headstone
 saying an entry is gone, no verdict on an entry: what is written here is the backlog, not a
@@ -16,11 +16,11 @@ descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` clai
 shadow types that were never loaded, `W-types` a duplication already gone. Both would have
 been work on nothing.
 
-## Binary protocol with the worker — page → worker built, worker → page left (user, 2026-10-07)
+## Binary protocol with the worker — page → worker merged, worker → page left (user, 2026-10-07)
 
-**Page → worker is implemented on `feat/binary-protocol`** (worktree `.work/binary-protocol`, not merged — the merge is the user's call): spec `docs/superpowers/specs/2026-10-07-binary-protocol-design.md`, plan beside it in `plans/`. Every parameterised method converts its params as `bulkWrite()` does, a value no rule binds throws `INVALID_VALUE` on the page, params cross as a transferred block bound with `SQLITE_STATIC`, `bulkWrite()` encodes at `enqueue()` under a row pattern the worker expands. User decisions taken during the work and not in the spec: an `ArrayBuffer`, a `SharedArrayBuffer`, a `DataView` or a typed array other than `Uint8Array` binds as the BLOB of its bytes; params that are not an array (`null` included) throw `INVALID_VALUE`. Verified at `b41e924`: tsc, biome (4 warnings), `pnpm test` 1498/8, 868/4, 18/0, conformance 83/14 and 79/18, consumer 24/24, matrix 65 of 66 (the entry below). Footprint and per-query cost re-measured: BINARY-PROTOCOL in `mem:measurements/footprint`.
+**Page → worker is merged into `main` (2026-10-07, `feat/binary-protocol`)**: spec `docs/superpowers/specs/2026-10-07-binary-protocol-design.md`, plan beside it in `plans/`. Every parameterised method converts its params as `bulkWrite()` does, a value no rule binds throws `INVALID_VALUE` on the page, params cross as a transferred block bound with `SQLITE_STATIC`, `bulkWrite()` encodes at `enqueue()` under a row pattern the worker expands. User decisions taken during the work and not in the spec: an `ArrayBuffer`, a `SharedArrayBuffer`, a `DataView` or a typed array other than `Uint8Array` binds as the BLOB of its bytes; params that are not an array (`null` included) throw `INVALID_VALUE`. Verified at `b41e924`: tsc, biome (4 warnings), `pnpm test` 1498/8, 868/4, 18/0, conformance 83/14 and 79/18, consumer 24/24, matrix 65 of 66 (the entry below). Footprint and per-query cost re-measured: BINARY-PROTOCOL in `mem:measurements/footprint`.
 
-**Worker → page (result rows) is the part left.** It waits for RESULT-BINARY re-measured directly on Firefox: its Firefox figures were taken under Playwright. The spike branches `spike/bulk-binary` and `spike/binary-protocol` (worktree `.work/spike-binary-protocol`, uncommitted switches) are throwaway; `RowWriter` there is the row encoder that measurement used.
+**Worker → page (result rows) is the part left.** It waits for RESULT-BINARY re-measured directly on Firefox: its Firefox figures were taken under Playwright. The spike branches `spike/bulk-binary` and `spike/binary-protocol` (its measurement switches committed as `e1b820c`) are throwaway; `RowWriter` on `spike/bulk-binary` is the row encoder that measurement used.
 
 **Recycling the params buffer** is an idea kept below (Designs owed).
 

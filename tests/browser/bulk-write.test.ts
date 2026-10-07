@@ -306,3 +306,45 @@ describe('bulkWrite() values', () => {
     db.close();
   });
 });
+
+describe('bulkWrite() refusals', () => {
+  it('refuses one row at enqueue() and writes the others', async () => {
+    const db = await createTestClient();
+    await db.write('CREATE TABLE r (id INTEGER, v)');
+    const bulk = db.bulkWrite('r', ['id', 'v']);
+    let refused = 0;
+    for (let id = 0; id < 5000; id++) {
+      try {
+        bulk.enqueue({ id, v: id % 1000 === 999 ? Symbol('bad') : `v${id}` });
+      } catch (e) {
+        expect(e).toMatchObject({ code: 'INVALID_VALUE' });
+        expect((e as Error).message).toContain('column "v"');
+        refused++;
+      }
+    }
+    expect(await bulk.close()).toBe(4995);
+    expect(refused).toBe(5);
+    const [row] = await db.read<{ n: number; bad: number }>(
+      "SELECT count(*) AS n, sum(v <> 'v' || id) AS bad FROM r",
+    );
+    expect(row).toEqual({ n: 4995, bad: 0 });
+    await db.close();
+  });
+
+  it('rebinds a cached batch statement with the next batch', async () => {
+    const db = await createTestClient({ poolSize: 1 } as never);
+    await db.write('CREATE TABLE r (a, b)');
+    const per = Math.floor(32766 / 2);
+    const bulk = db.bulkWrite('r', ['a', 'b']);
+    // Two full batches and a partial one: the partial batch has another row
+    // count, so reusing the full batch's statement would write extra NULL rows.
+    const total = per * 2 + 7;
+    for (let i = 0; i < total; i++) bulk.enqueue({ a: i, b: `x${i}` });
+    await bulk.close();
+    const [row] = await db.read<{ n: number; bad: number }>(
+      "SELECT count(*) AS n, sum(b <> 'x' || a) AS bad FROM r",
+    );
+    expect(row).toEqual({ n: total, bad: 0 });
+    await db.close();
+  });
+});

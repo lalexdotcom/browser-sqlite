@@ -9,9 +9,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - **`CHANGELOG.md` ships in the package**, beside `API.md` and `VFS.md`.
+- **`INVALID_VALUE` is thrown when a param or a `bulkWrite()` cell has no SQLite value:** a `Symbol`, a function, a `bigint` outside the 64-bit range, an invalid `Date` in an ordinary column, or a value `JSON.stringify` refuses. `params` that is not an array is refused the same way.
+
+### Changed
+
+- **Breaking:** **an array passed as a param is bound as JSON text instead of bytes.** Pass a `Uint8Array` to bind bytes.
+- **`bulkWrite()` and queries with large params use less memory.**
 
 ### Fixed
 
+- **An `ArrayBuffer`, a `DataView` or a typed array other than `Uint8Array` is bound as a BLOB of its bytes:** as a param it was bound as `NULL`, and in `bulkWrite()` and `output()` as JSON text.
+- **An object or a `Date` passed as a param is no longer bound as `NULL`:** an object is bound as JSON text and a `Date` as `YYYY-MM-DD HH:MM:SS.SSS` in UTC.
+- **A value `bulkWrite()` cannot bind is refused by `enqueue()` for its own row,** instead of failing the whole batch.
 - **On Firefox, `stream()`, `chunk()` and `tx.stream()` no longer keep the rows you have already consumed in memory:** every chunk stayed in memory until the client was closed, so a 500 MiB read peaked at about 2 GB. Consumed rows can now be collected as the read goes on.
 - **On Firefox, a query no longer leaves memory behind until the client is closed:** each one kept about 1 KB, so 200 000 queries on one worker held about 180 MB.
 

@@ -4,6 +4,7 @@ import type { SQLiteResultCode } from './const/sqlite';
 import type { SQLiteVFS } from './const/vfs';
 import { DEFAULT_CREDIT_WINDOW } from './credits';
 import type { QueryDebugHandle, WorkerDebugHandle } from './debug';
+import { EncodedParams, encodeParams, type QueryParams } from './encode';
 import type { Logger } from './logger';
 import { SQLiteError, type SQLiteErrorCode } from './types/errors';
 import type {
@@ -79,7 +80,7 @@ export type PoolWorker = Worker & {
   inTransaction?: boolean | undefined;
   query: <T extends Record<string, unknown> = Record<string, unknown>>(
     sql: string,
-    params?: unknown[],
+    params?: QueryParams,
     options?: PoolWorkerQueryOptions,
   ) => AsyncGenerator<T[] | number>;
   /**
@@ -663,7 +664,7 @@ export const createPoolWorker = (deps: {
   >(
     self: { gen?: AsyncGenerator<T[] | number> },
     sql: string,
-    params?: unknown[],
+    params?: QueryParams,
     options?: PoolWorkerQueryOptions,
   ): AsyncGenerator<T[] | number> {
     try {
@@ -691,6 +692,19 @@ export const createPoolWorker = (deps: {
         );
       }
 
+      // Encoded here, before the worker is claimed: a throw (an allocation
+      // failure, a second send) rejects this query and leaves the worker as it
+      // was, whereas after the claim the `finally` would post a `stop` nothing
+      // answers. Once per send: a retried read re-sends the caller's converted
+      // values, and a transferred buffer is gone from the page.
+      const encoded =
+        params instanceof EncodedParams
+          ? params
+          : params?.length
+            ? encodeParams(params)
+            : undefined;
+      const block = encoded?.toMessage();
+
       // Extract query options
       const {
         chunkSize = 500,
@@ -704,7 +718,13 @@ export const createPoolWorker = (deps: {
       } = options ?? {};
       suppressServed = noServed;
 
-      debugQuery = debugWorker?.query(sql, params, internal);
+      debugQuery = debugWorker?.query(
+        sql,
+        params instanceof EncodedParams
+          ? undefined
+          : (params as unknown[] | undefined),
+        internal,
+      );
 
       // Prepare for streaming chunks
       inbox = [];
@@ -731,20 +751,26 @@ export const createPoolWorker = (deps: {
       // query, so a transaction's pending conclusion leaves only with a message
       // that is actually sent (spec 2026-09-11, §4).
       const op = savepoint?.();
-      worker.postMessage({
-        type: 'query',
-        callId: ++currentCallId,
-        sql,
-        params,
-        options: {
-          chunkSize,
-          credits,
-          timeout,
-          ...(op ? { savepoint: op } : {}),
-          ...(control ? { control: true as const } : {}),
-          ...(uncached ? { uncached: true as const } : {}),
+      worker.postMessage(
+        {
+          type: 'query',
+          callId: ++currentCallId,
+          sql,
+          ...(block ? { params: block } : {}),
+          ...(encoded?.pattern !== undefined
+            ? { pattern: encoded.pattern }
+            : {}),
+          options: {
+            chunkSize,
+            credits,
+            timeout,
+            ...(op ? { savepoint: op } : {}),
+            ...(control ? { control: true as const } : {}),
+            ...(uncached ? { uncached: true as const } : {}),
+          },
         },
-      });
+        block ? block.chunks : [],
+      );
       worker.status = 'RUNNING';
 
       // Stream chunks until the query completes AND the inbox is empty. The
@@ -790,14 +816,15 @@ export const createPoolWorker = (deps: {
       // `inbox`, `idle`, `status` — belongs to whatever query is in flight NOW,
       // so a stale transport running it would post a `stop` under someone
       // else's call id, drop their queued chunks and hand their worker back
-      // mid-query. Two transports reach here without owning the worker: one
-      // that never claimed it (the reuse guard above threw) and one whose query
+      // mid-query. A transport reaches here without owning the worker when its
+      // reuse guard threw, when its params encoding failed, or when its query
       // ended while it stayed suspended at a `yield`, resumed arbitrarily later
-      // by the abandonment cleanup's `return()`. Both owe nothing: they hold no
+      // by the abandonment cleanup's `return()`. None owes anything: they hold no
       // state of their own, all of it having been per-worker and reassigned.
       //
       // NOTE: an `if`, and never an early `return` — a `return` in a `finally`
-      // discards the pending throw, which here is the reuse guard's own error.
+      // discards the pending throw, which here is either the reuse guard's error
+      // or an encoding failure.
       if (servingQuery === self.gen) {
         // If the consumer left early (break / return / throw) the worker is still
         // stepping rows. Tell it to stop, then wait for the reply it always sends,
@@ -875,7 +902,7 @@ export const createPoolWorker = (deps: {
    */
   const query = <T extends Record<string, unknown> = Record<string, unknown>>(
     sql: string,
-    params?: unknown[],
+    params?: QueryParams,
     options?: PoolWorkerQueryOptions,
   ): AsyncGenerator<T[] | number> => {
     const self: { gen?: AsyncGenerator<T[] | number> } = {};

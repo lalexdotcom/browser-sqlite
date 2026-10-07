@@ -38,10 +38,12 @@ import type { SQLiteErrorCode } from '../types/errors';
 import type {
   BootStage,
   ClientMessageData,
+  ParamsBlock,
   WasmLocation,
   WorkerMessageData,
 } from '../types/protocol';
 import { DATABASE_FILE_SUFFIXES, renderPragmas } from '../utils';
+import { bindBlock } from './bind';
 import { cloneable } from './cloneable';
 import { firstMissing } from './probes';
 import { sqliteCodeOf } from './sqlite-code';
@@ -578,10 +580,13 @@ const open = (file: string, options: OpenOptions) => {
   const query = async function* (
     callId: number,
     sql: string,
-    params: unknown[],
+    params: ParamsBlock | undefined,
     options?: SQLOptions,
+    textOf?: () => string,
   ) {
     if (!openedDB) throw new Error('No DB opened');
+    // Wasm allocations the statements' bindings point into, freed last.
+    const owned: number[] = [];
 
     const { sqlite, db, module } = await openedDB;
     const { chunkSize = 1 } = options ?? {};
@@ -609,9 +614,7 @@ const open = (file: string, options: OpenOptions) => {
     /** Binds and streams one statement. Never finalises: the caller owns it. */
     const run = async function* (stmt: number) {
       try {
-        if (params?.length) {
-          sqlite.bind_collection(stmt, params as any);
-        }
+        if (params) owned.push(bindBlock(module, sqlite, stmt, params));
       } catch (e) {
         throw stamped(e);
       }
@@ -753,7 +756,10 @@ const open = (file: string, options: OpenOptions) => {
         }
       } else if (cached === 'uncacheable') {
         // Today's path, untouched: the generator finalises what it yields.
-        for await (const stmt of sqlite.statements(db, sql)) {
+        for await (const stmt of sqlite.statements(
+          db,
+          textOf ? textOf() : sql,
+        )) {
           prepared++;
           yield* run(stmt);
         }
@@ -763,12 +769,19 @@ const open = (file: string, options: OpenOptions) => {
         let single: boolean | undefined;
         let failed = false;
         try {
-          for await (const stmt of sqlite.statements(db, sql, {
-            unscoped: true,
-            flags: SQLITE_PREPARE_PERSISTENT,
-          })) {
+          for await (const stmt of sqlite.statements(
+            db,
+            textOf ? textOf() : sql,
+            {
+              unscoped: true,
+              flags: SQLITE_PREPARE_PERSISTENT,
+            },
+          )) {
             prepared++;
-            single ??= isSingleStatement(sql, sqlite.sql(stmt));
+            single ??= isSingleStatement(
+              textOf ? textOf() : sql,
+              sqlite.sql(stmt),
+            );
             // Assigned BEFORE the rows are streamed: first() breaks out of the
             // loop, and an assignment after `yield*` would never run.
             if (single) keep = stmt;
@@ -815,6 +828,8 @@ const open = (file: string, options: OpenOptions) => {
     } finally {
       preparing = undefined;
       if (yields || polls) sqlite.progress_handler(db, 0, () => 0, null);
+      // After settle(): the bindings pointing into these are cleared.
+      for (const p of owned) module._sqlite3_free(p);
     }
   };
 
@@ -845,7 +860,7 @@ const open = (file: string, options: OpenOptions) => {
               const own = allowControl;
               allowControl = true;
               try {
-                for await (const _ of query(callId, statement, [])) {
+                for await (const _ of query(callId, statement, undefined)) {
                   // Savepoint statements return no rows.
                 }
               } finally {
@@ -881,7 +896,26 @@ const open = (file: string, options: OpenOptions) => {
             }
           }
 
-          for await (const chunk of query(callId, sql, params, options)) {
+          // A patterned query is cached under (sql, pattern, rows): a cached
+          // statement never builds its text, which is up to ~100 KB.
+          const { pattern } = data;
+          const rows = params?.rows ?? 0;
+          let key = sql;
+          let textOf: (() => string) | undefined;
+          if (pattern !== undefined) {
+            key = `${sql}\u0001${pattern}\u0001${rows}`;
+            let text: string | undefined;
+            textOf = () =>
+              (text ??= sql + new Array(rows).fill(pattern).join(','));
+          }
+
+          for await (const chunk of query(
+            callId,
+            key,
+            params,
+            options,
+            textOf,
+          )) {
             if (typeof chunk === 'number') {
               affected = chunk;
               break;

@@ -59,6 +59,20 @@ type SQLOptions = {
  */
 export type WasmLocation = { base: string } | { file: string };
 
+/**
+ * Params encoded on the page: values one after another, a tag byte then its
+ * payload, little-endian — 0 NULL, 1 int32 (4 bytes), 2 float64 (8 bytes),
+ * 3 text (u32 byte length + UTF-8), 4 BLOB (u32 byte length + bytes), 5 int64
+ * (8 bytes). A value never straddles two chunks. `rows` is the row count when
+ * the message carries a `pattern`.
+ */
+export type ParamsBlock = {
+  chunks: ArrayBuffer[];
+  used: number[];
+  count: number;
+  rows: number;
+};
+
 export type ClientMessageData =
   | {
       type: 'open';
@@ -93,7 +107,10 @@ export type ClientMessageData =
       type: 'query';
       callId: number;
       sql: string;
-      params: unknown[];
+      /** Absent when the query has no params. */
+      params?: ParamsBlock;
+      /** Repeated `params.rows` times, comma-joined, after `sql`. */
+      pattern?: string;
       options?: SQLOptions;
     }
   | { type: 'close'; callId: number }

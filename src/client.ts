@@ -10,6 +10,7 @@ import type { SQLiteBuild } from './const/builds';
 import type { PlatformFeature } from './const/platform';
 import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { createClientDebug, type RequestDebugHandle } from './debug';
+import { type EncodedParams, prepareParams } from './encode';
 import { advanceSeen, barrierSqlFor, epochsFor } from './epochs';
 import {
   type ClientInspection,
@@ -1263,10 +1264,11 @@ export const createSQLiteClient = (
     options?: SQLiteChunkOptions,
   ) => {
     assertReadable(sql, 'read');
+    const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'read');
     try {
       return await readWithRetry(signal, (worker) =>
-        readWorker<T>(worker, sql, params, { ...options, signal }),
+        readWorker<T>(worker, sql, bound, { ...options, signal }),
       );
     } finally {
       release();
@@ -1285,10 +1287,11 @@ export const createSQLiteClient = (
     T extends Record<string, unknown> = Record<string, unknown>,
   >(sql: string, params?: unknown[], options?: SQLiteChunkOptions) {
     assertReadable(sql, 'chunk');
+    const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'chunk');
     try {
       yield* streamWithRetry(signal, (worker, onAbandon) =>
-        chunkWorker<T>(worker, sql, params, {
+        chunkWorker<T>(worker, sql, bound, {
           ...options,
           signal,
           onAbandon: () => {
@@ -1313,10 +1316,11 @@ export const createSQLiteClient = (
     T extends Record<string, unknown> = Record<string, unknown>,
   >(sql: string, params?: unknown[], options?: SQLiteChunkOptions) {
     assertReadable(sql, 'stream');
+    const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'stream');
     try {
       yield* streamWithRetry(signal, (worker, onAbandon) =>
-        streamRows<T>(worker, sql, params, {
+        streamRows<T>(worker, sql, bound, {
           ...options,
           signal,
           onAbandon: () => {
@@ -1338,15 +1342,16 @@ export const createSQLiteClient = (
     T extends Record<string, unknown> = Record<string, unknown>,
   >(
     sql: string,
-    params?: unknown[],
+    params?: unknown[] | EncodedParams,
     options?: SQLiteQueryOptions,
   ) => {
     assertStatementAllowed(vfs, sql);
+    const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'write');
     try {
       const lease = await acquireInstrumented('write', signal);
       try {
-        return await writeWorker<T>(lease.worker, sql, params, {
+        return await writeWorker<T>(lease.worker, sql, bound, {
           ...options,
           signal,
         });
@@ -1388,10 +1393,11 @@ export const createSQLiteClient = (
     options?: SQLiteQueryOptions,
   ) => {
     assertReadable(sql, 'first');
+    const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'first');
     try {
       return await readWithRetry(signal, (worker) =>
-        firstWorker<T>(worker, sql, params, { ...options, signal }),
+        firstWorker<T>(worker, sql, bound, { ...options, signal }),
       );
     } finally {
       release();

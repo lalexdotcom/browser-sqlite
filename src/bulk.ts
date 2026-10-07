@@ -6,6 +6,7 @@ import type {
   SQLiteTransactionOptions,
 } from './api';
 import type { SQLiteVFS } from './const/vfs';
+import { type EncodedParams, ParamsWriter } from './encode';
 import {
   type Locks,
   stagingLockName,
@@ -36,7 +37,7 @@ type BulkCallOptions = { signal?: AbortSignal | undefined };
 
 export type WriteFn = (
   sql: string,
-  params?: unknown[],
+  params?: unknown[] | EncodedParams,
   options?: BulkCallOptions,
 ) => Promise<{ result: unknown[]; affected: number }>;
 
@@ -50,7 +51,7 @@ export type TransactionFn = <T>(
   callback: (db: {
     write: (
       sql: string,
-      params?: unknown[],
+      params?: unknown[] | EncodedParams,
       options?: BulkCallOptions,
     ) => Promise<{ result: unknown[]; affected: number }>;
   }) => Promise<T>,
@@ -145,6 +146,7 @@ export const createBulk = (shared: {
       // First, before withDeadline: a throw after it would leave the deadline timer armed.
       const jsonb = jsonbColumns(keys, options?.types);
       const rowTemplate = `(${keys.map((_, i) => (jsonb[i] ? 'jsonb(?)' : '?')).join(',')})`;
+      const head = `INSERT INTO ${quoteIdent(table)} (${keys.map(quoteIdent).join(',')}) VALUES `;
       const { signal, release: releaseDeadline } = withDeadline(
         options,
         'bulkWrite',
@@ -163,7 +165,7 @@ export const createBulk = (shared: {
       // worst case is the behaviour that predates this option.
       const queueSize = Math.max(1, options?.queueSize ?? 2 * maxBufferSize);
 
-      const buffer: unknown[][] = [];
+      let writer = new ParamsWriter();
 
       let writePromise = Promise.resolve<number>(0);
       let failure: unknown;
@@ -201,9 +203,10 @@ export const createBulk = (shared: {
         );
 
       const flush = () => {
-        const toInsert = [...buffer];
-        buffer.length = 0;
-        queuedRows += toInsert.length;
+        const rowCount = writer.rows;
+        const params = writer.finish(rowTemplate);
+        writer = new ParamsWriter();
+        queuedRows += rowCount;
         // Synchronous with the decision to write this batch — that is the whole
         // point. Anything issued after this call queues behind the batch.
         const slot = reserve?.();
@@ -211,13 +214,13 @@ export const createBulk = (shared: {
         // later `.then()` and drop already-spliced rows without a word (B5).
         const runBatch = async (currentAffected: number) => {
           if (failure) {
-            rowsNotWritten += toInsert.length;
+            rowsNotWritten += rowCount;
             return currentAffected;
           }
           // Skips a batch the abort beat to the start, so no round trip is
           // paid for rows that will not be written.
           if (signal?.aborted) {
-            rowsNotWritten += toInsert.length;
+            rowsNotWritten += rowCount;
             return currentAffected;
           }
           try {
@@ -234,23 +237,19 @@ export const createBulk = (shared: {
             // on an engine without `readwrite-unsafe`, waiting on a handle
             // hand-over that never comes — left this chain pending for ever,
             // and close() with it. Observed on macOS Safari 27.0.
-            const { affected } = await write(
-              `INSERT INTO ${quoteIdent(table)} (${keys.map(quoteIdent).join(',')}) VALUES ${toInsert.map(() => rowTemplate).join(',')}`,
-              toInsert.flat(),
-              { signal },
-            );
-            rowsWritten += toInsert.length;
+            const { affected } = await write(head, params, { signal });
+            rowsWritten += rowCount;
             return currentAffected + affected;
           } catch (error) {
             // An abort is not a failure. This branch is what keeps close()
             // rejecting with `signal.reason` rather than SQLiteBulkWriteError.
             if (signal?.aborted) {
-              rowsNotWritten += toInsert.length;
+              rowsNotWritten += rowCount;
               return currentAffected;
             }
             failure = error;
             // A multi-row INSERT is statement-atomic: nothing of this batch landed.
-            rowsNotWritten += toInsert.length;
+            rowsNotWritten += rowCount;
             return currentAffected;
           }
         };
@@ -266,7 +265,7 @@ export const createBulk = (shared: {
             // an abort skipped. One missed decrement and enqueue() never
             // resolves again.
             slot?.done();
-            queuedRows -= toInsert.length;
+            queuedRows -= rowCount;
             if (queuedRows < queueSize) releaseRoom();
           }
         });
@@ -286,9 +285,22 @@ export const createBulk = (shared: {
           // report about rows they stopped caring about.
           signal?.throwIfAborted();
           if (failure) throw fail();
-          // Converted before it is buffered: a value that cannot be leaves the buffer as it was.
-          buffer.push(keys.map((k, i) => toBindable(data[k], jsonb[i])));
-          if (buffer.length >= maxBufferSize) flush();
+          // Each row under a mark: a value that cannot be bound throws here and
+          // leaves the batch holding whole rows only.
+          writer.mark();
+          try {
+            for (let i = 0; i < keys.length; i++) {
+              const key = keys[i] as KEYS;
+              writer.value(
+                toBindable(data[key], jsonb[i] as boolean, `column "${key}"`),
+              );
+            }
+          } catch (error) {
+            writer.rollback();
+            throw error;
+          }
+          writer.endRow();
+          if (writer.rows >= maxBufferSize) flush();
           if (queuedRows < queueSize) return ADMITTED;
           // One deferred for every caller while the queue is full: enqueue() is
           // not concurrent-safe today and this does not make it so.
@@ -298,7 +310,7 @@ export const createBulk = (shared: {
         close: async () => {
           if (closed) throw failClosed();
           try {
-            if (buffer.length) flush();
+            if (writer.rows) flush();
             const affected = await writePromise;
             // Ordered ahead of the failure check for the same reason: a batch
             // skipped by the abort is not a batch that failed.

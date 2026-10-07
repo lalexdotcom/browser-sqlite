@@ -17,6 +17,8 @@ only what `AGENTS.md` does not say.**
   not a summary of it, when picking up designed-but-unbuilt work.
 - The agent framework is **superpowers**. A `.planning/` directory from a previous
   framework was deleted on 2026-08-17 — do not recreate it or trust anything quoting it.
+- **These memories are the ONLY memory (user, 2026-10-07).** Claude Code's own auto-memory (`MEMORY.md` and its files under `~/.claude/projects/…/memory/`) is not used: every rule, preference and fact goes here, through Serena.
+- **No git worktree for this repository (user, 2026-10-07).** A piece of work is its branch checked out in the main checkout (`/workspaces/wsqlite`), and it is done there, as `AGENTS.md`'s branch-and-merge rule implies — spikes included. When a skill asks for an isolated workspace (superpowers `using-git-worktrees`, subagent-driven-development's setup), use the main checkout on the feature branch and say so. The guard against another session switching the checkout is checking the branch in the same command as each commit, never a worktree. `.work/` worktrees and clones are for external repositories only (wa-sqlite, the release action). On 2026-10-07 a branch and two spikes were run from `.work/` worktrees and the user found the main checkout on `main`.
 - **Probes and fixtures go in `.scratchpad/` (user, 2026-08-31)**, gitignored, at the
   repository root rather than in the session's own temp directory — the user wants to
   open them. Nothing in `src/`, `tests/` or CI may depend on anything there. `.work/` is
@@ -360,3 +362,22 @@ one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.
   else stays in `mem:follow-ups`, which exists precisely so it does not have to be said aloud.
   This does not cancel the verdict rule above — when they ask for options, still recommend;
   just do not manufacture the occasion.
+
+## Working rules carried over from Claude's auto-memory (2026-10-07)
+
+Moved here when the user ruled that these memories are the only memory. Each was stated by the user; the date is when.
+
+- **Answer only the question (2026-10-04).** A question asked while work runs gets its answer and nothing else; status, rulings and next steps go in their own message when the work reaches a point worth reporting.
+- **A progress line every two minutes on anything long (2026-09-14, again 2026-10-04).** A measurement, a probe campaign, a matrix, any background run past ~2 minutes: report at launch and every 2 minutes — elapsed, what runs, what finished, any failure — until it ends, unasked. Without a monitor tool, one `sleep 118; <read the log>` call per point, a line to the user after each.
+- **Check the branch in the same command as the commit (2026-10-01).** Other sessions switch the shared checkout between two turns: `test "$(git branch --show-current)" = <branch> && git commit …`. If the checkout is on someone else's branch, ask — never a worktree (§ Where things live).
+- **A memory-only change is committed where I am (2026-10-03).** Only `.serena/memories/` staged: commit on the branch in progress, on `main` if none; never a branch made for it. Anything else in the change goes through a branch.
+- **Comments state the fact (2026-09-22).** One or two lines: the trap, the measurement, what a reader would get wrong; the alternatives and the debate go to the commit body or these memories. No memory references in `.github/workflows/**` comments (state the fact); in `src/` and `tests/` citing a memory is established practice. Upstream wa-sqlite wants a comment to say how the code is, not what changed — but invariants and the reason for a non-obvious bound do belong there (rhashimoto, #351-#353).
+- **A comment the work made false is corrected, then reported (2026-09-28)** — not asked about first. Comments only: a behaviour change the stale comment points to is still flagged, not done.
+- **No hard wrapping in prose (2026-09-16, again 2026-09-18).** Markdown, PR bodies, GitHub comments, docs, chat: one long line per paragraph. Git commit messages are the exception (wrap near 72), and the exception does not spread to a PR body drafted right after a commit.
+- **No unversioned path in a memory (2026-09-28).** Never cite `.scratchpad/…`, `.work/…` or any ignored file; state the fact itself. A commit SHA or a tracked file is a valid pointer (`git ls-files <path>` to check).
+- **Remove only what was asked (2026-09-29).** A cut or a criticism is read at its narrowest scope, never generalised into a rule; for anything posted outward, a changed draft is shown again unless the user said to send it.
+- **Upstream first, then the patch (2026-10-05).** A wa-sqlite change is validated on wa-sqlite's own suite (both engines), sent as a PR (body shown to the user, fork branch pushed for review), and only then carried in `patches/`. A plan listing "carry the patch" before "PR upstream" is reordered before starting.
+- **Nothing goes upstream with an open unknown (2026-09-30).** Name each thing the result does not explain, find its cause, measure it, then write; "not reproduced after a bounded search" is an acceptable answer, stated as such.
+- **A known conflict with another of our open PRs is stated in the PR (2026-10-03):** which parts of which file both touch, and that we rebase whichever merges second, so the maintainer picks the order.
+- **Upstream replies are warm, lightly (2026-09-30).** Thank for the review, say what it led to, offer help where it fits — one friendly touch per message; the PR description itself stays factual.
+- **Fork commits use the current identity (2026-09-30).** On the wa-sqlite fork, author with the identity the library repo has configured at commit time (`-c user.name=… -c user.email=…` from `git -C /workspaces/wsqlite config`), never copied from the branch's older commits and never written into the fork's config.
