@@ -193,3 +193,27 @@ Spike: with `binaryRows` in the query options the worker encodes each row from S
 | 5000 | 2.0 → **1.1** | 178 → **105** | 39 → 47 | 2 299 → 2 450 |
 
 Chromium: up to 45 % faster, and less memory once chunks are large. Firefox: 20-55 % slower and no memory gain. Firefox timings overlapped with other Firefox runs at times (the fix and diagnostic runs), so the slowdown is consistent across chunk sizes but its size is approximate.
+
+## BINARY-PROTOCOL — page → worker entirely binary, measured direct on both engines, 2026-10-07
+
+**Method.** Throwaway branch `spike/binary-protocol` off `main` (after the STREAM-FF fixes), every behaviour behind a `globalThis.__bsq*` switch. **Both browsers launched by hand, no Playwright**: Playwright's `chromium-1234` binary (`--headless --no-sandbox --user-data-dir`, no other flag; no branded Chrome exists for Linux arm64) and `firefox-1538` (`--headless --no-remote --profile`), page served with COOP/COEP, `jspi` build, PSS of the content processes (Chromium `--type=renderer`, Firefox `contentproc`, descendants of the launched pid) sampled every 250 ms, peak over the phase start. Agent variables stripped. The two engines ran as two parallel chains; the per-query micro of the first campaign ran one browser at a time.
+
+**What the spike does.** Any query's params, encoded at send time into a block (tag byte + payload, as BULK-BINARY), transferred; the worker copies the block into one wasm allocation and binds from it with `SQLITE_STATIC`, never building a JS array. `bulkWrite` encodes each row at `enqueue()` and sends `sql` = `INSERT … VALUES ` plus a `pattern` (the row template) in the block; the row count travels in the block's header (counted by the writer, never derived from the values), and the worker rebuilds `sql + pattern × rows`. The worker does not know it serves a `bulkWrite`. **Correctness**: every arm gives the same SHA-256 as the clone on both engines — 40 000 rows × 12 columns including a `jsonb(?)` column in the pattern, bigint, Unicode, empty text and blobs, booleans, Dates; params arms on 4 000 rows written by `tx.write` plus a read re-posted twice.
+
+**(a) Small queries: no threshold needed.** Per-query interleaving over the arms, 8 rounds × 2 runs, ratio to clone of the summed time, median (range). The spike's shape (fresh buffer, transferred, `malloc` per query) is neutral: pointRead 1.00-1.02, smallWrite 1.01-1.02 (Chromium 0.91-1.16), text10k 0.95-1.01, blob1M 0.92-1.01, on `MemoryVFS` and `OPFSAdaptiveVFS`, both engines. The 2-9 % of 2026-10-06 was measured under Playwright. Copying instead of transferring, a persistent wasm scratch, a buffer recycled through `done`: none improves on it for small queries (recycling up to 1.10 on Chromium small writes). An exact UTF-8 size (a JS scan of each string) costs 1.18-1.23 on 10 KB texts on Chromium.
+
+**(b) `bulkWrite`, 500 MiB of 1 KiB rows, n=3**, page PSS peak MB / load s, median (range), clone → binary (`enqueue` + `pattern` + row mark):
+
+| VFS | Chromium | Firefox |
+|---|---|---|
+| `OPFSAdaptiveVFS` | 477 → **264** MB, 3.25 → 2.66 s | 233 → **143** MB, 41 (35-47) → 36 s |
+| `OPFSCoopSyncVFS` | 527 → **297** MB, 3.07 → 2.39 s | 261 → **132** MB, 35 → 38 (34-40) s |
+| `OPFSWriteAheadVFS` | 684 → 593 (452-656) MB, 5.12 → 4.27 s | 243 → **147** MB, 56 → 56 s |
+
+What stays on `OPFSWriteAheadVFS` under Chromium is its worker's (BULK-GC). Chromium direct peaks run higher than under Playwright (clone 477-684 against 401-515), so compare within this table only.
+
+**(c) `pattern` and (d) row safety — 4 000 000 rows of two integers, `OPFSAdaptiveVFS`, n=3** (the case where the SQL text weighs most against the values): peak MB, Chromium / Firefox — clone 149 / 110; binary with the SQL built on the page 50 / 79; **`pattern` 44 / 38**; `pattern` with the cache keyed on `(sql, pattern, rows)`, so a cached statement never rebuilds the text, 38 / 32. Times within noise (Chromium 1.9-2.2 s, Firefox 7.3-8.3 s; clone 2.18 / 8.28). **On Firefox the page-built SQL strings alone are ~40 MB of the peak.** Row safety end to end: unprotected, a mark per row, or converting and checking the whole row before encoding — no measurable difference. Encoder alone (2 000 000 small rows, 12 interleaved rounds): mark +6-8 %, convert +12-22 % (~1-2 and ~3-4 ns per row); 1 KiB rows: none. **Unprotected is not an option**: a value that fails mid-row leaves its first columns in the block, and the batch fails at bind (`bind failed at parameter 32761`); mark and convert refuse exactly the faulty rows (40 of 40 000), digest equal to a load without them.
+
+**Large params on ordinary queries — 200 writes of a 1 MiB text in one transaction, `OPFSAdaptiveVFS`, n=3**, peak MB / s: Chromium clone 101-114 / 0.78-0.84, fresh buffer (B0) 29-40 / 0.62-0.66, **recycled buffer 16 / 0.64**; Firefox clone 129-132 / 9.4-10, B0 50-77 / 9.3-10, **recycled 25 / 9.2**. Decomposed: the recycled page buffer (the worker hands the transferred buffer back in `done`) gives the whole gain, the persistent wasm scratch none (Chromium 37, Firefox 76 alone); exact sizing gains nothing in memory. So the gain is fewer page allocations per query, not the worst-case size.
+
+**Seen on `main` on the way**: a value `postMessage` cannot clone (a `Symbol`) is not refused by `bulkWrite`'s `enqueue()` — `toBindable` passes it through and the whole batch fails at `postMessage`, 5 460 rows lost in the check (12 columns, two batches). The binary path with a row mark refuses only that row.

@@ -20,6 +20,8 @@ been work on nothing.
 
 Prototyped on branch `spike/bulk-binary` (commit `6e79a17`, worktree `.work/spike-bulk-binary`), every behaviour behind a `globalThis` switch, not for merge: binary `bulkWrite` batches (`__bsqBulkMode`, BULK-BINARY: measured, worth it on both engines), any query's params encoded and transferred (`__bsqQueryMode`), result rows encoded in the worker (`__bsqResultMode`, RESULT-BINARY: to be re-measured directly on Firefox, its Firefox figures were taken under Playwright). Numbers in `mem:measurements/footprint`. The two Firefox retention switches on that branch (`__bsqWakeEmpty`, `__bsqRaceFix`) are superseded by the fixes on `main` (STREAM-FF); a rewrite starts from `main`, not from the spike's `pool.ts`/`queries.ts`.
 
+**Brainstorming started 2026-10-07 (user), scope page → worker first, entirely binary.** Agreed so far: the `query` message carries `sql`, an optional `pattern` and the params block, whose header gives the row count; the worker rebuilds `sql + pattern × rows` and stays generic (it does not know `bulkWrite`); `bulkWrite` keeps encoding at `enqueue()` and hands a pre-encoded block to an internal write; the `pattern` form stays internal for now (recommended, not yet answered). Measured the same day on a second throwaway branch, `spike/binary-protocol` (worktree `.work/spike-binary-protocol`, uncommitted): BINARY-PROTOCOL in `mem:measurements/footprint`. Worker → page waits for RESULT-BINARY re-measured direct on Firefox.
+
 ## wa-sqlite #371: `IDBMirrorVFS` commit-abort — OPENED 2026-10-03, waiting on rhashimoto
 
 Offered on #363; rhashimoto: "Yes, please, if you're up for that." Defect: IDBMIRROR-COMMIT-ABORT; designs compared: IDBMIRROR-ABORT-JOURNAL, IDBMIRROR-ABORT-DESIGNS (`mem:measurements`).
