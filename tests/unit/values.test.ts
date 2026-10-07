@@ -202,13 +202,14 @@ describe('toBindable refusals', () => {
 });
 
 describe('convertParams', () => {
-  it('converts an array and passes undefined through', () => {
+  it('converts an array and passes undefined and null through as no params', () => {
     expect(convertParams(undefined)).toBeUndefined();
+    expect(convertParams(null as never)).toBeUndefined();
     expect(convertParams([1, true, 'a'])).toEqual([1, true, 'a']);
   });
 
   it('refuses params that are not an array', () => {
-    for (const bad of [{ ':a': 1 }, 5, 'x', null]) {
+    for (const bad of [{ ':a': 1 }, 5, 'x']) {
       let error: unknown;
       try {
         convertParams(bad as never);

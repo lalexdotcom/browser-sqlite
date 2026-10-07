@@ -89,11 +89,12 @@ export const toBindable = (
 export const convertParams = (
   params: readonly unknown[] | undefined,
 ): Bindable[] | undefined => {
-  if (params === undefined) return undefined;
+  // The types exclude null, but untyped code may pass it: no params, as before.
+  if (params == null) return undefined;
   if (!Array.isArray(params))
     throw new SQLiteError(
       'INVALID_VALUE',
-      `params must be an array, got ${params === null ? 'null' : typeof params}`,
+      `params must be an array, got ${typeof params}`,
     );
   return params.map((v, i) => toBindable(v, false, `param ${i + 1}`));
 };

@@ -117,6 +117,14 @@ describe('params', () => {
     await db.close();
   });
 
+  it('takes null params as no params, as untyped code may pass them', async () => {
+    const db = await createTestClient();
+    expect(await db.read('SELECT 1 AS x, ? AS y', null as never)).toEqual([
+      { x: 1, y: null },
+    ]);
+    await db.close();
+  });
+
   it('binds as many values as the statement has parameters, by index', async () => {
     const db = await createTestClient();
     expect(await db.read('SELECT ? AS a', [1, 2])).toEqual([{ a: 1 }]);
