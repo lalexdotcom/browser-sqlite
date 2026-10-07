@@ -16,12 +16,9 @@ descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` clai
 shadow types that were never loaded, `W-types` a duplication already gone. Both would have
 been work on nothing.
 
-## Firefox holds every streamed chunk — two retentions, fixes measured, not applied (2026-10-07)
+## Binary protocol with the worker — a dedicated piece of work (user, 2026-10-07)
 
-To be handled in a fresh session (user, 2026-10-07). Numbers and mechanisms: STREAM-FF, `mem:measurements/footprint`; measured in a Firefox launched WITHOUT Playwright (FF-JUGGLER).
-1. **`src/pool.ts`**: the `chunk` handler resolves `deferredChunk` with the rows, and the read loop races it against the worker-lifetime `deathDeferred` → every chunk held until the worker dies. Fix: resolve without a value (the loop only compares to `STOP`).
-2. **`src/queries.ts:164`/`:269`, `src/transaction.ts:751`**: a per-chunk race against the query-long `aborted` → the whole result held for the query with a `signal`, a `timeout`, and in every `tx.stream()`. Fix: one `abort` listener per wait, `signal.aborted` checked first.
-Both fixes exist as switches on branch `spike/bulk-binary` (commit `6e79a17`, `__bsqWakeEmpty`, `__bsqRaceFix`); direct Firefox, 500 MiB: peaks 2.1 GB → 0.5-0.8 GB, no time cost; Chromium unaffected. Still to do: tests that fail without each fix (they need a Firefox WITHOUT Playwright, or a `FinalizationRegistry` assertion that survives Juggler — to be found), CHANGELOG. The same branch holds the binary `bulkWrite` batches (BULK-BINARY, measured, worth it on both engines) and the binary result rows (RESULT-BINARY, to be re-measured directly on Firefox).
+Prototyped on branch `spike/bulk-binary` (commit `6e79a17`, worktree `.work/spike-bulk-binary`), every behaviour behind a `globalThis` switch, not for merge: binary `bulkWrite` batches (`__bsqBulkMode`, BULK-BINARY: measured, worth it on both engines), any query's params encoded and transferred (`__bsqQueryMode`), result rows encoded in the worker (`__bsqResultMode`, RESULT-BINARY: to be re-measured directly on Firefox, its Firefox figures were taken under Playwright). Numbers in `mem:measurements/footprint`. The two Firefox retention switches on that branch (`__bsqWakeEmpty`, `__bsqRaceFix`) are superseded by the fixes on `main` (STREAM-FF); a rewrite starts from `main`, not from the spike's `pool.ts`/`queries.ts`.
 
 ## wa-sqlite #371: `IDBMirrorVFS` commit-abort — OPENED 2026-10-03, waiting on rhashimoto
 

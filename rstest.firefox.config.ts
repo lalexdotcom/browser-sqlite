@@ -22,8 +22,9 @@ const onUnmet = onUnmetFromEnv(process.env.BSQ_TEST_NEEDS);
  *
  * `tests/browser/*.test.ts` is the shared suite, run by both engines; anything
  * under `tests/browser/firefox/` asserts behaviour that is Firefox's alone —
- * today, handle starvation, which cannot happen where `readwrite-unsafe` gives
- * each connection its own OPFS access handle.
+ * handle starvation, which cannot happen where `readwrite-unsafe` gives each
+ * connection its own OPFS access handle, and streamed chunks held by a
+ * `Promise.race`, which V8 does not retain.
  */
 export default defineConfig({
   extends: withRslibConfig(),

@@ -13,6 +13,7 @@ import {
   chunk as chunkWorker,
   firstWorker,
   makeAbortRace,
+  raceAbort,
   readWorker,
   streamRows,
   writeWorker,
@@ -744,11 +745,10 @@ export const createTransaction =
               return;
             }
             st.own?.throwIfAborted();
-            const { aborted, teardown } = makeAbortRace(st.own);
             try {
               while (true) {
-                const next = aborted
-                  ? await Promise.race([source.next(), aborted])
+                const next = st.own
+                  ? await raceAbort(st.own, source.next())
                   : await source.next();
                 if (next.done) return;
                 watchIdle();
@@ -765,7 +765,6 @@ export const createTransaction =
               }
               throw e;
             } finally {
-              teardown();
               // What `yield*` did for the other branch: the consumer's break or
               // return() reaches the query. Not for an abandoned write, which
               // drainToEnd now owns.

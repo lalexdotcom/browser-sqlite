@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-10-06.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-10-07.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one.
 
 **No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
@@ -309,7 +309,7 @@ failures established that no reading would have.
 
 ## Known live exposures
 
-- **Every published version holds a read's whole result on Firefox (found 2026-10-07).** `stream()`, `chunk()` and `tx.stream()` keep every chunk alive — until the worker dies for the pool's chunk wait, for the query's duration with a `signal`/`timeout` and in every transaction: ~2.1 GB for a 500 MiB read, measured in a Firefox launched without Playwright. Chromium is not affected. Both fixes are measured, not applied; the user will take them in a fresh session — `mem:follow-ups`, STREAM-FF in `mem:measurements/footprint`.
+- **Every published version up to `1.0.0-rc.7` holds memory on Firefox that the next release frees (fixed on `main` 2026-10-07, unreleased).** `stream()`, `chunk()` and `tx.stream()` keep every chunk until the client closes (~2 GB for a 500 MiB read), and every query of any kind keeps ~0.9 KB for its worker's life (~180 MB per 200 000 queries on one worker); measured in a Firefox launched without Playwright, Chromium not affected. Both are `### Fixed` in `## [Unreleased]`; numbers in STREAM-FF, `mem:measurements/footprint`. Nothing to do but release.
 
 - **`1.0.0-rc.4` is published under `latest` with a silent data-loss defect, and that is a
   decision, not an oversight (user, 2026-09-04).** `stream()` and `chunk()` drop rows for
