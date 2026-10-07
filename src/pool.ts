@@ -322,8 +322,10 @@ export const createPoolWorker = (deps: {
   // `deferredChunk`, so the callId check below also guards it.
   let debugQuery: QueryDebugHandle | undefined;
 
-  // Deferred promise for streaming query results one chunk at a time
-  let deferredChunk: PromiseWithResolvers<unknown[] | number> | undefined;
+  // Wakes the read loop when a message arrives. Resolved without a value: the
+  // rows travel through `inbox`, and Firefox keeps whatever this resolves with
+  // alive through the loop's race against the worker-lifetime `deathDeferred`.
+  let deferredChunk: PromiseWithResolvers<void> | undefined;
 
   /**
    * Everything the worker has delivered and the generator has not yielded yet.
@@ -573,8 +575,8 @@ export const createPoolWorker = (deps: {
           // Queue first, then wake. The resolution may reach nobody — that is
           // the whole defect the inbox exists for — but the chunk is kept.
           inbox.push(data.data);
-          deferredChunk.resolve(data.data);
-          deferredChunk = Promise.withResolvers<unknown[] | number>();
+          deferredChunk.resolve();
+          deferredChunk = Promise.withResolvers<void>();
         }
         break;
       }
@@ -588,7 +590,7 @@ export const createPoolWorker = (deps: {
           // queues behind whatever chunks are still waiting — a `done` that
           // jumped the queue would truncate them.
           inbox.push(affected);
-          deferredChunk.resolve(affected);
+          deferredChunk.resolve();
           deferredChunk = undefined;
           // The guard's own condition has just gone: announce it here rather
           // than at `idle`, which a parked consumer may never reach.
@@ -711,7 +713,7 @@ export const createPoolWorker = (deps: {
       // A death is terminal for this worker, so its failure outlives the query
       // that observed it; a transport failure belongs to one query only.
       if (!dead) failure = undefined;
-      deferredChunk = Promise.withResolvers<unknown[] | number>();
+      deferredChunk = Promise.withResolvers<void>();
       lost = Promise.withResolvers<never>();
       lost.promise.catch((error) => {
         failure ??= error;
@@ -747,9 +749,9 @@ export const createPoolWorker = (deps: {
       // drop whatever was still queued behind it.
       while (deferredChunk || inbox.length > 0) {
         if (inbox.length === 0) {
-          // Nothing queued: wait to be woken. The resolved VALUE is ignored —
-          // it is read from the inbox on the next turn, because a wake and a
-          // delivery are no longer the same event.
+          // Nothing queued: wait to be woken. The chunk is read from the inbox
+          // on the next turn, because a wake and a delivery are no longer the
+          // same event.
           const waiting = deferredChunk;
           if (!waiting) break;
           const outcome = await Promise.race([
