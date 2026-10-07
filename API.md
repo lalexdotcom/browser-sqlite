@@ -303,7 +303,7 @@ const written = await rows.close(); // rows written, in total
 | `signal` | `AbortSignal` | — | Aborts the load between batches. `close()` rejects with `signal.reason`.<br>See [Interrupting a call](#interrupting-a-call). |
 | `timeout` | `number` (ms) | — | Milliseconds before the load is aborted. `close()` rejects with `OPERATION_TIMEOUT`.<br>See [Interrupting a call](#interrupting-a-call). |
 | `queueSize` | `number` | 2 batches | Rows queued for writing above which `enqueue()` defers. A batch is `floor(32766 / columns)` rows. |
-| `types` | `{ [column]: 'JSONB' }` | — | Columns stored as JSONB. [More info](#how-values-are-stored) |
+| `types` | `{ [column]: 'JSONB' }` | — | Columns stored as JSONB. [More info](#how-params-are-bound) |
 
 **Single-use.**<br>`enqueue()` and `close()` throw once closed. A batch is flushed whenever the next row would cross SQLite's variable limit; `close()` flushes what is left and resolves with the total.
 
@@ -313,25 +313,7 @@ const written = await rows.close(); // rows written, in total
 
 **Await `enqueue()` to be slowed to the speed of the database.**<br>It resolves immediately while fewer than `queueSize` rows are queued for writing, and only defers beyond that — so a producer that awaits every row never holds more than that many unwritten rows. Ignoring the returned promise is legal and loads exactly as before: the bound is an offer, not a guarantee, and only you can take it. `queueSize` counts rows, not bytes: if your columns carry blobs, set it yourself.
 
-#### How values are stored
-
-| Value | Column | `JSONB` column |
-|---|---|---|
-| string | as given | JSON string |
-| number, bigint, `null` | as given | as given |
-| boolean | `1` / `0` | `true` / `false` |
-| `Uint8Array` | BLOB | read as JSONB already encoded |
-| `Date` | `YYYY-MM-DD HH:MM:SS.SSS`, UTC | JSON string, `"YYYY-MM-DDTHH:MM:SS.SSSZ"` |
-| any other object, arrays included | `JSON.stringify` text | `JSON.stringify` |
-
-**Objects follow `JSON.stringify`'s rules, at every depth.**<br>A `Map` or a `Set` gives `{}`, a class instance its own properties or its `toJSON()`, and a nested `Date` its ISO string. A value it refuses — a nested `bigint`, a cycle — makes `enqueue()` throw, and that row is not queued.
-
-**An array is stored as JSON.**<br>Pass a `Uint8Array` to store bytes.
-
-**A `Date` is stored in SQLite's own format, so it compares as text with SQLite's dates.**<br>`datetime('now', 'subsec')` gives the same shape. `CURRENT_TIMESTAMP` has no milliseconds: `'2026-10-06 12:34:56.000'` sorts after `'2026-10-06 12:34:56'`, the same instant.
-
-**A `JSONB` column stores every value as JSON.**<br>Declare it with `types: { doc: 'JSONB' }`; each value is stored through `jsonb()` as JSON, a string as a JSON string. A `Uint8Array` is taken as JSONB already encoded, and one that is not valid JSONB fails its batch. A plain `SELECT` returns the column as bytes (a `Uint8Array`); `json(col)` returns it as JSON text.
-
+Values are converted as for every query: [How params are bound](#how-params-are-bound).
 
 ## *client*.output
 
@@ -354,7 +336,7 @@ const written = await out.close();
 | `timeout` | `number` (ms) | — | Milliseconds before the load is aborted. `close()` rejects with `OPERATION_TIMEOUT`; the target is untouched.<br>See [Interrupting a call](#interrupting-a-call). |
 | `queueSize` | `number` | 2 batches | Rows queued for writing above which `enqueue()` defers. A batch is `floor(32766 / columns)` rows. |
 
-**Values are stored as in [`bulkWrite()`](#how-values-are-stored).**<br>A column whose type is `JSONB` is a JSONB column; no option is needed.
+**Values are stored as in [`bulkWrite()`](#how-params-are-bound).**<br>A column whose type is `JSONB` is a JSONB column; no option is needed.
 
 **The target is replaced atomically, or not at all.**<br>Rows land in a staging table and the swap happens at `close()`, so a reader querying mid-load sees the old data, never a half-filled table — and a target that did not exist appears only at `close()`. An abort is observationally a no-op: the staging table is dropped, nothing else is touched, and whatever was in the target before is still there, whole.
 
@@ -557,6 +539,29 @@ Serving the page **cross-origin isolated** is the first. Either header set below
 
 The second is a build other than `sync`: `jspi` where the browser has it, otherwise `async`, which is slower wherever a query walks rows.
 
+## How params are bound
+
+Every method that takes `params` — and `bulkWrite()`'s rows — converts each value before it leaves the page. A query that wants JSONB writes `jsonb(?)` itself; `bulkWrite()` does it for the columns its `types` declares.
+
+| Value | Column | `JSONB` column |
+|---|---|---|
+| string | as given | JSON string |
+| number, bigint, `null` | as given | as given |
+| boolean | `1` / `0` | `true` / `false` |
+| `Uint8Array` | BLOB | read as JSONB already encoded |
+| `Date` | `YYYY-MM-DD HH:MM:SS.SSS`, UTC | JSON string, `"YYYY-MM-DDTHH:MM:SS.SSSZ"` |
+| any other object, arrays included | `JSON.stringify` text | `JSON.stringify` |
+
+**Objects follow `JSON.stringify`'s rules, at every depth.**<br>A `Map` or a `Set` gives `{}`, a class instance its own properties or its `toJSON()`, and a nested `Date` its ISO string.
+
+**A value no rule can bind is refused before anything is sent.**<br>A `Symbol`, a function, a `bigint` outside SQLite's 64-bit range, or a value `JSON.stringify` refuses — a nested `bigint`, a cycle — throws `INVALID_VALUE`, naming the param or the column. In `bulkWrite()` it is thrown by `enqueue()`, and that row alone is not written.
+
+**An array is stored as JSON.**<br>Pass a `Uint8Array` to store bytes.
+
+**A `Date` is stored in SQLite's own format, so it compares as text with SQLite's dates.**<br>`datetime('now', 'subsec')` gives the same shape. `CURRENT_TIMESTAMP` has no milliseconds: `'2026-10-06 12:34:56.000'` sorts after `'2026-10-06 12:34:56'`, the same instant.
+
+**A `JSONB` column stores every value as JSON.**<br>Declare it with `types: { doc: 'JSONB' }`; each value is stored through `jsonb()` as JSON, a string as a JSON string. A `Uint8Array` is taken as JSONB already encoded, and one that is not valid JSONB fails its batch. A plain `SELECT` returns the column as bytes (a `Uint8Array`); `json(col)` returns it as JSON text.
+
 ## Error handling
 
 Errors raised by this library, and every statement SQLite refuses, are instances of `SQLiteError`, exported from the package entry point.
@@ -573,6 +578,7 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 | `BUSY` | A transient conflict, worth retrying. Either SQLite reported a lock conflict — `SQLITE_BUSY` or `SQLITE_LOCKED`, with its result code on `sqliteCode` and, when SQLite reports one, its subtype on `sqliteExtendedCode` — or a database was being opened or deleted elsewhere at that moment. **A read that SQLite reported busy is retried once for you**; if it reaches you, the retry failed too. Writes are never retried, and neither is a `BUSY` without a `sqliteCode`. |
 | `INVALID_OPTION` | An option was refused at the call, before any worker ran: `vfs` missing or unknown, a `(vfs, build)` pair the VFS does not support, a `poolSize` above what the VFS allows, a `wasmUrl` that is not a URL, a database name too long once normalized, a database name that is empty once normalized, a `bulkWrite()` `types` naming a column it does not write or a type other than `'JSONB'`, or `inspectDatabase` on a memory VFS. The message names the option and what it accepts. |
 | `INVALID_PRAGMA` | A `pragmas` entry could not be rendered — the name must be a bare word; the value must be an integer, a bare word such as `WAL`, or a quoted SQL literal — or the VFS refuses it, in `pragmas` or in a statement that sets it ([VFS.md](VFS.md)). |
+| `INVALID_VALUE` | A param, or a cell given to `bulkWrite()`, has no SQLite value: a `Symbol`, a function, a `bigint` outside the 64-bit range, or a value `JSON.stringify` refuses. Raised before any worker runs; the message names the param or the column, and `cause` carries the conversion's own error. |
 | `INVALID_IDENTIFIER` | A name or type handed to `output()`, `bulkWrite()` or `tx.savepoint()` cannot be used as written: an empty name, a name containing a NUL, a column type that is not a word with optional numeric arguments, or a generated expression that is not parenthesised and free of `;`. For `tx.savepoint()`: a name starting with `__bsq_`, or one already open. |
 | `BULK_WRITE_FAILED` | A batch failed inside `bulkWrite().close()` or `output().close()`. The error is a `SQLiteBulkWriteError`, carrying `rowsWritten` and `rowsNotWritten`. |
 | `DATABASE_IN_USE` | A client still holds the database, in this tab or another. Retrying will not help: close every client on it first. Raised by `deleteDatabase`, and by any method on a second client where the VFS supports one connection at a time. |
