@@ -216,4 +216,16 @@ What stays on `OPFSWriteAheadVFS` under Chromium is its worker's (BULK-GC). Chro
 
 **Large params on ordinary queries — 200 writes of a 1 MiB text in one transaction, `OPFSAdaptiveVFS`, n=3**, peak MB / s: Chromium clone 101-114 / 0.78-0.84, fresh buffer (B0) 29-40 / 0.62-0.66, **recycled buffer 16 / 0.64**; Firefox clone 129-132 / 9.4-10, B0 50-77 / 9.3-10, **recycled 25 / 9.2**. Decomposed: the recycled page buffer (the worker hands the transferred buffer back in `done`) gives the whole gain, the persistent wasm scratch none (Chromium 37, Firefox 76 alone); exact sizing gains nothing in memory. So the gain is fewer page allocations per query, not the worst-case size.
 
+**Re-measured on the implementation (`feat/binary-protocol` at `b41e924` against `main` at `f796fb8`), 2026-10-07 evening**, same direct harness, each build on its defaults (no switches), n=3, the two builds alternating within each repetition, 0 errors in 84 runs. Another session's Firefox was running on the machine throughout, so absolute times carry its load; the comparison does not, being interleaved. Page PSS peak MB / time, median (range), `main` → branch:
+
+| case | Chromium | Firefox |
+|---|---|---|
+| 500 MiB `OPFSAdaptiveVFS` | 496 → **269**, 3.48 → 2.61 s | 267 → **146**, 35 → 37 s |
+| 500 MiB `OPFSCoopSyncVFS` | 531 → **286**, 3.02 → 2.43 s | 281 → **148**, 36 → 35 s |
+| 500 MiB `OPFSWriteAheadVFS` | 759 → **499**, 4.98 → 4.06 s | 254 → **148**, 59 (58-63) → 63 (62-66) s |
+| 4 000 000 rows of two ints | 132 → **34**, 2.37 → 2.22 s | 167 → **30**, 8.24 → 8.10 s |
+| 200 writes of a 1 MiB text | 57 (36-114) → **25**, 0.80 → 0.63 s | 130 → **64** (55-68), ~10 s both |
+
+**Per query, both builds in ONE page, alternating at every query** (`page-ab.html`: the two `dist` imported side by side, one client each, 8 rounds × 2 runs), ratio branch / `main`: Chromium 1.00-1.03 (no params 1.00-1.01, point read 1.02-1.03, small write 1.01-1.03, 10 KB text 1.00-1.03; per-round 0.89-1.22), Firefox 1.00-1.03 (per-round 0.82-1.20), `MemoryVFS` and `OPFSAdaptiveVFS`. **A first comparison of whole runs read +11 to +26 % on Chromium small queries and was noise**: its ranges overlapped wholly, and alternating within the page removed it — compare per-query costs inside one page or not at all.
+
 **Seen on `main` on the way**: a value `postMessage` cannot clone (a `Symbol`) is not refused by `bulkWrite`'s `enqueue()` — `toBindable` passes it through and the whole batch fails at `postMessage`, 5 460 rows lost in the check (12 columns, two batches). The binary path with a row mark refuses only that row.
