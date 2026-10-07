@@ -839,7 +839,9 @@ describe('bulkWrite values and types', () => {
     const { calls, target } = capture();
     const bulk = target.bulkWrite('t', ['a']);
     bulk.enqueue({ a: 1 });
-    expect(() => bulk.enqueue({ a: { n: 1n } })).toThrow(TypeError);
+    expect(() => bulk.enqueue({ a: { n: 1n } })).toThrow(
+      expect.objectContaining({ code: 'INVALID_VALUE' }),
+    );
     bulk.enqueue({ a: 2 });
     expect(await bulk.close()).toBe(2);
     expect(calls[0].params).toEqual([1, 2]);

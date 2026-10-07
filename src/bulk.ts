@@ -287,7 +287,9 @@ export const createBulk = (shared: {
           signal?.throwIfAborted();
           if (failure) throw fail();
           // Converted before it is buffered: a value that cannot be leaves the buffer as it was.
-          buffer.push(keys.map((k, i) => toBindable(data[k], jsonb[i])));
+          buffer.push(
+            keys.map((k, i) => toBindable(data[k], jsonb[i], `column "${k}"`)),
+          );
           if (buffer.length >= maxBufferSize) flush();
           if (queuedRows < queueSize) return ADMITTED;
           // One deferred for every caller while the queue is full: enqueue() is
