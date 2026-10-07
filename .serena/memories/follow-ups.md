@@ -20,7 +20,7 @@ been work on nothing.
 
 Prototyped on branch `spike/bulk-binary` (commit `6e79a17`, worktree `.work/spike-bulk-binary`), every behaviour behind a `globalThis` switch, not for merge: binary `bulkWrite` batches (`__bsqBulkMode`, BULK-BINARY: measured, worth it on both engines), any query's params encoded and transferred (`__bsqQueryMode`), result rows encoded in the worker (`__bsqResultMode`, RESULT-BINARY: to be re-measured directly on Firefox, its Firefox figures were taken under Playwright). Numbers in `mem:measurements/footprint`. The two Firefox retention switches on that branch (`__bsqWakeEmpty`, `__bsqRaceFix`) are superseded by the fixes on `main` (STREAM-FF); a rewrite starts from `main`, not from the spike's `pool.ts`/`queries.ts`.
 
-**Brainstorming started 2026-10-07 (user), scope page → worker first, entirely binary.** Agreed so far: the `query` message carries `sql`, an optional `pattern` and the params block, whose header gives the row count; the worker rebuilds `sql + pattern × rows` and stays generic (it does not know `bulkWrite`); `bulkWrite` keeps encoding at `enqueue()` and hands a pre-encoded block to an internal write; the `pattern` form stays internal for now (recommended, not yet answered). Measured the same day on a second throwaway branch, `spike/binary-protocol` (worktree `.work/spike-binary-protocol`, uncommitted): BINARY-PROTOCOL in `mem:measurements/footprint`. Worker → page waits for RESULT-BINARY re-measured direct on Firefox.
+**Brainstorming started 2026-10-07 (user), scope page → worker first, entirely binary.** Agreed so far: the `query` message carries `sql`, an optional `pattern` and the params block, whose header gives the row count; the worker rebuilds `sql + pattern × rows` and stays generic (it does not know `bulkWrite`); `bulkWrite` keeps encoding at `enqueue()` and hands a pre-encoded block to an internal write; the `pattern` form stays internal (user, 2026-10-07: only `bulkWrite` uses it; the message supports exposing it later). **Decided by the user the same day:** every parameterised method converts its params as `bulkWrite` does (`toBindable` without JSONB: objects and arrays → JSON text, `Date` → SQLite date text, `null`/`undefined` → `NULL`; a JSONB column is the query's own `jsonb(?)`) — arrays change from bytes to JSON, a breaking entry; a value no rule binds (`Symbol`, function) throws a new `INVALID_VALUE`, synchronously, before any round trip; no recycling of the params buffer (kept as an idea below). A future `` sql`…` `` tag only joins its strings with `?`. Measured the same day on a second throwaway branch, `spike/binary-protocol` (worktree `.work/spike-binary-protocol`, uncommitted): BINARY-PROTOCOL in `mem:measurements/footprint`. Worker → page waits for RESULT-BINARY re-measured direct on Firefox.
 
 ## wa-sqlite #371: `IDBMirrorVFS` commit-abort — OPENED 2026-10-03, waiting on rhashimoto
 
@@ -102,6 +102,10 @@ SharedWorker cannot open a connection on the four VFS that matter (`mem:state`).
 measured numbers are the whole case, and they do not justify adding a handshake to the open
 path — the path GATE-1 and three abort defects were paid for. Reviving it needs no new
 measurement, only that table.
+
+### Recycling the params buffer through `done` — an idea, kept out of the binary protocol (user, 2026-10-07)
+
+The worker hands the transferred params buffer back in `done`, the page reuses it for the next send. Measured (BINARY-PROTOCOL, `mem:measurements/footprint`): on 200 writes of a 1 MiB text it halves the peak again over the plain binary path (Chromium 29-40 → 16 MB, Firefox 50-77 → 25 MB), and gains nothing on small queries. Cost: each worker keeps its largest buffer for life (~3 MiB for a 1 MiB text, worst-case sizing), and `done` grows an optional field — so it can be added later without breaking the protocol. If taken up: cap the size kept per worker; the cap is unmeasured.
 
 ### A timed flush — out of rc.4 (user, 2026-08-27)
 
@@ -199,7 +203,7 @@ A release runs the same commit through the tests up to three times: the `pre-pus
 
 ## Template queries with JSON parameters — not designed (user, 2026-10-06)
 
-`query()`, `write()` and the other parameterised methods still bind an object as `NULL` and an array as bytes (wa-sqlite's `sqlite3.bind`); `feat/bulk-object-values` fixed it for `bulkWrite()`/`output()` only (spec 2026-10-06, D1). The user's direction: tagged templates, `` sql`SELECT … WHERE id = ${o}` `` serialising objects as JSON text, and a JSONB variant whose form is open — `` sql('jsonb')`…` `` or `` jsonb`…` `` (loses the "SQL" reading), `` jsonbSql`…` `` judged too verbose. The form is settled during that work.
+`query()`, `write()` and the other parameterised methods still bind an object as `NULL` and an array as bytes (wa-sqlite's `sqlite3.bind`); `feat/bulk-object-values` fixed it for `bulkWrite()`/`output()` only (spec 2026-10-06, D1). **The binary protocol work takes over the conversion (user, 2026-10-07)**: objects become JSON text there for every method, so a plain tag is only `strings.join('?')` with the values as params; what stays open here is the JSONB form of the tag. The user's direction: tagged templates, `` sql`SELECT … WHERE id = ${o}` `` serialising objects as JSON text, and a JSONB variant whose form is open — `` sql('jsonb')`…` `` or `` jsonb`…` `` (loses the "SQL" reading), `` jsonbSql`…` `` judged too verbose. The form is settled during that work.
 
 ## More `types` values for `bulkWrite()` — not designed (user, 2026-10-06)
 
