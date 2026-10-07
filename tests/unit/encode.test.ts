@@ -65,10 +65,18 @@ describe('encodeParams', () => {
     const big = 'x'.repeat(MiB + 10);
     const p = encodeParams(['a', big, 'b']);
     expect(decodeParams(p)).toEqual(['a', big, 'b']);
-    for (let k = 0; k < p.chunks.length; k++)
-      expect(p.used[k]).toBeLessThanOrEqual(
-        (p.chunks[k] as ArrayBuffer).byteLength,
-      );
+    for (let k = 0; k < p.chunks.length; k++) {
+      const used = p.used[k] as number;
+      expect(used).toBeGreaterThan(0);
+      expect(used).toBeLessThanOrEqual((p.chunks[k] as ArrayBuffer).byteLength);
+    }
+  });
+
+  it('does not allocate empty chunks for a single large value', () => {
+    const big = 'x'.repeat(MiB + 10);
+    const p = encodeParams([big]);
+    expect(p.chunks).toHaveLength(1);
+    expect(p.used[0]).toBeGreaterThan(0);
   });
 
   it('refuses to be sent twice', () => {
@@ -110,6 +118,19 @@ describe('ParamsWriter', () => {
     expect(p.count).toBe(4);
     expect(p.pattern).toBe('(?,?)');
     expect(decodeParams(p)).toEqual([1, 'a', 3, 'c']);
+  });
+
+  it('restores coherent state on rollback of lazy writer mark', () => {
+    const w = new ParamsWriter();
+    w.mark();
+    w.value('z'.repeat(MiB / 2));
+    w.rollback();
+    w.mark();
+    w.value(1);
+    w.endRow();
+    const p = w.finish();
+    expect(p.chunks).toHaveLength(1);
+    expect(decodeParams(p)).toEqual([1]);
   });
 });
 

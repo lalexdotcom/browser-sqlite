@@ -61,7 +61,7 @@ export class ParamsWriter {
   /** Room for `n` more bytes, in a new chunk if this one cannot hold them. */
   #room(n: number) {
     if (this.#buf && this.#off + n <= this.#buf.byteLength) return;
-    if (this.#buf) {
+    if (this.#buf && this.#off > 0) {
       this.#chunks.push(this.#buf);
       this.#used.push(this.#off);
     }
@@ -76,9 +76,9 @@ export class ParamsWriter {
   }
 
   rollback() {
+    this.#chunks.length = this.#markChunks;
+    this.#used.length = this.#markChunks;
     if (this.#buf !== this.#markBuf) {
-      this.#chunks.length = this.#markChunks;
-      this.#used.length = this.#markChunks;
       if (this.#markBuf) {
         this.#buf = this.#markBuf;
         this.#u8 = new Uint8Array(this.#buf);
