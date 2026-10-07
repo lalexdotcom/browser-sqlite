@@ -18,7 +18,7 @@ export const bindBlock = (
   stmt: number,
   block: ParamsBlock,
 ): number => {
-  const m = module as any;
+  const m = module;
   let total = 0;
   for (const n of block.used) total += n;
   const ptr: number = m._sqlite3_malloc(Math.max(1, total));
