@@ -336,12 +336,15 @@ describe('bulkWrite() refusals', () => {
     await db.write('CREATE TABLE r (a, b)');
     const per = Math.floor(32766 / 2);
     const bulk = db.bulkWrite('r', ['a', 'b']);
-    for (let i = 0; i < per * 2; i++) bulk.enqueue({ a: i, b: `x${i}` });
+    // Two full batches and a partial one: the partial batch has another row
+    // count, so reusing the full batch's statement would write extra NULL rows.
+    const total = per * 2 + 7;
+    for (let i = 0; i < total; i++) bulk.enqueue({ a: i, b: `x${i}` });
     await bulk.close();
     const [row] = await db.read<{ n: number; bad: number }>(
       "SELECT count(*) AS n, sum(b <> 'x' || a) AS bad FROM r",
     );
-    expect(row).toEqual({ n: per * 2, bad: 0 });
+    expect(row).toEqual({ n: total, bad: 0 });
     await db.close();
   });
 });
