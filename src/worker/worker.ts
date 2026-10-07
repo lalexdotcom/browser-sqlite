@@ -896,7 +896,26 @@ const open = (file: string, options: OpenOptions) => {
             }
           }
 
-          for await (const chunk of query(callId, sql, params, options)) {
+          // A patterned query is cached under (sql, pattern, rows): a cached
+          // statement never builds its text, which is up to ~100 KB.
+          const { pattern } = data;
+          const rows = params?.rows ?? 0;
+          let key = sql;
+          let textOf: (() => string) | undefined;
+          if (pattern !== undefined) {
+            key = `${sql}\u0001${pattern}\u0001${rows}`;
+            let text: string | undefined;
+            textOf = () =>
+              (text ??= sql + new Array(rows).fill(pattern).join(','));
+          }
+
+          for await (const chunk of query(
+            callId,
+            key,
+            params,
+            options,
+            textOf,
+          )) {
             if (typeof chunk === 'number') {
               affected = chunk;
               break;

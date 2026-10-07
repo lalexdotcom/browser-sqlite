@@ -1,24 +1,24 @@
 import { describe, expect, it } from '@rstest/core';
 import { createBulk } from '../../src/bulk';
-import { EncodedParams } from '../../src/encode';
 import { type Locks, noOpLocks } from '../../src/locks';
 import { createLogger } from '../../src/logger';
 import { SQLiteBulkWriteError } from '../../src/types/errors';
+import { expandCall } from './helpers/params';
 
 const noopLogger = createLogger('test', false);
 
 /** Records every statement the unit under test emits. */
 const recorder = (locks: Locks = noOpLocks) => {
   const sql: string[] = [];
-  const write = async (statement: string) => {
-    sql.push(statement);
+  const write = async (statement: string, params?: unknown) => {
+    sql.push(expandCall(statement, params).sql);
     return { result: [] as any[], affected: 0 };
   };
   const read = async () => [] as any[];
   const transaction = async <T>(callback: (db: any) => Promise<T>) =>
     callback({
-      write: async (s: string) => {
-        sql.push(s);
+      write: async (s: string, params?: unknown) => {
+        sql.push(expandCall(s, params).sql);
         return { result: [], affected: 0 };
       },
       read: async () => [],
@@ -74,17 +74,17 @@ describe('bulkWrite quoting (B4)', () => {
 const failingRecorder = (failAt: number) => {
   const sql: string[] = [];
   let calls = 0;
-  const write = async (statement: string) => {
+  const write = async (statement: string, params?: unknown) => {
     const call = calls++;
-    sql.push(statement);
+    sql.push(expandCall(statement, params).sql);
     if (call === failAt) throw new Error('UNIQUE constraint failed');
     return { result: [] as any[], affected: 1 };
   };
   const read = async () => [] as any[];
   const transaction = async <T>(callback: (db: any) => Promise<T>) =>
     callback({
-      write: async (s: string) => {
-        sql.push(s);
+      write: async (s: string, params?: unknown) => {
+        sql.push(expandCall(s, params).sql);
         return { result: [], affected: 0 };
       },
       read: async () => [],
@@ -262,16 +262,16 @@ describe('the staging sweep', () => {
 /** Records statements from both plain writes and the swap transaction. */
 const outputRecorder = () => {
   const sql: string[] = [];
-  const write = async (statement: string) => {
-    sql.push(statement);
+  const write = async (statement: string, params?: unknown) => {
+    sql.push(expandCall(statement, params).sql);
     return { result: [] as any[], affected: 1 };
   };
   const read = async () => [] as any[];
   const transaction = async <T>(callback: (db: any) => Promise<T>) => {
     sql.push('BEGIN');
     const result = await callback({
-      write: async (statement: string) => {
-        sql.push(statement);
+      write: async (statement: string, params?: unknown) => {
+        sql.push(expandCall(statement, params).sql);
         return { result: [], affected: 0 };
       },
       read: async (statement: string) => {
@@ -353,8 +353,8 @@ describe('output() staging and swap (B5)', () => {
   it('drops the staging table and leaves the target alone when a batch fails', async () => {
     const sql: string[] = [];
     let calls = 0;
-    const write = async (statement: string) => {
-      sql.push(statement);
+    const write = async (statement: string, params?: unknown) => {
+      sql.push(expandCall(statement, params).sql);
       if (statement.startsWith('INSERT')) throw new Error('constraint');
       calls++;
       return { result: [] as any[], affected: 0 };
@@ -462,8 +462,8 @@ describe('bulkWrite abort (ABORT-1)', () => {
 
   it('leaves the target untouched and drops the staging table when output is aborted', async () => {
     const sql: string[] = [];
-    const write = async (statement: string) => {
-      sql.push(statement);
+    const write = async (statement: string, params?: unknown) => {
+      sql.push(expandCall(statement, params).sql);
       return { result: [] as any[], affected: 0 };
     };
     const read = async () => [] as any[];
@@ -560,8 +560,8 @@ describe('bulkWrite abort with a stalled batch (ABORT-1 regression)', () => {
 const gatedRecorder = () => {
   const sql: string[] = [];
   const gates: (() => void)[] = [];
-  const write = (statement: string) => {
-    sql.push(statement);
+  const write = (statement: string, params?: unknown) => {
+    sql.push(expandCall(statement, params).sql);
     return new Promise<{ result: any[]; affected: number }>((resolve) => {
       gates.push(() => resolve({ result: [], affected: 1 }));
     });
@@ -771,11 +771,10 @@ describe('bulkWrite back-pressure', () => {
 describe('bulkWrite values and types', () => {
   const capture = () => {
     const calls: { sql: string; params: unknown[] | undefined }[] = [];
-    const write = async (sql: string, params?: unknown[] | EncodedParams) => {
-      if (params instanceof EncodedParams)
-        throw new Error('bulkWrite sends a flat array here');
-      calls.push({ sql, params });
-      return { result: [] as unknown[], affected: params?.length ?? 0 };
+    const write = async (sql: string, params?: unknown) => {
+      const call = expandCall(sql, params);
+      calls.push(call);
+      return { result: [] as unknown[], affected: call.params?.length ?? 0 };
     };
     const read = async () => [] as unknown[];
     const transaction = async <T>(cb: (db: any) => Promise<T>) =>
