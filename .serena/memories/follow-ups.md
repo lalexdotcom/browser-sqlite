@@ -18,7 +18,7 @@ been work on nothing.
 
 ## Firefox keeps every streamed chunk until the worker dies — found 2026-10-06, not fixed
 
-`src/pool.ts`'s chunk wait races `deferredChunk` against the worker-lifetime `deathDeferred`, and the `chunk` handler resolves `deferredChunk` with the rows its loop never reads: on Firefox a 500 MiB `stream()` holds +2.3 GB until `close()`. Resolving without a value removed the retention in a spike (STREAM-FF, `mem:measurements/footprint`). The `signal` races in `src/queries.ts` (`aborted` against `iterator.next()`) and `src/transaction.ts:751` have the same shape and are unmeasured. The user has not decided yet.
+`src/pool.ts`'s chunk wait races `deferredChunk` against the worker-lifetime `deathDeferred`, and the `chunk` handler resolves `deferredChunk` with the rows its loop never reads: on Firefox a 500 MiB `stream()` holds +2.3 GB until `close()`. Resolving without a value removed the retention in a spike (STREAM-FF, `mem:measurements/footprint`). **The `signal` races retain too (measured 2026-10-07)**: `src/queries.ts:164`/`:269` and `src/transaction.ts:751` hold the whole result for the query's duration with a `signal` or a `timeout`, and in every `tx.stream()`; a per-wait listener fixes `stream()`, improves `tx.stream()` only partly. Still open: `chunk()` climbs to ~2 GB on Firefox whatever the signal, cause unknown. The user has not decided yet.
 
 ## wa-sqlite #371: `IDBMirrorVFS` commit-abort — OPENED 2026-10-03, waiting on rhashimoto
 
