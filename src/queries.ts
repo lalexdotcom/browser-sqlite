@@ -14,8 +14,7 @@ import type { PoolWorker } from './pool';
  * (`aborted?.catch`) suppresses the unhandled-rejection when the query ends
  * normally and nobody is racing the promise any more.
  *
- * This is the only place in the module that reads an AbortSignal; both
- * `chunk()` and `writeWorker()` delegate here.
+ * For a single wait. A loop that waits once per chunk uses `raceAbort`.
  */
 export const makeAbortRace = (
   signal: AbortSignal | undefined,
@@ -34,6 +33,38 @@ export const makeAbortRace = (
       if (onAbort) signal.removeEventListener('abort', onAbort);
     },
   };
+};
+
+/**
+ * Settles as `pending` does, unless `signal` fires first. One listener per
+ * wait, removed when the wait settles: Firefox keeps a race's result alive
+ * until every input settles, so racing each chunk against a query-long
+ * `makeAbortRace` promise held the whole result for the query. An abort
+ * already fired wins even when `pending` has settled too.
+ */
+export const raceAbort = <T>(
+  signal: AbortSignal,
+  pending: Promise<T>,
+): Promise<T> => {
+  if (signal.aborted) {
+    // Nothing awaits `pending` any more; its rejection must not go unhandled.
+    pending.catch(() => {});
+    return Promise.reject(signal.reason);
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    pending.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
 };
 
 /**
@@ -103,8 +134,8 @@ export const chunk = <
   };
 
   /**
-   * D7: an abort must reclaim, not merely reject. `makeAbortRace` inside the
-   * generator rejects a promise that an abandoned consumer is no longer
+   * D7: an abort must reclaim, not merely reject. `raceAbort` inside the
+   * generator rejects a wait that an abandoned consumer is no longer
    * awaiting, and that rejection is swallowed — so without this listener a
    * `timeout` buys an abandoned generator nothing at all.
    *
@@ -150,18 +181,16 @@ const drain = async function* <T extends Record<string, unknown>>(
     throw signal.reason;
   }
 
-  const { aborted, teardown } = makeAbortRace(signal);
   try {
     while (true) {
       // Racing the pending chunk, not testing a flag after it: an ORDER BY
       // sorts entirely inside the first step(), so waiting for a chunk before
       // noticing the abort makes AbortSignal.timeout(n) return minutes late.
-      // `aborted` first: D7's reclaim() may already have completed `iterator`
-      // by the time this races again, so with both promises pre-settled,
-      // array order breaks the tie. Putting `aborted` first keeps the abort
-      // observed even though `iterator.next()` also resolves immediately.
-      const next = aborted
-        ? await Promise.race([aborted, iterator.next()])
+      // D7's reclaim() may already have completed `iterator` by the time this
+      // waits again, so `iterator.next()` resolves immediately; `raceAbort`
+      // tests the signal first, which keeps the abort observed.
+      const next = signal
+        ? await raceAbort(signal, iterator.next())
         : await iterator.next();
       if (next.done) break;
       // FLK-1: chunks already queued are not delivered once the signal fired.
@@ -174,7 +203,6 @@ const drain = async function* <T extends Record<string, unknown>>(
     held.state.done = true;
     held.detach();
     registry.forget(token);
-    teardown();
     // Start the stop-and-drain, never await it. The caller must not wait for a
     // sort that may still have minutes to run; the lease returns through
     // quiesce() instead. interrupt() first, so the queued return() is not
@@ -256,7 +284,6 @@ export const writeWorker = async <
   // B9: addEventListener never fires for a signal that is already aborted.
   if (signal?.aborted) throw signal.reason;
 
-  const { aborted, teardown } = makeAbortRace(signal);
   const iterator = worker.query<T>(sql, params);
   const result: T[] = [];
   let affected = 0;
@@ -265,8 +292,8 @@ export const writeWorker = async <
       // Racing the pending chunk, not testing a flag after it: an ORDER BY
       // sorts entirely inside the first step(), so waiting for a chunk before
       // noticing the abort makes AbortSignal.timeout(n) return minutes late.
-      const next = aborted
-        ? await Promise.race([iterator.next(), aborted])
+      const next = signal
+        ? await raceAbort(signal, iterator.next())
         : await iterator.next();
       if (next.done) break;
       // write() is the only caller that needs the affected count, which is why
@@ -275,7 +302,6 @@ export const writeWorker = async <
       else result.push(...next.value);
     }
   } finally {
-    teardown();
     // Start the stop-and-drain, never await it. Same pattern as chunk(),
     // transport named for the same reason.
     worker.interrupt(iterator);
