@@ -49,7 +49,7 @@ An array interpolated directly is one JSON text, as `[1, 2]` is as a param today
 | `boolean` | `true` / `false` | `1` / `0` |
 | `null`, `undefined` | `null` | `NULL` (matches nothing, as in `IN (NULL)`) |
 | `Date` | JSON string of `toSQLiteDate(d)` | text, SQLite's date format, as a `Date` param |
-| non-finite `number`, out-of-range `bigint`, binary, any other object | — | `INVALID_VALUE`, naming the element's index |
+| non-finite `number`, out-of-range `bigint`, invalid `Date`, binary, any other object (a `SQLQuery` included) | — | `INVALID_VALUE`, naming the element's index |
 
 `toSQLiteDate` and the 64-bit bounds are the ones `src/values.ts` already holds, exported for `src/sql.ts`. The fragment's single param is that JSON text, a string, so `prepareParams` binds it as text.
 
@@ -96,7 +96,7 @@ No new code. A value `toBindable` refuses throws as today, from the method, nami
 ## 6. Testing
 
 - **Unit (`tests/unit/sql.test.ts`, Node):** text and params for each row of § 2; nesting both ways (`sql` in `sql.jsonb`, `sql.jsonb` in `sql`) and an empty fragment; a `{ sql, params }` plain object stays a value; `sql.raw` inlined with no params and refusing a non-string (a template included); `sql.id` with one and several parts, a `"` doubled, a dotted name kept whole, and each refused part; `sql.list`'s JSON text for each row of its table and each refused element; `takesJson` against `convert` for each kind of value in spec 2026-10-06 § 2; `queryArgs` for both forms and the refused one.
-- **Browser (shared suite, both engines):** each of the five methods with a `SQLQuery`, on the client and inside a transaction; a `sql.jsonb` insert reads back as JSONB (`typeof(col) = 'blob'`, `json(col)` equal to the object's JSON); an object through plain `sql` reads back as its JSON text; `sql.list` matching integers, a `bigint` above 2⁵³, strings, a `Date` against a column written by `datetime()`, and an empty list matching nothing.
+- **Browser (shared suite, both engines):** each of the five methods with a `SQLQuery`, on the client and inside a transaction; a `sql.jsonb` insert reads back as JSONB (`typeof(col) = 'blob'`, `json(col)` equal to the object's JSON); an object through plain `sql` reads back as its JSON text; `sql.list` matching integers, a `bigint` above 2⁵³, strings, a `Date` against a column written by `strftime('%Y-%m-%d %H:%M:%f', …)` (`datetime()` drops the milliseconds, so it would not compare equal), and an empty list matching nothing.
 - **Exports:** `tests/unit/exports.test.ts` as § 3.
 
 ## 7. Documentation and changelog
