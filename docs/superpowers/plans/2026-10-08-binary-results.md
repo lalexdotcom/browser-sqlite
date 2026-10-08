@@ -924,3 +924,228 @@ Co-Authored-By: <your model line>"
 - [ ] RESULT-BINARY re-run with the direct harness, `main` against the branch: the per-query micro (both builds in one page, alternating) and the large-result cases, both engines; numbers into `mem:measurements/footprint`.
 - [ ] Memories: `mem:history/2026-10` row, `mem:follow-ups` binary-protocol entry closed, `mem:state` baseline re-measured.
 - [ ] Final whole-branch review (capable tier), then `git merge --no-ff` into `main` on the user's go.
+
+---
+
+### Task 6: Short texts decoded in JS (spec D6, amendment of 2026-10-08)
+
+Added after the delivery measurement found that, on Chromium, strings `TextDecoder` returns on the page hold ~150-190 bytes more each than cloned ones. Runs before Task 5's remaining steps resume.
+
+**Files:**
+- Modify: `src/binary.ts` (`decodeRows`'s text branch, plus a short-text decoder above it)
+- Test: `tests/unit/binary.test.ts`, `tests/browser/results.test.ts`
+
+**Interfaces:**
+- Consumes: `decodeRows` (Task 2), `rowsBlock` (Task 2's test helper, which accepts `{ text: Uint8Array }`).
+- Produces: no new export; `decodeRows`'s output is unchanged by definition (parity with `TextDecoder('utf-8', { ignoreBOM: true })`).
+
+- [ ] **Step 1: Write the failing-or-guarding unit tests**
+
+Append to `tests/unit/binary.test.ts`:
+
+```ts
+describe('decodeRows short texts', () => {
+  const reference = new TextDecoder('utf-8', { ignoreBOM: true });
+  const decodeText = (bytes: Uint8Array) =>
+    decodeRows(rowsBlock(['v'], [{ text: bytes }]))[0]?.v;
+  const utf8 = new TextEncoder();
+
+  it('decodes valid UTF-8 on both sides of 32 bytes as TextDecoder does', () => {
+    const texts: string[] = [];
+    for (let n = 0; n <= 40; n++) texts.push('a'.repeat(n));
+    for (let n = 1; n <= 20; n++) texts.push('é'.repeat(n));
+    for (let n = 1; n <= 12; n++) texts.push('€'.repeat(n));
+    for (let n = 1; n <= 10; n++) texts.push('😀'.repeat(n));
+    texts.push('aé€😀', '\0', 'a\0b', '﻿x', '﻿', '￿', '\u{10ffff}', '\u0080', '߿', 'ࠀ');
+    for (const t of texts) {
+      const bytes = utf8.encode(t);
+      expect(decodeText(bytes)).toBe(reference.decode(bytes));
+      expect(decodeText(bytes)).toBe(t);
+    }
+  });
+
+  it('decodes invalid UTF-8 exactly as TextDecoder does, short or long', () => {
+    const invalid = [
+      [0xff],
+      [0x80],
+      [0xc0, 0xaf],
+      [0xc1, 0xbf],
+      [0xc3],
+      [0xc3, 0x41],
+      [0x41, 0xc3],
+      [0xe0, 0x80, 0x8f],
+      [0xe2, 0x82],
+      [0xed, 0xa0, 0x80],
+      [0xed, 0xbf, 0xbf],
+      [0xf0],
+      [0xf0, 0x8f, 0xbf, 0xbf],
+      [0xf4, 0x90, 0x80, 0x80],
+      [0xf5, 0x80, 0x80, 0x80],
+      [0xf0, 0x9f, 0x98],
+    ];
+    for (const seq of invalid) {
+      for (const pad of [0, 28, 40]) {
+        const bytes = Uint8Array.from([...Array(pad).fill(0x61), ...seq]);
+        expect(decodeText(bytes)).toBe(reference.decode(bytes));
+        const after = Uint8Array.from([...seq, ...Array(pad).fill(0x62)]);
+        expect(decodeText(after)).toBe(reference.decode(after));
+      }
+    }
+  });
+
+  it('decodes texts of exactly 31, 32 and 33 bytes', () => {
+    for (const n of [31, 32, 33]) {
+      const ascii = utf8.encode('x'.repeat(n));
+      expect(decodeText(ascii)).toBe('x'.repeat(n));
+      // A four-byte character straddling the threshold.
+      const mixed = utf8.encode(`${'y'.repeat(n - 4)}😀`);
+      expect(decodeText(mixed)).toBe(reference.decode(mixed));
+    }
+  });
+});
+```
+
+Run: `pnpm exec rstest --project unit run tests/unit/binary.test.ts`
+Expected: PASS on the current code (it uses `TextDecoder` for everything, which is the reference) — these tests guard the change, they do not drive it. Do not commit yet.
+
+- [ ] **Step 2: Implement the short-text decoder**
+
+In `src/binary.ts`, just above `decodeRows`'s doc comment, add:
+
+```ts
+// Texts up to this many bytes are decoded in JS (spec 2026-10-08, D6): on
+// Chromium a string TextDecoder returns holds ~150-190 bytes more than a
+// cloned one, and is slower to make for short texts (RESULT-BINARY).
+const SHORT_TEXT = 32;
+const shortUnits = new Uint16Array(SHORT_TEXT);
+
+/**
+ * Valid UTF-8 as a string, or undefined for anything TextDecoder would have
+ * to replace — an invalid lead byte, a missing or wrong continuation byte, an
+ * overlong form, an encoded surrogate, a code point above U+10FFFF — so the
+ * caller's TextDecoder keeps the replacement exactly its own.
+ */
+const shortText = (
+  u8: Uint8Array,
+  start: number,
+  end: number,
+): string | undefined => {
+  let k = 0;
+  for (let i = start; i < end; ) {
+    const c = u8[i] as number;
+    if (c < 0x80) {
+      shortUnits[k++] = c;
+      i++;
+      continue;
+    }
+    let cp: number;
+    let n: number;
+    if (c >= 0xc2 && c < 0xe0) {
+      cp = c & 0x1f;
+      n = 1;
+    } else if (c >= 0xe0 && c < 0xf0) {
+      cp = c & 0x0f;
+      n = 2;
+    } else if (c >= 0xf0 && c < 0xf5) {
+      cp = c & 0x07;
+      n = 3;
+    } else {
+      return undefined;
+    }
+    if (i + n >= end) return undefined;
+    for (let j = 1; j <= n; j++) {
+      const d = u8[i + j] as number;
+      if ((d & 0xc0) !== 0x80) return undefined;
+      cp = (cp << 6) | (d & 0x3f);
+    }
+    if (
+      (n === 2 && (cp < 0x800 || (cp >= 0xd800 && cp < 0xe000))) ||
+      (n === 3 && (cp < 0x10000 || cp > 0x10ffff))
+    ) {
+      return undefined;
+    }
+    if (cp < 0x10000) {
+      shortUnits[k++] = cp;
+    } else {
+      shortUnits[k++] = 0xd7c0 + (cp >> 10);
+      shortUnits[k++] = 0xdc00 | (cp & 0x3ff);
+    }
+    i += n + 1;
+  }
+  return String.fromCharCode.apply(
+    null,
+    shortUnits.subarray(0, k) as unknown as number[],
+  );
+};
+```
+
+and in `decodeRows`, the text branch
+
+```ts
+            ? utf8Decoder.decode(u8.subarray(start, start + len))
+```
+
+becomes
+
+```ts
+            ? ((len <= SHORT_TEXT ? shortText(u8, start, start + len) : undefined) ??
+              utf8Decoder.decode(u8.subarray(start, start + len)))
+```
+
+(Keep the ternary: `len <= SHORT_TEXT && …` would give `false`, which `??` does not replace.) A 32-byte text yields at most 32 UTF-16 units, so `shortUnits` never overflows.
+
+- [ ] **Step 3: Run the unit tests**
+
+Run: `pnpm exec rstest --project unit run`
+Expected: PASS, including Step 1's tests unchanged.
+
+- [ ] **Step 4: Browser parity of short and invalid texts**
+
+Append to the `describe('result rows', …)` in `tests/browser/results.test.ts`:
+
+```ts
+  it('decodes short, long and invalid texts as before', async () => {
+    const db = await createTestClient();
+    await db.write('CREATE TABLE e (id INTEGER PRIMARY KEY, v TEXT)');
+    const texts: string[] = [];
+    for (let n = 1; n <= 40; n++) texts.push('a'.repeat(n), 'é'.repeat(n), '😀'.repeat(Math.ceil(n / 4)));
+    for (const t of texts) await db.write('INSERT INTO e (v) VALUES (?)', [t]);
+    const invalid = ['ff', 'c0af', 'e0808f', 'eda080', 'f4908080', 'f0', 'e282', 'c3', '41c3', 'c341'];
+    const reference = new TextDecoder('utf-8', { ignoreBOM: true });
+    const hexBytes = (h: string) => Uint8Array.from(h.match(/../g) ?? [], (b) => Number.parseInt(b, 16));
+    const expectedInvalid: string[] = [];
+    for (const h of invalid) {
+      for (const pad of ['', '61'.repeat(40)]) {
+        await db.write(`INSERT INTO e (v) VALUES (CAST(x'${pad}${h}' AS TEXT))`);
+        expectedInvalid.push(reference.decode(hexBytes(pad + h)));
+      }
+    }
+    const rows = await db.read<{ v: string }>('SELECT v FROM e ORDER BY id');
+    expect(rows.map((r) => r.v)).toEqual([...texts, ...expectedInvalid]);
+    await db.close();
+  });
+```
+
+Run it on both engines:
+`pnpm exec rstest --project 'chromium*' run tests/browser/results.test.ts` and `pnpm exec rstest --config rstest.firefox.config.ts run tests/browser/results.test.ts`
+Expected: PASS.
+
+- [ ] **Step 5: Verify and commit**
+
+```bash
+pnpm exec biome check --write src/binary.ts tests/unit/binary.test.ts tests/browser/results.test.ts
+pnpm exec tsc --noEmit
+pnpm test
+test "$(git branch --show-current)" = feat/binary-results && git add src/binary.ts tests/unit/binary.test.ts tests/browser/results.test.ts && git commit -m "perf(binary): decode short texts in JS on the page
+
+On Chromium a string TextDecoder returns on the page is an external
+string holding ~150-190 bytes more than a cloned one; a 500 000-row
+read() retained 430 MB against 354 before the binary protocol. Texts
+up to 32 bytes of valid UTF-8 are now decoded in JS (237 MB, same
+speed); anything else still goes through TextDecoder, so replacement
+characters are unchanged.
+
+Co-Authored-By: <your model line>"
+```
+
+`pnpm test`: three reports, `status: pass` and `failedFiles: 0` in each.

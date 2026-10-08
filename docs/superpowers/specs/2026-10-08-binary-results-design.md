@@ -15,6 +15,7 @@ Measured on a throwaway spike before this design (RESULT-BINARY, `mem:measuremen
 - **D3 — Decoding happens when `pool.ts` hands the chunk over, not when the message arrives.** The inbox keeps the compact form, and a chunk a stop leaves in the inbox is never decoded.
 - **D4 — A blob is a copy (`slice()`), not a view on the received buffer.** A view would keep the whole chunk alive for one kept blob, and would break a consumer reading `blob.buffer` whole, which wa-sqlite's copy guarantees today.
 - **D5 — Encoding and decoding share one module per side.** `src/encode.ts` becomes `src/binary.ts` and takes the decoder; `src/worker/bind.ts` becomes `src/worker/binary.ts` and takes the row writer. The tag table stays documented in one place, `src/types/protocol.ts`.
+- **D6 — A text of 32 bytes or less is decoded in JS when its UTF-8 is valid; anything else goes through `TextDecoder` (user, 2026-10-08, amendment after the delivery measurement).** On Chromium, a string `TextDecoder` returns on the page is an external string that holds ~150-190 bytes more than the same string from a structured clone: a `read()` of 500 000 mixed rows retained 430 MB after GC against 354 on `main`. Decoding short texts in JS (UTF-16 units into a scratch `Uint16Array`, then one `String.fromCharCode`) took it to 237 MB at the same speed. Measured direct, both engines (RESULT-BINARY, `mem:measurements/footprint`): Chromium decodes short strings 1.5-3× faster in JS, and still 20 % faster with lengths alternating around the threshold; Firefox decodes them 15-25 % slower in JS, which costs a 500 000-row `read()` 4 % (5.58 → 5.78 s, against 7.0 on `main`) at equal memory. Above 32 bytes `TextDecoder` is faster on both engines. Only valid UTF-8 takes the JS path: an invalid lead byte, a missing or wrong continuation byte, an overlong form, an encoded surrogate or a code point above U+10FFFF falls back to `TextDecoder`, so replacement characters stay exactly the decoder's.
 
 ## 2. The block
 
@@ -46,7 +47,7 @@ The worker writes an integer as tag 1 when its high half is only the sign extens
 
 **Column names travel in every chunk.** They are read after the first `SQLITE_ROW`, as today (v2 re-preparation happens during `step()`). A few dozen bytes per chunk, and no state shared between messages.
 
-**Text stays raw UTF-8.** The bytes of `sqlite3_column_text` over `sqlite3_column_bytes`, read in that order — SQLite's recommended order, which wa-sqlite follows. The page decodes them with `new TextDecoder('utf-8', { ignoreBOM: true })`, exactly as wa-sqlite's `readUTF8` does today: invalid sequences are replaced the same way, an inner `NUL` is kept, and so is a leading byte-order mark — a default `TextDecoder` would strip it.
+**Text stays raw UTF-8.** The bytes of `sqlite3_column_text` over `sqlite3_column_bytes`, read in that order — SQLite's recommended order, which wa-sqlite follows. The page decodes a text of 32 bytes or less in JS when its UTF-8 is valid (D6), and anything else with `new TextDecoder('utf-8', { ignoreBOM: true })`, exactly as wa-sqlite's `readUTF8` does today: invalid sequences are replaced the same way, an inner `NUL` is kept, and so is a leading byte-order mark — a default `TextDecoder` would strip it; the JS path keeps both too.
 
 ## 3. Components
 
@@ -57,7 +58,7 @@ The worker writes an integer as tag 1 when its high half is only the sign extens
 
 **Page side**
 
-- **`src/binary.ts`** — `src/encode.ts` renamed, keeping `ParamsWriter`, `EncodedParams` and `encodeParams`, plus `decodeRows(block)`: the objects in column order (a duplicated column name keeps the last value, as the current loop does); tag 1 as is, tag 5 through wa-sqlite's `cvt32x2AsSafe` rule (a `number` within the safe range, a `bigint` beyond); text through `TextDecoder('utf-8', { ignoreBOM: true })`; a blob through `slice()`. The loop keeps the direct assignment and the comment that forbids `Object.fromEntries` (measured 2026-08-31), moved from the worker.
+- **`src/binary.ts`** — `src/encode.ts` renamed, keeping `ParamsWriter`, `EncodedParams` and `encodeParams`, plus `decodeRows(block)`: the objects in column order (a duplicated column name keeps the last value, as the current loop does); tag 1 as is, tag 5 through wa-sqlite's `cvt32x2AsSafe` rule (a `number` within the safe range, a `bigint` beyond); text in JS up to 32 bytes of valid UTF-8, else through `TextDecoder('utf-8', { ignoreBOM: true })` (D6); a blob through `slice()`. The loop keeps the direct assignment and the comment that forbids `Object.fromEntries` (measured 2026-08-31), moved from the worker.
 - **`src/pool.ts`** — the `chunk` handler queues the block as it is; `debugQuery?.chunk` counts `block.rows`. The loop decodes as it hands the chunk over (`yield decodeRows(chunk)` for anything but the `affected` number). Imports follow the rename; so does `src/bulk.ts`.
 
 **Protocol** — `src/types/protocol.ts`: `RowsBlock`, the `chunk` message's `data`.
@@ -70,7 +71,7 @@ Each value must come out exactly as `sqlite.row()` gives it today:
 
 - integers — a `number` within ±(2^53 − 1), a `bigint` beyond, the ±2^63 bounds; an integer within int32 identical whether it crossed as tag 1 or tag 5;
 - floats, including `-0.0` and 1e308;
-- text — empty, Unicode outside the BMP, invalid UTF-8 (`CAST(x'ff' AS TEXT)`), an inner `NUL` (`char(0)`), a leading byte-order mark (`char(65279)`);
+- text — empty, Unicode outside the BMP, invalid UTF-8 (`CAST(x'ff' AS TEXT)`), an inner `NUL` (`char(0)`), a leading byte-order mark (`char(65279)`); texts of 1 to 40 characters — ASCII, two-byte, four-byte — on both sides of the 32-byte threshold, and invalid UTF-8 of each kind D6 lists, short and long;
 - blobs — empty, `NULL`, 100 KiB; each a `Uint8Array` owning its own buffer;
 - duplicated column names, with today's winning value;
 - a value larger than the initial buffer.
@@ -81,7 +82,7 @@ None new. The format is internal and produced by our own worker: a malformed blo
 
 ## 6. Tests
 
-**Unit** (`unit` project) — `tests/unit/binary.test.ts`, taking over `tests/unit/encode.test.ts`: a round trip of every tag through `decodeRows` from a block built in the test; the int32/int64 rule at its bounds; a blob copied (`buffer.byteLength === length`); a duplicated column; an empty block.
+**Unit** (`unit` project) — `tests/unit/binary.test.ts`, taking over `tests/unit/encode.test.ts`: a round trip of every tag through `decodeRows` from a block built in the test; the int32/int64 rule at its bounds; a blob copied (`buffer.byteLength === length`); a duplicated column; an empty block; the short-text decoder against `TextDecoder` on valid texts at 31, 32 and 33 bytes and on every invalid form D6 lists.
 
 **Browser** (the chromium and firefox targets) — one parity file writing every case of § 4 and reading it back through `read`, `first`, `chunk` (with a value spanning several chunks), `stream` and `tx.read`, checked against `typeof()`/`hex()` on the SQL side and against the expected JS values.
 
