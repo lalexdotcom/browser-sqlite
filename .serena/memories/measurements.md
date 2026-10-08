@@ -142,11 +142,16 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - BULK-RELEASE
 - BULK-PLATEAU
 - BULK-GC
-- BULK-BINARY
 - STREAM-FF
 - FF-JUGGLER
-- RESULT-BINARY
+
+## `mem:measurements/binary-protocol` — the binary protocol between page and worker
+
+- BULK-BINARY
 - BINARY-PROTOCOL
+- RESULT-BINARY
+- TEXT-EXTERNAL
+- RESULT-BINARY-DELIVERY
 
 ## `mem:measurements/suite-and-matrix` — the test suite, the matrix, the Firefox harness
 

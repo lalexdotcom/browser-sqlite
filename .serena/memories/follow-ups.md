@@ -16,17 +16,9 @@ descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` clai
 shadow types that were never loaded, `W-types` a duplication already gone. Both would have
 been work on nothing.
 
-## Binary protocol with the worker — page → worker merged, worker → page left (user, 2026-10-07)
-
-**Page → worker is merged into `main` (2026-10-07, `feat/binary-protocol`)**: spec `docs/superpowers/specs/2026-10-07-binary-protocol-design.md`, plan beside it in `plans/`. Every parameterised method converts its params as `bulkWrite()` does, a value no rule binds throws `INVALID_VALUE` on the page, params cross as a transferred block bound with `SQLITE_STATIC`, `bulkWrite()` encodes at `enqueue()` under a row pattern the worker expands. User decisions taken during the work and not in the spec: an `ArrayBuffer`, a `SharedArrayBuffer`, a `DataView` or a typed array other than `Uint8Array` binds as the BLOB of its bytes; params that are not an array (`null` included) throw `INVALID_VALUE`. Verified at `b41e924`: tsc, biome (4 warnings), `pnpm test` 1498/8, 868/4, 18/0, conformance 83/14 and 79/18, consumer 24/24, matrix 65 of 66 (the entry below). Footprint and per-query cost re-measured: BINARY-PROTOCOL in `mem:measurements/footprint`.
-
-**Worker → page (result rows) is the part left, measured direct on both engines on 2026-10-08** (RESULT-BINARY, `mem:measurements/footprint`): neutral for one row, faster from 100 rows (Chromium up to 2×, Firefox up to −23 %), and on Firefox streamed reads peak 2-6× lower. Not decided yet. The spike branches `spike/bulk-binary`, `spike/binary-protocol` (its switches in `e1b820c`) and `spike/result-binary` (the row encoder and decoder that measurement used) are throwaway.
-
-**Recycling the params buffer** is an idea kept below (Designs owed).
-
 ## Firefox reads narrow rows ~15× slower than Chromium, whatever the transport — not traced (deferred by the user, 2026-10-08)
 
-Found measuring RESULT-BINARY (`mem:measurements/footprint`): 4 000 000 rows of two integers on `OPFSAdaptiveVFS`/`jspi`, direct Firefox — `stream()` ~75 s, `chunk()` ~40 s, against ~3 s on Chromium for both; `read()` of 1 000 000 rows 10.3 s against 0.9. Two halves: `stream()`'s per-row `for await` in the page (~9 µs per row on Firefox) and the worker (~10 µs per row, Chromium ~0.7). The binary result protocol changes neither. **First suspect for the worker half**: the progress handler every statement installs (`feat/always-abortable`), relayed through a `Suspending` import on Firefox `jspi` at ~2.2 µs a call (JSPI-SYNC-RELAYS, `mem:measurements/statement-cache-and-perf`). Quick check: the same read without the handler, and on the `sync` build. The page half is `stream()`'s shape (one `next()` per row), to weigh separately.
+Found measuring RESULT-BINARY (`mem:measurements/binary-protocol`): 4 000 000 rows of two integers on `OPFSAdaptiveVFS`/`jspi`, direct Firefox — `stream()` ~75 s, `chunk()` ~40 s, against ~3 s on Chromium for both; `read()` of 1 000 000 rows 10.3 s against 0.9. Two halves: `stream()`'s per-row `for await` in the page (~9 µs per row on Firefox) and the worker (~10 µs per row, Chromium ~0.7). The binary result protocol changes neither. **First suspect for the worker half**: the progress handler every statement installs (`feat/always-abortable`), relayed through a `Suspending` import on Firefox `jspi` at ~2.2 µs a call (JSPI-SYNC-RELAYS, `mem:measurements/statement-cache-and-perf`). Quick check: the same read without the handler, and on the `sync` build. The page half is `stream()`'s shape (one `next()` per row), to weigh separately.
 
 ## `multi-client` bulkWrite interleave on chromium `IDBMirrorVFS/async` — seen, not reproducible (2026-10-07)
 
@@ -115,7 +107,11 @@ measurement, only that table.
 
 ### Recycling the params buffer through `done` — an idea, kept out of the binary protocol (user, 2026-10-07)
 
-The worker hands the transferred params buffer back in `done`, the page reuses it for the next send. Measured (BINARY-PROTOCOL, `mem:measurements/footprint`): on 200 writes of a 1 MiB text it halves the peak again over the plain binary path (Chromium 29-40 → 16 MB, Firefox 50-77 → 25 MB), and gains nothing on small queries. Cost: each worker keeps its largest buffer for life (~3 MiB for a 1 MiB text, worst-case sizing), and `done` grows an optional field — so it can be added later without breaking the protocol. If taken up: cap the size kept per worker; the cap is unmeasured.
+The worker hands the transferred params buffer back in `done`, the page reuses it for the next send. Measured (BINARY-PROTOCOL, `mem:measurements/binary-protocol`): on 200 writes of a 1 MiB text it halves the peak again over the plain binary path (Chromium 29-40 → 16 MB, Firefox 50-77 → 25 MB), and gains nothing on small queries. Cost: each worker keeps its largest buffer for life (~3 MiB for a 1 MiB text, worst-case sizing), and `done` grows an optional field — so it can be added later without breaking the protocol. If taken up: cap the size kept per worker; the cap is unmeasured.
+
+### Buffer strategy of the binary blocks, both directions — a measurement to take if the choice is questioned (user, 2026-10-08)
+
+The two sides grow their buffers differently, on purpose: `ParamsWriter` knows the size before writing (`encodeParams` sizes for the worst case; `bulkWrite` batches are large), so it uses 1 MiB segments and never copies; the result `RowWriter` (spec 2026-10-08) learns the size row by row, so it keeps one buffer per chunk that doubles by copy, sized from the query's previous chunk. Growable `ArrayBuffer`s (`resize`, `transfer`) were refused on 2026-10-07 for raising the browser floor (Firefox → 122-128). Unmeasured alternative for rows: segments of doubling size capped at 1 MiB (no copy, a test per value at decoding). Should either choice be questioned, measure both arms on each side with the direct harness (RESULT-BINARY / BINARY-PROTOCOL).
 
 ### A timed flush — out of rc.4 (user, 2026-08-27)
 

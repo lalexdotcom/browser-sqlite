@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
-import { encodeParams } from '../../src/encode';
+import { encodeParams } from '../../src/binary';
 import { createLogger } from '../../src/logger';
 import { createPoolWorker, type PoolWorker } from '../../src/pool';
 import { databasePath } from '../../src/utils';

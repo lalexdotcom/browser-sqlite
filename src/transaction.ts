@@ -6,8 +6,8 @@ import type {
   SQLiteTransactionDB,
   SQLiteTransactionOptions,
 } from './api';
+import { type EncodedParams, prepareParams, type QueryParams } from './binary';
 import type { ReadFn, TransactionFn, WriteFn } from './bulk';
-import { type EncodedParams, prepareParams, type QueryParams } from './encode';
 import type { Logger } from './logger';
 import type { PoolWorker, PoolWorkerQueryOptions } from './pool';
 import {

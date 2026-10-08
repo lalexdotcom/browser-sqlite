@@ -43,7 +43,7 @@ import type {
   WorkerMessageData,
 } from '../types/protocol';
 import { DATABASE_FILE_SUFFIXES, renderPragmas } from '../utils';
-import { bindBlock } from './bind';
+import { bindBlock, RowWriter } from './binary';
 import { cloneable } from './cloneable';
 import { firstMissing } from './probes';
 import { sqliteCodeOf } from './sqlite-code';
@@ -562,8 +562,12 @@ const open = (file: string, options: OpenOptions) => {
   // becoming an unhandled rejection in the worker.
   openedDB.catch(() => {});
 
-  const reply = (data: WorkerMessageData) => {
-    self.postMessage(data);
+  const reply = (data: WorkerMessageData, transfer: Transferable[] = []) => {
+    (
+      self as unknown as {
+        postMessage(data: WorkerMessageData, transfer: Transferable[]): void;
+      }
+    ).postMessage(data, transfer);
   };
 
   // One query at a time per worker (a worker holds one lease), so a single
@@ -594,7 +598,8 @@ const open = (file: string, options: OpenOptions) => {
     // changes nothing; the total does not move then.
     const totalBefore = module._sqlite3_total_changes(db);
 
-    const buffer: Record<string, unknown>[] = [];
+    // The size the query's previous chunk needed: the next one starts there.
+    let chunkBytes = 0;
 
     /**
      * Stamps SQLite's extended result code on a wa-sqlite error where the
@@ -622,6 +627,7 @@ const open = (file: string, options: OpenOptions) => {
       // re-preparation happens during step(), so names read beforehand would
       // describe the old schema on a cached statement after an ALTER TABLE.
       let cols: string[] | undefined;
+      let writer: RowWriter | undefined;
 
       while (true) {
         if (gate.isStopped()) break;
@@ -647,26 +653,16 @@ const open = (file: string, options: OpenOptions) => {
 
         if (result === SQLITE_ROW) {
           cols ??= sqlite.column_names(stmt) as string[];
-          const row = sqlite.row(stmt);
-          // Deliberately not `Object.fromEntries(cols.map(...))`: that shape
-          // allocates one two-element array per column per row on the hottest
-          // path in the library. Measured 2026-08-31 over 50 000 rows x 12
-          // columns — 17.5 ms against 4.4 ms on Chromium, 23 ms against 14 ms
-          // on Firefox (`mem:measurements`). Same output, so nothing but the
-          // allocation is lost. Do not "simplify" it back.
-          const out: Record<string, unknown> = {};
-          for (let i = 0; i < cols.length; i++) {
-            out[cols[i] as string] = row[i];
-          }
-          buffer.push(out);
-
-          if (buffer.length >= chunkSize) {
-            yield buffer.splice(0, chunkSize);
+          writer ??= new RowWriter(chunkBytes);
+          writer.row(module, stmt, cols.length);
+          if (writer.rows >= chunkSize) {
+            const block = writer.finish(cols);
+            chunkBytes = block.used;
+            writer = undefined;
+            yield block;
           }
         } else {
-          while (buffer.length) {
-            yield buffer.splice(0, chunkSize);
-          }
+          if (writer && cols) yield writer.finish(cols);
           break;
         }
       }
@@ -921,7 +917,7 @@ const open = (file: string, options: OpenOptions) => {
               break;
             }
             if ((await gate.take(callId)) === 'stopped') break;
-            reply({ type: 'chunk', callId, data: chunk });
+            reply({ type: 'chunk', callId, data: chunk }, [chunk.buffer]);
           }
 
           if (closing) {

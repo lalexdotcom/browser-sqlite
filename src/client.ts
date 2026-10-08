@@ -1,4 +1,5 @@
 import type { SQLiteChunkOptions, SQLiteDB, SQLiteQueryOptions } from './api';
+import { type EncodedParams, prepareParams } from './binary';
 import { createBulk } from './bulk';
 import {
   defaultBuildFor,
@@ -10,7 +11,6 @@ import type { SQLiteBuild } from './const/builds';
 import type { PlatformFeature } from './const/platform';
 import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { createClientDebug, type RequestDebugHandle } from './debug';
-import { type EncodedParams, prepareParams } from './encode';
 import { advanceSeen, barrierSqlFor, epochsFor } from './epochs';
 import {
   type ClientInspection,

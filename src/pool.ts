@@ -1,13 +1,19 @@
+import {
+  decodeRows,
+  EncodedParams,
+  encodeParams,
+  type QueryParams,
+} from './binary';
 import type { SQLiteBuild } from './const/builds';
 import type { PlatformFeature } from './const/platform';
 import type { SQLiteResultCode } from './const/sqlite';
 import type { SQLiteVFS } from './const/vfs';
 import { DEFAULT_CREDIT_WINDOW } from './credits';
 import type { QueryDebugHandle, WorkerDebugHandle } from './debug';
-import { EncodedParams, encodeParams, type QueryParams } from './encode';
 import type { Logger } from './logger';
 import { SQLiteError, type SQLiteErrorCode } from './types/errors';
 import type {
+  RowsBlock,
   SavepointOp,
   WasmLocation,
   WorkerMessageData,
@@ -346,7 +352,7 @@ export const createPoolWorker = (deps: {
    * resolution nobody observes costs nothing; a chunk that was never queued
    * cannot be recovered.
    */
-  let inbox: (unknown[] | number)[] = [];
+  let inbox: (RowsBlock | number)[] = [];
 
   /**
    * Set by `interrupt()`. Without it, a stop arriving while the inbox holds
@@ -574,7 +580,7 @@ export const createPoolWorker = (deps: {
       case 'chunk': {
         const { callId } = data;
         if (deferredChunk && callId === currentCallId) {
-          debugQuery?.chunk(data.data.length);
+          debugQuery?.chunk(data.data.rows);
           // Queue first, then wake. The resolution may reach nobody — that is
           // the whole defect the inbox exists for — but the chunk is kept.
           inbox.push(data.data);
@@ -800,8 +806,10 @@ export const createPoolWorker = (deps: {
         // Same reasoning for the two failure channels, which the loop is no
         // longer awaiting while it has something to deliver.
         if (failure !== undefined) throw failure;
-        const chunk = inbox.shift() as T[] | number;
-        yield chunk;
+        const chunk = inbox.shift() as RowsBlock | number;
+        // Decoded as it is handed over: the inbox keeps the compact form, and
+        // a chunk a stop leaves behind is never decoded.
+        yield typeof chunk === 'number' ? chunk : decodeRows<T>(chunk);
         // Spec §3.3: the credit is issued once the CONSUMER has taken the
         // chunk. Crediting on arrival would let the worker run at full speed
         // and pile the chunks up in the message queue, which is the guarantee

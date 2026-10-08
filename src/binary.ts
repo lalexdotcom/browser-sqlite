@@ -1,4 +1,4 @@
-import type { ParamsBlock } from './types/protocol';
+import type { ParamsBlock, RowsBlock } from './types/protocol';
 import { type Bindable, convertParams } from './values';
 
 const CHUNK_BYTES = 1 << 20;
@@ -173,3 +173,132 @@ export const prepareParams = (
   params: readonly unknown[] | EncodedParams | undefined,
 ): QueryParams | undefined =>
   params instanceof EncodedParams ? params : convertParams(params);
+
+// wa-sqlite's readUTF8: ignoreBOM keeps a leading byte-order mark.
+const utf8Decoder = new TextDecoder('utf-8', { ignoreBOM: true });
+// wa-sqlite's cvt32x2AsSafe bounds: the high halves of ±Number.MAX_SAFE_INTEGER.
+const HI_MAX = 2097151;
+const HI_MIN = -2097152;
+
+// Texts up to this many bytes are decoded in JS (spec 2026-10-08, D6): on
+// Chromium a string TextDecoder returns on the page holds ~150-190 bytes more
+// than a cloned one, and is slower to make for short texts (RESULT-BINARY).
+const SHORT_TEXT = 32;
+const shortUnits = new Uint16Array(SHORT_TEXT);
+
+/**
+ * Valid UTF-8 as a string, or undefined for anything TextDecoder would have
+ * to replace — an invalid lead byte, a missing or wrong continuation byte, an
+ * overlong form, an encoded surrogate, a code point above U+10FFFF — so the
+ * caller's TextDecoder keeps the replacement exactly its own.
+ */
+const shortText = (
+  u8: Uint8Array,
+  start: number,
+  end: number,
+): string | undefined => {
+  let k = 0;
+  for (let i = start; i < end; ) {
+    const c = u8[i] as number;
+    if (c < 0x80) {
+      shortUnits[k++] = c;
+      i++;
+      continue;
+    }
+    let cp: number;
+    let n: number;
+    if (c >= 0xc2 && c < 0xe0) {
+      cp = c & 0x1f;
+      n = 1;
+    } else if (c >= 0xe0 && c < 0xf0) {
+      cp = c & 0x0f;
+      n = 2;
+    } else if (c >= 0xf0 && c < 0xf5) {
+      cp = c & 0x07;
+      n = 3;
+    } else {
+      return undefined;
+    }
+    if (i + n >= end) return undefined;
+    for (let j = 1; j <= n; j++) {
+      const d = u8[i + j] as number;
+      if ((d & 0xc0) !== 0x80) return undefined;
+      cp = (cp << 6) | (d & 0x3f);
+    }
+    if (
+      (n === 2 && (cp < 0x800 || (cp >= 0xd800 && cp < 0xe000))) ||
+      (n === 3 && (cp < 0x10000 || cp > 0x10ffff))
+    ) {
+      return undefined;
+    }
+    if (cp < 0x10000) {
+      shortUnits[k++] = cp;
+    } else {
+      shortUnits[k++] = 0xd7c0 + (cp >> 10);
+      shortUnits[k++] = 0xdc00 | (cp & 0x3ff);
+    }
+    i += n + 1;
+  }
+  return String.fromCharCode.apply(
+    null,
+    shortUnits.subarray(0, k) as unknown as number[],
+  );
+};
+
+/** A chunk of rows as wa-sqlite's `row()` and the worker's loop built them. */
+export const decodeRows = <T = Record<string, unknown>>(
+  block: RowsBlock,
+): T[] => {
+  const { columns, rows } = block;
+  const n = columns.length;
+  const u8 = new Uint8Array(block.buffer, 0, block.used);
+  const dv = new DataView(block.buffer, 0, block.used);
+  const out = new Array<T>(rows);
+  // A column named `__proto__` is never assigned: the old worker-side
+  // assignment set the row's prototype and the structured clone dropped it.
+  const skip = columns.indexOf('__proto__');
+  let off = 0;
+  for (let r = 0; r < rows; r++) {
+    // Deliberately not `Object.fromEntries(...)`: one two-element array per
+    // column per row. Measured 2026-08-31 over 50 000 rows x 12 columns —
+    // 17.5 ms against 4.4 ms on Chromium, 23 ms against 14 ms on Firefox
+    // (`mem:measurements`). Do not "simplify" it back.
+    const row: Record<string, unknown> = {};
+    for (let i = 0; i < n; i++) {
+      const tag = u8[off];
+      let v: unknown;
+      if (tag === 0) {
+        v = null;
+        off += 1;
+      } else if (tag === 1) {
+        v = dv.getInt32(off + 1, true);
+        off += 5;
+      } else if (tag === 2) {
+        v = dv.getFloat64(off + 1, true);
+        off += 9;
+      } else if (tag === 5) {
+        const lo = dv.getInt32(off + 1, true);
+        const hi = dv.getInt32(off + 5, true);
+        v =
+          hi > HI_MAX || hi < HI_MIN
+            ? (BigInt(hi) << 32n) | (BigInt(lo) & 0xffffffffn)
+            : hi * 0x100000000 + (lo & 0x7fffffff) - (lo & 0x80000000);
+        off += 9;
+      } else {
+        const len = dv.getUint32(off + 1, true);
+        const start = off + 5;
+        v =
+          tag === 3
+            ? ((len <= SHORT_TEXT
+                ? shortText(u8, start, start + len)
+                : undefined) ??
+              utf8Decoder.decode(u8.subarray(start, start + len)))
+            : u8.slice(start, start + len);
+        off = start + len;
+      }
+      if (i !== skip) row[columns[i] as string] = v;
+    }
+    out[r] = row as T;
+  }
+  return out;
+};

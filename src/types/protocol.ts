@@ -73,6 +73,18 @@ export type ParamsBlock = {
   rows: number;
 };
 
+/**
+ * Result rows encoded in the worker: `rows` rows of `columns.length` values,
+ * row after row, with `ParamsBlock`'s tags; tag 5 holds the int64 as two
+ * 32-bit halves, low first. The first `used` bytes of `buffer` are written.
+ */
+export type RowsBlock = {
+  columns: string[];
+  rows: number;
+  buffer: ArrayBuffer;
+  used: number;
+};
+
 export type ClientMessageData =
   | {
       type: 'open';
@@ -155,7 +167,7 @@ export type WorkerMessageData =
    * opens nothing until the client sends `proceed` (spec 2026-09-15, §3.2).
    */
   | { type: 'probed'; callId: number; missing: PlatformFeature | null }
-  | { type: 'chunk'; callId: number; data: unknown[] }
+  | { type: 'chunk'; callId: number; data: RowsBlock }
   | {
       type: 'done';
       callId: number;

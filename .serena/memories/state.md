@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-10-07.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-10-08.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one.
 
 **No SHAs, no commit counts, no branch names here (user, 2026-08-27).** `git log`,
@@ -32,27 +32,27 @@ obligations and unmeasured ground.
 - **Feature branches are merged with `--no-ff`** and a body explaining the change, matching
   every previous merge.
 
-## The verification baseline — compare against these, re-measured 2026-10-07
+## The verification baseline — compare against these, re-measured 2026-10-08
 
-Not history: the numbers a regression is detected against. **Every figure below was read off ONE run in this container on 2026-10-07, 18:10-18:17, on `feat/binary-protocol` at its closing head** (the code merged into `main` the same evening) — none is arithmetic, on the wa-sqlite pin `96d91182` with #371, #372 and #374 carried — **except the matrix row**, read the same afternoon at `b41e924`, which differs from the closing head only by `null` params taken as none (`8eb5645`) and memory commits.
+Not history: the numbers a regression is detected against. **Every figure below was read off ONE pass in this container on 2026-10-08 on `feat/binary-results` at `30f1991`** (worker → page binary results, before its merge) — none is arithmetic, on the wa-sqlite pin `96d91182` with #371, #372 and #374 carried — **except the matrix row**, read the same morning at `978376f`, which differs from `30f1991` only by the page-side short-text decoder (spec 2026-10-08, D6) and test placement: no change in `src/pool.ts` or `src/worker/`.
 
 | command | result |
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1508 tests, 1500 passed, 8 skipped** (unit + the two chromium target projects), **874 tests, 870 passed, 4 skipped** (the two firefox target projects), **18 tests, none skipped** (the two isolated target projects). The chromium and firefox targets are `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` since the default build follows the engine |
-| `pnpm exec rstest --project unit run` | **648** tests, 32 files |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1542 tests, 1534 passed, 8 skipped** (unit + the two chromium target projects), **892 tests, 888 passed, 4 skipped** (the two firefox target projects), **18 tests, none skipped** (the two isolated target projects). The chromium and firefox targets are `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` since the default build follows the engine |
+| `pnpm exec rstest --project unit run` | **664** tests, 32 files |
 | `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required since 2026-09-15 — project names are `chromium · <vfs>/<build>` and rstest's filter is anchored |
 | `pnpm test:conformance` | **TWO reports** — 97 tests / 3 files each: **Chromium 83 passed / 14 skipped, Firefox 79 / 18** — they differ by design since 2026-09-14. Each VFS runs on its default build for the engine, so the `jspi`-first VFS run `jspi` here |
 | `pnpm exec biome ci .` | exit 0 |
 | `pnpm docs:vfs` | leaves `VFS.md` unchanged (`git diff --exit-code`) |
 | `pnpm test:consumer` | 24/24 stages |
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.ts chromium --all` | `OK`, `"reasons": {}`, 22 declared pairs runnable; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 178 files, **4 warnings**, 1 info — the file count moves with the tree, **the warning count is the signal** |
+| `pnpm lint` | 180 files, **4 warnings**, 1 info — the file count moves with the tree, **the warning count is the signal** |
 | `dependencies` in `package.json` | absent |
-| `pnpm test:matrix` | **65 of 66 cells green, 2555 s**, no re-run inside it. ~43 min. **Every cell runs `BSQ_TEST_NEEDS=skip`**. The red cell is chromium `IDBMirrorVFS/async`, one test, `multi-client` "interleaves a bulkWrite with another client" — not reproducible afterwards (2 failures in 33 cell runs on the branch, 0 in 20 on `main`), recorded in `mem:follow-ups` and left by the user's decision. Another session's Firefox was loading the machine during that run |
+| `pnpm test:matrix` | **66 of 66 cells green, 2453 s**, no re-run inside it, no timed-out cell. ~41 min. **Every cell runs `BSQ_TEST_NEEDS=skip`** |
 
-Against the previous table (2026-10-06): unit 619 → 648 and 30 → 32 files (`encode.test.ts` is this branch's; the new `values` cases add the rest), `pnpm test` +59 / +38 tests passed with no skip added (the binary protocol's tests), lint files 169 → 178 with the warning count unchanged, conformance, consumer smoke and the isolated config unchanged; the matrix 66 → 65 of 66 by the one flake above.
+Against the previous table (2026-10-07): unit 648 → 664 (`binary.test.ts`, formerly `encode.test.ts`, gained the row decoder's and writer's cases), `pnpm test` +34 / +18 tests passed with no skip added (`results.test.ts` and the unit cases), lint files 178 → 180 with the warning count unchanged, conformance, consumer smoke, bench check and the isolated config unchanged; the matrix back to 66 of 66 (the `multi-client` interleave on chromium `IDBMirrorVFS/async` passed this time).
 
 **Do not reconcile any of these by arithmetic; re-run.** A previous version of this table was
 measured on 2026-09-15 and went stale the next day, and another contradicted itself in September
