@@ -4,7 +4,7 @@ Every method, property and option of [browser-sqlite](README.md).
 
 [*client*.id](#clientid) · [*client*.name](#clientname) · [*client*.file](#clientfile) · [*client*.files](#clientfiles) · [*client*.vfs](#clientvfs) · [*client*.build](#clientbuild) · [*client*.poolSize](#clientpoolsize) · [*client*.ready](#clientready) · [*client*.debug](#clientdebug)
 
-[createSQLiteClient()](#createsqliteclient) · [*client*.read()](#clientread) · [*client*.write()](#clientwrite) · [*client*.stream()](#clientstream) · [*client*.chunk()](#clientchunk) · [*client*.first()](#clientfirst) · [*client*.transaction()](#clienttransaction) · [*client*.bulkWrite()](#clientbulkwrite) · [*client*.output()](#clientoutput) · [*client*.inspect()](#clientinspect) · [*client*.close()](#clientclose) · [deleteDatabase()](#deletedatabase) · [inspectDatabase()](#inspectdatabase)
+[createSQLiteClient()](#createsqliteclient) · [*client*.read()](#clientread) · [*client*.write()](#clientwrite) · [*client*.stream()](#clientstream) · [*client*.chunk()](#clientchunk) · [*client*.first()](#clientfirst) · [*client*.transaction()](#clienttransaction) · [*client*.bulkWrite()](#clientbulkwrite) · [*client*.output()](#clientoutput) · [*client*.inspect()](#clientinspect) · [*client*.close()](#clientclose) · [deleteDatabase()](#deletedatabase) · [inspectDatabase()](#inspectdatabase) · [sql](#sql)
 
 **[Queries](#queries)**: [Writing queries](#writing-queries) · [How they run](#how-they-run) · [Inside a transaction](#inside-a-transaction)
 
@@ -449,11 +449,48 @@ It answers from code that holds no client — opening one to learn who holds the
 
 A memory VFS throws `INVALID_OPTION`: its pages live in the worker that opened them, so two clients are two databases and there is nothing to share. Where the Web Locks API is missing, `inspectDatabase` and `db.inspect()` throw `UNSUPPORTED` rather than report zero.
 
+## sql
+
+Builds a query from a template: each value becomes a `?` parameter. Every query method takes the result in place of its SQL and params, followed by its options.
+
+```typescript
+import { sql } from 'browser-sqlite';
+
+const users = await db.read<User>(
+  sql`SELECT id, name FROM users WHERE active = ${1} AND name LIKE ${pattern}`,
+  { timeout: 5_000 },
+);
+```
+
+Values are bound as described in [How params are bound](#how-params-are-bound): an object or an array as JSON text, a `Date` in SQLite's format, a `Uint8Array` as a BLOB.
+
+**Write no placeholder of your own in the template.**<br>`?`, `?NNN` or `:name` in its text would shift the numbering of the values. The template is not parsed, so this is not checked.
+
+| Helper | Gives | Example |
+|---|---|---|
+| `` sql.jsonb`…` `` | `jsonb(?)` for each object or array, `?` for any other value | `` sql.jsonb`INSERT INTO docs (body) VALUES (${doc})` `` |
+| `sql.list(values)` | `(SELECT value FROM json_each(?))`, for `IN` | `` sql`… WHERE id IN ${sql.list(ids)}` `` |
+| `sql.id(...names)` | a quoted identifier, joined with `.` | `` sql`SELECT * FROM ${sql.id('main', table)}` `` |
+| `sql.raw(text)` | `text` as it is, unquoted | `` sql`… ORDER BY ${sql.raw(order)}` `` |
+
+**A query built by `sql` can be interpolated into another.**<br>Its text and its values take the place of the interpolation, which is how to add an optional clause without concatenating strings:
+
+```typescript
+const filter = name ? sql`AND name = ${name}` : sql``;
+const rows = await db.read(sql`SELECT * FROM users WHERE active = 1 ${filter}`);
+```
+
+**An array is one JSON value, not a list.**<br>`` IN (${ids}) `` compares with a single JSON text and matches nothing. Use `sql.list(ids)`: its SQL is the same whatever the list's length, so the statement stays cached. Its elements may be numbers, bigints, strings, booleans, `null`, `undefined` and `Date`s, converted as params are; anything else throws `INVALID_VALUE`.
+
+**`sql.raw()` is not escaped.**<br>Never pass it text that comes from outside your code. For a table or a column name, use `sql.id()`: each argument is one identifier, so a name containing a dot stays one name, and only your code qualifies it with a schema.
+
+Misusing a helper throws when you call it: `INVALID_VALUE`, or `INVALID_IDENTIFIER` for `sql.id()`. Passing a params array after a query built by `sql` rejects with `INVALID_VALUE`.
+
 ## Queries
 
 ### Writing queries
 
-**Pass values as `?` parameters rather than building them into the SQL.**<br>Each worker keeps a cache of 32 prepared statements, keyed on the exact SQL string. Interpolating a value makes every call a new key, so nothing is ever reused and every query is recompiled. Generated SQL is sometimes unavoidable — `IN (?, ?, ?)` changes shape with the list — and it still works; it simply cannot be cached.
+**Pass values as `?` parameters rather than building them into the SQL.**<br>Each worker keeps a cache of 32 prepared statements, keyed on the exact SQL string. Interpolating a value makes every call a new key, so nothing is ever reused and every query is recompiled. Generated SQL is sometimes unavoidable and it still works; it simply cannot be cached. For a list, [`sql.list()`](#sql) keeps one SQL text whatever the list's length.
 
 ### How they run
 

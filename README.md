@@ -59,12 +59,12 @@ Cross-origin isolation is worth adding where you control your headers: it is wha
 Read the [detailed API documentation](API.md) for the full description.
 
 ```typescript
-import { createSQLiteClient } from 'browser-sqlite';
+import { createSQLiteClient, sql } from 'browser-sqlite';
 
 const db = createSQLiteClient('myapp.sqlite', { vfs: 'OPFSAdaptiveVFS' });
 
 await db.write('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)');
-await db.write('INSERT INTO users (name) VALUES (?)', ['Alice']);
+await db.write(sql`INSERT INTO users (name) VALUES (${'Alice'})`);
 
 const users = await db.read<{ id: number; name: string }>('SELECT id, name FROM users');
 
@@ -77,7 +77,7 @@ await db.close();
 
 [*client*.id](API.md#clientid) · [*client*.name](API.md#clientname) · [*client*.file](API.md#clientfile) · [*client*.files](API.md#clientfiles) · [*client*.vfs](API.md#clientvfs) · [*client*.build](API.md#clientbuild) · [*client*.poolSize](API.md#clientpoolsize) · [*client*.ready](API.md#clientready) · [*client*.debug](API.md#clientdebug)
 
-[createSQLiteClient()](API.md#createsqliteclient) · [*client*.read()](API.md#clientread) · [*client*.write()](API.md#clientwrite) · [*client*.stream()](API.md#clientstream) · [*client*.chunk()](API.md#clientchunk) · [*client*.first()](API.md#clientfirst) · [*client*.transaction()](API.md#clienttransaction) · [*client*.bulkWrite()](API.md#clientbulkwrite) · [*client*.output()](API.md#clientoutput) · [*client*.inspect()](API.md#clientinspect) · [*client*.close()](API.md#clientclose) · [deleteDatabase()](API.md#deletedatabase) · [inspectDatabase()](API.md#inspectdatabase)
+[createSQLiteClient()](API.md#createsqliteclient) · [*client*.read()](API.md#clientread) · [*client*.write()](API.md#clientwrite) · [*client*.stream()](API.md#clientstream) · [*client*.chunk()](API.md#clientchunk) · [*client*.first()](API.md#clientfirst) · [*client*.transaction()](API.md#clienttransaction) · [*client*.bulkWrite()](API.md#clientbulkwrite) · [*client*.output()](API.md#clientoutput) · [*client*.inspect()](API.md#clientinspect) · [*client*.close()](API.md#clientclose) · [deleteDatabase()](API.md#deletedatabase) · [inspectDatabase()](API.md#inspectdatabase) · [sql](API.md#sql)
 
 ## Storage
 
