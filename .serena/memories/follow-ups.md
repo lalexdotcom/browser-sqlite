@@ -24,6 +24,10 @@ been work on nothing.
 
 **Recycling the params buffer** is an idea kept below (Designs owed).
 
+## Firefox reads narrow rows ~15× slower than Chromium, whatever the transport — not traced (deferred by the user, 2026-10-08)
+
+Found measuring RESULT-BINARY (`mem:measurements/footprint`): 4 000 000 rows of two integers on `OPFSAdaptiveVFS`/`jspi`, direct Firefox — `stream()` ~75 s, `chunk()` ~40 s, against ~3 s on Chromium for both; `read()` of 1 000 000 rows 10.3 s against 0.9. Two halves: `stream()`'s per-row `for await` in the page (~9 µs per row on Firefox) and the worker (~10 µs per row, Chromium ~0.7). The binary result protocol changes neither. **First suspect for the worker half**: the progress handler every statement installs (`feat/always-abortable`), relayed through a `Suspending` import on Firefox `jspi` at ~2.2 µs a call (JSPI-SYNC-RELAYS, `mem:measurements/statement-cache-and-perf`). Quick check: the same read without the handler, and on the `sync` build. The page half is `stream()`'s shape (one `next()` per row), to weigh separately.
+
 ## `multi-client` bulkWrite interleave on chromium `IDBMirrorVFS/async` — seen, not reproducible (2026-10-07)
 
 `tests/browser/multi-client.test.ts` :: "two clients writing at once > interleaves a bulkWrite with another client, refusing neither" failed once in the `feat/binary-protocol` matrix: client A read 0 of B's first 2 047-row batch over its 5 s of polling (`expected +0 to be 2047`, test 10.9 s). Replays the same afternoon: the test alone 10/10 on the branch and on `main`; the file under 16 busy loops 15/15 each; the full cell on the branch 1 failure in 5 then 0 in 15 (and 0 in 12 with `debug: true` and a diagnostic of B's `close()` and A's late count), on `main` 0 in 20. Another session's Firefox was loading the machine during the failing runs. Left by the user's decision ("on ignore et on enchaîne, et on consigne"). At the next sighting: rerun the cell with the diagnostic (B's `writer.close()` outcome — a failed batch against a slow one — and A's count after it), and compare with `main` at the same load.
