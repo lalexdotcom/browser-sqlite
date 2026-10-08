@@ -20,11 +20,6 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 
 - 363-ERROR-PATH
 - 369-XCLOSE
-- IDBMIRROR-COMMIT-ABORT
-- IDBMIRROR-ABORT-JOURNAL
-- IDBMIRROR-ABORT-DESIGNS
-- IDBMIRROR-ABORT-RELOAD-ON-REFUSAL
-- IDBMIRROR-CLOSE-BROADCAST
 - IDB-JOURNAL
 - 363-SYNC-OFF
 - 351-REVIEW-2
@@ -32,6 +27,14 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - 351-PERSIST
 - RETRY-OPS
 - VFS-PILES
+
+## `mem:measurements/idbmirror` — `IDBMirrorVFS`: an aborted commit, a close with a commit in flight (#371, #372)
+
+- IDBMIRROR-COMMIT-ABORT
+- IDBMIRROR-ABORT-JOURNAL
+- IDBMIRROR-ABORT-DESIGNS
+- IDBMIRROR-ABORT-RELOAD-ON-REFUSAL
+- IDBMIRROR-CLOSE-BROADCAST
 
 ## `mem:measurements/writeahead` — `OPFSWriteAheadVFS`: checkpoint, page size, read freshness
 
@@ -65,7 +68,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - SAFARI-OPFS
 - HELD-LIVE
 
-## `mem:measurements/transactions` — transactions, aborts, the write lock
+## `mem:measurements/transactions` — transactions
 
 - TX-M1M2
 - TX-SAVEPOINT
@@ -73,13 +76,16 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - TX-HANDLE
 - TX-M1
 - TX-QUIESCE
+- TX-CONTROL-GUARD
+- SAVEPOINT-STACK
+
+## `mem:measurements/aborts` — interruption, abandoned generators, the write lock
+
 - Query interruption
 - ABANDON-RESTART
 - ABANDON-WEDGE
 - WRITELOCK-STUCK
 - GEN-ABORT
-- TX-CONTROL-GUARD
-- SAVEPOINT-STACK
 
 ## `mem:measurements/cross-tab-and-delete` — cross-tab coordination, Web Locks, deletion
 
@@ -168,10 +174,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - RSTEST-OTR
 - REUSE-LOAD
 - CI-QUERY-TIMEOUT
-- MATRIX-1
-- MATRIX-2
-- MATRIX-3
-- MATRIX-5
+- MATRIX-TRIAGE (MATRIX-1, -2, -3, -5)
 - MATRIX-DEFAULT-BUILD
 - GETDIR-HANG closed
 - LIFECYCLE-SEGV

@@ -320,7 +320,11 @@ aligned with it wholesale: the image, the Playwright engines and the Serena prer
   since then; the older `my-lalex` ones stay as they are.
 - **`gh` gets no credential relay from VS Code; git does.** `post-attach.sh` asks
   `git credential fill` for that account's token and pipes it to `gh auth login --with-token`, at
-  every attach, non-fatal.
+  every attach, non-fatal. Logged in as `lalexdotcom` since 2026-09-28 (scopes `repo`, `read:org`,
+  `workflow`, `gist`, `user`). Anything outward-facing through `gh` — a fork, a comment, a PR —
+  waits for the user's go. **`gh` cannot re-request a review upstream** (2026-09-30):
+  `requested_reviewers` answers 404 and `gh pr edit --add-reviewer` is refused for lack of
+  permission, so that click is the user's.
 - **`mempalace init` needs `--auto-mine`: `--yes` answers the entity questions only**, and init
   still asks "Mine this directory now?". During a rebuild stdin is a terminal, so the build waited
   on a prompt that `2>/dev/null` hid. `--no-llm`: there is no Ollama here.
@@ -386,17 +390,30 @@ aligned with it wholesale: the image, the Playwright engines and the Serena prer
     `refs/heads/main`. An environment restricted to tags refuses it, and a deleted tag then
     leaves its preview up until the next release. `main` must stay allowed for deletion to
     work.
+  - **A run that publishes nothing could cancel one that does, and did.** `cancel-in-progress` on
+    a shared group, `concurrency` evaluated before any job runs, and `delete` with no ref filter:
+    deleting a merged branch on 2026-09-04 killed the preview deploy pushed two seconds earlier,
+    then skipped itself, leaving the site on the previous build with nothing to say so. Fixed by
+    repeating the job's guard in the group expression, so a skipping run gets
+    `pages-noop-<run_id>` and contends with nobody. **The two conditions must stay identical;
+    `concurrency` cannot read `env`.** The expression was verified valid on GitHub; the
+    cancellation itself was never staged.
 
   **Which workflow FILE runs differs by trigger**, and it bites once: a `push` runs the file
   as it exists at the pushed commit, so tagging a commit that predates a change to this file
   fires nothing. `delete` reads the default branch; `workflow_call` runs at the caller's ref.
-  There is no `workflow_dispatch` — removed on the user's instruction, 2026-09-03, since
-  re-pushing the tag unchanged is already the republish.
+  There is no `workflow_dispatch` — removed on the user's instruction, 2026-09-03.
+  **Re-pushing the tag UNCHANGED does nothing** — git answers `Everything up-to-date` and emits no
+  event, so no run starts (believed otherwise until 2026-09-04). To republish without moving it:
+  `git push origin --delete preview && git push origin preview`, which briefly takes the preview down.
 
   **The `github-pages` environment allows `main`, the `v*` tags and the `preview` tag**
   (user, 2026-09-03). `main` is there for one reason and it is not obvious: `delete` runs
   from the default branch, so without it a deleted `preview` tag could not take its preview
-  down. `feat/*` was dropped — no branch deploys any more.
+  down. `feat/*` was dropped — no branch deploys any more. Putting unmerged work on a real
+  device through the `preview` tag is an exposure kept deliberately (user, 2026-08-26), which is
+  what makes the page's "development build" banner and `buildRef()` in
+  `scripts/bench/assemble.ts` load-bearing.
 - Local hooks (simple-git-hooks), three since 2026-09-11: `pre-commit` runs `tsc`,
   `lint-staged` and the unit project (~1.5 s), or `pnpm test` while concluding a conflicted
   merge; `pre-merge-commit` runs `tsc`, `biome ci .` and `pnpm test`; `pre-push` runs those three too, plus since

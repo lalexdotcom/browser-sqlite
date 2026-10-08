@@ -178,7 +178,12 @@ conventional commits, and we consume it by its major tag (`@v3`, user, 2026-10-0
 
 **The GitHub Release is created before `npm publish`**, inside the action. That
 ordering is the whole reason a failed release costs a retag rather than a burnt
-version number; do not reorder it back.
+version number; do not reorder it back. Proved twice by rc.4, which failed once before anything
+existed and once with the GitHub Release created but `npm publish` refused.
+**The action is not idempotent, and nothing fixes that yet**: once the release exists, re-running
+the job fails at `gh release create` before reaching npm. Recovery is to delete the release and the
+tag, then retag. A `gh release view … || gh release create …` in the action would make a partial
+failure replayable; it is not written.
 
 **Do not add `set -e` to the extraction step.** Two reviews have proposed it and it
 was refused both times: under `pipefail` it would abort
@@ -194,7 +199,7 @@ Design: `docs/superpowers/specs/2026-08-31-release-notes-from-changelog-design.m
 ## Writing for the consumer
 
 **Since 2026-09-07 the consumer documentation is three files** — `README.md`, `API.md` and
-`VFS.md` (`mem:state`). Both rules below were written about the README and apply to all
+`VFS.md` (`mem:history/waves`, § The documentation). Both rules below were written about the README and apply to all
 three.
 
 - **The README is for the consumer.** State the constraint and what it costs them; the
@@ -332,7 +337,7 @@ one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.
   "Done": thank him and answer his own tone — *"un petit message sympa quand-même"*. And nothing the
   dates contradict: "so quickly" was cut from a reply to a review that came eleven days after the
   PR. Every body is shown to the user before it is posted, and the re-request of the review is
-  the user's click (`mem:state`, Tooling). **But sparingly (user, 2026-10-01): "vas-y molo sur
+  the user's click (`mem:stack-and-build`, Devcontainer). **But sparingly (user, 2026-10-01): "vas-y molo sur
   les thanks"** — one thank-you in a set of replies, not one per thread; "Taken as written." is a
   whole reply.
 

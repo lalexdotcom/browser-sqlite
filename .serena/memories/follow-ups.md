@@ -159,7 +159,7 @@ Firefox, which does not.
 It was carried on the premise that whatever solved multi-tab would improve those numbers —
 a coordinator compiles once per **origin** rather than once per client. **That premise is
 gone:** rc.5's cross-tab design has no coordinator and cannot have one, because a
-SharedWorker cannot open a connection on the four VFS that matter (`mem:state`). So the
+SharedWorker cannot open a connection on the four VFS that matter (`mem:architecture/cross-tab`). So the
 measured numbers are the whole case, and they do not justify adding a handshake to the open
 path — the path GATE-1 and three abort defects were paid for. Reviving it needs no new
 measurement, only that table.

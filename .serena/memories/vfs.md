@@ -15,7 +15,7 @@ Numbers live in `mem:measurements`.
   it. `RECOMMENDED_VFS` used to be an unexported constant in `src/types.ts` (now split, `mem:architecture`); it is now a
   two-element list — `OPFSWriteAheadVFS`, `OPFSAdaptiveVFS` — in
   `scripts/render-vfs-matrix.ts`, and the error messages name no VFS. Rationale in
-  `mem:state`, evidence in `mem:measurements` (VFS-MEDIAN).
+  `mem:history/waves` (§ The documentation), evidence in `mem:measurements` (VFS-MEDIAN).
 - **Every declared (vfs, build) pair is executed, never trusted.** `tests/conformance/`
   runs all of them plus six invariants. Declaring a combination that does not work is the
   failure that suite exists to catch — `IDBMirrorVFS` was the row most at risk, its builds
@@ -294,10 +294,10 @@ indefinitely"). **The likeliest reading is that HANDLE-2 was that defect, misatt
 handle because one log line carried `NoModificationAllowedError`** — likeliest, not proven, and
 the verdict on the entry is the user's.
 
-**That other defect was fixed and merged the same day** (`mem:state`, § the origin write lock),
+**That other defect was fixed and merged the same day** (`mem:history/waves`, § The origin write lock),
 so its half of the symptom is gone: `close()` reclaims the lock, and a statement issued after a
 close rejects instead of hanging. What is NOT fixed is a stuck callback in a tab that stays
-open — refused deliberately, with the reasoning in `mem:state`.
+open — refused deliberately, with the reasoning in `mem:history/waves`, § The origin write lock.
 
 **The engine is the discriminator, not the VFS.** Same VFS, same code, same test, under CPU
 load — numbers and method in `mem:measurements`, ABANDON-WEDGE:

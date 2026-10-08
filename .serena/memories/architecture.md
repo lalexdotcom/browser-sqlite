@@ -276,7 +276,7 @@ write-lock transitions are polled (`ifAvailable`), so it would change nothing th
 rc.5's cross-tab design has to know it: the mixin takes up to three named locks
 `lock##<file>##{gate,access,reserved}` per connection, held only while that connection holds
 a SQLite lock. One query in flight per worker bounds it at one or two per simultaneously
-active worker. **Read from source, never measured** — see `mem:state` for the design that
+active worker. **Read from source, never measured** — see `mem:architecture/cross-tab` for the design that
 depends on it and `mem:measurements` for what a held lock costs a `query()`.
 
 **Routing is an allowlist, and its second clause is not decoration.** `isReadQuery`

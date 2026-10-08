@@ -71,114 +71,30 @@ slower than Chromium** — a bound calibrated on Chromium is a bound Firefox may
 
 \1
 
-## MATRIX-1 — the whole browser suite on every (vfs, build) pair, 2026-09-15
+## MATRIX-TRIAGE — from 989 cell-failures to 62, 2026-09-15 to 18, this container
 
-**Method.** `pnpm test:matrix`: 22 declared pairs × {chromium, firefox, isolated}, one rstest project per
-pair, 66 runs, each bounded at 600 s. 3447 s total, this container.
+Merged on 2026-10-08 from MATRIX-1, -2, -3 and -5; their own wording is in git. **No longer the reference**: the matrix reads 66 of 66 since 2026-09-21, and a regression is read against `mem:state`'s baseline.
 
-- **Green on every column:** `OPFSWriteAheadVFS` (sync/async/jspi), `OPFSAdaptiveVFS` (async/jspi),
-  `OPFSAnyContextVFS` (async/jspi). The isolated column is green for all 22 pairs.
-- **Reds per cell (chromium/firefox):** `OPFSCoopSyncVFS` 12/12; `AccessHandlePoolVFS` ~99/~99;
-  `IDBBatchAtomicVFS` 4/4; `IDBMirrorVFS` 25/24, its firefox `async` cell **timed out** (the Firefox
-  hang); `MemoryVFS` and `MemoryAsyncVFS` 21/21-22.
-- **Most reds are test assumptions, not defects:** a test pinning `poolSize: 2` on a VFS capped at 1
-  (`INVALID_OPTION`, 5-11 per cell); tests needing shared or persistent storage (inspection refuses a
-  memory VFS by design); `statement-errors` writing a raw OPFS file against an IndexedDB VFS;
-  `AccessHandlePoolVFS`'s `locking_mode=exclusive` default against a test expecting `normal`. On
-  `AccessHandlePoolVFS`, ~40 `WORKER_CRASHED` come from a previous test's client still being open:
-  `createTestClient` closes no client, and removing an OPFS entry by name frees no slot there.
-- **Probable defects, not triaged:** `IDBBatchAtomicVFS` — an abandoned write through `tx.first()` inside
-  a transaction HANGS (30 s and 60 s test timeouts, both engines); `IDBMirrorVFS` — 11 tests fail with
-  `database disk image is malformed`; `OPFSCoopSyncVFS` — one `deleteDatabase` answers
-  `DATABASE_NOT_FOUND` for a database the test created.
+**Method.** `pnpm test:matrix`: 22 declared pairs × {chromium, firefox, isolated} = 66 cells, one rstest project per pair, each bounded at 600 s. Triaged with `scripts/matrix-triage.mjs`. rstest truncates long failure lists (690 of 989 listed at MATRIX-2), so group counts under-report the widest causes.
 
-## MATRIX-2 — the whole browser suite on every (vfs, build) pair, 2026-09-16
+| | M-1 (09-15) | M-2 (09-16) | M-3 (+cleanup, 09-16) | +needs | **M-5 (09-18)** |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| wall clock | 3447 s | 2386 s | 2885 s | | 3067 s |
+| cell-failures | | 989 | 500 | 79 | **62** |
+| distinct groups | | 143 | 97 | 26 | **20** |
+| green cells /66 | | 36 | 36 | 49 | **52** |
 
-`pnpm test:matrix`, 22 pairs × {chromium, firefox,
-isolated} = 66 cells, **2386 s** — 31 % faster than MATRIX-1's 3447 s, which is the per-cell
-redundancy removed when the five VFS-sweeping files started following the target.
+M-1 → M-2 is the per-cell redundancy removed when the five VFS-sweeping files started following the target. Firefox `IDBMirrorVFS/async` timed out in M-1 (the Firefox hang) and reported its 334 tests from M-2 on (the probe's bound, `6560c9e`). `OPFSWriteAheadVFS`, `OPFSAdaptiveVFS`, `OPFSAnyContextVFS` and the whole `isolated` column were green throughout.
 
-- **Green on every column:** `OPFSWriteAheadVFS` (sync/async/jspi), `OPFSAdaptiveVFS` (async/jspi),
-  `OPFSAnyContextVFS` (async/jspi). The `isolated` column is green for all 22 pairs (7 tests each).
-- **Failures per cell (chromium/firefox):** `AccessHandlePoolVFS` 99/99 · `IDBMirrorVFS` 25/24 ·
-  `MemoryVFS` and `MemoryAsyncVFS` 21/21 · `OPFSCoopSyncVFS` 12/12 · `IDBBatchAtomicVFS` 4/4.
-  Same profile as MATRIX-1, and **no cell timed out** — firefox `IDBMirrorVFS/async`, which died on
-  the matrix's own bound in MATRIX-1, reported its 334 tests this time (the probe's bound, `6560c9e`).
-- 989 failing tests, 143 distinct (file, test, error) groups. Only 690 of the 989 are listed in the
-  reports — rstest truncates long lists — so the group counts under-report the widest causes.
+**Per VFS, summed over its six browser cells:** `AccessHandlePoolVFS` 593 → 102 → 18 → **0** · `MemoryVFS` 126 → **0** · `MemoryAsyncVFS` 84 → **0** · `IDBMirrorVFS` 98 → **46** · `IDBBatchAtomicVFS` 16 → **8** · `OPFSCoopSyncVFS` 72 → 74 → 7 → **8**.
 
-**The triage, 2026-09-16**:
+**The piles at M-2**, re-cut at M-3 rather than carried forward: tests assuming what they do not declare ~412 (`poolSize: 2` pinned on a capped VFS 250, inspection on a memory VFS 120, `statement-errors` writing a raw OPFS file 36, `default-pragmas` vs AccessHandlePool's `locking_mode` 6) — 420 at M-3, it GREW as AccessHandlePool tests reached their real cause; ~258 called "our own test infrastructure", all on `AccessHandlePoolVFS` — the previous test's client never closed, so its pool slot never returned — which was the symptom counted correctly under a cause that was wrong; and ~60 probable product defects (`IDBMirrorVFS` `database disk image is malformed`, `IDBBatchAtomicVFS` an abandoned write through a generator inside a transaction, `OPFSCoopSyncVFS` `DATABASE_NOT_FOUND` for a database the test created), 62 at M-3. M-3 also made 18 `createSyncAccessHandle` collisions visible in `lifecycle.test.ts` and `long-query.test.ts` (`mem:follow-ups`). The three product piles went to zero on 2026-09-18: VFS-PILES, `mem:measurements/wa-sqlite-prs`.
 
-| Tas | cell-failures | what it is |
-| --- | ---: | --- |
-| Tests assuming what they do not declare | ~412 | `poolSize: 2` pinned on a capped VFS (250); inspection on a memory VFS (120); `statement-errors` writing a raw OPFS file (36); `default-pragmas` vs AccessHandlePool's `locking_mode` (6) |
-| Our own test infrastructure | ~258 | every one on `AccessHandlePoolVFS`: `sqlite3_open_v2`, `unable to open database file`, `Failed to execute 'createSyncAccessHandle'`, `No modification allowed` — the previous test's client is never closed, so its pool slot is never returned |
-| Probable product defects | ~60 | `IDBMirrorVFS` 46 (`database disk image is malformed`, in tx-abort/tx-handle/tx-savepoint); `IDBBatchAtomicVFS` 8 (an abandoned write through a generator inside a transaction: timeout with no assertion, `TRANSACTION_CLOSED`, `offset is out of bounds`, `source array is too long`); `OPFSCoopSyncVFS` 6 (`DATABASE_NOT_FOUND` for a database the test created) |
+**The cleanup fix (`bbd0862`: `onTestFinished` + `close()` + `deleteDatabase` on the `opfs-pool` layout), each piece measured necessary** on `queries.test.ts` against `AccessHandlePoolVFS/sync`: 5/11 before · 5/11 with `onTestFinished` but no `deleteDatabase` · **11/11 with both**. `close()` alone cannot help — wa-sqlite's `jClose` flushes and drops the `fileId`, only `xDelete` frees a slot, and `DEFAULT_CAPACITY` is 6. At M-5 all nine `AccessHandlePoolVFS` cells were green, where only `chromium/sync` had been verified by hand, and the cleanup that no longer swallows created no failure on any cell.
 
-## MATRIX-3 — the same matrix after the test-cleanup fix, 2026-09-16
+**A whole-matrix run is not the instrument for a pile.** Two of them (80 min) said only "99, unchanged"; one instrumented single-file run answered it. Reach for `BSQ_TEST_TARGETS=<pair> pnpm exec rstest --config <cfg> --project 'chromium*' run <one file>` first — ~25 s.
 
-`pnpm test:matrix`, the same 66 cells, **2885 s**,
-no cell timed out. The tree is MATRIX-2's plus `bbd0862` (`onTestFinished` + `close()` +
-`deleteDatabase` on the `opfs-pool` layout). Triaged with `scripts/matrix-triage.mjs`, whose
-output is the numbers below.
-
-| | MATRIX-2 | MATRIX-3 |
-| --- | ---: | ---: |
-| cell-failures | 989 | **500** |
-| distinct groups | 143 | **97** |
-| green cells | 36/66 | 36/66 |
-
-**Per VFS, summed over its six browser cells:** `AccessHandlePoolVFS` **593 → 102** ·
-`OPFSCoopSyncVFS` 72 → 74 · `IDBMirrorVFS` 98 → 98 · `MemoryVFS` 126 → 126 ·
-`MemoryAsyncVFS` 84 → 84 · `IDBBatchAtomicVFS` 16 → 16. Per cell, AccessHandlePool goes
-99/99/99 (chromium) to 21/19/20 and 99/98/99 (firefox) to 14/14/14. **No cell turned green**:
-what remains on that VFS is the undeclared-needs pile.
-
-**The piles were re-cut on this run, not carried forward:** undeclared needs **420** (it GREW
-from ~372 — AccessHandlePool tests now reach their real cause), probable product defects
-**62**, and **18** newly visible `createSyncAccessHandle` collisions in `lifecycle.test.ts`
-and `long-query.test.ts` (`mem:follow-ups`). MATRIX-2's "~258 for our own test
-infrastructure" was the symptom counted correctly under a cause that was wrong.
-
-**The two pieces of the fix, each measured necessary** on `queries.test.ts` against
-`AccessHandlePoolVFS/sync`: 5/11 before · 5/11 with `onTestFinished` but no `deleteDatabase`
-· **11/11 with both**. `close()` alone cannot help — wa-sqlite's `jClose` flushes and drops
-the `fileId`, only `xDelete` frees a slot, and `DEFAULT_CAPACITY` is 6.
-
-**A whole-matrix run is not the instrument for this.** Two of them (80 min) said only
-"99, unchanged"; one instrumented single-file run answered it. Reach for `BSQ_TEST_TARGETS=<pair>
-pnpm exec rstest --config <cfg> --project 'chromium*' run <one file>` first — ~25 s.
-
-## MATRIX-5 — the matrix after the dying-worker fix, 2026-09-18
-
-The run of 2026-09-18, 66 cells, **3067 s**, no cell timed out. Triaged with
-`scripts/matrix-triage.mjs`. **This is the reference a matrix regression is read against.**
-
-| | M-2 (09-16) | +cleanup | +needs | **M-5** |
-| --- | ---: | ---: | ---: | ---: |
-| cell-failures | 989 | 500 | 79 | **62** |
-| distinct groups | 143 | 97 | 26 | **20** |
-| green cells /66 | 36 | 36 | 49 | **52** |
-
-Per VFS, summed over its six browser cells: `AccessHandlePoolVFS` 593 → 102 → 18 → **0** ·
-`MemoryVFS` 126 → **0** · `MemoryAsyncVFS` 84 → **0** · `IDBMirrorVFS` **46** (unmoved since the
-needs work) · `IDBBatchAtomicVFS` **8** · `OPFSCoopSyncVFS` 7 → **8**.
-
-**All nine `AccessHandlePoolVFS` cells are green** — three builds × three configs — where only
-`chromium/sync` had been verified by hand. The two risks named before the run did not
-materialise: the cleanup that no longer swallows created no failure on any cell, Firefox and
-isolated included.
-
-**The one regression, and it is informative:** `OPFSCoopSyncVFS` 7 → 8. Both of its
-`sqlite3_open_v2` failures (`restarts the slot once`, `a worker killed silently`) were read at the
-time as HANDLE-CORPSE on a path the fix does not cover — `AccessHandlePoolVFS` takes its directory
-at VFS **creation**, where `createVfsInstance` retries, while an `opfs-path` VFS takes the file's
-handle later at **xOpen**, inside `sqlite3_open_v2`. **Diagnosed and fixed the same day, and the
-hypothesis was only half of it:** the corpse starts it, but what made it permanent is the
-partial-acquisition leak (wa-sqlite #350, VFS-PILES above), which is why a retry at `xOpen` was
-necessary and not sufficient. Closed by measurement on 2026-09-21 — COOPSYNC-OPEN-CLOSED below.
-
-Everything else is the three product defects in `mem:follow-ups`.
+**M-5's one regression, `OPFSCoopSyncVFS` 7 → 8.** Both `sqlite3_open_v2` failures (`restarts the slot once`, `a worker killed silently`) were read as HANDLE-CORPSE on a path the fix does not cover — `AccessHandlePoolVFS` takes its directory at VFS **creation**, where `createVfsInstance` retries, while an `opfs-path` VFS takes the file's handle later at **xOpen**, inside `sqlite3_open_v2`. Fixed the same day, and the hypothesis was only half of it: the corpse starts it, but what made it permanent is the partial-acquisition leak (wa-sqlite #350, VFS-PILES), which is why a retry at `xOpen` was necessary and not sufficient. Closed by measurement on 2026-09-21: COOPSYNC-OPEN-CLOSED, `mem:measurements/opfs-handles`.
 
 ## MATRIX-DEFAULT-BUILD — the matrix after `jspi` moved before `async`, 2026-09-24
 
