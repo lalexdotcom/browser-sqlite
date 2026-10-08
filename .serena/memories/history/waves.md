@@ -1,12 +1,14 @@
 # History — what each merged wave left that the code will not tell you
 
+**Frozen since 2026-10-08: no new entry here.** Its last wave merged on 2026-09-15; what has merged since lives in the monthly tables of `mem:history` (`mem:history/2026-10` and on).
+
 Part of `mem:history`. Moved from `mem:state` on 2026-10-03, newest first as it was written there.
 
 ## `OPFSCoopSyncVFS` hands its handle over between calls only — merged 2026-09-15
 
 No spec: investigated with systematic debugging, the fix designed in chat and approved. Numbers in
 `mem:measurements` (COOPSYNC-HANDOVER); the VFS fact in `mem:vfs`; the pin and the patch traps in
-`mem:stack-and-build`. The fix is a wa-sqlite patch, proposed upstream as rhashimoto/wa-sqlite#347.
+`mem:stack-and-build/wa-sqlite`. The fix is a wa-sqlite patch, proposed upstream as rhashimoto/wa-sqlite#347.
 
 **Five things the code will not tell you:**
 

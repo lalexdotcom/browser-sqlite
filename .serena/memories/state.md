@@ -20,7 +20,7 @@ unmeasured ground.
 - **The vendored wa-sqlite sits on upstream `master` of 2026-10-05** (`96d91182`, `package.json`
   has the SHA). **`patches/wa-sqlite@1.1.2.patch` carries `IDBMirrorVFS.js` for #371 and #372**
   (both open upstream, conflicting in `jClose`) **and a one-line guard in `OPFSAdaptiveVFS.js`
-  for #374** (open upstream); heads and the merge in `mem:stack-and-build`, reports in
+  for #374** (open upstream); heads and the merge in `mem:stack-and-build/wa-sqlite`, reports in
   `mem:upstream`. A patch is regenerated or removed through `pnpm patch` / `pnpm patch-commit`,
   never by hand.
 - **`main` may sit ahead of `origin/main` indefinitely** — the convention, not an oversight. It

@@ -5,7 +5,7 @@ saying what it was, because a table of increments cannot show an arc. `CHANGELOG
 the consumer-facing delta; `git log` holds the detail. This file exists only so a date or a
 merge commit can be found without archaeology.
 
-The rows live by month: `mem:history/2026-08`, `mem:history/2026-09-01-to-15`, `mem:history/2026-09-16-to-30`, `mem:history/2026-10`. What each merged wave left that the code will not tell you is in `mem:history/waves`. **A new row goes in the month it was merged.**
+The rows live by month: `mem:history/2026-08`, `mem:history/2026-09-01-to-15`, `mem:history/2026-09-16-to-30`, `mem:history/2026-10`. What each merged wave left that the code will not tell you is in `mem:history/waves`, frozen since 2026-10-08 (its last wave merged on 2026-09-15). **A new row goes in the month it was merged.**
 
 ## What rc.4 was — the one entry that is not one line
 

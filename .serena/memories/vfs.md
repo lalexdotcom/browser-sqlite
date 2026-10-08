@@ -240,95 +240,33 @@ race and turn the failure green. Trust the unperturbed run.
 
 ## HANDLE-2 — CLOSED 2026-09-21 (user): the entry was a misattribution
 
-**The verdict, and it was owed since 2026-09-09.** HANDLE-2 named a permanent pool wedge and
-blamed the OPFS handle. Every factual claim it made has been refuted by measurement, and a
-different defect — found while hunting it — reproduces the same symptom deterministically, was
-fixed and merged the same day. The likeliest reading, now adopted: **HANDLE-2 WAS the origin
-write-lock defect, misattributed to the handle because one log line carried
-`NoModificationAllowedError`.** The entry is kept below rather than deleted because its
-measurements are true and load-bearing elsewhere — what is closed is the defect, not the data.
+Condensed on 2026-10-08; the full entry is in git. HANDLE-2 named a permanent pool wedge after a
+worker holding the rotated exclusive OPFS handle was terminated, and blamed Firefox for not
+releasing the handle. **Every claim was refuted by measurement**: Firefox releases a terminated
+worker's sync access handle in 1-6 ms (HANDLE-ORPHAN), and the wedge does not reproduce — ~70
+attempts on `main`, 0/40 at the pre-fix commit where 9/40 was recorded ("HANDLE-2 does not
+reproduce"), both in `mem:measurements/opfs-handles`. **The likeliest reading, adopted: it was the
+origin write-lock defect** (WRITELOCK-STUCK, `mem:measurements/aborts`; fixed and merged on
+2026-09-09, `mem:history/waves` § The origin write lock), misattributed because one log line
+carried `NoModificationAllowedError` — a name that marks a few milliseconds after `terminate()`,
+not a stable state.
 
-**One candidate survives the closure and is the thing to confront first if this ever returns:**
-`OPFSCoopSyncVFS.jLock` installs `handleRequestChannel.onmessage` as a SINGLE-SHOT listener — it
-nulls itself after firing — and reinstalls it only on a `jLock` that finds `handleLockReleaser`
-null. A connection that consumed its listener without releasing the handle is never notified
-again. Read from source, never confronted with a failing scenario.
+What stays true and is worth carrying:
 
-What the entry said, kept for its measurements:
-
-**Measured 2026-09-09, and pre-existing: nothing in the abandoned-generator work created it.**
-It is the consequence of HANDLE-1 that nobody had written down.
-
-**The symptom.** Terminate a worker holding the rotated exclusive OPFS sync access handle and
-every other connection blocks **for good**: the surviving worker's read never returns, and a
-replacement worker cannot open the file at all — it dies at `openTimeout` and the supervisor
-declares the slot `lost`. The pool is wedged permanently, with no error.
-
-**The cause is NOT the engine, and this entry said it was until 2026-09-09.** The original
-wording — "Firefox does not release that handle" — was measured false the same day:
-`mem:measurements`, HANDLE-ORPHAN. On raw OPFS, Firefox closes a terminated worker's sync
-access handle within **1-6 ms**, idle or killed mid-synchronous-loop, unloaded or under the
-sixteen busy loops that make this defect reproducible. `NoModificationAllowedError` — the name
-one run surfaced, and the reason the old explanation looked right — is reproducible, but it
-names a window of a few milliseconds after `terminate()`, not a stable state.
-
-So the permanence lives ABOVE the engine: in wa-sqlite's hand-over protocol, or in our pool.
-Which of the two is not established. **One candidate, read from source and not yet confronted
-with the failing scenario:** `OPFSCoopSyncVFS.jLock` installs
-`handleRequestChannel.onmessage` as a **single-shot** listener — it nulls itself after firing —
-and reinstalls it only on a `jLock` that finds `handleLockReleaser` null. A connection that
-consumed its listener without releasing the handle is never notified again.
-
-**And then it did not reproduce at all** — `mem:measurements`, "HANDLE-2 does not reproduce".
-Six shapes on `main` under the validated load, ~70 attempts, no wedge; and at the pre-fix commit
-`94bfaac`, on the VFS where 9/40 was recorded, **0/40**. Nobody holds a reproduction of HANDLE-2
-today.
-
-**The symptom has another owner, and that one reproduces every time.** A `transaction()` whose
-callback never settles holds `bsq:write` for the origin permanently — every write in every tab
-blocked, silently, no error, `close()` unable to reclaim it. Deterministic, both engines, both
-VFS families, nothing to do with OPFS handles: `mem:measurements`, WRITELOCK-STUCK. The pre-fix
-branch is independently recorded as having hit exactly that shape (`mem:history`, "an `await
-gen.return()` parked behind an in-flight `next()` that held the origin's write lock
-indefinitely"). **The likeliest reading is that HANDLE-2 was that defect, misattributed to the
-handle because one log line carried `NoModificationAllowedError`** — likeliest, not proven, and
-the verdict on the entry is the user's.
-
-**That other defect was fixed and merged the same day** (`mem:history/waves`, § The origin write lock),
-so its half of the symptom is gone: `close()` reclaims the lock, and a statement issued after a
-close rejects instead of hanging. What is NOT fixed is a stuck callback in a tab that stays
-open — refused deliberately, with the reasoning in `mem:history/waves`, § The origin write lock.
-
-**The engine is the discriminator, not the VFS.** Same VFS, same code, same test, under CPU
-load — numbers and method in `mem:measurements`, ABANDON-WEDGE:
-
-| VFS | Chromium | Firefox |
-|---|---|---|
-| `OPFSCoopSyncVFS` — rotates always | 0/40 | **9/40** |
-| `OPFSAdaptiveVFS` — rotates in degraded mode | 0 | ~3% |
-| `OPFSWriteAheadVFS` | — | 0/160 |
-| `IDBBatchAtomicVFS` — no handle | — | 0/40 |
-
-So Chromium survives killing the holder even on a VFS that rotates there too; Firefox does not.
-
-**`OPFSWriteAheadVFS` was predicted affected and measured not to be**, which is worth keeping
-as a warning about this file's own wording: the row above says it "degrades exactly like
-`OPFSAdaptiveVFS`" on Firefox, and that sentence is about **concurrency**, not about how the
-handle is owned. Reading it as the latter produced a false prediction. 0/160 refutes it at any
-rate comparable to Adaptive's.
-
-**What reaches it:** any path that terminates a worker mid-query — `handleDeath` from a crash, a
-failed rollback through `onPoisoned`, a drain that times out. `close()` is safe, it asks the
-worker first. The abandoned-generator work briefly made an ordinary consumer gesture reach it
-and then removed that path; the mechanism is untouched and still reachable by the others.
-
-**Three remedies were named before the cause was known, and HANDLE-ORPHAN moved two of them.**
-Asking the worker to hand the handle back before terminating it stands as written — it is
-mid-statement, and `terminate()` is the only reliable stop. But upstream's `lockTimeout` and a
-liveness declaration over the `BroadcastChannel` both act on the **Web Lock**, and a Web Lock is
-released by the platform when its holder is terminated, exactly as the handle now turns out to
-be. Neither can address a wedge whose held resource is not held. Do not schedule either on the
-strength of this file's older wording.
+- **One candidate survives, the thing to confront first if a wedge ever returns:**
+  `OPFSCoopSyncVFS.jLock` installs `handleRequestChannel.onmessage` as a SINGLE-SHOT listener —
+  it nulls itself after firing — and reinstalls it only on a `jLock` that finds
+  `handleLockReleaser` null. A connection that consumed its listener without releasing the handle
+  is never notified again. Read from source, never confronted with a failing scenario.
+- **What reaches that territory:** any path that terminates a worker mid-query — `handleDeath`
+  from a crash, a failed rollback through `onPoisoned`, a drain that times out. `close()` is safe,
+  it asks the worker first.
+- **`OPFSWriteAheadVFS` was predicted affected and measured not to be** (0/160, ABANDON-WEDGE):
+  "degrades exactly like `OPFSAdaptiveVFS`" in this file is about concurrency, not about how the
+  handle is owned.
+- **Do not schedule upstream's `lockTimeout` or a liveness declaration over the
+  `BroadcastChannel` on the strength of HANDLE-2**: both act on the Web Lock, which the platform
+  releases when its holder is terminated, exactly as it does the handle.
 
 ## ANYCONTEXT-1 — closed 2026-08-25, and the cause is worth carrying
 

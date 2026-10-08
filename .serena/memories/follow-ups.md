@@ -194,7 +194,7 @@ tests, 2650 s.** Every one of the three traced to a
 wa-sqlite defect rather than to this library, and each is upstream with a falsifying test in
 wa-sqlite's own suite: `OPFSCoopSyncVFS` → #350 plus our own `deleteDatabase` probe (a file's
 existence, not an open), `IDBBatchAtomicVFS` → #351, `IDBMirrorVFS` → #352 and #353. Reports in
-`docs/upstream/`, patch inventory in `mem:stack-and-build`.
+`docs/upstream/`, patch inventory in `mem:stack-and-build/wa-sqlite`.
 
 Kept for its method rather than its content — the original entry, now closed:
 
