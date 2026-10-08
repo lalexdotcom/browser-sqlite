@@ -227,12 +227,12 @@ export type SQLiteQueryAPI = {
    */
   read: {
     <T extends Record<string, unknown>>(
-      sql: string,
-      params?: unknown[],
+      query: SQLQuery,
       options?: SQLiteChunkOptions,
     ): Promise<T[]>;
     <T extends Record<string, unknown>>(
-      query: SQLQuery,
+      sql: string,
+      params?: unknown[],
       options?: SQLiteChunkOptions,
     ): Promise<T[]>;
   };
@@ -255,12 +255,12 @@ export type SQLiteQueryAPI = {
    */
   write: {
     <T extends Record<string, unknown>>(
-      sql: string,
-      params?: unknown[],
+      query: SQLQuery,
       options?: SQLiteQueryOptions,
     ): Promise<SQLiteWriteResult<T>>;
     <T extends Record<string, unknown>>(
-      query: SQLQuery,
+      sql: string,
+      params?: unknown[],
       options?: SQLiteQueryOptions,
     ): Promise<SQLiteWriteResult<T>>;
   };
@@ -290,12 +290,12 @@ export type SQLiteQueryAPI = {
    */
   chunk: {
     <T extends Record<string, unknown>>(
-      sql: string,
-      params?: unknown[],
+      query: SQLQuery,
       options?: SQLiteChunkOptions,
     ): AsyncGenerator<T[]>;
     <T extends Record<string, unknown>>(
-      query: SQLQuery,
+      sql: string,
+      params?: unknown[],
       options?: SQLiteChunkOptions,
     ): AsyncGenerator<T[]>;
   };
@@ -320,12 +320,12 @@ export type SQLiteQueryAPI = {
    */
   stream: {
     <T extends Record<string, unknown>>(
-      sql: string,
-      params?: unknown[],
+      query: SQLQuery,
       options?: SQLiteChunkOptions,
     ): AsyncGenerator<T>;
     <T extends Record<string, unknown>>(
-      query: SQLQuery,
+      sql: string,
+      params?: unknown[],
       options?: SQLiteChunkOptions,
     ): AsyncGenerator<T>;
   };
@@ -347,12 +347,12 @@ export type SQLiteQueryAPI = {
    */
   first: {
     <T extends Record<string, unknown>>(
-      sql: string,
-      params?: unknown[],
+      query: SQLQuery,
       options?: SQLiteQueryOptions,
     ): Promise<T | undefined>;
     <T extends Record<string, unknown>>(
-      query: SQLQuery,
+      sql: string,
+      params?: unknown[],
       options?: SQLiteQueryOptions,
     ): Promise<T | undefined>;
   };

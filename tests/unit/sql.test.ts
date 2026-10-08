@@ -269,3 +269,39 @@ const _overloads = async (db: SQLiteDB) => {
   // @ts-expect-error a query built by sql takes no params array
   await db.read(sql`SELECT 1`, [1]);
 };
+
+describe('review fixes', () => {
+  it('refuses a template with an invalid escape rather than dropping its text', () => {
+    expect(code(() => sql`DELETE FROM t WHERE id = ${1} AND p <> '\x'`)).toBe(
+      'INVALID_VALUE',
+    );
+    expect(code(() => sql.jsonb`SELECT '\u' || ${1}`)).toBe('INVALID_VALUE');
+  });
+
+  it('refuses a first argument that is neither SQL nor a query built by sql', () => {
+    expect(
+      code(() =>
+        queryArgs(
+          { sql: 'SELECT 1', params: [] } as never,
+          undefined,
+          undefined,
+        ),
+      ),
+    ).toBe('INVALID_VALUE');
+  });
+});
+
+// Compile-time only, never called. Falsifiable: make SQLQuery structural
+// again, or declare the string overload first.
+const _nominal = async (db: SQLiteDB) => {
+  // @ts-expect-error a plain object is not a query built by sql
+  await db.read({ sql: 'SELECT 1', params: [] });
+  // A wrapper typed from the method keeps the string form: TypeScript reads
+  // the last overload.
+  const args: Parameters<SQLiteDB['read']> = [
+    'SELECT ?',
+    [1],
+    { chunkSize: 1 },
+  ];
+  await db.read(...args);
+};

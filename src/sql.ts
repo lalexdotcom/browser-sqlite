@@ -11,6 +11,9 @@ import { MAX_INT64, MIN_INT64, takesJson, toSQLiteDate } from './values';
 export class SQLQuery {
   readonly sql: string;
   readonly params: readonly unknown[];
+  // Type-only and private: makes the type nominal, so a plain `{ sql, params }`
+  // does not type-check where a query built by sql is expected.
+  private declare readonly nominal: never;
 
   constructor(sql: string, params: readonly unknown[]) {
     this.sql = sql;
@@ -28,7 +31,18 @@ const build = (
       'INVALID_VALUE',
       'sql is a template tag: write sql`…`, not sql(…)',
     );
-  let text = strings[0] ?? '';
+  const segment = (i: number): string => {
+    const text: string | undefined = strings[i];
+    // A tagged template's text is undefined after an invalid escape such as
+    // `\x`: skipping it would silently drop that part of the SQL.
+    if (text === undefined)
+      throw new SQLiteError(
+        'INVALID_VALUE',
+        `sql template part ${i} has an invalid escape sequence: write \\\\ for a backslash`,
+      );
+    return text;
+  };
+  let text = segment(0);
   const params: unknown[] = [];
   for (let i = 0; i < values.length; i++) {
     const value = values[i];
@@ -41,7 +55,7 @@ const build = (
       text += jsonb && takesJson(value) ? 'jsonb(?)' : '?';
       params.push(value);
     }
-    text += strings[i + 1] ?? '';
+    text += segment(i + 1);
   }
   return new SQLQuery(text, params);
 };
@@ -144,12 +158,17 @@ export const queryArgs = <O>(
   params: readonly unknown[] | EncodedParams | undefined;
   options: O | undefined;
 } => {
-  if (!(first instanceof SQLQuery))
+  if (typeof first === 'string')
     return {
       sql: first,
       params: second as readonly unknown[] | EncodedParams | undefined,
       options: third,
     };
+  if (!(first instanceof SQLQuery))
+    throw new SQLiteError(
+      'INVALID_VALUE',
+      'A query must be a SQL string or a query built by sql',
+    );
   if (Array.isArray(second))
     throw new SQLiteError(
       'INVALID_VALUE',
