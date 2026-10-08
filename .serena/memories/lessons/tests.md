@@ -352,3 +352,7 @@ The first back/forward-cache run was green on both engines and both arms — bec
 ## Find a request in `db.debug` by what it is, never by sniffing its SQL (2026-09-30)
 
 A fresh worker's first request carries the freshness barrier, `SELECT count(*) FROM sqlite_master`, whether it is a read or a write. A test that found "the read" as the first request with a query containing `SELECT` found the `CREATE TABLE` write instead — and the pre-branch version of that test had been inspecting the barrier of that write all along, passing because it asserted only `sql.includes('SELECT')`. Match a request by `kind`, and a query by its exact text.
+
+## A failure count that changes run to run in one family of assertions, on every backend, points at the harness (2026-10-08, wa-sqlite on Safari 26)
+
+Safari 26 failed 72, then 81 `vfs_xOpen`/`vfs_xClose` assertions. They all read 0, and `MemoryVFS` failed too. A defect in nine VFS at once does not vary in count; a race does. It was the harness: an output `DataView` passed by `Comlink.proxy()` is written on its own port, unordered with the reply. **When every backend fails the same way and the count drifts, look at what the tests share before looking at what they test.**

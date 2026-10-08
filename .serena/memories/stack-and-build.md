@@ -104,7 +104,7 @@ placeholder `undefined` must keep a callable union type.
 Four projects. `pnpm test` runs the first two.
 
 **Both engines are installed locally** — `~/.cache/ms-playwright` carries chromium and firefox.
-WebKit is not installed by `post-create.sh` and not offered by any config. **It can run here** (2026-10-05): its system libraries install with `sudo` — the `node` user has it, the agent's sudo needs the user's approval — and Playwright 1.63+ has OPFS in a persistent context (WA-WEBKIT-SUITE, `mem:measurements/wa-sqlite-prs`); 1.62.1, our pin, has none. What blocks a WebKit project of ours is rstest's ephemeral context (`mem:follow-ups`, the rstest entry). Install a WebKit beside the pinned browsers with `PLAYWRIGHT_SKIP_BROWSER_GC=1`, or `playwright install` deletes browsers no installed Playwright references.
+WebKit is not installed by `post-create.sh` and not offered by any config. **It can run here** (2026-10-05): its system libraries install with `sudo` — the `node` user has it, the agent's sudo needs the user's approval — and Playwright 1.63+ has OPFS in a persistent context (WA-WEBKIT-SUITE, `mem:measurements/test-browsers`); 1.62.1, our pin, has none. What blocks a WebKit project of ours is rstest's ephemeral context (`mem:follow-ups`, the rstest entry). Install a WebKit beside the pinned browsers with `PLAYWRIGHT_SKIP_BROWSER_GC=1`, or `playwright install` deletes browsers no installed Playwright references.
 **There is no engine environment variable any more (2026-09-03).** `TEST_BROWSER` and
 `CONFORMANCE_BROWSER` are both gone: each suite has one config file per engine, and its
 `pnpm` script chains them, so `pnpm test` and `pnpm test:conformance` each cover both engines

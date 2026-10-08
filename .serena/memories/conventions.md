@@ -363,6 +363,20 @@ one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.
   This does not cancel the verdict rule above — when they ask for options, still recommend;
   just do not manufacture the occasion.
 
+## Testing in browsers (user, 2026-10-08)
+
+Stated for wa-sqlite's suite (Discussion #373), and explicitly meant for the library's tests too.
+
+- **Test in the browsers users run.** A browser test exists to validate a real environment. A patched build (Playwright's Firefox and WebKit) is noise: a failure no user will hit, or a pass that says nothing about a real browser. **WebKit on Linux "just to say it was tested" is worth nothing**; the WebKit to test is Safari or iOS Safari, on GitHub's macOS images, through WebDriver.
+- **During development, each contributor tests their own platform.** Chrome and Firefox on Windows and Linux; Chrome, Firefox and the local Safari on macOS (`sudo safaridriver --enable` once per machine). The default run is Chromium alone, one value to change in the config.
+- **In CI:**
+  - every platform: Linux and Windows (Chrome, Firefox), macOS (Chrome, Firefox, Safari);
+  - each platform startable by hand, with its triggers chosen per platform; Linux on push and PR;
+  - the WASM built once and shared by every job;
+  - an iOS simulator version is a workflow input that defaults to the newest stable runtime on the image, chosen semver-style (`26.6` → the newest installed `26.6.x`).
+- **A test skipped for a browser's defect is skipped in the test itself,** with `pending()` and its reason, keyed on the browser version when no capability can detect the defect. The skip then shows in every run's output, and it protects a developer's local run as well as CI. Skipping by capability stays the rule otherwise.
+- **The framework follows from the above.** For wa-sqlite, keep `@web/test-runner`, which does all of it. For the library, rstest offers no WebDriver, so Vitest with WebdriverIO is the candidate to probe (`mem:follow-ups`).
+
 ## Working rules carried over from Claude's auto-memory (2026-10-07)
 
 Moved here when the user ruled that these memories are the only memory. Each was stated by the user; the date is when.

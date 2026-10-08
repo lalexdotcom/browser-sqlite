@@ -224,6 +224,8 @@ What each merged wave left that the code will not tell you is in `mem:history/wa
 
 ## Pending, and not ours to move
 
+- **wa-sqlite's tests on stock browsers: a revised proposal was posted on Discussion #373 on 2026-10-08, and it waits on rhashimoto.** It covers WebDriver instead of Playwright, a workflow per platform, a DataView race in the harness, and a skip for Safari 26. Nothing is started on the PR before his answer. The plan and what his answer calls for are in `mem:follow-ups`, the measurements in `mem:measurements/test-browsers`, and the user's principles in `mem:conventions` (§ Testing in browsers).
+
 - **The upstream PR is MERGED (user, 2026-08-28): `rhashimoto/wa-sqlite#344`**,
   "Fix OPFSAnyContextVFS writes on WebKit by copying the page buffer", from
   `lalexdotcom`. rhashimoto's two conditions — a link to a filed WebKit bug, and

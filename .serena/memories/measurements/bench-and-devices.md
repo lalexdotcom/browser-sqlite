@@ -162,7 +162,7 @@ Playwright's own builds: Chromium 151, Firefox 153, WebKit 26.5, all arm64/Linux
   from CI and the devcontainer (`ee2e9f3`). Its 9/104 was one missing API, not 95 defects.
   **Corrected 2026-10-05: this was Playwright 1.62's WebKit, not the Linux port.** Playwright
   1.63.0 (WebKit 26.6) has OPFS in a persistent context and none in an ephemeral one
-  (WA-WEBKIT-SUITE, `mem:measurements/wa-sqlite-prs`).
+  (WA-WEBKIT-SUITE, `mem:measurements/test-browsers`).
 
 ## Device campaign — 2026-08-25, real hardware
 

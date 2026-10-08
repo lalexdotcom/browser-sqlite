@@ -211,3 +211,7 @@ Ten ablations of a nine-part fix: three parts made no test and no probe change a
 ## A platform gap measured with one tool version is a fact about that version (2026-10-05, Discussion #373)
 
 "Playwright's WebKit on Linux has no OPFS" was measured once, on Playwright 1.62's WebKit, and written as a property of the Linux port — into `post-create.sh`, three memories and an upstream discussion. The maintainer's question (private mode?) sent us to measure again: 1.63's WebKit has OPFS in a persistent context, and the absence had been fixed upstream a month before. **Record a missing capability with the tool version it was measured on, and re-measure before repeating it to someone else** — the more often a claim is copied, the less anyone rereads where it came from.
+
+## A runner image's README lists SDKs, not what is installed (2026-10-08, `xcode-27`)
+
+The `xcode-27` README lists "Simulator - iOS 27.0/27.1/27.2". The user was told iOS 27.2 was available, and a job was written for it. The image holds only the iOS 27.0 runtime: the other rows are SDKs, one of them from an Xcode beta. **Ask the machine (`xcrun simctl list runtimes`) before telling anyone what an image provides.**

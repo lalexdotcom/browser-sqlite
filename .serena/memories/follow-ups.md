@@ -40,19 +40,78 @@ With `synchronous=normal`, closing right after a commit made `oncomplete` post o
 
 `lalexdotcom:fix/idb-mirror-close-broadcast` = `a9811d75` (fix) + `69e00270` (tests), on `master` `7fcc30df`, **opened as rhashimoto/wa-sqlite#372** on the user's go. Based on master, not on #371, so the maintainer picks the merge order; the body names the conflict with #371 (`File` constructor, `jClose`, end of `#commitTx`) and promises to rebase whichever lands second (user). Carried in `patches/` merged with #371 (`mem:stack-and-build`). Upstream CI green on `69e00270` (run 37147812971). Report `docs/upstream/2026-10-03-wa-sqlite-372-idb-mirror-close-broadcast.md`. What each answer calls for: review changes → worktree `.work/wa-sqlite-close-broadcast`, rerun `test/IDBMirrorVFS.test.js` on both engines; #371 merges first → rebase #372 onto it (resolution: wait for commits in flight, then #371's journal removal) and drop `commitsFinished()` from #371's test worker if wanted; either merge → repin.
 
-## wa-sqlite's suite on Chromium, Firefox and WebKit — PR wanted by rhashimoto (Discussion #373, 2026-10-05)
+## wa-sqlite's suite on stock browsers — revised proposal posted, waiting on rhashimoto (Discussion #373, 2026-10-08)
 
-Upstream CI runs Chromium only, so neither shows there. Seen running the suite on Firefox (Playwright 1.62.1) for #372; both on `master` `7fcc30df`. **Neither is a VFS defect and neither reaches this library**, whose `OPFSWriteAheadVFS` answers a second client with `DATABASE_IN_USE` on Firefox and terminates a worker whose open fails (`mem:vfs`). Numbers: WA-FIREFOX-SQL-HANG, `mem:measurements`.
-- **`vfs_read_freshness` on `OPFSWriteAheadVFS`** (default, asyncify, jspi): `unable to open database file` at the second connection. The test is ours (#365) and assumes two connections; on Firefox, without `readwrite-unsafe`, the VFS keeps its access handles for a connection's life.
-- **`sql.test.js` hangs, caused by `OPFSWriteAheadVFS`'s `sql_0005`.** Same assumption: its second of eight connections fails to open on Firefox. Then three harness traits make a failure a hang: `sql_0005` registers a worker's cleanup only after a successful open, so the worker whose open failed is never destroyed, and its VFS keeps its `.session-*` directory and temp-file handles; the next `context.create()` with `reset` cannot empty OPFS (`maybeReset` retries `NoModificationAllowedError` for 10 s, then rejects unhandled, so the worker never posts its port); `TestContext.create()` listens for that message only and waits for ever. Jasmine runs in random order (`random: true`, not overridden by `web-test-runner-jasmine`), so the file hangs only when a resetting spec runs after that failure — hence one `master` run that finished.
-- **Asked upstream: Discussion rhashimoto/wa-sqlite#373 ("Should the test suite also run on Firefox?", category Ideas), opened 2026-10-03 on the user's go.** It gives the case for Firefox (no `readwrite-unsafe`, as on Safari; #363, #367 and #369 Firefox-only or worse there; JSPI on Firefox; Playwright's WebKit on Linux has no OPFS — false, see below), the two adaptations above, owns `vfs_read_freshness`'s assumption (#365), and offers a PR.
-- **rhashimoto answered on 2026-10-04**: not opposed to more diversity, but is Firefox the best choice given its declining usage and finances, and is WebKit's OPFS problem Playwright's private mode, painful to override? **Measured 2026-10-05, both answered** (WA-WEBKIT-SUITE and WEBKIT-IDB-TERMINATE, `mem:measurements/wa-sqlite-prs`): yes, the ephemeral context; one line of config with Playwright 1.63+; the suite on WebKit then needs the Firefox adaptations above plus `vfs_open_last_error` accepting `InvalidStateError`, and `TestContext.destroy()` closing the VFS before `terminate()` (or Playwright 1.64's WebKit, which carries WebKit 324094's fix). The reply proposing WebKit rather than Firefox, with the measurements and a test-only PR offered, was posted on the user's go on 2026-10-05 (discussioncomment-18758564), as a reply to his comment. **rhashimoto answered the same day (16:02 UTC): "Running CI tests on all three browsers by default would be great if you're up for that"**, and asked that testing be easy to restrict to a single browser during development, e.g. with an environment variable. **So the PR is wanted, test-only, not started:** Chromium, Firefox and WebKit by default in the config and the CI workflow; an environment variable to pick one; WebKit in a persistent context (Playwright 1.63+); the Firefox adaptations above (`vfs_read_freshness` and `sql_0005` on `OPFSWriteAheadVFS` without `readwrite-unsafe`, and the harness traits that turn a failed open into a hang); for WebKit also `vfs_open_last_error` accepting `InvalidStateError` and `TestContext.destroy()` closing the VFS before `terminate()` (or Playwright 1.64's WebKit). Rerun the whole suite on all three. **Design questions asked before starting** — posted on the user's go on 2026-10-06 as a top-level comment (discussioncomment-18773230), each with our default: (1) which Chromium — upstream CI runs a real Chrome 129 (`browser-actions/setup-chrome` + `chromeLauncher`, bumped from 121 on 2024-09-23 alongside Emscripten 3.1.61, reason not in the commit); options Playwright's bundled Chromium, a real Chrome through Playwright (`channel: 'chrome'` or `executablePath`, the latter "at your own risk" per Playwright's docs), or `chromeLauncher` kept; and whether 129 is a deliberate pin. **Measured 2026-10-06, this container (aarch64):** Playwright 1.63.0 drives Chromium 129.0.6668.29 (Playwright 1.47.2's `chromium-1134`, no branded Chrome exists for Linux arm64) through `playwrightLauncher({ product: 'chromium', launchOptions: { executablePath, args: [<upstream's JSPI flag>] } })`: `WebAssembly.Suspending`/`promising` present, upstream `master` `96d91182`'s whole suite **6156 passed, 0 failed, 102.6 s**. Not tried: the branded x86_64 Chrome 129 from `setup-chrome` (would take a CI probe on the fork). (2) `WTR_BROWSERS`, comma-separated, all three when unset. (3) a matrix, one job per browser, `fail-fast: false`, both passes; to cut CI time, drop the checked-in-WASM pass, never the post-`make` one (the user: a PR can change the WASM build, only the post-build pass tests it). (4) skip `vfs_read_freshness`/`sql_0005` without `mode`; `vfs_open_last_error` accepts both errors. (5) cleanup registered before the open, `create()` rejects on a failed reset. (6) `destroy()` closes the VFS before `terminate()`, or wait for 1.64. (7) one PR, test/harness commits before config/workflow. **rhashimoto answered on 2026-10-06 (15:35 UTC), as a reply to that comment:** (1) Playwright's bundled Chromium, and 129 was only the version current at the time, not a pin; (2) `WTR_BROWSERS` exactly as proposed; (3) **drop the pre-build pass** — each browser's job runs the suite once, after `make`; (4) both proposals taken; (5) taken, in the same PR; (6) the VFS should be closed — `destroy()` closes it before `terminate()`, whatever Playwright's WebKit version; (7) one PR. He closed with thanks for the investigations and fixes. Our reply, posted on the user's go on 2026-10-07 (discussioncomment-18791734, under the questions comment), confirms the plan, announces the PR soon and thanks him back. **The PR is therefore fully specified, not started:** `chromeLauncher` and `browser-actions/setup-chrome` replaced by `playwrightLauncher` for the three engines (WebKit in a persistent context, Playwright 1.63+); `WTR_BROWSERS` comma-separated, all three when unset; a CI matrix, one job per browser, `fail-fast: false`, `make` then the suite, no checked-in-WASM pass; `vfs_read_freshness` and `sql_0005` skipped where `FileSystemSyncAccessHandle` has no `mode`; `vfs_open_last_error` accepting `NoModificationAllowedError` or `InvalidStateError`; `sql_0005` registering each worker's cleanup before its open, `TestContext.create()` rejecting when the worker fails during setup; `TestContext.destroy()` closing the VFS before `terminate()`. Commits: test and harness first, config and workflow after. To check while writing it: whether upstream's JSPI launch flag is still needed on Playwright's bundled Chromium (it was on 129). Upstream `master` is `96d91182` (#375 merged); `probe/webkit-opfs` sits on `7fcc30df` and is throwaway. The fork branch `probe/webkit-opfs` holds the CI probe (workflow, `probe/webkit-opfs.mjs`, the WebKit config); the local instrumentation on top of it is uncommitted.
+**Where it stands.** On the user's go, a top-level comment was posted on rhashimoto/wa-sqlite#373 on 2026-10-08 (discussioncomment-18824045). It revises the plan he had validated, after two days of measurements on the fork (`mem:measurements/test-browsers`). **Nothing is started on the PR until he answers.** The user's principles behind it are in `mem:conventions` (§ Testing in browsers).
+
+**What the comment proposes:**
+- **Stock browsers through WebDriver** (`@web/test-runner-webdriver`), Playwright dropped, which revisits his answer 1 (Playwright's bundled Chromium). The reason given: test what users run; patched builds are noise.
+- **Development:** `yarn test` runs Chrome only by default, and `WTR_BROWSERS` picks others (`chrome,firefox`, plus `safari` on macOS).
+- **CI:** one reusable workflow with the steps, and one small workflow per platform: Linux (Chrome, Firefox), Windows (Chrome, Firefox), macOS (Chrome, Firefox, Safari). Triggers are his to choose per platform; the example given is all on a release, Linux on PRs and pushes to master, and any by `workflow_dispatch`. The WASM is built once with `make` and shared by every job.
+- **The DataView race** (SAFARI26-DATAVIEW-RACE) goes as its own commit in the test PR, not a PR of its own: only Safari exposes it.
+- **`sql_0005` on `IDBMirrorVFS`** is skipped on Safari before 27 with `pending()` and its reason (SAFARI26-IDBMIRROR-KILL).
+- **The `readwrite-unsafe` skips** stay as agreed.
+- **Windows:** geckodriver comes from the runner, and the docs will tell Windows contributors to install it.
+- **Mobile:** iOS Safari can follow the macOS images' simulators (iOS 26 works, iOS 27 refuses). Chrome on Android is not explored, only said possible.
+
+**What his answer calls for, if he agrees.** The PR branch, from upstream `master`, in this order:
+1. **Test and harness commits:**
+   - the capability skips: `vfs_read_freshness` and `sql_0005` on `OPFSWriteAheadVFS` without `FileSystemSyncAccessHandle.prototype.mode`, and `vfs_open_last_error` accepting `InvalidStateError`;
+   - `sql_0005` registering each worker's cleanup before its open;
+   - `TestContext.create()` rejecting when the worker reports an error;
+   - `destroy()` closing the VFS before `terminate()`;
+   - the DataView race fix, ported from `68aae811` on the fork;
+   - the Safari-before-27 skip, through a `TestContext` helper reading `Version/NN` from the user agent (the same on macOS and iOS).
+2. **Config:** `WTR_BROWSERS`, with Chrome as the default.
+3. **Workflows:** as proposed above.
+4. **Docs:** a "Running the tests" section per OS.
+
+Before opening it, measure reliability: about 10 runs per environment, through `workflow_dispatch` on the fork. Upstream's JSPI flag is not needed on stock Chrome 154.
+
+**Still open:**
+- Linux Firefox lost two files at the launcher once in 8 runs, unexplained.
+- Windows Firefox has only one complete run.
+- iOS 27 simulators refuse WebDriver sessions; the image `20261006` with Safari 27.0.1 is untried.
+- The fork's `probe/stock-browsers` (head `437e6de1`) and `probe/webkit-opfs` are throwaway.
+
+**History, compressed.**
+- **2026-10-03:** asked, about Firefox.
+- **2026-10-04:** he pointed at WebKit and Playwright's private mode.
+- **2026-10-05:** we measured WebKit's OPFS in a persistent context and proposed WebKit; he asked for all three browsers by default, with an environment variable to restrict to one.
+- **2026-10-06:** design questions (discussioncomment-18773230). He answered: Playwright's Chromium, `WTR_BROWSERS`, drop the pre-build pass, both skips, `create()` rejecting, `destroy()` closing the VFS, one PR.
+- **2026-10-07:** confirmed (discussioncomment-18791734).
+
+The Firefox findings that started it (WA-FIREFOX-SQL-HANG): `vfs_read_freshness` and `sql_0005` on `OPFSWriteAheadVFS` assume two connections, which Firefox without `readwrite-unsafe` refuses. Three harness traits then turn that failed open into a hang:
+- `sql_0005` registered a worker's cleanup only after its open, so the failed worker was never destroyed;
+- `maybeReset` retried `NoModificationAllowedError` for 10 s, then rejected without posting a port;
+- `TestContext.create()` waited for ever for that port.
+
+Jasmine's random order decides whether a resetting spec follows the failure. None of this is a VFS defect, and none of it reaches the library.
+
+## The library's tests on stock browsers — Vitest + WebdriverIO to probe (user, 2026-10-08)
+
+**The user's direction** (`mem:conventions`, § Testing in browsers): the library's browser tests should also run on stock browsers, Safari and iOS through GitHub's macOS images. rstest has no WebDriver and is pre-1.0, and reusing the rslib config does not make up for that. Testing the rslib-built `dist/` is worth considering. **Parked by the user the same day, to finish wa-sqlite first.**
+
+**The candidate is Vitest's browser mode with `@vitest/browser-webdriverio`.** Read on 2026-10-08:
+- Vitest 5.0.3 is current.
+- **Since Vitest 5 the WebdriverIO provider is community-maintained** (`vitest-community/vitest-webdriverio`, created 2026-06, 5 stars); the Playwright provider is the core one.
+- It declares Chrome, Firefox, Edge and Safari, with `supportsParallelism = false` and no headless Safari.
+- It runs the tests **inside an iframe of an orchestrator page**: OPFS, workers and IndexedDB there are unverified.
+- iOS is not a declared browser.
+
+**Before deciding:** probe a handful of the library's tests (OPFS, workers, IndexedDB) on Chrome, Firefox and Safari, on Linux, Windows and macOS. Its own branch.
+
+**Also owed by that direction:**
+- The devcontainer gets Debian's `chromium` and `chromium-driver` for a local Chrome. Google publishes no Chrome for Linux arm64, and Chrome for Testing has no linux-arm64 build either.
+- **An unmeasured exposure:** the library's `IDBMirrorVFS` with several connections on Safari 26 may stall the way wa-sqlite's `sql_0005` does (SAFARI26-IDBMIRROR-KILL).
 
 ## wa-sqlite #362: `OPFSCoopSyncVFS.create()` fails after a back/forward-cache navigation — PR not decided
 
 Open issue by jwaltz, 2026-09-25, no PR: `OPFSCoopSyncVFS.create()` fails with `NoModificationAllowedError` after a back/forward-cache navigation — the `.ahp-*` sweep in `#initialize()` gets the lock while the cached page's worker still holds its temp handles, and `removeEntry` throws; only `NotFoundError` is tolerated there, since our #347. An immediate retry succeeds; his suggested fix (try/catch around the sweep's `removeEntry`) gave 0/48. The library masks it: `createVfsInstance` retries `create()` on `NoModificationAllowedError`. With the real navigation on Chromium, wa-sqlite alone fails its first open 18 times of 18 and the library's succeeds 18 of 18, ~85 ms later than without a cached page (LEAK-LIB, `mem:measurements`). A PR for #362 was proposed to the user, not decided.
 
 ## rstest: browser mode cannot open a persistent context — issue/PR to send upstream (user, 2026-10-05)
+
+**Lower priority since 2026-10-08:** the user's direction for the library's tests is stock browsers through WebDriver, which rstest does not offer (entry "The library's tests on stock browsers" above). This issue matters only if the library stays on rstest.
 
 `@rstest/browser` creates every context with `browser.newContext()`, an ephemeral one, hard-coded in `launchPlaywrightBrowser` (0.11.8, ours, and 0.12.3, latest on 2026-10-05). `browser.providerOptions` ([web-infra-dev/rstest#1041](https://github.com/web-infra-dev/rstest/pull/1041)) only passes `launch` to `browserType.launch()` and `context` to `newContext()`'s options: the context's nature cannot be changed. Searched 2026-10-05 (issues, PRs, discussions: persistent, `launchPersistentContext`, `userDataDir`, OPFS, incognito, `newContext`): nothing upstream raises it; [#1799](https://github.com/web-infra-dev/rstest/pull/1799)'s `contextOptions` is the Node-side `@rstest/playwright`, browser mode untouched.
 

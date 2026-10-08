@@ -333,3 +333,15 @@ Under Playwright, Juggler keeps every value a page consumes through `for await` 
 **A module worker with top-level await drops the first message (2026-09-16, Chromium 151 and Firefox 153, Playwright 1.62.1).** A `new Worker(url, { type: 'module' })` whose script awaits at top level (`await SQLiteESMFactory(...)`) never receives a message the page posted at construction: it reaches its `self.onmessage = …` assignment and nothing is delivered — dropped, not queued. It looks exactly like a deadlock (nothing settles, no error, no `onerror`), and it alone is why the reproduction published in wa-sqlite #341 hangs. Any worker harness here has the worker announce itself (`postMessage({ ready: true })`) and the page send work only in reply; before calling a never-settling worker test a lock or VFS bug, check the handshake.
 
 **A retention test can still live in the Playwright suite (2026-10-07):** read with `next()` by hand, stop mid-query, allocate garbage that survives minor GCs until every tenured witness is finalized, and only then count. Waiting for a natural GC there gave a different answer depending on the test's position in the page; forcing one gave 29/30 against 0/30 on every arm. **And a residue after a fix is not a retention until pressure fails to free it**: `chunk()` stayed at +700 MB after the read on an idle page, and 4 s of allocation took it to +24.
+
+## A runner that reports a file only when it ends makes a slow file look like a hang (2026-10-07, wa-sqlite on Windows Firefox)
+
+`@web/test-runner` prints a file only once it finishes, in random order. A Windows Firefox run sat at 12 of 16 files for 16 minutes, and it was cancelled and reported to the user as a hang. One runner invocation per file, each bounded at 10 minutes, finished every file green in about 20 minutes: `sql` alone took 478 s. **Before calling a run hung, run its files one at a time under a bound, so the slow one is named and timed.**
+
+## A page the browser kills leaves no crash report; ask the browser's own log (2026-10-08, Safari 26)
+
+Safari 26 lost its WebDriver session during one spec, every time. Two runs collecting `DiagnosticReports` found nothing. One run of `log show` filtered on WebKit's subsystems gave the whole story at once: the page's footprint climbing to 9 GB, an IPC queue of 265 000 messages, and `reason=ExceededMemoryLimit`. **When a browser drops a page with no crash, read its unified log first.**
+
+## Counting a component's activity names the stuck party; a hypothesis about load does not (2026-10-08, Safari 26)
+
+Two hypotheses about the load the test put on Safari each cost a run: the number of proxies, then the retry rate. Neither changed anything. Per-worker counters reported live every 2 s did: the VFS calls in flight, the pending IndexedDB requests and lock requests, and `navigator.locks.query()`. They showed at once one worker inside its commit, its IndexedDB writes pending for 8 s while it held every lock, and the others polling. **Instrument what each party is waiting on before varying the load.**

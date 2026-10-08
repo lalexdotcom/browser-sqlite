@@ -34,6 +34,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - A suite count says nothing about the builds that were skipped (2026-09-30, wa-sqlite #351)
 - A green arm needs an arm that must go red in the same harness (2026-09-30, wa-sqlite #362)
 - Find a request in `db.debug` by what it is, never by sniffing its SQL (2026-09-30)
+- A failure count that changes run to run in one family of assertions, on every backend, points at the harness (2026-10-08, wa-sqlite on Safari 26)
 
 ## `mem:lessons/debugging` — debugging, probes, measurement
 
@@ -59,6 +60,9 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - `IDBTransaction.abort()` throws once `commit()` was called (2026-10-03, wa-sqlite #371)
 - A probe summary that drops a field can invent a defect (2026-10-03, wa-sqlite #372)
 - Playwright's Firefox is not a neutral place to measure memory (2026-10-07)
+- A runner that reports a file only when it ends makes a slow file look like a hang (2026-10-07, wa-sqlite on Windows Firefox)
+- A page the browser kills leaves no crash report; ask the browser's own log (2026-10-08, Safari 26)
+- Counting a component's activity names the stuck party; a hypothesis about load does not (2026-10-08, Safari 26)
 
 ## `mem:lessons/claims-and-docs` — claims, documentation, upstream
 
@@ -77,6 +81,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - A defect of a VFS is not an exposure of the library until the library's path is followed (2026-09-30)
 - Remove each part of a multi-part fix once before sending it (2026-10-03, wa-sqlite #371)
 - A platform gap measured with one tool version is a fact about that version (2026-10-05, Discussion #373)
+- A runner image's README lists SDKs, not what is installed (2026-10-08, `xcode-27`)
 
 ## `mem:lessons/process` — process, tooling, memory, git
 

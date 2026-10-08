@@ -6,10 +6,18 @@ one. A number nobody can reproduce is a story, not a measurement — say so in t
 
 The entries live in the sub-memories below, by theme, each in the order it was written. **A new entry goes in the sub-memory of its theme**; this index gets its line.
 
-## `mem:measurements/wa-sqlite-prs` — the campaigns behind wa-sqlite PRs
+## `mem:measurements/test-browsers` — wa-sqlite's suite across browsers and CI runners (Discussion #373)
 
+- STOCK-BROWSERS
+- SAFARI26-DATAVIEW-RACE
+- SAFARI26-IDBMIRROR-KILL
+- IOS-SIMULATOR
 - WEBKIT-IDB-TERMINATE
 - WA-WEBKIT-SUITE
+- WA-FIREFOX-SQL-HANG
+
+## `mem:measurements/wa-sqlite-prs` — the campaigns behind wa-sqlite PRs
+
 - 363-ERROR-PATH
 - 369-XCLOSE
 - IDBMIRROR-COMMIT-ABORT
@@ -17,7 +25,6 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - IDBMIRROR-ABORT-DESIGNS
 - IDBMIRROR-ABORT-RELOAD-ON-REFUSAL
 - IDBMIRROR-CLOSE-BROADCAST
-- WA-FIREFOX-SQL-HANG
 - IDB-JOURNAL
 - 363-SYNC-OFF
 - 351-REVIEW-2
