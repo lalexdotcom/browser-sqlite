@@ -146,3 +146,37 @@ describe('result rows', () => {
     await db.close();
   });
 });
+
+it('decodes short, long and invalid texts as before', async () => {
+  const db = await createTestClient();
+  await db.write('CREATE TABLE e (id INTEGER PRIMARY KEY, v TEXT)');
+  const texts: string[] = [];
+  for (let n = 1; n <= 40; n++)
+    texts.push('a'.repeat(n), 'é'.repeat(n), '😀'.repeat(Math.ceil(n / 4)));
+  for (const t of texts) await db.write('INSERT INTO e (v) VALUES (?)', [t]);
+  const invalid = [
+    'ff',
+    'c0af',
+    'e0808f',
+    'eda080',
+    'f4908080',
+    'f0',
+    'e282',
+    'c3',
+    '41c3',
+    'c341',
+  ];
+  const reference = new TextDecoder('utf-8', { ignoreBOM: true });
+  const hexBytes = (h: string) =>
+    Uint8Array.from(h.match(/../g) ?? [], (b) => Number.parseInt(b, 16));
+  const expectedInvalid: string[] = [];
+  for (const h of invalid) {
+    for (const pad of ['', '61'.repeat(40)]) {
+      await db.write(`INSERT INTO e (v) VALUES (CAST(x'${pad}${h}' AS TEXT))`);
+      expectedInvalid.push(reference.decode(hexBytes(pad + h)));
+    }
+  }
+  const rows = await db.read<{ v: string }>('SELECT v FROM e ORDER BY id');
+  expect(rows.map((r) => r.v)).toEqual([...texts, ...expectedInvalid]);
+  await db.close();
+});

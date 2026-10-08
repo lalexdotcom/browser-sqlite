@@ -181,6 +181,71 @@ const HI_MAX = 2097151;
 const HI_MIN = -2097152;
 
 /** A chunk of rows as wa-sqlite's `row()` and the worker's loop built them. */
+// Texts up to this many bytes are decoded in JS (spec 2026-10-08, D6): on
+// Chromium a string TextDecoder returns on the page holds ~150-190 bytes more
+// than a cloned one, and is slower to make for short texts (RESULT-BINARY).
+const SHORT_TEXT = 32;
+const shortUnits = new Uint16Array(SHORT_TEXT);
+
+/**
+ * Valid UTF-8 as a string, or undefined for anything TextDecoder would have
+ * to replace — an invalid lead byte, a missing or wrong continuation byte, an
+ * overlong form, an encoded surrogate, a code point above U+10FFFF — so the
+ * caller's TextDecoder keeps the replacement exactly its own.
+ */
+const shortText = (
+  u8: Uint8Array,
+  start: number,
+  end: number,
+): string | undefined => {
+  let k = 0;
+  for (let i = start; i < end; ) {
+    const c = u8[i] as number;
+    if (c < 0x80) {
+      shortUnits[k++] = c;
+      i++;
+      continue;
+    }
+    let cp: number;
+    let n: number;
+    if (c >= 0xc2 && c < 0xe0) {
+      cp = c & 0x1f;
+      n = 1;
+    } else if (c >= 0xe0 && c < 0xf0) {
+      cp = c & 0x0f;
+      n = 2;
+    } else if (c >= 0xf0 && c < 0xf5) {
+      cp = c & 0x07;
+      n = 3;
+    } else {
+      return undefined;
+    }
+    if (i + n >= end) return undefined;
+    for (let j = 1; j <= n; j++) {
+      const d = u8[i + j] as number;
+      if ((d & 0xc0) !== 0x80) return undefined;
+      cp = (cp << 6) | (d & 0x3f);
+    }
+    if (
+      (n === 2 && (cp < 0x800 || (cp >= 0xd800 && cp < 0xe000))) ||
+      (n === 3 && (cp < 0x10000 || cp > 0x10ffff))
+    ) {
+      return undefined;
+    }
+    if (cp < 0x10000) {
+      shortUnits[k++] = cp;
+    } else {
+      shortUnits[k++] = 0xd7c0 + (cp >> 10);
+      shortUnits[k++] = 0xdc00 | (cp & 0x3ff);
+    }
+    i += n + 1;
+  }
+  return String.fromCharCode.apply(
+    null,
+    shortUnits.subarray(0, k) as unknown as number[],
+  );
+};
+
 export const decodeRows = <T = Record<string, unknown>>(
   block: RowsBlock,
 ): T[] => {
@@ -224,7 +289,10 @@ export const decodeRows = <T = Record<string, unknown>>(
         const start = off + 5;
         v =
           tag === 3
-            ? utf8Decoder.decode(u8.subarray(start, start + len))
+            ? ((len <= SHORT_TEXT
+                ? shortText(u8, start, start + len)
+                : undefined) ??
+              utf8Decoder.decode(u8.subarray(start, start + len)))
             : u8.slice(start, start + len);
         off = start + len;
       }

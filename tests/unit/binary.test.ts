@@ -233,6 +233,77 @@ describe('decodeRows', () => {
   });
 });
 
+describe('decodeRows short texts', () => {
+  const reference = new TextDecoder('utf-8', { ignoreBOM: true });
+  const decodeText = (bytes: Uint8Array) =>
+    decodeRows(rowsBlock(['v'], [{ text: bytes }]))[0]?.v;
+  const utf8 = new TextEncoder();
+
+  it('decodes valid UTF-8 on both sides of 32 bytes as TextDecoder does', () => {
+    const texts: string[] = [];
+    for (let n = 0; n <= 40; n++) texts.push('a'.repeat(n));
+    for (let n = 1; n <= 20; n++) texts.push('é'.repeat(n));
+    for (let n = 1; n <= 12; n++) texts.push('€'.repeat(n));
+    for (let n = 1; n <= 10; n++) texts.push('😀'.repeat(n));
+    texts.push(
+      'aé€😀',
+      '\0',
+      'a\0b',
+      '﻿x',
+      '﻿',
+      '￿',
+      '\u{10ffff}',
+      '\u0080',
+      '߿',
+      'ࠀ',
+    );
+    for (const t of texts) {
+      const bytes = utf8.encode(t);
+      expect(decodeText(bytes)).toBe(reference.decode(bytes));
+      expect(decodeText(bytes)).toBe(t);
+    }
+  });
+
+  it('decodes invalid UTF-8 exactly as TextDecoder does, short or long', () => {
+    const invalid = [
+      [0xff],
+      [0x80],
+      [0xc0, 0xaf],
+      [0xc1, 0xbf],
+      [0xc3],
+      [0xc3, 0x41],
+      [0x41, 0xc3],
+      [0xe0, 0x80, 0x8f],
+      [0xe2, 0x82],
+      [0xed, 0xa0, 0x80],
+      [0xed, 0xbf, 0xbf],
+      [0xf0],
+      [0xf0, 0x8f, 0xbf, 0xbf],
+      [0xf4, 0x90, 0x80, 0x80],
+      [0xf5, 0x80, 0x80, 0x80],
+      [0xf0, 0x9f, 0x98],
+    ];
+    for (const seq of invalid) {
+      for (const pad of [0, 28, 40]) {
+        const bytes = Uint8Array.from([...Array(pad).fill(0x61), ...seq]);
+        expect(decodeText(bytes)).toBe(reference.decode(bytes));
+        const after = Uint8Array.from([...seq, ...Array(pad).fill(0x62)]);
+        expect(decodeText(after)).toBe(reference.decode(after));
+      }
+    }
+  });
+
+  it('decodes texts of exactly 31, 32 and 33 bytes', () => {
+    for (const n of [31, 32, 33]) {
+      const ascii = utf8.encode('x'.repeat(n));
+      expect(decodeText(ascii)).toBe('x'.repeat(n));
+      // A four-byte character straddling the threshold.
+      const mixed = utf8.encode(`${'y'.repeat(n - 4)}😀`);
+      expect(decodeText(mixed)).toBe(reference.decode(mixed));
+    }
+  });
+});
+
 describe('RowWriter', () => {
   const roundTrip = (cells: Parameters<typeof fakeModule>[0]) => {
     const w = new RowWriter();
