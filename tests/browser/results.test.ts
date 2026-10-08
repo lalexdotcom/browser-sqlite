@@ -54,6 +54,33 @@ describe('result rows', () => {
     await db.close();
   });
 
+  it('come back as today through write() RETURNING and the tx.* paths', async () => {
+    const db = await createTestClient();
+    await seed(db);
+    const sql = 'SELECT id, v FROM r ORDER BY id';
+    // write() resolves to { result, affected }: the returned rows are `result`.
+    await db.write('CREATE TABLE s (id INTEGER PRIMARY KEY, v)');
+    const returned = await db.write(
+      'INSERT INTO s (id, v) SELECT id, v FROM r ORDER BY id RETURNING id, v',
+    );
+    expect(returned.result).toEqual(expected);
+    expect(returned.affected).toBe(CASES.length);
+    await db.transaction(async (tx) => {
+      expect(await tx.first(sql)).toEqual(expected[0]);
+      const chunked: unknown[] = [];
+      for await (const rows of tx.chunk(sql, [], { chunkSize: 7 }))
+        chunked.push(...rows);
+      expect(chunked).toEqual(expected);
+      const streamed: unknown[] = [];
+      for await (const row of tx.stream(sql, [], { chunkSize: 5 }))
+        streamed.push(row);
+      expect(streamed).toEqual(expected);
+      const txReturned = await tx.write('UPDATE s SET id = id RETURNING id, v');
+      expect(txReturned.result).toEqual(expected);
+    });
+    await db.close();
+  });
+
   it('keeps a negative zero and the SQL types', async () => {
     const db = await createTestClient();
     const [row] = await db.read('SELECT -0.0 AS z, typeof(-0.0) AS t');
@@ -93,6 +120,16 @@ describe('result rows', () => {
   it('keeps duplicated column names as today', async () => {
     const db = await createTestClient();
     expect(await db.read('SELECT 1 AS a, 2 AS a')).toEqual([{ a: 2 }]);
+    await db.close();
+  });
+
+  it('drops a column named __proto__, as the structured clone did', async () => {
+    const db = await createTestClient();
+    for (const value of ['NULL', "x'01'"]) {
+      const [row] = await db.read(`SELECT 1 AS id, ${value} AS "__proto__"`);
+      expect(Object.getPrototypeOf(row)).toBe(Object.prototype);
+      expect(Object.keys(row as object)).toEqual(['id']);
+    }
     await db.close();
   });
 
