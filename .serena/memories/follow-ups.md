@@ -215,6 +215,10 @@ A release runs the same commit through the tests up to three times: the `pre-pus
 
 `types` accepts only `'JSONB'` (spec 2026-10-06, D7). The user sees it later carrying conversions such as `string → number`.
 
+## Export `AVAILABLE_VFS: Record<SQLiteVFS, SQLiteBuild[]>` — not started (user, 2026-10-08)
+
+A consumer cannot list the VFS at runtime: `index.ts` exports only the type `SQLiteVFS`; `VFS_CAPABILITIES`, `VFSCapability`, `defaultBuildFor` and `describeMissing` stay internal; the only runtime list is the `Unknown vfs … Supported: …` message `inspectDatabase` throws. To export: each VFS mapped to its builds, derived from `VFS_CAPABILITIES[vfs].builds` (most preferred first) so it cannot drift from the table. With `detectFeatures()` and `missingFeature(vfs, build, available)`, already exported, a consumer can then tell which pairs run on the current engine. User-visible: a CHANGELOG entry.
+
 ## Notes, with nothing to fix
 
 In `mem:follow-ups/notes`.
