@@ -4,7 +4,7 @@ One short entry each, and every entry OPEN. **An entry marked DORMANT waits for 
 `CHANGELOG.md` and `git log` record what was fixed, `mem:measurements` holds the numbers,
 `mem:vfs` the VFS behaviour, `mem:lessons` what a closure taught.
 
-**The `step()` workstream lives in `mem:follow-ups/wa-step` (2026-10-08).** **Entries waiting on an event live in `mem:follow-ups/dormant`** — `open-retry` on Firefox, wa-sqlite #297 `trace_v2`, and the rstest/Firefox `getDirectory()` hang, moved there on 2026-10-05 to keep this file under 40 000 characters.
+**The `step()` workstream lives in `mem:follow-ups/wa-step` (2026-10-08).** **Entries waiting on an event live in `mem:follow-ups/dormant`** — `open-retry` on Firefox and wa-sqlite #297 `trace_v2`, moved there on 2026-10-05 to keep this file under 40 000 characters.
 
 **Delete, never annotate.** No struck-through lines, no "shipped and merged", no headstone
 saying an entry is gone, no verdict on an entry: what is written here is the backlog, not a
@@ -124,17 +124,6 @@ durability: a slow producer's rows reaching SQLite without waiting for `close()`
 commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5.3 ms on
 Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
 trickle, and it is no longer a deduction.
-
-## Move to Playwright 1.64.0 as soon as it is released stable — its Firefox fixes the young-worker segfault (user, 2026-10-03)
-
-**Also its WebKit (2026-10-05):** `webkit-2370` in `1.64.0-alpha-2026-10-05` carries WebKit 324094's fix — a worker terminated with IndexedDB writes in flight no longer strands the database (WEBKIT-IDB-TERMINATE, `mem:measurements/wa-sqlite-prs`). It matters if a WebKit project of ours follows (the rstest entry).
-
-Playwright's Firefox loses the page's content process when a worker is `terminate()`d a few ms after `new Worker(...)` (LIFECYCLE-SEGV, `mem:measurements`). **Already fixed upstream, no issue to open:** it is microsoft/playwright#42565 (a worker torn down while its script compiles, a regression of 1.62.0's `firefox-1538`), fixed by the Gecko patch rolled in #42631 (`r1544`, 2026-09-09). Checked 2026-10-03 with a one-spec reproduction (`about:blank`, two blob workers terminated 0-6 ms after creation, 150 rounds): Playwright 1.63.0 (`firefox-1543`, Firefox 155.0) 5/5 `Target crashed`, and its binary launched alone 10/10, against Mozilla's Firefox 155.0 10/10 clean; `@playwright/test@1.64.0-alpha-2026-10-03` (`firefox-1554`) 10/10 clean on Firefox. **To do when 1.64.0 is released stable** (not an alpha; `npm view playwright dist-tags` → `latest`): bump `playwright` in `package.json` (pinned at 1.62.1), then **make sure the Firefox actually used is the new build**, `firefox-1554` or later:
-- locally, `.devcontainer/post-create.sh` installs browsers only when the container is created, so run `pnpm exec playwright install --with-deps chromium firefox` by hand; the old `firefox-1538` stays in `~/.cache/ms-playwright` and is simply no longer chosen;
-- check with `node -e "console.log(require('playwright').firefox.executablePath())"` that the path names the new revision and exists, and that rstest runs on it (the browser provider uses the project's `playwright`);
-- in CI the browser cache is keyed on `pnpm-lock.yaml` (`ci.yaml`, `release-and-publish.yaml`), so the bump renews it by itself;
-- then rerun the Firefox config, and the one-spec reproduction above if in doubt;
-- **and remeasure the rstest/Firefox `getDirectory()` hang** (its entry in `mem:follow-ups/dormant`: what each result calls for is there). The test-side guard in `lifecycle.test.ts` (kill a silent worker only after its boot signal) stays either way. The `DOM Worker` thread leak of the same builds (WORKER-LEAK) was not re-measured on `firefox-1554`; it never reaches the 512-worker cap in the suite.
 
 
 ## What the matrix showed, and what it shows now (2026-09-16, resolved 2026-09-18)

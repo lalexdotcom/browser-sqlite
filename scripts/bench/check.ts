@@ -64,7 +64,21 @@ const fail = (message: string): never => {
   process.exit(1);
 };
 
+// The server is a TypeScript script Node strips on start; Playwright 1.64's
+// Chromium launches in ~30 ms, before it listens. Wait for it to answer.
+const serverReady = async (): Promise<void> => {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      if ((await fetch(`http://127.0.0.1:${PORT}/`)).ok) return;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  fail(`the static server did not answer on port ${PORT} within 10 s`);
+};
+
 try {
+  await serverReady();
   const browser = await playwright[engine].launch();
   const context = await browser.newContext({ acceptDownloads: true });
   const page = await context.newPage();
