@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Breaking:** **an array passed as a param is bound as JSON text instead of bytes.** Pass a `Uint8Array` to bind bytes.
 - **`bulkWrite()` and queries with large params use less memory.**
+- Query results cross from the worker to the page in binary form: faster reads, and lower memory for large results.
 
 ### Fixed
 

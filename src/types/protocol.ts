@@ -167,7 +167,7 @@ export type WorkerMessageData =
    * opens nothing until the client sends `proceed` (spec 2026-09-15, §3.2).
    */
   | { type: 'probed'; callId: number; missing: PlatformFeature | null }
-  | { type: 'chunk'; callId: number; data: unknown[] }
+  | { type: 'chunk'; callId: number; data: RowsBlock }
   | {
       type: 'done';
       callId: number;
