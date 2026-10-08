@@ -4,7 +4,7 @@ import {
   encodeParams,
   ParamsWriter,
   prepareParams,
-} from '../../src/encode';
+} from '../../src/binary';
 import { decodeParams } from './helpers/params';
 
 const MiB = 1 << 20;

@@ -1,4 +1,4 @@
-import { EncodedParams } from '../../../src/encode';
+import { EncodedParams } from '../../../src/binary';
 import type { ParamsBlock } from '../../../src/types/protocol';
 import type { Bindable } from '../../../src/values';
 

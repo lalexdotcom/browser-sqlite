@@ -43,7 +43,7 @@ import type {
   WorkerMessageData,
 } from '../types/protocol';
 import { DATABASE_FILE_SUFFIXES, renderPragmas } from '../utils';
-import { bindBlock } from './bind';
+import { bindBlock } from './binary';
 import { cloneable } from './cloneable';
 import { firstMissing } from './probes';
 import { sqliteCodeOf } from './sqlite-code';

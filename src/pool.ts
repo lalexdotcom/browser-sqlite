@@ -1,10 +1,10 @@
+import { EncodedParams, encodeParams, type QueryParams } from './binary';
 import type { SQLiteBuild } from './const/builds';
 import type { PlatformFeature } from './const/platform';
 import type { SQLiteResultCode } from './const/sqlite';
 import type { SQLiteVFS } from './const/vfs';
 import { DEFAULT_CREDIT_WINDOW } from './credits';
 import type { QueryDebugHandle, WorkerDebugHandle } from './debug';
-import { EncodedParams, encodeParams, type QueryParams } from './encode';
 import type { Logger } from './logger';
 import { SQLiteError, type SQLiteErrorCode } from './types/errors';
 import type {

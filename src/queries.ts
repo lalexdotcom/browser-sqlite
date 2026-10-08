@@ -6,7 +6,7 @@ import {
   reclaim,
 } from './abandon';
 import type { SQLiteChunkOptions, SQLiteQueryOptions } from './api';
-import type { QueryParams } from './encode';
+import type { QueryParams } from './binary';
 import type { PoolWorker } from './pool';
 
 /**

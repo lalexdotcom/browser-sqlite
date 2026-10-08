@@ -5,8 +5,8 @@ import type {
   SQLiteOutputRow,
   SQLiteTransactionOptions,
 } from './api';
+import { type EncodedParams, ParamsWriter } from './binary';
 import type { SQLiteVFS } from './const/vfs';
-import { type EncodedParams, ParamsWriter } from './encode';
 import {
   type Locks,
   stagingLockName,
