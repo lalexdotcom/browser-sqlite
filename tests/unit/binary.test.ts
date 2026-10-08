@@ -217,6 +217,17 @@ describe('decodeRows', () => {
     ]);
   });
 
+  it('does not assign a column named __proto__, as the structured clone did', () => {
+    const block = rowsBlock(
+      ['id', '__proto__'],
+      [{ int32: 1 }, null, { int32: 2 }, { blob: Uint8Array.of(1) }],
+    );
+    for (const row of decodeRows(block)) {
+      expect(Object.getPrototypeOf(row)).toBe(Object.prototype);
+      expect(Object.keys(row)).toEqual(['id']);
+    }
+  });
+
   it('decodes an empty block', () => {
     expect(decodeRows(rowsBlock(['a'], []))).toEqual([]);
   });
@@ -257,6 +268,15 @@ describe('RowWriter', () => {
       new Uint8Array(0),
       null,
     ]);
+  });
+
+  it('writes NULL for a text whose pointer is 0, as readUTF8 gives null', () => {
+    const { values } = roundTrip([
+      { type: 3, bytes: new Uint8Array(0), nullPointer: true },
+      { type: 3, bytes: new Uint8Array(0) },
+      { type: 4, bytes: new Uint8Array(0) },
+    ]);
+    expect(values).toEqual([null, '', new Uint8Array(0)]);
   });
 
   it('writes an int32 in 5 bytes and a wider integer in 9', () => {

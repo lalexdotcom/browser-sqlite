@@ -66,23 +66,29 @@ export const rowsBlock = (columns: string[], cells: Cell[]): RowsBlock => {
 export type FakeCell =
   | { type: 1; value: bigint }
   | { type: 2; value: number }
-  | { type: 3 | 4; bytes: Uint8Array }
+  | { type: 3 | 4; bytes: Uint8Array; nullPointer?: true }
   | { type: 5 };
 
 /**
  * Test-only: the column API of a statement whose current row is `cells`,
  * text and blobs placed in a fake heap. A blob of length 0 has pointer 0, as
- * `sqlite3_column_blob` returns for an empty blob.
+ * `sqlite3_column_blob` returns for an empty blob; an empty text has a
+ * non-zero one, and `nullPointer` gives any cell pointer 0 (an allocation
+ * failure of `sqlite3_column_text`).
  */
 export const fakeModule = (cells: FakeCell[]): WASQLiteModule => {
   const HEAPU8 = new Uint8Array(1 << 20);
   const ptrs: number[] = [];
   let at = 8;
   for (const c of cells) {
-    if ((c.type === 3 || c.type === 4) && c.bytes.length > 0) {
-      HEAPU8.set(c.bytes, at);
-      ptrs.push(at);
-      at += c.bytes.length;
+    if ((c.type === 3 || c.type === 4) && !c.nullPointer) {
+      if (c.type === 3 || c.bytes.length > 0) {
+        HEAPU8.set(c.bytes, at);
+        ptrs.push(at);
+        at += c.bytes.length;
+      } else {
+        ptrs.push(0);
+      }
     } else {
       ptrs.push(0);
     }

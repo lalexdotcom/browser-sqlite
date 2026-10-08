@@ -154,6 +154,13 @@ export class RowWriter {
             ? module._sqlite3_column_text(stmt, i)
             : module._sqlite3_column_blob(stmt, i);
         const len = module._sqlite3_column_bytes(stmt, i);
+        if (type === SQLITE_TEXT && ptr === 0) {
+          // An allocation failure: wa-sqlite's readUTF8 gives null.
+          this.#room(1);
+          this.#u8[this.#off] = 0;
+          this.#off += 1;
+          continue;
+        }
         this.#room(5 + len);
         this.#u8[this.#off] = type === SQLITE_TEXT ? 3 : 4;
         this.#dv.setUint32(this.#off + 1, len, true);
