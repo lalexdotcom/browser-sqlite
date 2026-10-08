@@ -1,0 +1,86 @@
+# The `sql` template tag — design
+
+**Date:** 2026-10-08 · **Status:** approved in chat, spec under review · **Target:** `## [Unreleased]` · **Branch:** `feat/sql-tag`
+
+Today a query and its parameters are two arguments kept in step by hand: `db.read('SELECT … WHERE a = ? AND b = ?', [a, b])`. A tagged template writes each value where it is used and builds both. Since the binary protocol (spec 2026-10-07), every parameter already goes through `toBindable` (`src/values.ts`), so an object or an array is bound as JSON text for every method: a plain tag only has to join the template with `?` and collect the values. What it cannot do alone is JSONB, which needs `jsonb(?)` in the SQL — hence a variant. This closes the "template queries" entry of `mem:follow-ups` and § 7 of spec 2026-10-06.
+
+---
+
+## 1. Decisions (user, 2026-10-08)
+
+- **D1 — Two forms, one export.** `` sql`…` `` and `` sql.jsonb`…` ``; `jsonb` is a property of the tag, as `raw` is of `String`. `jsql` was rejected (it reads "JavaScript SQL" and says nothing of what it does), `jsonbSql` as too long.
+- **D2 — The values follow the existing conversion, unchanged.** The tag does not convert anything: every value it collects reaches the method's params and goes through `prepareParams` → `toBindable` like a hand-written param, so an object or an array is JSON text, a `Date` is SQLite's date format, binary is a BLOB (spec 2026-10-06, § 2).
+- **D3 — `sql.jsonb` wraps exactly the values the ordinary conversion turns into JSON.** A value gets `jsonb(?)` when `toBindable` would bind it through `JSON.stringify` as an ordinary column: an object that is not binary and not a `Date`, arrays included. Everything else keeps `?`. Strings and booleans in particular keep `?`, unlike a JSONB column of `bulkWrite()`: `` sql.jsonb`… WHERE name = ${name}` `` must compare text with text. Since the wrapped values are exactly those the ordinary conversion stringifies, the value itself needs no JSONB-specific conversion (§ 2).
+- **D4 — The methods take the query object as an overload.** `read`, `write`, `chunk`, `stream` and `first` accept `(query: SQLQuery, options?)` beside `(sql, params?, options?)`. Declared once, in `SQLiteQueryAPI`, so the client and the transaction both get it. A spread tuple (`db.read(...sql`…`)`) was rejected: it keeps the signatures but makes the `...` mandatory at every call.
+- **D5 — An interpolated `SQLQuery` is inlined as a fragment.** Its text replaces the placeholder, its params take the placeholder's place in order. This is the safe way to compose a dynamic query (an optional `WHERE` clause) without concatenating strings. A `sql.jsonb` fragment keeps its own `jsonb(?)` inside a plain `sql`, and a fragment inside `sql.jsonb` is inlined, never wrapped.
+- **D6 — A fragment is recognised by `instanceof` on an internal class, never by its shape.** A user value shaped `{ sql, params }` stays a value (JSON text): treating any such object as a fragment would inline user data into the SQL. The class is not exported as a value; only its type `SQLQuery` is public, as `export type`, so the runtime exports change only by `sql`. A module-private symbol would be as safe; the class was preferred because `instanceof` reads directly and it carries the fields. Two copies of the package in one bundle do not recognise each other's fragments — such a fragment is bound as JSON text, wrong but not unsafe; `Symbol.for` would fix it and let any code forge a fragment, so it is not used.
+
+## 2. Building a query
+
+`sql(strings, ...values)` walks the template once:
+
+| Interpolated value | Text emitted | Params added |
+|---|---|---|
+| a `SQLQuery` (fragment) | its `sql` | its `params`, in order |
+| under `sql.jsonb`, a value `takesJson(v)` | `jsonb(?)` | `v` |
+| anything else | `?` | `v` |
+
+`takesJson(v)` lives in `src/values.ts` beside `convert`, and `convert` uses it for its own `JSON.stringify` branch, so the two cannot drift apart: `typeof v === 'object'`, not `null`, not a `Uint8Array` / `ArrayBuffer` / `ArrayBuffer` view / `SharedArrayBuffer`, not a `Date`.
+
+The params are the raw values. Conversion stays where it is today, in `prepareParams` at the method's entry, so an error names the param's final position in the composed query (`param 3`), not its position in one template.
+
+The template's own text is not parsed. It must not carry placeholders of its own (`?`, `?NNN`, `:name`): mixed with the tag's `?`, they would shift the numbering. This is documented, not checked — checking needs tokenisation (`mem:architecture`, routing).
+
+No list expansion: `` IN (${[1, 2]}) `` binds one JSON text, as `[1, 2]` does as a param today. `json_each(?)` covers the case.
+
+## 3. The public API
+
+```ts
+// src/sql.ts
+export class SQLQuery {
+  readonly sql: string;
+  readonly params: readonly unknown[];
+}
+export const sql: {
+  (strings: TemplateStringsArray, ...values: unknown[]): SQLQuery;
+  jsonb(strings: TemplateStringsArray, ...values: unknown[]): SQLQuery;
+};
+```
+
+`src/index.ts` adds `export { sql } from './sql'` and `export type { SQLQuery } from './sql'`; `tests/unit/exports.test.ts` pins `sql` among the values and `SQLQuery` among the types.
+
+In `src/api.ts`, each of the five methods becomes an overloaded call signature:
+
+```ts
+read: {
+  <T extends Record<string, unknown>>(sql: string, params?: unknown[], options?: SQLiteChunkOptions): Promise<T[]>;
+  <T extends Record<string, unknown>>(query: SQLQuery, options?: SQLiteChunkOptions): Promise<T[]>;
+};
+```
+
+`bulkWrite()` and `output()` are not concerned.
+
+## 4. Dispatch
+
+One internal helper, `queryArgs(first, second, third)`, returns `{ sql, params, options }`: a `SQLQuery` first gives its fields and takes `second` as the options; a string first keeps today's reading. The ten entry points — five in `client.ts`, five in `transaction.ts` — call it first, before `assertReadable` / `checksql`, so routing, the read guard and the transaction's checks see the composed SQL exactly as they see a string today.
+
+A `SQLQuery` followed by an array (untyped code passing params anyway) is refused with `INVALID_VALUE`, rather than taking the array as options.
+
+## 5. Errors
+
+No new code. A value `toBindable` refuses throws as today, from the method, naming its final position. A misuse of the overload is `INVALID_VALUE` (§ 4).
+
+## 6. Testing
+
+- **Unit (`tests/unit/sql.test.ts`, Node):** text and params for each row of § 2; nesting both ways (`sql` in `sql.jsonb`, `sql.jsonb` in `sql`) and an empty fragment; a `{ sql, params }` plain object stays a value; `takesJson` against `convert` for each kind of value in spec 2026-10-06 § 2; `queryArgs` for both forms and the refused one.
+- **Browser (shared suite, both engines):** each of the five methods with a `SQLQuery`, on the client and inside a transaction; a `sql.jsonb` insert reads back as JSONB (`typeof(col) = 'blob'`, `json(col)` equal to the object's JSON); an object through plain `sql` reads back as its JSON text.
+- **Exports:** `tests/unit/exports.test.ts` as § 3.
+
+## 7. Documentation and changelog
+
+`API.md` gets a section on the tag: both forms, composition, the no-placeholder rule, no list expansion. `README.md`'s quick-start `INSERT` (`db.write('INSERT INTO users (name) VALUES (?)', ['Alice'])`) is rewritten with the tag, and `sql` joins its API link line. `CHANGELOG.md`: one `Added` entry under `[Unreleased]`.
+
+## 8. Out of scope
+
+- A `sql.json` variant: `json(?)` matters only to nest a JSON value inside `json_object()` and the like, where `jsonb(?)` serves as well. Added later if asked.
+- Identifiers (`${sql.id(name)}`), list expansion, joining an array of fragments.
