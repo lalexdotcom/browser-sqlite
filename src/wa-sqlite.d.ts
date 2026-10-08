@@ -74,6 +74,19 @@ type WASQLiteModule = {
     length: number,
     destructor: number,
   ) => number;
+  /**
+   * The `sqlite3_column_*` entry points `RowWriter` (`src/worker/binary.ts`)
+   * reads a row through. Exported by all three builds (checked 2026-10-08).
+   */
+  _sqlite3_column_type: (stmt: number, col: number) => number;
+  /** The low 32 bits; the high 32 are read with `getTempRet0()` right after. */
+  _sqlite3_column_int64: (stmt: number, col: number) => number;
+  _sqlite3_column_double: (stmt: number, col: number) => number;
+  _sqlite3_column_text: (stmt: number, col: number) => number;
+  _sqlite3_column_blob: (stmt: number, col: number) => number;
+  _sqlite3_column_bytes: (stmt: number, col: number) => number;
+  /** The high 32 bits of the last 64-bit result: wasm i64 is legalised to two halves. */
+  getTempRet0: () => number;
   /** The wasm heap; replaced by a new view when it grows. */
   HEAPU8: Uint8Array;
 };

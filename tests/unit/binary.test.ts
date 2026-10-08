@@ -6,8 +6,9 @@ import {
   ParamsWriter,
   prepareParams,
 } from '../../src/binary';
+import { RowWriter } from '../../src/worker/binary';
 import { decodeParams } from './helpers/params';
-import { rowsBlock } from './helpers/rows';
+import { fakeModule, rowsBlock } from './helpers/rows';
 
 const MiB = 1 << 20;
 
@@ -218,5 +219,81 @@ describe('decodeRows', () => {
 
   it('decodes an empty block', () => {
     expect(decodeRows(rowsBlock(['a'], []))).toEqual([]);
+  });
+});
+
+describe('RowWriter', () => {
+  const roundTrip = (cells: Parameters<typeof fakeModule>[0]) => {
+    const w = new RowWriter();
+    w.row(fakeModule(cells), 0, cells.length);
+    const block = w.finish(cells.map((_, i) => `c${i}`));
+    return { block, values: Object.values(decodeRows(block)[0] ?? {}) };
+  };
+
+  it('writes every column type and decodes back to it', () => {
+    const { values } = roundTrip([
+      { type: 1, value: 0n },
+      { type: 1, value: -(2n ** 31n) },
+      { type: 1, value: 2n ** 31n },
+      { type: 1, value: 2n ** 53n },
+      { type: 1, value: -(2n ** 63n) },
+      { type: 2, value: 1.5 },
+      { type: 3, bytes: new TextEncoder().encode('é€😀') },
+      { type: 3, bytes: new Uint8Array(0) },
+      { type: 4, bytes: Uint8Array.of(9, 8) },
+      { type: 4, bytes: new Uint8Array(0) },
+      { type: 5 },
+    ]);
+    expect(values).toEqual([
+      0,
+      -(2 ** 31),
+      2 ** 31,
+      2n ** 53n,
+      -(2n ** 63n),
+      1.5,
+      'é€😀',
+      '',
+      Uint8Array.of(9, 8),
+      new Uint8Array(0),
+      null,
+    ]);
+  });
+
+  it('writes an int32 in 5 bytes and a wider integer in 9', () => {
+    expect(roundTrip([{ type: 1, value: -1n }]).block.used).toBe(5);
+    expect(roundTrip([{ type: 1, value: 2n ** 31n }]).block.used).toBe(9);
+  });
+
+  it('grows past its initial size for a large value, by copy', () => {
+    const big = new Uint8Array(300_000).fill(7);
+    const w = new RowWriter();
+    const m1 = fakeModule([{ type: 3, bytes: Uint8Array.of(0x61) }]);
+    for (let i = 0; i < 100; i++) w.row(m1, 0, 1);
+    w.row(fakeModule([{ type: 4, bytes: big }]), 0, 1);
+    const block = w.finish(['v']);
+    expect(block.rows).toBe(101);
+    expect(block.buffer.byteLength).toBeGreaterThanOrEqual(block.used);
+    const rows = decodeRows(block);
+    expect(rows[99]).toEqual({ v: 'a' });
+    expect(rows[100]?.v).toEqual(big);
+  });
+
+  it('starts at the size it is given', () => {
+    expect(
+      new RowWriter(10_000).finish([]).buffer.byteLength,
+    ).toBeGreaterThanOrEqual(10_000);
+    expect(new RowWriter().finish([]).buffer.byteLength).toBe(4096);
+  });
+
+  it('counts its rows', () => {
+    const w = new RowWriter();
+    const m = fakeModule([{ type: 5 }, { type: 2, value: 2 }]);
+    w.row(m, 0, 2);
+    w.row(m, 0, 2);
+    expect(w.rows).toBe(2);
+    expect(decodeRows(w.finish(['a', 'b']))).toEqual([
+      { a: null, b: 2 },
+      { a: null, b: 2 },
+    ]);
   });
 });
