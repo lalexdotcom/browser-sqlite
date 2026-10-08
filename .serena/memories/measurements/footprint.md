@@ -180,19 +180,40 @@ Before: 0 chunks freed in every arm. Read 16-21 s in both. **What stays after th
 
 Found because `chunk()` under Playwright climbed to ~2 GB even with both fixes. Pure JS, 600 chunks of 512 rows, each chunk registered in a `FinalizationRegistry`, a 20-chunk ring of tenured witnesses proving major GCs run: **under Playwright, 0 of 600 chunks are ever finalized** whenever they are consumed through `for await` — one async generator, a stack shaped like the library's, or a hand-written async iterator with no generator at all — while a plain loop with the same awaits frees 523-563 and a sync generator 523. **The same binary launched without Playwright frees 509-513** for the generator and the hand-written iterator alike. Chromium frees them under Playwright. So it is Juggler's instrumentation, not SpiderMonkey. Consequences: every Firefox figure under Playwright for a path the page consumes with `for await` (`stream()`, `chunk()`, `tx.stream()`) overstates memory — the 2026-10-06 STREAM-FF numbers (+2.3 GB, then +1.34 GB "with the fix", the `chunk()` "open question") were all inflated by it — and **Juggler roughly halves Firefox's speed** here (the same read: 40-54 s under Playwright, 17-21 s direct). Paths without `for await` in the page (`bulkWrite`, `read()`) were not re-measured directly. **A page that calls `next()` by hand and forces a major GC by allocation does see chunks freed under Playwright** (2026-10-07, 29/30 on every arm, the library's own internal `for await` notwithstanding) — the method the retention tests use (STREAM-FF).
 
-## RESULT-BINARY — rows encoded in the worker: faster on Chromium, slower on Firefox, 2026-10-06
+## RESULT-BINARY — rows encoded in the worker: faster on both engines past one row, much less memory on Firefox, 2026-10-08
 
-Spike: with `binaryRows` in the query options the worker encodes each row from SQLite's column API (`_sqlite3_column_type/int64/double/text/blob/bytes`, an integer as its two 32-bit halves) into transferred 1 MiB chunks, no JS string in the worker; `pool.ts` decodes them into the same objects (`TextDecoder` for text, `slice()` for blobs, wa-sqlite's `cvt32x2AsSafe` rule for integers). **Correctness**: `read`, `stream` (chunkSize 333), `chunk` (1 000) and `first` give the same SHA-256 encoded and not, on Chromium and Firefox, two VFS — integers at ±2^53 and ±2^63, floats, Unicode and empty text, empty and non-empty blobs, null, a duplicated column name, 300 KB values spanning chunks.
+**Spike `spike/result-binary`** (off `main` after the page → worker protocol; throwaway): with `binaryRows` in the query options the worker encodes each chunk from SQLite's column API (`_sqlite3_column_type/int64/double/text/blob/bytes`, an integer as its two 32-bit halves via `getTempRet0`) into ONE growable `ArrayBuffer` per chunk (starts at 4 KiB or at the size the query's previous chunk needed, doubles with `ArrayBuffer.prototype.transfer`), transferred; no JS value is built in the worker. `pool.ts` decodes it in the `chunk` handler into the same objects (`TextDecoder` for text, `slice()` for blobs, wa-sqlite's `cvt32x2AsSafe` rule). Asked per query by a trailing `/*bin*/` in the SQL (so one client alternates arms) or `globalThis.__bsqResultMode = 'binary'`. **Correctness**: `read`, `stream` (333), `chunk` (1 000), `first`, `tx.read` give the same SHA-256 both ways on `MemoryVFS` and `OPFSAdaptiveVFS`, both engines — integers at ±2^53 and ±2^63, `-0.0`, 1e308, Unicode and empty text, empty and NULL blobs, 100 KiB blobs, a 300 000-character text, a duplicated column name; a decode counter confirmed the binary path ran.
 
-500 MiB `stream()`, `OPFSAdaptiveVFS`, n=3, without the fixes above, **under Playwright** — so the Firefox columns carry FF-JUGGLER's retention and slowdown, and the binary-vs-clone comparison on Firefox should be redone directly before it is trusted:
+**Method**: FOOTPRINT's direct harness (BINARY-PROTOCOL: Playwright's `chromium-1234` and `firefox-1538` launched by hand, COOP/COEP, `jspi`, PSS of the content processes every 250 ms, agent variables stripped), harness kept outside the repo. **The 2026-10-06 version of this entry was taken under Playwright and is superseded**: its "Firefox 20-55 % slower, no memory gain" was Juggler (FF-JUGGLER), not the protocol.
 
-| chunkSize | Chromium read s, clone → binary | Chromium peak MB | Firefox read s | Firefox peak MB |
+**Per query, both arms in one client, alternating at every query** (8 columns: int, real, short text, Unicode text, NULL, 16-byte blob, an int64 every 10th row; 12 rounds × 3 runs), ratio binary / clone of the summed times, median (per-round range):
+
+| workload | Chromium Memory | Chromium Adaptive | Firefox Memory | Firefox Adaptive |
 |---|---|---|---|---|
-| 50 | 1.9 → 1.6 | 63 → 47 | 52 → 80 | 2 294 → 2 396 |
-| 500 (default) | 1.7 → **1.1** | 61 → 78 | 41 → 51 | 2 291 → 2 397 |
-| 5000 | 2.0 → **1.1** | 178 → **105** | 39 → 47 | 2 299 → 2 450 |
+| `first()` of one row | 1.02 (0.92-1.06) | 1.01 (0.91-1.06) | 1.00 (0.94-1.09) | 1.00 (0.95-1.03) |
+| `read()` of one row | 1.02 (0.90-1.12) | 1.00 (0.92-1.07) | 1.00 (0.90-1.04) | 1.00 (0.94-1.09) |
+| `read()` of 100 rows | **0.75** (0.65-0.86) | 0.93 (0.79-1.02) | **0.82** (0.79-0.89) | 0.89 (0.85-0.97) |
+| `read()` of 10 000 rows | **0.50** (0.43-0.62) | **0.54** (0.47-0.62) | **0.77** (0.74-0.83) | **0.77** (0.73-0.85) |
+| 10 000 rows of two integers | 0.81 (0.72-0.89) | 0.84 (0.76-0.94) | 0.94 (0.86-1.02) | 0.94 (0.90-1.00) |
+| 1 000 rows of 1 KiB text | 0.75 (0.58-0.90) | 0.88 (0.72-1.09) | 0.93 (0.81-1.06) | 0.93 (0.80-1.19) |
+| 20 rows of a 100 KiB blob | 0.93 (0.75-1.11) | 0.94 (0.73-1.29) | 1.03 (0.85-1.16) | 1.05 (0.78-1.16) |
 
-Chromium: up to 45 % faster, and less memory once chunks are large. Firefox: 20-55 % slower and no memory gain. Firefox timings overlapped with other Firefox runs at times (the fix and diagnostic runs), so the slowdown is consistent across chunk sizes but its size is approximate.
+No size threshold is needed: one row is neutral. An ASCII fast path for short strings (≤ 32 bytes, `String.fromCharCode` instead of `TextDecoder`) changed nothing on either engine (same table within ±0.04), so `TextDecoder` alone is enough.
+
+**Large results, `OPFSAdaptiveVFS`, one run per browser, arms alternating within each repetition, n=3** (the two engines as parallel chains): page PSS peak MB / time s, median (range), clone → binary:
+
+| case | Chromium | Firefox |
+|---|---|---|
+| `stream()` 500 MiB of 1 KiB rows, `chunkSize` 50 | 163 → **106**, 1.97 → **1.46** | 556 (360-563) → **84** (83-140), 21.1 → 20.4 |
+| same, `chunkSize` 500 (default) | 171 → 149 (141-193), 1.68 → **1.20** | 539 → **193**, 19.5 → 18.5 |
+| same, `chunkSize` 5000 | 338 → 301 (229-339), 1.92 → **1.06** | 234 → 187, 19.1 → 17.3 |
+| `chunk()` 500 MiB, `chunkSize` 500 | 196 → **96**, 1.81 → **1.15** | 1 034 → **449** (358-518), 16.5 → 15.9 |
+| `read()` of 500 000 mixed rows | 376 → 359, 1.60 → **0.75** | 248 → 190, 8.1 → **6.0** |
+| `stream()` 4 000 000 rows of two integers, 500 | 192 → **108**, 3.56 → 2.82 | 168 → 132, 74 → 73 |
+
+So on Firefox the whole gain is memory — the clone path leaves hundreds of MB of uncollected garbage per streamed 500 MiB, the binary path almost none — and on Chromium it is mostly time. `read()` keeps its whole result, so its peak barely moves; its time halves on Chromium. 
+
+**Firefox reads narrow rows ~15× slower than Chromium, whatever the transport** (4 000 000 rows of two integers, n=2): `chunk()` 500 → 42.8 / 39.1 s clone / binary (Chromium 3.47 / 2.80), `chunk()` 5000 → 40.0 / 38.6, `stream()` 5000 → 78.4 / 77.3, `read()` of 1 000 000 → 10.3 / 10.2 (Chromium 0.93 / 0.78). `stream()`'s per-row `for await` in the page costs ~35 s of the 75 (~9 µs per row); the other ~40 s are the worker (~10 µs per row, Chromium ~0.7). Not traced; the per-statement progress handler relayed through a `Suspending` import on Firefox `jspi` (JSPI-SYNC-RELAYS) is the first suspect.
 
 ## BINARY-PROTOCOL — page → worker entirely binary, measured direct on both engines, 2026-10-07
 
