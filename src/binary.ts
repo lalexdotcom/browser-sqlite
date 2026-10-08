@@ -189,6 +189,9 @@ export const decodeRows = <T = Record<string, unknown>>(
   const u8 = new Uint8Array(block.buffer, 0, block.used);
   const dv = new DataView(block.buffer, 0, block.used);
   const out = new Array<T>(rows);
+  // A column named `__proto__` is never assigned: the old worker-side
+  // assignment set the row's prototype and the structured clone dropped it.
+  const skip = columns.indexOf('__proto__');
   let off = 0;
   for (let r = 0; r < rows; r++) {
     // Deliberately not `Object.fromEntries(...)`: one two-element array per
@@ -225,7 +228,7 @@ export const decodeRows = <T = Record<string, unknown>>(
             : u8.slice(start, start + len);
         off = start + len;
       }
-      row[columns[i] as string] = v;
+      if (i !== skip) row[columns[i] as string] = v;
     }
     out[r] = row as T;
   }
