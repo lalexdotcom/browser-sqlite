@@ -15,6 +15,7 @@ import type { SQLiteBuild } from './const/builds';
 import type { SQLiteVFS } from './const/vfs';
 import type { ClientDebugState } from './debug';
 import type { ClientInspection } from './inspect';
+import type { SQLQuery } from './sql';
 
 /**
  * Marks an options type as carrying an abort signal.
@@ -217,16 +218,24 @@ export type SQLiteQueryAPI = {
    * Read queries are dispatched to any available worker in the pool,
    * enabling concurrent execution across multiple readers.
    *
+   * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
+   *
    * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional query options (`chunkSize`, `signal`).
    * @returns Promise resolving to an array of typed rows (`T[]`). Returns `[]` for empty results.
    */
-  read: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-    options?: SQLiteChunkOptions,
-  ) => Promise<T[]>;
+  read: {
+    <T extends Record<string, unknown>>(
+      sql: string,
+      params?: unknown[],
+      options?: SQLiteChunkOptions,
+    ): Promise<T[]>;
+    <T extends Record<string, unknown>>(
+      query: SQLQuery,
+      options?: SQLiteChunkOptions,
+    ): Promise<T[]>;
+  };
 
   /**
    * Executes a DML or DDL statement (INSERT, UPDATE, DELETE, CREATE, DROP, etc.)
@@ -235,6 +244,8 @@ export type SQLiteQueryAPI = {
    * Write queries are serialized through a single dedicated writer worker.
    * Concurrent writes queue behind each other — only one write executes at a time.
    *
+   * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
+   *
    * @param sql - SQL statement. Any statement not classified as a read by `isReadQuery`.
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional query options (`signal`).
@@ -242,11 +253,17 @@ export type SQLiteQueryAPI = {
    *   `affected` is the SQLite `changes()` count for the statement, 0 for one
    *   that changes nothing.
    */
-  write: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-    options?: SQLiteQueryOptions,
-  ) => Promise<SQLiteWriteResult<T>>;
+  write: {
+    <T extends Record<string, unknown>>(
+      sql: string,
+      params?: unknown[],
+      options?: SQLiteQueryOptions,
+    ): Promise<SQLiteWriteResult<T>>;
+    <T extends Record<string, unknown>>(
+      query: SQLQuery,
+      options?: SQLiteQueryOptions,
+    ): Promise<SQLiteWriteResult<T>>;
+  };
 
   /**
    * Executes a query and yields result rows in chunks via an async generator.
@@ -263,17 +280,25 @@ export type SQLiteQueryAPI = {
    * does not throw at the call site — the `SQLiteError` arrives on the first
    * `await gen.next()` (or the first iteration of `for await...of`).
    *
+   * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
+   *
    * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional options including `chunkSize` (default `500`),
    *   `signal` (AbortSignal to cancel).
    * @returns AsyncGenerator yielding `T[]` chunks of at most `chunkSize` rows.
    */
-  chunk: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-    options?: SQLiteChunkOptions,
-  ) => AsyncGenerator<T[]>;
+  chunk: {
+    <T extends Record<string, unknown>>(
+      sql: string,
+      params?: unknown[],
+      options?: SQLiteChunkOptions,
+    ): AsyncGenerator<T[]>;
+    <T extends Record<string, unknown>>(
+      query: SQLQuery,
+      options?: SQLiteChunkOptions,
+    ): AsyncGenerator<T[]>;
+  };
 
   /**
    * Executes a query and yields individual result rows via an async generator.
@@ -286,16 +311,24 @@ export type SQLiteQueryAPI = {
    * does not throw at the call site — the `SQLiteError` arrives on the first
    * `await gen.next()` (or the first iteration of `for await...of`).
    *
+   * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
+   *
    * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional query options (`chunkSize`, `signal`).
    * @returns AsyncGenerator yielding individual rows of type `T`.
    */
-  stream: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-    options?: SQLiteChunkOptions,
-  ) => AsyncGenerator<T>;
+  stream: {
+    <T extends Record<string, unknown>>(
+      sql: string,
+      params?: unknown[],
+      options?: SQLiteChunkOptions,
+    ): AsyncGenerator<T>;
+    <T extends Record<string, unknown>>(
+      query: SQLQuery,
+      options?: SQLiteChunkOptions,
+    ): AsyncGenerator<T>;
+  };
 
   /**
    * Executes a query and returns the first row, or `undefined` if no rows match.
@@ -305,16 +338,24 @@ export type SQLiteQueryAPI = {
    * the break and the stop signal, so early termination is best-effort on small
    * result sets. A hard bound will arrive with back-pressure in a future wave.
    *
+   * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
+   *
    * @param sql - SQL query string.
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional query options (`signal`).
    * @returns Promise resolving to the first row as `T`, or `undefined` if no rows.
    */
-  first: <T extends Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-    options?: SQLiteQueryOptions,
-  ) => Promise<T | undefined>;
+  first: {
+    <T extends Record<string, unknown>>(
+      sql: string,
+      params?: unknown[],
+      options?: SQLiteQueryOptions,
+    ): Promise<T | undefined>;
+    <T extends Record<string, unknown>>(
+      query: SQLQuery,
+      options?: SQLiteQueryOptions,
+    ): Promise<T | undefined>;
+  };
 
   /**
    * Creates a buffered bulk-insert utility that batches rows to stay within

@@ -10,6 +10,7 @@ import type {
   RequestDebugState,
   SQLiteDB,
   SQLiteTransactionDB,
+  SQLQuery,
   WorkerDebugState,
 } from '../../src/index';
 import * as api from '../../src/index';
@@ -65,6 +66,9 @@ type _DebugTypesExported = [
   QueryDebugState,
 ];
 
+/** The query object's type is nameable, though its class is not exported. */
+type _SQLQueryExported = SQLQuery;
+
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /**
@@ -85,6 +89,7 @@ describe('public entry', () => {
         'detectFeatures',
         'inspectDatabase',
         'missingFeature',
+        'sql',
       ].sort(),
     );
   });

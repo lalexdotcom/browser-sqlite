@@ -6,7 +6,7 @@ import type {
   SQLiteTransactionDB,
   SQLiteTransactionOptions,
 } from './api';
-import { type EncodedParams, prepareParams, type QueryParams } from './binary';
+import { prepareParams, type QueryParams } from './binary';
 import type { ReadFn, TransactionFn, WriteFn } from './bulk';
 import type { Logger } from './logger';
 import type { PoolWorker, PoolWorkerQueryOptions } from './pool';
@@ -21,6 +21,7 @@ import {
 } from './queries';
 import { createSavepointStack, type SavepointEntry } from './savepoints';
 import type { Scheduler } from './scheduler';
+import { queryArgs, type SQLQuery } from './sql';
 import { SQLiteError } from './types/errors';
 import { isWriteQuery, mergeSignals, quoteIdent, withDeadline } from './utils';
 
@@ -935,11 +936,16 @@ export const createTransaction =
 
       const db: InternalTransactionDB = {
         read: <T extends Record<string, unknown>>(
-          sql: string,
-          params?: unknown[],
-          given?: SQLiteChunkOptions,
+          input: string | SQLQuery,
+          second?: unknown,
+          third?: SQLiteChunkOptions,
         ) => {
           if (ending) return Promise.reject(closedError(ending));
+          const {
+            sql,
+            params,
+            options: given,
+          } = queryArgs(input, second, third);
           const query = checksql(sql);
           const bound = prepareParams(params);
           const { settled } = withSignal(given, 'read', query);
@@ -949,11 +955,16 @@ export const createTransaction =
         },
 
         write: <T extends Record<string, unknown>>(
-          sql: string,
-          params?: unknown[] | EncodedParams,
-          given?: Interruptible,
+          input: string | SQLQuery,
+          second?: unknown,
+          third?: Interruptible,
         ) => {
           if (ending) return Promise.reject(closedError(ending));
+          const {
+            sql,
+            params,
+            options: given,
+          } = queryArgs(input, second, third);
           const query = checksql(sql);
           const bound = prepareParams(params);
           const { settled } = withSignal(given, 'write', query);
@@ -963,10 +974,15 @@ export const createTransaction =
         },
 
         chunk: <T extends Record<string, unknown>>(
-          sql: string,
-          params?: unknown[],
-          given?: SQLiteChunkOptions,
+          input: string | SQLQuery,
+          second?: unknown,
+          third?: SQLiteChunkOptions,
         ) => {
+          const {
+            sql,
+            params,
+            options: given,
+          } = queryArgs(input, second, third);
           const query = checksql(sql);
           const bound = prepareParams(params);
           const st = withSignal(given, 'chunk', query);
@@ -990,10 +1006,15 @@ export const createTransaction =
         },
 
         stream: <T extends Record<string, unknown>>(
-          sql: string,
-          params?: unknown[],
-          given?: SQLiteChunkOptions,
+          input: string | SQLQuery,
+          second?: unknown,
+          third?: SQLiteChunkOptions,
         ) => {
+          const {
+            sql,
+            params,
+            options: given,
+          } = queryArgs(input, second, third);
           const query = checksql(sql);
           const bound = prepareParams(params);
           const st = withSignal(given, 'stream', query);
@@ -1020,11 +1041,16 @@ export const createTransaction =
         },
 
         first: <T extends Record<string, unknown>>(
-          sql: string,
-          params?: unknown[],
-          given?: Interruptible,
+          input: string | SQLQuery,
+          second?: unknown,
+          third?: Interruptible,
         ) => {
           if (ending) return Promise.reject(closedError(ending));
+          const {
+            sql,
+            params,
+            options: given,
+          } = queryArgs(input, second, third);
           const query = checksql(sql);
           const bound = prepareParams(params);
           const { settled } = withSignal(given, 'first', query);

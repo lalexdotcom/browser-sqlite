@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
+import type { SQLiteDB } from '../../src/api';
 import { queryArgs, SQLQuery, sql } from '../../src/sql';
 import { SQLiteError } from '../../src/types/errors';
 
@@ -258,3 +259,13 @@ describe('queryArgs', () => {
     );
   });
 });
+
+// Compile-time only, never called. Falsifiable: drop the SQLQuery overload
+// from SQLiteQueryAPI.read or .write.
+const _overloads = async (db: SQLiteDB) => {
+  await db.read(sql`SELECT 1`, { chunkSize: 1 });
+  await db.write(sql`SELECT 1`);
+  await db.read('SELECT ?', [1], { chunkSize: 1 });
+  // @ts-expect-error a query built by sql takes no params array
+  await db.read(sql`SELECT 1`, [1]);
+};
