@@ -180,7 +180,6 @@ const utf8Decoder = new TextDecoder('utf-8', { ignoreBOM: true });
 const HI_MAX = 2097151;
 const HI_MIN = -2097152;
 
-/** A chunk of rows as wa-sqlite's `row()` and the worker's loop built them. */
 // Texts up to this many bytes are decoded in JS (spec 2026-10-08, D6): on
 // Chromium a string TextDecoder returns on the page holds ~150-190 bytes more
 // than a cloned one, and is slower to make for short texts (RESULT-BINARY).
@@ -246,6 +245,7 @@ const shortText = (
   );
 };
 
+/** A chunk of rows as wa-sqlite's `row()` and the worker's loop built them. */
 export const decodeRows = <T = Record<string, unknown>>(
   block: RowsBlock,
 ): T[] => {
