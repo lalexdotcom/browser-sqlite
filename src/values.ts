@@ -20,12 +20,28 @@ export type Bindable =
   | boolean
   | Uint8Array;
 
-const MAX_INT64 = 0x7fffffffffffffffn;
-const MIN_INT64 = -0x8000000000000000n;
+export const MAX_INT64 = 0x7fffffffffffffffn;
+export const MIN_INT64 = -0x8000000000000000n;
+
+/**
+ * Whether an ordinary column binds `value` through `JSON.stringify`: an object
+ * that is neither binary nor a `Date`. `sql.jsonb` wraps exactly these.
+ */
+export const takesJson = (value: unknown): value is object =>
+  typeof value === 'object' &&
+  value !== null &&
+  !(value instanceof ArrayBuffer) &&
+  !ArrayBuffer.isView(value) &&
+  !(
+    typeof SharedArrayBuffer !== 'undefined' &&
+    value instanceof SharedArrayBuffer
+  ) &&
+  !(value instanceof Date);
 
 const convert = (value: unknown, jsonb: boolean): unknown => {
   if (typeof value === 'boolean' || typeof value === 'string')
     return jsonb ? JSON.stringify(value) : value;
+  if (takesJson(value)) return JSON.stringify(value);
   if (typeof value !== 'object' || value === null) return value;
   if (value instanceof Uint8Array) return value;
   // The bytes of the value's own range, whatever the element type.
@@ -37,8 +53,8 @@ const convert = (value: unknown, jsonb: boolean): unknown => {
     value instanceof SharedArrayBuffer
   )
     return new Uint8Array(value);
-  if (value instanceof Date && !jsonb) return toSQLiteDate(value);
-  return JSON.stringify(value);
+  // Only a Date is left.
+  return jsonb ? JSON.stringify(value) : toSQLiteDate(value as Date);
 };
 
 /**
