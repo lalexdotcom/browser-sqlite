@@ -42,11 +42,11 @@ Values follow one another, row after row, column after column, each a tag byte t
 
 The worker writes an integer as tag 1 when its high half is only the sign extension of the low half, as tag 5 otherwise.
 
-**One buffer per chunk.** It starts at 4 KiB, or at the size the same query's previous chunk needed, and doubles with `ArrayBuffer.prototype.transfer`; a value larger than the buffer grows it by as much. Nothing is kept from one query to the next.
+**One buffer per chunk.** It starts at 4 KiB, or at the size the same query's previous chunk needed, and doubles by copying into a new buffer when a value does not fit, as many times as that value needs. Not `ArrayBuffer.prototype.transfer`: it is newer than the library's Firefox floor (`LIB_REQUIRES` in `scripts/render-vfs-matrix.ts`). Nothing is kept from one query to the next.
 
 **Column names travel in every chunk.** They are read after the first `SQLITE_ROW`, as today (v2 re-preparation happens during `step()`). A few dozen bytes per chunk, and no state shared between messages.
 
-**Text stays raw UTF-8.** The bytes of `sqlite3_column_text` over `sqlite3_column_bytes`, read in that order — SQLite's recommended order, which wa-sqlite follows. The page decodes them with a non-fatal `TextDecoder`, exactly as wa-sqlite's `readUTF8` does today, so invalid sequences are replaced the same way and an inner `NUL` is kept.
+**Text stays raw UTF-8.** The bytes of `sqlite3_column_text` over `sqlite3_column_bytes`, read in that order — SQLite's recommended order, which wa-sqlite follows. The page decodes them with `new TextDecoder('utf-8', { ignoreBOM: true })`, exactly as wa-sqlite's `readUTF8` does today: invalid sequences are replaced the same way, an inner `NUL` is kept, and so is a leading byte-order mark — a default `TextDecoder` would strip it.
 
 ## 3. Components
 
@@ -57,7 +57,7 @@ The worker writes an integer as tag 1 when its high half is only the sign extens
 
 **Page side**
 
-- **`src/binary.ts`** — `src/encode.ts` renamed, keeping `ParamsWriter`, `EncodedParams` and `encodeParams`, plus `decodeRows(block)`: the objects in column order (a duplicated column name keeps the last value, as the current loop does); tag 1 as is, tag 5 through wa-sqlite's `cvt32x2AsSafe` rule (a `number` within the safe range, a `bigint` beyond); text through `TextDecoder`; a blob through `slice()`. The loop keeps the direct assignment and the comment that forbids `Object.fromEntries` (measured 2026-08-31), moved from the worker.
+- **`src/binary.ts`** — `src/encode.ts` renamed, keeping `ParamsWriter`, `EncodedParams` and `encodeParams`, plus `decodeRows(block)`: the objects in column order (a duplicated column name keeps the last value, as the current loop does); tag 1 as is, tag 5 through wa-sqlite's `cvt32x2AsSafe` rule (a `number` within the safe range, a `bigint` beyond); text through `TextDecoder('utf-8', { ignoreBOM: true })`; a blob through `slice()`. The loop keeps the direct assignment and the comment that forbids `Object.fromEntries` (measured 2026-08-31), moved from the worker.
 - **`src/pool.ts`** — the `chunk` handler queues the block as it is; `debugQuery?.chunk` counts `block.rows`. The loop decodes as it hands the chunk over (`yield decodeRows(chunk)` for anything but the `affected` number). Imports follow the rename; so does `src/bulk.ts`.
 
 **Protocol** — `src/types/protocol.ts`: `RowsBlock`, the `chunk` message's `data`.
@@ -70,7 +70,7 @@ Each value must come out exactly as `sqlite.row()` gives it today:
 
 - integers — a `number` within ±(2^53 − 1), a `bigint` beyond, the ±2^63 bounds; an integer within int32 identical whether it crossed as tag 1 or tag 5;
 - floats, including `-0.0` and 1e308;
-- text — empty, Unicode outside the BMP, invalid UTF-8 (`CAST(x'ff' AS TEXT)`), an inner `NUL` (`char(0)`);
+- text — empty, Unicode outside the BMP, invalid UTF-8 (`CAST(x'ff' AS TEXT)`), an inner `NUL` (`char(0)`), a leading byte-order mark (`char(65279)`);
 - blobs — empty, `NULL`, 100 KiB; each a `Uint8Array` owning its own buffer;
 - duplicated column names, with today's winning value;
 - a value larger than the initial buffer.
