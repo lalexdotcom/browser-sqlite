@@ -2,6 +2,16 @@
 
 Part of `mem:follow-ups`: what was examined and closed or kept on purpose, and what to do if it comes back.
 
+### Two rulings of `feat/binary-results` left as they are — kept, 2026-10-08
+
+Taken during the subagent-driven execution and reported to the user at the merge; neither was asked to change.
+- **`chunkSize` is not validated.** A non-integer, zero, negative or `NaN` value splits chunks differently since the binary result protocol (1.5 → chunks of 2 rows); with 0, a negative value or `NaN` the old code looped for ever on empty arrays, the new one ends. If wanted: validate `chunkSize` at the entry points (`INVALID_OPTION`).
+- **Two columns both named `__proto__` in one statement.** `decodeRows` skips the first one (`columns.indexOf('__proto__')`) so the row keeps `Object.prototype`, as the structured clone did; a second one is still assigned and sets the row's prototype. A contrived alias; the fix would be a set of skipped indices.
+
+### Playwright and stock browsers — answered, 2026-10-08
+
+Chromium: yes, through `channel: 'chrome'`/`'msedge'` or `executablePath` (CDP); no branded Chrome exists for Linux arm64. Firefox: Playwright's own build carries Juggler, which a stock Firefox lacks; Playwright 1.64 ships a **private, experimental** `_bidiFirefox` launcher (WebDriver BiDi; channels `moz-firefox`, `moz-firefox-beta`, `moz-firefox-nightly`), not public API and not selectable by rstest's provider. WebKit/Safari: no (Playwright's own WebKit; Safari goes through `safaridriver`). **The user declined to try `_bidiFirefox`.** For Firefox timings the direct harness on a stock binary is the method (FF-PW-AWAIT, `mem:measurements/footprint`).
+
 ### Two worker fallback messages carry the path — kept, 2026-10-03
 
 `src/worker/worker.ts`'s open and delete fallbacks read `Failed to open ${file}` / `Failed to delete ${data.file}`, a path such as `.ad/name`, and `startupError` forwards it verbatim. They fire only when the chain throws something that is not an `Error`, and every `throw` in wa-sqlite's sources is an `Error`, a `SQLiteError` or a rethrown `Error`/`DOMException` (read, not measured). The path is the form `db.files` already makes public, and the thrown value travels in `cause`. Replacing the path with `String(error)` would be the only change worth making; no test can pin it without injecting a non-`Error` throw into the open chain.
