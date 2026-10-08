@@ -73,6 +73,18 @@ export type ParamsBlock = {
   rows: number;
 };
 
+/**
+ * Result rows encoded in the worker: `rows` rows of `columns.length` values,
+ * row after row, with `ParamsBlock`'s tags; tag 5 holds the int64 as two
+ * 32-bit halves, low first. The first `used` bytes of `buffer` are written.
+ */
+export type RowsBlock = {
+  columns: string[];
+  rows: number;
+  buffer: ArrayBuffer;
+  used: number;
+};
+
 export type ClientMessageData =
   | {
       type: 'open';

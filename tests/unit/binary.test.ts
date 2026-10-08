@@ -1,11 +1,13 @@
 import { describe, expect, it } from '@rstest/core';
 import {
+  decodeRows,
   EncodedParams,
   encodeParams,
   ParamsWriter,
   prepareParams,
 } from '../../src/binary';
 import { decodeParams } from './helpers/params';
+import { rowsBlock } from './helpers/rows';
 
 const MiB = 1 << 20;
 
@@ -142,5 +144,79 @@ describe('prepareParams', () => {
     expect(prepareParams([{ a: 1 }])).toEqual(['{"a":1}']);
     expect(prepareParams(undefined)).toBeUndefined();
     expect(p).toBeInstanceOf(EncodedParams);
+  });
+});
+
+describe('decodeRows', () => {
+  const one = (cell: Parameters<typeof rowsBlock>[1][number]) =>
+    decodeRows(rowsBlock(['v'], [cell]))[0]?.v;
+
+  it('decodes every tag', () => {
+    expect(one(null)).toBe(null);
+    expect(one({ int32: -(2 ** 31) })).toBe(-(2 ** 31));
+    expect(one({ int32: 2 ** 31 - 1 })).toBe(2 ** 31 - 1);
+    expect(one({ float: 1.5 })).toBe(1.5);
+    expect(Object.is(one({ float: -0 }), -0)).toBe(true);
+    expect(one({ float: 1e308 })).toBe(1e308);
+    expect(one({ text: 'é€😀' })).toBe('é€😀');
+    expect(one({ text: '' })).toBe('');
+    expect(one({ blob: Uint8Array.of(0, 255) })).toEqual(Uint8Array.of(0, 255));
+    expect(one({ blob: new Uint8Array(0) })).toEqual(new Uint8Array(0));
+  });
+
+  it('applies wa-sqlite cvt32x2AsSafe rule to int64', () => {
+    expect(one({ int64: 2n ** 31n })).toBe(2 ** 31);
+    expect(one({ int64: -1n })).toBe(-1);
+    expect(one({ int64: 2n ** 53n - 1n })).toBe(2 ** 53 - 1);
+    expect(one({ int64: -(2n ** 53n) + 1n })).toBe(-(2 ** 53) + 1);
+    expect(one({ int64: 2n ** 53n })).toBe(2n ** 53n);
+    expect(one({ int64: -(2n ** 53n) })).toBe(-(2 ** 53));
+    expect(one({ int64: -(2n ** 53n) - 1n })).toBe(-(2n ** 53n) - 1n);
+    expect(one({ int64: 2n ** 63n - 1n })).toBe(2n ** 63n - 1n);
+    expect(one({ int64: -(2n ** 63n) })).toBe(-(2n ** 63n));
+  });
+
+  it('decodes text as wa-sqlite readUTF8 does', () => {
+    expect(one({ text: Uint8Array.of(0xff) })).toBe('�');
+    expect(one({ text: Uint8Array.of(0x61, 0, 0x62) })).toBe('a\0b');
+    // ignoreBOM: true keeps a leading byte-order mark.
+    expect(one({ text: Uint8Array.of(0xef, 0xbb, 0xbf, 0x78) })).toBe('﻿x');
+  });
+
+  it('copies each blob into a buffer of its own', () => {
+    const block = rowsBlock(
+      ['a', 'b'],
+      [{ blob: Uint8Array.of(1, 2, 3) }, { int32: 7 }],
+    );
+    const v = decodeRows(block)[0]?.a as Uint8Array;
+    expect(v.buffer).not.toBe(block.buffer);
+    expect(v.buffer.byteLength).toBe(3);
+    new Uint8Array(block.buffer).fill(0);
+    expect(v).toEqual(Uint8Array.of(1, 2, 3));
+  });
+
+  it('builds the rows in order, a duplicated column keeping its last value', () => {
+    expect(
+      decodeRows(
+        rowsBlock(
+          ['id', 'x', 'x'],
+          [
+            { int32: 1 },
+            { text: 'a' },
+            { text: 'b' },
+            { int32: 2 },
+            null,
+            { float: 0.5 },
+          ],
+        ),
+      ),
+    ).toEqual([
+      { id: 1, x: 'b' },
+      { id: 2, x: 0.5 },
+    ]);
+  });
+
+  it('decodes an empty block', () => {
+    expect(decodeRows(rowsBlock(['a'], []))).toEqual([]);
   });
 });

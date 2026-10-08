@@ -1,4 +1,4 @@
-import type { ParamsBlock } from './types/protocol';
+import type { ParamsBlock, RowsBlock } from './types/protocol';
 import { type Bindable, convertParams } from './values';
 
 const CHUNK_BYTES = 1 << 20;
@@ -173,3 +173,61 @@ export const prepareParams = (
   params: readonly unknown[] | EncodedParams | undefined,
 ): QueryParams | undefined =>
   params instanceof EncodedParams ? params : convertParams(params);
+
+// wa-sqlite's readUTF8: ignoreBOM keeps a leading byte-order mark.
+const utf8Decoder = new TextDecoder('utf-8', { ignoreBOM: true });
+// wa-sqlite's cvt32x2AsSafe bounds: the high halves of ±Number.MAX_SAFE_INTEGER.
+const HI_MAX = 2097151;
+const HI_MIN = -2097152;
+
+/** A chunk of rows as wa-sqlite's `row()` and the worker's loop built them. */
+export const decodeRows = <T = Record<string, unknown>>(
+  block: RowsBlock,
+): T[] => {
+  const { columns, rows } = block;
+  const n = columns.length;
+  const u8 = new Uint8Array(block.buffer, 0, block.used);
+  const dv = new DataView(block.buffer, 0, block.used);
+  const out = new Array<T>(rows);
+  let off = 0;
+  for (let r = 0; r < rows; r++) {
+    // Deliberately not `Object.fromEntries(...)`: one two-element array per
+    // column per row. Measured 2026-08-31 over 50 000 rows x 12 columns —
+    // 17.5 ms against 4.4 ms on Chromium, 23 ms against 14 ms on Firefox
+    // (`mem:measurements`). Do not "simplify" it back.
+    const row: Record<string, unknown> = {};
+    for (let i = 0; i < n; i++) {
+      const tag = u8[off];
+      let v: unknown;
+      if (tag === 0) {
+        v = null;
+        off += 1;
+      } else if (tag === 1) {
+        v = dv.getInt32(off + 1, true);
+        off += 5;
+      } else if (tag === 2) {
+        v = dv.getFloat64(off + 1, true);
+        off += 9;
+      } else if (tag === 5) {
+        const lo = dv.getInt32(off + 1, true);
+        const hi = dv.getInt32(off + 5, true);
+        v =
+          hi > HI_MAX || hi < HI_MIN
+            ? (BigInt(hi) << 32n) | (BigInt(lo) & 0xffffffffn)
+            : hi * 0x100000000 + (lo & 0x7fffffff) - (lo & 0x80000000);
+        off += 9;
+      } else {
+        const len = dv.getUint32(off + 1, true);
+        const start = off + 5;
+        v =
+          tag === 3
+            ? utf8Decoder.decode(u8.subarray(start, start + len))
+            : u8.slice(start, start + len);
+        off = start + len;
+      }
+      row[columns[i] as string] = v;
+    }
+    out[r] = row as T;
+  }
+  return out;
+};
