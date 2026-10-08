@@ -192,6 +192,10 @@ The run of 2026-09-24, `feat/default-build`, 2570 s, 66 of 66 cells green, 0 fai
 
 Cells ran 22-79 s. In every row, on both engines, the `async` cell is the slowest of its VFS — by 4-7 s on Chromium and 3-10 s on Firefox against the next one. Wall clock per cell, setup included: a hint that agrees with the bench, not a benchmark.
 
+## GETDIR-HANG closed — the Firefox `getDirectory()` hang was `firefox-1538`'s, 2026-10-08
+
+The rstest/Firefox silent hang (`navigator.storage.getDirectory()` never settling in a worker, which wedged a whole run through the conformance probe's top-level await) measured 4 hangs in 24 runs on 2026-09-16 with the probe unguarded. Re-measured after the Playwright 1.64.0 bump, same arm: the probe's bound lifted to one attempt of 600 s (local edit, reverted), `firefox · OPFSWriteAheadVFS/sync` alone, 24 runs under a 240 s deadline each — **24 passed, 0 hangs, 41-43 s each**, on `firefox-1555` (Firefox 157). Closed as the build's, as the entry planned; the probe's bound and `bounded.ts` stay. The library's own exposure (workers calling `getDirectory()` in every OPFS VFS's `create()`, nothing bounding a worker's startup) was never seen outside that build.
+
 ## LIFECYCLE-SEGV — the Firefox page crash on `lifecycle.test.ts`, 2026-10-02/03, this container
 
 Playwright 1.62.1, `firefox-1538`, target `OPFSAdaptiveVFS/jspi` (the two-worker tests fall back to `OPFSAnyContextVFS`). "Amplified" = the file's top-level describes wrapped in a 40-round loop in one page, `bounds` skipped, alone in its config.

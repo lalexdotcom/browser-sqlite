@@ -34,7 +34,7 @@ obligations and unmeasured ground.
 
 ## The verification baseline — compare against these, re-measured 2026-10-08
 
-Not history: the numbers a regression is detected against. **Every figure below was read off ONE pass in this container on 2026-10-08 on `feat/binary-results` at `30f1991`** (worker → page binary results, before its merge) — none is arithmetic, on the wa-sqlite pin `96d91182` with #371, #372 and #374 carried — **except the matrix row**, read the same morning at `978376f`, which differs from `30f1991` only by the page-side short-text decoder (spec 2026-10-08, D6) and test placement: no change in `src/pool.ts` or `src/worker/`.
+Not history: the numbers a regression is detected against. **Every figure below was read off ONE pass in this container on 2026-10-08 evening on `build/playwright-1.64`** — Playwright 1.64.0, Chromium 156 (`chromium-1248`), Firefox 157 (`firefox-1555`) — at `ffe0be9`, none arithmetic, on the wa-sqlite pin `96d91182` with #371, #372 and #374 carried; **except the bench row**, read at `6fab602`, whose only change is the checker waiting for its server (it failed every run without that under 1.64).
 
 | command | result |
 |---|---|
@@ -50,9 +50,9 @@ Not history: the numbers a regression is detected against. **Every figure below 
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.ts chromium --all` | `OK`, `"reasons": {}`, 22 declared pairs runnable; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
 | `pnpm lint` | 180 files, **4 warnings**, 1 info — the file count moves with the tree, **the warning count is the signal** |
 | `dependencies` in `package.json` | absent |
-| `pnpm test:matrix` | **66 of 66 cells green, 2453 s**, no re-run inside it, no timed-out cell. ~41 min. **Every cell runs `BSQ_TEST_NEEDS=skip`** |
+| `pnpm test:matrix` | **66 of 66 cells green, 1892 s**, no re-run inside it, no timed-out cell. ~32 min. **Every cell runs `BSQ_TEST_NEEDS=skip`** |
 
-Against the previous table (2026-10-07): unit 648 → 664 (`binary.test.ts`, formerly `encode.test.ts`, gained the row decoder's and writer's cases), `pnpm test` +34 / +18 tests passed with no skip added (`results.test.ts` and the unit cases), lint files 178 → 180 with the warning count unchanged, conformance, consumer smoke, bench check and the isolated config unchanged; the matrix back to 66 of 66 (the `multi-client` interleave on chromium `IDBMirrorVFS/async` passed this time).
+Against the previous table (2026-10-08 morning, `feat/binary-results` on Playwright 1.62.1): every count identical — `pnpm test` 1542/1534/8, 892/888/4, 18; unit 664; conformance 83/14 and 79/18; lint 180 files, 4 warnings; consumer 24/24; bench `OK` with 22 pairs — and the matrix 2453 → 1892 s on the new browsers (the Firefox config's tests 95 → 70 s in `pnpm test`).
 
 **Do not reconcile any of these by arithmetic; re-run.** A previous version of this table was
 measured on 2026-09-15 and went stale the next day, and another contradicted itself in September

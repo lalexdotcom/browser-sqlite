@@ -13,7 +13,7 @@
     touch it, so a hand-edit's formatting survives untouched and nothing flags it. That
     file's style is maintained by hand — verified 2026-08-27 after a `},{` survived a
     format run.
-- Tests: **rstest 0.11.8**, Playwright pinned at 1.62.1.
+- Tests: **rstest 0.11.8**, Playwright pinned at 1.64.0 since 2026-10-08 (Chromium 156, `chromium-1248`; Firefox 157, `firefox-1555`). Locally the browsers come with `PLAYWRIGHT_SKIP_BROWSER_GC=1 pnpm exec playwright install --with-deps chromium firefox` after a bump (`post-create.sh` runs only at container creation; the variable keeps older revisions other tools still use); CI's browser cache is keyed on `pnpm-lock.yaml`. **Its Firefox is still not a stock Firefox for timing** (FF-PW-AWAIT, `mem:measurements/footprint`).
 - **Runtime dependencies: none.** `wa-sqlite` is a devDependency only, vendored into
   `dist/worker/worker.js` at build time so it never reaches a consumer lockfile. **Pinned by commit
   SHA, not by tag, since 2026-09-15 (user):**

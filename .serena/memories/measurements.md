@@ -166,5 +166,6 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - MATRIX-3
 - MATRIX-5
 - MATRIX-DEFAULT-BUILD
+- GETDIR-HANG closed
 - LIFECYCLE-SEGV
 - WORKER-LEAK

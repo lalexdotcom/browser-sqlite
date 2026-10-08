@@ -25,7 +25,7 @@ Part of `mem:follow-ups`. Each entry here needs no action until its event comes 
 
 **Not reproducible on demand by volume:** the test's body looped in one page, ~7 000 bounded cycles alone and beside the suite, 0 stalls; instrumented copies of the test (one run per page, its real place) beside the whole Firefox config, 240 runs, 0; the same under sixteen busy loops, 280 runs (copies and the real test), 0. One stall in ~590 real-shaped runs, and load did not raise it. Under load every step stays far inside its budget (`holder.take` p99 463 ms, max 1 005 ms; `creator.write` max 4.2 s).
 
-**Not the Playwright Firefox defects (2026-10-03).** Neither of `firefox-1538`'s worker defects (`mem:follow-ups`, the Playwright entry) explains the stall. The test kills no young worker: its holder is a classic worker ended in `dispose()` after the test, and `creator`'s workers end in `close()` after a write — outside the SIGSEGV window. And the leaked threads cannot reach the 512-worker cap that froze the 2026-09-29 page: in a whole Firefox run every test page gets its own content process, peak 5 threads in one (`mem:measurements`, WORKER-LEAK). The stall's cause is still open; the step it names at the next sighting decides.
+**Not the Playwright Firefox defects (2026-10-03).** Neither of `firefox-1538`'s worker defects (LIFECYCLE-SEGV and WORKER-LEAK, `mem:measurements/suite-and-matrix`; that Firefox was replaced by Playwright 1.64's `firefox-1555` on 2026-10-08) explains the stall. The test kills no young worker: its holder is a classic worker ended in `dispose()` after the test, and `creator`'s workers end in `close()` after a write — outside the SIGSEGV window. And the leaked threads cannot reach the 512-worker cap that froze the 2026-09-29 page: in a whole Firefox run every test page gets its own content process, peak 5 threads in one (`mem:measurements`, WORKER-LEAK). The stall's cause is still open; the step it names at the next sighting decides.
 
 **`pool-cap.test.ts`'s holder names its stall too, since 2026-10-06** (`holdFileExclusively`, both its tests). Until then it caught nothing: any rejection in `getDirectory`, `getDirectoryHandle`, `getFileHandle` or the first `createSyncAccessHandle` left the page waiting out the 30 s test timeout, so an error and an engine hang looked the same — and the 2026-09-26 and 2026-10-06 `pool-cap` sightings may have been either. Now it reports each step and a caught error, bounded at 20 s: `holder stalled in take … steps: booted > getDirectory` is the engine hang; `holder failed in take: <Name>: <message>; steps: …` is an error the old holder swallowed, and the step and name decide the next move; `no step` means the blob worker never booted. Checked by sabotage on Firefox: a `getDirectory` that never settles gives the first, an invalid file name the second (`TypeError: Invalid filename`, at once).
 
@@ -43,73 +43,3 @@ On 2026-09-28 ikusteu answered on rhashimoto/wa-sqlite#297 that he would finish 
 
 Rebuilding wa-sqlite's `dist/` here (Docker-in-Docker, arm64 host — the plain `emsdk:3.1.61` tag is amd64 and runs emulated): image once with `printf 'FROM emscripten/emsdk:3.1.61-arm64\nRUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tcl\n' | docker build -t wa-sqlite-emsdk:3.1.61 -` (without `DEBIAN_FRONTEND` the tzdata prompt hangs the build silently; tcl generates the amalgamation); build with `docker run --rm -v "$W":/src -w /src wa-sqlite-emsdk:3.1.61 sh -c 'make; s=$?; chown -R 1000:1000 /src; exit $s'`; tests with `CHROME_PATH=~/.cache/ms-playwright/chromium-1234/chrome-linux/chrome yarn web-test-runner --files test/callbacks.test.js`, `yarn test` for the suite. `yarn build-docs` fails in a checkout under `/workspaces/wsqlite` (TypeScript picks up wsqlite's `@types/node`, and typedoc.json's `tsconfig` overrides `--tsconfig`): pass `--options` a copy of typedoc.json with absolute paths whose `tsconfig` extends `src/types/tsconfig.json` with `types: []`.
 
-## The rstest/Firefox silent hang — CAUSE FOUND 2026-09-16, fix not taken — waits for the Playwright 1.64 bump (user, 2026-10-03)
-
-**Tied to the Playwright 1.64.0 entry above, at the same level: nothing to do before that bump, then remeasure (user, 2026-10-03).** Every sighting is on Playwright's patched Firefox, whose young-worker segfault turned out to be the build's own and is fixed in 1.64, so this may be the same story. After the bump: the unguarded probe arm, Firefox, `OPFSWriteAheadVFS/sync`, 24 runs, against 4/24 then. **Gone** → close this entry: it was the build's, and the library was never concerned. **Still there** → try a stock Firefox: if stock hangs too, the library is exposed for real — its workers call `getDirectory()` in every OPFS VFS's `create()` and in `worker.ts`'s delete and inspect paths, and nothing in the client bounds a worker's startup (`db.debug`'s `boot` would read `creating the VFS`) — so the question becomes bounding worker startup in the client, then the one-probe-per-run design below for the tests, and the Mozilla report.
-
-
-**`navigator.storage.getDirectory()` inside a dedicated worker sometimes never settles on Firefox
-— no resolve, no reject — under concurrent OPFS access from many pages.** That call sits at
-module scope behind a TOP-LEVEL AWAIT: `probeUnsafeHandles()` in `tests/conformance/helpers.ts`,
-reached by every browser test file through `tests/browser/helpers.ts` → `AVAILABLE_FEATURES`.
-rstest runs test files in parallel pages, so ~43 of these probe workers start per run, ten of them
-inside one five-second window. When one never answers, that file's module never finishes
-evaluating: **no test starts, so neither `testTimeout` (30 s) nor `hookTimeout` can fire**, rstest
-reports the file as "running" for ever, and `pnpm test` never ends.
-
-Established 2026-09-16, by instrumenting the probe worker step by step and catching a wedge:
-the wedged page prints `worker constructed` then `step:start` and nothing more, where a healthy
-page goes `step:start → got-root → got-file-handle → h1 → caught(NoModificationAllowedError) →
-ANSWERED false`. It stops at `await navigator.storage.getDirectory()`.
-
-Arms, all on Firefox `OPFSWriteAheadVFS/sync`, one project, no load: real probe **4 hangs / 24
-runs** (~17 %); probe stubbed to `return false` (behaviour-neutral on Firefox) **0 / 9**; probe
-bounded at 8 s **0 / 6**. The hang lands on whichever file loses: `inspect-marker` ×3,
-`inspect-client` ×1, `pool-savepoint` ×1.
-
-REFUTED on the way, keep refuted: it is NOT contention on the probe's fixed file name. Measured
-directly — a second `createSyncAccessHandle` on a held file REJECTS at once on Firefox
-(`NoModificationAllowedError`) and is granted on Chromium (that is what the probe reads).
-
-**Guarded 2026-09-16 (`6560c9e`), not cured.** Each probe attempt is bounded at 10 s, a wedged
-worker is terminated and replaced, three times, and the third failure THROWS rather than answering
-— a silent `false` would flip `readwrite-unsafe` on Chromium and make tests pass for the wrong
-reason. `scripts/bounded.ts` now gives every browser script a deadline (exit 124), because the
-next hang of this shape will not be this one.
-
-WHAT REMAINS OPEN:
-- **`HAS_UNSAFE_HANDLES` is still awaited at module scope** (`tests/conformance/helpers.ts`, the
-  top-level await; `AVAILABLE_FEATURES` is only derived from it — this entry used to name the wrong
-  one). **Making it lazy is NOT the structural answer this entry once claimed, and the correction
-  is measured (2026-09-21):** it would not reduce the number of probes, which is what wakes the
-  engine bug. `readwrite-unsafe` feeds `singleConnectionWithout` and `exclusiveConnectionWithout`
-  (`src/const/vfs.ts`), so `pairFor()` needs the answer in every browser test — on demand or at load,
-  every page still probes once. And the run no longer hangs either way, since `6560c9e` bounds it.
-  What laziness would still buy is only that a module-scope throw becomes a named test failure.
-- **The lever that WOULD attack the trigger is one probe per run instead of one per page**, and it
-  is now designed rather than speculated. Measured 2026-09-21, all three:
-  rstest 0.11.8 has **no per-run hook with browser access** (`setupFiles` runs before each FILE;
-  `globalSetup` runs in Node, and beside `projects` at root level it is silently IGNORED — declared
-  per project it runs once per project); the **injection channel works** — a value set in
-  `globalSetup`'s `process.env` reaches the page as `import.meta.env.X`, synchronously at module
-  scope, so declaration-time skips survive; and **no storage is shared** to cache an answer in —
-  not across runs, not across files of one run (same origin, isolated: `a` reads back its own
-  write, `b` reads `<empty>` 4 s later), not across projects (the origin's port differs). So the
-  shape is: `globalSetup` launches its own Playwright browser against a `127.0.0.1` page, probes
-  once, injects. Cost measured at **813 ms per project** (launch 183, page 404, probe 45, teardown
-  175) — ≈ +3.3 s on `pnpm test`, ≈ +2 % on the matrix, against 45 ms per page removed in parallel.
-  Roughly neutral in wall clock: the cost is not the argument either way.
-- **The engine bug is unreported, and Bugzilla was searched on 2026-09-21: nothing matches.** The
-  component is **Core › Storage: Bucket File System** (where the OPFS meta 1748667 lives); its 33
-  open bugs are almost all the `readwrite-unsafe` series and PBM, and a summary search for
-  `getDirectory` and `hang` there returns nothing of this shape. `Storage: Quota Manager`'s hangs
-  are all shutdownhangs.
-  **Two things block the report, and neither is the writing.** (1) The repro is not portable: the
-  console probe — 12 same-origin iframes × 4 workers, 3 rounds released together, each worker walking
-  `getDirectory` → `getFileHandle` → two sync access handles, bounded — does NOT reproduce it (0 of 144;
-  48 workers from one page, 0 either), only
-  the suite's shape does — ~50 pages each asking a worker for the OPFS root within a few seconds.
-  (2) Every sighting is on **Playwright's Firefox 153.0** (BuildID 20260722045007), a patched
-  build; Mozilla will ask first, so confirm on a stock Firefox before opening, or the bug is
-  Playwright's, not theirs. Then: `enter_bug.cgi?product=Core&component=Storage%3A%20Bucket%20File%20System`,
-  blocks 1748667, keyword `hang`, and a `mozregression` range if it reproduces on stock.
