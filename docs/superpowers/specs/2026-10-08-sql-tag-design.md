@@ -16,6 +16,8 @@ Today a query and its parameters are two arguments kept in step by hand: `db.rea
 - **D6 — A fragment is recognised by `instanceof` on an internal class, never by its shape.** A user value shaped `{ sql, params }` stays a value (JSON text): treating any such object as a fragment would inline user data into the SQL. The class is not exported as a value; only its type `SQLQuery` is public, as `export type`, so the runtime exports change only by `sql`. A module-private symbol would be as safe; the class was preferred because `instanceof` reads directly and it carries the fields. Two copies of the package in one bundle do not recognise each other's fragments — such a fragment is bound as JSON text, wrong but not unsafe; `Symbol.for` would fix it and let any code forge a fragment, so it is not used.
 - **D7 — `sql.raw(text)` is the escape hatch.** It returns a fragment whose SQL is `text` and whose params are empty: nothing is quoted, so it is documented as unsafe with untrusted input. It takes a string only; anything else, a `TemplateStringsArray` from `` sql.raw`…` `` included, is `INVALID_VALUE`.
 - **D8 — `sql.id(...parts)` quotes an identifier and returns a fragment.** Each part goes through `quoteIdent` (`src/utils.ts`) and the parts are joined with `.`: `sql.id('main', 'users')` → `"main"."users"`. Variadic rather than `split('.')`: a name containing a dot stays reachable, and a dynamic name can never choose its own schema (`temp.x`) — only the code qualifies it. No part, or a part that is not a non-empty string free of NUL, is `INVALID_IDENTIFIER`. `sql.ident` was judged unclear and `sql.quote` misleading (SQLite's `quote()` quotes a value).
+- **D9 — `sql.list(values)` is the list for `IN`, and an array alone never expands.** `` WHERE id IN ${sql.list(ids)} `` — the fragment carries its parentheses. An array interpolated directly stays a JSON value (D2), so `` IN (${ids}) `` cannot be told apart from `` json_each(${ids}) `` or an array stored as JSON; only the helper expands. `sql.in` was rejected (`IN ${sql.in(…)}` repeats itself).
+- **D10 — `sql.list` emits `(SELECT value FROM json_each(?))` with one JSON text param, not `(?, ?, ?)`.** One SQL text whatever the list's length, so one statement cache entry and no parameter-count limit; an expansion would cache one statement per length and evict the others from the LRU — the property spec 2026-10-06 D5 protects for `bulkWrite`. An empty list matches nothing. The cost is that elements follow JSON, so the helper converts them itself (§ 2).
 
 ## 2. Building a query
 
@@ -33,7 +35,23 @@ The params are the raw values. Conversion stays where it is today, in `preparePa
 
 The template's own text is not parsed. It must not carry placeholders of its own (`?`, `?NNN`, `:name`): mixed with the tag's `?`, they would shift the numbering. This is documented, not checked — checking needs tokenisation (`mem:architecture`, routing).
 
-No list expansion: `` IN (${[1, 2]}) `` binds one JSON text, as `[1, 2]` does as a param today, and silently matches nothing. `` IN (SELECT value FROM json_each(${ids})) `` covers the case and keeps one SQL text whatever the list's length, so the statement cache keeps serving it; `API.md` shows it prominently.
+An array interpolated directly is one JSON text, as `[1, 2]` is as a param today: `` IN (${[1, 2]}) `` silently matches nothing. `API.md` points to `sql.list` where it describes arrays.
+
+### `sql.list(values)`
+
+`values` must be an array, else `INVALID_VALUE`. The helper serialises it to JSON text itself, element by element, so that each element reaches `json_each` as the value it would be as a param:
+
+| Element | Written as | `json_each`'s `value` |
+|---|---|---|
+| finite `number` | JSON number | integer or real |
+| `bigint` in SQLite's 64-bit range | its decimal digits, unquoted | integer, exact |
+| `string` | JSON string | text |
+| `boolean` | `true` / `false` | `1` / `0` |
+| `null`, `undefined` | `null` | `NULL` (matches nothing, as in `IN (NULL)`) |
+| `Date` | JSON string of `toSQLiteDate(d)` | text, SQLite's date format, as a `Date` param |
+| non-finite `number`, out-of-range `bigint`, binary, any other object | — | `INVALID_VALUE`, naming the element's index |
+
+`toSQLiteDate` and the 64-bit bounds are the ones `src/values.ts` already holds, exported for `src/sql.ts`. The fragment's single param is that JSON text, a string, so `prepareParams` binds it as text.
 
 ## 3. The public API
 
@@ -48,6 +66,7 @@ export const sql: {
   jsonb(strings: TemplateStringsArray, ...values: unknown[]): SQLQuery;
   raw(text: string): SQLQuery;
   id(...parts: [string, ...string[]]): SQLQuery;
+  list(values: readonly unknown[]): SQLQuery;
 };
 ```
 
@@ -72,20 +91,19 @@ A `SQLQuery` followed by an array (untyped code passing params anyway) is refuse
 
 ## 5. Errors
 
-No new code. A value `toBindable` refuses throws as today, from the method, naming its final position. A misuse of the overload or of `sql.raw` is `INVALID_VALUE` (§ 4, D7); a bad `sql.id` part is `INVALID_IDENTIFIER` (D8). `sql.raw` and `sql.id` throw when called, not when the query runs.
+No new code. A value `toBindable` refuses throws as today, from the method, naming its final position. A misuse of the overload or of `sql.raw` is `INVALID_VALUE` (§ 4, D7); a bad `sql.id` part is `INVALID_IDENTIFIER` (D8); a non-array or a refused element of `sql.list` is `INVALID_VALUE` (§ 2). `sql.raw`, `sql.id` and `sql.list` throw when called, not when the query runs.
 
 ## 6. Testing
 
-- **Unit (`tests/unit/sql.test.ts`, Node):** text and params for each row of § 2; nesting both ways (`sql` in `sql.jsonb`, `sql.jsonb` in `sql`) and an empty fragment; a `{ sql, params }` plain object stays a value; `sql.raw` inlined with no params and refusing a non-string (a template included); `sql.id` with one and several parts, a `"` doubled, a dotted name kept whole, and each refused part; `takesJson` against `convert` for each kind of value in spec 2026-10-06 § 2; `queryArgs` for both forms and the refused one.
-- **Browser (shared suite, both engines):** each of the five methods with a `SQLQuery`, on the client and inside a transaction; a `sql.jsonb` insert reads back as JSONB (`typeof(col) = 'blob'`, `json(col)` equal to the object's JSON); an object through plain `sql` reads back as its JSON text.
+- **Unit (`tests/unit/sql.test.ts`, Node):** text and params for each row of § 2; nesting both ways (`sql` in `sql.jsonb`, `sql.jsonb` in `sql`) and an empty fragment; a `{ sql, params }` plain object stays a value; `sql.raw` inlined with no params and refusing a non-string (a template included); `sql.id` with one and several parts, a `"` doubled, a dotted name kept whole, and each refused part; `sql.list`'s JSON text for each row of its table and each refused element; `takesJson` against `convert` for each kind of value in spec 2026-10-06 § 2; `queryArgs` for both forms and the refused one.
+- **Browser (shared suite, both engines):** each of the five methods with a `SQLQuery`, on the client and inside a transaction; a `sql.jsonb` insert reads back as JSONB (`typeof(col) = 'blob'`, `json(col)` equal to the object's JSON); an object through plain `sql` reads back as its JSON text; `sql.list` matching integers, a `bigint` above 2⁵³, strings, a `Date` against a column written by `datetime()`, and an empty list matching nothing.
 - **Exports:** `tests/unit/exports.test.ts` as § 3.
 
 ## 7. Documentation and changelog
 
-`API.md` gets a section on the tag: both forms, composition, `sql.id`, `sql.raw` and its danger, the no-placeholder rule, `json_each` for a list. `README.md`'s quick-start `INSERT` (`db.write('INSERT INTO users (name) VALUES (?)', ['Alice'])`) is rewritten with the tag, and `sql` joins its API link line. `CHANGELOG.md`: one `Added` entry under `[Unreleased]`.
+`API.md` gets a section on the tag: both forms, composition, `sql.id`, `sql.raw` and its danger, `sql.list`, the no-placeholder rule. `README.md`'s quick-start `INSERT` (`db.write('INSERT INTO users (name) VALUES (?)', ['Alice'])`) is rewritten with the tag, and `sql` joins its API link line. `CHANGELOG.md`: one `Added` entry under `[Unreleased]`.
 
 ## 8. Out of scope
 
 - A `sql.json` variant: `json(?)` matters only to nest a JSON value inside `json_object()` and the like, where `jsonb(?)` serves as well. Added later if asked.
-- List expansion (§ 2, `json_each` instead).
 - Joining an array of fragments (`sql.join(conds, ' AND ')`): nesting already does it, `` conds.reduce((a, c) => sql`${a} AND ${c}`) ``.
