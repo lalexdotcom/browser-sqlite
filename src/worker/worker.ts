@@ -43,7 +43,7 @@ import type {
   WorkerMessageData,
 } from '../types/protocol';
 import { DATABASE_FILE_SUFFIXES, renderPragmas } from '../utils';
-import { bindBlock, RowWriter } from './binary';
+import { anonymousParams, bindBlock, RowWriter } from './binary';
 import { cloneable } from './cloneable';
 import { firstMissing } from './probes';
 import { sqliteCodeOf } from './sqlite-code';
@@ -591,6 +591,8 @@ const open = (file: string, options: OpenOptions) => {
     if (!openedDB) throw new Error('No DB opened');
     // Wasm allocations the statements' bindings point into, freed last.
     const owned: number[] = [];
+    // The next value a statement of anonymous `?` takes (`run`).
+    let cursor = 0;
 
     const { sqlite, db, module } = await openedDB;
     const { chunkSize = 1 } = options ?? {};
@@ -616,10 +618,22 @@ const open = (file: string, options: OpenOptions) => {
       return e;
     };
 
-    /** Binds and streams one statement. Never finalises: the caller owns it. */
-    const run = async function* (stmt: number) {
+    /**
+     * Binds and streams one statement. Never finalises: the caller owns it. In
+     * a multi-statement string, a statement of anonymous `?` takes the values
+     * after the previous such statement's; one with a numbered or named param
+     * reads from the first value, as a single statement does.
+     */
+    const run = async function* (stmt: number, multi = false) {
       try {
-        if (params) owned.push(bindBlock(module, sqlite, stmt, params));
+        if (params) {
+          let from = 0;
+          if (multi && anonymousParams(module, stmt)) {
+            from = cursor;
+            cursor += module._sqlite3_bind_parameter_count(stmt);
+          }
+          owned.push(bindBlock(module, sqlite, stmt, params, from));
+        }
       } catch (e) {
         throw stamped(e);
       }
@@ -757,7 +771,7 @@ const open = (file: string, options: OpenOptions) => {
           textOf ? textOf() : sql,
         )) {
           prepared++;
-          yield* run(stmt);
+          yield* run(stmt, true);
         }
       } else {
         let keep: number | undefined;
@@ -783,7 +797,7 @@ const open = (file: string, options: OpenOptions) => {
             if (single) keep = stmt;
             else live = stmt;
 
-            yield* run(stmt);
+            yield* run(stmt, !single);
 
             if (!single) {
               await sqlite.finalize(stmt);

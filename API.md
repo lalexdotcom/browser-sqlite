@@ -521,6 +521,8 @@ Every method that takes `params` — and `bulkWrite()`'s rows — converts each 
 
 **A `JSONB` column stores every value as JSON.**<br>Declare it with `types: { doc: 'JSONB' }`; each value is stored through `jsonb()` as JSON, a string as a JSON string. A `Uint8Array` is taken as JSONB already encoded, and one that is not valid JSONB fails its batch. A plain `SELECT` returns the column as bytes (a `Uint8Array`); `json(col)` returns it as JSON text.
 
+**In a string of several statements, each statement of `?` takes the next values.**<br>`INSERT INTO a VALUES (?); INSERT INTO b VALUES (?)` with `[x, y]` stores `x` in `a` and `y` in `b`. A statement with numbered or named params (`?2`, `:id`) reads them from the first value. A missing value is bound as `NULL` and an extra one is ignored, as SQLite does.
+
 ### How a query runs
 
 Read queries are dispatched to any available worker, so several run at once.
