@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **`CHANGELOG.md` ships in the package**, beside `API.md` and `VFS.md`.
 - **`INVALID_VALUE` is thrown when a param or a `bulkWrite()` cell has no SQLite value:** a `Symbol`, a function, a `bigint` outside the 64-bit range, an invalid `Date` in an ordinary column, or a value `JSON.stringify` refuses. `params` that is not an array is refused the same way.
+- **The `sql` template tag builds a query and its params from a template**, and is the recommended way to write queries: `read()`, `write()`, `chunk()`, `stream()` and `first()` take its result in place of SQL and params. `sql.jsonb` stores objects and arrays as JSONB, `sql.list()` matches a list with `IN`, `sql.id()` quotes an identifier and `sql.raw()` inserts text as it is.
 
 ### Changed
 
@@ -22,8 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **An `ArrayBuffer`, a `DataView` or a typed array other than `Uint8Array` is bound as a BLOB of its bytes:** as a param it was bound as `NULL`, and in `bulkWrite()` and `output()` as JSON text.
 - **An object or a `Date` passed as a param is no longer bound as `NULL`:** an object is bound as JSON text and a `Date` as `YYYY-MM-DD HH:MM:SS.SSS` in UTC.
 - **A value `bulkWrite()` cannot bind is refused by `enqueue()` for its own row,** instead of failing the whole batch.
-- **On Firefox, `stream()`, `chunk()` and `tx.stream()` no longer keep the rows you have already consumed in memory:** every chunk stayed in memory until the client was closed, so a 500 MiB read peaked at about 2 GB. Consumed rows can now be collected as the read goes on.
-- **On Firefox, a query no longer leaves memory behind until the client is closed:** each one kept about 1 KB, so 200 000 queries on one worker held about 180 MB.
+- **On Firefox, `stream()`, `chunk()` and `tx.stream()` no longer keep the rows you have already consumed in memory:** every chunk stayed in memory until the client was closed. Consumed rows can now be collected as the read goes on.
+- **On Firefox, a query no longer leaves memory behind until the client is closed.**
 
 ## [1.0.0-rc.7] - 2026-10-06
 

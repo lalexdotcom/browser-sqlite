@@ -4,9 +4,9 @@ Every method, property and option of [browser-sqlite](README.md).
 
 [*client*.id](#clientid) · [*client*.name](#clientname) · [*client*.file](#clientfile) · [*client*.files](#clientfiles) · [*client*.vfs](#clientvfs) · [*client*.build](#clientbuild) · [*client*.poolSize](#clientpoolsize) · [*client*.ready](#clientready) · [*client*.debug](#clientdebug)
 
-[createSQLiteClient()](#createsqliteclient) · [*client*.read()](#clientread) · [*client*.write()](#clientwrite) · [*client*.stream()](#clientstream) · [*client*.chunk()](#clientchunk) · [*client*.first()](#clientfirst) · [*client*.transaction()](#clienttransaction) · [*client*.bulkWrite()](#clientbulkwrite) · [*client*.output()](#clientoutput) · [*client*.inspect()](#clientinspect) · [*client*.close()](#clientclose) · [deleteDatabase()](#deletedatabase) · [inspectDatabase()](#inspectdatabase)
+[createSQLiteClient()](#createsqliteclient) · [*client*.read()](#clientread) · [*client*.write()](#clientwrite) · [*client*.stream()](#clientstream) · [*client*.chunk()](#clientchunk) · [*client*.first()](#clientfirst) · [*client*.transaction()](#clienttransaction) · [*client*.bulkWrite()](#clientbulkwrite) · [*client*.output()](#clientoutput) · [*client*.inspect()](#clientinspect) · [*client*.close()](#clientclose) · [deleteDatabase()](#deletedatabase) · [inspectDatabase()](#inspectdatabase) · [sql\`…\`](#sql)
 
-**[Queries](#queries)**: [Writing queries](#writing-queries) · [How they run](#how-they-run) · [Inside a transaction](#inside-a-transaction)
+**[Queries](#queries)**: [Using sql\`…\`](#using-sql) · [How params are bound](#how-params-are-bound) · [How a query runs](#how-a-query-runs) · [Inside a transaction](#inside-a-transaction)
 
 **[Interrupting a call](#interrupting-a-call)** · **[Error handling](#error-handling)** · **[Debugging](#debugging)**
 
@@ -140,7 +140,7 @@ const users = await db.read<User>(
 
 On `read()` this is transport only — it still resolves with the whole array.
 
-See [Writing queries](#writing-queries).
+See [Queries](#queries).
 
 ## *client*.write
 
@@ -169,7 +169,7 @@ const { result } = await db.write<{ id: number }>(
 
 **Transaction control is refused.**<br>`BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` reject with `STATEMENT_FAILED` and `sqliteCode` `23` (`SQLITE_CODES.AUTH`), on the client and inside a transaction alike. On the client, each call may run on a different connection, so a transaction opened this way could never be closed; inside a transaction, the library owns the transaction and its savepoints. Use [`transaction()`](#clienttransaction), and `tx.savepoint()` inside it. In a string of several statements, the ones before the refused statement have run — outside a transaction, they are committed.
 
-See [Writing queries](#writing-queries).
+See [Queries](#queries).
 
 ## *client*.stream
 
@@ -189,7 +189,7 @@ for await (const row of db.stream<User>('SELECT * FROM large_table', [])) {
 
 On `stream()`, `chunkSize` is the only lever on how many rows are in flight.
 
-See [Writing queries](#writing-queries).
+See [Queries](#queries).
 
 ## *client*.chunk
 
@@ -209,7 +209,7 @@ for await (const rows of db.chunk<User>('SELECT * FROM large_table', [])) {
 
 Here `chunkSize` is the batch size the consumer sees, not only a transport detail.
 
-See [Writing queries](#writing-queries).
+See [Queries](#queries).
 
 ## *client*.first
 
@@ -230,7 +230,7 @@ const user = await db.first<User>(
 
 `first()` stops the query after one row instead of draining the result set.
 
-See [Writing queries](#writing-queries).
+See [Queries](#queries).
 
 ## *client*.transaction
 
@@ -449,13 +449,79 @@ It answers from code that holds no client — opening one to learn who holds the
 
 A memory VFS throws `INVALID_OPTION`: its pages live in the worker that opened them, so two clients are two databases and there is nothing to share. Where the Web Locks API is missing, `inspectDatabase` and `db.inspect()` throw `UNSUPPORTED` rather than report zero.
 
+## sql
+
+Builds a query from a template, and is the recommended way to write queries: each value becomes a parameter, never part of the SQL text. Every query method takes the result in place of its SQL and params, followed by its options.
+
+```typescript
+import { sql } from 'browser-sqlite';
+
+const users = await db.read<User>(
+  sql`SELECT id, name FROM users WHERE active = ${1} AND name LIKE ${pattern}`,
+  { timeout: 5_000 },
+);
+```
+
+An object or an array is bound as JSON text, a `Date` in SQLite's format, a `Uint8Array` as a BLOB. See [How params are bound](#how-params-are-bound).
+
+| Helper | Gives | Example |
+|---|---|---|
+| `` sql.jsonb`…` `` | `jsonb(…)` around each object or array | `` sql.jsonb`INSERT INTO docs (body) VALUES (${doc})` `` |
+| `sql.list(values)` | a list, for `IN` | `` sql`… WHERE id IN ${sql.list(ids)}` `` |
+| `sql.id(...names)` | a quoted identifier, joined with `.` | `` sql`SELECT * FROM ${sql.id('main', table)}` `` |
+| `sql.raw(text)` | `text` as it is, unquoted | `` sql`… ORDER BY ${sql.raw(order)}` `` |
+
+See [Using sql\`…\`](#using-sql).
+
 ## Queries
 
-### Writing queries
+Pass values as parameters rather than building them into the SQL text: [sql\`…\`](#sql) does this for you.
 
-**Pass values as `?` parameters rather than building them into the SQL.**<br>Each worker keeps a cache of 32 prepared statements, keyed on the exact SQL string. Interpolating a value makes every call a new key, so nothing is ever reused and every query is recompiled. Generated SQL is sometimes unavoidable — `IN (?, ?, ?)` changes shape with the list — and it still works; it simply cannot be cached.
+### Using `` sql`…` ``
 
-### How they run
+See [sql\`…\`](#sql) for its syntax and helpers.
+
+**A query built by `sql` can be interpolated into another.**<br>Its text and its values take the place of the interpolation, which is how to add an optional clause without concatenating strings:
+
+```typescript
+const filter = name ? sql`AND name = ${name}` : sql``;
+const rows = await db.read(sql`SELECT * FROM users WHERE active = 1 ${filter}`);
+```
+
+**An array is one value, not a list.**<br>`` IN (${ids}) `` matches nothing: write `` IN ${sql.list(ids)} ``. A list's elements may be numbers, bigints, strings, booleans, `null`, `undefined` and `Date`s.
+
+**Write no placeholder of your own, and no value inside a string or a comment.**<br>Both throw `INVALID_VALUE`. For a pattern, write `` LIKE ${`%${x}%`} ``, not `` LIKE '%${x}%' ``.
+
+**`sql.raw()` inserts its text unchecked.**<br>Never pass it text that comes from outside your code. For a table or a column name, use `sql.id()`, which quotes each argument as one name.
+
+A misused helper throws when you call it: `INVALID_VALUE`, or `INVALID_IDENTIFIER` for `sql.id()`.
+
+### How params are bound
+
+Every method that takes `params` — and `bulkWrite()`'s rows — converts each value before it leaves the page. A query that wants JSONB writes `jsonb(?)` itself; `bulkWrite()` does it for the columns its `types` declares.
+
+| Value | Column | `JSONB` column |
+|---|---|---|
+| string | as given | JSON string |
+| number, bigint, `null` | as given | as given |
+| `undefined` | `NULL` | `NULL` |
+| boolean | `1` / `0` | `true` / `false` |
+| `Uint8Array` | BLOB | read as JSONB already encoded |
+| `ArrayBuffer`, `DataView`, a typed array other than `Uint8Array` | BLOB of its bytes | read as JSONB already encoded |
+| `Date` | `YYYY-MM-DD HH:MM:SS.SSS`, UTC | JSON string, `"YYYY-MM-DDTHH:MM:SS.SSSZ"` |
+| any other object, arrays included | `JSON.stringify` text | `JSON.stringify` |
+
+**Objects follow `JSON.stringify`'s rules, at every depth.**<br>A `Map` or a `Set` gives `{}`, a class instance its own properties or its `toJSON()`, and a nested `Date` its ISO string.
+
+**A value no rule can bind is refused before anything is sent.**<br>A `Symbol`, a function, a `bigint` outside SQLite's 64-bit range, an invalid `Date` in an ordinary column, or a value `JSON.stringify` refuses — a nested `bigint`, a cycle — throws `INVALID_VALUE`, naming the param or the column; so does `params` that is not an array. In `bulkWrite()` it is thrown by `enqueue()`, and that row alone is not written. In a `JSONB` column, or nested in an object, an invalid `Date` is stored as JSON `null`.
+
+**An array is stored as JSON.**<br>To match a list with `IN`, use [`sql.list()`](#sql). Pass a `Uint8Array` to store bytes. A typed array, a `DataView` or an `ArrayBuffer` stores the bytes of its own range, in the platform's byte order.
+
+**A `Date` is stored in SQLite's own format, so it compares as text with SQLite's dates.**<br>`datetime('now', 'subsec')` gives the same shape. `CURRENT_TIMESTAMP` has no milliseconds: `'2026-10-06 12:34:56.000'` sorts after `'2026-10-06 12:34:56'`, the same instant.
+
+**A `JSONB` column stores every value as JSON.**<br>Declare it with `types: { doc: 'JSONB' }`; each value is stored through `jsonb()` as JSON, a string as a JSON string. A `Uint8Array` is taken as JSONB already encoded, and one that is not valid JSONB fails its batch. A plain `SELECT` returns the column as bytes (a `Uint8Array`); `json(col)` returns it as JSON text.
+
+### How a query runs
 
 Read queries are dispatched to any available worker, so several run at once.
 
@@ -502,7 +568,7 @@ await db.transaction(async (tx) => {
 > [!WARNING]
 > On the `sync` build without cross-origin isolation, a statement already running cannot be stopped — see [Interrupting a call](#interrupting-a-call). Waiting for it is then the whole of what a statement ending early costs: `first()`, a `break`, or the end of the callback waits for the statement to finish on its own, up to `drainTimeout`, 60 s by default, with the write lock still held. On every other build the statement is stopped and the wait is negligible.
 
-See [Queries: How they run](#how-they-run).
+See [Queries: How a query runs](#how-a-query-runs).
 
 ## Interrupting a call
 
@@ -539,31 +605,6 @@ Serving the page **cross-origin isolated** is the first. Either header set below
 
 The second is a build other than `sync`: `jspi` where the browser has it, otherwise `async`, which is slower wherever a query walks rows.
 
-## How params are bound
-
-Every method that takes `params` — and `bulkWrite()`'s rows — converts each value before it leaves the page. A query that wants JSONB writes `jsonb(?)` itself; `bulkWrite()` does it for the columns its `types` declares.
-
-| Value | Column | `JSONB` column |
-|---|---|---|
-| string | as given | JSON string |
-| number, bigint, `null` | as given | as given |
-| `undefined` | `NULL` | `NULL` |
-| boolean | `1` / `0` | `true` / `false` |
-| `Uint8Array` | BLOB | read as JSONB already encoded |
-| `ArrayBuffer`, `DataView`, a typed array other than `Uint8Array` | BLOB of its bytes | read as JSONB already encoded |
-| `Date` | `YYYY-MM-DD HH:MM:SS.SSS`, UTC | JSON string, `"YYYY-MM-DDTHH:MM:SS.SSSZ"` |
-| any other object, arrays included | `JSON.stringify` text | `JSON.stringify` |
-
-**Objects follow `JSON.stringify`'s rules, at every depth.**<br>A `Map` or a `Set` gives `{}`, a class instance its own properties or its `toJSON()`, and a nested `Date` its ISO string.
-
-**A value no rule can bind is refused before anything is sent.**<br>A `Symbol`, a function, a `bigint` outside SQLite's 64-bit range, an invalid `Date` in an ordinary column, or a value `JSON.stringify` refuses — a nested `bigint`, a cycle — throws `INVALID_VALUE`, naming the param or the column; so does `params` that is not an array. In `bulkWrite()` it is thrown by `enqueue()`, and that row alone is not written. In a `JSONB` column, or nested in an object, an invalid `Date` is stored as JSON `null`.
-
-**An array is stored as JSON.**<br>Pass a `Uint8Array` to store bytes. A typed array, a `DataView` or an `ArrayBuffer` stores the bytes of its own range, in the platform's byte order.
-
-**A `Date` is stored in SQLite's own format, so it compares as text with SQLite's dates.**<br>`datetime('now', 'subsec')` gives the same shape. `CURRENT_TIMESTAMP` has no milliseconds: `'2026-10-06 12:34:56.000'` sorts after `'2026-10-06 12:34:56'`, the same instant.
-
-**A `JSONB` column stores every value as JSON.**<br>Declare it with `types: { doc: 'JSONB' }`; each value is stored through `jsonb()` as JSON, a string as a JSON string. A `Uint8Array` is taken as JSONB already encoded, and one that is not valid JSONB fails its batch. A plain `SELECT` returns the column as bytes (a `Uint8Array`); `json(col)` returns it as JSON text.
-
 ## Error handling
 
 Errors raised by this library, and every statement SQLite refuses, are instances of `SQLiteError`, exported from the package entry point.
@@ -580,8 +621,8 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 | `BUSY` | A transient conflict, worth retrying. Either SQLite reported a lock conflict — `SQLITE_BUSY` or `SQLITE_LOCKED`, with its result code on `sqliteCode` and, when SQLite reports one, its subtype on `sqliteExtendedCode` — or a database was being opened or deleted elsewhere at that moment. **A read that SQLite reported busy is retried once for you**; if it reaches you, the retry failed too. Writes are never retried, and neither is a `BUSY` without a `sqliteCode`. |
 | `INVALID_OPTION` | An option was refused at the call, before any worker ran: `vfs` missing or unknown, a `(vfs, build)` pair the VFS does not support, a `poolSize` above what the VFS allows, a `wasmUrl` that is not a URL, a database name too long once normalized, a database name that is empty once normalized, a `bulkWrite()` `types` naming a column it does not write or a type other than `'JSONB'`, or `inspectDatabase` on a memory VFS. The message names the option and what it accepts. |
 | `INVALID_PRAGMA` | A `pragmas` entry could not be rendered — the name must be a bare word; the value must be an integer, a bare word such as `WAL`, or a quoted SQL literal — or the VFS refuses it, in `pragmas` or in a statement that sets it ([VFS.md](VFS.md)). |
-| `INVALID_VALUE` | A param, or a cell given to `bulkWrite()`, has no SQLite value: a `Symbol`, a function, a `bigint` outside the 64-bit range, an invalid `Date` in an ordinary column, or a value `JSON.stringify` refuses; or `params` is not an array. Raised before any worker runs; the message names the param or the column, and when a conversion failed, `cause` carries its error. |
-| `INVALID_IDENTIFIER` | A name or type handed to `output()`, `bulkWrite()` or `tx.savepoint()` cannot be used as written: an empty name, a name containing a NUL, a column type that is not a word with optional numeric arguments, or a generated expression that is not parenthesised and free of `;`. For `tx.savepoint()`: a name starting with `__bsq_`, or one already open. |
+| `INVALID_VALUE` | A param, or a cell given to `bulkWrite()`, has no SQLite value: a `Symbol`, a function, a `bigint` outside the 64-bit range, an invalid `Date` in an ordinary column, or a value `JSON.stringify` refuses; or `params` is not an array; or [sql\`…\`](#sql) refuses its template, or one of its helpers is misused. Raised before any worker runs; the message names the param or the column, and when a conversion failed, `cause` carries its error. |
+| `INVALID_IDENTIFIER` | A name or type handed to `output()`, `bulkWrite()`, `tx.savepoint()` or `sql.id()` cannot be used as written: an empty name, a name containing a NUL, a column type that is not a word with optional numeric arguments, or a generated expression that is not parenthesised and free of `;`. For `tx.savepoint()`: a name starting with `__bsq_`, or one already open. For `sql.id()`: no name at all, or one that is not a string. |
 | `BULK_WRITE_FAILED` | A batch failed inside `bulkWrite().close()` or `output().close()`. The error is a `SQLiteBulkWriteError`, carrying `rowsWritten` and `rowsNotWritten`. |
 | `DATABASE_IN_USE` | A client still holds the database, in this tab or another. Retrying will not help: close every client on it first. Raised by `deleteDatabase`, and by any method on a second client where the VFS supports one connection at a time. |
 | `DATABASE_NOT_FOUND` | There is nothing at that name to delete. Raised by `deleteDatabase` alone — `createSQLiteClient` creates a database that is absent, so it has no such case. The likeliest cause is a `vfs` that is not the one the database was created with. |

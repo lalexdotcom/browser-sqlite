@@ -29,5 +29,6 @@ export {
   type InspectionBase,
   inspectDatabase,
 } from './inspect';
+export { type SQLQuery, sql } from './sql';
 // Nothing exports from `./types/protocol`: the wire protocol stays internal.
 export * from './types/errors';

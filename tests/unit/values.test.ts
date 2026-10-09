@@ -3,6 +3,7 @@ import { SQLiteError } from '../../src/types/errors';
 import {
   convertParams,
   jsonbColumns,
+  takesJson,
   toBindable,
   toSQLiteDate,
 } from '../../src/values';
@@ -285,6 +286,33 @@ describe('convertParams', () => {
     } catch (e) {
       expect((e as SQLiteError).code).toBe('INVALID_VALUE');
       expect((e as SQLiteError).message).toContain('param 2');
+    }
+  });
+});
+
+describe('takesJson', () => {
+  it('is true exactly for the values an ordinary column binds as JSON text', () => {
+    const cases: [unknown, boolean][] = [
+      [{ a: 1 }, true],
+      [[1, 2], true],
+      [new Map(), true],
+      [Object.create(null), true],
+      [new Date(0), false],
+      [Uint8Array.of(1), false],
+      [new ArrayBuffer(1), false],
+      [new DataView(new ArrayBuffer(1)), false],
+      [Float32Array.of(1), false],
+      [null, false],
+      [undefined, false],
+      ['s', false],
+      [1, false],
+      [1n, false],
+      [true, false],
+    ];
+    for (const [value, expected] of cases) {
+      expect(takesJson(value)).toBe(expected);
+      if (expected)
+        expect(toBindable(value, false)).toBe(JSON.stringify(value));
     }
   });
 });

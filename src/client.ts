@@ -1,5 +1,5 @@
 import type { SQLiteChunkOptions, SQLiteDB, SQLiteQueryOptions } from './api';
-import { type EncodedParams, prepareParams } from './binary';
+import { prepareParams } from './binary';
 import { createBulk } from './bulk';
 import {
   defaultBuildFor,
@@ -40,6 +40,7 @@ import {
   type InternalSQLiteClientOptions,
   type WriterPolicy,
 } from './scheduler';
+import { queryArgs, type SQLQuery } from './sql';
 import { createSupervisor } from './supervisor';
 import { createTransaction } from './transaction';
 import { SQLiteError } from './types/errors';
@@ -1259,10 +1260,11 @@ export const createSQLiteClient = (
   const read = async <
     T extends Record<string, unknown> = Record<string, unknown>,
   >(
-    sql: string,
-    params?: unknown[],
-    options?: SQLiteChunkOptions,
+    input: string | SQLQuery,
+    second?: unknown,
+    third?: SQLiteChunkOptions,
   ) => {
+    const { sql, params, options } = queryArgs(input, second, third);
     assertReadable(sql, 'read');
     const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'read');
@@ -1285,7 +1287,8 @@ export const createSQLiteClient = (
    */
   const chunk = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
-  >(sql: string, params?: unknown[], options?: SQLiteChunkOptions) {
+  >(input: string | SQLQuery, second?: unknown, third?: SQLiteChunkOptions) {
+    const { sql, params, options } = queryArgs(input, second, third);
     assertReadable(sql, 'chunk');
     const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'chunk');
@@ -1314,7 +1317,8 @@ export const createSQLiteClient = (
    */
   const stream = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
-  >(sql: string, params?: unknown[], options?: SQLiteChunkOptions) {
+  >(input: string | SQLQuery, second?: unknown, third?: SQLiteChunkOptions) {
+    const { sql, params, options } = queryArgs(input, second, third);
     assertReadable(sql, 'stream');
     const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'stream');
@@ -1341,10 +1345,11 @@ export const createSQLiteClient = (
   const write = async <
     T extends Record<string, unknown> = Record<string, unknown>,
   >(
-    sql: string,
-    params?: unknown[] | EncodedParams,
-    options?: SQLiteQueryOptions,
+    input: string | SQLQuery,
+    second?: unknown,
+    third?: SQLiteQueryOptions,
   ) => {
+    const { sql, params, options } = queryArgs(input, second, third);
     assertStatementAllowed(vfs, sql);
     const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'write');
@@ -1388,10 +1393,11 @@ export const createSQLiteClient = (
   const first = async <
     T extends Record<string, unknown> = Record<string, unknown>,
   >(
-    sql: string,
-    params?: unknown[],
-    options?: SQLiteQueryOptions,
+    input: string | SQLQuery,
+    second?: unknown,
+    third?: SQLiteQueryOptions,
   ) => {
+    const { sql, params, options } = queryArgs(input, second, third);
     assertReadable(sql, 'first');
     const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'first');
