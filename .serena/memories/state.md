@@ -12,12 +12,14 @@ unmeasured ground.
 
 ## Standing facts
 
-- **`1.0.0-rc.9` is published** (2026-10-09): on npm under `rc`, `next` and `latest`, and as a
-  GitHub prerelease whose body is the CHANGELOG section for the tag. It ships `AVAILABLE_VFS`
-  alone, over rc.8 (the binary protocol, `INVALID_VALUE`, the `sql` tag, the Firefox memory
-  fixes). `package.json` sits at `1.0.0-rc.9` until the user calls the next bump. The release
-  gate — 28 jobs, `verify`, `consumer-smoke`, 22/22 cells, then `release` — ran green first
-  time in ~12 min. At rc.8 two cells (`OPFSCoopSyncVFS/async`, `MemoryAsyncVFS/jspi`) took
+- **`1.0.0-rc.10` is published** (2026-10-09): on npm under `rc`, `next` and `latest`, and as a
+  GitHub prerelease whose body is the CHANGELOG section for the tag. Over rc.9 (`AVAILABLE_VFS`)
+  it ships the introspection pragmas as reads (#5), the breaking multi-statement binding (each
+  statement of anonymous `?` takes the next values) and the `WORKER_BUSY`-after-abort fix.
+  `package.json` sits at `1.0.0-rc.10` until the user calls the next bump. The release gate —
+  28 jobs, `verify`, `consumer-smoke`, 22/22 cells, then `release` — ran green first time in
+  ~19 min (one cell, `AccessHandlePoolVFS/sync`, started late); the registry showed the new
+  tags about two minutes after the job ended. At rc.8 two cells (`OPFSCoopSyncVFS/async`, `MemoryAsyncVFS/jspi`) took
   ~17 min against 3-9 for the others, under the 25-minute job limit — not looked into, and not
   seen at rc.9.
   Procedure: `mem:conventions`, § Releasing.
