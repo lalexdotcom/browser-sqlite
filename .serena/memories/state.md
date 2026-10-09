@@ -12,10 +12,14 @@ unmeasured ground.
 
 ## Standing facts
 
-- **`1.0.0-rc.7` is published** (2026-10-06, rc.6 the same morning): on npm under `rc`, `next`
-  and `latest`, with provenance, and as a GitHub prerelease whose body is the CHANGELOG section
-  for the tag. `package.json` sits at `1.0.0-rc.7` until the user calls the next bump. The
-  release gate — `verify`, `consumer-smoke`, 22/22 cells, then `release` — ran green first time.
+- **`1.0.0-rc.8` is published** (2026-10-09): on npm under `rc`, `next` and `latest`, with
+  provenance, published by `GitHub Actions <npm-oidc-no-reply@github.com>`, and as a GitHub
+  prerelease whose body is the CHANGELOG section for the tag. It ships the binary protocol (the
+  breaking change: array params as JSON text), `INVALID_VALUE`, the `sql` tag and the Firefox
+  memory fixes. `package.json` sits at `1.0.0-rc.8` until the user calls the next bump. The
+  release gate — `verify`, `consumer-smoke`, 22/22 cells, then `release` — ran green first time;
+  two cells (`OPFSCoopSyncVFS/async`, `MemoryAsyncVFS/jspi`) took ~17 min against 3-9 for the
+  others, under the 25-minute job limit — not looked into.
   Procedure: `mem:conventions`, § Releasing.
 - **The vendored wa-sqlite sits on upstream `master` of 2026-10-05** (`96d91182`, `package.json`
   has the SHA). **`patches/wa-sqlite@1.1.2.patch` carries `IDBMirrorVFS.js` for #371 and #372**
@@ -95,35 +99,21 @@ here on purpose: a total alone cannot say which suite moved.
 - **Another agent's work was paused by the user until our upstream PRs were done; the user
   relaunches it.**
 
-## The next release — what it must check
+## Trusted publishing — what is left, all the user's
 
-- **Trusted publishing (OIDC) is adopted since 2026-10-06 (user)**; rc.6 and rc.7 went through it,
-  **proven by the registry, not by the log**: `npm view browser-sqlite@<v> _npmUser` reads
-  `GitHub Actions <npm-oidc-no-reply@github.com>` for both, against `lalexdotcom` for rc.5. Neither
-  the action's "trusted publishing (OIDC), npm-token as fallback" line nor npm's 2FA-bypass notice
-  proves anything — the notice appears whenever a token is configured, used or not. Background:
-  `mem:history`, 2026-10-06.
-- **Unknown: what the two `npm dist-tag add` authenticate with** — the registry records no
-  publisher for a dist-tag. **Since 2026-10-06 (user) `release-and-publish.yaml` no longer passes
-  `npm-token` to the action** — commented out, not deleted, with a note to restore it if the
-  dist-tags cannot move. At the next release, read the `Update dist-tags` step and
-  `npm view browser-sqlite dist-tags`; `npm publish --tag` sets the channel's own tag at publish
-  time, so a failure shows as `latest`/`next` not moving.
-- **Once that is shown:** drop `npm-token` from the workflow, delete the `NPM_TOKEN` secret, and
-  switch the package's publishing access to "disallow bypass 2fa tokens" (both the user's). Until
-  then the secret stays, unused, and it **runs out around 2026-11-29** (renewed for 90 days at
-  rc.4's release, user 2026-09-05; derived, not read off npm).
+- **Shown at rc.8 (2026-10-09): OIDC alone publishes AND moves the dist-tags.** The release job ran
+  with `NODE_AUTH_TOKEN` empty; `npm publish` signed provenance and `npm dist-tag add` set
+  `latest` and `next` (`+latest: browser-sqlite@1.0.0-rc.8` in the log), and the registry reads
+  all three tags at rc.8. The open question of rc.7 is answered.
+- **So, the user's to do:** drop the commented-out `npm-token` from `release-and-publish.yaml`,
+  delete the `NPM_TOKEN` secret, and switch the package's publishing access to "disallow bypass
+  2fa tokens". Until then the secret stays, unused, and it **runs out around 2026-11-29**
+  (renewed for 90 days at rc.4's release, user 2026-09-05; derived, not read off npm).
 
 ## Known live exposures
 
-- **`## [Unreleased]` carries a breaking change since 2026-10-07**: an array passed as a param
-  binds as JSON text, no longer as bytes (with `INVALID_VALUE` and the page → worker binary
-  protocol). Nothing to do but release, when the user calls it.
-- **Every published version up to `1.0.0-rc.7` holds memory on Firefox that the next release
-  frees.** `stream()`, `chunk()` and `tx.stream()` keep every chunk until the client closes
-  (~2 GB for a 500 MiB read), and every query keeps ~0.9 KB for its worker's life (~180 MB per
-  200 000 queries on one worker); Chromium not affected. `### Fixed` in `## [Unreleased]`;
-  numbers in STREAM-FF, `mem:measurements/footprint`. Nothing to do but release.
+None known since rc.8: the breaking change and the Firefox memory fixes that sat in
+`[Unreleased]` shipped with it.
 
 ## Settled — do not reopen without new information
 
