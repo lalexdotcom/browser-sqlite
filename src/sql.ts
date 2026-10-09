@@ -3,9 +3,23 @@ import { SQLiteError } from './types/errors';
 import { quoteIdent } from './utils';
 import { MAX_INT64, MIN_INT64, takesJson, toSQLiteDate } from './values';
 
+/** Each query's texts between placeholders: one more than its params (spec D12). */
+const partsOf = new WeakMap<SQLQuery, readonly string[]>();
+
 /**
- * A query built by the `sql` tag: its text, with `?` placeholders, and its
- * params in order. Only `sql` and its helpers build one; a fragment is
+ * `parts[0] ?1 parts[1] ?2 … parts[N]`. Numbered, so each statement of a
+ * multi-statement string binds its own values: the worker binds the params
+ * to every statement from the first one.
+ */
+const render = (parts: readonly string[]): string => {
+  let text = parts[0] as string;
+  for (let i = 1; i < parts.length; i++) text += `?${i}${parts[i]}`;
+  return text;
+};
+
+/**
+ * A query built by the `sql` tag: its text, with numbered placeholders, and
+ * its params in order. Only `sql` and its helpers build one; a fragment is
  * recognised by `instanceof`, so an object of the same shape stays a value.
  */
 export class SQLQuery {
@@ -15,11 +29,106 @@ export class SQLQuery {
   // does not type-check where a query built by sql is expected.
   private declare readonly nominal: never;
 
-  constructor(sql: string, params: readonly unknown[]) {
-    this.sql = sql;
+  constructor(parts: readonly string[], params: readonly unknown[]) {
+    partsOf.set(this, parts);
+    this.sql = render(parts);
     this.params = params;
   }
 }
+
+// What the scan waits for inside a literal or a comment; NONE outside one.
+const NONE = 0;
+const LINE_END = -1;
+const BLOCK_END = -2;
+
+/** SQLite's identifier characters: letters, digits, `_`, `$` and anything past ASCII. */
+const isIdentChar = (c: number) =>
+  (c >= 48 && c <= 57) ||
+  (c >= 65 && c <= 90) ||
+  (c >= 97 && c <= 122) ||
+  c === 95 ||
+  c === 36 ||
+  c > 127;
+
+/**
+ * Why a template's text cannot be used, or undefined (spec D13): an invalid
+ * escape, a placeholder of its own, or a value inside a literal or a comment.
+ */
+const templateError = (
+  strings: readonly (string | undefined)[],
+): string | undefined => {
+  let close = NONE;
+  for (let s = 0; s < strings.length; s++) {
+    const text = strings[s];
+    if (text === undefined)
+      return `part ${s} has an invalid escape sequence: write \\\\ for a backslash`;
+    if (s > 0 && close !== NONE)
+      return `value ${s} is inside a string, a quoted name or a comment`;
+    for (let i = 0; i < text.length; i++) {
+      const c = text.charCodeAt(i);
+      if (close !== NONE) {
+        const ends =
+          close === LINE_END
+            ? c === 10
+            : close === BLOCK_END
+              ? c === 42 && text.charCodeAt(i + 1) === 47
+              : c === close;
+        if (ends) {
+          if (close === BLOCK_END) i++;
+          close = NONE;
+        }
+        continue;
+      }
+      switch (c) {
+        case 39: // '
+        case 34: // "
+        case 96: // `
+          close = c;
+          break;
+        case 91: // [ … ]
+          close = 93;
+          break;
+        case 45: // --
+          if (text.charCodeAt(i + 1) === 45) {
+            close = LINE_END;
+            i++;
+          }
+          break;
+        case 47: // /*
+          if (text.charCodeAt(i + 1) === 42) {
+            close = BLOCK_END;
+            i++;
+          }
+          break;
+        case 63: // ?
+          return 'it holds a placeholder of its own (?)';
+        case 58: // :
+        case 64: // @
+        case 36: // $
+        case 35: // #
+          if (
+            (i === 0 || !isIdentChar(text.charCodeAt(i - 1))) &&
+            isIdentChar(text.charCodeAt(i + 1))
+          )
+            return `it holds a placeholder of its own (${text.slice(i, i + 2)}…)`;
+      }
+    }
+  }
+  return undefined;
+};
+
+/** One scan per call site: a call site hands the same strings at every evaluation. */
+const scanned = new WeakMap<object, string | null>();
+
+const checkTemplate = (strings: TemplateStringsArray) => {
+  let error = scanned.get(strings);
+  if (error === undefined) {
+    error = templateError(strings) ?? null;
+    scanned.set(strings, error);
+  }
+  if (error !== null)
+    throw new SQLiteError('INVALID_VALUE', `sql template refused: ${error}`);
+};
 
 const build = (
   strings: TemplateStringsArray,
@@ -31,33 +140,30 @@ const build = (
       'INVALID_VALUE',
       'sql is a template tag: write sql`…`, not sql(…)',
     );
-  const segment = (i: number): string => {
-    const text: string | undefined = strings[i];
-    // A tagged template's text is undefined after an invalid escape such as
-    // `\x`: skipping it would silently drop that part of the SQL.
-    if (text === undefined)
-      throw new SQLiteError(
-        'INVALID_VALUE',
-        `sql template part ${i} has an invalid escape sequence: write \\\\ for a backslash`,
-      );
-    return text;
-  };
-  let text = segment(0);
+  checkTemplate(strings);
+  const parts: string[] = [strings[0] as string];
   const params: unknown[] = [];
   for (let i = 0; i < values.length; i++) {
     const value = values[i];
+    const after = strings[i + 1] as string;
     if (value instanceof SQLQuery) {
-      text += value.sql;
+      const inner = partsOf.get(value) as readonly string[];
+      parts[parts.length - 1] += inner[0] as string;
+      for (let k = 1; k < inner.length; k++) parts.push(inner[k] as string);
       // A loop, not push(...): a fragment may carry more params than a call
       // takes arguments.
       for (const p of value.params) params.push(p);
+      parts[parts.length - 1] += after;
+    } else if (jsonb && takesJson(value)) {
+      parts[parts.length - 1] += 'jsonb(';
+      parts.push(`)${after}`);
+      params.push(value);
     } else {
-      text += jsonb && takesJson(value) ? 'jsonb(?)' : '?';
+      parts.push(after);
       params.push(value);
     }
-    text += segment(i + 1);
   }
-  return new SQLQuery(text, params);
+  return new SQLQuery(parts, params);
 };
 
 const raw = (text: string): SQLQuery => {
@@ -66,7 +172,7 @@ const raw = (text: string): SQLQuery => {
       'INVALID_VALUE',
       `sql.raw() takes a string, got ${Array.isArray(text) ? 'a template' : typeof text}`,
     );
-  return new SQLQuery(text, []);
+  return new SQLQuery([text], []);
 };
 
 const id = (...parts: [string, ...string[]]): SQLQuery => {
@@ -83,7 +189,7 @@ const id = (...parts: [string, ...string[]]): SQLQuery => {
       );
     return quoteIdent(part);
   });
-  return new SQLQuery(quoted.join('.'), []);
+  return new SQLQuery([quoted.join('.')], []);
 };
 
 /** A refused value's kind, for a message: never the value itself, which may be a Symbol. */
@@ -125,7 +231,7 @@ const list = (values: readonly unknown[]): SQLQuery => {
     );
   // Array.from, not map: map skips a hole, which would leave `[1,,3]`.
   const json = `[${Array.from(values, listElement).join(',')}]`;
-  return new SQLQuery('(SELECT value FROM json_each(?))', [json]);
+  return new SQLQuery(['(SELECT value FROM json_each(', '))'], [json]);
 };
 
 /**

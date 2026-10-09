@@ -103,4 +103,16 @@ describe('sql tag', () => {
     expect(await names(sql`id IN ${sql.list([])}`)).toEqual([]);
     await db.close();
   });
+
+  it('binds each statement of a multi-statement string to its own values', async () => {
+    const db = await createTestClient();
+    await db.write(sql`CREATE TABLE a (v); CREATE TABLE b (v)`);
+    await db.write(
+      sql`INSERT INTO a VALUES (${'x'}); INSERT INTO b VALUES (${'y'})`,
+    );
+    expect(
+      await db.read(sql`SELECT (SELECT v FROM a) AS a, (SELECT v FROM b) AS b`),
+    ).toEqual([{ a: 'x', b: 'y' }]);
+    await db.close();
+  });
 });

@@ -16,11 +16,11 @@ const code = (fn: () => unknown) => {
 };
 
 describe('sql', () => {
-  it('joins the template with ? and collects the values in order', () => {
+  it('joins the template with numbered placeholders and collects the values in order', () => {
     const q = sql`SELECT * FROM t WHERE a = ${1} AND b = ${'x'}`;
     expect(q).toBeInstanceOf(SQLQuery);
     expect(parts(q)).toEqual({
-      sql: 'SELECT * FROM t WHERE a = ? AND b = ?',
+      sql: 'SELECT * FROM t WHERE a = ?1 AND b = ?2',
       params: [1, 'x'],
     });
   });
@@ -34,7 +34,7 @@ describe('sql', () => {
     const at = new Date(0);
     const bytes = Uint8Array.of(1);
     const q = sql`VALUES (${o}, ${[1, 2]}, ${at}, ${bytes}, ${null}, ${undefined})`;
-    expect(q.sql).toBe('VALUES (?, ?, ?, ?, ?, ?)');
+    expect(q.sql).toBe('VALUES (?1, ?2, ?3, ?4, ?5, ?6)');
     expect(q.params).toHaveLength(6);
     expect(q.params[0]).toBe(o);
     expect(q.params[2]).toBe(at);
@@ -50,10 +50,10 @@ describe('sql', () => {
 });
 
 describe('sql.jsonb', () => {
-  it('wraps objects and arrays in jsonb(?) and nothing else', () => {
+  it('wraps objects and arrays in jsonb(…) and nothing else', () => {
     const q = sql.jsonb`VALUES (${{ a: 1 }}, ${[1]}, ${new Map()}, ${'s'}, ${true}, ${1}, ${2n}, ${null}, ${undefined}, ${new Date(0)}, ${Uint8Array.of(1)}, ${new ArrayBuffer(1)}, ${new DataView(new ArrayBuffer(1))})`;
     expect(q.sql).toBe(
-      'VALUES (jsonb(?), jsonb(?), jsonb(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'VALUES (jsonb(?1), jsonb(?2), jsonb(?3), ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)',
     );
     expect(q.params).toHaveLength(13);
   });
@@ -70,7 +70,7 @@ describe('fragments', () => {
     expect(
       parts(sql`SELECT * FROM t WHERE a = ${1} ${filter} AND c = ${3}`),
     ).toEqual({
-      sql: 'SELECT * FROM t WHERE a = ? AND b = ? AND c = ?',
+      sql: 'SELECT * FROM t WHERE a = ?1 AND b = ?2 AND c = ?3',
       params: [1, 2, 3],
     });
   });
@@ -84,13 +84,13 @@ describe('fragments', () => {
 
   it("keeps a sql.jsonb fragment's jsonb(?) inside plain sql", () => {
     const q = sql`INSERT INTO t VALUES (${1}, ${sql.jsonb`${{ a: 1 }}`}, ${{ b: 2 }})`;
-    expect(q.sql).toBe('INSERT INTO t VALUES (?, jsonb(?), ?)');
+    expect(q.sql).toBe('INSERT INTO t VALUES (?1, jsonb(?2), ?3)');
     expect(q.params).toEqual([1, { a: 1 }, { b: 2 }]);
   });
 
   it('inlines a fragment inside sql.jsonb rather than wrapping it', () => {
     expect(parts(sql.jsonb`SELECT ${sql`${1}`}, ${{ a: 1 }}`)).toEqual({
-      sql: 'SELECT ?, jsonb(?)',
+      sql: 'SELECT ?1, jsonb(?2)',
       params: [1, { a: 1 }],
     });
   });
@@ -98,7 +98,7 @@ describe('fragments', () => {
   it('repeats a fragment used twice, with its params each time', () => {
     const f = sql`id = ${7}`;
     expect(parts(sql`SELECT 1 WHERE ${f} OR ${f}`)).toEqual({
-      sql: 'SELECT 1 WHERE id = ? OR id = ?',
+      sql: 'SELECT 1 WHERE id = ?1 OR id = ?2',
       params: [7, 7],
     });
   });
@@ -106,9 +106,9 @@ describe('fragments', () => {
   it('treats a plain { sql, params } object as a value, never as SQL', () => {
     const forged = { sql: 'DROP TABLE t', params: [] };
     const q = sql`SELECT ${forged}`;
-    expect(q.sql).toBe('SELECT ?');
+    expect(q.sql).toBe('SELECT ?1');
     expect(q.params[0]).toBe(forged);
-    expect(sql.jsonb`SELECT ${forged}`.sql).toBe('SELECT jsonb(?)');
+    expect(sql.jsonb`SELECT ${forged}`.sql).toBe('SELECT jsonb(?1)');
   });
 });
 
@@ -117,7 +117,7 @@ describe('sql.raw', () => {
     expect(
       parts(sql`SELECT * FROM t ORDER BY ${sql.raw('id DESC')} LIMIT ${5}`),
     ).toEqual({
-      sql: 'SELECT * FROM t ORDER BY id DESC LIMIT ?',
+      sql: 'SELECT * FROM t ORDER BY id DESC LIMIT ?1',
       params: [5],
     });
   });
@@ -157,7 +157,7 @@ describe('sql.list', () => {
   /** The single JSON param of a list, after checking its SQL. */
   const json = (values: readonly unknown[]) => {
     const q = sql.list(values);
-    expect(q.sql).toBe('(SELECT value FROM json_each(?))');
+    expect(q.sql).toBe('(SELECT value FROM json_each(?1))');
     expect(q.params).toHaveLength(1);
     return q.params[0];
   };
@@ -228,7 +228,7 @@ describe('sql.list', () => {
     expect(
       parts(sql`SELECT * FROM t WHERE id IN ${sql.list([1, 2])} AND a = ${3}`),
     ).toEqual({
-      sql: 'SELECT * FROM t WHERE id IN (SELECT value FROM json_each(?)) AND a = ?',
+      sql: 'SELECT * FROM t WHERE id IN (SELECT value FROM json_each(?1)) AND a = ?2',
       params: ['[1,2]', 3],
     });
   });
@@ -248,7 +248,7 @@ describe('queryArgs', () => {
     const options = { chunkSize: 1 };
     const q = sql`SELECT ${1}`;
     const args = queryArgs(q, options, undefined);
-    expect(args.sql).toBe('SELECT ?');
+    expect(args.sql).toBe('SELECT ?1');
     expect(args.params).toBe(q.params);
     expect(args.options).toBe(options);
   });
@@ -305,3 +305,86 @@ const _nominal = async (db: SQLiteDB) => {
   ];
   await db.read(...args);
 };
+
+describe('numbering', () => {
+  it('numbers placeholders across nested fragments', () => {
+    const inner = sql`b = ${2} AND c = ${sql.jsonb`${{ x: 1 }}`}`;
+    expect(
+      parts(sql`SELECT * FROM t WHERE a = ${1} AND ${inner} AND d = ${4}`),
+    ).toEqual({
+      sql: 'SELECT * FROM t WHERE a = ?1 AND b = ?2 AND c = jsonb(?3) AND d = ?4',
+      params: [1, 2, { x: 1 }, 4],
+    });
+  });
+
+  it('numbers a fragment from 1 when it stands alone', () => {
+    expect(sql`b = ${2}`.sql).toBe('b = ?1');
+  });
+
+  it('joins a fragment at either end of a template without a stray placeholder', () => {
+    const f = sql`a = ${1}`;
+    expect(parts(sql`${f}`)).toEqual({ sql: 'a = ?1', params: [1] });
+    expect(parts(sql`${f} AND ${f}`)).toEqual({
+      sql: 'a = ?1 AND a = ?2',
+      params: [1, 1],
+    });
+  });
+});
+
+describe('the template scan', () => {
+  it('refuses a placeholder of its own, in every form SQLite reads', () => {
+    const made = [
+      () => sql`SELECT ?`,
+      () => sql`SELECT ?3`,
+      () => sql`SELECT :name`,
+      () => sql`SELECT @name`,
+      () => sql`SELECT $name`,
+      () => sql`SELECT #name`,
+      () => sql`SELECT ${1}, ?`,
+    ];
+    for (const make of made) expect(code(make)).toBe('INVALID_VALUE');
+  });
+
+  it('lets placeholder characters through inside literals, quoted names and comments', () => {
+    const q = sql`SELECT 'what?', 'it''s :x ?', "a?b", \`c?\`, [d?], json_extract(doc, '$.a'), a$b -- why? :x
+      /* @y ?2 */ FROM t WHERE id = ${1}`;
+    expect(q.params).toEqual([1]);
+    expect(q.sql.endsWith('WHERE id = ?1')).toBe(true);
+  });
+
+  it('refuses a value inside a literal, a quoted name or a comment', () => {
+    const made = [
+      () => sql`SELECT * FROM t WHERE name LIKE '%${'x'}%'`,
+      () => sql`SELECT "${'x'}"`,
+      () => sql`SELECT \`${'x'}\``,
+      () => sql`SELECT [${'x'}]`,
+      () => sql`SELECT 1 -- ${'x'}
+        `,
+      () => sql`SELECT 1 /* ${'x'} */`,
+    ];
+    for (const make of made) expect(code(make)).toBe('INVALID_VALUE');
+  });
+
+  it('accepts a line comment that ends before the value', () => {
+    expect(
+      sql`SELECT 1 -- note
+        , ${2}`.params,
+    ).toEqual([2]);
+  });
+
+  it('does not scan sql.raw text', () => {
+    expect(sql`SELECT ${sql.raw('?')}`.sql).toBe('SELECT ?');
+  });
+
+  it('scans a call site once and remembers the result', () => {
+    // A real template's strings are frozen; mutating this hand-made one only
+    // shows that the result is cached on the object.
+    const strings = Object.assign(['SELECT ? + ', ''], {
+      raw: ['SELECT ? + ', ''],
+    });
+    const tag = () => sql(strings as unknown as TemplateStringsArray, 1);
+    expect(code(tag)).toBe('INVALID_VALUE');
+    strings[0] = 'SELECT 1 + ';
+    expect(code(tag)).toBe('INVALID_VALUE');
+  });
+});
