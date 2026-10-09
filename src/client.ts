@@ -1009,6 +1009,7 @@ export const createSQLiteClient = (
       };
     }
 
+    let barrier: Promise<void> | undefined;
     try {
       // Raced, not merely passed a signal. `applyBarrier` drains a real query
       // on the worker, and `PoolWorkerQueryOptions` carries no signal — so on
@@ -1023,22 +1024,28 @@ export const createSQLiteClient = (
       // added to this function later is covered without being remembered.
       //
       // The race abandons the WAIT, not the WORK: the barrier statement runs
-      // on. The catch below releases through `quiesce()`, which returns the
-      // worker only once it is actually idle, so nothing is re-lent mid-flight.
+      // on. The catch below releases once the barrier has settled and
+      // `quiesce()` has seen the worker idle, so nothing is re-lent mid-flight.
       const { aborted, teardown } = makeAbortRace(signal);
       try {
-        const barrier = applyBarrier(lease.worker);
+        barrier = applyBarrier(lease.worker);
         await (aborted ? Promise.race([barrier, aborted]) : barrier);
       } finally {
         teardown();
       }
     } catch (error) {
       // The caller never received the lease, so its try/finally cannot return
-      // the worker. Release on the same path a normal caller would.
-      void lease.worker.quiesce().then(
-        () => lease.release(),
-        () => lease.release(),
-      );
+      // the worker. Release on the same path a normal caller would — after the
+      // abandoned barrier: until it has posted its statement, `quiesce()` sees
+      // nothing in flight and resolves at once, and the barrier would then run
+      // on a worker already lent again (WORKER_BUSY, 2026-10-09).
+      const settled = barrier?.catch(() => {}) ?? Promise.resolve();
+      void settled
+        .then(() => lease.worker.quiesce())
+        .then(
+          () => lease.release(),
+          () => lease.release(),
+        );
       releaseWrite?.();
       throw error;
     }

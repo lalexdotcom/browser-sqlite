@@ -256,3 +256,38 @@ describe('catch-up pragma', () => {
     expect(withBarrier.rows).toBe(ownRows);
   });
 });
+
+describe('barrier — an abort while it waits', () => {
+  // Falsifiable: in client.ts, release an aborted acquisition's lease through
+  // `quiesce()` alone. The barrier is still parked in `originMax()` then, with
+  // no query in flight, so `quiesce()` resolves at once: the lease goes back,
+  // the second read takes the worker, and the abandoned barrier posts its query
+  // under it — `WORKER_BUSY` (2026-10-09, twice under the matrix on `jspi`).
+  it('keeps the lease until the abandoned barrier has run', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    await db.ready;
+    const query = LockManager.prototype.query;
+    const parked = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    LockManager.prototype.query = async function (this: LockManager) {
+      parked.resolve();
+      await gate.promise;
+      return query.call(this);
+    };
+    try {
+      const controller = new AbortController();
+      const first = db.read('SELECT 1', [], { signal: controller.signal });
+      // Every first read on a worker runs the barrier (`seen` starts at -1).
+      await parked.promise;
+      controller.abort();
+      await expect(first).rejects.toBeDefined();
+      const second = db.read<{ v: number }>('SELECT 2 AS v');
+      gate.resolve();
+      expect(await second).toEqual([{ v: 2 }]);
+    } finally {
+      LockManager.prototype.query = query;
+      gate.resolve();
+      await db.close();
+    }
+  });
+});
