@@ -1,4 +1,4 @@
-# Measurements — wa-sqlite's suite across browsers and CI runners (Discussion #373)
+# Measurements — test harnesses across browsers and CI runners: wa-sqlite's suite (Discussion #373), then the library's own (LIB-VITEST-SPIKE)
 
 Part of `mem:measurements`, which indexes every entry; its rules apply here. The first three entries were moved here verbatim from `mem:measurements/wa-sqlite-prs` on 2026-10-08.
 
@@ -86,3 +86,24 @@ Capabilities: `platformName: 'iOS'`, `browserName: 'safari'`, `'safari:useSimula
 ## WA-FIREFOX-SQL-HANG — why wa-sqlite's `sql.test.js` hangs on Firefox, 2026-10-03, Playwright 1.62.1 Firefox, wa-sqlite `7fcc30df`, this container
 
 **Per configuration** (a copy of `sql.test.js` with `CONFIGS` cut to one entry, 3 runs, 180 s cap): the nine others pass in 2-8 s, 27 of 27; `OPFSWriteAheadVFS` hits the cap 3 of 3. **Per spec and build** (`OPFSWriteAheadVFS` only): `sql_0001`-`sql_0004` pass on default, asyncify and jspi; `sql_0005` alone fails in 1-2 s, `unable to open database file` at its second `open_v2`. **Combinations** (60 s runner cap): one build, all five specs: finishes (17 passed, 1 failed); two builds without `sql_0005`: finishes (34); two builds, all five, or `sql_0005` alone on two builds: hang; `sql_0005` then other specs on the next build: finished in the order drawn. **Falsifiers:** `sql_0005` with each worker's destroy registered before its open: no hang, both builds fail fast at the open; each step bounded at 5 s: the step that fails is the following suite's `beforeAll` `context.create()` (with `reset`). Mechanism and the harness lines involved: `mem:follow-ups`.
+
+
+## LIB-VITEST-SPIKE — the library's browser tests on stock Chrome and Firefox through WebDriver, 2026-10-09, this container (Debian 13 aarch64)
+
+**Method.** Throwaway branch `spike/vitest-webdriverio` off `main` at rc.10. Vitest 5.0.3 + `@vitest/browser-webdriverio` 5.0.0 + webdriverio 10.0.2 + Vite 8.3.4. The library is the rslib build: `rslib.test.config.ts` imports `rslib.config.ts`, moves every `distPath` from `./dist` to `./tests/build`, and adds a separate `lib` item (a clone of `index`'s, `dts: false`, no `copy`) for `tests/testing.ts`, which re-exports `src/index` plus `createLogger` and `createPoolWorker`. `vitest.config.ts` aliases `browser-sqlite` → `tests/build/index.js` and `browser-sqlite/testing` → `tests/build/testing.js`, injects the target through `define`, and has two projects, `plain` and `isolated` (COOP/COEP through `server.headers`). Ported unchanged except imports: `queries`, `concurrency`, `idb-long-read`, `pool-death` (white-box, from `browser-sqlite/testing`), `isolated/abort-slot`, `isolated/environment`, plus a probe. Target `OPFSWriteAheadVFS/sync`.
+
+| browser (pinned) | result | wall clock |
+|---|---|---|
+| Chrome for Testing 153.0.8010.52, linux-arm64 | 41/41 | 21 s |
+| Firefox 155.0.1, Mozilla linux-aarch64 | 41/41 | 23 s |
+| also green on the way: Chrome 155.0.8059.39, Firefox Nightly 160.0a1, 156.0, 157.0.1 | 40/40 each | 18-30 s |
+
+- **The build:** `tests/build/index.js`, `worker/worker.js` and the three `.wasm` byte-identical to `dist/`; no `testing.*` in `dist/`; ~9 s.
+- **Falsifier:** a `throw` at the TOP of `tests/build/index.js` fails `queries`, in `testing.js` fails `pool-death`. Appended at the end it does nothing — the bundles end with `//# sourceMappingURL=…` and no newline, so the `throw` lands in the comment (the first attempt read "passes" for that reason).
+- **Same tests as rstest:** rstest runs 33 (`chromium`) + 7 (`isolated`) on the same files and target, none skipped — Vitest runs the same 40.
+- **Probe** (in the page, an iframe of Vitest's orchestrator): `HeadlessChrome/153.0.0.0` and `Firefox/155.0`; JSPI, OPFS, Web Locks present on both; `crossOriginIsolated` true in `isolated` on both — the first run of the isolated tests on Firefox.
+- **WebdriverIO 9.32.0 cannot get Chrome on linux-arm64:** its `@puppeteer/browsers` 2.13.2 stores the download as `linux_arm-<v>` but fetches `chrome-linux64` (x86-64), and chromedriver never starts ("Unable to connect … browser driver"). `@puppeteer/browsers` 3.x (webdriverio 10's) maps `linux_arm` to `linux-arm64` from 153.0.8001.0 on. The provider was built against `@wdio/types` 9 and works with 10.
+- **Firefox needs a channel prefix:** no `browserVersion`, `latest` or a bare `156.0` gives a Nightly or "Couldn't find a matching firefox browser for tag "156.0" on platform "linux_arm""; `stable_155.0.1` gives the release.
+- **Vitest renames `instances` in place:** two projects sharing one `instances` array fail at startup ("project name "plain (chrome)" was already defined").
+- `cacheDir` in the provider options keeps the downloads in `node_modules/.cache/wdio` instead of `/tmp`.
+- **Not run:** Safari, Windows, macOS, the rest of the suite, the matrix of targets.

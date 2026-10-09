@@ -88,22 +88,24 @@ The Firefox findings that started it (WA-FIREFOX-SQL-HANG): `vfs_read_freshness`
 
 Jasmine's random order decides whether a resetting spec follows the failure. None of this is a VFS defect, and none of it reaches the library.
 
-## The library's tests on stock browsers — Vitest + WebdriverIO to probe (user, 2026-10-08)
+## The library's tests on stock browsers — Vitest + WebdriverIO, spike green in the container (user, 2026-10-08 and 2026-10-09)
 
-**The user's direction** (`mem:conventions`, § Testing in browsers): the library's browser tests should also run on stock browsers, Safari and iOS through GitHub's macOS images. rstest has no WebDriver and is pre-1.0, and reusing the rslib config does not make up for that. Testing the rslib-built `dist/` is worth considering. **Parked by the user the same day, to finish wa-sqlite first.**
+**The user's direction** (`mem:conventions`, § Testing in browsers): the library's browser tests run on stock browsers, Safari and iOS through GitHub's macOS images. rstest has no WebDriver provider — 0.12.3's `BROWSER_PROVIDERS` holds `playwright` alone, and its own comment names WebDriver BiDi as a possible future provider (read 2026-10-09).
 
-**The candidate is Vitest's browser mode with `@vitest/browser-webdriverio`.** Read on 2026-10-08:
-- Vitest 5.0.3 is current.
-- **Since Vitest 5 the WebdriverIO provider is community-maintained** (`vitest-community/vitest-webdriverio`, created 2026-06, 5 stars); the Playwright provider is the core one.
-- It declares Chrome, Firefox, Edge and Safari, with `supportsParallelism = false` and no headless Safari.
-- It runs the tests **inside an iframe of an orchestrator page**: OPFS, workers and IndexedDB there are unverified.
-- iOS is not a declared browser.
+**Decided with the user on 2026-10-09:**
+- **Test the library as the npm package ships it, built by rslib.** Today's rstest suite compiles `src/` with rstest's own rsbuild in dev mode: `withRslibConfig()` takes the top-level `source`/`tools`/`plugins`/`resolve` of `rslib.config.ts` but not its `lib` items, so neither the `esm` preset nor the worker item (`url: false`, `asyncChunks: false`, the `.wasm` copy) nor minification apply, and the worker under test is a chunk rspack derives from `pool.ts`, not `dist/worker/worker.js`.
+- **Keep rslib for the build** — moving it to Vite was weighed and dropped: the build tool of `dist/` does not matter to Vitest, and rslib's facts would have to be paid again (Vite has no `.d.ts`, `vite-plugin-dts` needs TypeScript's JS API, which TS 7 lacks).
+- **`rslib.test.config.ts`** imports `rslib.config.ts` untouched, moves its `distPath` to `tests/build/` and adds a separate `lib` item for `tests/testing.ts` (public surface + the internals white-box tests drive), so `testing.js` sits beside `index.js` and spawns the shipped worker. `tests/testing.ts` lives outside `src/` so `tsconfig.build.json` never sees it (inside `src/` it would ship as `dist/testing.d.ts`).
+- **Every Vitest test takes the library from `tests/build/`**: `browser-sqlite` aliased to `tests/build/index.js` for public-API tests, `browser-sqlite/testing` to `testing.js` for white-box tests. **A test imports from ONE bundle** — two bundles are two copies of the code; `instanceof` and module singletons do not cross. Pure constants and helpers (`VFS_CAPABILITIES`, `databasePath`, lock names) may still come from `src/`. No browser test imports `src/worker/` (only unit tests do), so the worker under test is always the shipped one.
+- **Pinned versions: Chrome 153 (its last patch, `153.0.8010.52`) and the Firefox release current on Chrome 153's stable date (2026-09-08), `155.0.1`** — some distance from the newest, and two browsers of one age. Overridable by environment. Safari is whatever the OS ships.
+- **The isolated tests run on every browser** — they ran on Chromium only, by a plan's unjustified "keep Chromium" (`docs/superpowers/plans/2026-09-04-query-interruption.md`), not a decision.
+- **Order: the spike, then the tests in the container, then CI.**
 
-**Before deciding:** probe a handful of the library's tests (OPFS, workers, IndexedDB) on Chrome, Firefox and Safari, on Linux, Windows and macOS. Its own branch.
+**State on 2026-10-09:** the spike passes in the container (LIB-VITEST-SPIKE, `mem:measurements/test-browsers`), committed on its branch `spike/vitest-webdriverio`: `vitest.config.ts`, `rslib.test.config.ts`, `tests/testing.ts`, six files copied into `tests/vitest/` with their helpers, `paths` in `tsconfig.json` for `browser-sqlite` and `browser-sqlite/testing`, `tests/build/` gitignored, `tests/vitest/**` excluded from rstest's `unit` project (its `tests/**/*.test.ts` glob ran them in Node and the pre-commit hook refused the commit). Run it with `pnpm exec rslib build -c rslib.test.config.ts`, then `BSQ_BROWSER=chrome|firefox pnpm exec vitest run` (`BSQ_BROWSER_VERSION` overrides the pin, `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` silences Vite's warning about extensionless imports reached from the config).
 
-**Also owed by that direction:**
-- The devcontainer needs a local Chrome. **Google ships Chrome for Linux arm64 since 153 (read 2026-10-09):** Chrome for Testing has `linux-arm64` chrome and chromedriver from `153.0.8001.0` on (98 versions, majors 153-157, all four channels), and Google's apt repository serves `binary-arm64` for `google-chrome-stable`, `-beta`, `-unstable` and `-canary`. Debian's `chromium`/`chromium-driver` (154 on trixie) is no longer the only option.
-- **An unmeasured exposure:** the library's `IDBMirrorVFS` with several connections on Safari 26 may stall the way wa-sqlite's `sql_0005` does (SAFARI26-IDBMIRROR-KILL).
+**Next, when the user is back:** decide what of the spike becomes the real setup, then the migration of the whole browser and conformance suites — the target projects (`__BSQ_TEST_TARGET__`, one project per pair), the `needs`, `scripts/test-matrix.ts` and `scripts/matrix-triage.ts` (they parse rstest's reports), `bounded.ts`, the `pnpm` scripts, the hooks, `post-create.sh`. Then CI on the three OS. Open points: what the unit project stays on (rstest or Vitest in Node); `realm.test.ts` and `cross-tab.test.ts` create their own iframe inside Vitest's iframe; the provider runs no files in parallel (`supportsParallelism = false`); headless Safari does not exist.
+
+**Still owed by that direction:** an unmeasured exposure — the library's `IDBMirrorVFS` with several connections on Safari 26 may stall the way wa-sqlite's `sql_0005` does (SAFARI26-IDBMIRROR-KILL).
 
 ## wa-sqlite #362: `OPFSCoopSyncVFS.create()` fails after a back/forward-cache navigation — PR not decided
 

@@ -88,6 +88,13 @@ here on purpose: a total alone cannot say which suite moved.
   sixteen busy loops around a single-file Firefox run cut time-to-failure twentyfold (ABANDON-WEDGE,
   `mem:measurements/aborts`).
 
+## In progress
+
+- **The library's browser tests on stock browsers (Vitest + WebdriverIO, the rslib build).** A
+  spike is green in the container on pinned Chrome 153 and Firefox 155 and committed on its own
+  branch; paused by the user on 2026-10-09, to resume at their return. Decisions, state and next
+  steps: `mem:follow-ups`; measurements: LIB-VITEST-SPIKE, `mem:measurements/test-browsers`.
+
 ## In flight, and not ours to move
 
 - **wa-sqlite's tests on stock browsers: a revised proposal was posted on Discussion #373 on

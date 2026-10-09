@@ -385,7 +385,8 @@ Stated for wa-sqlite's suite (Discussion #373), and explicitly meant for the lib
   - the WASM built once and shared by every job;
   - an iOS simulator version is a workflow input that defaults to the newest stable runtime on the image, chosen semver-style (`26.6` → the newest installed `26.6.x`).
 - **A test skipped for a browser's defect is skipped in the test itself,** with `pending()` and its reason, keyed on the browser version when no capability can detect the defect. The skip then shows in every run's output, and it protects a developer's local run as well as CI. Skipping by capability stays the rule otherwise.
-- **The framework follows from the above.** For wa-sqlite, keep `@web/test-runner`, which does all of it. For the library, rstest offers no WebDriver, so Vitest with WebdriverIO is the candidate to probe (`mem:follow-ups`).
+- **The framework follows from the above.** For wa-sqlite, keep `@web/test-runner`, which does all of it. For the library, rstest offers no WebDriver, so Vitest with WebdriverIO — spiked green on 2026-10-09; the decisions taken with the user that day (test the rslib build, one bundle per test, the pins) are in `mem:follow-ups`.
+- **Pin a browser pair of one age (user, 2026-10-09).** Chrome a few majors behind the newest, and the Firefox release that was current on that Chrome's stable date — distance from the newest, and two browsers of one age. Safari is whatever the OS ships.
 
 ## Working rules carried over from Claude's auto-memory (2026-10-07)
 
