@@ -26,8 +26,9 @@ const render = ({ parts, slots }: Shape): string => {
 
 /**
  * A query built by the `sql` tag: its text, with numbered placeholders, and
- * its params in order of first appearance, an object once. Only `sql` and its helpers build one; a fragment is
- * recognised by `instanceof`, so an object of the same shape stays a value.
+ * its params in order of first appearance, an object once. Only `sql` and its
+ * helpers build one; a fragment is recognised by `instanceof`, so an object of
+ * the same shape stays a value.
  */
 export class SQLQuery {
   readonly sql: string;
@@ -282,9 +283,9 @@ const list = (values: readonly unknown[]): SQLQuery => {
 };
 
 /**
- * Builds a query from a template: each value becomes a `?` param, a `SQLQuery`
- * is inlined with its params. `sql.jsonb` also wraps objects and arrays in
- * `jsonb(?)`.
+ * Builds a query from a template: each value becomes a numbered `?N` param,
+ * the same object one param wherever it appears, and a `SQLQuery` is inlined
+ * with its params. `sql.jsonb` also wraps objects and arrays in `jsonb(…)`.
  */
 export const sql = Object.assign(
   (strings: TemplateStringsArray, ...values: unknown[]): SQLQuery =>
