@@ -112,9 +112,46 @@ const BARE_WRITING_PRAGMAS = new Set([
   'wal_checkpoint',
 ]);
 
+/**
+ * The pragmas whose argument names what to inspect rather than a value to set.
+ * Everywhere else `PRAGMA x(v)` is SQLite's other assignment syntax. Probed on
+ * wa-sqlite's SQLite 3.53.0, whose `pragma_list` holds no other: each ran on a
+ * read-only connection, where `user_version(5)` fails. Closed by meaning, not
+ * by that probe — `cache_size(10)` passes it too, and changes the connection.
+ */
+const INTROSPECTION_PRAGMAS = new Set([
+  'table_info',
+  'table_xinfo',
+  'table_list',
+  'index_info',
+  'index_xinfo',
+  'index_list',
+  'foreign_key_list',
+  'foreign_key_check',
+  'integrity_check',
+  'quick_check',
+]);
+
+/**
+ * One such pragma with one argument — a name, quoted or bare, or an integer —
+ * and nothing after it. The argument admits no `)` or `;` outside its quotes,
+ * so the `$` anchor keeps a second statement out, as in `READ_PRAGMA`.
+ */
+const INTROSPECTION_PRAGMA = new RegExp(
+  String.raw`^\s*PRAGMA\s+(?:\w+\.)?(\w+)\s*\(\s*(?:[\p{L}_][\p{L}\p{N}_$]*|[+-]?\d+|"(?:[^"]|"")*"|'(?:[^']|'')*'|\[[^\]]*\]|` +
+    '`(?:[^`]|``)*`' +
+    String.raw`)\s*\)\s*;?\s*$`,
+  'iu',
+);
+
 const isReadPragma = (sql: string) => {
   const name = READ_PRAGMA.exec(sql)?.[1];
-  return name !== undefined && !BARE_WRITING_PRAGMAS.has(name.toLowerCase());
+  if (name !== undefined) return !BARE_WRITING_PRAGMAS.has(name.toLowerCase());
+  const inspected = INTROSPECTION_PRAGMA.exec(sql)?.[1];
+  return (
+    inspected !== undefined &&
+    INTROSPECTION_PRAGMAS.has(inspected.toLowerCase())
+  );
 };
 
 export const isReadQuery = (sql: string) =>
@@ -209,9 +246,11 @@ export const withDeadline = (
  * Routing guard for the read-shaped methods (`read`, `chunk`, `stream`, `first`).
  * Throws before a lease is taken, so a rejected statement costs no pool capacity.
  *
- * A bare read pragma (`PRAGMA journal_mode`) is accepted; a pragma that assigns
- * (`PRAGMA journal_mode=WAL`), takes an argument, is followed by anything else,
- * or writes with no value (`PRAGMA optimize`) must go through `write()`.
+ * A bare read pragma (`PRAGMA journal_mode`) and an introspection pragma with
+ * its argument (`PRAGMA table_info(t)`) are accepted; a pragma that assigns
+ * (`PRAGMA journal_mode=WAL`, `PRAGMA user_version(5)`), is followed by
+ * anything else, or writes with no value (`PRAGMA optimize`) must go through
+ * `write()`.
  */
 export const assertReadable = (sql: string, method: string): void => {
   if (isReadQuery(sql)) return;
@@ -219,7 +258,7 @@ export const assertReadable = (sql: string, method: string): void => {
   throw new SQLiteError(
     'NOT_A_READ_QUERY',
     `${method}() only accepts statements that are provably reads; "${keyword}" must go through write(). ` +
-      `Note that a PRAGMA that assigns a value or takes an argument is a write, and so are PRAGMA optimize, incremental_vacuum and wal_checkpoint.`,
+      `Note that a PRAGMA that assigns a value is a write; so is one that takes an argument, except the introspection pragmas (table_info, index_list, integrity_check…); and so are PRAGMA optimize, incremental_vacuum and wal_checkpoint.`,
   );
 };
 

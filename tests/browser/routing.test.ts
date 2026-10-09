@@ -95,6 +95,27 @@ describe('routing — strictness', () => {
     await expect(db.read('PRAGMA journal_mode=WAL')).rejects.toMatchObject({
       code: 'NOT_A_READ_QUERY',
     });
+    await expect(db.read('PRAGMA user_version(5)')).rejects.toMatchObject({
+      code: 'NOT_A_READ_QUERY',
+    });
+    await db.close();
+  });
+
+  // Falsifiable: drop table_info from INTROSPECTION_PRAGMAS in src/utils.ts.
+  it('accepts an introspection pragma with its argument, in a read-only transaction too', async () => {
+    const db = await createTestClient();
+    await db.write('CREATE TABLE "we""ird" (a INTEGER, b TEXT)');
+
+    const columns = await db.read<{ name: string }>(
+      'PRAGMA table_info("we""ird")',
+    );
+    expect(columns.map((c) => c.name)).toEqual(['a', 'b']);
+
+    const inTx = await db.transaction(
+      (tx) => tx.read<{ name: string }>('PRAGMA main.table_xinfo("we""ird")'),
+      { readOnly: true },
+    );
+    expect(inTx.map((c) => c.name)).toEqual(['a', 'b']);
     await db.close();
   });
 });

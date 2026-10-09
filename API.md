@@ -611,7 +611,7 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 
 | Code | When it is thrown |
 |------|------------------|
-| `NOT_A_READ_QUERY` | `read()`, `chunk()`, `stream()`, or `first()` was called with a statement that is not a provably readable query. A bare read pragma (`PRAGMA journal_mode`) is accepted; a pragma that assigns a value or takes an argument, and `PRAGMA optimize`, `incremental_vacuum` and `wal_checkpoint`, which write, must go through `write()`. |
+| `NOT_A_READ_QUERY` | `read()`, `chunk()`, `stream()`, or `first()` was called with a statement that is not a provably readable query. |
 | `CLIENT_CLOSED` | A query was queued after `close()` was called. |
 | `WORKER_CRASHED` | A pool worker died and the supervisor decided not to restart it. All queued and in-flight work on that slot is rejected. When SQLite refused to open the database — a file that is not a database, a `pragmas` entry it rejected — `sqliteCode` carries its result code. |
 | `TIMEOUT` | A worker did not post `ready` within `openTimeout` milliseconds. The most common cause is a database held under an exclusive lock by another tab or client. |
@@ -657,7 +657,7 @@ try {
 ```
 
 
-**Read methods reject write statements.**<br>`read()`, `chunk()`, `stream()`, and `first()` reject any statement that is not a provably readable query, throwing `NOT_A_READ_QUERY`. A bare read pragma (`PRAGMA journal_mode`) is accepted; a pragma that assigns a value or takes an argument, and `PRAGMA optimize`, `incremental_vacuum` and `wal_checkpoint`, which write, must go through `write()`.
+**Read methods reject write statements.**<br>`read()`, `chunk()`, `stream()`, and `first()` reject any statement that is not a provably readable query, throwing `NOT_A_READ_QUERY`.
 
 ## Debugging
 

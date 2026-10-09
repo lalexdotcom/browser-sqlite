@@ -48,8 +48,8 @@ describe('isWriteQuery', () => {
     it('returns true for PRAGMA with assignment', () => {
       expect(isWriteQuery('PRAGMA journal_mode = WAL')).toBe(true);
     });
-    it('returns true for PRAGMA read-only variant (conservative routing)', () => {
-      expect(isWriteQuery('PRAGMA table_info(foo)')).toBe(true);
+    it('returns true for PRAGMA with an argument outside the introspection list', () => {
+      expect(isWriteQuery('PRAGMA cache_size(10)')).toBe(true);
     });
     it('returns true for ATTACH', () => {
       expect(isWriteQuery('ATTACH "other.db" AS other')).toBe(true);
@@ -98,7 +98,7 @@ describe('isWriteQuery', () => {
       expect(isWriteQuery('insert into t values (1)')).toBe(true);
     });
     it('returns true for lowercase pragma', () => {
-      expect(isWriteQuery('pragma table_info(foo)')).toBe(true);
+      expect(isWriteQuery('pragma user_version(5)')).toBe(true);
     });
     it('returns true for lowercase create', () => {
       expect(isWriteQuery('create table t (id integer)')).toBe(true);

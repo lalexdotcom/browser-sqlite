@@ -13,9 +13,6 @@ describe('routing (W-route)', () => {
     // Standard writes
     'INSERT INTO t VALUES (1)',
     'CREATE TABLE t (a INTEGER)',
-    // PRAGMA with parenthesised argument: READ_PRAGMA admits no '(' so it stays
-    // a write — falsifiable by adding \(.*\) to the regex.
-    'PRAGMA table_info(foo)',
     // Unknown statement: allowlist fails safe toward writer
     'FROBNICATE t',
     // CTE with a write body
@@ -72,10 +69,46 @@ describe('routing (W-route)', () => {
     'PRAGMA journal_mode; DROP TABLE t',
     'PRAGMA table_info(foo); DROP TABLE t',
     'PRAGMA optimize; VACUUM',
+    // An argument is an assignment outside the introspection list.
+    'PRAGMA user_version(5)',
+    'PRAGMA main.cache_size(10)',
+    'PRAGMA optimize(0x10002)',
+    'PRAGMA wal_checkpoint(PASSIVE)',
+    // The argument grammar admits one name or number, closed, and nothing after.
+    'PRAGMA table_info(foo) ; DROP TABLE t',
+    "PRAGMA table_info('foo'); DROP TABLE t",
+    "PRAGMA table_info('a'); DROP TABLE t; --')",
+    'PRAGMA table_info("foo)',
+    'PRAGMA table_info(foo',
+    'PRAGMA table_info(a, b)',
+    'PRAGMA table_info()',
+    'PRAGMA table_info = foo',
   ];
   for (const sql of writePragmas) {
     it(`routes to the writer: ${sql}`, () => {
       expect(isReadQuery(sql)).toBe(false);
+    });
+  }
+
+  // Probed on wa-sqlite's SQLite 3.53.0 (2026-10-09): each runs on a read-only
+  // connection, where user_version(5) fails.
+  const introspectionPragmas = [
+    'PRAGMA table_info(foo)',
+    'PRAGMA main.table_info("we""ird")',
+    "PRAGMA table_xinfo('foo')",
+    'PRAGMA table_list(foo)',
+    'PRAGMA index_list([foo])',
+    'PRAGMA index_info(i)',
+    'PRAGMA index_xinfo(`i`)',
+    'PRAGMA foreign_key_list(foo)',
+    'PRAGMA foreign_key_check(foo)',
+    'PRAGMA integrity_check(10)',
+    'PRAGMA quick_check(foo)',
+    'pragma  Table_Info ( foo ) ;',
+  ];
+  for (const sql of introspectionPragmas) {
+    it(`routes to the read pool: ${sql}`, () => {
+      expect(isReadQuery(sql)).toBe(true);
     });
   }
 });
