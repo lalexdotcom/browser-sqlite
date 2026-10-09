@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.0-rc.8] - 2026-10-09
+
 ### Added
 
 - **`CHANGELOG.md` ships in the package**, beside `API.md` and `VFS.md`.
@@ -821,7 +823,8 @@ with it.
 
 First published release line.
 
-[Unreleased]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.7...HEAD
+[Unreleased]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.8...HEAD
+[1.0.0-rc.8]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.7...v1.0.0-rc.8
 [1.0.0-rc.7]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.6...v1.0.0-rc.7
 [1.0.0-rc.6]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.5...v1.0.0-rc.6
 [1.0.0-rc.5]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.4...v1.0.0-rc.5
