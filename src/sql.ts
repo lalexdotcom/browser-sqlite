@@ -3,28 +3,30 @@ import { SQLiteError } from './types/errors';
 import { quoteIdent } from './utils';
 import { MAX_INT64, MIN_INT64, takesJson, toSQLiteDate } from './values';
 
-/** Each query's texts between placeholders: one more than its params (spec D12). */
-const partsOf = new WeakMap<SQLQuery, readonly string[]>();
+/** A query's texts between placeholders, and each placeholder's param index (spec D12, D14). */
+type Shape = { parts: readonly string[]; slots: readonly number[] };
+const shapeOf = new WeakMap<SQLQuery, Shape>();
 
 /**
- * `parts[0] ?1 parts[1] ?2 … parts[N]`. Numbered, so each statement of a
+ * `parts[0] ?a parts[1] ?b … parts[N]`. Numbered, so each statement of a
  * multi-statement string binds its own values: the worker binds the params
  * to every statement from the first one.
  */
-const render = (parts: readonly string[]): string => {
+const render = ({ parts, slots }: Shape): string => {
   let text = parts[0] as string;
-  for (let i = 1; i < parts.length; i++) {
-    const part = parts[i] as string;
+  for (let k = 1; k < parts.length; k++) {
+    const part = parts[k] as string;
+    const n = (slots[k - 1] as number) + 1;
     const digit = part.charCodeAt(0) >= 48 && part.charCodeAt(0) <= 57;
     // A digit right after `?1` would make it `?10`, another value.
-    text += digit ? `?${i} ${part}` : `?${i}${part}`;
+    text += digit ? `?${n} ${part}` : `?${n}${part}`;
   }
   return text;
 };
 
 /**
  * A query built by the `sql` tag: its text, with numbered placeholders, and
- * its params in order. Only `sql` and its helpers build one; a fragment is
+ * its params in order of first appearance, an object once. Only `sql` and its helpers build one; a fragment is
  * recognised by `instanceof`, so an object of the same shape stays a value.
  */
 export class SQLQuery {
@@ -34,9 +36,14 @@ export class SQLQuery {
   // does not type-check where a query built by sql is expected.
   private declare readonly nominal: never;
 
-  constructor(parts: readonly string[], params: readonly unknown[]) {
-    partsOf.set(this, parts);
-    this.sql = render(parts);
+  constructor(
+    parts: readonly string[],
+    slots: readonly number[],
+    params: readonly unknown[],
+  ) {
+    const shape = { parts, slots };
+    shapeOf.set(this, shape);
+    this.sql = render(shape);
     this.params = params;
   }
 }
@@ -164,32 +171,46 @@ const build = (
     );
   const endsInLineComment = checkTemplate(strings);
   const parts: string[] = [strings[0] as string];
+  const slots: number[] = [];
   const params: unknown[] = [];
+  // Objects already in this query, to their param index: one param per
+  // reference. Primitives are never grouped, so the text stays the same
+  // whatever the values (spec D14).
+  const seen = new Map<object, number>();
+  const slotFor = (value: unknown): number => {
+    if (typeof value === 'object' && value !== null) {
+      const known = seen.get(value);
+      if (known !== undefined) return known;
+      seen.set(value, params.length);
+    }
+    params.push(value);
+    return params.length - 1;
+  };
   for (let i = 0; i < values.length; i++) {
     const value = values[i];
     const after = strings[i + 1] as string;
     if (value instanceof SQLQuery) {
-      const inner = partsOf.get(value) as readonly string[];
+      const inner = shapeOf.get(value) as Shape;
       const last = parts.length - 1;
-      parts[last] = glue(parts[last] as string, inner[0] as string);
-      for (let k = 1; k < inner.length; k++) parts.push(inner[k] as string);
-      // A loop, not push(...): a fragment may carry more params than a call
-      // takes arguments.
-      for (const p of value.params) params.push(p);
+      parts[last] = glue(parts[last] as string, inner.parts[0] as string);
+      for (let k = 1; k < inner.parts.length; k++) {
+        slots.push(slotFor(value.params[inner.slots[k - 1] as number]));
+        parts.push(inner.parts[k] as string);
+      }
       const end = parts.length - 1;
       parts[end] = glue(parts[end] as string, after);
     } else if (jsonb && takesJson(value)) {
       parts[parts.length - 1] += 'jsonb(';
+      slots.push(slotFor(value));
       parts.push(`)${after}`);
-      params.push(value);
     } else {
+      slots.push(slotFor(value));
       parts.push(after);
-      params.push(value);
     }
   }
   // Closed, so that inlined it cannot comment out what follows it.
   if (endsInLineComment) parts[parts.length - 1] += '\n';
-  return new SQLQuery(parts, params);
+  return new SQLQuery(parts, slots, params);
 };
 
 const raw = (text: string): SQLQuery => {
@@ -198,7 +219,7 @@ const raw = (text: string): SQLQuery => {
       'INVALID_VALUE',
       `sql.raw() takes a string, got ${Array.isArray(text) ? 'a template' : typeof text}`,
     );
-  return new SQLQuery([text], []);
+  return new SQLQuery([text], [], []);
 };
 
 const id = (...parts: [string, ...string[]]): SQLQuery => {
@@ -215,7 +236,7 @@ const id = (...parts: [string, ...string[]]): SQLQuery => {
       );
     return quoteIdent(part);
   });
-  return new SQLQuery([quoted.join('.')], []);
+  return new SQLQuery([quoted.join('.')], [], []);
 };
 
 /** A refused value's kind, for a message: never the value itself, which may be a Symbol. */
@@ -257,7 +278,7 @@ const list = (values: readonly unknown[]): SQLQuery => {
     );
   // Array.from, not map: map skips a hole, which would leave `[1,,3]`.
   const json = `[${Array.from(values, listElement).join(',')}]`;
-  return new SQLQuery(['(SELECT value FROM json_each(', '))'], [json]);
+  return new SQLQuery(['(SELECT value FROM json_each(', '))'], [0], [json]);
 };
 
 /**

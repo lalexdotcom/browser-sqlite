@@ -429,3 +429,46 @@ describe('review fixes, amendment', () => {
     expect(sql`SELECT a$b FROM t`.params).toEqual([]);
   });
 });
+
+describe('one param per object', () => {
+  it('gives an object used twice one param', () => {
+    const o = { a: 1 };
+    const q = sql`SELECT ${o}, ${1}, ${o}`;
+    expect(q.sql).toBe('SELECT ?1, ?2, ?1');
+    expect(q.params).toHaveLength(2);
+    expect(q.params[0]).toBe(o);
+  });
+
+  it('gives the same object bare and under jsonb one param', () => {
+    const o = { a: 1 };
+    expect(parts(sql.jsonb`SELECT ${o}, ${sql`${o}`}`)).toEqual({
+      sql: 'SELECT jsonb(?1), ?1',
+      params: [o],
+    });
+  });
+
+  it('shares an object between a fragment and its parent', () => {
+    const o = [1, 2];
+    const f = sql`b = ${2} AND c = ${o}`;
+    expect(
+      parts(sql`SELECT * FROM t WHERE a = ${o} AND ${f} AND ${f}`),
+    ).toEqual({
+      sql: 'SELECT * FROM t WHERE a = ?1 AND b = ?2 AND c = ?1 AND b = ?3 AND c = ?1',
+      params: [o, 2, 2],
+    });
+  });
+
+  it("keeps a fragment's own grouping when it stands alone", () => {
+    const o = { a: 1 };
+    expect(parts(sql`${o} ${o}`)).toEqual({ sql: '?1 ?1', params: [o] });
+  });
+
+  it('keeps two equal primitives as two params', () => {
+    expect(parts(sql`LIMIT ${10} OFFSET ${10}`)).toEqual({
+      sql: 'LIMIT ?1 OFFSET ?2',
+      params: [10, 10],
+    });
+    const s = 'x';
+    expect(sql`SELECT ${s}, ${s}`.params).toEqual(['x', 'x']);
+  });
+});

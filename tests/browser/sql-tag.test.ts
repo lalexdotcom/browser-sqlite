@@ -115,4 +115,18 @@ describe('sql tag', () => {
     ).toEqual([{ a: 'x', b: 'y' }]);
     await db.close();
   });
+
+  it('sends an object interpolated twice once, into two columns and two statements', async () => {
+    const db = await createTestClient();
+    await db.write(sql`CREATE TABLE d (x, y); CREATE TABLE e (z)`);
+    const doc = { a: [1, 'x'] };
+    const q = sql`INSERT INTO d VALUES (${doc}, ${doc}); INSERT INTO e VALUES (${doc})`;
+    expect(q.params).toHaveLength(1);
+    await db.write(q);
+    const json = '{"a":[1,"x"]}';
+    expect(
+      await db.read(sql`SELECT x, y, (SELECT z FROM e) AS z FROM d`),
+    ).toEqual([{ x: json, y: json, z: json }]);
+    await db.close();
+  });
 });
