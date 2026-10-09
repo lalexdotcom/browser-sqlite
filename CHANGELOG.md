@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **`CHANGELOG.md` ships in the package**, beside `API.md` and `VFS.md`.
 - **`INVALID_VALUE` is thrown when a param or a `bulkWrite()` cell has no SQLite value:** a `Symbol`, a function, a `bigint` outside the 64-bit range, an invalid `Date` in an ordinary column, or a value `JSON.stringify` refuses. `params` that is not an array is refused the same way.
-- **The `sql` template tag builds a query and its params from a template**, and every query method takes its result in place of SQL and params. `sql.jsonb` stores objects and arrays as JSONB, `sql.list()` matches a list with `IN`, `sql.id()` quotes an identifier and `sql.raw()` inserts text as it is.
+- **The `sql` template tag builds a query and its params from a template**, and `read()`, `write()`, `chunk()`, `stream()` and `first()` take its result in place of SQL and params. `sql.jsonb` stores objects and arrays as JSONB, `sql.list()` matches a list with `IN`, `sql.id()` quotes an identifier and `sql.raw()` inserts text as it is.
 
 ### Changed
 

@@ -464,12 +464,14 @@ const users = await db.read<User>(
 
 Values are bound as described in [How params are bound](#how-params-are-bound): an object or an array as JSON text, a `Date` in SQLite's format, a `Uint8Array` as a BLOB.
 
-**Write no placeholder of your own in the template.**<br>`?`, `?NNN` or `:name` in its text would shift the numbering of the values. The template is not parsed, so this is not checked.
+**The template is checked when the query is built.**<br>A placeholder of your own (`?`, `?3`, `:name`, `@name`, `$name`, `#name`) or a value inside a string, a quoted name or a comment throws `INVALID_VALUE`: `` LIKE '%${x}%' `` would otherwise compare with the text `%?1%` and drop `x`. Write `` LIKE ${`%${x}%`} `` instead. Text passed to `sql.raw()` is not checked, and must not hold a placeholder either.
+
+**Each statement of a multi-statement string gets its own values.**<br>The tag numbers its placeholders `?1`, `?2`…, so `` sql`INSERT INTO a VALUES (${x}); INSERT INTO b VALUES (${y})` `` stores `x` in `a` and `y` in `b`.
 
 | Helper | Gives | Example |
 |---|---|---|
-| `` sql.jsonb`…` `` | `jsonb(?)` for each object or array, `?` for any other value | `` sql.jsonb`INSERT INTO docs (body) VALUES (${doc})` `` |
-| `sql.list(values)` | `(SELECT value FROM json_each(?))`, for `IN` | `` sql`… WHERE id IN ${sql.list(ids)}` `` |
+| `` sql.jsonb`…` `` | `jsonb(…)` around each object or array | `` sql.jsonb`INSERT INTO docs (body) VALUES (${doc})` `` |
+| `sql.list(values)` | `(SELECT value FROM json_each(…))`, for `IN` | `` sql`… WHERE id IN ${sql.list(ids)}` `` |
 | `sql.id(...names)` | a quoted identifier, joined with `.` | `` sql`SELECT * FROM ${sql.id('main', table)}` `` |
 | `sql.raw(text)` | `text` as it is, unquoted | `` sql`… ORDER BY ${sql.raw(order)}` `` |
 
@@ -484,7 +486,7 @@ const rows = await db.read(sql`SELECT * FROM users WHERE active = 1 ${filter}`);
 
 **`sql.raw()` is not escaped.**<br>Never pass it text that comes from outside your code. For a table or a column name, use `sql.id()`: each argument is one identifier, so a name containing a dot stays one name, and only your code qualifies it with a schema.
 
-Misusing a helper throws when you call it: `INVALID_VALUE`, or `INVALID_IDENTIFIER` for `sql.id()`. Passing a params array after a query built by `sql` rejects with `INVALID_VALUE`.
+Misusing a helper throws when you call it: `INVALID_VALUE`, or `INVALID_IDENTIFIER` for `sql.id()`. So does a template holding an invalid escape sequence such as `\x`, which would otherwise lose part of its SQL: write `\\` for a backslash. A params array passed after a query built by `sql`, or a first argument that is neither a string nor such a query, fails the call with `INVALID_VALUE` before anything is sent: a transaction's methods throw it, the client's reject with it — on the first `next()` for `stream()` and `chunk()`.
 
 ## Queries
 
@@ -595,7 +597,7 @@ Every method that takes `params` — and `bulkWrite()`'s rows — converts each 
 
 **A value no rule can bind is refused before anything is sent.**<br>A `Symbol`, a function, a `bigint` outside SQLite's 64-bit range, an invalid `Date` in an ordinary column, or a value `JSON.stringify` refuses — a nested `bigint`, a cycle — throws `INVALID_VALUE`, naming the param or the column; so does `params` that is not an array. In `bulkWrite()` it is thrown by `enqueue()`, and that row alone is not written. In a `JSONB` column, or nested in an object, an invalid `Date` is stored as JSON `null`.
 
-**An array is stored as JSON.**<br>Pass a `Uint8Array` to store bytes. A typed array, a `DataView` or an `ArrayBuffer` stores the bytes of its own range, in the platform's byte order.
+**An array is stored as JSON.**<br>To match a list with `IN`, use [`sql.list()`](#sql). Pass a `Uint8Array` to store bytes. A typed array, a `DataView` or an `ArrayBuffer` stores the bytes of its own range, in the platform's byte order.
 
 **A `Date` is stored in SQLite's own format, so it compares as text with SQLite's dates.**<br>`datetime('now', 'subsec')` gives the same shape. `CURRENT_TIMESTAMP` has no milliseconds: `'2026-10-06 12:34:56.000'` sorts after `'2026-10-06 12:34:56'`, the same instant.
 
@@ -617,8 +619,8 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 | `BUSY` | A transient conflict, worth retrying. Either SQLite reported a lock conflict — `SQLITE_BUSY` or `SQLITE_LOCKED`, with its result code on `sqliteCode` and, when SQLite reports one, its subtype on `sqliteExtendedCode` — or a database was being opened or deleted elsewhere at that moment. **A read that SQLite reported busy is retried once for you**; if it reaches you, the retry failed too. Writes are never retried, and neither is a `BUSY` without a `sqliteCode`. |
 | `INVALID_OPTION` | An option was refused at the call, before any worker ran: `vfs` missing or unknown, a `(vfs, build)` pair the VFS does not support, a `poolSize` above what the VFS allows, a `wasmUrl` that is not a URL, a database name too long once normalized, a database name that is empty once normalized, a `bulkWrite()` `types` naming a column it does not write or a type other than `'JSONB'`, or `inspectDatabase` on a memory VFS. The message names the option and what it accepts. |
 | `INVALID_PRAGMA` | A `pragmas` entry could not be rendered — the name must be a bare word; the value must be an integer, a bare word such as `WAL`, or a quoted SQL literal — or the VFS refuses it, in `pragmas` or in a statement that sets it ([VFS.md](VFS.md)). |
-| `INVALID_VALUE` | A param, or a cell given to `bulkWrite()`, has no SQLite value: a `Symbol`, a function, a `bigint` outside the 64-bit range, an invalid `Date` in an ordinary column, or a value `JSON.stringify` refuses; or `params` is not an array. Raised before any worker runs; the message names the param or the column, and when a conversion failed, `cause` carries its error. |
-| `INVALID_IDENTIFIER` | A name or type handed to `output()`, `bulkWrite()` or `tx.savepoint()` cannot be used as written: an empty name, a name containing a NUL, a column type that is not a word with optional numeric arguments, or a generated expression that is not parenthesised and free of `;`. For `tx.savepoint()`: a name starting with `__bsq_`, or one already open. |
+| `INVALID_VALUE` | A param, or a cell given to `bulkWrite()`, has no SQLite value: a `Symbol`, a function, a `bigint` outside the 64-bit range, an invalid `Date` in an ordinary column, or a value `JSON.stringify` refuses; or `params` is not an array; or the [`sql`](#sql) tag or one of its helpers is misused. Raised before any worker runs; the message names the param or the column, and when a conversion failed, `cause` carries its error. |
+| `INVALID_IDENTIFIER` | A name or type handed to `output()`, `bulkWrite()`, `tx.savepoint()` or `sql.id()` cannot be used as written: an empty name, a name containing a NUL, a column type that is not a word with optional numeric arguments, or a generated expression that is not parenthesised and free of `;`. For `tx.savepoint()`: a name starting with `__bsq_`, or one already open. For `sql.id()`: no name at all, or one that is not a string. |
 | `BULK_WRITE_FAILED` | A batch failed inside `bulkWrite().close()` or `output().close()`. The error is a `SQLiteBulkWriteError`, carrying `rowsWritten` and `rowsNotWritten`. |
 | `DATABASE_IN_USE` | A client still holds the database, in this tab or another. Retrying will not help: close every client on it first. Raised by `deleteDatabase`, and by any method on a second client where the VFS supports one connection at a time. |
 | `DATABASE_NOT_FOUND` | There is nothing at that name to delete. Raised by `deleteDatabase` alone — `createSQLiteClient` creates a database that is absent, so it has no such case. The likeliest cause is a `vfs` that is not the one the database was created with. |
