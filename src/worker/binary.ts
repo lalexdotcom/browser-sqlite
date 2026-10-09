@@ -14,13 +14,15 @@ import type { ParamsBlock, RowsBlock } from '../types/protocol';
  * Copies the block into one wasm allocation and binds from it, SQLITE_STATIC:
  * the allocation must outlive the bindings, so the caller frees the returned
  * pointer only after clearing them. Binds as many values as the statement has
- * parameters, by index, as wa-sqlite's `bind_collection` does.
+ * parameters, by index, as wa-sqlite's `bind_collection` does, starting at the
+ * block's value `from`.
  */
 export const bindBlock = (
   module: WASQLiteModule,
   sqlite: SQLiteAPI,
   stmt: number,
   block: ParamsBlock,
+  from = 0,
 ): number => {
   let total = 0;
   for (const n of block.used) total += n;
@@ -38,10 +40,24 @@ export const bindBlock = (
       );
       at += n;
     }
-    const bound = Math.min(block.count, sqlite.bind_parameter_count(stmt));
+    const bound = Math.max(
+      0,
+      Math.min(block.count - from, sqlite.bind_parameter_count(stmt)),
+    );
     let heap: Uint8Array = module.HEAPU8;
     let dv = new DataView(heap.buffer);
     let off = ptr;
+    for (let k = 0; bound > 0 && k < from; k++) {
+      const tag = heap[off];
+      off +=
+        tag === 0
+          ? 1
+          : tag === 1
+            ? 5
+            : tag === 3 || tag === 4
+              ? 5 + dv.getUint32(off + 1, true)
+              : 9;
+    }
     for (let i = 1; i <= bound; i++) {
       if (heap.buffer !== module.HEAPU8.buffer) {
         heap = module.HEAPU8;
@@ -82,6 +98,21 @@ export const bindBlock = (
     throw e;
   }
   return ptr;
+};
+
+/**
+ * Whether every parameter of the statement is an anonymous `?`. SQLite names
+ * the others (`?N`, `:a`, `@a`, `$a`); the gap a `?N` leaves below itself is
+ * unnamed too, but it never comes without that `?N`.
+ */
+export const anonymousParams = (
+  module: WASQLiteModule,
+  stmt: number,
+): boolean => {
+  const count = module._sqlite3_bind_parameter_count(stmt);
+  for (let i = 1; i <= count; i++)
+    if (module._sqlite3_bind_parameter_name(stmt, i) !== 0) return false;
+  return true;
 };
 
 const MIN_ROW_BYTES = 4096;

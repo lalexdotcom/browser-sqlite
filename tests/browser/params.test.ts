@@ -151,12 +151,94 @@ describe('params', () => {
     await db.close();
   });
 
-  it('binds the same params to each statement of a multi-statement string', async () => {
-    const db = await createTestClient();
-    await db.write('CREATE TABLE m (v)');
-    await db.write('INSERT INTO m VALUES (?); INSERT INTO m VALUES (?)', ['x']);
-    expect(await db.read('SELECT v FROM m')).toEqual([{ v: 'x' }, { v: 'x' }]);
-    await db.close();
+  describe('a multi-statement string', () => {
+    const rows = 'SELECT t, v FROM m ORDER BY rowid';
+
+    // Falsifiable: bind every statement from the first value in worker.ts.
+    it('gives each statement of anonymous `?` the next values', async () => {
+      const db = await createTestClient();
+      await db.write('CREATE TABLE m (t, v)');
+      await db.write(
+        "INSERT INTO m VALUES ('a', ?), ('a', ?); DELETE FROM m WHERE t = 'z'; INSERT INTO m VALUES ('b', ?)",
+        ['x', 'y', 'z'],
+      );
+      expect(await db.read(rows)).toEqual([
+        { t: 'a', v: 'x' },
+        { t: 'a', v: 'y' },
+        { t: 'b', v: 'z' },
+      ]);
+      await db.close();
+    });
+
+    // Falsifiable: give one tag the wrong width in bindBlock's skip loop.
+    it('skips every kind of value to reach the cursor', async () => {
+      const db = await createTestClient();
+      await db.write('CREATE TABLE m (t, v)');
+      const skipped = [null, 7, 1.5, 2n ** 40n, 'é€😀', Uint8Array.of(1, 2, 3)];
+      await db.write(
+        `SELECT ${skipped.map(() => '?').join(', ')}; INSERT INTO m VALUES ('b', ?)`,
+        [...skipped, 'z'],
+      );
+      expect(await db.read(rows)).toEqual([{ t: 'b', v: 'z' }]);
+      await db.close();
+    });
+
+    it('binds NULL where the values run out, and ignores extra ones', async () => {
+      const db = await createTestClient();
+      await db.write('CREATE TABLE m (t, v)');
+      await db.write(
+        "INSERT INTO m VALUES ('a', ?); INSERT INTO m VALUES ('b', ?)",
+        ['x'],
+      );
+      await db.write(
+        "INSERT INTO m VALUES ('c', ?); INSERT INTO m VALUES ('d', ?)",
+        ['x', 'y', 'z'],
+      );
+      expect(await db.read(rows)).toEqual([
+        { t: 'a', v: 'x' },
+        { t: 'b', v: null },
+        { t: 'c', v: 'x' },
+        { t: 'd', v: 'y' },
+      ]);
+      await db.close();
+    });
+
+    // Falsifiable: move the cursor on a statement with a numbered or named param.
+    it('reads numbered and named params from the first value, without moving the cursor', async () => {
+      const db = await createTestClient();
+      await db.write('CREATE TABLE m (t, v)');
+      await db.write(
+        "INSERT INTO m VALUES ('a', ?2); INSERT INTO m VALUES ('b', ?1); INSERT INTO m VALUES ('c', :x)",
+        ['x', 'y'],
+      );
+      await db.write(
+        "INSERT INTO m VALUES ('d', ?); INSERT INTO m VALUES ('e', ?2); INSERT INTO m VALUES ('f', ?)",
+        ['x', 'y', 'z'],
+      );
+      expect(await db.read(rows)).toEqual([
+        { t: 'a', v: 'y' },
+        { t: 'b', v: 'x' },
+        { t: 'c', v: 'x' },
+        { t: 'd', v: 'x' },
+        { t: 'e', v: 'y' },
+        { t: 'f', v: 'y' },
+      ]);
+      await db.close();
+    });
+
+    it('applies the same rule to a read, and from a cleared cursor on each call', async () => {
+      const db = await createTestClient({ poolSize: 1 });
+      const twice = 'SELECT ? AS a; SELECT ? AS a, ? AS b';
+      expect(await db.read(twice, [1, 2, 3])).toEqual([
+        { a: 1 },
+        { a: 2, b: 3 },
+      ]);
+      expect(await db.read(twice, [4, 5, 6])).toEqual([
+        { a: 4 },
+        { a: 5, b: 6 },
+      ]);
+      await db.close();
+    });
   });
 
   it('round-trips a param larger than the wasm heap', async () => {

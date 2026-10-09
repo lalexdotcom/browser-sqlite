@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Breaking:** **In a string of several statements, each statement of anonymous `?` takes the next values,** where every statement was bound from the first value. A statement with numbered or named params still reads them from the first value.
 - **`read()`, `first()`, `chunk()`, `stream()` and a read-only transaction accept the introspection pragmas with their argument**, such as `PRAGMA table_info(t)` or `PRAGMA index_list(t)`, which they refused with `NOT_A_READ_QUERY`.
 
 ## [1.0.0-rc.9] - 2026-10-09
