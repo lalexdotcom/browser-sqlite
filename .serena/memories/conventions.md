@@ -128,6 +128,8 @@ may be left live in this one. Three steps, in order:
 
 ## Git and versioning
 
+- **A breaking change is marked in the commit that makes it, not only in the CHANGELOG (user, 2026-10-09).** `AGENTS.md` asks for `type(scope)!:` and a `BREAKING CHANGE:` footer; it slipped on `feat/binary-protocol`, whose plan wrote the task's commit message without `!`, whose implementer copied it verbatim, and whose `**Breaking:**` CHANGELOG entry landed later in a separate docs commit — the history was reworded on 2026-10-09, 81 commits rehashed. So: **a plan task that makes a breaking change carries `!` and the footer in its commit message**, written into the plan; and **adding a `**Breaking:**` line to the CHANGELOG means checking that the branch holds a commit marked `!` or `BREAKING CHANGE`**, before the merge — reword it while it is still unpushed. Put `BREAKING CHANGE:` in a paragraph of its own above `Co-Authored-By`: its space makes it no git trailer, and in the same paragraph git stops reading the co-author line as one (`git interpret-trailers --parse` shows it).
+
 - **Everything lands in the unreleased version until the user says otherwise (user,
   2026-08-26).** There is no "too late for this release" — work goes into the current
   unreleased section of `CHANGELOG.md`, and the user says **explicitly** when they want the
