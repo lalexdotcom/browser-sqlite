@@ -13,7 +13,12 @@ const partsOf = new WeakMap<SQLQuery, readonly string[]>();
  */
 const render = (parts: readonly string[]): string => {
   let text = parts[0] as string;
-  for (let i = 1; i < parts.length; i++) text += `?${i}${parts[i]}`;
+  for (let i = 1; i < parts.length; i++) {
+    const part = parts[i] as string;
+    const digit = part.charCodeAt(0) >= 48 && part.charCodeAt(0) <= 57;
+    // A digit right after `?1` would make it `?10`, another value.
+    text += digit ? `?${i} ${part}` : `?${i}${part}`;
+  }
   return text;
 };
 
@@ -51,12 +56,13 @@ const isIdentChar = (c: number) =>
   c > 127;
 
 /**
- * Why a template's text cannot be used, or undefined (spec D13): an invalid
- * escape, a placeholder of its own, or a value inside a literal or a comment.
+ * Why a template's text cannot be used (spec D13) — an invalid escape, a
+ * placeholder of its own, a value inside a literal or a comment, or an end
+ * inside one — or else whether it ends inside a line comment.
  */
 const templateError = (
   strings: readonly (string | undefined)[],
-): string | undefined => {
+): string | boolean => {
   let close = NONE;
   for (let s = 0; s < strings.length; s++) {
     const text = strings[s];
@@ -104,30 +110,46 @@ const templateError = (
           return 'it holds a placeholder of its own (?)';
         case 58: // :
         case 64: // @
-        case 36: // $
         case 35: // #
+        case 36: // $
           if (
-            (i === 0 || !isIdentChar(text.charCodeAt(i - 1))) &&
-            isIdentChar(text.charCodeAt(i + 1))
+            isIdentChar(text.charCodeAt(i + 1)) &&
+            // `$` is also an identifier character: only a token's first counts.
+            (c !== 36 || i === 0 || !isIdentChar(text.charCodeAt(i - 1)))
           )
             return `it holds a placeholder of its own (${text.slice(i, i + 2)}…)`;
       }
     }
   }
-  return undefined;
+  // Inlined, a template left open would swallow the text after it.
+  if (close === LINE_END) return true;
+  if (close !== NONE)
+    return 'it ends inside a string, a quoted name or a comment';
+  return false;
 };
 
 /** One scan per call site: a call site hands the same strings at every evaluation. */
-const scanned = new WeakMap<object, string | null>();
+const scanned = new WeakMap<object, string | boolean>();
 
-const checkTemplate = (strings: TemplateStringsArray) => {
-  let error = scanned.get(strings);
-  if (error === undefined) {
-    error = templateError(strings) ?? null;
-    scanned.set(strings, error);
+/** Throws if the template is refused; else whether it ends in a line comment. */
+const checkTemplate = (strings: TemplateStringsArray): boolean => {
+  let result = scanned.get(strings);
+  if (result === undefined) {
+    result = templateError(strings);
+    scanned.set(strings, result);
   }
-  if (error !== null)
-    throw new SQLiteError('INVALID_VALUE', `sql template refused: ${error}`);
+  if (typeof result === 'string')
+    throw new SQLiteError('INVALID_VALUE', `sql template refused: ${result}`);
+  return result;
+};
+
+/** `a` then `b`, kept apart where joining them would open a comment (`--`, `/*`). */
+const glue = (a: string, b: string): string => {
+  const last = a.charCodeAt(a.length - 1);
+  const first = b.charCodeAt(0);
+  return (last === 45 && first === 45) || (last === 47 && first === 42)
+    ? `${a} ${b}`
+    : a + b;
 };
 
 const build = (
@@ -140,7 +162,7 @@ const build = (
       'INVALID_VALUE',
       'sql is a template tag: write sql`…`, not sql(…)',
     );
-  checkTemplate(strings);
+  const endsInLineComment = checkTemplate(strings);
   const parts: string[] = [strings[0] as string];
   const params: unknown[] = [];
   for (let i = 0; i < values.length; i++) {
@@ -148,12 +170,14 @@ const build = (
     const after = strings[i + 1] as string;
     if (value instanceof SQLQuery) {
       const inner = partsOf.get(value) as readonly string[];
-      parts[parts.length - 1] += inner[0] as string;
+      const last = parts.length - 1;
+      parts[last] = glue(parts[last] as string, inner[0] as string);
       for (let k = 1; k < inner.length; k++) parts.push(inner[k] as string);
       // A loop, not push(...): a fragment may carry more params than a call
       // takes arguments.
       for (const p of value.params) params.push(p);
-      parts[parts.length - 1] += after;
+      const end = parts.length - 1;
+      parts[end] = glue(parts[end] as string, after);
     } else if (jsonb && takesJson(value)) {
       parts[parts.length - 1] += 'jsonb(';
       parts.push(`)${after}`);
@@ -163,6 +187,8 @@ const build = (
       params.push(value);
     }
   }
+  // Closed, so that inlined it cannot comment out what follows it.
+  if (endsInLineComment) parts[parts.length - 1] += '\n';
   return new SQLQuery(parts, params);
 };
 

@@ -388,3 +388,44 @@ describe('the template scan', () => {
     expect(code(tag)).toBe('INVALID_VALUE');
   });
 });
+
+describe('review fixes, amendment', () => {
+  it('refuses a template that ends inside a string, a quoted name or a block comment', () => {
+    const made = [
+      () => sql`SELECT 'a`,
+      () => sql`SELECT "a`,
+      () => sql`SELECT \`a`,
+      () => sql`SELECT [a`,
+      () => sql`SELECT 1 /* a`,
+    ];
+    for (const make of made) expect(code(make)).toBe('INVALID_VALUE');
+  });
+
+  it('ends a template that ends in a line comment, so a fragment cannot swallow what follows', () => {
+    const active = sql`a > ${0} -- first filter`;
+    expect(sql`SELECT * FROM t WHERE ${active} AND a < ${3}`.sql).toBe(
+      'SELECT * FROM t WHERE a > ?1 -- first filter\n AND a < ?2',
+    );
+  });
+
+  it('keeps a join from forming a comment', () => {
+    expect(sql`SELECT 5 -${sql`-${1}`}, ${2}`.sql).toBe('SELECT 5 - -?1, ?2');
+    expect(sql`SELECT 5 ${sql`${1} -`}- 2`.sql).toBe('SELECT 5 ?1 - - 2');
+    expect(sql`SELECT 4 /${sql`* ${1}`}`.sql).toBe('SELECT 4 / * ?1');
+  });
+
+  it("keeps a value's number apart from a digit that follows it", () => {
+    expect(sql`SELECT ${1}0`.sql).toBe('SELECT ?1 0');
+  });
+
+  it('refuses :, @ and # right after a word, but not $ inside one', () => {
+    const made = [
+      () => sql`SELECT * FROM t WHERE a IS:x AND b = ${1}`,
+      () => sql`SELECT * FROM t LIMIT:n`,
+      () => sql`SELECT a@b`,
+      () => sql`SELECT a#b`,
+    ];
+    for (const make of made) expect(code(make)).toBe('INVALID_VALUE');
+    expect(sql`SELECT a$b FROM t`.params).toEqual([]);
+  });
+});
