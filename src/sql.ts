@@ -72,16 +72,22 @@ export class SQLQuery {
     };
     shapeOf.set(this, shape);
     this.sql = render(shape);
+    // An own, enumerable getter rather than a class accessor, so that a log,
+    // `JSON.stringify` or a spread of the query still shows its params.
+    Object.defineProperty(this, 'params', {
+      enumerable: true,
+      get: () => paramsOf(shape),
+    });
   }
 
   /** Its params in order; a `sql.list` array is read and serialised here. */
-  get params(): readonly unknown[] {
-    const { values, lists } = shapeOf.get(this) as Shape;
-    return lists
-      ? values.map((v) => (v instanceof ListParam ? listJson(v.values) : v))
-      : values;
-  }
+  declare readonly params: readonly unknown[];
 }
+
+const paramsOf = ({ values, lists }: Shape): readonly unknown[] =>
+  lists
+    ? values.map((v) => (v instanceof ListParam ? listJson(v.values) : v))
+    : values;
 
 // What the scan waits for inside a literal or a comment; NONE outside one.
 const NONE = 0;

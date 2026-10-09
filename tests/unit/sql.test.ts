@@ -514,3 +514,12 @@ describe('a sql.list array is read when the query is sent', () => {
     ]);
   });
 });
+
+describe('review fixes, task 7', () => {
+  it('keeps params an own, enumerable property, so logs and copies show it', () => {
+    const q = sql`SELECT ${1}, ${sql.list([2])}`;
+    expect(Object.keys(q)).toContain('params');
+    expect(JSON.parse(JSON.stringify(q)).params).toEqual([1, '[2]']);
+    expect({ ...q }.params).toEqual([1, '[2]']);
+  });
+});
