@@ -53,7 +53,7 @@ What stays on `OPFSWriteAheadVFS` under Chromium is its worker's (BULK-GC). Chro
 
 **Large params on ordinary queries — 200 writes of a 1 MiB text in one transaction, `OPFSAdaptiveVFS`, n=3**, peak MB / s: Chromium clone 101-114 / 0.78-0.84, fresh buffer (B0) 29-40 / 0.62-0.66, **recycled buffer 16 / 0.64**; Firefox clone 129-132 / 9.4-10, B0 50-77 / 9.3-10, **recycled 25 / 9.2**. Decomposed: the recycled page buffer (the worker hands the transferred buffer back in `done`) gives the whole gain, the persistent wasm scratch none (Chromium 37, Firefox 76 alone); exact sizing gains nothing in memory. So the gain is fewer page allocations per query, not the worst-case size.
 
-**Re-measured on the implementation (`feat/binary-protocol` at `b41e924` against `main` at `f796fb8`), 2026-10-07 evening**, same direct harness, each build on its defaults (no switches), n=3, the two builds alternating within each repetition, 0 errors in 84 runs. Another session's Firefox was running on the machine throughout, so absolute times carry its load; the comparison does not, being interleaved. Page PSS peak MB / time, median (range), `main` → branch:
+**Re-measured on the implementation (`feat/binary-protocol` at `775ae6a` against `main` at `f796fb8`), 2026-10-07 evening**, same direct harness, each build on its defaults (no switches), n=3, the two builds alternating within each repetition, 0 errors in 84 runs. Another session's Firefox was running on the machine throughout, so absolute times carry its load; the comparison does not, being interleaved. Page PSS peak MB / time, median (range), `main` → branch:
 
 | case | Chromium | Firefox |
 |---|---|---|
@@ -122,7 +122,7 @@ A JS decoder that concatenates (`s += char`) builds cons strings and is far wors
 
 ## RESULT-BINARY-DELIVERY — `feat/binary-results` against `main`, 2026-10-08
 
-Direct harness; `main` = `9c56f50` (its own build), branch at `978376f` (TextDecoder for all texts) and at `30f1991` (final, D6). Per-query micro: both builds in ONE page, alternating at every query, 12 rounds × 3 runs, both engines, `MemoryVFS` and `OPFSAdaptiveVFS`; ratio final / `main` (first ratio: `978376f`, second: the D6 variant, built from the same code as the final):
+Direct harness; `main` = `7bad247` (its own build), branch at `e911da9` (TextDecoder for all texts) and at `fee81e1` (final, D6). Per-query micro: both builds in ONE page, alternating at every query, 12 rounds × 3 runs, both engines, `MemoryVFS` and `OPFSAdaptiveVFS`; ratio final / `main` (first ratio: `e911da9`, second: the D6 variant, built from the same code as the final):
 
 | workload | Chromium | Firefox |
 |---|---|---|
@@ -133,7 +133,7 @@ Direct harness; `main` = `9c56f50` (its own build), branch at `978376f` (TextDec
 | 1 000 rows of 1 KiB text | 0.82-0.92 / 0.84-0.92 | 0.94-0.95 / 0.95 |
 | 20 rows of 100 KiB blobs | 0.94-0.95 / 0.94-0.95 | 1.01-1.02 / 1.00-1.02 |
 
-Large results, `OPFSAdaptiveVFS`, n=3, page PSS peak MB / time s, `main` → `978376f` (texts in these cases are 1 KiB, so D6 does not apply):
+Large results, `OPFSAdaptiveVFS`, n=3, page PSS peak MB / time s, `main` → `e911da9` (texts in these cases are 1 KiB, so D6 does not apply):
 
 | case | Chromium | Firefox |
 |---|---|---|
@@ -143,6 +143,6 @@ Large results, `OPFSAdaptiveVFS`, n=3, page PSS peak MB / time s, `main` → `97
 | `chunk()` 500 MiB, 500 | 184 → **99**, 1.66 → **1.09** | 1 039 → **512**, 15.8 → 15.2 |
 | `chunk()` 4 000 000 narrow rows, 500 | 115 → 86, 3.57 → 2.88 | 200 → 101, 37.9 → 37.4 |
 
-`read()` of 500 000 mixed rows on the final code (`30f1991`), n=3: Chromium peak 368-418 → **236-237 MB**, retained after GC 357-368 → **236-237**, 1.51-1.56 → **0.68-0.70 s**; Firefox peak 232-251 → **186-193**, 7.0-7.7 → **5.8-6.2 s**. The D6 variant alone on Firefox read 4 % slower than `978376f` (5.58 → 5.78 s).
+`read()` of 500 000 mixed rows on the final code (`fee81e1`), n=3: Chromium peak 368-418 → **236-237 MB**, retained after GC 357-368 → **236-237**, 1.51-1.56 → **0.68-0.70 s**; Firefox peak 232-251 → **186-193**, 7.0-7.7 → **5.8-6.2 s**. The D6 variant alone on Firefox read 4 % slower than `e911da9` (5.58 → 5.78 s).
 
 Harness trap paid for here: a copied driver that ignored its `PAGE` variable served the wrong page, and the browser sat at 0 % CPU with no mark posted — a run with no mark after a minute is a harness fault, not a slow query.
