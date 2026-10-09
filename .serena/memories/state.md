@@ -105,10 +105,11 @@ here on purpose: a total alone cannot say which suite moved.
   with `NODE_AUTH_TOKEN` empty; `npm publish` signed provenance and `npm dist-tag add` set
   `latest` and `next` (`+latest: browser-sqlite@1.0.0-rc.8` in the log), and the registry reads
   all three tags at rc.8. The open question of rc.7 is answered.
-- **So, the user's to do:** drop the commented-out `npm-token` from `release-and-publish.yaml`,
-  delete the `NPM_TOKEN` secret, and switch the package's publishing access to "disallow bypass
-  2fa tokens". Until then the secret stays, unused, and it **runs out around 2026-11-29**
-  (renewed for 90 days at rc.4's release, user 2026-09-05; derived, not read off npm).
+- **Done 2026-10-09:** the package's publishing access is "disallow bypass 2fa tokens" (user),
+  and `release-and-publish.yaml` no longer has an `npm-token` input, even commented out.
+- **Left, the user's:** delete the `NPM_TOKEN` repository secret. Nothing reads it any more; it
+  **runs out around 2026-11-29** anyway (renewed for 90 days at rc.4's release, user 2026-09-05;
+  derived, not read off npm).
 
 ## Known live exposures
 

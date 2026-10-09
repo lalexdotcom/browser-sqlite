@@ -172,9 +172,6 @@ jobs:
       # minor and patch releases are taken as they ship. A major is moved here.
       - uses: lalexdotcom/action-release-and-publish@v3
         with:
-          # Withheld to prove that OIDC alone moves the dist-tags; restore it
-          # if the next release cannot.
-          # npm-token: ${{ secrets.NPM_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           release-notes-file: ${{ steps.notes.outputs.file }}
 
