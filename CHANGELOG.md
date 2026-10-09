@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.0-rc.10] - 2026-10-09
+
 ### Changed
 
 - **Breaking:** **In a string of several statements, each statement of anonymous `?` takes the next values,** where every statement was bound from the first value. A statement with numbered or named params still reads them from the first value.
@@ -838,7 +840,8 @@ with it.
 
 First published release line.
 
-[Unreleased]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.9...HEAD
+[Unreleased]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.10...HEAD
+[1.0.0-rc.10]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.9...v1.0.0-rc.10
 [1.0.0-rc.9]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.8...v1.0.0-rc.9
 [1.0.0-rc.8]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.7...v1.0.0-rc.8
 [1.0.0-rc.7]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.6...v1.0.0-rc.7
