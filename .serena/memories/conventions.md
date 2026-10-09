@@ -243,8 +243,11 @@ twenty. Run it when the change can behave differently per pair:
 - **`VFS_CAPABILITIES`, the target machinery or a `needs` vocabulary change** — they decide which
   pairs run what;
 - **a new browser test with no `needs`**, since it will run on all 22 pairs whether or not you
-  thought about them;
-- **before a release**.
+  thought about them.
+
+**Not before a release (user, 2026-10-09):** `release-and-publish.yaml`'s `cells` job runs
+`scripts/test-matrix.ts --pair` on every declared pair and gates `release`, so a local run
+before the tag only repeats it. Said after rc.9 was cut without one.
 
 Not for documentation, memories, or a test change confined to what `pnpm test` already covers.
 
