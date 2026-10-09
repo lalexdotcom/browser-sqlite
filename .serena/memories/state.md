@@ -12,14 +12,14 @@ unmeasured ground.
 
 ## Standing facts
 
-- **`1.0.0-rc.8` is published** (2026-10-09): on npm under `rc`, `next` and `latest`, with
-  provenance, published by `GitHub Actions <npm-oidc-no-reply@github.com>`, and as a GitHub
-  prerelease whose body is the CHANGELOG section for the tag. It ships the binary protocol (the
-  breaking change: array params as JSON text), `INVALID_VALUE`, the `sql` tag and the Firefox
-  memory fixes. `package.json` sits at `1.0.0-rc.8` until the user calls the next bump. The
-  release gate — `verify`, `consumer-smoke`, 22/22 cells, then `release` — ran green first time;
-  two cells (`OPFSCoopSyncVFS/async`, `MemoryAsyncVFS/jspi`) took ~17 min against 3-9 for the
-  others, under the 25-minute job limit — not looked into.
+- **`1.0.0-rc.9` is published** (2026-10-09): on npm under `rc`, `next` and `latest`, and as a
+  GitHub prerelease whose body is the CHANGELOG section for the tag. It ships `AVAILABLE_VFS`
+  alone, over rc.8 (the binary protocol, `INVALID_VALUE`, the `sql` tag, the Firefox memory
+  fixes). `package.json` sits at `1.0.0-rc.9` until the user calls the next bump. The release
+  gate — 28 jobs, `verify`, `consumer-smoke`, 22/22 cells, then `release` — ran green first
+  time in ~12 min. At rc.8 two cells (`OPFSCoopSyncVFS/async`, `MemoryAsyncVFS/jspi`) took
+  ~17 min against 3-9 for the others, under the 25-minute job limit — not looked into, and not
+  seen at rc.9.
   Procedure: `mem:conventions`, § Releasing.
 - **The vendored wa-sqlite sits on upstream `master` of 2026-10-05** (`96d91182`, `package.json`
   has the SHA). **`patches/wa-sqlite@1.1.2.patch` carries `IDBMirrorVFS.js` for #371 and #372**
