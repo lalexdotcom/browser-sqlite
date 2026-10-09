@@ -472,3 +472,45 @@ describe('one param per object', () => {
     expect(sql`SELECT ${s}, ${s}`.params).toEqual(['x', 'x']);
   });
 });
+
+describe('a sql.list array is read when the query is sent', () => {
+  it('serialises the array as it is when params is read', () => {
+    const ids = [1, 2];
+    const q = sql`SELECT * FROM t WHERE id IN ${sql.list(ids)}`;
+    ids.push(3);
+    expect(q.params).toEqual(['[1,2,3]']);
+    expect(queryArgs(q, undefined, undefined).params).toEqual(['[1,2,3]']);
+  });
+
+  it('refuses an element at the call, and again when the query is sent', () => {
+    expect(code(() => sql.list([Symbol('s')]))).toBe('INVALID_VALUE');
+    const ids: unknown[] = [1];
+    const q = sql`SELECT * FROM t WHERE id IN ${sql.list(ids)}`;
+    ids.push(Symbol('s'));
+    expect(code(() => q.params)).toBe('INVALID_VALUE');
+    expect(code(() => queryArgs(q, undefined, undefined))).toBe(
+      'INVALID_VALUE',
+    );
+  });
+
+  it('gives a list fragment used twice one param, two lists of one array two', () => {
+    const ids = [1];
+    const one = sql.list(ids);
+    expect(parts(sql`SELECT ${one}, ${one}`)).toEqual({
+      sql: 'SELECT (SELECT value FROM json_each(?1)), (SELECT value FROM json_each(?1))',
+      params: ['[1]'],
+    });
+    expect(sql`SELECT ${sql.list(ids)}, ${sql.list(ids)}`.params).toEqual([
+      '[1]',
+      '[1]',
+    ]);
+  });
+
+  it('keeps the array bare and the same array as a list two params', () => {
+    const ids = [new Date(Date.UTC(2026, 9, 9))];
+    expect(sql`SELECT ${ids}, ${sql.list(ids)}`.params).toEqual([
+      ids,
+      '["2026-10-09 00:00:00.000"]',
+    ]);
+  });
+});

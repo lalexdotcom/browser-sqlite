@@ -129,4 +129,15 @@ describe('sql tag', () => {
     ).toEqual([{ x: json, y: json, z: json }]);
     await db.close();
   });
+
+  it('reads a sql.list array when the query is sent', async () => {
+    const db = await createTestClient();
+    await db.write(sql`CREATE TABLE n (id INTEGER)`);
+    await db.write(sql`INSERT INTO n VALUES (${1}), (${2}), (${3})`);
+    const ids = [1];
+    const q = sql`SELECT id FROM n WHERE id IN ${sql.list(ids)} ORDER BY id`;
+    ids.push(3);
+    expect(await db.read(q)).toEqual([{ id: 1 }, { id: 3 }]);
+    await db.close();
+  });
 });

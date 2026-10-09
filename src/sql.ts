@@ -3,8 +3,17 @@ import { SQLiteError } from './types/errors';
 import { quoteIdent } from './utils';
 import { MAX_INT64, MIN_INT64, takesJson, toSQLiteDate } from './values';
 
-/** A query's texts between placeholders, and each placeholder's param index (spec D12, D14). */
-type Shape = { parts: readonly string[]; slots: readonly number[] };
+/**
+ * A query's texts between placeholders, each placeholder's param index, and
+ * its raw values — a `sql.list` array still behind its marker (spec D12, D14,
+ * D15).
+ */
+type Shape = {
+  parts: readonly string[];
+  slots: readonly number[];
+  values: readonly unknown[];
+  lists: boolean;
+};
 const shapeOf = new WeakMap<SQLQuery, Shape>();
 
 /**
@@ -25,6 +34,20 @@ const render = ({ parts, slots }: Shape): string => {
 };
 
 /**
+ * A `sql.list` array, serialised when the query's params are read, as an
+ * object param is converted when the query is sent (spec D15). One per call:
+ * the array itself as a value converts differently, so grouping by reference
+ * must not merge the two.
+ */
+class ListParam {
+  readonly values: readonly unknown[];
+
+  constructor(values: readonly unknown[]) {
+    this.values = values;
+  }
+}
+
+/**
  * A query built by the `sql` tag: its text, with numbered placeholders, and
  * its params in order of first appearance, an object once. Only `sql` and its
  * helpers build one; a fragment is recognised by `instanceof`, so an object of
@@ -32,7 +55,6 @@ const render = ({ parts, slots }: Shape): string => {
  */
 export class SQLQuery {
   readonly sql: string;
-  readonly params: readonly unknown[];
   // Type-only and private: makes the type nominal, so a plain `{ sql, params }`
   // does not type-check where a query built by sql is expected.
   private declare readonly nominal: never;
@@ -40,12 +62,24 @@ export class SQLQuery {
   constructor(
     parts: readonly string[],
     slots: readonly number[],
-    params: readonly unknown[],
+    values: readonly unknown[],
   ) {
-    const shape = { parts, slots };
+    const shape = {
+      parts,
+      slots,
+      values,
+      lists: values.some((v) => v instanceof ListParam),
+    };
     shapeOf.set(this, shape);
     this.sql = render(shape);
-    this.params = params;
+  }
+
+  /** Its params in order; a `sql.list` array is read and serialised here. */
+  get params(): readonly unknown[] {
+    const { values, lists } = shapeOf.get(this) as Shape;
+    return lists
+      ? values.map((v) => (v instanceof ListParam ? listJson(v.values) : v))
+      : values;
   }
 }
 
@@ -195,7 +229,7 @@ const build = (
       const last = parts.length - 1;
       parts[last] = glue(parts[last] as string, inner.parts[0] as string);
       for (let k = 1; k < inner.parts.length; k++) {
-        slots.push(slotFor(value.params[inner.slots[k - 1] as number]));
+        slots.push(slotFor(inner.values[inner.slots[k - 1] as number]));
         parts.push(inner.parts[k] as string);
       }
       const end = parts.length - 1;
@@ -271,15 +305,24 @@ const listElement = (value: unknown, index: number): string => {
   );
 };
 
+/** A list's JSON text, element by element (`listElement`). */
+const listJson = (values: readonly unknown[]): string =>
+  // Array.from, not map: map skips a hole, which would leave `[1,,3]`.
+  `[${Array.from(values, listElement).join(',')}]`;
+
 const list = (values: readonly unknown[]): SQLQuery => {
   if (!Array.isArray(values))
     throw new SQLiteError(
       'INVALID_VALUE',
       `sql.list() takes an array, got ${typeof values}`,
     );
-  // Array.from, not map: map skips a hole, which would leave `[1,,3]`.
-  const json = `[${Array.from(values, listElement).join(',')}]`;
-  return new SQLQuery(['(SELECT value FROM json_each(', '))'], [0], [json]);
+  // Checked now for an early error; serialised again when the query is sent.
+  listJson(values);
+  return new SQLQuery(
+    ['(SELECT value FROM json_each(', '))'],
+    [0],
+    [new ListParam(values)],
+  );
 };
 
 /**
