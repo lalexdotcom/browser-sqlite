@@ -67,7 +67,8 @@ export class SQLQuery {
     const shape = {
       parts,
       slots,
-      values,
+      // Frozen: `params` hands it out, and a change would alter the query.
+      values: Object.freeze(values),
       lists: values.some((v) => v instanceof ListParam),
     };
     shapeOf.set(this, shape);
@@ -85,9 +86,18 @@ export class SQLQuery {
 }
 
 const paramsOf = ({ values, lists }: Shape): readonly unknown[] =>
-  lists
-    ? values.map((v) => (v instanceof ListParam ? listJson(v.values) : v))
-    : values;
+  lists ? Object.freeze(values.map(serialiseList)) : values;
+
+/** A `sql.list` marker as its JSON text; a refusal names the param. */
+const serialiseList = (value: unknown, i: number): unknown => {
+  if (!(value instanceof ListParam)) return value;
+  try {
+    return listJson(value.values);
+  } catch (e) {
+    if (!(e instanceof SQLiteError)) throw e;
+    throw new SQLiteError(e.code, `param ${i + 1}: ${e.message}`);
+  }
+};
 
 // What the scan waits for inside a literal or a comment; NONE outside one.
 const NONE = 0;
@@ -286,29 +296,40 @@ const kindOf = (value: unknown): string =>
     ? (value.constructor?.name ?? 'object')
     : typeof value;
 
-/** One element of a `sql.list`, as JSON text `json_each` reads back as the param it would be. */
-const listElement = (value: unknown, index: number): string => {
-  if (value === null || value === undefined) return 'null';
+/** Whether a `sql.list` element has a list form: what `listElement` can write. */
+const listable = (value: unknown): boolean => {
   switch (typeof value) {
     case 'string':
     case 'boolean':
-      return JSON.stringify(value);
+    case 'undefined':
+      return true;
     case 'number':
-      if (Number.isFinite(value)) return JSON.stringify(value);
-      break;
+      return Number.isFinite(value);
     case 'bigint':
-      // Digits, not a JSON.stringify'd Number: SQLite reads them as an exact
-      // 64-bit integer.
-      if (value <= MAX_INT64 && value >= MIN_INT64) return value.toString();
-      break;
+      return value <= MAX_INT64 && value >= MIN_INT64;
     default:
-      if (value instanceof Date && !Number.isNaN(value.getTime()))
-        return JSON.stringify(toSQLiteDate(value));
+      return (
+        value === null ||
+        (value instanceof Date && !Number.isNaN(value.getTime()))
+      );
   }
-  throw new SQLiteError(
+};
+
+const refused = (value: unknown, index: number) =>
+  new SQLiteError(
     'INVALID_VALUE',
     `sql.list() index ${index}: a ${kindOf(value)} has no list form`,
   );
+
+/** One element of a `sql.list`, as JSON text `json_each` reads back as the param it would be. */
+const listElement = (value: unknown, index: number): string => {
+  if (!listable(value)) throw refused(value, index);
+  if (value === null || value === undefined) return 'null';
+  // Digits, not a JSON.stringify'd Number: SQLite reads them as an exact
+  // 64-bit integer.
+  if (typeof value === 'bigint') return value.toString();
+  if (value instanceof Date) return JSON.stringify(toSQLiteDate(value));
+  return JSON.stringify(value);
 };
 
 /** A list's JSON text, element by element (`listElement`). */
@@ -322,8 +343,9 @@ const list = (values: readonly unknown[]): SQLQuery => {
       'INVALID_VALUE',
       `sql.list() takes an array, got ${typeof values}`,
     );
-  // Checked now for an early error; serialised again when the query is sent.
-  listJson(values);
+  // Checked now for an early error, serialised only when the query is sent.
+  for (let i = 0; i < values.length; i++)
+    if (!listable(values[i])) throw refused(values[i], i);
   return new SQLQuery(
     ['(SELECT value FROM json_each(', '))'],
     [0],

@@ -523,3 +523,59 @@ describe('review fixes, task 7', () => {
     expect({ ...q }.params).toEqual([1, '[2]']);
   });
 });
+
+describe('review minors, task 7', () => {
+  it('freezes params, with or without a list', () => {
+    for (const q of [sql`SELECT ${1}`, sql`SELECT ${1}, ${sql.list([2])}`]) {
+      expect(Object.isFrozen(q.params)).toBe(true);
+      expect(() => {
+        (q.params as unknown[])[0] = 99;
+      }).toThrow(TypeError);
+      expect(q.params[0]).toBe(1);
+    }
+  });
+
+  it('serialises a list once, when the query is sent', () => {
+    let calls = 0;
+    class Counted extends Date {
+      override toISOString() {
+        calls++;
+        return super.toISOString();
+      }
+    }
+    const q = sql`SELECT ${sql.list([new Counted(0)])}`;
+    expect(calls).toBe(0);
+    expect(q.params).toEqual(['["1970-01-01 00:00:00.000"]']);
+    expect(calls).toBe(1);
+  });
+
+  it('names the param of a list refused when the query is sent', () => {
+    const ids: unknown[] = [1];
+    const q = sql`SELECT ${'a'}, ${sql.list([1])}, ${sql.list(ids)}`;
+    ids.push(Symbol('s'));
+    let error: unknown;
+    try {
+      void q.params;
+    } catch (e) {
+      error = e;
+    }
+    expect((error as SQLiteError).code).toBe('INVALID_VALUE');
+    expect((error as SQLiteError).message).toContain('param 3');
+    expect((error as SQLiteError).message).toContain('index 1');
+  });
+
+  it('groups a list inside a fragment reused in a parent', () => {
+    const f = sql`id IN ${sql.list([1, 2])}`;
+    expect(parts(sql`SELECT * FROM t WHERE ${f} OR ${f}`)).toEqual({
+      sql: 'SELECT * FROM t WHERE id IN (SELECT value FROM json_each(?1)) OR id IN (SELECT value FROM json_each(?1))',
+      params: ['[1,2]'],
+    });
+  });
+
+  it('never wraps a list in jsonb(…)', () => {
+    expect(parts(sql.jsonb`SELECT ${sql.list([1])}, ${{ a: 1 }}`)).toEqual({
+      sql: 'SELECT (SELECT value FROM json_each(?1)), jsonb(?2)',
+      params: ['[1]', { a: 1 }],
+    });
+  });
+});
