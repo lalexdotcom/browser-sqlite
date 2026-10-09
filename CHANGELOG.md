@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.0-rc.9] - 2026-10-09
+
 ### Added
 
 - **`AVAILABLE_VFS` lists every VFS with the builds it runs on**, most preferred first. With `detectFeatures()` and `missingFeature()`, it tells which pairs run in the current browser.
@@ -827,7 +829,8 @@ with it.
 
 First published release line.
 
-[Unreleased]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.8...HEAD
+[Unreleased]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.9...HEAD
+[1.0.0-rc.9]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.8...v1.0.0-rc.9
 [1.0.0-rc.8]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.7...v1.0.0-rc.8
 [1.0.0-rc.7]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.6...v1.0.0-rc.7
 [1.0.0-rc.6]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.5...v1.0.0-rc.6
