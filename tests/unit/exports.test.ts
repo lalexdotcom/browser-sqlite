@@ -80,6 +80,7 @@ describe('public entry', () => {
   it('exports exactly the public values', () => {
     expect(Object.keys(api).sort()).toEqual(
       [
+        'AVAILABLE_VFS',
         'SQLITE_CODES',
         'SQLITE_EXTENDED_CODES',
         'SQLiteBulkWriteError',
@@ -133,6 +134,28 @@ describe('VFS_CAPABILITIES', () => {
         'OPFSWriteAheadVFS',
       ].sort(),
     );
+  });
+});
+
+describe('AVAILABLE_VFS', () => {
+  // Falsifiable: build AVAILABLE_VFS from a hand-written list, or reorder a VFS's builds.
+  it('lists every VFS with its builds, in preference order', () => {
+    expect(api.AVAILABLE_VFS).toEqual(
+      Object.fromEntries(
+        Object.entries(VFS_CAPABILITIES).map(([vfs, { builds }]) => [
+          vfs,
+          builds,
+        ]),
+      ),
+    );
+  });
+
+  // Falsifiable: drop either Object.freeze.
+  it('cannot be changed by a consumer', () => {
+    expect(Object.isFrozen(api.AVAILABLE_VFS)).toBe(true);
+    for (const builds of Object.values(api.AVAILABLE_VFS)) {
+      expect(Object.isFrozen(builds)).toBe(true);
+    }
   });
 });
 

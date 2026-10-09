@@ -12,7 +12,7 @@ export {
   type SQLiteExtendedResultCode,
   type SQLiteResultCode,
 } from './const/sqlite';
-export type { SQLiteVFS } from './const/vfs';
+export { AVAILABLE_VFS, type SQLiteVFS } from './const/vfs';
 export type {
   BootStage,
   ClientDebugState,

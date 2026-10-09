@@ -444,3 +444,17 @@ export const folderOf = (vfs: SQLiteVFS): string | undefined => {
 };
 
 export type SQLiteVFS = keyof typeof VFS_CAPABILITIES;
+
+/**
+ * Every VFS, mapped to the builds it runs on, most preferred first. An omitted
+ * `build` takes the first one `missingFeature(vfs, build, detectFeatures())`
+ * accepts. Derived from `VFS_CAPABILITIES`, so it cannot drift from it.
+ */
+export const AVAILABLE_VFS = Object.freeze(
+  Object.fromEntries(
+    (Object.keys(VFS_CAPABILITIES) as SQLiteVFS[]).map((vfs) => {
+      const { builds }: VFSCapability = VFS_CAPABILITIES[vfs];
+      return [vfs, Object.freeze([...builds])];
+    }),
+  ),
+) as Readonly<Record<SQLiteVFS, readonly [SQLiteBuild, ...SQLiteBuild[]]>>;
