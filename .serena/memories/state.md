@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-10-08.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-10-09.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one, and move what closes to `mem:history` rather than
 keeping it here struck through (rewritten on 2026-10-08 from 38 000 characters, two thirds of
 them closed subjects).
@@ -26,32 +26,32 @@ unmeasured ground.
 - **`main` may sit ahead of `origin/main` indefinitely** — the convention, not an oversight. It
   is pushed for a release, not as housekeeping.
 
-## The verification baseline — compare against these, re-measured 2026-10-08
+## The verification baseline — compare against these, re-measured 2026-10-09
 
 Not history: the numbers a regression is detected against. **Every figure below was read off ONE
-pass in this container on 2026-10-08 evening** — Playwright 1.64.0, Chromium 156
-(`chromium-1248`), Firefox 157 (`firefox-1555`) — none arithmetic, on the wa-sqlite pin
-`96d91182` with #371, #372 and #374 carried; the bench row after the checker was made to wait for
-its server (it failed every run without that under 1.64).
+pass in this container on 2026-10-09 morning, on `main` after the `feat/sql-tag` merge** —
+Playwright 1.64.0, Chromium 156 (`chromium-1248`), Firefox 157 (`firefox-1555`) — none arithmetic,
+on the wa-sqlite pin `96d91182` with #371, #372 and #374 carried.
 
 | command | result |
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1542 tests, 1534 passed, 8 skipped** (unit + the two chromium target projects), **892 tests, 888 passed, 4 skipped** (the two firefox target projects), **18 tests, none skipped** (the two isolated target projects). The chromium and firefox targets are `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` since the default build follows the engine |
-| `pnpm exec rstest --project unit run` | **664** tests, 32 files |
+| `pnpm test` | **THREE reports**, `status: pass` and `failedFiles: 0` on each: **1600 tests, 1592 passed, 8 skipped** (unit + the two chromium target projects), **908 tests, 904 passed, 4 skipped** (the two firefox target projects), **18 tests, none skipped** (the two isolated target projects). The chromium and firefox targets are `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` since the default build follows the engine |
+| `pnpm exec rstest --project unit run` | **706** tests, 33 files |
 | `pnpm exec rstest --project 'chromium*' run` | the two chromium target projects; the glob is required — project names are `chromium · <vfs>/<build>` and rstest's filter is anchored |
 | `pnpm test:conformance` | **TWO reports** — 97 tests / 3 files each: **Chromium 83 passed / 14 skipped, Firefox 79 / 18**. Each VFS runs on its default build for the engine |
 | `pnpm exec biome ci .` | exit 0 |
 | `pnpm docs:vfs` | leaves `VFS.md` unchanged (`git diff --exit-code`) |
 | `pnpm test:consumer` | 24/24 stages |
 | `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.ts chromium --all` | `OK`, `"reasons": {}`, 22 declared pairs runnable; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
-| `pnpm lint` | 180 files, **4 warnings**, 1 info — the file count moves with the tree, **the warning count is the signal** |
+| `pnpm lint` | 183 files, **4 warnings**, 1 info — the file count moves with the tree, **the warning count is the signal** |
 | `dependencies` in `package.json` | absent |
-| `pnpm test:matrix` | **66 of 66 cells green, 1892 s**, no re-run inside it, no timed-out cell. ~32 min. **Every cell runs `BSQ_TEST_NEEDS=skip`** |
+| `pnpm test:matrix` | **65 of 66 cells green, 1919 s**, no re-run inside it, no timed-out cell. ~32 min. **Every cell runs `BSQ_TEST_NEEDS=skip`**. The 66th, chromium `AccessHandlePoolVFS/jspi`, failed one test with `WORKER_BUSY` and was green alone 3/3, the test alone 20/20 (`mem:follow-ups`) |
 
-Against the previous table (2026-10-08 morning, Playwright 1.62.1): every count identical, and
-the matrix 2453 → 1892 s on the new browsers (the Firefox config's tests 95 → 70 s in `pnpm test`).
+Against the previous table (2026-10-08 evening): unit 664 → 706 tests, 32 → 33 files; `pnpm test`
+1534 → 1592 and 888 → 904 passed, skips unchanged; lint 180 → 183 files — all `feat/sql-tag`'s
+tests and `src/sql.ts`, less `debugSQLQuery`'s. Matrix 66/66 → 65/66, the one cell above.
 
 **Do not reconcile any of these by arithmetic; re-run, and re-measure the whole table when you
 touch it — never patch one cell.** Twice in September a total here went stale or contradicted its
