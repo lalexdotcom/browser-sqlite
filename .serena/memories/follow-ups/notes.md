@@ -10,7 +10,7 @@ Taken during the subagent-driven execution and reported to the user at the merge
 
 ### Playwright and stock browsers — answered, 2026-10-08
 
-Chromium: yes, through `channel: 'chrome'`/`'msedge'` or `executablePath` (CDP); no branded Chrome exists for Linux arm64. Firefox: Playwright's own build carries Juggler, which a stock Firefox lacks; Playwright 1.64 ships a **private, experimental** `_bidiFirefox` launcher (WebDriver BiDi; channels `moz-firefox`, `moz-firefox-beta`, `moz-firefox-nightly`), not public API and not selectable by rstest's provider. WebKit/Safari: no (Playwright's own WebKit; Safari goes through `safaridriver`). **The user declined to try `_bidiFirefox`.** For Firefox timings the direct harness on a stock binary is the method (FF-PW-AWAIT, `mem:measurements/footprint`).
+Chromium: yes, through `channel: 'chrome'`/`'msedge'` or `executablePath` (CDP); a branded Chrome exists for Linux arm64 since 153 (Chrome for Testing and Google's apt repository, read 2026-10-09; it did not when this entry was written). Firefox: Playwright's own build carries Juggler, which a stock Firefox lacks; Playwright 1.64 ships a **private, experimental** `_bidiFirefox` launcher (WebDriver BiDi; channels `moz-firefox`, `moz-firefox-beta`, `moz-firefox-nightly`), not public API and not selectable by rstest's provider. WebKit/Safari: no (Playwright's own WebKit; Safari goes through `safaridriver`). **The user declined to try `_bidiFirefox`.** For Firefox timings the direct harness on a stock binary is the method (FF-PW-AWAIT, `mem:measurements/footprint`).
 
 ### Two worker fallback messages carry the path — kept, 2026-10-03
 

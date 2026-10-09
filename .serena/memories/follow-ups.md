@@ -102,7 +102,7 @@ Jasmine's random order decides whether a resetting spec follows the failure. Non
 **Before deciding:** probe a handful of the library's tests (OPFS, workers, IndexedDB) on Chrome, Firefox and Safari, on Linux, Windows and macOS. Its own branch.
 
 **Also owed by that direction:**
-- The devcontainer gets Debian's `chromium` and `chromium-driver` for a local Chrome. Google publishes no Chrome for Linux arm64, and Chrome for Testing has no linux-arm64 build either.
+- The devcontainer needs a local Chrome. **Google ships Chrome for Linux arm64 since 153 (read 2026-10-09):** Chrome for Testing has `linux-arm64` chrome and chromedriver from `153.0.8001.0` on (98 versions, majors 153-157, all four channels), and Google's apt repository serves `binary-arm64` for `google-chrome-stable`, `-beta`, `-unstable` and `-canary`. Debian's `chromium`/`chromium-driver` (154 on trixie) is no longer the only option.
 - **An unmeasured exposure:** the library's `IDBMirrorVFS` with several connections on Safari 26 may stall the way wa-sqlite's `sql_0005` does (SAFARI26-IDBMIRROR-KILL).
 
 ## wa-sqlite #362: `OPFSCoopSyncVFS.create()` fails after a back/forward-cache navigation — PR not decided
