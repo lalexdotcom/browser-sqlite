@@ -345,3 +345,7 @@ Safari 26 lost its WebDriver session during one spec, every time. Two runs colle
 ## Counting a component's activity names the stuck party; a hypothesis about load does not (2026-10-08, Safari 26)
 
 Two hypotheses about the load the test put on Safari each cost a run: the number of proxies, then the retry rate. Neither changed anything. Per-worker counters reported live every 2 s did: the VFS calls in flight, the pending IndexedDB requests and lock requests, and `navigator.locks.query()`. They showed at once one worker inside its commit, its IndexedDB writes pending for 8 s while it held every lock, and the others polling. **Instrument what each party is waiting on before varying the load.**
+
+## A race load cannot reproduce may yield to parking the one await it lives in (2026-10-09, `WORKER_BUSY` after an abort)
+
+Seen twice under full matrices, the failure did not come back once in 35 runs under 16 busy loops — the test alone, its file, its whole cell. Reading the stack instead did it: the error came from the SECOND read's barrier, so the first read's lease had come back while something of its own was still to be posted; the only await between a lease and a posted statement was `applyBarrier`'s `originMax()`. Patching `LockManager.prototype.query` in the test page to park until released turned a once-a-matrix flake into a failure on every run. **When a race has a window, find the await that is the window and hold it open; more load only widens it by chance.**
