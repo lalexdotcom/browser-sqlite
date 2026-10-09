@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **`AVAILABLE_VFS` lists every VFS with the builds it runs on**, most preferred first. With `detectFeatures()` and `missingFeature()`, it tells which pairs run in the current browser.
+
 ## [1.0.0-rc.8] - 2026-10-09
 
 ### Added
