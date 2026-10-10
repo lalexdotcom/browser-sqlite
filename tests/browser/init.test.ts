@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import { createTestClient, removeDatabaseFiles, TEST_TARGET } from './helpers';
 
 /**
@@ -25,7 +25,7 @@ describe('createSQLiteClient (INT-02)', () => {
   it('supports poolSize: 1 (minimum)', async () => {
     // createTestClient uses the default poolSize: 2
     // Verify that a minimal pool works
-    const { createSQLiteClient } = await import('../../src/client');
+    const { createSQLiteClient } = await import('browser-sqlite');
     const dbName = `bsq-test-${crypto.randomUUID()}`;
 
     const cleanup = async () => {

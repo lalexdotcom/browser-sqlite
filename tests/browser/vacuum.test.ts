@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import { createTestClient } from './helpers';
 
 /** The OPFS size of `path` read from the page, 0 when the file is absent. */

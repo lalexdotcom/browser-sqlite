@@ -1,6 +1,10 @@
 // tests/browser/lifecycle.test.ts
-import { afterEach, describe, expect, it, onTestFinished } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
+import {
+  createSQLiteClient,
+  deleteDatabase,
+  type SQLiteError,
+} from 'browser-sqlite';
+import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
 import {
   createTestClient,
   interceptWorkers,
@@ -180,6 +184,13 @@ describe('worker lifecycle — bounds', () => {
     } catch {
       // OPFS entry may not exist if the test failed before DB creation
     }
+    // The database sits in one of AccessHandlePoolVFS's six fixed slots, which
+    // only deleteDatabase gives back (see createTestClient in ./helpers).
+    await deleteDatabase(shared, { vfs: 'AccessHandlePoolVFS' }).catch(
+      (error: unknown) => {
+        if ((error as SQLiteError)?.code !== 'DATABASE_NOT_FOUND') throw error;
+      },
+    );
   });
 
   // The connection guard (AHP-2TAB fix) fires before workers start, so the

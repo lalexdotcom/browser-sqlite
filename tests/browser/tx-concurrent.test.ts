@@ -1,4 +1,4 @@
-import { describe, expect, it, onTestFinished } from '@rstest/core';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { createTestClient, longQuery } from './helpers';
 
 /** Same shape as `pool-cap.test.ts`'s: the console is the only channel here. */

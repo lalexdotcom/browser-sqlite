@@ -1,8 +1,10 @@
-import { describe, expect, it, onTestFinished, rstest } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
+import {
+  createSQLiteClient,
+  deleteDatabase,
+  inspectDatabase,
+} from 'browser-sqlite';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
-import { deleteDatabase } from '../../src/delete';
-import { inspectDatabase } from '../../src/inspect';
 import { databasePath, MAX_DATABASE_NAME } from '../../src/utils';
 import { TEST_TARGET } from './helpers';
 
@@ -79,7 +81,7 @@ describe('the path length guard', () => {
   });
 
   it('deleteDatabase refuses a too-long name before taking any lock', async () => {
-    const request = rstest.spyOn(navigator.locks, 'request');
+    const request = vi.spyOn(navigator.locks, 'request');
     onTestFinished(() => request.mockRestore());
     await expect(
       deleteDatabase('n'.repeat(60), { vfs: 'IDBBatchAtomicVFS' }),
@@ -91,7 +93,7 @@ describe('the path length guard', () => {
     // inspectDatabase's only Web Locks call is locks.entries() -> query()
     // (src/locks.ts), never request() — spying on query() is what a guard
     // moved after that call would actually trip.
-    const query = rstest.spyOn(navigator.locks, 'query');
+    const query = vi.spyOn(navigator.locks, 'query');
     onTestFinished(() => query.mockRestore());
     await expect(
       inspectDatabase('n'.repeat(60), { vfs: 'IDBBatchAtomicVFS' }),

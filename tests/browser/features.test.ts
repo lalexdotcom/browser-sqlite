@@ -1,5 +1,5 @@
-import { describe, expect, it } from '@rstest/core';
-import { detectFeatures, missingFeature } from '../../src/capabilities';
+import { detectFeatures, missingFeature } from 'browser-sqlite';
+import { describe, expect, it } from 'vitest';
 import { BUILD_CAPABILITIES } from '../../src/const/builds';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import { AVAILABLE_FEATURES } from '../conformance/helpers';

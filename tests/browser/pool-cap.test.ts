@@ -6,8 +6,8 @@
  * no engine is named and the day Firefox or WebKit ships readwrite-unsafe these
  * tests follow it.
  */
-import { describe, expect, it, onTestFinished } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
+import { createSQLiteClient } from 'browser-sqlite';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { databasePath } from '../../src/utils';
 import { HAS_UNSAFE_HANDLES, removeOpfsPath } from '../conformance/helpers';
 import {

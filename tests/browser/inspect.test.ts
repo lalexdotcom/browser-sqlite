@@ -1,7 +1,9 @@
-import { describe, expect, it, onTestFinished } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
-import { deleteDatabase } from '../../src/delete';
-import { inspectDatabase } from '../../src/inspect';
+import {
+  createSQLiteClient,
+  deleteDatabase,
+  inspectDatabase,
+} from 'browser-sqlite';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { clientMarkerName } from '../../src/locks';
 import { databasePath } from '../../src/utils';
 import { pairFor } from './helpers';

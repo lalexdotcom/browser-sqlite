@@ -1,8 +1,11 @@
-import { describe, expect, it, onTestFinished } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
-import { deleteDatabase } from '../../src/delete';
-import { createLocks, writeLockName } from '../../src/locks';
-import { SQLiteError } from '../../src/types/errors';
+import {
+  createLocks,
+  createSQLiteClient,
+  deleteDatabase,
+  SQLiteError,
+} from 'browser-sqlite/testing';
+import { describe, expect, it, onTestFinished } from 'vitest';
+import { writeLockName } from '../../src/locks';
 import { databasePath } from '../../src/utils';
 import { holdIn, makeRealm } from './helpers/realm';
 

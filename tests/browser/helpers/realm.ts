@@ -1,4 +1,4 @@
-import { onTestFinished } from '@rstest/core';
+import { onTestFinished } from 'vitest';
 
 /** The slice of the Web Locks API these helpers use. */
 type LockManager = {

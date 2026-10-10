@@ -1,8 +1,11 @@
-import { describe, expect, it, onTestFinished } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
-import { SQLITE_CODES, SQLITE_EXTENDED_CODES } from '../../src/const/sqlite';
+import {
+  createSQLiteClient,
+  SQLITE_CODES,
+  SQLITE_EXTENDED_CODES,
+  SQLiteError,
+} from 'browser-sqlite';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import type { SQLiteVFS } from '../../src/const/vfs';
-import { SQLiteError } from '../../src/types/errors';
 import { databasePath } from '../../src/utils';
 import { removeOpfsPath } from '../conformance/helpers';
 import { createTestClient, pairFor, type Skip } from './helpers';

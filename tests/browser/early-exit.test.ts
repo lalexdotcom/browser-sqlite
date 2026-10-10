@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import { createTestClient, longQuery, sleep } from './helpers';
 
 // Two rows far apart: the first is immediate, the second exists only once a

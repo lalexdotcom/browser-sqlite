@@ -1,7 +1,10 @@
-import { describe, expect, it } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
+import {
+  createSQLiteClient,
+  deleteDatabase,
+  SQLiteError,
+} from 'browser-sqlite';
+import { describe, expect, it } from 'vitest';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
-import { SQLiteError } from '../../src/types/errors';
 import { createTestClient } from './helpers';
 
 /**
@@ -27,14 +30,15 @@ describe('AccessHandlePoolVFS pool guard', () => {
   // throw on a pool size the caller never chose.
   // One VFS: the subject is AccessHandlePoolVFS's own poolSize cap.
   it('defaults to the VFS cap rather than throwing when poolSize is omitted', async () => {
-    const db = createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
-      vfs: 'AccessHandlePoolVFS',
-    });
+    const name = `bsq-test-${crypto.randomUUID()}`;
+    const db = createSQLiteClient(name, { vfs: 'AccessHandlePoolVFS' });
     try {
       await db.write('CREATE TABLE t (id INTEGER PRIMARY KEY)');
       expect(await db.read('SELECT id FROM t')).toEqual([]);
     } finally {
       await db.close();
+      // One of AccessHandlePoolVFS's six fixed slots, given back by delete alone.
+      await deleteDatabase(name, { vfs: 'AccessHandlePoolVFS' });
     }
   });
 

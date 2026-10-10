@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import { createTestClient } from './helpers';
 
 // Every case of the spec's § 4, written by SQL so no param conversion is involved.

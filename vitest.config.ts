@@ -57,6 +57,9 @@ const browserProject = (
     browser: {
       enabled: true,
       headless: true,
+      // The WebdriverIO provider cannot take it on BiDi (`switchFrame` was
+      // removed in v10): every failure would print a stack trace for it.
+      screenshotFailures: false,
       provider: webdriverio({
         cacheDir: WDIO_CACHE_DIR,
         capabilities: browserCapabilities(browser),

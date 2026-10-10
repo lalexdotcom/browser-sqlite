@@ -29,7 +29,7 @@
 // token)` registration in src/queries.ts makes BOTH tests hard-time out at
 // 60000 ms with all ten retry rounds exhausted, rather than pass. That is
 // what tells a future reader this test is worth re-running at all.
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import { createTestClient, sleep } from './helpers';
 
 const forceGC = (globalThis as { gc?: () => void }).gc;

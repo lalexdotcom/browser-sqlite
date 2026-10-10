@@ -1,6 +1,6 @@
-import { describe, expect, it } from '@rstest/core';
-import { createLogger } from '../../src/logger';
-import { createPoolWorker, type PoolWorker } from '../../src/pool';
+import { createLogger, createPoolWorker } from 'browser-sqlite/testing';
+import { describe, expect, it } from 'vitest';
+import type { PoolWorker } from '../../src/pool';
 import { databasePath } from '../../src/utils';
 import {
   createTestClient,

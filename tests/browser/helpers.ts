@@ -1,12 +1,11 @@
-import { onTestFinished } from '@rstest/core';
+import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
+import { inject, onTestFinished } from 'vitest';
 import { defaultBuildFor } from '../../src/capabilities';
-import { createSQLiteClient } from '../../src/client';
 import {
   folderOf,
   type SQLiteVFS,
   VFS_CAPABILITIES,
 } from '../../src/const/vfs';
-import { deleteDatabase } from '../../src/delete';
 import type { InternalSQLiteClientOptions } from '../../src/scheduler';
 import type { SQLiteError } from '../../src/types/errors';
 import { databaseFiles, databasePath } from '../../src/utils';
@@ -41,37 +40,32 @@ type TestClientOptions = Omit<InternalSQLiteClientOptions, 'name' | 'vfs'> & {
   vfs?: SQLiteVFS;
 } & Needing;
 
-declare const __BSQ_TEST_TARGET__: TestTarget | undefined;
-declare const __BSQ_TEST_NEEDS__: OnUnmetNeed | undefined;
-
 /**
- * The target this project injects — `source.define` in the browser configs,
- * one project per target (tests/target-projects.ts). A browser project without
- * one is a configuration error, not a default, so this throws rather than
- * choose a VFS. It lives here, not in `./target`, because the resolver there
- * is imported by a Node unit test, where no project injects anything.
+ * The target this project provides (vitest.config.ts, one project per target,
+ * tests/target-projects.ts). A browser project without one is a configuration
+ * error, not a default, so this throws rather than choose a VFS. It lives
+ * here, not in `./target`, because the resolver there is imported by a Node
+ * unit test, where no project provides anything.
  */
 export const TEST_TARGET: TestTarget = (() => {
-  if (typeof __BSQ_TEST_TARGET__ === 'undefined') {
+  const target = inject('bsqTarget');
+  if (target === undefined) {
     throw new Error(
-      'TEST_TARGET: this project injects no __BSQ_TEST_TARGET__ — a browser project needs a target (tests/target-projects.ts)',
+      'TEST_TARGET: this project provides no bsqTarget — a browser project needs a target (tests/target-projects.ts)',
     );
   }
-  return __BSQ_TEST_TARGET__;
+  return target;
 })();
 
-/**
- * What a test whose need the target lacks does, injected beside the target —
- * `fallback` unless `BSQ_TEST_NEEDS` says `skip`, which `pnpm test:matrix`
- * does (spec 2026-09-15, A7). Missing is a configuration error, like the target.
- */
+/** `fallback` unless `BSQ_TEST_NEEDS` says `skip`, as `pnpm test:matrix` does (spec 2026-09-15, A7). */
 const ON_UNMET_NEED: OnUnmetNeed = (() => {
-  if (typeof __BSQ_TEST_NEEDS__ === 'undefined') {
+  const needs = inject('bsqNeeds');
+  if (needs === undefined) {
     throw new Error(
-      'ON_UNMET_NEED: this project injects no __BSQ_TEST_NEEDS__ (tests/target-projects.ts)',
+      'ON_UNMET_NEED: this project provides no bsqNeeds (tests/target-projects.ts)',
     );
   }
-  return __BSQ_TEST_NEEDS__;
+  return needs;
 })();
 
 /**

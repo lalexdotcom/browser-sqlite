@@ -1,9 +1,19 @@
-import { afterEach, expect } from '@rstest/core';
-import { defaultBuildFor, detectFeatures } from '../../src/capabilities';
-import { createSQLiteClient, type WorkerLostEvent } from '../../src/client';
+import {
+  createSQLiteClient,
+  deleteDatabase,
+  detectFeatures,
+  type SQLiteError,
+} from 'browser-sqlite';
+import { expect, onTestFinished } from 'vitest';
+import { defaultBuildFor } from '../../src/capabilities';
+import type { WorkerLostEvent } from '../../src/client';
 import { BUILD_CAPABILITIES, type SQLiteBuild } from '../../src/const/builds';
 import type { PlatformFeature } from '../../src/const/platform';
-import { type SQLiteVFS, VFS_CAPABILITIES } from '../../src/const/vfs';
+import {
+  folderOf,
+  type SQLiteVFS,
+  VFS_CAPABILITIES,
+} from '../../src/const/vfs';
 import { databaseFiles, databasePath } from '../../src/utils';
 
 /** Every wired VFS, in declaration order. */
@@ -229,21 +239,33 @@ export const conformanceClient = (
   poolSize: number = poolFor(vfs),
 ) => {
   const file = `conformance-${crypto.randomUUID()}`;
+  const db = createSQLiteClient(file, {
+    vfs,
+    build,
+    poolSize,
+    onWorkerLost: recordLoss(vfs),
+  });
 
-  afterEach(async () => {
+  // Once per test: `afterEach` registered from inside a running test would stay
+  // on the file's suite and run after every later test too.
+  onTestFinished(async () => {
+    await db.close().catch(() => {});
+    // AccessHandlePoolVFS keeps its files in six fixed slots under opaque
+    // names, and gives one back on xDelete alone: removing the path below
+    // matches nothing, and the origin is shared by every file of the run.
+    if (
+      VFS_CAPABILITIES[vfs].storage === 'opfs' &&
+      folderOf(vfs) === undefined
+    ) {
+      await deleteDatabase(file, { vfs, build }).catch((error: unknown) => {
+        if ((error as SQLiteError)?.code !== 'DATABASE_NOT_FOUND') throw error;
+      });
+    }
     for (const path of databaseFiles(vfs, databasePath(vfs, file)))
       await removeOpfsPath(path);
   });
 
-  return {
-    file,
-    db: createSQLiteClient(file, {
-      vfs,
-      build,
-      poolSize,
-      onWorkerLost: recordLoss(vfs),
-    }),
-  };
+  return { file, db };
 };
 
 /**

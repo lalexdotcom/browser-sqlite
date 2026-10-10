@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from '@rstest/core';
+import { deleteDatabase } from 'browser-sqlite';
+import { afterEach, describe, expect, it } from 'vitest';
 import { folderOf, type SQLiteVFS } from '../../src/const/vfs';
-import { deleteDatabase } from '../../src/delete';
 import { databasePath } from '../../src/utils';
 import {
   ALL_VFS,

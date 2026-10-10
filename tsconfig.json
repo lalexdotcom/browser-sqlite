@@ -18,7 +18,7 @@
       "browser-sqlite/testing": ["./tests/testing.ts"]
     }
   },
-  "include": ["src", "tests", "scripts", "rslib.config.ts", "rstest.config.ts", "vitest.config.ts", "rslib.test.config.ts"],
+  "include": ["src", "tests", "scripts", "rslib.config.ts", "vitest.config.ts", "rslib.test.config.ts"],
   // Consumer fixtures are standalone apps: they resolve `browser-sqlite` and
   // their bundler from their own install, not from this package's node_modules.
   // Matched by prefix rather than listed one by one, so adding a fixture cannot

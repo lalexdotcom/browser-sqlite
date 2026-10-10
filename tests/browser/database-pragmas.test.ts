@@ -1,7 +1,6 @@
-import { describe, expect, it, onTestFinished } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
+import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
-import { deleteDatabase } from '../../src/delete';
 import { pairFor, sleep } from './helpers';
 
 /**
