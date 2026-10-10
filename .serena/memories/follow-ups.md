@@ -24,7 +24,7 @@ In `mem:follow-ups/wa-step`: the scope the user set, what each solution (library
 
 `tests/browser/multi-client.test.ts` :: "two clients writing at once > interleaves a bulkWrite with another client, refusing neither" failed once in the `feat/binary-protocol` matrix: client A read 0 of B's first 2 047-row batch over its 5 s of polling (`expected +0 to be 2047`, test 10.9 s). Replays the same afternoon: the test alone 10/10 on the branch and on `main`; the file under 16 busy loops 15/15 each; the full cell on the branch 1 failure in 5 then 0 in 15 (and 0 in 12 with `debug: true` and a diagnostic of B's `close()` and A's late count), on `main` 0 in 20. Another session's Firefox was loading the machine during the failing runs. Left by the user's decision ("on ignore et on enchaîne, et on consigne"). At the next sighting: rerun the cell with the diagnostic (B's `writer.close()` outcome — a failed batch against a slow one — and A's count after it), and compare with `main` at the same load.
 
-## wa-sqlite #371: `IDBMirrorVFS` commit-abort — MERGED 2026-10-10 as `d09953ee`; repin owed
+## wa-sqlite #371: `IDBMirrorVFS` commit-abort — MERGED 2026-10-10 as `d09953ee`; repinned the same day, #372's rebase left
 
 Offered on #363; rhashimoto: "Yes, please, if you're up for that." Defect: IDBMIRROR-COMMIT-ABORT; designs compared: IDBMIRROR-ABORT-JOURNAL, IDBMIRROR-ABORT-DESIGNS (`mem:measurements`).
 
@@ -41,6 +41,8 @@ Evidence: 6 tests red on master both builds both engines; 190 tests 3/3 on Chrom
 - rebuild the patch from #372's rebased head and #374's line only, through `pnpm patch` / `patch-commit` (`mem:stack-and-build/wa-sqlite`, § The patch);
 - compare `dist/` across the repin, and run the full matrix (a repin is one of its triggers, `mem:conventions`);
 - update `mem:stack-and-build/wa-sqlite`, `mem:state` and `mem:upstream` (#371 merged).
+
+**Repin done on 2026-10-10** (branch `build/repin-wa-sqlite-d09953e`): pin `d09953ee`, the patch rebuilt with #372's lines and #374's guard only (the carried file minus upstream's, identical to #372's own diff), memories and the reports in `docs/upstream/` updated. `dist/worker/worker.js` and the three `.wasm` byte-identical to the previous pin's build, and the matrix ran anyway, cheap since the parallel runs: **88 of 88 cells green, 952 s**; `tsc`, `biome ci` and `pnpm test` green (311 files, 2616 passed / 12 skipped). Not merged into `main` until the user approves the report. **Left: rebase #372 onto `master` and push it** — an outward action, on the user's go.
 
 ## wa-sqlite #372: `IDBMirrorVFS` broadcasts a commit that completes after close — opened 2026-10-03, carried
 
