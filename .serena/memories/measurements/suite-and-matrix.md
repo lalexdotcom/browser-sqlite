@@ -2,6 +2,17 @@
 
 Part of `mem:measurements`, which indexes every entry; its rules apply here.
 
+## MATRIX-VITEST — the first Vitest matrix and its parity with the rstest one, 2026-10-10, this container, Vitest 5.0.3, Chrome 153.0.8010.52, Firefox 155.0.1
+
+**Method.** The baseline is the rstest 0.11.8 + Playwright 1.64.0 (Chromium 156, Firefox 157) matrix taken before the migration, at `d2df419`: skip mode, 66 cells (22 pairs × chromium / firefox / isolated), each bounded at 600 s, a JSON report per cell, **66 of 66 green, 18 676 passed / 1 608 skipped, 32 min**. The Vitest side is `pnpm test:matrix` on the final tree: 88 cells (22 pairs × `chrome`, `firefox`, `isolated-chrome`, `isolated-firefox`), one `vitest run` per cell. Each baseline cell was compared with its Vitest cell as a multiset of (file, full test name, status).
+
+- **Parity.** All 66 baseline cells are **identical, name for name and status for status**. The 22 `isolated-firefox` cells are the new column (spec D8): 9 tests each, 198 in all, all passed.
+- **Totals: 88 of 88 cells green, 18 874 passed / 1 608 skipped, 6187 s (1 h 43)** — 18 676 + 198 passed, skipped unchanged. Per column: `chrome` 9 225 / 741, `firefox` 9 253 / 867, each isolated column 198 / 0. A cell takes 80-175 s on Chrome, 94-147 s on Firefox, 20-25 s isolated.
+- **Why it takes three times as long:** the WebdriverIO provider runs one file at a time (`supportsParallelism = false`) where rstest ran files in parallel pages, and there are 22 more cells. `pnpm test` took 513 s in one invocation (2586 passed / 12 skipped), against about 3 minutes for rstest's three legs.
+- **The first pass read 82 of 88.** The six `AccessHandlePoolVFS` cells were red, 113-127 failures each, on both engines, and parity broke only there. The first file of the cell, `lifecycle.test.ts`, failed 4 tests alone, deterministically (not load, not shared storage): Vitest runs `onTestFinished` hooks in reverse, so the cleanup of `createTestClient` ran while the test's broken `Worker` was still installed, and its `deleteDatabase` — a worker call on a VFS without a folder — failed; the slot stayed taken, and the six slots were gone a few files later ("unable to open database file" in every file after). Fixed by deleting through the browser's own `Worker`: the file then passed 10 of 10 alone.
+- **The second pass read 86 of 88.** Chrome `AccessHandlePoolVFS/sync` lost 13 tests and Firefox `AccessHandlePoolVFS/jspi` 2, all "unable to open database file" in the last files of the cell: other files leak slots too, and their count sits at the edge of six, so a cell tips on file order. A probe that creates databases one after the other without deleting them, until an open fails, read 2 free slots (4 leaked) after most files of the Chrome cell. The user then asked for an effective, VERIFIED cleanup at the end of each VFS and build instead of a hunt for the leakers: every browser project wipes the origin's OPFS and IndexedDB after each file and verifies both are empty (`tests/storage-wipe.ts`, `mem:stack-and-build`). Falsified: a scratch file leaving an open `createWritable()` and an open IndexedDB connection fails with the entries named, on Chrome and on Firefox.
+- **The third pass, on the final tree, is the 88 of 88 above.** The other nineteen pairs were green in the first pass already, and no cell was re-run inside a pass. The second pass ran only the three `AccessHandlePoolVFS` pairs.
+
 ## INSECURE-CONTEXT — the library on a page that is not a secure context, 2026-10-03, Playwright 1.62.1 Chromium + Firefox, this container
 
 **Method.** The built `dist/` and a page creating a client per VFS (`write` then `read`), plus `deleteDatabase` and `inspectDatabase`, served by one Node server on `0.0.0.0` and loaded twice: `http://127.0.0.1` (secure, control) and `http://192.168.215.5`, the container's own address (insecure: `isSecureContext` false, no `navigator.storage`, no `navigator.locks`, no `FileSystemSyncAccessHandle` in workers).
@@ -69,7 +80,6 @@ be less than 2000`. `sync` without isolation keeps its documented limitation;
 `interrupt.test.ts` pins it on purpose. **Firefox runs this recursive CTE four to five times
 slower than Chromium** — a bound calibrated on Chromium is a bound Firefox may not meet.
 
-\1
 
 ## MATRIX-TRIAGE — from 989 cell-failures to 62, 2026-09-15 to 18, this container
 
@@ -92,7 +102,7 @@ M-1 → M-2 is the per-cell redundancy removed when the five VFS-sweeping files 
 
 **The cleanup fix (`bbd0862`: `onTestFinished` + `close()` + `deleteDatabase` on the `opfs-pool` layout), each piece measured necessary** on `queries.test.ts` against `AccessHandlePoolVFS/sync`: 5/11 before · 5/11 with `onTestFinished` but no `deleteDatabase` · **11/11 with both**. `close()` alone cannot help — wa-sqlite's `jClose` flushes and drops the `fileId`, only `xDelete` frees a slot, and `DEFAULT_CAPACITY` is 6. At M-5 all nine `AccessHandlePoolVFS` cells were green, where only `chromium/sync` had been verified by hand, and the cleanup that no longer swallows created no failure on any cell.
 
-**A whole-matrix run is not the instrument for a pile.** Two of them (80 min) said only "99, unchanged"; one instrumented single-file run answered it. Reach for `BSQ_TEST_TARGETS=<pair> pnpm exec rstest --config <cfg> --project 'chromium*' run <one file>` first — ~25 s.
+**A whole-matrix run is not the instrument for a pile.** Two of them (80 min) said only "99, unchanged"; one instrumented single-file run answered it. Reach for `BSQ_TEST_TARGETS=<pair> BSQ_TEST_NEEDS=skip pnpm exec vitest run --configLoader runner --project 'chrome ·*' <one file>` first (rstest's equivalent took ~25 s).
 
 **M-5's one regression, `OPFSCoopSyncVFS` 7 → 8.** Both `sqlite3_open_v2` failures (`restarts the slot once`, `a worker killed silently`) were read as HANDLE-CORPSE on a path the fix does not cover — `AccessHandlePoolVFS` takes its directory at VFS **creation**, where `createVfsInstance` retries, while an `opfs-path` VFS takes the file's handle later at **xOpen**, inside `sqlite3_open_v2`. Fixed the same day, and the hypothesis was only half of it: the corpse starts it, but what made it permanent is the partial-acquisition leak (wa-sqlite #350, VFS-PILES), which is why a retry at `xOpen` was necessary and not sufficient. Closed by measurement on 2026-09-21: COOPSYNC-OPEN-CLOSED, `mem:measurements/opfs-handles`.
 

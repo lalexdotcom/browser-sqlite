@@ -70,7 +70,7 @@ failing test and the code that satisfies it belong to the same task.
 
 **The full verification at delivery is the agent's job, not the hooks' (user, 2026-09-11).**
 Before reporting a task, a branch or a session as done: `pnpm test` AND
-`pnpm exec tsc --noEmit`, all three reports read. The hooks are braces on the belt; a green
+`pnpm exec tsc --noEmit`, the report read. The hooks are braces on the belt; a green
 commit proves the unit project and nothing more.
 
 ## What every implementer prompt forbids (2026-09-11)
@@ -234,9 +234,7 @@ policy becomes applicable as written.
 
 ## When to run the full matrix (2026-09-22)
 
-`pnpm test:matrix` costs ~45 min and covers the 22 declared (vfs, build) pairs × 3 engine configs.
-`pnpm test` covers **two recommended pairs**, so the matrix is the only thing that sees the other
-twenty. Run it when the change can behave differently per pair:
+`pnpm test:matrix` covers the 22 declared (vfs, build) pairs × 4 columns (`chrome`, `firefox`, `isolated-chrome`, `isolated-firefox`) = 88 cells, and costs about 1 h 45 on Vitest (`mem:measurements/suite-and-matrix`, MATRIX-VITEST). `pnpm test` covers **two recommended pairs**, so the matrix is the only thing that sees the other twenty. Run it when the change can behave differently per pair:
 
 - **the per-connection machinery** — `src/pool.ts`, `src/transaction.ts`, `src/worker/`;
 - **a wa-sqlite repin or a change to `patches/`** — every VFS comes from there;
@@ -255,7 +253,7 @@ Not for documentation, memories, or a test change confined to what `pnpm test` a
 may be LOAD rather than a defect: re-run the cell alone before diagnosing — `tx-savepoint`'s T4 went
 0/3 alone against 2/4 in the full cell. And the cause may be a test you just added: a matrix cell is
 one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.ts` regroups any
-`.matrix/<run>/`.
+`.matrix/<run>/`. **A run of the whole matrix is the only place a test that leaks storage shows up** (2026-10-10): the browser profile is shared by the files of a run, so a cleanup that fails in one file reddens the files after it, and a pair's whole cell can go red from one early file. Run the first failing file alone before reading the pile.
 
 ## Working with the user
 
@@ -385,7 +383,7 @@ Stated for wa-sqlite's suite (Discussion #373), and explicitly meant for the lib
   - the WASM built once and shared by every job;
   - an iOS simulator version is a workflow input that defaults to the newest stable runtime on the image, chosen semver-style (`26.6` → the newest installed `26.6.x`).
 - **A test skipped for a browser's defect is skipped in the test itself,** with `pending()` and its reason, keyed on the browser version when no capability can detect the defect. The skip then shows in every run's output, and it protects a developer's local run as well as CI. Skipping by capability stays the rule otherwise.
-- **The framework follows from the above.** For wa-sqlite, keep `@web/test-runner`, which does all of it. For the library, rstest offers no WebDriver, so Vitest with WebdriverIO — spiked green on 2026-10-09; the decisions taken with the user that day (test the rslib build, one bundle per test, the pins) are in `mem:follow-ups`.
+- **The framework follows from the above.** For wa-sqlite, keep `@web/test-runner`, which does all of it. For the library, rstest offered no WebDriver, so the suite moved to Vitest with WebdriverIO on 2026-10-10; the decisions (test the rslib build, one bundle per test, the pins) are in `docs/superpowers/specs/2026-10-10-vitest-webdriverio-design.md`, the setup in `mem:stack-and-build`.
 - **Pin a browser pair of one age (user, 2026-10-09).** Chrome a few majors behind the newest, and the Firefox release that was current on that Chrome's stable date — distance from the newest, and two browsers of one age. Safari is whatever the OS ships.
 
 ## Working rules carried over from Claude's auto-memory (2026-10-07)
