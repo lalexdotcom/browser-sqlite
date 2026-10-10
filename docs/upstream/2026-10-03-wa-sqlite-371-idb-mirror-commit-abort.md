@@ -110,8 +110,12 @@ Sent as `874303eb` on 2026-10-09 with [comment 6076926505](https://github.com/rh
 
 He asked for it on 2026-10-10. `cb97deed` wraps the write body and calls `idbTx.abort()` before rethrowing. The file's 190 tests pass on both engines. It was pushed and answered "Done 😉" (user's wording), and he replied "Thanks! LGTM." the same day. Upstream CI is green on both commits: [run 37902296087](https://github.com/rhashimoto/wa-sqlite/actions/runs/37902296087) on `874303eb`, [run 38065396129](https://github.com/rhashimoto/wa-sqlite/actions/runs/38065396129) on `cb97deed`.
 
+## Merged
+
+**Merged on 2026-10-10** by rhashimoto, as `d09953ee` on `master`, its `IDBMirrorVFS.js` byte for byte the head `cb97deed`. It left [`patches/`](../../patches) at the repin of 2026-10-10 to `d09953ee`; the built worker is byte-identical across that repin.
+
 ## What stays ours
 
-- **The carry.** [`patches/`](../../patches) carries `IDBMirrorVFS.js` at this PR's head `cb97deed` since 2026-10-10 (`3367cb65` before), merged with #372, whose `jClose` it conflicts with.
+- **The carry.** None since the repin to `d09953ee`. Until then [`patches/`](../../patches) carried `IDBMirrorVFS.js` at this PR's head (`3367cb65`, then `cb97deed` from 2026-10-10), merged with #372.
 - **The broadcast on a closed channel.** A separate defect, a possible separate PR.
 - **The probes.** Throwaway, kept outside git; the numbers are in `mem:measurements` (IDBMIRROR-COMMIT-ABORT, IDBMIRROR-ABORT-JOURNAL, IDBMIRROR-ABORT-DESIGNS).

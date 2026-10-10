@@ -73,9 +73,12 @@ PR [#372][pr372], opened 2026-10-03 from `lalexdotcom:fix/idb-mirror-close-broad
 
 ## Carried with #371
 
-The patch carries `IDBMirrorVFS.js` as #371's head `3367cb65` plus #372. The two conflict in `jClose` only; the resolution waits for the commits in flight first, then removes the journal of an aborted view, so that a commit that aborts during the wait is seen. Both PRs' tests run together on the merged file: 226 of 226, 3 of 3, Chromium and Firefox. The installed `src/` equals that file on the pin; `dist/` is the pin's.
+From 2026-10-03 the patch carried `IDBMirrorVFS.js` as #371's head (`3367cb65`, then `cb97deed` from 2026-10-10) plus #372. The two conflict in `jClose` only; the resolution waits for the commits in flight first, then removes the journal of an aborted view, so that a commit that aborts during the wait is seen. Both PRs' tests run together on the merged file: 226 of 226, 3 of 3, Chromium and Firefox. The installed `src/` equals that file on the pin; `dist/` is the pin's.
+
+#371 merged on 2026-10-10 as `d09953ee`, byte for byte `cb97deed`. Since the repin to it, the patch carries #372 alone on `IDBMirrorVFS.js`: the same lines, `jClose` resolved the same way.
 
 ## What stays ours
 
-- **The carry.** Until #371 and #372 merge; the second to merge gets the rebase.
+- **The carry.** Until #372 merges.
+- **The rebase.** #371 merged first, so #372 is to be rebased onto `master`; not done yet.
 - **The probes.** Throwaway, kept outside git; the numbers are in `mem:measurements` (IDBMIRROR-CLOSE-BROADCAST).
