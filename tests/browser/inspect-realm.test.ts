@@ -1,8 +1,10 @@
-import { describe, expect, it, onTestFinished } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
-import { deleteDatabase } from '../../src/delete';
-import { resolveRealmId } from '../../src/inspect';
-import { createLocks } from '../../src/locks';
+import {
+  createLocks,
+  createSQLiteClient,
+  deleteDatabase,
+  resolveRealmId,
+} from 'browser-sqlite/testing';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { pairFor } from './helpers';
 
 // resolveRealmId reads Web Lock entries generically — nothing here is

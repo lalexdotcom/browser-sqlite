@@ -1,4 +1,4 @@
-import { describe, expect, it, rstest } from '@rstest/core';
+import { describe, expect, it, vi } from 'vitest';
 import type { SQLiteSavepoint, SQLiteTransactionDB } from '../../src/api';
 import { createTransaction } from '../../src/transaction';
 import { SQLiteError } from '../../src/types/errors';
@@ -1121,7 +1121,7 @@ describe('transaction — the statement queue advisory', () => {
    * Falsifiable: raise `QUEUE_WARN_MS` in src/transaction.ts and this goes red.
    */
   it('warns once a statement has waited its turn for several seconds', async () => {
-    rstest.useFakeTimers();
+    vi.useFakeTimers();
     try {
       const gate = Promise.withResolvers<void>();
       const worker = fakeWorker([], { 'SELECT slow': () => gate.promise });
@@ -1132,7 +1132,7 @@ describe('transaction — the statement queue advisory', () => {
         const first = tx.read('SELECT slow');
         const queued = tx.read('SELECT 1');
 
-        await rstest.advanceTimersByTimeAsync(5_000);
+        await vi.advanceTimersByTimeAsync(5_000);
         expect(warnings.some((w) => w.includes('waited several seconds'))).toBe(
           true,
         );
@@ -1144,7 +1144,7 @@ describe('transaction — the statement queue advisory', () => {
         await Promise.all([first, queued]);
       });
     } finally {
-      rstest.useRealTimers();
+      vi.useRealTimers();
     }
   });
 });

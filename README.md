@@ -120,7 +120,7 @@ A database that any client still holds cannot be deleted, in this tab or another
 ```bash
 pnpm install
 pnpm build          # rslib → dist/
-pnpm test           # unit (Node) + browser (Playwright: Chromium, Firefox)
+pnpm test           # unit (Node) + browser (Vitest on WebdriverIO: Chrome, Firefox)
 pnpm check          # biome, with --write
 ```
 
@@ -143,4 +143,4 @@ pnpm bench:build    # assemble _site/ only
 
 `http://127.0.0.1` is a secure context, so OPFS works with no certificate — no TLS setup is needed to develop against it. A phone on the LAN is a different matter: it is not a secure context, so browsers withhold OPFS and the Web Locks API there, and only `MemoryVFS` and `MemoryAsyncVFS` run. A tunnel (or the published page) is the way to test a real device.
 
-`node scripts/bench/check.ts [chromium|firefox] [--all]` drives the page under Playwright and asserts that it still works — it is run by hand and deliberately not wired into CI. It checks the *page*, never that a VFS passes: a red cell can be a correct report about the engine you are on.
+`node scripts/bench/check.ts [chrome|firefox] [--all]` drives the page under WebdriverIO and asserts that it still works — it is run by hand and deliberately not wired into CI. It checks the *page*, never that a VFS passes: a red cell can be a correct report about the engine you are on.

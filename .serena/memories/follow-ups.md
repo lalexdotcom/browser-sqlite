@@ -24,7 +24,7 @@ In `mem:follow-ups/wa-step`: the scope the user set, what each solution (library
 
 `tests/browser/multi-client.test.ts` :: "two clients writing at once > interleaves a bulkWrite with another client, refusing neither" failed once in the `feat/binary-protocol` matrix: client A read 0 of B's first 2 047-row batch over its 5 s of polling (`expected +0 to be 2047`, test 10.9 s). Replays the same afternoon: the test alone 10/10 on the branch and on `main`; the file under 16 busy loops 15/15 each; the full cell on the branch 1 failure in 5 then 0 in 15 (and 0 in 12 with `debug: true` and a diagnostic of B's `close()` and A's late count), on `main` 0 in 20. Another session's Firefox was loading the machine during the failing runs. Left by the user's decision ("on ignore et on enchaîne, et on consigne"). At the next sighting: rerun the cell with the diagnostic (B's `writer.close()` outcome — a failed batch against a slow one — and A's count after it), and compare with `main` at the same load.
 
-## wa-sqlite #371: `IDBMirrorVFS` commit-abort — OPENED 2026-10-03, waiting on rhashimoto
+## wa-sqlite #371: `IDBMirrorVFS` commit-abort — MERGED 2026-10-10 as `d09953ee`; repin owed
 
 Offered on #363; rhashimoto: "Yes, please, if you're up for that." Defect: IDBMIRROR-COMMIT-ABORT; designs compared: IDBMIRROR-ABORT-JOURNAL, IDBMIRROR-ABORT-DESIGNS (`mem:measurements`).
 
@@ -33,6 +33,14 @@ Offered on #363; rhashimoto: "Yes, please, if you're up for that." Defect: IDBMI
 What the fix does, each part with a test that fails without it (ablation, both engines): writes never fail (a failing batch write makes SQLite fall back to a journal that is later played back); `#commitTx` refuses a transaction built on an aborted view; a gate request (only while another commit is pending) drops commits queued behind the aborted one, since `abort()` throws after `commit()`; reload from IndexedDB at the next SHARED and in the `full` error path (`#loadFile` extracted from `jOpen`); `SQLITE_BUSY` at RESERVED while aborted (transparent with a busy timeout); the journal removed on `jClose` of an aborted file (else reopen stores the aborted rows, 12/12). Dropped after ablation showed no effect: a second check after `#commitTx`'s await, journal removal on reload, a guard in `#processBroadcasts`. Known limit: exclusive `normal` fails commits until reopen.
 
 Evidence: 6 tests red on master both builds both engines; 190 tests 3/3 on Chromium and Firefox; suite 6274 passed; 168-probe matrix clean; perf = master within variation (9 interleaved runs). The test worker waits for pending commits before closing because closing first throws `InvalidStateError` from the broadcast — a separate defect, on master too, sent as #372 (entry below). **Body corrected 2026-10-03 (user):** the cost sentence now says commits confirmed before the connection learns of the abort are lost only in exclusive mode. **Revised the same day on the user's go: `3367cb65` reloads the view at the refusal unless a journal exists (IDBMIRROR-ABORT-RELOAD-ON-REFUSAL), so exclusive `normal` recovers after one `IOERR`; test adjusted (exclusive `normal` continues without reopen), body updated, comment 5971457674 posted; CI green (run 37139391822).** Carried in `patches/` since the repin to `7fcc30df`, merged with #372 since 2026-10-03 (`mem:stack-and-build`). Upstream CI green (runs 37137339446, 37139391822). What each answer calls for: changes → same worktree `.work/wa-sqlite-mirror-abort`, rerun the falsifiers, then rebuild the patch from both heads (the `jClose` conflict with #372 resolved as there); merge → repin.
+
+**Review (changes requested), then two commits.** `874303eb` did what he asked: `commitsPending` declared with the other `File` properties, a TODO in `#loadFile` (batch `getAll()` instead of a cursor), and `#commitTx` made sequential (an `async` executor, the fence `await`ed only while other commits are pending, the write body inline). Our reply noted that the write body, no longer inside a request event handler, would not abort the transaction if it threw; he asked for the `try`/`catch`. **`cb97deed` (2026-10-10)** wraps the write body and calls `idbTx.abort()` in the `catch`: the file's 190 tests green on Chromium and Firefox (Playwright, one run each), pushed, and answered "Done 😉" (the user's wording). **The patch carries `cb97deed` since the same day**, merged with #372 (`mem:stack-and-build/wa-sqlite`). The report in `docs/upstream/` records the review commits since 2026-10-10.
+
+**Merged 2026-10-10** (rhashimoto: "Thanks! LGTM.", then merged at 17:02 UTC as `d09953ee`, upstream `master`'s head that evening). **Follow-up — repin wa-sqlite to upstream `master` (user, 2026-10-10)**, at `d09953ee` or later:
+- rebase #372 (`.work/wa-sqlite-close-broadcast`) onto the new `master`, the `jClose` conflict resolved as in the patch (wait for the commits in flight, then remove an aborted view's journal), rerun `test/IDBMirrorVFS.test.js` on both engines, push, and tell the maintainer in a line on #372;
+- rebuild the patch from #372's rebased head and #374's line only, through `pnpm patch` / `patch-commit` (`mem:stack-and-build/wa-sqlite`, § The patch);
+- compare `dist/` across the repin, and run the full matrix (a repin is one of its triggers, `mem:conventions`);
+- update `mem:stack-and-build/wa-sqlite`, `mem:state` and `mem:upstream` (#371 merged).
 
 ## wa-sqlite #372: `IDBMirrorVFS` broadcasts a commit that completes after close — opened 2026-10-03, carried
 
@@ -43,6 +51,8 @@ With `synchronous=normal`, closing right after a commit made `oncomplete` post o
 ## wa-sqlite's suite on stock browsers — revised proposal posted, waiting on rhashimoto (Discussion #373, 2026-10-08)
 
 **Where it stands.** On the user's go, a top-level comment was posted on rhashimoto/wa-sqlite#373 on 2026-10-08 (discussioncomment-18824045). It revises the plan he had validated, after two days of measurements on the fork (`mem:measurements/test-browsers`). **Nothing is started on the PR until he answers.** The user's principles behind it are in `mem:conventions` (§ Testing in browsers).
+
+**2026-10-10: he questioned it, and was answered the same day.** He was not convinced that Playwright's browsers fall short for tests of storage, Web Locks and `BroadcastChannel`, asked for cases where Chrome or Safari differ from Playwright's builds, and whether WebDriver is slower than Playwright, and by how much. Answered on the user's go (discussioncomment-18853671), with no new measurement — the user: WebKit and Firefox are justified enough, and uniformity is the reason for Chrome. Chromium: no difference seen, WebDriver for one launcher and one configuration, versions pinnable there too (only Safari follows macOS). WebKit: Playwright's trunk build already has WebKit 324094's fix while Safari 27.0.1 does not; the DataView race shows on Safari 26 only; OPFS depends on Playwright's version and context. Firefox: the Juggler build's `await` cost (FF-PW-AWAIT). Speed: the two launchers not timed against each other; the driver mostly opens pages; the whole suite on stock Chrome through WebDriver takes 2-3 min on Linux runners. **For upstream the runner stays `@web/test-runner`; Vitest is the library's** — the two were mixed up once in drafting (user, 2026-10-10). **Waiting on him again; nothing started on the PR.**
 
 **What the comment proposes:**
 - **Stock browsers through WebDriver** (`@web/test-runner-webdriver`), Playwright dropped, which revisits his answer 1 (Playwright's bundled Chromium). The reason given: test what users run; patched builds are noise.
@@ -80,6 +90,8 @@ Before opening it, measure reliability: about 10 runs per environment, through `
 - **2026-10-05:** we measured WebKit's OPFS in a persistent context and proposed WebKit; he asked for all three browsers by default, with an environment variable to restrict to one.
 - **2026-10-06:** design questions (discussioncomment-18773230). He answered: Playwright's Chromium, `WTR_BROWSERS`, drop the pre-build pass, both skips, `create()` rejecting, `destroy()` closing the VFS, one PR.
 - **2026-10-07:** confirmed (discussioncomment-18791734).
+- **2026-10-08:** revised proposal, stock browsers through WebDriver (discussioncomment-18824045).
+- **2026-10-10:** his questions on Playwright's browsers and WebDriver's speed; answered the same day (discussioncomment-18853671).
 
 The Firefox findings that started it (WA-FIREFOX-SQL-HANG): `vfs_read_freshness` and `sql_0005` on `OPFSWriteAheadVFS` assume two connections, which Firefox without `readwrite-unsafe` refuses. Three harness traits then turn that failed open into a hang:
 - `sql_0005` registered a worker's cleanup only after its open, so the failed worker was never destroyed;
@@ -88,38 +100,18 @@ The Firefox findings that started it (WA-FIREFOX-SQL-HANG): `vfs_read_freshness`
 
 Jasmine's random order decides whether a resetting spec follows the failure. None of this is a VFS defect, and none of it reaches the library.
 
-## The library's tests on stock browsers — Vitest + WebdriverIO to probe (user, 2026-10-08)
+## The library's tests on stock browsers — what stays open after the Vitest + WebdriverIO migration (user, 2026-10-10)
 
-**The user's direction** (`mem:conventions`, § Testing in browsers): the library's browser tests should also run on stock browsers, Safari and iOS through GitHub's macOS images. rstest has no WebDriver and is pre-1.0, and reusing the rslib config does not make up for that. Testing the rslib-built `dist/` is worth considering. **Parked by the user the same day, to finish wa-sqlite first.**
-
-**The candidate is Vitest's browser mode with `@vitest/browser-webdriverio`.** Read on 2026-10-08:
-- Vitest 5.0.3 is current.
-- **Since Vitest 5 the WebdriverIO provider is community-maintained** (`vitest-community/vitest-webdriverio`, created 2026-06, 5 stars); the Playwright provider is the core one.
-- It declares Chrome, Firefox, Edge and Safari, with `supportsParallelism = false` and no headless Safari.
-- It runs the tests **inside an iframe of an orchestrator page**: OPFS, workers and IndexedDB there are unverified.
-- iOS is not a declared browser.
-
-**Before deciding:** probe a handful of the library's tests (OPFS, workers, IndexedDB) on Chrome, Firefox and Safari, on Linux, Windows and macOS. Its own branch.
-
-**Also owed by that direction:**
-- The devcontainer needs a local Chrome. **Google ships Chrome for Linux arm64 since 153 (read 2026-10-09):** Chrome for Testing has `linux-arm64` chrome and chromedriver from `153.0.8001.0` on (98 versions, majors 153-157, all four channels), and Google's apt repository serves `binary-arm64` for `google-chrome-stable`, `-beta`, `-unstable` and `-canary`. Debian's `chromium`/`chromium-driver` (154 on trixie) is no longer the only option.
-- **An unmeasured exposure:** the library's `IDBMirrorVFS` with several connections on Safari 26 may stall the way wa-sqlite's `sql_0005` does (SAFARI26-IDBMIRROR-KILL).
+Delivered on 2026-10-10; the decisions (D1-D11), the order and the risks are in `docs/superpowers/specs/2026-10-10-vitest-webdriverio-design.md`, the setup in `mem:stack-and-build` (§ Test suites), the numbers in `mem:measurements/suite-and-matrix`. Open:
+- **The rebuild after delivery is the user's check:** on a fresh container, `post-create.sh` must end with `node scripts/browsers.ts install` printing two `ok`, and `pnpm test` must be green. Its `deps` step (the browsers' apt packages) was only simulated with `apt-get -s`.
+- **CI is verified only when the user pushes the branch** (cache of `node_modules/.cache/wdio` keyed on `scripts/browsers.ts`, the bumped actions).
+- **The next piece of work:** Windows and macOS runners, Safari and the iOS simulator, per-platform triggers, the WASM built once and shared (`mem:conventions`, § Testing in browsers).
+- **Parallelism:** the WebdriverIO provider runs a project's files one at a time (D11); whether and how to run them in parallel is decided from the measured durations.
+- **Unmeasured, needs Safari:** the library's `IDBMirrorVFS` with several connections on Safari 26 may stall the way wa-sqlite's `sql_0005` does (SAFARI26-IDBMIRROR-KILL).
 
 ## wa-sqlite #362: `OPFSCoopSyncVFS.create()` fails after a back/forward-cache navigation — PR not decided
 
 Open issue by jwaltz, 2026-09-25, no PR: `OPFSCoopSyncVFS.create()` fails with `NoModificationAllowedError` after a back/forward-cache navigation — the `.ahp-*` sweep in `#initialize()` gets the lock while the cached page's worker still holds its temp handles, and `removeEntry` throws; only `NotFoundError` is tolerated there, since our #347. An immediate retry succeeds; his suggested fix (try/catch around the sweep's `removeEntry`) gave 0/48. The library masks it: `createVfsInstance` retries `create()` on `NoModificationAllowedError`. With the real navigation on Chromium, wa-sqlite alone fails its first open 18 times of 18 and the library's succeeds 18 of 18, ~85 ms later than without a cached page (LEAK-LIB, `mem:measurements`). A PR for #362 was proposed to the user, not decided.
-
-## rstest: browser mode cannot open a persistent context — issue/PR to send upstream (user, 2026-10-05)
-
-**Lower priority since 2026-10-08:** the user's direction for the library's tests is stock browsers through WebDriver, which rstest does not offer (entry "The library's tests on stock browsers" above). This issue matters only if the library stays on rstest.
-
-`@rstest/browser` creates every context with `browser.newContext()`, an ephemeral one, hard-coded in `launchPlaywrightBrowser` (0.11.8, ours, and 0.12.3, latest on 2026-10-05). `browser.providerOptions` ([web-infra-dev/rstest#1041](https://github.com/web-infra-dev/rstest/pull/1041)) only passes `launch` to `browserType.launch()` and `context` to `newContext()`'s options: the context's nature cannot be changed. Searched 2026-10-05 (issues, PRs, discussions: persistent, `launchPersistentContext`, `userDataDir`, OPFS, incognito, `newContext`): nothing upstream raises it; [#1799](https://github.com/web-infra-dev/rstest/pull/1799)'s `contextOptions` is the Node-side `@rstest/playwright`, browser mode untouched.
-
-Two measured costs to put in the issue:
-- **WebKit has no OPFS in an ephemeral context.** Playwright's docs: "OPFS is currently not supported in ephemeral WebKit contexts". Probed on GitHub Actions (ubuntu, 2026-10-05, a dedicated worker on `http://localhost`): Playwright 1.63.0 (WebKit 26.6) ephemeral → `getDirectory()` rejects `UnknownError`; persistent → `getDirectory()`, `createSyncAccessHandle` write/read and `createWritable` all work. 1.62.1 (WebKit 26.5, our pin) has no `navigator.storage` in either context — the August finding behind dropping WebKit was the version, not the Linux port; the fix is microsoft/playwright#41984 (WebKit r2339, shipped in 1.63.0).
-- **Chromium's ephemeral OPFS costs ~250× per call** (RSTEST-OTR, `mem:measurements/suite-and-matrix`).
-
-What to send: an issue proposing an opt-in persistent context for the Playwright provider (e.g. `providerOptions.persistentContext`, one fresh temporary profile per context through `browserType.launchPersistentContext`), with both measurements and a minimal reproduction; offer the PR. Outward-facing: waits for the user's go. Until it lands, a `pnpm patch` of `@rstest/browser` doing the same is what a WebKit project of our own would need (the WebKit-in-our-tests idea of 2026-10-05: Playwright 1.63+, WebKit installed with `PLAYWRIGHT_SKIP_BROWSER_GC=1` so the other revisions survive, persistent context for WebKit first).
 
 ## Designs owed — ideas, not scheduled work (user, 2026-09-03)
 

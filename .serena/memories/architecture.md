@@ -23,21 +23,9 @@ not exist yet; create it only when something needs it.
 **The shared glob is NON-recursive, and that is load-bearing.** `tests/browser/**` would make
 each project pick up the other's directory, which is the whole thing the layout prevents.
 
-**Two config files, and NOT by preference.** `rstest.config.ts` carries `unit` + `chromium`;
-`rstest.firefox.config.ts` carries `firefox`. rstest 0.11.8 **refuses two browser-enabled
-projects with different engines in one run** — *"All browser-enabled projects in one run must
-share provider/browser/headless/providerOptions"* — so putting both in one `projects` array
-makes `pnpm test` fail before it runs anything. Verified, not deduced. The `test` script
-chains the two configs, so one command still covers both engines.
+**One `vitest.config.ts` declares every project** (`mem:stack-and-build`, § Test suites): `unit`, one `chrome · …` and one `firefox · …` project per target, their `isolated` twins, and `conformance chrome` / `conformance firefox`. Until 2026-10-10 each engine had a config file of its own, because rstest 0.11.8 refused two browser-enabled projects with different engines in one run; `pnpm test` now covers both engines in one invocation and prints one report. The old chain had a trap: an `&&` stopped at the first red config, so a Chromium failure silenced Firefox and read as green.
 
-This replaced `TEST_BROWSER`, a single project whose engine came from the environment. Under
-it a local `pnpm test` covered Chromium while CI covered both, which is precisely how a
-Firefox-only failure reaches someone late. **`pnpm test` now prints TWO reports** — read both.
-
-**Conformance got the same treatment the same day**, in `rstest.conformance.config.ts` +
-`rstest.conformance.firefox.config.ts`, chained by `pnpm test:conformance`. No per-engine
-directory there and there should not be one: the value of that suite is the SAME invariants on
-both engines — a VFS sound on one and broken on the other is how HANDLE-1 was found.
+**Conformance has no per-engine directory and there should not be one:** the value of that suite is the SAME invariants on both engines — a VFS sound on one and broken on the other is how HANDLE-1 was found.
 
 ## Public surface
 

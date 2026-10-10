@@ -1,5 +1,5 @@
-import { describe, expect, it, onTestFinished } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
+import { createSQLiteClient } from 'browser-sqlite';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { BARRIER_SQL } from '../../src/epochs';
 import { HAS_UNSAFE_HANDLES } from '../conformance/helpers';
 import { createTestClient, removeDatabaseFiles } from './helpers';

@@ -1,21 +1,21 @@
 #!/usr/bin/env node
 /**
  * `pnpm test:matrix` — runs the browser suite on every declared (vfs, build)
- * pair, on every engine column, sequentially, and prints a pair × engine
- * table (spec 2026-09-15, A5 §12).
+ * pair, on every column, and prints a pair × column table
+ * (spec 2026-09-15, A5 §12).
  *
- * Columns are the three rstest configs that follow a target
- * (`tests/target-projects.ts`): `rstest.config.ts` (Chromium — run with
- * `--project 'chromium*'`, since rstest's project filter is anchored and the
- * config also declares the non-target `unit` project), `rstest.firefox.config.ts`
- * and `rstest.isolated.config.ts` (cross-origin isolated Chromium).
+ * A column is a family of Vitest projects that follow a target
+ * (`vitest.config.ts`): `chrome`, `firefox`, `isolated-chrome` (cross-origin
+ * isolated) and `isolated-firefox`, each selected by a `--project` glob.
  *
- * Each cell is one `pnpm exec rstest --config <cfg> run` with
- * `BSQ_TEST_TARGETS=<vfs>/<build>` in the environment, which makes that config
- * build exactly one project for that pair, and `BSQ_TEST_NEEDS=skip`, so that
- * every test the cell reports ran on that pair. Raw output is kept under
- * `.matrix/<run>/<engine>-<vfs>-<build>.txt` (gitignored) for later reading;
- * the table only shows the parsed summary.
+ * Cells run through a pool of `BSQ_TEST_JOBS` processes at once (see
+ * `scripts/parallel.ts`; each Vitest process has its own browser sessions),
+ * after tests/build/ is built once. Each cell is one `pnpm exec vitest run`
+ * with `BSQ_TEST_TARGETS=<vfs>/<build>` in the environment, which makes the config declare exactly one project per
+ * column for that pair, and `BSQ_TEST_NEEDS=skip`, so that every test the cell
+ * reports ran on that pair. A cell leaves `<column>__<vfs>__<build>.json`
+ * (Vitest's JSON report, which the table is parsed from) and `.log` (the
+ * console) under `.matrix/<run>/` (gitignored).
  *
  * A run is bounded by a timer this script owns (`child_process.spawn` plus a
  * `setTimeout` that kills the whole process group), not by the shell `timeout`
@@ -24,16 +24,21 @@
  * a machine without it. A run this bound kills is reported as "timed out",
  * never as a hang.
  */
-import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { type SQLiteVFS, VFS_CAPABILITIES } from '../src/const/vfs.ts';
+import {
+  buildOnce,
+  killLiveOnSignal,
+  ROOT,
+  resolveConcurrency,
+  runBounded,
+  runPool,
+} from './parallel.ts';
 
-const ROOT = fileURLToPath(new URL('..', import.meta.url));
-
-/** One column of the matrix: which config to run and how to select it. */
-type Engine = { name: string; config: string; extraArgs: string[] };
+/** One column of the matrix: the `--project` glob that selects its projects. */
+type Column = { name: string; args: string[] };
 type Pair = { vfs: string; build: string };
 
 export type MatrixResult =
@@ -45,31 +50,21 @@ export type MatrixResult =
       readonly skipped: number;
       readonly files: number;
       readonly seconds: number;
-      /** The report's unhandled errors, paths relative to its `cwd`; absent when none. */
+      /** Files that failed with no failed test, `path: reason`; absent when none. */
       readonly unhandled?: readonly string[];
     }
   | { readonly status: 'not-runnable'; readonly seconds: number }
   | { readonly status: 'timed-out' }
   | { readonly status: 'error'; readonly message: string };
 
-/** What `runBounded` resolves with — never rejects, so every outcome round-trips through here. */
-export type BoundedResult = {
-  readonly output: string;
-  readonly timedOut: boolean;
-  readonly error: (Error & { readonly code?: string }) | null;
-};
-
-const ENGINES: Engine[] = [
-  {
-    name: 'chromium',
-    config: 'rstest.config.ts',
-    extraArgs: ['--project', 'chromium*'],
-  },
-  { name: 'firefox', config: 'rstest.firefox.config.ts', extraArgs: [] },
-  { name: 'isolated', config: 'rstest.isolated.config.ts', extraArgs: [] },
+export const COLUMNS: Column[] = [
+  { name: 'chrome', args: ['--project', 'chrome ·*'] },
+  { name: 'firefox', args: ['--project', 'firefox ·*'] },
+  { name: 'isolated-chrome', args: ['--project', 'isolated chrome ·*'] },
+  { name: 'isolated-firefox', args: ['--project', 'isolated firefox ·*'] },
 ];
 
-/** Matches Task 10's brief: `timeout 600` per run, owned in-process instead. */
+/** Each cell is bounded at 600 s by a timer this script owns. */
 const RUN_TIMEOUT_MS = 600_000;
 
 /** Enough of a failing run's tail to name the cause; short enough to read in a job log. */
@@ -82,92 +77,81 @@ export const allPairs = (): Pair[] =>
   );
 
 /**
- * Parses one rstest 0.11.8 markdown report into a matrix cell.
- *
- * rstest prints a `## Summary` section holding a fenced ```json block first
- * — `status`, `counts` and `durationMs.total` — followed by a `## Failures`
- * section listing each failure's `errors[].message`, then `## Unhandled
- * Errors` when something failed outside a test. This function reads those,
- * and the header's `cwd` to make their paths relative, and nothing else.
- *
- * - No ```json block at all: the run never got to print a report — killed by
- *   this script's own timer, or crashed before finishing a build. Reported
- *   `timed-out`, since a genuinely killed run is exactly what looks like this.
- * - A failing summary whose failures are ALL `TARGET_NOT_RUNNABLE` (thrown by
- *   `createTestClient` when the target lacks a feature this browser doesn't
- *   have): `not-runnable`, not a failure — this browser was never able to run
- *   the pair.
- * - Anything else failing: `failed`, even where some failures are
- *   `TARGET_NOT_RUNNABLE` and others are not — a mix means a real failure is
- *   present, and `not-runnable` must never hide one.
- * - Otherwise: `passed`.
- *
- * @param output combined stdout+stderr of one rstest run.
+ * Reads one Vitest JSON report (`--reporter=json --outputFile`) into a matrix
+ * cell. No report, or one that does not parse: the run never finished —
+ * killed by this script's timer or crashed first — so `timed-out`. Failures
+ * that are ALL `TARGET_NOT_RUNNABLE`: `not-runnable`, never hiding a real one.
+ * A file that failed with no failed test (a page crash) carries its reason in
+ * `message`: reported in `unhandled`, so the cell reads FAIL with that reason.
  */
-export function parseMatrixReport(output: string): MatrixResult {
-  const summaryMatch = output.match(/```json\n([\s\S]*?)\n```/);
-  if (!summaryMatch) {
+export function parseMatrixReport(json: string): MatrixResult {
+  let report: VitestReport;
+  try {
+    report = JSON.parse(json);
+  } catch {
     return { status: 'timed-out' };
   }
-  const summary = JSON.parse(summaryMatch[1]);
-  const seconds = Math.round(summary.durationMs.total / 1000);
-
-  if (summary.status === 'fail') {
-    const failuresIndex = output.indexOf('## Failures');
-    const failuresSection =
-      failuresIndex === -1 ? '' : output.slice(failuresIndex);
-    const messages = [
-      ...failuresSection.matchAll(/"message":\s*"((?:\\.|[^"\\])*)"/g),
-    ].map((m): string => JSON.parse(`"${m[1]}"`));
-    if (
-      messages.length > 0 &&
-      messages.every((m) => m.startsWith('TARGET_NOT_RUNNABLE'))
-    ) {
-      return { status: 'not-runnable', seconds };
-    }
+  if (!Array.isArray(report?.testResults)) return { status: 'timed-out' };
+  const tests = report.testResults.flatMap((f) => f.assertionResults);
+  const failures = tests.filter((t) => t.status === 'failed');
+  const end = Math.max(
+    report.startTime,
+    ...report.testResults.map((f) => f.endTime),
+  );
+  const seconds = Math.round((end - report.startTime) / 1000);
+  const messages = failures.flatMap((t) => t.failureMessages);
+  const unhandled = report.testResults
+    .filter((f) => f.status === 'failed' && f.message)
+    .map((f) => `${relative(ROOT, f.name)}: ${f.message}`);
+  // A file-level failure is never hidden behind not-runnable tests.
+  if (
+    unhandled.length === 0 &&
+    messages.length > 0 &&
+    messages.every((m) => m.startsWith('TARGET_NOT_RUNNABLE'))
+  ) {
+    return { status: 'not-runnable', seconds };
   }
-
-  // A crashed page fails the run with no failed test: the reason is only here.
-  const cwd = output.match(/"cwd":"([^"]*)"/)?.[1];
-  const unhandledIndex = output.indexOf('## Unhandled Errors');
-  const unhandled =
-    unhandledIndex === -1
-      ? []
-      : [
-          ...output
-            .slice(unhandledIndex)
-            .matchAll(/"message":\s*"((?:\\.|[^"\\])*)"/g),
-        ].map((m) => {
-          const message: string = JSON.parse(`"${m[1]}"`);
-          return cwd ? message.replaceAll(`${cwd}/`, '') : message;
-        });
-
   return {
-    status: summary.status === 'pass' ? 'passed' : 'failed',
-    tests: summary.counts.tests,
-    passed: summary.counts.passedTests,
-    failed: summary.counts.failedTests,
-    skipped: summary.counts.skippedTests,
-    files: summary.counts.testFiles,
+    status: report.success ? 'passed' : 'failed',
+    tests: tests.length,
+    passed: tests.filter((t) => t.status === 'passed').length,
+    failed: failures.length,
+    skipped: tests.filter(
+      (t) =>
+        t.status === 'skipped' || t.status === 'pending' || t.status === 'todo',
+    ).length,
+    files: report.testResults.length,
     seconds,
     ...(unhandled.length > 0 ? { unhandled } : {}),
   };
 }
 
-/** `--engine <name>` (repeatable) and `--pair <vfs>/<build>` (repeatable). */
+type VitestReport = {
+  success: boolean;
+  startTime: number;
+  testResults: {
+    name: string;
+    status: string;
+    message: string;
+    endTime: number;
+    assertionResults: { status: string; failureMessages: string[] }[];
+  }[];
+};
+
+/** `--engine <column>` (repeatable) and `--pair <vfs>/<build>` (repeatable). */
 function parseArgs(argv: string[]) {
-  const engines: string[] = [];
+  const names: string[] = [];
   const pairs: Pair[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--engine') {
       const name = argv[++i];
-      if (!ENGINES.some((e) => e.name === name)) {
+      if (!COLUMNS.some((c) => c.name === name)) {
         throw new Error(
-          `test-matrix: --engine "${name}" is not one of ${ENGINES.map((e) => e.name).join(', ')}`,
+          `test-matrix: --engine "${name}" is not one of ${COLUMNS.map((c) => c.name).join(', ')}`,
         );
       }
-      engines.push(name);
+      names.push(name);
     } else if (arg === '--pair') {
       const label = argv[++i];
       const [vfs, build] = String(label).split('/');
@@ -189,125 +173,49 @@ function parseArgs(argv: string[]) {
     }
   }
   return {
-    engines: engines.length
-      ? ENGINES.filter((e) => engines.includes(e.name))
-      : ENGINES,
+    columns: names.length
+      ? COLUMNS.filter((c) => names.includes(c.name))
+      : COLUMNS,
     pairs: pairs.length ? pairs : allPairs(),
   };
 }
 
-/**
- * Spawns `command` with `args`, collecting combined stdout+stderr and
- * bounding the run to `timeoutMs`.
- *
- * Two distinct failure shapes, both reported through the return value rather
- * than a thrown/rejected promise, so a caller never has to choose between
- * `try/catch` and `.then` to cover every outcome:
- *
- * - The child starts but outlives `timeoutMs`: the whole process group is
- *   killed (`detached: true` + `process.kill(-pid, 'SIGKILL')` — the same
- *   pattern `scripts/consumer-smoke.ts` uses, because `pnpm exec rstest`
- *   forks the actual Playwright-driven runner and browser, which survive
- *   killing only the direct child) and `timedOut: true` is returned.
- * - The child never starts at all (`ENOENT`, `EACCES`, …): Node emits
- *   `'error'` instead of `'close'`, and never emits `'close'` for a process
- *   that was never spawned. A promise built on `'close'` alone never settles
- *   — the exact hang this script exists to prevent, one layer earlier than
- *   the timeout above. `error` is returned instead, and the timer is cleared
- *   so it cannot later try to kill a pid that was never assigned.
- *
- * A `settled` guard makes the two mutually exclusive: Node's own contract
- * still allows a `'close'` after an `'error'` for the same child, and only
- * the first of the two may resolve the promise.
- */
-export function runBounded(
-  command: string,
-  args: readonly string[],
-  {
-    cwd,
-    env,
-    timeoutMs,
-  }: {
-    readonly cwd?: string;
-    readonly env?: NodeJS.ProcessEnv;
-    readonly timeoutMs: number;
-  },
-): Promise<BoundedResult> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      cwd,
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: true,
-    });
-    let output = '';
-    let timedOut = false;
-    let settled = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        process.kill(-(child.pid as number), 'SIGKILL');
-      } catch {
-        child.kill('SIGKILL');
-      }
-    }, timeoutMs);
-    child.stdout?.on('data', (d) => {
-      output += String(d);
-    });
-    child.stderr?.on('data', (d) => {
-      output += String(d);
-    });
-    child.on('error', (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ output, timedOut, error });
-    });
-    child.on('close', () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ output, timedOut, error: null });
-    });
-  });
-}
-
-/** Runs one (engine, pair) cell via `runBounded`, translating its result into a matrix cell. */
+/** Runs one (column, pair) cell via `runBounded`, translating its result into a matrix cell. */
 function runOne(
-  engine: Engine,
+  column: Column,
   pair: Pair,
-  outFile: string,
+  cellBase: string,
+  baseEnv: NodeJS.ProcessEnv,
 ): Promise<MatrixResult> {
-  // `--reporter md` is what `parseMatrixReport` reads, and leaving it unpinned
-  // let rstest choose: it defaults to `md` when it detects an agent — Claude
-  // Code sets AI_AGENT — and to `default` otherwise. The report therefore
-  // existed on a developer's machine and not on a runner, and every cell of the
-  // first CI matrix was called "timed out" while all of its tests passed.
-  // Reproduced by unsetting AI_AGENT: no ```json block, 20 lines of output.
+  const reportFile = `${cellBase}.json`;
   const args = [
     'exec',
-    'rstest',
-    '--config',
-    engine.config,
-    '--reporter',
-    'md',
-    ...engine.extraArgs,
+    'vitest',
     'run',
+    '--configLoader',
+    'runner',
+    ...column.args,
+    '--reporter=default',
+    '--reporter=json',
+    `--outputFile=${reportFile}`,
   ];
   return runBounded('pnpm', args, {
     cwd: ROOT,
     // `skip`: a test whose need this pair lacks is skipped rather than run on
     // another pair, which is a cell of its own (spec 2026-09-15, A7).
     env: {
-      ...process.env,
+      ...baseEnv,
       BSQ_TEST_TARGETS: `${pair.vfs}/${pair.build}`,
       BSQ_TEST_NEEDS: 'skip',
     },
     timeoutMs: RUN_TIMEOUT_MS,
   }).then(({ output, timedOut, error }) => {
-    writeFileSync(outFile, output);
+    writeFileSync(`${cellBase}.log`, output);
     if (error) return { status: 'error', message: error.message };
-    return timedOut ? { status: 'timed-out' } : parseMatrixReport(output);
+    if (timedOut) return { status: 'timed-out' };
+    return parseMatrixReport(
+      existsSync(reportFile) ? readFileSync(reportFile, 'utf8') : '',
+    );
   });
 }
 
@@ -327,16 +235,16 @@ export function formatCell(result: MatrixResult): string {
 
 function printTable(
   pairs: Pair[],
-  engines: Engine[],
+  columns: Column[],
   results: Map<string, MatrixResult>,
 ) {
   const pairLabel = ({ vfs, build }: Pair) => `${vfs}/${build}`;
-  const header = ['pair', ...engines.map((e) => e.name)];
+  const header = ['pair', ...columns.map((c) => c.name)];
   const rows = pairs.map((pair) => [
     pairLabel(pair),
-    ...engines.map((engine) =>
+    ...columns.map((column) =>
       formatCell(
-        results.get(`${engine.name}:${pairLabel(pair)}`) as MatrixResult,
+        results.get(`${column.name}:${pairLabel(pair)}`) as MatrixResult,
       ),
     ),
   ]);
@@ -351,42 +259,63 @@ function printTable(
 }
 
 async function main() {
-  const { engines, pairs } = parseArgs(process.argv.slice(2));
+  const { columns, pairs } = parseArgs(process.argv.slice(2));
+  const concurrency = resolveConcurrency(process.env.BSQ_TEST_JOBS);
+  const baseEnv = buildOnce(process.env);
+  killLiveOnSignal();
   const runId = new Date().toISOString().replace(/[:.]/g, '-');
   const runDir = join(ROOT, '.matrix', runId);
   mkdirSync(runDir, { recursive: true });
 
+  // Column-major, as the table is printed; the pool takes them in this order.
+  const cells = columns.flatMap((column) =>
+    pairs.map((pair) => ({ column, pair })),
+  );
   const results = new Map<string, MatrixResult>();
   const start = Date.now();
-  for (const engine of engines) {
-    for (const pair of pairs) {
+  let done = 0;
+  console.log(
+    `${cells.length} cells, ${concurrency} at a time. Reports under ${join('.matrix', runId)}.`,
+  );
+  const settled = await runPool(
+    cells,
+    concurrency,
+    async ({ column, pair }) => {
       const label = `${pair.vfs}/${pair.build}`;
-      const outFile = join(
+      const cellBase = join(
         runDir,
-        `${engine.name}-${pair.vfs}-${pair.build}.txt`,
+        `${column.name}__${pair.vfs}__${pair.build}`,
       );
-      process.stdout.write(`[${engine.name}] ${label}: running…\n`);
-      const result = await runOne(engine, pair, outFile);
-      results.set(`${engine.name}:${label}`, result);
+      const result = await runOne(column, pair, cellBase, baseEnv);
+      results.set(`${column.name}:${label}`, result);
       process.stdout.write(
-        `[${engine.name}] ${label}: ${formatCell(result)}\n`,
+        `[${++done}/${cells.length}] [${column.name}] ${label}: ${formatCell(result)}\n`,
       );
-      // A verdict alone cannot be diagnosed anywhere the report file does not
+      // A verdict alone cannot be diagnosed anywhere the report files do not
       // survive the machine, which is every CI runner. "timed out" especially:
-      // it is also what a run that never printed a report looks like.
+      // it is also what a run that never wrote a report looks like.
       if (result.status !== 'passed' && result.status !== 'not-runnable') {
-        const tail = readFileSync(outFile, 'utf8')
+        const tail = readFileSync(`${cellBase}.log`, 'utf8')
           .split('\n')
           .slice(-TAIL_LINES);
         process.stdout.write(
-          `--- ${engine.name} ${label}: last ${tail.length} lines ---\n${tail.join('\n')}\n--- end ---\n`,
+          `--- ${column.name} ${label}: last ${tail.length} lines ---\n${tail.join('\n')}\n--- end ---\n`,
         );
       }
-    }
-  }
+    },
+  );
+  // A cell whose job threw is a red cell, never an absent one.
+  settled.forEach((outcome, i) => {
+    if (outcome.status !== 'rejected') return;
+    const { column, pair } = cells[i];
+    results.set(`${column.name}:${pair.vfs}/${pair.build}`, {
+      status: 'error',
+      message: String(outcome.reason),
+    });
+  });
 
   console.log('');
-  printTable(pairs, engines, results);
+  printTable(pairs, columns, results);
   const totalSeconds = Math.round((Date.now() - start) / 1000);
   console.log('');
   console.log(

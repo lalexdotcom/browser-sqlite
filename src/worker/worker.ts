@@ -1010,7 +1010,9 @@ const open = (file: string, options: OpenOptions) => {
         gate.stop();
         await idleUntilQueryEnds();
         try {
-          const { sqlite, db } = await openedDB!;
+          // open() assigns openedDB before this loop runs; the throw is caught below.
+          if (!openedDB) throw new Error('No DB opened');
+          const { sqlite, db } = await openedDB;
           // SQLite refuses to close a connection carrying live statements,
           // and the catch below would swallow the SQLITE_BUSY. idleUntilQueryEnds
           // has already returned, so the in-flight query's statement is reset

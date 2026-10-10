@@ -10,16 +10,27 @@ import { spawn } from 'node:child_process';
  *
  * Usage:
  *   pnpm bench:build
- *   node scripts/bench/check.ts [chromium|firefox] [--all]
+ *   node scripts/bench/check.ts [chrome|firefox] [--all]
  */
-import { readFileSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import playwright from 'playwright';
+import { remote } from 'webdriverio';
+import {
+  type BrowserName,
+  browserCapabilities,
+  WDIO_CACHE_DIR,
+} from '../browsers.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const engine = (process.argv[2] ?? 'chromium') as 'chromium' | 'firefox';
+const engine = (process.argv[2] ?? 'chrome') as BrowserName;
+if (engine !== 'chrome' && engine !== 'firefox') {
+  process.stderr.write(
+    `FAIL — unknown engine "${engine}": chrome or firefox\n`,
+  );
+  process.exit(1);
+}
 const all = process.argv.includes('--all');
 /**
  * 8099 is what `bench:serve` and `bench:dev` use, so the default collides with
@@ -58,14 +69,14 @@ type BenchExport = {
   measurements: Record<string, Record<string, unknown>>;
 };
 
+/** A failed check of the page; `main` reports it and sets the exit code. */
+class CheckFailure extends Error {}
 const fail = (message: string): never => {
-  process.stderr.write(`FAIL — ${message}\n`);
-  server.kill();
-  process.exit(1);
+  throw new CheckFailure(message);
 };
 
-// The server is a TypeScript script Node strips on start; Playwright 1.64's
-// Chromium launches in ~30 ms, before it listens. Wait for it to answer.
+// The server is a TypeScript script Node strips on start; the browser can be
+// up before it listens. Wait for it to answer.
 const serverReady = async (): Promise<void> => {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
@@ -77,27 +88,65 @@ const serverReady = async (): Promise<void> => {
   fail(`the static server did not answer on port ${PORT} within 10 s`);
 };
 
-try {
+/** The one finished `.json` in `dir`, once the browser has stopped writing it. */
+const downloaded = (dir: string): string | undefined => {
+  const files = readdirSync(dir);
+  if (files.some((f) => /\.(crdownload|part|tmp)$/.test(f))) return undefined;
+  return files.find((f) => f.endsWith('.json'));
+};
+
+const downloadDir = mkdtempSync(join(tmpdir(), 'bench-dl-'));
+const capabilities: WebdriverIO.Capabilities = {
+  ...browserCapabilities(engine),
+  ...(engine === 'chrome'
+    ? {
+        'goog:chromeOptions': {
+          args: ['--headless=new'],
+          prefs: {
+            'download.default_directory': downloadDir,
+            'download.prompt_for_download': false,
+          },
+        },
+      }
+    : {
+        'moz:firefoxOptions': {
+          args: ['-headless'],
+          prefs: {
+            'browser.download.folderList': 2,
+            'browser.download.dir': downloadDir,
+            'browser.download.useDownloadDir': true,
+            'browser.helperApps.neverAsk.saveToDisk': 'application/json',
+          },
+        },
+      }),
+};
+
+let browser: WebdriverIO.Browser | undefined;
+
+async function main(): Promise<void> {
   await serverReady();
-  const browser = await playwright[engine].launch();
-  const context = await browser.newContext({ acceptDownloads: true });
-  const page = await context.newPage();
+  browser = await remote({
+    logLevel: 'warn',
+    cacheDir: WDIO_CACHE_DIR,
+    capabilities,
+  });
+  const b = browser;
 
   const problems: string[] = [];
-  page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
-  page.on('console', (m) => {
-    if (m.type() === 'error') problems.push(`console.error: ${m.text()}`);
+  await b.sessionSubscribe({ events: ['log.entryAdded'] });
+  b.on('log.entryAdded', (entry) => {
+    if (entry.type === 'javascript') problems.push(`pageerror: ${entry.text}`);
+    else if (entry.level === 'error')
+      problems.push(`console.error: ${entry.text}`);
   });
 
-  await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'load' });
-  await page.waitForFunction(
-    () => (window as BenchWindow).__BENCH__ !== undefined,
-    {
-      timeout: 30_000,
-    },
+  await b.url(`http://127.0.0.1:${PORT}/`);
+  await b.waitUntil(
+    () => b.execute(() => (window as BenchWindow).__BENCH__ !== undefined),
+    { timeout: 30_000, interval: 100 },
   );
 
-  const info = (await page.evaluate(
+  const info = (await b.execute(
     () => (window as BenchWindow).__BENCH__,
   )) as BenchInfo;
   process.stdout.write(
@@ -109,68 +158,74 @@ try {
     fail('__LIB_VERSION__ was not substituted — run pnpm bench:build first');
   }
 
-  // The picker is collapsed by default and Playwright will not act on what it
+  // The picker is collapsed by default and WebDriver will not click what it
   // cannot see.
-  await page.evaluate(() => {
+  await b.execute(() => {
     (document.getElementById('picker') as HTMLDetailsElement).open = true;
   });
 
-  const runnable = await page.$$eval(
-    '#picker-list input[data-pair]:not([disabled])',
-    (els) => els.map((e) => (e as HTMLElement).dataset.pair),
+  const runnable = await b.execute(() =>
+    Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '#picker-list input[data-pair]:not([disabled])',
+      ),
+    ).map((e) => e.dataset.pair as string),
   );
   if (runnable.length === 0) fail('no runnable pair on this engine');
   process.stdout.write(`runnable: ${runnable.join(', ')}\n`);
 
   if (all) {
-    await page.click('#select-all');
+    await b.$('#select-all').click();
   } else {
-    await page.click('#select-none');
-    await page.check(`#picker-list input[data-pair="${runnable[0]}"]`);
+    await b.$('#select-none').click();
+    const first = await b.$(`#picker-list input[data-pair="${runnable[0]}"]`);
+    if (!(await first.isSelected())) await first.click();
   }
 
-  const summary = await page.textContent('#picker-summary');
+  const summary = await b.$('#picker-summary').getText();
   process.stdout.write(`summary: ${summary}\n`);
   if (all) {
-    if (!summary?.startsWith('All ('))
+    if (!summary.startsWith('All ('))
       fail(`bad summary after select-all: ${summary}`);
   } else {
-    if (!summary?.startsWith('1 selected'))
+    if (!summary.startsWith('1 selected'))
       fail(`bad summary after select-one: ${summary}`);
   }
 
   if (problems.length) fail(problems.join('\n'));
 
-  await page.click('#start');
-  await page.waitForFunction(
-    () => (window as BenchWindow).__BENCH__?.done === true,
-    null,
-    {
-      timeout: 10 * 60_000,
-    },
+  await b.$('#start').click();
+  await b.waitUntil(
+    () => b.execute(() => (window as BenchWindow).__BENCH__?.done === true),
+    { timeout: 10 * 60_000, interval: 500 },
   );
 
-  const stuck = await page.$$eval(
-    '#results td',
-    (tds) => tds.filter((td) => td.textContent === '…').length,
+  const stuck = await b.execute(
+    () =>
+      Array.from(document.querySelectorAll('#results td')).filter(
+        (td) => td.textContent === '…',
+      ).length,
   );
   if (stuck > 0) fail(`${stuck} cells never resolved`);
 
-  const columns = await page.$$eval('#head-row th', (th) => th.length - 1);
+  const columns = await b.execute(
+    () => document.querySelectorAll('#head-row th').length - 1,
+  );
   if (columns === 0) fail('no column was rendered');
 
-  const enabled = await page.$eval(
-    '#download',
-    (b) => !(b as HTMLButtonElement).disabled,
+  const enabled = await b.execute(
+    () => !(document.getElementById('download') as HTMLButtonElement).disabled,
   );
   if (!enabled) fail('download button never enabled');
 
-  // Capture the download headlessly — no display needed.
-  const downloadPromise = page.waitForEvent('download');
-  await page.click('#download');
-  const download = await downloadPromise;
-
-  const filename = download.suggestedFilename();
+  // The browser saves into `downloadDir` on its own; headless needs no display.
+  await b.$('#download').click();
+  await b.waitUntil(async () => downloaded(downloadDir) !== undefined, {
+    timeout: 30_000,
+    interval: 200,
+    timeoutMsg: 'the export never landed in the download directory',
+  });
+  const filename = downloaded(downloadDir) as string;
   process.stdout.write(`download filename: ${filename}\n`);
   // Timestamp first: the exports are read as an ordered campaign, so the
   // directory has to sort chronologically without help.
@@ -182,16 +237,9 @@ try {
     fail(`download filename has wrong shape: ${filename}`);
   }
 
-  const savePath = join(tmpdir(), filename);
-  await download.saveAs(savePath);
-  let payload: BenchExport;
-  try {
-    payload = JSON.parse(readFileSync(savePath, 'utf8'));
-  } finally {
-    try {
-      unlinkSync(savePath);
-    } catch {}
-  }
+  const payload: BenchExport = JSON.parse(
+    readFileSync(join(downloadDir, filename), 'utf8'),
+  );
 
   const EXPECTED_KEYS = [
     'generatedAt',
@@ -239,9 +287,8 @@ try {
 
   // The page and the export must not disagree about the floor: a partial sweep
   // that only the JSON knows about is the silent case this note exists to end.
-  const noteShown = await page.$eval(
-    '#sweep-note',
-    (el) => !(el as HTMLElement).hidden,
+  const noteShown = await b.execute(
+    () => !(document.getElementById('sweep-note') as HTMLElement).hidden,
   );
   if (noteShown !== payload.sweep.partial) {
     fail(
@@ -269,15 +316,24 @@ try {
   process.stdout.write(
     `${columns} columns, results:\n` +
       JSON.stringify(
-        await page.evaluate(() => (window as BenchWindow).__BENCH__?.results),
+        await b.execute(() => (window as BenchWindow).__BENCH__?.results),
         null,
         2,
       ) +
       '\n',
   );
 
-  await browser.close();
   process.stdout.write('OK\n');
+}
+
+try {
+  await main();
+} catch (error) {
+  const message = error instanceof CheckFailure ? error.message : String(error);
+  process.stderr.write(`FAIL — ${message}\n`);
+  process.exitCode = 1;
 } finally {
+  await browser?.deleteSession().catch(() => {});
+  rmSync(downloadDir, { recursive: true, force: true });
   server.kill();
 }

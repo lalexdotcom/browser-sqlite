@@ -1,6 +1,5 @@
-import { describe, expect, it, onTestFinished } from '@rstest/core';
-import { createSQLiteClient } from '../../../src/client';
-import { deleteDatabase } from '../../../src/delete';
+import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
+import { describe, expect, it, onTestFinished } from 'vitest';
 
 /**
  * THIS FILE ASSERTS A PLATFORM DIFFERENCE, NOT A LIBRARY INVARIANT.

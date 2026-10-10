@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from '@rstest/core';
+import { afterEach, describe, expect, it } from 'vitest';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import {
   ALL_VFS,

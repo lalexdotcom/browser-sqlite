@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import { createTestClient } from '../helpers';
 
 /**
@@ -10,7 +10,7 @@ import { createTestClient } from '../helpers';
  * per-chunk race against a query-long abort promise (`queries.ts`,
  * `transaction.ts`), reached with a signal, a timeout, and in any `tx.stream()`.
  *
- * Playwright's Firefox retains what a page consumes with `for await`, so these
+ * Firefox (seen on Playwright's build) retains what a page consumes with `for await`, so these
  * tests call `next()` by hand. Nothing can force a collection there either, so
  * each test stops mid-query and allocates until tenured witnesses are
  * finalized — proof that a major GC ran — before it counts.

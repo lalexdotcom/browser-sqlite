@@ -1,5 +1,5 @@
-import { describe, expect, it } from '@rstest/core';
-import { SQLITE_CODES } from '../../src/const/sqlite';
+import { SQLITE_CODES } from 'browser-sqlite';
+import { describe, expect, it } from 'vitest';
 import type { ClientDebugState } from '../../src/debug';
 import { createTestClient, interceptWorkers } from './helpers';
 

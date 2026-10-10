@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import type { Abandoned, AbandonRegistry } from '../../src/abandon';
 import { reclaim } from '../../src/abandon';
 import { chunk } from '../../src/queries';

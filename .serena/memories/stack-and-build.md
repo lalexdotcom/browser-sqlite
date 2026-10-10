@@ -13,7 +13,7 @@
     touch it, so a hand-edit's formatting survives untouched and nothing flags it. That
     file's style is maintained by hand — verified 2026-08-27 after a `},{` survived a
     format run.
-- Tests: **rstest 0.11.8**, Playwright pinned at 1.64.0 since 2026-10-08 (Chromium 156, `chromium-1248`; Firefox 157, `firefox-1555`). Locally the browsers come with `PLAYWRIGHT_SKIP_BROWSER_GC=1 pnpm exec playwright install --with-deps chromium firefox` after a bump (`post-create.sh` runs only at container creation; the variable keeps older revisions other tools still use); CI's browser cache is keyed on `pnpm-lock.yaml`. **Its Firefox is still not a stock Firefox for timing** (FF-PW-AWAIT, `mem:measurements/footprint`).
+- Tests: **Vitest 5.0.3** with `@vitest/browser-webdriverio` 5.0.0 and webdriverio 10.0.2 on stock Chrome 153 and Firefox 155, pinned in `scripts/browsers.ts` (§ Test suites). Playwright and rstest are gone since 2026-10-10. Stock Firefox is the one users run; Playwright's was ~5× slower on nested `await`s (FF-PW-AWAIT, `mem:measurements/footprint`).
 - **Runtime dependencies: none.** `wa-sqlite` is a devDependency only, vendored into
   `dist/worker/worker.js` at build time and pinned by commit SHA: the pin, the patch and how to
   regenerate it, and the fork's test suite are in `mem:stack-and-build/wa-sqlite`.
@@ -46,88 +46,38 @@ placeholder `undefined` must keep a callable union type.
 
 ## Test suites
 
-Four projects. `pnpm test` runs the first two.
+**Vitest 5.0.3 with `@vitest/browser-webdriverio` 5.0.0 and webdriverio 10.0.2, on stock Chrome for Testing and Firefox, since 2026-10-10** (rstest and Playwright left the repository). The decisions are the user's and live in `docs/superpowers/specs/2026-10-10-vitest-webdriverio-design.md` (D1-D11); their principles are in `mem:conventions` (§ Testing in browsers). What follows is what the code will not tell you.
 
-**Both engines are installed locally** — `~/.cache/ms-playwright` carries chromium and firefox.
-WebKit is not installed by `post-create.sh` and not offered by any config. **It can run here** (2026-10-05): its system libraries install with `sudo` — the `node` user has it, the agent's sudo needs the user's approval — and Playwright 1.63+ has OPFS in a persistent context (WA-WEBKIT-SUITE, `mem:measurements/test-browsers`); 1.62.1, our pin, has none. What blocks a WebKit project of ours is rstest's ephemeral context (`mem:follow-ups`, the rstest entry). Install a WebKit beside the pinned browsers with `PLAYWRIGHT_SKIP_BROWSER_GC=1`, or `playwright install` deletes browsers no installed Playwright references.
-**There is no engine environment variable any more (2026-09-03).** `TEST_BROWSER` and
-`CONFORMANCE_BROWSER` are both gone: each suite has one config file per engine, and its
-`pnpm` script chains them, so `pnpm test` and `pnpm test:conformance` each cover both engines
-in one command and print TWO reports. Read both.
+**The browsers are pinned in `scripts/browsers.ts`** (`PINNED`: Chrome `153.0.8010.52`, Firefox `stable_155.0.1`), read by `vitest.config.ts`, `scripts/consumer-smoke.ts` and `scripts/bench/check.ts`; `BSQ_CHROME_VERSION` and `BSQ_FIREFOX_VERSION` override them (an empty value falls back to the pin). geckodriver is pinned there too (`GECKODRIVER_VERSION`, `0.37.1`, via `wdio:geckodriverOptions`), so the cache key describes what the cache holds. A Firefox version needs its channel prefix: `@puppeteer/browsers` reads a bare number or `latest` as a Nightly, so `browsers.ts` refuses one without. WebdriverIO downloads browsers and drivers into `node_modules/.cache/wdio`. `node scripts/browsers.ts install` downloads both and opens a session in each (it prints two `ok`); `node scripts/browsers.ts deps` lists the apt packages both need. `.devcontainer/post-create.sh` runs the two at creation; CI caches the folder, keyed on `scripts/browsers.ts`. **webdriverio must stay on 10.x**: 9.x's `@puppeteer/browsers` 2.x fetches an x86-64 Chrome on linux-arm64, where 3.x maps `linux_arm` to `linux-arm64` from Chrome 153.0.8001.0. Safari, Windows and macOS are the next piece of work (spec § 8); WebKit is in no config (Playwright's Linux WebKit is no stand-in for Safari, `mem:conventions`).
 
-Why two files rather than two entries in one `projects` array: **rstest 0.11.8 refuses two
-browser-enabled projects with different engines in a single run** — *"All browser-enabled
-projects in one run must share provider/browser/headless/providerOptions"*. Verified; a
-`projects` array holding both makes the command fail before it runs anything.
-
-The variable that went was named `TEST_BROWSER` and **never `BROWSER`**: VS Code and
-devcontainers already export the latter, pointing at a URL-opening helper, and Playwright then
-failed with "Cannot read properties of undefined (reading 'launch')". Keep that in mind if an
-engine switch is ever reintroduced.
+**The tests run the library as rslib builds it.** `rslib.test.config.ts` imports `rslib.config.ts` untouched, moves every `distPath` to `tests/build/` (gitignored) and adds a second `lib` item for `tests/testing.ts` (the public surface plus the internals the white-box tests drive), so `testing.js` sits beside `index.js` and the worker under test is the shipped `worker/worker.js`. `vitest.config.ts` aliases `browser-sqlite` to `tests/build/index.js` and `browser-sqlite/testing` to `tests/build/testing.js`; `tsconfig.json` maps the same names to the sources through `paths`, so the types need no build. `tests/testing.ts` lives outside `src/` because `tsconfig.build.json` would emit it as `dist/testing.d.ts`. Every browser project declares `globalSetup: tests/build-setup.ts`, which runs the build once per Vitest invocation (~9 s cold) in its own persistent cache, `node_modules/.cache/rspack-test`, so any command that touches a browser tests the current tree. **A test imports from ONE bundle**: two bundles are two copies of the code, and `instanceof` and module singletons do not cross. The unit project runs on `src/` with no build.
 
 | Project | Where | What |
 |---|---|---|
-| `unit` | `tests/unit/` (15 files) | Node, pure logic — bulk, capabilities, credits, debug, epochs, errors, exports, locks, logger, quoting, routing, scheduler, supervisor, transaction, utils |
-| `chromium` | `tests/browser/*.test.ts` + `tests/browser/chromium/**` | Real Chromium via Playwright. `pnpm test:chromium`. `createTestClient(options?)` gives a unique OPFS name and an `afterEach` cleanup |
-| `firefox` | the same shared files + `tests/browser/firefox/**` | `rstest.firefox.config.ts`, `pnpm test:firefox`. The shared glob is NON-recursive so neither project sees the other's directory. `firefox/` holds what cannot pass on Chromium — handle starvation; `chromium/` is declared and does not exist yet |
-| `conformance` | `tests/conformance/` | On demand: every declared (vfs, build) pair through six invariants. `pnpm test:conformance` runs BOTH engines from two configs; no per-engine directory, deliberately — the value is the same invariants on both |
-| `consumer` | `scripts/consumer-smoke.ts` | On demand: packs the tarball into **five** temp app dirs **outside** the repo and drives **dev and build for each** — Vite, Vite 6 (pinned), rsbuild, webpack, Parcel — plus no-bundler static serve and a bare-specifier assertion over `dist/**/*.js`. **24 stages.** `pnpm test:consumer` |
+| `unit` | `tests/unit/` | Node, pure logic and the tooling scripts' own tests |
+| `chrome · <vfs>/<build>` | `tests/browser/*.test.ts` + `tests/browser/chromium/**` | Stock Chrome. `createTestClient(options?)` gives a unique OPFS name and an `onTestFinished` cleanup |
+| `firefox · <vfs>/<build>` | the same shared files + `tests/browser/firefox/**` | Stock Firefox. The shared glob is NON-recursive so neither project sees the other's directory. `firefox/` holds what cannot pass on Chrome — handle starvation, stream retention; `chromium/` is declared and does not exist yet |
+| `isolated chrome · …`, `isolated firefox · …` | `tests/browser/isolated/**` | The same browsers with COOP/COEP |
+| `conformance chrome`, `conformance firefox` | `tests/conformance/` | Every declared (vfs, build) pair through six invariants; no target and no per-engine directory, deliberately — the value is the same invariants on both engines |
+| `consumer` | `scripts/consumer-smoke.ts` | On demand, `pnpm test:consumer`: packs the tarball into temp app dirs **outside** the repo and drives dev and build for each — Vite, Vite 6 (pinned), rsbuild, webpack, Parcel — plus no-bundler static serve and a bare-specifier assertion over `dist/**/*.js`, with stock Chrome through WebdriverIO. Its console, page-error and failed-request listeners are WebDriver BiDi events |
 
-**Since 2026-09-15 each browser config declares one project PER TARGET, not one project.** A target is a
-(vfs, build) pair, injected into the test code through `source.define` as `__BSQ_TEST_TARGET__`; a test
-that names no VFS runs on it, and `tests/browser/target.ts`'s `resolvePair` falls back to another pair
-when the test declares a `needs` the target cannot meet — **except under `BSQ_TEST_NEEDS=skip`, which
-`pnpm test:matrix` sets on every cell since 2026-09-27: there the test is skipped**, since every pair a
-fallback could reach is a cell of its own, and a fallback only reported its failures under another
-pair's name (spec 2026-09-15, A7). rstest skips a running test only through its own `ctx.skip()`, so a
-test that declares `needs` passes `skip` with them (`createTestClient({ needs, skip })`,
-`pairFor(needs, skip)`); the types refuse one without the other. `pnpm test` therefore runs
-`<engine> · OPFSWriteAheadVFS/sync` and `<engine> · OPFSAdaptiveVFS/async` per config —
-**project filters must be globs** (`--project 'chromium*'`), rstest's filter being anchored.
-`BSQ_TEST_TARGETS` overrides the list (`all`, or a comma list of `vfs/build`), and `pnpm test:matrix`
-(`scripts/test-matrix.ts`) runs every declared pair on the three configs, bounding each run itself,
-keeping raw reports under `.matrix/<run>/` and exiting non-zero on any failed or timed-out cell.
+**One `vitest.config.ts`, one project per target.** A target is a (vfs, build) pair, handed to the tests through Vitest's `provide` / `inject` (`bsqTarget`, `bsqNeeds`); a test that names no VFS runs on it, and `tests/browser/target.ts`'s `resolvePair` falls back to another pair when the test declares a `needs` the target cannot meet — **except under `BSQ_TEST_NEEDS=skip`, which `pnpm test:matrix` sets on every cell: there the test is skipped**, since every pair a fallback could reach is a cell of its own, and a fallback only reported its failures under another pair's name (spec 2026-09-15, A7). A test that declares `needs` passes `skip` with them (`createTestClient({ needs, skip })`, `pairFor(needs, skip)`); the types refuse one without the other. `pnpm test` therefore runs `<engine> · OPFSWriteAheadVFS/sync` and the engine's other recommended pair per engine. **Project filters must be globs** (`--project 'chrome ·*'`). `BSQ_TEST_TARGETS` overrides the list (`all`, or a comma list of `vfs/build`). Each browser project builds its own `instances` array: Vitest renames an instance in place, and two projects sharing one fail at startup.
 
-**Every browser script runs under a deadline since 2026-09-16** — `node scripts/bounded.ts
-<seconds> <command>` wraps each leg of `test`, `test:browser`, `test:chromium`, `test:firefox`,
-`test:isolated` and `test:conformance` (900 s per leg, 600 s for the isolated one), and exits 124
-when it kills one, the code `test:matrix` already uses. It exists because a run CAN hang where
-`testTimeout` and `hookTimeout` cannot reach — a module-scope `await` that never settles means no
-test is running, so nothing times out (`mem:follow-ups`). `timeout(1)` is absent from a stock
-macOS, hence a script rather than a shell word; `tests/unit/bounded.test.ts` proves the deadline
-actually kills. **Since 2026-10-02 it kills the whole process group** (`detached`, then
-`process.kill(-pid)`, and a `SIGKILL` to the group once the command exits): signalling the
-direct child alone left `pnpm exec rstest`'s real pnpm, rstest and its browser running under
-init. The command gets no stdin, since a background group that read the terminal would be
-stopped; on Windows it falls back to the direct child. **It also keeps every run's output in `.test-runs/` (gitignored) since 2026-10-03, the newest 30, so a failure seen once survives a green rerun** (open-retry, `mem:follow-ups`); the command writes to a pipe as a result, as in CI, and `close` (or `exit` plus 2 s, should something it started hold the pipe) ends the wait. `BOUNDED_RUNS_DIR` moves the folder, for the script's own unit test.
+**Commands.** Every vitest script carries `--configLoader runner`: the default loader prints Vite's `configLoader: 'native'` warning (extensionless imports in `src/`, reached through `tests/target-projects.ts`) eleven times per run. `pnpm test` is ONE run (`unit`, `chrome`, `firefox` and `isolated`) through `scripts/test-parallel.ts`, bounded at 2400 s — one merged report to read, and a red Chrome no longer silences Firefox behind an `&&`. `pnpm test:conformance` covers both engines the same way; `:chrome` and `:firefox` run one. All of them are `node scripts/bounded.ts <s> node scripts/test-parallel.ts --project <glob>…`; extra arguments after `--` go to the merge (`pnpm test -- --reporter=json --outputFile=<f>`). `pnpm test:matrix` (`scripts/test-matrix.ts`) runs every declared pair on four columns — `chrome`, `firefox`, `isolated-chrome`, `isolated-firefox` — as one `vitest run` per cell, `BSQ_TEST_JOBS` cells at a time through the same pool, with `BSQ_TEST_TARGETS=<pair>` and `BSQ_TEST_NEEDS=skip`, bounded at 600 s by the script itself, keeping Vitest's JSON report and the console per cell in a timestamped directory of the matrix's own (gitignored) and exiting non-zero on any failed or timed-out cell. Vitest's JSON reporter carries no project name: a cell is one project run alone. `abandon-gc.test.ts` needs V8's `gc`: `BSQ_EXPOSE_GC=1` adds `--js-flags=--expose-gc` to Chrome, and without it the file skips.
 
-**No test file enumerates VFS** since 2026-09-16: a file states what its subject needs of the pair
-(`needs: ['two-workers' | 'interruptible' | 'shared-second-client']`) and the matrix supplies the
-pairs. The five that used to sweep `ALL_VFS`/`SHARED_VFS` by hand repeated their whole sweep in
-every cell.
+**Provider facts that cost time (2026-10-10).**
+- **The WebdriverIO provider runs the files of a project one at a time** (`supportsParallelism = false`) where rstest ran them in parallel pages: one Vitest invocation cannot use the machine, and projects run one after another in it. Parallelism is therefore several Vitest PROCESSES (next bullet); the figures are in `mem:measurements/suite-and-matrix`, PARALLEL-RUNS.
+- **Parallel runs: `scripts/test-parallel.ts` (user-approved 2026-10-10).** `node scripts/test-parallel.ts --project <glob>… [-- <args for the merge>]` resolves the globs (Vitest's `*`, whole name, any case) against `vitest list --filesOnly --json`, builds `tests/build/` ONCE and gives every child `BSQ_TEST_BUILT=1` (each browser project's globalSetup builds it otherwise, and N builds race on the directory), then runs `vitest run --project <name> [--shard=i/N] --reporter=blob` as a pool of processes: `BSQ_TEST_JOBS` (a positive integer, else an error) or `min(12, CPUs - 1)`, at least 1 — 12 here, 3 on a 4-vCPU runner. Each browser project gets `max(1, min(files, round(jobs × files / browser files)))` shards; `unit` is one job. Each job is bounded at 900 s (`runBounded`, kills the process group; shared with the matrix in `scripts/parallel.ts`), logs to `<run>/logs/`, and writes its blob to `<run>/blobs/` — **a directory of its own: `--merge-reports` reads every file in it**. `vitest --merge-reports <run>/blobs --reporter=default` then gives ONE report, identical test by test to an unsharded run. A job that ends without its blob (crash, kill, timeout) fails the launcher, which names it with the last 60 lines of its log; the merged report lacks its tests, so never read the merge alone. Each process has its own WebDriver session, hence its own browser profile and port, so the per-file storage wipe never reaches another process. Each run has a timestamped directory of the launcher's own (gitignored, newest 10 kept) holding `blobs/` and `logs/`. A Node script cannot import `tests/target-projects.ts` (extensionless imports in `src/`): project names come from `vitest list`. Ctrl-C and a CI cancellation kill the jobs' groups (they are detached, so `bounded.ts`'s group kill alone would not).
+- **Storage is shared across the files of a PROJECT** (one browser profile per project: each project is its own WebDriver session, and projects run one after another, so the wipe never reaches another project's storage; the shards of a parallel run are separate processes, so separate profiles too), where rstest gave each file a fresh context. `AccessHandlePoolVFS` has six fixed OPFS slots, freed only by `xDelete`, so a test that only closed its database exhausted them for the files after it ("unable to open database file"). **Every browser project therefore registers `tests/storage-wipe.ts` as a setup file (user, 2026-10-10: "un clean efficace et vérifié à la fin de chaque VFS+build")**: after each test file's own cleanups its `afterAll` removes every OPFS root entry and every IndexedDB database, then checks that OPFS is empty and `indexedDB.databases()` is empty. A handle still held, or a database still open, fails THAT file with the entry's name (after a 3 s settle, for a worker that has just closed). Falsified with a scratch file that leaked an open `createWritable()` and an open IndexedDB connection: red on Chrome and Firefox. A failure that appears in a full run and not in its file alone is read with this first.
+- **`onTestFinished` hooks run in reverse under Vitest.** A test that intercepts workers registers its restore before `createTestClient`'s cleanup, so the cleanup ran first, with the test's broken `Worker`; `deleteDatabase` on `AccessHandlePoolVFS` spawns a worker, failed, and left the slots taken. The cleanup now deletes through the browser's own `Worker` (`withNativeWorker`, `tests/browser/helpers.ts`).
+- **`screenshotFailures: false`**: on BiDi the provider cannot switch frames, and every failure printed a stack trace for the screenshot it tried.
+- `realm.test.ts` and `cross-tab.test.ts` create their own iframe inside Vitest's.
 
-350 tests green on `main`, 2026-08-26. **COOP/COEP live in ONE place: `rstest.isolated.config.ts`**,
-which sets `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy:
-require-corp` through a `modifyRsbuildConfig` plugin — a top-level `server.headers` key is silently
-ignored by rstest. That config is chromium like the default one; the difference is the isolation,
-not the engine, and it includes `tests/browser/isolated/**` only (7 tests per cell) because its
-subject is the `sync` build's abort channel, which needs a `SharedArrayBuffer`. Every other config
-stays un-isolated ON PURPOSE: that is what most consumers deploy, and the degraded path has to be
-asserted somewhere. (This line used to say "no COOP/COEP headers anywhere" — true when the SAB was
-removed, false since that config exists. Corrected 2026-09-16.)
+**Every browser script runs under a deadline since 2026-09-16** — `node scripts/bounded.ts <seconds> <command>` wraps `test`, `test:browser`, `test:chrome`, `test:firefox`, `test:isolated` and the conformance scripts, and exits 124 when it kills one, the code `test:matrix` already uses. It exists because a run CAN hang where `testTimeout` and `hookTimeout` cannot reach (`mem:follow-ups`). `timeout(1)` is absent from a stock macOS, hence a script rather than a shell word; `tests/unit/bounded.test.ts` proves the deadline actually kills. **Since 2026-10-02 it kills the whole process group** (`detached`, then `process.kill(-pid)`, and a `SIGKILL` to the group once the command exits): signalling the direct child alone left `pnpm exec <runner>`'s real pnpm, the runner and its browser running under init. The command gets no stdin, since a background group that read the terminal would be stopped; on Windows it falls back to the direct child. **It also keeps every run's output in `.test-runs/` (gitignored), the newest 30, so a failure seen once survives a green rerun** (open-retry, `mem:follow-ups`); the command writes to a pipe as a result, as in CI, and `close` (or `exit` plus 2 s, should something it started hold the pipe) ends the wait. `BOUNDED_RUNS_DIR` moves the folder, for the script's own unit test.
 
-Two rstest facts that cost time:
+**No test file enumerates VFS** since 2026-09-16: a file states what its subject needs of the pair (`needs: ['two-workers' | 'interruptible' | 'shared-second-client']`) and the matrix supplies the pairs.
 
-- **`rstest 0.11.8 has no `it.each`.** Parameterized tests use a plain `for` loop calling
-  `it()` directly — see `tests/unit/routing.test.ts`.
-- **`browserLogs: false`** in `rstest.config.ts`, so `console.log` from a browser test is
-  invisible. Measurements must be surfaced through an assertion failure message. See
-  `mem:lessons` for how to get a trace out of a test that never finishes.
-
-`rstest.config.ts` runs **Chromium alone**; Chromium and Firefox are both installed by
-`.devcontainer/post-create.sh` and by CI, so the matrix is possible but not enabled —
-blocked on the two Firefox failures in `mem:follow-ups`. rstest accepts no provider but
-`playwright`.
+**COOP/COEP live in ONE place: the `isolated` projects of `vitest.config.ts`**, through `server.headers` (`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp`). They include `tests/browser/isolated/**` only, because their subject is the `sync` build's abort channel, which needs a `SharedArrayBuffer`, and they run on Chrome and Firefox (spec D8). Every other project stays un-isolated ON PURPOSE: that is what most consumers deploy, and the degraded path has to be asserted somewhere.
 
 **Characterization-test convention.** A known bug is pinned with `it.fails(...)`: the test
 asserts the *correct* behaviour and `.fails` asserts the bug is still there. When the bug
@@ -206,8 +156,9 @@ correct; no manual `dist/` deletion is ever needed.
 
 - **Never put `/* webpackIgnore: true */` on the `new Worker(new URL(...))` call in
   `client.ts`.** rslib strips it from `dist/index.js` so it never reaches a consumer — but
-  **rstest's own rspack honours it**, so no worker chunk is emitted at test time, the
-  worker never loads, and the whole browser suite hangs forever with no error. The same
+  **rstest's own rspack honoured it** (the tests now run the rslib build): no worker chunk
+  was emitted at test time, the worker never loaded, and the suite hung forever with no
+  error. The same
   applies to `/* @vite-ignore */`, which survives into `dist/` but only suppresses the
   `?worker_file` query, not the `import.meta.url` rewrite it was added to fight. Both were
   tried, both removed.
@@ -250,7 +201,7 @@ instead.
 ## Devcontainer
 
 Ported from `lalexdotcom/claude-scaffold` on 2026-09-28 (identity, `gh`, lifecycle split), not
-aligned with it wholesale: the image, the Playwright engines and the Serena prerelease flag are ours.
+aligned with it wholesale: the image, the stock browsers (`post-create.sh` installs their system libraries, then the pinned browsers) and the Serena prerelease flag are ours.
 
 - **Agent tooling in `on-create.sh`, project setup in `post-create.sh`.** The Claude Code
   extension starts its MCPs and hooks when VS Code attaches, which is after `onCreateCommand`;
@@ -278,10 +229,10 @@ aligned with it wholesale: the image, the Playwright engines and the Serena prer
 
 ## CI and hooks
 
-- `.github/workflows/ci.yaml` — two jobs on push to `main` and every PR; Chromium cached
-  by `pnpm-lock.yaml` hash; `concurrency` cancels superseded runs.
+- `.github/workflows/ci.yaml` — two jobs on push to `main` and every PR; WebdriverIO's browsers
+  cached by the hash of `scripts/browsers.ts` (verified only once the branch is pushed, 2026-10-10); `concurrency` cancels superseded runs.
   - `verify` — `biome ci` + `tsc --noEmit` + `pnpm build` + `pnpm test`. Blocking.
-  - `consumer-smoke` — `pnpm test:consumer`, 11/11 stages. Blocking since wave P.
+  - `consumer-smoke` — `pnpm test:consumer`. Blocking since wave P.
 - `.github/workflows/release-and-publish.yaml` — on `v*` tags, build + publish, and it
   calls `pages.yaml` with `needs: release`.
 - `.github/workflows/pages.yaml` — **the site is a pure function of two tags** since
@@ -372,7 +323,7 @@ aligned with it wholesale: the image, the Playwright engines and the Serena prer
   source root to the repo root: declarations would land in `dist/src/` while
   `package.json` points at `dist/index.d.ts`, and `dist/tests/` would ship inside the
   package.
-- `tsconfig.json` `include` is `["src", "tests", "scripts", "rslib.config.ts", "rstest.config.ts"]` — `scripts` since 2026-09-24. **`.mjs` files are still not type-checked**: there is no `allowJs`/`checkJs` (`mem:follow-ups`).
+- `tsconfig.json` `include` is `["src", "tests", "scripts", "rslib.config.ts", "vitest.config.ts", "rslib.test.config.ts"]` — `scripts` since 2026-09-24. **`.mjs` files are still not type-checked**: there is no `allowJs`/`checkJs` (`mem:follow-ups`).
   Only `strict` is on.
 
 ## The benchmark page

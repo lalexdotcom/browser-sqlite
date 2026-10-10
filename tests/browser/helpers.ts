@@ -1,12 +1,11 @@
-import { onTestFinished } from '@rstest/core';
+import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
+import { inject, onTestFinished } from 'vitest';
 import { defaultBuildFor } from '../../src/capabilities';
-import { createSQLiteClient } from '../../src/client';
 import {
   folderOf,
   type SQLiteVFS,
   VFS_CAPABILITIES,
 } from '../../src/const/vfs';
-import { deleteDatabase } from '../../src/delete';
 import type { InternalSQLiteClientOptions } from '../../src/scheduler';
 import type { SQLiteError } from '../../src/types/errors';
 import { databaseFiles, databasePath } from '../../src/utils';
@@ -21,7 +20,7 @@ import {
 } from './target';
 
 /**
- * The running test's `ctx.skip`. rstest skips a running test only through its
+ * The running test's `ctx.skip`. A running test is skipped only through its
  * own context, so a test that declares `needs` hands it over with them (spec
  * 2026-09-15, A7).
  */
@@ -41,37 +40,32 @@ type TestClientOptions = Omit<InternalSQLiteClientOptions, 'name' | 'vfs'> & {
   vfs?: SQLiteVFS;
 } & Needing;
 
-declare const __BSQ_TEST_TARGET__: TestTarget | undefined;
-declare const __BSQ_TEST_NEEDS__: OnUnmetNeed | undefined;
-
 /**
- * The target this project injects — `source.define` in the browser configs,
- * one project per target (tests/target-projects.ts). A browser project without
- * one is a configuration error, not a default, so this throws rather than
- * choose a VFS. It lives here, not in `./target`, because the resolver there
- * is imported by a Node unit test, where no project injects anything.
+ * The target this project provides (vitest.config.ts, one project per target,
+ * tests/target-projects.ts). A browser project without one is a configuration
+ * error, not a default, so this throws rather than choose a VFS. It lives
+ * here, not in `./target`, because the resolver there is imported by a Node
+ * unit test, where no project provides anything.
  */
 export const TEST_TARGET: TestTarget = (() => {
-  if (typeof __BSQ_TEST_TARGET__ === 'undefined') {
+  const target = inject('bsqTarget');
+  if (target === undefined) {
     throw new Error(
-      'TEST_TARGET: this project injects no __BSQ_TEST_TARGET__ — a browser project needs a target (tests/target-projects.ts)',
+      'TEST_TARGET: this project provides no bsqTarget — a browser project needs a target (tests/target-projects.ts)',
     );
   }
-  return __BSQ_TEST_TARGET__;
+  return target;
 })();
 
-/**
- * What a test whose need the target lacks does, injected beside the target —
- * `fallback` unless `BSQ_TEST_NEEDS` says `skip`, which `pnpm test:matrix`
- * does (spec 2026-09-15, A7). Missing is a configuration error, like the target.
- */
+/** `fallback` unless `BSQ_TEST_NEEDS` says `skip`, as `pnpm test:matrix` does (spec 2026-09-15, A7). */
 const ON_UNMET_NEED: OnUnmetNeed = (() => {
-  if (typeof __BSQ_TEST_NEEDS__ === 'undefined') {
+  const needs = inject('bsqNeeds');
+  if (needs === undefined) {
     throw new Error(
-      'ON_UNMET_NEED: this project injects no __BSQ_TEST_NEEDS__ (tests/target-projects.ts)',
+      'ON_UNMET_NEED: this project provides no bsqNeeds (tests/target-projects.ts)',
     );
   }
-  return __BSQ_TEST_NEEDS__;
+  return needs;
 })();
 
 /**
@@ -137,7 +131,7 @@ export function pairFor(needs: readonly Need[] = [], skip?: Skip): TestTarget {
     );
   }
   if (pair !== 'skip') return pair;
-  // ctx.skip() takes no reason, so the report would not say why.
+  // skip() is called without a reason, so the report would not say why.
   console.info(
     `skipped: ${targetLabel(TEST_TARGET)} lacks [${needs.join(', ')}] here (BSQ_TEST_NEEDS=skip)`,
   );
@@ -170,9 +164,9 @@ export async function createTestClient(options: TestClientOptions = {}) {
   } as InternalSQLiteClientOptions);
 
   // onTestFinished, NOT afterEach: afterEach registered from inside a test
-  // body never runs in rstest — this cleanup was dead code from the day it was
-  // written, which is why nothing a test created was ever removed. The same
-  // trap is documented on interceptWorkers below.
+  // body is suite-scoped, not test-scoped — under rstest it never ran, and
+  // nothing a test created was ever removed. The same trap is documented on
+  // interceptWorkers below.
   onTestFinished(async () => {
     // Closing first is what lets the deletion below happen at all —
     // deleteDatabase refuses with DATABASE_IN_USE while a client holds the
@@ -198,16 +192,15 @@ export async function createTestClient(options: TestClientOptions = {}) {
       VFS_CAPABILITIES[pair.vfs].storage === 'opfs' &&
       folderOf(pair.vfs) === undefined
     ) {
-      await deleteDatabase(dbName, { vfs: pair.vfs, build: pair.build }).catch(
-        (error: unknown) => {
-          // DATABASE_NOT_FOUND only: the client never got as far as creating
-          // the file, which is the subject of several tests here and not a
-          // cleanup failure. Anything else — a slot this cleanup could not
-          // give back — must reach the test.
-          if ((error as SQLiteError)?.code !== 'DATABASE_NOT_FOUND')
-            throw error;
-        },
-      );
+      await withNativeWorker(() =>
+        deleteDatabase(dbName, { vfs: pair.vfs, build: pair.build }),
+      ).catch((error: unknown) => {
+        // DATABASE_NOT_FOUND only: the client never got as far as creating
+        // the file, which is the subject of several tests here and not a
+        // cleanup failure. Anything else — a slot this cleanup could not
+        // give back — must reach the test.
+        if ((error as SQLiteError)?.code !== 'DATABASE_NOT_FOUND') throw error;
+      });
     }
     await removeDatabaseFiles(dbName, pair.vfs);
   });
@@ -293,6 +286,23 @@ export function interceptWorkers(options?: { url?: string }): WorkerRecord[] {
  * that purpose no longer simulates anything.
  */
 const NativeWorker = globalThis.Worker;
+
+/**
+ * Runs `fn` with the browser's own `Worker`. A test that intercepts workers
+ * restores them in an `onTestFinished` registered BEFORE `createTestClient`'s,
+ * and Vitest runs those hooks in reverse: the cleanup's `deleteDatabase`, which
+ * spawns a worker on a VFS without a folder, would go through the test's
+ * broken constructor.
+ */
+const withNativeWorker = async <T>(fn: () => Promise<T>): Promise<T> => {
+  const current = globalThis.Worker;
+  globalThis.Worker = NativeWorker;
+  try {
+    return await fn();
+  } finally {
+    globalThis.Worker = current;
+  }
+};
 
 /** Stops the thread and tells the library nothing, as an engine kill does. */
 export const killSilently = (worker: Worker): void => {

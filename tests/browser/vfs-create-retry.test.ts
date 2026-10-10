@@ -1,4 +1,4 @@
-import { describe, expect, it, onTestFinished } from '@rstest/core';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { createTestClient, sleep } from './helpers';
 
 /**

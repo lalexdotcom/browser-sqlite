@@ -31,8 +31,8 @@
  * shape can delete the race it was written to pin"): each batch issues writes
  * and reads on both clients at once.
  */
-import { describe, expect, it } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
+import { createSQLiteClient } from 'browser-sqlite';
+import { describe, expect, it } from 'vitest';
 import { removeDatabaseFiles } from './helpers';
 
 type Client = ReturnType<typeof createSQLiteClient>;

@@ -43,3 +43,10 @@ doc_build/
 # MemPalace per-project files (issue #185)
 mempalace.yaml
 entities.json
+
+# Built by rslib.test.config.ts for the Vitest browser projects: the published
+# build plus the test-only entry tests/testing.ts.
+tests/build/
+
+# Runs of scripts/test-parallel.ts (blobs and logs per job), the newest 10 kept.
+.test-parallel/

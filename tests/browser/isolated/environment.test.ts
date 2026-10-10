@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 
 describe('the isolated project', () => {
   it('really is cross-origin isolated', () => {

@@ -1,6 +1,10 @@
 // tests/browser/lifecycle.test.ts
-import { afterEach, describe, expect, it, onTestFinished } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
+import {
+  createSQLiteClient,
+  deleteDatabase,
+  type SQLiteError,
+} from 'browser-sqlite';
+import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
 import {
   createTestClient,
   interceptWorkers,
@@ -134,8 +138,8 @@ describe('worker lifecycle — crash detection', () => {
     // import.meta.url instead — the directory the worker should sit beside.
     // The bundler may rename either chunk, so assert the stable wording and
     // the presence of some URL, never a literal path. The scheme is not
-    // pinned either: a consumer bundle yields http(s), while rstest bundles
-    // with source paths and yields file:.
+    // pinned either: a consumer bundle yields http(s), while a bundle of
+    // source paths yields file:.
     await expect(db.read('SELECT 1')).rejects.toMatchObject({
       code: 'WORKER_CRASHED',
       message: expect.stringContaining('could not load its worker'),
@@ -180,6 +184,13 @@ describe('worker lifecycle — bounds', () => {
     } catch {
       // OPFS entry may not exist if the test failed before DB creation
     }
+    // The database sits in one of AccessHandlePoolVFS's six fixed slots, which
+    // only deleteDatabase gives back (see createTestClient in ./helpers).
+    await deleteDatabase(shared, { vfs: 'AccessHandlePoolVFS' }).catch(
+      (error: unknown) => {
+        if ((error as SQLiteError)?.code !== 'DATABASE_NOT_FOUND') throw error;
+      },
+    );
   });
 
   // The connection guard (AHP-2TAB fix) fires before workers start, so the
@@ -322,7 +333,7 @@ function failWorkerAtIndex(n: number): Worker[] {
  * Returns the created Worker instances in creation order, and `booted`, which
  * settles once a silent worker's module has run (bounded by `waitUntil`).
  *
- * Kill a silent worker only after it booted: Playwright's Firefox crashes the
+ * Kill a silent worker only after it booted: Firefox (seen on Playwright's build) crashes the
  * page when a worker is terminated in its first milliseconds.
  */
 function silentWorkersFromIndex(from: number): {

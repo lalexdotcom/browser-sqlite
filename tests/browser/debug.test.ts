@@ -1,6 +1,5 @@
-import { describe, expect, it, onTestFinished } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
-import { deleteDatabase } from '../../src/delete';
+import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { poolFor } from '../conformance/helpers';
 import {
   createTestClient,

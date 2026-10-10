@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import { createSavepointStack } from '../../src/savepoints';
 
 describe('savepoint stack — names (spec 2026-10-04, D3)', () => {

@@ -1,5 +1,6 @@
-import { describe, expect, it } from '@rstest/core';
-import { type SQLiteQueryAPI, type SQLQuery, sql } from '../../src/index';
+import { sql } from 'browser-sqlite';
+import { describe, expect, it } from 'vitest';
+import type { SQLiteQueryAPI, SQLQuery } from '../../src/index';
 import { createTestClient } from './helpers';
 
 /** Every query method with a query built by `sql`, options in second position. */

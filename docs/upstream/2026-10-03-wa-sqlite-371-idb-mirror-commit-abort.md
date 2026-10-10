@@ -102,8 +102,16 @@ The corruption comes from SQLite rolling the refused transaction back through th
 
 Sent as `3367cb65` on 2026-10-03, on the user's go, with [comment 5971457674](https://github.com/rhashimoto/wa-sqlite/pull/371#issuecomment-5971457674). The description's costs, change list and ablation table were updated to match. The exclusive `normal` test now expects the next insert to succeed without a reopen. It fails without the commit, and the journal test fails without the journal condition. The file's 190 tests pass 3 of 3 on both engines, the suite passes (6274), and the matrix shows 0 stores corrupt out of 168. Upstream CI on `3367cb65` is green: [run 37139391822](https://github.com/rhashimoto/wa-sqlite/actions/runs/37139391822). The same day, the description's sentence on lost commits was narrowed to exclusive mode (user).
 
+## Review: a sequential commit path, then an abort on a throw
+
+rhashimoto approved the approach and requested changes on 2026-10-08: declare `commitsPending` with the other `File` properties, add a TODO in `#loadFile` (reading in batches with `getAll()` would beat a cursor), and reorganize `#commitTx` so it reads in order. The Promise executor becomes `async`, the fence request is `await`ed only while another commit is pending, and the write body follows inline instead of in a callback.
+
+Sent as `874303eb` on 2026-10-09 with [comment 6076926505](https://github.com/rhashimoto/wa-sqlite/pull/371#issuecomment-6076926505). The file's 190 tests pass 3 of 3 on both engines, and the queued-commit test still fails without the fence. The comment pointed out what the reorganization changes. An exception in an `async` executor no longer reaches `complete`. And the write body no longer runs inside a request's event handler, so a throw after a `put()` would let the requests already issued auto-commit instead of aborting the transaction. Both were checked with a standalone IndexedDB probe, with the same result on Chromium and Firefox. Nothing in the body throws today, so a `try`/`catch` was offered rather than added.
+
+He asked for it on 2026-10-10. `cb97deed` wraps the write body and calls `idbTx.abort()` before rethrowing. The file's 190 tests pass on both engines. It was pushed and answered "Done 😉" (user's wording), and he replied "Thanks! LGTM." the same day. Upstream CI is green on both commits: [run 37902296087](https://github.com/rhashimoto/wa-sqlite/actions/runs/37902296087) on `874303eb`, [run 38065396129](https://github.com/rhashimoto/wa-sqlite/actions/runs/38065396129) on `cb97deed`.
+
 ## What stays ours
 
-- **The carry.** Since the repin of 2026-10-03 to `7fcc30df`, [`patches/`](../../patches) carries this PR alone: `IDBMirrorVFS.js` at head `3367cb65`.
+- **The carry.** [`patches/`](../../patches) carries `IDBMirrorVFS.js` at this PR's head `cb97deed` since 2026-10-10 (`3367cb65` before), merged with #372, whose `jClose` it conflicts with.
 - **The broadcast on a closed channel.** A separate defect, a possible separate PR.
 - **The probes.** Throwaway, kept outside git; the numbers are in `mem:measurements` (IDBMIRROR-COMMIT-ABORT, IDBMIRROR-ABORT-JOURNAL, IDBMIRROR-ABORT-DESIGNS).

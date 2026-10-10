@@ -20,7 +20,9 @@ Chromium: yes, through `channel: 'chrome'`/`'msedge'` or `executablePath` (CDP);
 
 `barrier.test.ts` pins when and how the barrier is sent, and the worker's column-name capture: the staleness the barrier was first built for was our worker reading names before the first `step()` (spike 2026-09-25, `mem:history`). Nothing of ours fails when its effect is gone. That effect, data freshness on `OPFSWriteAheadVFS`, is real — 37 of 616 tests stale without it under sixteen busy loops, 0 with it (BARRIER-DATA, `mem:measurements`) — and is `PRAGMA wal_read_latest`, whose falsifier is wa-sqlite's deterministic test for #365. A timing falsifier of ours was not built: the old timing-only barrier read 0/100 even under 48 busy loops.
 
-### rstest's pages are off-the-record — a measurement caveat (2026-09-28)
+### rstest's pages were off-the-record — a caveat on timings taken before 2026-10-10 (2026-09-28)
+
+rstest left the repository on 2026-10-10; the Vitest + WebdriverIO suite drives a stock browser's own profile, whose OPFS cost per call is unmeasured. The caveat stands for every timing taken before.
 
 **rstest's pages are off-the-record: OPFS sync-access-handle calls cost 160-290 µs there against 0.6-2.6 µs on a persistent profile (RSTEST-OTR, `mem:measurements`, 2026-09-28).** rstest opens pages with Playwright's `browser.newContext()`. Every absolute OPFS timing taken under rstest — the checkpoint and page-size campaigns included — carries that per-call cost; only ratios between arms of one run compare. No persistent-context harness is planned (user, 2026-10-03).
 

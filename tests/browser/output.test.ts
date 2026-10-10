@@ -1,5 +1,5 @@
-import { describe, expect, it, onTestFinished } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
+import { createSQLiteClient } from 'browser-sqlite';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { createTestClient, removeDatabaseFiles } from './helpers';
 
 /**

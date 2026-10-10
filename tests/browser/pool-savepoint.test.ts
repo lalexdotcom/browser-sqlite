@@ -1,11 +1,10 @@
-import { describe, expect, it } from '@rstest/core';
-import { createLogger } from '../../src/logger';
 import {
+  createLogger,
   createPoolWorker,
-  type PoolWorker,
-  type PoolWorkerQueryOptions,
-} from '../../src/pool';
-import { SQLiteError } from '../../src/types/errors';
+  SQLiteError,
+} from 'browser-sqlite/testing';
+import { describe, expect, it } from 'vitest';
+import type { PoolWorker, PoolWorkerQueryOptions } from '../../src/pool';
 import { databasePath } from '../../src/utils';
 import { removeDatabaseFiles, TEST_TARGET } from './helpers';
 

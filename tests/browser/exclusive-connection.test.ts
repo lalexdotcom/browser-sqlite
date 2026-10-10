@@ -1,7 +1,10 @@
-import { describe, expect, it, onTestFinished } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
+import {
+  createSQLiteClient,
+  deleteDatabase,
+  SQLiteError,
+} from 'browser-sqlite';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { connectionLockName } from '../../src/locks';
-import { SQLiteError } from '../../src/types/errors';
 import { databasePath } from '../../src/utils';
 import { removeDatabaseFiles } from './helpers';
 
@@ -19,10 +22,13 @@ import { removeDatabaseFiles } from './helpers';
 /** Unique database name for each test. */
 const dbName = () => `bsq-test-${crypto.randomUUID()}`;
 
-/** Clean up an AccessHandlePoolVFS database. Its files live in a pool
- *  directory named after the VFS class, not directly at the dbName path, so
- *  OPFS cleanup is not useful here — just close the clients. */
+/**
+ * Close the clients, then delete the database: AccessHandlePoolVFS keeps its
+ * files in six fixed slots and gives one back on xDelete alone, so a database
+ * left behind occupies a slot for the rest of the browser session.
+ */
 const closeAll = async (
+  name: string,
   ...clients: ReturnType<typeof createSQLiteClient>[]
 ) => {
   for (const client of clients) {
@@ -32,6 +38,11 @@ const closeAll = async (
       /* a BUSY client was never open — nothing to drain */
     }
   }
+  await deleteDatabase(name, { vfs: 'AccessHandlePoolVFS' }).catch(
+    (error: unknown) => {
+      if ((error as SQLiteError)?.code !== 'DATABASE_NOT_FOUND') throw error;
+    },
+  );
 };
 
 describe('AccessHandlePoolVFS exclusive connection guard', () => {
@@ -53,7 +64,7 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
     const a = createSQLiteClient(name, opts);
     const b = createSQLiteClient(name, opts);
 
-    onTestFinished(() => closeAll(a, b));
+    onTestFinished(() => closeAll(name, a, b));
 
     // A uses the database. Workers start lazily so the first query is the
     // choke point — the connection lock settles before or at this await.
@@ -88,7 +99,7 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
     const a = createSQLiteClient(name, opts);
     const b = createSQLiteClient(name, opts);
 
-    onTestFinished(() => closeAll(a, b));
+    onTestFinished(() => closeAll(name, a, b));
 
     await a.write('CREATE TABLE t (n)');
 
@@ -132,7 +143,7 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
 
     // C opens after A is fully closed; it must succeed.
     const c = createSQLiteClient(name, opts);
-    onTestFinished(() => closeAll(c));
+    onTestFinished(() => closeAll(name, c));
 
     const rows = await c.read<{ n: number }>('SELECT n FROM t');
     expect(rows).toHaveLength(1);
@@ -177,7 +188,7 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
 
     // B opens cleanly: no orphaned worker should be holding OPFS handles.
     const b = createSQLiteClient(name, opts);
-    onTestFinished(() => closeAll(b));
+    onTestFinished(() => closeAll(name, b));
 
     // If an orphan holds the handles, this write fails with WORKER_CRASHED.
     await b.write('CREATE TABLE t (n)');
@@ -264,7 +275,13 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
     const b = createSQLiteClient(name, opts);
 
     onTestFinished(async () => {
-      await closeAll(a, b);
+      for (const client of [a, b]) {
+        try {
+          await client.close();
+        } catch {
+          /* a failed client has nothing to close */
+        }
+      }
       try {
         await removeDatabaseFiles(name, opts.vfs);
       } catch {

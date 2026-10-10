@@ -9,9 +9,8 @@
  * statement ended — measured on both engines, `mem:measurements` IDB-SIGNAL.
  * The worker installs that handler on every statement.
  */
-import { describe, expect, it, onTestFinished } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
-import { deleteDatabase } from '../../src/delete';
+import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
+import { describe, expect, it, onTestFinished } from 'vitest';
 
 const ROWS = 6000;
 const FILL = `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${ROWS}) INSERT INTO t (s) SELECT printf('%0100d', x) FROM c`;

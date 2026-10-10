@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import { createScheduler } from '../../src/scheduler';
 
 type TestWorker = { index: number };
@@ -415,7 +415,9 @@ describe('scheduler — add() writer-designation with multiple queued writes', (
     expect(secondWriteIndex).toBeUndefined();
 
     // Releasing the first lease hands worker 0 to the queued second write.
-    firstLease!.release();
+    expect(firstLease).toBeDefined();
+    if (!firstLease) throw new Error('first lease was never granted');
+    firstLease.release();
     await flush();
 
     // Second write must run on worker 0 (the designated writer), not worker 1.

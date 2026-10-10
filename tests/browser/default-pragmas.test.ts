@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
+import { createSQLiteClient } from 'browser-sqlite';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createTestClient } from './helpers';
 
 /**

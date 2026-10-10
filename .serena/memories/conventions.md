@@ -70,7 +70,7 @@ failing test and the code that satisfies it belong to the same task.
 
 **The full verification at delivery is the agent's job, not the hooks' (user, 2026-09-11).**
 Before reporting a task, a branch or a session as done: `pnpm test` AND
-`pnpm exec tsc --noEmit`, all three reports read. The hooks are braces on the belt; a green
+`pnpm exec tsc --noEmit`, the report read. The hooks are braces on the belt; a green
 commit proves the unit project and nothing more.
 
 ## What every implementer prompt forbids (2026-09-11)
@@ -234,9 +234,7 @@ policy becomes applicable as written.
 
 ## When to run the full matrix (2026-09-22)
 
-`pnpm test:matrix` costs ~45 min and covers the 22 declared (vfs, build) pairs × 3 engine configs.
-`pnpm test` covers **two recommended pairs**, so the matrix is the only thing that sees the other
-twenty. Run it when the change can behave differently per pair:
+`pnpm test:matrix` covers the 22 declared (vfs, build) pairs × 4 columns (`chrome`, `firefox`, `isolated-chrome`, `isolated-firefox`) = 88 cells, and costs about 13 min with 12 cells at a time (1 h 45 one by one; `mem:measurements/suite-and-matrix`, PARALLEL-RUNS). `pnpm test` covers **two recommended pairs**, so the matrix is the only thing that sees the other twenty. Run it when the change can behave differently per pair:
 
 - **the per-connection machinery** — `src/pool.ts`, `src/transaction.ts`, `src/worker/`;
 - **a wa-sqlite repin or a change to `patches/`** — every VFS comes from there;
@@ -255,7 +253,7 @@ Not for documentation, memories, or a test change confined to what `pnpm test` a
 may be LOAD rather than a defect: re-run the cell alone before diagnosing — `tx-savepoint`'s T4 went
 0/3 alone against 2/4 in the full cell. And the cause may be a test you just added: a matrix cell is
 one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.ts` regroups any
-`.matrix/<run>/`.
+`.matrix/<run>/`. **Storage between files (2026-10-10).** The files of a PROJECT share one browser profile (each project is its own WebDriver session and projects run one after another, so the wipe cannot reach another project), but since the per-file wipe (`tests/storage-wipe.ts`, `mem:stack-and-build`) the origin's OPFS and IndexedDB are erased and verified empty after every file. A removable leftover (a closed-but-undeleted database, an `AccessHandlePoolVFS` slot) is erased without failing anything; what the wipe cannot remove (a handle still held, a connection still open) fails the file that left it, by name. Inside one file a leak can still redden that file's later tests, so run the first failing file alone before reading a pile. The matrix remains the only run that targets every VFS, so a leak specific to one VFS shows up only there.
 
 ## Working with the user
 
@@ -385,12 +383,14 @@ Stated for wa-sqlite's suite (Discussion #373), and explicitly meant for the lib
   - the WASM built once and shared by every job;
   - an iOS simulator version is a workflow input that defaults to the newest stable runtime on the image, chosen semver-style (`26.6` → the newest installed `26.6.x`).
 - **A test skipped for a browser's defect is skipped in the test itself,** with `pending()` and its reason, keyed on the browser version when no capability can detect the defect. The skip then shows in every run's output, and it protects a developer's local run as well as CI. Skipping by capability stays the rule otherwise.
-- **The framework follows from the above.** For wa-sqlite, keep `@web/test-runner`, which does all of it. For the library, rstest offers no WebDriver, so Vitest with WebdriverIO is the candidate to probe (`mem:follow-ups`).
+- **The framework follows from the above.** For wa-sqlite, keep `@web/test-runner`, which does all of it. For the library, rstest offered no WebDriver, so the suite moved to Vitest with WebdriverIO on 2026-10-10; the decisions (test the rslib build, one bundle per test, the pins) are in `docs/superpowers/specs/2026-10-10-vitest-webdriverio-design.md`, the setup in `mem:stack-and-build`.
+- **Pin a browser pair of one age (user, 2026-10-09).** Chrome a few majors behind the newest, and the Firefox release that was current on that Chrome's stable date — distance from the newest, and two browsers of one age. Safari is whatever the OS ships.
 
 ## Working rules carried over from Claude's auto-memory (2026-10-07)
 
 Moved here when the user ruled that these memories are the only memory. Each was stated by the user; the date is when.
 
+- **Never merge before the report has been given and approved (user, 2026-10-10).** The order is: implementation done → report to the user → their corrections → their explicit approval → only then the merge into `main`. "Finis le chantier" ends the implementation, not the branch; no request to finish, and no closing step of `AGENTS.md` or of a skill (`finishing-a-development-branch`), authorizes the merge by itself. A merge was started on that reading and stopped before its commit.
 - **Answer only the question (2026-10-04).** A question asked while work runs gets its answer and nothing else; status, rulings and next steps go in their own message when the work reaches a point worth reporting.
 - **A progress line every two minutes on anything long (2026-09-14, again 2026-10-04 and 2026-10-08 — "toujours").** It starts at launch, not once the run looks healthy: on 2026-10-08 a measurement sat stuck for four minutes with no line, because the harness served the wrong page. A measurement, a probe campaign, a matrix, any background run past ~2 minutes: report at launch and every 2 minutes — elapsed, what runs, what finished, any failure — until it ends, unasked. Without a monitor tool, one `sleep 118; <read the log>` call per point, a line to the user after each.
 - **Check the branch in the same command as the commit (2026-10-01).** Other sessions switch the shared checkout between two turns: `test "$(git branch --show-current)" = <branch> && git commit …`. If the checkout is on someone else's branch, ask — never a worktree (§ Where things live).

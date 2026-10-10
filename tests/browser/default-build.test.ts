@@ -1,8 +1,7 @@
-import { describe, expect, it } from '@rstest/core';
-import { createSQLiteClient } from '../../src/client';
+import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
+import { describe, expect, it } from 'vitest';
 import { BUILD_CAPABILITIES, type SQLiteBuild } from '../../src/const/builds';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
-import { deleteDatabase } from '../../src/delete';
 import { pairFor } from './helpers';
 
 type WithSuspending = typeof WebAssembly & { Suspending?: unknown };

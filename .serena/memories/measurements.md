@@ -6,7 +6,7 @@ one. A number nobody can reproduce is a story, not a measurement — say so in t
 
 The entries live in the sub-memories below, by theme, each in the order it was written. **A new entry goes in the sub-memory of its theme**; this index gets its line.
 
-## `mem:measurements/test-browsers` — wa-sqlite's suite across browsers and CI runners (Discussion #373)
+## `mem:measurements/test-browsers` — test harnesses across browsers and CI runners: wa-sqlite's suite (Discussion #373), then the library's own
 
 - STOCK-BROWSERS
 - SAFARI26-DATAVIEW-RACE
@@ -15,6 +15,8 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - WEBKIT-IDB-TERMINATE
 - WA-WEBKIT-SUITE
 - WA-FIREFOX-SQL-HANG
+- PW-OPFS-QUOTA — Chromium's ephemeral context masks its quota and stops writes near 2 GB; a persistent one does not
+- LIB-VITEST-SPIKE — the library's own tests on Vitest + WebdriverIO, stock Chrome 153 / Firefox 155
 
 ## `mem:measurements/wa-sqlite-prs` — the campaigns behind wa-sqlite PRs
 
@@ -169,6 +171,8 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 
 ## `mem:measurements/suite-and-matrix` — the test suite, the matrix, the Firefox harness
 
+- PARALLEL-RUNS — several Vitest processes at once: `pnpm test` 519 s to 105 s, the matrix 6187 s to 765 s
+- MATRIX-VITEST
 - LIFECYCLE-INIT-RACE
 - INSECURE-CONTEXT
 - RSTEST-OTR

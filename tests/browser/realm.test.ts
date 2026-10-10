@@ -1,4 +1,4 @@
-import { describe, expect, it, onTestFinished } from '@rstest/core';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { heldNamesIn, holdIn, makeRealm } from './helpers/realm';
 
 const KEY_NAME = 'browser-sqlite.epochs.v1';
