@@ -88,6 +88,18 @@ Capabilities: `platformName: 'iOS'`, `browserName: 'safari'`, `'safari:useSimula
 **Per configuration** (a copy of `sql.test.js` with `CONFIGS` cut to one entry, 3 runs, 180 s cap): the nine others pass in 2-8 s, 27 of 27; `OPFSWriteAheadVFS` hits the cap 3 of 3. **Per spec and build** (`OPFSWriteAheadVFS` only): `sql_0001`-`sql_0004` pass on default, asyncify and jspi; `sql_0005` alone fails in 1-2 s, `unable to open database file` at its second `open_v2`. **Combinations** (60 s runner cap): one build, all five specs: finishes (17 passed, 1 failed); two builds without `sql_0005`: finishes (34); two builds, all five, or `sql_0005` alone on two builds: hang; `sql_0005` then other specs on the next build: finished in the order drawn. **Falsifiers:** `sql_0005` with each worker's destroy registered before its open: no hang, both builds fail fast at the open; each step bounded at 5 s: the step that fails is the following suite's `beforeAll` `context.create()` (with `reset`). Mechanism and the harness lines involved: `mem:follow-ups`.
 
 
+## PW-OPFS-QUOTA — OPFS space in Playwright's ephemeral and persistent contexts, 2026-10-10, this container
+
+**Method.** Playwright 1.62.1 (`chromium-1234`, `firefox-1538`), headless, a page on `http://localhost`: `navigator.storage.estimate()`, then one `createWritable()` writing 64 MB chunks up to a 2 GB cap, the file removed afterwards. Ephemeral = `browser.newContext()`, the default of `@web/test-runner-playwright`; persistent = `launchPersistentContext()` on a fresh directory. n=1 per cell; about 5 GB of RAM were available.
+
+| context | `estimate().quota` | written |
+|---|---|---|
+| Chromium ephemeral | 10 240 MB | 1 984 MB, then `QuotaExceededError` |
+| Chromium persistent | 10 240 MB | 2 048 MB (the cap), no error |
+| Firefox ephemeral and persistent | 4 822 MB | 2 048 MB (the cap), no error |
+
+**Reading.** Chromium's ephemeral context announces a quota it does not grant — a masked figure, so that an off-the-record profile cannot be told apart (the user's point; the figure is read, the reason not checked in Chromium's source). Only a write measures space. The limit is the off-the-record context's, not Playwright's patches: a persistent context lifts it, and WebKit needs one anyway for OPFS (WA-WEBKIT-SUITE). Not measured: whether the ~2 GB depends on RAM, WebKit, stock browsers, anything past 2 GB. Kept out of the 2026-10-10 reply on #373 as a weak argument.
+
 ## LIB-VITEST-SPIKE — the library's browser tests on stock Chrome and Firefox through WebDriver, 2026-10-09, this container (Debian 13 aarch64)
 
 **Method.** Throwaway branch `spike/vitest-webdriverio` off `main` at rc.10. Vitest 5.0.3 + `@vitest/browser-webdriverio` 5.0.0 + webdriverio 10.0.2 + Vite 8.3.4. The library is the rslib build: `rslib.test.config.ts` imports `rslib.config.ts`, moves every `distPath` from `./dist` to `./tests/build`, and adds a separate `lib` item (a clone of `index`'s, `dts: false`, no `copy`) for `tests/testing.ts`, which re-exports `src/index` plus `createLogger` and `createPoolWorker`. `vitest.config.ts` aliases `browser-sqlite` → `tests/build/index.js` and `browser-sqlite/testing` → `tests/build/testing.js`, injects the target through `define`, and has two projects, `plain` and `isolated` (COOP/COEP through `server.headers`). Ported unchanged except imports: `queries`, `concurrency`, `idb-long-read`, `pool-death` (white-box, from `browser-sqlite/testing`), `isolated/abort-slot`, `isolated/environment`, plus a probe. Target `OPFSWriteAheadVFS/sync`.

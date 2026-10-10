@@ -80,7 +80,8 @@ here on purpose: a total alone cannot say which suite moved.
 ## In flight, and not ours to move
 
 - **wa-sqlite's tests on stock browsers: a revised proposal was posted on Discussion #373 on
-  2026-10-08, and it waits on rhashimoto.** It covers WebDriver instead of Playwright, a workflow
+  2026-10-08; he questioned the move away from Playwright on 2026-10-10 and was answered the
+  same day, so it waits on rhashimoto again.** It covers WebDriver instead of Playwright, a workflow
   per platform, a DataView race in the harness, and a skip for Safari 26. Nothing is started on
   the PR before his answer. The plan and what his answer calls for are in `mem:follow-ups`, the
   measurements in `mem:measurements/test-browsers`, and the user's principles in
