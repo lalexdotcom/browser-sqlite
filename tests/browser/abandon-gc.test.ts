@@ -10,10 +10,11 @@
 // signal's abort — is pinned deterministically, with no garbage collection
 // and no browser flag, by tests/browser/abandon.test.ts.
 //
-// Verified under the command above, both cases: 13/13 real (non-skipped) green
-// runs, and — as the falsifier — commenting out the `registry.watch(gen, held,
-// token)` registration in src/queries.ts makes BOTH tests hard-time out at
-// 60000 ms with all ten retry rounds exhausted, rather than pass. That is
+// Measured under rstest: 13/13 real (non-skipped) green runs, and — as the
+// falsifier — commenting out the `registry.watch(gen, held, token)` registration
+// in src/queries.ts makes BOTH tests hard-time out at 60000 ms with all ten
+// retry rounds exhausted, rather than pass. Re-run under Vitest on 2026-10-10:
+// 2 passed with BSQ_EXPOSE_GC=1, 1 skipped without. The falsifier is
 // what tells a future reader this test is worth re-running at all.
 import { describe, expect, it } from 'vitest';
 import { createTestClient, sleep } from './helpers';
