@@ -192,16 +192,15 @@ export async function createTestClient(options: TestClientOptions = {}) {
       VFS_CAPABILITIES[pair.vfs].storage === 'opfs' &&
       folderOf(pair.vfs) === undefined
     ) {
-      await deleteDatabase(dbName, { vfs: pair.vfs, build: pair.build }).catch(
-        (error: unknown) => {
-          // DATABASE_NOT_FOUND only: the client never got as far as creating
-          // the file, which is the subject of several tests here and not a
-          // cleanup failure. Anything else — a slot this cleanup could not
-          // give back — must reach the test.
-          if ((error as SQLiteError)?.code !== 'DATABASE_NOT_FOUND')
-            throw error;
-        },
-      );
+      await withNativeWorker(() =>
+        deleteDatabase(dbName, { vfs: pair.vfs, build: pair.build }),
+      ).catch((error: unknown) => {
+        // DATABASE_NOT_FOUND only: the client never got as far as creating
+        // the file, which is the subject of several tests here and not a
+        // cleanup failure. Anything else — a slot this cleanup could not
+        // give back — must reach the test.
+        if ((error as SQLiteError)?.code !== 'DATABASE_NOT_FOUND') throw error;
+      });
     }
     await removeDatabaseFiles(dbName, pair.vfs);
   });
@@ -287,6 +286,23 @@ export function interceptWorkers(options?: { url?: string }): WorkerRecord[] {
  * that purpose no longer simulates anything.
  */
 const NativeWorker = globalThis.Worker;
+
+/**
+ * Runs `fn` with the browser's own `Worker`. A test that intercepts workers
+ * restores them in an `onTestFinished` registered BEFORE `createTestClient`'s,
+ * and Vitest runs those hooks in reverse: the cleanup's `deleteDatabase`, which
+ * spawns a worker on a VFS without a folder, would go through the test's
+ * broken constructor.
+ */
+const withNativeWorker = async <T>(fn: () => Promise<T>): Promise<T> => {
+  const current = globalThis.Worker;
+  globalThis.Worker = NativeWorker;
+  try {
+    return await fn();
+  } finally {
+    globalThis.Worker = current;
+  }
+};
 
 /** Stops the thread and tells the library nothing, as an engine kill does. */
 export const killSilently = (worker: Worker): void => {
