@@ -64,7 +64,7 @@ export const COLUMNS: Column[] = [
   { name: 'isolated-firefox', args: ['--project', 'isolated firefox ·*'] },
 ];
 
-/** Matches Task 10's brief: `timeout 600` per run, owned in-process instead. */
+/** Each cell is bounded at 600 s by a timer this script owns. */
 const RUN_TIMEOUT_MS = 600_000;
 
 /** Enough of a failing run's tail to name the cause; short enough to read in a job log. */
@@ -91,6 +91,7 @@ export function parseMatrixReport(json: string): MatrixResult {
   } catch {
     return { status: 'timed-out' };
   }
+  if (!Array.isArray(report?.testResults)) return { status: 'timed-out' };
   const tests = report.testResults.flatMap((f) => f.assertionResults);
   const failures = tests.filter((t) => t.status === 'failed');
   const end = Math.max(

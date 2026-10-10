@@ -100,7 +100,9 @@ for (const entry of readdirSync(dir).filter((f) => f.endsWith('.json'))) {
       : 'NO REPORT (killed or never started)',
     tests: tests.length,
     failed: failures.length,
-    skipped: tests.filter((t) => t.status === 'skipped').length,
+    skipped: tests.filter((t) =>
+      ['skipped', 'pending', 'todo'].includes(t.status),
+    ).length,
     listed: failures.length,
   });
   for (const failure of failures) {

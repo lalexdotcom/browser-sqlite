@@ -1,9 +1,13 @@
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   formatCell,
   parseMatrixReport,
   runBounded,
 } from '../../scripts/test-matrix.ts';
+
+const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
 /**
  * Fixtures carry only the fields `parseMatrixReport` reads of Vitest's JSON
@@ -21,7 +25,7 @@ const file = (
   tests: { title: string; status: string; failureMessages?: string[] }[],
   extra: object = {},
 ) => ({
-  name: `/workspaces/wsqlite/${name}`,
+  name: join(ROOT, name),
   startTime: 1_000,
   endTime: 53_000,
   status: tests.some((t) => t.status === 'failed') ? 'failed' : 'passed',
@@ -136,6 +140,9 @@ describe('parseMatrixReport', () => {
     // A killed run never writes its report: absence is the signal.
     expect(parseMatrixReport('')).toEqual({ status: 'timed-out' });
     expect(parseMatrixReport('{')).toEqual({ status: 'timed-out' });
+    // Valid JSON that is no report must not throw out of the matrix run.
+    expect(parseMatrixReport('{}')).toEqual({ status: 'timed-out' });
+    expect(parseMatrixReport('null')).toEqual({ status: 'timed-out' });
   });
 
   it('keeps the reason of a failed file whose tests all passed', () => {
