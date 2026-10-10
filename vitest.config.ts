@@ -47,8 +47,9 @@ const browserProject = (
     name,
     include,
     globalSetup: ['tests/build-setup.ts'],
-    // The files of a run share one profile: each one's leftovers are wiped and
-    // the wipe verified, so a leak fails the file that left it.
+    // The files of a run share one profile: after each file its OPFS and
+    // IndexedDB leftovers are erased and the erasure verified; what cannot be
+    // erased fails that file, by name.
     setupFiles: ['tests/storage-wipe.ts'],
     testTimeout: options.testTimeout,
     // A teardown closes a client that may still be draining an abandoned

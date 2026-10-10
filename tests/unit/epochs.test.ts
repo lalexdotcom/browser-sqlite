@@ -43,9 +43,8 @@ describe('epochsFor', () => {
     const host = globalThis as unknown as Record<symbol, unknown>;
     host[key] = new Map([['OPFSAdaptiveVFS:/preseeded', { value: 41 }]]);
 
-    // In a bundled Node environment the query-string trick may not
-    // produce a separate module instance. A plain re-import is equivalent
-    // because registry() reads globalThis[REGISTRY_KEY] on every call —
+    // A plain re-import, not a query-string one that forces a fresh copy:
+    // registry() reads globalThis[REGISTRY_KEY] on every call —
     // it never caches at module level — so seeding globalThis before the
     // call proves adoption regardless of whether `fresh` is a new copy.
     const fresh = await import('../../src/epochs');

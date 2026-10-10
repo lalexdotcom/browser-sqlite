@@ -4,8 +4,10 @@ import { afterAll } from 'vitest';
  * Registered as a setup file by every browser project: after each test file's
  * own cleanups, wipe what the file left in the origin's storage, then verify
  * it. The files of a run share one browser profile, so a database a file
- * leaves behind (an `AccessHandlePoolVFS` slot, an IndexedDB database) breaks
- * the files after it; here it fails the file that left it, by name.
+ * leaves behind (an `AccessHandlePoolVFS` slot, an IndexedDB database) would
+ * break the files after it. What can be removed is erased without a failure;
+ * what cannot (a handle still held, a connection still open) fails this file,
+ * by name.
  *
  * Hooks registered first run last under Vitest's default `stack` order, so
  * this one follows every `afterAll` the file registers.
@@ -40,12 +42,13 @@ async function removeOpfsEntries(
         held.push(`OPFS "${name}" (${describeError(error)})`);
       }
     }
-    if (held.length === 0) continue;
+    // Checked on every pass, so entries something keeps recreating end the
+    // loop at the deadline too: the next listing is the evidence.
     if (Date.now() >= deadline) {
-      problems.push(...held);
+      if (held.length > 0) problems.push(...held);
       return;
     }
-    await sleep(RETRY_MS);
+    if (held.length > 0) await sleep(RETRY_MS);
   }
 }
 
