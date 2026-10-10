@@ -1,8 +1,8 @@
 diff --git a/src/examples/IDBMirrorVFS.js b/src/examples/IDBMirrorVFS.js
-index 3de1296bd9a8634339accdfa1c66970b23efa892..fb07590bd795a654f607d24a7eab06cc08da2d9c 100644
+index 3de1296bd9a8634339accdfa1c66970b23efa892..0118a1312e886a8e6b3748e1c4af5cd025715843 100644
 --- a/src/examples/IDBMirrorVFS.js
 +++ b/src/examples/IDBMirrorVFS.js
-@@ -31,6 +31,7 @@ class File {
+@@ -31,11 +31,13 @@ class File {
  
    /** @type {BroadcastChannel} */ broadcastChannel;
    /** @type {Transaction[]} */ broadcastReceived;
@@ -10,7 +10,13 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..fb07590bd795a654f607d24a7eab06cc
  
    /** @type {number} */ lockState;
    /** @type {{write?: function, reserved?: function, hint?: function}} */ locks;
-@@ -54,8 +55,11 @@ class File {
+ 
+   /** @type {AbortController} */ abortController;
++  /** @type {number} */ commitsPending;
+ 
+   /** @type {Transaction?} */ txActive;
+   /** @type {boolean} */ txWriteHint;
+@@ -54,8 +56,11 @@ class File {
        this.viewReleaser = null;
        this.broadcastChannel = new BroadcastChannel('mirror:' + pathname);
        this.broadcastReceived = [];
@@ -22,7 +28,7 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..fb07590bd795a654f607d24a7eab06cc
        this.txActive = null;
        this.txWriteHint = false;
        this.txOverwrite = false;
-@@ -141,39 +145,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -141,39 +146,7 @@ export class IDBMirrorVFS extends FacadeVFS {
            }
          }
    
@@ -63,7 +69,7 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..fb07590bd795a654f607d24a7eab06cc
  
          // Publish our view of the database. This prevents other connections
          // from overwriting file data we still need.
-@@ -263,6 +235,12 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -263,6 +236,12 @@ export class IDBMirrorVFS extends FacadeVFS {
        this.#mapIdToFile.delete(fileId);
  
        if (file?.flags & VFS.SQLITE_OPEN_MAIN_DB) {
@@ -76,7 +82,7 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..fb07590bd795a654f607d24a7eab06cc
          file.broadcastChannel.close();
          file.viewReleaser?.();
        }
-@@ -418,6 +396,11 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -418,6 +397,11 @@ export class IDBMirrorVFS extends FacadeVFS {
      if (lockType <= file.lockState) return VFS.SQLITE_OK;
      switch (lockType) {
        case VFS.SQLITE_LOCK_SHARED:
@@ -88,7 +94,7 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..fb07590bd795a654f607d24a7eab06cc
          if (file.txWriteHint) {
              // xFileControl() has hinted that this transaction will
              // write. Acquire the hint lock, which is required to reach
-@@ -471,6 +454,12 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -471,6 +455,12 @@ export class IDBMirrorVFS extends FacadeVFS {
          }
  
          console.assert(entries[0]?.txId === file.viewTx.txId || !file.viewTx.txId);
@@ -101,7 +107,7 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..fb07590bd795a654f607d24a7eab06cc
          break;
        case VFS.SQLITE_LOCK_EXCLUSIVE:
          await this.#lock(file, 'write');
-@@ -670,6 +659,17 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -670,6 +660,17 @@ export class IDBMirrorVFS extends FacadeVFS {
     * @param {File} file 
     */
    async #commitTx(file) {
@@ -119,7 +125,7 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..fb07590bd795a654f607d24a7eab06cc
      // Advance our own view. Even if we received our own broadcasts (we
      // don't), we want our view to be updated synchronously.
      this.#acceptTx(file, file.txActive);
-@@ -677,47 +677,129 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -677,47 +678,136 @@ export class IDBMirrorVFS extends FacadeVFS {
  
      const oldestTxId = await this.#getOldestTxInUse(file);
  
@@ -130,53 +136,61 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..fb07590bd795a654f607d24a7eab06cc
 -    for (const [offset, data] of file.txActive.blocks) {
 -      blocks.put({ path: file.path, offset, data });
 -    }
--
--    // Delete blocks past the end of the file.
--    blocks.delete(IDBKeyRange.bound(
--      [file.path, file.txActive.fileSize], [file.path, Infinity]));
--
--    // Delete obsolete transactions no longer needed.
--    const oldRange = IDBKeyRange.bound(
--      [file.path, -Infinity], [file.path, oldestTxId],
--      false, true);
--    idbTx.objectStore('tx').delete(oldRange);
--
--    // Save transaction object. Omit page data as an optimization.
--    const txSansData = Object.assign({}, file.txActive);
--    txSansData.blocks = new Map(Array.from(file.txActive.blocks, ([k]) => [k, null]));
--    idbTx.objectStore('tx').put(txSansData);
--
--    // Broadcast transaction once it commits.
-+    const gated = file.commitsPending++ > 0;
-     const complete = new Promise((resolve, reject) => {
--      const message = file.txActive;
-       idbTx.oncomplete = () => {
--        file.broadcastChannel.postMessage(message);
++    const complete = new Promise(async (resolve, reject) => {
++      idbTx.oncomplete = () => {
 +        file.commitsPending--;
 +        file.broadcastChannel.postMessage(tx);
-         resolve();
-       };
--      idbTx.onabort = () => reject(idbTx.error);
--      idbTx.commit();
++        resolve();
++      };
 +      idbTx.onabort = () => {
 +        // Our view includes this transaction, so it must be reloaded.
 +        file.commitsPending--;
 +        file.abortController.abort();
 +        reject(idbTx.error);
 +      };
-+
-+      const write = () => {
+ 
+-    // Delete blocks past the end of the file.
+-    blocks.delete(IDBKeyRange.bound(
+-      [file.path, file.txActive.fileSize], [file.path, Infinity]));
++      if (file.commitsPending++ > 0) {
++        // There are other write transactions still in flight. Use
++        // a read request purely for the side effect of flushing
++        // the IDB pipeline. Then we can ensure we are not building
++        // the new transaction on a failed transaction.
++        const fence = idbTx.objectStore('tx').get([file.path, -1]);
++        await idbX(fence);
++      }
+ 
+-    // Delete obsolete transactions no longer needed.
+-    const oldRange = IDBKeyRange.bound(
+-      [file.path, -Infinity], [file.path, oldestTxId],
+-      false, true);
+-    idbTx.objectStore('tx').delete(oldRange);
++      try {
 +        if (file.abortController.signal.aborted) {
 +          idbTx.abort();
 +          return;
 +        }
-+
+ 
+-    // Save transaction object. Omit page data as an optimization.
+-    const txSansData = Object.assign({}, file.txActive);
+-    txSansData.blocks = new Map(Array.from(file.txActive.blocks, ([k]) => [k, null]));
+-    idbTx.objectStore('tx').put(txSansData);
 +        // Update IndexedDB page data.
 +        const blocks = idbTx.objectStore('blocks');
 +        for (const [offset, data] of tx.blocks) {
 +          blocks.put({ path: file.path, offset, data });
 +        }
-+
+ 
+-    // Broadcast transaction once it commits.
+-    const complete = new Promise((resolve, reject) => {
+-      const message = file.txActive;
+-      idbTx.oncomplete = () => {
+-        file.broadcastChannel.postMessage(message);
+-        resolve();
+-      };
+-      idbTx.onabort = () => reject(idbTx.error);
+-      idbTx.commit();
 +        // Delete blocks past the end of the file.
 +        blocks.delete(IDBKeyRange.bound(
 +          [file.path, tx.fileSize], [file.path, Infinity]));
@@ -192,14 +206,11 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..fb07590bd795a654f607d24a7eab06cc
 +        txSansData.blocks = new Map(Array.from(tx.blocks, ([k]) => [k, null]));
 +        idbTx.objectStore('tx').put(txSansData);
 +        idbTx.commit();
-+      };
-+
-+      if (gated) {
-+        // A request runs only after the earlier commits have finished,
-+        // so the check above sees whether one of them was aborted.
-+        idbTx.objectStore('tx').get([file.path, -1]).onsuccess = write;
-+      } else {
-+        write();
++      } catch (e) {
++        // This code no longer runs inside a request event handler, so an
++        // exception would not abort the transaction on its own.
++        idbTx.abort();
++        throw e;
 +      }
      });
  
@@ -232,6 +243,8 @@ index 3de1296bd9a8634339accdfa1c66970b23efa892..fb07590bd795a654f607d24a7eab06cc
 +  async #loadFile(file, idbTx) {
 +    const blocks = new Map();
 +    await new Promise((resolve, reject) => {
++      // TODO: Reading the database in batches with `getAll()` and a
++      // batch size count would be faster than using a cursor.
 +      const range = IDBKeyRange.bound([file.path, 0], [file.path, Infinity]);
 +      const request = idbTx.objectStore('blocks').openCursor(range);
 +      request.onsuccess = () => {

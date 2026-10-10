@@ -28,7 +28,7 @@ no longer deletable as a block. Each is independent and each has a report in
 
 - `IDBMirrorVFS.js` — #371 (a commit whose IndexedDB transaction aborts: commits built on it refused
   or dropped, the view reloaded from IndexedDB, `SQLITE_BUSY` at RESERVED, the journal of an aborted
-  view removed on close), head `3367cb65` since 2026-10-03; and #372 (`jClose` waits for the commits in
+  view removed on close), head `cb97deed` since 2026-10-10 (the review's sequential `#commitTx` with its fence, `commitsPending` declared, the `#loadFile` TODO, and a `try`/`catch` that aborts the IndexedDB transaction if the write body throws); and #372 (`jClose` waits for the commits in
   flight before closing the `BroadcastChannel`), head `69e00270` since 2026-10-03. The two PRs conflict
   in `jClose` only: the patch waits for the commits in flight first, then removes an aborted view's
   journal. Both PRs' tests pass on the merged file (226, 3/3, both engines).
