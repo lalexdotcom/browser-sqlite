@@ -75,7 +75,7 @@ here on purpose: a total alone cannot say which suite moved.
 
 ## In progress
 
-- **The Vitest + WebdriverIO migration is delivered and waits for the user:** the rebuild of the container (`post-create.sh` on a fresh one) and a push, which is the first time CI runs the new workflows. What stays open after it: `mem:follow-ups`; the design: `docs/superpowers/specs/2026-10-10-vitest-webdriverio-design.md`.
+- **The Vitest + WebdriverIO migration, parallel runs included, is merged into `main` (2026-10-10) and waits for the user:** the rebuild of the container (`post-create.sh` on a fresh one: `node scripts/browsers.ts install` prints two `ok`, `pnpm test` green) and a push, which is the first time CI runs the new workflows and measures their durations. What stays open after it: `mem:follow-ups`; the design: `docs/superpowers/specs/2026-10-10-vitest-webdriverio-design.md`.
 
 ## In flight, and not ours to move
 
