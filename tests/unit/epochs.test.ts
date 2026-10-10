@@ -43,7 +43,7 @@ describe('epochsFor', () => {
     const host = globalThis as unknown as Record<symbol, unknown>;
     host[key] = new Map([['OPFSAdaptiveVFS:/preseeded', { value: 41 }]]);
 
-    // In rstest's bundled Node environment the query-string trick does not
+    // In a bundled Node environment the query-string trick may not
     // produce a separate module instance. A plain re-import is equivalent
     // because registry() reads globalThis[REGISTRY_KEY] on every call —
     // it never caches at module level — so seeding globalThis before the

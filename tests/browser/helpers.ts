@@ -20,7 +20,7 @@ import {
 } from './target';
 
 /**
- * The running test's `ctx.skip`. rstest skips a running test only through its
+ * The running test's `ctx.skip`. A running test is skipped only through its
  * own context, so a test that declares `needs` hands it over with them (spec
  * 2026-09-15, A7).
  */
@@ -131,7 +131,7 @@ export function pairFor(needs: readonly Need[] = [], skip?: Skip): TestTarget {
     );
   }
   if (pair !== 'skip') return pair;
-  // ctx.skip() takes no reason, so the report would not say why.
+  // skip() is called without a reason, so the report would not say why.
   console.info(
     `skipped: ${targetLabel(TEST_TARGET)} lacks [${needs.join(', ')}] here (BSQ_TEST_NEEDS=skip)`,
   );
@@ -164,9 +164,9 @@ export async function createTestClient(options: TestClientOptions = {}) {
   } as InternalSQLiteClientOptions);
 
   // onTestFinished, NOT afterEach: afterEach registered from inside a test
-  // body never runs in rstest — this cleanup was dead code from the day it was
-  // written, which is why nothing a test created was ever removed. The same
-  // trap is documented on interceptWorkers below.
+  // body is suite-scoped, not test-scoped — under rstest it never ran, and
+  // nothing a test created was ever removed. The same trap is documented on
+  // interceptWorkers below.
   onTestFinished(async () => {
     // Closing first is what lets the deletion below happen at all —
     // deleteDatabase refuses with DATABASE_IN_USE while a client holds the

@@ -73,8 +73,8 @@ const exit = (code: number) => {
 };
 
 // Its own process group, so that a deadline or a signal reaches what the
-// command started too: `pnpm exec rstest` killed through its launcher alone
-// left rstest and its browser running under init (2026-10-01). A background
+// command started too: `pnpm exec <runner>` killed through its launcher alone
+// left the runner and its browser running under init (2026-10-01, rstest). A background
 // group that read the terminal would be stopped, hence no stdin. POSIX only.
 const grouped = process.platform !== 'win32';
 

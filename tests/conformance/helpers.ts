@@ -112,7 +112,7 @@ const PROBE_ATTEMPTS = 3;
  * The answer, or a thrown error — never a guess.
  *
  * This runs at module scope behind a TOP-LEVEL AWAIT, in every browser test
- * file's page, and rstest runs those files in parallel pages. On Firefox,
+ * file's page, and a runner may run those files in parallel pages (rstest did). On Firefox,
  * `await navigator.storage.getDirectory()` inside the worker below sometimes
  * NEVER SETTLES under that concurrency — no resolve, no reject (established
  * 2026-09-16, `mem:follow-ups`). An unbounded probe therefore hangs its page

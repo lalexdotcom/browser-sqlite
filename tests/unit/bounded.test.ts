@@ -63,8 +63,8 @@ describe('scripts/bounded.ts', () => {
     expect(stderr).toContain('without finishing');
   }, 20_000);
 
-  // `pnpm exec rstest` is such a command: the deadline killed the pnpm launcher
-  // and left rstest and its browser running under init (2026-10-01).
+  // `pnpm exec <runner>` is such a command: the deadline killed the pnpm launcher
+  // and left the runner and its browser running under init (2026-10-01, rstest).
   // Falsifiable: signal the child alone (`child.kill`) and the grandchild
   // outlives the run.
   it('kills what the command started too, not only the command', async () => {

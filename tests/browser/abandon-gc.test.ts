@@ -10,7 +10,7 @@
 // signal's abort — is pinned deterministically, with no garbage collection
 // and no browser flag, by tests/browser/abandon.test.ts.
 //
-// Measured under rstest: 13/13 real (non-skipped) green runs, and — as the
+// Measured under rstest (before the move to Vitest): 13/13 real (non-skipped) green runs, and — as the
 // falsifier — commenting out the `registry.watch(gen, held, token)` registration
 // in src/queries.ts makes BOTH tests hard-time out at 60000 ms with all ten
 // retry rounds exhausted, rather than pass. Re-run under Vitest on 2026-10-10:

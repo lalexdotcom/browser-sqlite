@@ -7,7 +7,7 @@ import type { OnUnmetNeed, TestTarget } from './browser/target.ts';
 
 /**
  * What each engine the configs drive offers a build — the only features the
- * default build reads. Both Playwright engines expose `WebAssembly.Suspending`.
+ * default build reads. Chrome for Testing and stock Firefox both expose `WebAssembly.Suspending`.
  */
 export const CHROMIUM_FEATURES: ReadonlySet<PlatformFeature> =
   new Set<PlatformFeature>(['jspi']);
@@ -16,8 +16,7 @@ export const FIREFOX_FEATURES: ReadonlySet<PlatformFeature> =
 
 /**
  * The targets the browser configs make one project each for, read in Node by
- * `rstest.config.ts`, `rstest.firefox.config.ts` and `rstest.isolated.config.ts`
- * (spec 2026-09-15, A5).
+ * `vitest.config.ts` (spec 2026-09-15, A5; spec 2026-10-10, D8).
  *
  * `BSQ_TEST_TARGETS` — prefixed, never a generic name: VS Code exports
  * `BROWSER` (mem:stack-and-build) — selects them:
