@@ -24,5 +24,5 @@ PR [#374][pr374], opened 2026-10-03 from `lalexdotcom:fix/adaptive-missing-sync-
 
 ## What stays ours
 
-- **The carry.** The patch holds this line, byte-identical to the PR, beside #371 and #372.
+- **The carry.** The patch holds this line, byte-identical to the PR, beside #372's lines in `IDBMirrorVFS.js`.
 - **The library side** — `randomId()` instead of `crypto.randomUUID()`, and `web-locks` required by every VFS outside memory — is ours alone (`CHANGELOG.md`, Fixed).

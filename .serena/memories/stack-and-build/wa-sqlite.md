@@ -6,10 +6,12 @@ Part of `mem:stack-and-build`. Moved here from it on 2026-10-08; the chain of ea
 
 `wa-sqlite` is a devDependency only, vendored into `dist/worker/worker.js` at build time so it
 never reaches a consumer lockfile. **Pinned by commit SHA, not by tag, since 2026-09-15 (user)**:
-`github:rhashimoto/wa-sqlite#96d91182bf958d1c9fce2d851f66198378d8dbf1` since 2026-10-05, upstream
-`master` with our #375 merged, byte-identical to the head the patch carried; the repin also brought
-what the patch had left out of #375, the `async` glue and a rebuilt `wa-sqlite-async.wasm` (no
-`asyncify_imports.json` any more), so `async` executes new code since. Vendored, so a commit serves
+`github:rhashimoto/wa-sqlite#d09953ee4bc565c0d0c321cdd949b4fecf12a72e` since 2026-10-10, upstream
+`master` with our #371 merged, its `IDBMirrorVFS.js` byte-identical to the head the patch carried
+(`cb97deed`); nothing else changed upstream since `96d91182`, and the built `worker.js` and the three
+`.wasm` are byte-identical across that repin. The previous pin, `96d91182` (2026-10-05, #375 merged),
+brought what the patch had left out of #375, the `async` glue and a rebuilt `wa-sqlite-async.wasm`
+(no `asyncify_imports.json` any more), so `async` executes new code since then. Vendored, so a commit serves
 as well as a release and nothing waits for one.
 
 - **A repin can change executed code even when the PRs it brings were carried**: a PR merged at a
@@ -26,12 +28,11 @@ as well as a release and nothing waits for one.
 no longer deletable as a block. Each is independent and each has a report in
 `docs/upstream/`, which is where the mechanisms and measurements live:
 
-- `IDBMirrorVFS.js` — #371 (a commit whose IndexedDB transaction aborts: commits built on it refused
-  or dropped, the view reloaded from IndexedDB, `SQLITE_BUSY` at RESERVED, the journal of an aborted
-  view removed on close), head `cb97deed` since 2026-10-10 (the review's sequential `#commitTx` with its fence, `commitsPending` declared, the `#loadFile` TODO, and a `try`/`catch` that aborts the IndexedDB transaction if the write body throws); and #372 (`jClose` waits for the commits in
-  flight before closing the `BroadcastChannel`), head `69e00270` since 2026-10-03. The two PRs conflict
-  in `jClose` only: the patch waits for the commits in flight first, then removes an aborted view's
-  journal. Both PRs' tests pass on the merged file (226, 3/3, both engines).
+- `IDBMirrorVFS.js` — #372 (`jClose` waits for the commits in flight before closing the
+  `BroadcastChannel`), head `69e00270`, applied on upstream's file, which has #371 since the repin of
+  2026-10-10. The `jClose` conflict with #371 is resolved as it was in the patch while both were
+  carried: wait for the commits in flight first, then remove an aborted view's journal. Both PRs'
+  tests passed on that merged file (226, 3/3, both engines). #372's branch was rebased onto `d09953ee` the same day (head `6512da9f`), with exactly that file: the patch is #372's own diff.
 - `OPFSAdaptiveVFS.js` — #374, line 9 guarded (`FileSystemSyncAccessHandle?.prototype`), without
   which no worker loads outside a secure context (INSECURE-CONTEXT).
 - `dist/wa-sqlite-jspi.mjs` was carried for #375 from 2026-10-05 until its merge the same day. **After any change to a carried `dist/` glue, clear `node_modules/.cache/rspack` and check the pattern in `dist/worker/worker.js`**: the forced build cache served the previous glue once.

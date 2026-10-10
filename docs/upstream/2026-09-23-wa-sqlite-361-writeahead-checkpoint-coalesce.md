@@ -132,6 +132,10 @@ It does not mention this library, per the standing rule: a stable library is not
 
 **Carried here:** `patches/wa-sqlite@1.1.2.patch` holds `68db49b3`'s `WriteAhead.js` byte for byte, in place of the first version; the test file stays upstream, the patch covering `src/` only.
 
+## Merged
+
+**Merged on 2026-09-27** by rhashimoto, as `baff7453` on `master`, its `WriteAhead.js` byte for byte the head `68db49b3`. It left [`patches/`](../../patches) at the repin of 2026-09-28 to `e6e01ae1`.
+
 ## What stays ours
 
 What this change leaves open:

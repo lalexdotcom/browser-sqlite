@@ -23,10 +23,11 @@ unmeasured ground.
   ~17 min against 3-9 for the others, under the 25-minute job limit — not looked into, and not
   seen at rc.9.
   Procedure: `mem:conventions`, § Releasing.
-- **The vendored wa-sqlite sits on upstream `master` of 2026-10-05** (`96d91182`, `package.json`
-  has the SHA). **`patches/wa-sqlite@1.1.2.patch` carries `IDBMirrorVFS.js` for #371 and #372**
-  (both open upstream, conflicting in `jClose`) **and a one-line guard in `OPFSAdaptiveVFS.js`
-  for #374** (open upstream); heads and the merge in `mem:stack-and-build/wa-sqlite`, reports in
+- **The vendored wa-sqlite sits on upstream `master` of 2026-10-10** (`d09953ee`, #371 merged;
+  `package.json` has the SHA; the built worker is byte-identical to the previous pin's).
+  **`patches/wa-sqlite@1.1.2.patch` carries `IDBMirrorVFS.js` for #372** (open upstream, its
+  `jClose` resolved against #371 as before) **and a one-line guard in `OPFSAdaptiveVFS.js` for
+  #374** (open upstream); heads and the merge in `mem:stack-and-build/wa-sqlite`, reports in
   `mem:upstream`. A patch is regenerated or removed through `pnpm patch` / `pnpm patch-commit`,
   never by hand.
 - **`main` may sit ahead of `origin/main` indefinitely** — the convention, not an oversight. It
@@ -86,8 +87,9 @@ here on purpose: a total alone cannot say which suite moved.
   the PR before his answer. The plan and what his answer calls for are in `mem:follow-ups`, the
   measurements in `mem:measurements/test-browsers`, and the user's principles in
   `mem:conventions` (§ Testing in browsers).
-- **#371, #372 and #374 are open upstream** and carried in the patch (§ Standing facts);
-  follow-ups in `mem:follow-ups`.
+- **#372 and #374 are open upstream** and carried in the patch (§ Standing facts); #371 merged on
+  2026-10-10 and left the patch at the repin; #372 was rebased onto it the same day. Follow-ups in
+  `mem:follow-ups`.
 - **Another agent's work was paused by the user until our upstream PRs were done; the user
   relaunches it.**
 

@@ -50,3 +50,7 @@ With both halves, the `OPFSCoopSyncVFS/sync` cell went from three failures to no
 ## Posted upstream
 
 PR [#350][pr350] on 2026-09-18, with the reproduction as a gist and the test in the same branch. It does not claim to make a blocked acquisition succeed — a file held elsewhere is a legitimate failure that the caller is expected to retry. It makes that failure recoverable, which it was not.
+
+## Merged
+
+**Merged on 2026-09-27** by rhashimoto, as `5113ecb2` on `master`, its `OPFSCoopSyncVFS.js` byte for byte the head `2fdd0826`. It left [`patches/`](../../patches) at the repin of 2026-09-28 to `e6e01ae1`.

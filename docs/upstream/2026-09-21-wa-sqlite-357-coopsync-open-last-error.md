@@ -57,3 +57,7 @@ It claims nothing about what SQLite tells a caller: the connection's message is 
 Upstream CI on the head commit is green — [run 35592627851](https://github.com/rhashimoto/wa-sqlite/actions/runs/35592627851), `build (20.x)`, the only check.
 
 **Two commits, four files**, and the second of them is the one to watch in review: the test needs a line in `test/test-worker.js`, because the harness proxies the VFS behind a getter that returns only functions. That is a change to upstream's own test infrastructure, small and load-bearing — without it no test can observe VFS state at all.
+
+## Merged
+
+**Merged on 2026-09-27** by rhashimoto, as `e6e01ae1` on `master`, byte for byte the head `6a0d6c5a`. It left [`patches/`](../../patches) at the repin of 2026-09-28 to `e6e01ae1`.
