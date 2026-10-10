@@ -170,6 +170,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 
 ## `mem:measurements/suite-and-matrix` — the test suite, the matrix, the Firefox harness
 
+- PARALLEL-RUNS — several Vitest processes at once: `pnpm test` 519 s to 105 s, the matrix 6187 s to 765 s
 - MATRIX-VITEST
 - LIFECYCLE-INIT-RACE
 - INSECURE-CONTEXT

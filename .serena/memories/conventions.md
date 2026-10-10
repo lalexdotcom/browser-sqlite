@@ -234,7 +234,7 @@ policy becomes applicable as written.
 
 ## When to run the full matrix (2026-09-22)
 
-`pnpm test:matrix` covers the 22 declared (vfs, build) pairs × 4 columns (`chrome`, `firefox`, `isolated-chrome`, `isolated-firefox`) = 88 cells, and costs about 1 h 45 on Vitest (`mem:measurements/suite-and-matrix`, MATRIX-VITEST). `pnpm test` covers **two recommended pairs**, so the matrix is the only thing that sees the other twenty. Run it when the change can behave differently per pair:
+`pnpm test:matrix` covers the 22 declared (vfs, build) pairs × 4 columns (`chrome`, `firefox`, `isolated-chrome`, `isolated-firefox`) = 88 cells, and costs about 13 min with 12 cells at a time (1 h 45 one by one; `mem:measurements/suite-and-matrix`, PARALLEL-RUNS). `pnpm test` covers **two recommended pairs**, so the matrix is the only thing that sees the other twenty. Run it when the change can behave differently per pair:
 
 - **the per-connection machinery** — `src/pool.ts`, `src/transaction.ts`, `src/worker/`;
 - **a wa-sqlite repin or a change to `patches/`** — every VFS comes from there;

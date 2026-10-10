@@ -2,6 +2,24 @@
 
 Part of `mem:measurements`, which indexes every entry; its rules apply here.
 
+## PARALLEL-RUNS — several Vitest processes at once, 2026-10-10, this container (16 cores), Vitest 5.0.3, Chrome 153.0.8010.52, Firefox 155.0.1
+
+**Why.** The WebdriverIO provider runs one file at a time per project and a Vitest run takes its projects one after another (`supportsParallelism = false`, one active page per WebDriver session), so one invocation cannot use the machine. Several processes can, each with its own session, hence browser profile and port. Design in `mem:stack-and-build` (Provider facts, "Parallel runs").
+
+**Probe (before the launcher).** `vitest run --project … --shard=i/N --reporter=blob` then `vitest --merge-reports <dir> --reporter=default` merges **identical test by test** to an unsharded run (453 of 453 names and statuses on `chrome · OPFSWriteAheadVFS/sync`); 3 shards of that project took 51 s against 107 s. 12 concurrent processes (both engines, the two default pairs, 3 shards): 82-84 s, 3 runs of 3 green, 1814 passed / 12 skipped, 20 distinct browser profiles during the run. The merge reads every file of the blobs directory: logs beside the blobs broke it ("Unexpected end of JSON input").
+
+**`pnpm test` on the final tree** (`unit`, `chrome`, `firefox`, `isolated`: 315 files, 2620 tests, 2608 passed / 12 skipped):
+- One Vitest invocation, no launcher: **519 s** (8 min 40 wall), the reference.
+- Launcher, `BSQ_TEST_JOBS` unset (17 jobs, 12 at a time: `unit`, one job per isolated project, three shards per `chrome` and `firefox` project): **105 s** wall, and 106 s in the plain `pnpm test` that followed. The jobs took 4-78 s.
+- `BSQ_TEST_JOBS=3` (what a 4-vCPU `ubuntu-latest` resolves to): **246 s**; 9 jobs, one per project, the `chrome` and `firefox` ones 106-140 s.
+- **Parity with the sequential run: 1229 distinct (file, full name) keys, 2620 results, 0 differences, both for 12 jobs and for 3** — compared as multisets of statuses per key, since Vitest's JSON carries no project name.
+- `pnpm test:conformance`: 6 files, 162 passed / 32 skipped as before, 21 s (29 s one invocation).
+- **Falsifier.** A launcher run on `chrome ·*` (12 jobs, 6 shards per project) with one `vitest` child (`--shard=2/6` of `OPFSAdaptiveVFS/jspi`) killed with SIGKILL: the job read `exit 1 in 1s (NO BLOB)`, the merge ran on the other eleven (807 passed instead of 898), the launcher named the job with its log tail and exited 1. The same command unkilled: exit 0, 898 passed / 8 skipped.
+
+**The matrix through the pool** (`pnpm test:matrix`, 12 cells at a time, `tests/build/` built once): **88 of 88 cells green, 765 s (12 min 45; 6187 s one by one), 18 874 passed / 1 608 skipped** — the figures of the sequential run. **Per cell, against the sequential Vitest matrix: 88 cells, 0 differing** (file + full name + status, as multisets). A cell takes 123-378 s on Chrome and 119-233 s on Firefox under that load (80-175 s and 94-147 s alone), 14-22 s isolated; the longest, 378 s, is two thirds of the 600 s bound, which therefore has less margin than one by one: a smaller `BSQ_TEST_JOBS` is the lever if a loaded machine tips a cell.
+
+**What the figures do not say.** They are one pass each on a machine with 16 cores and nothing else running (idle Firefox processes of another session aside). A runner with fewer cores gets fewer jobs (`CPUs - 1`), so CI's figure is the `BSQ_TEST_JOBS=3` one only if the 4-vCPU assumption holds.
+
 ## MATRIX-VITEST — the first Vitest matrix and its parity with the rstest one, 2026-10-10, this container, Vitest 5.0.3, Chrome 153.0.8010.52, Firefox 155.0.1
 
 **Method.** The baseline is the rstest 0.11.8 + Playwright 1.64.0 (Chromium 156, Firefox 157) matrix taken before the migration, at `d2df419`: skip mode, 66 cells (22 pairs × chromium / firefox / isolated), each bounded at 600 s, a JSON report per cell, **66 of 66 green, 18 676 passed / 1 608 skipped, 32 min**. The Vitest side is `pnpm test:matrix` on the final tree: 88 cells (22 pairs × `chrome`, `firefox`, `isolated-chrome`, `isolated-firefox`), one `vitest run` per cell. Each baseline cell was compared with its Vitest cell as a multiset of (file, full test name, status).

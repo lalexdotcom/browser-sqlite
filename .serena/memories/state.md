@@ -40,16 +40,16 @@ Not history: the numbers a regression is detected against. **Every figure below 
 |---|---|
 | `pnpm exec tsc --noEmit` | clean |
 | `pnpm build` | clean |
-| `pnpm test` | ONE report, exit 0, **314 files (310 passed, 4 skipped), 2598 tests: 2586 passed, 12 skipped**, 513 s. It holds `unit`, the `chrome` and `firefox` target projects (`OPFSWriteAheadVFS/sync` and the engine's other recommended pair) and the four `isolated` ones |
-| `pnpm test:unit` | **736** tests, 34 files, ~3 s |
-| `pnpm test:conformance` | ONE report, both engines — 6 files, **162 passed / 32 skipped** (Chrome 83 / 14, Firefox 79 / 18), 29 s. Each VFS runs on its default build for the engine |
+| `pnpm test` | ONE merged report, exit 0, **315 files (311 passed, 4 skipped), 2620 tests: 2608 passed, 12 skipped**, **106 s** through the parallel launcher (17 jobs, 12 at a time; 246 s with `BSQ_TEST_JOBS=3`; 519 s as one Vitest invocation). It holds `unit`, the `chrome` and `firefox` target projects (`OPFSWriteAheadVFS/sync` and the engine's other recommended pair) and the four `isolated` ones |
+| `pnpm test:unit` | **758** tests, 35 files, ~3 s |
+| `pnpm test:conformance` | ONE merged report, both engines — 6 files, **162 passed / 32 skipped** (Chrome 83 / 14, Firefox 79 / 18), 21 s. Each VFS runs on its default build for the engine |
 | `pnpm exec biome ci .` | exit 0 |
-| `pnpm lint` | 189 files, **0 warnings** — the file count moves with the tree, **the warning count is the signal** |
+| `pnpm lint` | 192 files, **0 warnings** — the file count moves with the tree, **the warning count is the signal** |
 | `pnpm docs:vfs` | leaves `VFS.md` and `README.md` unchanged (`git diff --exit-code`) |
-| `pnpm test:consumer` | 24/24 stages, 46 s |
-| `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.ts chrome --all` | `OK`, `"reasons": {}`, 22 declared pairs runnable, 82 s; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
+| `pnpm test:consumer` | 24/24 stages, 47 s |
+| `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.ts chrome --all` | `OK`, `"reasons": {}`, 22 declared pairs runnable, 91 s; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
 | `dependencies` in `package.json` | absent |
-| `pnpm test:matrix` | **88 of 88 cells green, 6187 s** (1 h 43), no re-run inside it, no timed-out cell: **18 874 passed / 1 608 skipped** in total — `chrome` 9 225 / 741, `firefox` 9 253 / 867, `isolated-chrome` 198 / 0, `isolated-firefox` 198 / 0. **Every cell runs `BSQ_TEST_NEEDS=skip`**. A cell is 80-175 s on Chrome, 94-147 s on Firefox, 20-25 s isolated |
+| `pnpm test:matrix` | **88 of 88 cells green, 765 s** (12 min 45, 12 cells at a time), no re-run inside it, no timed-out cell: **18 874 passed / 1 608 skipped** in total — `chrome` 9 225 / 741, `firefox` 9 253 / 867, `isolated-chrome` 198 / 0, `isolated-firefox` 198 / 0, cell for cell the same tests and statuses as the one-by-one run (6187 s). **Every cell runs `BSQ_TEST_NEEDS=skip`**. A cell is 123-378 s on Chrome, 119-233 s on Firefox, 14-22 s isolated under that load |
 
 Detail of the matrix, and how it was reached (parity with the rstest matrix, the first red pass): `mem:measurements/suite-and-matrix`, MATRIX-VITEST.
 
@@ -58,7 +58,7 @@ touch it — never patch one cell.** Twice in September a total here went stale 
 own prose because one cell was patched and the table was not re-read. The per-project split is
 here on purpose: a total alone cannot say which suite moved.
 
-- **`pnpm test` is ONE `vitest run`** bounded at 2400 s, so a green `pnpm test` covers what CI covers; a red Chrome no longer hides Firefox. A commit pays only the unit project; a merge or a push pays the whole run (`mem:git-hooks`).
+- **`pnpm test` is ONE run** (several Vitest processes merged into one report, `mem:stack-and-build`, "Parallel runs") bounded at 2400 s, so a green `pnpm test` covers what CI covers; a red Chrome no longer hides Firefox. A job that leaves no blob fails it by name. A commit pays only the unit project; a merge or a push pays the whole run (`mem:git-hooks`).
 - **A green `pnpm test` is not a green tree: run `pnpm exec tsc --noEmit` beside it** — a commit
   once landed with a failing typecheck no test run could show (`mem:lessons`).
 - **Read the `Test Files` line as well as `Tests`:** a file can fail with no failed test (a setup or an unhandled error, the storage wipe included), which the test counters cannot show.
