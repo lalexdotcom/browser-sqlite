@@ -244,3 +244,79 @@ export function buildOnce(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   }
   return { ...env, BSQ_TEST_BUILT: '1' };
 }
+
+/** One process of a parallel run: a project, or one shard of it. */
+export type Job = {
+  readonly id: string;
+  readonly project: string;
+  readonly shard: readonly [number, number] | null;
+};
+
+/**
+ * The jobs of a run: `unit` once, every other project cut into its shards. An id
+ * names the job's blob and log, so two jobs must never share one: project names
+ * that collapse to the same file name are an error naming both.
+ */
+export function planJobs(
+  projects: ReadonlyMap<string, number>,
+  names: readonly string[],
+  concurrency: number,
+): Job[] {
+  const slug = (name: string) => name.replace(/[^\w.-]+/g, '-');
+  const jobs: Job[] = [];
+  const browser = names
+    .filter((name) => name !== 'unit')
+    .map((name) => ({ name, files: projects.get(name) as number }));
+  if (names.includes('unit')) {
+    jobs.push({ id: 'unit', project: 'unit', shard: null });
+  }
+  for (const { name, shards } of allocateShards(browser, concurrency)) {
+    for (let shard = 1; shard <= shards; shard++) {
+      jobs.push({
+        id: shards > 1 ? `${slug(name)}.${shard}of${shards}` : slug(name),
+        project: name,
+        shard: shards > 1 ? [shard, shards] : null,
+      });
+    }
+  }
+  const owners = new Map<string, string>();
+  for (const { id, project } of jobs) {
+    const owner = owners.get(id);
+    if (owner !== undefined && owner !== project) {
+      throw new Error(
+        `projects "${owner}" and "${project}" would share the job id "${id}" (one blob, one log)`,
+      );
+    }
+    owners.set(id, project);
+  }
+  return jobs;
+}
+
+/** What a job left of its blob: `unparsable` is a file Vitest did not finish writing. */
+export type BlobState = 'ok' | 'missing' | 'unparsable';
+
+/**
+ * The jobs that did not finish cleanly, each with why. A job killed by its
+ * timer or that never started failed whatever it left behind — a browser can
+ * hang in teardown after writing its blob — and a missing or truncated blob is
+ * a job whose tests the merge lacks. A job whose tests failed is NOT here: its
+ * blob is complete and the merge reports the failures.
+ */
+export function findFailedJobs<J>(
+  outcomes: readonly {
+    readonly job: J;
+    readonly timedOut: boolean;
+    readonly error: Error | null;
+    readonly blob: BlobState;
+  }[],
+): { job: J; reason: string }[] {
+  return outcomes.flatMap(({ job, timedOut, error, blob }) => {
+    const reasons = [
+      ...(timedOut ? ['timed out'] : []),
+      ...(error ? [`could not run: ${error.message}`] : []),
+      ...(blob === 'missing' ? ['no blob'] : []),
+      ...(blob === 'unparsable' ? ['blob does not parse'] : []),
+    ];
+    return reasons.length > 0 ? [{ job, reason: reasons.join(', ') }] : [];
+  });
+}

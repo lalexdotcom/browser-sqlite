@@ -28,15 +28,18 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import {
-  allocateShards,
+  type BlobState,
   buildOnce,
+  findFailedJobs,
   killLiveOnSignal,
   matchProjects,
+  planJobs,
   ROOT,
   resolveConcurrency,
   runBounded,
@@ -47,13 +50,6 @@ import {
 const JOB_TIMEOUT_MS = 900_000;
 const KEEP_RUNS = 10;
 const TAIL_LINES = 60;
-const UNIT = 'unit';
-
-type Job = {
-  readonly id: string;
-  readonly project: string;
-  readonly shard: readonly [number, number] | null;
-};
 
 function parseArgs(argv: readonly string[]) {
   const globs: string[] = [];
@@ -104,29 +100,15 @@ function listProjects(env: NodeJS.ProcessEnv): Map<string, number> {
   return files;
 }
 
-function planJobs(
-  projects: Map<string, number>,
-  names: readonly string[],
-  concurrency: number,
-): Job[] {
-  const slug = (name: string) => name.replace(/[^\w.-]+/g, '-');
-  const jobs: Job[] = [];
-  const browser = names
-    .filter((name) => name !== UNIT)
-    .map((name) => ({ name, files: projects.get(name) as number }));
-  if (names.includes(UNIT)) {
-    jobs.push({ id: UNIT, project: UNIT, shard: null });
+/** `ok` when the file is there and parses: Vitest writes a blob as JSON. */
+function blobState(file: string): BlobState {
+  if (!existsSync(file)) return 'missing';
+  try {
+    JSON.parse(readFileSync(file, 'utf8'));
+    return 'ok';
+  } catch {
+    return 'unparsable';
   }
-  for (const { name, shards } of allocateShards(browser, concurrency)) {
-    for (let shard = 1; shard <= shards; shard++) {
-      jobs.push({
-        id: shards > 1 ? `${slug(name)}.${shard}of${shards}` : slug(name),
-        project: name,
-        shard: shards > 1 ? [shard, shards] : null,
-      });
-    }
-  }
-  return jobs;
 }
 
 const tailOf = (file: string) =>
@@ -135,19 +117,22 @@ const tailOf = (file: string) =>
 async function main() {
   const { globs, mergeArgs } = parseArgs(process.argv.slice(2));
   const concurrency = resolveConcurrency(process.env.BSQ_TEST_JOBS);
-  const env = buildOnce(process.env);
-  killLiveOnSignal();
-
-  const projects = listProjects(env);
+  // `vitest list` needs no build: a typo in a glob fails before the build.
+  const projects = listProjects({ ...process.env, BSQ_TEST_BUILT: '1' });
   const names = matchProjects(globs, [...projects.keys()]);
   const jobs = planJobs(projects, names, concurrency);
+  const env = buildOnce(process.env);
+  killLiveOnSignal();
 
   const runsRoot = join(ROOT, '.test-parallel');
   const run = join(runsRoot, new Date().toISOString().replace(/[:.]/g, '-'));
   const blobs = join(run, 'blobs');
   const logs = join(run, 'logs');
+  // Blobs the merge cannot read, moved out of its directory.
+  const rejected = join(run, 'rejected');
   mkdirSync(blobs, { recursive: true });
   mkdirSync(logs, { recursive: true });
+  mkdirSync(rejected, { recursive: true });
   for (const old of readdirSync(runsRoot).sort().slice(0, -KEEP_RUNS)) {
     rmSync(join(runsRoot, old), { recursive: true, force: true });
   }
@@ -157,7 +142,6 @@ async function main() {
 
   const start = Date.now();
   let done = 0;
-  const missing: Job[] = [];
   const settled = await runPool(jobs, concurrency, async (job) => {
     const blob = join(blobs, `${job.id}.json`);
     const log = join(logs, `${job.id}.log`);
@@ -179,30 +163,46 @@ async function main() {
       { cwd: ROOT, env, timeoutMs: JOB_TIMEOUT_MS },
     );
     writeFileSync(log, error ? `${output}\n${error.message}\n` : output);
+    const state = blobState(blob);
+    // A blob the merge cannot read would kill it without naming the job.
+    if (state === 'unparsable')
+      renameSync(blob, join(rejected, `${job.id}.json`));
     const ended = timedOut
       ? 'timed out'
       : error
         ? `error ${error.message}`
         : `exit ${exitCode}`;
-    // A failed test still leaves its blob: the merge reports it. No blob is a
-    // job that never finished.
-    if (!existsSync(blob)) missing.push(job);
     console.log(
-      `[${++done}/${jobs.length}] ${job.id}: ${ended} in ${Math.round((Date.now() - began) / 1000)}s${existsSync(blob) ? '' : ' (NO BLOB)'}`,
+      `[${++done}/${jobs.length}] ${job.id}: ${ended} in ${Math.round((Date.now() - began) / 1000)}s${state === 'ok' ? '' : ` (${state === 'missing' ? 'NO BLOB' : 'BLOB DOES NOT PARSE'})`}`,
     );
+    return { job, timedOut, error, blob: state };
   });
-  settled.forEach((outcome, i) => {
-    if (outcome.status === 'rejected') {
+  const failed = findFailedJobs(
+    settled.flatMap((outcome, i) => {
+      if (outcome.status === 'fulfilled') return [outcome.value];
       console.error(`${jobs[i].id}: ${String(outcome.reason)}`);
-      if (!missing.includes(jobs[i])) missing.push(jobs[i]);
-    }
-  });
+      return [
+        {
+          job: jobs[i],
+          timedOut: false,
+          error:
+            outcome.reason instanceof Error
+              ? outcome.reason
+              : new Error(String(outcome.reason)),
+          blob: 'missing' as BlobState,
+        },
+      ];
+    }),
+  );
+  const usable = settled.filter(
+    (o) => o.status === 'fulfilled' && o.value.blob === 'ok',
+  ).length;
   console.log(
     `Jobs done in ${Math.round((Date.now() - start) / 1000)}s. Merging…\n`,
   );
 
-  let status = missing.length > 0 ? 1 : 0;
-  if (missing.length < jobs.length) {
+  let status = failed.length > 0 ? 1 : 0;
+  if (usable > 0) {
     const merged = spawnSync(
       'pnpm',
       [
@@ -219,15 +219,15 @@ async function main() {
     );
     if (merged.status !== 0) status = 1;
   }
-  for (const job of missing) {
+  for (const { job, reason } of failed) {
     const log = join(logs, `${job.id}.log`);
     console.error(
-      `\n--- ${job.id} ended without its blob; last ${TAIL_LINES} lines of ${log} ---\n${existsSync(log) ? tailOf(log) : '(no log)'}\n--- end ---`,
+      `\n--- ${job.id} failed (${reason}); last ${TAIL_LINES} lines of ${log} ---\n${existsSync(log) ? tailOf(log) : '(no log)'}\n--- end ---`,
     );
   }
-  if (missing.length > 0) {
+  if (failed.length > 0) {
     console.error(
-      `\n${missing.length} of ${jobs.length} jobs left no blob: ${missing.map((j) => j.id).join(', ')}. The merged report above lacks their tests.`,
+      `\n${failed.length} of ${jobs.length} jobs did not finish cleanly: ${failed.map((f) => `${f.job.id} (${f.reason})`).join(', ')}. The merged report above may lack their tests.`,
     );
   }
   process.exitCode = status;

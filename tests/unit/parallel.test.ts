@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   allocateShards,
+  type BlobState,
+  findFailedJobs,
   matchProjects,
+  planJobs,
   resolveConcurrency,
   runBounded,
   runPool,
@@ -264,5 +267,88 @@ describe('runBounded', () => {
     const elapsed = Date.now() - started;
     expect(result.timedOut).toBe(true);
     expect(elapsed).toBeLessThan(4000);
+  });
+});
+
+describe('findFailedJobs', () => {
+  const outcome = (
+    job: string,
+    over: Partial<{ timedOut: boolean; error: Error | null; blob: BlobState }>,
+  ) => ({
+    job,
+    timedOut: false,
+    error: null,
+    blob: 'ok' as BlobState,
+    ...over,
+  });
+
+  it('has nothing to say about jobs that finished with their blob', () => {
+    expect(findFailedJobs([outcome('a', {}), outcome('b', {})])).toEqual([]);
+    expect(findFailedJobs([])).toEqual([]);
+  });
+
+  it('fails a job with no blob', () => {
+    expect(
+      findFailedJobs([outcome('a', {}), outcome('b', { blob: 'missing' })]),
+    ).toEqual([{ job: 'b', reason: 'no blob' }]);
+  });
+
+  it('fails a job its timer killed, whatever it left behind', () => {
+    // Falsifiable: judging by the blob alone passes a browser that hung in
+    // teardown after writing it.
+    expect(findFailedJobs([outcome('a', { timedOut: true })])).toEqual([
+      { job: 'a', reason: 'timed out' },
+    ]);
+    expect(
+      findFailedJobs([outcome('a', { timedOut: true, blob: 'missing' })]),
+    ).toEqual([{ job: 'a', reason: 'timed out, no blob' }]);
+  });
+
+  it('fails a job that could not be spawned, with the cause', () => {
+    expect(
+      findFailedJobs([outcome('a', { error: new Error('spawn pnpm ENOENT') })]),
+    ).toEqual([{ job: 'a', reason: 'could not run: spawn pnpm ENOENT' }]);
+  });
+
+  it('fails a job whose blob does not parse', () => {
+    // A kill during the write leaves a truncated file the merge dies on.
+    expect(
+      findFailedJobs([outcome('a', { timedOut: true, blob: 'unparsable' })]),
+    ).toEqual([{ job: 'a', reason: 'timed out, blob does not parse' }]);
+  });
+});
+
+describe('planJobs', () => {
+  const files = new Map([
+    ['unit', 30],
+    ['chrome · A/sync', 10],
+    ['firefox · A/sync', 10],
+  ]);
+
+  it('plans unit once and shards the others', () => {
+    const jobs = planJobs(files, [...files.keys()], 4);
+    expect(jobs.filter((j) => j.project === 'unit')).toEqual([
+      { id: 'unit', project: 'unit', shard: null },
+    ]);
+    expect(jobs.filter((j) => j.project === 'chrome · A/sync')).toEqual([
+      { id: 'chrome-A-sync.1of2', project: 'chrome · A/sync', shard: [1, 2] },
+      { id: 'chrome-A-sync.2of2', project: 'chrome · A/sync', shard: [2, 2] },
+    ]);
+  });
+
+  it('gives every job its own id', () => {
+    const jobs = planJobs(files, [...files.keys()], 12);
+    expect(new Set(jobs.map((j) => j.id)).size).toBe(jobs.length);
+  });
+
+  it('throws, naming both projects, when two names collapse to one id', () => {
+    // Falsifiable: they would share one blob and one log.
+    const clash = new Map([
+      ['chrome · A/b', 3],
+      ['chrome A-b', 3],
+    ]);
+    expect(() => planJobs(clash, [...clash.keys()], 1)).toThrow(
+      /"chrome · A\/b" and "chrome A-b".*chrome-A-b/,
+    );
   });
 });
