@@ -43,9 +43,6 @@ importers:
       lint-staged:
         specifier: ^16.4.0
         version: 16.4.0
-      playwright:
-        specifier: 1.64.0
-        version: 1.64.0
       simple-git-hooks:
         specifier: ^2.13.1
         version: 2.13.1
@@ -3080,11 +3077,13 @@ snapshots:
 
   picomatch@4.0.7: {}
 
-  playwright-core@1.64.0: {}
+  playwright-core@1.64.0:
+    optional: true
 
   playwright@1.64.0:
     dependencies:
       playwright-core: 1.64.0
+    optional: true
 
   pngjs@7.0.0: {}
 

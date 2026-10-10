@@ -2,7 +2,7 @@
 /**
  * Consumer smoke test — exercises the PUBLISHED package, not the sources.
  *
- * The rstest browser suite bundles `src/` with rsbuild, so it never touches
+ * The Vitest browser suite loads `src/` through Vite, so it never touches
  * `dist/`, the `exports` map, or the way a third-party bundler resolves the
  * Web Worker. This script closes that gap:
  *
@@ -11,7 +11,7 @@
  *      bare `browser-sqlite` specifier cannot resolve back to the local
  *      sources and make the test lie
  *   3. `npm install` the tarball there
- *   4. drive the app with Playwright in BOTH Vite modes — dev server and
+ *   4. drive the app with WebdriverIO in BOTH Vite modes — dev server and
  *      `vite build` + `vite preview`. Worker resolution differs between the
  *      two, so a single mode proves nothing.
  *
@@ -28,7 +28,8 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { remote } from 'webdriverio';
+import { browserCapabilities, WDIO_CACHE_DIR } from './browsers.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEV_PORT = 5199;
@@ -163,30 +164,47 @@ function stopServer(child: ChildProcess) {
 
 /** Loads the fixture and returns what `window.__SMOKE__` ended up holding. */
 async function driveBrowser(url: string) {
-  const browser = await chromium.launch();
+  const browser = await remote({
+    logLevel: 'warn',
+    cacheDir: WDIO_CACHE_DIR,
+    capabilities: {
+      ...browserCapabilities('chrome'),
+      'goog:chromeOptions': { args: ['--headless=new'] },
+    },
+  });
   const noise: string[] = [];
   try {
-    const page = await browser.newPage();
-    page.on('console', (m) => {
-      if (m.type() === 'error') noise.push(`console.error: ${m.text()}`);
+    // WebDriver BiDi, on by default in WebdriverIO 10: the console, page-error,
+    // failed-request and HTTP-status signals the fixture's failures leave.
+    await browser.sessionSubscribe({
+      events: [
+        'log.entryAdded',
+        'network.fetchError',
+        'network.responseCompleted',
+      ],
     });
-    page.on('pageerror', (e) => noise.push(`pageerror: ${e.message}`));
-    page.on('requestfailed', (r) =>
-      noise.push(`requestfailed: ${r.url()} (${r.failure()?.errorText})`),
+    browser.on('log.entryAdded', (entry) => {
+      if (entry.type === 'javascript') noise.push(`pageerror: ${entry.text}`);
+      else if (entry.level === 'error')
+        noise.push(`console.error: ${entry.text}`);
+    });
+    browser.on('network.fetchError', (event) =>
+      noise.push(`requestfailed: ${event.request.url} (${event.errorText})`),
     );
-    page.on('response', (r) => {
-      if (r.status() >= 400) noise.push(`http ${r.status()}: ${r.url()}`);
+    browser.on('network.responseCompleted', (event) => {
+      if (event.response.status >= 400)
+        noise.push(`http ${event.response.status}: ${event.response.url}`);
     });
 
-    await page.goto(url, { waitUntil: 'load' });
-    await page.waitForFunction(
-      () => (window as SmokeWindow).__SMOKE__ !== undefined,
-      null,
-      {
-        timeout: 45_000,
-      },
+    await browser.url(url);
+    await browser.waitUntil(
+      () =>
+        browser.execute(() => (window as SmokeWindow).__SMOKE__ !== undefined),
+      { timeout: 45_000, interval: 100 },
     );
-    const smoke = await page.evaluate(() => (window as SmokeWindow).__SMOKE__);
+    const smoke = await browser.execute(
+      () => (window as SmokeWindow).__SMOKE__,
+    );
     return { smoke, noise };
   } catch (error) {
     return {
@@ -194,7 +212,7 @@ async function driveBrowser(url: string) {
       noise: [...noise, `driver: ${(error as Error).message}`],
     };
   } finally {
-    await browser.close();
+    await browser.deleteSession();
   }
 }
 
