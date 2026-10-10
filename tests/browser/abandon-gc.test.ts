@@ -1,23 +1,9 @@
-// This test only runs, rather than skipping, under a Chromium launched with
-// V8's `gc` exposed on globalThis. That is not part of `rstest.config.ts`:
-// the file defines a single `chromium` project whose launch args are shared
-// by every browser test, so putting `--expose-gc` there would change what
-// every other test in tests/browser/ runs under, and rstest refuses to run
-// a second browser-enabled project alongside it with different
-// provider options (all such projects in one run must share
-// provider/browser/headless/providerOptions). So the flag is passed at
-// invocation time only, via rstest's CLI override, and never touches the
-// checked-in config:
+// Run it with V8's `gc` exposed on globalThis, which only this file needs:
 //
-//   pnpm exec rstest --project 'chromium*' run tests/browser/abandon-gc.test.ts \
-//     --browser.providerOptions.launch.args.0="--js-flags=--expose-gc"
+//   BSQ_EXPOSE_GC=1 pnpm exec vitest run --configLoader runner --project 'chrome ·*' tests/browser/abandon-gc.test.ts
 //
-// `chromium*` matches every chromium project (one per target, spec
-// 2026-09-15, A5) — there is no longer a project named plain `chromium`.
-//
-// Without that flag `globalThis.gc` is undefined and this test skips itself
-// below — that is expected, not a failure, when run through `pnpm test` or
-// a git hook.
+// Without that variable `globalThis.gc` is undefined and this test skips
+// itself below — expected, not a failure, under `pnpm test` or a git hook.
 //
 // This covers the collection path only. The repair itself — an abandoned
 // generator giving its worker back at a timeout's deadline and at a
