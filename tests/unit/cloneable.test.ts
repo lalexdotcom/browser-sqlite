@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import { cloneable } from '../../src/worker/cloneable';
 
 describe('cloneable — a cause that cannot cross postMessage', () => {

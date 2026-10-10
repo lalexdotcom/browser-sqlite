@@ -1,5 +1,5 @@
 // tests/unit/supervisor.test.ts
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import { createSupervisor } from '../../src/supervisor';
 
 describe('supervisor — R1: a slot that never reported ready is never restarted', () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import type { SQLiteBuild } from '../../src/const/builds';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import { SQLiteError } from '../../src/types/errors';

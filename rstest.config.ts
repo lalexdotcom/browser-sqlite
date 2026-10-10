@@ -56,15 +56,6 @@ export const pluginSilenceWorkerHmrLogs = {
 export default defineConfig({
   extends: withRslibConfig(),
   projects: [
-    {
-      name: 'unit',
-      include: ['tests/**/*.test.ts', 'tests/**/*.spec.ts'],
-      exclude: ['tests/browser/**', 'tests/conformance/**'],
-      passWithNoTests: true,
-      // Explicit rather than inherited: these are pure Node tests with no I/O,
-      // so anything approaching this bound is a deadlock, not slowness.
-      testTimeout: 10000,
-    },
     // ONE browser engine here, and a second engine in rstest.firefox.config.ts
     // rather than beside this one. Not a preference: rstest 0.11.8 refuses two
     // browser-enabled projects with different engines in a single run —

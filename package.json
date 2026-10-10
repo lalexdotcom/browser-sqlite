@@ -51,10 +51,10 @@
 		"dev": "rslib build --watch",
 		"format": "biome format --write",
 		"prepare": "simple-git-hooks",
-		"test": "node scripts/bounded.ts 900 rstest && node scripts/bounded.ts 900 rstest --config rstest.firefox.config.ts && node scripts/bounded.ts 600 rstest --config rstest.isolated.config.ts",
+		"test": "node scripts/bounded.ts 300 vitest run --project unit && node scripts/bounded.ts 900 rstest && node scripts/bounded.ts 900 rstest --config rstest.firefox.config.ts && node scripts/bounded.ts 600 rstest --config rstest.isolated.config.ts",
 		"test:isolated": "node scripts/bounded.ts 600 rstest --config rstest.isolated.config.ts",
 		"test:watch": "rstest --watch",
-		"test:unit": "rstest --project unit",
+		"test:unit": "vitest run --project unit",
 		"test:browser": "node scripts/bounded.ts 900 rstest --project 'chromium*' && node scripts/bounded.ts 900 rstest --config rstest.firefox.config.ts",
 		"test:chromium": "node scripts/bounded.ts 900 rstest --project 'chromium*'",
 		"test:firefox": "node scripts/bounded.ts 900 rstest --config rstest.firefox.config.ts",
@@ -76,11 +76,15 @@
 		"@rstest/browser": "0.11.8",
 		"@rstest/core": "0.11.8",
 		"@types/node": "^24.12.0",
+		"@vitest/browser-webdriverio": "5.0.0",
 		"lint-staged": "^16.4.0",
 		"playwright": "1.64.0",
 		"simple-git-hooks": "^2.13.1",
 		"typescript": "^7.0.2",
-		"wa-sqlite": "github:rhashimoto/wa-sqlite#96d91182bf958d1c9fce2d851f66198378d8dbf1"
+		"vite": "8.3.4",
+		"vitest": "5.0.3",
+		"wa-sqlite": "github:rhashimoto/wa-sqlite#96d91182bf958d1c9fce2d851f66198378d8dbf1",
+		"webdriverio": "10.0.2"
 	},
 	"lint-staged": {
 		"*.{js,ts,jsx,tsx,mjs,cjs}": [

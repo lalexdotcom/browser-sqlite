@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import type { SQLiteDB } from '../../src/api';
 import { queryArgs, SQLQuery, sql } from '../../src/sql';
 import { SQLiteError } from '../../src/types/errors';

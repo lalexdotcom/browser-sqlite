@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import { SQLITE_CODES, SQLITE_EXTENDED_CODES } from '../../src/const/sqlite';
 import { SQLiteError } from '../../src/types/errors';
 

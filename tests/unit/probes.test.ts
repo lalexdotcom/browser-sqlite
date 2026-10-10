@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import { firstMissing, WORKER_PROBES } from '../../src/worker/probes';
 
 /** Chromium 121+: the handle carries the `mode` attribute. */

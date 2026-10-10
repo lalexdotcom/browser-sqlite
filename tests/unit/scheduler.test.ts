@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import { createScheduler } from '../../src/scheduler';
 
 type TestWorker = { index: number };

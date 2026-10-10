@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import * as wa from 'wa-sqlite/src/sqlite-constants.js';
 import { SQLITE_CODES, SQLITE_EXTENDED_CODES } from '../../src/const/sqlite';
 

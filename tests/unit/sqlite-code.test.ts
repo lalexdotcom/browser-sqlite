@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 import { SQLiteError } from 'wa-sqlite/src/sqlite-api.js';
 import { sqliteCodeOf } from '../../src/worker/sqlite-code';
 

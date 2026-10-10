@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'vitest';
 
 // The runs of this file are kept apart from the real ones in `.test-runs/`.
 const runsDir = mkdtempSync(join(tmpdir(), 'bounded-runs-'));
