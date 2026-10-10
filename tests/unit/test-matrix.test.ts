@@ -6,286 +6,144 @@ import {
 } from '../../scripts/test-matrix.ts';
 
 /**
- * Fixtures are trimmed excerpts of real rstest 0.11.8 markdown reports,
- * captured 2026-09-15 by running `BSQ_TEST_TARGETS=OPFSAdaptiveVFS/async
- * pnpm exec rstest --project 'chromium*' run` (passing case) and a synthetic
- * failing `unit` project run (failing / not-runnable cases); the crashed case
- * is the 2026-09-26 matrix's Firefox IDBMirrorVFS/async report. Only the
- * parts `parseMatrixReport` actually reads are kept.
+ * Fixtures carry only the fields `parseMatrixReport` reads of Vitest's JSON
+ * reporter (`--reporter=json`); the shapes were checked against a real report.
  */
+const report = (files: object[], success: boolean) =>
+  JSON.stringify({
+    success,
+    startTime: 1_000,
+    numTotalTests: 0,
+    testResults: files,
+  });
+const file = (
+  name: string,
+  tests: { title: string; status: string; failureMessages?: string[] }[],
+  extra: object = {},
+) => ({
+  name: `/workspaces/wsqlite/${name}`,
+  startTime: 1_000,
+  endTime: 53_000,
+  status: tests.some((t) => t.status === 'failed') ? 'failed' : 'passed',
+  message: '',
+  assertionResults: tests.map((t) => ({
+    ancestorTitles: ['d'],
+    title: t.title,
+    status: t.status,
+    failureMessages: t.failureMessages ?? [],
+  })),
+  ...extra,
+});
 
-const PASSING_REPORT = `---
-tool: "@rstest/core@0.11.8"
-timestamp: "2026-09-15T21:17:58.581Z"
-runtime: {"node":"v24.13.0","platform":"linux","cwd":"/workspaces/wsqlite"}
----
-
-# Rstest Test Execution Report
-
-## Summary
-
-\`\`\`json
-{
-  "status": "pass",
-  "counts": {
-    "testFiles": 48,
-    "failedFiles": 0,
-    "tests": 526,
-    "failedTests": 0,
-    "passedTests": 522,
-    "skippedTests": 4,
-    "todoTests": 0
-  },
-  "durationMs": {
-    "total": 51776,
-    "build": 296,
-    "tests": 51480
-  }
-}
-\`\`\`
-
-## Failures
-
-No test failures reported.
-`;
-
-const FAILING_REPORT = `---
-tool: "@rstest/core@0.11.8"
----
-
-# Rstest Test Execution Report
-
-## Summary
-
-\`\`\`json
-{
-  "status": "fail",
-  "counts": {
-    "testFiles": 1,
-    "failedFiles": 1,
-    "tests": 2,
-    "failedTests": 2,
-    "passedTests": 0,
-    "skippedTests": 0,
-    "todoTests": 0
-  },
-  "durationMs": {
-    "total": 71,
-    "build": 19,
-    "tests": 52
-  }
-}
-\`\`\`
-
-## Failures
-
-### [F01] tests/browser/foo.test.ts :: foo > bar
-
-details:
-
-\`\`\`json
-{
-  "testPath": "tests/browser/foo.test.ts",
-  "status": "fail",
-  "errors": [
-    {
-      "type": "Error",
-      "message": "expected 1 to be 2"
-    }
-  ]
-}
-\`\`\`
-
-### [F02] tests/browser/foo.test.ts :: foo > baz
-
-details:
-
-\`\`\`json
-{
-  "testPath": "tests/browser/foo.test.ts",
-  "status": "fail",
-  "errors": [
-    {
-      "type": "Error",
-      "message": "TARGET_NOT_RUNNABLE: no opfs here"
-    }
-  ]
-}
-\`\`\`
-`;
-
-const NOT_RUNNABLE_REPORT = `---
-tool: "@rstest/core@0.11.8"
----
-
-# Rstest Test Execution Report
-
-## Summary
-
-\`\`\`json
-{
-  "status": "fail",
-  "counts": {
-    "testFiles": 1,
-    "failedFiles": 1,
-    "tests": 2,
-    "failedTests": 2,
-    "passedTests": 0,
-    "skippedTests": 0,
-    "todoTests": 0
-  },
-  "durationMs": {
-    "total": 71,
-    "build": 19,
-    "tests": 52
-  }
-}
-\`\`\`
-
-## Failures
-
-### [F01] tests/browser/foo.test.ts :: foo > bar
-
-details:
-
-\`\`\`json
-{
-  "testPath": "tests/browser/foo.test.ts",
-  "status": "fail",
-  "errors": [
-    {
-      "type": "Error",
-      "message": "TARGET_NOT_RUNNABLE: readwrite-unsafe is missing here"
-    }
-  ]
-}
-\`\`\`
-
-### [F02] tests/browser/foo.test.ts :: foo > baz
-
-details:
-
-\`\`\`json
-{
-  "testPath": "tests/browser/foo.test.ts",
-  "status": "fail",
-  "errors": [
-    {
-      "type": "Error",
-      "message": "TARGET_NOT_RUNNABLE: no opfs here"
-    }
-  ]
-}
-\`\`\`
-`;
-
-const NO_SUMMARY_REPORT = `start   build started...
-ready   built in 0.26s
-
-(browser process killed before it could print a report)
-`;
-
-const CRASHED_REPORT = `---
-tool: "@rstest/core@0.11.8"
-timestamp: "2026-09-26T20:18:23.753Z"
-runtime: {"node":"v24.13.0","platform":"linux","cwd":"/workspaces/wsqlite"}
----
-
-# Rstest Test Execution Report
-
-## Summary
-
-\`\`\`json
-{
-  "status": "fail",
-  "counts": {
-    "testFiles": 38,
-    "failedFiles": 0,
-    "tests": 206,
-    "failedTests": 0,
-    "passedTests": 204,
-    "skippedTests": 2,
-    "todoTests": 0
-  },
-  "durationMs": {
-    "total": 19606,
-    "build": 19606,
-    "tests": 0
-  }
-}
-\`\`\`
-
-## Failures
-
-No test failures reported.
-
-## Unhandled Errors
-
-### Unhandled Error 1
-
-\`\`\`json
-{
-  "name": "Error",
-  "message": "Browser page crashed while running /workspaces/wsqlite/tests/browser/lifecycle.test.ts."
-}
-\`\`\`
-`;
+const PASSING = report(
+  [
+    file('tests/browser/a.test.ts', [
+      { title: 'x', status: 'passed' },
+      { title: 'y', status: 'skipped' },
+    ]),
+  ],
+  true,
+);
+const FAILING = report(
+  [
+    file('tests/browser/a.test.ts', [
+      {
+        title: 'x',
+        status: 'failed',
+        failureMessages: ['AssertionError: expected 1 to be 2'],
+      },
+    ]),
+  ],
+  false,
+);
+const NOT_RUNNABLE = report(
+  [
+    file('tests/browser/a.test.ts', [
+      {
+        title: 'x',
+        status: 'failed',
+        failureMessages: ['TARGET_NOT_RUNNABLE: needs opfs'],
+      },
+    ]),
+  ],
+  false,
+);
+const MIXED = report(
+  [
+    file('tests/browser/a.test.ts', [
+      {
+        title: 'x',
+        status: 'failed',
+        failureMessages: ['TARGET_NOT_RUNNABLE: needs opfs'],
+      },
+      {
+        title: 'y',
+        status: 'failed',
+        failureMessages: ['AssertionError: expected 1 to be 2'],
+      },
+    ]),
+  ],
+  false,
+);
+// A page crash: the file failed with no failed test, the reason in `message`.
+const CRASHED = report(
+  [
+    file('tests/browser/a.test.ts', [{ title: 'x', status: 'passed' }], {
+      status: 'failed',
+      message: 'Browser connection was closed while running tests',
+    }),
+  ],
+  false,
+);
 
 describe('parseMatrixReport', () => {
-  it('reads a passing summary', () => {
-    expect(parseMatrixReport(PASSING_REPORT)).toEqual({
+  it('reads a passing report', () => {
+    expect(parseMatrixReport(PASSING)).toEqual({
       status: 'passed',
-      tests: 526,
-      passed: 522,
+      tests: 2,
+      passed: 1,
       failed: 0,
-      skipped: 4,
-      files: 48,
+      skipped: 1,
+      files: 1,
       seconds: 52,
     });
   });
 
-  it('reads a failing summary whose failures are not all TARGET_NOT_RUNNABLE', () => {
-    // Falsifiable: classifying this as "not-runnable" would hide a real
-    // failure (foo > bar) behind the one TARGET_NOT_RUNNABLE failure.
-    expect(parseMatrixReport(FAILING_REPORT)).toEqual({
+  it('reads a failing report', () => {
+    expect(parseMatrixReport(FAILING)).toMatchObject({
       status: 'failed',
-      tests: 2,
-      passed: 0,
-      failed: 2,
-      skipped: 0,
-      files: 1,
-      seconds: 0,
+      failed: 1,
     });
   });
 
-  it('classifies a summary as not-runnable only when every failure is TARGET_NOT_RUNNABLE', () => {
-    expect(parseMatrixReport(NOT_RUNNABLE_REPORT)).toEqual({
+  it('classifies a report as not-runnable only when every failure is TARGET_NOT_RUNNABLE', () => {
+    expect(parseMatrixReport(NOT_RUNNABLE)).toEqual({
       status: 'not-runnable',
-      seconds: 0,
+      seconds: 52,
     });
   });
 
-  it('classifies an output with no summary block as timed out', () => {
-    // A killed run never gets to print its report, so the absence of a
-    // ```json summary block is the signal, not a status word.
-    expect(parseMatrixReport(NO_SUMMARY_REPORT)).toEqual({
-      status: 'timed-out',
+  it('keeps a real failure that comes with TARGET_NOT_RUNNABLE ones', () => {
+    // Falsifiable: classifying this as "not-runnable" would hide a real
+    // failure behind the TARGET_NOT_RUNNABLE one.
+    expect(parseMatrixReport(MIXED)).toMatchObject({
+      status: 'failed',
+      failed: 2,
     });
   });
-  it('keeps the unhandled errors of a failing report whose tests all passed', () => {
-    // Firefox IDBMirrorVFS/async, matrix of 2026-09-26: the page crashed, 38 of
-    // 57 files ran, and not one test failed.
-    expect(parseMatrixReport(CRASHED_REPORT)).toEqual({
+
+  it('classifies no report, or one that does not parse, as timed out', () => {
+    // A killed run never writes its report: absence is the signal.
+    expect(parseMatrixReport('')).toEqual({ status: 'timed-out' });
+    expect(parseMatrixReport('{')).toEqual({ status: 'timed-out' });
+  });
+
+  it('keeps the reason of a failed file whose tests all passed', () => {
+    expect(parseMatrixReport(CRASHED)).toMatchObject({
       status: 'failed',
-      tests: 206,
-      passed: 204,
       failed: 0,
-      skipped: 2,
-      files: 38,
-      seconds: 20,
-      // Relative to the report's own `cwd`, which differs on a CI runner.
       unhandled: [
-        'Browser page crashed while running tests/browser/lifecycle.test.ts.',
+        'tests/browser/a.test.ts: Browser connection was closed while running tests',
       ],
     });
   });
@@ -293,16 +151,16 @@ describe('parseMatrixReport', () => {
 
 describe('formatCell', () => {
   it('prints counts, files and time for a passing cell', () => {
-    expect(formatCell(parseMatrixReport(PASSING_REPORT))).toBe(
-      '522/0/4 · 48 files · 52s',
+    expect(formatCell(parseMatrixReport(PASSING))).toBe(
+      '1/0/1 · 1 files · 52s',
     );
   });
 
   it('says FAIL, and why, for a failed cell with no failed test', () => {
-    // Falsifiable: print only the counts and this cell reads 204/0/2, which
-    // is how the crash of 2026-09-26 passed for green in the table.
-    expect(formatCell(parseMatrixReport(CRASHED_REPORT))).toBe(
-      '204/0/2 · 38 files · 20s · FAIL: Browser page crashed while running tests/browser/lifecycle.test.ts.',
+    // Falsifiable: print only the counts and this cell reads 1/0/0, which
+    // is how a page crash passed for green in the table.
+    expect(formatCell(parseMatrixReport(CRASHED))).toContain(
+      'FAIL: tests/browser/a.test.ts: Browser connection',
     );
   });
 });
@@ -312,7 +170,7 @@ describe('runBounded', () => {
     // Falsifiable: runBounded without an 'error' listener on the child never
     // settles for a command that cannot start — removing that listener turns
     // this test into a timeout instead of a pass. Verified by hand: with the
-    // listener commented out, this test hits rstest's 10s project timeout
+    // listener commented out, this test hits Vitest's test timeout
     // instead of resolving.
     const result = await runBounded('bsq-test-matrix-nonexistent-binary', [], {
       env: process.env,
