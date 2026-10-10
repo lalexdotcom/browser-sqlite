@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v6
         with:
@@ -32,36 +32,15 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # One browser list for the whole workflow, named in the cache key and
-      # installed identically by both jobs. The key names the browsers because
-      # actions/cache only *saves* on a miss: a key that did not would stay
-      # identical when the list grows, hit on the older and smaller cache, and
-      # re-download the missing engines on every run, silently, until the
-      # lockfile happened to change. Keeping one list rather than one per job
-      # is deliberate — two lists that must agree is a drift waiting to happen,
-      # and consumer-smoke installing an engine it does not drive costs only
-      # apt time on a cache hit.
-      #
-      # Both engines are driven: Chromium by `pnpm test`, Firefox by the step
-      # after it. Firefox is the engine that answers RWU-1 — it ignores the
-      # readwrite-unsafe access-handle mode, so it is the only one here that
-      # exercises OPFSAdaptiveVFS's degraded path, which is where the pool's
-      # readiness gate and the commit barrier are actually load-bearing.
-      #
-      # WebKit is deliberately absent. It was added and removed on 2026-08-24:
-      # Playwright's Linux WebKit exposes no `navigator.storage` at all, so it
-      # cannot exercise any VFS this library ships and reported 9/104 for that
-      # single reason. A real WebKit signal needs Playwright on macOS. Adding
-      # it back means changing this comment, the list below, and the key above,
-      # together.
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
+      # Stock Chrome and Firefox at the versions scripts/browsers.ts pins, and
+      # their drivers, downloaded by WebdriverIO on first use. The key is that
+      # file: a new pin is a new cache. GitHub's Ubuntu images carry both
+      # browsers' system libraries.
+      - name: Cache WebdriverIO browsers
+        uses: actions/cache@v6
         with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-chromium-firefox-${{ hashFiles('pnpm-lock.yaml') }}
-
-      - name: Install browsers
-        run: pnpm exec playwright install --with-deps chromium firefox
+          path: node_modules/.cache/wdio
+          key: wdio-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/browsers.ts') }}
 
       - name: Lint and format check
         run: pnpm exec biome ci .
@@ -110,7 +89,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v6
         with:
@@ -119,19 +98,15 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Same key and same list as verify, on purpose — see the note there.
-      # scripts/consumer-smoke.ts imports { chromium } and drives nothing
-      # else, so Firefox is dead weight here; sharing one cache entry and one
-      # list across both jobs is worth that, because a per-job list is a pair
-      # that has to stay in agreement forever.
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
+      # Stock Chrome and Firefox at the versions scripts/browsers.ts pins, and
+      # their drivers, downloaded by WebdriverIO on first use. The key is that
+      # file: a new pin is a new cache. GitHub's Ubuntu images carry both
+      # browsers' system libraries.
+      - name: Cache WebdriverIO browsers
+        uses: actions/cache@v6
         with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-chromium-firefox-${{ hashFiles('pnpm-lock.yaml') }}
-
-      - name: Install browsers
-        run: pnpm exec playwright install --with-deps chromium firefox
+          path: node_modules/.cache/wdio
+          key: wdio-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/browsers.ts') }}
 
       - name: Consumer smoke test
         run: pnpm test:consumer

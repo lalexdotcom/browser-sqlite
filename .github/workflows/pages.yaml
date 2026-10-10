@@ -180,7 +180,7 @@ jobs:
           ref: preview
           path: preview
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v6
         with:
@@ -243,9 +243,9 @@ jobs:
             --ref "preview @ $SHORT"
           echo "Preview served at <page-url>/preview/"
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

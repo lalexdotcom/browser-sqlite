@@ -188,7 +188,7 @@ describe('AbortSignal (INT-09)', () => {
     let added = 0;
     let removed = 0;
     const signal = new Proxy(controller.signal, {
-      get(target, prop, receiver) {
+      get(target, prop) {
         if (prop === 'addEventListener') {
           return (...args: Parameters<AbortSignal['addEventListener']>) => {
             added++;

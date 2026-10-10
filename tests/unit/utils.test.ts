@@ -191,7 +191,7 @@ describe('normalizeDatabaseFile', () => {
   // chars, one over the 56-char ceiling SQLite's `nPathname + 8 > mxPathname`
   // (mxPathname = 64, wa-sqlite/src/VFS.js:10) leaves for the open call.
   it('strips the leading slash so a 57-char name fits the 56-char open budget', () => {
-    const input = '/' + 'x'.repeat(56); // 57 chars as written
+    const input = `/${'x'.repeat(56)}`; // 57 chars as written
     const normalized = normalizeDatabaseFile(input);
     expect(normalized.length).toBe(56);
   });

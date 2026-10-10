@@ -4,29 +4,14 @@ set -euo pipefail
 
 pnpm install
 
-# Install Playwright browsers + OS deps for rstest browser mode.
-#
-# Chromium and Firefox, deliberately not WebKit.
-#
-# Firefox earns its place: it ignores the readwrite-unsafe access-handle
-# mode, so it is the only engine here that exercises OPFSAdaptiveVFS's
-# degraded path. Measured 2026-08-24 — a second handle on the same file
-# throws NoModificationAllowedError, and the suite still passes 102/104.
-#
-# WebKit is not installed. Playwright 1.62's WebKit has no OPFS at all;
-# 1.63+ has it in a persistent context only, and rstest's browser mode opens
-# ephemeral ones, so a WebKit project needs both a newer Playwright and a
-# persistent context before it can exercise any OPFS VFS.
-#
-# Caveat that stands for Firefox: Playwright's build is patched and is not
-# the branded browser. See https://playwright.dev/docs/browsers
-#
-# `playwright` is declared in the root devDependencies (per the root-only
-# test-tooling convention in mem:conventions), so `pnpm exec` from the
-# root resolves to the catalog-pinned version. `pnpm dlx` would pull
-# Playwright's latest, downloading browsers that the pinned runtime
-# cannot launch. https://rstest.rs/guide/browser-mode
-pnpm exec playwright install --with-deps chromium firefox
+# Stock Chrome and Firefox at the versions scripts/browsers.ts pins, driven by
+# WebdriverIO. Their system libraries first — Chrome for Testing lists its
+# Debian ones in deb.deps, Firefox's are Debian's firefox-esr's — then one
+# session in each, which downloads browsers and drivers into
+# node_modules/.cache/wdio.
+# shellcheck disable=SC2046
+sudo apt-get update && sudo apt-get install -y --no-install-recommends $(node scripts/browsers.ts deps)
+node scripts/browsers.ts install
 
 # There is no top-level `serena index` and no `--project-root` flag. When it
 # creates .serena/project.yml, `project index` asks about each extra language it

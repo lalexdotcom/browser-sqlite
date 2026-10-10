@@ -25,7 +25,7 @@ jobs:
       list: ${{ steps.list.outputs.pairs }}
     steps:
       - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -53,19 +53,21 @@ jobs:
         pair: ${{ fromJSON(needs.pairs.outputs.list) }}
     steps:
       - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
+      # Stock Chrome and Firefox at the versions scripts/browsers.ts pins, and
+      # their drivers, downloaded by WebdriverIO on first use. The key is that
+      # file: a new pin is a new cache. GitHub's Ubuntu images carry both
+      # browsers' system libraries.
+      - name: Cache WebdriverIO browsers
+        uses: actions/cache@v6
         with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-chromium-firefox-${{ hashFiles('pnpm-lock.yaml') }}
-      - name: Install browsers
-        run: pnpm exec playwright install --with-deps chromium firefox
+          path: node_modules/.cache/wdio
+          key: wdio-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/browsers.ts') }}
       - name: Matrix ${{ matrix.pair }}
         run: node scripts/test-matrix.ts --pair ${{ matrix.pair }}
       # The script writes each run's output to .matrix/ and prints only a
@@ -73,7 +75,7 @@ jobs:
       # locally" fails when the cell is green locally, which is how rc.5 went.
       - name: Matrix report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: matrix-report-${{ strategy.job-index }}
           path: .matrix/
