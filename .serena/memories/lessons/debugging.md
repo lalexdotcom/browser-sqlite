@@ -162,8 +162,7 @@ The same session installed a Firefox selector for the browser suite, then measur
 correction was blunt and right. Firefox then produced the finding that mattered — the 1 ms
 timer clamp — which Chromium alone could never have shown.
 
-**Two engines are installed here** (`~/.cache/ms-playwright`: chromium, firefox, webkit;
-WebKit is useless for OPFS on Linux). A measurement announced from one of the two is half a
+**Two engines are installed here** (in the rstest era, 2026-09: `~/.cache/ms-playwright` held chromium, firefox, webkit, WebKit useless for OPFS on Linux; since the 2026-10-10 Vitest migration the pinned stock Chrome and Firefox live in `node_modules/.cache/wdio`). A measurement announced from one of the two is half a
 measurement.
 
 ## When a timing says nothing, count a state instead — 2026-08-31
@@ -264,7 +263,7 @@ Two more traps from the same afternoon, both of which produced confident wrong r
 - **The first probe measured the connection lock, not the engine.** It reopened while the first
   client was still alive, so it was reading `bsq:conn`'s exclusivity — `-1` on every trial, which
   reads like "never released". Close the thing that is not under test.
-- **rstest prints `console` output only for tests that FAIL.** A probe that logs its measurement
+- **rstest printed `console` output only for tests that FAIL (rstest era, before 2026-10-10; Vitest shows a passing browser test's console only with `--silent=false`).** A probe that logs its measurement
   and passes prints nothing. Carry the value in the assertion (`expect(measured).toBe('X')`) — and
   keep it short, the report truncates the message.
 
