@@ -83,6 +83,9 @@ export default defineConfig({
   test: {
     // Root-only option: Vitest rejects it inside a project.
     passWithNoTests: true,
+    // A test's console shows only when it fails: the library's own warnings
+    // (a pool capped on Firefox) are expected in passing tests.
+    silent: 'passed-only',
     projects: [
       {
         extends: true,

@@ -98,6 +98,10 @@
 		"onlyBuiltDependencies": [
 			"simple-git-hooks"
 		],
+		"ignoredBuiltDependencies": [
+			"edgedriver",
+			"geckodriver"
+		],
 		"patchedDependencies": {
 			"wa-sqlite@1.1.2": "patches/wa-sqlite@1.1.2.patch"
 		}

@@ -125,7 +125,8 @@ async function installAll() {
   const { remote } = await import('webdriverio');
   for (const name of ['chrome', 'firefox'] as const) {
     const browser = await remote({
-      logLevel: 'warn',
+      // geckodriver relays a fresh Firefox profile's own startup noise as WARN.
+      logLevel: 'error',
       cacheDir: WDIO_CACHE_DIR,
       capabilities: {
         ...browserCapabilities(name),
