@@ -22,13 +22,11 @@
  * a machine without it. A run this bound kills is reported as "timed out",
  * never as a hang.
  */
-import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { type SQLiteVFS, VFS_CAPABILITIES } from '../src/const/vfs.ts';
-
-const ROOT = fileURLToPath(new URL('..', import.meta.url));
+import { ROOT, runBounded } from './parallel.ts';
 
 /** One column of the matrix: the `--project` glob that selects its projects. */
 type Column = { name: string; args: string[] };
@@ -49,13 +47,6 @@ export type MatrixResult =
   | { readonly status: 'not-runnable'; readonly seconds: number }
   | { readonly status: 'timed-out' }
   | { readonly status: 'error'; readonly message: string };
-
-/** What `runBounded` resolves with — never rejects, so every outcome round-trips through here. */
-export type BoundedResult = {
-  readonly output: string;
-  readonly timedOut: boolean;
-  readonly error: (Error & { readonly code?: string }) | null;
-};
 
 export const COLUMNS: Column[] = [
   { name: 'chrome', args: ['--project', 'chrome ·*'] },
@@ -178,82 +169,6 @@ function parseArgs(argv: string[]) {
       : COLUMNS,
     pairs: pairs.length ? pairs : allPairs(),
   };
-}
-
-/**
- * Spawns `command` with `args`, collecting combined stdout+stderr and
- * bounding the run to `timeoutMs`.
- *
- * Two distinct failure shapes, both reported through the return value rather
- * than a thrown/rejected promise, so a caller never has to choose between
- * `try/catch` and `.then` to cover every outcome:
- *
- * - The child starts but outlives `timeoutMs`: the whole process group is
- *   killed (`detached: true` + `process.kill(-pid, 'SIGKILL')` — the same
- *   pattern `scripts/consumer-smoke.ts` uses, because `pnpm exec vitest`
- *   forks the browser drivers and the browsers themselves, which survive
- *   killing only the direct child) and `timedOut: true` is returned.
- * - The child never starts at all (`ENOENT`, `EACCES`, …): Node emits
- *   `'error'` instead of `'close'`, and never emits `'close'` for a process
- *   that was never spawned. A promise built on `'close'` alone never settles
- *   — the exact hang this script exists to prevent, one layer earlier than
- *   the timeout above. `error` is returned instead, and the timer is cleared
- *   so it cannot later try to kill a pid that was never assigned.
- *
- * A `settled` guard makes the two mutually exclusive: Node's own contract
- * still allows a `'close'` after an `'error'` for the same child, and only
- * the first of the two may resolve the promise.
- */
-export function runBounded(
-  command: string,
-  args: readonly string[],
-  {
-    cwd,
-    env,
-    timeoutMs,
-  }: {
-    readonly cwd?: string;
-    readonly env?: NodeJS.ProcessEnv;
-    readonly timeoutMs: number;
-  },
-): Promise<BoundedResult> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      cwd,
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: true,
-    });
-    let output = '';
-    let timedOut = false;
-    let settled = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        process.kill(-(child.pid as number), 'SIGKILL');
-      } catch {
-        child.kill('SIGKILL');
-      }
-    }, timeoutMs);
-    child.stdout?.on('data', (d) => {
-      output += String(d);
-    });
-    child.stderr?.on('data', (d) => {
-      output += String(d);
-    });
-    child.on('error', (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ output, timedOut, error });
-    });
-    child.on('close', () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ output, timedOut, error: null });
-    });
-  });
 }
 
 /** Runs one (column, pair) cell via `runBounded`, translating its result into a matrix cell. */
