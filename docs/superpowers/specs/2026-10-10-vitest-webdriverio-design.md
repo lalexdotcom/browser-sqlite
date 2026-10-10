@@ -52,7 +52,7 @@ Every browser project of `vitest.config.ts` declares a `globalSetup` that runs t
 | `chrome · <vfs>/<build>` | Chrome | `tests/browser/*.test.ts`, `tests/browser/chromium/**` |
 | `firefox · <vfs>/<build>` | Firefox | `tests/browser/*.test.ts`, `tests/browser/firefox/**` |
 | `isolated chrome · …`, `isolated firefox · …` | the browser, COOP/COEP through `server.headers` | `tests/browser/isolated/**` |
-| `conformance chrome · …`, `conformance firefox · …` | the browser | `tests/conformance/**` |
+| `conformance chrome`, `conformance firefox` | the browser, `testTimeout` 60 s | `tests/conformance/**` — no target: the files iterate every VFS themselves, as today |
 
 Browser projects keep today's `testTimeout` 30 s and `hookTimeout` 60 s. Each project builds its own `instances` object: Vitest renames instances in place, and two projects sharing one array fail at startup (LIB-VITEST-SPIKE).
 
@@ -125,6 +125,7 @@ One invocation is the one behavioural change, and it removes a trap: today's `&&
 - **Duration.** Inside a browser project the WebdriverIO provider runs one file at a time (`supportsParallelism = false`), where rstest ran files in parallel pages. `pnpm test` is measured early; the 2400 s bound, the matrix's 600 s and the CI `timeout-minutes` are set from that measurement; parallelism is revisited after (D11).
 - **Bounds calibrated on Playwright's Firefox.** Stock Firefox times differently (FF-PW-AWAIT). A bound that breaks is re-measured, not loosened blind.
 - **Nested iframes.** Vitest runs each test file in an iframe of its orchestrator page; `realm.test.ts` and `cross-tab.test.ts` create their own same-origin iframe inside it.
+- **Storage shared across files.** rstest opens a fresh browser context per test file, so OPFS and IndexedDB start empty in each; under Vitest every file of a session shares one profile and one origin. Tests already use unique names and clean up after themselves (`createTestClient`), but a file that leaks — an `AccessHandlePoolVFS` slot never freed, a database never deleted — now reaches the files after it. A failure that appears only in a full run and not in its file alone is read with that in mind first.
 - **BiDi events in `consumer-smoke`** (§ 6).
 
 ## 8. Out of scope
