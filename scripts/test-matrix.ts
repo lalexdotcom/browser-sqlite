@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 /**
  * `pnpm test:matrix` — runs the browser suite on every declared (vfs, build)
- * pair, on every column, sequentially, and prints a pair × column table
+ * pair, on every column, and prints a pair × column table
  * (spec 2026-09-15, A5 §12).
  *
  * A column is a family of Vitest projects that follow a target
  * (`vitest.config.ts`): `chrome`, `firefox`, `isolated-chrome` (cross-origin
  * isolated) and `isolated-firefox`, each selected by a `--project` glob.
  *
- * Each cell is one `pnpm exec vitest run` with `BSQ_TEST_TARGETS=<vfs>/<build>`
- * in the environment, which makes the config declare exactly one project per
+ * Cells run through a pool of `BSQ_TEST_JOBS` processes at once (see
+ * `scripts/parallel.ts`; each Vitest process has its own browser sessions),
+ * after tests/build/ is built once. Each cell is one `pnpm exec vitest run`
+ * with `BSQ_TEST_TARGETS=<vfs>/<build>` in the environment, which makes the config declare exactly one project per
  * column for that pair, and `BSQ_TEST_NEEDS=skip`, so that every test the cell
  * reports ran on that pair. A cell leaves `<column>__<vfs>__<build>.json`
  * (Vitest's JSON report, which the table is parsed from) and `.log` (the
@@ -26,7 +28,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { type SQLiteVFS, VFS_CAPABILITIES } from '../src/const/vfs.ts';
-import { ROOT, runBounded } from './parallel.ts';
+import {
+  buildOnce,
+  killLiveOnSignal,
+  ROOT,
+  resolveConcurrency,
+  runBounded,
+  runPool,
+} from './parallel.ts';
 
 /** One column of the matrix: the `--project` glob that selects its projects. */
 type Column = { name: string; args: string[] };
@@ -176,6 +185,7 @@ function runOne(
   column: Column,
   pair: Pair,
   cellBase: string,
+  baseEnv: NodeJS.ProcessEnv,
 ): Promise<MatrixResult> {
   const reportFile = `${cellBase}.json`;
   const args = [
@@ -194,7 +204,7 @@ function runOne(
     // `skip`: a test whose need this pair lacks is skipped rather than run on
     // another pair, which is a cell of its own (spec 2026-09-15, A7).
     env: {
-      ...process.env,
+      ...baseEnv,
       BSQ_TEST_TARGETS: `${pair.vfs}/${pair.build}`,
       BSQ_TEST_NEEDS: 'skip',
     },
@@ -250,24 +260,36 @@ function printTable(
 
 async function main() {
   const { columns, pairs } = parseArgs(process.argv.slice(2));
+  const concurrency = resolveConcurrency(process.env.BSQ_TEST_JOBS);
+  const baseEnv = buildOnce(process.env);
+  killLiveOnSignal();
   const runId = new Date().toISOString().replace(/[:.]/g, '-');
   const runDir = join(ROOT, '.matrix', runId);
   mkdirSync(runDir, { recursive: true });
 
+  // Column-major, as the table is printed; the pool takes them in this order.
+  const cells = columns.flatMap((column) =>
+    pairs.map((pair) => ({ column, pair })),
+  );
   const results = new Map<string, MatrixResult>();
   const start = Date.now();
-  for (const column of columns) {
-    for (const pair of pairs) {
+  let done = 0;
+  console.log(
+    `${cells.length} cells, ${concurrency} at a time. Reports under ${join('.matrix', runId)}.`,
+  );
+  const settled = await runPool(
+    cells,
+    concurrency,
+    async ({ column, pair }) => {
       const label = `${pair.vfs}/${pair.build}`;
       const cellBase = join(
         runDir,
         `${column.name}__${pair.vfs}__${pair.build}`,
       );
-      process.stdout.write(`[${column.name}] ${label}: running…\n`);
-      const result = await runOne(column, pair, cellBase);
+      const result = await runOne(column, pair, cellBase, baseEnv);
       results.set(`${column.name}:${label}`, result);
       process.stdout.write(
-        `[${column.name}] ${label}: ${formatCell(result)}\n`,
+        `[${++done}/${cells.length}] [${column.name}] ${label}: ${formatCell(result)}\n`,
       );
       // A verdict alone cannot be diagnosed anywhere the report files do not
       // survive the machine, which is every CI runner. "timed out" especially:
@@ -280,8 +302,17 @@ async function main() {
           `--- ${column.name} ${label}: last ${tail.length} lines ---\n${tail.join('\n')}\n--- end ---\n`,
         );
       }
-    }
-  }
+    },
+  );
+  // A cell whose job threw is a red cell, never an absent one.
+  settled.forEach((outcome, i) => {
+    if (outcome.status !== 'rejected') return;
+    const { column, pair } = cells[i];
+    results.set(`${column.name}:${pair.vfs}/${pair.build}`, {
+      status: 'error',
+      message: String(outcome.reason),
+    });
+  });
 
   console.log('');
   printTable(pairs, columns, results);
