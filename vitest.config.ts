@@ -47,6 +47,9 @@ const browserProject = (
     name,
     include,
     globalSetup: ['tests/build-setup.ts'],
+    // The files of a run share one profile: each one's leftovers are wiped and
+    // the wipe verified, so a leak fails the file that left it.
+    setupFiles: ['tests/storage-wipe.ts'],
     testTimeout: options.testTimeout,
     // A teardown closes a client that may still be draining an abandoned
     // statement, and close() waits up to drainTimeout (60 s by default).
