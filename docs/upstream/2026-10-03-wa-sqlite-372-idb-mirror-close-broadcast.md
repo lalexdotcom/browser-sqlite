@@ -80,5 +80,5 @@ From 2026-10-03 the patch carried `IDBMirrorVFS.js` as #371's head (`3367cb65`, 
 ## What stays ours
 
 - **The carry.** Until #372 merges.
-- **The rebase.** Done on 2026-10-10: #371 merged first, so the branch was rebased onto `d09953ee` (`622510da` fix, `6512da9f` tests), `jClose` resolved as in the patch, and force-pushed. The file's 226 tests, #371's included, pass 3 runs of 3 on stock Chrome 153 and Firefox 155; with `master`'s VFS, 6 fail on each. Said in [comment 6100877542](https://github.com/rhashimoto/wa-sqlite/pull/372#issuecomment-6100877542).
+- **The rebase.** Done on 2026-10-10: #371 merged first, so the branch was rebased onto `d09953ee` (`622510da` fix, `6512da9f` tests), `jClose` resolved as in the patch, and force-pushed. The file's 226 tests, #371's included, pass 3 runs of 3 on stock Chrome 153 and Firefox 155; with `master`'s VFS, 6 fail on each. Said in [comment 6100877542](https://github.com/rhashimoto/wa-sqlite/pull/372#issuecomment-6100877542). Upstream CI on `6512da9f` is green: [run 38076536851](https://github.com/rhashimoto/wa-sqlite/actions/runs/38076536851).
 - **The probes.** Throwaway, kept outside git; the numbers are in `mem:measurements` (IDBMIRROR-CLOSE-BROADCAST).
