@@ -27,7 +27,12 @@ type Assertion = {
 };
 type Report = {
   success: boolean;
-  testResults: { name: string; assertionResults: Assertion[] }[];
+  testResults: {
+    name: string;
+    status?: string;
+    message?: string;
+    assertionResults: Assertion[];
+  }[];
 };
 type Failure = { file: string; name: string; type: string; message: string };
 
@@ -49,25 +54,42 @@ const reportOf = (text: string): Report | null => {
   }
 };
 
-/** Failed tests of a report: `Error: msg` → type `Error`, message `msg`. */
+/** `Error: msg` → type `Error`, message `msg`, cut to one line. */
+const splitMessage = (first: string) => {
+  const colon = first.indexOf(':');
+  return {
+    type: colon === -1 ? 'unknown' : first.slice(0, colon),
+    message: (colon === -1 ? first : first.slice(colon + 1))
+      .trim()
+      .replace(/\n/g, ' ')
+      .slice(0, 110),
+  };
+};
+
+/**
+ * Failures of a report: each failed test, plus each file that failed on its
+ * own (the storage wipe's afterAll error, a page crash), named `(file)` and
+ * read from the file's `message` as parseMatrixReport does.
+ */
 const failuresOf = (report: Report): Failure[] =>
-  report.testResults.flatMap((f) =>
-    f.assertionResults
+  report.testResults.flatMap((f) => [
+    ...f.assertionResults
       .filter((t) => t.status === 'failed')
-      .map((t) => {
-        const first = t.failureMessages[0] ?? '';
-        const colon = first.indexOf(':');
-        return {
-          file: relative(ROOT, f.name),
-          name: [...t.ancestorTitles, t.title].join(' > '),
-          type: colon === -1 ? 'unknown' : first.slice(0, colon),
-          message: (colon === -1 ? first : first.slice(colon + 1))
-            .trim()
-            .replace(/\n/g, ' ')
-            .slice(0, 110),
-        };
-      }),
-  );
+      .map((t) => ({
+        file: relative(ROOT, f.name),
+        name: [...t.ancestorTitles, t.title].join(' > '),
+        ...splitMessage(t.failureMessages[0] ?? ''),
+      })),
+    ...(f.status === 'failed' && f.message
+      ? [
+          {
+            file: relative(ROOT, f.name),
+            name: '(file)',
+            ...splitMessage(f.message),
+          },
+        ]
+      : []),
+  ]);
 
 /** Messages differ by uuid, ms and ids; group on their shape, not their text. */
 const shapeOf = (message: string) =>

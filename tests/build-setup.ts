@@ -15,21 +15,26 @@ let watcher: ChildProcess | undefined;
  * to src/ reaches tests/build/ and Vite's watcher reruns the tests.
  */
 export default function setup(project: TestProject) {
-  if (process.env.BSQ_TEST_BUILT === '1') return;
-  process.env.BSQ_TEST_BUILT = '1';
-  const built = spawnSync('pnpm', BUILD, { cwd: ROOT, stdio: 'inherit' });
-  if (built.status !== 0) {
-    throw new Error(
-      `rslib.test.config.ts: the build failed (exit ${built.status})`,
-    );
+  // BSQ_TEST_BUILT skips only the one-shot build: after a config-triggered
+  // restart in watch mode, setup runs again and the watcher must follow.
+  if (process.env.BSQ_TEST_BUILT !== '1') {
+    process.env.BSQ_TEST_BUILT = '1';
+    const built = spawnSync('pnpm', BUILD, { cwd: ROOT, stdio: 'inherit' });
+    if (built.status !== 0) {
+      throw new Error(
+        `rslib.test.config.ts: the build failed (exit ${built.status})`,
+      );
+    }
   }
-  if (!project.vitest.config.watch) return;
-  watcher = spawn('pnpm', [...BUILD, '--watch'], {
+  if (!project.vitest.config.watch || watcher) return;
+  const started = spawn('pnpm', [...BUILD, '--watch'], {
     cwd: ROOT,
     stdio: 'ignore',
     detached: true,
   });
+  watcher = started;
   return () => {
-    if (watcher?.pid) process.kill(-watcher.pid, 'SIGTERM');
+    if (started.pid) process.kill(-started.pid, 'SIGTERM');
+    if (watcher === started) watcher = undefined;
   };
 }

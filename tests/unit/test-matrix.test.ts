@@ -99,6 +99,23 @@ const CRASHED = report(
   ],
   false,
 );
+// Every failed test is not-runnable, and the file ALSO failed at file level.
+const NOT_RUNNABLE_AND_CRASHED = report(
+  [
+    file(
+      'tests/browser/a.test.ts',
+      [
+        {
+          title: 'x',
+          status: 'failed',
+          failureMessages: ['TARGET_NOT_RUNNABLE: needs opfs'],
+        },
+      ],
+      { message: 'Browser connection was closed while running tests' },
+    ),
+  ],
+  false,
+);
 
 describe('parseMatrixReport', () => {
   it('reads a passing report', () => {
@@ -133,6 +150,17 @@ describe('parseMatrixReport', () => {
     expect(parseMatrixReport(MIXED)).toMatchObject({
       status: 'failed',
       failed: 2,
+    });
+  });
+
+  it('does not hide a file-level failure behind not-runnable tests', () => {
+    // Falsifiable: deciding not-runnable before reading `message` reports
+    // this cell as not-runnable and drops the page crash.
+    expect(parseMatrixReport(NOT_RUNNABLE_AND_CRASHED)).toMatchObject({
+      status: 'failed',
+      unhandled: [
+        'tests/browser/a.test.ts: Browser connection was closed while running tests',
+      ],
     });
   });
 

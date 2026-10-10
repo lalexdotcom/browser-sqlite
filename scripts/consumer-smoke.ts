@@ -2,9 +2,9 @@
 /**
  * Consumer smoke test — exercises the PUBLISHED package, not the sources.
  *
- * The Vitest browser suite loads `src/` through Vite, so it never touches
- * `dist/`, the `exports` map, or the way a third-party bundler resolves the
- * Web Worker. This script closes that gap:
+ * The Vitest browser suite loads `tests/build/index.js` (the rslib build of
+ * `src/`), so it never touches `dist/`, the `exports` map, or the way a
+ * third-party bundler resolves the Web Worker. This script closes that gap:
  *
  *   1. build + `pnpm pack` — exactly the tarball npm would publish
  *   2. scaffold `tests/consumer/` into a temp dir OUTSIDE the repo, so the
@@ -212,7 +212,7 @@ async function driveBrowser(url: string) {
       noise: [...noise, `driver: ${(error as Error).message}`],
     };
   } finally {
-    await browser.deleteSession();
+    await browser.deleteSession().catch(() => {});
   }
 }
 

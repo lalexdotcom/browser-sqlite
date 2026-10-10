@@ -60,15 +60,16 @@ jobs:
       - name: Build
         run: pnpm build
 
-      # Unit (Node), then the browser suite on BOTH engines — `pnpm test`
-      # chains the two configs, so Firefox needs no step and no environment
-      # variable of its own. It was a separate step until 2026-09-03, which
-      # meant a developer's local run covered Chromium alone while this file
-      # covered both: the exact path by which a Firefox-only failure arrived
-      # late. Firefox has been a gate since 2026-08-28 and still is — it is the
-      # only engine here that runs the pool against a rotating exclusive OPFS
-      # handle, so a reduced-mode regression lands there first and a single
-      # failure is signal, not noise.
+      # Unit (Node), then the browser suite on BOTH engines — `pnpm test` is
+      # one Vitest invocation over the unit, Chrome, Firefox and isolated
+      # projects, so Firefox needs no step and no environment variable of its
+      # own. It was a separate step until 2026-09-03, which meant a developer's
+      # local run covered Chromium alone while this file covered both: the
+      # exact path by which a Firefox-only failure arrived late. Firefox has
+      # been a gate since 2026-08-28 and still is — it is the only engine here
+      # that runs the pool against a rotating exclusive OPFS handle, so a
+      # reduced-mode regression lands there first and a single failure is
+      # signal, not noise.
       - name: Test
         run: pnpm test
 
@@ -82,8 +83,9 @@ jobs:
 
   # Exercises the packed tarball across four consumption modes — Vite dev
   # server, Vite build+preview, rsbuild build+preview, and no bundler at all
-  # — which `verify` never does because it bundles src/ and never touches
-  # dist/, the exports map, or third-party worker resolution.
+  # — which `verify` never does because it tests the rslib build
+  # (tests/build/) and never touches dist/, the exports map, or third-party
+  # worker resolution.
   consumer-smoke:
     runs-on: ubuntu-latest
     steps:

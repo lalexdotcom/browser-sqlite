@@ -25,6 +25,9 @@ export const PINNED: Readonly<Record<BrowserName, string>> = {
   firefox: 'stable_155.0.1',
 };
 
+/** The geckodriver WebdriverIO would otherwise resolve to the latest release; the CI cache key hashes this file. */
+export const GECKODRIVER_VERSION = '0.37.1';
+
 /** Where WebdriverIO keeps the browsers and drivers it downloads. */
 export const WDIO_CACHE_DIR = fileURLToPath(
   new URL('../node_modules/.cache/wdio', import.meta.url),
@@ -41,7 +44,7 @@ export const browserVersion = (
   name: BrowserName,
   env: NodeJS.ProcessEnv = process.env,
 ): string => {
-  const version = env[ENV_VAR[name]] ?? PINNED[name];
+  const version = env[ENV_VAR[name]] || PINNED[name];
   // @puppeteer/browsers reads a bare Firefox number, or `latest`, as a Nightly.
   if (name === 'firefox' && !FIREFOX_CHANNELS.test(version)) {
     throw new Error(
@@ -57,6 +60,11 @@ export const browserCapabilities = (
 ): WebdriverIO.Capabilities => ({
   browserName: name,
   browserVersion: browserVersion(name, env),
+  ...(name === 'firefox'
+    ? {
+        'wdio:geckodriverOptions': { geckoDriverVersion: GECKODRIVER_VERSION },
+      }
+    : {}),
   ...(name === 'chrome' && env.BSQ_EXPOSE_GC === '1'
     ? { 'goog:chromeOptions': { args: ['--js-flags=--expose-gc'] } }
     : {}),

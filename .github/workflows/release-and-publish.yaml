@@ -10,15 +10,18 @@ jobs:
   # A tag is not a branch push, so ci.yaml never runs on it — and a red CI on
   # `main` blocks nothing, since separate workflows cannot wait for each other.
   # Calling it is what makes the gate real, and it covers what the cells
-  # cannot: the unit project, excluded by `--project 'chromium*'`.
+  # cannot: the unit project, which the cells' `--project` filters (`chrome ·*`,
+  # `firefox ·*`, `isolated chrome ·*`, `isolated firefox ·*`) never select.
   verify:
     permissions:
       contents: read
     uses: ./.github/workflows/ci.yaml
 
   # `pnpm test` covers two of the 22 declared pairs; the rest are only seen
-  # here, on the tag itself. One job per pair: ~10 min instead of ~70. Each
-  # shard goes through test-matrix.ts, which owns the per-cell timer.
+  # here, on the tag itself. One job per pair, each running the four columns
+  # (chrome, firefox, isolated chrome, isolated firefox) of its pair — 263 s
+  # measured locally for one pair. Each shard goes through test-matrix.ts,
+  # which owns the per-cell timer.
   pairs:
     runs-on: ubuntu-latest
     outputs:

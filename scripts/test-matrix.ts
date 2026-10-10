@@ -100,15 +100,17 @@ export function parseMatrixReport(json: string): MatrixResult {
   );
   const seconds = Math.round((end - report.startTime) / 1000);
   const messages = failures.flatMap((t) => t.failureMessages);
+  const unhandled = report.testResults
+    .filter((f) => f.status === 'failed' && f.message)
+    .map((f) => `${relative(ROOT, f.name)}: ${f.message}`);
+  // A file-level failure is never hidden behind not-runnable tests.
   if (
+    unhandled.length === 0 &&
     messages.length > 0 &&
     messages.every((m) => m.startsWith('TARGET_NOT_RUNNABLE'))
   ) {
     return { status: 'not-runnable', seconds };
   }
-  const unhandled = report.testResults
-    .filter((f) => f.status === 'failed' && f.message)
-    .map((f) => `${relative(ROOT, f.name)}: ${f.message}`);
   return {
     status: report.success ? 'passed' : 'failed',
     tests: tests.length,
