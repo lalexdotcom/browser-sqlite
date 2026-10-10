@@ -88,7 +88,7 @@ here on purpose: a total alone cannot say which suite moved.
   measurements in `mem:measurements/test-browsers`, and the user's principles in
   `mem:conventions` (§ Testing in browsers).
 - **#372 and #374 are open upstream** and carried in the patch (§ Standing facts); #371 merged on
-  2026-10-10 and left the patch at the repin; #372 is to be rebased onto `master`. Follow-ups in
+  2026-10-10 and left the patch at the repin; #372 was rebased onto it the same day. Follow-ups in
   `mem:follow-ups`.
 - **Another agent's work was paused by the user until our upstream PRs were done; the user
   relaunches it.**
