@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createTestClient,
   interceptWorkers,
+  LONG_QUERY,
   longQuery,
   sleep,
   theQueryIsRunning,
@@ -181,15 +182,16 @@ describe('statement cache, sync build isolated', () => {
 
   it('an aborted query leaves its cached statement reusable', async () => {
     // The slot delivers SQLITE_INTERRUPT without gate.isStopped() being true
-    // (the sync build never yields to process the stop message). Before the
-    // fix, the catch block fell through to `throw new WorkerQueryTimeout`,
-    // which set failed=true, which caused settle() to evict the statement.
-    // The repair adds abortedHere() to the break condition so settle() sees
-    // a clean exit and keeps the statement cached.
+    // (the sync build never yields to process the stop message). The step's
+    // catch breaks on SQLITE_INTERRUPT, so settle() sees a clean exit and
+    // keeps the statement cached.
     //
-    // Falsifiability: revert `|| abortedHere()` from the SQLITE_INTERRUPT
-    // catch block in worker.ts and this test fails — the third run recompiles.
-    const sql = longQuery(20_000_000);
+    // Falsifiability: make that catch rethrow SQLITE_INTERRUPT in worker.ts
+    // and this test fails — the third run recompiles.
+    //
+    // N is a parameter: only the aborted run needs to be long. Three runs of
+    // longQuery(20_000_000) took ~10 s on Firefox locally and timed out at
+    // 30 s on a GitHub runner (2026-10-11).
     // One VFS: same reason as above — the sync build's abort-slot mechanism.
     const db = await createTestClient({
       vfs: 'OPFSWriteAheadVFS',
@@ -199,19 +201,24 @@ describe('statement cache, sync build isolated', () => {
     });
     try {
       // Prime: compile and cache the statement (prepared=1).
-      await db.read(sql);
+      await db.read(LONG_QUERY, [1_000]);
 
       // Abort via the slot channel while step() is running.
       const controller = new AbortController();
-      const aborting = db.read(sql, [], { signal: controller.signal });
+      const aborting = db.read(LONG_QUERY, [20_000_000], {
+        signal: controller.signal,
+      });
       aborting.catch(() => {});
-      await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
+      await waitUntil(
+        theQueryIsRunning(db, LONG_QUERY),
+        'the query to be running',
+      );
       controller.abort(new Error('cancelled'));
       await expect(aborting).rejects.toThrow('cancelled');
 
       // The statement must still be in the cache: prepared=0 on this run.
-      await db.read(sql);
-      expect(runsOf(db, sql)[2]?.prepared).toBe(0);
+      await db.read(LONG_QUERY, [1_000]);
+      expect(runsOf(db, LONG_QUERY)[2]?.prepared).toBe(0);
     } finally {
       await db.close();
     }
