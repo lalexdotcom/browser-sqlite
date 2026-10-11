@@ -1,5 +1,5 @@
 diff --git a/src/examples/IDBMirrorVFS.js b/src/examples/IDBMirrorVFS.js
-index b7dcb8440c080fe52f0f31c360e6b427618f7293..0118a1312e886a8e6b3748e1c4af5cd025715843 100644
+index b7dcb8440c080fe52f0f31c360e6b427618f7293..20b788aa75579ae871edd5190855b9d9ebc65cbd 100644
 --- a/src/examples/IDBMirrorVFS.js
 +++ b/src/examples/IDBMirrorVFS.js
 @@ -31,6 +31,7 @@ class File {
@@ -18,16 +18,18 @@ index b7dcb8440c080fe52f0f31c360e6b427618f7293..0118a1312e886a8e6b3748e1c4af5cd0
        this.lockState = VFS.SQLITE_LOCK_NONE;
        this.locks = {};
        this.abortController = new AbortController();
-@@ -234,6 +236,8 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -234,6 +236,10 @@ export class IDBMirrorVFS extends FacadeVFS {
        this.#mapIdToFile.delete(fileId);
  
        if (file?.flags & VFS.SQLITE_OPEN_MAIN_DB) {
-+        // Commits still in flight broadcast on this channel when they complete.
++        // Wait for any outstanding write transactions to broadcast
++        // (after receiving an IDBTransaction complete event) before
++        // closing the BroadcastChannel.
 +        await Promise.allSettled(file.commitsInFlight);
          if (file.abortController.signal.aborted) {
            // The journal belongs to a view that was never stored.
            this.#mapPathToFile.delete(file.path + '-journal');
-@@ -733,6 +737,8 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -733,6 +739,8 @@ export class IDBMirrorVFS extends FacadeVFS {
        }
      });
  

@@ -77,6 +77,10 @@ From 2026-10-03 the patch carried `IDBMirrorVFS.js` as #371's head (`3367cb65`, 
 
 #371 merged on 2026-10-10 as `d09953ee`, byte for byte `cb97deed`. Since the repin to it, the patch carries #372 alone on `IDBMirrorVFS.js`: the same lines, `jClose` resolved the same way.
 
+## Review
+
+rhashimoto reviewed on 2026-10-11: changes requested, "just one comment nit". The comment above the wait in `jClose` became his wording, word for word — wait for any outstanding write transactions to broadcast (after receiving an IDBTransaction complete event) before closing the BroadcastChannel. Pushed as `2e85b243`, answered under his comment. The patch carries that head; the built worker is byte-identical.
+
 ## What stays ours
 
 - **The carry.** Until #372 merges.
