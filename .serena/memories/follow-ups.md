@@ -105,10 +105,11 @@ Jasmine's random order decides whether a resetting spec follows the failure. Non
 ## The library's tests on stock browsers — what stays open after the Vitest + WebdriverIO migration (user, 2026-10-10)
 
 Delivered on 2026-10-10; the decisions (D1-D11), the order and the risks are in `docs/superpowers/specs/2026-10-10-vitest-webdriverio-design.md`, the setup in `mem:stack-and-build` (§ Test suites), the numbers in `mem:measurements/suite-and-matrix`. Open:
-- **The rebuild after delivery is the user's check:** on a fresh container, `post-create.sh` must end with `node scripts/browsers.ts install` printing two `ok`, and `pnpm test` must be green. Its `deps` step (the browsers' apt packages) was only simulated with `apt-get -s`.
+- **The rebuild after delivery passed (2026-10-10):** on a fresh container `post-create.sh` installed the browsers' apt packages (apt resolved the pre-t64 names to their t64 packages), `node scripts/browsers.ts install` printed `ok` for both, and `pnpm test` gave 2616 passed / 12 skipped.
 - **CI is verified only when the user pushes the branch** (cache of `node_modules/.cache/wdio` keyed on `scripts/browsers.ts`, the bumped actions).
 - **The next piece of work:** Windows and macOS runners, Safari and the iOS simulator, per-platform triggers, the WASM built once and shared (`mem:conventions`, § Testing in browsers).
-- **Parallelism:** the WebdriverIO provider runs a project's files one at a time (D11); whether and how to run them in parallel is decided from the measured durations.
+- **Parallelism: delivered 2026-10-10** (`scripts/test-parallel.ts`, `mem:stack-and-build`); its CI durations are measured at the first push.
+- **WPE WebKit in the Linux tests (user, 2026-10-11):** add WPE WebKit 2.54 with its MiniBrowser and WPEWebDriver to the Linux runs (dev container and CI), beside Chrome and Firefox. Not designed. To check first: whether a WebDriver session gets a persistent website-data session — WebKitGTK's MiniBrowser under `--automation` takes `webkit_web_context_get_network_session_for_automation()`, an ephemeral session (read in WebKit's source, not run; STOCK-BROWSERS, `mem:measurements/test-browsers`), and Playwright's ephemeral WebKit contexts have no OPFS (WA-WEBKIT-SUITE) — so OPFS under WPEWebDriver is unknown; and how 2.54 is installed on Debian 13 and on `ubuntu-latest`.
 - **Unmeasured, needs Safari:** the library's `IDBMirrorVFS` with several connections on Safari 26 may stall the way wa-sqlite's `sql_0005` does (SAFARI26-IDBMIRROR-KILL).
 
 ## wa-sqlite #362: `OPFSCoopSyncVFS.create()` fails after a back/forward-cache navigation — PR not decided
