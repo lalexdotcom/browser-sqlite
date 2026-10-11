@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-10-10.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-10-11.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one, and move what closes to `mem:history` rather than
 keeping it here struck through (rewritten on 2026-10-08 from 38 000 characters, two thirds of
 them closed subjects).
@@ -88,7 +88,8 @@ here on purpose: a total alone cannot say which suite moved.
   measurements in `mem:measurements/test-browsers`, and the user's principles in
   `mem:conventions` (§ Testing in browsers).
 - **#372 and #374 are open upstream** and carried in the patch (§ Standing facts); #371 merged on
-  2026-10-10 and left the patch at the repin; #372 was rebased onto it the same day. Follow-ups in
+  2026-10-10 and left the patch at the repin; #372 was rebased onto it the same day, and reviewed on 2026-10-11 with one comment
+  nit, done and carried. Follow-ups in
   `mem:follow-ups`.
 - **Another agent's work was paused by the user until our upstream PRs were done; the user
   relaunches it.**

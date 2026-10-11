@@ -32,7 +32,7 @@ no longer deletable as a block. Each is independent and each has a report in
   `BroadcastChannel`), head `69e00270`, applied on upstream's file, which has #371 since the repin of
   2026-10-10. The `jClose` conflict with #371 is resolved as it was in the patch while both were
   carried: wait for the commits in flight first, then remove an aborted view's journal. Both PRs'
-  tests passed on that merged file (226, 3/3, both engines). #372's branch was rebased onto `d09953ee` the same day (head `6512da9f`), with exactly that file: the patch is #372's own diff.
+  tests passed on that merged file (226, 3/3, both engines). #372's branch was rebased onto `d09953ee` the same day (head `6512da9f`), with exactly that file: the patch is #372's own diff. On 2026-10-11 the review's comment nit moved the head to `2e85b243` (the `jClose` comment only); the patch was rebuilt from it through `pnpm patch`, the installed file equal to the pin plus #372's diff, and `dist/worker/worker.js` byte-identical (only `worker.js.map` changes, through its sources).
 - `OPFSAdaptiveVFS.js` — #374, line 9 guarded (`FileSystemSyncAccessHandle?.prototype`), without
   which no worker loads outside a secure context (INSECURE-CONTEXT).
 - `dist/wa-sqlite-jspi.mjs` was carried for #375 from 2026-10-05 until its merge the same day. **After any change to a carried `dist/` glue, clear `node_modules/.cache/rspack` and check the pattern in `dist/worker/worker.js`**: the forced build cache served the previous glue once.
