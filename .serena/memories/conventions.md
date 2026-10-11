@@ -243,9 +243,11 @@ policy becomes applicable as written.
 - **a new browser test with no `needs`**, since it will run on all 22 pairs whether or not you
   thought about them.
 
-**Not before a release (user, 2026-10-09):** `release-and-publish.yaml`'s `cells` job runs
-`scripts/test-matrix.ts --pair` on every declared pair and gates `release`, so a local run
-before the tag only repeats it. Said after rc.9 was cut without one.
+**Not before a release (user, 2026-10-09):** `matrix.yaml`'s `cells` job, called by
+`release-and-publish.yaml`, runs `scripts/test-matrix.ts --pair` on every declared pair and gates
+`release`, so a local run before the tag only repeats it. **On GitHub without a release (user,
+2026-10-11):** `gh workflow run matrix.yaml --ref <branch>` runs the same jobs and publishes
+nothing. Said after rc.9 was cut without one.
 
 Not for documentation, memories, or a test change confined to what `pnpm test` already covers.
 

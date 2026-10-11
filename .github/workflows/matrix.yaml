@@ -1,0 +1,98 @@
+name: Matrix
+
+# Every declared VFS/build pair through the four columns of the matrix, one job
+# per pair. release-and-publish.yaml calls it as the gate of a publication;
+# workflow_dispatch runs it by hand on any branch, publishing nothing.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # `pnpm test` covers two of the 22 declared pairs; the rest are only seen
+  # here. One job per pair, each running the four columns (chrome, firefox,
+  # isolated chrome, isolated firefox) of its pair — 263 s measured locally for
+  # one pair. Each shard goes through test-matrix.ts, which owns the per-cell
+  # timer.
+  pairs:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.list.outputs.pairs }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The pair list lives in VFS_CAPABILITIES and nowhere else.
+      # Single-quoted: backticks and ${...} in a double-quoted $( ) would be
+      # eaten by bash before node saw them.
+      - id: list
+        run: |
+          PAIRS=$(node --experimental-strip-types -e 'import("./scripts/test-matrix.ts").then(({ allPairs }) => console.log(JSON.stringify(allPairs().map((p) => p.vfs + "/" + p.build))))')
+          echo "pairs=$PAIRS" >> "$GITHUB_OUTPUT"
+
+  cells:
+    needs: pairs
+    runs-on: ubuntu-latest
+    # The default is six hours, and Firefox has an uncured hang here:
+    # navigator.storage.getDirectory() can fail to settle in a worker.
+    timeout-minutes: 25
+    strategy:
+      # A gate, not a triage tool (user, 2026-09-22): one red is enough to
+      # refuse, and diagnosis happens in a local run, not in 22 job logs.
+      fail-fast: true
+      matrix:
+        pair: ${{ fromJSON(needs.pairs.outputs.list) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Stock Chrome and Firefox at the versions scripts/browsers.ts pins, and
+      # their drivers, downloaded by WebdriverIO on first use. The key is that
+      # file: a new pin is a new cache. GitHub's Ubuntu images carry both
+      # browsers' system libraries.
+      - name: Cache WebdriverIO browsers
+        uses: actions/cache@v6
+        with:
+          path: node_modules/.cache/wdio
+          key: wdio-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/browsers.ts') }}
+      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor.
+      # Chrome's sandbox needs them, and only the system Chrome has a profile
+      # that allows them: the Chrome for Testing WebdriverIO downloads exits at
+      # launch ("Chrome instance exited"). Lifting the restriction keeps the
+      # sandbox, where --no-sandbox would drop it.
+      - name: Let Chrome's sandbox create user namespaces
+        run: |
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # One download per browser and driver, before anything runs in parallel:
+      # on a cold cache, parallel Vitest jobs fetched the same chromedriver at
+      # once, and one spawned it before it was executable (EACCES).
+      - name: Install browsers
+        run: node scripts/browsers.ts install
+      - name: Matrix ${{ matrix.pair }}
+        run: node scripts/test-matrix.ts --pair ${{ matrix.pair }}
+      # The script writes each run's output to .matrix/ and prints only a
+      # verdict, so a red cell otherwise explains nothing — and "diagnose it
+      # locally" fails when the cell is green locally, which is how rc.5 went.
+      - name: Matrix report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: matrix-report-${{ strategy.job-index }}
+          path: .matrix/
+          retention-days: 14
+          # .matrix is a dotted path, which v4 excludes by default — the step
+          # then succeeds having uploaded nothing, which is how rc.5's second
+          # refusal came back with an empty artifact list.
+          include-hidden-files: true
+          if-no-files-found: error
