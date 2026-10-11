@@ -71,6 +71,20 @@ jobs:
         with:
           path: node_modules/.cache/wdio
           key: wdio-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/browsers.ts') }}
+      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor.
+      # Chrome's sandbox needs them, and only the system Chrome has a profile
+      # that allows them: the Chrome for Testing WebdriverIO downloads exits at
+      # launch ("Chrome instance exited"). Lifting the restriction keeps the
+      # sandbox, where --no-sandbox would drop it.
+      - name: Let Chrome's sandbox create user namespaces
+        run: |
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # One download per browser and driver, before anything runs in parallel:
+      # on a cold cache, parallel Vitest jobs fetched the same chromedriver at
+      # once, and one spawned it before it was executable (EACCES).
+      - name: Install browsers
+        run: node scripts/browsers.ts install
       - name: Matrix ${{ matrix.pair }}
         run: node scripts/test-matrix.ts --pair ${{ matrix.pair }}
       # The script writes each run's output to .matrix/ and prints only a
