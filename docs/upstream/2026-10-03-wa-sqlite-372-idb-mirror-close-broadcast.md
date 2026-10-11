@@ -5,7 +5,7 @@
 [pr372]: https://github.com/rhashimoto/wa-sqlite/pull/372
 [pr371]: 2026-10-03-wa-sqlite-371-idb-mirror-commit-abort.md
 
-**Why this is here.** On `IDBMirrorVFS` with `synchronous=normal`, a connection that closes right after a commit never tells the other connections about it. They keep reading the database as it was before that commit until they write, and their first write fails with `SQLITE_BUSY` when there is no busy timeout. The commit itself is stored. In this library, that is a client on `IDBMirrorVFS` with `synchronous: 'NORMAL'` in `pragmas` that calls `close()` right after a write, while another client (another tab) has the same database open. On Chromium, an uncaught `InvalidStateError` also reaches the page. Carried in [`patches/`](../../patches) since 2026-10-03, together with [#371][pr371].
+**Why this is here.** On `IDBMirrorVFS` with `synchronous=normal`, a connection that closes right after a commit never tells the other connections about it. They keep reading the database as it was before that commit until they write, and their first write fails with `SQLITE_BUSY` when there is no busy timeout. The commit itself is stored. In this library, that is a client on `IDBMirrorVFS` with `synchronous: 'NORMAL'` in `pragmas` that calls `close()` right after a write, while another client (another tab) has the same database open. On Chromium, an uncaught `InvalidStateError` also reaches the page. Carried in [`patches/`](../../patches) from 2026-10-03, together with [#371][pr371]; merged upstream on 2026-10-11, and in the pin since then.
 
 ## How it was found
 
@@ -81,8 +81,12 @@ From 2026-10-03 the patch carried `IDBMirrorVFS.js` as #371's head (`3367cb65`, 
 
 rhashimoto reviewed on 2026-10-11: changes requested, "just one comment nit". The comment above the wait in `jClose` became his wording, word for word — wait for any outstanding write transactions to broadcast (after receiving an IDBTransaction complete event) before closing the BroadcastChannel. Pushed as `2e85b243`, answered under his comment. The patch carries that head; the built worker is byte-identical.
 
+## Merged
+
+**Merged on 2026-10-11** by rhashimoto, squashed as `91a34ef7` on `master`, its tree byte for byte the head `2e85b243`. It left [`patches/`](../../patches) at the repin of 2026-10-11 to `94cd1e7d`, `master`'s head then (a dependabot bump of `yarn.lock` on top, outside the package); the built worker and the three `.wasm` are byte-identical across that repin.
+
 ## What stays ours
 
-- **The carry.** Until #372 merges.
+- **The carry.** None since the repin to `94cd1e7d`. Until then [`patches/`](../../patches) carried `IDBMirrorVFS.js` with this PR, merged with #371 until #371's own merge, then alone (head `6512da9f`, then `2e85b243` from 2026-10-11).
 - **The rebase.** Done on 2026-10-10: #371 merged first, so the branch was rebased onto `d09953ee` (`622510da` fix, `6512da9f` tests), `jClose` resolved as in the patch, and force-pushed. The file's 226 tests, #371's included, pass 3 runs of 3 on stock Chrome 153 and Firefox 155; with `master`'s VFS, 6 fail on each. Said in [comment 6100877542](https://github.com/rhashimoto/wa-sqlite/pull/372#issuecomment-6100877542). Upstream CI on `6512da9f` is green: [run 38076536851](https://github.com/rhashimoto/wa-sqlite/actions/runs/38076536851).
 - **The probes.** Throwaway, kept outside git; the numbers are in `mem:measurements` (IDBMIRROR-CLOSE-BROADCAST).

@@ -6,10 +6,12 @@ Part of `mem:stack-and-build`. Moved here from it on 2026-10-08; the chain of ea
 
 `wa-sqlite` is a devDependency only, vendored into `dist/worker/worker.js` at build time so it
 never reaches a consumer lockfile. **Pinned by commit SHA, not by tag, since 2026-09-15 (user)**:
-`github:rhashimoto/wa-sqlite#d09953ee4bc565c0d0c321cdd949b4fecf12a72e` since 2026-10-10, upstream
-`master` with our #371 merged, its `IDBMirrorVFS.js` byte-identical to the head the patch carried
-(`cb97deed`); nothing else changed upstream since `96d91182`, and the built `worker.js` and the three
-`.wasm` are byte-identical across that repin. The previous pin, `96d91182` (2026-10-05, #375 merged),
+`github:rhashimoto/wa-sqlite#94cd1e7d7dbbfcbb6ebe473e56ee2dc0faece756` since 2026-10-11, upstream
+`master` with our #372 merged (squashed as `91a34ef7`, its tree byte-identical to the head the patch
+carried, `2e85b243`) and a dependabot bump of `yarn.lock` on top (outside the package); the built
+`worker.js` and the three `.wasm` are byte-identical across that repin, only `worker.js.map` moves
+(the `.pnpm` path it names). Before it, `d09953ee` (2026-10-10, #371 merged, byte-identical build
+too). The pin before that, `96d91182` (2026-10-05, #375 merged),
 brought what the patch had left out of #375, the `async` glue and a rebuilt `wa-sqlite-async.wasm`
 (no `asyncify_imports.json` any more), so `async` executes new code since then. Vendored, so a commit serves
 as well as a release and nothing waits for one.
@@ -28,15 +30,13 @@ as well as a release and nothing waits for one.
 no longer deletable as a block. Each is independent and each has a report in
 `docs/upstream/`, which is where the mechanisms and measurements live:
 
-- `IDBMirrorVFS.js` — #372 (`jClose` waits for the commits in flight before closing the
-  `BroadcastChannel`), head `69e00270`, applied on upstream's file, which has #371 since the repin of
-  2026-10-10. The `jClose` conflict with #371 is resolved as it was in the patch while both were
-  carried: wait for the commits in flight first, then remove an aborted view's journal. Both PRs'
-  tests passed on that merged file (226, 3/3, both engines). #372's branch was rebased onto `d09953ee` the same day (head `6512da9f`), with exactly that file: the patch is #372's own diff. On 2026-10-11 the review's comment nit moved the head to `2e85b243` (the `jClose` comment only); the patch was rebuilt from it through `pnpm patch`, the installed file equal to the pin plus #372's diff, and `dist/worker/worker.js` byte-identical (only `worker.js.map` changes, through its sources).
+- `IDBMirrorVFS.js` — #372 was carried from 2026-10-03 (merged with #371 until #371's merge, then
+  alone, last at head `2e85b243`) and left the patch at the repin to `94cd1e7d` (2026-10-11), merged
+  upstream byte for byte.
 - `OPFSAdaptiveVFS.js` — #374, line 9 guarded (`FileSystemSyncAccessHandle?.prototype`), without
   which no worker loads outside a secure context (INSECURE-CONTEXT).
 - `dist/wa-sqlite-jspi.mjs` was carried for #375 from 2026-10-05 until its merge the same day. **After any change to a carried `dist/` glue, clear `node_modules/.cache/rspack` and check the pattern in `dist/worker/worker.js`**: the forced build cache served the previous glue once.
-- `IDBMirrorVFS.js` and that line are all the patch holds: every other PR it carried has merged.
+- That line is all the patch holds since 2026-10-11: every other PR it carried has merged.
 
 `WriteAhead.js` is no longer patched: #365 (`PRAGMA wal_read_latest`, which the library's barrier
 sets) and #361 are upstream. #366 changes tests only and is not carried.
