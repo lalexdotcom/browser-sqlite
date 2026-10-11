@@ -231,7 +231,7 @@ aligned with it wholesale: the image, the stock browsers (`post-create.sh` insta
 
 - `.github/workflows/ci.yaml` — two jobs on push to `main` and every PR; WebdriverIO's browsers
   cached by the hash of `scripts/browsers.ts`; `concurrency` cancels superseded runs. **Every job that
-  drives a browser (`verify`, `consumer-smoke`, the release `cells`) runs two steps after the cache
+  drives a browser (`verify`, `consumer-smoke`, `matrix.yaml`'s `cells`) runs two steps after the cache
   (2026-10-11):** `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` — the runner has
   it at 1, and Chrome for Testing, having no AppArmor profile, then exits at launch ("Chrome instance
   exited"); lifting it keeps the sandbox, `--no-sandbox` would drop it — and `node scripts/browsers.ts
@@ -241,7 +241,11 @@ aligned with it wholesale: the image, the stock browsers (`post-create.sh` insta
   - `verify` — `biome ci` + `tsc --noEmit` + `pnpm build` + `pnpm test`. Blocking.
   - `consumer-smoke` — `pnpm test:consumer`. Blocking since wave P.
 - `.github/workflows/release-and-publish.yaml` — on `v*` tags, build + publish, and it
-  calls `pages.yaml` with `needs: release`.
+  calls `pages.yaml` with `needs: release`. `release` and `untag` need `verify` (`ci.yaml`) and
+  `matrix`.
+- `.github/workflows/matrix.yaml` — `pairs` + `cells`, every declared pair through the four
+  columns, one job per pair, `fail-fast`. `workflow_call` from the release, `workflow_dispatch` by
+  hand on any branch (2026-10-11, user); moved out of `release-and-publish.yaml` for that.
 - `.github/workflows/pages.yaml` — **the site is a pure function of two tags** since
   2026-09-03: `/` is the latest release tag, `/preview/` is the `preview` tag when one
   exists. **The ref that triggered a run is never built and never consulted**, so every
