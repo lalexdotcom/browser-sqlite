@@ -1,15 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   createTestClient,
+  LONG_QUERY,
   longQuery,
   sleep,
   theQueryIsRunning,
   waitUntil,
 } from './helpers';
-
-/** `longQuery` with its iteration count bound, so one cached statement serves every N. */
-const LONG_QUERY =
-  'WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < ?) SELECT count(*) AS n FROM c';
 
 describe('aborting a running statement', () => {
   it('frees the worker, so the next query does not wait it out', async ({

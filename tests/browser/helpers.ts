@@ -361,3 +361,7 @@ export const theQueryIsRunning =
  */
 export const longQuery = (iterations: number) =>
   `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < ${iterations}) SELECT count(*) AS n FROM c`;
+
+/** `longQuery` with its iteration count bound, so one cached statement serves every N. */
+export const LONG_QUERY =
+  'WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < ?) SELECT count(*) AS n FROM c';
