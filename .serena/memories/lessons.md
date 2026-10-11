@@ -35,6 +35,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - A green arm needs an arm that must go red in the same harness (2026-09-30, wa-sqlite #362)
 - Find a request in `db.debug` by what it is, never by sniffing its SQL (2026-09-30)
 - A failure count that changes run to run in one family of assertions, on every backend, points at the harness (2026-10-08, wa-sqlite on Safari 26)
+- A warm local cache and a permissive container hide what a fresh CI runner hits first (2026-10-11, the first CI run on WebdriverIO)
 
 ## `mem:lessons/debugging` — debugging, probes, measurement
 

@@ -356,3 +356,7 @@ A fresh worker's first request carries the freshness barrier, `SELECT count(*) F
 ## A failure count that changes run to run in one family of assertions, on every backend, points at the harness (2026-10-08, wa-sqlite on Safari 26)
 
 Safari 26 failed 72, then 81 `vfs_xOpen`/`vfs_xClose` assertions. They all read 0, and `MemoryVFS` failed too. A defect in nine VFS at once does not vary in count; a race does. It was the harness: an output `DataView` passed by `Comlink.proxy()` is written on its own port, unordered with the reply. **When every backend fails the same way and the count drifts, look at what the tests share before looking at what they test.**
+
+## A warm local cache and a permissive container hide what a fresh CI runner hits first (2026-10-11, the first CI run on WebdriverIO)
+
+The suite was green locally three times the day before, and the first CI run ran no Chrome test. Both causes exist only on a fresh runner: a browser cache that is cold (parallel jobs downloaded the same chromedriver at once; one spawned it before it was executable) and a kernel that restricts unprivileged user namespaces through AppArmor (Ubuntu 24.04; the container does not), which Chrome for Testing's sandbox needs. **Anything that downloads, caches or launches runs once, serially, before the parallel jobs; and a new browser setup is green when CI says so, not when the container does.** Read the sysctl value in the step that changes it: one line proved the hypothesis in the same run as the fix.
