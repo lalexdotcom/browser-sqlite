@@ -10,8 +10,9 @@
  * which cell runs which test, prints the plan, runs the cells
  * (`scripts/run-cell.ts`, `BSQ_TEST_JOBS` at a time, a cell cut in shards
  * by files when there are more processes than cells) and `unit`, then
- * merges their blobs as one report. `--table` prints the matrix table
- * instead and keeps each cell's JSON report under `.matrix/<run>/` for
+ * merges their blobs as one report, followed by every test skipped with a
+ * reason (`scripts/skip-notes.ts`). `--table` prints the matrix table and the
+ * reasons instead, and keeps each cell's JSON report under `.matrix/<run>/` for
  * `scripts/matrix-triage.ts`. `BSQ_TEST_TARGETS` and `--pair` give the
  * pairs, never substituted.
  */
@@ -414,6 +415,22 @@ async function main() {
 
   let status =
     failed.length > 0 || outcomes.some((o) => o.exitCode !== 0) ? 1 : 0;
+  // The default reporter shows a skip's reason only on a failed module's lines.
+  const SKIP_NOTES = '--reporter=./scripts/skip-notes.ts';
+  const mergeBlobs = (reporters: string[]) =>
+    spawnSync(
+      'pnpm',
+      [
+        'exec',
+        'vitest',
+        '--configLoader',
+        'runner',
+        '--merge-reports',
+        blobs,
+        ...reporters,
+      ],
+      { cwd: ROOT, env, stdio: 'inherit' },
+    );
   if (options.table) {
     const columns = ['chrome', 'firefox', 'isolated-chrome', 'isolated-firefox']
       .filter((name) =>
@@ -439,23 +456,16 @@ async function main() {
       if (result) keyed.set(`${column}:${cell.vfs}/${cell.build}`, result);
     }
     printTable(pairs, columns, keyed);
+    // The table decides the status; this merge only prints the reasons.
+    if (outcomes.some((o) => o.blob === 'ok')) mergeBlobs([SKIP_NOTES]);
   } else if (outcomes.some((o) => o.blob === 'ok')) {
-    const merged = spawnSync(
-      'pnpm',
-      [
-        'exec',
-        'vitest',
-        '--configLoader',
-        'runner',
-        '--merge-reports',
-        blobs,
-        '--reporter=default',
-        ...(options.json
-          ? ['--reporter=json', `--outputFile=${options.json}`]
-          : []),
-      ],
-      { cwd: ROOT, env, stdio: 'inherit' },
-    );
+    const merged = mergeBlobs([
+      '--reporter=default',
+      SKIP_NOTES,
+      ...(options.json
+        ? ['--reporter=json', `--outputFile=${options.json}`]
+        : []),
+    ]);
     if (merged.status !== 0) status = 1;
   }
   // A cell that ran and failed leaves a complete blob, so it is not in `failed`;
