@@ -28,6 +28,8 @@ import { RECOMMENDED_VFS } from './recommended-vfs.ts';
  * - `web-locks` (`navigator.locks`, `LockManager.request`): MDN
  *   browser-compat-data, `api.Navigator.locks` and `api.LockManager.request`,
  *   checked 2026-10-03. Both give the same versions.
+ * - `indexeddb` (`indexedDB` on the global): MDN browser-compat-data,
+ *   `api.indexedDB`, checked 2026-10-12.
  *
  * This is documentation data with a shelf life. Re-check it against those
  * sources rather than trusting it a year from now.
@@ -101,6 +103,14 @@ const FEATURE_SUPPORT = {
     Safari: '15.4',
     iOS: '15.4',
   },
+  // Where the IndexedDB VFS store their pages.
+  indexeddb: {
+    Chrome: '24',
+    Android: '25',
+    Firefox: '16',
+    Safari: '8',
+    iOS: '8',
+  },
 } as const satisfies Record<PlatformFeature, Record<string, Support>>;
 
 /**
@@ -117,6 +127,7 @@ const SECURE_CONTEXT_ONLY = {
   jspi: false,
   'cross-origin-isolated': true,
   'web-locks': true,
+  indexeddb: false,
 } as const satisfies Record<PlatformFeature, boolean>;
 
 /** Desktop first, then mobile. Order is deliberate and shared by both tables. */

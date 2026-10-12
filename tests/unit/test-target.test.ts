@@ -29,6 +29,7 @@ const WITHOUT_UNSAFE = here([
   'sync-access-handle',
   'writable-stream',
   'web-locks',
+  'indexeddb',
 ]);
 /** Chromium as the suite meets it, not isolated. */
 const WITH_UNSAFE = here([
@@ -37,6 +38,7 @@ const WITH_UNSAFE = here([
   'readwrite-unsafe',
   'writable-stream',
   'web-locks',
+  'indexeddb',
 ]);
 
 describe('resolvePair', () => {
@@ -182,7 +184,7 @@ describe('resolvePair', () => {
       resolvePair(
         pair('MemoryVFS', 'sync'),
         ['interruptible', 'two-workers'],
-        here(['readwrite-unsafe', 'web-locks']),
+        here(['readwrite-unsafe', 'web-locks', 'indexeddb']),
       ),
     ).toEqual(pair('IDBBatchAtomicVFS', 'async'));
 

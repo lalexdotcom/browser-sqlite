@@ -150,6 +150,37 @@ describe('platform requirements', () => {
     expect(missingFeature('MemoryAsyncVFS', 'async', new Set())).toBeNull();
   });
 
+  // Falsifiable: drop 'indexeddb' from an IndexedDB VFS's `requires`. Where
+  // IndexedDB is missing it would construct, then fail inside its worker.
+  it('requires IndexedDB for the IndexedDB VFS once Web Locks are there', () => {
+    const here = new Set<PlatformFeature>(['web-locks']);
+    expect(missingFeature('IDBBatchAtomicVFS', 'async', here)).toBe(
+      'indexeddb',
+    );
+    expect(missingFeature('IDBMirrorVFS', 'async', here)).toBe('indexeddb');
+  });
+
+  it('names IndexedDB and the VFS that do without it when it is missing', () => {
+    const here = new Set<PlatformFeature>([
+      'web-locks',
+      'opfs',
+      'sync-access-handle',
+    ]);
+    const message = describeMissing(
+      'IDBBatchAtomicVFS',
+      'async',
+      'indexeddb',
+      here,
+    );
+    expect(message).toContain('IndexedDB');
+    expect(message).toContain('OPFSWriteAheadVFS');
+    expect(message).not.toContain('IDBMirrorVFS');
+  });
+
+  it('probes IndexedDB, which Node does not have', () => {
+    expect(detectFeatures().has('indexeddb')).toBe(false);
+  });
+
   it('requires writable-stream for OPFSAnyContextVFS', () => {
     expect(
       missingFeature('OPFSAnyContextVFS', 'async', new Set(['opfs'])),

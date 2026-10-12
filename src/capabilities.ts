@@ -28,6 +28,7 @@ const PROBES: Partial<Record<PlatformFeature, () => boolean>> = {
   'web-locks': () =>
     typeof navigator !== 'undefined' &&
     typeof navigator.locks?.request === 'function',
+  indexeddb: () => typeof indexedDB !== 'undefined',
 };
 
 /**
@@ -56,6 +57,7 @@ const FEATURE_LABEL: Record<PlatformFeature, string> = {
   'readwrite-unsafe': 'readwrite-unsafe access handles',
   'cross-origin-isolated': 'cross-origin isolation',
   'web-locks': 'the Web Locks API',
+  indexeddb: 'IndexedDB',
 };
 
 /**
