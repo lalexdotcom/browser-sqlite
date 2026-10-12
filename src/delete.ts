@@ -99,8 +99,6 @@ export const deleteDatabase = async (
     );
   }
 
-  const wasm = resolveWasmLocation(options.wasmUrl, build, location.href);
-
   const locks = createLocks();
 
   // The connection lock first: a live client is both the likelier refusal and
@@ -125,7 +123,16 @@ export const deleteDatabase = async (
 
   try {
     const ran = await locks.tryWithLock(initLockName(vfs, dbFile), () =>
-      runDelete({ file: dbFile, vfs, build, wasm }, logicalFile),
+      runDelete(
+        {
+          file: dbFile,
+          vfs,
+          build,
+          // Only now: a refused delete starts no worker and has no use for it.
+          wasm: resolveWasmLocation(options.wasmUrl, build, location.href),
+        },
+        logicalFile,
+      ),
     );
 
     if (!ran) {
