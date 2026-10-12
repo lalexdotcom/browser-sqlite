@@ -75,7 +75,7 @@ export type Plan = {
   readonly cells: readonly Cell[];
   /** The situation the test needs does not exist on this browser (env-capped-pool on Chrome): listed, never a failure. */
   readonly notApplicable: readonly Unplaced[];
-  /** Eligible on no pair of any family it belongs to. */
+  /** Placed in no cell of any family it belongs to. */
   readonly dead: readonly Pick<CollectedTest, 'file' | 'name' | 'tags'>[];
   /** An explicit pair a family cannot run: shown, never replaced. */
   readonly notRunnable: readonly (Family & Pair)[];
@@ -113,7 +113,7 @@ export const plan = (
   >();
   const notApplicable: Unplaced[] = [];
   const notRunnable: (Family & Pair)[] = [];
-  // `placed`: the test runs, or could (eligible on a pair, dedupe ignored), in some family.
+  // `placed`: the test is in a cell of some family (or, all-pairs, a standalone one left out on purpose).
   const seen = new Map<string, { test: CollectedTest; placed: boolean }>();
 
   for (const family of families) {
@@ -177,10 +177,10 @@ export const plan = (
       let placed = false;
       if (standalone) {
         // Once per browser, non-isolated, outside the matrix (spec § 3).
-        if (options.mode === 'all-pairs' || family.isolated) {
-          entry.placed = true;
-          continue;
-        }
+        // All-pairs leaves it out on purpose (never dead); an isolated family
+        // never hosts it, so it is placed only by a non-isolated family.
+        if (options.mode === 'all-pairs') entry.placed = true;
+        if (options.mode === 'all-pairs' || family.isolated) continue;
         const host = starts[0] ?? canonical[0];
         if (host && representative(need, family.browser, features)) {
           add(host, starts[0] ? 'start' : 'complement', test);
@@ -208,17 +208,18 @@ export const plan = (
           }
         }
       }
-      // Eligible on some pair of this family, dedupe aside: the situation the
-      // test needs exists here. A test merely deduped out of an isolated
-      // family is neither not applicable nor dead.
+      // Eligible on some pair of this family, dedupe aside: when it is not, the
+      // situation the test needs does not exist here. A test merely deduped
+      // out of an isolated family is not "not applicable" (it is dead if no
+      // family places it).
       const exists =
         placed ||
         (!standalone &&
           canonical.some((pair) =>
             shouldTestRun(context(pair), need, { dedupeIsolation: false }),
           ));
-      if (exists) entry.placed = true;
-      else if (complete) {
+      if (placed) entry.placed = true;
+      else if (complete && !exists) {
         notApplicable.push({
           ...family,
           file: test.file,

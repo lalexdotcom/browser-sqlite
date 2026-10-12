@@ -95,8 +95,20 @@ describe('complement mode', () => {
       COMPLEMENT,
     );
     expect(p.cells.some((c) => c.isolated)).toBe(false);
+    // Eligible there without the dedupe, so not "not applicable"; but it runs
+    // nowhere (its non-isolated run is in a file no non-isolated family collects).
     expect(p.notApplicable).toEqual([]);
-    expect(p.dead).toEqual([]);
+    expect(p.dead.map((d) => d.name)).toEqual(['plain isolated file']);
+  });
+
+  it('calls a standalone test collected only in isolated families dead: it runs nowhere', () => {
+    const p = plan(
+      families([], [test('alone, isolated file', ['standalone'])]),
+      COMPLEMENT,
+    );
+    expect(p.cells).toEqual([]);
+    expect(p.notApplicable).toEqual([]);
+    expect(p.dead.map((d) => d.name)).toEqual(['alone, isolated file']);
   });
 
   it('places an untagged test of both families in the non-isolated cells, and calls it neither not applicable nor dead', () => {
