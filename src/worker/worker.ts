@@ -1305,6 +1305,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         file,
         vfs,
         build,
+        wasm,
         pragmas,
         statementCacheSize,
         statementCacheBytes,
@@ -1316,6 +1317,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
       open(file, {
         vfs,
         build,
+        wasm,
         pragmas,
         statementCacheSize,
         statementCacheBytes,
