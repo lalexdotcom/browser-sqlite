@@ -36,9 +36,18 @@ const servesWithin = (
   return Promise.race([read, sleep(ms).then(() => false)]);
 };
 
+/**
+ * The abandoned generators, reachable until the test clears this in its
+ * `finally`. An unreachable one is reclaimed at collection (src/abandon.ts),
+ * and a collection then frees the worker before the deadline — a GitHub runner
+ * did, in 139 ms (2026-10-11) — or in place of the path under test.
+ */
+const held = new Set<AsyncGenerator<unknown>>();
+
 /** Takes one chunk and drops the generator: no break, no return(), no throw. */
 const abandon = async (make: () => AsyncGenerator<unknown>) => {
   const rows = make();
+  held.add(rows);
   await rows.next();
   await sleep(0);
 };
@@ -60,6 +69,7 @@ describe('an abandoned generator gives its worker back', () => {
       // After it, the reclaim has run and the pool serves again.
       expect(await servesWithin(db, 8000)).toBe(true);
     } finally {
+      held.clear();
       await db.close();
     }
   }, 30_000);
@@ -80,6 +90,7 @@ describe('an abandoned generator gives its worker back', () => {
       controller.abort(new Error('the consumer changed its mind'));
       expect(await servesWithin(db, 8000)).toBe(true);
     } finally {
+      held.clear();
       await db.close();
     }
   }, 30_000);
