@@ -1,6 +1,7 @@
 import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
-import { inject, onTestFinished } from 'vitest';
+import { expect, inject, onTestFinished } from 'vitest';
 import { defaultBuildFor } from '../../src/capabilities';
+import type { SQLiteBuild } from '../../src/const/builds';
 import {
   folderOf,
   type SQLiteVFS,
@@ -10,6 +11,7 @@ import type { InternalSQLiteClientOptions } from '../../src/scheduler';
 import type { SQLiteError } from '../../src/types/errors';
 import { databaseFiles, databasePath } from '../../src/utils';
 import { AVAILABLE_FEATURES, removeOpfsPath } from '../conformance/helpers';
+import { needFromTags, representative, runsIn } from '../need';
 import { targetLabel } from '../target-projects';
 import {
   type Here,
@@ -56,6 +58,61 @@ export const TEST_TARGET: TestTarget = (() => {
   }
   return target;
 })();
+
+/** This project's family (vitest.config.ts provides it beside the target). */
+export const ENVIRONMENT = inject('bsqEnvironment');
+
+/**
+ * The pair a standalone test uses here: the first canonical pair its own
+ * tags admit (spec § 3), never a name written in the test. Throws when none
+ * does — the planner lists such a test as not applicable and never runs it.
+ */
+export const standalonePair = (tags: readonly string[]): TestTarget => {
+  const pair = representative(
+    needFromTags(tags).need,
+    ENVIRONMENT.browser,
+    AVAILABLE_FEATURES,
+  );
+  if (pair === null) {
+    throw new Error(`STANDALONE: no pair here satisfies [${tags.join(', ')}]`);
+  }
+  return { vfs: pair.vfs, build: pair.build };
+};
+
+/** The builds of a VFS this browser can run, as declared. */
+export const buildsHere = (vfs: SQLiteVFS): SQLiteBuild[] =>
+  (VFS_CAPABILITIES[vfs].builds as readonly SQLiteBuild[]).filter((build) =>
+    runsIn({
+      vfs,
+      build,
+      browser: ENVIRONMENT.browser,
+      isolated: false,
+      features: AVAILABLE_FEATURES,
+    }),
+  );
+
+/**
+ * Runs every case whatever the others do, then fails once naming each case
+ * that failed (user, 2026-10-12): a loop that stops at its first failure
+ * hides how many cases share it.
+ */
+export const forEachCase = async <T>(
+  cases: readonly T[],
+  label: (item: T) => string,
+  run: (item: T) => Promise<void>,
+): Promise<void> => {
+  const failures: string[] = [];
+  for (const item of cases) {
+    try {
+      await run(item);
+    } catch (error) {
+      failures.push(
+        `${label(item)}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  expect(failures).toEqual([]);
+};
 
 /** `fallback` unless `BSQ_TEST_NEEDS` says `skip`, as `pnpm test:matrix` does (spec 2026-09-15, A7). */
 const ON_UNMET_NEED: OnUnmetNeed = (() => {
