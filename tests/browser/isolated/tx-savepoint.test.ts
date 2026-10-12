@@ -26,7 +26,9 @@ const setUp = async () => {
   return db;
 };
 
-describe('a savepointed write on the sync isolated build (spec 2026-09-11)', () => {
+describe('a savepointed write on the sync isolated build (spec 2026-09-11)', {
+  tags: ['vfs:OPFSWriteAheadVFS', 'build:sync', 'isolated'],
+}, () => {
   // Falsifiable: drive the savepointed write with the merged signal in
   // `settled` (`start(via(true, mark), options)`) — the slot then cuts it,
   // SQLite rolls the transaction back, and it dies.

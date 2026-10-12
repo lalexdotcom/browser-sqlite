@@ -204,35 +204,33 @@ describe('deleteDatabase', () => {
     // Falsifiable: drop `...VFS_CAPABILITIES[vfs].extraFileSuffixes` from the
     // OPFS pass for a VFS with a folder in deleteDatabaseFiles — OPFSWriteAheadVFS
     // leaves `-wa0` and `-wa1` behind, and this goes red on that target.
-    const opfsEntries = storage === 'opfs';
-    (opfsEntries ? it : it.skip)(
-      `leaves no OPFS entry named after the database${opfsEntries ? '' : ' — skipped, this VFS keeps no OPFS entry'}`,
-      async () => {
-        const dbName = `bsq-test-${crypto.randomUUID()}`;
-        const db = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
-        await db.write('CREATE TABLE t (n)');
-        await db.close();
+    it('leaves no OPFS entry named after the database', {
+      tags: ['requires:opfs-file'],
+    }, async () => {
+      const dbName = `bsq-test-${crypto.randomUUID()}`;
+      const db = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
+      await db.write('CREATE TABLE t (n)');
+      await db.close();
 
-        await expect(
-          deleteDatabase(dbName, { vfs, build }),
-        ).resolves.toBeUndefined();
+      await expect(
+        deleteDatabase(dbName, { vfs, build }),
+      ).resolves.toBeUndefined();
 
-        // The folder of databasePath(vfs, dbName) — the root when the VFS
-        // has no folder.
-        const path = databasePath(vfs, dbName);
-        const segments = path.split('/');
-        const base = segments.pop() as string;
-        let dir = await navigator.storage.getDirectory();
-        for (const segment of segments) {
-          dir = await dir.getDirectoryHandle(segment);
-        }
-        const remaining: string[] = [];
-        for await (const name of (dir as any).keys()) {
-          if (name.startsWith(base)) remaining.push(name);
-        }
-        expect(remaining).toEqual([]);
-      },
-    );
+      // The folder of databasePath(vfs, dbName) — the root when the VFS
+      // has no folder.
+      const path = databasePath(vfs, dbName);
+      const segments = path.split('/');
+      const base = segments.pop() as string;
+      let dir = await navigator.storage.getDirectory();
+      for (const segment of segments) {
+        dir = await dir.getDirectoryHandle(segment);
+      }
+      const remaining: string[] = [];
+      for await (const name of (dir as any).keys()) {
+        if (name.startsWith(base)) remaining.push(name);
+      }
+      expect(remaining).toEqual([]);
+    });
   });
 });
 
@@ -257,30 +255,27 @@ describe('deleteDatabase under a live connection', () => {
   };
 
   const { vfs, build } = TEST_TARGET;
-  const shared = VFS_CAPABILITIES[vfs].storage !== 'memory';
-
   // Falsifiable: remove the connection-lock acquisition in delete.ts and this
   // goes red — by resolving where the VFS shares its store, and with
   // WORKER_CRASHED instead of DATABASE_IN_USE on OPFSAdaptiveVFS.
-  (shared ? it : it.skip)(
-    `refuses with DATABASE_IN_USE while a client is live${shared ? '' : ' — skipped, a memory VFS shares no connection (pinned test below)'}`,
-    async () => {
-      const { db, dbName } = liveClient();
-      await db.write('CREATE TABLE t (n)');
-      await db.write('INSERT INTO t VALUES (1)');
+  it('refuses with DATABASE_IN_USE while a client is live', {
+    tags: ['requires:shared-storage'],
+  }, async () => {
+    const { db, dbName } = liveClient();
+    await db.write('CREATE TABLE t (n)');
+    await db.write('INSERT INTO t VALUES (1)');
 
-      const error = await deleteDatabase(dbName, { vfs, build }).then(
-        () => undefined,
-        (e) => e,
-      );
-      expect(error).toBeInstanceOf(SQLiteError);
-      expect((error as SQLiteError).code).toBe('DATABASE_IN_USE');
+    const error = await deleteDatabase(dbName, { vfs, build }).then(
+      () => undefined,
+      (e) => e,
+    );
+    expect(error).toBeInstanceOf(SQLiteError);
+    expect((error as SQLiteError).code).toBe('DATABASE_IN_USE');
 
-      // The live client is untouched — this is the whole point.
-      const rows = await db.read<{ n: number }>('SELECT n FROM t');
-      expect(rows.map((r) => r.n)).toEqual([1]);
-    },
-  );
+    // The live client is untouched — this is the whole point.
+    const rows = await db.read<{ n: number }>('SELECT n FROM t');
+    expect(rows.map((r) => r.n)).toEqual([1]);
+  });
 
   it('deletes once the client has closed', async () => {
     const { db, dbName } = liveClient();

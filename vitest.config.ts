@@ -51,13 +51,23 @@ const browserProject = (
     // The files of a run share one profile: after each file its OPFS and
     // IndexedDB leftovers are erased and the erasure verified; what cannot be
     // erased fails that file, by name.
-    setupFiles: ['tests/storage-wipe.ts'],
+    // The guard reads the project's target, so only target projects take it.
+    setupFiles: [
+      'tests/storage-wipe.ts',
+      ...(options.target ? ['tests/browser/need-guard.ts'] : []),
+    ],
     testTimeout: options.testTimeout,
     // A teardown closes a client that may still be draining an abandoned
     // statement, and close() waits up to drainTimeout (60 s by default).
     hookTimeout: 60_000,
     ...(options.target
-      ? { provide: { bsqTarget: options.target, bsqNeeds: onUnmet } }
+      ? {
+          provide: {
+            bsqTarget: options.target,
+            bsqNeeds: onUnmet,
+            bsqEnvironment: { browser, isolated: options.isolated === true },
+          },
+        }
       : {}),
     browser: {
       enabled: true,
@@ -104,6 +114,7 @@ export default defineConfig({
             'tests/browser/**',
             'tests/conformance/**',
             'tests/consumer*/**',
+            'tests/probe/**',
           ],
           // Pure Node tests with no I/O: anything near this bound is a deadlock.
           testTimeout: 10_000,
@@ -136,6 +147,17 @@ export default defineConfig({
           browser,
           ['tests/conformance/**/*.test.ts'],
           { testTimeout: 60_000 },
+        ),
+      ),
+      // One probe per environment the planner can select (spec § 4.2).
+      ...ENGINES.flatMap((browser) =>
+        [false, true].map((isolated) =>
+          browserProject(
+            `probe ${isolated ? 'isolated ' : ''}${browser}`,
+            browser,
+            ['tests/probe/features.test.ts'],
+            { isolated, testTimeout: 30_000 },
+          ),
         ),
       ),
     ],

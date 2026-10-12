@@ -4,8 +4,10 @@ import {
   SQLiteError,
 } from 'browser-sqlite';
 import { describe, expect, it } from 'vitest';
-import { VFS_CAPABILITIES } from '../../src/const/vfs';
-import { createTestClient } from './helpers';
+import { defaultBuildFor, missingFeature } from '../../src/capabilities';
+import { type SQLiteVFS, VFS_CAPABILITIES } from '../../src/const/vfs';
+import { AVAILABLE_FEATURES } from '../conformance/helpers';
+import { createTestClient, forEachCase } from './helpers';
 
 /**
  * `AccessHandlePoolVFS` cannot share access handles across connections, so its
@@ -100,38 +102,43 @@ describe('vfs/build combination guard', () => {
 });
 
 /**
- * Each newly wired VFS opens on its default build and serves a round trip.
- * The exhaustive build sweep lives in the conformance project; this is the
- * gate that keeps `pnpm test` honest about the four additions.
+ * Every VFS this browser can run opens on its default build and serves a
+ * round trip: the gate that keeps `pnpm test` honest about each loader in
+ * the worker. Standalone, once per browser; a VFS added to VFS_CAPABILITIES
+ * joins with no edit here.
  */
-describe('newly wired VFS', () => {
-  // One VFS (one per case): each case's own opening/round-trip is the
-  // subject — the gate that keeps `pnpm test` honest about each addition.
+describe('every wired VFS', () => {
   // Falsifiable: delete any one loader from VFSConfigs in worker/worker.ts.
-  const cases = [
-    // poolSize 1 because the capability table now says so — see MIRROR-1.
-    { vfs: 'IDBMirrorVFS', poolSize: 1 },
-    { vfs: 'OPFSAnyContextVFS', poolSize: 2 },
-    { vfs: 'MemoryVFS', poolSize: 1 },
-    { vfs: 'MemoryAsyncVFS', poolSize: 1 },
-  ] as const;
-
-  for (const { vfs, poolSize } of cases) {
-    it(`${vfs} opens and serves a round trip`, async () => {
-      const db = await createTestClient({ vfs, poolSize });
-
-      await db.write('CREATE TABLE wired (id INTEGER, val TEXT)');
-      await db.write("INSERT INTO wired VALUES (1, 'ok')");
-
-      const rows = await db.read<{ id: number; val: string }>(
-        'SELECT * FROM wired',
-      );
-      expect(rows).toHaveLength(1);
-      expect(rows[0].val).toBe('ok');
-
-      await db.close();
-    });
-  }
+  it('opens on its default build and serves a round trip', {
+    tags: ['standalone'],
+  }, async () => {
+    const runnable = (Object.keys(VFS_CAPABILITIES) as SQLiteVFS[]).filter(
+      (vfs) =>
+        missingFeature(
+          vfs,
+          defaultBuildFor(vfs, AVAILABLE_FEATURES),
+          AVAILABLE_FEATURES,
+        ) === null,
+    );
+    await forEachCase(
+      runnable,
+      (vfs) => vfs,
+      async (vfs) => {
+        const db = await createTestClient({ vfs });
+        try {
+          await db.write('CREATE TABLE wired (id INTEGER, val TEXT)');
+          await db.write("INSERT INTO wired VALUES (1, 'ok')");
+          const rows = await db.read<{ id: number; val: string }>(
+            'SELECT * FROM wired',
+          );
+          expect(rows).toHaveLength(1);
+          expect(rows[0]?.val).toBe('ok');
+        } finally {
+          await db.close();
+        }
+      },
+    );
+  });
 });
 
 describe('vfs is required', () => {

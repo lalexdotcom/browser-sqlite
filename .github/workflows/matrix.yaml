@@ -14,8 +14,9 @@ jobs:
   # `pnpm test` covers two of the 22 declared pairs; the rest are only seen
   # here. One job per pair, each running the four columns (chrome, firefox,
   # isolated chrome, isolated firefox) of its pair — 263 s measured locally for
-  # one pair. Each shard goes through test-matrix.ts, which owns the per-cell
-  # timer.
+  # one pair. Each shard goes through test-matrix.ts, which hands the pair to the
+  # test planner (scripts/test-plan.ts): it runs each cell as its own process,
+  # bounded by its own timer.
   pairs:
     runs-on: ubuntu-latest
     outputs:
@@ -81,9 +82,10 @@ jobs:
         run: node scripts/browsers.ts install
       - name: Matrix ${{ matrix.pair }}
         run: node scripts/test-matrix.ts --pair ${{ matrix.pair }}
-      # The script writes each run's output to .matrix/ and prints only a
-      # verdict, so a red cell otherwise explains nothing — and "diagnose it
-      # locally" fails when the cell is green locally, which is how rc.5 went.
+      # The planner writes each cell's report and log to .matrix/ and prints the
+      # last lines of a red cell's log, but a log tail may not say enough — and
+      # "diagnose it locally" fails when the cell is green locally, which is how
+      # rc.5 went.
       - name: Matrix report
         if: failure()
         uses: actions/upload-artifact@v7

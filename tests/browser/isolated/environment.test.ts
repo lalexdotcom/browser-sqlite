@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-describe('the isolated project', () => {
+describe('the isolated project', {
+  tags: ['vfs:OPFSWriteAheadVFS', 'build:sync', 'isolated'],
+}, () => {
   it('really is cross-origin isolated', () => {
     expect(globalThis.crossOriginIsolated).toBe(true);
     expect(typeof SharedArrayBuffer).toBe('function');

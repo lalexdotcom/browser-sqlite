@@ -5,10 +5,17 @@ import {
   SQLiteError,
 } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
+import type { SQLiteBuild } from '../../src/const/builds';
 import type { SQLiteVFS } from '../../src/const/vfs';
 import { databasePath } from '../../src/utils';
 import { removeOpfsPath } from '../conformance/helpers';
-import { createTestClient, pairFor, type Skip } from './helpers';
+import {
+  buildsHere,
+  createTestClient,
+  forEachCase,
+  standalonePair,
+  TEST_TARGET,
+} from './helpers';
 
 /**
  * docs/superpowers/specs/2026-09-14-statement-errors-design.md: a statement
@@ -16,11 +23,12 @@ import { createTestClient, pairFor, type Skip } from './helpers';
  * result code on `sqliteCode` and its extended one on `sqliteExtendedCode`.
  *
  * Every build, because each has its own export of
- * `sqlite3_extended_errcode`. `MemoryVFS` declares all three and needs no
- * cleanup; `poolSize: 1` because its pages live in the worker that opened it.
+ * `sqlite3_extended_errcode`: the tests are standalone and take the VFS their
+ * need resolves to — a memory VFS that declares every build (MemoryVFS today),
+ * which keeps the subject apart from storage-layer noise and needs no cleanup
+ * — and loop over its builds. `poolSize: 1` because a memory VFS's pages live
+ * in the worker that opened it.
  */
-
-const BUILDS = ['sync', 'async', 'jspi'] as const;
 
 const CONSTRAINTS = [
   {
@@ -54,27 +62,37 @@ const FILL_BIG =
   "INSERT INTO big WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 20000) SELECT printf('%0500d', x) FROM c";
 
 const memoryClient = (
-  build: (typeof BUILDS)[number],
+  vfs: SQLiteVFS,
+  build: SQLiteBuild,
   pragmas?: Record<string, string>,
 ) =>
   createTestClient({
-    // One VFS: the subject is SQLite's own error/code translation, exercised
-    // across every build; MemoryVFS isolates it from storage-layer noise
-    // (declares all three builds, needs no cleanup — see file docblock).
-    vfs: 'MemoryVFS',
+    vfs,
     build,
     poolSize: 1,
     ...(pragmas ? { pragmas } : {}),
   });
 
-describe('a failed statement carries SQLite codes', () => {
-  for (const build of BUILDS) {
-    // Falsifiable: drop the STATEMENT_FAILED branch of statementError in
-    // src/pool.ts — a plain Error arrives. Drop the stamp in the worker's
-    // `run` — sqliteExtendedCode is undefined.
-    for (const c of CONSTRAINTS) {
-      it(`${c.name} through write() (${build})`, async () => {
-        const db = await memoryClient(build, { foreign_keys: 'ON' });
+describe('a failed statement carries SQLite codes', {
+  tags: ['standalone', 'excludes:shared-storage', 'requires:every-build'],
+}, () => {
+  // Falsifiable: drop the STATEMENT_FAILED branch of statementError in
+  // src/pool.ts — a plain Error arrives. Make `stamped` in
+  // src/worker/worker.ts a no-op — sqliteExtendedCode is undefined. (Dropping
+  // only the step stamp in `run` changes nothing: the outer catches stamp the
+  // same value.)
+  it('a constraint violation through write() carries its codes, on every build', async ({
+    task,
+  }) => {
+    const { vfs } = standalonePair(task.tags ?? []);
+    const cases = buildsHere(vfs).flatMap((build) =>
+      CONSTRAINTS.map((c) => ({ build, c })),
+    );
+    await forEachCase(
+      cases,
+      ({ build, c }) => `${c.name} on ${build}`,
+      async ({ build, c }) => {
+        const db = await memoryClient(vfs, build, { foreign_keys: 'ON' });
         try {
           for (const sql of c.setup) await db.write(sql);
           const error = await db.write(c.failing).catch((e) => e);
@@ -89,119 +107,156 @@ describe('a failed statement carries SQLite codes', () => {
         } finally {
           await db.close();
         }
-      });
-    }
+      },
+    );
+  });
 
-    // The prepare path: no statement exists yet, so `run` never sees this
-    // error. A missing collation is the prepare failure that has a subtype,
-    // so it is the one that can falsify SOME prepare-level stamp. This SQL is
-    // a single statement, so it takes the fresh branch's own inner catch,
-    // which stamps first — the outer stamp would read the same value there
-    // (`??=`), so this falsifies only the removal of BOTH prepare-level
-    // stamps. The test below is what falsifies the outer one alone.
-    it(`a missing collation through read(), the prepare path (${build})`, async () => {
-      const db = await memoryClient(build);
-      try {
-        const error = await db
-          .read("SELECT 'a' = 'b' COLLATE nosuch")
-          .catch((e) => e);
-        expect(error).toMatchObject({
-          code: 'STATEMENT_FAILED',
-          sqliteCode: SQLITE_CODES.ERROR,
-          sqliteExtendedCode: SQLITE_EXTENDED_CODES.ERROR_MISSING_COLLSEQ,
-        });
-        expect(error.message).toMatch(/no such collation sequence: nosuch/);
-      } finally {
-        await db.close();
-      }
-    });
+  // The prepare path: no statement exists yet, so `run` never sees this
+  // error. A missing collation is the prepare failure that has a subtype,
+  // so it is the one that can falsify SOME prepare-level stamp. This SQL is
+  // a single statement, so it takes the fresh branch's own inner catch,
+  // which stamps first — the outer stamp would read the same value there
+  // (`??=`), so this falsifies only the removal of BOTH prepare-level
+  // stamps. The test below is what falsifies the outer one alone.
+  it('a missing collation through read(), the prepare path, on every build', async ({
+    task,
+  }) => {
+    const { vfs } = standalonePair(task.tags ?? []);
+    await forEachCase(
+      buildsHere(vfs),
+      (build) => build,
+      async (build) => {
+        const db = await memoryClient(vfs, build);
+        try {
+          const error = await db
+            .read("SELECT 'a' = 'b' COLLATE nosuch")
+            .catch((e) => e);
+          expect(error).toMatchObject({
+            code: 'STATEMENT_FAILED',
+            sqliteCode: SQLITE_CODES.ERROR,
+            sqliteExtendedCode: SQLITE_EXTENDED_CODES.ERROR_MISSING_COLLSEQ,
+          });
+          expect(error.message).toMatch(/no such collation sequence: nosuch/);
+        } finally {
+          await db.close();
+        }
+      },
+    );
+  });
 
-    // The uncacheable branch. A multi-statement string's first run takes the
-    // fresh branch and marks the string uncacheable; its second run prepares
-    // through wa-sqlite's own statements() generator, where only query's outer
-    // catch stamps. Falsifiable: drop that outer stamp — the second run's
-    // sqliteExtendedCode is undefined. The fresh branch's own stamp (first run)
-    // has no falsifier: nothing runs between that failure and the outer catch,
-    // which would read the same value.
-    it(`a later statement's prepare failure, fresh then uncacheable (${build})`, async () => {
-      const db = await memoryClient(build);
-      try {
-        const sql = "SELECT 1; SELECT 'a' = 'b' COLLATE nosuch";
-        const expected = {
-          code: 'STATEMENT_FAILED',
-          sqliteCode: SQLITE_CODES.ERROR,
-          sqliteExtendedCode: SQLITE_EXTENDED_CODES.ERROR_MISSING_COLLSEQ,
-        };
-        const fresh = await db.read(sql).catch((e) => e);
-        expect(fresh).toMatchObject(expected);
-        const uncacheable = await db.read(sql).catch((e) => e);
-        expect(uncacheable).toMatchObject(expected);
-      } finally {
-        await db.close();
-      }
-    });
+  // The uncacheable branch. A multi-statement string's first run takes the
+  // fresh branch and marks the string uncacheable; its second run prepares
+  // through wa-sqlite's own statements() generator, where only query's outer
+  // catch stamps. Falsifiable: drop that outer stamp — the second run's
+  // sqliteExtendedCode is undefined. The fresh branch's own stamp (first run)
+  // has no falsifier: nothing runs between that failure and the outer catch,
+  // which would read the same value.
+  it("a later statement's prepare failure, fresh then uncacheable, on every build", async ({
+    task,
+  }) => {
+    const { vfs } = standalonePair(task.tags ?? []);
+    await forEachCase(
+      buildsHere(vfs),
+      (build) => build,
+      async (build) => {
+        const db = await memoryClient(vfs, build);
+        try {
+          const sql = "SELECT 1; SELECT 'a' = 'b' COLLATE nosuch";
+          const expected = {
+            code: 'STATEMENT_FAILED',
+            sqliteCode: SQLITE_CODES.ERROR,
+            sqliteExtendedCode: SQLITE_EXTENDED_CODES.ERROR_MISSING_COLLSEQ,
+          };
+          const fresh = await db.read(sql).catch((e) => e);
+          expect(fresh).toMatchObject(expected);
+          const uncacheable = await db.read(sql).catch((e) => e);
+          expect(uncacheable).toMatchObject(expected);
+        } finally {
+          await db.close();
+        }
+      },
+    );
+  });
 
-    // Spec D9: SQLite reports no subtype for a syntax error, so there is no
-    // sqliteExtendedCode. Falsifiable: make subtypeOf in src/pool.ts return
-    // data.sqliteExtendedCode unconditionally — it arrives as 1.
-    it(`a syntax error has no subtype (${build})`, async () => {
-      const db = await memoryClient(build);
-      try {
-        const error = await db.read('SELECT * FROM WHERE').catch((e) => e);
-        expect(error).toMatchObject({
-          code: 'STATEMENT_FAILED',
-          sqliteCode: SQLITE_CODES.ERROR,
-        });
-        expect(error.sqliteExtendedCode).toBeUndefined();
-        expect(error.message).toMatch(/syntax error/);
-      } finally {
-        await db.close();
-      }
-    });
+  // Spec D9: SQLite reports no subtype for a syntax error, so there is no
+  // sqliteExtendedCode. Falsifiable: make subtypeOf in src/pool.ts return
+  // data.sqliteExtendedCode unconditionally — it arrives as 1.
+  it('a syntax error has no subtype, on every build', async ({ task }) => {
+    const { vfs } = standalonePair(task.tags ?? []);
+    await forEachCase(
+      buildsHere(vfs),
+      (build) => build,
+      async (build) => {
+        const db = await memoryClient(vfs, build);
+        try {
+          const error = await db.read('SELECT * FROM WHERE').catch((e) => e);
+          expect(error).toMatchObject({
+            code: 'STATEMENT_FAILED',
+            sqliteCode: SQLITE_CODES.ERROR,
+          });
+          expect(error.sqliteExtendedCode).toBeUndefined();
+          expect(error.message).toMatch(/syntax error/);
+        } finally {
+          await db.close();
+        }
+      },
+    );
+  });
 
-    // TX-M1 (mem:measurements, 2026-09-10): this error reached the client with
-    // neither `code` nor `sqliteCode`. SQLite undoes the statement alone, so
-    // the transaction goes on and commits.
-    it(`SQLITE_FULL inside a transaction (${build})`, async () => {
-      const db = await memoryClient(build);
-      try {
-        await db.write('CREATE TABLE t (a INTEGER)');
-        await db.write('CREATE TABLE big (x TEXT)');
-        const pages =
-          (await db.read<{ page_count: number }>('PRAGMA page_count'))[0]
-            ?.page_count ?? 0;
-        await db.write(`PRAGMA max_page_count = ${pages + 3}`);
-        let caught: unknown;
-        await db.transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
-          caught = await tx.write(FILL_BIG).catch((e) => e);
-          await tx.write('INSERT INTO t VALUES (2)');
-        });
-        expect(caught).toMatchObject({
-          code: 'STATEMENT_FAILED',
-          sqliteCode: SQLITE_CODES.FULL,
-        });
-        // SQLite has no subtype for a full database (spec D9).
-        expect(
-          (caught as { sqliteExtendedCode?: number }).sqliteExtendedCode,
-        ).toBeUndefined();
-        expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
-          { a: 1 },
-          { a: 2 },
-        ]);
-      } finally {
-        await db.close();
-      }
-    });
-  }
+  // TX-M1 (mem:measurements, 2026-09-10): this error reached the client with
+  // neither `code` nor `sqliteCode`. SQLite undoes the statement alone, so
+  // the transaction goes on and commits.
+  it('SQLITE_FULL inside a transaction, on every build', async ({ task }) => {
+    const { vfs } = standalonePair(task.tags ?? []);
+    await forEachCase(
+      buildsHere(vfs),
+      (build) => build,
+      async (build) => {
+        const db = await memoryClient(vfs, build);
+        try {
+          await db.write('CREATE TABLE t (a INTEGER)');
+          await db.write('CREATE TABLE big (x TEXT)');
+          const pages =
+            (await db.read<{ page_count: number }>('PRAGMA page_count'))[0]
+              ?.page_count ?? 0;
+          await db.write(`PRAGMA max_page_count = ${pages + 3}`);
+          let caught: unknown;
+          await db.transaction(async (tx) => {
+            await tx.write('INSERT INTO t VALUES (1)');
+            caught = await tx.write(FILL_BIG).catch((e) => e);
+            await tx.write('INSERT INTO t VALUES (2)');
+          });
+          expect(caught).toMatchObject({
+            code: 'STATEMENT_FAILED',
+            sqliteCode: SQLITE_CODES.FULL,
+          });
+          // SQLite has no subtype for a full database (spec D9).
+          expect(
+            (caught as { sqliteExtendedCode?: number }).sqliteExtendedCode,
+          ).toBeUndefined();
+          expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+            { a: 1 },
+            { a: 2 },
+          ]);
+        } finally {
+          await db.close();
+        }
+      },
+    );
+  });
 });
 
-describe('bulkWrite', () => {
+describe('bulkWrite', {
+  tags: ['standalone', 'excludes:shared-storage'],
+}, () => {
   // SQLiteBulkWriteError already keeps the failed batch as `cause`; this pins
   // what that cause now is. Falsifiable: drop the STATEMENT_FAILED branch of
   // statementError — the cause is a plain Error.
-  it('keeps the failed statement as the cause of BULK_WRITE_FAILED', async () => {
-    const db = await memoryClient('sync');
+  it('keeps the failed statement as the cause of BULK_WRITE_FAILED', async ({
+    task,
+  }) => {
+    const { vfs, build } = standalonePair(task.tags ?? []);
+    const db = await memoryClient(vfs, build);
     try {
       await db.write('CREATE TABLE k (k INTEGER UNIQUE)');
       const bulk = db.bulkWrite('k', ['k']);
@@ -220,7 +275,9 @@ describe('bulkWrite', () => {
   });
 });
 
-describe('a file that is not a database', () => {
+describe('a file that is not a database', {
+  tags: ['requires:opfs-file'],
+}, () => {
   /**
    * These two tests put bytes at the database's own name before anything
    * opens it, so they need a VFS that opens an OPFS file by that name: a pool
@@ -228,8 +285,6 @@ describe('a file that is not a database', () => {
    * a memory one has nothing at all — on those three, the garbage is simply
    * never read and a healthy empty database opens instead.
    */
-  const opfsPair = (skip: Skip) => pairFor(['opfs-file'], skip);
-
   /** An OPFS file of 4 KiB of 'A' — what a VFS with a folder opens at its path. */
   const garbageFile = async (vfs: SQLiteVFS) => {
     const file = `stmt-errors-${crypto.randomUUID()}`;
@@ -251,10 +306,8 @@ describe('a file that is not a database', () => {
   // as `busy_timeout` does not, and a pragma that writes runs later, as a
   // write. Falsifiable: drop `sqliteCode` from the WORKER_CRASHED built in
   // startupError.
-  it('fails the open with WORKER_CRASHED carrying NOTADB when a pragma reads it', async ({
-    skip,
-  }) => {
-    const pair = opfsPair(skip);
+  it('fails the open with WORKER_CRASHED carrying NOTADB when a pragma reads it', async () => {
+    const pair = TEST_TARGET;
     const { file, remove } = await garbageFile(pair.vfs);
     const db = createSQLiteClient(file, {
       vfs: pair.vfs,
@@ -276,10 +329,8 @@ describe('a file that is not a database', () => {
 
   // Without one, the open is lazy and succeeds: the first statement that
   // reads the schema is what fails.
-  it('fails the first statement with STATEMENT_FAILED when nothing reads it at open', async ({
-    skip,
-  }) => {
-    const pair = opfsPair(skip);
+  it('fails the first statement with STATEMENT_FAILED when nothing reads it at open', async () => {
+    const pair = TEST_TARGET;
     const { file, remove } = await garbageFile(pair.vfs);
     const db = createSQLiteClient(file, {
       vfs: pair.vfs,

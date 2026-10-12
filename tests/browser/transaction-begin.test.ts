@@ -17,10 +17,9 @@ import { createTestClient } from './helpers';
 
 type Db = ReturnType<typeof createSQLiteClient>;
 
-const SHAPES: Record<
-  string,
-  { run: (db: Db) => Promise<unknown>; after: string; rows: number }
-> = {
+type Shape = { run: (db: Db) => Promise<unknown>; after: string; rows: number };
+
+const SHAPES = {
   'reads, then writes': {
     run: (db) =>
       db.transaction(async (tx) => {
@@ -59,7 +58,7 @@ const SHAPES: Record<
     after: 'SELECT count(*) AS n FROM t',
     rows: 1,
   },
-};
+} satisfies Record<string, Shape>;
 
 const fresh = async () => {
   const db = await createTestClient();
@@ -79,15 +78,27 @@ const fresh = async () => {
 };
 
 describe('a transaction that does not write first', () => {
-  for (const [shape, { run, after, rows }] of Object.entries(SHAPES)) {
-    it(shape, async () => {
-      const db = await fresh();
-      await db.write('CREATE TABLE t (n)');
-      await db.write('INSERT INTO t VALUES (1)');
-      await run(db);
-      // The client is still usable: the failure left it broken for good.
-      const [row] = await db.read<{ n: number }>(after);
-      expect(row?.n).toBe(rows);
-    });
-  }
+  const check = (shape: keyof typeof SHAPES) => async () => {
+    const { run, after, rows } = SHAPES[shape];
+    const db = await fresh();
+    await db.write('CREATE TABLE t (n)');
+    await db.write('INSERT INTO t VALUES (1)');
+    await run(db);
+    // The client is still usable: the failure left it broken for good.
+    const [row] = await db.read<{ n: number }>(after);
+    expect(row?.n).toBe(rows);
+  };
+  it('reads, then writes', check('reads, then writes'));
+  it(
+    'runs a write that changes nothing, then writes',
+    check('runs a write that changes nothing, then writes'),
+  );
+  it(
+    'output() creates a table that does not exist yet',
+    check('output() creates a table that does not exist yet'),
+  );
+  it(
+    'a readOnly transaction still reads',
+    check('a readOnly transaction still reads'),
+  );
 });

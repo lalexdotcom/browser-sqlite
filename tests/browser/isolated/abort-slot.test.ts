@@ -9,7 +9,9 @@ import {
   waitUntil,
 } from '../helpers';
 
-describe('the sync build, isolated', () => {
+describe('the sync build, isolated', {
+  tags: ['vfs:OPFSWriteAheadVFS', 'build:sync', 'isolated'],
+}, () => {
   it('stops a running statement on abort', async () => {
     // One VFS: the subject is the `sync` build's SharedArrayBuffer abort-slot
     // mechanism, exercised only under cross-origin isolation on a `sync`
@@ -171,7 +173,9 @@ describe('the sync build, isolated', () => {
   });
 });
 
-describe('statement cache, sync build isolated', () => {
+describe('statement cache, sync build isolated', {
+  tags: ['vfs:OPFSWriteAheadVFS', 'build:sync', 'isolated'],
+}, () => {
   const runsOf = (
     db: Awaited<ReturnType<typeof createTestClient>>,
     sql: string,

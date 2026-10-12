@@ -194,4 +194,9 @@ describe('formatCell', () => {
       'FAIL: tests/browser/a.test.ts: Browser connection',
     );
   });
+
+  // An empty cell is never launched (spec § 4.5): the table shows it as such.
+  it('shows a cell the plan did not launch as a dash', () => {
+    expect(formatCell(undefined)).toBe('—');
+  });
 });

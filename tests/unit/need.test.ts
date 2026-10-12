@@ -4,11 +4,13 @@ import { BUILD_CAPABILITIES, type SQLiteBuild } from '../../src/const/builds';
 import type { PlatformFeature } from '../../src/const/platform';
 import { type SQLiteVFS, VFS_CAPABILITIES } from '../../src/const/vfs';
 import {
+  canonicalPairs,
   declaredTags,
   holds,
   needFromTags,
   PROPERTIES,
   type Property,
+  representative,
   runsIn,
   shouldTestRun,
   type TestContext,
@@ -171,6 +173,38 @@ describe('the properties, against the spec table (2026-10-12)', () => {
       chrome: ['IDBBatchAtomicVFS', 'IDBMirrorVFS'],
       firefox: ['IDBBatchAtomicVFS', 'IDBMirrorVFS'],
     },
+    'every-build': {
+      chrome: [
+        'OPFSWriteAheadVFS',
+        'OPFSCoopSyncVFS',
+        'AccessHandlePoolVFS',
+        'MemoryVFS',
+      ],
+      firefox: [
+        'OPFSWriteAheadVFS',
+        'OPFSCoopSyncVFS',
+        'AccessHandlePoolVFS',
+        'MemoryVFS',
+      ],
+    },
+    'env-cappable': {
+      chrome: ['OPFSWriteAheadVFS', 'OPFSAdaptiveVFS'],
+      firefox: ['OPFSWriteAheadVFS', 'OPFSAdaptiveVFS'],
+    },
+    'sync-handle': {
+      chrome: [
+        'OPFSWriteAheadVFS',
+        'OPFSAdaptiveVFS',
+        'OPFSCoopSyncVFS',
+        'AccessHandlePoolVFS',
+      ],
+      firefox: [
+        'OPFSWriteAheadVFS',
+        'OPFSAdaptiveVFS',
+        'OPFSCoopSyncVFS',
+        'AccessHandlePoolVFS',
+      ],
+    },
   };
   for (const [property, browsers] of Object.entries(table))
     for (const [browser, expected] of Object.entries(browsers))
@@ -253,6 +287,20 @@ describe('shouldTestRun', () => {
   it('honours isolated: false', () => {
     expect(shouldTestRun(wa('chrome'), { isolated: false })).toBe(true);
     expect(shouldTestRun(wa('chrome', true), { isolated: false })).toBe(false);
+  });
+
+  // Falsifiable: ignore dedupeIsolation in shouldTestRun.
+  it('runs every eligible test in isolation when the mode was asked for in full', () => {
+    expect(
+      shouldTestRun(wa('chrome', true), {}, { dedupeIsolation: false }),
+    ).toBe(true);
+    expect(
+      shouldTestRun(
+        wa('chrome', true),
+        { isolated: false },
+        { dedupeIsolation: false },
+      ),
+    ).toBe(false);
   });
 
   it('reads a list as OR and the fields as AND', () => {
@@ -398,5 +446,70 @@ describe('the tags', () => {
   it('never name a property like a platform feature', () => {
     for (const p of PROPERTIES)
       expect(KNOWN_FEATURES.has(p as PlatformFeature)).toBe(false);
+  });
+});
+
+describe('canonicalPairs', () => {
+  it('lists every runnable pair, VFS in declaration order, then builds as declared', () => {
+    const pairs = canonicalPairs('chrome', false, CHROME);
+    expect(pairs).toHaveLength(22);
+    expect(
+      pairs.slice(0, 4).map(({ vfs, build }) => `${vfs}/${build}`),
+    ).toEqual([
+      'OPFSWriteAheadVFS/sync',
+      'OPFSWriteAheadVFS/jspi',
+      'OPFSWriteAheadVFS/async',
+      'OPFSAdaptiveVFS/jspi',
+    ]);
+    expect(pairs.every((p) => p.browser === 'chrome' && !p.isolated)).toBe(
+      true,
+    );
+  });
+
+  // Falsifiable: drop the runsIn filter.
+  it('leaves out the pairs this environment cannot run', () => {
+    const noJspi = new Set<PlatformFeature>(
+      [...FIREFOX].filter((f) => f !== 'jspi'),
+    );
+    const pairs = canonicalPairs('firefox', false, noJspi);
+    expect(pairs).toHaveLength(13);
+    expect(pairs.some((p) => p.build === 'jspi')).toBe(false);
+  });
+});
+
+describe('representative', () => {
+  it('gives a standalone test the first pair its need admits', () => {
+    const memory = representative(
+      { excludes: ['shared-storage'], requires: ['every-build'] },
+      'chrome',
+      CHROME,
+    );
+    expect(memory && `${memory.vfs}/${memory.build}`).toBe('MemoryVFS/sync');
+    const capped = representative(
+      { requires: ['env-capped-pool'] },
+      'firefox',
+      FIREFOX,
+    );
+    expect(capped && `${capped.vfs}/${capped.build}`).toBe(
+      'OPFSWriteAheadVFS/sync',
+    );
+  });
+
+  it('says null where no pair admits the need', () => {
+    expect(
+      representative({ requires: ['env-capped-pool'] }, 'chrome', CHROME),
+    ).toBeNull();
+  });
+
+  // Sync is interruptible only under isolation, and a standalone test runs
+  // non-isolated: the isolated feature set must not leak into the answer.
+  it('never answers with an isolated pair', () => {
+    const rep = representative(
+      { requires: ['interruptible'] },
+      'chrome',
+      isolatedOf(CHROME),
+    );
+    expect(`${rep?.vfs}/${rep?.build}`).toBe('OPFSWriteAheadVFS/jspi');
+    expect(rep?.isolated).toBe(false);
   });
 });

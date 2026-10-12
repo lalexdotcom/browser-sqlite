@@ -1,6 +1,5 @@
 import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import { createTestClient, TEST_TARGET } from './helpers';
 
 // One VFS: two clients must share one database (inspect()'s sibling/tabs
@@ -73,24 +72,29 @@ describe('db.inspect', () => {
  * reaches the eight VFS the pinned tests never visit.
  */
 describe('db.inspect on the target', () => {
-  it('describes a lone client', async () => {
+  it('describes a lone client', {
+    tags: ['requires:shared-storage'],
+  }, async () => {
     const db = await createTestClient();
     onTestFinished(() => db.close().catch(() => {}));
     await db.read('SELECT 1');
-
-    if (VFS_CAPABILITIES[TEST_TARGET.vfs].storage === 'memory') {
-      // A memory VFS keeps its database inside its own client: there is no
-      // realm to inspect, and inspect() says so rather than inventing one.
-      await expect(db.inspect()).rejects.toMatchObject({
-        code: 'INVALID_OPTION',
-      });
-      return;
-    }
-
     const view = await db.inspect();
     expect(view.self?.id).toBe(db.id);
     expect(view.siblings).toHaveLength(0);
     expect(view.tabs).toBe(1);
+  });
+
+  // A memory VFS keeps its database inside its own client: there is no realm
+  // to inspect, and inspect() says so rather than inventing one.
+  it('refuses to describe a lone client of a memory VFS', {
+    tags: ['excludes:shared-storage'],
+  }, async () => {
+    const db = await createTestClient();
+    onTestFinished(() => db.close().catch(() => {}));
+    await db.read('SELECT 1');
+    await expect(db.inspect()).rejects.toMatchObject({
+      code: 'INVALID_OPTION',
+    });
   });
 
   it('throws CLIENT_CLOSED after close', async () => {
