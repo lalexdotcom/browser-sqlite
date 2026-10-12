@@ -5,6 +5,7 @@ import { type SQLiteVFS, VFS_CAPABILITIES } from '../../src/const/vfs';
 import { deleteDatabase } from '../../src/delete';
 import { inspectDatabase } from '../../src/inspect';
 import { SQLiteError } from '../../src/types/errors';
+import { MAX_DATABASE_NAME } from '../../src/utils';
 
 // Every guard here reads the declaration and throws before any worker, so it
 // runs in Node, once per VFS the declaration concerns — a VFS added to
@@ -129,7 +130,15 @@ describe('deleteDatabase on a memory VFS', () => {
 
 describe('the name length guard', () => {
   // The bound is the same for every VFS; each is checked because the guard
-  // runs inside each entry point's own VFS-dependent path.
+  // runs inside each entry point's own VFS-dependent path. The message is
+  // matched, not only the code: in Node every persistent VFS also lacks its
+  // features, and that guard throws INVALID_OPTION before any lock too.
+  const NAME_TOO_LONG = {
+    code: 'INVALID_OPTION',
+    message: expect.stringContaining(
+      `a database name may have at most ${MAX_DATABASE_NAME}`,
+    ),
+  };
   // Falsifiable: move resolveDatabase after the lock in deleteDatabase.
   it.each(ALL_VFS)(
     'deleteDatabase refuses a too-long name on %s before taking any lock',
@@ -138,7 +147,7 @@ describe('the name length guard', () => {
       onTestFinished(() => request.mockRestore());
       await expect(
         deleteDatabase('n'.repeat(60), { vfs }),
-      ).rejects.toMatchObject({ code: 'INVALID_OPTION' });
+      ).rejects.toMatchObject(NAME_TOO_LONG);
       expect(request).not.toHaveBeenCalled();
     },
   );
@@ -152,7 +161,7 @@ describe('the name length guard', () => {
       onTestFinished(() => query.mockRestore());
       await expect(
         inspectDatabase('n'.repeat(60), { vfs }),
-      ).rejects.toMatchObject({ code: 'INVALID_OPTION' });
+      ).rejects.toMatchObject(NAME_TOO_LONG);
       expect(query).not.toHaveBeenCalled();
     },
   );
