@@ -95,6 +95,21 @@ describe('complement mode', () => {
       COMPLEMENT,
     );
     expect(p.cells.some((c) => c.isolated)).toBe(false);
+    expect(p.notApplicable).toEqual([]);
+    expect(p.dead).toEqual([]);
+  });
+
+  it('places an untagged test of both families in the non-isolated cells, and calls it neither not applicable nor dead', () => {
+    const shared = test('both families');
+    const p = plan(families([shared], [shared]), COMPLEMENT);
+    expect(layout(p)).toEqual([
+      'chrome · OPFSAdaptiveVFS/jspi [start]: both families',
+      'chrome · OPFSWriteAheadVFS/sync [start]: both families',
+      'firefox · OPFSAdaptiveVFS/jspi [start]: both families',
+      'firefox · OPFSWriteAheadVFS/sync [start]: both families',
+    ]);
+    expect(p.notApplicable).toEqual([]);
+    expect(p.dead).toEqual([]);
   });
 
   it('runs the slot-channel test in the isolated start cell of each browser', () => {

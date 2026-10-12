@@ -113,6 +113,7 @@ export const plan = (
   >();
   const notApplicable: Unplaced[] = [];
   const notRunnable: (Family & Pair)[] = [];
+  // `placed`: the test runs, or could (eligible on a pair, dedupe ignored), in some family.
   const seen = new Map<string, { test: CollectedTest; placed: boolean }>();
 
   for (const family of families) {
@@ -207,7 +208,16 @@ export const plan = (
           }
         }
       }
-      if (placed) entry.placed = true;
+      // Eligible on some pair of this family, dedupe aside: the situation the
+      // test needs exists here. A test merely deduped out of an isolated
+      // family is neither not applicable nor dead.
+      const exists =
+        placed ||
+        (!standalone &&
+          canonical.some((pair) =>
+            shouldTestRun(context(pair), need, { dedupeIsolation: false }),
+          ));
+      if (exists) entry.placed = true;
       else if (complete) {
         notApplicable.push({
           ...family,

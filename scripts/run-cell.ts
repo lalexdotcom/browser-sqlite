@@ -10,6 +10,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import type { Vitest } from 'vitest/node';
 import type { Planned } from '../tests/planner/guard.ts';
 import { ROOT } from './parallel.ts';
 import { openVitest, type PlannedRun, projectNamed } from './plan-io.ts';
@@ -36,8 +37,9 @@ if (cell === undefined) throw new Error(`run-cell: no cell ${index}`);
 // Files go round-robin to the shards: each shard keeps whole files.
 const specs = cell.specs.filter((_, i) => i % shardCount === shardNumber - 1);
 
-const vitest = await openVitest({ projects: [cell.project], blob, json });
+let vitest: Vitest | undefined;
 try {
+  vitest = await openVitest({ projects: [cell.project], blob, json });
   const project = projectNamed(vitest, cell.project);
   const planned: Planned = {
     tests: Object.fromEntries(
@@ -78,5 +80,5 @@ try {
     result.testModules.some((m) => m.state() === 'failed');
   process.exitCode = failed ? 1 : 0;
 } finally {
-  await vitest.close();
+  await vitest?.close();
 }

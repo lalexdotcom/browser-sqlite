@@ -24,7 +24,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import type { SQLiteBuild } from '../src/const/builds.ts';
 import type { SQLiteVFS } from '../src/const/vfs.ts';
 import type { Family, FamilyInput, Pair, Plan } from '../tests/planner/plan.ts';
@@ -201,18 +201,34 @@ async function main() {
   // Closed on a refusal too: the probes leave WebDriver processes behind.
   const cells: PlannedCell[] = [];
   const families: FamilyInput[] = [];
+  const matched: string[] = [];
   let plan: Plan;
   try {
     const planner = await loadPlanner(vitest);
     for (const browser of options.browsers) {
       for (const isolated of options.isolatedModes) {
         const family: Family = { browser, isolated };
+        const collected = await collectFamily(vitest, family, options.files);
+        matched.push(...collected.files);
         families.push({
           ...family,
           features: await probeFeatures(vitest, family),
-          tests: await collectFamily(vitest, family, options.files),
+          tests: collected.tests,
         });
       }
+    }
+    // A typo would otherwise plan zero cells and pass.
+    const unknown = (options.files ?? []).filter(
+      (file) => !matched.includes(relative(ROOT, resolve(ROOT, file))),
+    );
+    if (unknown.length > 0) {
+      for (const file of unknown) {
+        console.error(
+          `test-plan: ${file} is not a test file of the selected projects`,
+        );
+      }
+      process.exitCode = 2;
+      return;
     }
     plan = planner.plan(families, {
       mode: options.mode,

@@ -501,9 +501,15 @@ describe('representative', () => {
     ).toBeNull();
   });
 
+  // Sync is interruptible only under isolation, and a standalone test runs
+  // non-isolated: the isolated feature set must not leak into the answer.
   it('never answers with an isolated pair', () => {
-    expect(representative({}, 'chrome', isolatedOf(CHROME))?.isolated).toBe(
-      false,
+    const rep = representative(
+      { requires: ['interruptible'] },
+      'chrome',
+      isolatedOf(CHROME),
     );
+    expect(`${rep?.vfs}/${rep?.build}`).toBe('OPFSWriteAheadVFS/jspi');
+    expect(rep?.isolated).toBe(false);
   });
 });

@@ -20,6 +20,10 @@ const FORBIDDEN: readonly [RegExp, string][] = [
     'a conditional test: tag its need instead',
   ],
   [
+    /\?\s*(it|test|describe)\.skip\s*:\s*(it|test|describe)\b/,
+    'a conditional test, reversed: tag its need instead',
+  ],
+  [
     /\b(it|test|describe)\.(each|for)\b/,
     'an each: write one literal test per case, or loop inside one test',
   ],

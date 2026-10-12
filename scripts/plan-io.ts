@@ -56,7 +56,15 @@ export async function openVitest({
   // reports: it also starts one WebDriver per browser project in scope (94
   // drivers, 28 s, and the process then never exits), which the planning
   // phase, with every project open, must not pay.
-  if (reporters.length > 0) await vitest.standalone();
+  if (reporters.length > 0) {
+    try {
+      await vitest.standalone();
+    } catch (error) {
+      // The caller has no handle on a Vitest this function failed to return.
+      await vitest.close().catch(() => {});
+      throw error;
+    }
+  }
   return vitest;
 }
 
@@ -109,12 +117,16 @@ const referenceProject = (vitest: Vitest, family: Family): TestProject => {
   return project;
 };
 
-/** Every test of the family's files (or of `files`), with its tags, by static parsing. */
+/**
+ * Every test of the family's files (or of `files`), with its tags, by static
+ * parsing; and the repo-relative test files `files` matched in this family
+ * (a file with no test still counts, so a typo is told from an empty file).
+ */
 export async function collectFamily(
   vitest: Vitest,
   family: Family,
   files: readonly string[] | null,
-): Promise<CollectedTest[]> {
+): Promise<{ tests: CollectedTest[]; files: string[] }> {
   const project = referenceProject(vitest, family);
   const wanted = files?.map((file) => resolve(ROOT, file));
   const testFiles = (await project.globTestFiles()).testFiles.filter(
@@ -123,7 +135,7 @@ export async function collectFamily(
   const modules = await vitest.parseSpecifications(
     testFiles.map((file) => project.createSpecification(file)),
   );
-  return modules.flatMap((module) =>
+  const tests = modules.flatMap((module) =>
     [...module.children.allTests()].map((test, position) => ({
       file: relative(ROOT, module.moduleId),
       position,
@@ -137,6 +149,7 @@ export async function collectFamily(
         test.fullName.includes('${'),
     })),
   );
+  return { tests, files: testFiles.map((file) => relative(ROOT, file)) };
 }
 
 export type CellSpec = {
