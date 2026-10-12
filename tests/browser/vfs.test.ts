@@ -8,11 +8,10 @@ import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import { createTestClient } from './helpers';
 
 /**
- * Characterization tests for the `AccessHandlePoolVFS` + `poolSize` guard.
- *
- * `AccessHandlePoolVFS` cannot share access handles across connections, so the
- * client refuses any pool larger than 1 — at construction time, synchronously.
- * The guard is easy to break during the pool refactor (wave 1), hence the test.
+ * `AccessHandlePoolVFS` cannot share access handles across connections, so its
+ * pool is capped at 1. These are the sides that open a database: the cap as
+ * default, and a pool of 1. The refusal of a larger pool runs in unit, for
+ * every capped VFS (`tests/unit/vfs-guards.test.ts`).
  */
 describe('AccessHandlePoolVFS pool guard', () => {
   // Falsifiable: restore `clientOptions.poolSize ?? DEFAULT_POOL_SIZE` in
@@ -76,10 +75,11 @@ describe('OPFSCoopSyncVFS pool guard', () => {
  * `VFS_CAPABILITIES` in `const/vfs.ts` is the single table declaring which wa-sqlite
  * builds each VFS accepts. The client checks the pair at construction so a bad
  * combination fails synchronously, with the supported builds named, instead of
- * surfacing later as an opaque `open-error` from inside a worker.
+ * surfacing later as an opaque `open-error` from inside a worker. The refusal
+ * runs in unit (`tests/unit/vfs-guards.test.ts`); this is the accept side.
  */
 describe('vfs/build combination guard', () => {
-  // One VFS: the accept side of the same guard pairing tested above.
+  // One VFS: the accept side of the guard whose refusal runs in unit.
   it('accepts an explicitly declared combination and serves queries', async () => {
     const db = await createTestClient({
       vfs: 'OPFSAdaptiveVFS',

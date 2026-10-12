@@ -83,10 +83,13 @@ describe('the vfs/build combination guard', () => {
   );
 
   // Falsifiable: drop the build guard from deleteDatabase.
+  // The message is matched, not only the code: in Node the persistent VFS
+  // also lack their features, and that guard throws INVALID_OPTION too.
   it.each(refused)('deleteDatabase refuses %s on %s', async (vfs, build) => {
     await expect(deleteDatabase(fresh(), { vfs, build })).rejects.toMatchObject(
       {
         code: 'INVALID_OPTION',
+        message: expect.stringContaining(`cannot run on the '${build}' build`),
       },
     );
   });
