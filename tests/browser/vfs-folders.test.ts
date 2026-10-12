@@ -70,22 +70,3 @@ describe('the name a consumer uses', () => {
     },
   );
 });
-
-describe('the path length guard', () => {
-  // Synchronous: createSQLiteClient never returns a promise, so the refusal
-  // has to be a thrown error, not a rejection. deleteDatabase and
-  // inspectDatabase are checked in unit (tests/unit/vfs-guards.test.ts).
-  it('refuses a too-long name synchronously, before any worker', () => {
-    expect(() =>
-      createSQLiteClient('n'.repeat(60), { vfs: TEST_TARGET.vfs }),
-    ).toThrow(expect.objectContaining({ code: 'INVALID_OPTION' }));
-  });
-});
-
-describe('the empty name guard', () => {
-  it('deleteDatabase refuses a name that is empty once normalized', async () => {
-    await expect(deleteDatabase('?x', { vfs, build })).rejects.toMatchObject({
-      code: 'INVALID_OPTION',
-    });
-  });
-});

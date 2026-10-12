@@ -144,6 +144,18 @@ describe('the name length guard', () => {
       `a database name may have at most ${MAX_DATABASE_NAME}`,
     ),
   };
+  // Synchronous: createSQLiteClient never returns a promise, so the refusal is
+  // a thrown SQLiteError, not a rejection.
+  // Falsifiable: move resolveDatabase after missingFeature in createSQLiteClient.
+  it.each(ALL_VFS)(
+    'createSQLiteClient refuses a too-long name on %s, synchronously',
+    (vfs) => {
+      expect(
+        thrown(() => createSQLiteClient('n'.repeat(60), { vfs })),
+      ).toMatchObject(NAME_TOO_LONG);
+    },
+  );
+
   // No lock spy: in Node a persistent VFS stops at missingFeature and a memory
   // VFS returns, both before any lock, so a spy could never be called. The
   // message is the proof: the name guard ran before the memory return and
@@ -169,6 +181,21 @@ describe('the name length guard', () => {
         inspectDatabase('n'.repeat(60), { vfs }),
       ).rejects.toMatchObject(NAME_TOO_LONG);
       expect(query).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe('the empty name guard', () => {
+  // What normalizes to empty is resolveDatabase's own subject (utils.test.ts);
+  // this checks that deleteDatabase asks it before its other guards.
+  // Falsifiable: move resolveDatabase after missingFeature in deleteDatabase.
+  it.each(ALL_VFS)(
+    'deleteDatabase refuses a name that is empty once normalized on %s',
+    async (vfs) => {
+      await expect(deleteDatabase('?x', { vfs })).rejects.toMatchObject({
+        code: 'INVALID_OPTION',
+        message: expect.stringContaining('is empty once normalized'),
+      });
     },
   );
 });
