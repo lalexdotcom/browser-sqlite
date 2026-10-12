@@ -1,6 +1,6 @@
 # A browser suite without identical repetitions — design
 
-**Date:** 2026-10-12 · **Status:** approved in chat point by point, spec under review · **Target:** CHANGELOG entries for step 1 only (§ 7); the rest changes no consumer-visible behaviour · **Branches:** one per step (§ 10)
+**Date:** 2026-10-12 · **Status:** approved (user, 2026-10-12) · **Target:** CHANGELOG entries for step 1 only (§ 7); the rest changes no consumer-visible behaviour · **Branches:** one per step (§ 10)
 
 Every browser project of `vitest.config.ts` is one (vfs, build) target on one browser, isolated or not, and every project includes the same files. A test that names its own VFS — `createTestClient({ vfs })`, a VFS constant, a literal passed to `createSQLiteClient` — ignores the target but still runs in every project: 44 identical runs in a matrix of 22 pairs × 2 browsers, twice that counting the isolated column. The isolated column itself held 9 tests, all pinned to `OPFSWriteAheadVFS/sync` or using no VFS at all, so 44 isolated cells repeated one cell. The first matrix run on GitHub (2026-10-11) failed twice in such tests, each time in a cell that had nothing to do with it.
 
