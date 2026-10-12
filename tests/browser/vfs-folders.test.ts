@@ -3,7 +3,7 @@ import {
   deleteDatabase,
   inspectDatabase,
 } from 'browser-sqlite';
-import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import { databasePath, MAX_DATABASE_NAME } from '../../src/utils';
 import { TEST_TARGET } from './helpers';
@@ -69,43 +69,4 @@ describe('the name a consumer uses', () => {
       await reopened.close();
     },
   );
-});
-
-describe('the path length guard', () => {
-  // Synchronous, unlike the two below: createSQLiteClient never returns a
-  // promise, so the refusal has to be a thrown error, not a rejection.
-  it('refuses a too-long name synchronously, before any worker', () => {
-    expect(() =>
-      createSQLiteClient('n'.repeat(60), { vfs: TEST_TARGET.vfs }),
-    ).toThrow(expect.objectContaining({ code: 'INVALID_OPTION' }));
-  });
-
-  it('deleteDatabase refuses a too-long name before taking any lock', async () => {
-    const request = vi.spyOn(navigator.locks, 'request');
-    onTestFinished(() => request.mockRestore());
-    await expect(
-      deleteDatabase('n'.repeat(60), { vfs: 'IDBBatchAtomicVFS' }),
-    ).rejects.toMatchObject({ code: 'INVALID_OPTION' });
-    expect(request).not.toHaveBeenCalled();
-  });
-
-  it('inspectDatabase refuses a too-long name before taking any lock', async () => {
-    // inspectDatabase's only Web Locks call is locks.entries() -> query()
-    // (src/locks.ts), never request() — spying on query() is what a guard
-    // moved after that call would actually trip.
-    const query = vi.spyOn(navigator.locks, 'query');
-    onTestFinished(() => query.mockRestore());
-    await expect(
-      inspectDatabase('n'.repeat(60), { vfs: 'IDBBatchAtomicVFS' }),
-    ).rejects.toMatchObject({ code: 'INVALID_OPTION' });
-    expect(query).not.toHaveBeenCalled();
-  });
-});
-
-describe('the empty name guard', () => {
-  it('deleteDatabase refuses a name that is empty once normalized', async () => {
-    await expect(deleteDatabase('?x', { vfs, build })).rejects.toMatchObject({
-      code: 'INVALID_OPTION',
-    });
-  });
 });

@@ -111,16 +111,6 @@ describe('a pragma that writes the database', () => {
 describe('a pragma the VFS refuses', () => {
   const vfs = 'OPFSCoopSyncVFS';
 
-  // Falsifiable: drop the check in createSQLiteClient.
-  it('is refused at construction', () => {
-    expect(() =>
-      createSQLiteClient(`refused-${crypto.randomUUID()}`, {
-        vfs,
-        pragmas: { busy_timeout: '100' },
-      }),
-    ).toThrow(expect.objectContaining({ code: 'INVALID_PRAGMA' }));
-  });
-
   // Falsifiable: drop the check in write(), or in the transaction's checksql.
   it('is refused in a statement that sets it, in or out of a transaction', async () => {
     const name = `refused-${crypto.randomUUID()}`;

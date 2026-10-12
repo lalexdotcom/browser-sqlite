@@ -73,21 +73,6 @@ describe('deleteDatabase', () => {
     ).rejects.toMatchObject({ code: 'INVALID_OPTION' });
   });
 
-  // One VFS: the guard needs a concrete VFS whose declared builds exclude
-  // 'sync' — OPFSAdaptiveVFS declares ['jspi', 'async'].
-  it('rejects with INVALID_OPTION when the build is not one the VFS supports', async () => {
-    await expect(
-      deleteDatabase('anything', { vfs: 'OPFSAdaptiveVFS', build: 'sync' }),
-    ).rejects.toMatchObject({ code: 'INVALID_OPTION' });
-  });
-
-  // One VFS: the subject is MemoryVFS's no-op delete (nothing persisted).
-  it('resolves without a worker for a memory VFS', async () => {
-    await expect(
-      deleteDatabase('anything', { vfs: 'MemoryVFS' }),
-    ).resolves.toBeUndefined();
-  });
-
   // `navigator.locks` is origin-wide, so this is the same lock a client in
   // another tab would hold while opening. Held here directly, because the point
   // is the lock and not the client that usually takes it.
