@@ -22,7 +22,7 @@ beforeEach(({ task, skip }) => {
   const verdict = guardVerdict({
     tags: task.tags ?? [],
     id: task.id,
-    name: task.fullName,
+    name: task.fullTestName,
     vfs: TEST_TARGET.vfs,
     build: TEST_TARGET.build,
     browser: environment.browser,
