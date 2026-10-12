@@ -133,7 +133,9 @@ function parseArgs(argv: readonly string[]): Options {
       throw new Error(`test-plan: unknown argument "${arg}"`);
     else files.push(arg);
   }
-  if (options.browsers.length === 0) options.browsers = ['chrome', 'firefox'];
+  options.browsers = options.browsers.length
+    ? [...new Set(options.browsers)]
+    : ['chrome', 'firefox'];
   const env = process.env.BSQ_TEST_TARGETS;
   options.pairs = pairs.length
     ? pairs
@@ -179,10 +181,23 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   const concurrency = resolveConcurrency(process.env.BSQ_TEST_JOBS);
   const env = { ...buildOnce(process.env), BSQ_TEST_TARGETS: 'all' };
-  killLiveOnSignal();
 
   // --- Plan -------------------------------------------------------------
   const vitest = await openVitest();
+  // A signal during planning closes this Vitest (its WebDriver processes
+  // are not in `live`); the run phase's own handlers replace these.
+  const closeOnSignal = (code: number) => async () => {
+    await Promise.race([
+      vitest.close().catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 10_000)),
+    ]);
+    process.exit(code);
+  };
+  const planSignals = [
+    ['SIGINT', closeOnSignal(130)],
+    ['SIGTERM', closeOnSignal(143)],
+  ] as const;
+  for (const [signal, handler] of planSignals) process.on(signal, handler);
   // Closed on a refusal too: the probes leave WebDriver processes behind.
   const cells: PlannedCell[] = [];
   const families: FamilyInput[] = [];
@@ -218,8 +233,10 @@ async function main() {
       });
     }
   } finally {
+    for (const [signal, handler] of planSignals) process.off(signal, handler);
     await vitest.close();
   }
+  killLiveOnSignal();
   printPlan(plan, families);
 
   const allNotRunnable =
@@ -250,10 +267,14 @@ async function main() {
   const logs = join(run, 'logs');
   const reports = options.table ? run : join(run, 'reports');
   for (const dir of [blobs, logs, reports]) mkdirSync(dir, { recursive: true });
-  for (const old of readdirSync(runsRoot).sort().slice(0, -KEEP_RUNS)) {
-    rmSync(join(runsRoot, old), { recursive: true, force: true });
+  // The matrix keeps every report: scripts/test-matrix.ts never deleted any.
+  if (!options.table) {
+    for (const old of readdirSync(runsRoot).sort().slice(0, -KEEP_RUNS)) {
+      rmSync(join(runsRoot, old), { recursive: true, force: true });
+    }
   }
-  const planFile = join(run, 'plan.json');
+  // Under logs/: matrix-triage reads every *.json beside the table's reports.
+  const planFile = join(logs, 'plan.json');
   const planned: PlannedRun = { fullIsolation: options.full, cells };
   writeFileSync(planFile, JSON.stringify(planned, null, 2));
 
@@ -434,8 +455,9 @@ async function main() {
     // Dead fails CI and the matrix; locally a browser may simply be absent.
     const fatal =
       options.mode === 'all-pairs' &&
-      options.pairs === null &&
-      options.browsers.length === 2;
+      (options.pairs === null || options.pairs === 'all') &&
+      options.browsers.length === 2 &&
+      options.isolatedModes.length === 2;
     console[fatal ? 'error' : 'warn'](
       `\n${plan.dead.length} test(s) run on no pair of any selected browser:\n${plan.dead.map((d) => `  ${describeTest(d)} — needs [${d.tags.join(', ')}]`).join('\n')}`,
     );
