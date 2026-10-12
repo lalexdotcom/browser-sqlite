@@ -20,6 +20,15 @@ Part of `mem:measurements`, which indexes every entry; its rules apply here.
 
 **What the figures do not say.** They are one pass each on a machine with 16 cores and nothing else running (idle Firefox processes of another session aside). A runner with fewer cores gets fewer jobs (`CPUs - 1`), so CI's figure is the `BSQ_TEST_JOBS=3` one only if the 4-vCPU assumption holds.
 
+## TEST-IDS — giving a cell its exact tests, 2026-10-12, this container, Vitest 5.0.3, Chrome 153, Firefox 155 (spec 2026-10-12 § 4.5)
+
+Method: Vitest's Node API (`createVitest('test', { configLoader: 'runner', project })`), static ids from `vitest.parseSpecifications(specs)`, runtime ids from `vitest.collectTests(specs)` (files loaded in the browser), then `vitest.runTestSpecifications([project.createSpecification(file, { testIds })])`; projects `chrome · OPFSWriteAheadVFS/sync` and `firefox · OPFSWriteAheadVFS/sync`, every file under `tests/browser/`.
+
+- **Running by `testIds` is exact**: on 5 files (`tx-handle`, `vfs`, `delete`, `vfs-folders`, `statement-errors`), every second test asked for: 31 wanted all passed, the 29 others reported `skipped`, none run that was not asked for. 6.6 s for the five. The CLI has no `testIds`: a cell given ids runs through the Node API.
+- **Ids are positional** (`<file hash>_<describe index>_<test index>`) **and differ per project**: 0 of 67 files had the same first id on the Chrome and the Firefox project. So ids are computed per project; static parsing of the whole suite takes 0.2-0.5 s per project.
+- **Static ids equal runtime ids on 55 of 67 files (Chrome), 57 of 69 (Firefox)**: same count, same id, same name (`output.test.ts` differs only by an escaped `\"` in a name, its ids agree). The 12 others create tests dynamically, and every dynamic test shifts the ids after it: loops (`vfs`, `delete`, `pool-cap`, `statement-errors` 8 static / 24 runtime, `coopsync-handover`, `idb-long-read`, `transaction-begin`, `second-client`), `it.each` (static sees one `…-dynamic` test, `tx-handle`), a conditional `(persistent ? it : it.skip)` (`vfs-folders`: 0 static / 3 runtime), an `if`/`else` that declares different tests (`abandon-gc`: 3 / 1).
+- **Runtime collection costs 11.6-17.3 s per project** (every file loaded in the browser), against <0.5 s static.
+
 ## MATRIX-VITEST — the first Vitest matrix and its parity with the rstest one, 2026-10-10, this container, Vitest 5.0.3, Chrome 153.0.8010.52, Firefox 155.0.1
 
 **Method.** The baseline is the rstest 0.11.8 + Playwright 1.64.0 (Chromium 156, Firefox 157) matrix taken before the migration, at `d2df419`: skip mode, 66 cells (22 pairs × chromium / firefox / isolated), each bounded at 600 s, a JSON report per cell, **66 of 66 green, 18 676 passed / 1 608 skipped, 32 min**. The Vitest side is `pnpm test:matrix` on the final tree: 88 cells (22 pairs × `chrome`, `firefox`, `isolated-chrome`, `isolated-firefox`), one `vitest run` per cell. Each baseline cell was compared with its Vitest cell as a multiset of (file, full test name, status).
