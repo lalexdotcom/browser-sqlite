@@ -11,4 +11,5 @@ export type PlatformFeature =
   | 'jspi'
   | 'writable-stream'
   | 'cross-origin-isolated'
-  | 'web-locks';
+  | 'web-locks'
+  | 'indexeddb';

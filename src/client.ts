@@ -443,25 +443,10 @@ export const createSQLiteClient = (
   const { file: logicalFile, path: dbFile } = resolveDatabase(file, vfs);
   const files = databaseFiles(vfs, dbFile);
 
-  // Resolved once, here, and reused by every worker in the pool and by every
-  // restart — a callback must not be re-entered per slot. Undefined when the
-  // option was not given, which is what leaves the worker's resolution alone.
-  const wasm = resolveWasmLocation(clientOptions.wasmUrl, build, location.href);
-
   if (capability.maxPoolSize !== null && poolSize > capability.maxPoolSize) {
     throw new SQLiteError(
       'INVALID_OPTION',
       `${vfs} does not support pool sizes greater than ${capability.maxPoolSize}: ${capability.poolLimitReason}. Set poolSize: ${capability.maxPoolSize}.`,
-    );
-  }
-
-  // The engine, not the declaration. Without this the mismatch surfaces later
-  // as an opaque open-error from a worker that could not instantiate wasm.
-  const absent = missingFeature(vfs, build, available);
-  if (absent) {
-    throw new SQLiteError(
-      'INVALID_OPTION',
-      describeMissing(vfs, build, absent, available),
     );
   }
 
@@ -480,6 +465,23 @@ export const createSQLiteClient = (
   // is what gets validated: a bad default would otherwise reach a worker.
   renderPragmas(pragmas);
   assertPragmasAllowed(vfs, pragmas);
+
+  // Every option but `wasmUrl` is valid by now: an invalid one is invalid on
+  // every browser, so it is reported before this one.
+  // The engine, not the declaration. Without this the mismatch surfaces later
+  // as an opaque open-error from a worker that could not instantiate wasm.
+  const absent = missingFeature(vfs, build, available);
+  if (absent) {
+    throw new SQLiteError(
+      'INVALID_OPTION',
+      describeMissing(vfs, build, absent, available),
+    );
+  }
+
+  // Resolved once, here, and reused by every worker in the pool and by every
+  // restart — a callback must not be re-entered per slot. Undefined when the
+  // option was not given, which is what leaves the worker's resolution alone.
+  const wasm = resolveWasmLocation(clientOptions.wasmUrl, build, location.href);
 
   // TEST-ONLY, UNSUPPORTED. Read once here, validated, and converted to a
   // typed internal value so no `any` travels further. Absent from the public

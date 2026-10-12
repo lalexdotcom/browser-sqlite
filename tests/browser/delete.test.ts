@@ -3,7 +3,7 @@ import {
   deleteDatabase,
   SQLiteError,
 } from 'browser-sqlite';
-import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import { initLockName } from '../../src/locks';
 import { databasePath } from '../../src/utils';
@@ -107,9 +107,12 @@ describe('deleteDatabase', () => {
     );
     await held.promise;
 
+    const wasmUrl = vi.fn(() => 'https://example.test/wasm/');
     await expect(
-      deleteDatabase(file, { vfs: 'OPFSAdaptiveVFS' }),
+      deleteDatabase(file, { vfs: 'OPFSAdaptiveVFS', wasmUrl }),
     ).rejects.toMatchObject({ code: 'BUSY' });
+    // Falsifiable: resolve the `.wasm` URL before the locks again.
+    expect(wasmUrl).not.toHaveBeenCalled();
 
     release.resolve();
   });

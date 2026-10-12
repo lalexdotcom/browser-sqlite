@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **An invalid or refused pragma is reported with `INVALID_PRAGMA` before a missing browser feature,** where a browser without OPFS reported the missing OPFS instead.
+- **A `wasmUrl` callback is no longer called when the client's options are invalid or the browser lacks what the VFS needs,** nor when `deleteDatabase()` is refused before starting its worker.
+
+### Fixed
+
+- **A client loads its `.wasm` from `wasmUrl`,** where it always loaded them from beside `worker.js` whatever `wasmUrl` said; only `deleteDatabase()` honoured it.
+- **`IDBBatchAtomicVFS` and `IDBMirrorVFS` are refused at construction where IndexedDB is missing,** naming the VFS that do without it, instead of failing in their worker. `detectFeatures()` and `PlatformFeature` gain `indexeddb`.
+
 ## [1.0.0-rc.10] - 2026-10-09
 
 ### Changed
