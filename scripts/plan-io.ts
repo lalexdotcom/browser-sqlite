@@ -29,7 +29,13 @@ export async function openVitest({
   // picks among them (vitest.config.ts reads this when it loads).
   process.env.BSQ_TEST_TARGETS = 'all';
   process.env.BSQ_TEST_BUILT = '1';
-  const reporters = [...(blob ? ['blob'] : []), ...(json ? ['json'] : [])];
+  // `default` first when reporting: the log of a cell (or of a merge's source)
+  // then holds Vitest's failure output; planning, which sets neither, stays silent.
+  const reporters = [
+    ...(blob || json ? ['default'] : []),
+    ...(blob ? ['blob'] : []),
+    ...(json ? ['json'] : []),
+  ];
   const vitest = await createVitest('test', {
     config: resolve(ROOT, 'vitest.config.ts'),
     configLoader: 'runner',

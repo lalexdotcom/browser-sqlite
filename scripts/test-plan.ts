@@ -442,7 +442,27 @@ async function main() {
     );
     if (merged.status !== 0) status = 1;
   }
-  for (const { job, reason } of failed) {
+  // A cell that ran and failed leaves a complete blob, so it is not in `failed`;
+  // its log (the default reporter's output) is what says why, in a CI job log too.
+  const red = [...failed];
+  for (const { job, exitCode } of outcomes) {
+    if (red.some((r) => r.job === job)) continue;
+    const result =
+      job.cell === null || !options.table
+        ? undefined
+        : results.get((cells[job.cell] as PlannedCell).project);
+    const unwell =
+      result !== undefined &&
+      result.status !== 'passed' &&
+      result.status !== 'not-runnable';
+    if (exitCode !== 0 || unwell) {
+      red.push({
+        job,
+        reason: exitCode !== 0 ? `exit ${exitCode}` : 'red cell',
+      });
+    }
+  }
+  for (const { job, reason } of red) {
     const log = join(logs, `${job.id}.log`);
     const tail = existsSync(log)
       ? readFileSync(log, 'utf8').split('\n').slice(-TAIL_LINES).join('\n')

@@ -4,11 +4,10 @@
  * pair, on every column, and prints a pair × column table
  * (spec 2026-09-15, A5 §12).
  *
- * A column is a family of Vitest projects that follow a target
- * (`vitest.config.ts`): `chrome`, `firefox`, `isolated-chrome` (cross-origin
- * isolated) and `isolated-firefox`, each selected by a `--project` glob.
+ * A column is a browser in a mode (`vitest.config.ts`): `chrome`, `firefox`,
+ * `isolated-chrome` (cross-origin isolated) and `isolated-firefox`.
  *
- * Since the test planner (spec 2026-10-12), a run is `scripts/test-plan.ts --mode all-pairs --table`: only the cells with tests to run start, each with exactly its tests, and the table shows a cell that did not start as —. Each cell leaves `<column>__<vfs>__<build>.json` (Vitest's JSON report) under `.matrix/<run>/`, which `scripts/matrix-triage.ts` reads.
+ * Since the test planner (spec 2026-10-12), a run is `scripts/test-plan.ts --mode all-pairs --table`: only the cells with tests to run start, each with exactly its tests, and the table shows a cell that did not start as —. Each cell leaves `<column>__<vfs>__<build>.json` (Vitest's JSON report) under `.matrix/<run>/`, which `scripts/matrix-triage.ts` reads, and its console (Vitest's default reporter) under `.matrix/<run>/logs/`; the tail of a red cell's log is printed.
  */
 import { spawnSync } from 'node:child_process';
 import { relative } from 'node:path';
@@ -16,7 +15,7 @@ import { pathToFileURL } from 'node:url';
 import { type SQLiteVFS, VFS_CAPABILITIES } from '../src/const/vfs.ts';
 import { ROOT } from './parallel.ts';
 
-/** One column of the matrix: the `--project` glob that selects its projects. */
+/** One column of the matrix, named `<browser>` or `isolated-<browser>`; `args` is no longer read (the planner selects the projects). */
 type Column = { name: string; args: string[] };
 type Pair = { vfs: string; build: string };
 
@@ -52,7 +51,7 @@ export const allPairs = (): Pair[] =>
 /**
  * Reads one Vitest JSON report (`--reporter=json --outputFile`) into a matrix
  * cell. No report, or one that does not parse: the run never finished —
- * killed by this script's timer or crashed first — so `timed-out`. Failures
+ * killed by the planner's timer or crashed first — so `timed-out`. Failures
  * that are ALL `TARGET_NOT_RUNNABLE`: `not-runnable`, never hiding a real one.
  * A file that failed with no failed test (a page crash) carries its reason in
  * `message`: reported in `unhandled`, so the cell reads FAIL with that reason.
@@ -153,7 +152,6 @@ function parseArgs(argv: string[]) {
   };
 }
 
-/** Runs one (column, pair) cell via `runBounded`, translating its result into a matrix cell. */
 /**
  * `522/0/4 · 57 files · 52s`, or the status word for a cell that never
  * produced counts. A failed cell with no failed test says FAIL and why, or its
