@@ -23,10 +23,11 @@ import {
  * result code on `sqliteCode` and its extended one on `sqliteExtendedCode`.
  *
  * Every build, because each has its own export of
- * `sqlite3_extended_errcode`: the tests are standalone, take the VFS their
- * tags name — a memory VFS that declares every build, MemoryVFS today — and
- * loop over its builds. `poolSize: 1` because a memory VFS's pages live in the
- * worker that opened it.
+ * `sqlite3_extended_errcode`: the tests are standalone and take the VFS their
+ * need resolves to — a memory VFS that declares every build (MemoryVFS today),
+ * which keeps the subject apart from storage-layer noise and needs no cleanup
+ * — and loop over its builds. `poolSize: 1` because a memory VFS's pages live
+ * in the worker that opened it.
  */
 
 const CONSTRAINTS = [
@@ -76,8 +77,10 @@ describe('a failed statement carries SQLite codes', {
   tags: ['standalone', 'excludes:shared-storage', 'requires:every-build'],
 }, () => {
   // Falsifiable: drop the STATEMENT_FAILED branch of statementError in
-  // src/pool.ts — a plain Error arrives. Drop the stamp in the worker's
-  // `run` — sqliteExtendedCode is undefined.
+  // src/pool.ts — a plain Error arrives. Make `stamped` in
+  // src/worker/worker.ts a no-op — sqliteExtendedCode is undefined. (Dropping
+  // only the step stamp in `run` changes nothing: the outer catches stamp the
+  // same value.)
   it('a constraint violation through write() carries its codes, on every build', async ({
     task,
   }) => {
