@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { defaultBuildFor } from '../../src/capabilities';
 import { BUILD_CAPABILITIES, type SQLiteBuild } from '../../src/const/builds';
 import type { PlatformFeature } from '../../src/const/platform';
@@ -180,6 +180,31 @@ describe('platform requirements', () => {
   it('probes IndexedDB, which Node does not have', () => {
     expect(detectFeatures().has('indexeddb')).toBe(false);
   });
+
+  // An opaque origin (a sandboxed iframe) throws SecurityError from the
+  // getter, and a browser with IndexedDB disabled can expose it as null.
+  // Falsifiable: probe with a bare `typeof indexedDB !== 'undefined'`.
+  it.each([
+    [
+      'throws',
+      () => {
+        throw new DOMException('denied', 'SecurityError');
+      },
+    ],
+    ['is null', () => null],
+  ])(
+    'reports no IndexedDB, without throwing, where its getter %s',
+    (_, get) => {
+      Object.defineProperty(globalThis, 'indexedDB', {
+        get,
+        configurable: true,
+      });
+      onTestFinished(() => {
+        delete (globalThis as { indexedDB?: unknown }).indexedDB;
+      });
+      expect(detectFeatures().has('indexeddb')).toBe(false);
+    },
+  );
 
   it('requires writable-stream for OPFSAnyContextVFS', () => {
     expect(

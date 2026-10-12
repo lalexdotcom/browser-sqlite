@@ -466,8 +466,8 @@ export const createSQLiteClient = (
   renderPragmas(pragmas);
   assertPragmasAllowed(vfs, pragmas);
 
-  // Every option is valid by now: an invalid one is invalid on every
-  // browser, so it is reported before this one.
+  // Every option but `wasmUrl` is valid by now: an invalid one is invalid on
+  // every browser, so it is reported before this one.
   // The engine, not the declaration. Without this the mismatch surfaces later
   // as an opaque open-error from a worker that could not instantiate wasm.
   const absent = missingFeature(vfs, build, available);

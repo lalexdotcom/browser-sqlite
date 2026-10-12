@@ -28,7 +28,15 @@ const PROBES: Partial<Record<PlatformFeature, () => boolean>> = {
   'web-locks': () =>
     typeof navigator !== 'undefined' &&
     typeof navigator.locks?.request === 'function',
-  indexeddb: () => typeof indexedDB !== 'undefined',
+  // The getter throws SecurityError on an opaque origin (a sandboxed iframe),
+  // and a browser with IndexedDB disabled can leave it null.
+  indexeddb: () => {
+    try {
+      return typeof indexedDB !== 'undefined' && indexedDB !== null;
+    } catch {
+      return false;
+    }
+  },
 };
 
 /**
