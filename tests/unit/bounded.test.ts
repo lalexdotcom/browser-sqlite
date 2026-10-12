@@ -90,8 +90,17 @@ describe('scripts/bounded.ts', () => {
         return false;
       }
     };
+    // The grandchild, orphaned to the container's PID 1, stays a zombie until
+    // that init reaps it, and kill(pid, 0) succeeds on a zombie: poll, bounded.
+    const gone = async () => {
+      const end = Date.now() + 2_000;
+      while (alive() && Date.now() < end) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      return !alive();
+    };
     try {
-      expect(alive()).toBe(false);
+      expect(await gone()).toBe(true);
     } finally {
       if (alive()) process.kill(pid, 'SIGKILL');
     }
