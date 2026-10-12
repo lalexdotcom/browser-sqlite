@@ -1,12 +1,8 @@
 import { RECOMMENDED_VFS } from '../../scripts/recommended-vfs';
 import { BUILD_CAPABILITIES, type SQLiteBuild } from '../../src/const/builds';
 import type { PlatformFeature } from '../../src/const/platform';
-import {
-  folderOf,
-  type SQLiteVFS,
-  VFS_CAPABILITIES,
-} from '../../src/const/vfs';
-import { sharesStorage } from '../../src/locks';
+import { type SQLiteVFS, VFS_CAPABILITIES } from '../../src/const/vfs';
+import { holds as propertyHolds, type TestContext } from '../need';
 
 /**
  * A (vfs, build) pair the browser suite runs on. Each browser project injects
@@ -73,53 +69,39 @@ const runsHere = ({ vfs, build }: TestTarget, here: Here): boolean =>
   );
 
 /**
+ * The need model's context for a pair here. `browser` is not read by the six
+ * properties this resolver asks for, so any value does; isolation is the
+ * feature the probe already reports.
+ */
+const contextOf = ({ vfs, build }: TestTarget, here: Here): TestContext => ({
+  vfs,
+  build,
+  browser: 'chrome',
+  isolated: here.features.has('cross-origin-isolated'),
+  features: here.features,
+});
+
+/**
  * Whether a second client of this VFS reaches the first one's database here.
  *
  * False two ways, and they are not the same failure: the memory VFS give the
  * second client a database of its own, while an exclusive VFS refuses it
  * (`DATABASE_IN_USE`). A test of two clients sharing one database has neither.
  *
- * Derived from `VFS_CAPABILITIES` so the rule exists once: `secondClientOutcome`
- * in `helpers/vfs-contract.ts` names the three outcomes from this same answer.
+ * The `shared-second-client` property of `tests/need.ts`, so the rule exists
+ * once: `secondClientOutcome` in `helpers/vfs-contract.ts` names the three
+ * outcomes from this same answer.
  */
 export const sharedSecondClient = (vfs: SQLiteVFS, here: Here): boolean =>
-  VFS_CAPABILITIES[vfs].storage !== 'memory' &&
-  !VFS_CAPABILITIES[vfs].exclusiveConnection &&
-  allHere(
-    VFS_CAPABILITIES[vfs]
-      .exclusiveConnectionWithout as readonly PlatformFeature[],
-    here,
+  // The property reads no build; any declared one makes the context.
+  propertyHolds(
+    'shared-second-client',
+    contextOf({ vfs, build: VFS_CAPABILITIES[vfs].builds[0] }, here),
   );
 
-const holds = (need: Need, { vfs, build }: TestTarget, here: Here): boolean => {
-  switch (need) {
-    case 'two-workers':
-      return (
-        VFS_CAPABILITIES[vfs].maxPoolSize !== 1 &&
-        allHere(
-          VFS_CAPABILITIES[vfs]
-            .singleConnectionWithout as readonly PlatformFeature[],
-          here,
-        )
-      );
-    case 'interruptible':
-      return allHere(BUILD_CAPABILITIES[build].interruptibleWithout, here);
-    case 'shared-second-client':
-      return sharedSecondClient(vfs, here);
-    case 'shared-storage':
-      // The product's own predicate, not a copy of it: `inspectDatabase`
-      // refuses on exactly this condition (src/inspect.ts), so a test that
-      // declares the need and a client that enforces it can never drift.
-      return sharesStorage(vfs);
-    case 'opfs-file':
-      return folderOf(vfs) !== undefined;
-    case 'in-place-file':
-      return (
-        folderOf(vfs) !== undefined &&
-        VFS_CAPABILITIES[vfs].extraFileSuffixes.length === 0
-      );
-  }
-};
+const holds = (need: Need, target: TestTarget, here: Here): boolean =>
+  // One definition (tests/need.ts): this resolver goes with the planner (plan B).
+  propertyHolds(need, contextOf(target, here));
 
 const pairsOf = (vfs: SQLiteVFS): TestTarget[] =>
   (VFS_CAPABILITIES[vfs].builds as readonly SQLiteBuild[]).map((build) => ({

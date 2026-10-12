@@ -11,6 +11,7 @@ import {
   WDIO_CACHE_DIR,
 } from './scripts/browsers.ts';
 import type { TestTarget } from './tests/browser/target.ts';
+import { declaredTags } from './tests/need.ts';
 import {
   CHROMIUM_FEATURES,
   FIREFOX_FEATURES,
@@ -83,6 +84,9 @@ export default defineConfig({
   test: {
     // Root-only option: Vitest rejects it inside a project.
     passWithNoTests: true,
+    // The need vocabulary (tests/need.ts). Vitest refuses a tag it was not
+    // told about, which is what keeps the vocabulary closed.
+    tags: declaredTags().map((name) => ({ name })),
     // A test's console shows only when it fails: the library's own warnings
     // (a pool capped on Firefox) are expected in passing tests.
     silent: 'passed-only',
