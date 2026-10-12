@@ -149,30 +149,35 @@ describe('a transaction handle used after its transaction ended (spec §1.2)', (
 describe('a statement after an explicit end, inside the callback', () => {
   // Falsifiable: remove the `if (ending)` guard in transaction.ts's write();
   // the statement runs in autocommit on the leased worker and lands.
-  it.each(['commit', 'rollback'] as const)(
-    'is refused after tx.%s() under autoCommit: false',
-    async (end) => {
-      const db = await createTestClient({ poolSize: 1 });
-      try {
-        await db.write('CREATE TABLE t (a TEXT)');
-        let refused: unknown;
-        await db.transaction(
-          async (tx) => {
-            await tx.write("INSERT INTO t VALUES ('in')");
-            await tx[end]();
-            refused = await tx
-              .write("INSERT INTO t VALUES ('after')")
-              .catch((e) => e);
-          },
-          { autoCommit: false },
-        );
-        expect(refused).toMatchObject({ code: 'TRANSACTION_CLOSED' });
-        const rows = await db.read('SELECT a FROM t ORDER BY a');
-        expect(rows).toEqual(end === 'commit' ? [{ a: 'in' }] : []);
-      } finally {
-        await db.close();
-      }
-    },
+  const refusedAfter = (end: 'commit' | 'rollback') => async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    try {
+      await db.write('CREATE TABLE t (a TEXT)');
+      let refused: unknown;
+      await db.transaction(
+        async (tx) => {
+          await tx.write("INSERT INTO t VALUES ('in')");
+          await tx[end]();
+          refused = await tx
+            .write("INSERT INTO t VALUES ('after')")
+            .catch((e) => e);
+        },
+        { autoCommit: false },
+      );
+      expect(refused).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+      const rows = await db.read('SELECT a FROM t ORDER BY a');
+      expect(rows).toEqual(end === 'commit' ? [{ a: 'in' }] : []);
+    } finally {
+      await db.close();
+    }
+  };
+  it(
+    'is refused after tx.commit() under autoCommit: false',
+    refusedAfter('commit'),
+  );
+  it(
+    'is refused after tx.rollback() under autoCommit: false',
+    refusedAfter('rollback'),
   );
 });
 
