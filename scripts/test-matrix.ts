@@ -8,34 +8,13 @@
  * (`vitest.config.ts`): `chrome`, `firefox`, `isolated-chrome` (cross-origin
  * isolated) and `isolated-firefox`, each selected by a `--project` glob.
  *
- * Cells run through a pool of `BSQ_TEST_JOBS` processes at once (see
- * `scripts/parallel.ts`; each Vitest process has its own browser sessions),
- * after tests/build/ is built once. Each cell is one `pnpm exec vitest run`
- * with `BSQ_TEST_TARGETS=<vfs>/<build>` in the environment, which makes the config declare exactly one project per
- * column for that pair, and `BSQ_TEST_NEEDS=skip`, so that every test the cell
- * reports ran on that pair. A cell leaves `<column>__<vfs>__<build>.json`
- * (Vitest's JSON report, which the table is parsed from) and `.log` (the
- * console) under `.matrix/<run>/` (gitignored).
- *
- * A run is bounded by a timer this script owns (`child_process.spawn` plus a
- * `setTimeout` that kills the whole process group), not by the shell `timeout`
- * binary — a Firefox run hung silently (0% CPU, no output) during this work,
- * and a script relying on `timeout` being on PATH would have no such guard on
- * a machine without it. A run this bound kills is reported as "timed out",
- * never as a hang.
+ * Since the test planner (spec 2026-10-12), a run is `scripts/test-plan.ts --mode all-pairs --table`: only the cells with tests to run start, each with exactly its tests, and the table shows a cell that did not start as —. Each cell leaves `<column>__<vfs>__<build>.json` (Vitest's JSON report) under `.matrix/<run>/`, which `scripts/matrix-triage.ts` reads.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { type SQLiteVFS, VFS_CAPABILITIES } from '../src/const/vfs.ts';
-import {
-  buildOnce,
-  killLiveOnSignal,
-  ROOT,
-  resolveConcurrency,
-  runBounded,
-  runPool,
-} from './parallel.ts';
+import { ROOT } from './parallel.ts';
 
 /** One column of the matrix: the `--project` glob that selects its projects. */
 type Column = { name: string; args: string[] };
@@ -63,12 +42,6 @@ export const COLUMNS: Column[] = [
   { name: 'isolated-chrome', args: ['--project', 'isolated chrome ·*'] },
   { name: 'isolated-firefox', args: ['--project', 'isolated firefox ·*'] },
 ];
-
-/** Each cell is bounded at 600 s by a timer this script owns. */
-const RUN_TIMEOUT_MS = 600_000;
-
-/** Enough of a failing run's tail to name the cause; short enough to read in a job log. */
-const TAIL_LINES = 60;
 
 /** Every declared (vfs, build) pair, in `VFS_CAPABILITIES` key order. */
 export const allPairs = (): Pair[] =>
@@ -181,44 +154,6 @@ function parseArgs(argv: string[]) {
 }
 
 /** Runs one (column, pair) cell via `runBounded`, translating its result into a matrix cell. */
-function runOne(
-  column: Column,
-  pair: Pair,
-  cellBase: string,
-  baseEnv: NodeJS.ProcessEnv,
-): Promise<MatrixResult> {
-  const reportFile = `${cellBase}.json`;
-  const args = [
-    'exec',
-    'vitest',
-    'run',
-    '--configLoader',
-    'runner',
-    ...column.args,
-    '--reporter=default',
-    '--reporter=json',
-    `--outputFile=${reportFile}`,
-  ];
-  return runBounded('pnpm', args, {
-    cwd: ROOT,
-    // `skip`: a test whose need this pair lacks is skipped rather than run on
-    // another pair, which is a cell of its own (spec 2026-09-15, A7).
-    env: {
-      ...baseEnv,
-      BSQ_TEST_TARGETS: `${pair.vfs}/${pair.build}`,
-      BSQ_TEST_NEEDS: 'skip',
-    },
-    timeoutMs: RUN_TIMEOUT_MS,
-  }).then(({ output, timedOut, error }) => {
-    writeFileSync(`${cellBase}.log`, output);
-    if (error) return { status: 'error', message: error.message };
-    if (timedOut) return { status: 'timed-out' };
-    return parseMatrixReport(
-      existsSync(reportFile) ? readFileSync(reportFile, 'utf8') : '',
-    );
-  });
-}
-
 /**
  * `522/0/4 · 57 files · 52s`, or the status word for a cell that never
  * produced counts. A failed cell with no failed test says FAIL and why, or its
@@ -259,73 +194,40 @@ export function printTable(
 
 async function main() {
   const { columns, pairs } = parseArgs(process.argv.slice(2));
-  const concurrency = resolveConcurrency(process.env.BSQ_TEST_JOBS);
-  const baseEnv = buildOnce(process.env);
-  killLiveOnSignal();
-  const runId = new Date().toISOString().replace(/[:.]/g, '-');
-  const runDir = join(ROOT, '.matrix', runId);
-  mkdirSync(runDir, { recursive: true });
-
-  // Column-major, as the table is printed; the pool takes them in this order.
-  const cells = columns.flatMap((column) =>
-    pairs.map((pair) => ({ column, pair })),
+  const browsers = [
+    ...new Set(columns.map((c) => c.name.replace('isolated-', ''))),
+  ];
+  const modes = [
+    ...new Set(
+      columns.map((c) =>
+        c.name.startsWith('isolated-') ? 'isolated' : 'not-isolated',
+      ),
+    ),
+  ];
+  // The plan selects browsers × modes: a mix such as chrome with isolated-firefox is not one.
+  if (browsers.length * modes.length !== columns.length) {
+    throw new Error(
+      `test-matrix: --engine ${columns.map((c) => c.name).join(', ')} is not a product of browsers and modes`,
+    );
+  }
+  const explicit = process.argv.includes('--pair');
+  const run = spawnSync(
+    'node',
+    [
+      'scripts/test-plan.ts',
+      '--mode',
+      'all-pairs',
+      '--table',
+      ...browsers.flatMap((b) => ['--browser', b]),
+      '--modes',
+      modes.join(','),
+      ...(explicit
+        ? pairs.flatMap((p) => ['--pair', `${p.vfs}/${p.build}`])
+        : []),
+    ],
+    { cwd: ROOT, stdio: 'inherit' },
   );
-  const results = new Map<string, MatrixResult>();
-  const start = Date.now();
-  let done = 0;
-  console.log(
-    `${cells.length} cells, ${concurrency} at a time. Reports under ${join('.matrix', runId)}.`,
-  );
-  const settled = await runPool(
-    cells,
-    concurrency,
-    async ({ column, pair }) => {
-      const label = `${pair.vfs}/${pair.build}`;
-      const cellBase = join(
-        runDir,
-        `${column.name}__${pair.vfs}__${pair.build}`,
-      );
-      const result = await runOne(column, pair, cellBase, baseEnv);
-      results.set(`${column.name}:${label}`, result);
-      process.stdout.write(
-        `[${++done}/${cells.length}] [${column.name}] ${label}: ${formatCell(result)}\n`,
-      );
-      // A verdict alone cannot be diagnosed anywhere the report files do not
-      // survive the machine, which is every CI runner. "timed out" especially:
-      // it is also what a run that never wrote a report looks like.
-      if (result.status !== 'passed' && result.status !== 'not-runnable') {
-        const tail = readFileSync(`${cellBase}.log`, 'utf8')
-          .split('\n')
-          .slice(-TAIL_LINES);
-        process.stdout.write(
-          `--- ${column.name} ${label}: last ${tail.length} lines ---\n${tail.join('\n')}\n--- end ---\n`,
-        );
-      }
-    },
-  );
-  // A cell whose job threw is a red cell, never an absent one.
-  settled.forEach((outcome, i) => {
-    if (outcome.status !== 'rejected') return;
-    const { column, pair } = cells[i];
-    results.set(`${column.name}:${pair.vfs}/${pair.build}`, {
-      status: 'error',
-      message: String(outcome.reason),
-    });
-  });
-
-  console.log('');
-  printTable(pairs, columns, results);
-  const totalSeconds = Math.round((Date.now() - start) / 1000);
-  console.log('');
-  console.log(
-    `Total: ${totalSeconds}s. Reports under ${join('.matrix', runId)}.`,
-  );
-
-  const failed = [...results.values()].some(
-    (r) =>
-      r.status === 'failed' || r.status === 'timed-out' || r.status === 'error',
-  );
-  process.exitCode = failed ? 1 : 0;
+  process.exitCode = run.status ?? 1;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
