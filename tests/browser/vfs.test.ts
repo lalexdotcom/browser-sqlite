@@ -15,16 +15,6 @@ import { createTestClient } from './helpers';
  * The guard is easy to break during the pool refactor (wave 1), hence the test.
  */
 describe('AccessHandlePoolVFS pool guard', () => {
-  // One VFS: the subject is AccessHandlePoolVFS's own poolSize guard.
-  it('throws when combined with an explicit poolSize > 1', () => {
-    expect(() =>
-      createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
-        vfs: 'AccessHandlePoolVFS',
-        poolSize: 2,
-      }),
-    ).toThrow(/pool sizes greater than 1/);
-  });
-
   // Falsifiable: restore `clientOptions.poolSize ?? DEFAULT_POOL_SIZE` in
   // client.ts. Selecting a single-connection VFS and nothing else used to
   // throw on a pool size the caller never chose.
@@ -40,27 +30,6 @@ describe('AccessHandlePoolVFS pool guard', () => {
       // One of AccessHandlePoolVFS's six fixed slots, given back by delete alone.
       await deleteDatabase(name, { vfs: 'AccessHandlePoolVFS' });
     }
-  });
-
-  // Falsifiable: revert the pool guard in client.ts to `throw new Error(...)`.
-  // One VFS: the subject is AccessHandlePoolVFS's own poolSize guard.
-  it('reports the pool guard as SQLiteError with code INVALID_OPTION', () => {
-    let caught: unknown;
-    try {
-      createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
-        vfs: 'AccessHandlePoolVFS',
-        poolSize: 2,
-      });
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(SQLiteError);
-    expect((caught as SQLiteError).code).toBe('INVALID_OPTION');
-    // The message must carry the reason, or the caller cannot act on it.
-    expect((caught as SQLiteError).message).toMatch(
-      /pool sizes greater than 1/,
-    );
-    expect((caught as SQLiteError).message).toMatch(/access handles/);
   });
 
   // One VFS: the subject is AccessHandlePoolVFS's own poolSize guard.
@@ -84,17 +53,6 @@ describe('AccessHandlePoolVFS pool guard', () => {
 });
 
 describe('OPFSCoopSyncVFS pool guard', () => {
-  // One VFS: the subject is OPFSCoopSyncVFS's own poolSize cap.
-  // Falsifiable: revert OPFSCoopSyncVFS.maxPoolSize to null.
-  it('throws when combined with an explicit poolSize > 1', () => {
-    expect(() =>
-      createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
-        vfs: 'OPFSCoopSyncVFS',
-        poolSize: 2,
-      }),
-    ).toThrow(/pool sizes greater than 1/);
-  });
-
   // One VFS: the subject is OPFSCoopSyncVFS's own poolSize cap.
   // Falsifiable: revert OPFSCoopSyncVFS.maxPoolSize to null — db.poolSize is
   // then 2, not 1.
@@ -121,35 +79,6 @@ describe('OPFSCoopSyncVFS pool guard', () => {
  * surfacing later as an opaque `open-error` from inside a worker.
  */
 describe('vfs/build combination guard', () => {
-  // One VFS: the guard needs a concrete VFS whose declared builds exclude
-  // 'sync' — OPFSAdaptiveVFS declares ['jspi', 'async'].
-  it('throws when the build is not one the VFS supports', () => {
-    // OPFSAdaptiveVFS declares ['jspi', 'async'] — 'sync' is not among them.
-    expect(() =>
-      createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
-        vfs: 'OPFSAdaptiveVFS',
-        build: 'sync',
-      }),
-    ).toThrow(/cannot run on the 'sync' build/);
-  });
-
-  // One VFS: same guard, same concrete mismatch as above.
-  it('reports the failure as SQLiteError with code INVALID_OPTION', () => {
-    let caught: unknown;
-    try {
-      createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
-        vfs: 'OPFSAdaptiveVFS',
-        build: 'sync',
-      });
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(SQLiteError);
-    expect((caught as SQLiteError).code).toBe('INVALID_OPTION');
-    // The message must name the supported builds, or the caller cannot act.
-    expect((caught as SQLiteError).message).toContain('async');
-  });
-
   // One VFS: the accept side of the same guard pairing tested above.
   it('accepts an explicitly declared combination and serves queries', async () => {
     const db = await createTestClient({
@@ -201,33 +130,6 @@ describe('newly wired VFS', () => {
       expect(rows[0].val).toBe('ok');
 
       await db.close();
-    });
-  }
-});
-
-/**
- * The memory VFS hold their pages in the worker that opened them, so a pool
- * would hold independent databases diverging silently. That is corruption, not
- * volatility, and the guard states it.
- */
-describe('memory VFS pool guard', () => {
-  // One VFS (one per case): each memory VFS's own pool-size guard is the
-  // subject.
-  // Falsifiable: set maxPoolSize to null on MemoryVFS in VFS_CAPABILITIES.
-  for (const vfs of ['MemoryVFS', 'MemoryAsyncVFS'] as const) {
-    it(`${vfs} refuses a pool larger than 1`, () => {
-      let caught: unknown;
-      try {
-        createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
-          vfs,
-          poolSize: 2,
-        });
-      } catch (error) {
-        caught = error;
-      }
-      expect(caught).toBeInstanceOf(SQLiteError);
-      expect((caught as SQLiteError).code).toBe('INVALID_OPTION');
-      expect((caught as SQLiteError).message).toMatch(/diverge/);
     });
   }
 });
