@@ -1,0 +1,450 @@
+#!/usr/bin/env node
+/**
+ * The browser suite through the planner (spec 2026-10-12, § 4-5):
+ *
+ *   node scripts/test-plan.ts [--unit] [--browser chrome|firefox]…
+ *     [--modes not-isolated,isolated] [--full] [--mode complement|all-pairs]
+ *     [--pair vfs/build]… [--table] [file…]
+ *
+ * Probes each selected environment, parses the tests statically, plans
+ * which cell runs which test, prints the plan, runs the cells
+ * (`scripts/run-cell.ts`, `BSQ_TEST_JOBS` at a time, a cell cut in shards
+ * by files when there are more processes than cells) and `unit`, then
+ * merges their blobs as one report. `--table` prints the matrix table
+ * instead and keeps each cell's JSON report under `.matrix/<run>/` for
+ * `scripts/matrix-triage.ts`. `BSQ_TEST_TARGETS` and `--pair` give the
+ * pairs, never substituted.
+ */
+import { spawnSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { join, relative } from 'node:path';
+import type { SQLiteBuild } from '../src/const/builds.ts';
+import type { SQLiteVFS } from '../src/const/vfs.ts';
+import type { Family, FamilyInput, Pair, Plan } from '../tests/planner/plan.ts';
+import type { BrowserName } from './browsers.ts';
+import {
+  allocateShards,
+  type BlobState,
+  buildOnce,
+  findFailedJobs,
+  killLiveOnSignal,
+  ROOT,
+  resolveConcurrency,
+  runBounded,
+  runPool,
+} from './parallel.ts';
+import {
+  cellSpecs,
+  collectFamily,
+  loadPlanner,
+  openVitest,
+  type PlannedCell,
+  type PlannedRun,
+  probeFeatures,
+} from './plan-io.ts';
+import { RECOMMENDED_VFS } from './recommended-vfs.ts';
+import {
+  type MatrixResult,
+  parseMatrixReport,
+  printTable,
+} from './test-matrix.ts';
+
+const JOB_TIMEOUT_MS = 900_000;
+const KEEP_RUNS = 10;
+const TAIL_LINES = 60;
+
+type Options = {
+  unit: boolean;
+  browsers: BrowserName[];
+  isolatedModes: boolean[];
+  full: boolean;
+  mode: 'complement' | 'all-pairs';
+  pairs: Pair[] | 'all' | null;
+  table: boolean;
+  /** Also write the merged report as Vitest JSON there (the coverage comparison of Task 12). */
+  json: string | null;
+  files: string[] | null;
+};
+
+const parsePair = (label: string): Pair => {
+  const [vfs, build] = label.split('/');
+  if (!vfs || !build) throw new Error(`test-plan: "${label}" is not vfs/build`);
+  // Validated against the declarations by the planner (PLAN_PAIR).
+  return { vfs: vfs as SQLiteVFS, build: build as SQLiteBuild };
+};
+
+function parseArgs(argv: readonly string[]): Options {
+  const options: Options = {
+    unit: false,
+    browsers: [],
+    isolatedModes: [false, true],
+    full: false,
+    mode: 'complement',
+    pairs: null,
+    table: false,
+    json: null,
+    files: null,
+  };
+  const pairs: Pair[] = [];
+  const files: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i] as string;
+    if (arg === '--') continue;
+    if (arg === '--unit') options.unit = true;
+    else if (arg === '--full') options.full = true;
+    else if (arg === '--table') options.table = true;
+    else if (arg === '--json') options.json = String(argv[++i]);
+    else if (arg === '--browser') {
+      const browser = argv[++i];
+      if (browser !== 'chrome' && browser !== 'firefox') {
+        throw new Error(
+          `test-plan: --browser "${browser}" is not chrome or firefox`,
+        );
+      }
+      options.browsers.push(browser);
+    } else if (arg === '--modes') {
+      const modes = String(argv[++i]).split(',');
+      if (modes.some((m) => m !== 'not-isolated' && m !== 'isolated')) {
+        throw new Error(
+          `test-plan: --modes takes not-isolated and/or isolated`,
+        );
+      }
+      options.isolatedModes = [
+        ...(modes.includes('not-isolated') ? [false] : []),
+        ...(modes.includes('isolated') ? [true] : []),
+      ];
+    } else if (arg === '--mode') {
+      const mode = argv[++i];
+      if (mode !== 'complement' && mode !== 'all-pairs') {
+        throw new Error(
+          `test-plan: --mode "${mode}" is not complement or all-pairs`,
+        );
+      }
+      options.mode = mode;
+    } else if (arg === '--pair') pairs.push(parsePair(String(argv[++i])));
+    else if (arg.startsWith('--'))
+      throw new Error(`test-plan: unknown argument "${arg}"`);
+    else files.push(arg);
+  }
+  if (options.browsers.length === 0) options.browsers = ['chrome', 'firefox'];
+  const env = process.env.BSQ_TEST_TARGETS;
+  options.pairs = pairs.length
+    ? pairs
+    : env === 'all'
+      ? 'all'
+      : env
+        ? env.split(',').map((label) => parsePair(label.trim()))
+        : null;
+  options.files = files.length ? files : null;
+  return options;
+}
+
+const describeTest = ({ file, name }: { file: string; name: string }) =>
+  `${name} (${file})`;
+
+function printPlan(plan: Plan, families: readonly FamilyInput[]) {
+  console.log(`Plan: ${plan.cells.length} cells.`);
+  for (const cell of plan.cells) {
+    const files = new Set(cell.tests.map((t) => t.file)).size;
+    console.log(
+      `  ${cell.project.padEnd(44)} ${cell.reason.padEnd(10)} ${cell.tests.length} tests, ${files} files`,
+    );
+  }
+  for (const family of families) {
+    const missing = plan.notApplicable.filter(
+      (u) => u.browser === family.browser && u.isolated === family.isolated,
+    );
+    if (missing.length === 0) continue;
+    console.log(
+      `Not applicable on ${family.isolated ? 'isolated ' : ''}${family.browser} (${missing.length}):`,
+    );
+    for (const u of missing)
+      console.log(`  ${describeTest(u)} — needs [${u.tags.join(', ')}]`);
+  }
+  for (const n of plan.notRunnable) {
+    console.log(
+      `Not runnable on ${n.isolated ? 'isolated ' : ''}${n.browser}: ${n.vfs}/${n.build}`,
+    );
+  }
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+  const concurrency = resolveConcurrency(process.env.BSQ_TEST_JOBS);
+  const env = { ...buildOnce(process.env), BSQ_TEST_TARGETS: 'all' };
+  killLiveOnSignal();
+
+  // --- Plan -------------------------------------------------------------
+  const vitest = await openVitest();
+  // Closed on a refusal too: the probes leave WebDriver processes behind.
+  const cells: PlannedCell[] = [];
+  const families: FamilyInput[] = [];
+  let plan: Plan;
+  try {
+    const planner = await loadPlanner(vitest);
+    for (const browser of options.browsers) {
+      for (const isolated of options.isolatedModes) {
+        const family: Family = { browser, isolated };
+        families.push({
+          ...family,
+          features: await probeFeatures(vitest, family),
+          tests: await collectFamily(vitest, family, options.files),
+        });
+      }
+    }
+    plan = planner.plan(families, {
+      mode: options.mode,
+      fullIsolation: options.full,
+      recommended: RECOMMENDED_VFS,
+      pairs: options.pairs,
+    });
+    for (const cell of plan.cells) {
+      const features = families.find(
+        (f) => f.browser === cell.browser && f.isolated === cell.isolated,
+      )?.features as PlannedCell['features'];
+      cells.push({
+        project: cell.project,
+        vfs: cell.vfs,
+        build: cell.build,
+        features,
+        specs: await cellSpecs(vitest, cell),
+      });
+    }
+  } finally {
+    await vitest.close();
+  }
+  printPlan(plan, families);
+
+  const allNotRunnable =
+    Array.isArray(options.pairs) &&
+    options.pairs.some((pair) =>
+      families.every((f) =>
+        plan.notRunnable.some(
+          (n) =>
+            n.browser === f.browser &&
+            n.isolated === f.isolated &&
+            n.vfs === pair.vfs &&
+            n.build === pair.build,
+        ),
+      ),
+    );
+  if (allNotRunnable) {
+    console.error(
+      'test-plan: an explicit pair runs on no selected browser (above)',
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  // --- Run --------------------------------------------------------------
+  const runsRoot = join(ROOT, options.table ? '.matrix' : '.test-parallel');
+  const run = join(runsRoot, new Date().toISOString().replace(/[:.]/g, '-'));
+  const blobs = join(run, 'blobs');
+  const logs = join(run, 'logs');
+  const reports = options.table ? run : join(run, 'reports');
+  for (const dir of [blobs, logs, reports]) mkdirSync(dir, { recursive: true });
+  for (const old of readdirSync(runsRoot).sort().slice(0, -KEEP_RUNS)) {
+    rmSync(join(runsRoot, old), { recursive: true, force: true });
+  }
+  const planFile = join(run, 'plan.json');
+  const planned: PlannedRun = { fullIsolation: options.full, cells };
+  writeFileSync(planFile, JSON.stringify(planned, null, 2));
+
+  // The matrix keeps one report per cell; elsewhere a cell may be sharded.
+  const shards = options.table
+    ? cells.map(() => 1)
+    : allocateShards(
+        cells.map((c) => ({ name: c.project, files: c.specs.length })),
+        concurrency,
+      ).map((s) => s.shards);
+  // `isolated chrome · OPFSWriteAheadVFS/sync` → `isolated-chrome__OPFSWriteAheadVFS__sync`,
+  // the name scripts/matrix-triage.ts parses.
+  const slug = (name: string) =>
+    name.replace(/ · /g, '__').replace(/\//g, '__').replace(/ /g, '-');
+  type Job = { id: string; cell: number | null; shard: number; shards: number };
+  const jobs: Job[] = [
+    ...(options.unit ? [{ id: 'unit', cell: null, shard: 1, shards: 1 }] : []),
+    ...cells.flatMap((cell, index) =>
+      Array.from({ length: shards[index] as number }, (_, s) => ({
+        id:
+          (shards[index] as number) > 1
+            ? `${slug(cell.project)}.${s + 1}of${shards[index]}`
+            : slug(cell.project),
+        cell: index,
+        shard: s + 1,
+        shards: shards[index] as number,
+      })),
+    ),
+  ];
+  console.log(
+    `\n${jobs.length} jobs, ${concurrency} at a time. Run under ${relative(ROOT, run)}.`,
+  );
+
+  const start = Date.now();
+  let done = 0;
+  const results = new Map<string, MatrixResult>();
+  const settled = await runPool(jobs, concurrency, async (job) => {
+    const blob = join(blobs, `${job.id}.json`);
+    const json = join(reports, `${job.id}.json`);
+    const began = Date.now();
+    const { output, timedOut, exitCode, error } =
+      job.cell === null
+        ? await runBounded(
+            'pnpm',
+            [
+              'exec',
+              'vitest',
+              'run',
+              '--configLoader',
+              'runner',
+              '--project',
+              'unit',
+              '--reporter=blob',
+              `--outputFile=${blob}`,
+            ],
+            { cwd: ROOT, env, timeoutMs: JOB_TIMEOUT_MS },
+          )
+        : await runBounded(
+            'node',
+            [
+              'scripts/run-cell.ts',
+              planFile,
+              String(job.cell),
+              String(job.shard),
+              String(job.shards),
+              blob,
+              json,
+            ],
+            { cwd: ROOT, env, timeoutMs: JOB_TIMEOUT_MS },
+          );
+    writeFileSync(
+      join(logs, `${job.id}.log`),
+      error ? `${output}\n${error.message}\n` : output,
+    );
+    let state: BlobState = existsSync(blob) ? 'ok' : 'missing';
+    if (state === 'ok') {
+      try {
+        JSON.parse(readFileSync(blob, 'utf8'));
+      } catch {
+        state = 'unparsable';
+        rmSync(blob);
+      }
+    }
+    if (job.cell !== null && options.table) {
+      const cell = cells[job.cell] as PlannedCell;
+      results.set(
+        cell.project,
+        timedOut
+          ? { status: 'timed-out' }
+          : error
+            ? { status: 'error', message: error.message }
+            : parseMatrixReport(
+                existsSync(json) ? readFileSync(json, 'utf8') : '',
+              ),
+      );
+    }
+    const ended = timedOut
+      ? 'timed out'
+      : error
+        ? `error ${error.message}`
+        : `exit ${exitCode}`;
+    console.log(
+      `[${++done}/${jobs.length}] ${job.id}: ${ended} in ${Math.round((Date.now() - began) / 1000)}s${state === 'ok' ? '' : ' (NO BLOB)'}`,
+    );
+    return { job, timedOut, error, blob: state, exitCode };
+  });
+  const outcomes = settled.map((o, i) =>
+    o.status === 'fulfilled'
+      ? o.value
+      : {
+          job: jobs[i] as Job,
+          timedOut: false,
+          error:
+            o.reason instanceof Error ? o.reason : new Error(String(o.reason)),
+          blob: 'missing' as BlobState,
+          exitCode: null,
+        },
+  );
+  const failed = findFailedJobs(outcomes);
+  console.log(`Jobs done in ${Math.round((Date.now() - start) / 1000)}s.\n`);
+
+  let status =
+    failed.length > 0 || outcomes.some((o) => o.exitCode !== 0) ? 1 : 0;
+  if (options.table) {
+    const columns = ['chrome', 'firefox', 'isolated-chrome', 'isolated-firefox']
+      .filter((name) =>
+        families.some(
+          (f) => (f.isolated ? `isolated-${f.browser}` : f.browser) === name,
+        ),
+      )
+      .map((name) => ({ name, args: [] as string[] }));
+    const pairs = [
+      ...new Map(
+        cells.map((c) => [
+          `${c.vfs}/${c.build}`,
+          { vfs: c.vfs, build: c.build },
+        ]),
+      ).values(),
+    ];
+    const keyed = new Map<string, MatrixResult>();
+    for (const cell of cells) {
+      const column = cell.project.startsWith('isolated ')
+        ? `isolated-${cell.project.split(' ')[1]}`
+        : cell.project.split(' ')[0];
+      const result = results.get(cell.project);
+      if (result) keyed.set(`${column}:${cell.vfs}/${cell.build}`, result);
+    }
+    printTable(pairs, columns, keyed);
+  } else if (outcomes.some((o) => o.blob === 'ok')) {
+    const merged = spawnSync(
+      'pnpm',
+      [
+        'exec',
+        'vitest',
+        '--configLoader',
+        'runner',
+        '--merge-reports',
+        blobs,
+        '--reporter=default',
+        ...(options.json
+          ? ['--reporter=json', `--outputFile=${options.json}`]
+          : []),
+      ],
+      { cwd: ROOT, env, stdio: 'inherit' },
+    );
+    if (merged.status !== 0) status = 1;
+  }
+  for (const { job, reason } of failed) {
+    const log = join(logs, `${job.id}.log`);
+    const tail = existsSync(log)
+      ? readFileSync(log, 'utf8').split('\n').slice(-TAIL_LINES).join('\n')
+      : '(no log)';
+    console.error(
+      `\n--- ${job.id} failed (${reason}); last ${TAIL_LINES} lines of ${log} ---\n${tail}\n--- end ---`,
+    );
+  }
+  if (plan.dead.length > 0) {
+    // Dead fails CI and the matrix; locally a browser may simply be absent.
+    const fatal =
+      options.mode === 'all-pairs' &&
+      options.pairs === null &&
+      options.browsers.length === 2;
+    console[fatal ? 'error' : 'warn'](
+      `\n${plan.dead.length} test(s) run on no pair of any selected browser:\n${plan.dead.map((d) => `  ${describeTest(d)} — needs [${d.tags.join(', ')}]`).join('\n')}`,
+    );
+    if (fatal) status = 1;
+  }
+  process.exitCode = status;
+}
+
+main().catch((error) => {
+  console.error(`test-plan: ${error instanceof Error ? error.stack : error}`);
+  process.exitCode = 2;
+});

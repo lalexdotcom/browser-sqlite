@@ -79,7 +79,11 @@ export async function probeFeatures(
   const result = await vitest.runTestSpecifications([
     project.createSpecification(resolve(ROOT, 'tests/probe/features.test.ts')),
   ]);
-  const [test] = result.testModules.flatMap((m) => [...m.children.allTests()]);
+  // `testModules` accumulates over every run of this Vitest: only this
+  // probe project's module is this run's (measured 2026-10-12).
+  const [test] = result.testModules
+    .filter((m) => m.project.name === name)
+    .flatMap((m) => [...m.children.allTests()]);
   const features = test?.meta().features;
   if (!Array.isArray(features)) {
     throw new Error(
@@ -119,9 +123,12 @@ export async function collectFamily(
       position,
       name: test.fullName,
       tags: [...test.tags],
+      // The runner leaves `dynamic` unset for a template-literal name
+      // (measured 2026-10-12): its unresolved `${` says it.
       dynamic:
         experimental_getRunnerTask(test).dynamic === true ||
-        test.id.endsWith('-dynamic'),
+        test.id.endsWith('-dynamic') ||
+        test.fullName.includes('${'),
     })),
   );
 }

@@ -224,7 +224,8 @@ function runOne(
  * produced counts. A failed cell with no failed test says FAIL and why, or its
  * counts read as green — a page crash looks exactly like that.
  */
-export function formatCell(result: MatrixResult): string {
+export function formatCell(result: MatrixResult | undefined): string {
+  if (result === undefined) return '—';
   if (result.status === 'not-runnable') return 'not runnable here';
   if (result.status === 'timed-out') return 'timed out';
   if (result.status === 'error') return `error: ${result.message}`;
@@ -233,7 +234,7 @@ export function formatCell(result: MatrixResult): string {
   return `${cell} · FAIL: ${result.unhandled?.[0] ?? 'the report says fail'}`;
 }
 
-function printTable(
+export function printTable(
   pairs: Pair[],
   columns: Column[],
   results: Map<string, MatrixResult>,
@@ -243,9 +244,7 @@ function printTable(
   const rows = pairs.map((pair) => [
     pairLabel(pair),
     ...columns.map((column) =>
-      formatCell(
-        results.get(`${column.name}:${pairLabel(pair)}`) as MatrixResult,
-      ),
+      formatCell(results.get(`${column.name}:${pairLabel(pair)}`)),
     ),
   ]);
   const widths = header.map((h, i) =>
