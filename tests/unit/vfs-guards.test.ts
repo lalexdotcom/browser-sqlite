@@ -77,8 +77,10 @@ describe('the vfs/build combination guard', () => {
       const error = thrown(() => createSQLiteClient(fresh(), { vfs, build }));
       expect(error.code).toBe('INVALID_OPTION');
       expect(error.message).toContain(`cannot run on the '${build}' build`);
-      for (const supported of VFS_CAPABILITIES[vfs].builds)
-        expect(error.message).toContain(supported);
+      // The whole list, not each name: 'sync' is a substring of 'async'.
+      expect(error.message).toContain(
+        `Supported: ${VFS_CAPABILITIES[vfs].builds.join(', ')}.`,
+      );
     },
   );
 
@@ -142,16 +144,17 @@ describe('the name length guard', () => {
       `a database name may have at most ${MAX_DATABASE_NAME}`,
     ),
   };
-  // Falsifiable: move resolveDatabase after the lock in deleteDatabase.
+  // No lock spy: in Node a persistent VFS stops at missingFeature and a memory
+  // VFS returns, both before any lock, so a spy could never be called. The
+  // message is the proof: the name guard ran before the memory return and
+  // the environment guard, and those run before the locks.
+  // Falsifiable: move resolveDatabase after missingFeature in deleteDatabase.
   it.each(ALL_VFS)(
-    'deleteDatabase refuses a too-long name on %s before taking any lock',
+    'deleteDatabase refuses a too-long name on %s before its memory and environment guards',
     async (vfs) => {
-      const request = vi.spyOn(navigator.locks, 'request');
-      onTestFinished(() => request.mockRestore());
       await expect(
         deleteDatabase('n'.repeat(60), { vfs }),
       ).rejects.toMatchObject(NAME_TOO_LONG);
-      expect(request).not.toHaveBeenCalled();
     },
   );
 
