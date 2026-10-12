@@ -28,6 +28,9 @@ export const PROPERTIES = [
   'default-pragmas',
   'exclusive-file-handle',
   'idb-storage',
+  'every-build',
+  'env-cappable',
+  'sync-handle',
 ] as const;
 export type Property = (typeof PROPERTIES)[number];
 
@@ -68,6 +71,9 @@ const refusesSecondClient = (context: TestContext) => {
   );
 };
 
+const VFS_NAMES = Object.keys(VFS_CAPABILITIES) as SQLiteVFS[];
+const BUILD_NAMES = Object.keys(BUILD_CAPABILITIES) as SQLiteBuild[];
+
 export const holds = (property: Property, context: TestContext): boolean => {
   const c = declared(context.vfs);
   switch (property) {
@@ -105,6 +111,16 @@ export const holds = (property: Property, context: TestContext): boolean => {
       return c.exclusiveFileHandle;
     case 'idb-storage':
       return c.storage === 'indexeddb';
+    case 'every-build':
+      return BUILD_NAMES.every((build) =>
+        (c.builds as readonly SQLiteBuild[]).includes(build),
+      );
+    case 'env-cappable':
+      return c.singleConnectionWithout.length > 0;
+    case 'sync-handle':
+      return (c.requires as readonly PlatformFeature[]).includes(
+        'sync-access-handle',
+      );
   }
 };
 
@@ -137,16 +153,54 @@ const eligible = (context: TestContext, need: TestNeed): boolean =>
 export const shouldTestRun = (
   context: TestContext,
   need: TestNeed = {},
+  { dedupeIsolation = true }: { readonly dedupeIsolation?: boolean } = {},
 ): boolean => {
   if (!eligible(context, need)) return false;
-  if (!context.isolated || need.isolated === true) return true;
+  // A mode asked for explicitly runs in full (spec § 2, D3).
+  if (!context.isolated || need.isolated === true || !dedupeIsolation)
+    return true;
   const features = new Set(context.features);
   features.delete('cross-origin-isolated');
   return !eligible({ ...context, isolated: false, features }, need);
 };
 
-const VFS_NAMES = Object.keys(VFS_CAPABILITIES) as SQLiteVFS[];
-const BUILD_NAMES = Object.keys(BUILD_CAPABILITIES) as SQLiteBuild[];
+/**
+ * Every pair this environment can run, in canonical order: `VFS_CAPABILITIES`
+ * keys, then each VFS's builds as declared (spec § 4.4). The order is the
+ * planner's complement rule, so it never depends on which tests exist.
+ */
+export const canonicalPairs = (
+  browser: BrowserName,
+  isolated: boolean,
+  features: ReadonlySet<PlatformFeature>,
+): TestContext[] =>
+  VFS_NAMES.flatMap((vfs) =>
+    (VFS_CAPABILITIES[vfs].builds as readonly SQLiteBuild[]).map((build) => ({
+      vfs,
+      build,
+      browser,
+      isolated,
+      features,
+    })),
+  ).filter(runsIn);
+
+/**
+ * The pair a standalone test takes here: the first non-isolated canonical
+ * pair its need admits, or null — never a name written in the test (spec § 3).
+ */
+export const representative = (
+  need: TestNeed,
+  browser: BrowserName,
+  features: ReadonlySet<PlatformFeature>,
+): TestContext | null => {
+  const here = new Set(features);
+  here.delete('cross-origin-isolated');
+  return (
+    canonicalPairs(browser, false, here).find((context) =>
+      shouldTestRun(context, need),
+    ) ?? null
+  );
+};
 
 /** Every tag a need can be spelt with — what `vitest.config.ts` declares. */
 export const declaredTags = (): string[] => [
