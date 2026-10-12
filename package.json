@@ -53,7 +53,6 @@
 		"prepare": "simple-git-hooks",
 		"test": "node scripts/bounded.ts 2400 node scripts/test-parallel.ts --project unit --project 'chrome ·*' --project 'firefox ·*' --project 'isolated *'",
 		"test:isolated": "node scripts/bounded.ts 600 node scripts/test-parallel.ts --project 'isolated *'",
-		"test:watch": "vitest --configLoader runner --project unit --project 'chrome ·*'",
 		"test:unit": "vitest run --configLoader runner --project unit",
 		"test:browser": "node scripts/bounded.ts 1800 node scripts/test-parallel.ts --project 'chrome ·*' --project 'firefox ·*'",
 		"test:chrome": "node scripts/bounded.ts 900 node scripts/test-parallel.ts --project 'chrome ·*'",
