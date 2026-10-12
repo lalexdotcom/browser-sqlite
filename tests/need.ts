@@ -10,8 +10,10 @@ import { sharesStorage } from '../src/locks';
 
 /**
  * What a browser test needs of the pair it runs on, and whether a context
- * gives it that (spec 2026-10-12, § 2). Pure, so the planner (Node), each
- * cell's guard (browser) and the unit tests share one answer.
+ * gives it that (spec 2026-10-12, § 2). Pure, so the planner, each cell's
+ * guard (browser) and the unit tests share one answer. In Node it loads
+ * through Vite (the config, Vitest's runner), not plain `node`: its `src/`
+ * imports, and `src/`'s own, carry no extension.
  */
 export const PROPERTIES = [
   'two-workers',

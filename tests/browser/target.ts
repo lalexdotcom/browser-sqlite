@@ -69,16 +69,6 @@ const runsHere = ({ vfs, build }: TestTarget, here: Here): boolean =>
   );
 
 /**
- * Whether a second client of this VFS reaches the first one's database here.
- *
- * False two ways, and they are not the same failure: the memory VFS give the
- * second client a database of its own, while an exclusive VFS refuses it
- * (`DATABASE_IN_USE`). A test of two clients sharing one database has neither.
- *
- * Derived from `VFS_CAPABILITIES` so the rule exists once: `secondClientOutcome`
- * in `helpers/vfs-contract.ts` names the three outcomes from this same answer.
- */
-/**
  * The need model's context for a pair here. `browser` is not read by the six
  * properties this resolver asks for, so any value does; isolation is the
  * feature the probe already reports.
@@ -91,6 +81,17 @@ const contextOf = ({ vfs, build }: TestTarget, here: Here): TestContext => ({
   features: here.features,
 });
 
+/**
+ * Whether a second client of this VFS reaches the first one's database here.
+ *
+ * False two ways, and they are not the same failure: the memory VFS give the
+ * second client a database of its own, while an exclusive VFS refuses it
+ * (`DATABASE_IN_USE`). A test of two clients sharing one database has neither.
+ *
+ * The `shared-second-client` property of `tests/need.ts`, so the rule exists
+ * once: `secondClientOutcome` in `helpers/vfs-contract.ts` names the three
+ * outcomes from this same answer.
+ */
 export const sharedSecondClient = (vfs: SQLiteVFS, here: Here): boolean =>
   // The property reads no build; any declared one makes the context.
   propertyHolds(

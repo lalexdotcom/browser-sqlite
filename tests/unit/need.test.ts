@@ -277,6 +277,26 @@ describe('shouldTestRun', () => {
       false,
     );
   });
+
+  // Falsifiable: read `requires` with `some` in eligible().
+  it('needs every required property, not one of them', () => {
+    // On Chrome, OPFSWriteAheadVFS runs two workers but stores in OPFS.
+    const need = { requires: ['two-workers', 'idb-storage'] } as const;
+    expect(shouldTestRun(wa('chrome'), need)).toBe(false);
+  });
+
+  // Falsifiable: read `excludes` as "not all of them" in eligible().
+  it('refuses when one excluded property holds and the other does not', () => {
+    const need = { excludes: ['idb-storage', 'shared-storage'] } as const;
+    expect(shouldTestRun(wa('chrome'), need)).toBe(false);
+  });
+
+  // Falsifiable: drop the `build` field from eligible().
+  it('keeps a build-bound test off the other builds', () => {
+    const asyncPair = ctx('OPFSWriteAheadVFS', 'async', 'chrome');
+    expect(shouldTestRun(asyncPair, { build: ['sync'] })).toBe(false);
+    expect(shouldTestRun(wa('chrome'), { build: ['sync'] })).toBe(true);
+  });
 });
 
 describe('runsIn', () => {
@@ -296,6 +316,16 @@ describe('runsIn', () => {
         features: noJspi,
       }),
     ).toBe(true);
+  });
+
+  // Falsifiable: drop the VFS's `requires` from runsIn.
+  it('says no for a VFS whose feature is missing', () => {
+    const noIndexedDB = new Set<PlatformFeature>(
+      [...FIREFOX].filter((f) => f !== 'indexeddb'),
+    );
+    const idb = ctx('IDBBatchAtomicVFS', 'async', 'firefox');
+    expect(runsIn({ ...idb, features: noIndexedDB })).toBe(false);
+    expect(runsIn(idb)).toBe(true);
   });
 });
 
