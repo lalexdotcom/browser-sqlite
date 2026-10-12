@@ -33,27 +33,25 @@
  */
 import { createSQLiteClient } from 'browser-sqlite';
 import { describe, expect, it } from 'vitest';
-import { removeDatabaseFiles } from './helpers';
+import { removeDatabaseFiles, TEST_TARGET } from './helpers';
 
 type Client = ReturnType<typeof createSQLiteClient>;
 
 const ATTEMPTS = 20;
 const CONCURRENT = 8;
 
-/**
- * `sync` is the default build; `jspi` is where a microtask hand-over still
- * failed (see header), so the two handle-transfer tests run on both.
- */
-const BUILDS = ['sync', 'jspi'] as const;
-
-// One VFS: the subject is OPFSCoopSyncVFS's own handle hand-over protocol.
-const open = (file: string, build: (typeof BUILDS)[number] = 'sync') =>
-  createSQLiteClient(file, { vfs: 'OPFSCoopSyncVFS', build });
+// The describe's `vfs:` tag names the subject, OPFSCoopSyncVFS's own handle
+// hand-over protocol; the build follows the cell's pair.
+const open = (file: string) =>
+  createSQLiteClient(file, {
+    vfs: TEST_TARGET.vfs,
+    build: TEST_TARGET.build,
+  });
 
 const describeError = (e: any) => `${e?.code}: ${e?.message}`;
 
 const scrub = async (file: string) => {
-  await removeDatabaseFiles(file, 'OPFSCoopSyncVFS');
+  await removeDatabaseFiles(file, TEST_TARGET.vfs);
 };
 
 /** Writes on A, reads on B, all issued at once; returns every rejection. */
@@ -85,61 +83,61 @@ const mixedBatch = async (dbA: Client, dbB: Client) => {
   );
 };
 
-describe('OPFSCoopSyncVFS hands the access handle over between calls only', () => {
-  for (const build of BUILDS) {
-    it(`two clients opened together fail no statement (${build})`, async () => {
-      const failures: string[] = [];
-      for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-        const file = `cs-handover-${crypto.randomUUID()}`;
-        // Both built before A's CREATE TABLE: A prepares its barrier statement
-        // on the empty schema, so its first barrier after B's first write must
-        // be re-prepared inside one `step` — the inner unlock the bug released at.
-        const dbA = open(file, build);
-        const dbB = open(file, build);
-        try {
-          await dbA.write('CREATE TABLE t (a INTEGER)');
-          for (let round = 0; round < 3; round++) {
-            failures.push(...(await mixedBatch(dbA, dbB)));
-          }
-        } catch (e) {
-          failures.push(describeError(e));
-        } finally {
-          await dbB.close().catch(() => {});
-          await dbA.close().catch(() => {});
-          await scrub(file);
+describe('OPFSCoopSyncVFS hands the access handle over between calls only', {
+  tags: ['vfs:OPFSCoopSyncVFS'],
+}, () => {
+  it('two clients opened together fail no statement', async () => {
+    const failures: string[] = [];
+    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+      const file = `cs-handover-${crypto.randomUUID()}`;
+      // Both built before A's CREATE TABLE: A prepares its barrier statement
+      // on the empty schema, so its first barrier after B's first write must
+      // be re-prepared inside one `step` — the inner unlock the bug released at.
+      const dbA = open(file);
+      const dbB = open(file);
+      try {
+        await dbA.write('CREATE TABLE t (a INTEGER)');
+        for (let round = 0; round < 3; round++) {
+          failures.push(...(await mixedBatch(dbA, dbB)));
         }
+      } catch (e) {
+        failures.push(describeError(e));
+      } finally {
+        await dbB.close().catch(() => {});
+        await dbA.close().catch(() => {});
+        await scrub(file);
       }
-      expect(failures).toEqual([]);
-    }, 120000);
+    }
+    expect(failures).toEqual([]);
+  }, 120000);
 
-    // Discriminates on Firefox only: Chromium never failed this shape before #347.
-    it(`a write following another client's schema change does not fail (${build})`, async () => {
-      const failures: string[] = [];
-      for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-        const file = `cs-handover-${crypto.randomUUID()}`;
-        const dbA = open(file, build);
-        let dbB: Client | undefined;
-        try {
-          await dbA.write('CREATE TABLE t (a INTEGER)');
-          dbB = open(file, build);
-          // Both clients' statements cached on the current schema first, so
-          // the CREATE TABLE below is what makes them stale.
+  // Discriminates on Firefox only: Chromium never failed this shape before #347.
+  it("a write following another client's schema change does not fail", async () => {
+    const failures: string[] = [];
+    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+      const file = `cs-handover-${crypto.randomUUID()}`;
+      const dbA = open(file);
+      let dbB: Client | undefined;
+      try {
+        await dbA.write('CREATE TABLE t (a INTEGER)');
+        dbB = open(file);
+        // Both clients' statements cached on the current schema first, so
+        // the CREATE TABLE below is what makes them stale.
+        failures.push(...(await writesAgainstReads(dbA, dbB)));
+        await dbB.write('CREATE TABLE u (a INTEGER)');
+        for (let round = 0; round < 2; round++) {
           failures.push(...(await writesAgainstReads(dbA, dbB)));
-          await dbB.write('CREATE TABLE u (a INTEGER)');
-          for (let round = 0; round < 2; round++) {
-            failures.push(...(await writesAgainstReads(dbA, dbB)));
-          }
-        } catch (e) {
-          failures.push(describeError(e));
-        } finally {
-          await dbB?.close().catch(() => {});
-          await dbA.close().catch(() => {});
-          await scrub(file);
         }
+      } catch (e) {
+        failures.push(describeError(e));
+      } finally {
+        await dbB?.close().catch(() => {});
+        await dbA.close().catch(() => {});
+        await scrub(file);
       }
-      expect(failures).toEqual([]);
-    }, 120000);
-  }
+    }
+    expect(failures).toEqual([]);
+  }, 120000);
 
   it('two clients starting together survive orphaned temporary directories', async () => {
     const root = await navigator.storage.getDirectory();
