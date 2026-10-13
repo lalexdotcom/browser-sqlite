@@ -53,6 +53,8 @@ Not history: the numbers a regression is detected against. **Every figure below 
 
 Detail of the matrix, and how earlier ones were reached: `mem:measurements/suite-and-matrix`.
 
+**The table was taken at 12 processes; the default is 6 since the same afternoon (user)** — at 6, same tree: `pnpm test` 143 s, the matrix 949 s (PARALLEL-CAP). The next full pass rewrites the table at 6.
+
 **Do not reconcile any of these by arithmetic; re-run, and re-measure the whole table when you
 touch it — never patch one cell.** Twice in September a total here went stale or contradicted its
 own prose because one cell was patched and the table was not re-read. The per-column split is
