@@ -1,5 +1,6 @@
 import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
 import { expect, inject, onTestFinished } from 'vitest';
+import type { SQLiteDB } from '../../src/api';
 import { defaultBuildFor } from '../../src/capabilities';
 import type { SQLiteBuild } from '../../src/const/builds';
 import {
@@ -38,7 +39,7 @@ export type Needing =
  * test follows the target, and `needs` declares what its subject requires of
  * the pair it runs on.
  */
-type TestClientOptions = Omit<InternalSQLiteClientOptions, 'name' | 'vfs'> & {
+type TestClientOptions = Omit<InternalSQLiteClientOptions, 'vfs'> & {
   vfs?: SQLiteVFS;
 } & Needing;
 
@@ -218,11 +219,73 @@ export function pairFor(needs: readonly Need[] = [], skip?: Skip): TestTarget {
   return skip();
 }
 
-export async function createTestClient(options: TestClientOptions = {}) {
+/**
+ * Closes `clients`, then deletes `name` on `pair` and removes its files — the
+ * one cleanup of `createTestClient` and `sharedDatabase`.
+ */
+const cleanUp = async (
+  name: string,
+  pair: TestTarget,
+  clients: readonly SQLiteDB[],
+): Promise<void> => {
+  // Closing first is what lets the deletion below happen at all —
+  // deleteDatabase refuses with DATABASE_IN_USE while a client holds the
+  // connection lock. A client the test deliberately poisoned may refuse to
+  // close, which is that test's subject, not this cleanup's.
+  for (const client of clients) await client.close().catch(() => {});
+  // AccessHandlePoolVFS (OPFS without a folder, the only one) holds a FIXED pool of
+  // six OPFS files and hands a slot back on its own xDelete alone: jClose
+  // returns nothing, and the path→handle association is written into the
+  // OPFS file header, so it outlives the worker, the page and the whole
+  // run. Since every test opens a fresh UUID name, the sixth test exhausts
+  // the origin and nothing opens afterwards. removeDatabaseFiles cannot
+  // help — that VFS keeps its files under opaque names inside its own
+  // directory, so removing the database's name matches nothing.
+  //
+  // NOT swallowed, and that is the point. This call used to end in
+  // `.catch(() => {})`; it was failing on every test that had just killed a
+  // busy worker — the dying worker still held the directory — so the slot
+  // leaked, the pool ran out, and the next tests failed for a reason nobody
+  // could see. The silence cost a full day (`mem:lessons`). A cleanup that
+  // cannot clean must say so.
+  const { storage } = VFS_CAPABILITIES[pair.vfs];
+  if (
+    storage === 'indexeddb' ||
+    (storage === 'opfs' && folderOf(pair.vfs) === undefined)
+  ) {
+    // IndexedDB keeps its database, and AccessHandlePoolVFS its slot, until
+    // deleteDatabase: removing files by name reaches neither.
+    await withNativeWorker(() =>
+      deleteDatabase(name, { vfs: pair.vfs, build: pair.build }),
+    ).catch((error: unknown) => {
+      // DATABASE_NOT_FOUND only: the client never got as far as creating
+      // the file, or the test deleted it itself. Anything else — a slot
+      // this cleanup could not give back — must reach the test.
+      if ((error as SQLiteError)?.code !== 'DATABASE_NOT_FOUND') throw error;
+    });
+  }
+  await removeDatabaseFiles(name, pair.vfs);
+};
+
+/**
+ * Creates a SQLite client with a unique database name (UUID) on `pair` —
+ * this project's (`TEST_TARGET`) unless a standalone test hands it the pair
+ * it resolved — and closes and deletes it when the test ends.
+ *
+ * Decisions: D-06 (unique name), D-07 (per-test cleanup), D-08 (shared helper).
+ * Until plan C's Task 9, `options.vfs` still pins and `options.needs` still
+ * resolves through `pairFor`; both go then.
+ */
+
+export async function createTestClient(
+  options: TestClientOptions = {},
+  pair?: TestTarget,
+) {
   const dbName = `bsq-test-${crypto.randomUUID()}`;
   const { needs: _needs, skip: _skip, ...clientOptions } = options;
-  const pair: TestTarget =
-    options.vfs === undefined
+  const resolved: TestTarget =
+    pair ??
+    (options.vfs === undefined
       ? options.needs === undefined
         ? pairFor()
         : pairFor(options.needs, options.skip)
@@ -230,60 +293,50 @@ export async function createTestClient(options: TestClientOptions = {}) {
           vfs: options.vfs,
           build:
             options.build ?? defaultBuildFor(options.vfs, AVAILABLE_FEATURES),
-        };
-
+        });
   // createSQLiteClient is synchronous — workers initialize in the background.
   // The first query queues until a worker reaches READY.
   const db = createSQLiteClient(dbName, {
     ...clientOptions,
-    vfs: pair.vfs,
-    build: pair.build,
+    vfs: resolved.vfs,
+    build: resolved.build,
   } as InternalSQLiteClientOptions);
-
   // onTestFinished, NOT afterEach: afterEach registered from inside a test
-  // body is suite-scoped, not test-scoped — under rstest it never ran, and
-  // nothing a test created was ever removed. The same trap is documented on
-  // interceptWorkers below.
-  onTestFinished(async () => {
-    // Closing first is what lets the deletion below happen at all —
-    // deleteDatabase refuses with DATABASE_IN_USE while a client holds the
-    // connection lock. A client the test deliberately poisoned may refuse to
-    // close, which is that test's subject, not this cleanup's.
-    await db.close().catch(() => {});
-    // AccessHandlePoolVFS (OPFS without a folder, the only one) holds a FIXED pool of
-    // six OPFS files and hands a slot back on its own xDelete alone: jClose
-    // returns nothing, and the path→handle association is written into the
-    // OPFS file header, so it outlives the worker, the page and the whole
-    // run. Since every test opens a fresh UUID name, the sixth test exhausts
-    // the origin and nothing opens afterwards. removeDatabaseFiles cannot
-    // help — that VFS keeps its files under opaque names inside its own
-    // directory, so removing the database's name matches nothing.
-    //
-    // NOT swallowed, and that is the point. This call used to end in
-    // `.catch(() => {})`; it was failing on every test that had just killed a
-    // busy worker — the dying worker still held the directory — so the slot
-    // leaked, the pool ran out, and the next tests failed for a reason nobody
-    // could see. The silence cost a full day (`mem:lessons`). A cleanup that
-    // cannot clean must say so.
-    if (
-      VFS_CAPABILITIES[pair.vfs].storage === 'opfs' &&
-      folderOf(pair.vfs) === undefined
-    ) {
-      await withNativeWorker(() =>
-        deleteDatabase(dbName, { vfs: pair.vfs, build: pair.build }),
-      ).catch((error: unknown) => {
-        // DATABASE_NOT_FOUND only: the client never got as far as creating
-        // the file, which is the subject of several tests here and not a
-        // cleanup failure. Anything else — a slot this cleanup could not
-        // give back — must reach the test.
-        if ((error as SQLiteError)?.code !== 'DATABASE_NOT_FOUND') throw error;
-      });
-    }
-    await removeDatabaseFiles(dbName, pair.vfs);
-  });
-
+  // body is suite-scoped, not test-scoped — under rstest it never ran.
+  onTestFinished(() => cleanUp(dbName, resolved, [db]));
   return db;
 }
+
+/** What a test may set on a client it opens: everything but where. */
+export type ClientOptions = Omit<InternalSQLiteClientOptions, 'vfs' | 'build'>;
+
+/**
+ * One database, on this project's pair, that a test opens as many clients on
+ * as its subject needs, each when it decides and with its own options;
+ * `spelling` opens it under another spelling of the same name (`./name`).
+ * Every client is closed and the database deleted when the test ends.
+ */
+export const sharedDatabase = (): {
+  name: string;
+  open: (options?: ClientOptions, spelling?: string) => SQLiteDB;
+} => {
+  const name = `bsq-shared-${crypto.randomUUID()}`;
+  const pair: TestTarget = { vfs: TEST_TARGET.vfs, build: TEST_TARGET.build };
+  const clients: SQLiteDB[] = [];
+  onTestFinished(() => cleanUp(name, pair, clients));
+  return {
+    name,
+    open: (options = {}, spelling = name) => {
+      const client = createSQLiteClient(spelling, {
+        ...options,
+        vfs: pair.vfs,
+        build: pair.build,
+      } as InternalSQLiteClientOptions);
+      clients.push(client);
+      return client;
+    },
+  };
+};
 
 export type WorkerRecord = {
   worker: Worker;
