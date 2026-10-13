@@ -22,7 +22,7 @@ unmeasured ground.
   tags about two minutes after the job ended. At rc.8 two cells (`OPFSCoopSyncVFS/async`, `MemoryAsyncVFS/jspi`) took
   ~17 min against 3-9 for the others, under the 25-minute job limit — not looked into, and not
   seen at rc.9.
-  Procedure: `mem:conventions`, § Releasing.
+  Procedure: `mem:conventions/releasing`.
 - **The vendored wa-sqlite sits on upstream `master` of 2026-10-13** (`6238f532`, #374 merged;
   `package.json` has the SHA; the built worker, the `.wasm` and `index.js` are byte-identical to the
   previous pin's). **No patch since then**: every change the library carried has merged upstream,

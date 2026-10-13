@@ -11,9 +11,9 @@ Each memory is small enough to read whole. Start with `mem:state`. A name with a
 | `mem:measurements` | Every number this project owns, with its date and method — an index of its sub-memories, by theme | per measurement |
 | `mem:follow-ups` | The open backlog, one short entry each; `mem:follow-ups/notes` holds what was closed or kept on purpose, `mem:follow-ups/dormant` the entries waiting on an event, `mem:follow-ups/wa-step` the `step()` workstream, `mem:follow-ups/test-planner-design` the browser-suite planner design | ongoing |
 | `mem:lessons` | Lessons paid for once; do not relearn them — an index of its sub-memories, by theme | append only |
-| `mem:conventions` | Working rules not already in `AGENTS.md` | rarely |
+| `mem:conventions` | Working rules not already in `AGENTS.md`; releasing in `mem:conventions/releasing`, contributing to wa-sqlite in `mem:conventions/upstream` | rarely |
 | `mem:git-hooks` | The three git hooks, what they run, what a green hook does not prove | rarely |
-| `mem:history` | What each wave/branch shipped, in one line, by month; `mem:history/waves` holds what each merged wave left that the code will not tell you | append only |
+| `mem:history` | What each wave/branch shipped, in one line, one memory per week (Monday to Sunday); `mem:history/waves` holds what each merged wave left that the code will not tell you | append only |
 | `mem:upstream` | Every report on work sent to wa-sqlite, with its path in `docs/upstream/` | per upstream PR |
 
 ## Rules for keeping these usable

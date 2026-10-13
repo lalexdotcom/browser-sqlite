@@ -1,6 +1,6 @@
 # History — what each merged wave left that the code will not tell you
 
-**Frozen since 2026-10-08: no new entry here.** Its last wave merged on 2026-09-15; what has merged since lives in the monthly tables of `mem:history` (`mem:history/2026-10` and on).
+**Frozen since 2026-10-08: no new entry here.** Its last wave merged on 2026-09-15; what has merged since lives in the weekly tables of `mem:history` (`mem:history/2026-09-14-to-20` and on).
 
 Part of `mem:history`. Moved from `mem:state` on 2026-10-03, newest first as it was written there.
 
