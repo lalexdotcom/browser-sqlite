@@ -10,8 +10,11 @@ pnpm install
 # session in each, which downloads browsers and drivers into
 # node_modules/.cache/wdio.
 # shellcheck disable=SC2046
-sudo apt-get update && sudo apt-get install -y --no-install-recommends $(node scripts/browsers.ts deps)
+sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck $(node scripts/browsers.ts deps)
 node scripts/browsers.ts install
+# actionlint at the version scripts/actionlint.ts pins; shellcheck above lets it
+# check every run: block.
+node scripts/actionlint.ts install
 
 # There is no top-level `serena index` and no `--project-root` flag. When it
 # creates .serena/project.yml, `project index` asks about each extra language it

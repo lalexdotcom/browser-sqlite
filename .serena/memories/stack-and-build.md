@@ -57,8 +57,8 @@ placeholder `undefined` must keep a callable union type.
 | `unit` | `tests/unit/` | Node, pure logic and the tooling scripts' own tests |
 | `chrome · <vfs>/<build>`, `firefox · <vfs>/<build>` | `tests/browser/*.test.ts` | Stock Chrome / Firefox, one project per DECLARED pair whatever the environment (`allTargets()`, `tests/target-projects.ts`); the planner chooses which run. `firefox/`, `isolated/` and the never-created `chromium/` are gone since `test/convert-needs` (2026-10-13): a directory decides nothing, tags do |
 | `isolated chrome · …`, `isolated firefox · …` | `tests/browser/*.test.ts` | The same browsers with COOP/COEP; `tests/browser/isolation-check.ts` (a setup file, before the guard) fails the file by name (`ISOLATION_MISSING`) if the page is not cross-origin isolated or a `SharedArrayBuffer` does not reach a worker |
-| `conformance chrome`, `conformance firefox` | `tests/conformance/` | Every declared (vfs, build) pair through six invariants; no target and no per-engine directory, deliberately — the value is the same invariants on both engines |
-| `consumer` | `scripts/consumer-smoke.ts` | On demand, `pnpm test:consumer`: packs the tarball into temp app dirs **outside** the repo and drives dev and build for each — Vite, Vite 6 (pinned), rsbuild, webpack, Parcel — plus no-bundler static serve and a bare-specifier assertion over `dist/**/*.js`, with stock Chrome through WebdriverIO. Its console, page-error and failed-request listeners are WebDriver BiDi events |
+| `conformance chrome`, `conformance firefox` | `tests/conformance/` | Every VFS on its default build for the engine through seven invariants (`invariants.test.ts`), the VFS folders (`folders.test.ts`), and every declared (vfs, build) pair opening and serving a query (`builds.test.ts`); no target and no per-engine directory, deliberately — the value is the same invariants on both engines |
+| `consumer` | `scripts/consumer-smoke.ts` | `pnpm test:consumer`, run by `pre-push` for a `v*` tag and by the release's `consumer-smoke` job (nowhere else since 2026-10-13): packs the tarball, lints it statically — publint 0.3.24 (`package.json` against the files shipped, `--strict`) and `@arethetypeswrong/cli` 0.18.5 (the published types under each resolution mode, `--profile esm-only`) — then installs it into temp app dirs **outside** the repo and drives dev and build for each — Vite, Vite 6 (pinned), rsbuild, webpack, Parcel — plus no-bundler static serve and a bare-specifier assertion over `dist/**/*.js`, with stock Chrome through WebdriverIO. Its console, page-error and failed-request listeners are WebDriver BiDi events |
 
 **One `vitest.config.ts`, one project per declared pair.** A target is a (vfs, build) pair, handed to the tests through Vitest's `provide` / `inject` (`bsqTarget`, `bsqEnvironment`). **Since `test/convert-needs` (plan C, 2026-10-13) a test runs on its cell's pair or not at all**: it states what it needs as literal tags (`requires:`/`excludes:<property>`, `vfs:`, `build:`, `browser:`, `isolated`, `not-isolated`, `standalone`; vocabulary in `tests/need.ts`, declared to Vitest by `declaredTags`) and the planner places it; pinning (`createTestClient({ vfs })`), `pairFor`'s fallback, `resolvePair` and `BSQ_TEST_NEEDS` are gone, down to the types. In a test: `TEST_TARGET` is the pair, read INSIDE a test or a helper a test calls (never at module/describe scope — it is counted, see the trace); `createTestClient(options?, pair = TEST_TARGET)` — `options` is everything but `vfs`/`build` (`name`, the client's log name, allowed), `pair` is passed only by the standalone sweeps (`statement-errors`, `vfs` › every wired VFS); `sharedDatabase()` → `{ name, open(options?, spelling?) }` opens several clients on ONE database of the pair, each when the test decides, and closes them and deletes the database after the test (one `cleanUp` with `createTestClient`: `deleteDatabase` on IndexedDB and on AccessHandlePoolVFS, files removed elsewhere); a standalone test reads its pair with `standalonePair(tags)`. **Standalone** = a test that opens no VFS, or whose subject is to sweep every VFS or every build so `pnpm test` catches it early; the matrix leaves those out on purpose (user, 2026-10-13). `BSQ_TEST_TARGETS` is an input of `scripts/test-plan.ts` alone (its start pairs, never substituted). **Project filters must be globs** (`--project 'chrome ·*'`) — and a direct `vitest run --project 'chrome ·*'` now starts all 22 Chrome pairs: target one project by its full name, or go through `node scripts/test-plan.ts --pair <vfs/build> <file>`. Each browser project builds its own `instances` array: Vitest renames an instance in place, and two projects sharing one fail at startup. **The trace**: `BSQ_TEST_TRACE=1` adds `tests/browser/trace.ts` (last setup file) which records per test the reads of `TEST_TARGET`, the workers started and the tags in `task.meta.bsqTrace`; `node scripts/trace-diff.ts <before.json> <after.json>` (two `test-plan --json` reports) lists the tests that ran before and not after (only passed/failed count as a run), the new ones, and traced tests that read no pair and are not standalone.
 
@@ -228,105 +228,8 @@ aligned with it wholesale: the image, the stock browsers (`post-create.sh` insta
 
 ## CI and hooks
 
-- `.github/workflows/ci.yaml` — two jobs on push to `main` and every PR; WebdriverIO's browsers
-  cached by the hash of `scripts/browsers.ts`; `concurrency` cancels superseded runs. **Every job that
-  drives a browser (`verify`, `consumer-smoke`, `matrix.yaml`'s `cells`) runs two steps after the cache
-  (2026-10-11):** `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` — the runner has
-  it at 1, and Chrome for Testing, having no AppArmor profile, then exits at launch ("Chrome instance
-  exited"); lifting it keeps the sandbox, `--no-sandbox` would drop it — and `node scripts/browsers.ts
-  install`, so the browsers and drivers download once, before `test-parallel` starts jobs that would
-  race on a cold cache (chromedriver spawned before it was executable, `EACCES`). First green run on
-  the WebdriverIO suite: PR #7, run 38182346151.
-  - `verify` — `biome ci` + `tsc --noEmit` + `pnpm build` + `pnpm test`. Blocking.
-  - `consumer-smoke` — `pnpm test:consumer`. Blocking since wave P.
-- `.github/workflows/release-and-publish.yaml` — on `v*` tags, build + publish, and it
-  calls `pages.yaml` with `needs: release`. `release` and `untag` need `verify` (`ci.yaml`) and
-  `matrix`.
-- `.github/workflows/matrix.yaml` — `plan` + `cells` since `ci/test-planner` (plan C step 6, 2026-10-13). `plan` (bounded at 15 min) installs the browsers and runs `node scripts/test-plan.ts --mode all-pairs --plan-only --pairs-out pairs.json`: it probes both browsers, fails ONCE on a dead test over the whole plan, and outputs the pairs that have a non-empty cell; `cells` runs one job per such pair (`test-matrix.ts --pair`, its non-empty columns only), `fail-fast`. Triggers: `workflow_call` from the release, `workflow_dispatch` by hand on any branch (2026-10-11, user), and **every push of `main`** (spec § 9); `concurrency: matrix-${{ github.ref }}`, cancel-in-progress — a new push of `main` supersedes the previous run (a manual run on `main` too), a release's call runs under its tag's ref and is never cancelled by `main`. **First GitHub run green on 2026-10-13** (run 38387953580, dispatched on `ci/test-planner`): `plan` green, 22 pair jobs from its output, 23/23 in ~8 min. The push trigger is proven too: the push of `main` with step 6 started run 38390480232 (event `push`, 23/23 green) beside CI run 38390480173 (green, `pnpm test` planned 16 cells with no dead test).
-- **A dead test fails CI in two places:** `matrix.yaml`'s `plan` (all-pairs, always fatal) and `ci.yaml`'s `verify` (`pnpm test` is complement mode; `scripts/plan-report.ts`'s `deadIsFatal` makes a full complement run fatal under `CI=true`, a warning locally — checked 2026-10-13 with a throwaway dead test: exit 1 under `CI=true`, 0 without). A dead standalone test is caught only by `verify` (all-pairs leaves standalone tests out). A normal run that a dead test fails says so on its last line.
-- `.github/workflows/pages.yaml` — **the site is a pure function of two tags** since
-  2026-09-03: `/` is the latest release tag, `/preview/` is the `preview` tag when one
-  exists. **The ref that triggered a run is never built and never consulted**, so every
-  trigger produces the same site and re-running anything is idempotent. Want a preview:
-  `git tag -f preview && git push -f origin preview`. Want it gone: delete the tag.
-
-  Triggers: `workflow_call` (from release-and-publish), `workflow_dispatch` (republish),
-  push of `preview`, and `delete`. **`push` does NOT fire for a deleted ref** — `delete` is
-  the event for that, it carries no ref filter, hence a job-level guard.
-
-  **The root resolves `/releases/latest` FIRST and falls back to the list, and that order is
-  load-bearing.** `latest` is the release GitHub designates and the one npm's `latest`
-  dist-tag follows — which is what the page's badge claims the root to be. The list alone
-  would put the root on the newest rc once a stable version exists, while
-  `npm i browser-sqlite` still served the stable one, and the badge would be a lie.
-  But **every release cut so far is a PRERELEASE and `latest` excludes those**, so it answers
-  404 today: `gh release view` and `GET /releases/latest` both said "release not found", which
-  is how the first preview run failed on 2026-09-03. Hence the fallback to
-  `GET /releases?per_page=20`, newest first, drafts filtered out. The fallback stops being the
-  live path the day a stable version ships.
-
-  **`gh api` writes the response BODY to stdout when it fails**, and `--jq` does not filter
-  it. So `VAR=$(gh api … || true)` captures `{"message":"Not Found",…}` as if it were data —
-  it passed every emptiness test and died three steps later in `actions/checkout` with
-  `fatal: invalid refspec '+refs/heads/{"message":"Not Found"…'`. **Gate on the exit status**
-  — `if VAR=$(gh api …); then` — and shape-check anything that reaches a checkout.
-
-  What bites, all of it silent:
-  - **Order.** `assemble.ts` opens with `rmSync(target, …)`, so the root must be assembled
-    BEFORE the preview that sits inside it. The reverse deletes the preview.
-  - **The root's ASSEMBLER is copied in from the triggering checkout; only its content comes
-    from the release tag.** Otherwise the step runs the released tag's own assembler,
-    frozen at whatever shipped, which predates the flags and falls back to the environment —
-    and the environment names the TRIGGER. On 2026-09-03 that made the root label itself
-    `preview`; harmless only because the badge does not print the ref when `IS_RELEASE` is
-    true, and a lie the moment a `delete` run sets REF_TYPE to `branch` and the real release
-    shows "development build". The copy degrades to a no-op once a release ships a script
-    that takes the flags.
-  - **The preview step runs the preview tree's OWN assembler, and its name depends on the tag**: `assemble.mjs` before 2026-10-03, `assemble.ts` since. The step takes whichever exists; hard-coding one name fails on a preview tag from the other side of the rename.
-  - **The build label is passed to `assemble.ts` as an ARGUMENT — `--ref` and `--release` —
-    never through the environment.** Actions reposes the `GITHUB_*` variables for every step
-    and IGNORES a step-level `env:` that tries to override them, so a run building a ref
-    other than its trigger cannot describe itself that way. Overriding them was tried and
-    shipped on 2026-09-03: both halves came out labelled with the triggering tag and BOTH
-    claimed to be the published package, `/preview/` included. The preview passes no
-    `--release`, which is the point — `preview` IS a tag, and without an explicit label the
-    script takes any tag for a release tag.
-  - **A `delete` run executes from the DEFAULT BRANCH**, so its deployment presents
-    `refs/heads/main`. An environment restricted to tags refuses it, and a deleted tag then
-    leaves its preview up until the next release. `main` must stay allowed for deletion to
-    work.
-  - **A run that publishes nothing could cancel one that does, and did.** `cancel-in-progress` on
-    a shared group, `concurrency` evaluated before any job runs, and `delete` with no ref filter:
-    deleting a merged branch on 2026-09-04 killed the preview deploy pushed two seconds earlier,
-    then skipped itself, leaving the site on the previous build with nothing to say so. Fixed by
-    repeating the job's guard in the group expression, so a skipping run gets
-    `pages-noop-<run_id>` and contends with nobody. **The two conditions must stay identical;
-    `concurrency` cannot read `env`.** The expression was verified valid on GitHub; the
-    cancellation itself was never staged.
-
-  **Which workflow FILE runs differs by trigger**, and it bites once: a `push` runs the file
-  as it exists at the pushed commit, so tagging a commit that predates a change to this file
-  fires nothing. `delete` reads the default branch; `workflow_call` runs at the caller's ref.
-  There is no `workflow_dispatch` — removed on the user's instruction, 2026-09-03.
-  **Re-pushing the tag UNCHANGED does nothing** — git answers `Everything up-to-date` and emits no
-  event, so no run starts (believed otherwise until 2026-09-04). To republish without moving it:
-  `git push origin --delete preview && git push origin preview`, which briefly takes the preview down.
-
-  **The `github-pages` environment allows `main`, the `v*` tags and the `preview` tag**
-  (user, 2026-09-03). `main` is there for one reason and it is not obvious: `delete` runs
-  from the default branch, so without it a deleted `preview` tag could not take its preview
-  down. `feat/*` was dropped — no branch deploys any more. Putting unmerged work on a real
-  device through the `preview` tag is an exposure kept deliberately (user, 2026-08-26), which is
-  what makes the page's "development build" banner and `buildRef()` in
-  `scripts/bench/assemble.ts` load-bearing.
-- Local hooks (simple-git-hooks), three since 2026-09-11: `pre-commit` runs `tsc`,
-  `lint-staged` and the unit project (~1.5 s), or `pnpm test` while concluding a conflicted
-  merge; `pre-merge-commit` runs `tsc`, `biome ci .` and `pnpm test`; `pre-push` runs those three too, plus since
-  2026-09-15 CI's VFS table check (`pnpm docs:vfs && git diff --exit-code VFS.md README.md`, README since 2026-10-06), before the
-  suite so a stale table fails fast. Since 2026-10-05 the two merge paths (`pre-merge-commit`, and `pre-commit` concluding a conflicted merge) first run `pnpm install --frozen-lockfile` when the merge changes the dependencies (`mem:git-hooks`). The render rewrites `VFS.md`'s generated spans in the working
-  tree, so an UNCOMMITTED hand edit inside one is overwritten silently by a push. All
-  bypassable with `--no-verify`. The agent's own verification at delivery is the gate (user),
-  CI the independent one. Details: `mem:git-hooks`.
+- **The GitHub workflows** (`ci.yaml`, `release-and-publish.yaml` and its `prior` job, `matrix.yaml`, `pages.yaml` and its bench check), actionlint, and what bites in each: `mem:stack-and-build/ci`.
+- Local hooks (simple-git-hooks): `pre-commit`, `pre-merge-commit`, `pre-push` (and `post-checkout`); since 2026-10-13 each runs what its change calls for, through `node scripts/hook-gate.ts <hook> --run` — `mem:git-hooks`. The render of `pnpm docs:vfs` rewrites `VFS.md`'s generated spans in the working tree, so an UNCOMMITTED hand edit inside one is overwritten silently by the docs check. All bypassable with `--no-verify`. The agent's own verification at delivery is the gate (user), CI the independent one.
 - `tsconfig.build.json` (`include: ["src"]`, `rootDir: "src"`) drives declaration
   generation via `source.tsconfigPath`. Without it the root tsconfig pushes the common
   source root to the repo root: declarations would land in `dist/src/` while
@@ -339,7 +242,7 @@ aligned with it wholesale: the image, the stock browsers (`post-create.sh` insta
 
 `scripts/bench/html/index.html`, one self-contained file served beside a **verbatim** copy
 of `dist/`, so it exercises the library exactly as a bundler-free consumer would. Scripts:
-`scripts/bench/{assemble,check,dev}.mjs`. `pnpm bench:dev` / `bench:serve` / `bench:build`.
+`scripts/bench/{assemble,check,dev}.ts`. **`check.ts [chrome|firefox] [--all] [--dir <path>]`** serves `_site` (or `--dir`, e.g. `_site/preview`) and drives the page; since 2026-10-13 `pages.yaml` runs it (Chrome, `--all`) on the half a run builds anew — the root when a release calls it, `/preview/` on a push of `preview`, nothing on `delete` — before uploading, so a red page stops the deployment (not the npm publication, which comes before); and `pre-merge-commit` runs it when a merge moves `scripts/bench/`. A `src/` change that breaks the page is seen only at the next deployment (accepted, spec § 8). `pnpm bench:dev` / `bench:serve` / `bench:build`.
 `http://127.0.0.1` is a secure context, so OPFS works with no certificate. A phone on the
 LAN is not, so a tunnel is needed there. `.bench/` holds device exports and is gitignored —
 read, never committed.

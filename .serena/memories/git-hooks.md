@@ -11,28 +11,23 @@ The local hooks, why they are not the gate, and what a green hook does not prove
 
 **A branch that predates the hook uninstalls it.** `pnpm install` runs `prepare: simple-git-hooks`, which installs the ARRIVING branch's `simple-git-hooks` config and removes hooks absent from it — so the hook fires once into such a branch, then is gone, and the switch back does not reinstall. Measured on the first round trip. Fixed there by cherry-picking the hook commit (`e22d0f2` on `main`) onto the branch; do the same for any older branch before switching to it, or run `pnpm install` by hand after coming back. **A `git worktree add` on an older tag does the same** (2026-10-03): `post-checkout` runs `pnpm install` in the new tree, whose `prepare` reinstalls the SHARED `.git/hooks` from that tag's config — rc.5's dropped `post-checkout`. `pnpm exec simple-git-hooks` from the main checkout restores them; check `ls .git/hooks` after any worktree on an old ref.
 
-## The checks skip what they do not check (user, 2026-10-06)
+## One script decides and runs (user, 2026-10-13; first version 2026-10-06)
 
-`pre-commit`, `pre-merge-commit` and `pre-push` first run `node scripts/hook-gate.ts <hook>`, which lists the files at stake and exits 0 (full checks), 10 (generated docs only: `pnpm docs:vfs` and its `git diff`, `pre-push` only) or 11 (nothing). Files: the index against `HEAD` for the first two (for a merge, what the merge brings); for `pre-push`, the files of the commits no remote branch has yet (`git log <sha> --not --remotes`), so a tag on a pushed commit runs nothing. **Classified by exclusion**: `.github/`, `.serena/`, `docs/`, `.claude/` and any `.md` but `README.md`/`VFS.md` are ignored; `README.md`/`VFS.md` are generated docs; everything else is code, so a new kind of file is checked by default. Any other exit code (an error in the gate) falls back to the full checks. The conditional `pnpm install` of the merge hooks still runs first. Asked after a release ran the same commit through `pnpm test` three times and a workflow-only merge paid the whole suite. The shell was checked with stand-ins: a failing check still fails the hook, a failed install still stops it. There is no workflow linter, so a workflow change is checked by nothing locally.
+Every hook command ends with `node scripts/hook-gate.ts <hook> --run` (after the conditional `pnpm install` of the merge paths). The script gathers the facts from git, decides with a pure, unit-tested `checksFor(hook, facts)`, prints the decision on one line, and runs the checks in a fixed order (`tsc`, `lint-staged`, `biome`, `actionlint`, `docs`, `unit`, `test`, `conformance`, `bench`, `consumer`), stopping at the first failure with its code. Without `--run` it prints the decision only — `node scripts/hook-gate.ts pre-push` by hand does not wait on a terminal's stdin and says "no refs on stdin" rather than "nothing to check" (git runs the hook only with refs to push); from a non-TTY empty stdin (an agent's shell) it falls back to the full list. If gathering the facts throws, the hook's full list runs. Design: `docs/superpowers/specs/2026-10-13-test-triggers-design.md` § 3.
+
+**File classes, by exclusion:** workflows (`.github/workflows/*.yml|yaml`); ignored (the rest of `.github/`, `.serena/`, `docs/`, `.claude/`, any `.md` but `README.md`/`VFS.md`); generated docs (`README.md`, `VFS.md`); code (everything else, so a new kind of file is checked by default). A changed workflow adds `actionlint` on every hook; a change made only of workflows runs it alone.
+
+**The rules:**
+- `pre-commit`: code staged → `tsc`, `lint-staged`, `unit` (~2 s).
+- `pre-merge-commit`, and `pre-commit` concluding a conflicted merge (`MERGE_HEAD`; it keeps `lint-staged` too): files = what the merge brings. Code → `tsc`, `biome`, `docs`, `pnpm test`; plus `conformance` when `src/`, `tests/conformance/`, `patches/` or `pnpm-lock.yaml` moved; plus the bench check (`pnpm bench:build`, `check.ts chrome --all` on port 8123) when `scripts/bench/` moved; generated docs alone → `docs`.
+- `pre-push`: files of the commits no remote has yet. Code → `tsc`, `biome`, `docs`; plus `pnpm test` only when a pushed branch carries a **direct code commit** (`git log --first-parent --no-merges <sha> --not --remotes` touches code — commits that came in through a merge were tested by `pre-merge-commit`); plus `pnpm test:consumer` when a `refs/tags/v*` ref is pushed, even alone. A deleted ref counts for nothing.
+- `delivery` (not a hook, the agent's command): the `pre-merge-commit` rules on the branch against `main`, committed, uncommitted and untracked.
+
+The cases are unit-tested on throwaway repositories (`tests/unit/hook-gate.test.ts`): a direct commit vs a merged one, the release push (`main` and its tag in one stdin), a tag alone, a deleted ref, a new branch, a conflicted merge, delivery's three sources.
 
 ## The three commit/push hooks (user, 2026-09-11)
 
-Decided and installed on 2026-09-11, in `package.json` under `simple-git-hooks`:
-
-- `pre-commit` — `tsc`, then `lint-staged`, then the unit project: ~1.5 s. **While concluding a
-  merge that stopped on a conflict** (`MERGE_HEAD` exists) it runs `pnpm test` instead of the
-  unit project, because the commit that concludes such a merge fires `pre-commit` and never
-  `pre-merge-commit`; and before `tsc` it runs `pnpm install` if the merge changes the
-  dependencies (since 2026-10-05).
-- `pre-merge-commit` — `pnpm install` if the merge changes `package.json`, `pnpm-lock.yaml` or
-  `patches/` (since 2026-10-05), then `tsc`, `biome ci .`, `pnpm test`. Every merge here is `--no-ff`, so
-  every merge into `main` pays the full suite.
-- `pre-push` — the same, as the backstop for commits made directly on `main` before anything
-  reaches CI. Since 2026-09-15 it also runs CI's VFS table check, `pnpm docs:vfs && git diff
-  --exit-code VFS.md` (user), after a hand edit inside a generated span of `VFS.md` failed the
-  first CI run of rc.5 before it reached a single test. Since 2026-10-06 the same check covers
-  `README.md`, whose Browser support table `pnpm docs:vfs` generates (`git diff --exit-code
-  VFS.md README.md`, in CI too).
+Decided and installed on 2026-09-11, in `package.json` under `simple-git-hooks`; what each runs is decided per change since 2026-10-13 (§ One script decides and runs). History of that first version: `pre-commit` ran `tsc`, `lint-staged` and the unit project; `pre-merge-commit` and `pre-push` ran `tsc`, `biome ci .` and `pnpm test`, `pre-push` adding the generated-docs check (2026-09-15, after a hand edit inside a generated span of `VFS.md` failed rc.5's first CI run; `README.md` since 2026-10-06). Until 2026-10-13 `pre-push` re-ran the suite on merges `pre-merge-commit` had already tested.
 
 Verified in a scratch repository: an ordinary commit, a clean `--no-ff` merge, a conflicted
 merge concluded by `git commit` and by `git merge --continue`, and a push each fire the

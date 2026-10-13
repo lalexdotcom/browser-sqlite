@@ -1,10 +1,10 @@
 name: Matrix
 
 # Every declared VFS/build pair through the four columns of the matrix, one job
-# per pair. release-and-publish.yaml calls it as the gate of a publication;
-# workflow_dispatch runs it by hand on any branch, publishing nothing; every push
-# of `main` runs it too, so a pair that regresses is seen at the merge and not
-# at the next tag.
+# per pair. Every push of `main` runs it, so a pair that regresses is seen at
+# the merge; a release reuses that run, and calls this workflow only when the
+# tagged commit has no passing one. workflow_dispatch runs it by hand on any
+# branch, publishing nothing.
 on:
   workflow_call:
   workflow_dispatch:

@@ -7,27 +7,114 @@ on:
       - "v*.*.*-*"
 
 jobs:
-  # A tag is not a branch push, so ci.yaml never runs on it — and a red CI on
-  # `main` blocks nothing, since separate workflows cannot wait for each other.
-  # Calling it is what makes the gate real, and it covers what the cells
-  # cannot: the unit project, which the cells' `--project` filters (`chrome ·*`,
-  # `firefox ·*`, `isolated chrome ·*`, `isolated firefox ·*`) never select.
+  # The push of `main` that carries the tagged commit has run CI and the matrix
+  # on it. Wait for those runs and reuse them; anything but a passing run — none,
+  # cancelled by a later push of `main`, failed — makes the release run its own.
+  prior:
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      ci: ${{ steps.runs.outputs.ci }}
+      matrix: ${{ steps.runs.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Reuse the runs of the push of main
+        id: runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          SHA=$(git rev-parse HEAD)
+          # Both waits end within 50 of the job's 60 minutes: a wait that runs
+          # out means rerun, where a killed job would fail and untag a good tag.
+          DEADLINE=$((SECONDS + 50 * 60))
+          for WF in ci matrix; do
+            ID=$(gh run list --workflow "$WF.yaml" --commit "$SHA" --event push \
+              --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+            LEFT=$((DEADLINE - SECONDS))
+            if [ -n "$ID" ] && [ "$LEFT" -gt 0 ] \
+              && timeout "$LEFT" gh run watch "$ID" --exit-status --interval 30 > /dev/null; then
+              echo "$WF=success" >> "$GITHUB_OUTPUT"
+              echo "$WF.yaml: run $ID passed on $SHA, reused"
+            else
+              echo "$WF=rerun" >> "$GITHUB_OUTPUT"
+              echo "$WF.yaml: no passing run on $SHA (${ID:-none}), the release runs its own"
+            fi
+          done
+
+  # ci.yaml covers what the cells cannot: the unit project, which the cells'
+  # `--project` filters never select.
   verify:
+    needs: prior
+    if: needs.prior.outputs.ci != 'success'
     permissions:
       contents: read
     uses: ./.github/workflows/ci.yaml
 
   # The 22 pairs, in matrix.yaml so that they can also be run by hand.
   matrix:
+    needs: prior
+    if: needs.prior.outputs.matrix != 'success'
     permissions:
       contents: read
     uses: ./.github/workflows/matrix.yaml
+
+  # The packed tarball, statically (publint, Are the Types Wrong?) and through
+  # five bundlers and a page with none. It proves the package is usable once
+  # published, so it runs for a release only, never on a PR or a push of main.
+  consumer-smoke:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Stock Chrome and Firefox at the versions scripts/browsers.ts pins, and
+      # their drivers, downloaded by WebdriverIO on first use. The key is that
+      # file: a new pin is a new cache. GitHub's Ubuntu images carry both
+      # browsers' system libraries.
+      - name: Cache WebdriverIO browsers
+        uses: actions/cache@v6
+        with:
+          path: node_modules/.cache/wdio
+          key: wdio-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/browsers.ts') }}
+
+      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor.
+      # Chrome's sandbox needs them, and only the system Chrome has a profile
+      # that allows them: the Chrome for Testing WebdriverIO downloads exits at
+      # launch ("Chrome instance exited"). Lifting the restriction keeps the
+      # sandbox, where --no-sandbox would drop it.
+      - name: Let Chrome's sandbox create user namespaces
+        run: |
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # One download per browser and driver, before anything runs in parallel:
+      # on a cold cache, parallel Vitest jobs fetched the same chromedriver at
+      # once, and one spawned it before it was executable (EACCES).
+      - name: Install browsers
+        run: node scripts/browsers.ts install
+
+      - name: Consumer smoke test
+        run: pnpm test:consumer
 
   # Only when a CHECK failed, so before `release` has run and before anything
   # could be published. A failure after npm publish is left alone: deleting the
   # tag there would orphan a published version.
   untag:
-    needs: [verify, matrix]
+    needs: [prior, verify, matrix, consumer-smoke]
     if: failure()
     permissions:
       contents: write
@@ -42,7 +129,10 @@ jobs:
           echo "::notice::${{ github.ref_name }} was deleted: the release checks did not pass."
 
   release:
-    needs: [verify, matrix]
+    needs: [prior, verify, matrix, consumer-smoke]
+    # A check reused from the push of main is skipped here, and a skipped need
+    # would skip this job without the condition.
+    if: ${{ !cancelled() && !failure() }}
     permissions:
       contents: write
       # npm trusted publishing: the action publishes and moves dist-tags
@@ -115,12 +205,14 @@ jobs:
           release-notes-file: ${{ steps.notes.outputs.file }}
 
   # The benchmark page is published for the version that was just released, and
-  # only if the release actually succeeded — `needs` is what makes that true.
-  # Because a reusable workflow runs at the caller's ref, this builds the tag,
-  # so the page and the npm tarball are the same code and the page's banner can
-  # say so.
+  # only if the release actually succeeded. The condition is explicit because a
+  # skipped ancestor (verify or matrix, reused from the push of main) would skip
+  # this job too. Because a reusable workflow runs at the caller's ref, this
+  # builds the tag, so the page and the npm tarball are the same code and the
+  # page's banner can say so.
   pages:
     needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     permissions:
       contents: read
       pages: write
