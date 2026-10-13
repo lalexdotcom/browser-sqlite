@@ -7,6 +7,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { availableParallelism } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -245,6 +246,23 @@ export function buildOnce(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     }
   }
   return { ...env, BSQ_TEST_BUILT: '1' };
+}
+
+/**
+ * The environment of one job: its own Vite cache, read by `vitest.config.ts`.
+ * Processes that share a project's dep-optimizer cache race on a cold or stale
+ * one — each commits its optimization by renaming `deps` with no lock, and the
+ * loser fails `ENOENT` mid-run or leaves a `deps_temp_*` orphan. Named after
+ * the job, so the same job finds its cache warm on the next run.
+ */
+export function jobEnv(
+  env: NodeJS.ProcessEnv,
+  jobId: string,
+): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    BSQ_VITE_CACHE_DIR: join(ROOT, 'node_modules/.vite/jobs', jobId),
+  };
 }
 
 /** One process of a parallel run: a project, or one shard of it. */

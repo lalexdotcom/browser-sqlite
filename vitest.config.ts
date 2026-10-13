@@ -81,6 +81,11 @@ const browserProject = (
 });
 
 export default defineConfig({
+  // One Vite cache per parallel job (scripts/parallel.ts, jobEnv): processes
+  // sharing a dep-optimizer cache race when they commit it.
+  ...(process.env.BSQ_VITE_CACHE_DIR
+    ? { cacheDir: process.env.BSQ_VITE_CACHE_DIR }
+    : {}),
   resolve: {
     alias: [
       { find: /^browser-sqlite$/, replacement: built('index.js') },

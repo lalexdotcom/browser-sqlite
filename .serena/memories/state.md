@@ -77,7 +77,7 @@ here on purpose: a total alone cannot say which suite moved.
 
 ## Owed — ours to move
 
-- **Next: the Vite dep-optimizer race between parallel Vitest processes** (`mem:follow-ups`, user 2026-10-13).
+- **The Vite dep-optimizer race between parallel Vitest processes is fixed on `fix/vite-cache-per-job`** (one cache per job; `mem:follow-ups/notes`), awaiting the user's approval to merge.
 - **Done and pushed (2026-10-13):** the test planner (plans A, B, C; the matrix plans first and runs on every push of `main`), and the test-triggers review (`docs/superpowers/specs/2026-10-13-test-triggers-design.md`: hooks per change, actionlint, the release reusing the push-of-`main` runs, publint/attw, the Pages bench check; `mem:conventions` § What runs where). CI 38441033562 and matrix 38441033564 green on the push. **Left for GitHub to prove:** the release's `prior` job and its `release`/`pages` conditions and `consumer-smoke` at the next release; the Pages bench check at the next push of `preview`.
 - **The container rebuild waits for the user:** `post-create.sh` on a fresh container (`node scripts/browsers.ts install` prints two `ok`, actionlint installs, `pnpm test` green). The Vitest + WebdriverIO design: `docs/superpowers/specs/2026-10-10-vitest-webdriverio-design.md`.
 
