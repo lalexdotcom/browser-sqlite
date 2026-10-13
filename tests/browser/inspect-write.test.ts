@@ -1,10 +1,6 @@
-import {
-  createSQLiteClient,
-  deleteDatabase,
-  inspectDatabase,
-} from 'browser-sqlite';
-import { describe, expect, it, onTestFinished } from 'vitest';
-import { TEST_TARGET } from './helpers';
+import { inspectDatabase } from 'browser-sqlite';
+import { describe, expect, it } from 'vitest';
+import { sharedDatabase, TEST_TARGET } from './helpers';
 
 // The write-lock accounting `inspectDatabase` reports is generic — nothing
 // here is specific to one VFS family — so the no-client case below follows
@@ -20,20 +16,12 @@ describe('inspectDatabase write', () => {
     expect(result.write).toEqual({ tab: null, sameTab: false, waiting: 0 });
   });
 
-  // One VFS: two clients must share one database; OPFSAdaptiveVFS shares it
-  // on every engine (see `secondClientOutcome`). Measured: on Firefox's
-  // OPFSWriteAheadVFS/sync target, the second client's first query rejects
-  // with DATABASE_IN_USE (no `readwrite-unsafe`), so this cannot follow the
-  // target.
-  it('names the writing tab and counts who waits', async () => {
-    const file = 'writing.db';
-    const vfs = 'OPFSAdaptiveVFS' as const;
-    const a = createSQLiteClient(file, { vfs });
-    const b = createSQLiteClient(file, { vfs });
-    onTestFinished(async () => {
-      await Promise.all([a.close(), b.close()]).catch(() => {});
-      await deleteDatabase(file, { vfs }).catch(() => {});
-    });
+  it('names the writing tab and counts who waits', {
+    tags: ['requires:shared-second-client'],
+  }, async () => {
+    const shared = sharedDatabase();
+    const a = shared.open();
+    const b = shared.open();
     await a.write('CREATE TABLE t (v)');
 
     let seen: Awaited<ReturnType<typeof inspectDatabase>> | undefined;
@@ -54,7 +42,7 @@ describe('inspectDatabase write', () => {
       queued = b.write('INSERT INTO t VALUES (2)');
 
       for (let attempt = 0; attempt < 50; attempt++) {
-        seen = await inspectDatabase(file, { vfs });
+        seen = await inspectDatabase(shared.name, { vfs: TEST_TARGET.vfs });
         if (seen.write.waiting >= 1) break;
         await new Promise<void>((r) => setTimeout(r, 20));
       }

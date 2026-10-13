@@ -73,12 +73,12 @@ describe('per-VFS default pragmas', () => {
     expect(modes.locking).toBe('exclusive');
   });
 
-  it('applies nothing on a VFS that declares no defaults', async () => {
-    // One VFS: the subject IS "declares no defaults", so the VFS is the
-    // fixture and cannot follow the target — against AccessHandlePoolVFS,
-    // the only one that declares any, the premise is false and this read
-    // 'exclusive'. MemoryVFS declares none and needs nothing of the engine.
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+  it('applies nothing on a VFS that declares no defaults', {
+    tags: ['excludes:default-pragmas'],
+  }, async () => {
+    // The property is the premise: against a VFS that declares defaults
+    // (AccessHandlePoolVFS is the only one) this read 'exclusive'.
+    const db = await createTestClient({ poolSize: 1 });
     await db.write('CREATE TABLE t (a INTEGER)');
     const [locking] = await db.read<{ locking_mode: string }>(
       'PRAGMA locking_mode',

@@ -1,15 +1,10 @@
 // tests/browser/lifecycle.test.ts
-import {
-  createSQLiteClient,
-  deleteDatabase,
-  type SQLiteError,
-} from 'browser-sqlite';
-import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import {
   createTestClient,
   interceptWorkers,
   longQuery,
-  removeDatabaseFiles,
+  sharedDatabase,
   sleep,
   waitUntil,
 } from './helpers';
@@ -177,22 +172,6 @@ describe('worker lifecycle — crash detection', () => {
 });
 
 describe('worker lifecycle — bounds', () => {
-  let shared: string;
-  afterEach(async () => {
-    try {
-      await removeDatabaseFiles(shared, 'AccessHandlePoolVFS');
-    } catch {
-      // OPFS entry may not exist if the test failed before DB creation
-    }
-    // The database sits in one of AccessHandlePoolVFS's six fixed slots, which
-    // only deleteDatabase gives back (see createTestClient in ./helpers).
-    await deleteDatabase(shared, { vfs: 'AccessHandlePoolVFS' }).catch(
-      (error: unknown) => {
-        if ((error as SQLiteError)?.code !== 'DATABASE_NOT_FOUND') throw error;
-      },
-    );
-  });
-
   // The connection guard (AHP-2TAB fix) fires before workers start, so the
   // second client now fails BUSY — not WORKER_CRASHED. Workers for the second
   // client are never spawned, which is faster and cleaner.
@@ -200,20 +179,14 @@ describe('worker lifecycle — bounds', () => {
   // Falsifiable: delete the `if (connLockPromise !== undefined)` deferred-
   // spawn block in src/client.ts. Without it, workers start immediately and
   // collide on the OPFS handle, producing WORKER_CRASHED instead of BUSY.
-  it('rejects a second client with BUSY instead of crashing its workers', async () => {
-    shared = `bsq-test-${crypto.randomUUID()}`;
-    // One VFS: the subject is AccessHandlePoolVFS's exclusive-connection
-    // guard (AHP-2TAB).
-    const first = createSQLiteClient(shared, {
-      poolSize: 1,
-      vfs: 'AccessHandlePoolVFS',
-    });
+  it('rejects a second client with BUSY instead of crashing its workers', {
+    tags: ['requires:exclusive-connection'],
+  }, async () => {
+    const db = sharedDatabase();
+    const first = db.open({ poolSize: 1 });
     await first.write('CREATE TABLE t (a)');
 
-    const second = createSQLiteClient(shared, {
-      poolSize: 1,
-      vfs: 'AccessHandlePoolVFS',
-    });
+    const second = db.open({ poolSize: 1 });
     await expect(second.read('SELECT 1')).rejects.toMatchObject({
       code: 'DATABASE_IN_USE',
     });

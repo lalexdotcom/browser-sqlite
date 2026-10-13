@@ -286,10 +286,14 @@ describe('deleteDatabase under a live connection', () => {
     ).resolves.toBeUndefined();
   });
 
-  // One VFS: the subject is MemoryVFS's lack of any shared connection lock.
-  it('still deletes on the memory VFS with a client open — nothing is shared there', async () => {
+  // The subject is the absence of any shared connection lock, as on the
+  // memory VFS.
+  it('still deletes with a client open where nothing is shared', {
+    tags: ['excludes:shared-storage'],
+  }, async () => {
+    const target = { vfs: TEST_TARGET.vfs, build: TEST_TARGET.build };
     const dbName = `bsq-test-${crypto.randomUUID()}`;
-    const db = createSQLiteClient(dbName, { vfs: 'MemoryVFS', poolSize: 1 });
+    const db = createSQLiteClient(dbName, { ...target, poolSize: 1 });
     onTestFinished(async () => {
       try {
         await db.close();
@@ -298,9 +302,7 @@ describe('deleteDatabase under a live connection', () => {
       }
     });
     await db.write('CREATE TABLE t (n)');
-    await expect(
-      deleteDatabase(dbName, { vfs: 'MemoryVFS' }),
-    ).resolves.toBeUndefined();
+    await expect(deleteDatabase(dbName, target)).resolves.toBeUndefined();
   });
 
   // One VFS: the connection lock and its FIFO ordering is OPFS-family;

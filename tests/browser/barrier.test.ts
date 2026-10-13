@@ -1,8 +1,7 @@
-import { createSQLiteClient } from 'browser-sqlite';
-import { describe, expect, it, onTestFinished } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { BARRIER_SQL } from '../../src/epochs';
 import { HAS_UNSAFE_HANDLES } from '../conformance/helpers';
-import { createTestClient, removeDatabaseFiles } from './helpers';
+import { createTestClient, sharedDatabase } from './helpers';
 
 /**
  * With the designation forbidden on index 0 at poolSize 2, the writer is
@@ -118,34 +117,15 @@ describe('commit-propagation barrier', {
   });
 });
 
-// One VFS: two clients must share one database; OPFSAdaptiveVFS shares it on
-// every engine (see `secondClientOutcome`).
-const sharedFile = { vfs: 'OPFSAdaptiveVFS' as const };
-
 describe('barrier — two clients in one tab', () => {
   // Falsifiable: in src/worker/worker.ts, read `column_names(stmt)` before the
   // first step() — B's statement, cached before A's rename, reports old_col.
-  it("client B observes client A's schema change", async () => {
-    const dbName = `bsq-test-${crypto.randomUUID()}`;
-    const a = createSQLiteClient(dbName, sharedFile);
-    const b = createSQLiteClient(dbName, sharedFile);
-    onTestFinished(async () => {
-      try {
-        await a.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        await b.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        await removeDatabaseFiles(dbName, sharedFile.vfs);
-      } catch {
-        /* ignore */
-      }
-    });
+  it("client B observes client A's schema change", {
+    tags: ['requires:shared-second-client'],
+  }, async () => {
+    const db = sharedDatabase();
+    const a = db.open();
+    const b = db.open();
 
     await a.write('CREATE TABLE t (old_col)');
     await a.write('INSERT INTO t (old_col) VALUES (42)');
@@ -160,31 +140,16 @@ describe('barrier — two clients in one tab', () => {
   // normalizeDatabaseFile leaves it green, the VFS resolving './' to the same
   // file on its own (spike 2026-09-25). The column-name mutation above turns
   // it red, as it does the test before.
-  it('treats two spellings of one file as one database', async () => {
-    // './bsq-test-<uuid>' normalizes to the same 45-char name as `dbName`
+  it('treats two spellings of one file as one database', {
+    tags: ['requires:shared-second-client'],
+  }, async () => {
+    // './bsq-shared-<uuid>' normalizes to the same 47-char name as `db.name`
     // (URL resolves './' away), well under the 56-char wa-sqlite path bound
     // (SQLite checks nPathname + 8 > mxPathname = 64 before calling xOpen) —
-    // folder included, since this VFS keeps one.
-    const dbName = `bsq-test-${crypto.randomUUID()}`;
-    const a = createSQLiteClient(dbName, sharedFile);
-    const b = createSQLiteClient(`./${dbName}`, sharedFile);
-    onTestFinished(async () => {
-      try {
-        await a.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        await b.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        await removeDatabaseFiles(dbName, sharedFile.vfs);
-      } catch {
-        /* ignore */
-      }
-    });
+    // folder included, for a VFS that keeps one.
+    const db = sharedDatabase();
+    const a = db.open();
+    const b = db.open({}, `./${db.name}`);
 
     await a.write('CREATE TABLE t (old_col)');
     await a.write('INSERT INTO t (old_col) VALUES (42)');

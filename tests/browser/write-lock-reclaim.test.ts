@@ -7,6 +7,7 @@ import {
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { writeLockName } from '../../src/locks';
 import { databasePath } from '../../src/utils';
+import { TEST_TARGET } from './helpers';
 import { holdIn, makeRealm } from './helpers/realm';
 
 /**
@@ -20,15 +21,11 @@ import { holdIn, makeRealm } from './helpers/realm';
  * `close()` is the escape a consumer has, and it did not work: it terminates
  * the workers and returns — reporting success — while still holding the lock.
  *
- * `IDBBatchAtomicVFS` on purpose: the defect is about a Web Lock and has
- * nothing to do with OPFS handles, so the VFS that cannot confuse the two is
- * the right one to pin it with.
+ * `requires:idb-storage` on purpose: the defect is about a Web Lock and has
+ * nothing to do with OPFS handles (no OPFS handle in play), so a VFS that
+ * keeps its database in IndexedDB cannot confuse the two.
  */
 
-// One VFS: see the file header — the defect is about a Web Lock, and
-// IDBBatchAtomicVFS is the VFS that cannot confuse it with an OPFS access
-// handle.
-const VFS = 'IDBBatchAtomicVFS' as const;
 const locks = createLocks();
 
 const held = async (name: string) =>
@@ -36,7 +33,8 @@ const held = async (name: string) =>
 
 /** A client whose transaction callback is inside and will never come back. */
 const stuckTransaction = async (file: string) => {
-  const db = createSQLiteClient(file, { vfs: VFS, drainTimeout: 500 });
+  const { vfs, build } = TEST_TARGET;
+  const db = createSQLiteClient(file, { vfs, build, drainTimeout: 500 });
   await db.write('CREATE TABLE IF NOT EXISTS t (v)');
 
   let entered!: () => void;
@@ -53,37 +51,45 @@ const stuckTransaction = async (file: string) => {
 };
 
 describe('the origin write lock is reclaimed', () => {
-  it('close() releases the write lock a stuck transaction still holds', async () => {
+  it('close() releases the write lock a stuck transaction still holds', {
+    tags: ['requires:idb-storage'],
+    timeout: 30_000,
+  }, async () => {
+    const { vfs, build } = TEST_TARGET;
     const file = `reclaim-${crypto.randomUUID()}.db`;
     onTestFinished(async () => {
-      await deleteDatabase(file, { vfs: VFS }).catch(() => {});
+      await deleteDatabase(file, { vfs, build }).catch(() => {});
     });
 
     const a = await stuckTransaction(file);
-    expect(await held(writeLockName(VFS, databasePath(VFS, file)))).toBe(true);
+    expect(await held(writeLockName(vfs, databasePath(vfs, file)))).toBe(true);
 
     await a.close();
 
-    expect(await held(writeLockName(VFS, databasePath(VFS, file)))).toBe(false);
+    expect(await held(writeLockName(vfs, databasePath(vfs, file)))).toBe(false);
 
     // Not merely absent from the registry: another client must be able to
     // write, which is the whole point of releasing it.
-    const b = createSQLiteClient(file, { vfs: VFS });
+    const b = createSQLiteClient(file, { vfs, build });
     onTestFinished(async () => {
       await b.close().catch(() => {});
     });
     await expect(b.write('INSERT INTO t VALUES (2)')).resolves.toBeDefined();
-  }, 30_000);
+  });
 });
 
 describe('a write that gives up says who was holding', () => {
-  it('names another tab when the holder is in another realm', async () => {
+  it('names another tab when the holder is in another realm', {
+    tags: ['requires:idb-storage'],
+    timeout: 30_000,
+  }, async () => {
+    const { vfs, build } = TEST_TARGET;
     const file = `holder-other-${crypto.randomUUID()}.db`;
     onTestFinished(async () => {
-      await deleteDatabase(file, { vfs: VFS }).catch(() => {});
+      await deleteDatabase(file, { vfs, build }).catch(() => {});
     });
 
-    const db = createSQLiteClient(file, { vfs: VFS });
+    const db = createSQLiteClient(file, { vfs, build });
     onTestFinished(async () => {
       await db.close().catch(() => {});
     });
@@ -92,7 +98,7 @@ describe('a write that gives up says who was holding', () => {
     const realm = await makeRealm();
     const release = await holdIn(
       realm,
-      writeLockName(VFS, databasePath(VFS, file)),
+      writeLockName(vfs, databasePath(vfs, file)),
       'exclusive',
     );
     onTestFinished(() => release());
@@ -108,12 +114,16 @@ describe('a write that gives up says who was holding', () => {
     expect(failure?.code).toBe('OPERATION_TIMEOUT');
     expect(failure?.timeout).toBe(300);
     expect(failure?.message).toContain('another tab');
-  }, 30_000);
+  });
 
-  it('names this tab when the holder is a transaction in this page', async () => {
+  it('names this tab when the holder is a transaction in this page', {
+    tags: ['requires:idb-storage', 'requires:shared-second-client'],
+    timeout: 30_000,
+  }, async () => {
+    const { vfs, build } = TEST_TARGET;
     const file = `holder-self-${crypto.randomUUID()}.db`;
     onTestFinished(async () => {
-      await deleteDatabase(file, { vfs: VFS }).catch(() => {});
+      await deleteDatabase(file, { vfs, build }).catch(() => {});
     });
 
     const a = await stuckTransaction(file);
@@ -121,7 +131,7 @@ describe('a write that gives up says who was holding', () => {
       await a.close().catch(() => {});
     });
 
-    const b = createSQLiteClient(file, { vfs: VFS });
+    const b = createSQLiteClient(file, { vfs, build });
     onTestFinished(async () => {
       await b.close().catch(() => {});
     });
@@ -135,5 +145,5 @@ describe('a write that gives up says who was holding', () => {
 
     expect(failure?.code).toBe('OPERATION_TIMEOUT');
     expect(failure?.message).toContain('this tab');
-  }, 30_000);
+  });
 });

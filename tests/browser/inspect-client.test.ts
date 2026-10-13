@@ -1,10 +1,6 @@
 import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { createTestClient, TEST_TARGET } from './helpers';
-
-// One VFS: two clients must share one database (inspect()'s sibling/tabs
-// roster); OPFSAdaptiveVFS shares it on every engine (see `secondClientOutcome`).
-const VFS = 'OPFSAdaptiveVFS' as const;
+import { createTestClient, sharedDatabase, TEST_TARGET } from './helpers';
 
 describe('db identity getters', () => {
   it('describes itself without the debug option', async () => {
@@ -46,14 +42,12 @@ describe('db.inspect on a memory VFS', () => {
 });
 
 describe('db.inspect', () => {
-  it('splits self from siblings', async () => {
-    const file = 'siblings.db';
-    const a = createSQLiteClient(file, { vfs: VFS });
-    const b = createSQLiteClient(file, { vfs: VFS });
-    onTestFinished(async () => {
-      await Promise.all([a.close(), b.close()]).catch(() => {});
-      await deleteDatabase(file, { vfs: VFS }).catch(() => {});
-    });
+  it('splits self from siblings', {
+    tags: ['requires:shared-second-client'],
+  }, async () => {
+    const shared = sharedDatabase();
+    const a = shared.open();
+    const b = shared.open();
     await Promise.all([a.read('SELECT 1'), b.read('SELECT 1')]);
 
     const view = await a.inspect();
