@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { createTestClient, TEST_TARGET } from './helpers';
 
 /**
@@ -7,9 +7,9 @@ import { createTestClient, TEST_TARGET } from './helpers';
  *
  * Several VFS declare default pragmas; the first three tests are about
  * `AccessHandlePoolVFS`'s own (`journal_mode` and `locking_mode`), so they
- * carry its `vfs:` tag. It allows one connection per origin, so every client here is closed
- * before the next opens, and its directory — one for the whole origin, holding
- * files with random names — is scrubbed between tests.
+ * carry its `vfs:` tag. It allows one connection per origin, so every client
+ * here is closed before the next opens, and its directory — one for the whole
+ * origin, holding files with random names — is scrubbed between tests.
  */
 
 // The VFS's directory is named after the VFS, which the cell's pair names.
@@ -26,6 +26,11 @@ const scrubVfsDirectory = async () => {
 const modesOf = async (pragmas?: Record<string, string>) => {
   // The tests that call this carry `vfs:AccessHandlePoolVFS`: the subject is
   // its own `defaultPragmas` (journal_mode: wal, locking_mode: exclusive).
+  // Registered before createTestClient's own cleanup: onTestFinished hooks run
+  // in reverse, so the scrub comes after that cleanup has given the slot back.
+  // Here and not in an afterEach, which would also scrub after the test that
+  // runs on another VFS.
+  onTestFinished(scrubVfsDirectory);
   const db = await createTestClient({
     poolSize: 1,
     ...(pragmas ? { pragmas } : {}),
@@ -42,8 +47,6 @@ const modesOf = async (pragmas?: Record<string, string>) => {
 };
 
 describe('per-VFS default pragmas', () => {
-  afterEach(scrubVfsDirectory);
-
   it('applies what the VFS declares, with no consumer pragmas', {
     tags: ['vfs:AccessHandlePoolVFS'],
   }, async () => {
