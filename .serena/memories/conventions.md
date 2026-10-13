@@ -95,6 +95,8 @@ follow-up that tracked two such files on `main` was deleted on this instruction.
 The corollary: do not spend a session's attention proving how one got past `.gitignore`.
 Leave the files, leave the workspaces, say nothing.
 
+**Superseded for the two that were tracked (user, 2026-10-13):** both `final-fix-report.md` (waves of 2026-08-18 and 2026-08-31) were removed from git and from disk, and `.superpowers/` emptied; nothing under it is tracked any more. A plan's workspace is deleted when its plan is done (the `executing-plans` skill does it).
+
 ## "On clôture la session" is a defined procedure (user, 2026-08-17)
 
 Not a figure of speech. It means the work continues in a *different* session, so nothing
