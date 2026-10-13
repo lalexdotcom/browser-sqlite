@@ -31,6 +31,7 @@ export const PROPERTIES = [
   'every-build',
   'env-cappable',
   'sync-handle',
+  'immediate-connection-lock',
 ] as const;
 export type Property = (typeof PROPERTIES)[number];
 
@@ -120,6 +121,14 @@ export const holds = (property: Property, context: TestContext): boolean => {
     case 'sync-handle':
       return (c.requires as readonly PlatformFeature[]).includes(
         'sync-access-handle',
+      );
+    // The client requests its connection lock in the task that constructs it;
+    // a VFS exclusive only without a probed feature asks after worker 0's answer.
+    case 'immediate-connection-lock':
+      return (
+        sharesStorage(context.vfs) &&
+        (c.exclusiveConnectionWithout as readonly PlatformFeature[]).length ===
+          0
       );
   }
 };

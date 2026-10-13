@@ -320,15 +320,17 @@ describe('deleteDatabase under a live connection', () => {
   });
 
   it('refuses a delete issued in the same task as a client construction', {
-    tags: ['requires:shared-storage'],
+    tags: ['requires:immediate-connection-lock'],
   }, async () => {
     const { vfs, build } = TEST_TARGET;
     const database = sharedDatabase();
     const dbName = database.name;
 
-    // Both requests are issued in this one task, client first. Per the Web Locks
-    // specification the queue is FIFO per name, so the client's shared request is
-    // processed first and the delete's ifAvailable request meets it pending.
+    // A VFS that asks for its lock after worker 0's probe takes none in this
+    // task, hence the tag. Both requests are issued in this one task, client
+    // first. Per the Web Locks specification the queue is FIFO per name, so the
+    // client's shared request is processed first and the delete's ifAvailable
+    // request meets it pending.
     const db = database.open({ poolSize: 1 });
     const attempt = deleteDatabase(dbName, { vfs, build }).then(
       () => undefined,
