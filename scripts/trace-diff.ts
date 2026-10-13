@@ -18,6 +18,8 @@ export type TracedTest = {
   workers: number;
   tags: string[];
   runs: number;
+  /** Some run of the test carried a trace (a skipped test or a unit test has none). */
+  traced: boolean;
 };
 
 type Report = {
@@ -49,6 +51,7 @@ export function readTrace(json: string): Map<string, TracedTest> {
         workers: Math.max(seen?.workers ?? 0, trace?.workers ?? 0),
         tags: trace?.tags ?? seen?.tags ?? [],
         runs: (seen?.runs ?? 0) + 1,
+        traced: (seen?.traced ?? false) || trace !== undefined,
       });
     }
   }
@@ -68,7 +71,10 @@ export function diffTraces(
     lost: [...before.keys()].filter((key) => !after.has(key)).sort(),
     added: [...after.keys()].filter((key) => !before.has(key)).sort(),
     unread: [...after.values()]
-      .filter((t) => t.targetReads === 0 && !t.tags.includes('standalone'))
+      .filter(
+        (t) =>
+          t.traced && t.targetReads === 0 && !t.tags.includes('standalone'),
+      )
       .map((t) => t.key)
       .sort(),
   };

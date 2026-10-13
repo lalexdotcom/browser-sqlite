@@ -114,6 +114,18 @@ describe('diffTraces', () => {
     expect(diffTraces(after, after).unread).toEqual(['a.test.ts › d > forgot']);
   });
 
+  it('does not flag a test that carries no trace at all', () => {
+    // Falsifiable: drop the traced check and every unit test and every test
+    // skipped before its afterEach reads as a forgotten standalone.
+    const after = readTrace(
+      report([
+        { file: 'a.test.ts', ancestors: ['d'], title: 'ran', trace: traced(0) },
+        { file: 'a.test.ts', ancestors: ['d'], title: 'skipped' },
+      ]),
+    );
+    expect(diffTraces(after, after).unread).toEqual(['a.test.ts › d > ran']);
+  });
+
   it('refuses a report with no trace in it', () => {
     // Falsifiable: a run without BSQ_TEST_TRACE=1 would compare as all-unread.
     expect(() =>
