@@ -55,6 +55,10 @@ const browserProject = (
     setupFiles: [
       'tests/storage-wipe.ts',
       ...(options.target ? ['tests/browser/need-guard.ts'] : []),
+      // Last, so the guard's own reads of the pair are discarded.
+      ...(options.target && process.env.BSQ_TEST_TRACE === '1'
+        ? ['tests/browser/trace.ts']
+        : []),
     ],
     testTimeout: options.testTimeout,
     // A teardown closes a client that may still be draining an abandoned

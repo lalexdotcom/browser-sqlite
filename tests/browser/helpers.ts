@@ -42,6 +42,8 @@ type TestClientOptions = Omit<InternalSQLiteClientOptions, 'name' | 'vfs'> & {
   vfs?: SQLiteVFS;
 } & Needing;
 
+let targetReads = 0;
+
 /**
  * The target this project provides (vitest.config.ts, one project per target,
  * tests/target-projects.ts). A browser project without one is a configuration
@@ -56,8 +58,26 @@ export const TEST_TARGET: TestTarget = (() => {
       'TEST_TARGET: this project provides no bsqTarget — a browser project needs a target (tests/target-projects.ts)',
     );
   }
-  return target;
+  // Getters, so the trace (tests/browser/trace.ts) can tell a test that
+  // follows its pair from one that opens a VFS of its own.
+  return Object.freeze({
+    get vfs() {
+      targetReads++;
+      return target.vfs;
+    },
+    get build() {
+      targetReads++;
+      return target.build;
+    },
+  });
 })();
+
+/** The reads of `TEST_TARGET` since the last call (the trace's counter). */
+export const takeTargetReads = (): number => {
+  const reads = targetReads;
+  targetReads = 0;
+  return reads;
+};
 
 /** This project's family (vitest.config.ts provides it beside the target). */
 export const ENVIRONMENT = inject('bsqEnvironment');

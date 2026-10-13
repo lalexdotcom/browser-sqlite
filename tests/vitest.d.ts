@@ -15,5 +15,7 @@ declare module 'vitest' {
   export interface TaskMeta {
     /** What tests/probe/features.test.ts found in its environment. */
     features?: PlatformFeature[];
+    /** Under BSQ_TEST_TRACE=1: what the test touched (tests/browser/trace.ts). */
+    bsqTrace?: { targetReads: number; workers: number; tags: string[] };
   }
 }
