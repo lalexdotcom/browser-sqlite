@@ -85,17 +85,11 @@ landed with a failing `tsc` from a subagent whose command was cut mid-hook
 (`mem:git-hooks`). And **do not accept a subagent's "pre-existing"**
 without checking the base commit.
 
-## `.superpowers/` artefacts are not a subject (user, 2026-09-03)
+## `.superpowers/` workspaces: delete them, and do not report a failed delete (user, 2026-09-03, clarified 2026-10-13)
 
-**Do not log SDD scratch — ledgers, briefs, task and fix reports — as a backlog item, and do
-not raise it as a finding.** It is non-versioned working material; if a stray one was
-force-added past the ignore rule and is now tracked, that is not worth an entry either. The
-follow-up that tracked two such files on `main` was deleted on this instruction.
+A plan's workspace under `.superpowers/sdd/` (ledger, briefs, reports, review packages) is deleted once its plan is done, as the `executing-plans` and `subagent-driven-development` skills do. **The rule of 2026-09-03 was: stop telling the user, at every delivery, that the deletion failed** — Claude's settings refused the `rm` each time. It was never a rule to keep the files; a memory written that day read it as "leave the files, leave the workspaces, say nothing", which is wrong (user, 2026-10-13). The Bash permissions were changed since and should no longer block the deletion. SDD scratch is not a backlog item or a finding either.
 
-The corollary: do not spend a session's attention proving how one got past `.gitignore`.
-Leave the files, leave the workspaces, say nothing.
-
-**Superseded for the two that were tracked (user, 2026-10-13):** both `final-fix-report.md` (waves of 2026-08-18 and 2026-08-31) were removed from git and from disk, and `.superpowers/` emptied; nothing under it is tracked any more. A plan's workspace is deleted when its plan is done (the `executing-plans` skill does it).
+Two reports had been committed under `.superpowers/` (one before the ignore rule of 2026-08-20, one force-added after it); both were removed from git and disk on 2026-10-13, and nothing there is tracked any more.
 
 ## "On clôture la session" is a defined procedure (user, 2026-08-17)
 
