@@ -22,7 +22,7 @@ unmeasured ground.
   tags about two minutes after the job ended. At rc.8 two cells (`OPFSCoopSyncVFS/async`, `MemoryAsyncVFS/jspi`) took
   ~17 min against 3-9 for the others, under the 25-minute job limit — not looked into, and not
   seen at rc.9.
-  Procedure: `mem:conventions`, § Releasing.
+  Procedure: `mem:conventions/releasing`.
 - **The vendored wa-sqlite sits on upstream `master` of 2026-10-13** (`6238f532`, #374 merged;
   `package.json` has the SHA; the built worker, the `.wasm` and `index.js` are byte-identical to the
   previous pin's). **No patch since then**: every change the library carried has merged upstream,
@@ -75,7 +75,7 @@ here on purpose: a total alone cannot say which suite moved.
   sixteen busy loops around a single-file Firefox run cut time-to-failure twentyfold (ABANDON-WEDGE,
   `mem:measurements/aborts`).
 
-## Owed — ours to move
+## In progress
 
 - **The Vite dep-optimizer race between parallel Vitest processes is fixed and merged (2026-10-13)**: one cache per job (`mem:follow-ups/notes`). CI's `verify` was the exposed run (conformance in 2 shards per project on a cold cache); the push that carries the fix is its proof.
 - **Done and pushed (2026-10-13):** the test planner (plans A, B, C; the matrix plans first and runs on every push of `main`), and the test-triggers review (`docs/superpowers/specs/2026-10-13-test-triggers-design.md`: hooks per change, actionlint, the release reusing the push-of-`main` runs, publint/attw, the Pages bench check; `mem:conventions` § What runs where). CI 38441033562 and matrix 38441033564 green on the push. **Left for GitHub to prove:** the release's `prior` job and its `release`/`pages` conditions and `consumer-smoke` at the next release. The Pages bench check is proven (run 38448872714, `preview` moved to `e5855bb` on 2026-10-13).

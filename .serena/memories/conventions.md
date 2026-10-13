@@ -17,6 +17,7 @@ only what `AGENTS.md` does not say.**
   not a summary of it, when picking up designed-but-unbuilt work.
 - The agent framework is **superpowers**. A `.planning/` directory from a previous
   framework was deleted on 2026-08-17 — do not recreate it or trust anything quoting it.
+- **Read back what was written to a memory (user, 2026-10-13).** After every edit, grep or read the section it touched; before a memory commit, check the changed memories for a lone `$1` (`mem:lessons/process`), duplicated lines and the 40 000-character limit. Six edits once lost text unnoticed for a day.
 - **These memories are the ONLY memory (user, 2026-10-07).** Claude Code's own auto-memory (`MEMORY.md` and its files under `~/.claude/projects/…/memory/`) is not used: every rule, preference and fact goes here, through Serena.
 - **No git worktree for this repository (user, 2026-10-07).** A piece of work is its branch checked out in the main checkout (`/workspaces/wsqlite`), and it is done there, as `AGENTS.md`'s branch-and-merge rule implies — spikes included. When a skill asks for an isolated workspace (superpowers `using-git-worktrees`, subagent-driven-development's setup), use the main checkout on the feature branch and say so. The guard against another session switching the checkout is checking the branch in the same command as each commit, never a worktree. `.work/` worktrees and clones are for external repositories only (wa-sqlite, the release action). On 2026-10-07 a branch and two spikes were run from `.work/` worktrees and the user found the main checkout on `main`.
 - **Probes and fixtures go in `.scratchpad/` (user, 2026-08-31)**, gitignored, at the
@@ -85,15 +86,11 @@ landed with a failing `tsc` from a subagent whose command was cut mid-hook
 (`mem:git-hooks`). And **do not accept a subagent's "pre-existing"**
 without checking the base commit.
 
-## `.superpowers/` artefacts are not a subject (user, 2026-09-03)
+## `.superpowers/` workspaces: delete them, and do not report a failed delete (user, 2026-09-03, clarified 2026-10-13)
 
-**Do not log SDD scratch — ledgers, briefs, task and fix reports — as a backlog item, and do
-not raise it as a finding.** It is non-versioned working material; if a stray one was
-force-added past the ignore rule and is now tracked, that is not worth an entry either. The
-follow-up that tracked two such files on `main` was deleted on this instruction.
+A plan's workspace under `.superpowers/sdd/` (ledger, briefs, reports, review packages) is deleted once its plan is done, as the `executing-plans` and `subagent-driven-development` skills do. **The rule of 2026-09-03 was: stop telling the user, at every delivery, that the deletion failed** — Claude's settings refused the `rm` each time. It was never a rule to keep the files; a memory written that day read it as "leave the files, leave the workspaces, say nothing", which is wrong (user, 2026-10-13). The Bash permissions were changed since and should no longer block the deletion. SDD scratch is not a backlog item or a finding either.
 
-The corollary: do not spend a session's attention proving how one got past `.gitignore`.
-Leave the files, leave the workspaces, say nothing.
+Two reports had been committed under `.superpowers/` (one before the ignore rule of 2026-08-20, one force-added after it); both were removed from git and disk on 2026-10-13, and nothing there is tracked any more.
 
 ## "On clôture la session" is a defined procedure (user, 2026-08-17)
 
@@ -144,58 +141,7 @@ may be left live in this one. Three steps, in order:
 
 ## Releasing (user, 2026-08-31)
 
-**The `changelog-maintenance` skill is the authority on `CHANGELOG.md` (user,
-2026-10-06)**: what goes in `[Unreleased]`, cutting a release, consolidating the rc
-sections into `## [1.0.0] - <date>`. Where this file and the skill differ, the skill
-wins — this section predates it. So a release reopens an empty `## [Unreleased]`
-with its link at once, as the skill does; rc.6 was cut without one by following
-the old wording here, and it was reopened the same day. No automation writes the
-file: the workflow reads it, and the action receives a file path and never learns
-where it came from.
-
-**`CHANGELOG.md` follows Keep a Changelog since 2026-09-30 (user).** Headings are
-`## [<version>] - <date>`, each with a link definition at the end of the file
-(`compare/v<previous>...v<version>`, `[Unreleased]` against `HEAD`). Only the
-format's own types are used. **A breaking change goes under `Changed` or `Removed`,
-prefixed `**Breaking:**` and listed first** — there is no `Breaking` section;
-performance and documentation changes go under `Changed` (user, same day). **The
-sections published before that date keep their own subsections and text** — only
-their headings changed; the consolidation into `1.0.0` rewrites them. The release
-workflow finds a section by the prefix `## [<version>] - `, refuses an undated
-heading or a missing link definition, and stops the body at the next heading or at
-the link definitions.
-
-**Pushing `main` and the tag in one command or in two is the same since 2026-10-13**: `pre-push` runs the suite only for a commit made on a branch directly (the bump commit is one) and the consumer smoke for a `v*` tag, and the release reuses the CI and matrix runs of the push of `main` (its `prior` job), running its own only when none passed.
-
-**The bump is one commit, then a tag.** `package.json` and the dated CHANGELOG
-heading must be true of the same tree, because the release workflow refuses a
-tag that disagrees with either. `upversion` is **not** used for this package —
-it was, and the tag/`package.json` coupling it provided is now enforced in the
-workflow instead.
-
-**The two repositories cannot be updated together.**
-`lalexdotcom/action-release-and-publish` releases itself on push to `main` from
-conventional commits, and we consume it by its major tag (`@v3`, user, 2026-10-03: the action is ours and follows semver), so a minor or patch reaches the next release once it is pushed and released, with no commit here; a major needs the tag in `release-and-publish.yaml` moved. The clone lives at `.work/action-release-and-publish`. **Since v3 the action manages the dist-tags itself**: `latest` only moves forward, `next` stays on the highest rc above it, and a `latest` that moves removes the tags left on older prereleases. So the 1.0.0 release publishes straight to `latest`, creates no `stable` tag, and removes `rc` and `next` — `npm i browser-sqlite@rc` stops resolving instead of installing an old rc.
-
-**The GitHub Release is created before `npm publish`**, inside the action. That
-ordering is the whole reason a failed release costs a retag rather than a burnt
-version number; do not reorder it back. Proved twice by rc.4, which failed once before anything
-existed and once with the GitHub Release created but `npm publish` refused.
-**The action is not idempotent, and nothing fixes that yet**: once the release exists, re-running
-the job fails at `gh release create` before reaching npm. Recovery is to delete the release and the
-tag, then retag. A `gh release view … || gh release create …` in the action would make a partial
-failure replayable; it is not written.
-
-**Do not add `set -e` to the extraction step.** Two reviews have proposed it and it
-was refused both times: under `pipefail` it would abort
-`PKG=$(grep '"version"' package.json | …)` silently when the grep finds nothing,
-replacing a diagnosable `tag vX != package.json ()` with no message at all. The
-only path it would newly protect — a missing `CHANGELOG.md` — is already caught
-by the emptiness test. That test is `grep -q '[^[:space:]]'` and **not `[ -s ]`**,
-because a section holding one blank line is one byte long and `-s` calls it
-non-empty; this was found by running the block against a fixture, not by reading it.
-
-Design: `docs/superpowers/specs/2026-08-31-release-notes-from-changelog-design.md`.
+In `mem:conventions/releasing`: the changelog skill as authority, Keep a Changelog, pushing `main` and the tag, the bump commit, the release action and its dist-tags, the order of the GitHub Release and `npm publish`.
 
 ## Writing for the consumer
 
@@ -299,48 +245,7 @@ one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.
   *when*, a *where* or a *what*, check that choice against the code before proposing another
   one.**
 
-- **An upstream PR's title starts with the VFS it concerns (user, 2026-09-27):**
-  `OPFSWriteAheadVFS: read the WAL to its end when a read transaction begins`. Every PR from then
-  on, in the draft's suggested title as in the PR itself.
-
-- **Upstream contributions stand on upstream's own evidence (user, 2026-09-15).** A PR to
-  wa-sqlite does not cite this library — a stable library is not argued from an unstable one — and
-  its measurements must be reproducible with wa-sqlite alone, best as a test in its own suite that
-  fails on its master. **Claude's part is never stated in a PR body, comment or issue (user,
-  2026-09-29):** Claude co-signs every commit, and that is disclosure enough. **Claude ticks
-  the licence checkboxes of its PR template itself when submitting (user, 2026-09-29)** — until
-  then they were the user's to tick. Drafts go in `.scratchpad/`.
-
-  **Not citing this library means not citing it at all (user, 2026-09-23).** No "How this was found"
-  section, no "in a library built on wa-sqlite", no provenance of any kind: the maintainer's question
-  is whether the change is right for their code, and non-reproducible downstream numbers invite a
-  reviewer to weigh evidence they cannot check. Grep the body AND every commit message for the
-  library's name before submitting. **And the body must carry an arm the maintainer can run in their
-  own checkout, executed by us first** — see `mem:lessons`, "a measurement the maintainer cannot
-  rerun is not evidence for them".
-
-  **The report in `docs/upstream/` is written AFTER the PR is opened, named with its number from
-  the start (user, 2026-09-21).** Not before, and not under a numberless name to be renamed later:
-  the number belongs in the file name, the title, the table row and the "Posted upstream" section,
-  so writing the file first means touching all four twice. Said after #357's report was written
-  while the branch was still local, then `git mv`-ed — the history carries that once. What DOES
-  belong before the PR: the branch, the test that fails on upstream's master, and the PR body
-  draft in `.scratchpad/`.
-
-- **A reply to a maintainer's review carries a friendly word (user, 2026-09-30).** Not a bare
-  "Done": thank him and answer his own tone — *"un petit message sympa quand-même"*. And nothing the
-  dates contradict: "so quickly" was cut from a reply to a review that came eleven days after the
-  PR. Every body is shown to the user before it is posted, and the re-request of the review is
-  the user's click (`mem:stack-and-build`, Devcontainer). **But sparingly (user, 2026-10-01): "vas-y molo sur
-  les thanks"** — one thank-you in a set of replies, not one per thread; "Taken as written." is a
-  whole reply.
-
-- **An argument goes upstream only once measured, and SQLite is cited at the version wa-sqlite
-  builds (user, 2026-10-01).** *"Fais plutôt la vérification avant histoire de répondre avec des
-  infos fiables"* — a claim read off SQLite's source is probed before it is posted. The version is
-  `SQLITE_VERSION` in wa-sqlite's `Makefile` at upstream's head (3.53.0 on that date), and the
-  links go to the `sqlite/sqlite` GitHub mirror at that tag: sqlite.org's source pages answer a
-  script with a robot check, so what they show cannot be verified before linking.
+- **Contributing to wa-sqlite** — PR titles, evidence that stands on upstream alone, when the report is written, replies to reviews, measuring before arguing, the order PR then patch, conflicts between our PRs, the fork's commit identity: `mem:conventions/upstream`.
 
 - **A report does not end on "not measured" for something that bears on the subject (user,
   2026-09-30).** *"Pourquoi tu gardes du non-mesuré si c'est pertinent ?"* — asked after a campaign
@@ -391,8 +296,3 @@ Moved here when the user ruled that these memories are the only memory. Each was
 - **No hard wrapping in prose (2026-09-16, again 2026-09-18).** Markdown, PR bodies, GitHub comments, docs, chat: one long line per paragraph. Git commit messages are the exception (wrap near 72), and the exception does not spread to a PR body drafted right after a commit.
 - **No unversioned path in a memory (2026-09-28).** Never cite `.scratchpad/…`, `.work/…` or any ignored file; state the fact itself. A commit SHA or a tracked file is a valid pointer (`git ls-files <path>` to check).
 - **Remove only what was asked (2026-09-29).** A cut or a criticism is read at its narrowest scope, never generalised into a rule; for anything posted outward, a changed draft is shown again unless the user said to send it.
-- **Upstream first, then the patch (2026-10-05).** A wa-sqlite change is validated on wa-sqlite's own suite (both engines), sent as a PR (body shown to the user, fork branch pushed for review), and only then carried in `patches/`. A plan listing "carry the patch" before "PR upstream" is reordered before starting. **This orders the steps of a wa-sqlite change; it is not a preference for one (user, 2026-10-08):** a solution that avoids changing upstream is better; upstream is studied when it is the only solution or the best-performing one — "on ne s'interdit pas de changer upstream si c'est la meilleure solution".
-- **Nothing goes upstream with an open unknown (2026-09-30).** Name each thing the result does not explain, find its cause, measure it, then write; "not reproduced after a bounded search" is an acceptable answer, stated as such.
-- **A known conflict with another of our open PRs is stated in the PR (2026-10-03):** which parts of which file both touch, and that we rebase whichever merges second, so the maintainer picks the order.
-- **Upstream replies are warm, lightly (2026-09-30).** Thank for the review, say what it led to, offer help where it fits — one friendly touch per message; the PR description itself stays factual.
-- **Fork commits use the current identity (2026-09-30).** On the wa-sqlite fork, author with the identity the library repo has configured at commit time (`-c user.name=… -c user.email=…` from `git -C /workspaces/wsqlite config`), never copied from the branch's older commits and never written into the fork's config.

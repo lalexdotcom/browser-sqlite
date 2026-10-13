@@ -26,15 +26,14 @@ doc_build/
 # Subagent-driven-development scratch: ledgers, briefs, reports, review packages.
 .superpowers/
 
-# Scratch clones for upstream work (forks, patches under review). Never shipped.
+# Scratch clones for upstream work (forks, patches under review), and the test
+# runs kept for reading after the fact: test-runs/ (every run through
+# scripts/bounded.ts, the newest 30) and test-parallel/ (blobs and logs of
+# scripts/test-parallel.ts and test-plan.ts, the newest 10). Never shipped.
 .work/
 
 # Raw reports from `pnpm test:matrix`, one run per timestamped directory.
 .matrix/
-
-# Every run that goes through scripts/bounded.mjs (`pnpm test` and the hooks),
-# the newest 30 kept, so a failure seen once can be read after a green rerun.
-.test-runs/
 
 # Probes, fixtures and throwaway harnesses. In the project so they are visible
 # in the editor, ignored so they never ship. Never referenced by src/ or by CI.
@@ -47,6 +46,3 @@ entities.json
 # Built by rslib.test.config.ts for the Vitest browser projects: the published
 # build plus the test-only entry tests/testing.ts.
 tests/build/
-
-# Runs of scripts/test-parallel.ts (blobs and logs per job), the newest 10 kept.
-.test-parallel/

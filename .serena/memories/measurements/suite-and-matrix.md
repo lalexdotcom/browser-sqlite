@@ -30,7 +30,7 @@ Part of `mem:measurements`, which indexes every entry; its rules apply here.
 
 **Cells slow each other down**: the same matrix costs 26 % more CPU-time at 8 than at 6, and twice as much at 12, for 5 % and 11 % less wall time. At 8 the user's machine was already loud. **The user set the default cap to 6 (`resolveConcurrency`, `min(6, CPUs - 1)`)**: 12 % slower than 12 for half the parallelism. `pnpm test` at 6: **143 s** wall (119 s of jobs, 17 jobs), 2469 passed / 490 skipped, against 127 s at 12 the same morning. A run of 12 with sampling was stopped half-way at the user's request. The queue (`runPool`) is a work queue — N lanes take the next job when free — in plan order; the tail past the ideal (sum / N) was ~15 s at 6, so sorting cells longest-first would gain little. A per-process CPU split (browser main processes vs pages and workers) was sampled at 6 and 8 and not analysed; take it again if "one browser, a tab per cell" comes back. On GitHub the same matrix takes ~8 min: 22 runners of 4 vCPU, each running its pair's 2-4 cells 3 at a time; the slowest pair job (`IDBBatchAtomicVFS/async`) 356 s.
 
-$1, 2026-10-12, this container, Vitest 5.0.3, Chrome 153, Firefox 155 (spec 2026-10-12 § 4.5)
+## TEST-IDS — giving a cell its exact tests, 2026-10-12, this container, Vitest 5.0.3, Chrome 153, Firefox 155 (spec 2026-10-12 § 4.5)
 
 Method: Vitest's Node API (`createVitest('test', { configLoader: 'runner', project })`), static ids from `vitest.parseSpecifications(specs)`, runtime ids from `vitest.collectTests(specs)` (files loaded in the browser), then `vitest.runTestSpecifications([project.createSpecification(file, { testIds })])`; projects `chrome · OPFSWriteAheadVFS/sync` and `firefox · OPFSWriteAheadVFS/sync`, every file under `tests/browser/`.
 
