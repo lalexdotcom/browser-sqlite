@@ -37,6 +37,7 @@ import {
   type BlobState,
   buildOnce,
   findFailedJobs,
+  jobEnv,
   killLiveOnSignal,
   matchProjects,
   planJobs,
@@ -160,7 +161,7 @@ async function main() {
         '--reporter=blob',
         `--outputFile=${blob}`,
       ],
-      { cwd: ROOT, env, timeoutMs: JOB_TIMEOUT_MS },
+      { cwd: ROOT, env: jobEnv(env, job.id), timeoutMs: JOB_TIMEOUT_MS },
     );
     writeFileSync(log, error ? `${output}\n${error.message}\n` : output);
     const state = blobState(blob);

@@ -1,14 +1,41 @@
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   allocateShards,
   type BlobState,
   findFailedJobs,
+  jobEnv,
   matchProjects,
   planJobs,
+  ROOT,
   resolveConcurrency,
   runBounded,
   runPool,
 } from '../../scripts/parallel.ts';
+
+describe('jobEnv', () => {
+  it('gives every job a Vite cache of its own, named after the job', () => {
+    const a = jobEnv({ PATH: '/bin' }, 'conformance-chrome.1of3');
+    const b = jobEnv({ PATH: '/bin' }, 'conformance-chrome.2of3');
+    expect(a.BSQ_VITE_CACHE_DIR).toBe(
+      join(ROOT, 'node_modules/.vite/jobs/conformance-chrome.1of3'),
+    );
+    expect(b.BSQ_VITE_CACHE_DIR).not.toBe(a.BSQ_VITE_CACHE_DIR);
+  });
+
+  it('keeps the rest of the environment', () => {
+    expect(jobEnv({ PATH: '/bin', BSQ_TEST_BUILT: '1' }, 'x')).toMatchObject({
+      PATH: '/bin',
+      BSQ_TEST_BUILT: '1',
+    });
+  });
+
+  it('names the same job the same way on every run, so its cache stays warm', () => {
+    expect(jobEnv({}, 'unit').BSQ_VITE_CACHE_DIR).toBe(
+      jobEnv({}, 'unit').BSQ_VITE_CACHE_DIR,
+    );
+  });
+});
 
 describe('resolveConcurrency', () => {
   it('takes a positive integer from BSQ_TEST_JOBS, beyond the default cap too', () => {

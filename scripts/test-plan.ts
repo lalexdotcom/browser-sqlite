@@ -37,6 +37,7 @@ import {
   type BlobState,
   buildOnce,
   findFailedJobs,
+  jobEnv,
   killLiveOnSignal,
   ROOT,
   resolveConcurrency,
@@ -390,7 +391,7 @@ async function main() {
               '--reporter=blob',
               `--outputFile=${blob}`,
             ],
-            { cwd: ROOT, env, timeoutMs: JOB_TIMEOUT_MS },
+            { cwd: ROOT, env: jobEnv(env, job.id), timeoutMs: JOB_TIMEOUT_MS },
           )
         : await runBounded(
             'node',
@@ -403,7 +404,7 @@ async function main() {
               blob,
               json,
             ],
-            { cwd: ROOT, env, timeoutMs: JOB_TIMEOUT_MS },
+            { cwd: ROOT, env: jobEnv(env, job.id), timeoutMs: JOB_TIMEOUT_MS },
           );
     writeFileSync(
       join(logs, `${job.id}.log`),
