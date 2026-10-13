@@ -291,6 +291,7 @@ async function main() {
 
   // Dead fails CI and the matrix; locally a browser may simply be absent.
   let status = 0;
+  let deadFatal = false;
   if (plan.dead.length > 0) {
     const fatal = deadIsFatal(
       {
@@ -305,6 +306,7 @@ async function main() {
       `\n${plan.dead.length} test(s) run on no pair of any selected browser:\n${plan.dead.map((d) => `  ${describeTest(d)} — needs [${d.tags.join(', ')}]`).join('\n')}`,
     );
     if (fatal) status = 1;
+    deadFatal = fatal;
   }
   if (options.pairsOut) {
     const withTests = new Set(plan.cells.map((c) => `${c.vfs}/${c.build}`));
@@ -532,6 +534,12 @@ async function main() {
       : '(no log)';
     console.error(
       `\n--- ${job.id} failed (${reason}); last ${TAIL_LINES} lines of ${log} ---\n${tail}\n--- end ---`,
+    );
+  }
+  // The dead report is above the run; say here why the exit is 1 when every cell is green.
+  if (deadFatal) {
+    console.error(
+      `test-plan: failing because ${plan.dead.length} test(s) run on no pair (listed after the plan, above)`,
     );
   }
   process.exitCode = status;
