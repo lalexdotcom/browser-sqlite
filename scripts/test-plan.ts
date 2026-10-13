@@ -4,7 +4,7 @@
  *
  *   node scripts/test-plan.ts [--unit] [--browser chrome|firefox]…
  *     [--modes not-isolated,isolated] [--full] [--mode complement|all-pairs]
- *     [--pair vfs/build]… [--table] [file…]
+ *     [--pair vfs/build]… [--table] [--plan-only] [--pairs-out file] [file…]
  *
  * Probes each selected environment, parses the tests statically, plans
  * which cell runs which test, prints the plan, runs the cells
@@ -14,7 +14,9 @@
  * reason (`scripts/skip-notes.ts`). `--table` prints the matrix table and the
  * reasons instead, and keeps each cell's JSON report under `.matrix/<run>/` for
  * `scripts/matrix-triage.ts`. `BSQ_TEST_TARGETS` and `--pair` give the
- * pairs, never substituted.
+ * pairs, never substituted. `--plan-only` stops after the plan and its checks;
+ * `--pairs-out` writes the pairs that have tests. A dead test fails a run that
+ * saw every pair (`scripts/plan-report.ts`).
  */
 import { spawnSync } from 'node:child_process';
 import {
@@ -50,8 +52,10 @@ import {
   type PlannedRun,
   probeFeatures,
 } from './plan-io.ts';
+import { deadIsFatal } from './plan-report.ts';
 import { RECOMMENDED_VFS } from './recommended-vfs.ts';
 import {
+  allPairs,
   type MatrixResult,
   parseMatrixReport,
   printTable,
@@ -72,6 +76,10 @@ type Options = {
   /** Also write the merged report as Vitest JSON there (the coverage comparison of Task 12). */
   json: string | null;
   files: string[] | null;
+  /** Plan, print and check, then exit before running anything. */
+  planOnly: boolean;
+  /** Write the pairs that have tests there, as a JSON array of `vfs/build`. */
+  pairsOut: string | null;
 };
 
 const parsePair = (label: string): Pair => {
@@ -92,6 +100,8 @@ function parseArgs(argv: readonly string[]): Options {
     table: false,
     json: null,
     files: null,
+    planOnly: false,
+    pairsOut: null,
   };
   const pairs: Pair[] = [];
   const files: string[] = [];
@@ -101,6 +111,8 @@ function parseArgs(argv: readonly string[]): Options {
     if (arg === '--unit') options.unit = true;
     else if (arg === '--full') options.full = true;
     else if (arg === '--table') options.table = true;
+    else if (arg === '--plan-only') options.planOnly = true;
+    else if (arg === '--pairs-out') options.pairsOut = String(argv[++i]);
     else if (arg === '--json') options.json = String(argv[++i]);
     else if (arg === '--browser') {
       const browser = argv[++i];
@@ -277,6 +289,37 @@ async function main() {
     return;
   }
 
+  // Dead fails CI and the matrix; locally a browser may simply be absent.
+  let status = 0;
+  let deadFatal = false;
+  if (plan.dead.length > 0) {
+    const fatal = deadIsFatal(
+      {
+        mode: options.mode,
+        explicitPairs: Array.isArray(options.pairs),
+        browsers: options.browsers.length,
+        modes: options.isolatedModes.length,
+      },
+      process.env.CI === 'true',
+    );
+    console[fatal ? 'error' : 'warn'](
+      `\n${plan.dead.length} test(s) run on no pair of any selected browser:\n${plan.dead.map((d) => `  ${describeTest(d)} — needs [${d.tags.join(', ')}]`).join('\n')}`,
+    );
+    if (fatal) status = 1;
+    deadFatal = fatal;
+  }
+  if (options.pairsOut) {
+    const withTests = new Set(plan.cells.map((c) => `${c.vfs}/${c.build}`));
+    const nonEmptyPairs = allPairs()
+      .map((p) => `${p.vfs}/${p.build}`)
+      .filter((label) => withTests.has(label));
+    writeFileSync(options.pairsOut, JSON.stringify(nonEmptyPairs));
+  }
+  if (options.planOnly) {
+    process.exitCode = status;
+    return;
+  }
+
   // --- Run --------------------------------------------------------------
   const runsRoot = join(ROOT, options.table ? '.matrix' : '.test-parallel');
   const run = join(runsRoot, new Date().toISOString().replace(/[:.]/g, '-'));
@@ -413,8 +456,7 @@ async function main() {
   const failed = findFailedJobs(outcomes);
   console.log(`Jobs done in ${Math.round((Date.now() - start) / 1000)}s.\n`);
 
-  let status =
-    failed.length > 0 || outcomes.some((o) => o.exitCode !== 0) ? 1 : 0;
+  if (failed.length > 0 || outcomes.some((o) => o.exitCode !== 0)) status = 1;
   // The default reporter shows a skip's reason only on a failed module's lines.
   const SKIP_NOTES = '--reporter=./scripts/skip-notes.ts';
   const mergeBlobs = (reporters: string[]) =>
@@ -494,17 +536,11 @@ async function main() {
       `\n--- ${job.id} failed (${reason}); last ${TAIL_LINES} lines of ${log} ---\n${tail}\n--- end ---`,
     );
   }
-  if (plan.dead.length > 0) {
-    // Dead fails CI and the matrix; locally a browser may simply be absent.
-    const fatal =
-      options.mode === 'all-pairs' &&
-      (options.pairs === null || options.pairs === 'all') &&
-      options.browsers.length === 2 &&
-      options.isolatedModes.length === 2;
-    console[fatal ? 'error' : 'warn'](
-      `\n${plan.dead.length} test(s) run on no pair of any selected browser:\n${plan.dead.map((d) => `  ${describeTest(d)} — needs [${d.tags.join(', ')}]`).join('\n')}`,
+  // The dead report is above the run; say here why the exit is 1 when every cell is green.
+  if (deadFatal) {
+    console.error(
+      `test-plan: failing because ${plan.dead.length} test(s) run on no pair (listed after the plan, above)`,
     );
-    if (fatal) status = 1;
   }
   process.exitCode = status;
 }

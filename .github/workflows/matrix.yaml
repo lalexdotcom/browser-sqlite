@@ -2,23 +2,38 @@ name: Matrix
 
 # Every declared VFS/build pair through the four columns of the matrix, one job
 # per pair. release-and-publish.yaml calls it as the gate of a publication;
-# workflow_dispatch runs it by hand on any branch, publishing nothing.
+# workflow_dispatch runs it by hand on any branch, publishing nothing; every push
+# of `main` runs it too, so a pair that regresses is seen at the merge and not
+# at the next tag.
 on:
   workflow_call:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+
+# A new push of `main` supersedes the previous run. A called workflow takes the
+# caller's `github.ref`, so a release's run is grouped under its tag and never
+# under `main`.
+concurrency:
+  group: matrix-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  # `pnpm test` covers two of the 22 declared pairs; the rest are only seen
-  # here. One job per pair, each running the four columns (chrome, firefox,
-  # isolated chrome, isolated firefox) of its pair — 263 s measured locally for
-  # one pair. Each shard goes through test-matrix.ts, which hands the pair to the
-  # test planner (scripts/test-plan.ts): it runs each cell as its own process,
-  # bounded by its own timer.
-  pairs:
+  # Plans the whole matrix once, before any pair job starts: the planner
+  # (scripts/test-plan.ts) probes both browsers, parses the tests, and prints
+  # the plan. A test that no pair of any browser can run fails this job, once,
+  # instead of failing every pair job; the pairs that have at least one test to
+  # run become the matrix of `cells`. test-plan.ts also builds tests/build/ once,
+  # before probing; the probe projects' global setup then skips its build.
+  plan:
     runs-on: ubuntu-latest
+    # The default is six hours; a stuck WebDriver session while probing both
+    # browsers in both modes would hold the release gate that long.
+    timeout-minutes: 15
     outputs:
       list: ${{ steps.list.outputs.pairs }}
     steps:
@@ -29,16 +44,45 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # The pair list lives in VFS_CAPABILITIES and nowhere else.
-      # Single-quoted: backticks and ${...} in a double-quoted $( ) would be
-      # eaten by bash before node saw them.
+      # Stock Chrome and Firefox at the versions scripts/browsers.ts pins, and
+      # their drivers, downloaded by WebdriverIO on first use. The key is that
+      # file: a new pin is a new cache. GitHub's Ubuntu images carry both
+      # browsers' system libraries.
+      - name: Cache WebdriverIO browsers
+        uses: actions/cache@v6
+        with:
+          path: node_modules/.cache/wdio
+          key: wdio-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/browsers.ts') }}
+      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor.
+      # Chrome's sandbox needs them, and only the system Chrome has a profile
+      # that allows them: the Chrome for Testing WebdriverIO downloads exits at
+      # launch ("Chrome instance exited"). Lifting the restriction keeps the
+      # sandbox, where --no-sandbox would drop it.
+      - name: Let Chrome's sandbox create user namespaces
+        run: |
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # One download per browser and driver, before anything runs in parallel:
+      # on a cold cache, parallel Vitest jobs fetched the same chromedriver at
+      # once, and one spawned it before it was executable (EACCES).
+      - name: Install browsers
+        run: node scripts/browsers.ts install
+      # --plan-only stops after the plan and its checks, and exits 1 naming any
+      # dead test (always fatal in an all-pairs run). pairs.json is a one-line
+      # JSON array of "vfs/build", the pairs with a non-empty cell.
       - id: list
         run: |
-          PAIRS=$(node --experimental-strip-types -e 'import("./scripts/test-matrix.ts").then(({ allPairs }) => console.log(JSON.stringify(allPairs().map((p) => p.vfs + "/" + p.build))))')
-          echo "pairs=$PAIRS" >> "$GITHUB_OUTPUT"
+          node scripts/test-plan.ts --mode all-pairs --plan-only --pairs-out pairs.json
+          echo "pairs=$(cat pairs.json)" >> "$GITHUB_OUTPUT"
 
+  # One job per pair of the plan, each running only that pair's non-empty cells
+  # of the four columns (chrome, firefox, isolated chrome, isolated firefox) —
+  # 263 s measured locally for one pair. Each goes through test-matrix.ts, which
+  # hands the pair to the test planner: it runs each cell as its own process,
+  # bounded by its own timer. `pnpm test` runs the start pairs and their
+  # complement cells; the other combinations are only seen here.
   cells:
-    needs: pairs
+    needs: plan
     runs-on: ubuntu-latest
     # The default is six hours, and Firefox has an uncured hang here:
     # navigator.storage.getDirectory() can fail to settle in a worker.
@@ -48,7 +92,7 @@ jobs:
       # refuse, and diagnosis happens in a local run, not in 22 job logs.
       fail-fast: true
       matrix:
-        pair: ${{ fromJSON(needs.pairs.outputs.list) }}
+        pair: ${{ fromJSON(needs.plan.outputs.list) }}
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
