@@ -276,7 +276,6 @@ const cleanUp = async (
  * Until plan C's Task 9, `options.vfs` still pins and `options.needs` still
  * resolves through `pairFor`; both go then.
  */
-
 export async function createTestClient(
   options: TestClientOptions = {},
   pair?: TestTarget,
