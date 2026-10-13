@@ -23,12 +23,12 @@ unmeasured ground.
   ~17 min against 3-9 for the others, under the 25-minute job limit — not looked into, and not
   seen at rc.9.
   Procedure: `mem:conventions`, § Releasing.
-- **The vendored wa-sqlite sits on upstream `master` of 2026-10-11** (#372 merged;
-  `package.json` has the SHA; the built worker is byte-identical to the previous pin's).
-  **`patches/wa-sqlite@1.1.2.patch` carries only a one-line guard in `OPFSAdaptiveVFS.js` for
-  #374** (open upstream); heads and the merge in `mem:stack-and-build/wa-sqlite`, reports in
-  `mem:upstream`. A patch is regenerated or removed through `pnpm patch` / `pnpm patch-commit`,
-  never by hand.
+- **The vendored wa-sqlite sits on upstream `master` of 2026-10-13** (`6238f532`, #374 merged;
+  `package.json` has the SHA; the built worker, the `.wasm` and `index.js` are byte-identical to the
+  previous pin's). **No patch since then**: every change the library carried has merged upstream,
+  and `patches/` and `patchedDependencies` are gone. Heads and merges in
+  `mem:stack-and-build/wa-sqlite`, reports in `mem:upstream`. A patch is added, regenerated or
+  removed through `pnpm patch` / `pnpm patch-commit` / `pnpm patch-remove`, never by hand.
 - **`main` may sit ahead of `origin/main` indefinitely** — the convention, not an oversight. It
   is pushed for a release, not as housekeeping.
 
@@ -90,9 +90,7 @@ here on purpose: a total alone cannot say which suite moved.
   the PR before his answer. The plan and what his answer calls for are in `mem:follow-ups`, the
   measurements in `mem:measurements/test-browsers`, and the user's principles in
   `mem:conventions` (§ Testing in browsers).
-- **#374 is open upstream** and carried in the patch (§ Standing facts); #371 (2026-10-10) and
-  #372 (2026-10-11, after one comment nit) merged and left the patch at the repins. Follow-ups in
-  `mem:follow-ups`.
+- **No PR of ours is open on wa-sqlite since 2026-10-13**: #371 (2026-10-10), #372 (2026-10-11) and #374 (2026-10-13) merged and left the patch at the repins (§ Standing facts). #362 (an upstream issue) awaits the user's decision on a PR; `mem:follow-ups`.
 - **Another agent's work was paused by the user until our upstream PRs were done; the user
   relaunches it.**
 
