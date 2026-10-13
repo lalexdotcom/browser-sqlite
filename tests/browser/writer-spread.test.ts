@@ -35,19 +35,15 @@ const poolReady = async (db: TestClient, size: number) => {
   throw new Error('pool never reached READY');
 };
 
-describe('writer spread', () => {
+describe('writer spread', {
+  tags: ['requires:two-workers'],
+}, () => {
   // Falsifiable: delete the `currentWriterIndex = -1` release in handOver()
   // (src/scheduler.ts) and every write queues behind the first designated
   // worker — the set collapses to one index and this goes red.
-  it('sends a write to a free worker while a read holds the preferred one', async ({
-    skip,
-  }) => {
+  it('sends a write to a free worker while a read holds the preferred one', async () => {
     // The subject is a pool spreading writes across two live workers.
-    const db = await createTestClient({
-      debug: true,
-      needs: ['two-workers'],
-      skip,
-    });
+    const db = await createTestClient({ debug: true });
     await poolReady(db, 2);
 
     await db.write('CREATE TABLE spread (id INTEGER PRIMARY KEY, v TEXT)');
@@ -79,15 +75,9 @@ describe('writer spread', () => {
   // It is the regression guard for what relaxing the designation risks: writes
   // spread over connections while other connections read, which is where a
   // missing barrier surfaces as `no such table` or a stale row set.
-  it('keeps results correct under writes and reads issued together', async ({
-    skip,
-  }) => {
+  it('keeps results correct under writes and reads issued together', async () => {
     // The subject is a pool spreading writes across two live workers.
-    const db = await createTestClient({
-      debug: true,
-      needs: ['two-workers'],
-      skip,
-    });
+    const db = await createTestClient({ debug: true });
     await poolReady(db, 2);
 
     await db.write('CREATE TABLE mixed (id INTEGER PRIMARY KEY, v INTEGER)');

@@ -18,17 +18,13 @@ describe('a long single step', () => {
   // Falsifiable: drop the abort from the race in chunk() and go back to testing
   // `aborted` after the await — the rejection then waits for the sort to finish
   // and this exceeds its budget.
-  it('gives the caller back control at the moment the signal fires', async ({
-    skip,
-  }) => {
+  it('gives the caller back control at the moment the signal fires', {
+    tags: ['requires:two-workers', 'requires:interruptible'],
+  }, async () => {
     // A second worker must be free to answer while the first is inside the
-    // long sort, so the pair has to keep two (spec 2026-09-15, A5).
-    // Interruptible too: uncut, the teardown drains the whole 20M-row query.
-    const db = await createTestClient({
-      poolSize: 2,
-      needs: ['two-workers', 'interruptible'],
-      skip,
-    });
+    // long sort, so the pair has to keep two. Interruptible too: uncut, the
+    // teardown drains the whole 20M-row query.
+    const db = await createTestClient({ poolSize: 2 });
     // Booted first: the bound is on the abort, not on the pool's startup.
     await db.read('SELECT 1');
     const started = performance.now();
@@ -43,16 +39,13 @@ describe('a long single step', () => {
   // Falsifiable: remove both `interrupt()` calls, in reclaim() and in drain()'s
   // finally — the worker then goes RUNNING → READY without ABORTING. Either one
   // alone keeps it green: the abort listener reclaims before the finally runs.
-  it('does not terminate the worker it abandoned', async ({ skip }) => {
+  it('does not terminate the worker it abandoned', {
+    tags: ['requires:two-workers', 'requires:interruptible'],
+  }, async () => {
     const records = interceptWorkers();
     const db = await createTestClient({
-      // Both workers must stay alive: needs two-workers so a target that caps
-      // the pool without readwrite-unsafe (spec 2026-09-13, §10) falls back to
-      // a pair that keeps two, or is skipped under the matrix (spec
-      // 2026-09-15, A5, A7).
+      // Both workers must stay alive, so the pair has to keep two.
       // Interruptible too: uncut, the teardown drains the whole 20M-row query.
-      needs: ['two-workers', 'interruptible'],
-      skip,
       poolSize: 2,
       drainTimeout: 60_000,
       debug: true,

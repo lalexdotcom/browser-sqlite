@@ -189,18 +189,15 @@ describe('statement cache', () => {
     await db.close();
   });
 
-  it('an aborted query leaves its cached statement reusable', async ({
-    skip,
-  }) => {
+  it('an aborted query leaves its cached statement reusable', {
+    tags: ['requires:interruptible'],
+    timeout: 120_000,
+  }, async () => {
     // Needs interruptible: on a sync build outside cross-origin isolation the
     // abort cannot cut the statement, so the read below waits the whole query
     // out — past this test's 30 s on a CI runner (mem:measurements,
     // CI-QUERY-TIMEOUT).
-    const db = await createTestClient({
-      ...single,
-      needs: ['interruptible'],
-      skip,
-    });
+    const db = await createTestClient({ ...single });
     await db.write('CREATE TABLE t (a INTEGER)');
     await db.write('INSERT INTO t VALUES (1)');
 
@@ -236,7 +233,7 @@ describe('statement cache', () => {
     // Firefox runs this query 3.8x slower than Chromium and lands at ~28 s,
     // which straddled the 30 s default: one CI run passed it at 27.6 and failed
     // it at 31.7 on two pairs of the same suite.
-  }, 120_000);
+  });
 });
 
 /** 5 columns → bulkWrite flushes every floor(32766 / 5) = 6553 rows. */

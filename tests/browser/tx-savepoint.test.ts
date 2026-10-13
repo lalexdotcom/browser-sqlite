@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, type Needing } from './helpers';
+import { createTestClient } from './helpers';
 
 /**
  * docs/superpowers/specs/2026-09-11-tx-savepoint-design.md: a statement the
@@ -20,8 +20,8 @@ type Debuggable = { debug: { workers: { creationTime: number }[] } };
 const workerIdentity = (db: unknown) =>
   (db as Debuggable).debug.workers.map((w) => w.creationTime).join(',');
 
-const setUp = async (options: Needing = {}) => {
-  const db = await createTestClient({ ...options, poolSize: 1, debug: true });
+const setUp = async () => {
+  const db = await createTestClient({ poolSize: 1, debug: true });
   await db.write('CREATE TABLE t (a INTEGER)');
   await db.write('CREATE TABLE big (x INTEGER)');
   await db.write('INSERT INTO t VALUES (0)');
@@ -203,10 +203,11 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
   // start the savepointed write with `{ ...given, signal: undefined }` in
   // `settled` — the death then cannot cut it and transaction() waits for the
   // whole write.
-  it('cuts the write, keeps nothing, and aborts tx.signal when the rejection escapes (T3)', async ({
-    skip,
-  }) => {
-    const db = await setUp({ needs: ['interruptible'], skip });
+  it('cuts the write, keeps nothing, and aborts tx.signal when the rejection escapes (T3)', {
+    tags: ['requires:interruptible'],
+    timeout: 120_000,
+  }, async () => {
+    const db = await setUp();
     try {
       const natural = await timed(() => db.write(HUGE_INSERT));
       await db.write('DELETE FROM big');
@@ -237,18 +238,19 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
     } finally {
       await db.close();
     }
-  }, 120_000);
+  });
 
-  // No falsifier known. T3's was run here on 2026-09-15 and refuted: with
-  // `needs` dropped, on the uninterruptible OPFSWriteAheadVFS/sync pair, T4
+  // No falsifier known. T3's was run here on 2026-09-15 and refuted: with the
+  // need dropped, on the uninterruptible OPFSWriteAheadVFS/sync pair, T4
   // stayed green on both Chromium projects. Its `took` bound measures how fast
   // the transaction rejects against its own 150 ms timeout, not whether the
-  // background write was cut. `needs: ['interruptible']` stays: the subject is
+  // background write was cut. `requires:interruptible` stays: the subject is
   // a build that can cut a step.
-  it("cuts an abandoned write when the transaction's own timeout expires (T4)", async ({
-    skip,
-  }) => {
-    const db = await setUp({ needs: ['interruptible'], skip });
+  it("cuts an abandoned write when the transaction's own timeout expires (T4)", {
+    tags: ['requires:interruptible'],
+    timeout: 120_000,
+  }, async () => {
+    const db = await setUp();
     try {
       const natural = await timed(() => db.write(HUGE_INSERT));
       await db.write('DELETE FROM big');
@@ -279,7 +281,7 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
     } finally {
       await db.close();
     }
-  }, 120_000);
+  });
 });
 
 describe('a write issued through a generator (spec 2026-09-11, §4)', () => {

@@ -2,17 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { createTestClient, longQuery } from './helpers';
 
 describe('query timeout', () => {
-  it('rejects with OPERATION_TIMEOUT and leaves the client usable', async ({
-    skip,
-  }) => {
+  it('rejects with OPERATION_TIMEOUT and leaves the client usable', {
+    tags: ['requires:interruptible'],
+  }, async () => {
     // Needs interruptible: without it the next read would wait out the whole
     // query — 4 s on Chromium, 22 s on Firefox, past this test's 30 s on a CI
     // runner (mem:measurements, CI-QUERY-TIMEOUT).
-    const db = await createTestClient({
-      needs: ['interruptible'],
-      skip,
-      poolSize: 1,
-    });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       const slow = longQuery(20_000_000);
       // A fresh client's first call can time out while it waits for the worker
@@ -39,16 +35,12 @@ describe('query timeout', () => {
     }
   });
 
-  it('spends the budget over the whole call, not per statement', async ({
-    skip,
-  }) => {
+  it('spends the budget over the whole call, not per statement', {
+    tags: ['requires:interruptible'],
+  }, async () => {
     // Needs interruptible: so the write is really cut and close() does not
     // wait it out (mem:measurements, CI-QUERY-TIMEOUT).
-    const db = await createTestClient({
-      needs: ['interruptible'],
-      skip,
-      poolSize: 1,
-    });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await db.read('SELECT 1');
       // Two statements, each shorter than the budget, whose sum is not.
@@ -95,14 +87,12 @@ describe('query timeout', () => {
     }
   });
 
-  it('lets the caller signal win, with its own reason', async ({ skip }) => {
+  it('lets the caller signal win, with its own reason', {
+    tags: ['requires:interruptible'],
+  }, async () => {
     // Needs interruptible: the abandoned long query must not keep close()
     // waiting for its natural length after the signal wins.
-    const db = await createTestClient({
-      needs: ['interruptible'],
-      skip,
-      poolSize: 1,
-    });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       const controller = new AbortController();
       const mine = new Error('mine');
@@ -122,17 +112,15 @@ describe('query timeout', () => {
     }
   });
 
-  it('spends the budget while the call is still queued', async ({ skip }) => {
+  it('spends the budget while the call is still queued', {
+    tags: ['requires:interruptible'],
+  }, async () => {
     // Needs interruptible: on a build that cannot stop a statement, the holder
     // keeps its worker to its natural end, and close() waits it out — 31.6 s on
     // Firefox, 22 s on the `sync` build, past this test's 30 s
     // (mem:measurements, CI-QUERY-TIMEOUT). It is abandoned at the end, as in
     // concurrency.test.ts.
-    const db = await createTestClient({
-      needs: ['interruptible'],
-      skip,
-      poolSize: 1,
-    });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       // The worker must be up, so the long read below occupies it rather than
       // waiting for it to start alongside the call under test.
