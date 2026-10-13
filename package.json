@@ -72,6 +72,7 @@
 		"bench:dev": "npx --yes kill-port 8099 && node scripts/bench/dev.ts 8099"
 	},
 	"devDependencies": {
+		"@arethetypeswrong/cli": "0.18.5",
 		"@biomejs/biome": "2.5.8",
 		"@mdn/browser-compat-data": "^8.0.13",
 		"@puppeteer/browsers": "^3.2.4",
@@ -79,6 +80,7 @@
 		"@types/node": "^24.12.0",
 		"@vitest/browser-webdriverio": "5.0.0",
 		"lint-staged": "^16.4.0",
+		"publint": "0.3.24",
 		"simple-git-hooks": "^2.13.1",
 		"typescript": "^7.0.2",
 		"vite": "8.3.4",

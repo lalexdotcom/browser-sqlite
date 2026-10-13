@@ -7,11 +7,13 @@
  * third-party bundler resolves the Web Worker. This script closes that gap:
  *
  *   1. build + `pnpm pack` — exactly the tarball npm would publish
- *   2. scaffold `tests/consumer/` into a temp dir OUTSIDE the repo, so the
+ *   2. publint and attw on that tarball: package.json against what it ships,
+ *      and the published types under each TypeScript resolution mode
+ *   3. scaffold `tests/consumer/` into a temp dir OUTSIDE the repo, so the
  *      bare `browser-sqlite` specifier cannot resolve back to the local
  *      sources and make the test lie
- *   3. `npm install` the tarball there
- *   4. drive the app with WebdriverIO in BOTH Vite modes — dev server and
+ *   4. `npm install` the tarball there
+ *   5. drive the app with WebdriverIO in BOTH Vite modes — dev server and
  *      `vite build` + `vite preview`. Worker resolution differs between the
  *      two, so a single mode proves nothing.
  *
@@ -342,6 +344,38 @@ try {
     } catch (error) {
       s.fail(errText(error));
       throw error;
+    }
+  }
+
+  // Static checks of the tarball, before any app installs it: publint reads
+  // package.json against the files it ships, attw resolves the published
+  // types the way each TypeScript resolution mode would. ESM only, hence the
+  // esm-only profile: it does not ask `require` to work.
+  {
+    const s = stage('publint');
+    try {
+      run(
+        'pnpm',
+        ['exec', 'publint', 'run', tarball as string, '--strict'],
+        ROOT,
+      );
+      s.pass('package.json agrees with the tarball');
+    } catch (error) {
+      s.fail(errText(error));
+    }
+  }
+
+  {
+    const s = stage('are the types wrong');
+    try {
+      run(
+        'pnpm',
+        ['exec', 'attw', tarball as string, '--profile', 'esm-only'],
+        ROOT,
+      );
+      s.pass('the types resolve under every ESM resolution mode');
+    } catch (error) {
+      s.fail(errText(error));
     }
   }
 
