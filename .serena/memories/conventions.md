@@ -234,7 +234,7 @@ policy becomes applicable as written.
 
 ## When to run the full matrix (2026-09-22)
 
-`pnpm test:matrix` covers the 22 declared (vfs, build) pairs × 4 columns (`chrome`, `firefox`, `isolated-chrome`, `isolated-firefox`) = 88 cells, and costs about 13 min with 12 cells at a time (1 h 45 one by one; `mem:measurements/suite-and-matrix`, PARALLEL-RUNS). `pnpm test` covers **two recommended pairs**, so the matrix is the only thing that sees the other twenty. Run it when the change can behave differently per pair:
+`pnpm test:matrix` runs every eligible (vfs, build) pair on both browsers, isolated where isolation changes a test — 52 non-empty cells on 2026-10-13 — and costs about 16 min locally at the default 6 cells at a time (`mem:measurements/suite-and-matrix`, PARALLEL-CAP), ~8 min on GitHub. **When to run which test suite is to be reviewed next session (user, 2026-10-13)**: the list below predates the planner and the push-triggered matrix, and the user wants fewer local matrix runs. `pnpm test` covers **two recommended pairs**, so the matrix is the only thing that sees the other twenty. Run it when the change can behave differently per pair:
 
 - **the per-connection machinery** — `src/pool.ts`, `src/transaction.ts`, `src/worker/`;
 - **a wa-sqlite repin or a change to `patches/`** — every VFS comes from there;

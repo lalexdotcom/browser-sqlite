@@ -12,7 +12,7 @@
  *
  * The globs are Vitest's `--project` globs, resolved against `vitest list`. Each
  * browser project is cut into shards in proportion to its files, so that about
- * `BSQ_TEST_JOBS` processes (default: every CPU but one, at most 12) run at
+ * `BSQ_TEST_JOBS` processes (default: every CPU but one, at most 6) run at
  * once; `unit` is one process. Each process writes a Vitest blob under
  * `<run>/blobs/` and its console under `<run>/logs/`; `vitest --merge-reports`
  * then reads the blobs as one run. The blobs have a directory of their own: the

@@ -130,14 +130,16 @@ export function runBounded(
 
 /**
  * How many processes run at once. `BSQ_TEST_JOBS` (a positive integer) wins;
- * otherwise every CPU but one, at most 12: a browser, a driver and a server per
- * process, and a stalled page under CPU starvation costs more than it saves.
+ * otherwise every CPU but one, at most 6: each process is a browser, a driver
+ * and a server, and cells slow each other down — measured 2026-10-13 on 16
+ * cores, the matrix took 949 s at 6, 906 s at 8 and 842 s at 12, for 26% more
+ * CPU at 8 than at 6.
  */
 export function resolveConcurrency(
   env: string | undefined,
   cpus: number = availableParallelism(),
 ): number {
-  if (env === undefined) return Math.max(1, Math.min(12, cpus - 1));
+  if (env === undefined) return Math.max(1, Math.min(6, cpus - 1));
   if (!/^[1-9]\d*$/.test(env)) {
     throw new Error(`BSQ_TEST_JOBS: "${env}" is not a positive integer`);
   }
