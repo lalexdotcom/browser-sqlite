@@ -31,7 +31,6 @@ export type MatrixResult =
       /** Files that failed with no failed test, `path: reason`; absent when none. */
       readonly unhandled?: readonly string[];
     }
-  | { readonly status: 'not-runnable'; readonly seconds: number }
   | { readonly status: 'timed-out' }
   | { readonly status: 'error'; readonly message: string };
 
@@ -51,8 +50,7 @@ export const allPairs = (): Pair[] =>
 /**
  * Reads one Vitest JSON report (`--reporter=json --outputFile`) into a matrix
  * cell. No report, or one that does not parse: the run never finished —
- * killed by the planner's timer or crashed first — so `timed-out`. Failures
- * that are ALL `TARGET_NOT_RUNNABLE`: `not-runnable`, never hiding a real one.
+ * killed by the planner's timer or crashed first — so `timed-out`.
  * A file that failed with no failed test (a page crash) carries its reason in
  * `message`: reported in `unhandled`, so the cell reads FAIL with that reason.
  */
@@ -71,18 +69,9 @@ export function parseMatrixReport(json: string): MatrixResult {
     ...report.testResults.map((f) => f.endTime),
   );
   const seconds = Math.round((end - report.startTime) / 1000);
-  const messages = failures.flatMap((t) => t.failureMessages);
   const unhandled = report.testResults
     .filter((f) => f.status === 'failed' && f.message)
     .map((f) => `${relative(ROOT, f.name)}: ${f.message}`);
-  // A file-level failure is never hidden behind not-runnable tests.
-  if (
-    unhandled.length === 0 &&
-    messages.length > 0 &&
-    messages.every((m) => m.startsWith('TARGET_NOT_RUNNABLE'))
-  ) {
-    return { status: 'not-runnable', seconds };
-  }
   return {
     status: report.success ? 'passed' : 'failed',
     tests: tests.length,
@@ -159,7 +148,6 @@ function parseArgs(argv: string[]) {
  */
 export function formatCell(result: MatrixResult | undefined): string {
   if (result === undefined) return '—';
-  if (result.status === 'not-runnable') return 'not runnable here';
   if (result.status === 'timed-out') return 'timed out';
   if (result.status === 'error') return `error: ${result.message}`;
   const cell = `${result.passed}/${result.failed}/${result.skipped} · ${result.files} files · ${result.seconds}s`;

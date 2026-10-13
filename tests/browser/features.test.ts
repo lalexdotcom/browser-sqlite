@@ -7,8 +7,8 @@ import { TEST_TARGET } from './helpers';
 
 /**
  * `detectFeatures` decides what a browser can do, and every other test trusts
- * it: the client refuses a pair whose features are missing, and the matrix
- * reports TARGET_NOT_RUNNABLE from the same answer. Until 2026-09-16 it was
+ * it: the client refuses a pair whose features are missing, and the planner
+ * decides from the same answer which pairs a browser can run. Until 2026-09-16 it was
  * asserted in Node only — where no global it probes exists, so every probe
  * answers false and the positive branch was never taken anywhere.
  *

@@ -46,9 +46,8 @@ describe('db.inspect', () => {
 
 /**
  * inspect() on the pair this project injects. The roster above needs two
- * clients on one database and is pinned for it; a lone client needs nothing of
- * the VFS, so these run wherever the target points — which is how inspect()
- * reaches the eight VFS the pinned tests never visit.
+ * clients on one database and is tagged for it; a lone client needs nothing of
+ * the VFS, so these run wherever the target points.
  */
 describe('db.inspect on the target', () => {
   it('describes a lone client', {

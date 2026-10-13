@@ -477,10 +477,7 @@ async function main() {
       job.cell === null || !options.table
         ? undefined
         : results.get((cells[job.cell] as PlannedCell).project);
-    const unwell =
-      result !== undefined &&
-      result.status !== 'passed' &&
-      result.status !== 'not-runnable';
+    const unwell = result !== undefined && result.status !== 'passed';
     if (exitCode !== 0 || unwell) {
       red.push({
         job,

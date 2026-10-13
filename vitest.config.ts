@@ -118,20 +118,19 @@ export default defineConfig({
       },
       ...ENGINES.flatMap((browser) =>
         allTargets().flatMap((target) => [
-            browserProject(
-              `${browser} · ${targetLabel(target)}`,
-              browser,
-              ['tests/browser/*.test.ts'],
-              { target, testTimeout: 30_000 },
-            ),
-            browserProject(
-              `isolated ${browser} · ${targetLabel(target)}`,
-              browser,
-              ['tests/browser/*.test.ts'],
-              { target, isolated: true, testTimeout: 30_000 },
-            ),
-          ],
-        ),
+          browserProject(
+            `${browser} · ${targetLabel(target)}`,
+            browser,
+            ['tests/browser/*.test.ts'],
+            { target, testTimeout: 30_000 },
+          ),
+          browserProject(
+            `isolated ${browser} · ${targetLabel(target)}`,
+            browser,
+            ['tests/browser/*.test.ts'],
+            { target, isolated: true, testTimeout: 30_000 },
+          ),
+        ]),
       ),
       ...ENGINES.map((browser) =>
         browserProject(

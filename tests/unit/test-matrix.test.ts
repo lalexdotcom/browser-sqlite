@@ -56,35 +56,6 @@ const FAILING = report(
   ],
   false,
 );
-const NOT_RUNNABLE = report(
-  [
-    file('tests/browser/a.test.ts', [
-      {
-        title: 'x',
-        status: 'failed',
-        failureMessages: ['TARGET_NOT_RUNNABLE: needs opfs'],
-      },
-    ]),
-  ],
-  false,
-);
-const MIXED = report(
-  [
-    file('tests/browser/a.test.ts', [
-      {
-        title: 'x',
-        status: 'failed',
-        failureMessages: ['TARGET_NOT_RUNNABLE: needs opfs'],
-      },
-      {
-        title: 'y',
-        status: 'failed',
-        failureMessages: ['AssertionError: expected 1 to be 2'],
-      },
-    ]),
-  ],
-  false,
-);
 // A page crash: the file failed with no failed test, the reason in `message`.
 const CRASHED = report(
   [
@@ -92,23 +63,6 @@ const CRASHED = report(
       status: 'failed',
       message: 'Browser connection was closed while running tests',
     }),
-  ],
-  false,
-);
-// Every failed test is not-runnable, and the file ALSO failed at file level.
-const NOT_RUNNABLE_AND_CRASHED = report(
-  [
-    file(
-      'tests/browser/a.test.ts',
-      [
-        {
-          title: 'x',
-          status: 'failed',
-          failureMessages: ['TARGET_NOT_RUNNABLE: needs opfs'],
-        },
-      ],
-      { message: 'Browser connection was closed while running tests' },
-    ),
   ],
   false,
 );
@@ -130,33 +84,6 @@ describe('parseMatrixReport', () => {
     expect(parseMatrixReport(FAILING)).toMatchObject({
       status: 'failed',
       failed: 1,
-    });
-  });
-
-  it('classifies a report as not-runnable only when every failure is TARGET_NOT_RUNNABLE', () => {
-    expect(parseMatrixReport(NOT_RUNNABLE)).toEqual({
-      status: 'not-runnable',
-      seconds: 52,
-    });
-  });
-
-  it('keeps a real failure that comes with TARGET_NOT_RUNNABLE ones', () => {
-    // Falsifiable: classifying this as "not-runnable" would hide a real
-    // failure behind the TARGET_NOT_RUNNABLE one.
-    expect(parseMatrixReport(MIXED)).toMatchObject({
-      status: 'failed',
-      failed: 2,
-    });
-  });
-
-  it('does not hide a file-level failure behind not-runnable tests', () => {
-    // Falsifiable: deciding not-runnable before reading `message` reports
-    // this cell as not-runnable and drops the page crash.
-    expect(parseMatrixReport(NOT_RUNNABLE_AND_CRASHED)).toMatchObject({
-      status: 'failed',
-      unhandled: [
-        'tests/browser/a.test.ts: Browser connection was closed while running tests',
-      ],
     });
   });
 

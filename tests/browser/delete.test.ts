@@ -48,13 +48,9 @@ describe('deleteDatabase', () => {
     expect(await tableCount(file, { vfs, build })).toBe(0);
   });
 
-  // No target-following deletion test lives here. One was written on
-  // 2026-09-16 and deleted the same day: the cross-VFS sweep below and
-  // conformance invariant 7 already delete on every VFS, and no mutation of
-  // src/ reddened the target version without reddening one of those first —
-  // including the one that stops the deletion from removing a VFS's own
-  // sidecars, which the sweep catches and it did not. It varied the BUILD and
-  // nothing else, and deletion does not read the build.
+  // The deletion tests below follow their pair through TEST_TARGET, and
+  // conformance invariant 7 deletes on every VFS. Deletion does not read the
+  // build, so no test here varies it.
 
   it('rejects with INVALID_OPTION when vfs is missing', {
     tags: ['standalone'],

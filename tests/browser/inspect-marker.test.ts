@@ -16,13 +16,11 @@ import {
 
 const locks = createLocks();
 
-/**
- * A marker only reaches the lock registry for a database that outlives the
- * worker holding it — a memory VFS has no roster to hold one in, which is what
- * `holds no marker where nothing is shared` below asserts on purpose. Every other
- * test here is tagged `requires:shared-storage` rather than assuming the
- * target has it.
- */
+// A marker only reaches the lock registry for a database that outlives the
+// worker holding it — a memory VFS has no roster to hold one in, which is what
+// `holds no marker where nothing is shared` below asserts on purpose. Every other
+// test here is tagged `requires:shared-storage` rather than assuming the
+// target has it.
 
 const markersFor = async (file: string, vfs: SQLiteVFS) => {
   const { held } = await locks.entries();
