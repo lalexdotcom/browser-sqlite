@@ -1,6 +1,5 @@
-import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
-import { describe, expect, it, onTestFinished } from 'vitest';
-import { createTestClient, pairFor } from './helpers';
+import { describe, expect, it } from 'vitest';
+import { createTestClient, sharedDatabase } from './helpers';
 
 /**
  * `poolSize: 1` throughout this file. At the default size two executions of
@@ -137,33 +136,18 @@ describe('statement cache', () => {
     await db.close();
   });
 
-  it('ends the read transaction of a statement abandoned by first()', async ({
-    skip,
-  }) => {
+  it('ends the read transaction of a statement abandoned by first()', {
+    tags: ['requires:shared-second-client'],
+  }, async () => {
     // first() leaves its statement at SQLITE_ROW, inside an implicit read
     // transaction that only the reset in `settle` ends. An abort needs no
     // reset: SQLite ends the transaction itself on SQLITE_INTERRUPT.
     // Falsifiable: delete the `reset` call in `settle` — the reader's view
     // stays frozen and it reads 1 on Chromium; on Firefox's pair the held
     // transaction blocks the write until its timeout.
-    const { vfs, build } = pairFor(['shared-second-client'], skip);
-    const dbName = `bsq-test-${crypto.randomUUID()}`;
-    const reader = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
-    const writer = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
-    onTestFinished(async () => {
-      for (const client of [reader, writer]) {
-        try {
-          await client.close();
-        } catch {
-          /* a failed client has nothing to close */
-        }
-      }
-      try {
-        await deleteDatabase(dbName, { vfs, build });
-      } catch {
-        /* never created */
-      }
-    });
+    const database = sharedDatabase();
+    const reader = database.open({ poolSize: 1 });
+    const writer = database.open({ poolSize: 1 });
     await reader.write('CREATE TABLE t (a)');
     await reader.write('INSERT INTO t (a) VALUES (1), (2)');
     await reader.first('SELECT a FROM t');
@@ -189,18 +173,15 @@ describe('statement cache', () => {
     await db.close();
   });
 
-  it('an aborted query leaves its cached statement reusable', async ({
-    skip,
-  }) => {
+  it('an aborted query leaves its cached statement reusable', {
+    tags: ['requires:interruptible'],
+    timeout: 120_000,
+  }, async () => {
     // Needs interruptible: on a sync build outside cross-origin isolation the
     // abort cannot cut the statement, so the read below waits the whole query
     // out — past this test's 30 s on a CI runner (mem:measurements,
     // CI-QUERY-TIMEOUT).
-    const db = await createTestClient({
-      ...single,
-      needs: ['interruptible'],
-      skip,
-    });
+    const db = await createTestClient({ ...single });
     await db.write('CREATE TABLE t (a INTEGER)');
     await db.write('INSERT INTO t VALUES (1)');
 
@@ -236,7 +217,7 @@ describe('statement cache', () => {
     // Firefox runs this query 3.8x slower than Chromium and lands at ~28 s,
     // which straddled the 30 s default: one CI run passed it at 27.6 and failed
     // it at 31.7 on two pairs of the same suite.
-  }, 120_000);
+  });
 });
 
 /** 5 columns → bulkWrite flushes every floor(32766 / 5) = 6553 rows. */

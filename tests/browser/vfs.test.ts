@@ -1,98 +1,38 @@
-import {
-  createSQLiteClient,
-  deleteDatabase,
-  SQLiteError,
-} from 'browser-sqlite';
+import { createSQLiteClient, SQLiteError } from 'browser-sqlite';
 import { describe, expect, it } from 'vitest';
 import { defaultBuildFor, missingFeature } from '../../src/capabilities';
 import { type SQLiteVFS, VFS_CAPABILITIES } from '../../src/const/vfs';
 import { AVAILABLE_FEATURES } from '../conformance/helpers';
-import { createTestClient, forEachCase } from './helpers';
+import { createTestClient, forEachCase, TEST_TARGET } from './helpers';
 
 /**
- * `AccessHandlePoolVFS` cannot share access handles across connections, so its
- * pool is capped at 1. These are the sides that open a database: the cap as
- * default, and a pool of 1. The refusal of a larger pool runs in unit, for
- * every capped VFS (`tests/unit/vfs-guards.test.ts`).
+ * A VFS that cannot share access handles across connections caps its pool
+ * (`maxPoolSize` in `VFS_CAPABILITIES`). These are the sides that open a
+ * database: the cap as default, and a pool of 1. The refusal of a larger pool
+ * runs in unit, for every capped VFS (`tests/unit/vfs-guards.test.ts`).
  */
-describe('AccessHandlePoolVFS pool guard', () => {
+describe('a VFS that caps its pool', {
+  tags: ['requires:capped-pool'],
+}, () => {
   // Falsifiable: restore `clientOptions.poolSize ?? DEFAULT_POOL_SIZE` in
   // client.ts. Selecting a single-connection VFS and nothing else used to
-  // throw on a pool size the caller never chose.
-  // One VFS: the subject is AccessHandlePoolVFS's own poolSize cap.
+  // throw on a pool size the caller never chose. Also revert a VFS's
+  // maxPoolSize to null — db.poolSize is then 2, not its cap.
   it('defaults to the VFS cap rather than throwing when poolSize is omitted', async () => {
-    const name = `bsq-test-${crypto.randomUUID()}`;
-    const db = createSQLiteClient(name, { vfs: 'AccessHandlePoolVFS' });
-    try {
-      await db.write('CREATE TABLE t (id INTEGER PRIMARY KEY)');
-      expect(await db.read('SELECT id FROM t')).toEqual([]);
-    } finally {
-      await db.close();
-      // One of AccessHandlePoolVFS's six fixed slots, given back by delete alone.
-      await deleteDatabase(name, { vfs: 'AccessHandlePoolVFS' });
-    }
+    const db = await createTestClient();
+    await db.write('CREATE TABLE t (id INTEGER PRIMARY KEY)');
+    expect(await db.read('SELECT id FROM t')).toEqual([]);
+    expect(db.poolSize).toBe(VFS_CAPABILITIES[TEST_TARGET.vfs].maxPoolSize);
   });
 
-  // One VFS: the subject is AccessHandlePoolVFS's own poolSize guard.
   it('accepts poolSize 1 and serves queries', async () => {
-    const db = await createTestClient({
-      vfs: 'AccessHandlePoolVFS',
-      poolSize: 1,
-    });
+    const db = await createTestClient({ poolSize: 1 });
 
-    await db.write('CREATE TABLE ahp (id INTEGER, val TEXT)');
-    await db.write("INSERT INTO ahp VALUES (1, 'ok')");
+    await db.write('CREATE TABLE capped (id INTEGER, val TEXT)');
+    await db.write("INSERT INTO capped VALUES (1, 'ok')");
 
     const rows = await db.read<{ id: number; val: string }>(
-      'SELECT * FROM ahp',
-    );
-    expect(rows).toHaveLength(1);
-    expect(rows[0].val).toBe('ok');
-
-    db.close();
-  });
-});
-
-describe('OPFSCoopSyncVFS pool guard', () => {
-  // One VFS: the subject is OPFSCoopSyncVFS's own poolSize cap.
-  // Falsifiable: revert OPFSCoopSyncVFS.maxPoolSize to null — db.poolSize is
-  // then 2, not 1.
-  it('defaults to the VFS cap rather than throwing when poolSize is omitted', async () => {
-    const db = createSQLiteClient(`bsq-test-${crypto.randomUUID()}`, {
-      vfs: 'OPFSCoopSyncVFS',
-    });
-    try {
-      await db.write('CREATE TABLE t (id INTEGER PRIMARY KEY)');
-      expect(await db.read('SELECT id FROM t')).toEqual([]);
-      expect(db.poolSize).toBe(1);
-    } finally {
-      await db.close();
-    }
-  });
-});
-
-/**
- * Characterization tests for the `vfs` + `build` combination guard.
- *
- * `VFS_CAPABILITIES` in `const/vfs.ts` is the single table declaring which wa-sqlite
- * builds each VFS accepts. The client checks the pair at construction so a bad
- * combination fails synchronously, with the supported builds named, instead of
- * surfacing later as an opaque `open-error` from inside a worker. The refusal
- * runs in unit (`tests/unit/vfs-guards.test.ts`); this is the accept side.
- */
-describe('vfs/build combination guard', () => {
-  // One VFS: the accept side of the guard whose refusal runs in unit.
-  it('accepts an explicitly declared combination and serves queries', async () => {
-    const db = await createTestClient({
-      vfs: 'OPFSAdaptiveVFS',
-      build: 'async',
-    });
-
-    await db.write('CREATE TABLE combo (id INTEGER, val TEXT)');
-    await db.write("INSERT INTO combo VALUES (1, 'ok')");
-
-    const rows = await db.read<{ id: number; val: string }>(
-      'SELECT * FROM combo',
+      'SELECT * FROM capped',
     );
     expect(rows).toHaveLength(1);
     expect(rows[0].val).toBe('ok');
@@ -124,7 +64,10 @@ describe('every wired VFS', () => {
       runnable,
       (vfs) => vfs,
       async (vfs) => {
-        const db = await createTestClient({ vfs });
+        const db = await createTestClient(
+          {},
+          { vfs, build: defaultBuildFor(vfs, AVAILABLE_FEATURES) },
+        );
         try {
           await db.write('CREATE TABLE wired (id INTEGER, val TEXT)');
           await db.write("INSERT INTO wired VALUES (1, 'ok')");
@@ -141,7 +84,9 @@ describe('every wired VFS', () => {
   });
 });
 
-describe('vfs is required', () => {
+describe('vfs is required', {
+  tags: ['standalone'],
+}, () => {
   // Falsifiable: restore `?? RECOMMENDED_VFS` in client.ts.
   it('throws synchronously when vfs is omitted', () => {
     expect(() =>

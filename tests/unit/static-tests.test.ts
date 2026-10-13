@@ -27,6 +27,14 @@ const FORBIDDEN: readonly [RegExp, string][] = [
     /\b(it|test|describe)\.(each|for)\b/,
     'an each: write one literal test per case, or loop inside one test',
   ],
+  [
+    /\b(it|test|describe)(\.\w+)*\(\s*[A-Za-z_$][\w$.]*\s*,/,
+    'a test whose name is not a literal: the parser reads the identifier, and every planned run fails as dynamic',
+  ],
+  [
+    /\bif\s*\([^)]*\)\s*\{?\s*(it|test|describe)(\.\w+)*\s*\(/,
+    'a test behind an if: tag its need instead',
+  ],
 ];
 
 const files = readdirSync(BROWSER, { recursive: true })
@@ -46,5 +54,23 @@ describe('browser test files declare their tests statically', () => {
       );
     });
     expect(offenders).toEqual([]);
+  });
+
+  it('refuses the constructs it lists', () => {
+    // Falsifiable: break one pattern and its sample passes.
+    const samples = [
+      'const x = cond ? it : it.skip;',
+      "it.each([1])('t', () => {});",
+      'it(name, () => {});',
+      "if (ok) {\n  it('t', () => {});\n}",
+    ];
+    for (const sample of samples) {
+      expect(FORBIDDEN.some(([pattern]) => pattern.test(sample))).toBe(true);
+    }
+    expect(
+      FORBIDDEN.some(([p]) =>
+        p.test("it('t', { tags: ['standalone'] }, () => {});"),
+      ),
+    ).toBe(false);
   });
 });

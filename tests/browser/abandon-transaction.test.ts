@@ -7,30 +7,29 @@ import {
 } from './helpers';
 
 /**
- * Every test here needs two workers alive and unevicted, so it declares
- * two-workers rather than merely asking for `poolSize: 2`: a target that caps
- * the pool without readwrite-unsafe (spec 2026-09-13, §10) falls back to a
- * pair of this browser that keeps two, or is skipped under the matrix (spec
- * 2026-09-15, A5, A7). Pinning the size
- * alone refused the client outright on the five capped VFS.
+ * Every test here needs two workers alive and unevicted: the describe's
+ * `requires:two-workers` tag keeps it to the pairs that keep two. Pinning
+ * `poolSize: 2` alone would refuse the client outright on the five capped VFS.
  */
-const TWO_WORKERS = { poolSize: 2, needs: ['two-workers'] } as const;
+const TWO_WORKERS = { poolSize: 2 } as const;
 
 const SEED =
   'INSERT INTO t (n) WITH RECURSIVE c(x) AS ' +
   '(SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 2000) ' +
   'SELECT x FROM c';
 
-describe('an abandoned generator inside a transaction', () => {
+describe('an abandoned generator inside a transaction', {
+  tags: ['requires:two-workers'],
+}, () => {
   // Falsifiable: revert closeOpenStatements()'s two call sites in
   // src/transaction.ts. Without them the abandoned generator is still open
   // when the auto-COMMIT runs, which trips pool.ts's reuse guard, fails the
   // ROLLBACK in turn, and gets the worker evicted — turning every assertion
   // below red. No CPU load and no flake needed: the trip is deterministic on
   // the current code, and its absence is deterministic with the fix.
-  it('commits, and evicts no worker', async ({ skip }) => {
+  it('commits, and evicts no worker', { timeout: 30_000 }, async () => {
     const records = interceptWorkers();
-    const db = await createTestClient({ ...TWO_WORKERS, skip });
+    const db = await createTestClient({ ...TWO_WORKERS });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -59,10 +58,12 @@ describe('an abandoned generator inside a transaction', () => {
     } finally {
       await db.close();
     }
-  }, 30_000);
+  });
 
-  it('leaves a correct transaction untouched', async ({ skip }) => {
-    const db = await createTestClient({ ...TWO_WORKERS, skip });
+  it('leaves a correct transaction untouched', {
+    timeout: 30_000,
+  }, async () => {
+    const db = await createTestClient({ ...TWO_WORKERS });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
       await db.write(SEED);
@@ -78,7 +79,7 @@ describe('an abandoned generator inside a transaction', () => {
     } finally {
       await db.close();
     }
-  }, 30_000);
+  });
 
   // C1. Falsifiable: delete `worker.interrupt(transport)` from
   // closeOpenStatements() in src/transaction.ts. A method call on an async
@@ -88,15 +89,14 @@ describe('an abandoned generator inside a transaction', () => {
   // and no timeout is passed here, so nothing else cuts it: the transaction
   // never rejects, the lease never goes back, and the origin-wide write lock
   // is held throughout. This times out instead of finishing in seconds.
-  it('rejects when the callback leaves a next() in flight', async ({
-    skip,
-  }) => {
+  it('rejects when the callback leaves a next() in flight', {
+    timeout: 30_000,
+  }, async () => {
     // Short on purpose: the worker is inside one uninterruptible step() and
     // will answer no stop, so drainTimeout is what bounds the wait. That
     // bound is the whole point — see closeOpenStatements()'s JSDoc.
     const db = await createTestClient({
       ...TWO_WORKERS,
-      skip,
       drainTimeout: 2000,
     });
     try {
@@ -120,7 +120,7 @@ describe('an abandoned generator inside a transaction', () => {
     } finally {
       await db.close();
     }
-  }, 30_000);
+  });
 });
 
 // What no test here can reach: the `onAbandon: release` added to

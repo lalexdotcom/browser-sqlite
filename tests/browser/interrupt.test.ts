@@ -9,15 +9,14 @@ import {
 } from './helpers';
 
 describe('aborting a running statement', () => {
-  it('frees the worker, so the next query does not wait it out', async ({
-    skip,
-  }) => {
+  it('frees the worker, so the next query does not wait it out', {
+    tags: ['requires:interruptible'],
+    timeout: 90_000,
+  }, async () => {
     // poolSize 1: the next query MUST land on the worker that was interrupted.
     const db = await createTestClient({
       poolSize: 1,
       debug: true,
-      needs: ['interruptible'],
-      skip,
     });
     try {
       // Prime: run the statement once so it is cached and the real abort run
@@ -62,16 +61,14 @@ describe('aborting a running statement', () => {
     // 40 M step to its end, tens of seconds on Firefox, and a test that
     // exceeds its timeout does not fail, it expires mutely without naming
     // what it was waiting for.
-  }, 90_000);
+  });
 
-  it('still rejects immediately, without waiting for the worker', async ({
-    skip,
-  }) => {
+  it('still rejects immediately, without waiting for the worker', {
+    tags: ['requires:interruptible'],
+  }, async () => {
     const db = await createTestClient({
       poolSize: 1,
       debug: true,
-      needs: ['interruptible'],
-      skip,
     });
     try {
       // Fast-abort prime (same rationale as "frees the worker" above):
@@ -115,12 +112,12 @@ describe('aborting a running statement', () => {
     }
   });
 
-  it('leaves nothing broken behind', async ({ skip }) => {
+  it('leaves nothing broken behind', {
+    tags: ['requires:interruptible'],
+  }, async () => {
     const db = await createTestClient({
       poolSize: 1,
       debug: true,
-      needs: ['interruptible'],
-      skip,
     });
     try {
       await db.write('CREATE TABLE t (a INTEGER)');
@@ -168,21 +165,18 @@ describe('aborting a running statement', () => {
     }
   });
 
-  // One VFS: the subject is the `sync` build's degraded (non-interruptible)
-  // behaviour, which needs an explicit `sync`-build pin — the opposite of
-  // `needs: ['interruptible']`. OPFSAdaptiveVFS does not support `sync` at
-  // all, so the pin moves to the recommended OPFSWriteAheadVFS (its default
-  // build is `sync`), same precedent as isolated/abort-slot.test.ts.
-  // Falsifiable: pin `build: 'async'`, which can cut the statement without
-  // isolation — the worker is then back to READY well within the 300 ms.
-  it('rejects an aborted read at once, and lets its statement run on, on a sync build without isolation', async () => {
+  // The subject is the `sync` build's degraded (non-interruptible) behaviour,
+  // the opposite of `requires:interruptible`.
+  // Falsifiable: run it on an `async` build, which can cut the statement
+  // without isolation — the worker is then back to READY well within the 300 ms.
+  it('rejects an aborted read at once, and lets its statement run on, on a sync build without isolation', {
+    tags: ['build:sync', 'excludes:interruptible'],
+  }, async () => {
     // The ordinary test host is NOT cross-origin isolated, so this is the
     // degraded row of the design's §6: the signal stops the wait, not the work.
     // `close()` would otherwise wait the uncuttable statement out, ~23 s on
     // Firefox, which load pushed past the test's 30 s (REUSE-LOAD).
     const db = await createTestClient({
-      vfs: 'OPFSWriteAheadVFS',
-      build: 'sync',
       poolSize: 1,
       debug: true,
       drainTimeout: 2_000,

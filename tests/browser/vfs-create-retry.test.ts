@@ -6,10 +6,10 @@ import { createTestClient, sleep } from './helpers';
  * files are held elsewhere, so a failed attempt must keep nothing: a handle it
  * kept would refuse every later attempt of that worker.
  *
- * One VFS, named on purpose: `AccessHandlePoolVFS` is the one that acquires
- * its files at creation, and its pool is a directory named after it.
+ * One VFS, named by the test's `vfs:` tag: `AccessHandlePoolVFS` is the one
+ * that acquires its files at creation, and its pool is a directory named after
+ * it.
  */
-const VFS = 'AccessHandlePoolVFS';
 /** Between the attempt seen and the release, so that attempt has failed. */
 const GRACE_MS = 30;
 /** No attempt seen: release anyway rather than hang the test. */
@@ -87,13 +87,14 @@ const handleWorker = () => {
   };
 };
 
-/** The pool's files, by path. */
-const poolFiles = async (): Promise<string[]> => {
+/** The pool's files, by path; `directory` is the VFS's name. */
+const poolFiles = async (directory: string): Promise<string[]> => {
   const root = await navigator.storage.getDirectory();
-  const dir = await root.getDirectoryHandle(VFS);
+  const dir = await root.getDirectoryHandle(directory);
   const paths: string[] = [];
   // `any`: the DOM lib lacks the directory's async iterators.
-  for await (const name of (dir as any).keys()) paths.push(`${VFS}/${name}`);
+  for await (const name of (dir as any).keys())
+    paths.push(`${directory}/${name}`);
   return paths.sort();
 };
 
@@ -101,19 +102,24 @@ describe('creating a VFS whose files are partly held', () => {
   // Falsifiable: revert rhashimoto/wa-sqlite#368 in the vendored wa-sqlite
   // with a `pnpm patch` of AccessHandlePoolVFS.js — the first attempt keeps what
   // it acquired beside the held file, and the open fails once the 10 s are spent.
-  it('opens once the held file is let go', async () => {
+  it('opens once the held file is let go', {
+    tags: ['vfs:AccessHandlePoolVFS'],
+  }, async () => {
     // A first client, so the pool exists before anything holds one of its files.
-    const creator = await createTestClient({ vfs: VFS });
+    const creator = await createTestClient();
     await creator.write('CREATE TABLE t (a)');
     await creator.close();
 
-    const [heldFile, witness] = (await poolFiles()) as [string, string];
+    const [heldFile, witness] = (await poolFiles(creator.vfs)) as [
+      string,
+      string,
+    ];
     const holder = handleWorker();
     onTestFinished(() => holder.dispose());
     expect(await holder.take(heldFile, SETTLE_BUDGET_MS)).toBe('taken');
     expect(await holder.probe(witness, SETTLE_BUDGET_MS)).toBe('free');
 
-    const db = await createTestClient({ vfs: VFS });
+    const db = await createTestClient();
     const read = db.read<{ n: number }>('SELECT 1 AS n');
     // Awaited only after the release; a failure before then is still reported.
     read.catch(() => {});

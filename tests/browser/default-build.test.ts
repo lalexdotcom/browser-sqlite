@@ -2,7 +2,7 @@ import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
 import { describe, expect, it } from 'vitest';
 import { BUILD_CAPABILITIES, type SQLiteBuild } from '../../src/const/builds';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
-import { pairFor } from './helpers';
+import { TEST_TARGET } from './helpers';
 
 type WithSuspending = typeof WebAssembly & { Suspending?: unknown };
 
@@ -14,7 +14,7 @@ describe('the default build without JSPI', () => {
     // The premise: both engines under test have JSPI to take away.
     expect(typeof wasm.Suspending).toBe('function');
 
-    const { vfs } = pairFor();
+    const { vfs } = TEST_TARGET;
     const expected = (
       VFS_CAPABILITIES[vfs].builds as readonly SQLiteBuild[]
     ).find((build) => BUILD_CAPABILITIES[build].requires.length === 0);
@@ -40,16 +40,18 @@ describe('the default build without JSPI', () => {
 
   // Falsifiable: resolve before reading `clientOptions.build`, or drop the
   // `??` — the engine has JSPI, so the explicit `async` would be overridden.
-  it('keeps an explicit build where the engine could run a preferred one', async () => {
-    const { vfs } = pairFor();
+  it('keeps an explicit build where the engine could run a preferred one', {
+    tags: ['build:async'],
+  }, async () => {
+    const { vfs, build } = TEST_TARGET;
     const file = `bsq-test-${crypto.randomUUID()}`;
-    const db = createSQLiteClient(file, { vfs, build: 'async' });
+    const db = createSQLiteClient(file, { vfs, build });
     try {
-      expect(db.build).toBe('async');
+      expect(db.build).toBe(build);
       await db.read('SELECT 1');
     } finally {
       await db.close();
     }
-    await deleteDatabase(file, { vfs, build: 'async' });
+    await deleteDatabase(file, { vfs, build });
   });
 });

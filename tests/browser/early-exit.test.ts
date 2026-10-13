@@ -10,17 +10,15 @@ import { createTestClient, longQuery, sleep } from './helpers';
 const SLOW_SECOND_ROW = `SELECT 1 AS n UNION ALL SELECT (${longQuery(40_000_000)})`;
 const SLOW_SECOND_ROW_CTE = `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 40000000) SELECT 0 AS n UNION ALL SELECT count(*) FROM c`;
 
-describe('leaving a read early, with no signal and no timeout', () => {
+describe('leaving a read early, with no signal and no timeout', {
+  tags: ['requires:interruptible'],
+}, () => {
   // Falsifiable: install the progress handler only for a statement that was
   // given a signal. The worker then runs the second row's step to its end
   // before the lease comes back, and the SELECT 1 below pays for all of it.
-  it('first() cuts the step it left running', async ({ skip }) => {
+  it('first() cuts the step it left running', { timeout: 90_000 }, async () => {
     // poolSize 1: the next query MUST land on the worker that served first().
-    const db = await createTestClient({
-      poolSize: 1,
-      needs: ['interruptible'],
-      skip,
-    });
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await db.read('SELECT 1');
       expect(await db.first<{ n: number }>(SLOW_SECOND_ROW)).toEqual({ n: 1 });
@@ -33,17 +31,13 @@ describe('leaving a read early, with no signal and no timeout', () => {
     } finally {
       await db.close();
     }
-  }, 90_000);
+  });
 
   // Falsifiable: same as above, for a break out of chunk().
-  it('a break out of chunk() cuts the step it left running', async ({
-    skip,
-  }) => {
-    const db = await createTestClient({
-      poolSize: 1,
-      needs: ['interruptible'],
-      skip,
-    });
+  it('a break out of chunk() cuts the step it left running', {
+    timeout: 90_000,
+  }, async () => {
+    const db = await createTestClient({ poolSize: 1 });
     try {
       await db.read('SELECT 1');
       for await (const rows of db.chunk<{ n: number }>(
@@ -65,5 +59,5 @@ describe('leaving a read early, with no signal and no timeout', () => {
     } finally {
       await db.close();
     }
-  }, 90_000);
+  });
 });

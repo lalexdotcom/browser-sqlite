@@ -66,12 +66,10 @@ const memoryClient = (
   build: SQLiteBuild,
   pragmas?: Record<string, string>,
 ) =>
-  createTestClient({
-    vfs,
-    build,
-    poolSize: 1,
-    ...(pragmas ? { pragmas } : {}),
-  });
+  createTestClient(
+    { poolSize: 1, ...(pragmas ? { pragmas } : {}) },
+    { vfs, build },
+  );
 
 describe('a failed statement carries SQLite codes', {
   tags: ['standalone', 'excludes:shared-storage', 'requires:every-build'],

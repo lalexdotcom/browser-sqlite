@@ -1,8 +1,6 @@
-import { createSQLiteClient } from 'browser-sqlite';
-import { describe, expect, it, onTestFinished } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { BARRIER_SQL } from '../../src/epochs';
-import { HAS_UNSAFE_HANDLES } from '../conformance/helpers';
-import { createTestClient, removeDatabaseFiles } from './helpers';
+import { createTestClient, sharedDatabase } from './helpers';
 
 /**
  * With the designation forbidden on index 0 at poolSize 2, the writer is
@@ -13,11 +11,8 @@ import { createTestClient, removeDatabaseFiles } from './helpers';
  * OPFSWriteAheadVFS; wa-sqlite's own test for #365 does.
  */
 const forced = {
-  // Writer spread: needs two live workers, so a target that caps the pool
-  // without readwrite-unsafe (spec 2026-09-13, §10) falls back to a pair
-  // that keeps two, on every engine, or is skipped under the matrix (spec
-  // 2026-09-15, A5, A7).
-  needs: ['two-workers'] as const,
+  // Writer spread: needs two live workers, which the describe's
+  // `requires:two-workers` tag guarantees.
   poolSize: 2,
   __unsafeTestWriterPolicy: (i: number) => i !== 0,
 };
@@ -29,11 +24,13 @@ const countBarrierStatements = (
     .flatMap((request) => request.queries)
     .filter((query) => query.sql.includes(BARRIER_SQL)).length;
 
-describe('commit-propagation barrier', () => {
+describe('commit-propagation barrier', {
+  tags: ['requires:two-workers'],
+}, () => {
   // Falsifiable: in src/worker/worker.ts, read `column_names(stmt)` before the
   // first step() — the statement cached before the rename reports old_col.
-  it('sees a schema swap committed by another worker', async ({ skip }) => {
-    const db = await createTestClient({ ...forced, skip });
+  it('sees a schema swap committed by another worker', async () => {
+    const db = await createTestClient({ ...forced });
 
     await db.write('CREATE TABLE t (old_col)');
     await db.write('INSERT INTO t (old_col) VALUES (42)');
@@ -51,10 +48,8 @@ describe('commit-propagation barrier', () => {
 
   // Falsifiable: in src/worker/worker.ts, read `column_names(stmt)` before the
   // first step() — the statement cached before the swap reports old_col.
-  it('sees a table dropped and replaced with a different shape', async ({
-    skip,
-  }) => {
-    const db = await createTestClient({ ...forced, skip });
+  it('sees a table dropped and replaced with a different shape', async () => {
+    const db = await createTestClient({ ...forced });
 
     await db.write('CREATE TABLE t (old_col)');
     await db.write('INSERT INTO t (old_col) VALUES (1)');
@@ -74,10 +69,8 @@ describe('commit-propagation barrier', () => {
   // applyBarrier() — this is the test that explicitly pins conditionality.
   // The backpressure tests also go red as collateral (the extra barrier query
   // pushes their step-count limits), but only this one names the requirement.
-  it('does not repeat the barrier on a worker that is already current', async ({
-    skip,
-  }) => {
-    const db = await createTestClient({ ...forced, skip, debug: true });
+  it('does not repeat the barrier on a worker that is already current', async () => {
+    const db = await createTestClient({ ...forced, debug: true });
 
     await db.write('CREATE TABLE t (a)');
     // Both reads go to w1, the last writer, which is current.
@@ -109,10 +102,8 @@ describe('commit-propagation barrier', () => {
   // Falsifiable: delete the lastWriterIndex branch from takeAvailable() — the
   // read then lands on worker 0, whose epoch the INSERT left behind, and pays a
   // barrier.
-  it('sends a read to the worker that just wrote, which owes no barrier', async ({
-    skip,
-  }) => {
-    const db = await createTestClient({ ...forced, skip, debug: true });
+  it('sends a read to the worker that just wrote, which owes no barrier', async () => {
+    const db = await createTestClient({ ...forced, debug: true });
 
     await db.write('CREATE TABLE t (a)');
     await db.read('SELECT * FROM t');
@@ -125,34 +116,15 @@ describe('commit-propagation barrier', () => {
   });
 });
 
-// One VFS: two clients must share one database; OPFSAdaptiveVFS shares it on
-// every engine (see `secondClientOutcome`).
-const sharedFile = { vfs: 'OPFSAdaptiveVFS' as const };
-
 describe('barrier — two clients in one tab', () => {
   // Falsifiable: in src/worker/worker.ts, read `column_names(stmt)` before the
   // first step() — B's statement, cached before A's rename, reports old_col.
-  it("client B observes client A's schema change", async () => {
-    const dbName = `bsq-test-${crypto.randomUUID()}`;
-    const a = createSQLiteClient(dbName, sharedFile);
-    const b = createSQLiteClient(dbName, sharedFile);
-    onTestFinished(async () => {
-      try {
-        await a.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        await b.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        await removeDatabaseFiles(dbName, sharedFile.vfs);
-      } catch {
-        /* ignore */
-      }
-    });
+  it("client B observes client A's schema change", {
+    tags: ['requires:shared-second-client'],
+  }, async () => {
+    const db = sharedDatabase();
+    const a = db.open();
+    const b = db.open();
 
     await a.write('CREATE TABLE t (old_col)');
     await a.write('INSERT INTO t (old_col) VALUES (42)');
@@ -167,31 +139,16 @@ describe('barrier — two clients in one tab', () => {
   // normalizeDatabaseFile leaves it green, the VFS resolving './' to the same
   // file on its own (spike 2026-09-25). The column-name mutation above turns
   // it red, as it does the test before.
-  it('treats two spellings of one file as one database', async () => {
-    // './bsq-test-<uuid>' normalizes to the same 45-char name as `dbName`
+  it('treats two spellings of one file as one database', {
+    tags: ['requires:shared-second-client'],
+  }, async () => {
+    // './bsq-shared-<uuid>' normalizes to the same 47-char name as `db.name`
     // (URL resolves './' away), well under the 56-char wa-sqlite path bound
     // (SQLite checks nPathname + 8 > mxPathname = 64 before calling xOpen) —
-    // folder included, since this VFS keeps one.
-    const dbName = `bsq-test-${crypto.randomUUID()}`;
-    const a = createSQLiteClient(dbName, sharedFile);
-    const b = createSQLiteClient(`./${dbName}`, sharedFile);
-    onTestFinished(async () => {
-      try {
-        await a.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        await b.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        await removeDatabaseFiles(dbName, sharedFile.vfs);
-      } catch {
-        /* ignore */
-      }
-    });
+    // folder included, for a VFS that keeps one.
+    const db = sharedDatabase();
+    const a = db.open();
+    const b = db.open({}, `./${db.name}`);
 
     await a.write('CREATE TABLE t (old_col)');
     await a.write('INSERT INTO t (old_col) VALUES (42)');
@@ -205,16 +162,14 @@ describe('barrier — two clients in one tab', () => {
 
 describe('catch-up pragma', () => {
   // One VFS: the subject is OPFSWriteAheadVFS's catchUpPragma. A barrier needs
-  // a second worker, which this VFS has only with readwrite-unsafe.
+  // a second worker, which `requires:two-workers` guarantees.
   // Falsifiable: drop the closing `PRAGMA wal_read_latest=0` in barrierSqlFor —
   // the worker that paid the barrier then reads 1, and every later read on it
   // scans the write-ahead to its end.
-  it('closes the pragma the barrier opens on OPFSWriteAheadVFS', async ({
-    skip,
-  }) => {
-    if (!HAS_UNSAFE_HANDLES) return skip();
+  it('closes the pragma the barrier opens on OPFSWriteAheadVFS', {
+    tags: ['vfs:OPFSWriteAheadVFS', 'requires:two-workers'],
+  }, async () => {
     const db = await createTestClient({
-      vfs: 'OPFSWriteAheadVFS',
       poolSize: 2,
       __unsafeTestWriterPolicy: (i: number) => i !== 0,
       debug: true,

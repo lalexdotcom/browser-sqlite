@@ -258,12 +258,11 @@ describe('params', () => {
     await db.close();
   }, 120_000);
 
-  it('rebinds a cached statement after an aborted query', async ({ skip }) => {
-    const db = await createTestClient({
-      poolSize: 1,
-      needs: ['interruptible'],
-      skip,
-    });
+  it('rebinds a cached statement after an aborted query', {
+    tags: ['requires:interruptible'],
+    timeout: 60_000,
+  }, async () => {
+    const db = await createTestClient({ poolSize: 1 });
     const sql =
       'WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c WHERE i < ?) SELECT max(i) AS m, ? AS tag FROM c';
     const controller = new AbortController();
@@ -276,7 +275,7 @@ describe('params', () => {
       { m: 3, tag: 'second' },
     ]);
     await db.close();
-  }, 60_000);
+  });
 });
 
 describe('one converted params array, sent twice', () => {

@@ -25,9 +25,8 @@ export async function openVitest({
   readonly blob?: string;
   readonly json?: string;
 } = {}): Promise<Vitest> {
-  // Every pair's projects exist, whatever the caller asked for: the plan
-  // picks among them (vitest.config.ts reads this when it loads).
-  process.env.BSQ_TEST_TARGETS = 'all';
+  // Every pair's projects exist whatever the environment says
+  // (vitest.config.ts): the plan picks among them.
   process.env.BSQ_TEST_BUILT = '1';
   // `default` first when reporting: the log of a cell (or of a merge's source)
   // then holds Vitest's failure output; planning, which sets neither, stays silent.

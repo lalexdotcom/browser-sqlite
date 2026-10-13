@@ -7,20 +7,20 @@ import { describe, expect, it, onTestFinished } from 'vitest';
 import type { SQLiteVFS } from '../../src/const/vfs';
 import { parseClientMarker } from '../../src/locks';
 import { databasePath } from '../../src/utils';
-import { interceptWorkers, pairFor, type Skip } from './helpers';
+import {
+  createTestClient,
+  interceptWorkers,
+  sharedDatabase,
+  TEST_TARGET,
+} from './helpers';
 
-// One VFS: two clients must share one database (the marker roster);
-// OPFSAdaptiveVFS shares it on every engine (see `secondClientOutcome`).
-const SHARED_FILE_VFS = 'OPFSAdaptiveVFS' as const;
 const locks = createLocks();
 
-/**
- * A marker only reaches the lock registry for a database that outlives the
- * worker holding it — a memory VFS has no roster to hold one in, which is what
- * `holds no marker on the memory VFS` below asserts on purpose. Every other
- * test here declares the need rather than assuming the target has it.
- */
-const shared = (skip: Skip) => pairFor(['shared-storage'], skip);
+// A marker only reaches the lock registry for a database that outlives the
+// worker holding it — a memory VFS has no roster to hold one in, which is what
+// `holds no marker where nothing is shared` below asserts on purpose. Every other
+// test here is tagged `requires:shared-storage` rather than assuming the
+// target has it.
 
 const markersFor = async (file: string, vfs: SQLiteVFS) => {
   const { held } = await locks.entries();
@@ -34,10 +34,10 @@ const markersFor = async (file: string, vfs: SQLiteVFS) => {
 };
 
 describe('the client liveness marker', () => {
-  it('is held while the client lives and gone after close', async ({
-    skip,
-  }) => {
-    const pair = shared(skip);
+  it('is held while the client lives and gone after close', {
+    tags: ['requires:shared-storage'],
+  }, async () => {
+    const pair = TEST_TARGET;
     const file = 'marker-life.db';
     const db = createSQLiteClient(file, {
       vfs: pair.vfs,
@@ -59,36 +59,32 @@ describe('the client liveness marker', () => {
     expect(await markersFor(file, pair.vfs)).toHaveLength(0);
   });
 
-  it('gives one marker per client in the same tab', async () => {
-    const file = 'marker-two.db';
-    const a = createSQLiteClient(file, { vfs: SHARED_FILE_VFS });
-    const b = createSQLiteClient(file, { vfs: SHARED_FILE_VFS });
-    onTestFinished(async () => {
-      await Promise.all([a.close(), b.close()]).catch(() => {});
-      await deleteDatabase(file, { vfs: SHARED_FILE_VFS }).catch(() => {});
-    });
+  it('gives one marker per client in the same tab', {
+    tags: ['requires:shared-second-client'],
+  }, async () => {
+    const shared = sharedDatabase();
+    const a = shared.open();
+    const b = shared.open();
 
     await Promise.all([a.read('SELECT 1'), b.read('SELECT 1')]);
-    const markers = await markersFor(file, SHARED_FILE_VFS);
+    const markers = await markersFor(shared.name, TEST_TARGET.vfs);
     expect(markers).toHaveLength(2);
     expect(new Set(markers.map((m) => m?.id)).size).toBe(2);
   });
 
-  it('holds no marker on the memory VFS', async () => {
-    const db = createSQLiteClient('marker-mem.db', {
-      vfs: 'MemoryVFS',
-      poolSize: 1,
-    });
-    onTestFinished(() => db.close());
+  it('holds no marker where nothing is shared', {
+    tags: ['excludes:shared-storage'],
+  }, async () => {
+    const db = await createTestClient({ poolSize: 1 });
     await db.read('SELECT 1');
     const { held } = await locks.entries();
     expect(held.some((e) => e.name.startsWith('bsq:client:'))).toBe(false);
   });
 
-  it('releases the marker when close() races the acquisition', async ({
-    skip,
-  }) => {
-    const pair = shared(skip);
+  it('releases the marker when close() races the acquisition', {
+    tags: ['requires:shared-storage'],
+  }, async () => {
+    const pair = TEST_TARGET;
     const file = 'marker-race.db';
     onTestFinished(async () => {
       await deleteDatabase(file, { vfs: pair.vfs }).catch(() => {});
@@ -139,8 +135,10 @@ describe('the client liveness marker', () => {
 
   // Falsifiable: drop the marker release from failClient (src/client.ts) — a
   // client that failed stays in the roster until the application closes it.
-  it('is gone once the client fails, before close', async ({ skip }) => {
-    const pair = shared(skip);
+  it('is gone once the client fails, before close', {
+    tags: ['requires:shared-storage'],
+  }, async () => {
+    const pair = TEST_TARGET;
     const file = 'marker-failed.db';
     interceptWorkers({ url: '/definitely-missing-worker.js' });
     const db = createSQLiteClient(file, {
@@ -159,10 +157,10 @@ describe('the client liveness marker', () => {
 
   // Falsifiable: in failClient, release the marker without setting
   // `markerClosed` — a grant landing after the failure is then kept.
-  it('releases the marker when the failure races the acquisition', async ({
-    skip,
-  }) => {
-    const pair = shared(skip);
+  it('releases the marker when the failure races the acquisition', {
+    tags: ['requires:shared-storage'],
+  }, async () => {
+    const pair = TEST_TARGET;
     const file = 'marker-failed-race.db';
     onTestFinished(async () => {
       await deleteDatabase(file, { vfs: pair.vfs }).catch(() => {});
@@ -206,8 +204,10 @@ describe('the client liveness marker', () => {
     expect(await markersFor(file, pair.vfs)).toHaveLength(0);
   });
 
-  it('does not change what deleteDatabase reports', async ({ skip }) => {
-    const pair = shared(skip);
+  it('does not change what deleteDatabase reports', {
+    tags: ['requires:shared-storage'],
+  }, async () => {
+    const pair = TEST_TARGET;
     const file = 'marker-delete.db';
     const db = createSQLiteClient(file, {
       vfs: pair.vfs,

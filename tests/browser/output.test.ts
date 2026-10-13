@@ -1,6 +1,5 @@
-import { createSQLiteClient } from 'browser-sqlite';
-import { describe, expect, it, onTestFinished } from 'vitest';
-import { createTestClient, removeDatabaseFiles } from './helpers';
+import { describe, expect, it } from 'vitest';
+import { createTestClient, sharedDatabase } from './helpers';
 
 /**
  * Characterization tests for `db.output()` — the schema-driven staging-table
@@ -310,31 +309,13 @@ describe('output() atomicity and sweep', () => {
   // Falsifiability pin: removing the `staleStagingTables` filter in sweepOnce()
   // (so every staging-like table is dropped) makes the sweep destroy A's live
   // staging table → outA.close() fails with "no such table".
-  it('does not collect a staging table that is still in flight', async () => {
-    // Two clients share the same OPFS file so their sweeps interact.
-    const dbName = `bsq-test-${crypto.randomUUID()}`;
-    // One VFS: two clients must share one database; OPFSAdaptiveVFS shares
-    // it on every engine (see `secondClientOutcome`).
-    const dbA = createSQLiteClient(dbName, { vfs: 'OPFSAdaptiveVFS' });
-    const dbB = createSQLiteClient(dbName, { vfs: 'OPFSAdaptiveVFS' });
-
-    onTestFinished(async () => {
-      try {
-        await dbA.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        await dbB.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        await removeDatabaseFiles(dbName, 'OPFSAdaptiveVFS');
-      } catch {
-        /* ignore */
-      }
-    });
+  it('does not collect a staging table that is still in flight', {
+    tags: ['requires:shared-second-client'],
+  }, async () => {
+    // Two clients share the same file so their sweeps interact.
+    const shared = sharedDatabase();
+    const dbA = shared.open();
+    const dbB = shared.open();
 
     // Start A's output — the staging lock is acquired inside output() before
     // sweepOnce() runs, so A's lock is held from this point even before the

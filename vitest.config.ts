@@ -12,23 +12,13 @@ import {
 } from './scripts/browsers.ts';
 import type { TestTarget } from './tests/browser/target.ts';
 import { declaredTags } from './tests/need.ts';
-import {
-  CHROMIUM_FEATURES,
-  FIREFOX_FEATURES,
-  onUnmetFromEnv,
-  targetLabel,
-  targetsFromEnv,
-} from './tests/target-projects.ts';
+import { allTargets, targetLabel } from './tests/target-projects.ts';
 
 const ENGINES: readonly BrowserName[] = ['chrome', 'firefox'];
-const FEATURES = { chrome: CHROMIUM_FEATURES, firefox: FIREFOX_FEATURES };
-/** The engine-only directory each project adds to the shared, non-recursive glob. */
-const ENGINE_DIR = { chrome: 'chromium', firefox: 'firefox' };
 const ISOLATION = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Embedder-Policy': 'require-corp',
 };
-const onUnmet = onUnmetFromEnv(process.env.BSQ_TEST_NEEDS);
 const built = (file: string) =>
   fileURLToPath(new URL(`./tests/build/${file}`, import.meta.url));
 
@@ -54,7 +44,14 @@ const browserProject = (
     // The guard reads the project's target, so only target projects take it.
     setupFiles: [
       'tests/storage-wipe.ts',
+      // Before the guard: a project that is not isolated fails its files by
+      // name, before any test reads the environment.
+      ...(options.isolated ? ['tests/browser/isolation-check.ts'] : []),
       ...(options.target ? ['tests/browser/need-guard.ts'] : []),
+      // Last, so the guard's own reads of the pair are discarded.
+      ...(options.target && process.env.BSQ_TEST_TRACE === '1'
+        ? ['tests/browser/trace.ts']
+        : []),
     ],
     testTimeout: options.testTimeout,
     // A teardown closes a client that may still be draining an abandoned
@@ -64,7 +61,6 @@ const browserProject = (
       ? {
           provide: {
             bsqTarget: options.target,
-            bsqNeeds: onUnmet,
             bsqEnvironment: { browser, isolated: options.isolated === true },
           },
         }
@@ -121,25 +117,20 @@ export default defineConfig({
         },
       },
       ...ENGINES.flatMap((browser) =>
-        targetsFromEnv(process.env.BSQ_TEST_TARGETS, FEATURES[browser]).flatMap(
-          (target) => [
-            browserProject(
-              `${browser} · ${targetLabel(target)}`,
-              browser,
-              [
-                'tests/browser/*.test.ts',
-                `tests/browser/${ENGINE_DIR[browser]}/**/*.test.ts`,
-              ],
-              { target, testTimeout: 30_000 },
-            ),
-            browserProject(
-              `isolated ${browser} · ${targetLabel(target)}`,
-              browser,
-              ['tests/browser/isolated/**/*.test.ts'],
-              { target, isolated: true, testTimeout: 30_000 },
-            ),
-          ],
-        ),
+        allTargets().flatMap((target) => [
+          browserProject(
+            `${browser} · ${targetLabel(target)}`,
+            browser,
+            ['tests/browser/*.test.ts'],
+            { target, testTimeout: 30_000 },
+          ),
+          browserProject(
+            `isolated ${browser} · ${targetLabel(target)}`,
+            browser,
+            ['tests/browser/*.test.ts'],
+            { target, isolated: true, testTimeout: 30_000 },
+          ),
+        ]),
       ),
       ...ENGINES.map((browser) =>
         browserProject(

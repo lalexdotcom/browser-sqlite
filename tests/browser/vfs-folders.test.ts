@@ -7,12 +7,11 @@ import { describe, expect, it, onTestFinished } from 'vitest';
 import { databasePath, MAX_DATABASE_NAME } from '../../src/utils';
 import { TEST_TARGET } from './helpers';
 
-const { vfs, build } = TEST_TARGET;
-
 describe('the name a consumer uses', {
   tags: ['requires:shared-storage'],
 }, () => {
   it('hands db.file back to deleteDatabase and inspectDatabase as the same database', async () => {
+    const { vfs, build } = TEST_TARGET;
     const name = `vfs-folders-${crypto.randomUUID()}`;
     const db = createSQLiteClient(name, { vfs, build, poolSize: 1 });
     onTestFinished(() => deleteDatabase(name, { vfs, build }).catch(() => {}));
@@ -28,6 +27,7 @@ describe('the name a consumer uses', {
   });
 
   it('opens, writes and deletes a name with a slash', async () => {
+    const { vfs, build } = TEST_TARGET;
     const name = `vf-${crypto.randomUUID()}/nested`;
     const db = createSQLiteClient(name, { vfs, build, poolSize: 1 });
     onTestFinished(() => deleteDatabase(name, { vfs, build }).catch(() => {}));
@@ -38,6 +38,7 @@ describe('the name a consumer uses', {
   });
 
   it('opens and persists a name exactly at the bound', async () => {
+    const { vfs, build } = TEST_TARGET;
     const name = 'b'.repeat(MAX_DATABASE_NAME);
     onTestFinished(() => deleteDatabase(name, { vfs, build }).catch(() => {}));
     // A residue from a killed run must not fail this run too.

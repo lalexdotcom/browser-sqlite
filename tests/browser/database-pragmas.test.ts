@@ -1,7 +1,11 @@
-import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
-import { pairFor, sleep } from './helpers';
+import {
+  createTestClient,
+  sharedDatabase,
+  sleep,
+  TEST_TARGET,
+} from './helpers';
 
 /**
  * The pragmas that write the file — `user_version` here — run once per client,
@@ -9,22 +13,19 @@ import { pairFor, sleep } from './helpers';
  * worker, they took the write lock of SQLite outside the library's own, and met
  * another client's write with `BUSY` (`mem:measurements`, PRAGMA-BUSY).
  *
- * `shared-second-client`: the collision needs two clients on one database.
+ * `requires:shared-second-client`: the collision needs two clients on one
+ * database.
  */
-describe('a pragma that writes the database', () => {
+describe('a pragma that writes the database', {
+  tags: ['requires:shared-second-client'],
+}, () => {
   // Falsifiable: apply every pragma at open again (pass `pragmas` whole to the
   // workers) — B's worker meets A's open transaction, waits its busy_timeout
   // (100 ms, or none where the VFS refuses it), gets BUSY, and with no restart
   // left B fails.
-  it("waits for another client's write instead of failing", async ({
-    skip,
-  }) => {
-    const pair = pairFor(['shared-second-client'], skip);
-    const name = `db-pragmas-${crypto.randomUUID()}`;
-    onTestFinished(() => deleteDatabase(name, pair).catch(() => {}));
-
-    const a = createSQLiteClient(name, { ...pair, poolSize: 1 });
-    onTestFinished(() => a.close().catch(() => {}));
+  it("waits for another client's write instead of failing", async () => {
+    const database = sharedDatabase();
+    const a = database.open({ poolSize: 1 });
     await a.write('CREATE TABLE t (x)');
 
     // A holds its transaction open, past B's busy_timeout, after writing.
@@ -43,19 +44,17 @@ describe('a pragma that writes the database', () => {
     });
     await wrote.promise;
 
-    const b = createSQLiteClient(name, {
-      ...pair,
+    const b = database.open({
       poolSize: 1,
       maxWorkerRestarts: 0,
       // Below A's hold, so that busy_timeout alone cannot be what passes.
       pragmas: {
-        ...('busy_timeout' in VFS_CAPABILITIES[pair.vfs].refusedPragmas
+        ...('busy_timeout' in VFS_CAPABILITIES[TEST_TARGET.vfs].refusedPragmas
           ? {}
           : { busy_timeout: '100' }),
         user_version: '7',
       },
     });
-    onTestFinished(() => b.close().catch(() => {}));
     const read = b.read<{ user_version: number }>('PRAGMA user_version');
 
     await sleep(500);
@@ -67,16 +66,8 @@ describe('a pragma that writes the database', () => {
 
   // Falsifiable: let queries skip the wait for the client's database pragmas —
   // the first read can run before them and report 0.
-  it("is in force before the client's first read", async ({ skip }) => {
-    const pair = pairFor(['shared-second-client'], skip);
-    const name = `db-pragmas-${crypto.randomUUID()}`;
-    onTestFinished(() => deleteDatabase(name, pair).catch(() => {}));
-
-    const db = createSQLiteClient(name, {
-      ...pair,
-      pragmas: { user_version: '7' },
-    });
-    onTestFinished(() => db.close().catch(() => {}));
+  it("is in force before the client's first read", async () => {
+    const db = await createTestClient({ pragmas: { user_version: '7' } });
     const rows = await db.read<{ user_version: number }>('PRAGMA user_version');
     expect(rows[0]?.user_version).toBe(7);
   });
@@ -84,18 +75,10 @@ describe('a pragma that writes the database', () => {
   // A connection pragma applied at open, `query_only`, makes the write fail.
   // Falsifiable: rethrow from databaseSetup's catch instead of failing the
   // client — the query rejects, and `ready` never settles.
-  it('fails the client with its statement error when SQLite refuses it', async ({
-    skip,
-  }) => {
-    const pair = pairFor(['shared-second-client'], skip);
-    const name = `db-pragmas-${crypto.randomUUID()}`;
-    onTestFinished(() => deleteDatabase(name, pair).catch(() => {}));
-
-    const db = createSQLiteClient(name, {
-      ...pair,
+  it('fails the client with its statement error when SQLite refuses it', async () => {
+    const db = await createTestClient({
       pragmas: { query_only: '1', user_version: '7' },
     });
-    onTestFinished(() => db.close().catch(() => {}));
     await expect(db.read('SELECT 1')).rejects.toMatchObject({
       code: 'STATEMENT_FAILED',
     });
@@ -109,14 +92,11 @@ describe('a pragma that writes the database', () => {
  * write after another client's schema change hung there (2026-10-01).
  */
 describe('a pragma the VFS refuses', () => {
-  const vfs = 'OPFSCoopSyncVFS';
-
   // Falsifiable: drop the check in write(), or in the transaction's checksql.
-  it('is refused in a statement that sets it, in or out of a transaction', async () => {
-    const name = `refused-${crypto.randomUUID()}`;
-    onTestFinished(() => deleteDatabase(name, { vfs }).catch(() => {}));
-    const db = createSQLiteClient(name, { vfs });
-    onTestFinished(() => db.close().catch(() => {}));
+  it('is refused in a statement that sets it, in or out of a transaction', {
+    tags: ['vfs:OPFSCoopSyncVFS'],
+  }, async () => {
+    const db = await createTestClient();
 
     await expect(db.write('PRAGMA busy_timeout = 100')).rejects.toMatchObject({
       code: 'INVALID_PRAGMA',

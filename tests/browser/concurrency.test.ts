@@ -304,18 +304,11 @@ describe('SQL errors (INT-10)', () => {
  * clients and tabs; a test of that is a follow-up.
  */
 describe('lock() blocking behavior (D-09)', () => {
-  it('both workers with poolSize: 2 reach READY (sequential lock/unlock)', async ({
-    skip,
-  }) => {
-    // Both workers must reach READY: needs two-workers so a target that caps
-    // the pool without readwrite-unsafe (spec 2026-09-13, §10) falls back to
-    // a pair that keeps two, on every engine, or is skipped under the matrix
-    // (spec 2026-09-15, A5, A7).
-    const db = await createTestClient({
-      needs: ['two-workers'],
-      skip,
-      poolSize: 2,
-    });
+  it('both workers with poolSize: 2 reach READY (sequential lock/unlock)', {
+    tags: ['requires:two-workers'],
+  }, async () => {
+    // Both workers must reach READY, so the test needs a pair that keeps two.
+    const db = await createTestClient({ poolSize: 2 });
 
     // If both workers are READY, lock/unlock worked correctly
     // (each waited its turn to open the DB)

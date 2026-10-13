@@ -205,6 +205,24 @@ describe('the properties, against the spec table (2026-10-12)', () => {
         'AccessHandlePoolVFS',
       ],
     },
+    'immediate-connection-lock': {
+      chrome: [
+        'OPFSAdaptiveVFS',
+        'OPFSCoopSyncVFS',
+        'AccessHandlePoolVFS',
+        'IDBBatchAtomicVFS',
+        'IDBMirrorVFS',
+        'OPFSAnyContextVFS',
+      ],
+      firefox: [
+        'OPFSAdaptiveVFS',
+        'OPFSCoopSyncVFS',
+        'AccessHandlePoolVFS',
+        'IDBBatchAtomicVFS',
+        'IDBMirrorVFS',
+        'OPFSAnyContextVFS',
+      ],
+    },
   };
   for (const [property, browsers] of Object.entries(table))
     for (const [browser, expected] of Object.entries(browsers))

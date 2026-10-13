@@ -1,12 +1,8 @@
-import {
-  createSQLiteClient,
-  deleteDatabase,
-  SQLiteError,
-} from 'browser-sqlite';
-import { describe, expect, it, onTestFinished } from 'vitest';
+import { SQLiteError } from 'browser-sqlite';
+import { describe, expect, it } from 'vitest';
 import { connectionLockName } from '../../src/locks';
 import { databasePath } from '../../src/utils';
-import { removeDatabaseFiles } from './helpers';
+import { createTestClient, sharedDatabase, TEST_TARGET } from './helpers';
 
 /**
  * Guard against AHP-2TAB: two clients on `AccessHandlePoolVFS` silently break
@@ -19,33 +15,7 @@ import { removeDatabaseFiles } from './helpers';
  * contend exactly as two tabs would.
  */
 
-/** Unique database name for each test. */
-const dbName = () => `bsq-test-${crypto.randomUUID()}`;
-
-/**
- * Close the clients, then delete the database: AccessHandlePoolVFS keeps its
- * files in six fixed slots and gives one back on xDelete alone, so a database
- * left behind occupies a slot for the rest of the browser session.
- */
-const closeAll = async (
-  name: string,
-  ...clients: ReturnType<typeof createSQLiteClient>[]
-) => {
-  for (const client of clients) {
-    try {
-      await client.close();
-    } catch {
-      /* a BUSY client was never open — nothing to drain */
-    }
-  }
-  await deleteDatabase(name, { vfs: 'AccessHandlePoolVFS' }).catch(
-    (error: unknown) => {
-      if ((error as SQLiteError)?.code !== 'DATABASE_NOT_FOUND') throw error;
-    },
-  );
-};
-
-describe('AccessHandlePoolVFS exclusive connection guard', () => {
+describe('the exclusive connection guard', () => {
   // -------------------------------------------------------------------------
   // Core assertion: a second client fails BUSY on its first query, fast.
   //
@@ -55,16 +25,12 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
   // and appears healthy, so `error` comes back undefined and the test goes RED.
   // Restore the block and the test goes GREEN.
   // -------------------------------------------------------------------------
-  // One VFS: the subject is AccessHandlePoolVFS's exclusive-connection guard
-  // (AHP-2TAB).
-  it('makes the second client fail BUSY on its first query, not silently succeed', async () => {
-    const name = dbName();
-    const opts = { vfs: 'AccessHandlePoolVFS' as const, poolSize: 1 };
-
-    const a = createSQLiteClient(name, opts);
-    const b = createSQLiteClient(name, opts);
-
-    onTestFinished(() => closeAll(name, a, b));
+  it('makes the second client fail BUSY on its first query, not silently succeed', {
+    tags: ['requires:exclusive-connection'],
+  }, async () => {
+    const db = sharedDatabase();
+    const a = db.open({ poolSize: 1 });
+    const b = db.open({ poolSize: 1 });
 
     // A uses the database. Workers start lazily so the first query is the
     // choke point — the connection lock settles before or at this await.
@@ -84,22 +50,19 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
     expect(error).toBeInstanceOf(SQLiteError);
     expect((error as SQLiteError).code).toBe('DATABASE_IN_USE');
     // The message must name the VFS and explain what to do.
-    expect((error as SQLiteError).message).toMatch(/AccessHandlePoolVFS/);
+    expect((error as SQLiteError).message).toMatch(new RegExp(TEST_TARGET.vfs));
     expect((error as SQLiteError).message).toMatch(/one connection at a time/);
     expect((error as SQLiteError).message).toMatch(/Close that client/);
   });
 
   // The BUSY error must arrive quickly — not after a 30-second stall, which
   // is what happens without the guard when an exclusive handle is already held.
-  // One VFS: the subject is AccessHandlePoolVFS's exclusive-connection guard.
-  it('fails fast — within 3 seconds, not after a timeout stall', async () => {
-    const name = dbName();
-    const opts = { vfs: 'AccessHandlePoolVFS' as const, poolSize: 1 };
-
-    const a = createSQLiteClient(name, opts);
-    const b = createSQLiteClient(name, opts);
-
-    onTestFinished(() => closeAll(name, a, b));
+  it('fails fast, not after a timeout stall', {
+    tags: ['requires:exclusive-connection'],
+  }, async () => {
+    const db = sharedDatabase();
+    const a = db.open({ poolSize: 1 });
+    const b = db.open({ poolSize: 1 });
 
     await a.write('CREATE TABLE t (n)');
 
@@ -128,13 +91,11 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
   // Without it the lock is never released, the second client always gets BUSY,
   // and this test goes RED at the `await c.read(...)` assertion.
   // -------------------------------------------------------------------------
-  // One VFS: the subject is AccessHandlePoolVFS's exclusive-connection guard
-  // releasing on close().
-  it('allows a new client after the first is closed', async () => {
-    const name = dbName();
-    const opts = { vfs: 'AccessHandlePoolVFS' as const, poolSize: 1 };
-
-    const a = createSQLiteClient(name, opts);
+  it('allows a new client after the first is closed', {
+    tags: ['requires:exclusive-connection'],
+  }, async () => {
+    const db = sharedDatabase();
+    const a = db.open({ poolSize: 1 });
     await a.write('CREATE TABLE t (n)');
     await a.write('INSERT INTO t VALUES (99)');
 
@@ -142,8 +103,7 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
     await a.close();
 
     // C opens after A is fully closed; it must succeed.
-    const c = createSQLiteClient(name, opts);
-    onTestFinished(() => closeAll(name, c));
+    const c = db.open({ poolSize: 1 });
 
     const rows = await c.read<{ n: number }>('SELECT n FROM t');
     expect(rows).toHaveLength(1);
@@ -177,18 +137,19 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
   // -------------------------------------------------------------------------
   // One VFS: the subject is AccessHandlePoolVFS's orphan-worker race
   // (AHP-CLOSE-RACE), specific to its pooled OPFS access handles.
-  it('does not orphan workers when close() is called before any query', async () => {
-    const name = dbName();
-    const opts = { vfs: 'AccessHandlePoolVFS' as const, poolSize: 1 };
+  it('does not orphan workers when close() is called before any query', {
+    tags: ['vfs:AccessHandlePoolVFS'],
+  }, async () => {
+    const database = sharedDatabase();
+    const opts = { poolSize: 1 };
 
     // Create A and close it immediately — before any query forces the lock
     // to settle. This is the path that previously orphaned a worker.
-    const a = createSQLiteClient(name, opts);
+    const a = database.open(opts);
     await a.close();
 
     // B opens cleanly: no orphaned worker should be holding OPFS handles.
-    const b = createSQLiteClient(name, opts);
-    onTestFinished(() => closeAll(name, b));
+    const b = database.open(opts);
 
     // If an orphan holds the handles, this write fails with WORKER_CRASHED.
     await b.write('CREATE TABLE t (n)');
@@ -198,27 +159,12 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
     expect(rows[0].n).toBe(1);
   });
 
-  // One VFS: two clients must share one database; OPFSAdaptiveVFS shares it
-  // on every engine (see `secondClientOutcome`).
-  it('lets two clients coexist on a shared-mode VFS, and both hold the lock', async () => {
-    const dbName = `bsq-test-${crypto.randomUUID()}`;
-    const options = { vfs: 'OPFSAdaptiveVFS' as const, poolSize: 1 };
-    const a = createSQLiteClient(dbName, options);
-    const b = createSQLiteClient(dbName, options);
-    onTestFinished(async () => {
-      for (const client of [a, b]) {
-        try {
-          await client.close();
-        } catch {
-          /* a failed client has nothing to close */
-        }
-      }
-      try {
-        await removeDatabaseFiles(dbName, options.vfs);
-      } catch {
-        /* the entry may not exist if the test failed before creation */
-      }
-    });
+  it('lets two clients coexist where the database is shared, and both hold the lock', {
+    tags: ['requires:shared-second-client'],
+  }, async () => {
+    const db = sharedDatabase();
+    const a = db.open({ poolSize: 1 });
+    const b = db.open({ poolSize: 1 });
 
     await a.write('CREATE TABLE t (n)');
     await b.write('INSERT INTO t VALUES (1)');
@@ -226,10 +172,8 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
     // Falsifiable: give the shared branch `ifAvailable: true` and one of these
     // two clients starts throwing DATABASE_IN_USE.
     const held = (await navigator.locks.query()).held ?? [];
-    const name = connectionLockName(
-      options.vfs,
-      databasePath(options.vfs, dbName),
-    );
+    const { vfs } = TEST_TARGET;
+    const name = connectionLockName(vfs, databasePath(vfs, db.name));
     expect(held.filter((lock) => lock.name === name).length).toBe(2);
     expect(
       held
@@ -238,18 +182,12 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
     ).toBe(true);
   });
 
-  // One VFS: the subject is MemoryVFS's lack of any OPFS-backed connection
-  // lock (it holds no shared storage to guard).
-  it('takes no connection lock on the memory VFS', async () => {
-    const dbName = `bsq-test-${crypto.randomUUID()}`;
-    const db = createSQLiteClient(dbName, { vfs: 'MemoryVFS', poolSize: 1 });
-    onTestFinished(async () => {
-      try {
-        await db.close();
-      } catch {
-        /* a failed client has nothing to close */
-      }
-    });
+  // The subject is the absence of any connection lock where there is no
+  // shared storage to guard, as on the memory VFS.
+  it('takes no connection lock where nothing is shared', {
+    tags: ['excludes:shared-storage'],
+  }, async () => {
+    const db = await createTestClient({ poolSize: 1 });
     await db.write('CREATE TABLE t (n)');
 
     const held = (await navigator.locks.query()).held ?? [];
@@ -259,35 +197,18 @@ describe('AccessHandlePoolVFS exclusive connection guard', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Control: the guard must not over-reach. OPFSAdaptiveVFS supports multiple
-  // connections, so two clients on the same database must both work.
+  // Control: the guard must not over-reach. A VFS that supports multiple
+  // connections must let two clients on the same database both work.
   //
   // Falsifiable: set `exclusiveConnection: true` on OPFSAdaptiveVFS in
   // VFS_CAPABILITIES. The second client then gets BUSY and this goes RED.
   // -------------------------------------------------------------------------
-  // One VFS: two clients must share one database; OPFSAdaptiveVFS shares it
-  // on every engine (see `secondClientOutcome`).
-  it('does not block a second client on OPFSAdaptiveVFS (control)', async () => {
-    const name = dbName();
-    const opts = { vfs: 'OPFSAdaptiveVFS' as const, poolSize: 1 };
-
-    const a = createSQLiteClient(name, opts);
-    const b = createSQLiteClient(name, opts);
-
-    onTestFinished(async () => {
-      for (const client of [a, b]) {
-        try {
-          await client.close();
-        } catch {
-          /* a failed client has nothing to close */
-        }
-      }
-      try {
-        await removeDatabaseFiles(name, opts.vfs);
-      } catch {
-        /* may not exist if the test failed early */
-      }
-    });
+  it('does not block a second client where the database is shared (control)', {
+    tags: ['requires:shared-second-client'],
+  }, async () => {
+    const db = sharedDatabase();
+    const a = db.open({ poolSize: 1 });
+    const b = db.open({ poolSize: 1 });
 
     await a.write('CREATE TABLE t (n)');
     await a.write('INSERT INTO t VALUES (7)');

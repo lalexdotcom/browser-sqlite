@@ -1,15 +1,10 @@
 // tests/browser/lifecycle.test.ts
-import {
-  createSQLiteClient,
-  deleteDatabase,
-  type SQLiteError,
-} from 'browser-sqlite';
-import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import {
   createTestClient,
   interceptWorkers,
   longQuery,
-  removeDatabaseFiles,
+  sharedDatabase,
   sleep,
   waitUntil,
 } from './helpers';
@@ -177,22 +172,6 @@ describe('worker lifecycle — crash detection', () => {
 });
 
 describe('worker lifecycle — bounds', () => {
-  let shared: string;
-  afterEach(async () => {
-    try {
-      await removeDatabaseFiles(shared, 'AccessHandlePoolVFS');
-    } catch {
-      // OPFS entry may not exist if the test failed before DB creation
-    }
-    // The database sits in one of AccessHandlePoolVFS's six fixed slots, which
-    // only deleteDatabase gives back (see createTestClient in ./helpers).
-    await deleteDatabase(shared, { vfs: 'AccessHandlePoolVFS' }).catch(
-      (error: unknown) => {
-        if ((error as SQLiteError)?.code !== 'DATABASE_NOT_FOUND') throw error;
-      },
-    );
-  });
-
   // The connection guard (AHP-2TAB fix) fires before workers start, so the
   // second client now fails BUSY — not WORKER_CRASHED. Workers for the second
   // client are never spawned, which is faster and cleaner.
@@ -200,20 +179,14 @@ describe('worker lifecycle — bounds', () => {
   // Falsifiable: delete the `if (connLockPromise !== undefined)` deferred-
   // spawn block in src/client.ts. Without it, workers start immediately and
   // collide on the OPFS handle, producing WORKER_CRASHED instead of BUSY.
-  it('rejects a second client with BUSY instead of crashing its workers', async () => {
-    shared = `bsq-test-${crypto.randomUUID()}`;
-    // One VFS: the subject is AccessHandlePoolVFS's exclusive-connection
-    // guard (AHP-2TAB).
-    const first = createSQLiteClient(shared, {
-      poolSize: 1,
-      vfs: 'AccessHandlePoolVFS',
-    });
+  it('rejects a second client with BUSY instead of crashing its workers', {
+    tags: ['requires:exclusive-connection'],
+  }, async () => {
+    const db = sharedDatabase();
+    const first = db.open({ poolSize: 1 });
     await first.write('CREATE TABLE t (a)');
 
-    const second = createSQLiteClient(shared, {
-      poolSize: 1,
-      vfs: 'AccessHandlePoolVFS',
-    });
+    const second = db.open({ poolSize: 1 });
     await expect(second.read('SELECT 1')).rejects.toMatchObject({
       code: 'DATABASE_IN_USE',
     });
@@ -226,14 +199,14 @@ describe('worker lifecycle — bounds', () => {
 describe('worker lifecycle — onWorkerLost callback', () => {
   // Falsifiable: remove the emitWorkerLost() call from the 'lost' branch of
   // handleDeath — the callback is never fired and events stays empty.
-  it('is called when a worker slot is permanently lost', async ({ skip }) => {
+  it('is called when a worker slot is permanently lost', {
+    tags: ['requires:two-workers'],
+  }, async () => {
     const records = interceptWorkers();
     const events: number[] = [];
     const db = await createTestClient({
       // Two live workers, so killing slot 0 leaves slot 1 to observe from
       // (spec 2026-09-15, A5).
-      needs: ['two-workers'],
-      skip,
       poolSize: 2,
       maxWorkerRestarts: 0,
       onWorkerLost: ({ index }) => events.push(index),
@@ -276,12 +249,12 @@ describe('worker lifecycle — onWorkerLost callback', () => {
 
   // Falsifiable: let a throwing onWorkerLost bubble out of handleDeath — the
   // pool becomes corrupted and subsequent queries hang or produce wrong errors.
-  it('a throwing callback does not break the pool', async ({ skip }) => {
+  it('a throwing callback does not break the pool', {
+    tags: ['requires:two-workers'],
+  }, async () => {
     const records = interceptWorkers();
     const db = await createTestClient({
       // Worker 1 must still be alive after worker 0 crashes (spec 2026-09-15, A5).
-      needs: ['two-workers'],
-      skip,
       poolSize: 2,
       maxWorkerRestarts: 0,
       onWorkerLost: () => {
@@ -395,9 +368,9 @@ describe('worker lifecycle — startup readiness gate', () => {
   // call with `if (retrySlots.has(index))` (reverting defect 1 fix). Slot 0's
   // death during the retry round is then silently dropped — onWorkerLost never
   // fires for index 0 and the test fails on the events assertion.
-  it('reports a slot that opened and then dies during the retry round as lost', async ({
-    skip,
-  }) => {
+  it('reports a slot that opened and then dies during the retry round as lost', {
+    tags: ['requires:two-workers'],
+  }, async () => {
     // Worker 0 (slot 0): real URL — opens successfully in round 1.
     // Worker 1 (slot 1, round 1): bad URL — fails immediately.
     // Worker 2 (slot 1, retry): real URL — succeeds in the retry round.
@@ -405,8 +378,6 @@ describe('worker lifecycle — startup readiness gate', () => {
     const lostIndices: number[] = [];
     const db = await createTestClient({
       // Two live slots to distinguish which one died/recovered (spec 2026-09-15, A5).
-      needs: ['two-workers'],
-      skip,
       poolSize: 2,
       onWorkerLost: ({ index }) => lostIndices.push(index),
     });
@@ -437,9 +408,9 @@ describe('worker lifecycle — startup readiness gate', () => {
   // and the supervisor's 'fail-client' verdict for 'lost' (src/supervisor.ts,
   // return 'lost' unconditionally). The client then hangs and the race
   // resolves to 'HUNG'.
-  it('fails the client rather than hanging when all startup workers are gone', async ({
-    skip,
-  }) => {
+  it('fails the client rather than hanging when all startup workers are gone', {
+    tags: ['requires:two-workers'],
+  }, async () => {
     // Every failure here is dispatched by the test itself, not timed by the
     // browser: slot 1 (silent) fails round 1; once slot 0 (real) has opened,
     // slot 1's retry (also silent) is spawned; slot 0 is then killed while
@@ -452,8 +423,6 @@ describe('worker lifecycle — startup readiness gate', () => {
     // (spec 2026-09-15, A5).
     const db = await createTestClient({
       poolSize: 2,
-      needs: ['two-workers'],
-      skip,
       onWorkerLost: ({ index }) => lostIndices.push(index),
     });
 
@@ -496,9 +465,9 @@ describe('worker lifecycle — startup readiness gate', () => {
   // Falsifiable: remove the emitWorkerLost loop from the `openedCount === 0`
   // branch in onFirstSettle (src/client.ts). The callback then fires for no
   // slots on total failure and the length assertion fails.
-  it('fires onWorkerLost for every slot on total startup failure (openedCount === 0)', async ({
-    skip,
-  }) => {
+  it('fires onWorkerLost for every slot on total startup failure (openedCount === 0)', {
+    tags: ['requires:two-workers'],
+  }, async () => {
     interceptWorkers({ url: '/definitely-missing-worker.js' });
     const lostIndices: number[] = [];
     // The startup gate is about TWO slots, so the pair must keep two: a target
@@ -506,8 +475,6 @@ describe('worker lifecycle — startup readiness gate', () => {
     // (spec 2026-09-15, A5).
     const db = await createTestClient({
       poolSize: 2,
-      needs: ['two-workers'],
-      skip,
       onWorkerLost: ({ index }) => lostIndices.push(index),
     });
 
@@ -522,9 +489,9 @@ describe('worker lifecycle — startup readiness gate', () => {
   // Falsifiable: remove `startupLosses.delete(index)` from spawn's .then()
   // in src/client.ts. Slot 1 stays in startupLosses even after it succeeds,
   // so onGateOpen emits onWorkerLost for it and lostIndices becomes [1].
-  it('does not report a slot as lost when its retry round succeeds', async ({
-    skip,
-  }) => {
+  it('does not report a slot as lost when its retry round succeeds', {
+    tags: ['requires:two-workers'],
+  }, async () => {
     // Worker 0 (slot 0): real URL, round 1 success.
     // Worker 1 (slot 1, round 1): bad URL, fail.
     // Worker 2 (slot 1, retry): real URL, success.
@@ -532,8 +499,6 @@ describe('worker lifecycle — startup readiness gate', () => {
     const lostIndices: number[] = [];
     const db = await createTestClient({
       // Two live slots to distinguish which one died/recovered (spec 2026-09-15, A5).
-      needs: ['two-workers'],
-      skip,
       poolSize: 2,
       onWorkerLost: ({ index }) => lostIndices.push(index),
     });
@@ -557,9 +522,9 @@ describe('worker lifecycle — startup readiness gate', () => {
   // Falsifiable: move `readyDeferred.resolve()` to the START of onGateOpen (or
   // derive `ready` from the scheduler's gate). The gate opens on an empty pool
   // and onGateOpen fails the client just after; `ready` must not resolve first.
-  it('rejects db.ready when the pool is empty at gate-open, although the gate opened', async ({
-    skip,
-  }) => {
+  it('rejects db.ready when the pool is empty at gate-open, although the gate opened', {
+    tags: ['requires:two-workers'],
+  }, async () => {
     // Every failure here is dispatched by the test itself, not timed by the
     // browser: slot 1 (silent) fails round 1; once slot 0 (real) has opened,
     // slot 1's retry (also silent) is spawned; slot 0 is then killed while
@@ -569,8 +534,6 @@ describe('worker lifecycle — startup readiness gate', () => {
     const { created, booted } = silentWorkersFromIndex(1);
     const db = await createTestClient({
       poolSize: 2,
-      needs: ['two-workers'],
-      skip,
     });
 
     // Slot 0 (real) and slot 1 (silent, round 1) have both been constructed.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, longQuery, type Needing } from './helpers';
+import { createTestClient, longQuery } from './helpers';
 
 /**
  * One INSERT whose single step() runs for hundreds of milliseconds (Chromium)
@@ -21,8 +21,8 @@ const abortAfter = (ms: number, reason: unknown) => {
   return ctl.signal;
 };
 
-const setUp = async (options: Needing = {}) => {
-  const db = await createTestClient({ ...options, poolSize: 1, debug: true });
+const setUp = async () => {
+  const db = await createTestClient({ poolSize: 1, debug: true });
   await db.write('CREATE TABLE t (a INTEGER)');
   await db.write('CREATE TABLE big (x INTEGER)');
   await db.write('INSERT INTO t VALUES (0)');
@@ -37,10 +37,11 @@ describe('a write abandoned inside a transaction', () => {
    * table: t`). Falsifiable: drop the `worker.inTransaction !== false` condition
    * in transaction.ts's catch.
    */
-  it('costs no worker and no committed data when the callback does not catch it', async ({
-    skip,
-  }) => {
-    const db = await setUp({ needs: ['interruptible'], skip });
+  it('costs no worker and no committed data when the callback does not catch it', {
+    tags: ['requires:interruptible'],
+    timeout: 30_000,
+  }, async () => {
+    const db = await setUp();
     try {
       const before = workerIdentity(db);
       const reason = new Error('abandon the write');
@@ -60,14 +61,15 @@ describe('a write abandoned inside a transaction', () => {
     } finally {
       await db.close();
     }
-  }, 30_000);
+  });
 
   // Spec 2026-09-11, R1. Falsifiable: in src/transaction.ts's `abandon`, drop
   // `pending = 'undo'` — the million rows are then committed.
-  it('undoes a caught abandoned write, and the transaction goes on (async)', async ({
-    skip,
-  }) => {
-    const db = await setUp({ needs: ['interruptible'], skip });
+  it('undoes a caught abandoned write, and the transaction goes on (async)', {
+    tags: ['requires:interruptible'],
+    timeout: 30_000,
+  }, async () => {
+    const db = await setUp();
     try {
       const before = workerIdentity(db);
       const reason = new Error('abandon the write');
@@ -93,7 +95,7 @@ describe('a write abandoned inside a transaction', () => {
     } finally {
       await db.close();
     }
-  }, 30_000);
+  });
 
   // Spec 2026-09-11, R3: nothing can cut the step on this build, and the
   // outcome is now the same as where something can. Falsifiable: as above.
@@ -182,10 +184,11 @@ describe('a write abandoned inside a transaction', () => {
   // Falsifiable: in `settled`'s outer catch (src/transaction.ts), call die(e)
   // whenever a statement is rejected by its own signal, not only a
   // savepointed write — the abandoned read then kills the transaction too.
-  it('does not abandon the transaction for an abandoned read (R7)', async ({
-    skip,
-  }) => {
-    const db = await setUp({ needs: ['interruptible'], skip });
+  it('does not abandon the transaction for an abandoned read (R7)', {
+    tags: ['requires:interruptible'],
+    timeout: 30_000,
+  }, async () => {
+    const db = await setUp();
     try {
       const slow = longQuery(20_000_000);
       // Prepare and cache the exact statement first, so the measured run takes
@@ -208,16 +211,17 @@ describe('a write abandoned inside a transaction', () => {
     } finally {
       await db.close();
     }
-  }, 30_000);
+  });
 
   // The SQL decides, not the method (spec 2026-09-10, D5): a write through
   // first() is savepointed like any other. Falsifiable: make opensSavepoint()
   // return false — the write is then cut mid-step and SQLite takes the
   // transaction with it.
-  it('undoes a caught write issued through tx.first(), and goes on', async ({
-    skip,
-  }) => {
-    const db = await setUp({ needs: ['interruptible'], skip });
+  it('undoes a caught write issued through tx.first(), and goes on', {
+    tags: ['requires:interruptible'],
+    timeout: 30_000,
+  }, async () => {
+    const db = await setUp();
     try {
       const reason = new Error('cut mid-step');
       let caught: unknown;
@@ -241,7 +245,7 @@ describe('a write abandoned inside a transaction', () => {
     } finally {
       await db.close();
     }
-  }, 30_000);
+  });
 
   // Spec 2026-09-11, R4. Falsifiable: restore the `onAbandoned` hook in
   // src/bulk.ts — the abandoned load kills the transaction again.

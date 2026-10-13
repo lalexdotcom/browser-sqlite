@@ -3,7 +3,9 @@ import { heldNamesIn, holdIn, makeRealm } from './helpers/realm';
 
 const KEY_NAME = 'browser-sqlite.epochs.v1';
 
-describe('a same-origin iframe as a second realm', () => {
+describe('a same-origin iframe as a second realm', {
+  tags: ['standalone'],
+}, () => {
   // If this ever goes red, `multi-client.test.ts`'s "two clients contend
   // exactly as two tabs would" would start being true of the epoch too, and
   // the cross-tab tests would be measuring nothing.

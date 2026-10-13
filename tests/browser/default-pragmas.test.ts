@@ -1,21 +1,22 @@
-import { createSQLiteClient } from 'browser-sqlite';
-import { afterEach, describe, expect, it } from 'vitest';
-import { createTestClient } from './helpers';
+import { describe, expect, it, onTestFinished } from 'vitest';
+import { createTestClient, TEST_TARGET } from './helpers';
 
 /**
  * The per-VFS PRAGMA defaults, end to end: what `VFS_CAPABILITIES` declares is
  * what the worker actually runs, and the consumer can still refuse it.
  *
- * `AccessHandlePoolVFS` is the only VFS that declares any, so it carries these
- * tests. It allows one connection per origin, so every client here is closed
- * before the next opens, and its directory — one for the whole origin, holding
- * files with random names — is scrubbed between tests.
+ * Several VFS declare default pragmas; the first three tests are about
+ * `AccessHandlePoolVFS`'s own (`journal_mode` and `locking_mode`), so they
+ * carry its `vfs:` tag. It allows one connection per origin, so every client
+ * here is closed before the next opens, and its directory — one for the whole
+ * origin, holding files with random names — is scrubbed between tests.
  */
 
+// The VFS's directory is named after the VFS, which the cell's pair names.
 const scrubVfsDirectory = async () => {
   try {
     const root = await navigator.storage.getDirectory();
-    await root.removeEntry('AccessHandlePoolVFS', { recursive: true });
+    await root.removeEntry(TEST_TARGET.vfs, { recursive: true });
   } catch {
     // Absent until the first test creates it.
   }
@@ -23,10 +24,14 @@ const scrubVfsDirectory = async () => {
 
 /** The mode SQLite reports, which is the only proof the pragma was applied. */
 const modesOf = async (pragmas?: Record<string, string>) => {
-  // One VFS: the subject is AccessHandlePoolVFS's own `defaultPragmas`
-  // (journal_mode: wal, locking_mode: exclusive) — the only VFS that declares any.
-  const db = createSQLiteClient(`default-pragmas-${crypto.randomUUID()}`, {
-    vfs: 'AccessHandlePoolVFS',
+  // The tests that call this carry `vfs:AccessHandlePoolVFS`: the subject is
+  // its own `defaultPragmas` (journal_mode: wal, locking_mode: exclusive).
+  // Registered before createTestClient's own cleanup: onTestFinished hooks run
+  // in reverse, so the scrub comes after that cleanup has given the slot back.
+  // Here and not in an afterEach, which would also scrub after the test that
+  // runs on another VFS.
+  onTestFinished(scrubVfsDirectory);
+  const db = await createTestClient({
     poolSize: 1,
     ...(pragmas ? { pragmas } : {}),
   });
@@ -42,9 +47,9 @@ const modesOf = async (pragmas?: Record<string, string>) => {
 };
 
 describe('per-VFS default pragmas', () => {
-  afterEach(scrubVfsDirectory);
-
-  it('applies what the VFS declares, with no consumer pragmas', async () => {
+  it('applies what the VFS declares, with no consumer pragmas', {
+    tags: ['vfs:AccessHandlePoolVFS'],
+  }, async () => {
     // Falsifiability: empty AccessHandlePoolVFS's `defaultPragmas` in const/vfs.ts
     // and this is 'delete' / 'normal' — SQLite's own defaults.
     expect(await modesOf()).toEqual({
@@ -53,7 +58,9 @@ describe('per-VFS default pragmas', () => {
     });
   });
 
-  it('keeps them when the consumer sets an unrelated pragma', async () => {
+  it('keeps them when the consumer sets an unrelated pragma', {
+    tags: ['vfs:AccessHandlePoolVFS'],
+  }, async () => {
     // The merge, live. `foreign_keys` is the pragma consumers actually pass and
     // it says nothing about journalling, so it must not cost them the defaults.
     // Falsifiability: make `resolvePragmas` return the consumer's set when it
@@ -64,7 +71,9 @@ describe('per-VFS default pragmas', () => {
     });
   });
 
-  it('lets the consumer refuse a default by naming its key', async () => {
+  it('lets the consumer refuse a default by naming its key', {
+    tags: ['vfs:AccessHandlePoolVFS'],
+  }, async () => {
     // Falsifiability: spread the defaults after the consumer's in
     // `resolvePragmas` and this is 'wal' — the consumer could not opt out.
     const modes = await modesOf({ journal_mode: 'delete' });
@@ -73,12 +82,12 @@ describe('per-VFS default pragmas', () => {
     expect(modes.locking).toBe('exclusive');
   });
 
-  it('applies nothing on a VFS that declares no defaults', async () => {
-    // One VFS: the subject IS "declares no defaults", so the VFS is the
-    // fixture and cannot follow the target — against AccessHandlePoolVFS,
-    // the only one that declares any, the premise is false and this read
-    // 'exclusive'. MemoryVFS declares none and needs nothing of the engine.
-    const db = await createTestClient({ vfs: 'MemoryVFS', poolSize: 1 });
+  it('applies nothing on a VFS that declares no defaults', {
+    tags: ['excludes:default-pragmas'],
+  }, async () => {
+    // The property is the premise: against a VFS that declares defaults
+    // (AccessHandlePoolVFS declares `locking_mode: exclusive`) this read 'exclusive'.
+    const db = await createTestClient({ poolSize: 1 });
     await db.write('CREATE TABLE t (a INTEGER)');
     const [locking] = await db.read<{ locking_mode: string }>(
       'PRAGMA locking_mode',

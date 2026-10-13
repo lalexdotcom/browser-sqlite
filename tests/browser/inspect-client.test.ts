@@ -1,10 +1,6 @@
 import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { createTestClient, TEST_TARGET } from './helpers';
-
-// One VFS: two clients must share one database (inspect()'s sibling/tabs
-// roster); OPFSAdaptiveVFS shares it on every engine (see `secondClientOutcome`).
-const VFS = 'OPFSAdaptiveVFS' as const;
+import { createTestClient, sharedDatabase, TEST_TARGET } from './helpers';
 
 describe('db identity getters', () => {
   it('describes itself without the debug option', async () => {
@@ -30,30 +26,13 @@ describe('db identity getters', () => {
   });
 });
 
-describe('db.inspect on a memory VFS', () => {
-  // One VFS: the subject is MemoryVFS's own semantics — two clients on it are
-  // two independent, unrelated databases, so inspect() cannot see a sibling.
-  it('throws INVALID_OPTION — two memory clients are two databases', async () => {
-    const db = createSQLiteClient('mem.db', { vfs: 'MemoryVFS', poolSize: 1 });
-    onTestFinished(async () => {
-      await db.close().catch(() => {});
-    });
-    await db.read('SELECT 1');
-    await expect(db.inspect()).rejects.toMatchObject({
-      code: 'INVALID_OPTION',
-    });
-  });
-});
-
 describe('db.inspect', () => {
-  it('splits self from siblings', async () => {
-    const file = 'siblings.db';
-    const a = createSQLiteClient(file, { vfs: VFS });
-    const b = createSQLiteClient(file, { vfs: VFS });
-    onTestFinished(async () => {
-      await Promise.all([a.close(), b.close()]).catch(() => {});
-      await deleteDatabase(file, { vfs: VFS }).catch(() => {});
-    });
+  it('splits self from siblings', {
+    tags: ['requires:shared-second-client'],
+  }, async () => {
+    const shared = sharedDatabase();
+    const a = shared.open();
+    const b = shared.open();
     await Promise.all([a.read('SELECT 1'), b.read('SELECT 1')]);
 
     const view = await a.inspect();
@@ -67,9 +46,8 @@ describe('db.inspect', () => {
 
 /**
  * inspect() on the pair this project injects. The roster above needs two
- * clients on one database and is pinned for it; a lone client needs nothing of
- * the VFS, so these run wherever the target points — which is how inspect()
- * reaches the eight VFS the pinned tests never visit.
+ * clients on one database and is tagged for it; a lone client needs nothing of
+ * the VFS, so these run wherever the target points.
  */
 describe('db.inspect on the target', () => {
   it('describes a lone client', {

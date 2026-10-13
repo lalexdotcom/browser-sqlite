@@ -1,5 +1,6 @@
 import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
+import { TEST_TARGET } from './helpers';
 
 /**
  * THIS FILE ASSERTS A PLATFORM DIFFERENCE, NOT A LIBRARY INVARIANT.
@@ -14,7 +15,7 @@ import { describe, expect, it, onTestFinished } from 'vitest';
  * `init.test.ts` do NOT exercise: those point a worker at a missing URL, which
  * is a LOAD failure. They pin the orchestration; this pins the phenomenon.
  *
- * It lives under `firefox/` because it cannot be written to pass on both
+ * It is Firefox-only because it cannot be written to pass on both
  * engines. Chromium gives each connection its own handle, so the same shape
  * opens in tens of milliseconds and asserts nothing. And it cannot be branched
  * on at runtime either: `readwrite-unsafe` is in `UNPROBEABLE`
@@ -27,17 +28,18 @@ import { describe, expect, it, onTestFinished } from 'vitest';
  * exactly the kind of platform movement this project wants to hear about.
  */
 
-// One VFS: see the file header — the subject is Firefox's reduced-mode
-// handle rotation, which OPFSAdaptiveVFS exhibits; this cannot be written to
-// pass on both engines or follow a target that might resolve to Chromium.
-const VFS = 'OPFSAdaptiveVFS' as const;
-
 describe('handle starvation during open (reduced mode)', () => {
-  it('fails the second client with TIMEOUT while a write transaction holds the handle', async () => {
+  // `requires:env-capped-pool` selects the pairs that rotate one handle on
+  // this engine; `requires:shared-second-client` keeps out a pair whose second
+  // client is refused outright with DATABASE_IN_USE on Firefox.
+  it('fails the second client with TIMEOUT while a write transaction holds the handle', {
+    tags: ['requires:env-capped-pool', 'requires:shared-second-client'],
+  }, async () => {
+    const { vfs, build } = TEST_TARGET;
     const file = `starvation-${crypto.randomUUID()}.db`;
-    onTestFinished(() => deleteDatabase(file, { vfs: VFS }).catch(() => {}));
+    onTestFinished(() => deleteDatabase(file, { vfs, build }).catch(() => {}));
 
-    const holder = createSQLiteClient(file, { vfs: VFS, poolSize: 1 });
+    const holder = createSQLiteClient(file, { vfs, build, poolSize: 1 });
     await holder.write('CREATE TABLE t (v)');
 
     // Enter a write transaction and stay in it. This is what keeps the single
@@ -61,7 +63,8 @@ describe('handle starvation during open (reduced mode)', () => {
     // `openTimeout` well under the 30 s test budget: the point is that it
     // expires, not how long it takes to.
     const starved = createSQLiteClient(file, {
-      vfs: VFS,
+      vfs,
+      build,
       poolSize: 1,
       openTimeout: 2000,
     });
