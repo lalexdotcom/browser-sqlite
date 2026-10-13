@@ -33,6 +33,9 @@ export default defineConfig({
       format: 'esm',
       syntax: 'esnext',
       dts: true,
+      // Relative imports in the .d.ts get their `.js`: without it, a consumer
+      // resolving with node16/nodenext (tsc --init's default) sees no types.
+      redirect: { dts: { extension: true } },
       source: {
         entry: { index: './src/index.ts' },
       },
