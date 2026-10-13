@@ -1,18 +1,24 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 /**
- * Hand-run driver for the benchmark page. NOTHING RUNS THIS AUTOMATICALLY — it
- * is not wired into CI and must not be. It exists so a developer can prove the
- * page still works on both engines without clicking through it.
+ * Driver for the benchmark page: proves the page still works on an engine
+ * without clicking through it. pages.yaml runs it on the half of the site a
+ * run builds anew; locally the merge hook runs it when scripts/bench/ moves.
  *
  * It asserts that the PAGE works, never that a VFS passes: a red cell can be a
  * correct report about this engine.
  *
  * Usage:
  *   pnpm bench:build
- *   node scripts/bench/check.ts [chrome|firefox] [--all]
+ *   node scripts/bench/check.ts [chrome|firefox] [--all] [--dir <path>]
  */
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +38,20 @@ if (engine !== 'chrome' && engine !== 'firefox') {
   process.exit(1);
 }
 const all = process.argv.includes('--all');
+/** The site to serve: `_site`, or one half of it (`_site/preview`). */
+const dirFlag = process.argv.indexOf('--dir');
+if (dirFlag !== -1 && !process.argv[dirFlag + 1]) {
+  process.stderr.write('FAIL — --dir needs a path\n');
+  process.exit(1);
+}
+const siteDir = resolve(
+  root,
+  dirFlag === -1 ? '_site' : (process.argv[dirFlag + 1] ?? ''),
+);
+if (!existsSync(join(siteDir, 'index.html'))) {
+  process.stderr.write(`FAIL — no index.html in ${siteDir}\n`);
+  process.exit(1);
+}
 /**
  * 8099 is what `bench:serve` and `bench:dev` use, so the default collides with
  * a page the developer is testing by hand — and this driver kills whatever
@@ -42,11 +62,7 @@ const PORT = Number(process.env.BENCH_PORT ?? 8099);
 
 const server = spawn(
   process.execPath,
-  [
-    resolve(root, 'scripts/static-server.ts'),
-    resolve(root, '_site'),
-    String(PORT),
-  ],
+  [resolve(root, 'scripts/static-server.ts'), siteDir, String(PORT)],
   { stdio: 'inherit' },
 );
 

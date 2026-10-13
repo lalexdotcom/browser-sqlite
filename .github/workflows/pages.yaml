@@ -99,8 +99,9 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       # Checked out for the tooling only — `pnpm/action-setup` reads
-      # `packageManager` from a package.json at the workspace root. NOTHING is
-      # built from this checkout; both halves build from their own tag below.
+      # `packageManager` from a package.json at the workspace root, and the
+      # bench check runs from here. NOTHING is built from this checkout; both
+      # halves build from their own tag below.
       - uses: actions/checkout@v6
 
       - name: Resolve the two tags
@@ -242,6 +243,45 @@ jobs:
           node "$ASSEMBLE" "$GITHUB_WORKSPACE/_site/preview" \
             --ref "preview @ $SHORT"
           echo "Preview served at <page-url>/preview/"
+
+      # The bench page of the half this run builds anew. Called by a release,
+      # github.ref is its v* tag: the root. A push of `preview`: /preview/. A
+      # `delete` rebuilds a root a release already checked: nothing.
+      - name: Which half to check
+        id: bench
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/preview) echo "dir=_site/preview" >> "$GITHUB_OUTPUT" ;;
+            refs/tags/v*) echo "dir=_site" >> "$GITHUB_OUTPUT" ;;
+            *) echo "dir=" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Install the workspace tooling
+        if: steps.bench.outputs.dir != ''
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache WebdriverIO browsers
+        if: steps.bench.outputs.dir != ''
+        uses: actions/cache@v6
+        with:
+          path: node_modules/.cache/wdio
+          key: wdio-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/browsers.ts') }}
+
+      # Chrome for Testing has no AppArmor profile and exits at launch while
+      # unprivileged user namespaces are restricted; lifting it keeps the sandbox.
+      - name: Let Chrome's sandbox create user namespaces
+        if: steps.bench.outputs.dir != ''
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Install browsers
+        if: steps.bench.outputs.dir != ''
+        run: node scripts/browsers.ts install
+
+      - name: Check the bench page
+        if: steps.bench.outputs.dir != ''
+        env:
+          BENCH_PORT: "8123"
+        run: node scripts/bench/check.ts chrome --all --dir "${{ steps.bench.outputs.dir }}"
 
       - uses: actions/upload-pages-artifact@v5
         with:
