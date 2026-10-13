@@ -33,7 +33,7 @@ if (!Number.isFinite(seconds) || seconds <= 0 || command.length === 0) {
   process.exit(2);
 }
 
-// Every run's output is also kept in `.test-runs/` (gitignored), the newest
+// Every run's output is also kept in `.work/test-runs/` (gitignored), the newest
 // KEEP_RUNS of them: a failure seen once — in a hook, then rerun green — can
 // still be read afterwards (open-retry's stall, `mem:follow-ups`). The command
 // writes to a pipe rather than a terminal as a result, as it does in CI.
@@ -42,7 +42,7 @@ const KEEP_RUNS = 30;
 // push real ones out.
 const runsDir =
   process.env.BOUNDED_RUNS_DIR ??
-  join(dirname(fileURLToPath(import.meta.url)), '..', '.test-runs');
+  join(dirname(fileURLToPath(import.meta.url)), '..', '.work', 'test-runs');
 mkdirSync(runsDir, { recursive: true });
 const label = command
   .join(' ')

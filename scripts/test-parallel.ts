@@ -20,7 +20,7 @@
  * timeout) fails the run, with its name and the end of its log.
  *
  * tests/build/ is built once before any process starts (they would race on it).
- * Runs are kept under `.test-parallel/` (gitignored), the newest KEEP_RUNS.
+ * Runs are kept under `.work/test-parallel/` (gitignored), the newest KEEP_RUNS.
  */
 import { spawnSync } from 'node:child_process';
 import {
@@ -125,7 +125,7 @@ async function main() {
   const env = buildOnce(process.env);
   killLiveOnSignal();
 
-  const runsRoot = join(ROOT, '.test-parallel');
+  const runsRoot = join(ROOT, '.work', 'test-parallel');
   const run = join(runsRoot, new Date().toISOString().replace(/[:.]/g, '-'));
   const blobs = join(run, 'blobs');
   const logs = join(run, 'logs');

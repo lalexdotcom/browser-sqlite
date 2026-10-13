@@ -322,7 +322,10 @@ async function main() {
   }
 
   // --- Run --------------------------------------------------------------
-  const runsRoot = join(ROOT, options.table ? '.matrix' : '.test-parallel');
+  const runsRoot = join(
+    ROOT,
+    ...(options.table ? ['.matrix'] : ['.work', 'test-parallel']),
+  );
   const run = join(runsRoot, new Date().toISOString().replace(/[:.]/g, '-'));
   const blobs = join(run, 'blobs');
   const logs = join(run, 'logs');

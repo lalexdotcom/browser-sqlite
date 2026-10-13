@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-// The runs of this file are kept apart from the real ones in `.test-runs/`.
+// The runs of this file are kept apart from the real ones in `.work/test-runs/`.
 const runsDir = mkdtempSync(join(tmpdir(), 'bounded-runs-'));
 
 /**
