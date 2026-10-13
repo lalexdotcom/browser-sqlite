@@ -32,6 +32,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # The only check a workflow gets before GitHub runs it: actionlint, and
+      # shellcheck on every run: block (actionlint skips them silently without it).
+      - name: Lint the workflows
+        run: |
+          command -v shellcheck || { sudo apt-get update && sudo apt-get install -y shellcheck; }
+          node scripts/actionlint.ts
+
       # Stock Chrome and Firefox at the versions scripts/browsers.ts pins, and
       # their drivers, downloaded by WebdriverIO on first use. The key is that
       # file: a new pin is a new cache. GitHub's Ubuntu images carry both
