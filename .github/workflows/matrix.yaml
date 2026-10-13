@@ -27,10 +27,13 @@ jobs:
   # (scripts/test-plan.ts) probes both browsers, parses the tests, and prints
   # the plan. A test that no pair of any browser can run fails this job, once,
   # instead of failing every pair job; the pairs that have at least one test to
-  # run become the matrix of `cells`. Building the library happens here too,
-  # through the probe projects' global setup.
+  # run become the matrix of `cells`. test-plan.ts also builds tests/build/ once,
+  # before probing; the probe projects' global setup then skips its build.
   plan:
     runs-on: ubuntu-latest
+    # The default is six hours; a stuck WebDriver session while probing both
+    # browsers in both modes would hold the release gate that long.
+    timeout-minutes: 15
     outputs:
       list: ${{ steps.list.outputs.pairs }}
     steps:
