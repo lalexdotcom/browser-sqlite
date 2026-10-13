@@ -53,7 +53,7 @@ Not history: the numbers a regression is detected against. **Every figure below 
 
 Detail of the matrix, and how earlier ones were reached: `mem:measurements/suite-and-matrix`.
 
-**The table was taken at 12 processes; the default is 6 since the same afternoon (user)** — at 6, same tree: `pnpm test` 143 s, the matrix 949 s (PARALLEL-CAP). The next full pass rewrites the table at 6.
+**The table was taken at 12 processes; the default is 6 since the same afternoon (user)** — at 6, same tree: `pnpm test` 143 s, the matrix 949 s (PARALLEL-CAP). The next full pass rewrites the table at 6. **Since `ci/test-triggers` (2026-10-13) `pnpm test:consumer` has 26 stages** (publint and attw added, 26/26 green), and the delivery verification is `node scripts/hook-gate.ts delivery --run` (`mem:conventions`, § What runs where); the table's consumer row predates both.
 
 **Do not reconcile any of these by arithmetic; re-run, and re-measure the whole table when you
 touch it — never patch one cell.** Twice in September a total here went stale or contradicted its

@@ -17,7 +17,7 @@ Numbers live in `mem:measurements`.
   `scripts/render-vfs-matrix.ts`, and the error messages name no VFS. Rationale in
   `mem:history/waves` (§ The documentation), evidence in `mem:measurements` (VFS-MEDIAN).
 - **Every declared (vfs, build) pair is executed, never trusted.** `tests/conformance/`
-  runs all of them plus six invariants. Declaring a combination that does not work is the
+  runs all of them plus seven invariants. Declaring a combination that does not work is the
   failure that suite exists to catch — `IDBMirrorVFS` was the row most at risk, its builds
   having been inferred from its source because upstream's table omits it.
 - **Every VFS is constructed with `{ lockPolicy: 'shared' }`** (`worker/worker.ts:159`) —

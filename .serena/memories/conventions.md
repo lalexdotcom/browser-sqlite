@@ -69,8 +69,7 @@ anyway: a red commit breaks bisection, and the branch cannot merge while it is r
 failing test and the code that satisfies it belong to the same task.
 
 **The full verification at delivery is the agent's job, not the hooks' (user, 2026-09-11).**
-Before reporting a task, a branch or a session as done: `pnpm test` AND
-`pnpm exec tsc --noEmit`, the report read. The hooks are braces on the belt; a green
+Before reporting a task, a branch or a session as done: `node scripts/hook-gate.ts delivery --run` (since 2026-10-13: `tsc`, `pnpm test` and whatever else the branch's files call for, § What runs where), the report read. The hooks are braces on the belt; a green
 commit proves the unit project and nothing more.
 
 ## What every implementer prompt forbids (2026-09-11)
@@ -166,7 +165,7 @@ workflow finds a section by the prefix `## [<version>] - `, refuses an undated
 heading or a missing link definition, and stops the body at the next heading or at
 the link definitions.
 
-**Push `main` and the tag in ONE command (`git push origin main v<version>`)**: two pushes run the `pre-push` hook — the whole `pnpm test` — twice on the same commit (rc.7, 2026-10-06). GitHub still runs `ci.yaml` on `main` and the release's own `verify` on the tag, one event per ref; the user keeps that as it is (2026-10-06).
+**Pushing `main` and the tag in one command or in two is the same since 2026-10-13**: `pre-push` runs the suite only for a commit made on a branch directly (the bump commit is one) and the consumer smoke for a `v*` tag, and the release reuses the CI and matrix runs of the push of `main` (its `prior` job), running its own only when none passed.
 
 **The bump is one commit, then a tag.** `package.json` and the dated CHANGELOG
 heading must be true of the same tree, because the release workflow refuses a
@@ -232,24 +231,14 @@ honoured on the model half alone, and a subagent inherits the session's effort l
 tier it was dispatched at. Recorded rather than worked around; if `effort` appears later, the
 policy becomes applicable as written.
 
-## When to run the full matrix (2026-09-22)
+## What runs where, and when (user, 2026-10-13)
 
-`pnpm test:matrix` runs every eligible (vfs, build) pair on both browsers, isolated where isolation changes a test — 52 non-empty cells on 2026-10-13 — and costs about 16 min locally at the default 6 cells at a time (`mem:measurements/suite-and-matrix`, PARALLEL-CAP), ~8 min on GitHub. **When to run which test suite is to be reviewed next session (user, 2026-10-13)**: the list below predates the planner and the push-triggered matrix, and the user wants fewer local matrix runs. `pnpm test` covers **two recommended pairs**, so the matrix is the only thing that sees the other twenty. Run it when the change can behave differently per pair:
+Reviewed with the user on 2026-10-13; the design is `docs/superpowers/specs/2026-10-13-test-triggers-design.md` (§ 2 is the table test → where). The hooks are in `mem:git-hooks`. What is a convention, not a hook:
 
-- **the per-connection machinery** — `src/pool.ts`, `src/transaction.ts`, `src/worker/`;
-- **a wa-sqlite repin or a change to `patches/`** — every VFS comes from there;
-- **`VFS_CAPABILITIES`, the target machinery or a `needs` vocabulary change** — they decide which
-  pairs run what;
-- **a new browser test with no `needs`**, since it will run on all 22 pairs whether or not you
-  thought about them.
-
-**Not before a release (user, 2026-10-09):** `matrix.yaml`'s `cells` job, called by
-`release-and-publish.yaml`, runs `scripts/test-matrix.ts --pair` on every declared pair and gates
-`release`, so a local run before the tag only repeats it. **On GitHub without a release (user,
-2026-10-11):** `gh workflow run matrix.yaml --ref <branch>` runs the same jobs and publishes
-nothing. Said after rc.9 was cut without one. **Since plan C step 6 (2026-10-13) `matrix.yaml` also runs on every push of `main`** (spec § 9), so a pushed `main` gets its matrix verdict without asking; a local matrix stays for a branch, before it is merged, under the rules below.
-
-Not for documentation, memories, or a test change confined to what `pnpm test` already covers.
+- **Delivery: `node scripts/hook-gate.ts delivery --run`** — the merge rules applied to the branch against `main` (committed, uncommitted and untracked files): `tsc`, `biome`, `actionlint` if a workflow moved, `docs`, `pnpm test`, conformance if `src/`, `tests/conformance/`, `patches/` or `pnpm-lock.yaml` moved, the bench check if `scripts/bench/` moved. Its report read, the `Test Files` line included.
+- **The matrix.** `pnpm test` (complement mode) runs every browser test at least once per browser, so the matrix adds pair diversity, not test coverage; its verdict comes from the push of `main` (`matrix.yaml`). A branch that touches `src/pool.ts`, `src/transaction.ts`, `src/worker/`, the wa-sqlite pin or `patches/`, `VFS_CAPABILITIES`, the target machinery or the need vocabulary gets it before the merge, **on GitHub**: ask the user to push the branch, `gh workflow run matrix.yaml --ref <branch>`, read the verdict, then delete the remote branch (`git push origin --delete <branch>`). `pnpm test:matrix` (~16 min locally at 6 cells at a time, `mem:measurements/suite-and-matrix`, PARALLEL-CAP) stays available by hand; the user wants fewer local matrix runs. A new browser test with no tag is no reason: the planner places it.
+- **Not before a release:** the release reuses the push of `main`'s CI and matrix runs, or runs its own (`mem:stack-and-build/ci`).
+- Not for documentation, memories, or a test change confined to what `pnpm test` already covers.
 
 **Two things about reading a red cell, both paid for on 2026-09-22.** A timing-sensitive failure
 may be LOAD rather than a defect: re-run the cell alone before diagnosing — `tx-savepoint`'s T4 went
