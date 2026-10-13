@@ -276,6 +276,18 @@ describe('hook-gate gatherFacts', () => {
     ).toEqual({ files: [], directCodeCommit: false, tagPushed: true });
   });
 
+  it('pre-push: a v* tag created on the remote from another local ref', () => {
+    const r = repo();
+    const sha = r.git('rev-parse', 'HEAD');
+    // git push origin HEAD:refs/tags/v1.2.3 — no local tag exists.
+    expect(
+      gatherFacts('pre-push', {
+        cwd: r.dir,
+        stdin: `HEAD ${sha} refs/tags/v1.2.3 ${ZERO}\n`,
+      }).tagPushed,
+    ).toBe(true);
+  });
+
   it('pre-push: a deleted ref triggers nothing, a v* tag included', () => {
     const r = repo();
     const remote = r.git('rev-parse', 'HEAD');

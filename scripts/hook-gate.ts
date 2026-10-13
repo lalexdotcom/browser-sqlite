@@ -207,9 +207,11 @@ export function gatherFacts(
       let directCodeCommit = false;
       let tagPushed = false;
       for (const line of stdin.split('\n')) {
-        const [localRef, sha] = line.split(' ');
+        const [localRef, sha, remoteRef = ''] = line.split(' ');
         if (!localRef || !sha || /^0+$/.test(sha)) continue;
-        if (localRef.startsWith('refs/tags/v')) tagPushed = true;
+        // The remote ref is the tag GitHub receives: `HEAD:refs/tags/v1.2.3`
+        // pushes one with no local tag.
+        if (remoteRef.startsWith('refs/tags/v')) tagPushed = true;
         for (const file of git(
           cwd,
           'log',
