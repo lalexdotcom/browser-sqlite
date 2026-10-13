@@ -316,12 +316,16 @@ function main(argv: readonly string[]): number {
   const hook = HOOKS.find((h) => h === name);
   if (!hook) throw new Error(`unknown hook: ${name}`);
   let checks: readonly Check[];
+  let noRefs = false;
   try {
     // A terminal on stdin means a hand run: reading it would wait forever.
     const stdin =
       hook === 'pre-push' && !process.stdin.isTTY
         ? readFileSync(0, 'utf8')
         : '';
+    // git runs pre-push only with refs to push; none means a hand run, where
+    // "nothing to check" would wrongly vouch for unpushed commits.
+    noRefs = hook === 'pre-push' && stdin.trim() === '';
     checks = checksFor(hook, gatherFacts(hook, { stdin }));
   } catch (error) {
     checks = FULL[hook];
@@ -330,7 +334,13 @@ function main(argv: readonly string[]): number {
     );
   }
   console.error(
-    `hook-gate: ${hook} — ${checks.length > 0 ? checks.join(', ') : 'nothing to check'}`,
+    `hook-gate: ${hook} — ${
+      noRefs
+        ? 'no refs on stdin (git passes "<local ref> <sha> <remote ref> <sha>" lines)'
+        : checks.length > 0
+          ? checks.join(', ')
+          : 'nothing to check'
+    }`,
   );
   return flag === '--run' ? runChecks(checks) : 0;
 }

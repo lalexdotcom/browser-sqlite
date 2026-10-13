@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -324,6 +324,19 @@ describe('hook-gate gatherFacts', () => {
       'scripts/bench/new.ts',
       'src/a.ts',
     ]);
+  });
+});
+
+describe('hook-gate CLI', () => {
+  it('pre-push with no refs on stdin says so instead of "nothing to check"', () => {
+    const result = spawnSync(
+      process.execPath,
+      [join(import.meta.dirname, '../../scripts/hook-gate.ts'), 'pre-push'],
+      { input: '', encoding: 'utf8' },
+    );
+    expect(result.status).toBe(0);
+    expect(result.stderr).toMatch(/pre-push — no refs on stdin/);
+    expect(result.stderr).not.toMatch(/nothing to check/);
   });
 });
 
