@@ -76,14 +76,16 @@ jobs:
       - name: Build
         run: pnpm build
 
-      # Unit (Node), then the browser suite on BOTH engines — `pnpm test` is
-      # one Vitest invocation over the unit, Chrome, Firefox and isolated
-      # projects, so Firefox needs no step and no environment variable of its
+      # `pnpm test` is the test planner (scripts/test-plan.ts) in complement
+      # mode: the unit project, then both browsers in both modes (not isolated
+      # and cross-origin isolated), on the start pairs plus the cells that
+      # complete them. Firefox needs no step and no environment variable of its
       # own. It was a separate step until 2026-09-03, which meant a developer's
       # local run covered Chromium alone while this file covered both: the
-      # exact path by which a Firefox-only failure arrived late. Firefox has
-      # been a gate since 2026-08-28 and still is — it is the only engine here
-      # that runs the pool against a rotating exclusive OPFS handle, so a
+      # exact path by which a Firefox-only failure arrived late. Under
+      # CI=true a test that no selected browser can run fails the step. Firefox
+      # has been a gate since 2026-08-28 and still is — it is the only engine
+      # here that runs the pool against a rotating exclusive OPFS handle, so a
       # reduced-mode regression lands there first and a single failure is
       # signal, not noise.
       - name: Test
