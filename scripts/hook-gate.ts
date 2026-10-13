@@ -36,6 +36,140 @@ export function classify(files: readonly string[], hook: Hook): Decision {
   return docs && hook === 'pre-push' ? 'docs' : 'skip';
 }
 
+export type Check =
+  | 'tsc'
+  | 'lint-staged'
+  | 'biome'
+  | 'actionlint'
+  | 'docs'
+  | 'unit'
+  | 'test'
+  | 'conformance'
+  | 'bench'
+  | 'consumer';
+
+/** The order checks run in: cheap first, so a fast failure comes first. */
+export const CHECK_ORDER: readonly Check[] = [
+  'tsc',
+  'lint-staged',
+  'biome',
+  'actionlint',
+  'docs',
+  'unit',
+  'test',
+  'conformance',
+  'bench',
+  'consumer',
+];
+
+export type GateHook = Hook | 'delivery';
+export const HOOKS: readonly GateHook[] = [
+  'pre-commit',
+  'pre-merge-commit',
+  'pre-push',
+  'delivery',
+];
+
+export type FileClass = 'workflow' | 'ignored' | 'docs' | 'code';
+
+export type Facts = {
+  /** The files at stake for this hook. */
+  files: readonly string[];
+  /** pre-commit only: a conflicted merge is being concluded. */
+  merging?: boolean;
+  /** pre-push only: a pushed branch carries a non-merge, first-parent commit touching code. */
+  directCodeCommit?: boolean;
+  /** pre-push only: a `refs/tags/v*` ref is pushed. */
+  tagPushed?: boolean;
+};
+
+// What conformance depends on besides its tests: the VFS code, the wa-sqlite
+// patch, and the wa-sqlite pin, which lives in the lockfile.
+const CONFORMANCE_PATHS = [
+  'src/',
+  'tests/conformance/',
+  'patches/',
+  'pnpm-lock.yaml',
+];
+const BENCH_PATHS = ['scripts/bench/'];
+
+export function classOf(file: string): FileClass {
+  if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(file)) return 'workflow';
+  if (isDocs(file)) return 'docs';
+  if (isIgnored(file)) return 'ignored';
+  return 'code';
+}
+
+const touches = (files: readonly string[], paths: readonly string[]) =>
+  files.some((file) =>
+    paths.some((path) => file === path || file.startsWith(path)),
+  );
+
+/** What runs when the facts cannot be gathered. */
+export const FULL: Readonly<Record<GateHook, readonly Check[]>> = {
+  'pre-commit': ['tsc', 'lint-staged', 'test'],
+  'pre-merge-commit': [
+    'tsc',
+    'biome',
+    'actionlint',
+    'docs',
+    'test',
+    'conformance',
+    'bench',
+  ],
+  'pre-push': ['tsc', 'biome', 'actionlint', 'docs', 'test'],
+  delivery: [
+    'tsc',
+    'biome',
+    'actionlint',
+    'docs',
+    'test',
+    'conformance',
+    'bench',
+  ],
+};
+
+export function checksFor(hook: GateHook, facts: Facts): Check[] {
+  const classes = new Set(facts.files.map(classOf));
+  const code = classes.has('code');
+  const docsOnly = !code && classes.has('docs');
+  const out = new Set<Check>();
+  if (classes.has('workflow')) out.add('actionlint');
+
+  const mergeRules =
+    hook === 'pre-merge-commit' ||
+    hook === 'delivery' ||
+    (hook === 'pre-commit' && facts.merging === true);
+
+  if (mergeRules) {
+    if (code) {
+      for (const check of ['tsc', 'biome', 'docs', 'test'] as const) {
+        out.add(check);
+      }
+      if (hook === 'pre-commit') out.add('lint-staged');
+      if (touches(facts.files, CONFORMANCE_PATHS)) out.add('conformance');
+      if (touches(facts.files, BENCH_PATHS)) out.add('bench');
+    } else if (docsOnly) {
+      out.add('docs');
+    }
+  } else if (hook === 'pre-commit') {
+    if (code) {
+      for (const check of ['tsc', 'lint-staged', 'unit'] as const) {
+        out.add(check);
+      }
+    }
+  } else {
+    if (code) {
+      for (const check of ['tsc', 'biome', 'docs'] as const) out.add(check);
+    } else if (docsOnly) {
+      out.add('docs');
+    }
+    if (facts.directCodeCommit) out.add('test');
+    if (facts.tagPushed) out.add('consumer');
+  }
+  return CHECK_ORDER.filter((check) => out.has(check));
+}
+
 const git = (...args: string[]) =>
   execFileSync('git', args, { encoding: 'utf8', maxBuffer: 1 << 28 })
     .split('\n')
