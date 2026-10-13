@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { BARRIER_SQL } from '../../src/epochs';
-import { HAS_UNSAFE_HANDLES } from '../conformance/helpers';
 import { createTestClient, sharedDatabase } from './helpers';
 
 /**
@@ -163,16 +162,14 @@ describe('barrier — two clients in one tab', () => {
 
 describe('catch-up pragma', () => {
   // One VFS: the subject is OPFSWriteAheadVFS's catchUpPragma. A barrier needs
-  // a second worker, which this VFS has only with readwrite-unsafe.
+  // a second worker, which `requires:two-workers` guarantees.
   // Falsifiable: drop the closing `PRAGMA wal_read_latest=0` in barrierSqlFor —
   // the worker that paid the barrier then reads 1, and every later read on it
   // scans the write-ahead to its end.
-  it('closes the pragma the barrier opens on OPFSWriteAheadVFS', async ({
-    skip,
-  }) => {
-    if (!HAS_UNSAFE_HANDLES) return skip();
+  it('closes the pragma the barrier opens on OPFSWriteAheadVFS', {
+    tags: ['vfs:OPFSWriteAheadVFS', 'requires:two-workers'],
+  }, async () => {
     const db = await createTestClient({
-      vfs: 'OPFSWriteAheadVFS',
       poolSize: 2,
       __unsafeTestWriterPolicy: (i: number) => i !== 0,
       debug: true,

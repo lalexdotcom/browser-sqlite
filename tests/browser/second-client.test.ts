@@ -86,9 +86,12 @@ describe('a client whose worker 0 is lost before it answers the probe', () => {
   // Falsifier run 2026-09-15: deleting the `index === 0 && !probeSettled`
   // line of `onGateOpen` (src/client.ts) turns this red on both Chromium
   // projects — the query is still waiting at the bound.
-  it("fails the client with that worker's error rather than hanging", async () => {
-    // One VFS: the subject is the probe that only this VFS's exclusiveConnectionWithout triggers.
-    const vfs = 'OPFSWriteAheadVFS' as const;
+  // The subject is the probe that only this VFS's exclusiveConnectionWithout
+  // triggers; the build follows the cell's pair.
+  it("fails the client with that worker's error rather than hanging", {
+    tags: ['vfs:OPFSWriteAheadVFS'],
+  }, async () => {
+    const { vfs, build } = TEST_TARGET;
     const file = `second-client-${crypto.randomUUID()}`;
     const LOST = 'worker 0 lost before it answered the probe';
     // A bound on a hang, not a timing claim.
@@ -117,10 +120,10 @@ describe('a client whose worker 0 is lost before it answers the probe', () => {
       }
       return record(...added);
     };
-    const db = createSQLiteClient(file, { vfs, poolSize: 2 });
+    const db = createSQLiteClient(file, { vfs, build, poolSize: 2 });
     onTestFinished(async () => {
       await db.close().catch(() => {});
-      await deleteDatabase(file, { vfs }).catch(() => {});
+      await deleteDatabase(file, { vfs, build }).catch(() => {});
     });
     const outcome = await Promise.race([
       db.read('SELECT 1').then(
@@ -240,13 +243,15 @@ describe('a client closed before worker 0 has answered', () => {
   // side (Task 4 review, 2026-09-15): deleting the waiting-`close` branch of
   // `src/worker/worker.ts` (`case 'close'` while `proceedGate` is set) makes
   // this test time out.
-  it('closes promptly, holds no lock, and leaves the database to the next client', async () => {
-    const vfs = 'OPFSWriteAheadVFS' as const;
+  it('closes promptly, holds no lock, and leaves the database to the next client', {
+    tags: ['vfs:OPFSWriteAheadVFS'],
+  }, async () => {
+    const { vfs, build } = TEST_TARGET;
     const file = `second-client-${crypto.randomUUID()}`;
     onTestFinished(async () => {
-      await deleteDatabase(file, { vfs }).catch(() => {});
+      await deleteDatabase(file, { vfs, build }).catch(() => {});
     });
-    const a = createSQLiteClient(file, { vfs });
+    const a = createSQLiteClient(file, { vfs, build });
     const started = performance.now();
     await a.close();
     expect(performance.now() - started).toBeLessThan(REFUSED_WITHIN);
@@ -256,7 +261,7 @@ describe('a client closed before worker 0 has answered', () => {
         lock.name.endsWith(`:${databasePath(vfs, file)}`),
     );
     expect(held).toEqual([]);
-    const b = createSQLiteClient(file, { vfs });
+    const b = createSQLiteClient(file, { vfs, build });
     await b.write('CREATE TABLE t (n)');
     await b.close();
   });

@@ -1,9 +1,5 @@
-import {
-  createSQLiteClient,
-  deleteDatabase,
-  SQLiteError,
-} from 'browser-sqlite';
-import { describe, expect, it, onTestFinished } from 'vitest';
+import { SQLiteError } from 'browser-sqlite';
+import { describe, expect, it } from 'vitest';
 import { connectionLockName } from '../../src/locks';
 import { databasePath } from '../../src/utils';
 import { createTestClient, sharedDatabase, TEST_TARGET } from './helpers';
@@ -18,31 +14,6 @@ import { createTestClient, sharedDatabase, TEST_TARGET } from './helpers';
  * Locks and OPFS access handles are both origin-wide, so two clients here
  * contend exactly as two tabs would.
  */
-
-/** Unique database name for each test. */
-const dbName = () => `bsq-test-${crypto.randomUUID()}`;
-
-/**
- * Close the clients, then delete the database: AccessHandlePoolVFS keeps its
- * files in six fixed slots and gives one back on xDelete alone, so a database
- * left behind occupies a slot for the rest of the browser session.
- */
-const closeAll = async (
-  name: string,
-  ...clients: ReturnType<typeof createSQLiteClient>[]
-) => {
-  for (const client of clients) {
-    try {
-      await client.close();
-    } catch {
-      /* a BUSY client was never open — nothing to drain */
-    }
-  }
-  const { vfs, build } = TEST_TARGET;
-  await deleteDatabase(name, { vfs, build }).catch((error: unknown) => {
-    if ((error as SQLiteError)?.code !== 'DATABASE_NOT_FOUND') throw error;
-  });
-};
 
 describe('the exclusive connection guard', () => {
   // -------------------------------------------------------------------------
@@ -166,18 +137,19 @@ describe('the exclusive connection guard', () => {
   // -------------------------------------------------------------------------
   // One VFS: the subject is AccessHandlePoolVFS's orphan-worker race
   // (AHP-CLOSE-RACE), specific to its pooled OPFS access handles.
-  it('does not orphan workers when close() is called before any query', async () => {
-    const name = dbName();
-    const opts = { vfs: 'AccessHandlePoolVFS' as const, poolSize: 1 };
+  it('does not orphan workers when close() is called before any query', {
+    tags: ['vfs:AccessHandlePoolVFS'],
+  }, async () => {
+    const database = sharedDatabase();
+    const opts = { poolSize: 1 };
 
     // Create A and close it immediately — before any query forces the lock
     // to settle. This is the path that previously orphaned a worker.
-    const a = createSQLiteClient(name, opts);
+    const a = database.open(opts);
     await a.close();
 
     // B opens cleanly: no orphaned worker should be holding OPFS handles.
-    const b = createSQLiteClient(name, opts);
-    onTestFinished(() => closeAll(name, b));
+    const b = database.open(opts);
 
     // If an orphan holds the handles, this write fails with WORKER_CRASHED.
     await b.write('CREATE TABLE t (n)');

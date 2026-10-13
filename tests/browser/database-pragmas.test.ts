@@ -1,4 +1,3 @@
-import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import {
@@ -93,14 +92,11 @@ describe('a pragma that writes the database', {
  * write after another client's schema change hung there (2026-10-01).
  */
 describe('a pragma the VFS refuses', () => {
-  const vfs = 'OPFSCoopSyncVFS';
-
   // Falsifiable: drop the check in write(), or in the transaction's checksql.
-  it('is refused in a statement that sets it, in or out of a transaction', async () => {
-    const name = `refused-${crypto.randomUUID()}`;
-    onTestFinished(() => deleteDatabase(name, { vfs }).catch(() => {}));
-    const db = createSQLiteClient(name, { vfs });
-    onTestFinished(() => db.close().catch(() => {}));
+  it('is refused in a statement that sets it, in or out of a transaction', {
+    tags: ['vfs:OPFSCoopSyncVFS'],
+  }, async () => {
+    const db = await createTestClient();
 
     await expect(db.write('PRAGMA busy_timeout = 100')).rejects.toMatchObject({
       code: 'INVALID_PRAGMA',

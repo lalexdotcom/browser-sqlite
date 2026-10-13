@@ -2,6 +2,7 @@ import { createSQLiteClient } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { databasePath } from '../../src/utils';
 import { removeOpfsPath } from '../conformance/helpers';
+import { TEST_TARGET } from './helpers';
 
 /**
  * A VFS that takes an EXCLUSIVE OPFS access handle inside `xOpen` fails the
@@ -31,8 +32,8 @@ import { removeOpfsPath } from '../conformance/helpers';
  * `mode: 'readwrite-unsafe'`, so a dead holder blocks nothing;
  * `AccessHandlePoolVFS` is exclusive but acquires at VFS-instance creation,
  * which `createVfsInstance` already retries (`3755805`). `OPFSCoopSyncVFS` is
- * the only VFS meeting both conditions, so it is named here rather than
- * discovered through the target — holding a handle in the wrong mode would
+ * the only VFS meeting both conditions, so the test carries its `vfs:` tag
+ * rather than running on every pair — holding a handle in the wrong mode would
  * redden targets that the defect cannot reach.
  *
  * **The release is driven by the VFS's own signal, not by a delay.** A first
@@ -52,7 +53,8 @@ import { removeOpfsPath } from '../conformance/helpers';
  * debug state; `mem:follow-ups` (`open-retry`) says what each step means.
  */
 
-const VFS = 'OPFSCoopSyncVFS';
+/** The cell's pair, read inside a test: never at module scope. */
+const TEST_PAIR = () => ({ vfs: TEST_TARGET.vfs, build: TEST_TARGET.build });
 /** Long enough for the first acquisition to have failed, short enough to bind. */
 const GRACE_MS = 30;
 /** Nothing announced: release anyway rather than hang the test. */
@@ -235,7 +237,9 @@ const stepsUnder = (report: () => string) => {
 };
 
 describe('opening a database whose file is momentarily held', () => {
-  it('succeeds once the holder lets go', async () => {
+  it('succeeds once the holder lets go', {
+    tags: ['vfs:OPFSCoopSyncVFS'],
+  }, async () => {
     const dbName = `bsq-test-${crypto.randomUUID()}`;
     let creator: Client | undefined;
     let holder: ReturnType<typeof exclusiveHolder> | undefined;
@@ -247,16 +251,19 @@ describe('opening a database whose file is momentarily held', () => {
     );
 
     // Create the database, so the open under test is an ordinary reopen.
-    creator = createSQLiteClient(dbName, { vfs: VFS, debug: 'creator' });
+    creator = createSQLiteClient(dbName, { ...TEST_PAIR(), debug: 'creator' });
     await step('creator.write', creator.write('CREATE TABLE t (a)'));
     await step('creator.close', creator.close());
 
     holder = exclusiveHolder();
     expect(
-      await step('holder.take', holder.take(databasePath(VFS, dbName))),
+      await step(
+        'holder.take',
+        holder.take(databasePath(TEST_TARGET.vfs, dbName)),
+      ),
     ).toBe('taken');
 
-    db = createSQLiteClient(dbName, { vfs: VFS, debug: 'db' });
+    db = createSQLiteClient(dbName, { ...TEST_PAIR(), debug: 'db' });
     // Not awaited before the holder is armed: the open has to start while the
     // handle is still held.
     try {
@@ -282,9 +289,11 @@ describe('opening a database whose file is refused for another reason', () => {
   // worker's boot before it is the engine's, not the subject, and on a CI
   // runner it alone has gone past a whole-call bound. A failure prints the
   // boot, so it says where the time went.
-  it('fails without waiting out the retry budget', async () => {
+  it('fails without waiting out the retry budget', {
+    tags: ['requires:opfs-file', 'requires:exclusive-file-handle'],
+  }, async () => {
     const dbName = `bsq-test-${crypto.randomUUID()}`;
-    const path = databasePath(VFS, dbName);
+    const path = databasePath(TEST_TARGET.vfs, dbName);
     // A directory where the database file belongs: the VFS's getFileHandle
     // refuses it with a TypeMismatchError, which no wait will change.
     const segments = path.split('/');
@@ -319,7 +328,7 @@ describe('opening a database whose file is refused for another reason', () => {
     });
 
     const started = performance.now();
-    const db = createSQLiteClient(dbName, { vfs: VFS });
+    const db = createSQLiteClient(dbName, TEST_PAIR());
     onTestFinished(() => db.close().catch(() => {}));
     const error = await db.read('SELECT 1').then(
       () => undefined,

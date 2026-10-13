@@ -7,7 +7,13 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { VFS_CAPABILITIES } from '../../src/const/vfs';
 import { initLockName } from '../../src/locks';
 import { databasePath } from '../../src/utils';
-import { longQuery, removeDatabaseFiles, sleep, TEST_TARGET } from './helpers';
+import {
+  createTestClient,
+  longQuery,
+  removeDatabaseFiles,
+  sleep,
+  TEST_TARGET,
+} from './helpers';
 
 /**
  * The database is gone when a fresh client on the same name finds no table.
@@ -359,15 +365,12 @@ describe('deleteDatabase under a live connection', () => {
 describe('deleting after a worker died inside a statement', () => {
   // One VFS: the subject IS AccessHandlePoolVFS's fixed handle pool. No other
   // VFS holds its whole directory, so none of them can show this.
-  const vfs = 'AccessHandlePoolVFS' as const;
-
-  it('deletes a database whose worker was killed mid-statement', async () => {
-    const file = `delete-busy-${crypto.randomUUID()}`;
-    const db = createSQLiteClient(file, {
-      vfs,
-      poolSize: 1,
-      drainTimeout: 200,
-    });
+  it('deletes a database whose worker was killed mid-statement', {
+    tags: ['vfs:AccessHandlePoolVFS'],
+    timeout: 60_000,
+  }, async () => {
+    const { vfs, build } = TEST_TARGET;
+    const db = await createTestClient({ poolSize: 1, drainTimeout: 200 });
     await db.write('CREATE TABLE t (a)');
 
     // Abandoned on purpose: close() bounds the drain and terminates the worker
@@ -377,6 +380,8 @@ describe('deleting after a worker died inside a statement', () => {
     await db.close();
     await running;
 
-    await expect(deleteDatabase(file, { vfs })).resolves.toBeUndefined();
-  }, 60_000);
+    await expect(
+      deleteDatabase(db.file, { vfs, build }),
+    ).resolves.toBeUndefined();
+  });
 });

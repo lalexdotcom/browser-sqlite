@@ -1,6 +1,5 @@
-import { createSQLiteClient } from 'browser-sqlite';
 import { describe, expect, it } from 'vitest';
-import { removeDatabaseFiles } from './helpers';
+import { sharedDatabase } from './helpers';
 
 /**
  * `OPFSCoopSyncVFS` rotates one exclusive OPFS access handle between workers,
@@ -50,53 +49,37 @@ import { removeDatabaseFiles } from './helpers';
 const CONCURRENT = 8;
 const ROUNDS = 6;
 
-const scrub = async (file: string) => {
-  try {
-    await removeDatabaseFiles(file, 'OPFSCoopSyncVFS');
-  } catch {
-    // Never created, or already gone.
-  }
-};
-
 describe('OPFSCoopSyncVFS handle-transfer BUSY', () => {
-  it('does not surface the transfer BUSY to the caller', async () => {
-    const file = `coopsync-retry-${crypto.randomUUID()}`;
+  // One VFS: the subject is OPFSCoopSyncVFS's exclusive-handle transfer
+  // between two clients; the build follows the cell's pair.
+  it('does not surface the transfer BUSY to the caller', {
+    tags: ['vfs:OPFSCoopSyncVFS'],
+    timeout: 120000,
+  }, async () => {
+    const database = sharedDatabase();
     // dbA alone creates the table, exactly as the single client used to. dbB
     // only joins afterward, as a second tab opening an already-running
     // database would — each client at its default (capped) pool of one
     // worker, so the handle transfer this test chases now happens between
     // these two clients rather than between workers of one pool.
-    // One VFS: the subject is OPFSCoopSyncVFS's exclusive-handle transfer
-    // between two clients.
-    const dbA = createSQLiteClient(file, { vfs: 'OPFSCoopSyncVFS' });
-    try {
-      await dbA.write('CREATE TABLE t (a INTEGER)');
-      const dbB = createSQLiteClient(file, { vfs: 'OPFSCoopSyncVFS' });
-      const clients = [dbA, dbB];
-      try {
-        for (let round = 0; round < ROUNDS; round++) {
-          const work = Array.from({ length: CONCURRENT }, (_, i) => {
-            const db = clients[i % clients.length];
-            return i % 3 === 0
-              ? db.write('INSERT INTO t (a) VALUES (?)', [
-                  round * CONCURRENT + i,
-                ])
-              : db.read<{ n: number }>('SELECT count(*) AS n FROM t');
-          });
-          // Falsifiability, verified by experiment (see header): drop the
-          // catch from `readWithRetry` in client.ts so it just awaits
-          // `onReadLease`, and one of these rejects with SQLiteError code
-          // BUSY, sqliteCode 5, "database is locked" — on Firefox.
-          const settled = await Promise.allSettled(work);
-          const rejected = settled.filter((s) => s.status === 'rejected');
-          expect(rejected).toEqual([]);
-        }
-      } finally {
-        await dbB.close().catch(() => {});
-      }
-    } finally {
-      await dbA.close().catch(() => {});
-      await scrub(file);
+    const dbA = database.open();
+    await dbA.write('CREATE TABLE t (a INTEGER)');
+    const dbB = database.open();
+    const clients = [dbA, dbB];
+    for (let round = 0; round < ROUNDS; round++) {
+      const work = Array.from({ length: CONCURRENT }, (_, i) => {
+        const db = clients[i % clients.length];
+        return i % 3 === 0
+          ? db.write('INSERT INTO t (a) VALUES (?)', [round * CONCURRENT + i])
+          : db.read<{ n: number }>('SELECT count(*) AS n FROM t');
+      });
+      // Falsifiability, verified by experiment (see header): drop the
+      // catch from `readWithRetry` in client.ts so it just awaits
+      // `onReadLease`, and one of these rejects with SQLiteError code
+      // BUSY, sqliteCode 5, "database is locked" — on Firefox.
+      const settled = await Promise.allSettled(work);
+      const rejected = settled.filter((s) => s.status === 'rejected');
+      expect(rejected).toEqual([]);
     }
-  }, 120000);
+  });
 });
