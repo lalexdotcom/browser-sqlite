@@ -1,7 +1,6 @@
 import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
 import { expect, inject, onTestFinished } from 'vitest';
 import type { SQLiteDB } from '../../src/api';
-import { defaultBuildFor } from '../../src/capabilities';
 import type { SQLiteBuild } from '../../src/const/builds';
 import {
   folderOf,
@@ -13,44 +12,15 @@ import type { SQLiteError } from '../../src/types/errors';
 import { databaseFiles, databasePath } from '../../src/utils';
 import { AVAILABLE_FEATURES, removeOpfsPath } from '../conformance/helpers';
 import { needFromTags, representative, runsIn } from '../need';
-import { targetLabel } from '../target-projects';
-import {
-  type Here,
-  type Need,
-  type OnUnmetNeed,
-  resolvePair,
-  type TestTarget,
-} from './target';
-
-/**
- * The running test's `ctx.skip`. A running test is skipped only through its
- * own context, so a test that declares `needs` hands it over with them (spec
- * 2026-09-15, A7).
- */
-export type Skip = () => never;
-
-/** `needs` and `skip` travel together: the types refuse one without the other. */
-export type Needing =
-  | { needs?: undefined; skip?: undefined }
-  | { needs: readonly Need[]; skip: Skip };
-
-/**
- * Options for createTestClient. `vfs` pins the test to one VFS; without it the
- * test follows the target, and `needs` declares what its subject requires of
- * the pair it runs on.
- */
-type TestClientOptions = Omit<InternalSQLiteClientOptions, 'vfs'> & {
-  vfs?: SQLiteVFS;
-} & Needing;
+import type { TestTarget } from './target';
 
 let targetReads = 0;
 
 /**
- * The target this project provides (vitest.config.ts, one project per target,
- * tests/target-projects.ts). A browser project without one is a configuration
- * error, not a default, so this throws rather than choose a VFS. It lives
- * here, not in `./target`, because the resolver there is imported by a Node
- * unit test, where no project provides anything.
+ * The pair this project provides (vitest.config.ts, one project per declared
+ * pair, tests/target-projects.ts). A browser project without one is a
+ * configuration error, not a default, so this throws rather than choose a VFS.
+ * Read it inside a test or a helper, never at module or describe scope.
  */
 export const TEST_TARGET: TestTarget = (() => {
   const target = inject('bsqTarget');
@@ -135,42 +105,6 @@ export const forEachCase = async <T>(
   expect(failures).toEqual([]);
 };
 
-/** `fallback` unless `BSQ_TEST_NEEDS` says `skip`, as `pnpm test:matrix` does (spec 2026-09-15, A7). */
-const ON_UNMET_NEED: OnUnmetNeed = (() => {
-  const needs = inject('bsqNeeds');
-  if (needs === undefined) {
-    throw new Error(
-      'ON_UNMET_NEED: this project provides no bsqNeeds (tests/target-projects.ts)',
-    );
-  }
-  return needs;
-})();
-
-/**
- * This browser, as the resolver sees it: the conformance probe's features,
- * which already carry `cross-origin-isolated` — `AVAILABLE_FEATURES` is
- * `detectFeatures()` plus the async probe, and isolation is one of the four
- * synchronous probes. Nothing here re-tests a global by hand.
- */
-const HERE: Here = { features: AVAILABLE_FEATURES };
-
-/**
- * Creates a SQLite client with a unique database name (UUID) and registers
- * cleanup of the client and its files via onTestFinished.
- *
- * Decisions: D-06 (unique name), D-07 (per-test cleanup), D-08 (shared helper)
- *
- * VFS: the target this project injects (`TEST_TARGET`), unless the test pins
- * one with `vfs`. Pinning is for tests whose subject IS a VFS, and says why on
- * a `// One VFS: <reason>` line above the call; a pinned test runs on its
- * `build`, or that VFS's default. A property the subject requires of the pair
- * it runs on — two workers in the pool, an interruptible statement — is
- * declared in `needs`, never obtained by pinning: the test runs on the target
- * where the target has it here, otherwise on the nearest pair of this browser
- * that does (`resolvePair`, spec 2026-09-15, A5), or is skipped under
- * `BSQ_TEST_NEEDS=skip` (A7) — hence `skip` beside `needs`. A target this
- * browser cannot run is an error, TARGET_NOT_RUNNABLE, never a skip.
- */
 /**
  * Removes a database file and every file a VFS keeps beside it — the three
  * every layout may have, and the VFS's own (e.g. OPFSWriteAheadVFS's
@@ -186,38 +120,6 @@ export const removeDatabaseFiles = async (
   for (const path of databaseFiles(vfs, databasePath(vfs, name)))
     await removeOpfsPath(path);
 };
-
-/**
- * The pair a test with these needs runs on — the target itself where it has
- * them; otherwise the nearest pair of this browser that does, or a skip under
- * `BSQ_TEST_NEEDS=skip`.
- *
- * Exported for the few tests that build their clients themselves (a foreign
- * realm, an intercepted worker, a pool size of its own): everything else takes
- * `createTestClient`, which calls this. Call it INSIDE the test, never at
- * module scope, so a target this browser cannot run fails that test with
- * TARGET_NOT_RUNNABLE instead of failing the file at load — and so that
- * `skip` is the running test's own.
- */
-export function pairFor(): TestTarget;
-export function pairFor(needs: readonly Need[], skip: Skip): TestTarget;
-export function pairFor(needs: readonly Need[] = [], skip?: Skip): TestTarget {
-  const pair = resolvePair(TEST_TARGET, needs, HERE, ON_UNMET_NEED);
-  if (pair === null) {
-    throw new Error(
-      `TARGET_NOT_RUNNABLE: no pair of this browser runs ${targetLabel(TEST_TARGET)} with needs [${needs.join(', ')}]`,
-    );
-  }
-  if (pair !== 'skip') return pair;
-  // skip() is called without a reason, so the report would not say why.
-  console.info(
-    `skipped: ${targetLabel(TEST_TARGET)} lacks [${needs.join(', ')}] here (BSQ_TEST_NEEDS=skip)`,
-  );
-  if (skip === undefined) {
-    throw new Error('pairFor: a need went unmet and no skip was handed over');
-  }
-  return skip();
-}
 
 /**
  * Closes `clients`, then deletes `name` on `pair` and removes its files — the
@@ -273,30 +175,17 @@ const cleanUp = async (
  * it resolved — and closes and deletes it when the test ends.
  *
  * Decisions: D-06 (unique name), D-07 (per-test cleanup), D-08 (shared helper).
- * Until plan C's Task 9, `options.vfs` still pins and `options.needs` still
- * resolves through `pairFor`; both go then.
  */
 export async function createTestClient(
-  options: TestClientOptions = {},
-  pair?: TestTarget,
+  options: ClientOptions = {},
+  pair: TestTarget = TEST_TARGET,
 ) {
   const dbName = `bsq-test-${crypto.randomUUID()}`;
-  const { needs: _needs, skip: _skip, ...clientOptions } = options;
-  const resolved: TestTarget =
-    pair ??
-    (options.vfs === undefined
-      ? options.needs === undefined
-        ? pairFor()
-        : pairFor(options.needs, options.skip)
-      : {
-          vfs: options.vfs,
-          build:
-            options.build ?? defaultBuildFor(options.vfs, AVAILABLE_FEATURES),
-        });
+  const resolved: TestTarget = { vfs: pair.vfs, build: pair.build };
   // createSQLiteClient is synchronous — workers initialize in the background.
   // The first query queues until a worker reaches READY.
   const db = createSQLiteClient(dbName, {
-    ...clientOptions,
+    ...options,
     vfs: resolved.vfs,
     build: resolved.build,
   } as InternalSQLiteClientOptions);

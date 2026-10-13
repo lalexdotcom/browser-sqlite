@@ -181,7 +181,7 @@ function printPlan(plan: Plan, families: readonly FamilyInput[]) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const concurrency = resolveConcurrency(process.env.BSQ_TEST_JOBS);
-  const env = { ...buildOnce(process.env), BSQ_TEST_TARGETS: 'all' };
+  const env = buildOnce(process.env);
 
   // --- Plan -------------------------------------------------------------
   const vitest = await openVitest();

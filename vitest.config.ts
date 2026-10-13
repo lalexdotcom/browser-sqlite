@@ -12,21 +12,13 @@ import {
 } from './scripts/browsers.ts';
 import type { TestTarget } from './tests/browser/target.ts';
 import { declaredTags } from './tests/need.ts';
-import {
-  CHROMIUM_FEATURES,
-  FIREFOX_FEATURES,
-  onUnmetFromEnv,
-  targetLabel,
-  targetsFromEnv,
-} from './tests/target-projects.ts';
+import { allTargets, targetLabel } from './tests/target-projects.ts';
 
 const ENGINES: readonly BrowserName[] = ['chrome', 'firefox'];
-const FEATURES = { chrome: CHROMIUM_FEATURES, firefox: FIREFOX_FEATURES };
 const ISOLATION = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Embedder-Policy': 'require-corp',
 };
-const onUnmet = onUnmetFromEnv(process.env.BSQ_TEST_NEEDS);
 const built = (file: string) =>
   fileURLToPath(new URL(`./tests/build/${file}`, import.meta.url));
 
@@ -69,7 +61,6 @@ const browserProject = (
       ? {
           provide: {
             bsqTarget: options.target,
-            bsqNeeds: onUnmet,
             bsqEnvironment: { browser, isolated: options.isolated === true },
           },
         }
@@ -126,8 +117,7 @@ export default defineConfig({
         },
       },
       ...ENGINES.flatMap((browser) =>
-        targetsFromEnv(process.env.BSQ_TEST_TARGETS, FEATURES[browser]).flatMap(
-          (target) => [
+        allTargets().flatMap((target) => [
             browserProject(
               `${browser} · ${targetLabel(target)}`,
               browser,
