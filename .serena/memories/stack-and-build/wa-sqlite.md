@@ -6,7 +6,11 @@ Part of `mem:stack-and-build`. Moved here from it on 2026-10-08; the chain of ea
 
 `wa-sqlite` is a devDependency only, vendored into `dist/worker/worker.js` at build time so it
 never reaches a consumer lockfile. **Pinned by commit SHA, not by tag, since 2026-09-15 (user)**:
-`github:rhashimoto/wa-sqlite#94cd1e7d7dbbfcbb6ebe473e56ee2dc0faece756` since 2026-10-11, upstream
+`github:rhashimoto/wa-sqlite#6238f532b399de77fd5f141f6e3776aeb24b2f04` since 2026-10-13, upstream
+`master` with our #374 merged (squashed, its fix and test hunks byte for byte the PR's), two
+dependabot bumps of `yarn.lock` before it (outside the package); **no patch since**, and the built
+`worker.js`, the three `.wasm` and `index.js` byte-identical across that repin, the source map
+differing only by the package's `.pnpm` path. Before it, `94cd1e7d` (2026-10-11), upstream
 `master` with our #372 merged (squashed as `91a34ef7`, its tree byte-identical to the head the patch
 carried, `2e85b243`) and a dependabot bump of `yarn.lock` on top (outside the package); the built
 `worker.js` and the three `.wasm` are byte-identical across that repin, only `worker.js.map` moves
@@ -26,17 +30,16 @@ as well as a release and nothing waits for one.
 
 ## The patch
 
-**`patches/wa-sqlite@1.1.2.patch` carries the upstream changes listed below, file by file**, and is
-no longer deletable as a block. Each is independent and each has a report in
-`docs/upstream/`, which is where the mechanisms and measurements live:
+**There is no patch since the repin to `6238f532` (2026-10-13)**: `pnpm patch-remove wa-sqlite@1.1.2` deleted `patches/` and `patchedDependencies` — then its own install failed `ENOENT` on the file it had just deleted (pnpm 10.31), and a plain `pnpm install` finished cleanly. Below, what `patches/wa-sqlite@1.1.2.patch` carried until then, file by file; each change has a report in `docs/upstream/`, which is where the mechanisms and measurements live. The procedure that follows is for the next change carried before it merges:
 
 - `IDBMirrorVFS.js` — #372 was carried from 2026-10-03 (merged with #371 until #371's merge, then
   alone, last at head `2e85b243`) and left the patch at the repin to `94cd1e7d` (2026-10-11), merged
   upstream byte for byte.
 - `OPFSAdaptiveVFS.js` — #374, line 9 guarded (`FileSystemSyncAccessHandle?.prototype`), without
-  which no worker loads outside a secure context (INSECURE-CONTEXT).
+  which no worker loads outside a secure context (INSECURE-CONTEXT); carried from 2026-10-03, merged
+  upstream on 2026-10-13 and gone with the patch at the repin to `6238f532`.
 - `dist/wa-sqlite-jspi.mjs` was carried for #375 from 2026-10-05 until its merge the same day. **After any change to a carried `dist/` glue, clear `node_modules/.cache/rspack` and check the pattern in `dist/worker/worker.js`**: the forced build cache served the previous glue once.
-- That line is all the patch holds since 2026-10-11: every other PR it carried has merged.
+- That line was all the patch held from 2026-10-11 until #374 merged.
 
 `WriteAhead.js` is no longer patched: #365 (`PRAGMA wal_read_latest`, which the library's barrier
 sets) and #361 are upstream. #366 changes tests only and is not carried.
