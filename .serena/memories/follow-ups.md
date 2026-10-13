@@ -16,10 +16,6 @@ descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` clai
 shadow types that were never loaded, `W-types` a duplication already gone. Both would have
 been work on nothing.
 
-## Parallel Vitest processes race on Vite's dep-optimizer cache (2026-10-13)
-
-`scripts/test-parallel.ts` (and the planner's cells, when a cell is sharded) start several Vitest processes on ONE project, and they share its Vite dep-optimizer cache, `node_modules/.vite/vitest/<project hash>/deps`. **Root cause, measured 2026-10-13:** on a cold or stale cache every process runs Vite's initial optimization (`onCrawlEnd → runOptimizer → commit`), and the commit is `existsSync(deps)`, `rename(deps → deps_temp_*)`, `rename(processing → deps)` with no lock across processes — two commits that overlap make the second `rename(deps)` fail `ENOENT`, the page reloads mid-test (an "Unhandled Error" with no stack), and the cache can be left with a `deps_temp_*` orphan. A warm, valid cache never re-optimizes, so never races. **Reproduction**, `pnpm test:conformance` (3 shards per engine): cold cache (directory moved aside) 1 race and 1 red file in 5 runs; stale cache (`hash`/`lockfileHash` of `_metadata.json` changed, as a lockfile change does) 0 red in 5 but one orphan `deps_temp_*` left. First seen on `ci/test-triggers` (publint and attw changed the lockfile), where the orphan then failed every Firefox conformance file at import ("Vitest failed to find the current suite"). CI starts cold on every run (`node_modules/.vite` is not cached), so CI carries the hazard each time a project is sharded. Not fixed.
-
 ## wa-sqlite's async `step()` wrapper costs every read, most on Firefox — a dedicated workstream for a new session (user, 2026-10-08)
 
 In `mem:follow-ups/wa-step`: the scope the user set, what each solution (library-side fast step, three upstream forms) asks of the library, the measurements on Firefox, Chromium and WebKit, and what an upstream Discussion would rest on.
