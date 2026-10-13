@@ -17,11 +17,11 @@ describe('resolveConcurrency', () => {
     expect(resolveConcurrency('40', 4)).toBe(40);
   });
 
-  it('defaults to every CPU but one, capped at 12', () => {
-    expect(resolveConcurrency(undefined, 16)).toBe(12);
-    expect(resolveConcurrency(undefined, 64)).toBe(12);
-    expect(resolveConcurrency(undefined, 13)).toBe(12);
-    expect(resolveConcurrency(undefined, 8)).toBe(7);
+  it('defaults to every CPU but one, capped at 6', () => {
+    expect(resolveConcurrency(undefined, 16)).toBe(6);
+    expect(resolveConcurrency(undefined, 64)).toBe(6);
+    expect(resolveConcurrency(undefined, 7)).toBe(6);
+    expect(resolveConcurrency(undefined, 6)).toBe(5);
     // A 4-vCPU `ubuntu-latest`.
     expect(resolveConcurrency(undefined, 4)).toBe(3);
   });
