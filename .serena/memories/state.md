@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-10-11.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-10-13.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one, and move what closes to `mem:history` rather than
 keeping it here struck through (rewritten on 2026-10-08 from 38 000 characters, two thirds of
 them closed subjects).
@@ -32,37 +32,37 @@ unmeasured ground.
 - **`main` may sit ahead of `origin/main` indefinitely** — the convention, not an oversight. It
   is pushed for a release, not as housekeeping.
 
-## The verification baseline — compare against these, re-measured 2026-10-10
+## The verification baseline — compare against these, re-measured 2026-10-13
 
-Not history: the numbers a regression is detected against. **Every figure below was read off ONE pass in this container (Debian 13 aarch64, 16 cores) on 2026-10-10, on the Vitest + WebdriverIO setup** (`mem:stack-and-build`, § Test suites) — Vitest 5.0.3, Chrome for Testing 153.0.8010.52, Firefox 155.0.1 — none arithmetic, on the wa-sqlite pin `96d91182` with #371, #372 and #374 carried. The numbers of 2026-10-09 were taken under rstest and Playwright and are not comparable (another runner, one report instead of three, the isolated tests now on both engines).
+Not history: the numbers a regression is detected against. **Every figure below was read off ONE sequential pass in this container (Debian 13 aarch64, 16 cores) on 2026-10-13, at `main` `9e9f66b`** (plan C step 5 merged: every browser test tagged, run only on its eligible pairs) — Vitest 5.0.3, Chrome for Testing 153.0.8010.52, Firefox 155.0.1, the wa-sqlite pin `94cd1e7d` (`mem:stack-and-build/wa-sqlite`) with `patches/wa-sqlite@1.1.2.patch`. The figures of 2026-10-10 predate the planner (plans B and C) and are not comparable: a test then ran in every target project, now only on the pairs its tags admit.
 
 | command | result |
 |---|---|
-| `pnpm exec tsc --noEmit` | clean |
-| `pnpm build` | clean |
-| `pnpm test` | ONE merged report, exit 0, **315 files (311 passed, 4 skipped), 2620 tests: 2608 passed, 12 skipped**, **106 s** through the parallel launcher (17 jobs, 12 at a time; 246 s with `BSQ_TEST_JOBS=3`; 519 s as one Vitest invocation). It holds `unit`, the `chrome` and `firefox` target projects (`OPFSWriteAheadVFS/sync` and the engine's other recommended pair) and the four `isolated` ones |
-| `pnpm test:unit` | **758** tests, 35 files, ~3 s |
-| `pnpm test:conformance` | ONE merged report, both engines — 6 files, **162 passed / 32 skipped** (Chrome 83 / 14, Firefox 79 / 18), 21 s. Each VFS runs on its default build for the engine |
+| `pnpm exec tsc --noEmit` | clean, 1 s |
+| `pnpm build` | clean, 13 s |
+| `pnpm test` | ONE merged report, exit 0, **340 files passed, 2956 tests: 2466 passed, 490 skipped, 0 failed**, **127 s** wall (99 s of jobs; 16 cells, 12 at a time). Plan: start pairs `OPFSWriteAheadVFS/sync` and the engine's other recommended pair per browser, complement cells for the rest, isolated cells on the `sync` pairs |
+| `pnpm test:unit` | **909** tests, 42 files, 5 s |
+| `pnpm test:conformance` | ONE merged report, both engines — 6 files, **162 passed / 32 skipped**, 36 s. Each VFS runs on its default build for the engine |
 | `pnpm exec biome ci .` | exit 0 |
-| `pnpm lint` | 192 files, **0 warnings** — the file count moves with the tree, **the warning count is the signal** |
+| `pnpm lint` | 212 files, **0 warnings** — the file count moves with the tree, **the warning count is the signal** |
 | `pnpm docs:vfs` | leaves `VFS.md` and `README.md` unchanged (`git diff --exit-code`) |
-| `pnpm test:consumer` | 24/24 stages, 47 s |
-| `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.ts chrome --all` | `OK`, `"reasons": {}`, 22 declared pairs runnable, 91 s; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
+| `pnpm test:consumer` | 24/24 stages, 52 s |
+| `pnpm bench:build && BENCH_PORT=8123 node scripts/bench/check.ts chrome --all` | `OK`, `"reasons": {}`, 114 s; the checker requires `poolSize` and `longQueryCalibration` among the keys. `bench:build`, not `build`: the checker serves `_site/`. Pass `BENCH_PORT` to leave 8099 to `bench:serve` |
 | `dependencies` in `package.json` | absent |
-| `pnpm test:matrix` | **88 of 88 cells green, 765 s** (12 min 45, 12 cells at a time), no re-run inside it, no timed-out cell: **18 874 passed / 1 608 skipped** in total — `chrome` 9 225 / 741, `firefox` 9 253 / 867, `isolated-chrome` 198 / 0, `isolated-firefox` 198 / 0, cell for cell the same tests and statuses as the one-by-one run (6187 s). **Every cell runs `BSQ_TEST_NEEDS=skip`**. A cell is 123-378 s on Chrome, 119-233 s on Firefox, 14-22 s isolated under that load |
+| `pnpm test:matrix` | **52 of 52 cells green, 842 s** wall (805 s of jobs, 12 cells at a time), dead list empty: `chrome` 22 cells, 7 377 passed / 1 159 skipped, 100-481 s a cell; `firefox` 22 cells, 7 338 / 1 253, 99-266 s; `isolated-chrome` 4 cells (the `sync` pairs), 98 / 198, 28-36 s; `isolated-firefox` 4 cells, 96 / 196, 25-41 s. The slowest cells are `chrome · OPFSAnyContextVFS/*` |
 
-Detail of the matrix, and how it was reached (parity with the rstest matrix, the first red pass): `mem:measurements/suite-and-matrix`, MATRIX-VITEST.
+Detail of the matrix, and how earlier ones were reached: `mem:measurements/suite-and-matrix`.
 
 **Do not reconcile any of these by arithmetic; re-run, and re-measure the whole table when you
 touch it — never patch one cell.** Twice in September a total here went stale or contradicted its
-own prose because one cell was patched and the table was not re-read. The per-project split is
+own prose because one cell was patched and the table was not re-read. The per-column split is
 here on purpose: a total alone cannot say which suite moved.
 
 - **`pnpm test` is ONE run** (several Vitest processes merged into one report, `mem:stack-and-build`, "Parallel runs") bounded at 2400 s, so a green `pnpm test` covers what CI covers; a red Chrome no longer hides Firefox. A job that leaves no blob fails it by name. A commit pays only the unit project; a merge or a push pays the whole run (`mem:git-hooks`).
 - **A green `pnpm test` is not a green tree: run `pnpm exec tsc --noEmit` beside it** — a commit
   once landed with a failing typecheck no test run could show (`mem:lessons`).
-- **Read the `Test Files` line as well as `Tests`:** a file can fail with no failed test (a setup or an unhandled error, the storage wipe included), which the test counters cannot show.
-- **The expected skips: 4 per Chrome project and 2 per Firefox project** — so **8** on the two Chrome target projects and **4** on the two Firefox ones, 12 in all; count per project before comparing. On Chrome and Firefox alike, `tests/browser/abandon-gc.test.ts` needs V8's `gc` (`BSQ_EXPOSE_GC=1` runs it on Chrome). On Firefox, `barrier.test.ts`'s "closes the pragma the barrier opens on `OPFSWriteAheadVFS`" skips without `readwrite-unsafe`. On Chrome, `pool-cap.test.ts`'s three capped-engine tests skip where `readwrite-unsafe` exists. **Any other count is something to look at.**
+- **Read the `Test Files` line as well as `Tests`:** a file can fail with no failed test (a setup or an unhandled error, the storage wipe or the isolation check included), which the test counters cannot show.
+- **What "skipped" holds since the planner:** Vitest reports as skipped every test of a running file that the plan did not give that cell (its tags exclude the cell's pair, or another cell runs it), so the skipped count moves with the plan and is not the signal. **The signal is the "Skipped with a reason" list printed after the report** — today exactly `abandon-gc.test.ts`'s two tests (no `--expose-gc`; `BSQ_EXPOSE_GC=1` runs them on Chrome), on every non-isolated cell that holds them — **and the plan's "Not applicable" counts: chrome 20, isolated chrome 14, firefox 11, isolated firefox 5** (e.g. the barrier catch-up pragma needs `two-workers` on OPFSWriteAheadVFS, absent on Firefox; the capped-pool tests need `env-capped-pool`, absent on Chrome). Compare those lists before and after a browser pin changes. **Any other reasoned skip, or a not-applicable count that moves without a tag or declaration change, is something to look at.**
 - **The engines' conformance counts differ by design**: on Firefox two invariants skip
   `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS`, which run one worker there (`oneWorkerHere` in
   `tests/conformance/helpers.ts`). Any other divergence means something skipped that should not.
@@ -73,8 +73,7 @@ here on purpose: a total alone cannot say which suite moved.
   sixteen busy loops around a single-file Firefox run cut time-to-failure twentyfold (ABANDON-WEDGE,
   `mem:measurements/aborts`).
 
-## In progress
-
+$1- **The test planner (spec 2026-10-12): plans A and B and plan C's step 5 are merged (2026-10-12/13); step 6, CI (`matrix.yaml` plans first and runs on every push of `main`, a dead test fails CI once), is next** — `docs/superpowers/plans/2026-10-13-test-planner-c.md` Tasks 13-15, `mem:follow-ups/test-planner-design`. **No push until plan C is done (user, 2026-10-12)**; step 6's GitHub check is that push, asked for when it comes.
 - **The Vitest + WebdriverIO migration, parallel runs included, is merged into `main` (2026-10-10) and waits for the user:** the rebuild of the container (`post-create.sh` on a fresh one: `node scripts/browsers.ts install` prints two `ok`, `pnpm test` green) and a push, which is the first time CI runs the new workflows and measures their durations. What stays open after it: `mem:follow-ups`; the design: `docs/superpowers/specs/2026-10-10-vitest-webdriverio-design.md`.
 
 ## In flight, and not ours to move
