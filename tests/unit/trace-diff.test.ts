@@ -11,6 +11,8 @@ const report = (
     file: string;
     ancestors: string[];
     title: string;
+    /** Vitest's status for the entry; a test that ran passed. */
+    status?: string;
     trace?: { targetReads: number; workers: number; tags: string[] };
   }[],
 ) =>
@@ -22,7 +24,7 @@ const report = (
         .map((t) => ({
           ancestorTitles: t.ancestors,
           title: t.title,
-          status: 'passed',
+          status: t.status ?? 'passed',
           meta: t.trace ? { bsqTrace: t.trace } : {},
         })),
     })),
@@ -84,6 +86,31 @@ describe('diffTraces', () => {
     expect(diffTraces(before, after)).toMatchObject({
       lost: ['a.test.ts › d > old'],
       added: ['a.test.ts › d > new'],
+    });
+  });
+
+  it('counts a test reported only as skipped after the change as lost', () => {
+    // Falsifiable: count every assertion result as a run and a test whose tags
+    // exclude every pair (skipped in each planned cell, file still run) is
+    // never reported lost.
+    const before = readTrace(
+      report([
+        { file: 'a.test.ts', ancestors: ['d'], title: 't', trace: traced(1) },
+      ]),
+    );
+    const after = readTrace(
+      report([
+        { file: 'a.test.ts', ancestors: ['d'], title: 't', status: 'skipped' },
+        { file: 'a.test.ts', ancestors: ['d'], title: 'u', trace: traced(1) },
+      ]),
+    );
+    expect(diffTraces(before, after)).toMatchObject({
+      lost: ['a.test.ts › d > t'],
+      added: ['a.test.ts › d > u'],
+    });
+    expect(diffTraces(after, before)).toMatchObject({
+      lost: ['a.test.ts › d > u'],
+      added: ['a.test.ts › d > t'],
     });
   });
 

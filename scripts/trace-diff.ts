@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Compares two traced runs (`BSQ_TEST_TRACE=1 node scripts/test-plan.ts …
- * --json <file>`): the tests present before and absent after, the new ones,
+ * --json <file>`): the tests that ran before and not after, the new ones,
  * and every test of the second run that read no pair and is not standalone
  * (spec 2026-10-12 § 8). A test is keyed by its file's basename, so a file
  * moved out of `isolated/` or `firefox/` keeps its tests.
@@ -17,6 +17,7 @@ export type TracedTest = {
   targetReads: number;
   workers: number;
   tags: string[];
+  /** Runs that passed or failed; a skipped or filtered-out entry is not a run. */
   runs: number;
   /** Some run of the test carried a trace (a skipped test or a unit test has none). */
   traced: boolean;
@@ -28,6 +29,7 @@ type Report = {
     assertionResults: {
       ancestorTitles: string[];
       title: string;
+      status?: string;
       meta?: {
         bsqTrace?: { targetReads: number; workers: number; tags: string[] };
       };
@@ -43,6 +45,7 @@ export function readTrace(json: string): Map<string, TracedTest> {
     for (const result of file.assertionResults) {
       const key = `${basename(file.name)} › ${[...result.ancestorTitles, result.title].join(' > ')}`;
       const trace = result.meta?.bsqTrace;
+      const ran = result.status === 'passed' || result.status === 'failed';
       if (trace) traced++;
       const seen = tests.get(key);
       tests.set(key, {
@@ -50,7 +53,7 @@ export function readTrace(json: string): Map<string, TracedTest> {
         targetReads: Math.max(seen?.targetReads ?? 0, trace?.targetReads ?? 0),
         workers: Math.max(seen?.workers ?? 0, trace?.workers ?? 0),
         tags: trace?.tags ?? seen?.tags ?? [],
-        runs: (seen?.runs ?? 0) + 1,
+        runs: (seen?.runs ?? 0) + (ran ? 1 : 0),
         traced: (seen?.traced ?? false) || trace !== undefined,
       });
     }
@@ -63,13 +66,23 @@ export function readTrace(json: string): Map<string, TracedTest> {
   return tests;
 }
 
+/** Keys that ran in `from` and have no run in `other` (absent or only skipped). */
+const ranOnlyIn = (
+  from: Map<string, TracedTest>,
+  other: Map<string, TracedTest>,
+): string[] =>
+  [...from.values()]
+    .filter((t) => t.runs > 0 && !((other.get(t.key)?.runs ?? 0) > 0))
+    .map((t) => t.key)
+    .sort();
+
 export function diffTraces(
   before: Map<string, TracedTest>,
   after: Map<string, TracedTest>,
 ): { lost: string[]; added: string[]; unread: string[] } {
   return {
-    lost: [...before.keys()].filter((key) => !after.has(key)).sort(),
-    added: [...after.keys()].filter((key) => !before.has(key)).sort(),
+    lost: ranOnlyIn(before, after),
+    added: ranOnlyIn(after, before),
     unread: [...after.values()]
       .filter(
         (t) =>
