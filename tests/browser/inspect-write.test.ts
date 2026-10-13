@@ -4,16 +4,18 @@ import {
   inspectDatabase,
 } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { pairFor } from './helpers';
+import { TEST_TARGET } from './helpers';
 
 // The write-lock accounting `inspectDatabase` reports is generic — nothing
 // here is specific to one VFS family — so the no-client case below follows
-// the target, declaring only that the database outlives its worker.
+// the target, tagging only that the database outlives its worker.
 
 describe('inspectDatabase write', () => {
-  it('is empty when nobody writes', async ({ skip }) => {
+  it('is empty when nobody writes', {
+    tags: ['requires:shared-storage'],
+  }, async () => {
     const result = await inspectDatabase('quiet.db', {
-      vfs: pairFor(['shared-storage'], skip).vfs,
+      vfs: TEST_TARGET.vfs,
     });
     expect(result.write).toEqual({ tab: null, sameTab: false, waiting: 0 });
   });

@@ -1,12 +1,10 @@
-import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
-import { describe, expect, it, onTestFinished } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { poolFor } from '../conformance/helpers';
 import {
   createTestClient,
   interceptWorkers,
   longQuery,
-  pairFor,
-  type Skip,
+  sharedDatabase,
   sleep,
   TEST_TARGET,
   waitUntil,
@@ -62,13 +60,7 @@ describe('debug subsystem (B6)', () => {
   });
 
   it('names the client the way its log lines are prefixed', async () => {
-    const db = createSQLiteClient('debug-name.db', {
-      vfs: TEST_TARGET.vfs,
-      build: TEST_TARGET.build,
-      name: 'ledger',
-      debug: true,
-    });
-    onTestFinished(() => db.close());
+    const db = await createTestClient({ name: 'ledger', debug: true });
     expect(db.debug?.name).toMatch(/^ledger \d+$/);
   });
 });
@@ -237,26 +229,14 @@ describe('the pool-level request history', () => {
 });
 
 describe('the cross-tab write lock in the history', () => {
-  const NEEDS = ['shared-second-client'] as const;
-
-  const twoClients = (skip: Skip) => {
-    const { vfs, build } = pairFor(NEEDS, skip);
-    const dbName = `bsq-test-${crypto.randomUUID()}`;
-    const options = { vfs, build, poolSize: poolFor(vfs) };
-    const a = createSQLiteClient(dbName, options);
-    const b = createSQLiteClient(dbName, { ...options, debug: true });
-    onTestFinished(async () => {
-      for (const client of [a, b]) await client.close().catch(() => {});
-      await deleteDatabase(dbName, { vfs, build }).catch(() => {});
-    });
-    return { a, b };
-  };
-
   // Falsifiable: drop `request?.locked()` from acquireLease — lockTime never appears.
-  it('shows a write waiting on another client lock, then when it got it', async ({
-    skip,
-  }) => {
-    const { a, b } = twoClients(skip);
+  it('shows a write waiting on another client lock, then when it got it', {
+    tags: ['requires:shared-second-client'],
+  }, async () => {
+    const database = sharedDatabase();
+    const poolSize = poolFor(TEST_TARGET.vfs);
+    const a = database.open({ poolSize });
+    const b = database.open({ poolSize, debug: true });
     await a.write('CREATE TABLE t (a)');
     const gate = Promise.withResolvers<void>();
     const entered = Promise.withResolvers<void>();

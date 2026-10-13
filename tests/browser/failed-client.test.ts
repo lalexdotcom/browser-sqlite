@@ -2,18 +2,18 @@ import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { connectionLockName } from '../../src/locks';
 import { databasePath } from '../../src/utils';
-import { interceptWorkers, pairFor, type Skip, sleep } from './helpers';
+import { interceptWorkers, sleep, TEST_TARGET } from './helpers';
 
 /**
  * A client that failed holds nothing: its workers are terminated and nothing
  * revives it, so the database is free before anyone calls `close()`.
  *
- * Declared `shared-storage`: a memory VFS has no connection lock to keep.
+ * Tagged `requires:shared-storage`: a memory VFS has no connection lock to keep.
  */
 
 /** A client whose only worker died with no restart left. */
-const failedClient = async (skip: Skip) => {
-  const pair = pairFor(['shared-storage'], skip);
+const failedClient = async () => {
+  const pair = { vfs: TEST_TARGET.vfs, build: TEST_TARGET.build };
   const name = `bsq-test-${crypto.randomUUID()}`;
   const options = { ...pair, poolSize: 1, maxWorkerRestarts: 0 };
   const records = interceptWorkers();
@@ -33,16 +33,20 @@ const failedClient = async (skip: Skip) => {
 describe('a client that failed', () => {
   // Falsifiable: drop the connection release from failClient (src/client.ts) —
   // the delete is refused with DATABASE_IN_USE until the client is closed.
-  it('lets the database be deleted, before close', async ({ skip }) => {
-    const { name, pair } = await failedClient(skip);
+  it('lets the database be deleted, before close', {
+    tags: ['requires:shared-storage'],
+  }, async () => {
+    const { name, pair } = await failedClient();
 
     await expect(deleteDatabase(name, pair)).resolves.toBeUndefined();
   });
 
   // Falsifiable: the same — where the connection is exclusive, the next
   // client is refused with DATABASE_IN_USE.
-  it('lets a new client open, before close', async ({ skip }) => {
-    const { name, options } = await failedClient(skip);
+  it('lets a new client open, before close', {
+    tags: ['requires:shared-storage'],
+  }, async () => {
+    const { name, options } = await failedClient();
 
     const next = createSQLiteClient(name, options);
     onTestFinished(() => next.close().catch(() => {}));
@@ -56,12 +60,12 @@ describe('a client that failed', () => {
 
   // Falsifiable: in failClient, release the connection without refusing a
   // grant that lands after the failure — it is then held until close.
-  // `shared-second-client`: an exclusive VFS starts its workers after the
+  // `requires:shared-second-client`: an exclusive VFS starts its workers after the
   // grant, so a failure cannot race it there.
-  it('holds no connection lock when the failure races its grant', async ({
-    skip,
-  }) => {
-    const pair = pairFor(['shared-second-client'], skip);
+  it('holds no connection lock when the failure races its grant', {
+    tags: ['requires:shared-second-client'],
+  }, async () => {
+    const pair = { vfs: TEST_TARGET.vfs, build: TEST_TARGET.build };
     const name = `bsq-test-${crypto.randomUUID()}`;
 
     // Defers bsq:conn: grants until signaled.

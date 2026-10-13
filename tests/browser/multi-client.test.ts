@@ -1,14 +1,13 @@
-import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
-import { describe, expect, it, onTestFinished } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { poolFor } from '../conformance/helpers';
-import { createTestClient, pairFor, type Skip } from './helpers';
+import { createTestClient, sharedDatabase, TEST_TARGET } from './helpers';
 
 /**
- * What two clients writing at once actually do, on the pair this project
- * injects wherever a second client shares its database there — declared as
- * `shared-second-client`, resolved to the nearest pair of this browser that
- * has it otherwise (spec 2026-09-15, A6). It used to sweep SHARED_VFS by hand,
- * which repeated the whole file in every cell of `pnpm test:matrix`.
+ * What two clients writing at once actually do, on the pair of the project
+ * that runs them — tagged `requires:shared-second-client`, so only a pair
+ * where a second client shares its database there runs them (spec 2026-09-15,
+ * A6). It used to sweep SHARED_VFS by hand, which repeated the whole file in
+ * every cell of `pnpm test:matrix`.
  *
  * Nothing here mentions tabs and everything here is about them: Web Locks and
  * OPFS access handles are both origin-wide, so two clients in this one page
@@ -27,29 +26,10 @@ import { createTestClient, pairFor, type Skip } from './helpers';
  * B waits the two deadlocked — the test presupposed the fail-fast behaviour it
  * was written to observe.
  */
-const NEEDS = ['shared-second-client'] as const;
-
-const twoClients = (skip: Skip) => {
-  const { vfs, build } = pairFor(NEEDS, skip);
-  const dbName = `bsq-test-${crypto.randomUUID()}`;
-  const options = { vfs, build, poolSize: poolFor(vfs) };
-  const a = createSQLiteClient(dbName, options);
-  const b = createSQLiteClient(dbName, options);
-  onTestFinished(async () => {
-    for (const client of [a, b]) {
-      try {
-        await client.close();
-      } catch {
-        /* a failed client has nothing to close */
-      }
-    }
-    try {
-      await deleteDatabase(dbName, { vfs, build });
-    } catch {
-      /* never created */
-    }
-  });
-  return { a, b };
+const twoClients = () => {
+  const database = sharedDatabase();
+  const poolSize = poolFor(TEST_TARGET.vfs);
+  return { a: database.open({ poolSize }), b: database.open({ poolSize }) };
 };
 
 /** Resolves to the rejection, or `undefined` when the promise resolved. */
@@ -75,7 +55,9 @@ const settledWithin = (
     new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms)),
   ]);
 
-describe('two clients writing at once', () => {
+describe('two clients writing at once', {
+  tags: ['requires:shared-second-client'],
+}, () => {
   // Falsifiable: delete the `locks.hold(writeLock, …)` line in
   // `acquireInstrumented` and this goes red on `settled` where handles are
   // per-connection — B is refused with BUSY instead of waiting.
@@ -87,8 +69,8 @@ describe('two clients writing at once', () => {
   // OPFSAdaptiveVFS (Firefox): each rotates one exclusive OPFS handle
   // between the two clients regardless of our lock, which still
   // serializes the second write on its own (HANDLE-1, `mem:vfs`).
-  it('makes the second writer wait, on both regimes', async ({ skip }) => {
-    const { a, b } = twoClients(skip);
+  it('makes the second writer wait, on both regimes', async () => {
+    const { a, b } = twoClients();
     await a.write('CREATE TABLE t (n)');
 
     let settled = false;
@@ -126,10 +108,8 @@ describe('two clients writing at once', () => {
   // OPFSAdaptiveVFS, OPFSCoopSyncVFS, IDBBatchAtomicVFS, IDBMirrorVFS,
   // OPFSAnyContextVFS (Chromium); OPFSAdaptiveVFS, OPFSCoopSyncVFS,
   // IDBBatchAtomicVFS, IDBMirrorVFS, OPFSAnyContextVFS (Firefox).
-  it('never refuses a read-only transaction opened under a writer', async ({
-    skip,
-  }) => {
-    const { a, b } = twoClients(skip);
+  it('never refuses a read-only transaction opened under a writer', async () => {
+    const { a, b } = twoClients();
     await a.write('CREATE TABLE t (n)');
     await a.write('INSERT INTO t VALUES (1)');
 
@@ -160,10 +140,8 @@ describe('two clients writing at once', () => {
   // Falsifiable by its own middle assertion: if `bulkWrite` did not commit per
   // batch, the first batch would be invisible to A until `close()` and
   // `committed` would stay 0 through all hundred polls.
-  it('interleaves a bulkWrite with another client, refusing neither', async ({
-    skip,
-  }) => {
-    const { a, b } = twoClients(skip);
+  it('interleaves a bulkWrite with another client, refusing neither', async () => {
+    const { a, b } = twoClients();
     const keys = Array.from({ length: 16 }, (_, i) => `c${i}`);
     await a.write(`CREATE TABLE t (${keys.join(', ')})`);
 
@@ -217,10 +195,8 @@ describe('two clients writing at once', () => {
   // VFS times out at 30s waiting on B's write lock request, which A's
   // callback in turn is waiting on B to settle, since B's own abort no
   // longer cancels it.
-  it('gives back a usable client after a transaction is aborted mid-contention', async ({
-    skip,
-  }) => {
-    const { a, b } = twoClients(skip);
+  it('gives back a usable client after a transaction is aborted mid-contention', async () => {
+    const { a, b } = twoClients();
     await a.write('CREATE TABLE t (n)');
 
     let error: unknown;
@@ -259,9 +235,7 @@ describe('one client', () => {
   // `write` and a `transaction: (fn) => fn(db)` that opens nothing — so a flush
   // that has already happened is still uncommitted and goes back with the
   // rollback. Engine-independent: no second client, no contention, nothing that
-  // depends on how handles are held. Runs on `OPFSAdaptiveVFS` (via
-  // `createTestClient`'s default) until it follows an injected target, once
-  // Task 7 lands (spec A5).
+  // depends on how handles are held.
   //
   // What this pins: batches flushed INSIDE a transaction do not survive its
   // rollback, where `db.bulkWrite`'s do — the test above measures that other
