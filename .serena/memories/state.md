@@ -77,6 +77,8 @@ here on purpose: a total alone cannot say which suite moved.
 
 ## In progress
 
+- **Next, in this order (user, 2026-10-13):** (1) **the reorganisation of the test code** — mostly moving files, nothing put back in question (the wider reorganisation `mem:follow-ups/test-planner-design` already named as the next piece of work); (2) **the tests on other OSes** — Windows and macOS runners, Safari and the iOS simulator (`mem:follow-ups`, § The library's tests on stock browsers).
+
 - **The Vite dep-optimizer race between parallel Vitest processes is fixed and merged (2026-10-13)**: one cache per job (`mem:follow-ups/notes`). CI's `verify` was the exposed run (conformance in 2 shards per project on a cold cache); the push that carries the fix is its proof.
 - **Done and pushed (2026-10-13):** the test planner (plans A, B, C; the matrix plans first and runs on every push of `main`), and the test-triggers review (`docs/superpowers/specs/2026-10-13-test-triggers-design.md`: hooks per change, actionlint, the release reusing the push-of-`main` runs, publint/attw, the Pages bench check; `mem:conventions` § What runs where). CI 38441033562 and matrix 38441033564 green on the push. **Left for GitHub to prove:** the release's `prior` job and its `release`/`pages` conditions and `consumer-smoke` at the next release. The Pages bench check is proven (run 38448872714, `preview` moved to `e5855bb` on 2026-10-13).
 - **The container rebuild waits for the user:** `post-create.sh` on a fresh container (`node scripts/browsers.ts install` prints two `ok`, actionlint installs, `pnpm test` green). The Vitest + WebdriverIO design: `docs/superpowers/specs/2026-10-10-vitest-webdriverio-design.md`.
