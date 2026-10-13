@@ -7,19 +7,13 @@ import {
   sleep,
   theQueryIsRunning,
   waitUntil,
-} from '../helpers';
+} from './helpers';
 
 describe('the sync build, isolated', {
-  tags: ['vfs:OPFSWriteAheadVFS', 'build:sync', 'isolated'],
+  tags: ['build:sync', 'requires:interruptible'],
 }, () => {
   it('stops a running statement on abort', async () => {
-    // One VFS: the subject is the `sync` build's SharedArrayBuffer abort-slot
-    // mechanism, exercised only under cross-origin isolation on a `sync`
-    // build. OPFSWriteAheadVFS is the recommended VFS whose default build is
-    // `sync` (spec 2026-09-15, A5, task 9a context).
     const db = await createTestClient({
-      vfs: 'OPFSWriteAheadVFS',
-      build: 'sync',
       poolSize: 1,
       debug: true,
     });
@@ -66,10 +60,7 @@ describe('the sync build, isolated', {
     // Falsifiable: remove the `interrupt()` in drain()'s finally
     // (src/queries.ts) — the count then runs to its end, seconds, before
     // SELECT 1 gets the worker.
-    // One VFS: same reason as above — the sync build's abort-slot mechanism.
     const db = await createTestClient({
-      vfs: 'OPFSWriteAheadVFS',
-      build: 'sync',
       poolSize: 1,
     });
     try {
@@ -100,10 +91,7 @@ describe('the sync build, isolated', {
     // for every statement, so first() cuts the step it left running.
     // Falsifiable: poll the slot only for a statement that was given a signal —
     // the count then runs to its end, seconds, before SELECT 1 gets the worker.
-    // One VFS: same reason as above — the sync build's abort-slot mechanism.
     const db = await createTestClient({
-      vfs: 'OPFSWriteAheadVFS',
-      build: 'sync',
       poolSize: 1,
     });
     try {
@@ -126,10 +114,7 @@ describe('the sync build, isolated', {
     // the one the abort wrote, and on no other: the defect is a single wrong
     // interrupt, several queries after the restart.
     const records = interceptWorkers();
-    // One VFS: same reason as above — the sync build's abort-slot mechanism.
     const db = await createTestClient({
-      vfs: 'OPFSWriteAheadVFS',
-      build: 'sync',
       poolSize: 1,
       maxWorkerRestarts: 1,
       debug: true,
@@ -174,7 +159,7 @@ describe('the sync build, isolated', {
 });
 
 describe('statement cache, sync build isolated', {
-  tags: ['vfs:OPFSWriteAheadVFS', 'build:sync', 'isolated'],
+  tags: ['build:sync', 'requires:interruptible'],
 }, () => {
   const runsOf = (
     db: Awaited<ReturnType<typeof createTestClient>>,
@@ -196,10 +181,7 @@ describe('statement cache, sync build isolated', {
     // N is a parameter: only the aborted run needs to be long. Three runs of
     // longQuery(20_000_000) took ~10 s on Firefox locally and timed out at
     // 30 s on a GitHub runner (2026-10-11).
-    // One VFS: same reason as above — the sync build's abort-slot mechanism.
     const db = await createTestClient({
-      vfs: 'OPFSWriteAheadVFS',
-      build: 'sync',
       poolSize: 1,
       debug: true,
     });

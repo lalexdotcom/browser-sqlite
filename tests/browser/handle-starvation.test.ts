@@ -1,6 +1,6 @@
 import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { TEST_TARGET } from '../helpers';
+import { TEST_TARGET } from './helpers';
 
 /**
  * THIS FILE ASSERTS A PLATFORM DIFFERENCE, NOT A LIBRARY INVARIANT.
@@ -15,7 +15,7 @@ import { TEST_TARGET } from '../helpers';
  * `init.test.ts` do NOT exercise: those point a worker at a missing URL, which
  * is a LOAD failure. They pin the orchestration; this pins the phenomenon.
  *
- * It lives under `firefox/` because it cannot be written to pass on both
+ * It is Firefox-only because it cannot be written to pass on both
  * engines. Chromium gives each connection its own handle, so the same shape
  * opens in tens of milliseconds and asserts nothing. And it cannot be branched
  * on at runtime either: `readwrite-unsafe` is in `UNPROBEABLE`

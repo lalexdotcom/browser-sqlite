@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient } from '../helpers';
+import { createTestClient } from './helpers';
 
 /**
  * Chunks a consumer has taken must be collectable while the query still runs.
@@ -85,7 +85,9 @@ const freedWhileOpen = async (
 // The chunk being delivered is still referenced by the generators.
 const ALL_BUT_IN_FLIGHT = TAKEN - 2;
 
-describe('consumed chunks are collectable while the query runs', () => {
+describe('consumed chunks are collectable while the query runs', {
+  tags: ['browser:firefox'],
+}, () => {
   it('stream()', async () => {
     const db = await seeded();
     const rows = db.stream(SQL, [], { chunkSize: CHUNK_SIZE });

@@ -22,8 +22,6 @@ import {
 
 const ENGINES: readonly BrowserName[] = ['chrome', 'firefox'];
 const FEATURES = { chrome: CHROMIUM_FEATURES, firefox: FIREFOX_FEATURES };
-/** The engine-only directory each project adds to the shared, non-recursive glob. */
-const ENGINE_DIR = { chrome: 'chromium', firefox: 'firefox' };
 const ISOLATION = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Embedder-Policy': 'require-corp',
@@ -54,6 +52,9 @@ const browserProject = (
     // The guard reads the project's target, so only target projects take it.
     setupFiles: [
       'tests/storage-wipe.ts',
+      // Before the guard: a project that is not isolated fails its files by
+      // name, before any test reads the environment.
+      ...(options.isolated ? ['tests/browser/isolation-check.ts'] : []),
       ...(options.target ? ['tests/browser/need-guard.ts'] : []),
       // Last, so the guard's own reads of the pair are discarded.
       ...(options.target && process.env.BSQ_TEST_TRACE === '1'
@@ -130,16 +131,13 @@ export default defineConfig({
             browserProject(
               `${browser} · ${targetLabel(target)}`,
               browser,
-              [
-                'tests/browser/*.test.ts',
-                `tests/browser/${ENGINE_DIR[browser]}/**/*.test.ts`,
-              ],
+              ['tests/browser/*.test.ts'],
               { target, testTimeout: 30_000 },
             ),
             browserProject(
               `isolated ${browser} · ${targetLabel(target)}`,
               browser,
-              ['tests/browser/isolated/**/*.test.ts'],
+              ['tests/browser/*.test.ts'],
               { target, isolated: true, testTimeout: 30_000 },
             ),
           ],
