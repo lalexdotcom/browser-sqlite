@@ -247,7 +247,7 @@ policy becomes applicable as written.
 `release-and-publish.yaml`, runs `scripts/test-matrix.ts --pair` on every declared pair and gates
 `release`, so a local run before the tag only repeats it. **On GitHub without a release (user,
 2026-10-11):** `gh workflow run matrix.yaml --ref <branch>` runs the same jobs and publishes
-nothing. Said after rc.9 was cut without one.
+nothing. Said after rc.9 was cut without one. **Since plan C step 6 (2026-10-13) `matrix.yaml` also runs on every push of `main`** (spec § 9), so a pushed `main` gets its matrix verdict without asking; a local matrix stays for a branch, before it is merged, under the rules below.
 
 Not for documentation, memories, or a test change confined to what `pnpm test` already covers.
 
