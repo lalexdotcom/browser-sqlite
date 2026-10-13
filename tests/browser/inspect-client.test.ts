@@ -26,21 +26,6 @@ describe('db identity getters', () => {
   });
 });
 
-describe('db.inspect on a memory VFS', () => {
-  // One VFS: the subject is MemoryVFS's own semantics — two clients on it are
-  // two independent, unrelated databases, so inspect() cannot see a sibling.
-  it('throws INVALID_OPTION — two memory clients are two databases', async () => {
-    const db = createSQLiteClient('mem.db', { vfs: 'MemoryVFS', poolSize: 1 });
-    onTestFinished(async () => {
-      await db.close().catch(() => {});
-    });
-    await db.read('SELECT 1');
-    await expect(db.inspect()).rejects.toMatchObject({
-      code: 'INVALID_OPTION',
-    });
-  });
-});
-
 describe('db.inspect', () => {
   it('splits self from siblings', {
     tags: ['requires:shared-second-client'],

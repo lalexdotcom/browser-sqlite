@@ -13,7 +13,9 @@ import { TEST_TARGET } from './helpers';
 const locks = createLocks();
 
 describe('resolveRealmId', () => {
-  it('is stable across calls', async () => {
+  it('is stable across calls', {
+    tags: ['standalone'],
+  }, async () => {
     const first = await resolveRealmId(locks, await locks.entries());
     const second = await resolveRealmId(locks, await locks.entries());
     expect(first).toBe(second);

@@ -37,7 +37,9 @@ describe('detectFeatures, in the engine', () => {
     ).toBeNull();
   });
 
-  it('never reports what no page can probe', () => {
+  it('never reports what no page can probe', {
+    tags: ['standalone'],
+  }, () => {
     // A worker answers these (src/worker/probes.ts, the conformance probe): sync
     // access handles exist in dedicated workers only, and from the page WebIDL
     // drops the unknown `mode` member without complaining, so a page probe of
