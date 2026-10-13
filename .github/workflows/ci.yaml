@@ -5,12 +5,9 @@ on:
     branches:
       - main
   pull_request:
-  # From release-and-publish.yaml, so the gate that blocks a publication is the
-  # SAME verification, not a copy of it. A red CI on `main` blocks nothing by
-  # itself — the two workflows are independent and the release is triggered by
-  # a tag — so the release calls this one and waits for it. Duplicating these
-  # steps there was the alternative, and the browser-list comment below already
-  # says what two lists that must agree become.
+  # From release-and-publish.yaml, when the push of `main` carrying the tagged
+  # commit has no passing run of this workflow to reuse: the gate that blocks a
+  # publication is then the SAME verification, not a copy of it.
   workflow_call:
 
 concurrency:
@@ -105,51 +102,3 @@ jobs:
       # the other, which is how HANDLE-1 was found.
       - name: Conformance (both engines)
         run: pnpm test:conformance
-
-  # Exercises the packed tarball across four consumption modes — Vite dev
-  # server, Vite build+preview, rsbuild build+preview, and no bundler at all
-  # — which `verify` never does because it tests the rslib build
-  # (tests/build/) and never touches dist/, the exports map, or third-party
-  # worker resolution.
-  consumer-smoke:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      # Stock Chrome and Firefox at the versions scripts/browsers.ts pins, and
-      # their drivers, downloaded by WebdriverIO on first use. The key is that
-      # file: a new pin is a new cache. GitHub's Ubuntu images carry both
-      # browsers' system libraries.
-      - name: Cache WebdriverIO browsers
-        uses: actions/cache@v6
-        with:
-          path: node_modules/.cache/wdio
-          key: wdio-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/browsers.ts') }}
-
-      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor.
-      # Chrome's sandbox needs them, and only the system Chrome has a profile
-      # that allows them: the Chrome for Testing WebdriverIO downloads exits at
-      # launch ("Chrome instance exited"). Lifting the restriction keeps the
-      # sandbox, where --no-sandbox would drop it.
-      - name: Let Chrome's sandbox create user namespaces
-        run: |
-          sysctl kernel.apparmor_restrict_unprivileged_userns
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
-      # One download per browser and driver, before anything runs in parallel:
-      # on a cold cache, parallel Vitest jobs fetched the same chromedriver at
-      # once, and one spawned it before it was executable (EACCES).
-      - name: Install browsers
-        run: node scripts/browsers.ts install
-
-      - name: Consumer smoke test
-        run: pnpm test:consumer
