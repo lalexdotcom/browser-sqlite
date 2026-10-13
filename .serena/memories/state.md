@@ -75,8 +75,11 @@ here on purpose: a total alone cannot say which suite moved.
   sixteen busy loops around a single-file Firefox run cut time-to-failure twentyfold (ABANDON-WEDGE,
   `mem:measurements/aborts`).
 
-$1- **The test planner (spec 2026-10-12): plans A and B and plan C's step 5 are merged (2026-10-12/13); step 6, CI (`matrix.yaml` plans first and runs on every push of `main`, a dead test fails CI once), is next** — `docs/superpowers/plans/2026-10-13-test-planner-c.md` Tasks 13-15, `mem:follow-ups/test-planner-design`. **No push until plan C is done (user, 2026-10-12)**; step 6's GitHub check is that push, asked for when it comes.
-- **The Vitest + WebdriverIO migration, parallel runs included, is merged into `main` (2026-10-10) and waits for the user:** the rebuild of the container (`post-create.sh` on a fresh one: `node scripts/browsers.ts install` prints two `ok`, `pnpm test` green) and a push, which is the first time CI runs the new workflows and measures their durations. What stays open after it: `mem:follow-ups`; the design: `docs/superpowers/specs/2026-10-10-vitest-webdriverio-design.md`.
+## Owed — ours to move
+
+- **Next: the Vite dep-optimizer race between parallel Vitest processes** (`mem:follow-ups`, user 2026-10-13).
+- **Done and pushed (2026-10-13):** the test planner (plans A, B, C; the matrix plans first and runs on every push of `main`), and the test-triggers review (`docs/superpowers/specs/2026-10-13-test-triggers-design.md`: hooks per change, actionlint, the release reusing the push-of-`main` runs, publint/attw, the Pages bench check; `mem:conventions` § What runs where). CI 38441033562 and matrix 38441033564 green on the push. **Left for GitHub to prove:** the release's `prior` job and its `release`/`pages` conditions and `consumer-smoke` at the next release; the Pages bench check at the next push of `preview`.
+- **The container rebuild waits for the user:** `post-create.sh` on a fresh container (`node scripts/browsers.ts install` prints two `ok`, actionlint installs, `pnpm test` green). The Vitest + WebdriverIO design: `docs/superpowers/specs/2026-10-10-vitest-webdriverio-design.md`.
 
 ## In flight, and not ours to move
 
