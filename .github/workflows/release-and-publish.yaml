@@ -28,10 +28,15 @@ jobs:
         run: |
           set -uo pipefail
           SHA=$(git rev-parse HEAD)
+          # Both waits end within 50 of the job's 60 minutes: a wait that runs
+          # out means rerun, where a killed job would fail and untag a good tag.
+          DEADLINE=$((SECONDS + 50 * 60))
           for WF in ci matrix; do
             ID=$(gh run list --workflow "$WF.yaml" --commit "$SHA" --event push \
               --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-            if [ -n "$ID" ] && gh run watch "$ID" --exit-status --interval 30 > /dev/null; then
+            LEFT=$((DEADLINE - SECONDS))
+            if [ -n "$ID" ] && [ "$LEFT" -gt 0 ] \
+              && timeout "$LEFT" gh run watch "$ID" --exit-status --interval 30 > /dev/null; then
               echo "$WF=success" >> "$GITHUB_OUTPUT"
               echo "$WF.yaml: run $ID passed on $SHA, reused"
             else
