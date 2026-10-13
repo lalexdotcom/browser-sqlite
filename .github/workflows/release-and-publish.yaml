@@ -200,12 +200,14 @@ jobs:
           release-notes-file: ${{ steps.notes.outputs.file }}
 
   # The benchmark page is published for the version that was just released, and
-  # only if the release actually succeeded — `needs` is what makes that true.
-  # Because a reusable workflow runs at the caller's ref, this builds the tag,
-  # so the page and the npm tarball are the same code and the page's banner can
-  # say so.
+  # only if the release actually succeeded. The condition is explicit because a
+  # skipped ancestor (verify or matrix, reused from the push of main) would skip
+  # this job too. Because a reusable workflow runs at the caller's ref, this
+  # builds the tag, so the page and the npm tarball are the same code and the
+  # page's banner can say so.
   pages:
     needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     permissions:
       contents: read
       pages: write

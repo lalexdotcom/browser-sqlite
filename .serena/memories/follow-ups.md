@@ -16,6 +16,10 @@ descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` clai
 shadow types that were never loaded, `W-types` a duplication already gone. Both would have
 been work on nothing.
 
+## Parallel Vitest processes race on Vite's dep-optimizer cache (2026-10-13)
+
+`scripts/test-parallel.ts` (and the planner's cells) start several Vitest processes that share `node_modules/.vite/vitest/<config hash>/deps`. On a cold cache — a lockfile change, a fresh CI checkout, where `node_modules/.vite` is not cached — a process that discovers a dependency at run time re-optimizes and renames `deps` while another reads it. Seen once, on `ci/test-triggers` after publint and attw were added: `pnpm test:conformance` (6 jobs) failed `conformance-firefox.2of3` with an "Unhandled Error" and no stack, its log showing `[vite] error while updating dependencies: ENOENT … rename …/deps -> …/deps_temp_*`; the cache was left corrupt (`deps_temp_*` beside `deps`), and the next run failed every Firefox conformance file at import ("Vitest failed to find the current suite"). Setting that directory aside made the suite green twice (162/32). Not fixed. Levers to measure: optimize once before the jobs start (as `tests/build/` is built once), a cache directory per process, or declaring the dependency in `optimizeDeps.include` so none is discovered at run time.
+
 ## wa-sqlite's async `step()` wrapper costs every read, most on Firefox — a dedicated workstream for a new session (user, 2026-10-08)
 
 In `mem:follow-ups/wa-step`: the scope the user set, what each solution (library-side fast step, three upstream forms) asks of the library, the measurements on Firefox, Chromium and WebKit, and what an upstream Discussion would rest on.
