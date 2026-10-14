@@ -24,6 +24,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, openSync, readdirSync, rmSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DETACHED, killTree } from './processes.ts';
 
 const [rawSeconds, ...command] = process.argv.slice(2);
 const seconds = Number(rawSeconds);
@@ -75,8 +76,9 @@ const exit = (code: number) => {
 // Its own process group, so that a deadline or a signal reaches what the
 // command started too: `pnpm exec <runner>` killed through its launcher alone
 // left the runner and its browser running under init (2026-10-01, rstest). A background
-// group that read the terminal would be stopped, hence no stdin. POSIX only.
-const grouped = process.platform !== 'win32';
+// group that read the terminal would be stopped, hence no stdin. On Windows
+// the tree is killed by parentage instead (`killTree`).
+const grouped = DETACHED;
 
 const child = spawn(command[0], command.slice(1), {
   stdio: [grouped ? 'ignore' : 'inherit', 'pipe', 'pipe'],
@@ -96,15 +98,10 @@ for (const [from, to] of [
   });
 }
 
-/** Signals the command and everything it started; a group already gone is fine. */
+/** Signals the command and everything it started; a tree already gone is fine. */
 const killAll = (signal: NodeJS.Signals) => {
-  if (!grouped) return child.kill(signal);
   if (child.pid === undefined) return;
-  try {
-    process.kill(-child.pid, signal);
-  } catch {
-    // ESRCH: nothing left in the group.
-  }
+  killTree(child.pid, signal);
 };
 
 let killedByDeadline = false;

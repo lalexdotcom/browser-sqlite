@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   CHECK_ORDER,
   type Check,
+  COMMANDS,
   checksFor,
   classOf,
   FULL,
@@ -381,5 +382,17 @@ describe('hook-gate runChecks', () => {
 
   it('answers 0 for nothing to run', () => {
     expect(runChecks([])).toBe(0);
+  });
+});
+
+describe('COMMANDS on Windows', () => {
+  // Under shell: true (win32, for the pnpm/npx .cmd shims) cmd.exe would
+  // split such an entry. Falsifiable: add an argv entry with a space.
+  it('has no argv entry a shell could split or unquote', () => {
+    for (const steps of Object.values(COMMANDS)) {
+      for (const step of steps) {
+        for (const arg of step.argv) expect(arg).not.toMatch(/[\s"'^&|<>%]/);
+      }
+    }
   });
 });
