@@ -19,11 +19,11 @@ Every hook command ends with `node scripts/hook-gate.ts <hook> --run` (after the
 
 **The rules:**
 - `pre-commit`: code staged → `tsc`, `lint-staged`, `unit` (~2 s).
-- `pre-merge-commit`, and `pre-commit` concluding a conflicted merge (`MERGE_HEAD`; it keeps `lint-staged` too): files = what the merge brings. Code → `tsc`, `biome`, `docs`, `pnpm test`; plus `conformance` when `src/`, `tests/conformance/`, `patches/` or `pnpm-lock.yaml` moved; plus the bench check (`pnpm bench:build`, `check.ts chrome --all` on port 8123) when `scripts/bench/` moved; generated docs alone → `docs`.
+- `pre-merge-commit`, and `pre-commit` concluding a conflicted merge (`MERGE_HEAD`; it keeps `lint-staged` too): files = what the merge brings. Code → `tsc`, `biome`, `docs`, `pnpm test`; plus `conformance` when `src/`, `tests/browser/conformance/`, `patches/` or `pnpm-lock.yaml` moved; plus the bench check (`pnpm bench:build`, `check.ts chrome --all` on port 8123) when `scripts/bench/` moved; generated docs alone → `docs`.
 - `pre-push`: files of the commits no remote has yet. Code → `tsc`, `biome`, `docs`; plus `pnpm test` only when a pushed branch carries a **direct code commit** (`git log --first-parent --no-merges <sha> --not --remotes` touches code — commits that came in through a merge were tested by `pre-merge-commit`); plus `pnpm test:consumer` when a `refs/tags/v*` ref is pushed, even alone. A deleted ref counts for nothing.
 - `delivery` (not a hook, the agent's command): the `pre-merge-commit` rules on the branch against `main`, committed, uncommitted and untracked.
 
-The cases are unit-tested on throwaway repositories (`tests/unit/hook-gate.test.ts`): a direct commit vs a merged one, the release push (`main` and its tag in one stdin), a tag alone, a deleted ref, a new branch, a conflicted merge, delivery's three sources.
+The cases are unit-tested on throwaway repositories (`tests/unit/tooling/hook-gate.test.ts`): a direct commit vs a merged one, the release push (`main` and its tag in one stdin), a tag alone, a deleted ref, a new branch, a conflicted merge, delivery's three sources.
 
 ## The three commit/push hooks (user, 2026-09-11)
 

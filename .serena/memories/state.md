@@ -67,7 +67,7 @@ here on purpose: a total alone cannot say which suite moved.
 - **What "skipped" holds since the planner:** Vitest reports as skipped every test of a running file that the plan did not give that cell (its tags exclude the cell's pair, or another cell runs it), so the skipped count moves with the plan and is not the signal. **The signal is the "Skipped with a reason" list printed after the report** — today exactly `abandon-gc.test.ts`'s two tests (no `--expose-gc`; `BSQ_EXPOSE_GC=1` runs them on Chrome), on every non-isolated cell that holds them — **and the plan's "Not applicable" counts: chrome 20, isolated chrome 14, firefox 11, isolated firefox 5** (e.g. the barrier catch-up pragma needs `two-workers` on OPFSWriteAheadVFS, absent on Firefox; the capped-pool tests need `env-capped-pool`, absent on Chrome). Compare those lists before and after a browser pin changes. **Any other reasoned skip, or a not-applicable count that moves without a tag or declaration change, is something to look at.**
 - **The engines' conformance counts differ by design**: on Firefox two invariants skip
   `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS`, which run one worker there (`oneWorkerHere` in
-  `tests/conformance/helpers.ts`). Any other divergence means something skipped that should not.
+  `tests/browser/helpers/environment.ts`). Any other divergence means something skipped that should not.
 - **A failure on the Firefox project is signal, not noise** — it is the only one without
   `readwrite-unsafe`, so it is where a reduced-mode regression lands first. A Firefox browser test
   that fails once on CI and passes on a re-run is not automatically noise here: a load-sensitive

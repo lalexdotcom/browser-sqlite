@@ -12,18 +12,11 @@ Stack, build output and test tooling: `mem:stack-and-build`. VFS: `mem:vfs`.
 
 What each file of `src/` holds, the placement rule for `const/` and `types/`, and the read path's single retry: `mem:architecture/layout`.
 
-## The browser suite runs on two engines, from two config files (2026-09-03)
+## The browser suite runs on two engines, from one config file
 
-`tests/browser/*.test.ts` is the shared suite and runs on BOTH engines.
-`tests/browser/firefox/**` holds tests that assert Firefox's own behaviour and cannot pass on
-Chromium — today, handle starvation, which cannot occur where `readwrite-unsafe` gives each
-connection its own OPFS handle. A `chromium/` directory is declared in the include and does
-not exist yet; create it only when something needs it.
+The layout of `tests/` (where each suite lives, what runs where) is in `mem:stack-and-build`, § Test suites. No directory decides an engine or a mode since 2026-10-13: a test's tags do, and the planner places it.
 
-**The shared glob is NON-recursive, and that is load-bearing.** `tests/browser/**` would make
-each project pick up the other's directory, which is the whole thing the layout prevents.
-
-**One `vitest.config.ts` declares every project** (`mem:stack-and-build`, § Test suites): `unit`, one `chrome · …` and one `firefox · …` project per target, their `isolated` twins, and `conformance chrome` / `conformance firefox`. Until 2026-10-10 each engine had a config file of its own, because rstest 0.11.8 refused two browser-enabled projects with different engines in one run; `pnpm test` now covers both engines in one invocation and prints one report. The old chain had a trap: an `&&` stopped at the first red config, so a Chromium failure silenced Firefox and read as green.
+**One `tests/vitest.config.ts` declares every project** (`mem:stack-and-build`, § Test suites): `unit`, one `chrome · …` and one `firefox · …` project per target, their `isolated` twins, and `conformance chrome` / `conformance firefox`. Until 2026-10-10 each engine had a config file of its own, because rstest 0.11.8 refused two browser-enabled projects with different engines in one run; `pnpm test` now covers both engines in one invocation and prints one report. The old chain had a trap: an `&&` stopped at the first red config, so a Chromium failure silenced Firefox and read as green.
 
 **Conformance has no per-engine directory and there should not be one:** the value of that suite is the SAME invariants on both engines — a VFS sound on one and broken on the other is how HANDLE-1 was found.
 
@@ -41,7 +34,7 @@ a documented exception: `navigator.locks.query()` takes no lock and waits for no
 parameter could only abort the `.then()`.
 and `chunkSize` on the three that stream. Client options: `name`, `poolSize`,
 **`vfs` (required)**, `build`, `pragmas`, `maxWorkerRestarts`, `openTimeout`,
-`drainTimeout`, `debug`. The entry exports exactly these names, pinned at runtime by `tests/unit/exports.test.ts`. Values: `createSQLiteClient`, `deleteDatabase`, `inspectDatabase`, `detectFeatures`, `missingFeature`, `SQLiteError`, `SQLiteBulkWriteError`, `SQLITE_CODES`, `SQLITE_EXTENDED_CODES`, and since 2026-10-09 `sql` (its query type `SQLQuery` is exported as a type only). `read`/`write`/`chunk`/`stream`/`first` are overloaded call signatures in `SQLiteQueryAPI`, the `SQLQuery` form declared FIRST so that `Parameters<SQLiteDB['read']>` keeps reading the string form — TypeScript takes the last overload (`mem:architecture/layout`, `sql.ts`). Types: everything `src/api.ts` exports, plus `CreateSQLiteClientOptions`, `WorkerLostEvent`, `DeleteDatabaseOptions`, `InspectDatabaseOptions`, `DatabaseInspection`, `ClientInspection`, `InspectionBase`, `DatabaseClient`, `SQLiteVFS`, `SQLiteBuild`, `PlatformFeature`, `SQLiteErrorCode`, `SQLiteResultCode`, `SQLiteExtendedResultCode`, and since 2026-09-30 `ClientDebugState`, `WorkerDebugState`, `RequestDebugState`, `QueryDebugState`. The package declares no subpath but `.`. The bench page gets its VFS table from `scripts/bench/assemble.ts`, which writes it only when the page imports it, because `pages.yaml` runs the current assembler over the published tag. `SQLiteDB.debug` is declared `debug?: ClientDebugState | undefined` — an optional key that may hold `undefined` — since this chantier: under `exactOptionalPropertyTypes` a plain `debug?:` refused the client's always-present, possibly-undefined key, so the declared type was widened, not narrowed, to match what the client publishes. `ClientDebugState` stays unexported (`@internal`); whether `db.debug` itself is public is the documentation review's call (`mem:follow-ups`).
+`drainTimeout`, `debug`. The entry exports exactly these names, pinned at runtime by `tests/unit/lib/exports.test.ts`. Values: `createSQLiteClient`, `deleteDatabase`, `inspectDatabase`, `detectFeatures`, `missingFeature`, `SQLiteError`, `SQLiteBulkWriteError`, `SQLITE_CODES`, `SQLITE_EXTENDED_CODES`, and since 2026-10-09 `sql` (its query type `SQLQuery` is exported as a type only). `read`/`write`/`chunk`/`stream`/`first` are overloaded call signatures in `SQLiteQueryAPI`, the `SQLQuery` form declared FIRST so that `Parameters<SQLiteDB['read']>` keeps reading the string form — TypeScript takes the last overload (`mem:architecture/layout`, `sql.ts`). Types: everything `src/api.ts` exports, plus `CreateSQLiteClientOptions`, `WorkerLostEvent`, `DeleteDatabaseOptions`, `InspectDatabaseOptions`, `DatabaseInspection`, `ClientInspection`, `InspectionBase`, `DatabaseClient`, `SQLiteVFS`, `SQLiteBuild`, `PlatformFeature`, `SQLiteErrorCode`, `SQLiteResultCode`, `SQLiteExtendedResultCode`, and since 2026-09-30 `ClientDebugState`, `WorkerDebugState`, `RequestDebugState`, `QueryDebugState`. The package declares no subpath but `.`. The bench page gets its VFS table from `scripts/bench/assemble.ts`, which writes it only when the page imports it, because `pages.yaml` runs the current assembler over the published tag. `SQLiteDB.debug` is declared `debug?: ClientDebugState | undefined` — an optional key that may hold `undefined` — since this chantier: under `exactOptionalPropertyTypes` a plain `debug?:` refused the client's always-present, possibly-undefined key, so the declared type was widened, not narrowed, to match what the client publishes. `ClientDebugState` stays unexported (`@internal`); whether `db.debug` itself is public is the documentation review's call (`mem:follow-ups`).
 
 **Every root export names the database positionally** — `createSQLiteClient(file, options)`,
 `deleteDatabase(file, options)`, `inspectDatabase(file, options)`. `inspectDatabase` shipped on
@@ -168,7 +161,7 @@ transaction would fail and evict a healthy worker through `onPoisoned`. A new st
 method that calls a query helper with the raw worker instead of `via(…)` breaks the undo
 silently — its first message carries no pending conclusion, so a savepoint opened by an
 earlier abandoned write is never
-resolved. `tests/unit/transaction.test.ts` T7 is parameterised over the methods to catch it. `tx.savepoint()`, `release()` and `rollback()` go through `via(false)` in `runControl`, and T7 covers them.
+resolved. `tests/unit/lib/transaction.test.ts` T7 is parameterised over the methods to catch it. `tx.savepoint()`, `release()` and `rollback()` go through `via(false)` in `runControl`, and T7 covers them.
 
 **The worker's authorizer is the only guard against transaction control (spec 2026-10-04, § 4).** It denies `SQLITE_TRANSACTION` and `SQLITE_SAVEPOINT` unless the message carries `control`, which only `transaction.ts`'s `exec` and the worker's own `__bsq_sp` `control()` set; `controlSql` remembers the control statements it allowed so a cache hit cannot bypass it; savepoint operations run `uncached`. A new library path that sends transaction control without `exec` is refused with `AUTH`. Transaction control is allowed while a statement is stepping — VACUUM runs its own BEGIN/COMMIT during its step; a consumer's control statement is refused at its own prepare, or by `controlSql` on a cache hit, always before any step. The cache-hit refusal sets `extendedCode = SQLITE_AUTH` itself, because no SQLite call failed and `stamped` would otherwise read a stale code.
 
@@ -191,7 +184,7 @@ afterwards waited for a reply that could never come. It now calls `poison()` —
 an optional reason, and `close()`, `handleDeath` and `failClient` each pass their own.
 
 Two consequences to know before writing anything near it. **A test that simulates the ENGINE
-killing a worker must use `killSilently()` from `tests/browser/helpers.ts`**, which reaches the
+killing a worker must use `killSilently()` from `tests/browser/helpers/index.ts`**, which reaches the
 native method past the override; `worker.terminate()` no longer simulates a silent death, and
 two tests went red proving it. And **the method was overridden rather than added beside**
 deliberately: there are several terminate sites and a new one must not be able to forget.
