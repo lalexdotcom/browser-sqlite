@@ -227,7 +227,7 @@ describe('a write abandoned inside a transaction', () => {
       let caught: unknown;
       await db.transaction(async (tx) => {
         caught = await tx
-          .first(`${BIG_INSERT} RETURNING x`, [], {
+          .first(BIG_INSERT, [], {
             signal: abortAfter(30, reason),
           })
           .catch((e) => e);
