@@ -1,7 +1,8 @@
 name: Probe OPFS (throwaway)
 
-# TEMPORARY (ci/windows-macos): times each OPFS primitive per platform and
-# browser. Removed before the merge.
+# TEMPORARY (ci/windows-macos): times each OPFS primitive on Windows with
+# Defender's real-time protection as the image ships it, then turned off.
+# Removed before the merge.
 on:
   push:
     branches:
@@ -9,11 +10,7 @@ on:
 
 jobs:
   probe:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     timeout-minutes: 15
     defaults:
       run:
@@ -21,4 +18,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
-      - run: node scripts/probe-opfs.ts
+      - name: Defender, as shipped
+        shell: pwsh
+        run: Get-MpComputerStatus | Select-Object AMServiceEnabled, AntivirusEnabled, RealTimeProtectionEnabled, OnAccessProtectionEnabled | Format-List
+      - name: Probe, Defender as shipped
+        run: node scripts/probe-opfs.ts
+      - name: Turn real-time protection off
+        shell: pwsh
+        run: |
+          Set-MpPreference -DisableRealtimeMonitoring $true
+          Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled, OnAccessProtectionEnabled | Format-List
+      - name: Probe, real-time protection off
+        run: node scripts/probe-opfs.ts
