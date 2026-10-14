@@ -1,0 +1,24 @@
+name: Probe OPFS (throwaway)
+
+# TEMPORARY (ci/windows-macos): times each OPFS primitive per platform and
+# browser. Removed before the merge.
+on:
+  push:
+    branches:
+      - ci/windows-macos
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - run: node scripts/probe-opfs.ts
