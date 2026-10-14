@@ -1,0 +1,26 @@
+name: Tests
+
+# The suites a platform runs: what ci.yaml's verify tests on Linux, without
+# the checks that do not depend on the OS (lint, docs, typecheck), which
+# ci.yaml runs. Each platform's workflow calls this with its runner.
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: The runner label, e.g. windows-latest.
+        required: true
+        type: string
+
+jobs:
+  test:
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - run: pnpm build
+      - run: pnpm test
+      - run: pnpm test:conformance

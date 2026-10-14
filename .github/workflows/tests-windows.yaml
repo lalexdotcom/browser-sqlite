@@ -1,0 +1,19 @@
+name: Tests (Windows)
+
+on:
+  workflow_dispatch:
+  # TEMPORARY: runs the workflow from its branch before it exists on main.
+  # Removed before the merge.
+  push:
+    branches:
+      - ci/windows-macos
+
+concurrency:
+  group: tests-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    uses: ./.github/workflows/tests.yaml
+    with:
+      runs-on: windows-latest
