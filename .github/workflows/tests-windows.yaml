@@ -17,3 +17,8 @@ jobs:
     uses: ./.github/workflows/tests.yaml
     with:
       runs-on: windows-latest
+      # Firefox pays 50-220 ms of fsyncs for every OPFS file open, close or
+      # delete on Windows (Mozilla bug 2072928): its OPFS tests run 7-16 times
+      # slower than Chrome's there.
+      time-scale: '4'
+      timeout-minutes: 240

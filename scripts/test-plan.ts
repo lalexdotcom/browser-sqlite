@@ -59,7 +59,7 @@ import {
   probeFeatures,
 } from './plan-io.ts';
 import { deadIsFatal } from './plan-report.ts';
-import { packageBin } from './processes.ts';
+import { packageBin, timeScale } from './processes.ts';
 import { RECOMMENDED_VFS } from './recommended-vfs.ts';
 import {
   allPairs,
@@ -70,7 +70,7 @@ import {
 
 /** Vitest started through Node, not `pnpm exec`: no `.cmd` shim, no shell, on every OS. */
 const [NODE, VITEST] = packageBin('vitest', 'vitest');
-const JOB_TIMEOUT_MS = 900_000;
+const JOB_TIMEOUT_MS = 900_000 * timeScale();
 const KEEP_RUNS = 10;
 const TAIL_LINES = 60;
 

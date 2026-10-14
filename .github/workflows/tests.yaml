@@ -10,11 +10,21 @@ on:
         description: The runner label, e.g. windows-latest.
         required: true
         type: string
+      time-scale:
+        description: How many times Linux's bounds this platform needs (BSQ_TIME_SCALE).
+        default: '1'
+        type: string
+      timeout-minutes:
+        description: The job's bound.
+        default: 90
+        type: number
 
 jobs:
   test:
     runs-on: ${{ inputs.runs-on }}
-    timeout-minutes: 90
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      BSQ_TIME_SCALE: ${{ inputs.time-scale }}
     defaults:
       run:
         shell: bash

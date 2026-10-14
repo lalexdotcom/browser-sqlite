@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { killTree, packageBin } from '../../../scripts/processes.ts';
+import { killTree, packageBin, timeScale } from '../../../scripts/processes.ts';
 
 describe('packageBin', () => {
   it('starts a package CLI with this Node, on the file its manifest names', () => {
@@ -70,5 +70,25 @@ describe('killTree', () => {
     expect(() =>
       killTree(2 ** 22 - 1, 'SIGKILL', { platform: 'linux' }),
     ).not.toThrow();
+  });
+});
+
+describe('timeScale', () => {
+  it('is 1 when BSQ_TIME_SCALE is unset or empty', () => {
+    expect(timeScale(undefined)).toBe(1);
+    expect(timeScale('')).toBe(1);
+  });
+
+  it('takes a positive number, fractions included', () => {
+    expect(timeScale('4')).toBe(4);
+    expect(timeScale('1.5')).toBe(1.5);
+  });
+
+  // Falsifiable: fall back to 1 on a bad value — a typo then silently keeps
+  // Linux's bounds on a platform that needs four times them.
+  it('refuses anything else, naming the variable', () => {
+    for (const bad of ['0', '-2', 'four', 'Infinity']) {
+      expect(() => timeScale(bad)).toThrow(/BSQ_TIME_SCALE/);
+    }
   });
 });

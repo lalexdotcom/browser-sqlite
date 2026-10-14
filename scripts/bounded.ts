@@ -24,15 +24,18 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, openSync, readdirSync, rmSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DETACHED, killTree } from './processes.ts';
+import { DETACHED, killTree, timeScale } from './processes.ts';
 
 const [rawSeconds, ...command] = process.argv.slice(2);
-const seconds = Number(rawSeconds);
+const given = Number(rawSeconds);
 
-if (!Number.isFinite(seconds) || seconds <= 0 || command.length === 0) {
+if (!Number.isFinite(given) || given <= 0 || command.length === 0) {
   console.error('usage: node scripts/bounded.ts <seconds> <command> [args...]');
   process.exit(2);
 }
+// The bound written in package.json is Linux's; BSQ_TIME_SCALE stretches it
+// for a slower platform.
+const seconds = given * timeScale();
 
 // Every run's output is also kept in `.work/test-runs/` (gitignored), the newest
 // KEEP_RUNS of them: a failure seen once — in a hook, then rerun green — can

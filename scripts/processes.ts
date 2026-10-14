@@ -18,6 +18,24 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 export const DETACHED = process.platform !== 'win32';
 
 /**
+ * `BSQ_TIME_SCALE`: how many times slower than Linux a platform runs the
+ * suite, applied to every bound of a run (per test, per job, whole command)
+ * so they keep their ratios. 1 when unset. Firefox on Windows needs it: every
+ * OPFS file open, close or delete costs it 50-220 ms of fsyncs (Mozilla bug
+ * 2072928).
+ */
+export function timeScale(
+  raw: string | undefined = process.env.BSQ_TIME_SCALE,
+): number {
+  if (raw === undefined || raw === '') return 1;
+  const scale = Number(raw);
+  if (!Number.isFinite(scale) || scale <= 0) {
+    throw new Error(`BSQ_TIME_SCALE="${raw}" is not a positive number`);
+  }
+  return scale;
+}
+
+/**
  * `[node, <the package's bin script>]`: a package's CLI started with this Node.
  * `pnpm exec <cli>` goes through `pnpm.cmd` on Windows, which Node spawns only
  * with a shell, and a shell splits the project names Vitest is given

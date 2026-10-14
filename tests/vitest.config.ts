@@ -9,11 +9,13 @@ import {
   browserCapabilities,
   WDIO_CACHE_DIR,
 } from '../scripts/browsers.ts';
+import { timeScale } from '../scripts/processes.ts';
 import { declaredTags } from './harness/planner/need.ts';
 import type { TestTarget } from './harness/target.ts';
 import { allTargets, targetLabel } from './harness/target-projects.ts';
 
 const ENGINES: readonly BrowserName[] = ['chrome', 'firefox'];
+const TIME_SCALE = timeScale();
 const ISOLATION = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Embedder-Policy': 'require-corp',
@@ -52,10 +54,12 @@ const browserProject = (
         ? ['tests/browser/setup/trace.ts']
         : []),
     ],
-    testTimeout: options.testTimeout,
+    // BSQ_TIME_SCALE: a platform N times slower than Linux gets N times the
+    // bounds (scripts/processes.ts).
+    testTimeout: options.testTimeout * TIME_SCALE,
     // A teardown closes a client that may still be draining an abandoned
     // statement, and close() waits up to drainTimeout (60 s by default).
-    hookTimeout: 60_000,
+    hookTimeout: 60_000 * TIME_SCALE,
     ...(options.target
       ? {
           provide: {

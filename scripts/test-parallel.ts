@@ -46,13 +46,13 @@ import {
   runBounded,
   runPool,
 } from './parallel.ts';
-import { packageBin } from './processes.ts';
+import { packageBin, timeScale } from './processes.ts';
 
 /** Vitest started through Node, not `pnpm exec`: no `.cmd` shim, no shell, on every OS. */
 const [NODE, VITEST] = packageBin('vitest', 'vitest');
 
 /** Each job is bounded by a timer this script owns, as a matrix cell is. */
-const JOB_TIMEOUT_MS = 900_000;
+const JOB_TIMEOUT_MS = 900_000 * timeScale();
 const KEEP_RUNS = 10;
 const TAIL_LINES = 60;
 
