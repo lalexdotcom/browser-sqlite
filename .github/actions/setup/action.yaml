@@ -27,6 +27,14 @@ runs:
       shell: bash
       run: pnpm install --frozen-lockfile
 
+    # A cache key cannot contain commas: chrome,firefox → chrome-firefox.
+    - if: inputs.browsers != ''
+      id: browsers
+      shell: bash
+      run: echo "key=${BROWSERS//,/-}" >> "$GITHUB_OUTPUT"
+      env:
+        BROWSERS: ${{ inputs.browsers }}
+
     # The list is in the key: a cache saved by a Chrome-only job and restored
     # for one that also needs Firefox would download Firefox on every run, a
     # hit being never written back. scripts/browsers.ts holds the pins.
@@ -35,7 +43,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: node_modules/.cache/wdio
-        key: wdio-${{ runner.os }}-${{ runner.arch }}-${{ inputs.browsers }}-${{ hashFiles('scripts/browsers.ts') }}
+        key: wdio-${{ runner.os }}-${{ runner.arch }}-${{ steps.browsers.outputs.key }}-${{ hashFiles('scripts/browsers.ts') }}
 
     # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor.
     # Chrome's sandbox needs them, and only the system Chrome has a profile
