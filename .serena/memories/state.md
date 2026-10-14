@@ -77,7 +77,7 @@ here on purpose: a total alone cannot say which suite moved.
 
 ## In progress
 
-- **Next, in this order (user, 2026-10-13):** (1) **the reorganisation of the test code** — mostly moving files, nothing put back in question (the wider reorganisation `mem:follow-ups/test-planner-design` already named as the next piece of work); (2) **the tests on other OSes** — Windows and macOS runners, Safari and the iOS simulator (`mem:follow-ups`, § The library's tests on stock browsers).
+- **Next (user, 2026-10-14): the library's tests on Windows and macOS in CI, dispatched on demand (`workflow_dispatch`) for now; once they run well, the release takes them in.** Safari and the iOS simulator belong to the same piece (`mem:follow-ups`, § The library's tests on stock browsers). The reorganisation of the test code that came first is merged (`chore/tests-layout`, 2026-10-14), and so are two load-only reds (`test/load-only-reds`, 2026-10-14).
 
 - **The Vite dep-optimizer race between parallel Vitest processes is fixed and merged (2026-10-13)**: one cache per job (`mem:follow-ups/notes`). CI's `verify` was the exposed run (conformance in 2 shards per project on a cold cache); the push that carries the fix is its proof.
 - **Done and pushed (2026-10-13):** the test planner (plans A, B, C; the matrix plans first and runs on every push of `main`), and the test-triggers review (`docs/superpowers/specs/2026-10-13-test-triggers-design.md`: hooks per change, actionlint, the release reusing the push-of-`main` runs, publint/attw, the Pages bench check; `mem:conventions` § What runs where). CI 38441033562 and matrix 38441033564 green on the push. **Left for GitHub to prove:** the release's `prior` job and its `release`/`pages` conditions and `consumer-smoke` at the next release. The Pages bench check is proven (run 38448872714, `preview` moved to `e5855bb` on 2026-10-13).
@@ -85,11 +85,12 @@ here on purpose: a total alone cannot say which suite moved.
 
 ## In flight, and not ours to move
 
-- **wa-sqlite's tests on stock browsers: a revised proposal was posted on Discussion #373 on
-  2026-10-08; he questioned the move away from Playwright on 2026-10-10 and was answered the
-  same day, so it waits on rhashimoto again.** It covers WebDriver instead of Playwright, a workflow
-  per platform, a DataView race in the harness, and a skip for Safari 26. Nothing is started on
-  the PR before his answer. The plan and what his answer calls for are in `mem:follow-ups`, the
+- **wa-sqlite's tests on stock browsers: the WebDriver PR is ours to send.** A revised proposal
+  was posted on Discussion #373 on 2026-10-08; he questioned the move away from Playwright on
+  2026-10-10, was answered the same day, and accepted it that evening ("let's see what a WebDriver
+  PR looks like", CI triggers on Linux only for now) — unrecorded until 2026-10-14. It covers
+  WebDriver instead of Playwright, a DataView race in the harness, and a skip for Safari 26. The
+  plan and what his go calls for are in `mem:follow-ups`, the
   measurements in `mem:measurements/test-browsers`, and the user's principles in
   `mem:conventions` (§ Testing in browsers).
 - **No PR of ours is open on wa-sqlite since 2026-10-13**: #371 (2026-10-10), #372 (2026-10-11) and #374 (2026-10-13) merged and left the patch at the repins (§ Standing facts). #362 (an upstream issue) awaits the user's decision on a PR; `mem:follow-ups`.

@@ -2,7 +2,7 @@ import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { connectionLockName } from '../../../src/locks';
 import { databasePath } from '../../../src/utils';
-import { interceptWorkers, sleep, TEST_TARGET } from '../helpers';
+import { interceptWorkers, sleep, TEST_TARGET, waitUntil } from '../helpers';
 
 /**
  * A client that failed holds nothing: its workers are terminated and nothing
@@ -68,7 +68,7 @@ describe('a client that failed', () => {
     const pair = { vfs: TEST_TARGET.vfs, build: TEST_TARGET.build };
     const name = `bsq-test-${crypto.randomUUID()}`;
 
-    // Defers bsq:conn: grants until signaled.
+    // Defers bsq:conn: grants until signaled, and records when one lands.
     const originalRequest = (
       navigator.locks.request as (...args: unknown[]) => unknown
     ).bind(navigator.locks);
@@ -76,12 +76,19 @@ describe('a client that failed', () => {
     const grantDeferred = new Promise<void>((resolve) => {
       triggerGrant = resolve;
     });
+    let grantLanded = false;
     (navigator.locks as unknown as Record<string, unknown>).request = (
       lockName: string,
       ...args: unknown[]
     ) => {
       if (lockName.startsWith('bsq:conn:')) {
-        return grantDeferred.then(() => originalRequest(lockName, ...args));
+        const callback = args.pop() as (lock: Lock | null) => unknown;
+        return grantDeferred.then(() =>
+          originalRequest(lockName, ...args, (lock: Lock | null) => {
+            grantLanded = true;
+            return callback(lock);
+          }),
+        );
       }
       return originalRequest(lockName, ...args);
     };
@@ -96,12 +103,20 @@ describe('a client that failed', () => {
     await expect(db.ready).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
 
     triggerGrant();
-    // A turn for the grant to land and be given back.
-    await sleep(50);
+    // Waited for, not slept on: the grant lands in a task of its own, and
+    // after a stall of the main thread a due timer can run first — a query
+    // sent then finds the lock granted and not yet given back.
+    await waitUntil(() => grantLanded, 'the connection grant to land');
 
-    const { held = [] } = await navigator.locks.query();
-    expect(held.map((lock) => lock.name)).not.toContain(
-      connectionLockName(pair.vfs, databasePath(pair.vfs, name)),
-    );
+    // The release reaches the browser on the lock's own channel, which is not
+    // ordered with query(): polled, bounded.
+    const lockName = connectionLockName(pair.vfs, databasePath(pair.vfs, name));
+    const heldNames = async () =>
+      ((await navigator.locks.query()).held ?? []).map((lock) => lock.name);
+    const deadline = Date.now() + 2000;
+    while ((await heldNames()).includes(lockName) && Date.now() < deadline) {
+      await sleep(10);
+    }
+    expect(await heldNames()).not.toContain(lockName);
   });
 });
