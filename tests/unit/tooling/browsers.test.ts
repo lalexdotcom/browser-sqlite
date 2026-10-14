@@ -4,6 +4,7 @@ import {
   browserVersion,
   GECKODRIVER_VERSION,
   PINNED,
+  parseBrowserList,
 } from '../../../scripts/browsers.ts';
 
 describe('browserVersion', () => {
@@ -65,5 +66,32 @@ describe('browserCapabilities', () => {
         'goog:chromeOptions'
       ],
     ).toBeUndefined();
+  });
+});
+
+describe('parseBrowserList', () => {
+  it('is both browsers when no list is given', () => {
+    expect(parseBrowserList(undefined)).toEqual(['chrome', 'firefox']);
+  });
+
+  it('takes one name or a comma-separated list, in the given order', () => {
+    expect(parseBrowserList('chrome')).toEqual(['chrome']);
+    expect(parseBrowserList('firefox,chrome')).toEqual(['firefox', 'chrome']);
+  });
+
+  it('ignores empty entries and repeats', () => {
+    expect(parseBrowserList('chrome,,chrome')).toEqual(['chrome']);
+  });
+
+  // Falsifiable: filter unknown names out instead of throwing — a typo then
+  // installs nothing for it, and the job fails much later at launch.
+  it('refuses an unknown name, naming the valid ones', () => {
+    expect(() => parseBrowserList('chrome,safari')).toThrow(
+      'browsers: unknown browser "safari" — expected chrome, firefox',
+    );
+  });
+
+  it('refuses a list that names nothing', () => {
+    expect(() => parseBrowserList(',')).toThrow(/names no browser/);
   });
 });
