@@ -25,11 +25,11 @@ In `mem:follow-ups/wa-step`: the scope the user set, what each solution (library
 `tests/browser/pairs/multi-client.test.ts` :: "two clients writing at once > interleaves a bulkWrite with another client, refusing neither" failed once in the `feat/binary-protocol` matrix: client A read 0 of B's first 2 047-row batch over its 5 s of polling (`expected +0 to be 2047`, test 10.9 s). Replays the same afternoon: the test alone 10/10 on the branch and on `main`; the file under 16 busy loops 15/15 each; the full cell on the branch 1 failure in 5 then 0 in 15 (and 0 in 12 with `debug: true` and a diagnostic of B's `close()` and A's late count), on `main` 0 in 20. Another session's Firefox was loading the machine during the failing runs. Left by the user's decision ("on ignore et on enchaîne, et on consigne"). At the next sighting: rerun the cell with the diagnostic (B's `writer.close()` outcome — a failed batch against a slow one — and A's count after it), and compare with `main` at the same load.
 
 
-## wa-sqlite's suite on stock browsers — revised proposal posted, waiting on rhashimoto (Discussion #373, 2026-10-08)
+## wa-sqlite's suite on stock browsers — WebDriver PR accepted, ours to send (Discussion #373, 2026-10-10)
 
-**Where it stands.** On the user's go, a top-level comment was posted on rhashimoto/wa-sqlite#373 on 2026-10-08 (discussioncomment-18824045). It revises the plan he had validated, after two days of measurements on the fork (`mem:measurements/test-browsers`). **Nothing is started on the PR until he answers.** The user's principles behind it are in `mem:conventions` (§ Testing in browsers).
+**Where it stands.** On the user's go, a top-level comment was posted on rhashimoto/wa-sqlite#373 on 2026-10-08 (discussioncomment-18824045). It revises the plan he had validated, after two days of measurements on the fork (`mem:measurements/test-browsers`). **He accepted it on 2026-10-10 at 18:11 UTC: "Okay, let's see what a WebDriver PR looks like! For CI triggers, I'm fine with just Linux for now." The PR is ours to send.** That reply went unrecorded until 2026-10-14, and this entry said "waiting on him" for four days: **read the thread (`gh api graphql`, discussion comments and their replies) before reporting a Discussion as waiting.** The user's principles behind it are in `mem:conventions` (§ Testing in browsers).
 
-**2026-10-10: he questioned it, and was answered the same day.** He was not convinced that Playwright's browsers fall short for tests of storage, Web Locks and `BroadcastChannel`, asked for cases where Chrome or Safari differ from Playwright's builds, and whether WebDriver is slower than Playwright, and by how much. Answered on the user's go (discussioncomment-18853671), with no new measurement — the user: WebKit and Firefox are justified enough, and uniformity is the reason for Chrome. Chromium: no difference seen, WebDriver for one launcher and one configuration, versions pinnable there too (only Safari follows macOS). WebKit: Playwright's trunk build already has WebKit 324094's fix while Safari 27.0.1 does not; the DataView race shows on Safari 26 only; OPFS depends on Playwright's version and context. Firefox: the Juggler build's `await` cost (FF-PW-AWAIT). Speed: the two launchers not timed against each other; the driver mostly opens pages; the whole suite on stock Chrome through WebDriver takes 2-3 min on Linux runners. **For upstream the runner stays `@web/test-runner`; Vitest is the library's** — the two were mixed up once in drafting (user, 2026-10-10). **Waiting on him again; nothing started on the PR.**
+**2026-10-10: he questioned it, and was answered the same day.** He was not convinced that Playwright's browsers fall short for tests of storage, Web Locks and `BroadcastChannel`, asked for cases where Chrome or Safari differ from Playwright's builds, and whether WebDriver is slower than Playwright, and by how much. Answered on the user's go (discussioncomment-18853671), with no new measurement — the user: WebKit and Firefox are justified enough, and uniformity is the reason for Chrome. Chromium: no difference seen, WebDriver for one launcher and one configuration, versions pinnable there too (only Safari follows macOS). WebKit: Playwright's trunk build already has WebKit 324094's fix while Safari 27.0.1 does not; the DataView race shows on Safari 26 only; OPFS depends on Playwright's version and context. Firefox: the Juggler build's `await` cost (FF-PW-AWAIT). Speed: the two launchers not timed against each other; the driver mostly opens pages; the whole suite on stock Chrome through WebDriver takes 2-3 min on Linux runners. **For upstream the runner stays `@web/test-runner`; Vitest is the library's** — the two were mixed up once in drafting (user, 2026-10-10). He answered within the hour (above): WebDriver it is, Linux-only triggers for now.
 
 **What the comment proposes:**
 - **Stock browsers through WebDriver** (`@web/test-runner-webdriver`), Playwright dropped, which revisits his answer 1 (Playwright's bundled Chromium). The reason given: test what users run; patched builds are noise.
@@ -41,7 +41,7 @@ In `mem:follow-ups/wa-step`: the scope the user set, what each solution (library
 - **Windows:** geckodriver comes from the runner, and the docs will tell Windows contributors to install it.
 - **Mobile:** iOS Safari can follow the macOS images' simulators (iOS 26 works, iOS 27 refuses). Chrome on Android is not explored, only said possible.
 
-**What his answer calls for, if he agrees.** The PR branch, from upstream `master`, in this order:
+**What his go calls for.** The PR branch, from upstream `master`, in this order:
 1. **Test and harness commits:**
    - the capability skips: `vfs_read_freshness` and `sql_0005` on `OPFSWriteAheadVFS` without `FileSystemSyncAccessHandle.prototype.mode`, and `vfs_open_last_error` accepting `InvalidStateError`;
    - `sql_0005` registering each worker's cleanup before its open;
@@ -50,13 +50,13 @@ In `mem:follow-ups/wa-step`: the scope the user set, what each solution (library
    - the DataView race fix, ported from `68aae811` on the fork;
    - the Safari-before-27 skip, through a `TestContext` helper reading `Version/NN` from the user agent (the same on macOS and iOS).
 2. **Config:** `WTR_BROWSERS`, with Chrome as the default.
-3. **Workflows:** as proposed above.
+3. **Workflows:** as proposed above, but only Linux (Chrome, Firefox) is triggered — "just Linux for now" (2026-10-10). Open, for the user: also ship the Windows and macOS workflows on `workflow_dispatch` only, or ship Linux alone with the reusable workflow ready for the others.
 4. **Docs:** a "Running the tests" section per OS.
 
 Before opening it, measure reliability: about 10 runs per environment, through `workflow_dispatch` on the fork. Upstream's JSPI flag is not needed on stock Chrome 154.
 
 **Still open:**
-- Linux Firefox lost two files at the launcher once in 8 runs, unexplained.
+- Linux Firefox lost two files at the launcher once in 8 runs, unexplained — on the Linux-only target, so to watch in the reliability runs.
 - Windows Firefox has only one complete run.
 - iOS 27 simulators refuse WebDriver sessions; the image `20261006` with Safari 27.0.1 is untried.
 - The fork's `probe/stock-browsers` (head `437e6de1`) and `probe/webkit-opfs` are throwaway.
@@ -68,7 +68,7 @@ Before opening it, measure reliability: about 10 runs per environment, through `
 - **2026-10-06:** design questions (discussioncomment-18773230). He answered: Playwright's Chromium, `WTR_BROWSERS`, drop the pre-build pass, both skips, `create()` rejecting, `destroy()` closing the VFS, one PR.
 - **2026-10-07:** confirmed (discussioncomment-18791734).
 - **2026-10-08:** revised proposal, stock browsers through WebDriver (discussioncomment-18824045).
-- **2026-10-10:** his questions on Playwright's browsers and WebDriver's speed; answered the same day (discussioncomment-18853671).
+- **2026-10-10:** his questions on Playwright's browsers and WebDriver's speed; answered the same day (discussioncomment-18853671); at 18:11 UTC he accepted: "let's see what a WebDriver PR looks like", Linux-only triggers for now.
 
 The Firefox findings that started it (WA-FIREFOX-SQL-HANG): `vfs_read_freshness` and `sql_0005` on `OPFSWriteAheadVFS` assume two connections, which Firefox without `readwrite-unsafe` refuses. Three harness traits then turn that failed open into a hang:
 - `sql_0005` registered a worker's cleanup only after its open, so the failed worker was never destroyed;

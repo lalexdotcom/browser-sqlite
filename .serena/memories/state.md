@@ -85,11 +85,12 @@ here on purpose: a total alone cannot say which suite moved.
 
 ## In flight, and not ours to move
 
-- **wa-sqlite's tests on stock browsers: a revised proposal was posted on Discussion #373 on
-  2026-10-08; he questioned the move away from Playwright on 2026-10-10 and was answered the
-  same day, so it waits on rhashimoto again.** It covers WebDriver instead of Playwright, a workflow
-  per platform, a DataView race in the harness, and a skip for Safari 26. Nothing is started on
-  the PR before his answer. The plan and what his answer calls for are in `mem:follow-ups`, the
+- **wa-sqlite's tests on stock browsers: the WebDriver PR is ours to send.** A revised proposal
+  was posted on Discussion #373 on 2026-10-08; he questioned the move away from Playwright on
+  2026-10-10, was answered the same day, and accepted it that evening ("let's see what a WebDriver
+  PR looks like", CI triggers on Linux only for now) — unrecorded until 2026-10-14. It covers
+  WebDriver instead of Playwright, a DataView race in the harness, and a skip for Safari 26. The
+  plan and what his go calls for are in `mem:follow-ups`, the
   measurements in `mem:measurements/test-browsers`, and the user's principles in
   `mem:conventions` (§ Testing in browsers).
 - **No PR of ours is open on wa-sqlite since 2026-10-13**: #371 (2026-10-10), #372 (2026-10-11) and #374 (2026-10-13) merged and left the patch at the repins (§ Standing facts). #362 (an upstream issue) awaits the user's decision on a PR; `mem:follow-ups`.
