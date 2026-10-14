@@ -281,7 +281,10 @@ describe('worker lifecycle — onWorkerLost callback', () => {
  * redirecting it to a missing URL. All other workers use the real URL.
  * Returns the array of created Worker instances in creation order.
  */
-function failWorkerAtIndex(n: number): Worker[] {
+function failWorkerAtIndex(
+  n: number,
+  onCreate?: (index: number, created: Worker[]) => void,
+): Worker[] {
   const created: Worker[] = [];
   const Original = globalThis.Worker;
   class Selective extends Original {
@@ -291,6 +294,7 @@ function failWorkerAtIndex(n: number): Worker[] {
         options,
       );
       created.push(this);
+      onCreate?.(created.length - 1, created);
     }
   }
   globalThis.Worker = Selective as unknown as typeof Worker;
@@ -364,36 +368,37 @@ function silentWorkersFromIndex(from: number): {
 }
 
 describe('worker lifecycle — startup readiness gate', () => {
-  // Falsifiable: in handleDeath (src/client.ts), guard the startupLosses.set
-  // call with `if (retrySlots.has(index))` (reverting defect 1 fix). Slot 0's
-  // death during the retry round is then silently dropped — onWorkerLost never
-  // fires for index 0 and the test fails on the events assertion.
+  // Falsifiable: in handleDeath (src/client.ts), drop the startupLosses.set
+  // call. Slot 0's death during the retry round is then silently dropped —
+  // onWorkerLost never fires for index 0 and the test fails on the events
+  // assertion (checked 2026-10-14).
   it('reports a slot that opened and then dies during the retry round as lost', {
     tags: ['requires:two-workers'],
   }, async () => {
     // Worker 0 (slot 0): real URL — opens successfully in round 1.
     // Worker 1 (slot 1, round 1): bad URL — fails immediately.
     // Worker 2 (slot 1, retry): real URL — succeeds in the retry round.
-    const created = failWorkerAtIndex(1);
+    // Worker 2's creation IS the retry round starting (round 1 has settled:
+    // worker 1 failed, worker 0 opened). Slot 0 is killed in the microtask
+    // that follows it: worker 2 cannot have loaded by then, as that takes a
+    // task. Polling for it instead lost the race on a fast machine (macOS
+    // runner, 2026-10-14): worker 2 opened between two 10 ms polls and closed
+    // the round, so the death was an ordinary one.
+    const created = failWorkerAtIndex(1, (index, workers) => {
+      if (index !== 2) return;
+      queueMicrotask(() =>
+        workers[0]?.dispatchEvent(
+          new ErrorEvent('error', { message: 'killed during retry' }),
+        ),
+      );
+    });
     const lostIndices: number[] = [];
     const db = await createTestClient({
       // Two live slots to distinguish which one died/recovered (spec 2026-09-15, A5).
       poolSize: 2,
       onWorkerLost: ({ index }) => lostIndices.push(index),
     });
-
-    // Wait for round 1 to settle: worker 1 (bad URL) fails fast, worker 0
-    // eventually opens.  After onFirstSettle the retry round begins and
-    // worker 2 (slot 1 retry, real URL) starts loading.
-    // Poll until worker 2 has been created (= retry round is in progress).
-    while (created.length < 3) await sleep(10);
-
-    // Kill slot 0's worker while the retry round is still open.
-    // The browser fires load errors asynchronously, so dispatching here is
-    // ordered before worker 2's real load completes.
-    created[0].dispatchEvent(
-      new ErrorEvent('error', { message: 'killed during retry' }),
-    );
+    await waitUntil(() => created.length >= 3, 'the retry round to start');
 
     // The gate opens when slot 1 retry (worker 2) settles.  After that the
     // client has one live worker (slot 1) and one permanent startup loss (slot 0).
