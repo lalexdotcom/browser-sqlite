@@ -9,7 +9,7 @@
  *   1. build + `pnpm pack` — exactly the tarball npm would publish
  *   2. publint and attw on that tarball: package.json against what it ships,
  *      and the published types under each TypeScript resolution mode
- *   3. scaffold `tests/consumer/` into a temp dir OUTSIDE the repo, so the
+ *   3. scaffold `tests/consumers/vite/` into a temp dir OUTSIDE the repo, so the
  *      bare `browser-sqlite` specifier cannot resolve back to the local
  *      sources and make the test lie
  *   4. `npm install` the tarball there
@@ -261,9 +261,11 @@ function scaffoldApp(
 ) {
   const s = stage(`scaffold and install the ${label} consumer app`);
   try {
-    cpSync(join(ROOT, 'tests', fixture), dir, { recursive: true });
+    cpSync(join(ROOT, 'tests', 'consumers', fixture), dir, { recursive: true });
     for (const [sub, from] of Object.entries(nested ?? {})) {
-      cpSync(join(ROOT, 'tests', from), join(dir, sub), { recursive: true });
+      cpSync(join(ROOT, 'tests', 'consumers', from), join(dir, sub), {
+        recursive: true,
+      });
     }
     // npm, not pnpm, and outside the repo: nothing can resolve
     // `browser-sqlite` back to the local sources.
@@ -380,9 +382,7 @@ try {
   }
 
   // ── Vite, newest (the fixture range resolves to the current major) ────────
-  if (
-    scaffoldApp('Vite', 'consumer', appDir, { nobundler: 'consumer-nobundler' })
-  ) {
+  if (scaffoldApp('Vite', 'vite', appDir, { nobundler: 'nobundler' })) {
     await checkMode(
       'Vite dev server',
       ['vite', '--host', HOST, '--port', String(DEV_PORT), '--strictPort'],
@@ -430,7 +430,7 @@ try {
   // where `optimizeDeps.exclude` is a no-op, so it never exercised the single
   // line of configuration the README asks a consumer to write. This one is
   // pinned to the range where that line decides whether dev works at all.
-  if (scaffoldApp('Vite 6', 'consumer-vite6', vite6AppDir)) {
+  if (scaffoldApp('Vite 6', 'vite6', vite6AppDir)) {
     await checkMode(
       'Vite 6 dev server',
       [
@@ -473,7 +473,7 @@ try {
   }
 
   // ── rsbuild (which is rspack) ─────────────────────────────────────────────
-  if (scaffoldApp('rsbuild', 'consumer-rsbuild', rsbuildAppDir)) {
+  if (scaffoldApp('rsbuild', 'rsbuild', rsbuildAppDir)) {
     await checkMode(
       'rsbuild dev server',
       ['rsbuild', 'dev', '--host', HOST, '--port', String(RSBUILD_DEV_PORT)],
@@ -509,7 +509,7 @@ try {
   }
 
   // ── webpack ───────────────────────────────────────────────────────────────
-  if (scaffoldApp('webpack', 'consumer-webpack', webpackAppDir)) {
+  if (scaffoldApp('webpack', 'webpack', webpackAppDir)) {
     await checkMode(
       'webpack dev server',
       ['webpack', 'serve', '--host', HOST, '--port', String(WEBPACK_DEV_PORT)],
@@ -537,7 +537,7 @@ try {
   // The only resolver here that does not read the `exports` map: it falls back
   // to `main`, which is why the package declares one. Keeping Parcel in the
   // matrix is what stops that field being dropped as dead weight.
-  if (scaffoldApp('Parcel', 'consumer-parcel', parcelAppDir)) {
+  if (scaffoldApp('Parcel', 'parcel', parcelAppDir)) {
     await checkMode(
       'Parcel dev server',
       ['parcel', 'index.html', '--port', String(PARCEL_DEV_PORT)],

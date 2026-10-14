@@ -11,19 +11,19 @@
     "moduleResolution": "bundler",
     "useDefineForClassFields": true,
     "allowImportingTsExtensions": true,
-    // The Vitest tests import the library by name; vitest.config.ts aliases
+    // The Vitest tests import the library by name; tests/vitest.config.ts aliases
     // both to tests/build/, and the types come from the sources they build.
     "paths": {
       "browser-sqlite": ["./src/index.ts"],
-      "browser-sqlite/testing": ["./tests/testing.ts"]
+      "browser-sqlite/testing": ["./tests/harness/testing.ts"]
     }
   },
-  "include": ["src", "tests", "scripts", "rslib.config.ts", "vitest.config.ts", "rslib.test.config.ts"],
+  "include": ["src", "tests", "scripts", "rslib.config.ts"],
   // Consumer fixtures are standalone apps: they resolve `browser-sqlite` and
   // their bundler from their own install, not from this package's node_modules.
-  // Matched by prefix rather than listed one by one, so adding a fixture cannot
-  // redden `tsc --noEmit` for a resolution that is correct where it runs.
+  // Excluded as one folder, so adding a fixture cannot redden `tsc --noEmit`
+  // for a resolution that is correct where it runs.
   // `tests/build/` is the rslib output the suite loads (gitignored): its .d.ts
   // would enter the program locally but not on a fresh clone.
-  "exclude": ["tests/consumer*", "tests/build"]
+  "exclude": ["tests/consumers", "tests/build"]
 }

@@ -43,6 +43,6 @@ doc_build/
 mempalace.yaml
 entities.json
 
-# Built by rslib.test.config.ts for the Vitest browser projects: the published
-# build plus the test-only entry tests/testing.ts.
+# Built by tests/rslib.vitest.config.ts for the Vitest browser projects: the
+# published build plus the test-only entry tests/harness/testing.ts.
 tests/build/

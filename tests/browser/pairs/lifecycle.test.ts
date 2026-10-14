@@ -1,0 +1,584 @@
+// tests/browser/lifecycle.test.ts
+import { describe, expect, it, onTestFinished } from 'vitest';
+import {
+  createTestClient,
+  interceptWorkers,
+  longQuery,
+  sharedDatabase,
+  sleep,
+  waitUntil,
+} from '../helpers';
+
+describe('worker lifecycle — crash detection', () => {
+  // Falsifiable: delete `worker.onerror = ...` in pool.ts and this hangs until
+  // the test timeout instead of rejecting.
+  it('rejects the in-flight query when the worker reports an uncaught error', async () => {
+    const records = interceptWorkers();
+    const db = await createTestClient({ poolSize: 1 });
+    await db.write('CREATE TABLE t (a)');
+
+    const running = db.read(longQuery(20_000_000));
+    await sleep(100);
+    records[0].worker.dispatchEvent(
+      new ErrorEvent('error', { message: 'simulated worker failure' }),
+    );
+
+    await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+  });
+
+  // Falsifiable: return 'lost' instead of 'restart' from the supervisor, or
+  // drop the `if (decision === 'restart') void spawn(index)` branch in client.ts.
+  it('restarts the slot once and keeps serving', async () => {
+    const records = interceptWorkers();
+    const db = await createTestClient({ poolSize: 1 });
+    await db.write('CREATE TABLE t (a)');
+    expect(records.length).toBe(1);
+
+    const running = db.read(longQuery(20_000_000));
+    await sleep(100);
+    records[0].worker.dispatchEvent(new ErrorEvent('error'));
+    await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+
+    const rows = await db.read<{ n: number }>('SELECT 1 AS n');
+    expect(rows[0]?.n).toBe(1);
+    expect(records.length).toBe(2);
+  });
+
+  // Falsifiable: delete the `failClient(error)` call on the 'fail-client'
+  // decision in handleDeath (src/client.ts).
+  it('fails the client permanently once the restart budget is spent', async () => {
+    const records = interceptWorkers();
+    const db = await createTestClient({ poolSize: 1, maxWorkerRestarts: 1 });
+    await db.write('CREATE TABLE t (a)');
+
+    for (const attempt of [0, 1]) {
+      const running = db.read(longQuery(20_000_000));
+      await sleep(100);
+      records[attempt].worker.dispatchEvent(new ErrorEvent('error'));
+      await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+      // Killing the replacement before its ready leaves the open lock to its
+      // termination, and the cleanup's deleteDatabase answers BUSY.
+      if (attempt === 0)
+        await waitUntil(
+          () => records[1]?.received.includes('ready') ?? false,
+          'the replacement to be ready',
+        );
+    }
+
+    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+      code: 'WORKER_CRASHED',
+    });
+  });
+
+  /**
+   * Redirects every Worker from the `from`-th one on to a URL that does not
+   * exist, so a REPLACEMENT can be made to fail deterministically while the
+   * original boots normally. helpers' interceptWorkers redirects all of them.
+   */
+  const failWorkersFrom = (from: number) => {
+    const created: Worker[] = [];
+    const Original = globalThis.Worker;
+    class Failing extends Original {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(
+          created.length >= from ? '/definitely-missing-worker.js' : url,
+          options,
+        );
+        created.push(this);
+      }
+    }
+    globalThis.Worker = Failing as unknown as typeof Worker;
+    onTestFinished(() => {
+      globalThis.Worker = Original;
+    });
+    return created;
+  };
+
+  // Falsifiable: delete the `supervisor.report(index, 'spawned')` call in
+  // spawn() (src/client.ts). The slot stays marked dead from the first death,
+  // the replacement's death reads as a duplicate signal, report() returns no
+  // decision, and the client neither restarts nor fails — this read then waits
+  // for a worker that will never exist and the test dies on its timeout.
+  it('fails the client when the replacement never boots', async () => {
+    const created = failWorkersFrom(1);
+    const db = await createTestClient({ poolSize: 1, maxWorkerRestarts: 1 });
+    await db.write('CREATE TABLE t (a)');
+    expect(created.length).toBe(1);
+
+    const running = db.read(longQuery(20_000_000));
+    await sleep(100);
+    created[0].dispatchEvent(new ErrorEvent('error'));
+    await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+
+    // The slot restarts into a worker that cannot load. The client must reach a
+    // verdict rather than leave the pool empty and silent.
+    const outcome = await Promise.race([
+      db.read('SELECT 1').then(
+        () => 'resolved',
+        (error: { code?: string }) => `rejected:${error.code}`,
+      ),
+      new Promise((resolve) => setTimeout(() => resolve('HUNG'), 10_000)),
+    ]);
+    expect(outcome).toBe('rejected:WORKER_CRASHED');
+  });
+
+  // Falsifiable: replace the load-failure branch with a generic message that
+  // omits both the 'could not load its worker' wording and the
+  // 'Bundler Configuration' README pointer.
+  it('sends a load failure to the bundler configuration section, with a URL', async () => {
+    interceptWorkers({ url: '/definitely-missing-worker.js' });
+    const db = await createTestClient({ poolSize: 1 });
+
+    // Chrome leaves ErrorEvent.filename empty here, so pool.ts names
+    // import.meta.url instead — the directory the worker should sit beside.
+    // The bundler may rename either chunk, so assert the stable wording and
+    // the presence of some URL, never a literal path. The scheme is not
+    // pinned either: a consumer bundle yields http(s), while a bundle of
+    // source paths yields file:.
+    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+      code: 'WORKER_CRASHED',
+      message: expect.stringContaining('could not load its worker'),
+    });
+    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+      message: expect.stringContaining('Bundler Configuration'),
+    });
+    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+      message: expect.stringMatching(/\w+:\/\/\S+/),
+    });
+  });
+
+  // Falsifiable: delete the `worker.addEventListener('messageerror', ...)` call in pool.ts — the query then hangs.
+  // Note: synthetic. Producing a genuinely undeserializable message on demand
+  // is not achievable cleanly; the handler is exercised, not the browser's path
+  // into it.
+  it('rejects the in-flight query on a deserialization failure, and keeps the worker', async () => {
+    const records = interceptWorkers();
+    const db = await createTestClient({ poolSize: 1 });
+    await db.write('CREATE TABLE t (a)');
+
+    // Long enough to still be in flight after the sleep below, and no longer:
+    // 20 000 000 iterations cost 30 s on Firefox — against a 30 s budget, which
+    // the test lost three times out of three — for a margin of 300× over what
+    // it needs. At 2 000 000 the query still runs for seconds on the slowest
+    // engine measured, twenty times the sleep.
+    const running = db.read(longQuery(2_000_000));
+    await sleep(100);
+    records[0].worker.dispatchEvent(new MessageEvent('messageerror'));
+
+    await expect(running).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' });
+    expect(records[0].terminated).toBe(false);
+    expect(records.length).toBe(1);
+  });
+});
+
+describe('worker lifecycle — bounds', () => {
+  // The connection guard (AHP-2TAB fix) fires before workers start, so the
+  // second client now fails BUSY — not WORKER_CRASHED. Workers for the second
+  // client are never spawned, which is faster and cleaner.
+  //
+  // Falsifiable: delete the `if (connLockPromise !== undefined)` deferred-
+  // spawn block in src/client.ts. Without it, workers start immediately and
+  // collide on the OPFS handle, producing WORKER_CRASHED instead of BUSY.
+  it('rejects a second client with BUSY instead of crashing its workers', {
+    tags: ['requires:exclusive-connection'],
+  }, async () => {
+    const db = sharedDatabase();
+    const first = db.open({ poolSize: 1 });
+    await first.write('CREATE TABLE t (a)');
+
+    const second = db.open({ poolSize: 1 });
+    await expect(second.read('SELECT 1')).rejects.toMatchObject({
+      code: 'DATABASE_IN_USE',
+    });
+
+    await first.close();
+    await second.close().catch(() => {});
+  });
+});
+
+describe('worker lifecycle — onWorkerLost callback', () => {
+  // Falsifiable: remove the emitWorkerLost() call from the 'lost' branch of
+  // handleDeath — the callback is never fired and events stays empty.
+  it('is called when a worker slot is permanently lost', {
+    tags: ['requires:two-workers'],
+  }, async () => {
+    const records = interceptWorkers();
+    const events: number[] = [];
+    const db = await createTestClient({
+      // Two live workers, so killing slot 0 leaves slot 1 to observe from
+      // (spec 2026-09-15, A5).
+      poolSize: 2,
+      maxWorkerRestarts: 0,
+      onWorkerLost: ({ index }) => events.push(index),
+    });
+    await db.write('CREATE TABLE t (a)');
+
+    // Kill worker 0 — budget is 0, so it goes directly to 'lost'.
+    const running = db.read(longQuery(20_000_000));
+    await sleep(100);
+    records[0].worker.dispatchEvent(new ErrorEvent('error'));
+    await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+
+    await sleep(100);
+    expect(events).toContain(0);
+  });
+
+  // Falsifiable: call failClient() before emitWorkerLost() in the fail-client
+  // branch — the client is shut down first and the callback may not fire in
+  // time (the scheduler rejects all acquires synchronously on shutdown,
+  // interrupting any pending work the callback depended on).
+  it('is called before the client is failed when the last slot is lost', async () => {
+    const records = interceptWorkers();
+    const callOrder: string[] = [];
+    const db = await createTestClient({
+      poolSize: 1,
+      maxWorkerRestarts: 0,
+      onWorkerLost: () => callOrder.push('callback'),
+    });
+    await db.write('CREATE TABLE t (a)');
+
+    const running = db.read(longQuery(20_000_000));
+    await sleep(100);
+    records[0].worker.dispatchEvent(new ErrorEvent('error'));
+
+    // The read rejects because the client is failed.
+    await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+    // The callback must have fired before (or during) the failure.
+    expect(callOrder).toContain('callback');
+  });
+
+  // Falsifiable: let a throwing onWorkerLost bubble out of handleDeath — the
+  // pool becomes corrupted and subsequent queries hang or produce wrong errors.
+  it('a throwing callback does not break the pool', {
+    tags: ['requires:two-workers'],
+  }, async () => {
+    const records = interceptWorkers();
+    const db = await createTestClient({
+      // Worker 1 must still be alive after worker 0 crashes (spec 2026-09-15, A5).
+      poolSize: 2,
+      maxWorkerRestarts: 0,
+      onWorkerLost: () => {
+        throw new Error('callback exploded');
+      },
+    });
+    await db.write('CREATE TABLE t (a)');
+
+    // Kill worker 0 — callback throws, must be swallowed.
+    const running = db.read(longQuery(20_000_000));
+    await sleep(100);
+    records[0].worker.dispatchEvent(new ErrorEvent('error'));
+    await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+
+    // Worker 1 is still alive and can serve queries.
+    await sleep(100);
+    const rows = await db.read<{ n: number }>('SELECT 1 AS n');
+    expect(rows[0]?.n).toBe(1);
+  });
+});
+
+/**
+ * Intercepts worker creation and makes the N-th worker (0-based) fail by
+ * redirecting it to a missing URL. All other workers use the real URL.
+ * Returns the array of created Worker instances in creation order.
+ */
+function failWorkerAtIndex(n: number): Worker[] {
+  const created: Worker[] = [];
+  const Original = globalThis.Worker;
+  class Selective extends Original {
+    constructor(url: string | URL, options?: WorkerOptions) {
+      super(
+        created.length === n ? '/definitely-missing-worker.js' : url,
+        options,
+      );
+      created.push(this);
+    }
+  }
+  globalThis.Worker = Selective as unknown as typeof Worker;
+  onTestFinished(() => {
+    globalThis.Worker = Original;
+  });
+  return created;
+}
+
+/**
+ * Intercepts worker creation and makes workers from index `from` onward load
+ * a SILENT module — one that starts successfully and never answers a message.
+ * Returns the created Worker instances in creation order, and `booted`, which
+ * settles once a silent worker's module has run (bounded by `waitUntil`).
+ *
+ * Kill a silent worker only after it booted: Firefox (seen on Playwright's build) crashes the
+ * page when a worker is terminated in its first milliseconds.
+ */
+function silentWorkersFromIndex(from: number): {
+  created: Worker[];
+  booted: (worker: Worker) => Promise<void>;
+} {
+  const created: Worker[] = [];
+  const silent = new Map<string, Worker>();
+  const up = new Set<Worker>();
+  const urls: string[] = [];
+  const channel = new BroadcastChannel(`bsq-silent-${crypto.randomUUID()}`);
+  channel.onmessage = (event: MessageEvent<string>) => {
+    const worker = silent.get(event.data);
+    if (worker) up.add(worker);
+  };
+  const Original = globalThis.Worker;
+  class Silent extends Original {
+    constructor(url: string | URL, options?: WorkerOptions) {
+      const id = created.length >= from ? crypto.randomUUID() : undefined;
+      const silentUrl =
+        id === undefined
+          ? undefined
+          : URL.createObjectURL(
+              new Blob(
+                [
+                  `new BroadcastChannel(${JSON.stringify(channel.name)}).postMessage(${JSON.stringify(id)});`,
+                  'self.onmessage = () => {};',
+                ],
+                { type: 'text/javascript' },
+              ),
+            );
+      super(silentUrl ?? url, options);
+      if (id !== undefined && silentUrl !== undefined) {
+        urls.push(silentUrl);
+        silent.set(id, this);
+      }
+      created.push(this);
+    }
+  }
+  globalThis.Worker = Silent as unknown as typeof Worker;
+  onTestFinished(() => {
+    globalThis.Worker = Original;
+    channel.close();
+    for (const url of urls) URL.revokeObjectURL(url);
+  });
+  const booted = async (worker: Worker) => {
+    if (![...silent.values()].includes(worker))
+      throw new Error(`worker ${created.indexOf(worker)} is not silent`);
+    await waitUntil(
+      () => up.has(worker),
+      `silent worker ${created.indexOf(worker)} to boot`,
+    );
+  };
+  return { created, booted };
+}
+
+describe('worker lifecycle — startup readiness gate', () => {
+  // Falsifiable: in handleDeath (src/client.ts), guard the startupLosses.set
+  // call with `if (retrySlots.has(index))` (reverting defect 1 fix). Slot 0's
+  // death during the retry round is then silently dropped — onWorkerLost never
+  // fires for index 0 and the test fails on the events assertion.
+  it('reports a slot that opened and then dies during the retry round as lost', {
+    tags: ['requires:two-workers'],
+  }, async () => {
+    // Worker 0 (slot 0): real URL — opens successfully in round 1.
+    // Worker 1 (slot 1, round 1): bad URL — fails immediately.
+    // Worker 2 (slot 1, retry): real URL — succeeds in the retry round.
+    const created = failWorkerAtIndex(1);
+    const lostIndices: number[] = [];
+    const db = await createTestClient({
+      // Two live slots to distinguish which one died/recovered (spec 2026-09-15, A5).
+      poolSize: 2,
+      onWorkerLost: ({ index }) => lostIndices.push(index),
+    });
+
+    // Wait for round 1 to settle: worker 1 (bad URL) fails fast, worker 0
+    // eventually opens.  After onFirstSettle the retry round begins and
+    // worker 2 (slot 1 retry, real URL) starts loading.
+    // Poll until worker 2 has been created (= retry round is in progress).
+    while (created.length < 3) await sleep(10);
+
+    // Kill slot 0's worker while the retry round is still open.
+    // The browser fires load errors asynchronously, so dispatching here is
+    // ordered before worker 2's real load completes.
+    created[0].dispatchEvent(
+      new ErrorEvent('error', { message: 'killed during retry' }),
+    );
+
+    // The gate opens when slot 1 retry (worker 2) settles.  After that the
+    // client has one live worker (slot 1) and one permanent startup loss (slot 0).
+    await db.write('CREATE TABLE t (a)');
+
+    // onWorkerLost must have been called for the slot that died during the retry.
+    expect(lostIndices).toContain(0);
+  });
+
+  // Falsifiable only by removing BOTH guards, each sufficient alone: the
+  // `pool.filter(Boolean).length === 0` check in onGateOpen (src/client.ts)
+  // and the supervisor's 'fail-client' verdict for 'lost' (src/supervisor.ts,
+  // return 'lost' unconditionally). The client then hangs and the race
+  // resolves to 'HUNG'.
+  it('fails the client rather than hanging when all startup workers are gone', {
+    tags: ['requires:two-workers'],
+  }, async () => {
+    // Every failure here is dispatched by the test itself, not timed by the
+    // browser: slot 1 (silent) fails round 1; once slot 0 (real) has opened,
+    // slot 1's retry (also silent) is spawned; slot 0 is then killed while
+    // that retry is still open, and killing the retry leaves the pool empty
+    // at gate-open.
+    const { created, booted } = silentWorkersFromIndex(1);
+    const lostIndices: number[] = [];
+    // The startup gate is about TWO slots, so the pair must keep two: a target
+    // that caps the pool would refuse the client instead of exercising the gate
+    // (spec 2026-09-15, A5).
+    const db = await createTestClient({
+      poolSize: 2,
+      onWorkerLost: ({ index }) => lostIndices.push(index),
+    });
+
+    // Slot 0 (real) and slot 1 (silent, round 1) have both been constructed.
+    while (created.length < 2) await sleep(10);
+    await booted(created[1]);
+    created[1].dispatchEvent(
+      new ErrorEvent('error', { message: 'slot 1 failed round 1' }),
+    );
+
+    // Round 1 settles only once slot 0 has genuinely opened — only then does
+    // the retry spawn slot 1's silent replacement (worker index 2).
+    while (created.length < 3) await sleep(10);
+    await booted(created[2]);
+
+    created[0].dispatchEvent(
+      new ErrorEvent('error', { message: 'slot 0 killed during retry' }),
+    );
+    created[2].dispatchEvent(
+      new ErrorEvent('error', { message: 'slot 1 retry failed' }),
+    );
+
+    // The gate is now open with 0 workers.  A subsequent query must reject, not
+    // block indefinitely.  The bound of 8 s converts a hang into a test failure.
+    const outcome = await Promise.race([
+      db.read('SELECT 1').then(
+        () => 'resolved' as const,
+        (e: { code?: string }) => `rejected:${e.code ?? 'UNKNOWN'}` as const,
+      ),
+      new Promise<'HUNG'>((resolve) =>
+        setTimeout(() => resolve('HUNG'), 8_000),
+      ),
+    ]);
+    expect(outcome).not.toBe('HUNG');
+    expect(outcome).toMatch(/^rejected:/);
+    // Both permanently lost slots must have been reported before the client failed.
+    expect(lostIndices.sort()).toEqual([0, 1]);
+  });
+
+  // Falsifiable: remove the emitWorkerLost loop from the `openedCount === 0`
+  // branch in onFirstSettle (src/client.ts). The callback then fires for no
+  // slots on total failure and the length assertion fails.
+  it('fires onWorkerLost for every slot on total startup failure (openedCount === 0)', {
+    tags: ['requires:two-workers'],
+  }, async () => {
+    interceptWorkers({ url: '/definitely-missing-worker.js' });
+    const lostIndices: number[] = [];
+    // The startup gate is about TWO slots, so the pair must keep two: a target
+    // that caps the pool would refuse the client instead of exercising the gate
+    // (spec 2026-09-15, A5).
+    const db = await createTestClient({
+      poolSize: 2,
+      onWorkerLost: ({ index }) => lostIndices.push(index),
+    });
+
+    // Both workers fail to load; the client must reject and fire the callback
+    // for each slot before doing so.
+    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+      code: 'WORKER_CRASHED',
+    });
+    expect(lostIndices.sort()).toEqual([0, 1]);
+  });
+
+  // Falsifiable: remove `startupLosses.delete(index)` from spawn's .then()
+  // in src/client.ts. Slot 1 stays in startupLosses even after it succeeds,
+  // so onGateOpen emits onWorkerLost for it and lostIndices becomes [1].
+  it('does not report a slot as lost when its retry round succeeds', {
+    tags: ['requires:two-workers'],
+  }, async () => {
+    // Worker 0 (slot 0): real URL, round 1 success.
+    // Worker 1 (slot 1, round 1): bad URL, fail.
+    // Worker 2 (slot 1, retry): real URL, success.
+    failWorkerAtIndex(1);
+    const lostIndices: number[] = [];
+    const db = await createTestClient({
+      // Two live slots to distinguish which one died/recovered (spec 2026-09-15, A5).
+      poolSize: 2,
+      onWorkerLost: ({ index }) => lostIndices.push(index),
+    });
+
+    // Wait for startup to complete — both slots are now live.
+    await db.write('CREATE TABLE t (a)');
+
+    // No permanent losses occurred.
+    expect(lostIndices).toEqual([]);
+  });
+
+  // Falsifiable: drop `readyDeferred.reject(fatal)` from failClient — the gate
+  // is rejected before it opens, onGateOpen never runs, and `ready` stays
+  // pending until the test times out.
+  it('rejects db.ready with WORKER_CRASHED when no worker can start', async () => {
+    interceptWorkers({ url: '/definitely-missing-worker.js' });
+    const db = await createTestClient({ poolSize: 1 });
+    await expect(db.ready).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+  });
+
+  // Falsifiable: move `readyDeferred.resolve()` to the START of onGateOpen (or
+  // derive `ready` from the scheduler's gate). The gate opens on an empty pool
+  // and onGateOpen fails the client just after; `ready` must not resolve first.
+  it('rejects db.ready when the pool is empty at gate-open, although the gate opened', {
+    tags: ['requires:two-workers'],
+  }, async () => {
+    // Every failure here is dispatched by the test itself, not timed by the
+    // browser: slot 1 (silent) fails round 1; once slot 0 (real) has opened,
+    // slot 1's retry (also silent) is spawned; slot 0 is then killed while
+    // that retry is still open; killing the retry settles the gate on an
+    // empty pool — onGateOpen must fail the client there, before `ready` is
+    // allowed to resolve.
+    const { created, booted } = silentWorkersFromIndex(1);
+    const db = await createTestClient({
+      poolSize: 2,
+    });
+
+    // Slot 0 (real) and slot 1 (silent, round 1) have both been constructed.
+    while (created.length < 2) await sleep(10);
+    await booted(created[1]);
+    created[1].dispatchEvent(
+      new ErrorEvent('error', { message: 'slot 1 failed round 1' }),
+    );
+
+    // Round 1 settles only once slot 0 has genuinely opened — only then does
+    // the retry spawn slot 1's silent replacement (worker index 2).
+    while (created.length < 3) await sleep(10);
+    await booted(created[2]);
+
+    // Kill slot 0 while the retry round is still open.
+    created[0].dispatchEvent(
+      new ErrorEvent('error', { message: 'slot 0 killed during retry' }),
+    );
+    // Kill the retry itself: the pool is now empty, right as the gate opens.
+    created[2].dispatchEvent(
+      new ErrorEvent('error', { message: 'slot 1 retry failed' }),
+    );
+
+    await expect(db.ready).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+  });
+
+  // Falsifiable: drop `void readyDeferred.promise.catch(() => {})` — the
+  // failed client's unread `ready` then surfaces as an unhandledrejection.
+  it('raises no unhandled rejection for a failed client whose ready is never read', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (event: PromiseRejectionEvent) => {
+      unhandled.push(event.reason);
+      event.preventDefault();
+    };
+    window.addEventListener('unhandledrejection', onUnhandled);
+    onTestFinished(() =>
+      window.removeEventListener('unhandledrejection', onUnhandled),
+    );
+    interceptWorkers({ url: '/definitely-missing-worker.js' });
+    const db = await createTestClient({ poolSize: 1 });
+    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+      code: 'WORKER_CRASHED',
+    });
+    // unhandledrejection is dispatched after the microtask checkpoint.
+    await sleep(100);
+    expect(unhandled).toEqual([]);
+  });
+});

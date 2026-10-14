@@ -30,7 +30,12 @@ import {
 import { join, relative, resolve } from 'node:path';
 import type { SQLiteBuild } from '../src/const/builds.ts';
 import type { SQLiteVFS } from '../src/const/vfs.ts';
-import type { Family, FamilyInput, Pair, Plan } from '../tests/planner/plan.ts';
+import type {
+  Family,
+  FamilyInput,
+  Pair,
+  Plan,
+} from '../tests/harness/planner/plan.ts';
 import type { BrowserName } from './browsers.ts';
 import {
   allocateShards,
@@ -387,6 +392,8 @@ async function main() {
               'exec',
               'vitest',
               'run',
+              '--config',
+              'tests/vitest.config.ts',
               '--configLoader',
               'runner',
               '--project',
@@ -469,6 +476,8 @@ async function main() {
       [
         'exec',
         'vitest',
+        '--config',
+        'tests/vitest.config.ts',
         '--configLoader',
         'runner',
         '--merge-reports',
