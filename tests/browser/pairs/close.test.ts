@@ -18,8 +18,12 @@ import {
  * The recursive CTE gives the window a floor measured in milliseconds rather
  * than microseconds. It is the precondition that needed widening, not the
  * behaviour under test: what is asserted after the wait is unchanged.
+ *
+ * 20 000 rows was not enough: ~20 ms in Firefox on Linux, less on Apple
+ * Silicon, where the 4 ms polls missed the whole write (macOS runner,
+ * 2026-10-14). 200 000 rows: 140-190 ms in Firefox, 50-80 ms in Chrome here.
  */
-const SLOW_INSERT_ROWS = 20_000;
+const SLOW_INSERT_ROWS = 200_000;
 const SLOW_INSERT =
   'INSERT INTO t (a) WITH RECURSIVE c(x) AS ' +
   `(SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${SLOW_INSERT_ROWS}) ` +
