@@ -71,9 +71,11 @@ GitHub accepts a `workflow_dispatch` only for a workflow file present on the rem
 
 macOS behaves like Linux for everything below: POSIX process groups and signals. Only `win32` branches.
 
+Both helpers below live in a new `scripts/processes.ts`, imported by `scripts/parallel.ts`, `scripts/bounded.ts` and `tests/harness/build-setup.ts`.
+
 ### 4.1 Killing a process tree
 
-A shared `killTree(pid)` in `scripts/parallel.ts`:
+A shared `killTree(pid)`:
 
 - POSIX: `process.kill(-pid, 'SIGKILL')`, `ESRCH` ignored — today's behaviour.
 - `win32`: `taskkill /T /F /PID <pid>`, synchronous, so the child and everything it started go.
@@ -82,7 +84,12 @@ Used by `runBounded`'s timer, by `killLive` (Ctrl-C, CI cancellation), and by `s
 
 ### 4.2 Starting `pnpm` and `npx`
 
-On Windows `pnpm` and `npx` are `.cmd` files, and Node refuses to spawn one without `shell: true` (`EINVAL`, since the CVE-2024-27980 fix). One helper sets `shell: true` for them on `win32`; every `spawn`/`spawnSync`/`execFileSync` of a `.cmd` command in `scripts/` uses it: `parallel.ts` (the `pnpm` build before the jobs), `hook-gate.ts` (`pnpm`, `npx`), and any other found in a pass over `scripts/`. The arguments are constants of the code, never input, so the shell opens no injection. Commands that start with `node` need nothing.
+On Windows `pnpm` and `npx` are `.cmd` files, and Node refuses to spawn one without `shell: true` (`EINVAL`, since the CVE-2024-27980 fix). A shell is no answer on the path CI runs: the Vitest invocations pass project names with spaces (`chrome · OPFSAdaptiveVFS/jspi`), which `cmd.exe` would split (amended 2026-10-14, while planning).
+
+- **The CI path — Vitest and rslib — runs their package's bin with Node:** `packageBin(pkg, bin)` reads `node_modules/<pkg>/package.json`'s `bin` and returns `[process.execPath, <absolute path of the bin>]`. No `.cmd`, no shell, the same on every OS, so no `win32` branch. It replaces every `pnpm exec vitest …` and `pnpm exec rslib …` in `scripts/test-parallel.ts`, `scripts/test-plan.ts`, `scripts/parallel.ts` (`buildOnce`) and `tests/harness/build-setup.ts`.
+- **`scripts/hook-gate.ts`, which runs locally only (git hooks), keeps `pnpm`/`npx` with `shell: true` on `win32`.** Its argv are constants of the code without whitespace or quotes — a unit test holds that — so the shell can neither split them nor open an injection.
+
+Commands that start with `node` need nothing.
 
 ### 4.3 `scripts/browsers.ts`
 
