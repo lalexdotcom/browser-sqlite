@@ -132,7 +132,7 @@ table: t` for a table committed before the transaction — the respawned worker 
 memory database. Natural duration of the insert outside any transaction, for scale:
 356-430 ms Chromium, 1.8-2.5 s Firefox (`MemoryVFS`).
 
-**Status:** fixed by merge `eeabe06`; pinned by `tests/browser/tx-abort.test.ts`. Design:
+**Status:** fixed by merge `eeabe06`; pinned by `tests/browser/pairs/tx-abort.test.ts`. Design:
 `docs/superpowers/specs/2026-09-10-transaction-abort-design.md` §1.1.
 
 ## TX-HANDLE — a `tx` handle used after its transaction ended, 2026-09-10, both engines
@@ -152,7 +152,7 @@ arm with no late call; identical across runs and engines.
 **Present in `1.0.0-rc.4`** — `rollback()` there is the same unguarded `exec(worker,
 'ROLLBACK')`, read from the tag. Found because the user asked to verify a claim the design
 had marked "read from the code, not measured". **Status:** fixed by merge `eeabe06`; pinned by
-`tests/browser/tx-handle.test.ts`.
+`tests/browser/pairs/tx-handle.test.ts`.
 
 ## TX-M1 — an interrupted READ, and `SQLITE_FULL`, inside a transaction, 2026-09-10, both engines
 

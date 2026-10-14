@@ -81,7 +81,7 @@ n=3, one machine, headless, one container. The two engines agree closely.
 **Method.** Throwaway `tests/browser/cross-tab-probe.test.ts` (deleted). `navigator.locks.query`
 and `navigator.locks.request` wrapped in the test page before the client is created and counted
 by name prefix; `BARRIER_SQL` executions counted through `db.debug` the way
-`tests/browser/barrier.test.ts` does. The before/after arm ran the same workload in a scratch
+`tests/browser/pairs/barrier.test.ts` does. The before/after arm ran the same workload in a scratch
 `git worktree` at `git merge-base main HEAD`. **Every figure below is a count. No durations
 were taken, deliberately** — the effect is ~0.03 ms, Firefox clamps `performance.now()` to 1 ms,
 and this project has already paid once for timing an effect this size.
@@ -234,7 +234,7 @@ lock from inside an iframe would be counted as an independent client.
 
 ## A delete cannot slip past a client under construction — 2026-09-02, 20 runs per engine
 
-**Method.** `tests/browser/delete.test.ts`, kept: `createSQLiteClient` and `deleteDatabase` issued in
+**Method.** `tests/browser/pairs/delete.test.ts`, kept: `createSQLiteClient` and `deleteDatabase` issued in
 **one synchronous task**, client first, no `await` between them. Twenty runs on Chromium 151 and
 twenty on Firefox 153, this devcontainer. **20/20 refused with `DATABASE_IN_USE` on each engine, no
 variation.**

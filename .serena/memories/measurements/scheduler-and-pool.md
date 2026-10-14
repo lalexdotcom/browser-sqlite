@@ -128,7 +128,7 @@ see.
 
 **The change is proven as a count, not as a duration.** After a write, the next read is
 routed to the worker that wrote and pays no `BARRIER_SQL` statement — asserted by
-`tests/browser/barrier.test.ts` on Chromium **and** on Firefox, and falsified by deleting
+`tests/browser/pairs/barrier.test.ts` on Chromium **and** on Firefox, and falsified by deleting
 the branch in `takeAvailable`.
 
 **No latency gain is measurable on either engine.** One run per configuration, 200
@@ -159,7 +159,7 @@ the merge commit of `feat/last-writer-routing`.
 ## COOPSYNC-BUSY — a protocol step reaching the consumer, 2026-09-03, both engines
 
 Throwaway spike `tests/browser/coopsync-busy-probe.test.ts`, deleted; its tightened form is
-`tests/browser/coopsync-retry.test.ts`. Workload: 15 rounds of 8 concurrent operations, one
+`tests/browser/pairs/coopsync-retry.test.ts`. Workload: 15 rounds of 8 concurrent operations, one
 in three a write, through the public client.
 
 ### The defect, and two clauses of `mem:vfs` it falsified

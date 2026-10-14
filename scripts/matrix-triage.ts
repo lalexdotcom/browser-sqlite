@@ -160,7 +160,7 @@ console.log('| ---: | --- | --- | --- | --- |');
 for (const g of byCells) {
   const vfs = [...new Set(g.cells.map(vfsOf))].join(', ');
   console.log(
-    `| ${g.cells.length} | ${vfs} | ${g.file.replace('tests/browser/', '')} | ${g.name.slice(0, 80)} | ${g.type}: ${g.shape} |`,
+    `| ${g.cells.length} | ${vfs} | ${g.file.replace('tests/browser/pairs/', '')} | ${g.name.slice(0, 80)} | ${g.type}: ${g.shape} |`,
   );
 }
 

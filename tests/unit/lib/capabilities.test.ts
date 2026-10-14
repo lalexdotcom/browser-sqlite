@@ -1,0 +1,439 @@
+import { describe, expect, it, onTestFinished } from 'vitest';
+import { defaultBuildFor } from '../../../src/capabilities';
+import {
+  BUILD_CAPABILITIES,
+  type SQLiteBuild,
+} from '../../../src/const/builds';
+import type { PlatformFeature } from '../../../src/const/platform';
+import {
+  folderOf,
+  type SQLiteVFS,
+  VFS_CAPABILITIES,
+} from '../../../src/const/vfs';
+
+describe('VFS_CAPABILITIES', () => {
+  const names = Object.keys(VFS_CAPABILITIES) as SQLiteVFS[];
+
+  it('declares every field for every VFS', () => {
+    for (const vfs of names) {
+      const cap = VFS_CAPABILITIES[vfs];
+      expect(cap.builds.length).toBeGreaterThan(0);
+      expect(['page-cache', 'whole-database']).toContain(cap.memoryModel);
+      expect(typeof cap.multiConnection).toBe('boolean');
+      expect(typeof cap.persistent).toBe('boolean');
+    }
+  });
+
+  const WITH_JSPI = new Set<PlatformFeature>(['jspi']);
+  const WITHOUT_JSPI = new Set<PlatformFeature>();
+  const JSPI_FIRST: readonly SQLiteVFS[] = [
+    'OPFSAdaptiveVFS',
+    'IDBBatchAtomicVFS',
+    'IDBMirrorVFS',
+    'OPFSAnyContextVFS',
+    'MemoryAsyncVFS',
+  ];
+
+  // Falsifiable: swap `jspi` and `async` back in any `builds` array.
+  it('declares jspi before async on every VFS that runs both', () => {
+    for (const vfs of names) {
+      const builds = VFS_CAPABILITIES[vfs].builds as readonly SQLiteBuild[];
+      expect(builds.indexOf('jspi')).toBeLessThan(builds.indexOf('async'));
+    }
+  });
+
+  // Falsifiable: return `builds[1]` in defaultBuildFor.
+  it('resolves the default build to the first declared one where the engine has JSPI', () => {
+    for (const vfs of names) {
+      expect(defaultBuildFor(vfs, WITH_JSPI)).toBe(
+        VFS_CAPABILITIES[vfs].builds[0],
+      );
+    }
+  });
+
+  // Falsifiable: return `builds[0]` whatever `available` says.
+  it('falls back to the first declared build that requires nothing without JSPI', () => {
+    for (const vfs of names) {
+      const expected = JSPI_FIRST.includes(vfs) ? 'async' : 'sync';
+      expect(defaultBuildFor(vfs, WITHOUT_JSPI)).toBe(expected);
+    }
+  });
+
+  // Falsifiable: drop `async` from a jspi-first VFS's `builds`.
+  it('gives every VFS a build that requires nothing, so the resolution always lands', () => {
+    for (const vfs of names) {
+      const builds = VFS_CAPABILITIES[vfs].builds as readonly SQLiteBuild[];
+      expect(
+        builds.some((build) => BUILD_CAPABILITIES[build].requires.length === 0),
+      ).toBe(true);
+    }
+  });
+
+  // Falsifiable: delete `maxPoolSize: 1` from the AccessHandlePoolVFS entry.
+  it('caps AccessHandlePoolVFS at one worker and leaves the others uncapped', () => {
+    expect(VFS_CAPABILITIES.AccessHandlePoolVFS.maxPoolSize).toBe(1);
+    expect(VFS_CAPABILITIES.OPFSAdaptiveVFS.maxPoolSize).toBeNull();
+  });
+
+  // Falsifiable: set multiConnection to true on AccessHandlePoolVFS.
+  it('records which VFS can share one database between connections', () => {
+    expect(VFS_CAPABILITIES.AccessHandlePoolVFS.multiConnection).toBe(false);
+    expect(VFS_CAPABILITIES.OPFSAdaptiveVFS.multiConnection).toBe(true);
+  });
+
+  // Falsifiable: delete poolLimitReason from the AccessHandlePoolVFS entry.
+  it('gives every capped VFS a reason for its cap', () => {
+    for (const vfs of names) {
+      const cap = VFS_CAPABILITIES[vfs];
+      if (cap.maxPoolSize !== null) {
+        expect(cap.poolLimitReason).toBeTruthy();
+      }
+    }
+  });
+});
+
+import {
+  describeMissing,
+  detectFeatures,
+  KNOWN_FEATURES,
+  missingFeature,
+} from '../../../src/capabilities';
+import { WORKER_PROBES } from '../../../src/worker/probes';
+
+describe('platform requirements', () => {
+  // Falsifiable: add a feature to any `requires` without adding a probe.
+  // This is the invariant that would have caught `writable-stream` shipping
+  // with no probe — ANYCONTEXT-1's exact gap.
+  it('gives every declared feature either a probe or an explicit exemption', () => {
+    const declared = new Set<PlatformFeature>();
+    for (const cap of Object.values(VFS_CAPABILITIES)) {
+      for (const f of cap.requires) declared.add(f);
+      for (const f of cap.degradesWithout) declared.add(f);
+      for (const f of cap.singleConnectionWithout) declared.add(f);
+    }
+    for (const cap of Object.values(BUILD_CAPABILITIES)) {
+      for (const f of cap.requires) declared.add(f);
+      for (const f of cap.interruptibleWithout) declared.add(f);
+    }
+
+    expect(declared.size).toBeGreaterThan(0);
+    for (const feature of declared) {
+      expect(KNOWN_FEATURES.has(feature)).toBe(true);
+    }
+  });
+
+  it('reports the first missing feature a pair requires', () => {
+    // OPFSAdaptiveVFS requires opfs; the jspi build requires jspi.
+    expect(missingFeature('OPFSAdaptiveVFS', 'async', new Set())).toBe('opfs');
+    expect(
+      missingFeature('OPFSAdaptiveVFS', 'jspi', new Set(['opfs', 'web-locks'])),
+    ).toBe('jspi');
+    expect(missingFeature('OPFSAdaptiveVFS', 'async', new Set(['opfs']))).toBe(
+      'web-locks',
+    );
+    expect(
+      missingFeature(
+        'OPFSAdaptiveVFS',
+        'async',
+        new Set(['opfs', 'web-locks']),
+      ),
+    ).toBeNull();
+  });
+
+  // Falsifiable: drop 'web-locks' from an IndexedDB VFS's `requires`. Outside
+  // a secure context it fails on its first lock instead of being refused.
+  it('requires Web Locks for the IndexedDB VFS, and nothing for the memory VFS', () => {
+    expect(missingFeature('IDBBatchAtomicVFS', 'async', new Set())).toBe(
+      'web-locks',
+    );
+    expect(missingFeature('IDBMirrorVFS', 'async', new Set())).toBe(
+      'web-locks',
+    );
+    expect(missingFeature('MemoryVFS', 'sync', new Set())).toBeNull();
+    expect(missingFeature('MemoryAsyncVFS', 'async', new Set())).toBeNull();
+  });
+
+  // Falsifiable: drop 'indexeddb' from an IndexedDB VFS's `requires`. Where
+  // IndexedDB is missing it would construct, then fail inside its worker.
+  it('requires IndexedDB for the IndexedDB VFS once Web Locks are there', () => {
+    const here = new Set<PlatformFeature>(['web-locks']);
+    expect(missingFeature('IDBBatchAtomicVFS', 'async', here)).toBe(
+      'indexeddb',
+    );
+    expect(missingFeature('IDBMirrorVFS', 'async', here)).toBe('indexeddb');
+  });
+
+  it('names IndexedDB and the VFS that do without it when it is missing', () => {
+    const here = new Set<PlatformFeature>([
+      'web-locks',
+      'opfs',
+      'sync-access-handle',
+    ]);
+    const message = describeMissing(
+      'IDBBatchAtomicVFS',
+      'async',
+      'indexeddb',
+      here,
+    );
+    expect(message).toContain('IndexedDB');
+    expect(message).toContain('OPFSWriteAheadVFS');
+    expect(message).not.toContain('IDBMirrorVFS');
+  });
+
+  it('probes IndexedDB, which Node does not have', () => {
+    expect(detectFeatures().has('indexeddb')).toBe(false);
+  });
+
+  // An opaque origin (a sandboxed iframe) throws SecurityError from the
+  // getter, and a browser with IndexedDB disabled can expose it as null.
+  // Falsifiable: probe with a bare `typeof indexedDB !== 'undefined'`.
+  it.each([
+    [
+      'throws',
+      () => {
+        throw new DOMException('denied', 'SecurityError');
+      },
+    ],
+    ['is null', () => null],
+  ])(
+    'reports no IndexedDB, without throwing, where its getter %s',
+    (_, get) => {
+      Object.defineProperty(globalThis, 'indexedDB', {
+        get,
+        configurable: true,
+      });
+      onTestFinished(() => {
+        delete (globalThis as { indexedDB?: unknown }).indexedDB;
+      });
+      expect(detectFeatures().has('indexeddb')).toBe(false);
+    },
+  );
+
+  it('requires writable-stream for OPFSAnyContextVFS', () => {
+    expect(
+      missingFeature('OPFSAnyContextVFS', 'async', new Set(['opfs'])),
+    ).toBe('writable-stream');
+  });
+
+  // Falsifiable: remove 'readwrite-unsafe' from UNPROBEABLE.
+  it('never reports readwrite-unsafe, which has no synchronous probe', () => {
+    expect(
+      missingFeature(
+        'OPFSWriteAheadVFS',
+        'sync',
+        new Set(['opfs', 'web-locks']),
+      ),
+    ).toBeNull();
+  });
+
+  it('names an alternative build when the build is what is missing', () => {
+    const message = describeMissing('OPFSAdaptiveVFS', 'jspi', 'jspi');
+    expect(message).toContain("the 'jspi' build requires");
+    expect(message).toContain('async');
+  });
+
+  it('names VFS that do not need the feature when the VFS is what is missing', () => {
+    const message = describeMissing('OPFSAdaptiveVFS', 'async', 'opfs');
+    expect(message).toContain('OPFSAdaptiveVFS requires');
+    expect(message).toContain('IDBBatchAtomicVFS');
+  });
+
+  // Falsifiable: drop the availability filter on the alternatives, or the
+  // secure-context sentence.
+  it('outside a secure context, names only the memory VFS as alternatives', () => {
+    const global = globalThis as { isSecureContext?: boolean };
+    const before = global.isSecureContext;
+    global.isSecureContext = false;
+    try {
+      const message = describeMissing(
+        'OPFSAdaptiveVFS',
+        'async',
+        'opfs',
+        new Set(),
+      );
+      expect(message).toContain('not a secure context (https or localhost)');
+      expect(message).toContain('MemoryVFS, MemoryAsyncVFS');
+      expect(message).not.toContain('IDBBatchAtomicVFS');
+    } finally {
+      if (before === undefined) delete global.isSecureContext;
+      else global.isSecureContext = before;
+    }
+  });
+
+  it('detects nothing in Node, where none of the globals exist', () => {
+    expect(detectFeatures().has('opfs')).toBe(false);
+  });
+
+  it('probes cross-origin isolation, and reports the host it runs in', () => {
+    const features = detectFeatures();
+    // Node and the test host are not isolated; the probe must say so rather
+    // than throw or report the feature present.
+    expect(features.has('cross-origin-isolated')).toBe(
+      globalThis.crossOriginIsolated === true,
+    );
+  });
+
+  it('declares which build cannot be interrupted without which feature', () => {
+    expect(BUILD_CAPABILITIES.sync.interruptibleWithout).toEqual([
+      'cross-origin-isolated',
+    ]);
+    expect(BUILD_CAPABILITIES.async.interruptibleWithout).toEqual([]);
+    expect(BUILD_CAPABILITIES.jspi.interruptibleWithout).toEqual([]);
+  });
+});
+
+describe('VFS folder declarations', () => {
+  // Not documentation. `folder` is where the library places a database AND the
+  // statement that this VFS addresses its files by path: `deleteDatabase` runs
+  // its OPFS removal pass only where it is set, and OPFSCoopSyncVFS's jDelete
+  // truncates without removing — a missing folder is a deletion that silently
+  // leaves the file in place. Pinned by name, one line per VFS.
+  it('gives each path-addressed OPFS VFS its own folder', () => {
+    expect(folderOf('OPFSAdaptiveVFS')).toBe('ad');
+    expect(folderOf('OPFSAnyContextVFS')).toBe('ac');
+    expect(folderOf('OPFSCoopSyncVFS')).toBe('cs');
+    expect(folderOf('OPFSWriteAheadVFS')).toBe('wa');
+    expect(folderOf('AccessHandlePoolVFS')).toBeUndefined();
+    expect(folderOf('IDBBatchAtomicVFS')).toBeUndefined();
+    expect(folderOf('IDBMirrorVFS')).toBeUndefined();
+    expect(folderOf('MemoryVFS')).toBeUndefined();
+    expect(folderOf('MemoryAsyncVFS')).toBeUndefined();
+  });
+
+  it('declares folders only on OPFS, two letters each, never twice', () => {
+    const folders = (Object.keys(VFS_CAPABILITIES) as SQLiteVFS[])
+      .filter((vfs) => folderOf(vfs) !== undefined)
+      .map((vfs) => {
+        expect(VFS_CAPABILITIES[vfs].storage).toBe('opfs');
+        return folderOf(vfs) as string;
+      });
+    for (const folder of folders) expect(folder).toMatch(/^[a-z]{2}$/);
+    expect(new Set(folders).size).toBe(folders.length);
+  });
+
+  it('no longer declares a layout', () => {
+    for (const cap of Object.values(VFS_CAPABILITIES)) {
+      expect('layout' in cap).toBe(false);
+    }
+  });
+});
+
+describe('exclusiveConnection', () => {
+  const names = Object.keys(VFS_CAPABILITIES) as SQLiteVFS[];
+
+  // Falsifiable: set exclusiveConnection to false on AccessHandlePoolVFS and
+  // this goes red. That is the whole point — the guard in client.ts reads this
+  // field to decide whether to enforce the origin-wide connection lock, so a
+  // wrong false here means a second client is handed a silently broken view.
+  it('is true only for AccessHandlePoolVFS', () => {
+    expect(VFS_CAPABILITIES.AccessHandlePoolVFS.exclusiveConnection).toBe(true);
+    for (const vfs of names) {
+      if (vfs === 'AccessHandlePoolVFS') continue;
+      expect(VFS_CAPABILITIES[vfs].exclusiveConnection).toBe(false);
+    }
+  });
+
+  // Falsifiable: set exclusiveConnection to true on IDBMirrorVFS. Despite
+  // multiConnection: false, that VFS shares data via BroadcastChannel (measured
+  // 2026-09-01), so exclusiveConnection must stay false there.
+  it('is false for IDBMirrorVFS, which shares data across clients via BroadcastChannel', () => {
+    expect(VFS_CAPABILITIES.IDBMirrorVFS.exclusiveConnection).toBe(false);
+    expect(VFS_CAPABILITIES.IDBMirrorVFS.multiConnection).toBe(false);
+  });
+
+  // Falsifiable: set exclusiveConnection to true on MemoryVFS.
+  it('is false for the memory VFS, which are isolated by construction', () => {
+    expect(VFS_CAPABILITIES.MemoryVFS.exclusiveConnection).toBe(false);
+    expect(VFS_CAPABILITIES.MemoryAsyncVFS.exclusiveConnection).toBe(false);
+  });
+
+  it('declares the field for every VFS', () => {
+    for (const vfs of names) {
+      expect(typeof VFS_CAPABILITIES[vfs].exclusiveConnection).toBe('boolean');
+    }
+  });
+});
+
+describe('singleConnectionWithout', () => {
+  // Falsifiable: declare `singleConnectionWithout: ['opfs']` on any VFS — the
+  // worker has no probe for it, so the declaration would never cap anything.
+  it('names only features a worker can probe', () => {
+    for (const cap of Object.values(VFS_CAPABILITIES)) {
+      for (const feature of cap.singleConnectionWithout) {
+        expect(feature in WORKER_PROBES).toBe(true);
+      }
+    }
+  });
+
+  // Falsifiable: remove OPFSAdaptiveVFS's declaration.
+  it('caps OPFSWriteAheadVFS and OPFSAdaptiveVFS, and nothing else', () => {
+    const capped = Object.entries(VFS_CAPABILITIES)
+      .filter(([, cap]) => cap.singleConnectionWithout.length > 0)
+      .map(([name]) => name);
+    expect(capped).toEqual(['OPFSWriteAheadVFS', 'OPFSAdaptiveVFS']);
+  });
+
+  // Falsifiable: set OPFSCoopSyncVFS's maxPoolSize back to null (spec 2026-09-13, §10, D9).
+  it('caps OPFSCoopSyncVFS at one worker on every engine', () => {
+    expect(VFS_CAPABILITIES.OPFSCoopSyncVFS.maxPoolSize).toBe(1);
+    expect(VFS_CAPABILITIES.OPFSCoopSyncVFS.multiConnection).toBe(true);
+  });
+});
+
+describe('exclusiveConnectionWithout', () => {
+  // Falsifiable: remove OPFSWriteAheadVFS's declaration, or declare one on
+  // OPFSAdaptiveVFS — which shares its database across tabs.
+  it('makes OPFSWriteAheadVFS alone exclusive where a feature is missing', () => {
+    const declared = Object.entries(VFS_CAPABILITIES)
+      .filter(([, cap]) => cap.exclusiveConnectionWithout.length > 0)
+      .map(([name]) => name);
+    expect(declared).toEqual(['OPFSWriteAheadVFS']);
+    expect(
+      VFS_CAPABILITIES.OPFSWriteAheadVFS.exclusiveConnectionWithout,
+    ).toEqual(['readwrite-unsafe']);
+  });
+
+  // Falsifiable: declare `exclusiveConnectionWithout: ['opfs']` on any VFS —
+  // worker 0 has no probe for it, so the lock's mode could never be decided.
+  it('names only features a worker can probe', () => {
+    for (const cap of Object.values(VFS_CAPABILITIES)) {
+      for (const feature of cap.exclusiveConnectionWithout) {
+        expect(feature in WORKER_PROBES).toBe(true);
+      }
+    }
+  });
+
+  // Falsifiable: remove 'readwrite-unsafe' from OPFSWriteAheadVFS's
+  // singleConnectionWithout. The client spawns its whole pool at once and only
+  // worker 0 waits for the connection lock (spec 2026-09-15, A2); a surplus
+  // worker is kept off the file by declining on that list.
+  it('is covered by singleConnectionWithout', () => {
+    for (const cap of Object.values(VFS_CAPABILITIES)) {
+      for (const feature of cap.exclusiveConnectionWithout) {
+        expect(cap.singleConnectionWithout).toContain(feature);
+      }
+    }
+  });
+
+  // Falsifiable: set exclusiveConnection: true on OPFSWriteAheadVFS.
+  it('is never combined with exclusiveConnection', () => {
+    for (const cap of Object.values(VFS_CAPABILITIES)) {
+      if (cap.exclusiveConnection) {
+        expect(cap.exclusiveConnectionWithout).toEqual([]);
+      }
+    }
+  });
+});
+
+describe('extraFileSuffixes', () => {
+  // Falsifiable: remove '-wa0'/'-wa1' from OPFSWriteAheadVFS, or declare a suffix on
+  // another VFS without a measurement behind it.
+  it('declares extra files on OPFSWriteAheadVFS and nothing else', () => {
+    const declared = Object.fromEntries(
+      Object.entries(VFS_CAPABILITIES)
+        .filter(([, cap]) => cap.extraFileSuffixes.length > 0)
+        .map(([name, cap]) => [name, cap.extraFileSuffixes]),
+    );
+    expect(declared).toEqual({ OPFSWriteAheadVFS: ['-wa0', '-wa1'] });
+  });
+});

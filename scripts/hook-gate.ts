@@ -79,7 +79,7 @@ export type Facts = {
 // patch, and the wa-sqlite pin, which lives in the lockfile.
 const CONFORMANCE_PATHS = [
   'src/',
-  'tests/conformance/',
+  'tests/browser/conformance/',
   'patches/',
   'pnpm-lock.yaml',
 ];

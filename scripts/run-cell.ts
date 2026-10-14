@@ -11,7 +11,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Vitest } from 'vitest/node';
-import type { Planned } from '../tests/planner/guard.ts';
+import type { Planned } from '../tests/harness/planner/guard.ts';
 import { ROOT } from './parallel.ts';
 import { openVitest, type PlannedRun, projectNamed } from './plan-io.ts';
 

@@ -6,13 +6,17 @@ import {
   type Vitest,
 } from 'vitest/node';
 import type { PlatformFeature } from '../src/const/platform.ts';
-import type { Cell, CollectedTest, Family } from '../tests/planner/plan.ts';
+import type {
+  Cell,
+  CollectedTest,
+  Family,
+} from '../tests/harness/planner/plan.ts';
 import { ROOT } from './parallel.ts';
 
 /**
  * The planner's side of Vitest's Node API (spec 2026-10-12, § 4; measured
  * in mem:measurements/suite-and-matrix § TEST-IDS). A plain `node` script
- * cannot import tests/planner/plan.ts — its src/ imports carry no
+ * cannot import tests/harness/planner/plan.ts — its src/ imports carry no
  * extension — so the planner is loaded through Vite (`loadPlanner`).
  */
 
@@ -36,7 +40,7 @@ export async function openVitest({
     ...(json ? ['json'] : []),
   ];
   const vitest = await createVitest('test', {
-    config: resolve(ROOT, 'vitest.config.ts'),
+    config: resolve(ROOT, 'tests/vitest.config.ts'),
     configLoader: 'runner',
     watch: false,
     reporters,
@@ -79,10 +83,10 @@ export const projectNamed = (vitest: Vitest, name: string): TestProject => {
 
 export const loadPlanner = (vitest: Vitest) =>
   projectNamed(vitest, 'unit').import<
-    typeof import('../tests/planner/plan.ts')
-  >(resolve(ROOT, 'tests/planner/plan.ts'));
+    typeof import('../tests/harness/planner/plan.ts')
+  >(resolve(ROOT, 'tests/harness/planner/plan.ts'));
 
-/** The family's probe project's view of its environment (tests/probe/features.test.ts). */
+/** The family's probe project's view of its environment (tests/browser/probe/features.test.ts). */
 export async function probeFeatures(
   vitest: Vitest,
   family: Family,
@@ -90,7 +94,9 @@ export async function probeFeatures(
   const name = `probe ${family.isolated ? 'isolated ' : ''}${family.browser}`;
   const project = projectNamed(vitest, name);
   const result = await vitest.runTestSpecifications([
-    project.createSpecification(resolve(ROOT, 'tests/probe/features.test.ts')),
+    project.createSpecification(
+      resolve(ROOT, 'tests/browser/probe/features.test.ts'),
+    ),
   ]);
   // `testModules` accumulates over every run of this Vitest: only this
   // probe project's module is this run's (measured 2026-10-12).

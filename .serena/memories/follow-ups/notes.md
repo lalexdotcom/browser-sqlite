@@ -59,7 +59,7 @@ The single allocation was suggested in the reply to rhashimoto's review (2026-09
 
 ### `pool-cap`'s surplus-slot flake — margin widened, never reproduced; closed by the user on 2026-09-27
 
-**The test.** `tests/browser/pool-cap.test.ts :: a pool capped by its environment > a surplus slot that times out, then declines in the retry round, is not announced lost` — Firefox only (`CAPPED`, no `readwrite-unsafe`). It holds slot 1's round-1 `open` back so round 1 gives up on it, then lets the retry decline, and asserts no `onWorkerLost`, a pool of 1, no warning.
+**The test.** `tests/browser/pairs/pool-cap.test.ts :: a pool capped by its environment > a surplus slot that times out, then declines in the retry round, is not announced lost` — Firefox only (`CAPPED`, no `readwrite-unsafe`). It holds slot 1's round-1 `open` back so round 1 gives up on it, then lets the retry decline, and asserts no `onWorkerLost`, a pool of 1, no warning.
 
 **The flake and its mechanism.** Seen under load as `Worker 1 did not become ready within 600 ms`: `openTimeout` is client-wide, so it also governs slot 0's HEALTHY worker, and it was that one that missed. Squeezed on an idle machine, slot 0 needs some tens of ms (10, 25, 50 ms fail; 100 ms passes). `2be2ae6` (2026-09-21) moved `openTimeout` 600 → 3000 (~10× → ~50×) and the held-back `open` 3000 → 15000.
 
@@ -142,7 +142,7 @@ library's number — the true floor is at least that and may be higher.
 ### BENCH-DRIFT — the page holds a second copy of the invariants, permanently
 
 The six conformance invariants are duplicated between `scripts/bench/html/index.html` and
-`tests/conformance/`, ~220 lines each side. `dist/index.js` is the page's only import
+`tests/browser/conformance/`, ~220 lines each side. `dist/index.js` is the page's only import
 channel, so sharing them would ship conformance assertions to every consumer.
 `HAS_UNSAFE_HANDLES` stays on the page because it needs a worker and two access handles.
 

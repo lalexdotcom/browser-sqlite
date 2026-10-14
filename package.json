@@ -53,7 +53,7 @@
 		"prepare": "simple-git-hooks",
 		"test": "node scripts/bounded.ts 2400 node scripts/test-plan.ts --unit",
 		"test:isolated": "node scripts/bounded.ts 600 node scripts/test-plan.ts --modes isolated --full",
-		"test:unit": "vitest run --configLoader runner --project unit",
+		"test:unit": "vitest run --config tests/vitest.config.ts --configLoader runner --project unit",
 		"test:browser": "node scripts/bounded.ts 1800 node scripts/test-plan.ts",
 		"test:chrome": "node scripts/bounded.ts 900 node scripts/test-plan.ts --browser chrome",
 		"test:firefox": "node scripts/bounded.ts 900 node scripts/test-plan.ts --browser firefox",

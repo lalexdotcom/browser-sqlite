@@ -58,7 +58,7 @@ same under concurrent connections; any other VFS under a yielding statement — 
 `OPFSAdaptiveVFS` can hand its rotated handle over mid-statement between clients.
 
 **Fixed on `fix/idb-long-read` (`133d51a`), 2026-09-14.** `yieldsDuringStatements`, true for this
-VFS only, makes the worker yield on every statement there. `tests/browser/idb-long-read.test.ts`
+VFS only, makes the worker yield on every statement there. `tests/browser/pairs/idb-long-read.test.ts`
 failed before it on both engines and both builds, and passes after. **Safari 26.6.2 macOS, the
 user's console probe on preview `4340da6`**:
 a read issued 50 ms into an unsignalled self-join won 3/3, 2-3 ms against 343-355 ms. The worker

@@ -236,12 +236,12 @@ export function buildOnce(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (env.BSQ_TEST_BUILT !== '1') {
     const built = spawnSync(
       'pnpm',
-      ['exec', 'rslib', 'build', '-c', 'rslib.test.config.ts'],
+      ['exec', 'rslib', 'build', '-c', 'tests/rslib.vitest.config.ts'],
       { cwd: ROOT, env, stdio: 'inherit' },
     );
     if (built.status !== 0) {
       throw new Error(
-        `rslib.test.config.ts: the build failed (exit ${built.status})`,
+        `tests/rslib.vitest.config.ts: the build failed (exit ${built.status})`,
       );
     }
   }

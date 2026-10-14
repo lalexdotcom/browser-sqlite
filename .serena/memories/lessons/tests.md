@@ -174,7 +174,7 @@ from the other side. That test carries its own 90 s timeout and a comment saying
 Renaming the README's *Bundler Configuration* section to lowercase `configuration` while
 splitting the documentation broke nothing visible, so the same rename was carried into the
 error message `pool.ts` raises when the worker URL 404s. That message is asserted at the
-character level: `tests/browser/lifecycle.test.ts` expects
+character level: `tests/browser/pairs/lifecycle.test.ts` expects
 `stringContaining('Bundler Configuration')`. The suite would have caught it at commit — the
 pre-commit hook runs all three configs — but only after several minutes, and the diagnosis
 from a browser test failing on a string is not obvious.
@@ -193,7 +193,7 @@ it is worth running whenever a documentation file is reorganised.
 ## A plan's list of tests to invert is a guess until the tests are grepped — 2026-09-11
 
 The savepoint spec and plan listed the tests the new rule would invert, from memory of the
-previous branch. They missed one: `tests/browser/tx-handle.test.ts` pinned the superseded rule
+previous branch. They missed one: `tests/browser/pairs/tx-handle.test.ts` pinned the superseded rule
 through `tx.signal` — a caught abandoned write aborted it. The core task's implementer stopped
 BLOCKED with the suite red on a file outside its brief, which cost a round trip and a ruling.
 **Before planning a rule change, grep the tests for what the old rule makes observable** — here

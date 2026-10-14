@@ -367,7 +367,7 @@
        * the property is supported would answer yes and be wrong.
        *
        * createSyncAccessHandle only exists in a dedicated worker, hence the
-       * inline blob worker. Ported from tests/conformance/helpers.ts — see
+       * inline blob worker. Ported from tests/browser/helpers/environment.ts — see
        * BENCH-DRIFT in mem:follow-ups before changing either copy.
        */
       /**
@@ -552,7 +552,7 @@
        * True when this VFS runs a single worker in this browser: declared
        * (`maxPoolSize: 1`), or capped because a `singleConnectionWithout`
        * feature is missing here. Mirrors `oneWorkerHere` in
-       * tests/conformance/helpers.ts (BENCH-DRIFT, `mem:follow-ups`): a
+       * tests/browser/helpers/environment.ts (BENCH-DRIFT, `mem:follow-ups`): a
        * two-worker row is skipped there, never "passed" on one worker. Only
        * `readwrite-unsafe` is probed on this page; any other feature counts as
        * present, as the worker's own probe treats one it cannot probe. `?? []`
@@ -1376,7 +1376,7 @@
 
       /**
        * Conformance rows. Ids are the describe() titles of
-       * tests/conformance/invariants.test.ts, normalized: the "invariant N — "
+       * tests/browser/conformance/invariants.test.ts, normalized: the "invariant N — "
        * prefix is dropped and the remainder is kebab-cased — see BENCH-DRIFT in
        * mem:follow-ups. `run` resolves true, resolves 'blocked', or throws.
        */

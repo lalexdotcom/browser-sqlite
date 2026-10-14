@@ -1,7 +1,7 @@
 import type { BrowserName } from '../scripts/browsers';
 import type { PlatformFeature } from '../src/const/platform';
-import type { TestTarget } from './browser/target';
-import type { Planned } from './planner/guard';
+import type { Planned } from './harness/planner/guard';
+import type { TestTarget } from './harness/target';
 
 declare module 'vitest' {
   export interface ProvidedContext {
@@ -12,9 +12,9 @@ declare module 'vitest' {
     bsqPlanned?: Planned;
   }
   export interface TaskMeta {
-    /** What tests/probe/features.test.ts found in its environment. */
+    /** What tests/browser/probe/features.test.ts found in its environment. */
     features?: PlatformFeature[];
-    /** Under BSQ_TEST_TRACE=1: what the test touched (tests/browser/trace.ts). */
+    /** Under BSQ_TEST_TRACE=1: what the test touched (tests/browser/setup/trace.ts). */
     bsqTrace?: { targetReads: number; workers: number; tags: string[] };
   }
 }

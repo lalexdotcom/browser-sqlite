@@ -51,7 +51,7 @@ settled N.
 > `closeOpenStatements()` in `src/transaction.ts` interrupts the transport, awaits the
 > generator's `return()` and then `worker.quiesce()` — so the ROLLBACK meets an idle
 > connection, trips no guard, and evicts nothing. Measured after the fix by
-> `tests/browser/abandon-transaction.test.ts` → *commits, and evicts no worker*:
+> `tests/browser/pairs/abandon-transaction.test.ts` → *commits, and evicts no worker*:
 > `terminated=0 created=2`, and the transaction COMMITS rather than failing at all, so the
 > `GENERATOR_ABANDONED` column below no longer has a value. The `AccessHandlePoolVFS`
 > recovery figures (43 ms / 57 ms) now price a path an abandoned generator does not take.
