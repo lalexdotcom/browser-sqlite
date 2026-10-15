@@ -2,6 +2,8 @@
 
 Part of `mem:conventions`, moved out of it as written on 2026-10-13 when that memory neared 40 000 characters: the upstream rules of its § Working with the user, then those carried over from Claude's auto-memory. What was sent, and its reports: `mem:upstream`.
 
+- **One PR per VFS (user, 2026-10-15).** A defect shared by two VFS gets one PR each, not a shared helper; the first PR may say the other VFS "may have the same problem" and is being looked into separately (#381 for `OPFSCoopSyncVFS`, `OPFSAdaptiveVFS` to follow).
+- **A PR body goes straight to the essentials, without our measurement tables (user, 2026-10-15).** What happens, the change and its cost, the test: say in words where it reproduces (e.g. "in Chrome, Firefox and Safari, most reliably in Firefox"), not per-browser counts. The numbers stay in our report in `docs/upstream/`. The test in the PR remains the maintainer's reproducible arm.
 - **An upstream PR's title starts with the VFS it concerns (user, 2026-09-27):**
   `OPFSWriteAheadVFS: read the WAL to its end when a read transaction begins`. Every PR from then
   on, in the draft's suggested title as in the PR itself.

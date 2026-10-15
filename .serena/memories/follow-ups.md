@@ -260,6 +260,10 @@ Options put to the user: (1) wa-sqlite `OPFSCoopSyncVFS` retries `createSyncAcce
 - `tests/unit/tooling/processes.test.ts` › "hands an argument with spaces and a middle dot over intact" spawns Node itself and exercises no project code; its "Falsifiable" comment is wrong.
 - Windows bounds: (2400 + 1800) × 4 s = 280 min of `bounded.ts` budget against a 240-min job; a job GitHub cancels uploads no logs (`if: failure()` does not run on cancel).
 
+## `close.test.ts` › "rejects a queued request and every later call" — its falsifier is refuted (2026-10-14, pre-existing)
+
+Checked while widening its window on `ci/windows-macos`: with `closeAbort.abort(closingError)` removed from `close()` (`src/client.ts`, ~l. 1483 then), the test stays GREEN on `firefox · OPFSWriteAheadVFS/sync` — the comment's stated falsifier does not bite. Likely a second guard producing the same rejection (`mem:lessons/tests`, "A falsifier that stays green may be one guard of two"). To do: find the second guard, then either pin what only `closeAbort` buys or rewrite the comment to the pair, running the mutation. Reported to the user, not fixed.
+
 ## The matrix on Windows and macOS — later (user, 2026-10-15)
 
 `matrix.yaml` (every vfs/build pair, 52 cells) runs on `ubuntu-latest` only; `tests.yaml` gives Windows and macOS `pnpm test` (complement mode) and conformance only (spec 2026-10-14, D6). The planner already produces an all-pairs plan; `matrix.yaml` would need a `runs-on` input and `BSQ_TIME_SCALE`. Cost to weigh: on Windows, Firefox's OPFS makes a full matrix take hours.
