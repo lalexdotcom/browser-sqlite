@@ -94,7 +94,14 @@ export default defineConfig({
     : {}),
   resolve: {
     alias: [
-      { find: /^browser-sqlite$/, replacement: built('index.js') },
+      // The build, through a module that only stretches the default open
+      // timeout under BSQ_TIME_SCALE (tests/browser/helpers/library.ts).
+      {
+        find: /^browser-sqlite$/,
+        replacement: fileURLToPath(
+          new URL('./browser/helpers/library.ts', import.meta.url),
+        ),
+      },
       { find: /^browser-sqlite\/testing$/, replacement: built('testing.js') },
     ],
   },
