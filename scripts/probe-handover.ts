@@ -26,7 +26,7 @@ const ROUNDS = 30;
 
 const WORKER = `
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-onmessage = async ({ data: { role, round } }) => {
+onmessage = async ({ data: { role, round, kill } }) => {
   const root = await navigator.storage.getDirectory();
   const fh = await root.getFileHandle('handover', { create: true });
   if (role === 'A') {
@@ -35,6 +35,10 @@ onmessage = async ({ data: { role, round } }) => {
       const h = await fh.createSyncAccessHandle();
       h.write(new Uint8Array([round]), { at: 0 });
       h.flush();
+      if (kill) {
+        postMessage({ holding: true });
+        await new Promise(() => {});
+      }
       h.close();
     });
     postMessage({ done: true });
@@ -63,22 +67,27 @@ onmessage = async ({ data: { role, round } }) => {
 
 const PAGE = `<!doctype html><script>
 const url = URL.createObjectURL(new Blob([${JSON.stringify(WORKER)}], { type: 'text/javascript' }));
-const a = new Worker(url), b = new Worker(url);
 const next = (w) => new Promise((r) => { w.onmessage = (e) => r(e.data); });
-window.__probe = (async () => {
+const run = async (kill) => {
   const out = [];
+  const b = new Worker(url);
   for (let round = 0; round < ${ROUNDS}; round++) {
+    const a = new Worker(url);
     const aGranted = next(a);
-    a.postMessage({ role: 'A', round });
+    a.postMessage({ role: 'A', round, kill });
     await aGranted;
-    const aDone = next(a);
+    const aNext = next(a);
     const bDone = next(b);
     b.postMessage({ role: 'B', round });
-    await aDone;
+    await aNext;
+    if (kill) a.terminate();
     out.push(await bDone);
+    if (!kill) a.terminate();
   }
+  b.terminate();
   return out;
-})();
+};
+window.__probe = (async () => ({ close: await run(false), terminate: await run(true) }))();
 </script>`;
 
 const dir = mkdtempSync(join(tmpdir(), 'probe-handover-'));
@@ -106,18 +115,20 @@ try {
     });
     try {
       await browser.url(`http://localhost:${PORT}/index.html`);
-      const rounds = (await browser.execute(
+      const result = (await browser.execute(
         () => (window as unknown as { __probe: Promise<unknown> }).__probe,
-      )) as Round[];
-      const failed = rounds.filter((r) => r.first !== 'ok');
-      const names = [...new Set(failed.map((r) => r.first))].join(', ');
-      const waits = failed.map((r) => r.waited).sort((x, y) => x - y);
-      console.log(
-        `${name} on ${process.platform}: B's first open failed ${failed.length}/${rounds.length}` +
-          (failed.length
-            ? ` (${names}); free after median ${waits[Math.floor(waits.length / 2)]?.toFixed(0)} ms, max ${waits.at(-1)?.toFixed(0)} ms, never: ${failed.filter((r) => r.waited < 0).length}`
-            : ''),
-      );
+      )) as Record<string, Round[]>;
+      for (const [mode, rounds] of Object.entries(result)) {
+        const failed = rounds.filter((r) => r.first !== 'ok');
+        const names = [...new Set(failed.map((r) => r.first))].join(', ');
+        const waits = failed.map((r) => r.waited).sort((x, y) => x - y);
+        console.log(
+          `${name} on ${process.platform}, A ${mode === 'close' ? 'closes' : 'is terminated holding it'}: B's first open failed ${failed.length}/${rounds.length}` +
+            (failed.length
+              ? ` (${names}); free after median ${waits[Math.floor(waits.length / 2)]?.toFixed(0)} ms, max ${waits.at(-1)?.toFixed(0)} ms, never: ${failed.filter((r) => r.waited < 0).length}`
+              : ''),
+        );
+      }
     } finally {
       await browser.deleteSession();
     }
