@@ -252,6 +252,14 @@ Options put to the user: (1) wa-sqlite `OPFSCoopSyncVFS` retries `createSyncAcce
 
 `statementError` (`src/pool.ts`) turns a query failure that SQLite did not report — a JS exception in the worker — into a plain `Error` ("as before"): the caller gets no `code` to branch on. Seen as `undefined: No modification allowed` (the entry below). Fixing that case's cause (the CoopSync retry) removes that instance, not the class. To decide: wrap such failures in a `SQLiteError` (`WORKER_CRASHED`, or a dedicated code) with the original as `cause`. Consumer-visible (CHANGELOG, `API.md`'s error codes).
 
+## The Windows/macOS CI: deferred minors of its final review (2026-10-15)
+
+- `coopsync-handover`'s skip reason says "misses the 30 s open timeout", yet under `BSQ_TIME_SCALE=4` the tests' default open timeout is 120 s (`tests/browser/helpers/library.ts`, added after the skips). The three tests were never re-run with it: re-run them on Windows before concluding they must stay skipped (with the #381 patch step).
+- `scripts/bounded.ts` calls `killTree` on the child's PID after it exited; on Windows that is `taskkill /T /F` on a PID Windows may have recycled (narrow window).
+- `scripts/hook-gate.ts`: `shell: true` with an args array prints DEP0190 on Node 24 under Windows (cosmetic; the argv guard test stands).
+- `tests/unit/tooling/processes.test.ts` › "hands an argument with spaces and a middle dot over intact" spawns Node itself and exercises no project code; its "Falsifiable" comment is wrong.
+- Windows bounds: (2400 + 1800) × 4 s = 280 min of `bounded.ts` budget against a 240-min job; a job GitHub cancels uploads no logs (`if: failure()` does not run on cancel).
+
 ## The matrix on Windows and macOS — later (user, 2026-10-15)
 
 `matrix.yaml` (every vfs/build pair, 52 cells) runs on `ubuntu-latest` only; `tests.yaml` gives Windows and macOS `pnpm test` (complement mode) and conformance only (spec 2026-10-14, D6). The planner already produces an all-pairs plan; `matrix.yaml` would need a `runs-on` input and `BSQ_TIME_SCALE`. Cost to weigh: on Windows, Firefox's OPFS makes a full matrix take hours.
