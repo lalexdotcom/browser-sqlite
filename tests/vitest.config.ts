@@ -72,6 +72,9 @@ const browserProject = (
     browser: {
       enabled: true,
       headless: true,
+      // Vitest's 60 s for the page to reach its server, scaled like the other
+      // bounds: Firefox on Windows missed it under the suite's parallel load.
+      connectTimeout: 60_000 * TIME_SCALE,
       // The WebdriverIO provider cannot take it on BiDi (`switchFrame` was
       // removed in v10): every failure would print a stack trace for it.
       screenshotFailures: false,
