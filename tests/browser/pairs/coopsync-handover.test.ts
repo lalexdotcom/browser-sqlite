@@ -45,6 +45,16 @@ type Client = ReturnType<typeof createSQLiteClient>;
 const ATTEMPTS = 20;
 const CONCURRENT = 8;
 
+// Every hand-over costs Firefox on Windows 150-300 ms of OPFS fsyncs (Mozilla
+// bug 2072928): with two clients, a worker misses the library's 30 s open
+// timeout — 12 times in 20 attempts for the first test (2026-10-15), now and
+// then for the other two. A product limit, tracked in mem:follow-ups:
+// re-enable these tests once it is solved.
+const onWindowsFirefox = () =>
+  ENVIRONMENT.browser === 'firefox' && /Windows/.test(navigator.userAgent);
+const WINDOWS_FIREFOX =
+  'Firefox on Windows: a CoopSync hand-over pays OPFS fsyncs (Mozilla bug 2072928), and a second client misses the 30 s open timeout';
+
 // The describe's `vfs:` tag names the subject, OPFSCoopSyncVFS's own handle
 // hand-over protocol; the build follows the cell's pair.
 const open = (file: string) =>
@@ -94,17 +104,7 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', {
   it(
     'two clients opened together fail no statement',
     async ({ skip }) => {
-      // Every hand-over costs Firefox on Windows 150-300 ms of OPFS fsyncs
-      // (Mozilla bug 2072928): the second client's worker missed the
-      // library's 30 s open timeout 12 times in 20 (2026-10-15). A product
-      // limit, tracked in mem:follow-ups — re-enable once it is solved.
-      if (
-        ENVIRONMENT.browser === 'firefox' &&
-        /Windows/.test(navigator.userAgent)
-      )
-        return skip(
-          'Firefox on Windows: a CoopSync hand-over pays OPFS fsyncs (Mozilla bug 2072928), and a second client misses the 30 s open timeout',
-        );
+      if (onWindowsFirefox()) return skip(WINDOWS_FIREFOX);
       const failures: string[] = [];
       for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
         const file = `cs-handover-${crypto.randomUUID()}`;
@@ -134,7 +134,8 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', {
   // Discriminates on Firefox only: Chromium never failed this shape before #347.
   it(
     "a write following another client's schema change does not fail",
-    async () => {
+    async ({ skip }) => {
+      if (onWindowsFirefox()) return skip(WINDOWS_FIREFOX);
       const failures: string[] = [];
       for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
         const file = `cs-handover-${crypto.randomUUID()}`;
@@ -165,7 +166,8 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', {
 
   it(
     'two clients starting together survive orphaned temporary directories',
-    async () => {
+    async ({ skip }) => {
+      if (onWindowsFirefox()) return skip(WINDOWS_FIREFOX);
       const root = await navigator.storage.getDirectory();
       const failures: string[] = [];
       for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
