@@ -60,14 +60,15 @@ const browserProject = (
     // A teardown closes a client that may still be draining an abandoned
     // statement, and close() waits up to drainTimeout (60 s by default).
     hookTimeout: 60_000 * TIME_SCALE,
-    ...(options.target
-      ? {
-          provide: {
+    provide: {
+      bsqTimeScale: TIME_SCALE,
+      ...(options.target
+        ? {
             bsqTarget: options.target,
             bsqEnvironment: { browser, isolated: options.isolated === true },
-          },
-        }
-      : {}),
+          }
+        : {}),
+    },
     browser: {
       enabled: true,
       headless: true,
@@ -113,8 +114,9 @@ export default defineConfig({
           name: 'unit',
           environment: 'node',
           include: ['tests/unit/**/*.test.ts'],
-          // Pure Node tests with no I/O: anything near this bound is a deadlock.
-          testTimeout: 10_000,
+          // Anything near this bound is a deadlock — except git, which the
+          // hook-gate tests run for real and Windows runs several times slower.
+          testTimeout: 10_000 * TIME_SCALE,
         },
       },
       ...ENGINES.flatMap((browser) =>

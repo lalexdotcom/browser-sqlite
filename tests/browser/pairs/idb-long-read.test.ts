@@ -11,7 +11,7 @@
  */
 import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { TEST_TARGET } from '../helpers';
+import { scaled, TEST_TARGET } from '../helpers';
 
 const ROWS = 6000;
 const FILL = `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${ROWS}) INSERT INTO t (s) SELECT printf('%0100d', x) FROM c`;
@@ -25,35 +25,39 @@ describe('IDBBatchAtomicVFS during a long statement', {
 }, () => {
   // Falsifiable: stop installing the yielding progress handler in worker.ts
   // — the read then waits the self-join out and loses the race.
-  it('serves a read from another worker without a signal', async () => {
-    const { vfs, build } = TEST_TARGET;
-    const file = `idb-long-read-${crypto.randomUUID()}`;
-    const db = createSQLiteClient(file, { vfs, build, poolSize: 2 });
-    onTestFinished(async () => {
-      await db.close();
-      await deleteDatabase(file, { vfs });
-    });
-    await db.write('CREATE TABLE t (id INTEGER PRIMARY KEY, s TEXT)');
-    await db.write(FILL);
-    // Both connections open and warm before the race.
-    await Promise.all([
-      db.read('SELECT s FROM t WHERE id = 2'),
-      db.read('SELECT s FROM t WHERE id = 3'),
-    ]);
+  it(
+    'serves a read from another worker without a signal',
+    async () => {
+      const { vfs, build } = TEST_TARGET;
+      const file = `idb-long-read-${crypto.randomUUID()}`;
+      const db = createSQLiteClient(file, { vfs, build, poolSize: 2 });
+      onTestFinished(async () => {
+        await db.close();
+        await deleteDatabase(file, { vfs });
+      });
+      await db.write('CREATE TABLE t (id INTEGER PRIMARY KEY, s TEXT)');
+      await db.write(FILL);
+      // Both connections open and warm before the race.
+      await Promise.all([
+        db.read('SELECT s FROM t WHERE id = 2'),
+        db.read('SELECT s FROM t WHERE id = 3'),
+      ]);
 
-    let longSettled = false;
-    const long = db.read(LONG).finally(() => {
-      longSettled = true;
-    });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    // A long statement already over would prove nothing either way.
-    expect(longSettled).toBe(false);
+      let longSettled = false;
+      const long = db.read(LONG).finally(() => {
+        longSettled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      // A long statement already over would prove nothing either way.
+      expect(longSettled).toBe(false);
 
-    const winner = await Promise.race([
-      db.read('SELECT s FROM t WHERE id = 1').then(() => 'read'),
-      long.then(() => 'long'),
-    ]);
-    await long;
-    expect(winner).toBe('read');
-  }, 60_000);
+      const winner = await Promise.race([
+        db.read('SELECT s FROM t WHERE id = 1').then(() => 'read'),
+        long.then(() => 'long'),
+      ]);
+      await long;
+      expect(winner).toBe('read');
+    },
+    scaled(60_000),
+  );
 });

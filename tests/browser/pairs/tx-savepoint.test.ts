@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient } from '../helpers';
+import { createTestClient, scaled } from '../helpers';
 
 /**
  * docs/superpowers/specs/2026-09-11-tx-savepoint-design.md: a statement the
@@ -123,26 +123,30 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
   // statement waits for nothing. Holds on every build: the promise rejects at
   // the deadline whether or not the underlying step can be cut, so this no
   // longer loops over VFS (spec 2026-09-15, A5).
-  it('rejects at the deadline, and the next statement pays for the rest (T2)', async () => {
-    const db = await setUp();
-    try {
-      let rejectedAfter = 0;
-      let nextWaited = 0;
-      await db.transaction(async (tx) => {
-        const t0 = performance.now();
-        await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
-        const t1 = performance.now();
-        await tx.write('INSERT INTO t VALUES (1)');
-        rejectedAfter = t1 - t0;
-        nextWaited = performance.now() - t1;
-      });
-      expect(nextWaited).toBeGreaterThan(rejectedAfter);
-      expect(await bigCount(db)).toBe(0);
-      expect(await rowsOf(db)).toEqual([0, 1]);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+  it(
+    'rejects at the deadline, and the next statement pays for the rest (T2)',
+    async () => {
+      const db = await setUp();
+      try {
+        let rejectedAfter = 0;
+        let nextWaited = 0;
+        await db.transaction(async (tx) => {
+          const t0 = performance.now();
+          await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+          const t1 = performance.now();
+          await tx.write('INSERT INTO t VALUES (1)');
+          rejectedAfter = t1 - t0;
+          nextWaited = performance.now() - t1;
+        });
+        expect(nextWaited).toBeGreaterThan(rejectedAfter);
+        expect(await bigCount(db)).toBe(0);
+        expect(await rowsOf(db)).toEqual([0, 1]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 
   // Falsifiable: in `entryWait`, await `abandoned` without racing the
   // waiting statement's own signal — the rejection still arrives (`own`'s
@@ -151,52 +155,60 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
   // the whole remaining run and `nextWaited` costs nothing, so the timing
   // assertion below inverts instead of the outcome silently staying green.
   // Holds on every build (see T2's note).
-  it('rejects a statement that times out behind an abandoned write, alone (T5)', async () => {
-    const db = await setUp();
-    try {
-      let second: unknown;
-      let rejectedAfter = 0;
-      let nextWaited = 0;
-      await db.transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
-        await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
-        const t0 = performance.now();
-        second = await tx
-          .write('INSERT INTO t VALUES (9)', [], { timeout: 20 })
-          .catch((e) => e);
-        const t1 = performance.now();
-        rejectedAfter = t1 - t0;
-        await tx.write('INSERT INTO t VALUES (2)');
-        nextWaited = performance.now() - t1;
-      });
-      expect(second).toMatchObject({
-        code: 'OPERATION_TIMEOUT',
-        timeout: 20,
-      });
-      expect(rejectedAfter).toBeLessThan(nextWaited);
-      expect(await rowsOf(db)).toEqual([0, 1, 2]);
-      expect(await bigCount(db)).toBe(0);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+  it(
+    'rejects a statement that times out behind an abandoned write, alone (T5)',
+    async () => {
+      const db = await setUp();
+      try {
+        let second: unknown;
+        let rejectedAfter = 0;
+        let nextWaited = 0;
+        await db.transaction(async (tx) => {
+          await tx.write('INSERT INTO t VALUES (1)');
+          await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+          const t0 = performance.now();
+          second = await tx
+            .write('INSERT INTO t VALUES (9)', [], { timeout: 20 })
+            .catch((e) => e);
+          const t1 = performance.now();
+          rejectedAfter = t1 - t0;
+          await tx.write('INSERT INTO t VALUES (2)');
+          nextWaited = performance.now() - t1;
+        });
+        expect(second).toMatchObject({
+          code: 'OPERATION_TIMEOUT',
+          timeout: 20,
+        });
+        expect(rejectedAfter).toBeLessThan(nextWaited);
+        expect(await rowsOf(db)).toEqual([0, 1, 2]);
+        expect(await bigCount(db)).toBe(0);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 
   // Falsifiable: make commitNow() send its COMMIT with `exec(worker, …)`
   // instead of `via(false)` — the COMMIT then carries no undo and the
   // million rows are committed. Holds on every build (see T2's note).
-  it('commits only what preceded a caught abandoned write when the callback returns at once (T6)', async () => {
-    const db = await setUp();
-    try {
-      await db.transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
-        await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
-      });
-      expect(await rowsOf(db)).toEqual([0, 1]);
-      expect(await bigCount(db)).toBe(0);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+  it(
+    'commits only what preceded a caught abandoned write when the callback returns at once (T6)',
+    async () => {
+      const db = await setUp();
+      try {
+        await db.transaction(async (tx) => {
+          await tx.write('INSERT INTO t VALUES (1)');
+          await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+        });
+        expect(await rowsOf(db)).toEqual([0, 1]);
+        expect(await bigCount(db)).toBe(0);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 
   // On a build that can cut a step: the rejection escapes, the transaction
   // dies, and the background write is cut rather than awaited. Falsifiable:
@@ -205,7 +217,7 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
   // whole write.
   it('cuts the write, keeps nothing, and aborts tx.signal when the rejection escapes (T3)', {
     tags: ['requires:interruptible'],
-    timeout: 120_000,
+    timeout: scaled(120_000),
   }, async () => {
     const db = await setUp();
     try {
@@ -248,7 +260,7 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
   // a build that can cut a step.
   it("cuts an abandoned write when the transaction's own timeout expires (T4)", {
     tags: ['requires:interruptible'],
-    timeout: 120_000,
+    timeout: scaled(120_000),
   }, async () => {
     const db = await setUp();
     try {
@@ -290,28 +302,36 @@ describe('a write issued through a generator (spec 2026-09-11, §4)', () => {
   // transaction dies), committed where it cannot. Holds on every build (T2's
   // note in the describe above): the promise rejects at the deadline either
   // way, so this no longer loops over VFS (spec 2026-09-15, A5).
-  it('undoes a caught write issued through tx.chunk(), and goes on', async () => {
-    const db = await setUp();
-    try {
-      let caught: unknown;
-      await db.transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
-        caught = await (async () => {
-          for await (const _rows of tx.chunk(`${BIG_INSERT} RETURNING x`, [], {
-            timeout: 30,
-          })) {
-            // The first chunk comes only after the whole DML.
-          }
-        })().catch((e) => e);
-        await tx.write('INSERT INTO t VALUES (2)');
-      });
-      expect(caught).toMatchObject({ code: 'OPERATION_TIMEOUT' });
-      expect(await rowsOf(db)).toEqual([0, 1, 2]);
-      expect(await bigCount(db)).toBe(0);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+  it(
+    'undoes a caught write issued through tx.chunk(), and goes on',
+    async () => {
+      const db = await setUp();
+      try {
+        let caught: unknown;
+        await db.transaction(async (tx) => {
+          await tx.write('INSERT INTO t VALUES (1)');
+          caught = await (async () => {
+            for await (const _rows of tx.chunk(
+              `${BIG_INSERT} RETURNING x`,
+              [],
+              {
+                timeout: 30,
+              },
+            )) {
+              // The first chunk comes only after the whole DML.
+            }
+          })().catch((e) => e);
+          await tx.write('INSERT INTO t VALUES (2)');
+        });
+        expect(caught).toMatchObject({ code: 'OPERATION_TIMEOUT' });
+        expect(await rowsOf(db)).toEqual([0, 1, 2]);
+        expect(await bigCount(db)).toBe(0);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 });
 
 describe('a load the callback abandons (spec 2026-09-11, R4, D6)', () => {
@@ -320,38 +340,42 @@ describe('a load the callback abandons (spec 2026-09-11, R4, D6)', () => {
   // completes batch 1 parks until batch 1 has settled. Falsifiable: restore
   // the `onAbandoned` hook in src/bulk.ts — the transaction then dies and
   // nothing is kept.
-  it('keeps the batches an abandoned tx.bulkWrite completed (T9)', async () => {
-    const db = await setUp();
-    try {
-      // src/bulk.ts: maxVariables (32766) / one key.
-      const batch = 32766;
-      const reason = new Error('stop loading');
-      const ctl = new AbortController();
-      let closed: unknown;
-      await db.transaction(async (tx) => {
-        const writer = tx.bulkWrite('t', ['a'], {
-          signal: ctl.signal,
-          queueSize: batch,
+  it(
+    'keeps the batches an abandoned tx.bulkWrite completed (T9)',
+    async () => {
+      const db = await setUp();
+      try {
+        // src/bulk.ts: maxVariables (32766) / one key.
+        const batch = 32766;
+        const reason = new Error('stop loading');
+        const ctl = new AbortController();
+        let closed: unknown;
+        await db.transaction(async (tx) => {
+          const writer = tx.bulkWrite('t', ['a'], {
+            signal: ctl.signal,
+            queueSize: batch,
+          });
+          for (let i = 0; i < batch; i++) await writer.enqueue({ a: 1 });
+          await writer.enqueue({ a: 2 });
+          ctl.abort(reason);
+          closed = await writer.close().catch((e) => e);
+          await tx.write('INSERT INTO t VALUES (3)');
         });
-        for (let i = 0; i < batch; i++) await writer.enqueue({ a: 1 });
-        await writer.enqueue({ a: 2 });
-        ctl.abort(reason);
-        closed = await writer.close().catch((e) => e);
-        await tx.write('INSERT INTO t VALUES (3)');
-      });
-      expect(closed).toBe(reason);
-      const counts = await db.read<{ a: number; n: number }>(
-        'SELECT a, count(*) AS n FROM t GROUP BY a ORDER BY a',
-      );
-      expect(counts).toEqual([
-        { a: 0, n: 1 },
-        { a: 1, n: batch },
-        { a: 3, n: 1 },
-      ]);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+        expect(closed).toBe(reason);
+        const counts = await db.read<{ a: number; n: number }>(
+          'SELECT a, count(*) AS n FROM t GROUP BY a ORDER BY a',
+        );
+        expect(counts).toEqual([
+          { a: 0, n: 1 },
+          { a: 1, n: batch },
+          { a: 3, n: 1 },
+        ]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 });
 
 describe('a consumer savepoint and an abandoned write (spec 2026-10-04)', () => {
@@ -360,26 +384,30 @@ describe('a consumer savepoint and an abandoned write (spec 2026-10-04)', () => 
   // Falsifiable: delete the set_authorizer call in src/worker/worker.ts — the
   // RELEASE pops __bsq_sp with u, the next conclusion fails and the
   // transaction dies.
-  it('refuses a RELEASE riding on an abandoned write, and undoes the write', async () => {
-    const db = await setUp();
-    try {
-      const before = workerIdentity(db);
-      let first: unknown;
-      await db.transaction(async (tx) => {
-        const sp = await tx.savepoint('u');
-        await tx.write('INSERT INTO t VALUES (1)');
-        first = await tx
-          .write(`${BIG_INSERT}; RELEASE u`, [], { timeout: 30 })
-          .catch((e) => e);
-        await tx.write('INSERT INTO t VALUES (2)');
-        await sp.release();
-      });
-      expect(first).toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 30 });
-      expect(await rowsOf(db)).toEqual([0, 1, 2]);
-      expect(await bigCount(db)).toBe(0);
-      expect(workerIdentity(db)).toBe(before);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+  it(
+    'refuses a RELEASE riding on an abandoned write, and undoes the write',
+    async () => {
+      const db = await setUp();
+      try {
+        const before = workerIdentity(db);
+        let first: unknown;
+        await db.transaction(async (tx) => {
+          const sp = await tx.savepoint('u');
+          await tx.write('INSERT INTO t VALUES (1)');
+          first = await tx
+            .write(`${BIG_INSERT}; RELEASE u`, [], { timeout: 30 })
+            .catch((e) => e);
+          await tx.write('INSERT INTO t VALUES (2)');
+          await sp.release();
+        });
+        expect(first).toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 30 });
+        expect(await rowsOf(db)).toEqual([0, 1, 2]);
+        expect(await bigCount(db)).toBe(0);
+        expect(workerIdentity(db)).toBe(before);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 });

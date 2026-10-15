@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, interceptWorkers, sleep } from '../helpers';
+import { createTestClient, interceptWorkers, scaled, sleep } from '../helpers';
 
 /**
  * Every test here drives two statements against two workers: the describes'
@@ -56,7 +56,7 @@ describe('a statement following a short-circuited statement in the same callback
   });
 
   it('follows a tx.chunk() broken out of mid-callback', {
-    timeout: 30_000,
+    timeout: scaled(30_000),
   }, async () => {
     const db = await createTestClient({ ...TWO_WORKERS });
     try {
@@ -87,7 +87,7 @@ describe('a statement following a short-circuited statement in the same callback
   });
 
   it('follows a tx.read() aborted by its own signal', {
-    timeout: 30_000,
+    timeout: scaled(30_000),
   }, async () => {
     const db = await createTestClient({ ...TWO_WORKERS });
     try {
@@ -146,7 +146,7 @@ describe('the boundary of that wait', {
    * FinalizationRegistry exists and why it is documented as best effort.
    */
   it('makes a statement after a dropped generator wait for its own bound', {
-    timeout: 30_000,
+    timeout: scaled(30_000),
   }, async () => {
     const db = await createTestClient({ ...TWO_WORKERS });
     try {
@@ -181,7 +181,7 @@ describe('the boundary of that wait', {
    * is itself waiting.
    */
   it('bounds a tx.chunk() queued behind a dropped generator', {
-    timeout: 30_000,
+    timeout: scaled(30_000),
   }, async () => {
     const db = await createTestClient({ ...TWO_WORKERS });
     try {
@@ -220,7 +220,7 @@ describe('the boundary of that wait', {
   // Falsifiable: comment out both closeOpenStatements() call sites in
   // src/transaction.ts — a worker is then evicted.
   it('fails cleanly when the drop is never caught', {
-    timeout: 30_000,
+    timeout: scaled(30_000),
   }, async () => {
     const records = interceptWorkers();
     // Both workers must stay alive and unevicted here, not merely exist.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, longQuery, sleep } from '../helpers';
+import { createTestClient, longQuery, scaled, sleep } from '../helpers';
 
 // Two rows far apart: the first is immediate, the second exists only once a
 // 40 M-step recursion has run, in one `sqlite.step()`. N=40_000_000 takes ~8 s
@@ -35,7 +35,7 @@ describe('leaving a read early, with no signal and no timeout', {
 
   // Falsifiable: same as above, for a break out of chunk().
   it('a break out of chunk() cuts the step it left running', {
-    timeout: 90_000,
+    timeout: scaled(90_000),
   }, async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {

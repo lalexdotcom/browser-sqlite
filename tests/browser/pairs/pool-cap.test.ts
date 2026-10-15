@@ -13,6 +13,7 @@ import {
   createTestClient,
   interceptWorkers,
   removeDatabaseFiles,
+  scaled,
   TEST_TARGET,
 } from '../helpers';
 import { removeOpfsPath } from '../helpers/environment';
@@ -282,7 +283,7 @@ describe('a pool capped by its environment', () => {
   // makes Firefox capture a `pool capped` warning here.
   it('close() during startup of a capped pool returns promptly and does not warn', {
     tags: ['requires:env-cappable'],
-    timeout: 15000,
+    timeout: scaled(15000),
   }, async () => {
     const warnings = captureWarnings();
     const file = `pool-cap-close-${crypto.randomUUID()}`;
@@ -310,7 +311,7 @@ describe('a pool capped by its environment', () => {
   // the widened openTimeout below and the round that follows it.
   it('a surplus slot that times out, then declines in the retry round, is not announced lost', {
     tags: ['requires:env-capped-pool'],
-    timeout: 30000,
+    timeout: scaled(30000),
   }, async () => {
     const Original = globalThis.Worker;
     let created = 0;

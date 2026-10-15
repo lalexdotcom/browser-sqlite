@@ -3,6 +3,7 @@ import {
   createTestClient,
   LONG_QUERY,
   longQuery,
+  scaled,
   sleep,
   theQueryIsRunning,
   waitUntil,
@@ -11,7 +12,7 @@ import {
 describe('aborting a running statement', () => {
   it('frees the worker, so the next query does not wait it out', {
     tags: ['requires:interruptible'],
-    timeout: 90_000,
+    timeout: scaled(90_000),
   }, async () => {
     // poolSize 1: the next query MUST land on the worker that was interrupted.
     const db = await createTestClient({

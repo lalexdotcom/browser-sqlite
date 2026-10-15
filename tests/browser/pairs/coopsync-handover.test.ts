@@ -33,7 +33,7 @@
  */
 import { createSQLiteClient } from 'browser-sqlite';
 import { describe, expect, it } from 'vitest';
-import { removeDatabaseFiles, TEST_TARGET } from '../helpers';
+import { removeDatabaseFiles, scaled, TEST_TARGET } from '../helpers';
 
 type Client = ReturnType<typeof createSQLiteClient>;
 
@@ -86,92 +86,106 @@ const mixedBatch = async (dbA: Client, dbB: Client) => {
 describe('OPFSCoopSyncVFS hands the access handle over between calls only', {
   tags: ['vfs:OPFSCoopSyncVFS'],
 }, () => {
-  it('two clients opened together fail no statement', async () => {
-    const failures: string[] = [];
-    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-      const file = `cs-handover-${crypto.randomUUID()}`;
-      // Both built before A's CREATE TABLE: A prepares its barrier statement
-      // on the empty schema, so its first barrier after B's first write must
-      // be re-prepared inside one `step` — the inner unlock the bug released at.
-      const dbA = open(file);
-      const dbB = open(file);
-      try {
-        await dbA.write('CREATE TABLE t (a INTEGER)');
-        for (let round = 0; round < 3; round++) {
-          failures.push(...(await mixedBatch(dbA, dbB)));
+  it(
+    'two clients opened together fail no statement',
+    async () => {
+      const failures: string[] = [];
+      for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+        const file = `cs-handover-${crypto.randomUUID()}`;
+        // Both built before A's CREATE TABLE: A prepares its barrier statement
+        // on the empty schema, so its first barrier after B's first write must
+        // be re-prepared inside one `step` — the inner unlock the bug released at.
+        const dbA = open(file);
+        const dbB = open(file);
+        try {
+          await dbA.write('CREATE TABLE t (a INTEGER)');
+          for (let round = 0; round < 3; round++) {
+            failures.push(...(await mixedBatch(dbA, dbB)));
+          }
+        } catch (e) {
+          failures.push(describeError(e));
+        } finally {
+          await dbB.close().catch(() => {});
+          await dbA.close().catch(() => {});
+          await scrub(file);
         }
-      } catch (e) {
-        failures.push(describeError(e));
-      } finally {
-        await dbB.close().catch(() => {});
-        await dbA.close().catch(() => {});
-        await scrub(file);
       }
-    }
-    expect(failures).toEqual([]);
-  }, 120000);
+      expect(failures).toEqual([]);
+    },
+    scaled(120000),
+  );
 
   // Discriminates on Firefox only: Chromium never failed this shape before #347.
-  it("a write following another client's schema change does not fail", async () => {
-    const failures: string[] = [];
-    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-      const file = `cs-handover-${crypto.randomUUID()}`;
-      const dbA = open(file);
-      let dbB: Client | undefined;
-      try {
-        await dbA.write('CREATE TABLE t (a INTEGER)');
-        dbB = open(file);
-        // Both clients' statements cached on the current schema first, so
-        // the CREATE TABLE below is what makes them stale.
-        failures.push(...(await writesAgainstReads(dbA, dbB)));
-        await dbB.write('CREATE TABLE u (a INTEGER)');
-        for (let round = 0; round < 2; round++) {
+  it(
+    "a write following another client's schema change does not fail",
+    async () => {
+      const failures: string[] = [];
+      for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+        const file = `cs-handover-${crypto.randomUUID()}`;
+        const dbA = open(file);
+        let dbB: Client | undefined;
+        try {
+          await dbA.write('CREATE TABLE t (a INTEGER)');
+          dbB = open(file);
+          // Both clients' statements cached on the current schema first, so
+          // the CREATE TABLE below is what makes them stale.
           failures.push(...(await writesAgainstReads(dbA, dbB)));
+          await dbB.write('CREATE TABLE u (a INTEGER)');
+          for (let round = 0; round < 2; round++) {
+            failures.push(...(await writesAgainstReads(dbA, dbB)));
+          }
+        } catch (e) {
+          failures.push(describeError(e));
+        } finally {
+          await dbB?.close().catch(() => {});
+          await dbA.close().catch(() => {});
+          await scrub(file);
         }
-      } catch (e) {
-        failures.push(describeError(e));
-      } finally {
-        await dbB?.close().catch(() => {});
-        await dbA.close().catch(() => {});
-        await scrub(file);
       }
-    }
-    expect(failures).toEqual([]);
-  }, 120000);
+      expect(failures).toEqual([]);
+    },
+    scaled(120000),
+  );
 
-  it('two clients starting together survive orphaned temporary directories', async () => {
-    const root = await navigator.storage.getDirectory();
-    const failures: string[] = [];
-    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-      // No lock protects these, so every starting CoopSync worker deletes them
-      // — both workers at once, over the same list.
-      const orphans = Array.from(
-        { length: 30 },
-        () => `.ahp-orphan-${crypto.randomUUID()}`,
-      );
-      await Promise.all(
-        orphans.map((name) => root.getDirectoryHandle(name, { create: true })),
-      );
-      const file = `cs-handover-${crypto.randomUUID()}`;
-      const dbA = open(file);
-      const dbB = open(file);
-      try {
-        const settled = await Promise.allSettled([
-          dbA.read('SELECT 1 AS one'),
-          dbB.read('SELECT 1 AS one'),
-        ]);
-        for (const s of settled) {
-          if (s.status === 'rejected') failures.push(describeError(s.reason));
-        }
-      } finally {
-        await dbB.close().catch(() => {});
-        await dbA.close().catch(() => {});
-        await scrub(file);
-        for (const name of orphans) {
-          await root.removeEntry(name, { recursive: true }).catch(() => {});
+  it(
+    'two clients starting together survive orphaned temporary directories',
+    async () => {
+      const root = await navigator.storage.getDirectory();
+      const failures: string[] = [];
+      for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+        // No lock protects these, so every starting CoopSync worker deletes them
+        // — both workers at once, over the same list.
+        const orphans = Array.from(
+          { length: 30 },
+          () => `.ahp-orphan-${crypto.randomUUID()}`,
+        );
+        await Promise.all(
+          orphans.map((name) =>
+            root.getDirectoryHandle(name, { create: true }),
+          ),
+        );
+        const file = `cs-handover-${crypto.randomUUID()}`;
+        const dbA = open(file);
+        const dbB = open(file);
+        try {
+          const settled = await Promise.allSettled([
+            dbA.read('SELECT 1 AS one'),
+            dbB.read('SELECT 1 AS one'),
+          ]);
+          for (const s of settled) {
+            if (s.status === 'rejected') failures.push(describeError(s.reason));
+          }
+        } finally {
+          await dbB.close().catch(() => {});
+          await dbA.close().catch(() => {});
+          await scrub(file);
+          for (const name of orphans) {
+            await root.removeEntry(name, { recursive: true }).catch(() => {});
+          }
         }
       }
-    }
-    expect(failures).toEqual([]);
-  }, 120000);
+      expect(failures).toEqual([]);
+    },
+    scaled(120000),
+  );
 });

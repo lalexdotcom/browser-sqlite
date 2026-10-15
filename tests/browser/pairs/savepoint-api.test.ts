@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SQLiteSavepoint } from '../../../src/api';
-import { createTestClient } from '../helpers';
+import { createTestClient, scaled } from '../helpers';
 
 /**
  * docs/superpowers/specs/2026-10-04-tx-savepoint-design.md: tx.savepoint()
@@ -91,25 +91,29 @@ describe('tx.savepoint() (spec 2026-10-04)', () => {
 
   // Falsifiable: send the consumer's ROLLBACK TO before the pending __bsq_sp
   // conclusion — it pops __bsq_sp, the conclusion fails and the transaction dies.
-  it('rolls back right after a caught abandoned write (B4, E15)', async () => {
-    const db = await setUp();
-    try {
-      await db.write('CREATE TABLE big (x INTEGER)');
-      await db.transaction(async (tx) => {
-        const sp = await tx.savepoint('u');
-        await tx.write('INSERT INTO t VALUES (1)');
-        await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
-        await sp.rollback();
-        await tx.write('INSERT INTO t VALUES (3)');
-      });
-      expect(await rowsOf(db)).toEqual([3]);
-      expect(
-        (await db.read<{ n: number }>('SELECT count(*) AS n FROM big'))[0]?.n,
-      ).toBe(0);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+  it(
+    'rolls back right after a caught abandoned write (B4, E15)',
+    async () => {
+      const db = await setUp();
+      try {
+        await db.write('CREATE TABLE big (x INTEGER)');
+        await db.transaction(async (tx) => {
+          const sp = await tx.savepoint('u');
+          await tx.write('INSERT INTO t VALUES (1)');
+          await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+          await sp.rollback();
+          await tx.write('INSERT INTO t VALUES (3)');
+        });
+        expect(await rowsOf(db)).toEqual([3]);
+        expect(
+          (await db.read<{ n: number }>('SELECT count(*) AS n FROM big'))[0]?.n,
+        ).toBe(0);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 
   // Falsifiable: drop the `if (ending)` check from the handle's release() —
   // a RELEASE reaches a connection that left its transaction and fails with

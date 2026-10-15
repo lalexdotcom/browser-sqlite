@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, longQuery } from '../helpers';
+import { createTestClient, longQuery, scaled } from '../helpers';
 
 /**
  * Calls created in the SAME tick at the CLIENT level — `Promise.all`, which is
@@ -32,228 +32,266 @@ import { createTestClient, longQuery } from '../helpers';
 const ONE_WORKER = { poolSize: 1 } as const;
 
 describe('calls issued in the same tick on one worker', () => {
-  it('runs two first() calls', async () => {
-    const db = await createTestClient(ONE_WORKER);
-    try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write('INSERT INTO t (n) VALUES (1), (2)');
+  it(
+    'runs two first() calls',
+    async () => {
+      const db = await createTestClient(ONE_WORKER);
+      try {
+        await db.write('CREATE TABLE t (n INTEGER)');
+        await db.write('INSERT INTO t (n) VALUES (1), (2)');
 
-      const [a, b] = await Promise.all([
-        db.first<{ n: number }>('SELECT n FROM t WHERE n = 1'),
-        db.first<{ n: number }>('SELECT n FROM t WHERE n = 2'),
-      ]);
+        const [a, b] = await Promise.all([
+          db.first<{ n: number }>('SELECT n FROM t WHERE n = 1'),
+          db.first<{ n: number }>('SELECT n FROM t WHERE n = 2'),
+        ]);
 
-      expect(a).toEqual({ n: 1 });
-      expect(b).toEqual({ n: 2 });
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+        expect(a).toEqual({ n: 1 });
+        expect(b).toEqual({ n: 2 });
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 
-  it('runs two writes and keeps both', async () => {
-    const db = await createTestClient(ONE_WORKER);
-    try {
-      await db.write('CREATE TABLE t (n INTEGER)');
+  it(
+    'runs two writes and keeps both',
+    async () => {
+      const db = await createTestClient(ONE_WORKER);
+      try {
+        await db.write('CREATE TABLE t (n INTEGER)');
 
-      await Promise.all([
-        db.write('INSERT INTO t (n) VALUES (1)'),
-        db.write('INSERT INTO t (n) VALUES (2)'),
-      ]);
+        await Promise.all([
+          db.write('INSERT INTO t (n) VALUES (1)'),
+          db.write('INSERT INTO t (n) VALUES (2)'),
+        ]);
 
-      expect(
-        await db.read<{ n: number }>('SELECT n FROM t ORDER BY n'),
-      ).toEqual([{ n: 1 }, { n: 2 }]);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+        expect(
+          await db.read<{ n: number }>('SELECT n FROM t ORDER BY n'),
+        ).toEqual([{ n: 1 }, { n: 2 }]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 
-  it('drains two chunk() generators', async () => {
-    const db = await createTestClient(ONE_WORKER);
-    try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write('INSERT INTO t (n) VALUES (1), (2), (3), (4)');
+  it(
+    'drains two chunk() generators',
+    async () => {
+      const db = await createTestClient(ONE_WORKER);
+      try {
+        await db.write('CREATE TABLE t (n INTEGER)');
+        await db.write('INSERT INTO t (n) VALUES (1), (2), (3), (4)');
 
-      const drain = async (sql: string) => {
-        const seen: number[] = [];
-        for await (const batch of db.chunk<{ n: number }>(sql, [], {
-          chunkSize: 1,
-        })) {
-          seen.push(...batch.map((r) => r.n));
-        }
-        return seen;
-      };
+        const drain = async (sql: string) => {
+          const seen: number[] = [];
+          for await (const batch of db.chunk<{ n: number }>(sql, [], {
+            chunkSize: 1,
+          })) {
+            seen.push(...batch.map((r) => r.n));
+          }
+          return seen;
+        };
 
-      const [odd, even] = await Promise.all([
-        drain('SELECT n FROM t WHERE n % 2 = 1 ORDER BY n'),
-        drain('SELECT n FROM t WHERE n % 2 = 0 ORDER BY n'),
-      ]);
+        const [odd, even] = await Promise.all([
+          drain('SELECT n FROM t WHERE n % 2 = 1 ORDER BY n'),
+          drain('SELECT n FROM t WHERE n % 2 = 0 ORDER BY n'),
+        ]);
 
-      expect(odd).toEqual([1, 3]);
-      expect(even).toEqual([2, 4]);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+        expect(odd).toEqual([1, 3]);
+        expect(even).toEqual([2, 4]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 
-  it('drains two stream() generators', async () => {
-    const db = await createTestClient(ONE_WORKER);
-    try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write('INSERT INTO t (n) VALUES (1), (2), (3), (4)');
+  it(
+    'drains two stream() generators',
+    async () => {
+      const db = await createTestClient(ONE_WORKER);
+      try {
+        await db.write('CREATE TABLE t (n INTEGER)');
+        await db.write('INSERT INTO t (n) VALUES (1), (2), (3), (4)');
 
-      const drain = async (sql: string) => {
-        const seen: number[] = [];
-        for await (const row of db.stream<{ n: number }>(sql)) {
-          seen.push(row.n);
-        }
-        return seen;
-      };
+        const drain = async (sql: string) => {
+          const seen: number[] = [];
+          for await (const row of db.stream<{ n: number }>(sql)) {
+            seen.push(row.n);
+          }
+          return seen;
+        };
 
-      const [odd, even] = await Promise.all([
-        drain('SELECT n FROM t WHERE n % 2 = 1 ORDER BY n'),
-        drain('SELECT n FROM t WHERE n % 2 = 0 ORDER BY n'),
-      ]);
+        const [odd, even] = await Promise.all([
+          drain('SELECT n FROM t WHERE n % 2 = 1 ORDER BY n'),
+          drain('SELECT n FROM t WHERE n % 2 = 0 ORDER BY n'),
+        ]);
 
-      expect(odd).toEqual([1, 3]);
-      expect(even).toEqual([2, 4]);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+        expect(odd).toEqual([1, 3]);
+        expect(even).toEqual([2, 4]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 
-  it('closes two bulkWrite buffers', async () => {
-    const db = await createTestClient(ONE_WORKER);
-    try {
-      await db.write('CREATE TABLE a (n INTEGER)');
-      await db.write('CREATE TABLE b (n INTEGER)');
+  it(
+    'closes two bulkWrite buffers',
+    async () => {
+      const db = await createTestClient(ONE_WORKER);
+      try {
+        await db.write('CREATE TABLE a (n INTEGER)');
+        await db.write('CREATE TABLE b (n INTEGER)');
 
-      const one = db.bulkWrite('a', ['n']);
-      const two = db.bulkWrite('b', ['n']);
-      one.enqueue({ n: 1 });
-      two.enqueue({ n: 2 });
+        const one = db.bulkWrite('a', ['n']);
+        const two = db.bulkWrite('b', ['n']);
+        one.enqueue({ n: 1 });
+        two.enqueue({ n: 2 });
 
-      const [first, second] = await Promise.all([one.close(), two.close()]);
+        const [first, second] = await Promise.all([one.close(), two.close()]);
 
-      expect(first).toBe(1);
-      expect(second).toBe(1);
-      expect(await db.read<{ n: number }>('SELECT n FROM a')).toEqual([
-        { n: 1 },
-      ]);
-      expect(await db.read<{ n: number }>('SELECT n FROM b')).toEqual([
-        { n: 2 },
-      ]);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+        expect(first).toBe(1);
+        expect(second).toBe(1);
+        expect(await db.read<{ n: number }>('SELECT n FROM a')).toEqual([
+          { n: 1 },
+        ]);
+        expect(await db.read<{ n: number }>('SELECT n FROM b')).toEqual([
+          { n: 2 },
+        ]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 
-  it('mixes a read with a transaction', async () => {
-    const db = await createTestClient(ONE_WORKER);
-    try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write('INSERT INTO t (n) VALUES (1)');
+  it(
+    'mixes a read with a transaction',
+    async () => {
+      const db = await createTestClient(ONE_WORKER);
+      try {
+        await db.write('CREATE TABLE t (n INTEGER)');
+        await db.write('INSERT INTO t (n) VALUES (1)');
 
-      const [rows] = await Promise.all([
-        db.read<{ n: number }>('SELECT n FROM t'),
-        db.transaction(async (tx) => {
-          await tx.write('INSERT INTO t (n) VALUES (2)');
-        }),
-      ]);
+        const [rows] = await Promise.all([
+          db.read<{ n: number }>('SELECT n FROM t'),
+          db.transaction(async (tx) => {
+            await tx.write('INSERT INTO t (n) VALUES (2)');
+          }),
+        ]);
 
-      expect(rows).toEqual([{ n: 1 }]);
-      expect(
-        await db.read<{ n: number }>('SELECT n FROM t ORDER BY n'),
-      ).toEqual([{ n: 1 }, { n: 2 }]);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+        expect(rows).toEqual([{ n: 1 }]);
+        expect(
+          await db.read<{ n: number }>('SELECT n FROM t ORDER BY n'),
+        ).toEqual([{ n: 1 }, { n: 2 }]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 
-  it('closes two output() loads', async () => {
-    const db = await createTestClient(ONE_WORKER);
-    try {
-      const one = db.output('out_a', { n: 'INTEGER' });
-      const two = db.output('out_b', { n: 'INTEGER' });
-      one.enqueue({ n: 1 });
-      two.enqueue({ n: 2 });
+  it(
+    'closes two output() loads',
+    async () => {
+      const db = await createTestClient(ONE_WORKER);
+      try {
+        const one = db.output('out_a', { n: 'INTEGER' });
+        const two = db.output('out_b', { n: 'INTEGER' });
+        one.enqueue({ n: 1 });
+        two.enqueue({ n: 2 });
 
-      // Each close() runs a staging load and an atomic rename inside its own
-      // transaction, so two of them in one tick is two transactions racing for
-      // the same connection.
-      const [first, second] = await Promise.all([one.close(), two.close()]);
+        // Each close() runs a staging load and an atomic rename inside its own
+        // transaction, so two of them in one tick is two transactions racing for
+        // the same connection.
+        const [first, second] = await Promise.all([one.close(), two.close()]);
 
-      expect(first).toBe(1);
-      expect(second).toBe(1);
-      expect(await db.read<{ n: number }>('SELECT n FROM out_a')).toEqual([
-        { n: 1 },
-      ]);
-      expect(await db.read<{ n: number }>('SELECT n FROM out_b')).toEqual([
-        { n: 2 },
-      ]);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+        expect(first).toBe(1);
+        expect(second).toBe(1);
+        expect(await db.read<{ n: number }>('SELECT n FROM out_a')).toEqual([
+          { n: 1 },
+        ]);
+        expect(await db.read<{ n: number }>('SELECT n FROM out_b')).toEqual([
+          { n: 2 },
+        ]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 
-  it('runs two transactions issued in the same tick, one after the other', async () => {
-    const db = await createTestClient(ONE_WORKER);
-    try {
-      await db.write('CREATE TABLE t (n INTEGER)');
+  it(
+    'runs two transactions issued in the same tick, one after the other',
+    async () => {
+      const db = await createTestClient(ONE_WORKER);
+      try {
+        await db.write('CREATE TABLE t (n INTEGER)');
 
-      // A queue behind a queue: each transaction serialises its own
-      // statements, and the two transactions serialise against each other on
-      // the origin's write lock.
-      await Promise.all([
-        db.transaction(async (tx) => {
-          await tx.write('INSERT INTO t (n) VALUES (1)');
-          await tx.write('INSERT INTO t (n) VALUES (2)');
-        }),
-        db.transaction(async (tx) => {
-          await tx.write('INSERT INTO t (n) VALUES (3)');
-          await tx.write('INSERT INTO t (n) VALUES (4)');
-        }),
-      ]);
+        // A queue behind a queue: each transaction serialises its own
+        // statements, and the two transactions serialise against each other on
+        // the origin's write lock.
+        await Promise.all([
+          db.transaction(async (tx) => {
+            await tx.write('INSERT INTO t (n) VALUES (1)');
+            await tx.write('INSERT INTO t (n) VALUES (2)');
+          }),
+          db.transaction(async (tx) => {
+            await tx.write('INSERT INTO t (n) VALUES (3)');
+            await tx.write('INSERT INTO t (n) VALUES (4)');
+          }),
+        ]);
 
-      // Both committed, and neither interleaved into the other: whichever ran
-      // first, its pair is contiguous.
-      const rows = await db.read<{ n: number }>('SELECT n FROM t');
-      expect(rows.map((r) => r.n).sort((a, b) => a - b)).toEqual([1, 2, 3, 4]);
-      const order = rows.map((r) => r.n);
-      expect(
-        order.join(',') === '1,2,3,4' || order.join(',') === '3,4,1,2',
-      ).toBe(true);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+        // Both committed, and neither interleaved into the other: whichever ran
+        // first, its pair is contiguous.
+        const rows = await db.read<{ n: number }>('SELECT n FROM t');
+        expect(rows.map((r) => r.n).sort((a, b) => a - b)).toEqual([
+          1, 2, 3, 4,
+        ]);
+        const order = rows.map((r) => r.n);
+        expect(
+          order.join(',') === '1,2,3,4' || order.join(',') === '3,4,1,2',
+        ).toBe(true);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 
-  it('rejects a call aborted while it waits behind another, and keeps the rest', async () => {
-    const db = await createTestClient(ONE_WORKER);
-    try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write('INSERT INTO t (n) VALUES (1)');
-      const controller = new AbortController();
+  it(
+    'rejects a call aborted while it waits behind another, and keeps the rest',
+    async () => {
+      const db = await createTestClient(ONE_WORKER);
+      try {
+        await db.write('CREATE TABLE t (n INTEGER)');
+        await db.write('INSERT INTO t (n) VALUES (1)');
+        const controller = new AbortController();
 
-      const first = db.read(longQuery(2_000_000));
-      const queued = db.read('SELECT 1 AS one', [], {
-        signal: controller.signal,
-      });
-      const after = db.read<{ n: number }>('SELECT n FROM t');
-      // The abort lands while `queued` is still waiting for the worker.
-      controller.abort(new Error('the caller changed its mind'));
+        const first = db.read(longQuery(2_000_000));
+        const queued = db.read('SELECT 1 AS one', [], {
+          signal: controller.signal,
+        });
+        const after = db.read<{ n: number }>('SELECT n FROM t');
+        // The abort lands while `queued` is still waiting for the worker.
+        controller.abort(new Error('the caller changed its mind'));
 
-      const settled = await Promise.allSettled([first, queued, after]);
-      expect(settled.map((r) => r.status)).toEqual([
-        'fulfilled',
-        'rejected',
-        'fulfilled',
-      ]);
-      expect(
-        (settled[2] as PromiseFulfilledResult<{ n: number }[]>).value,
-      ).toEqual([{ n: 1 }]);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+        const settled = await Promise.allSettled([first, queued, after]);
+        expect(settled.map((r) => r.status)).toEqual([
+          'fulfilled',
+          'rejected',
+          'fulfilled',
+        ]);
+        expect(
+          (settled[2] as PromiseFulfilledResult<{ n: number }[]>).value,
+        ).toEqual([{ n: 1 }]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 });

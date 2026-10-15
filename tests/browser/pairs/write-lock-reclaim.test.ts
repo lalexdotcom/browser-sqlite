@@ -7,7 +7,7 @@ import {
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { writeLockName } from '../../../src/locks';
 import { databasePath } from '../../../src/utils';
-import { TEST_TARGET } from '../helpers';
+import { scaled, TEST_TARGET } from '../helpers';
 import { holdIn, makeRealm } from '../helpers/realm';
 
 /**
@@ -53,7 +53,7 @@ const stuckTransaction = async (file: string) => {
 describe('the origin write lock is reclaimed', () => {
   it('close() releases the write lock a stuck transaction still holds', {
     tags: ['requires:idb-storage'],
-    timeout: 30_000,
+    timeout: scaled(30_000),
   }, async () => {
     const { vfs, build } = TEST_TARGET;
     const file = `reclaim-${crypto.randomUUID()}.db`;
@@ -81,7 +81,7 @@ describe('the origin write lock is reclaimed', () => {
 describe('a write that gives up says who was holding', () => {
   it('names another tab when the holder is in another realm', {
     tags: ['requires:idb-storage'],
-    timeout: 30_000,
+    timeout: scaled(30_000),
   }, async () => {
     const { vfs, build } = TEST_TARGET;
     const file = `holder-other-${crypto.randomUUID()}.db`;
@@ -118,7 +118,7 @@ describe('a write that gives up says who was holding', () => {
 
   it('names this tab when the holder is a transaction in this page', {
     tags: ['requires:idb-storage', 'requires:shared-second-client'],
-    timeout: 30_000,
+    timeout: scaled(30_000),
   }, async () => {
     const { vfs, build } = TEST_TARGET;
     const file = `holder-self-${crypto.randomUUID()}.db`;

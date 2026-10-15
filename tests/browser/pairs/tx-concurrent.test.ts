@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { createTestClient, longQuery } from '../helpers';
+import { createTestClient, longQuery, scaled } from '../helpers';
 
 /** Same shape as `pool-cap.test.ts`'s: the console is the only channel here. */
 const captureWarnings = () => {
@@ -132,155 +132,175 @@ describe('statements issued in the same tick inside a transaction', () => {
     }
   });
 
-  it('rejects a statement aborted while it waits its turn, and keeps the queue', async () => {
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      const controller = new AbortController();
+  it(
+    'rejects a statement aborted while it waits its turn, and keeps the queue',
+    async () => {
+      const db = await createTestClient({ poolSize: 1 });
+      try {
+        const controller = new AbortController();
 
-      const outcome = await db.transaction(async (tx) => {
-        // First holds the connection; the other two are created behind it.
-        const first = tx.read(longQuery(2_000_000));
-        const queued = tx.read('SELECT 1 AS one', [], {
-          signal: controller.signal,
+        const outcome = await db.transaction(async (tx) => {
+          // First holds the connection; the other two are created behind it.
+          const first = tx.read(longQuery(2_000_000));
+          const queued = tx.read('SELECT 1 AS one', [], {
+            signal: controller.signal,
+          });
+          const after = tx.read<{ two: number }>('SELECT 2 AS two');
+          // The abort lands while `queued` is still waiting its turn, so the
+          // statement never reaches the database. Falsifiable: pass `undefined`
+          // instead of the statement's signal to the queue wait in
+          // src/transaction.ts — `queued` then waits its turn and resolves.
+          controller.abort(new Error('the caller changed its mind'));
+          const settled = await Promise.allSettled([first, queued, after]);
+          return settled.map((s) =>
+            s.status === 'rejected'
+              ? `rejected:${(s.reason as { code?: string; message?: string }).code ?? (s.reason as Error).message}`
+              : s.status,
+          );
         });
-        const after = tx.read<{ two: number }>('SELECT 2 AS two');
-        // The abort lands while `queued` is still waiting its turn, so the
-        // statement never reaches the database. Falsifiable: pass `undefined`
-        // instead of the statement's signal to the queue wait in
-        // src/transaction.ts — `queued` then waits its turn and resolves.
-        controller.abort(new Error('the caller changed its mind'));
-        const settled = await Promise.allSettled([first, queued, after]);
-        return settled.map((s) =>
-          s.status === 'rejected'
-            ? `rejected:${(s.reason as { code?: string; message?: string }).code ?? (s.reason as Error).message}`
-            : s.status,
-        );
-      });
 
-      // Rejected alone, with its OWN reason, and the queue goes on: the
-      // statement behind it still runs. A place left early is handed on, not
-      // cancelled — releasing it outright let `after` start while the FIRST
-      // statement was still in flight, and it met the reuse guard.
-      expect(outcome).toEqual([
-        'fulfilled',
-        'rejected:the caller changed its mind',
-        'fulfilled',
-      ]);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
-
-  it("gives a queued statement the transaction's reason when the transaction aborts", async () => {
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      const controller = new AbortController();
-      const reason = new Error('the whole transaction');
-      let queuedError: unknown;
-
-      await expect(
-        db.transaction(
-          async (tx) => {
-            const first = tx.read(longQuery(2_000_000));
-            const queued = tx.read('SELECT 1 AS one').catch((e: unknown) => {
-              queuedError = e;
-              throw e;
-            });
-            controller.abort(reason);
-            await Promise.all([first, queued]);
-          },
-          { signal: controller.signal },
-        ),
-      ).rejects.toBe(reason);
-
-      // Not a bare abort: the statement waiting its turn carries the cause.
-      expect(queuedError).toBe(reason);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
-
-  it('runs two savepointed writes in issue order', async () => {
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      // A write carrying its OWN signal takes the savepointed branch of
-      // settled() (`opensSavepoint`), which has its own abort handling — so
-      // the queue has to hold there too, not only on the plain path.
-      const first = new AbortController();
-      const second = new AbortController();
-
-      await db.transaction(async (tx) => {
-        await Promise.all([
-          tx.write('INSERT INTO t (n) VALUES (1)', [], {
-            signal: first.signal,
-          }),
-          tx.write('INSERT INTO t (n) VALUES (2)', [], {
-            signal: second.signal,
-          }),
+        // Rejected alone, with its OWN reason, and the queue goes on: the
+        // statement behind it still runs. A place left early is handed on, not
+        // cancelled — releasing it outright let `after` start while the FIRST
+        // statement was still in flight, and it met the reuse guard.
+        expect(outcome).toEqual([
+          'fulfilled',
+          'rejected:the caller changed its mind',
+          'fulfilled',
         ]);
-      });
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 
-      expect(
-        await db.read<{ n: number }>('SELECT n FROM t ORDER BY n'),
-      ).toEqual([{ n: 1 }, { n: 2 }]);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+  it(
+    "gives a queued statement the transaction's reason when the transaction aborts",
+    async () => {
+      const db = await createTestClient({ poolSize: 1 });
+      try {
+        const controller = new AbortController();
+        const reason = new Error('the whole transaction');
+        let queuedError: unknown;
 
-  it('keeps the queue when a savepointed write is abandoned by its own signal', async () => {
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      const controller = new AbortController();
+        await expect(
+          db.transaction(
+            async (tx) => {
+              const first = tx.read(longQuery(2_000_000));
+              const queued = tx.read('SELECT 1 AS one').catch((e: unknown) => {
+                queuedError = e;
+                throw e;
+              });
+              controller.abort(reason);
+              await Promise.all([first, queued]);
+            },
+            { signal: controller.signal },
+          ),
+        ).rejects.toBe(reason);
 
-      const outcome = await db.transaction(async (tx) => {
-        // Abandoned mid-flight, the savepointed write resolves its caller at
-        // once and runs on; the wait moves to `abandoned`, which the statement
-        // behind it must still observe through the queue.
-        const abandonedWrite = tx.write(
-          `INSERT INTO t (n) SELECT 1 FROM (${longQuery(2_000_000)})`,
-          [],
-          { signal: controller.signal },
-        );
-        const behind = tx.read<{ c: number }>('SELECT COUNT(*) AS c FROM t');
-        controller.abort(new Error('the write is abandoned'));
-        const settled = await Promise.allSettled([abandonedWrite, behind]);
-        return settled.map((s) => s.status);
-      });
+        // Not a bare abort: the statement waiting its turn carries the cause.
+        expect(queuedError).toBe(reason);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 
-      expect(outcome[0]).toBe('rejected');
-      // The statement behind it still ran: no guard, no eviction.
-      expect(outcome[1]).toBe('fulfilled');
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+  it(
+    'runs two savepointed writes in issue order',
+    async () => {
+      const db = await createTestClient({ poolSize: 1 });
+      try {
+        await db.write('CREATE TABLE t (n INTEGER)');
+        // A write carrying its OWN signal takes the savepointed branch of
+        // settled() (`opensSavepoint`), which has its own abort handling — so
+        // the queue has to hold there too, not only on the plain path.
+        const first = new AbortController();
+        const second = new AbortController();
 
-  it('says nothing while a statement waits an ordinary turn', async () => {
-    const warnings = captureWarnings();
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      await db.write('CREATE TABLE t (n INTEGER)');
+        await db.transaction(async (tx) => {
+          await Promise.all([
+            tx.write('INSERT INTO t (n) VALUES (1)', [], {
+              signal: first.signal,
+            }),
+            tx.write('INSERT INTO t (n) VALUES (2)', [], {
+              signal: second.signal,
+            }),
+          ]);
+        });
 
-      await db.transaction(async (tx) => {
-        await Promise.all([
-          tx.write('INSERT INTO t (n) VALUES (1)'),
-          tx.read('SELECT 1 AS one'),
-        ]);
-      });
+        expect(
+          await db.read<{ n: number }>('SELECT n FROM t ORDER BY n'),
+        ).toEqual([{ n: 1 }, { n: 2 }]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 
-      // The half that matters, and the half that belongs in a browser: an
-      // advisory on every healthy wait would be worse than none, since the
-      // queue waits by design and most waits are short. Its twin — that the
-      // advisory DOES fire after five seconds — lives in the unit project on
-      // fake timers: a browser test that really waits seven seconds loads the
-      // machine, and the cell it shares with `tx-savepoint` measures interrupt
-      // latency (T4 failed 2 of 4 runs with it present, 0 of 5 without).
-      expect(warnings.filter((w) => w.includes(ADVISORY))).toEqual([]);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+  it(
+    'keeps the queue when a savepointed write is abandoned by its own signal',
+    async () => {
+      const db = await createTestClient({ poolSize: 1 });
+      try {
+        await db.write('CREATE TABLE t (n INTEGER)');
+        const controller = new AbortController();
+
+        const outcome = await db.transaction(async (tx) => {
+          // Abandoned mid-flight, the savepointed write resolves its caller at
+          // once and runs on; the wait moves to `abandoned`, which the statement
+          // behind it must still observe through the queue.
+          const abandonedWrite = tx.write(
+            `INSERT INTO t (n) SELECT 1 FROM (${longQuery(2_000_000)})`,
+            [],
+            { signal: controller.signal },
+          );
+          const behind = tx.read<{ c: number }>('SELECT COUNT(*) AS c FROM t');
+          controller.abort(new Error('the write is abandoned'));
+          const settled = await Promise.allSettled([abandonedWrite, behind]);
+          return settled.map((s) => s.status);
+        });
+
+        expect(outcome[0]).toBe('rejected');
+        // The statement behind it still ran: no guard, no eviction.
+        expect(outcome[1]).toBe('fulfilled');
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
+
+  it(
+    'says nothing while a statement waits an ordinary turn',
+    async () => {
+      const warnings = captureWarnings();
+      const db = await createTestClient({ poolSize: 1 });
+      try {
+        await db.write('CREATE TABLE t (n INTEGER)');
+
+        await db.transaction(async (tx) => {
+          await Promise.all([
+            tx.write('INSERT INTO t (n) VALUES (1)'),
+            tx.read('SELECT 1 AS one'),
+          ]);
+        });
+
+        // The half that matters, and the half that belongs in a browser: an
+        // advisory on every healthy wait would be worse than none, since the
+        // queue waits by design and most waits are short. Its twin — that the
+        // advisory DOES fire after five seconds — lives in the unit project on
+        // fake timers: a browser test that really waits seven seconds loads the
+        // machine, and the cell it shares with `tx-savepoint` measures interrupt
+        // latency (T4 failed 2 of 4 runs with it present, 0 of 5 without).
+        expect(warnings.filter((w) => w.includes(ADVISORY))).toEqual([]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 });

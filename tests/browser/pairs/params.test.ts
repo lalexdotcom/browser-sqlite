@@ -6,7 +6,12 @@ import {
 import { describe, expect, it } from 'vitest';
 import type { PoolWorker } from '../../../src/pool';
 import { databasePath } from '../../../src/utils';
-import { createTestClient, removeDatabaseFiles, TEST_TARGET } from '../helpers';
+import {
+  createTestClient,
+  removeDatabaseFiles,
+  scaled,
+  TEST_TARGET,
+} from '../helpers';
 
 const typed = 'SELECT typeof(v) AS t, quote(v) AS q FROM p ORDER BY rowid';
 
@@ -244,23 +249,27 @@ describe('params', () => {
     });
   });
 
-  it('round-trips a param larger than the wasm heap', async () => {
-    const db = await createTestClient();
-    await db.write('CREATE TABLE b (v)');
-    const big = new Uint8Array(64 << 20);
-    for (let i = 0; i < big.length; i += 4096) big[i] = (i / 4096) & 255;
-    await db.write('INSERT INTO b VALUES (?)', [big]);
-    const [row] = await db.read<{ n: number; h: string }>(
-      'SELECT length(v) AS n, hex(substr(v, 1 + 4096 * 3, 1)) AS h FROM b',
-    );
-    // Byte 1 + 4096 * 3 (1-based) is index 3 * 4096, set to 3 above.
-    expect(row).toEqual({ n: 64 << 20, h: '03' });
-    await db.close();
-  }, 120_000);
+  it(
+    'round-trips a param larger than the wasm heap',
+    async () => {
+      const db = await createTestClient();
+      await db.write('CREATE TABLE b (v)');
+      const big = new Uint8Array(64 << 20);
+      for (let i = 0; i < big.length; i += 4096) big[i] = (i / 4096) & 255;
+      await db.write('INSERT INTO b VALUES (?)', [big]);
+      const [row] = await db.read<{ n: number; h: string }>(
+        'SELECT length(v) AS n, hex(substr(v, 1 + 4096 * 3, 1)) AS h FROM b',
+      );
+      // Byte 1 + 4096 * 3 (1-based) is index 3 * 4096, set to 3 above.
+      expect(row).toEqual({ n: 64 << 20, h: '03' });
+      await db.close();
+    },
+    scaled(120_000),
+  );
 
   it('rebinds a cached statement after an aborted query', {
     tags: ['requires:interruptible'],
-    timeout: 60_000,
+    timeout: scaled(60_000),
   }, async () => {
     const db = await createTestClient({ poolSize: 1 });
     const sql =

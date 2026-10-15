@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sharedDatabase } from '../helpers';
+import { scaled, sharedDatabase } from '../helpers';
 
 /**
  * `OPFSCoopSyncVFS` rotates one exclusive OPFS access handle between workers,
@@ -54,7 +54,7 @@ describe('OPFSCoopSyncVFS handle-transfer BUSY', () => {
   // between two clients; the build follows the cell's pair.
   it('does not surface the transfer BUSY to the caller', {
     tags: ['vfs:OPFSCoopSyncVFS'],
-    timeout: 120000,
+    timeout: scaled(120000),
   }, async () => {
     const database = sharedDatabase();
     // dbA alone creates the table, exactly as the single client used to. dbB
