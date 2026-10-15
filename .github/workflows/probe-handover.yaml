@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     defaults:
@@ -24,4 +24,4 @@ jobs:
       - uses: ./.github/actions/setup
       - if: runner.os == 'macOS'
         run: sudo safaridriver --enable
-      - run: node scripts/probe-handover.ts "${{ runner.os == 'macOS' && 'chrome,firefox,safari' || 'chrome,firefox' }}"
+      - run: node scripts/probe-handover.ts safari

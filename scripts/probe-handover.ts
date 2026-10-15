@@ -132,13 +132,7 @@ const names = async () => {
   holder.terminate();
   return out;
 };
-window.__probe = (async () => ({
-  names: await names(),
-  close: await handover('close'),
-  idle: await handover('idle'),
-  busy: await handover('busy'),
-  wasm: await handover('wasm'),
-}))();
+window.__run = { names, handover };
 </script>`;
 
 const dir = mkdtempSync(join(tmpdir(), 'probe-handover-'));
@@ -174,15 +168,35 @@ try {
       const version = (browser.capabilities as { browserVersion?: string })
         .browserVersion;
       await browser.url(`http://localhost:${PORT}/index.html`);
-      const result = (await browser.execute(
-        () => (window as unknown as { __probe: Promise<unknown> }).__probe,
-      )) as { names: Record<string, string> } & Record<string, Round[]>;
+      await browser.setTimeout({ script: 600_000 });
       const tag = `${name} ${version} on ${process.platform}`;
+      const names = (await browser.execute(() =>
+        (
+          window as unknown as { __run: { names: () => Promise<unknown> } }
+        ).__run.names(),
+      )) as Record<string, string>;
       console.log(
-        `${tag}, names on a held file: createSyncAccessHandle ${result.names.createSyncAccessHandle}, removeEntry ${result.names.removeEntry}`,
+        `${tag}, names on a held file: createSyncAccessHandle ${names.createSyncAccessHandle}, removeEntry ${names.removeEntry}`,
       );
       for (const mode of ['close', 'idle', 'busy', 'wasm'] as const) {
-        const rounds = result[mode] as Round[];
+        const began = Date.now();
+        let rounds: Round[];
+        try {
+          rounds = (await browser.execute(
+            (m) =>
+              (
+                window as unknown as {
+                  __run: { handover: (m: string) => Promise<unknown> };
+                }
+              ).__run.handover(m),
+            mode,
+          )) as Round[];
+        } catch (e) {
+          console.log(
+            `${tag}, A ${mode}: no result after ${Math.round((Date.now() - began) / 1000)} s (${(e as Error).message.slice(0, 80)})`,
+          );
+          continue;
+        }
         const failed = rounds.filter((r) => r.first !== 'ok');
         const errs = [...new Set(failed.map((r) => r.first))].join(', ');
         const waits = failed.map((r) => r.waited).sort((x, y) => x - y);
@@ -190,7 +204,8 @@ try {
           `${tag}, A ${mode}: B's first open failed ${failed.length}/${rounds.length}` +
             (failed.length
               ? ` (${errs}); free after median ${waits[Math.floor(waits.length / 2)]?.toFixed(0)} ms, p90 ${waits[Math.floor(waits.length * 0.9)]?.toFixed(0)} ms, max ${waits.at(-1)?.toFixed(0)} ms, never: ${failed.filter((r) => r.waited < 0).length}`
-              : ''),
+              : '') +
+            ` [${Math.round((Date.now() - began) / 1000)} s]`,
         );
       }
     } finally {
