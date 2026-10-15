@@ -1,0 +1,24 @@
+name: Probe hand-over (throwaway)
+
+# TEMPORARY (ci/windows-macos): does a sync access handle closed before its
+# Web Lock is released stay busy for the next holder? Removed before the merge.
+on:
+  push:
+    branches:
+      - ci/windows-macos
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - run: node scripts/probe-handover.ts
