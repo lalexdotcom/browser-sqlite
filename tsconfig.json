@@ -12,9 +12,12 @@
     "useDefineForClassFields": true,
     "allowImportingTsExtensions": true,
     // The Vitest tests import the library by name; tests/vitest.config.ts aliases
-    // both to tests/build/, and the types come from the sources they build.
+    // them to tests/build/ (`browser-sqlite` through tests/browser/helpers/
+    // library.ts, which imports `browser-sqlite/built`), and the types come from
+    // the sources they build: tests/build/ does not exist before a test run.
     "paths": {
       "browser-sqlite": ["./src/index.ts"],
+      "browser-sqlite/built": ["./src/index.ts"],
       "browser-sqlite/testing": ["./tests/harness/testing.ts"]
     }
   },

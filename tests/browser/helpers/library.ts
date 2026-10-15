@@ -8,10 +8,11 @@
  * 2072928); for these tests the open timeout is a budget, not the subject. A
  * test about the open timeout passes `openTimeout` itself.
  */
-import { inject } from 'vitest';
-import * as library from '../../build/index.js';
 
-export * from '../../build/index.js';
+import * as library from 'browser-sqlite/built';
+import { inject } from 'vitest';
+
+export * from 'browser-sqlite/built';
 
 const TIME_SCALE = inject('bsqTimeScale') ?? 1;
 const OPEN_TIMEOUT_MS = 30_000;
