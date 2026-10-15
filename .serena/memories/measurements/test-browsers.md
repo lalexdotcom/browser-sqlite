@@ -119,3 +119,14 @@ Capabilities: `platformName: 'iOS'`, `browserName: 'safari'`, `'safari:useSimula
 - **Vitest renames `instances` in place:** two projects sharing one `instances` array fail at startup ("project name "plain (chrome)" was already defined").
 - `cacheDir` in the provider options keeps the downloads in `node_modules/.cache/wdio` instead of `/tmp`.
 - **Not run:** Safari, Windows, macOS, the rest of the suite, the matrix of targets.
+
+## LIB-WIN-MAC — the library's suites on GitHub's Windows and macOS runners, 2026-10-14/15, Chrome 153 / Firefox 155 (`ci/windows-macos`)
+
+**Method.** `tests-windows.yaml` / `tests-macos.yaml` → `tests.yaml` (`pnpm build`, `pnpm test`, `pnpm test:conformance`), `windows-latest` (4 vCPU, 3 jobs) and `macos-latest` (arm64, 2 jobs). Windows with `BSQ_TIME_SCALE=4` and a 240-min job from run 38598783823 on.
+
+| | `pnpm test` | conformance | counts |
+|---|---|---|---|
+| macOS, green runs 38592188039, 38595129721, 38598783776, 38693552150, 38715791686, 38721500086, 38726538338, 38734843269 | 276-949 s (runner variance) | 36-93 s | 343 files, 2506-2510 passed / 490 skipped (the count grew with the branch's unit tests), Not applicable 20/14/11/5, `abandon-gc` ×4 — Linux's |
+| Windows, green runs 38726538222, 38734843259 (attempts 1 and 2) | 1276-1614 s | 179-210 s | 343 files, 2506 passed / 494 skipped (+3 `coopsync-handover` skips on Firefox, +1 POSIX-only unit test), Not applicable 20/14/11/5, conformance 162/32 |
+
+**What Windows needed, in the order the runs showed it:** `shell` only for `pnpm`/`npx` (cmd.exe mangled `node -e`); `/` in the matrix table; the per-job and per-test bounds ×4 (Firefox OPFS tests 7-16× slower than Chrome there — OPFS-PROBE, `mem:follow-ups` § Firefox + OPFS); then the bounds tests write themselves (`scaled()`), the library's default open timeout in tests (`tests/browser/helpers/library.ts`), Vitest's `browser.connectTimeout` (a Firefox cell never connected in 60 s), and double quotes in `package.json` scripts (cmd.exe keeps `'…'`). Product limits met and recorded in `mem:follow-ups`: two `OPFSCoopSyncVFS` clients miss the 30 s open timeout (three tests skipped on Windows Firefox), a single `OPFSWriteAheadVFS` client did once under load, and the held-handle race behind wa-sqlite #381. Chrome on Windows was green from the first run that reached the tests.

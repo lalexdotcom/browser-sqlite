@@ -264,3 +264,13 @@ In `edit_memory` and `replace_content` regex mode, a backreference is written as
 ## A stub on `PATH` is checked before the script under test runs (2026-10-06)
 
 Testing the action's npm-upgrade step against a fake `npm`, the stub's directory was mistyped in `PATH`; the real npm answered, and the step under test ran a real `npm install -g npm@^11.21.0`, upgrading the container's global npm (left so, user's choice). **Assert `type -P <tool>` names the stub before running the script**, and keep the real tool out of reach (`env -i PATH=<stubs>:/usr/bin:/bin`) when the script under test can install or delete.
+
+
+## A script that runs on Linux is not a script that runs on Windows: four traps, each paid for once (2026-10-15, `ci/windows-macos`)
+
+- **`pnpm`/`npx` are `.cmd` shims on Windows**, which Node spawns only with `shell: true` — and a shell splits arguments with spaces (Vitest's project names). Run a package's CLI with Node on its `bin` (`packageBin`), and keep `shell: true` for constant argv only.
+- **No process groups:** `process.kill(-pid)` fails, and killing the direct child leaves its browser and driver alive. `taskkill /T /F` kills the tree (`killTree`).
+- **pnpm runs `package.json` scripts through `cmd.exe`**, which keeps single quotes: `'conformance *'` became two arguments. Double quotes work in both shells.
+- **Paths print with `\`**: anything compared or shown as text gets `/` first.
+
+And one about bounds: **every timeout in a run is a bet on the platform's speed** — the runner's, the job's, Vitest's (`testTimeout`, `hookTimeout`, `browser.connectTimeout`), the ones tests write, and the library defaults tests rely on. Scale them together (`BSQ_TIME_SCALE`); each one left out was a red Windows run.
