@@ -1,7 +1,8 @@
 name: Probe hand-over (throwaway)
 
-# TEMPORARY (ci/windows-macos): does a sync access handle closed before its
-# Web Lock is released stay busy for the next holder? Removed before the merge.
+# TEMPORARY (ci/windows-macos): what a held OPFS file throws, and how long a
+# terminated holder keeps it, per platform and browser. Removed before the
+# merge.
 on:
   push:
     branches:
@@ -14,11 +15,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
-      - run: node scripts/probe-handover.ts
+      - if: runner.os == 'macOS'
+        run: sudo safaridriver --enable
+      - run: node scripts/probe-handover.ts "${{ runner.os == 'macOS' && 'chrome,firefox,safari' || 'chrome,firefox' }}"
