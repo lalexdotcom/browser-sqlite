@@ -334,7 +334,7 @@ describe('a pool capped by its environment', () => {
                 try {
                   post(m);
                 } catch {}
-              }, 15000);
+              }, scaled(15000));
               return;
             }
             post(m);
@@ -380,7 +380,9 @@ describe('a pool capped by its environment', () => {
       // at 3000 rather than assumed: the interception constructs exactly
       // THREE workers — slot 0, slot 1's round-1 worker, slot 1's retry —
       // and the pool settles at 1 with no loss and no warning.
-      openTimeout: 3000,
+      // Scaled with the delay above (BSQ_TIME_SCALE): Firefox on Windows took
+      // more than 3 s to open slot 0's healthy worker (2026-10-15).
+      openTimeout: scaled(3000),
       onWorkerLost: (e) => lost.push(e),
     });
     await db.write('CREATE TABLE t (a)');
