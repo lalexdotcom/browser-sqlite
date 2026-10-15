@@ -99,8 +99,10 @@ and passed against the bug — the falsifier had to go through SQL. Three facts 
 - **`TestContext.create()` never rejects**: a worker that fails to start throws from the message
   listener and the promise stays pending. `test/vfs_handover.js` starts its workers through a helper
   that does reject.
-- **`TestContext.supportsJSPI()` builds a `WebAssembly.Function`**, gone from Chrome 151 (which has
-  `WebAssembly.Suspending` and `promising`), so every `jspi` describe is skipped locally.
+- **`TestContext.supportsJSPI()` tests `WebAssembly.Suspending`/`Suspender` since upstream #364
+  (merged 2026-09-25)**; before it, it built a `WebAssembly.Function`, gone from Chrome 151, and every
+  `jspi` describe was skipped. On a branch from current `master` the `jspi` tests run (checked
+  2026-10-15: a new `vfs_handover` test failed on `jspi` as on the other two builds).
 - **Upstream CI** (`.github/workflows/ci.yml`) runs `yarn test` on Chrome 129, then rebuilds the WASM
   with Emscripten 3.1.61 and runs it again. It starts on a PR from the fork without approval. Its
   job steps are readable through the public API (`/actions/runs/<id>/jobs`); its logs are not.
