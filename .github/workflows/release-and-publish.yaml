@@ -72,40 +72,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
+      # The smoke drives Chrome alone.
+      - uses: ./.github/actions/setup
         with:
-          node-version: 24
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      # Stock Chrome and Firefox at the versions scripts/browsers.ts pins, and
-      # their drivers, downloaded by WebdriverIO on first use. The key is that
-      # file: a new pin is a new cache. GitHub's Ubuntu images carry both
-      # browsers' system libraries.
-      - name: Cache WebdriverIO browsers
-        uses: actions/cache@v6
-        with:
-          path: node_modules/.cache/wdio
-          key: wdio-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/browsers.ts') }}
-
-      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor.
-      # Chrome's sandbox needs them, and only the system Chrome has a profile
-      # that allows them: the Chrome for Testing WebdriverIO downloads exits at
-      # launch ("Chrome instance exited"). Lifting the restriction keeps the
-      # sandbox, where --no-sandbox would drop it.
-      - name: Let Chrome's sandbox create user namespaces
-        run: |
-          sysctl kernel.apparmor_restrict_unprivileged_userns
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
-      # One download per browser and driver, before anything runs in parallel:
-      # on a cold cache, parallel Vitest jobs fetched the same chromedriver at
-      # once, and one spawned it before it was executable (EACCES).
-      - name: Install browsers
-        run: node scripts/browsers.ts install
+          browsers: chrome
 
       - name: Consumer smoke test
         run: pnpm test:consumer

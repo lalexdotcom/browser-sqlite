@@ -4,8 +4,9 @@
  * and the Firefox release current on that Chrome's stable date (2026-09-08),
  * so the two are of one age (mem:conventions).
  *
- *   node scripts/browsers.ts deps      apt packages both need, on one line
- *   node scripts/browsers.ts install   download both, open and close a session
+ *   node scripts/browsers.ts deps            apt packages both need, on one line (Linux)
+ *   node scripts/browsers.ts install [list]  download the browsers in list (chrome,firefox
+ *                                            by default), open and close a session with each
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -24,6 +25,27 @@ export const PINNED: Readonly<Record<BrowserName, string>> = {
   chrome: '153.0.8010.52',
   firefox: 'stable_155.0.1',
 };
+
+const NAMES = Object.keys(PINNED) as BrowserName[];
+
+/** `chrome,firefox` → the browsers to install, in that order; both when omitted. */
+export function parseBrowserList(arg: string | undefined): BrowserName[] {
+  if (arg === undefined) return [...NAMES];
+  const names: BrowserName[] = [];
+  for (const entry of arg.split(',').map((s) => s.trim())) {
+    if (entry === '') continue;
+    if (!NAMES.includes(entry as BrowserName)) {
+      throw new Error(
+        `browsers: unknown browser "${entry}" — expected ${NAMES.join(', ')}`,
+      );
+    }
+    if (!names.includes(entry as BrowserName)) names.push(entry as BrowserName);
+  }
+  if (names.length === 0) {
+    throw new Error(`browsers: "${arg}" names no browser`);
+  }
+  return names;
+}
 
 /** The geckodriver WebdriverIO would otherwise resolve to the latest release; the CI cache key hashes this file. */
 export const GECKODRIVER_VERSION = '0.37.1';
@@ -121,9 +143,9 @@ async function deps(): Promise<string[]> {
   return [...new Set([...chrome, ...firefox])].sort();
 }
 
-async function installAll() {
+async function installAll(names: readonly BrowserName[]) {
   const { remote } = await import('webdriverio');
-  for (const name of ['chrome', 'firefox'] as const) {
+  for (const name of names) {
     const browser = await remote({
       // geckodriver relays a fresh Firefox profile's own startup noise as WARN.
       logLevel: 'error',
@@ -144,10 +166,18 @@ async function installAll() {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const command = process.argv[2];
-  if (command === 'deps') console.log((await deps()).join(' '));
-  else if (command === 'install') await installAll();
-  else {
-    console.error('usage: node scripts/browsers.ts deps|install');
+  if (command === 'deps') {
+    if (process.platform !== 'linux') {
+      console.error('browsers deps: Linux only (apt packages)');
+      process.exit(2);
+    }
+    console.log((await deps()).join(' '));
+  } else if (command === 'install') {
+    await installAll(parseBrowserList(process.argv[3]));
+  } else {
+    console.error(
+      'usage: node scripts/browsers.ts deps | install [chrome,firefox]',
+    );
     process.exit(2);
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient } from '../helpers';
+import { createTestClient, scaled } from '../helpers';
 
 /**
  * Characterization tests for `db.transaction()`.
@@ -311,30 +311,34 @@ describe('transaction() abandonment', () => {
  * and left the database malformed (wa-sqlite, 2026-09-18).
  */
 describe('transaction() rollback past the page cache', () => {
-  it('leaves the database intact when a spilled transaction is rolled back', async () => {
-    const db = await createTestClient();
+  it(
+    'leaves the database intact when a spilled transaction is rolled back',
+    async () => {
+      const db = await createTestClient();
 
-    await db.write('CREATE TABLE spill (x INTEGER)');
-    await db.write('INSERT INTO spill VALUES (-1)');
+      await db.write('CREATE TABLE spill (x INTEGER)');
+      await db.write('INSERT INTO spill VALUES (-1)');
 
-    const reason = new Error('roll it back');
-    await expect(
-      db.transaction(async (tx) => {
-        await tx.write(
-          `INSERT INTO spill WITH RECURSIVE c(x) AS
+      const reason = new Error('roll it back');
+      await expect(
+        db.transaction(async (tx) => {
+          await tx.write(
+            `INSERT INTO spill WITH RECURSIVE c(x) AS
              (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 200000)
            SELECT x FROM c`,
-        );
-        throw reason;
-      }),
-    ).rejects.toBe(reason);
+          );
+          throw reason;
+        }),
+      ).rejects.toBe(reason);
 
-    // The database must still be readable, and hold only what preceded.
-    expect(await db.read('PRAGMA integrity_check')).toEqual([
-      { integrity_check: 'ok' },
-    ]);
-    expect(await db.read('SELECT x FROM spill')).toEqual([{ x: -1 }]);
+      // The database must still be readable, and hold only what preceded.
+      expect(await db.read('PRAGMA integrity_check')).toEqual([
+        { integrity_check: 'ok' },
+      ]);
+      expect(await db.read('SELECT x FROM spill')).toEqual([{ x: -1 }]);
 
-    await db.close();
-  }, 60_000);
+      await db.close();
+    },
+    scaled(60_000),
+  );
 });

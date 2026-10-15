@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, longQuery } from '../helpers';
+import { createTestClient, longQuery, scaled } from '../helpers';
 
 /**
  * One INSERT whose single step() runs for hundreds of milliseconds (Chromium)
@@ -39,7 +39,7 @@ describe('a write abandoned inside a transaction', () => {
    */
   it('costs no worker and no committed data when the callback does not catch it', {
     tags: ['requires:interruptible'],
-    timeout: 30_000,
+    timeout: scaled(30_000),
   }, async () => {
     const db = await setUp();
     try {
@@ -67,7 +67,7 @@ describe('a write abandoned inside a transaction', () => {
   // `pending = 'undo'` — the million rows are then committed.
   it('undoes a caught abandoned write, and the transaction goes on (async)', {
     tags: ['requires:interruptible'],
-    timeout: 30_000,
+    timeout: scaled(30_000),
   }, async () => {
     const db = await setUp();
     try {
@@ -99,28 +99,32 @@ describe('a write abandoned inside a transaction', () => {
 
   // Spec 2026-09-11, R3: nothing can cut the step on this build, and the
   // outcome is now the same as where something can. Falsifiable: as above.
-  it('undoes a caught abandoned write on the sync build too, and goes on (R3)', async () => {
-    const db = await setUp();
-    try {
-      const reason = new Error('abandon the write');
-      await db.transaction(async (tx) => {
-        await tx
-          .write(BIG_INSERT, [], { signal: abortAfter(30, reason) })
-          .catch(() => {});
-        await tx.write('INSERT INTO t VALUES (2)');
-      });
+  it(
+    'undoes a caught abandoned write on the sync build too, and goes on (R3)',
+    async () => {
+      const db = await setUp();
+      try {
+        const reason = new Error('abandon the write');
+        await db.transaction(async (tx) => {
+          await tx
+            .write(BIG_INSERT, [], { signal: abortAfter(30, reason) })
+            .catch(() => {});
+          await tx.write('INSERT INTO t VALUES (2)');
+        });
 
-      expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
-        { n: 0 },
-      ]);
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
-        { a: 0 },
-        { a: 2 },
-      ]);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+        expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
+          { n: 0 },
+        ]);
+        expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+          { a: 0 },
+          { a: 2 },
+        ]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
 
   // Spec 2026-09-10, D4 reversed: a write whose own signal is already
   // aborted at the call never reaches the worker, so it rejects alone — the
@@ -153,40 +157,47 @@ describe('a write abandoned inside a transaction', () => {
   });
 
   // Falsifiable: as for the signal above.
-  it('undoes a write abandoned by its own timeout, and goes on', async () => {
-    const db = await setUp();
-    try {
-      const before = workerIdentity(db);
-      let caught: unknown;
-      await db.transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
-        caught = await tx
-          .write(BIG_INSERT, [], { timeout: 30 })
-          .catch((e) => e);
-        await tx.write('INSERT INTO t VALUES (2)');
-      });
+  it(
+    'undoes a write abandoned by its own timeout, and goes on',
+    async () => {
+      const db = await setUp();
+      try {
+        const before = workerIdentity(db);
+        let caught: unknown;
+        await db.transaction(async (tx) => {
+          await tx.write('INSERT INTO t VALUES (1)');
+          caught = await tx
+            .write(BIG_INSERT, [], { timeout: 30 })
+            .catch((e) => e);
+          await tx.write('INSERT INTO t VALUES (2)');
+        });
 
-      expect(caught).toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 30 });
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
-        { a: 0 },
-        { a: 1 },
-        { a: 2 },
-      ]);
-      expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
-        { n: 0 },
-      ]);
-      expect(workerIdentity(db)).toBe(before);
-    } finally {
-      await db.close();
-    }
-  }, 30_000);
+        expect(caught).toMatchObject({
+          code: 'OPERATION_TIMEOUT',
+          timeout: 30,
+        });
+        expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+          { a: 0 },
+          { a: 1 },
+          { a: 2 },
+        ]);
+        expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
+          { n: 0 },
+        ]);
+        expect(workerIdentity(db)).toBe(before);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(30_000),
+  );
 
   // Falsifiable: in `settled`'s outer catch (src/transaction.ts), call die(e)
   // whenever a statement is rejected by its own signal, not only a
   // savepointed write — the abandoned read then kills the transaction too.
   it('does not abandon the transaction for an abandoned read (R7)', {
     tags: ['requires:interruptible'],
-    timeout: 30_000,
+    timeout: scaled(30_000),
   }, async () => {
     const db = await setUp();
     try {
@@ -219,7 +230,7 @@ describe('a write abandoned inside a transaction', () => {
   // transaction with it.
   it('undoes a caught write issued through tx.first(), and goes on', {
     tags: ['requires:interruptible'],
-    timeout: 30_000,
+    timeout: scaled(30_000),
   }, async () => {
     const db = await setUp();
     try {

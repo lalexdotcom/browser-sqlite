@@ -260,22 +260,13 @@ jobs:
         if: steps.bench.outputs.dir != ''
         run: pnpm install --frozen-lockfile
 
-      - name: Cache WebdriverIO browsers
-        if: steps.bench.outputs.dir != ''
-        uses: actions/cache@v6
+      # pnpm and Node are set up above, for the tag checkouts; the bench check
+      # drives Chrome alone.
+      - if: steps.bench.outputs.dir != ''
+        uses: ./.github/actions/setup
         with:
-          path: node_modules/.cache/wdio
-          key: wdio-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/browsers.ts') }}
-
-      # Chrome for Testing has no AppArmor profile and exits at launch while
-      # unprivileged user namespaces are restricted; lifting it keeps the sandbox.
-      - name: Let Chrome's sandbox create user namespaces
-        if: steps.bench.outputs.dir != ''
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
-      - name: Install browsers
-        if: steps.bench.outputs.dir != ''
-        run: node scripts/browsers.ts install
+          browsers: chrome
+          node-setup: 'false'
 
       - name: Check the bench page
         if: steps.bench.outputs.dir != ''

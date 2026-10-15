@@ -5,6 +5,7 @@ import { databasePath } from '../../../src/utils';
 import {
   createTestClient,
   removeDatabaseFiles,
+  scaled,
   sleep,
   TEST_TARGET,
 } from '../helpers';
@@ -53,67 +54,83 @@ const abandon = async (make: () => AsyncGenerator<unknown>) => {
 };
 
 describe('an abandoned generator gives its worker back', () => {
-  it('at the deadline, when the caller set a timeout', async () => {
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      await seed(db);
-      await abandon(() =>
-        db.chunk('SELECT n FROM t', [], { chunkSize: 10, timeout: 2000 }),
-      );
+  it(
+    'at the deadline, when the caller set a timeout',
+    async () => {
+      const db = await createTestClient({ poolSize: 1 });
+      try {
+        await seed(db);
+        await abandon(() =>
+          db.chunk('SELECT n FROM t', [], { chunkSize: 10, timeout: 2000 }),
+        );
 
-      // poolSize 1: the only worker is leased and parked between two step()
-      // calls. Before the deadline nothing may be served — this half is what
-      // proves the leak is real rather than assuming it.
-      expect(await servesWithin(db, 300)).toBe(false);
+        // poolSize 1: the only worker is leased and parked between two step()
+        // calls. Before the deadline nothing may be served — this half is what
+        // proves the leak is real rather than assuming it.
+        expect(await servesWithin(db, 300)).toBe(false);
 
-      // After it, the reclaim has run and the pool serves again.
-      expect(await servesWithin(db, 8000)).toBe(true);
-    } finally {
-      held.clear();
-      await db.close();
-    }
-  }, 30_000);
-
-  it('at once, when the caller aborts the signal', async () => {
-    const controller = new AbortController();
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      await seed(db);
-      await abandon(() =>
-        db.stream('SELECT n FROM t', [], {
-          chunkSize: 10,
-          signal: controller.signal,
-        }),
-      );
-
-      expect(await servesWithin(db, 300)).toBe(false);
-      controller.abort(new Error('the consumer changed its mind'));
-      expect(await servesWithin(db, 8000)).toBe(true);
-    } finally {
-      held.clear();
-      await db.close();
-    }
-  }, 30_000);
-
-  it('leaves a correct consumer untouched', async () => {
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      await seed(db);
-      let seen = 0;
-      for await (const rows of db.chunk<{ n: number }>('SELECT n FROM t', [], {
-        chunkSize: 500,
-      })) {
-        seen += rows.length;
-        // A streaming test must await in its loop body: consuming at full
-        // speed exercises only the transport's happy interleaving.
-        await sleep(0);
+        // After it, the reclaim has run and the pool serves again.
+        expect(await servesWithin(db, 8000)).toBe(true);
+      } finally {
+        held.clear();
+        await db.close();
       }
-      expect(seen).toBe(ROWS);
-      expect(await servesWithin(db, 8000)).toBe(true);
-    } finally {
-      await db.close();
-    }
-  }, 30_000);
+    },
+    scaled(30_000),
+  );
+
+  it(
+    'at once, when the caller aborts the signal',
+    async () => {
+      const controller = new AbortController();
+      const db = await createTestClient({ poolSize: 1 });
+      try {
+        await seed(db);
+        await abandon(() =>
+          db.stream('SELECT n FROM t', [], {
+            chunkSize: 10,
+            signal: controller.signal,
+          }),
+        );
+
+        expect(await servesWithin(db, 300)).toBe(false);
+        controller.abort(new Error('the consumer changed its mind'));
+        expect(await servesWithin(db, 8000)).toBe(true);
+      } finally {
+        held.clear();
+        await db.close();
+      }
+    },
+    scaled(30_000),
+  );
+
+  it(
+    'leaves a correct consumer untouched',
+    async () => {
+      const db = await createTestClient({ poolSize: 1 });
+      try {
+        await seed(db);
+        let seen = 0;
+        for await (const rows of db.chunk<{ n: number }>(
+          'SELECT n FROM t',
+          [],
+          {
+            chunkSize: 500,
+          },
+        )) {
+          seen += rows.length;
+          // A streaming test must await in its loop body: consuming at full
+          // speed exercises only the transport's happy interleaving.
+          await sleep(0);
+        }
+        expect(seen).toBe(ROWS);
+        expect(await servesWithin(db, 8000)).toBe(true);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(30_000),
+  );
 });
 
 describe('a reclaim that arrives late', () => {
@@ -132,42 +149,50 @@ describe('a reclaim that arrives late', () => {
    * Before the fix the abort reached the live query: `interrupt()` broke its
    * loop and the consumer received `done` with 100 of 4000 rows and no error.
    */
-  it('does not truncate the query the worker has moved on to', async () => {
-    const controller = new AbortController();
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      await seed(db);
+  it(
+    'does not truncate the query the worker has moved on to',
+    async () => {
+      const controller = new AbortController();
+      const db = await createTestClient({ poolSize: 1 });
+      try {
+        await seed(db);
 
-      await db.transaction(async (tx) => {
-        const rows = tx.chunk('SELECT n FROM t LIMIT 1', [], {
-          chunkSize: 10,
-          signal: controller.signal,
+        await db.transaction(async (tx) => {
+          const rows = tx.chunk('SELECT n FROM t LIMIT 1', [], {
+            chunkSize: 10,
+            signal: controller.signal,
+          });
+          // One chunk, then the generator is dropped. `done` has already
+          // cleared deferredChunk while the drain sits at its yield.
+          await rows.next();
+          await sleep(50);
+          // The guard is not tripped, and this is the point: the transaction
+          // ends normally, which is what leaves the stale transport behind.
+          const ok = await tx.read<{ ok: number }>('SELECT 1 AS ok');
+          expect(ok[0]?.ok).toBe(1);
         });
-        // One chunk, then the generator is dropped. `done` has already
-        // cleared deferredChunk while the drain sits at its yield.
-        await rows.next();
-        await sleep(50);
-        // The guard is not tripped, and this is the point: the transaction
-        // ends normally, which is what leaves the stale transport behind.
-        const ok = await tx.read<{ ok: number }>('SELECT 1 AS ok');
-        expect(ok[0]?.ok).toBe(1);
-      });
 
-      let seen = 0;
-      for await (const rows of db.chunk<{ n: number }>('SELECT n FROM t', [], {
-        chunkSize: 10,
-      })) {
-        seen += rows.length;
-        // A streaming test must await in its loop body.
-        await sleep(1);
-        if (seen === 100)
-          controller.abort(new Error('the caller tidies up its controller'));
+        let seen = 0;
+        for await (const rows of db.chunk<{ n: number }>(
+          'SELECT n FROM t',
+          [],
+          {
+            chunkSize: 10,
+          },
+        )) {
+          seen += rows.length;
+          // A streaming test must await in its loop body.
+          await sleep(1);
+          if (seen === 100)
+            controller.abort(new Error('the caller tidies up its controller'));
+        }
+        expect(seen).toBe(ROWS);
+      } finally {
+        await db.close();
       }
-      expect(seen).toBe(ROWS);
-    } finally {
-      await db.close();
-    }
-  }, 60_000);
+    },
+    scaled(60_000),
+  );
 });
 
 describe("interrupt() ignores a transport the worker isn't serving", () => {

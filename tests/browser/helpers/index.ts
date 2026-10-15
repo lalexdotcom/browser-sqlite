@@ -331,6 +331,18 @@ export const killSilently = (worker: Worker): void => {
   NativeWorker.prototype.terminate.call(worker);
 };
 
+/**
+ * BSQ_TIME_SCALE: how many times Linux's bounds this platform needs — 4 for
+ * Windows, where Firefox pays 50-220 ms of fsyncs per OPFS file operation
+ * (Mozilla bug 2072928). The config scales `testTimeout` and `hookTimeout`;
+ * a bound a test writes itself goes through `scaled()`. Never for a value the
+ * library is given (a statement's `timeout`): that is the behaviour tested.
+ */
+export const TIME_SCALE = inject('bsqTimeScale') ?? 1;
+
+/** `ms` stretched by BSQ_TIME_SCALE: a test's own bound, never a library input. */
+export const scaled = (ms: number) => ms * TIME_SCALE;
+
 export const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -348,10 +360,11 @@ export const waitUntil = async (
   what: string,
   timeoutMs = 5000,
 ): Promise<void> => {
-  const deadline = Date.now() + timeoutMs;
+  const bound = scaled(timeoutMs);
+  const deadline = Date.now() + bound;
   while (!predicate()) {
     if (Date.now() > deadline) {
-      throw new Error(`timed out after ${timeoutMs} ms waiting for ${what}`);
+      throw new Error(`timed out after ${bound} ms waiting for ${what}`);
     }
     await sleep(0);
   }

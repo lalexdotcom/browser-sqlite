@@ -1,7 +1,7 @@
 import { createSQLiteClient } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { databasePath } from '../../../src/utils';
-import { TEST_TARGET } from '../helpers';
+import { scaled, TEST_TARGET } from '../helpers';
 import { removeOpfsPath } from '../helpers/environment';
 
 /**
@@ -57,12 +57,15 @@ import { removeOpfsPath } from '../helpers/environment';
 const TEST_PAIR = () => ({ vfs: TEST_TARGET.vfs, build: TEST_TARGET.build });
 /** Long enough for the first acquisition to have failed, short enough to bind. */
 const GRACE_MS = 30;
+// The three below are the test's own waits, so BSQ_TIME_SCALE stretches them
+// (Firefox on Windows took 2.6 s to take a handle); GRACE_MS is what the test
+// checks, and does not move.
 /** Nothing announced: release anyway rather than hang the test. */
-const ANNOUNCE_TIMEOUT_MS = 1_000;
+const ANNOUNCE_TIMEOUT_MS = scaled(1_000);
 /** How long the holder waits out a handle the previous client has not released. */
-const TAKE_BUDGET_MS = 3_000;
-/** Under the 30 s test timeout, so a hang fails naming its step, not bare. */
-const STALL_MS = 25_000;
+const TAKE_BUDGET_MS = scaled(3_000);
+/** Under the test timeout (30 s, scaled alike), so a hang fails naming its step, not bare. */
+const STALL_MS = scaled(25_000);
 
 /**
  * Holds an exclusive OPFS access handle on a file until told to release it.

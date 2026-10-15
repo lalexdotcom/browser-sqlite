@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, longQuery, sleep } from '../helpers';
+import { createTestClient, longQuery, scaled, sleep } from '../helpers';
 
 /**
  * A statement's own `timeout` inside a transaction, bounding it exactly like a
@@ -21,73 +21,85 @@ import { createTestClient, longQuery, sleep } from '../helpers';
  * each test's own timeout even when the statement is not actually cut.
  */
 describe('a statement timeout inside a transaction', () => {
-  it('rejects the transaction, uncaught, and rolls back an earlier write', async () => {
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      await db.write('CREATE TABLE t (a INTEGER)');
+  it(
+    'rejects the transaction, uncaught, and rolls back an earlier write',
+    async () => {
+      const db = await createTestClient({ poolSize: 1 });
+      try {
+        await db.write('CREATE TABLE t (a INTEGER)');
 
-      await expect(
-        db.transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
-          await tx.read(longQuery(2_000_000), [], { timeout: 200 });
-        }),
-      ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 200 });
+        await expect(
+          db.transaction(async (tx) => {
+            await tx.write('INSERT INTO t VALUES (1)');
+            await tx.read(longQuery(2_000_000), [], { timeout: 200 });
+          }),
+        ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 200 });
 
-      expect(await db.read('SELECT a FROM t')).toEqual([]);
-    } finally {
-      await db.close();
-    }
-  }, 15000);
+        expect(await db.read('SELECT a FROM t')).toEqual([]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(15000),
+  );
 
-  it('lets the callback catch the timeout and continue to COMMIT', async () => {
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      await db.write('CREATE TABLE t (a INTEGER)');
+  it(
+    'lets the callback catch the timeout and continue to COMMIT',
+    async () => {
+      const db = await createTestClient({ poolSize: 1 });
+      try {
+        await db.write('CREATE TABLE t (a INTEGER)');
 
-      let caughtCode: string | undefined;
-      await db.transaction(async (tx) => {
-        try {
-          await tx.read(longQuery(2_000_000), [], { timeout: 200 });
-        } catch (error) {
-          caughtCode = (error as { code?: string }).code;
-        }
-        await tx.write('INSERT INTO t VALUES (1)');
-      });
-
-      expect(caughtCode).toBe('OPERATION_TIMEOUT');
-      expect(await db.read('SELECT a FROM t')).toEqual([{ a: 1 }]);
-    } finally {
-      await db.close();
-    }
-  }, 15000);
-
-  it('rejects a tx.chunk() whose consumer pauses past the timeout between chunks', async () => {
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      await db.write('CREATE TABLE t (x INTEGER)');
-      await db.write(
-        'WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 1001) ' +
-          'INSERT INTO t SELECT x FROM c',
-      );
-
-      await expect(
-        db.transaction(async (tx) => {
-          for await (const rows of tx.chunk<{ x: number }>(
-            'SELECT x FROM t',
-            [],
-            {
-              timeout: 100,
-            },
-          )) {
-            void rows;
-            // A streaming consumer that never pauses tests nothing here: the
-            // credit window keeps a chunk in flight regardless of the timeout.
-            await sleep(150);
+        let caughtCode: string | undefined;
+        await db.transaction(async (tx) => {
+          try {
+            await tx.read(longQuery(2_000_000), [], { timeout: 200 });
+          } catch (error) {
+            caughtCode = (error as { code?: string }).code;
           }
-        }),
-      ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 100 });
-    } finally {
-      await db.close();
-    }
-  }, 15000);
+          await tx.write('INSERT INTO t VALUES (1)');
+        });
+
+        expect(caughtCode).toBe('OPERATION_TIMEOUT');
+        expect(await db.read('SELECT a FROM t')).toEqual([{ a: 1 }]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(15000),
+  );
+
+  it(
+    'rejects a tx.chunk() whose consumer pauses past the timeout between chunks',
+    async () => {
+      const db = await createTestClient({ poolSize: 1 });
+      try {
+        await db.write('CREATE TABLE t (x INTEGER)');
+        await db.write(
+          'WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 1001) ' +
+            'INSERT INTO t SELECT x FROM c',
+        );
+
+        await expect(
+          db.transaction(async (tx) => {
+            for await (const rows of tx.chunk<{ x: number }>(
+              'SELECT x FROM t',
+              [],
+              {
+                timeout: 100,
+              },
+            )) {
+              void rows;
+              // A streaming consumer that never pauses tests nothing here: the
+              // credit window keeps a chunk in flight regardless of the timeout.
+              await sleep(150);
+            }
+          }),
+        ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 100 });
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(15000),
+  );
 });

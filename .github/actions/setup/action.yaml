@@ -1,0 +1,69 @@
+name: Setup
+description: >-
+  Node 24, pnpm and the dependencies, then the browsers a job drives at the
+  versions scripts/browsers.ts pins, with their drivers.
+
+inputs:
+  browsers:
+    description: Browsers to install, comma-separated (chrome,firefox); empty for none.
+    default: chrome,firefox
+  node-setup:
+    description: Set up pnpm and Node, and install the dependencies.
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - if: inputs.node-setup == 'true'
+      uses: pnpm/action-setup@v6
+
+    - if: inputs.node-setup == 'true'
+      uses: actions/setup-node@v6
+      with:
+        node-version: 24
+        cache: pnpm
+
+    - if: inputs.node-setup == 'true'
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    # A cache key cannot contain commas: chrome,firefox → chrome-firefox.
+    - if: inputs.browsers != ''
+      id: browsers
+      shell: bash
+      run: echo "key=${BROWSERS//,/-}" >> "$GITHUB_OUTPUT"
+      env:
+        BROWSERS: ${{ inputs.browsers }}
+
+    # The list is in the key: a cache saved by a Chrome-only job and restored
+    # for one that also needs Firefox would download Firefox on every run, a
+    # hit being never written back. scripts/browsers.ts holds the pins.
+    - if: inputs.browsers != ''
+      name: Cache WebdriverIO browsers
+      uses: actions/cache@v6
+      with:
+        path: node_modules/.cache/wdio
+        key: wdio-${{ runner.os }}-${{ runner.arch }}-${{ steps.browsers.outputs.key }}-${{ hashFiles('scripts/browsers.ts') }}
+
+    # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor.
+    # Chrome's sandbox needs them, and only the system Chrome has a profile
+    # that allows them: the Chrome for Testing WebdriverIO downloads exits at
+    # launch ("Chrome instance exited"). Lifting the restriction keeps the
+    # sandbox, where --no-sandbox would drop it. Windows and macOS have no
+    # such restriction.
+    - if: inputs.browsers != '' && runner.os == 'Linux'
+      name: Let Chrome's sandbox create user namespaces
+      shell: bash
+      run: |
+        sysctl kernel.apparmor_restrict_unprivileged_userns
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+    # One download per browser and driver, before anything runs in parallel:
+    # on a cold cache, parallel Vitest jobs fetched the same chromedriver at
+    # once, and one spawned it before it was executable (EACCES).
+    - if: inputs.browsers != ''
+      name: Install browsers
+      shell: bash
+      run: node scripts/browsers.ts install "$BROWSERS"
+      env:
+        BROWSERS: ${{ inputs.browsers }}

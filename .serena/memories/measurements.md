@@ -17,6 +17,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - WA-FIREFOX-SQL-HANG
 - PW-OPFS-QUOTA — Chromium's ephemeral context masks its quota and stops writes near 2 GB; a persistent one does not
 - LIB-VITEST-SPIKE — the library's own tests on Vitest + WebdriverIO, stock Chrome 153 / Firefox 155
+- LIB-WIN-MAC — the library's suites on GitHub's Windows and macOS runners: durations, counts, what Windows needed
 
 ## `mem:measurements/wa-sqlite-prs` — the campaigns behind wa-sqlite PRs
 

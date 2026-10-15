@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SQLiteTransactionDB } from '../../../src/api';
-import { createTestClient } from '../helpers';
+import { createTestClient, scaled } from '../helpers';
 
 type Debuggable = { debug: { workers: { creationTime: number }[] } };
 const workerIdentity = (db: unknown) =>
@@ -188,58 +188,66 @@ describe('tx.signal', () => {
   // An in-flight abort whose rejection ESCAPES the callback (spec 2026-09-11,
   // case 2): a caught one no longer kills the transaction — see the next test.
   // createTestClient()'s default VFS, OPFSAdaptiveVFS, is on the async build.
-  it('aborts with the write reason when an abandoned write escapes the callback', async () => {
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      await db.write('CREATE TABLE t (a INTEGER)');
-      await db.write('CREATE TABLE big (x INTEGER)');
-      const reason = new Error('abandon the write');
-      let seen!: AbortSignal;
+  it(
+    'aborts with the write reason when an abandoned write escapes the callback',
+    async () => {
+      const db = await createTestClient({ poolSize: 1 });
+      try {
+        await db.write('CREATE TABLE t (a INTEGER)');
+        await db.write('CREATE TABLE big (x INTEGER)');
+        const reason = new Error('abandon the write');
+        let seen!: AbortSignal;
 
-      const outcome = await db
-        .transaction(async (tx) => {
-          seen = tx.signal;
-          await tx.write(BIG_INSERT, [], { signal: abortAfter(30, reason) });
-        })
-        .catch((e) => e);
+        const outcome = await db
+          .transaction(async (tx) => {
+            seen = tx.signal;
+            await tx.write(BIG_INSERT, [], { signal: abortAfter(30, reason) });
+          })
+          .catch((e) => e);
 
-      expect(outcome).toBe(reason);
-      expect(seen.aborted).toBe(true);
-      expect(seen.reason).toBe(reason);
-    } finally {
-      await db.close();
-    }
-  }, 30_000);
+        expect(outcome).toBe(reason);
+        expect(seen.aborted).toBe(true);
+        expect(seen.reason).toBe(reason);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(30_000),
+  );
 
   // Spec 2026-09-11, §3: a caught abandoned write leaves the transaction whole,
   // so transaction() resolves and tx.signal never fires. Falsifiable: call
   // die(e) inside `abandon` in src/transaction.ts — the transaction then dies
   // and tx.signal aborts.
-  it('does not abort when the callback catches an abandoned write', async () => {
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      await db.write('CREATE TABLE t (a INTEGER)');
-      await db.write('CREATE TABLE big (x INTEGER)');
-      const reason = new Error('abandon the write');
-      let seen!: AbortSignal;
+  it(
+    'does not abort when the callback catches an abandoned write',
+    async () => {
+      const db = await createTestClient({ poolSize: 1 });
+      try {
+        await db.write('CREATE TABLE t (a INTEGER)');
+        await db.write('CREATE TABLE big (x INTEGER)');
+        const reason = new Error('abandon the write');
+        let seen!: AbortSignal;
 
-      await db.transaction(async (tx) => {
-        seen = tx.signal;
-        await tx
-          .write(BIG_INSERT, [], { signal: abortAfter(30, reason) })
-          .catch(() => {});
-        await tx.write('INSERT INTO t VALUES (1)');
-      });
+        await db.transaction(async (tx) => {
+          seen = tx.signal;
+          await tx
+            .write(BIG_INSERT, [], { signal: abortAfter(30, reason) })
+            .catch(() => {});
+          await tx.write('INSERT INTO t VALUES (1)');
+        });
 
-      expect(seen.aborted).toBe(false);
-      expect(await db.read('SELECT a FROM t')).toEqual([{ a: 1 }]);
-      expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
-        { n: 0 },
-      ]);
-    } finally {
-      await db.close();
-    }
-  }, 30_000);
+        expect(seen.aborted).toBe(false);
+        expect(await db.read('SELECT a FROM t')).toEqual([{ a: 1 }]);
+        expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
+          { n: 0 },
+        ]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(30_000),
+  );
 
   // Falsifiable: remove `die(e)` from the catch in src/transaction.ts's
   // createTransaction — transaction() still rejects with `boom`, but

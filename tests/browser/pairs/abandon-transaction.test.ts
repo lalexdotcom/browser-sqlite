@@ -3,6 +3,7 @@ import {
   createTestClient,
   interceptWorkers,
   longQuery,
+  scaled,
   sleep,
 } from '../helpers';
 
@@ -61,7 +62,7 @@ describe('an abandoned generator inside a transaction', {
   });
 
   it('leaves a correct transaction untouched', {
-    timeout: 30_000,
+    timeout: scaled(30_000),
   }, async () => {
     const db = await createTestClient({ ...TWO_WORKERS });
     try {
@@ -90,7 +91,7 @@ describe('an abandoned generator inside a transaction', {
   // never rejects, the lease never goes back, and the origin-wide write lock
   // is held throughout. This times out instead of finishing in seconds.
   it('rejects when the callback leaves a next() in flight', {
-    timeout: 30_000,
+    timeout: scaled(30_000),
   }, async () => {
     // Short on purpose: the worker is inside one uninterruptible step() and
     // will answer no stop, so drainTimeout is what bounds the wait. That

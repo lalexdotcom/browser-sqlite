@@ -10,6 +10,7 @@ import type { TestTarget } from '../../harness/target';
 import {
   createTestClient,
   longQuery,
+  scaled,
   sharedDatabase,
   sleep,
   TEST_TARGET,
@@ -365,7 +366,7 @@ describe('deleting after a worker died inside a statement', () => {
   // VFS holds its whole directory, so none of them can show this.
   it('deletes a database whose worker was killed mid-statement', {
     tags: ['vfs:AccessHandlePoolVFS'],
-    timeout: 60_000,
+    timeout: scaled(60_000),
   }, async () => {
     const { vfs, build } = TEST_TARGET;
     const db = await createTestClient({ poolSize: 1, drainTimeout: 200 });

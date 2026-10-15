@@ -13,6 +13,7 @@ import {
   createTestClient,
   interceptWorkers,
   removeDatabaseFiles,
+  scaled,
   TEST_TARGET,
 } from '../helpers';
 import { removeOpfsPath } from '../helpers/environment';
@@ -282,7 +283,7 @@ describe('a pool capped by its environment', () => {
   // makes Firefox capture a `pool capped` warning here.
   it('close() during startup of a capped pool returns promptly and does not warn', {
     tags: ['requires:env-cappable'],
-    timeout: 15000,
+    timeout: scaled(15000),
   }, async () => {
     const warnings = captureWarnings();
     const file = `pool-cap-close-${crypto.randomUUID()}`;
@@ -310,7 +311,7 @@ describe('a pool capped by its environment', () => {
   // the widened openTimeout below and the round that follows it.
   it('a surplus slot that times out, then declines in the retry round, is not announced lost', {
     tags: ['requires:env-capped-pool'],
-    timeout: 30000,
+    timeout: scaled(30000),
   }, async () => {
     const Original = globalThis.Worker;
     let created = 0;
@@ -333,7 +334,7 @@ describe('a pool capped by its environment', () => {
                 try {
                   post(m);
                 } catch {}
-              }, 15000);
+              }, scaled(15000));
               return;
             }
             post(m);
@@ -379,7 +380,9 @@ describe('a pool capped by its environment', () => {
       // at 3000 rather than assumed: the interception constructs exactly
       // THREE workers — slot 0, slot 1's round-1 worker, slot 1's retry —
       // and the pool settles at 1 with no loss and no warning.
-      openTimeout: 3000,
+      // Scaled with the delay above (BSQ_TIME_SCALE): Firefox on Windows took
+      // more than 3 s to open slot 0's healthy worker (2026-10-15).
+      openTimeout: scaled(3000),
       onWorkerLost: (e) => lost.push(e),
     });
     await db.write('CREATE TABLE t (a)');

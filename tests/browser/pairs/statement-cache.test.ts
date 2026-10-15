@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, sharedDatabase } from '../helpers';
+import { createTestClient, scaled, sharedDatabase } from '../helpers';
 
 /**
  * `poolSize: 1` throughout this file. At the default size two executions of
@@ -175,7 +175,7 @@ describe('statement cache', () => {
 
   it('an aborted query leaves its cached statement reusable', {
     tags: ['requires:interruptible'],
-    timeout: 120_000,
+    timeout: scaled(120_000),
   }, async () => {
     // Needs interruptible: on a sync build outside cross-origin isolation the
     // abort cannot cut the statement, so the read below waits the whole query

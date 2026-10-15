@@ -120,9 +120,13 @@ A database that any client still holds cannot be deleted, in this tab or another
 ```bash
 pnpm install
 pnpm build          # rslib → dist/
-pnpm test           # unit (Node) + browser (Vitest on WebdriverIO: Chrome, Firefox)
+pnpm test           # unit (Node) + browser (Vitest on WebdriverIO: Chrome, Firefox) — Linux, Windows, macOS
 pnpm check          # biome, with --write
 ```
+
+The browsers are the versions `scripts/browsers.ts` pins, downloaded on first use. On a fresh machine, run `node scripts/browsers.ts install` once before the first `pnpm test`: its parallel jobs would otherwise download the same browsers at once.
+
+CI runs the suites on Linux for every pull request and push of `main`. The Windows and macOS runs are started by hand, from the Actions tab or with `gh workflow run tests-windows.yaml --ref <branch>` (`tests-macos.yaml` likewise); a workflow can be started this way once it exists on `main`.
 
 These suites run on demand rather than on every change:
 

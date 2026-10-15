@@ -1,0 +1,49 @@
+name: Tests
+
+# The suites a platform runs: what ci.yaml's verify tests on Linux, without
+# the checks that do not depend on the OS (lint, docs, typecheck), which
+# ci.yaml runs. Each platform's workflow calls this with its runner.
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: The runner label, e.g. windows-latest.
+        required: true
+        type: string
+      time-scale:
+        description: How many times Linux's bounds this platform needs (BSQ_TIME_SCALE).
+        default: '1'
+        type: string
+      timeout-minutes:
+        description: The job's bound.
+        default: 90
+        type: number
+
+jobs:
+  test:
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      BSQ_TIME_SCALE: ${{ inputs.time-scale }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - run: pnpm build
+      - run: pnpm test
+      - run: pnpm test:conformance
+      # The step log keeps only the last 60 lines of a red job; every job's
+      # whole log and report is in .work/.
+      - name: Test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-logs-${{ runner.os }}
+          path: .work/
+          retention-days: 14
+          # .work is a dotted path, excluded by default: the step would then
+          # succeed having uploaded nothing.
+          include-hidden-files: true
+          if-no-files-found: error

@@ -9,6 +9,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { availableParallelism } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DETACHED, killTree, packageBin } from './processes.ts';
 
 export const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -24,15 +25,9 @@ export type BoundedResult = {
 /** Process groups of the runs in flight, so a signal to the launcher reaches them. */
 const live = new Set<number>();
 
-/** Kills every run in flight (each is its own process group); a group already gone is fine. */
+/** Kills every run in flight and what each started; a run already gone is fine. */
 export function killLive(signal: NodeJS.Signals = 'SIGKILL'): void {
-  for (const pid of live) {
-    try {
-      process.kill(-pid, signal);
-    } catch {
-      // ESRCH: nothing left in the group.
-    }
-  }
+  for (const pid of live) killTree(pid, signal);
 }
 
 /**
@@ -59,9 +54,8 @@ export function killLiveOnSignal(): void {
  * than a thrown/rejected promise, so a caller never has to choose between
  * `try/catch` and `.then` to cover every outcome:
  *
- * - The child starts but outlives `timeoutMs`: the whole process group is
- *   killed (`detached: true` + `process.kill(-pid, 'SIGKILL')` — the same
- *   pattern `scripts/consumer-smoke.ts` uses, because `pnpm exec vitest`
+ * - The child starts but outlives `timeoutMs`: the child and everything it
+ *   started are killed (`killTree`, from `scripts/processes.ts`), because `pnpm exec vitest`
  *   forks the browser drivers and the browsers themselves, which survive
  *   killing only the direct child) and `timedOut: true` is returned.
  * - The child never starts at all (`ENOENT`, `EACCES`, …): Node emits
@@ -93,7 +87,7 @@ export function runBounded(
       cwd,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
-      detached: true,
+      detached: DETACHED,
     });
     if (child.pid !== undefined) live.add(child.pid);
     let output = '';
@@ -101,11 +95,8 @@ export function runBounded(
     let settled = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      try {
-        process.kill(-(child.pid as number), 'SIGKILL');
-      } catch {
-        child.kill('SIGKILL');
-      }
+      if (child.pid === undefined) child.kill('SIGKILL');
+      else killTree(child.pid);
     }, timeoutMs);
     const settle = (result: BoundedResult) => {
       if (settled) return;
@@ -234,9 +225,10 @@ export async function runPool<T, R>(
  */
 export function buildOnce(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (env.BSQ_TEST_BUILT !== '1') {
+    const [node, rslib] = packageBin('@rslib/core', 'rslib');
     const built = spawnSync(
-      'pnpm',
-      ['exec', 'rslib', 'build', '-c', 'tests/rslib.vitest.config.ts'],
+      node,
+      [rslib, 'build', '-c', 'tests/rslib.vitest.config.ts'],
       { cwd: ROOT, env, stdio: 'inherit' },
     );
     if (built.status !== 0) {

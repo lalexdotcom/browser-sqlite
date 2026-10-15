@@ -59,6 +59,7 @@ import {
   probeFeatures,
 } from './plan-io.ts';
 import { deadIsFatal } from './plan-report.ts';
+import { packageBin, timeScale } from './processes.ts';
 import { RECOMMENDED_VFS } from './recommended-vfs.ts';
 import {
   allPairs,
@@ -67,7 +68,9 @@ import {
   printTable,
 } from './test-matrix.ts';
 
-const JOB_TIMEOUT_MS = 900_000;
+/** Vitest started through Node, not `pnpm exec`: no `.cmd` shim, no shell, on every OS. */
+const [NODE, VITEST] = packageBin('vitest', 'vitest');
+const JOB_TIMEOUT_MS = 900_000 * timeScale();
 const KEEP_RUNS = 10;
 const TAIL_LINES = 60;
 
@@ -387,10 +390,9 @@ async function main() {
     const { output, timedOut, exitCode, error } =
       job.cell === null
         ? await runBounded(
-            'pnpm',
+            NODE,
             [
-              'exec',
-              'vitest',
+              VITEST,
               'run',
               '--config',
               'tests/vitest.config.ts',
@@ -472,10 +474,9 @@ async function main() {
   const SKIP_NOTES = '--reporter=./scripts/skip-notes.ts';
   const mergeBlobs = (reporters: string[]) =>
     spawnSync(
-      'pnpm',
+      NODE,
       [
-        'exec',
-        'vitest',
+        VITEST,
         '--config',
         'tests/vitest.config.ts',
         '--configLoader',

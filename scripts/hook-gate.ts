@@ -299,6 +299,12 @@ export function runChecks(
         cwd,
         stdio: ['ignore', 'inherit', 'inherit'],
         env: { ...process.env, ...step.env },
+        // pnpm and npx are .cmd shims on Windows, which Node starts only
+        // through a shell; COMMANDS holds no argument a shell could split.
+        // Anything else runs without one: cmd.exe mangles a `node -e` script.
+        shell:
+          process.platform === 'win32' &&
+          (command === 'pnpm' || command === 'npx'),
       });
       if (result.status !== 0) {
         console.error(

@@ -46,9 +46,13 @@ import {
   runBounded,
   runPool,
 } from './parallel.ts';
+import { packageBin, timeScale } from './processes.ts';
+
+/** Vitest started through Node, not `pnpm exec`: no `.cmd` shim, no shell, on every OS. */
+const [NODE, VITEST] = packageBin('vitest', 'vitest');
 
 /** Each job is bounded by a timer this script owns, as a matrix cell is. */
-const JOB_TIMEOUT_MS = 900_000;
+const JOB_TIMEOUT_MS = 900_000 * timeScale();
 const KEEP_RUNS = 10;
 const TAIL_LINES = 60;
 
@@ -74,10 +78,9 @@ function parseArgs(argv: readonly string[]) {
 /** Files per project, from `vitest list` (a Node script cannot import the config: src/ has extensionless imports). */
 function listProjects(env: NodeJS.ProcessEnv): Map<string, number> {
   const listed = spawnSync(
-    'pnpm',
+    NODE,
     [
-      'exec',
-      'vitest',
+      VITEST,
       'list',
       '--config',
       'tests/vitest.config.ts',
@@ -150,10 +153,9 @@ async function main() {
     const log = join(logs, `${job.id}.log`);
     const began = Date.now();
     const { output, timedOut, exitCode, error } = await runBounded(
-      'pnpm',
+      NODE,
       [
-        'exec',
-        'vitest',
+        VITEST,
         'run',
         '--config',
         'tests/vitest.config.ts',
@@ -209,10 +211,9 @@ async function main() {
   let status = failed.length > 0 ? 1 : 0;
   if (usable > 0) {
     const merged = spawnSync(
-      'pnpm',
+      NODE,
       [
-        'exec',
-        'vitest',
+        VITEST,
         '--config',
         'tests/vitest.config.ts',
         '--configLoader',

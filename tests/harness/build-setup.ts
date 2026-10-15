@@ -1,9 +1,11 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import type { TestProject } from 'vitest/node';
+import { DETACHED, killTree, packageBin } from '../../scripts/processes.ts';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
-const BUILD = ['exec', 'rslib', 'build', '-c', 'tests/rslib.vitest.config.ts'];
+const [NODE, RSLIB] = packageBin('@rslib/core', 'rslib');
+const BUILD = [RSLIB, 'build', '-c', 'tests/rslib.vitest.config.ts'];
 
 // The `--watch` build, alive for the run in watch mode only.
 let watcher: ChildProcess | undefined;
@@ -19,7 +21,7 @@ export default function setup(project: TestProject) {
   // restart in watch mode, setup runs again and the watcher must follow.
   if (process.env.BSQ_TEST_BUILT !== '1') {
     process.env.BSQ_TEST_BUILT = '1';
-    const built = spawnSync('pnpm', BUILD, { cwd: ROOT, stdio: 'inherit' });
+    const built = spawnSync(NODE, BUILD, { cwd: ROOT, stdio: 'inherit' });
     if (built.status !== 0) {
       throw new Error(
         `tests/rslib.vitest.config.ts: the build failed (exit ${built.status})`,
@@ -27,14 +29,14 @@ export default function setup(project: TestProject) {
     }
   }
   if (!project.vitest.config.watch || watcher) return;
-  const started = spawn('pnpm', [...BUILD, '--watch'], {
+  const started = spawn(NODE, [...BUILD, '--watch'], {
     cwd: ROOT,
     stdio: 'ignore',
-    detached: true,
+    detached: DETACHED,
   });
   watcher = started;
   return () => {
-    if (started.pid) process.kill(-started.pid, 'SIGTERM');
+    if (started.pid) killTree(started.pid, 'SIGTERM');
     if (watcher === started) watcher = undefined;
   };
 }

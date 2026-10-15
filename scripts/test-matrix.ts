@@ -71,7 +71,10 @@ export function parseMatrixReport(json: string): MatrixResult {
   const seconds = Math.round((end - report.startTime) / 1000);
   const unhandled = report.testResults
     .filter((f) => f.status === 'failed' && f.message)
-    .map((f) => `${relative(ROOT, f.name)}: ${f.message}`);
+    // `/` on every OS: a table read beside Linux's, and greppable the same way.
+    .map(
+      (f) => `${relative(ROOT, f.name).replaceAll('\\', '/')}: ${f.message}`,
+    );
   return {
     status: report.success ? 'passed' : 'failed',
     tests: tests.length,
