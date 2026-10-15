@@ -24,9 +24,11 @@ export const DETACHED = process.platform !== 'win32';
  * OPFS file open, close or delete costs it 50-220 ms of fsyncs (Mozilla bug
  * 2072928).
  */
-export function timeScale(
-  raw: string | undefined = process.env.BSQ_TIME_SCALE,
-): number {
+export const timeScale = (): number =>
+  parseTimeScale(process.env.BSQ_TIME_SCALE);
+
+/** A `BSQ_TIME_SCALE` value: 1 when unset or empty, else a positive number. */
+export function parseTimeScale(raw: string | undefined): number {
   if (raw === undefined || raw === '') return 1;
   const scale = Number(raw);
   if (!Number.isFinite(scale) || scale <= 0) {
