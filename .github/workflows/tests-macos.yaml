@@ -2,11 +2,6 @@ name: Tests (macOS)
 
 on:
   workflow_dispatch:
-  # TEMPORARY: runs the workflow from its branch before it exists on main.
-  # Removed before the merge.
-  push:
-    branches:
-      - ci/windows-macos
 
 concurrency:
   group: tests-macos-${{ github.ref }}
