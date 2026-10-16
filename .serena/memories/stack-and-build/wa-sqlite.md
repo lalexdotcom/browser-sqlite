@@ -27,6 +27,11 @@ as well as a release and nothing waits for one.
   `unable to open database file` instead of the function name (CHANGELOG under Changed). It also
   stops a failed `sqlite3_open_v2` leaking the database handle SQLite allocates for it —
   `openWithRetry` can make 25 attempts, each of which leaked before.
+- **A repin re-reads what the fast step reproduces** (2026-10-16) — `src/worker/step.ts` copies
+  wa-sqlite's `step()`, `retry()`, `check()`, each build's `ccall`, `jspi`'s promising exports and
+  the use of `retryOps`/`pendingOps`; compare them between the old pin and the new, update the fast
+  step if anything moved, then the fingerprints in `tests/unit/lib/wa-sqlite-pin.test.ts`, which
+  fail otherwise.
 
 ## The patch
 
