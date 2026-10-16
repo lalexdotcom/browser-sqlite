@@ -46,5 +46,6 @@ PR [#382][pr382], opened 2026-10-16 from `lalexdotcom:opfsadaptive-retry-held-ha
 
 ## What stays ours
 
-- **No carry yet.** To carry: regenerate `patches/wa-sqlite@1.1.2.patch` with #381's and #382's `src/` hunks (`mem:stack-and-build/wa-sqlite`).
+- **Carried since 2026-10-16.** [`patches/`](../../patches) holds #381's and #382's `src/` hunks, the installed files byte for byte the two PR heads; the library's matrix and Windows run green with them.
+- **The rest of the family, surveyed the same day:** no other lock-then-file site of upstream needs a change; the two `OPFSAdaptiveVFS` candidates (a hot journal opened without a lock, an open right after the termination) never failed with #382, on Linux or Windows (ADAPTIVE-382, `mem:measurements/held-handles`).
 - The library's `HELD_ELSEWHERE` still matches `NoModificationAllowedError` only (`mem:follow-ups`).
