@@ -106,7 +106,10 @@
 		"ignoredBuiltDependencies": [
 			"edgedriver",
 			"geckodriver"
-		]
+		],
+		"patchedDependencies": {
+			"wa-sqlite@1.1.2": "patches/wa-sqlite@1.1.2.patch"
+		}
 	},
 	"private": false,
 	"packageManager": "pnpm@10.31.0"
