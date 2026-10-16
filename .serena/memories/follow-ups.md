@@ -4,7 +4,7 @@ One short entry each, and every entry OPEN. **An entry marked DORMANT waits for 
 `CHANGELOG.md` and `git log` record what was fixed, `mem:measurements` holds the numbers,
 `mem:vfs` the VFS behaviour, `mem:lessons` what a closure taught.
 
-**The test-planner design (no identical repetitions in the browser suite) lives in `mem:follow-ups/test-planner-design` (2026-10-12)**: decisions taken with the user point by point, before any spec. **The `step()` workstream lives in `mem:follow-ups/wa-step` (2026-10-08).** **Entries waiting on an event live in `mem:follow-ups/dormant`** — `open-retry` on Firefox and wa-sqlite #297 `trace_v2`, moved there on 2026-10-05 to keep this file under 40 000 characters.
+**The test-planner design (no identical repetitions in the browser suite) lives in `mem:follow-ups/test-planner-design` (2026-10-12)**: decisions taken with the user point by point, before any spec. **Proposals to wa-sqlite for a cheaper `step()` live in `mem:follow-ups/wa-step-upstream`, the `stream()` iterator in `mem:follow-ups/stream-iterator` (2026-10-16).** **Entries waiting on an event live in `mem:follow-ups/dormant`** — `open-retry` on Firefox and wa-sqlite #297 `trace_v2`, moved there on 2026-10-05 to keep this file under 40 000 characters.
 
 **Delete, never annotate.** No struck-through lines, no "shipped and merged", no headstone
 saying an entry is gone, no verdict on an entry: what is written here is the backlog, not a
@@ -16,9 +16,9 @@ descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` clai
 shadow types that were never loaded, `W-types` a duplication already gone. Both would have
 been work on nothing.
 
-## wa-sqlite's async `step()` wrapper costs every read, most on Firefox — a dedicated workstream for a new session (user, 2026-10-08)
+## `stream()`: a hand-written iterator, and `step()` proposals to wa-sqlite (user, 2026-10-16)
 
-In `mem:follow-ups/wa-step`: the scope the user set, what each solution (library-side fast step, three upstream forms) asks of the library, the measurements on Firefox, Chromium and WebKit, and what an upstream Discussion would rest on.
+`mem:follow-ups/stream-iterator` (its own branch) and `mem:follow-ups/wa-step-upstream` (optional, upstream's).
 
 ## `multi-client` bulkWrite interleave on chromium `IDBMirrorVFS/async` — seen, not reproducible (2026-10-07)
 

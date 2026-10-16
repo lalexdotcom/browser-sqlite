@@ -43,7 +43,7 @@ as well as a release and nothing waits for one.
 - `OPFSAdaptiveVFS.js` — #374, line 9 guarded (`FileSystemSyncAccessHandle?.prototype`), without
   which no worker loads outside a secure context (INSECURE-CONTEXT); carried from 2026-10-03, merged
   upstream on 2026-10-13 and gone with the patch at the repin to `6238f532`.
-- `dist/wa-sqlite-jspi.mjs` was carried for #375 from 2026-10-05 until its merge the same day. **After any change to a carried `dist/` glue, clear `node_modules/.cache/rspack` and check the pattern in `dist/worker/worker.js`**: the forced build cache served the previous glue once.
+- `dist/wa-sqlite-jspi.mjs` was carried for #375 from 2026-10-05 until its merge the same day. **After any change to a carried `dist/` glue or any re-link of `node_modules/wa-sqlite` (a patch change), clear `node_modules/.cache/rspack` and `node_modules/.cache/rspack-test` (the browser tests' build: a stale one bundled two `SQLiteError` classes on 2026-10-16, so `instanceof` failed and 20 `statement-errors` tests went red) and check the pattern in `dist/worker/worker.js`**: the forced build cache served the previous glue once.
 - That line was all the patch held from 2026-10-11 until #374 merged.
 
 `WriteAhead.js` is no longer patched: #365 (`PRAGMA wal_read_latest`, which the library's barrier
