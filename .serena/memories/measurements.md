@@ -70,9 +70,13 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - ADAPTIVE-JSPI-SAFARI
 - SAFARI-OPFS
 - HELD-LIVE
+
+## `mem:measurements/held-handles` — a file still held after its holder let go: OPFS cost per operation, the terminated-holder race, #381 and #382
+
 - OPFS-PROBE — each OPFS file operation per browser and OS: Firefox on Windows 40-220 ms
 - HANDOVER-PROBE — a terminated holder frees its Web Lock before its file, on every engine and OS
 - COOPSYNC-381-WINDOWS — two CoopSync clients on Windows Firefox with #381 carried: no failed statement, 25-60 s an attempt
+- ADAPTIVE-382 — `OPFSAdaptiveVFS` after a terminated holder: B hangs and the lock stays held on Firefox, 0 with the change
 
 ## `mem:measurements/transactions` — transactions
 
