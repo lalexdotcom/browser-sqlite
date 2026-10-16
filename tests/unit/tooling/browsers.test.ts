@@ -2,10 +2,38 @@ import { describe, expect, it } from 'vitest';
 import {
   browserCapabilities,
   browserVersion,
+  FIREFOX_POLICIES,
+  firefoxPoliciesPath,
   GECKODRIVER_VERSION,
   PINNED,
   parseBrowserList,
 } from '../../../scripts/browsers.ts';
+
+describe('firefoxPoliciesPath', () => {
+  it('is distribution/policies.json beside the binary on Linux and Windows', () => {
+    expect(
+      firefoxPoliciesPath(
+        '/cache/firefox/linux_arm-stable_155.0.1/firefox/firefox',
+      ),
+    ).toBe(
+      '/cache/firefox/linux_arm-stable_155.0.1/firefox/distribution/policies.json',
+    );
+  });
+
+  it('is under Contents/Resources in a macOS bundle', () => {
+    expect(
+      firefoxPoliciesPath(
+        '/cache/firefox/mac_arm-stable_155.0.1/Firefox.app/Contents/MacOS/firefox',
+      ),
+    ).toBe(
+      '/cache/firefox/mac_arm-stable_155.0.1/Firefox.app/Contents/Resources/distribution/policies.json',
+    );
+  });
+
+  it('disables updates', () => {
+    expect(FIREFOX_POLICIES).toEqual({ policies: { DisableAppUpdate: true } });
+  });
+});
 
 describe('browserVersion', () => {
   it('returns the pins when nothing overrides them', () => {

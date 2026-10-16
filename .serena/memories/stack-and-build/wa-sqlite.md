@@ -27,6 +27,11 @@ as well as a release and nothing waits for one.
   `unable to open database file` instead of the function name (CHANGELOG under Changed). It also
   stops a failed `sqlite3_open_v2` leaking the database handle SQLite allocates for it —
   `openWithRetry` can make 25 attempts, each of which leaked before.
+- **A repin re-reads what the fast step reproduces** (2026-10-16) — `src/worker/step.ts` copies
+  wa-sqlite's `step()`, `retry()`, `check()`, each build's `ccall`, `jspi`'s promising exports and
+  the use of `retryOps`/`pendingOps`; compare them between the old pin and the new, update the fast
+  step if anything moved, then the fingerprints in `tests/unit/lib/wa-sqlite-pin.test.ts`, which
+  fail otherwise.
 
 ## The patch
 
@@ -38,7 +43,7 @@ as well as a release and nothing waits for one.
 - `OPFSAdaptiveVFS.js` — #374, line 9 guarded (`FileSystemSyncAccessHandle?.prototype`), without
   which no worker loads outside a secure context (INSECURE-CONTEXT); carried from 2026-10-03, merged
   upstream on 2026-10-13 and gone with the patch at the repin to `6238f532`.
-- `dist/wa-sqlite-jspi.mjs` was carried for #375 from 2026-10-05 until its merge the same day. **After any change to a carried `dist/` glue, clear `node_modules/.cache/rspack` and check the pattern in `dist/worker/worker.js`**: the forced build cache served the previous glue once.
+- `dist/wa-sqlite-jspi.mjs` was carried for #375 from 2026-10-05 until its merge the same day. **After any change to a carried `dist/` glue or any re-link of `node_modules/wa-sqlite` (a patch change), clear `node_modules/.cache/rspack` and `node_modules/.cache/rspack-test` (the browser tests' build: a stale one bundled two `SQLiteError` classes on 2026-10-16, so `instanceof` failed and 20 `statement-errors` tests went red) and check the pattern in `dist/worker/worker.js`**: the forced build cache served the previous glue once.
 - That line was all the patch held from 2026-10-11 until #374 merged.
 
 `WriteAhead.js` is no longer patched: #365 (`PRAGMA wal_read_latest`, which the library's barrier

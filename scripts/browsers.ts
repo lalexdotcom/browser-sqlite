@@ -6,11 +6,12 @@
  *
  *   node scripts/browsers.ts deps            apt packages both need, on one line (Linux)
  *   node scripts/browsers.ts install [list]  download the browsers in list (chrome,firefox
- *                                            by default), open and close a session with each
+ *                                            by default), open and close a session with each,
+ *                                            and turn off Firefox's self-update
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   Browser,
@@ -54,6 +55,20 @@ export const GECKODRIVER_VERSION = '0.37.1';
 export const WDIO_CACHE_DIR = fileURLToPath(
   new URL('../node_modules/.cache/wdio', import.meta.url),
 );
+
+/**
+ * Firefox updates itself in place when launched outside WebDriver (geckodriver's
+ * profiles disable it; a hand launch for a measurement does not): this policy stops it for every profile.
+ */
+export const FIREFOX_POLICIES = { policies: { DisableAppUpdate: true } };
+
+/** Where Firefox reads its policies: `distribution/` beside the binary, under `Contents/Resources/` in a macOS bundle. */
+export const firefoxPoliciesPath = (executable: string): string => {
+  const dir = dirname(executable);
+  return basename(dir) === 'MacOS'
+    ? join(dir, '..', 'Resources', 'distribution', 'policies.json')
+    : join(dir, 'distribution', 'policies.json');
+};
 
 const ENV_VAR: Record<BrowserName, string> = {
   chrome: 'BSQ_CHROME_VERSION',
@@ -160,6 +175,20 @@ async function installAll(names: readonly BrowserName[]) {
     const version = (browser.capabilities as { browserVersion?: string })
       .browserVersion;
     await browser.deleteSession();
+    if (name === 'firefox') {
+      const platform = detectBrowserPlatform();
+      if (!platform) throw new Error('browsers: unsupported platform');
+      const policies = firefoxPoliciesPath(
+        computeExecutablePath({
+          browser: Browser.FIREFOX,
+          buildId: browserVersion('firefox'),
+          cacheDir: WDIO_CACHE_DIR,
+          platform,
+        }),
+      );
+      mkdirSync(dirname(policies), { recursive: true });
+      writeFileSync(policies, `${JSON.stringify(FIREFOX_POLICIES, null, 2)}\n`);
+    }
     console.log(`${name} ${version}: ok`);
   }
 }

@@ -48,6 +48,7 @@ import { cloneable } from './cloneable';
 import { firstMissing } from './probes';
 import { sqliteCodeOf } from './sqlite-code';
 import { createStatementCache } from './statement-cache';
+import { createStep, type Step } from './step';
 
 type SQLOptions = {
   chunkSize?: number;
@@ -294,7 +295,12 @@ const stmtWeight = (module: WASQLiteModule, stmt: number) =>
   module._sqlite3_stmt_status(stmt, SQLITE_STMTSTATUS_MEMUSED, 0);
 
 let openedDB:
-  | Promise<{ sqlite: SQLiteAPI; module: WASQLiteModule; db: number }>
+  | Promise<{
+      sqlite: SQLiteAPI;
+      module: WASQLiteModule;
+      db: number;
+      step: Step;
+    }>
   | undefined;
 const gate = createCreditGate(createMessageChannelTick());
 const locks = createLocks();
@@ -514,16 +520,17 @@ const open = (file: string, options: OpenOptions) => {
               vfs,
               () => vfsInstanceSeen?.lastError,
             );
+            const step = createStep(module, build, db);
             boot('applying pragmas');
             for (const statement of renderPragmas(pragmas)) {
               for await (const stmt of sqlite.statements(db, statement)) {
-                while ((await sqlite.step(stmt)) === SQLITE_ROW) {}
+                while ((await step(stmt)) === SQLITE_ROW) {}
               }
             }
             // After the pragmas, which are not control. A plain function: an
             // async one would take wa-sqlite's `_async` relay.
             sqlite.set_authorizer(db, authorize, null);
-            return { sqlite, module, db };
+            return { sqlite, module, db, step };
           });
         },
       );
@@ -594,7 +601,7 @@ const open = (file: string, options: OpenOptions) => {
     // The next value a statement of anonymous `?` takes (`run`).
     let cursor = 0;
 
-    const { sqlite, db, module } = await openedDB;
+    const { sqlite, db, module, step } = await openedDB;
     const { chunkSize = 1 } = options ?? {};
     // sqlite3_changes() keeps the last write's count across a statement that
     // changes nothing; the total does not move then.
@@ -649,7 +656,10 @@ const open = (file: string, options: OpenOptions) => {
         let result: number;
         try {
           stepping = true;
-          result = await sqlite.step(stmt);
+          // A number when nothing suspended; a synchronous throw lands in this
+          // same `try`, like a rejection.
+          const stepped = step(stmt);
+          result = typeof stepped === 'number' ? stepped : await stepped;
         } catch (e) {
           if ((e as { code?: number })?.code === SQLITE_INTERRUPT) {
             // Two triggers, and both mean the client has already rejected:

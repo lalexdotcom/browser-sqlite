@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **An invalid or refused pragma is reported with `INVALID_PRAGMA` before a missing browser feature,** where a browser without OPFS reported the missing OPFS instead.
 - **A `wasmUrl` callback is no longer called when the client's options are invalid or the browser lacks what the VFS needs,** nor when `deleteDatabase()` is refused before starting its worker.
+- **Reading rows is faster, most on Firefox.**
 
 ### Fixed
 
