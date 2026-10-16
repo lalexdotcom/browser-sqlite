@@ -47,7 +47,9 @@ const ccall = (s: string) =>
     ';var cwrap=',
     false,
   );
-const exportPattern = (s: string) => between(s, 'exportPattern=/^(', ')$/');
+// The pattern and the loop of instrumentWasmExports that makes a match promising.
+const exportPattern = (s: string) =>
+  between(s, 'exportPattern=/^(', 'else{ret[x]=original}}return ret}');
 const makeAsync = (s: string) =>
   between(s, 'makeAsyncFunction(original){', '}');
 
@@ -143,7 +145,7 @@ describe('the wa-sqlite code the fast step reproduces', () => {
     verify(
       'exportPattern (wa-sqlite-jspi.mjs)',
       exportPattern(read('dist/wa-sqlite-jspi.mjs')),
-      'ca8ab9e347508851749c87883844efc562e783dddcc998e9b5ea6589cf41f0de',
+      '968dce8376a09e12c3cd3de120065ef50de5a996039dd3fd40f4021c4c95bf32',
     );
   });
 
