@@ -125,6 +125,7 @@ export default defineConfig({
           name: 'unit',
           environment: 'node',
           include: ['tests/unit/**/*.test.ts'],
+          setupFiles: ['tests/unit/setup/git-env.ts'],
           // Anything near this bound is a deadlock — except git, which the
           // hook-gate tests run for real and Windows runs several times slower.
           testTimeout: 10_000 * TIME_SCALE,

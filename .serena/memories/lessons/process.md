@@ -274,3 +274,7 @@ Testing the action's npm-upgrade step against a fake `npm`, the stub's directory
 - **Paths print with `\`**: anything compared or shown as text gets `/` first.
 
 And one about bounds: **every timeout in a run is a bet on the platform's speed** — the runner's, the job's, Vitest's (`testTimeout`, `hookTimeout`, `browser.connectTimeout`), the ones tests write, and the library defaults tests rely on. Scale them together (`BSQ_TIME_SCALE`); each one left out was a red Windows run.
+
+## `git commit -a` hands its hook an absolute `GIT_INDEX_FILE`, and every git the hook's tests start inherits it (2026-10-16)
+
+A plain commit runs `pre-commit` with `GIT_INDEX_FILE=.git/index`, relative, harmless in another repository; `commit -a` (and `commit -- <paths>`) points it at the temporary `<repo>/.git/index.lock`. The hook-gate unit tests run git in scratch repositories: they built trees from this repository's index with their own object store — 11 failures, `invalid object 100755 … for '.claude/scripts/fix-session-mtimes.py'` / `Error building trees`, the named file being merely the index's first entry; `git fsck` was clean. Shown with a hook printing `env | grep ^GIT_` in a throwaway repository. **Fixed where tests run, not in the scripts**: `tests/unit/setup/git-env.ts` deletes every `GIT_*` before the unit project's files; `scripts/hook-gate.ts` must keep them, since a hook's git has to read the index being committed. A git error naming a file the commit never touched points at the environment, not the repository.

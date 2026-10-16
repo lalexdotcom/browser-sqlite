@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-10-13.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-10-16.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one, and move what closes to `mem:history` rather than
 keeping it here struck through (rewritten on 2026-10-08 from 38 000 characters, two thirds of
 them closed subjects).
@@ -25,8 +25,8 @@ unmeasured ground.
   Procedure: `mem:conventions/releasing`.
 - **The vendored wa-sqlite sits on upstream `master` of 2026-10-13** (`6238f532`, #374 merged;
   `package.json` has the SHA; the built worker, the `.wasm` and `index.js` are byte-identical to the
-  previous pin's). **No patch since then**: every change the library carried has merged upstream,
-  and `patches/` and `patchedDependencies` are gone. Heads and merges in
+  previous pin's). **Since 2026-10-16 the patch carries rhashimoto/wa-sqlite#381** (the
+  `OPFSCoopSyncVFS` retry on a held access handle), its only change. Heads and merges in
   `mem:stack-and-build/wa-sqlite`, reports in `mem:upstream`. A patch is added, regenerated or
   removed through `pnpm patch` / `pnpm patch-commit` / `pnpm patch-remove`, never by hand.
 - **`main` may sit ahead of `origin/main` indefinitely** — the convention, not an oversight. It
@@ -78,7 +78,8 @@ here on purpose: a total alone cannot say which suite moved.
 ## In progress
 
 - **Merged into `main` on 2026-10-15 (`c82d103`, not pushed; PR #9 of this repo stays open until `main` is pushed): the library's tests on Windows and macOS in CI, dispatched on demand.** The final review's critical finding (the open-timeout shim imported the untracked `tests/build/`, which broke `tsc` on a fresh clone) was fixed before the merge; its deferred minors are in `mem:follow-ups` (§ The Windows/macOS CI: deferred minors). Spec `docs/superpowers/specs/2026-10-14-ci-windows-macos-design.md`, plan `docs/superpowers/plans/2026-10-14-ci-windows-macos.md`. Three green runs per platform (LIB-WIN-MAC, `mem:measurements/test-browsers`); what it built is in `mem:stack-and-build/ci` and `mem:conventions` (§ What runs where, `BSQ_TIME_SCALE`). Pushed for the runs (the user's go covered that); `main` not pushed.
-- **Next, in this order (user, 2026-10-15):** (1) carry wa-sqlite #381 (opened 2026-10-15, `docs/upstream/2026-10-15-wa-sqlite-381-coopsync-held-handle.md`) as a `pnpm patch`, on its own branch off `main`, with a CHANGELOG entry and the matrix; (2) one Windows run with `coopsync-handover`'s three tests re-enabled, to see only the 30 s `TIMEOUT`s remain; (3) `OPFSAdaptiveVFS`'s hand-over, which may have #381's race and leave its lock held (`mem:follow-ups`); then `browsers.ts` as the only installer under an inter-process lock; later, the Windows/macOS workflows in the release.
+- **Merged into `main` on 2026-10-16 (not pushed): wa-sqlite #381 carried as a `pnpm patch`** (CHANGELOG Fixed; matrix 23/23 on GitHub), `coopsync-handover` re-enabled on Firefox on Windows with 3 attempts (Windows run green, COOPSYNC-381-WINDOWS), and the unit project dropping git's `GIT_*` variables (`tests/unit/setup/git-env.ts`).
+- **Next, in this order (user, 2026-10-15, confirmed 2026-10-16):** (1) `OPFSAdaptiveVFS`'s hand-over, which may have #381's race and leave its lock held (`mem:follow-ups`); then `browsers.ts` as the only installer under an inter-process lock; later, the Windows/macOS workflows in the release.
 
 - **The Vite dep-optimizer race between parallel Vitest processes is fixed and merged (2026-10-13)**: one cache per job (`mem:follow-ups/notes`). CI's `verify` was the exposed run (conformance in 2 shards per project on a cold cache); the push that carries the fix is its proof.
 - **Done and pushed (2026-10-13):** the test planner (plans A, B, C; the matrix plans first and runs on every push of `main`), and the test-triggers review (`docs/superpowers/specs/2026-10-13-test-triggers-design.md`: hooks per change, actionlint, the release reusing the push-of-`main` runs, publint/attw, the Pages bench check; `mem:conventions` § What runs where). CI 38441033562 and matrix 38441033564 green on the push. **Left for GitHub to prove:** the release's `prior` job and its `release`/`pages` conditions and `consumer-smoke` at the next release. The Pages bench check is proven (run 38448872714, `preview` moved to `e5855bb` on 2026-10-13).

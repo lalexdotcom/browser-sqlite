@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **A client loads its `.wasm` from `wasmUrl`,** where it always loaded them from beside `worker.js` whatever `wasmUrl` said; only `deleteDatabase()` honoured it.
 - **`IDBBatchAtomicVFS` and `IDBMirrorVFS` are refused at construction where IndexedDB is missing,** naming the VFS that do without it, instead of failing in their worker. `detectFeatures()` and `PlatformFeature` gain `indexeddb`.
 - **The published types resolve under TypeScript's `node16` and `nodenext` module resolution,** the default of `tsc --init`, where only `bundler` resolved them.
+- **On `OPFSCoopSyncVFS`, a statement no longer fails with an error carrying no code (`No modification allowed`) when another client's worker was terminated while it held the database,** such as a worker that missed its open timeout.
 
 ## [1.0.0-rc.10] - 2026-10-09
 
