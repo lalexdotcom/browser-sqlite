@@ -142,7 +142,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - JSPI-VS-SYNC — `jspi` walks rows as fast as `sync`
 - JSPI-SYNC-RELAYS
 - BULK-VALUES — converting cells in `enqueue()` costs nothing; JSONB faster on Chromium, slower on Firefox
-- FAST-STEP — the library's own step against `main`, stock Chrome 153 / Firefox 155: `chunk()` of 4 000 000 rows −49 % / −80 % on `sync`, every VFS faster, one-row queries unchanged
+- FAST-STEP — the library's own step against `main`, stock Chrome 153 / Firefox 158: `chunk()` of 4 000 000 rows −49 % / −80 % on `sync`, every VFS faster, one-row queries unchanged
 
 ## `mem:measurements/bench-and-devices` — the bench page, devices, browsers, bundlers
 
