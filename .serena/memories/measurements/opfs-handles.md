@@ -43,6 +43,16 @@ So Firefox releases them one by one and Chromium at once. Chromium's 2.00 s is B
 
 The ~85 ms added is one turn of `createVfsInstance`'s retry. On Firefox the condition does not arise: with its cache enabled (`fission.bfcacheInParent: true` and `browser.sessionhistory.max_total_viewers: 4` in `firefoxUserPrefs` — Playwright's build sets the first to `false` — after which a page with nothing in it leaves with `persisted === true`), a page holding the database open still leaves with `persisted === false`, and the next page's first open succeeds, 9 of 9 for wa-sqlite alone and 9 of 9 for the library (53-73 ms).
 
+**The fix for #362 on the real navigation (2026-10-16, this container).** Chrome for Testing 153.0.8010.52 headless under WebdriverIO 10 (`wdio:enforceWebDriverClassic`), a scratchpad harness not kept: the issue's repro (a module worker opens `repro.db`, inserts a row and keeps it open; the page goes to the next run 300 ms later), ten pages, two passes, a fresh profile per arm and pass, `src/` and `dist/` of upstream `6238f532`. Pages 2-10 of each pass counted; each left with `persisted === true`.
+
+| sweep in `#initialize()` | first open failed | first open |
+|---|---|---|
+| `master` | 18 of 18, `NoModificationAllowedError` on `removeEntry`; an immediate retry succeeds 18 of 18 | |
+| also tolerating `NoModificationAllowedError` beside `NotFoundError` | 0 of 18 | 40-53 ms |
+| the issue's try/catch | 0 of 18 | 39-53 ms |
+
+Every arm read back the rows of each earlier page. With either fix the worker saw at most two `.ahp-*` directories once open, its own and the previous page's: the next open sweeps the leftover. **Under WebDriver the cache needs no flag, but `Cache-Control: no-store` on the page disables it**: the first run served it, every page left with `persisted === false` and `master` passed; an empty page without the header left with `persisted === true`.
+
 ## COOPSYNC-OPEN-CLOSED — the two `sqlite3_open_v2` cells do not come back, 2026-09-21, this container
 
 Method: the one cell that ever carried them, `BSQ_TEST_TARGETS=OPFSCoopSyncVFS/sync pnpm exec rstest
