@@ -168,6 +168,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - BULK-GC
 - STREAM-FF
 - FF-PW-AWAIT
+- STREAM-GEN
 - FF-JUGGLER
 
 ## `mem:measurements/binary-protocol` — the binary protocol between page and worker
