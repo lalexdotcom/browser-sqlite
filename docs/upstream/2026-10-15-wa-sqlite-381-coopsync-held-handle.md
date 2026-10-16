@@ -24,7 +24,7 @@ On `master`: Chrome Linux 10/10 on default, asyncify and jspi; Firefox 155 Linux
 
 ## Posted upstream
 
-PR [#381][pr381], opened 2026-10-15 from `lalexdotcom:opfscoopsync-retry-held-handle`, on `master` at `6238f532`: the fix (`cb2ed6e4`), the test made independent of `destroy()` (`147357f1`), bounded rounds (`a79a5ea6`), the 5 s bound (`3c75a3c8`). The body, cut by the user to the essentials, carries no measurement: it says the race reproduces in Chrome, Firefox and Safari, most reliably in Firefox, especially on Windows, and that `OPFSAdaptiveVFS`, which hands its handle over the same way without `readwrite-unsafe`, is being looked into separately. It does not mention this library. Upstream CI on the head commit: [run 38714899901](https://github.com/rhashimoto/wa-sqlite/actions/runs/38714899901), pending at the time of writing.
+PR [#381][pr381], opened 2026-10-15 from `lalexdotcom:opfscoopsync-retry-held-handle`, on `master` at `6238f532`: the fix (`cb2ed6e4`), the test made independent of `destroy()` (`147357f1`), bounded rounds (`a79a5ea6`), the 5 s bound (`3c75a3c8`). The body, cut by the user to the essentials, carries no measurement: it says the race reproduces in Chrome, Firefox and Safari, most reliably in Firefox, especially on Windows, and that `OPFSAdaptiveVFS`, which hands its handle over the same way without `readwrite-unsafe`, is being looked into separately. It does not mention this library. Upstream CI on the head commit is green: [run 38714899901](https://github.com/rhashimoto/wa-sqlite/actions/runs/38714899901), `build (20.x)`, the only check.
 
 ## What stays ours
 
