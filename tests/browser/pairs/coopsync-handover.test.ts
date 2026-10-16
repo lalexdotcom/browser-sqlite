@@ -42,18 +42,16 @@ import {
 
 type Client = ReturnType<typeof createSQLiteClient>;
 
-const ATTEMPTS = 20;
-const CONCURRENT = 8;
-
 // Every hand-over costs Firefox on Windows 150-300 ms of OPFS fsyncs (Mozilla
-// bug 2072928): with two clients, a worker misses the library's 30 s open
-// timeout — 12 times in 20 attempts for the first test (2026-10-15), now and
-// then for the other two. A product limit, tracked in mem:follow-ups:
-// re-enable these tests once it is solved.
-const onWindowsFirefox = () =>
-  ENVIRONMENT.browser === 'firefox' && /Windows/.test(navigator.userAgent);
-const WINDOWS_FIREFOX =
-  'Firefox on Windows: a CoopSync hand-over pays OPFS fsyncs (Mozilla bug 2072928), and a second client misses the 30 s open timeout';
+// bug 2072928): an attempt takes 25-60 s there against ~150 ms on Linux, so 20
+// outlive the test's bound. Measured 2026-10-16 with wa-sqlite #381 carried:
+// 54 attempts, no failed statement — before it, a second client met the raw
+// error #381 fixes. Three attempts keep that covered where the race is widest.
+const ATTEMPTS =
+  ENVIRONMENT.browser === 'firefox' && /Windows/.test(navigator.userAgent)
+    ? 3
+    : 20;
+const CONCURRENT = 8;
 
 // The describe's `vfs:` tag names the subject, OPFSCoopSyncVFS's own handle
 // hand-over protocol; the build follows the cell's pair.
@@ -103,8 +101,7 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', {
 }, () => {
   it(
     'two clients opened together fail no statement',
-    async ({ skip }) => {
-      if (onWindowsFirefox()) return skip(WINDOWS_FIREFOX);
+    async () => {
       const failures: string[] = [];
       for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
         const file = `cs-handover-${crypto.randomUUID()}`;
@@ -134,8 +131,7 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', {
   // Discriminates on Firefox only: Chromium never failed this shape before #347.
   it(
     "a write following another client's schema change does not fail",
-    async ({ skip }) => {
-      if (onWindowsFirefox()) return skip(WINDOWS_FIREFOX);
+    async () => {
       const failures: string[] = [];
       for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
         const file = `cs-handover-${crypto.randomUUID()}`;
@@ -166,8 +162,7 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', {
 
   it(
     'two clients starting together survive orphaned temporary directories',
-    async ({ skip }) => {
-      if (onWindowsFirefox()) return skip(WINDOWS_FIREFOX);
+    async () => {
       const root = await navigator.storage.getDirectory();
       const failures: string[] = [];
       for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
