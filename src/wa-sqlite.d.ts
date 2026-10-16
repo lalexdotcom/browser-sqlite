@@ -28,6 +28,38 @@
  */
 type WASQLiteModule = {
   /**
+   * `sqlite3_step`, unwrapped. A number on `sync`, a promise on `jspi` (a
+   * `promising` export); `async` is called through `ccall` instead.
+   * `src/worker/step.ts` reproduces what wa-sqlite's `step()` does around it.
+   */
+  _sqlite3_step: (stmt: number) => number | Promise<number>;
+  /**
+   * The operations the VFS queued: the ones to await before a call and the ones
+   * to await after it. wa-sqlite reassigns both arrays, so read them from the
+   * module at the moment of use.
+   */
+  retryOps: Promise<unknown>[];
+  pendingOps: Promise<unknown>[];
+  /**
+   * Emscripten's `ccall`, typed for its two uses in `src/worker/step.ts`
+   * (without the `async` option, which is what makes `sqlite3_step` return a
+   * number when nothing unwound).
+   */
+  ccall: {
+    (
+      name: 'sqlite3_step',
+      returnType: 'number',
+      argTypes: ['number'],
+      args: [number],
+    ): number | Promise<number>;
+    (
+      name: 'sqlite3_errmsg',
+      returnType: 'string',
+      argTypes: ['number'],
+      args: [number],
+    ): string;
+  };
+  /**
    * `sqlite3_stmt_status`. Exported by all three builds; the JS façade does
    * not wrap it, and it takes a pointer and returns a number, so `mapStmtToDB`
    * — a JS-side guard only — is not involved. Declared here rather than cast
