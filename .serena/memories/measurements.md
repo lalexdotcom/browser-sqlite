@@ -70,6 +70,9 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - ADAPTIVE-JSPI-SAFARI
 - SAFARI-OPFS
 - HELD-LIVE
+- OPFS-PROBE — each OPFS file operation per browser and OS: Firefox on Windows 40-220 ms
+- HANDOVER-PROBE — a terminated holder frees its Web Lock before its file, on every engine and OS
+- COOPSYNC-381-WINDOWS — two CoopSync clients on Windows Firefox with #381 carried: no failed statement, 25-60 s an attempt
 
 ## `mem:measurements/transactions` — transactions
 

@@ -37,6 +37,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - A failure count that changes run to run in one family of assertions, on every backend, points at the harness (2026-10-08, wa-sqlite on Safari 26)
 - A warm local cache and a permissive container hide what a fresh CI runner hits first (2026-10-11, the first CI run on WebdriverIO)
 - A fixed sleep before reading state another task delivers loses the race when the main thread stalls (2026-10-14, `failed-client`)
+- A test that outlives its bound keeps running into the next test, and its result list dies with it (2026-10-16, `coopsync-handover` on Windows Firefox)
 
 ## `mem:lessons/debugging` — debugging, probes, measurement
 
@@ -106,6 +107,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - `pkill -f` with a pattern from your own command line kills your own shell (2026-10-03)
 - A stub on `PATH` is checked before the script under test runs (2026-10-06)
 - A script that runs on Linux is not a script that runs on Windows: four traps, each paid for once (2026-10-15, `ci/windows-macos`)
+- `git commit -a` hands its hook an absolute `GIT_INDEX_FILE`, and every git the hook's tests start inherits it (2026-10-16)
 
 ## `mem:lessons/design` — design of the library
 

@@ -8,7 +8,7 @@ Part of `mem:stack-and-build`. Moved here from it on 2026-10-08; the chain of ea
 never reaches a consumer lockfile. **Pinned by commit SHA, not by tag, since 2026-09-15 (user)**:
 `github:rhashimoto/wa-sqlite#6238f532b399de77fd5f141f6e3776aeb24b2f04` since 2026-10-13, upstream
 `master` with our #374 merged (squashed, its fix and test hunks byte for byte the PR's), two
-dependabot bumps of `yarn.lock` before it (outside the package); **no patch since**, and the built
+dependabot bumps of `yarn.lock` before it (outside the package); no patch from then until #381 was carried on 2026-10-16 (§ The patch), and the built
 `worker.js`, the three `.wasm` and `index.js` byte-identical across that repin, the source map
 differing only by the package's `.pnpm` path. Before it, `94cd1e7d` (2026-10-11), upstream
 `master` with our #372 merged (squashed as `91a34ef7`, its tree byte-identical to the head the patch
@@ -30,7 +30,7 @@ as well as a release and nothing waits for one.
 
 ## The patch
 
-**There is no patch since the repin to `6238f532` (2026-10-13)**: `pnpm patch-remove wa-sqlite@1.1.2` deleted `patches/` and `patchedDependencies` — then its own install failed `ENOENT` on the file it had just deleted (pnpm 10.31), and a plain `pnpm install` finished cleanly. Below, what `patches/wa-sqlite@1.1.2.patch` carried until then, file by file; each change has a report in `docs/upstream/`, which is where the mechanisms and measurements live. The procedure that follows is for the next change carried before it merges:
+**Since 2026-10-16 `patches/wa-sqlite@1.1.2.patch` carries #381 alone**: `OPFSCoopSyncVFS.js`, the `src/` hunks of the PR head `3c75a3c8` byte for byte (its test file is not carried). Made with `pnpm patch --edit-dir` outside the stale `node_modules/.pnpm_patches/wa-sqlite@1.1.2`, `patch -p1` of the PR's `git diff 6238f532 3c75a3c8 -- src/`, `pnpm patch-commit`: this time `node_modules` came out patched at once (the `.pnpm` directory with its hash suffix, `patchedDependencies` in the lockfile), and after clearing `node_modules/.cache/rspack` the retry shows in `dist/worker/worker.js`. From the repin to `6238f532` (2026-10-13) until then there was no patch: `pnpm patch-remove wa-sqlite@1.1.2` had deleted `patches/` and `patchedDependencies` — then its own install failed `ENOENT` on the file it had just deleted (pnpm 10.31), and a plain `pnpm install` finished cleanly. Below, what the patch carried before that, file by file; each change has a report in `docs/upstream/`, which is where the mechanisms and measurements live. The procedure that follows is for the next change carried before it merges:
 
 - `IDBMirrorVFS.js` — #372 was carried from 2026-10-03 (merged with #371 until #371's merge, then
   alone, last at head `2e85b243`) and left the patch at the repin to `94cd1e7d` (2026-10-11), merged
