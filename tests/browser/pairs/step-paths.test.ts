@@ -21,7 +21,7 @@ describe('the fast step', {
 }, () => {
   // 300 000 rows exceed PROGRESS_OPS several times, so `async` and `jspi`
   // suspend mid-statement. Falsifiable: compare a `jspi` promise to
-  // SQLITE_ROW instead of awaiting it — one row arrives, not 300 000.
+  // SQLITE_ROW instead of awaiting it and the row-count assertion fails.
   it('a long read returns every row, on every build', async ({ task }) => {
     const { vfs } = standalonePair(task.tags ?? []);
     await forEachCase(
@@ -66,8 +66,9 @@ describe('the fast step', {
 });
 
 describe('a checkpoint on the write-ahead VFS', () => {
-  // The VFS queues `pendingOps` during `wal_checkpoint`; the fast step settles
-  // them before it returns the step's code.
+  // A regression pin of a checkpoint through the worker. The VFS queues its
+  // checkpoint at prepare (SQLITE_FCNTL_PRAGMA), where wa-sqlite's prepare retry() settles it, so
+  // the step's `pendingOps` branch is covered by tests/unit/lib/step.test.ts only.
   it('a wal_checkpoint on OPFSWriteAheadVFS completes and the data stays readable', {
     tags: ['vfs:OPFSWriteAheadVFS'],
   }, async () => {

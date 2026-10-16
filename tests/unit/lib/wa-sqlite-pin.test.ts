@@ -56,7 +56,7 @@ const makeAsync = (s: string) =>
 /** Every line of src/**\/*.js that mentions retryOps or pendingOps, by path. */
 const opsUses = (): string | undefined => {
   const files = readdirSync(`${PKG}src`, { recursive: true })
-    .map(String)
+    .map((f) => String(f).replaceAll('\\', '/'))
     .filter((f) => f.endsWith('.js'))
     .sort();
   const lines = files.flatMap((file) =>
