@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   wa-sqlite@1.1.2:
-    hash: 2efe43696f3bbeee0904f2aff181d3d3bfee1f427d6ae2b33eb05ef48811e74f
+    hash: 6260e1c5ff2bb464fb0a2b436887f50b1492acd8455d02b4429262b10f5ca5db
     path: patches/wa-sqlite@1.1.2.patch
 
 importers:
@@ -54,7 +54,7 @@ importers:
         version: 5.0.3(@types/node@24.12.0)(@vitest/browser-webdriverio@5.0.0)(@vitest/ui@5.0.3)(vite@8.3.4(@types/node@24.12.0)(jiti@2.7.0)(yaml@2.8.3))
       wa-sqlite:
         specifier: github:rhashimoto/wa-sqlite#6238f532b399de77fd5f141f6e3776aeb24b2f04
-        version: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/6238f532b399de77fd5f141f6e3776aeb24b2f04(patch_hash=2efe43696f3bbeee0904f2aff181d3d3bfee1f427d6ae2b33eb05ef48811e74f)
+        version: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/6238f532b399de77fd5f141f6e3776aeb24b2f04(patch_hash=6260e1c5ff2bb464fb0a2b436887f50b1492acd8455d02b4429262b10f5ca5db)
       webdriverio:
         specifier: 10.0.2
         version: 10.0.2
@@ -3405,7 +3405,7 @@ snapshots:
     transitivePeerDependencies:
       - msw
 
-  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/6238f532b399de77fd5f141f6e3776aeb24b2f04(patch_hash=2efe43696f3bbeee0904f2aff181d3d3bfee1f427d6ae2b33eb05ef48811e74f): {}
+  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/6238f532b399de77fd5f141f6e3776aeb24b2f04(patch_hash=6260e1c5ff2bb464fb0a2b436887f50b1492acd8455d02b4429262b10f5ca5db): {}
 
   wait-port@1.1.0:
     dependencies:
