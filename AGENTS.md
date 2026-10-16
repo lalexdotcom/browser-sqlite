@@ -60,6 +60,11 @@ SECONDARY and must not touch code files when a Serena equivalent exists.
   callers → `find_referencing_symbols`.
 - Edit → `replace_symbol_body` / `insert_before_symbol` / `insert_after_symbol` /
   `replace_content`; rename/move/delete → `rename` / `move` / `safe_delete`.
+- **`edit_memory` / `replace_content`: never `$1` in a replacement.** It is
+  inserted literally and the text it should have kept is lost. A backreference
+  is `$!1`; better, capture nothing (anchor with a lookahead `(?=…)`, or literal
+  mode with the full text). After every such edit, grep the file for `$1`
+  anywhere on a line, not only alone, and read the section back.
 - Built-in Read/Edit/Grep on code only as fallback (Serena failed or file
   unparseable). Read/Edit are fine for non-code (`.md`, JSON, YAML, TOML,
   config, lockfiles).
