@@ -171,13 +171,13 @@ async function* layer<V>(
     let delivered = false;
     const input = open();
     try {
-      await turns(options.tryTurns);
+      if (options.tryTurns) await turns(options.tryTurns);
       try {
         for await (const value of input) {
           delivered = true;
           const chunk = mark(value);
           if (chunk !== null) events.push(`value ${chunk}`);
-          await turns(options.valueTurns);
+          if (options.valueTurns) await turns(options.valueTurns);
           yield value;
         }
       } finally {
@@ -199,7 +199,7 @@ async function* layer<V>(
       return;
     } finally {
       events.push('finally');
-      await turns(options.finallyTurns);
+      if (options.finallyTurns) await turns(options.finallyTurns);
       // biome-ignore lint/correctness/noUnsafeFinally: `releasing`'s finally can throw (dieIfConnectionLeft)
       if (options.finallyThrows) throw new Error('finally failed');
     }
@@ -768,6 +768,7 @@ describe('flatten against the generator chain it replaces', () => {
       finallyFailed: 0,
       extraReturn: 0,
       waited: 0,
+      zeroAwait: 0,
     };
     for (let i = 0; i < CASES; i++) {
       const seed = BASE_SEED + i;
@@ -781,7 +782,10 @@ describe('flatten against the generator chain it replaces', () => {
       }
       if (today.results.some((r) => r.startsWith('error'))) seen.errors++;
       if (today.layer.includes('catch source failed')) seen.sourceErrors++;
-      if (today.source.includes('return')) seen.sourceClosed++;
+      // `source` is not compared (so is empty) when the layer closes it twice.
+      if (!scenario.layer?.extraReturn && today.source.includes('return')) {
+        seen.sourceClosed++;
+      }
       if (today.results.some((r) => r.startsWith('done'))) seen.ended++;
       if (today.results.some((r) => r.startsWith('value'))) seen.values++;
       if (overlap.nextNext > 0) seen.nextWhileNextPending++;
@@ -798,12 +802,14 @@ describe('flatten against the generator chain it replaces', () => {
       if (scenario.layer?.tryTurns || scenario.layer?.finallyTurns) {
         seen.waited++;
       }
+      // The original layer: no option set, so no await beyond the loop's own.
+      if (Object.keys(scenario.layer ?? {}).length === 0) seen.zeroAwait++;
     }
     // The space is exercised, not just compared: every kind of outcome occurs.
     expect(seen.values).toBeGreaterThan(CASES / 4);
     expect(seen.errors).toBeGreaterThan(CASES / 20);
     expect(seen.sourceErrors).toBeGreaterThan(CASES / 50);
-    expect(seen.sourceClosed).toBeGreaterThan(CASES / 5);
+    expect(seen.sourceClosed).toBeGreaterThan(CASES / 10);
     expect(seen.ended).toBeGreaterThan(CASES / 5);
     expect(seen.nextWhileNextPending).toBeGreaterThan(CASES / 20);
     expect(seen.closeWhileNextPending).toBeGreaterThan(CASES / 20);
@@ -811,5 +817,6 @@ describe('flatten against the generator chain it replaces', () => {
     expect(seen.finallyFailed).toBeGreaterThan(CASES / 100);
     expect(seen.extraReturn).toBeGreaterThan(CASES / 10);
     expect(seen.waited).toBeGreaterThan(CASES / 4);
+    expect(seen.zeroAwait).toBeGreaterThan(CASES / 20);
   });
 });
