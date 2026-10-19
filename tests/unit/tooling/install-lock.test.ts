@@ -12,7 +12,11 @@ import { createConnection, createServer, Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { lockPath, runOnce } from '../../../scripts/install-lock.ts';
+import {
+  listenBusy,
+  lockPath,
+  runOnce,
+} from '../../../scripts/install-lock.ts';
 import { timeScale } from '../../../scripts/processes.ts';
 
 const fixture = join(
@@ -339,6 +343,76 @@ describe('scripts/install-lock.ts', () => {
       });
       expect(installed).toBe(true);
     }),
+    TIMEOUT,
+  );
+
+  it('listenBusy takes EADDRINUSE and EEXIST as a held path, nothing else', () => {
+    // Falsifiable: test EADDRINUSE alone and macOS's EEXIST crashes the process.
+    expect(listenBusy('EADDRINUSE')).toBe(true);
+    expect(listenBusy('EEXIST')).toBe(true);
+    expect(listenBusy('EACCES')).toBe(false);
+    expect(listenBusy('ENOENT')).toBe(false);
+    expect(listenBusy(undefined)).toBe(false);
+  });
+
+  // The client connects inside install() and install() returns without yielding,
+  // so the connection is still in the accept queue when the leader answers.
+  const answerToLateClient = async (
+    install: (connectLate: () => void) => Promise<void>,
+  ): Promise<{ received: string; rejected: string | undefined }> => {
+    let received = '';
+    let closed: Promise<unknown> = Promise.resolve();
+    const connectLate = (): void => {
+      const client = createConnection(path);
+      client.setEncoding('utf8');
+      client.on('data', (chunk: string) => {
+        received += chunk;
+      });
+      client.on('error', () => {});
+      closed = once(client, 'close');
+    };
+    const outcome = await runOnce({
+      path,
+      done: async () => false,
+      install: () => install(connectLate),
+      installBound: 5000,
+      waitBound: 5000,
+    }).then(
+      () => undefined,
+      (error: Error) => error.message,
+    );
+    await closed;
+    return { received, rejected: outcome };
+  };
+
+  it(
+    'answers a client still in the accept queue when the install ends',
+    async () => {
+      // Falsifiable: close the server as soon as the work ends and this client gets 'end' with no line.
+      const { received, rejected } = await answerToLateClient(
+        async (connectLate) => {
+          connectLate();
+        },
+      );
+      expect(rejected).toBeUndefined();
+      expect(received).toBe('ready\n');
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "answers a client still in the accept queue with the leader's error",
+    async () => {
+      // Falsifiable: close the server as soon as the work ends and this client gets 'end' with no line.
+      const { received, rejected } = await answerToLateClient(
+        async (connectLate) => {
+          connectLate();
+          throw new Error('boom');
+        },
+      );
+      expect(rejected).toBe('boom');
+      expect(received).toBe('error boom\n');
+    },
     TIMEOUT,
   );
 });

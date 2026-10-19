@@ -32,6 +32,8 @@ const REFUSED_RETRY_MS = 10;
 const STALE_CONFIRM_MS = 100;
 /** Grace for waiters to hang up before the leader destroys their sockets. */
 const CLOSE_GRACE_MS = 2000;
+/** Most event-loop turns the leader spends answering late arrivals before it closes. */
+const MAX_DRAIN_TURNS = 50;
 
 /**
  * The socket one cache directory elects its installer on: short, because a
@@ -140,12 +142,17 @@ function bounded<T>(
   });
 }
 
+/** Whether a `listen` error means another process holds the path: macOS says EEXIST where Linux says EADDRINUSE. */
+export function listenBusy(code: string | undefined): boolean {
+  return code === 'EADDRINUSE' || code === 'EEXIST';
+}
+
 /** The server bound to `path`, or `'busy'` when something already is. */
 function tryListen(path: string): Promise<Server | 'busy'> {
   return new Promise((resolvePromise, reject) => {
     const server = createServer();
     server.once('error', (error: NodeJS.ErrnoException) => {
-      if (error.code === 'EADDRINUSE') resolvePromise('busy');
+      if (listenBusy(error.code)) resolvePromise('busy');
       else reject(error);
     });
     server.listen(path, () => {
@@ -163,11 +170,13 @@ async function lead(
 ): Promise<void> {
   const sockets = new Set<Socket>();
   let line: string | undefined;
+  let accepted = 0;
   server.on('connection', (socket: Socket) => {
+    accepted++;
     socket.on('error', () => {});
     socket.on('close', () => sockets.delete(socket));
-    if (line === undefined) sockets.add(socket);
-    else socket.end(line);
+    sockets.add(socket);
+    if (line !== undefined) socket.end(line);
   });
 
   let failure: unknown;
@@ -185,6 +194,15 @@ async function lead(
       ? 'ready\n'
       : `error ${(failure instanceof Error ? failure.message : String(failure)).replace(/\s*\n\s*/g, ' ')}\n`;
   for (const socket of sockets) socket.end(line);
+
+  // A client whose connect completed but that the loop has not accepted yet would
+  // be dropped by close(): keep answering until a full turn brings no new one.
+  for (let turn = 0; turn < MAX_DRAIN_TURNS; turn++) {
+    const before = accepted;
+    await new Promise((turned) => setTimeout(turned, 0));
+    await new Promise((turned) => setImmediate(turned));
+    if (accepted === before) break;
+  }
 
   await new Promise<void>((closed) => {
     const grace = setTimeout(() => {
