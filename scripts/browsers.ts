@@ -14,7 +14,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -33,6 +32,7 @@ import {
   firefoxPoliciesPath,
   installItem,
   isInstalled,
+  renameWithRetry,
   sweepStaging,
 } from './browser-cache.ts';
 import {
@@ -149,7 +149,7 @@ function puppeteerItem(
       try {
         await install({ browser, buildId, cacheDir: scratch });
         rmSync(target, { recursive: true, force: true });
-        renameSync(join(scratch, dir), target);
+        await renameWithRetry(join(scratch, dir), target);
       } finally {
         try {
           rmSync(scratch, { recursive: true, force: true });

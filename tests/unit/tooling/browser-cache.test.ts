@@ -21,6 +21,7 @@ import {
   installItem,
   isInstalled,
   MARKER,
+  renameWithRetry,
   STAGING,
   sweepStaging,
 } from '../../../scripts/browser-cache.ts';
@@ -207,5 +208,39 @@ describe('sweepStaging', () => {
     mkdirSync(join(cache, STAGING, 'stray'), { recursive: true });
     sweepStaging(cache);
     expect(existsSync(join(cache, STAGING, 'stray'))).toBe(false);
+  });
+});
+
+describe('renameWithRetry', () => {
+  it('retries a rename refused for a moment, then moves the folder', async () => {
+    // Falsifiable: no retry and the first EBUSY rejects.
+    const from = join(cache, 'from');
+    const to = join(cache, 'to');
+    mkdirSync(from);
+    let refused = 0;
+    const flaky = ((a, b) => {
+      if (refused < 2) {
+        refused += 1;
+        throw Object.assign(new Error('resource busy'), { code: 'EBUSY' });
+      }
+      renameSync(a, b);
+    }) as typeof renameSync;
+    await renameWithRetry(from, to, flaky);
+    expect(refused).toBe(2);
+    expect(existsSync(to)).toBe(true);
+    expect(existsSync(from)).toBe(false);
+  });
+
+  it('rethrows another error at once', async () => {
+    // Falsifiable: retry every error and the rename is called more than once.
+    let calls = 0;
+    const missing = (() => {
+      calls += 1;
+      throw Object.assign(new Error('no such file'), { code: 'ENOENT' });
+    }) as typeof renameSync;
+    await expect(
+      renameWithRetry(join(cache, 'a'), join(cache, 'b'), missing),
+    ).rejects.toThrow('no such file');
+    expect(calls).toBe(1);
   });
 });

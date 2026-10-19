@@ -85,6 +85,30 @@ export function sweepStaging(cacheDir: string): void {
 }
 
 /**
+ * Renames `from` to `to`, retrying for a moment while Windows refuses it
+ * (EPERM/EACCES/EBUSY: an antivirus or indexer holds a fresh file); any other
+ * error, or the last one once the time is up, is thrown. `rename` is a test seam.
+ */
+export async function renameWithRetry(
+  from: string,
+  to: string,
+  rename: typeof renameSync = renameSync,
+): Promise<void> {
+  const deadline = Date.now() + RETRY_FOR_MS * timeScale();
+  for (;;) {
+    try {
+      rename(from, to);
+      return;
+    } catch (err) {
+      if (!TRANSIENT.has(code(err) as string) || Date.now() >= deadline) {
+        throw err;
+      }
+      await sleep(RETRY_EVERY_MS);
+    }
+  }
+}
+
+/**
  * Builds `item` in a staging folder and publishes it by rename; returns the
  * absolute executable. An installation found without its marker is replaced.
  * `rename` is a test seam.
@@ -132,23 +156,22 @@ export async function installItem(
     throw err;
   }
 
-  const deadline = Date.now() + RETRY_FOR_MS * timeScale();
-  for (;;) {
+  // The rename fails when another installer published first: its tree is as good as ours.
+  let lost = false;
+  const publish = ((from: string, to: string) => {
     try {
-      rename(staging, final);
-      return executable;
+      rename(from, to);
     } catch (err) {
-      if (isInstalled(cacheDir, item)) {
-        // Another installer published first: its tree is as good as ours.
-        discard();
-        return executable;
-      }
-      if (TRANSIENT.has(code(err) as string) && Date.now() < deadline) {
-        await sleep(RETRY_EVERY_MS);
-        continue;
-      }
-      discard();
-      throw new Error(`browsers: cannot publish ${final}: ${reason(err)}`);
+      if (!isInstalled(cacheDir, item)) throw err;
+      lost = true;
     }
+  }) as typeof renameSync;
+  try {
+    await renameWithRetry(staging, final, publish);
+  } catch (err) {
+    discard();
+    throw new Error(`browsers: cannot publish ${final}: ${reason(err)}`);
   }
+  if (lost) discard();
+  return executable;
 }
