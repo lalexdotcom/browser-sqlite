@@ -41,12 +41,30 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
       const row = this.#rows[this.#index++] as T;
       this.#pending++;
       const result = resolved.then(
-        (): IteratorResult<T, void> | Promise<IteratorResult<T, void>> => {
+        (): IteratorResult<T, void> | PromiseLike<IteratorResult<T, void>> => {
           if (this.#signal?.aborted) {
-            // Held until the rejection has settled, not until the source has
-            // answered: a call in between must queue behind it.
-            result.then(this.#release, this.#release);
-            return this.#throwIntoSource(this.#signal.reason);
+            // A thenable, so `#pending` is released in the very run that
+            // settles `result`: a call in between must queue behind it, and
+            // `result` stays unobserved, as an async generator's is.
+            const reason: unknown = this.#signal.reason;
+            return {
+              // biome-ignore lint/suspicious/noThenProperty: a thenable on purpose, see above
+              then: (
+                resolve: (step: IteratorResult<T, void>) => void,
+                reject: (error: unknown) => void,
+              ) => {
+                void this.#throwIntoSource(reason).then(
+                  (step) => {
+                    this.#release();
+                    resolve(step);
+                  },
+                  (error: unknown) => {
+                    this.#release();
+                    reject(error);
+                  },
+                );
+              },
+            } as PromiseLike<IteratorResult<T, void>>;
           }
           this.#pending--;
           return { value: row, done: false };
@@ -96,12 +114,22 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
   #enqueue<R>(request: () => Promise<R>): Promise<R> {
     const idle = this.#pending === 0;
     this.#pending++;
-    const result = idle ? request() : this.#last.then(request, request);
-    // Registered before the caller can attach its own handlers, so a call made
-    // from one finds the iterator idle only once `result` has settled.
-    result.then(this.#release, this.#release);
-    this.#last = result;
-    return result;
+    const inner = idle ? request() : this.#last.then(request, request);
+    // `#pending` is released in the run that settles the promise handed back,
+    // ahead of the caller's handlers; `inner` is the observed one, so a caller
+    // that drops a rejection gets the unhandled rejection an async generator
+    // gives.
+    this.#last = inner;
+    return inner.then(
+      (value) => {
+        this.#release();
+        return value;
+      },
+      (error: unknown) => {
+        this.#release();
+        throw error;
+      },
+    );
   }
 
   readonly #release = (): void => {
