@@ -19,8 +19,8 @@ type Op =
   | { op: 'nextNA' } // not awaited
   | { op: 'two' } // two next() issued together, then both awaited
   | { op: 'drain' } // next() until done or an error
-  | { op: 'return'; value?: number }
-  | { op: 'returnNA'; value?: number }
+  | { op: 'return'; value?: number; promise?: 'resolve' | 'reject' }
+  | { op: 'returnNA'; value?: number; promise?: 'resolve' | 'reject' }
   | { op: 'throw' }
   | { op: 'throwNA' }
   | { op: 'break' } // for await over the iterator, break at the first row
@@ -175,6 +175,23 @@ const consume = async (
   const quiet = (promise: Promise<unknown>) => promise.then(noop, noop);
   const noop = () => undefined;
   const failure = () => new Error(`thrown ${results.length}`);
+  // What a JavaScript caller may hand to return(): nothing, a value, or a
+  // promise of one that resolves or rejects (`error value n`).
+  const returnArgument = (step: {
+    value?: number;
+    promise?: 'resolve' | 'reject';
+  }): never => {
+    if (step.promise === 'resolve') {
+      return Promise.resolve(step.value) as never;
+    }
+    if (step.promise === 'reject') {
+      const rejected = Promise.reject(new Error(`value ${step.value}`));
+      // Handled here so a layer that never awaits it is not an unhandled error.
+      rejected.catch(noop);
+      return rejected as never;
+    }
+    return step.value as never;
+  };
   const probe: AsyncIterable<number> = {
     [Symbol.asyncIterator]: () => ({
       next: () => track(iterator.next()),
@@ -206,10 +223,10 @@ const consume = async (
         }
         break;
       case 'return':
-        await quiet(track(iterator.return(step.value as never)));
+        await quiet(track(iterator.return(returnArgument(step))));
         break;
       case 'returnNA':
-        outstanding.push(quiet(track(iterator.return(step.value as never))));
+        outstanding.push(quiet(track(iterator.return(returnArgument(step)))));
         break;
       case 'throw':
         await quiet(track(iterator.throw(failure())));
@@ -472,6 +489,54 @@ describe('flatten against the generator chain it replaces', () => {
     expect(open.rethrow.source).toEqual(['next', 'return']);
   });
 
+  it('throws a rejecting return(v) into the layer of an open iterator', async () => {
+    const traces = await sameInEveryVariant({
+      chunks: sizes(3, 2),
+      errorAt: null,
+      ops: [{ op: 'next' }, { op: 'return', value: 5, promise: 'reject' }],
+    });
+    expect(traces.rethrow).toEqual({
+      results: ['value 0', 'error value 5'],
+      order: [0, 1],
+      source: ['next', 'return'],
+      sourceBody: ['yield 0', 'finally'],
+      layer: ['value 0', 'catch value 5', 'finally'],
+    });
+    expect(traces.swallow.results).toEqual(['value 0', 'done undefined']);
+    expect(traces.swallow.layer).toEqual([
+      'value 0',
+      'catch value 5',
+      'finally',
+    ]);
+    expect(traces.wrap.results).toEqual(['value 0', 'error wrapped value 5']);
+    const resolved = await sameInEveryVariant({
+      chunks: sizes(3),
+      errorAt: null,
+      ops: [{ op: 'next' }, { op: 'return', value: 6, promise: 'resolve' }],
+    });
+    expect(resolved.rethrow.results).toEqual(['value 0', 'done 6']);
+    // Idle and ended: the rejection never reaches the layer.
+    const idle = await sameInEveryVariant({
+      chunks: sizes(3),
+      errorAt: null,
+      ops: [{ op: 'return', value: 7, promise: 'reject' }],
+    });
+    expect(idle.rethrow).toEqual({
+      results: ['error value 7'],
+      order: [0],
+      source: [],
+      sourceBody: [],
+      layer: [],
+    });
+    const ended = await sameInEveryVariant({
+      chunks: sizes(1),
+      errorAt: null,
+      ops: [{ op: 'drain' }, { op: 'return', value: 8, promise: 'reject' }],
+    });
+    expect(ended.rethrow.results[2]).toBe('error value 8');
+    expect(ended.rethrow.layer).toEqual(['value 0', 'finally']);
+  });
+
   it('serves two next() not awaited, with a slow chunk', async () => {
     const traces = await sameInEveryVariant({
       chunks: [
@@ -549,8 +614,16 @@ describe('flatten against the generator chain it replaces', () => {
         delay: delay(),
       }));
       const errorAt = random() < 0.4 ? int(chunks.length + 1) : null;
-      const optionalValue = () =>
-        random() < 0.4 ? { value: 1000 + int(9) } : {};
+      const optionalValue = (): Pick<
+        Op & { op: 'return' },
+        'value' | 'promise'
+      > => {
+        if (random() >= 0.4) return {};
+        const value = 1000 + int(9);
+        const kind = int(3);
+        if (kind === 0) return { value };
+        return { value, promise: kind === 1 ? 'resolve' : 'reject' };
+      };
       const op = (): Op => {
         const r = random() * 100;
         if (r < 26) return { op: 'next' };

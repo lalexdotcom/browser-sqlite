@@ -28,13 +28,16 @@ const scripted = (
   onThrow: (error: unknown) => Promise<IteratorResult<number[], void>> = (
     error,
   ) => Promise.reject(error),
-  onReturn: () => Promise<IteratorResult<number[], void>> = async () => ({
+  onReturn: (
+    value: unknown,
+  ) => Promise<IteratorResult<number[], void>> = async () => ({
     value: undefined,
     done: true,
   }),
 ) => {
   const calls: string[] = [];
   const thrown: unknown[] = [];
+  const returned: unknown[] = [];
   let inFlight = 0;
   let maxInFlight = 0;
   const source: AsyncGenerator<number[], void, unknown> = {
@@ -51,9 +54,10 @@ const scripted = (
         inFlight--;
       }
     },
-    return() {
+    return(value?: unknown) {
       calls.push('return');
-      return onReturn();
+      returned.push(value);
+      return onReturn(value);
     },
     throw(error: unknown) {
       calls.push('throw');
@@ -67,7 +71,7 @@ const scripted = (
       await source.return();
     },
   };
-  return { source, calls, thrown, maxInFlight: () => maxInFlight };
+  return { source, calls, thrown, returned, maxInFlight: () => maxInFlight };
 };
 
 const rowsOf = async (iterator: AsyncIterable<number>) => {
@@ -346,77 +350,126 @@ describe('flatten', () => {
     expect(calls).toEqual(['next', 'return']);
   });
 
-  it('settles return() as an async generator does when its value and the source both reject', async () => {
-    const failure = new Error('value');
-    const cleanup = new Error('cleanup failed');
-    const reference = async function* (
-      source: AsyncGenerator<number[], void, unknown>,
-    ) {
-      for await (const chunk of source) for (const row of chunk) yield row;
-    };
-    const outcome = async (
-      make: (
-        source: AsyncGenerator<number[], void, unknown>,
-      ) => AsyncGenerator<number, void, unknown>,
-    ) => {
-      const { source, calls } = scripted([[1, 2]], undefined, () =>
-        Promise.reject(cleanup),
-      );
-      const iterator = make(source);
-      await iterator.next();
-      const error = await iterator.return(Promise.reject(failure)).then(
-        () => undefined,
-        (e: unknown) => e,
-      );
-      return { error, calls };
-    };
-    const expected = await outcome(reference);
-    // Falsifiability: await `value` after closing the source and `cleanup`
-    // surfaces instead of `failure`.
-    expect(expected.error).toBe(failure);
-    expect(await outcome(flatten)).toEqual(expected);
+  it('hands return(v) to the source itself on an open iterator and settles with its answer', async () => {
+    const value = Promise.resolve(43);
+    const { source, calls, returned } = scripted(
+      [[1, 2]],
+      undefined,
+      async (v) => ({ value: (await v) as undefined, done: true }),
+    );
+    const iterator = flatten(source);
+    await iterator.next();
+    // Falsifiability: await `value` before closing the source and the source
+    // receives 43, not the promise (or undefined).
+    expect(await iterator.return(value as never)).toEqual({
+      value: 43,
+      done: true,
+    });
+    expect(returned).toHaveLength(1);
+    expect(returned[0]).toBe(value);
+    expect(calls).toEqual(['next', 'return']);
+    expect(await iterator.next()).toEqual({ value: undefined, done: true });
+    expect(calls).toEqual(['next', 'return']);
   });
 
-  it('resolves return() with the awaited value, as an async generator does', async () => {
+  it('settles return(v) with the source rejecting v on an open iterator', async () => {
+    const failure = new Error('value');
+    const { source, calls, returned } = scripted(
+      [[1, 2]],
+      undefined,
+      (v) => Promise.resolve(v) as never,
+    );
+    const iterator = flatten(source);
+    await iterator.next();
+    const value = Promise.reject(failure);
+    // Falsifiability: await `value` in flatten and the source never sees the
+    // rejection: `returned` holds undefined.
+    await expect(iterator.return(value as never)).rejects.toBe(failure);
+    expect(returned[0]).toBe(value);
+    expect(calls).toEqual(['next', 'return']);
+    expect(await iterator.next()).toEqual({ value: undefined, done: true });
+  });
+
+  it('settles return(v) with what the source settles with, not with v', async () => {
+    const cleanup = new Error('cleanup failed');
+    const { source } = scripted([[1, 2]], undefined, () =>
+      Promise.reject(cleanup),
+    );
+    const iterator = flatten(source);
+    await iterator.next();
+    // Falsifiability: reject with the value's error instead of the source's.
+    const value = Promise.reject(new Error('value'));
+    // The source ignores it, so nothing else observes the rejection.
+    value.catch(() => undefined);
+    await expect(iterator.return(value as never)).rejects.toBe(cleanup);
+  });
+
+  it('closes a source that yields again from its return()', async () => {
+    let answers = 0;
+    const { source, calls } = scripted([[1, 2]], undefined, () =>
+      Promise.resolve(
+        answers++ === 0
+          ? { value: [9], done: false }
+          : { value: undefined, done: true },
+      ),
+    );
+    const iterator = flatten(source);
+    await iterator.next();
+    // Falsifiability: drop the second return() and the log ends at 'return'.
+    expect(await iterator.return()).toEqual({ value: undefined, done: true });
+    expect(calls).toEqual(['next', 'return', 'return']);
+    expect(await iterator.next()).toEqual({ value: undefined, done: true });
+    expect(calls).toEqual(['next', 'return', 'return']);
+  });
+
+  it('awaits return(v) itself when idle or ended, as an async generator does', async () => {
     const reference = async function* (
       source: AsyncGenerator<number[], void, unknown>,
     ) {
       for await (const chunk of source) for (const row of chunk) yield row;
     };
-    const outcome = async (
-      make: (
-        source: AsyncGenerator<number[], void, unknown>,
-      ) => AsyncGenerator<number, void, unknown>,
-    ) => {
-      const { source, calls } = scripted([[1, 2]]);
-      const iterator = make(source);
-      // A JavaScript caller is not held to the declared type.
-      const unstarted = await iterator.return(Promise.resolve(41) as never);
-      await iterator.next();
-      const again = await iterator.return(42 as never);
-      return { unstarted, again, calls };
+    type Make = (
+      source: AsyncGenerator<number[], void, unknown>,
+    ) => AsyncGenerator<number, void, unknown>;
+    const settle = (promise: Promise<unknown>) =>
+      promise.then(
+        (result) => ({ result }),
+        (error: unknown) => ({ error }),
+      );
+    const outcome = async (make: Make) => {
+      const idle = scripted([[1, 2]]);
+      const unstarted = make(idle.source);
+      const resolved = await unstarted.return(Promise.resolve(41) as never);
+      const afterStart = await unstarted.next();
+      const rejecting = scripted([[1, 2]]);
+      const rejected = await settle(
+        make(rejecting.source).return(
+          Promise.reject(new Error('idle value')) as never,
+        ),
+      );
+      const ended = scripted([[1]]);
+      const finished = make(ended.source);
+      await rowsOf(finished);
+      const again = await finished.return(42 as never);
+      const failed = await settle(
+        finished.return(Promise.reject(new Error('ended value')) as never),
+      );
+      return {
+        resolved,
+        afterStart,
+        rejected,
+        again,
+        failed,
+        calls: [idle.calls, rejecting.calls, ended.calls],
+      };
     };
-    const open = async (
-      make: (
-        source: AsyncGenerator<number[], void, unknown>,
-      ) => AsyncGenerator<number, void, unknown>,
-    ) => {
-      const { source, calls } = scripted([[1, 2]]);
-      const iterator = make(source);
-      await iterator.next();
-      return { closed: await iterator.return(43 as never), calls };
-    };
-    // Falsifiability: resolve `{ value: undefined, done: true }` and the
-    // values here are undefined, not 41, 42, 43.
+    // Falsifiability: forward `value` to the source here and the idle log is
+    // ['return'].
     expect(await outcome(flatten)).toEqual(await outcome(reference));
-    expect(await open(flatten)).toEqual(await open(reference));
-    expect(await open(flatten)).toEqual({
-      closed: { value: 43, done: true },
-      calls: ['next', 'return'],
-    });
     expect(await outcome(flatten)).toMatchObject({
-      unstarted: { value: 41, done: true },
+      resolved: { value: 41, done: true },
       again: { value: 42, done: true },
+      calls: [[], [], ['next', 'next']],
     });
   });
 
