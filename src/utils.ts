@@ -201,7 +201,7 @@ export const mergeSignals = (
 
 /**
  * The `timeout` option: a wall-clock budget in milliseconds, counted from the
- * call. Returns the signal the call should actually use — the caller's own,
+ * call (for `chunk()` and `stream()`, from the first `next()`). Returns the signal the call should actually use — the caller's own,
  * merged with one this library owns and aborts when the budget is spent.
  *
  * The abort reason IS the error the caller receives. Every abort path in this

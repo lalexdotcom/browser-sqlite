@@ -1,5 +1,5 @@
 import type { SQLiteChunkOptions, SQLiteDB, SQLiteQueryOptions } from './api';
-import { prepareParams } from './binary';
+import { prepareParams, type QueryParams } from './binary';
 import { createBulk } from './bulk';
 import {
   defaultBuildFor,
@@ -32,7 +32,6 @@ import {
   firstWorker,
   makeAbortRace,
   readWorker,
-  streamRows,
   writeWorker,
 } from './queries';
 import {
@@ -1287,20 +1286,19 @@ export const createSQLiteClient = (
   };
 
   /**
-   * Executes a query and yields result rows in chunks.
-   * The single abort-aware primitive — all other read paths derive from this.
-   *
-   * @remarks
-   * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
-   * guaranteed within the tab, not across tabs.
+   * The body of `chunk()` and `stream()`, after their arguments were validated
+   * at the call: the deadline starts at the first `next()`, the retry and the
+   * lease are `streamWithRetry`'s.
    */
-  const chunk = async function* <
+  const chunkRows = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
-  >(input: string | SQLQuery, second?: unknown, third?: SQLiteChunkOptions) {
-    const { sql, params, options } = queryArgs(input, second, third);
-    assertReadable(sql, 'chunk');
-    const bound = prepareParams(params);
-    const { signal, release } = withDeadline(options, 'chunk');
+  >(
+    sql: string,
+    bound: QueryParams | undefined,
+    options: SQLiteChunkOptions | undefined,
+    method: 'chunk' | 'stream',
+  ): AsyncGenerator<T[], void, unknown> {
+    const { signal, release } = withDeadline(options, method);
     try {
       yield* streamWithRetry(signal, (worker, onAbandon) =>
         chunkWorker<T>(worker, sql, bound, {
@@ -1318,33 +1316,48 @@ export const createSQLiteClient = (
   };
 
   /**
+   * Executes a query and yields result rows in chunks.
+   * The single abort-aware primitive — all other read paths derive from this.
+   *
+   * @remarks
+   * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
+   * guaranteed within the tab, not across tabs.
+   */
+  const chunk = <T extends Record<string, unknown> = Record<string, unknown>>(
+    input: string | SQLQuery,
+    second?: unknown,
+    third?: SQLiteChunkOptions,
+  ): AsyncGenerator<T[], void, unknown> => {
+    const { sql, params, options } = queryArgs(input, second, third);
+    assertReadable(sql, 'chunk');
+    const bound = prepareParams(params);
+    return chunkRows<T>(sql, bound, options, 'chunk');
+  };
+
+  const flattenChunks = async function* <T>(
+    source: AsyncGenerator<T[], void, unknown>,
+  ): AsyncGenerator<T, void, unknown> {
+    for await (const rows of source) {
+      for (const row of rows) yield row;
+    }
+  };
+
+  /**
    * Executes a query and streams individual rows (flattened from chunks).
    *
    * @remarks
    * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
    * guaranteed within the tab, not across tabs.
    */
-  const stream = async function* <
-    T extends Record<string, unknown> = Record<string, unknown>,
-  >(input: string | SQLQuery, second?: unknown, third?: SQLiteChunkOptions) {
+  const stream = <T extends Record<string, unknown> = Record<string, unknown>>(
+    input: string | SQLQuery,
+    second?: unknown,
+    third?: SQLiteChunkOptions,
+  ): AsyncGenerator<T, void, unknown> => {
     const { sql, params, options } = queryArgs(input, second, third);
     assertReadable(sql, 'stream');
     const bound = prepareParams(params);
-    const { signal, release } = withDeadline(options, 'stream');
-    try {
-      yield* streamWithRetry(signal, (worker, onAbandon) =>
-        streamRows<T>(worker, sql, bound, {
-          ...options,
-          signal,
-          onAbandon: () => {
-            onAbandon();
-            release();
-          },
-        }),
-      );
-    } finally {
-      release();
-    }
+    return flattenChunks(chunkRows<T>(sql, bound, options, 'stream'));
   };
 
   /**

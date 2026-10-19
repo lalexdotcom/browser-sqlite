@@ -1,3 +1,4 @@
+import { SQLiteError, sql } from 'browser-sqlite';
 import { describe, expect, it } from 'vitest';
 import { createTestClient } from '../helpers';
 
@@ -23,13 +24,10 @@ describe('routing — strictness', () => {
     await db.write('CREATE TABLE t (a)');
     await db.write('INSERT INTO t (a) VALUES (1)');
 
-    // chunk() is an async generator: the throw arrives on the first next(),
-    // not at the call.
-    const call = async () => {
-      for await (const _ of db.chunk('DELETE FROM t')) break;
-    };
-
-    await expect(call()).rejects.toMatchObject({ code: 'NOT_A_READ_QUERY' });
+    // The throw is at the call, not on the first next().
+    expect(() => db.chunk('DELETE FROM t')).toThrow(
+      expect.objectContaining({ code: 'NOT_A_READ_QUERY' }),
+    );
     const rows = await db.read('SELECT * FROM t');
     expect(rows.length).toBe(1);
   });
@@ -41,13 +39,10 @@ describe('routing — strictness', () => {
     await db.write('CREATE TABLE t (a)');
     await db.write('INSERT INTO t (a) VALUES (1)');
 
-    // stream() is an async generator: the throw arrives on the first next(),
-    // not at the call.
-    const call = async () => {
-      for await (const _ of db.stream('DELETE FROM t')) break;
-    };
-
-    await expect(call()).rejects.toMatchObject({ code: 'NOT_A_READ_QUERY' });
+    // The throw is at the call, not on the first next().
+    expect(() => db.stream('DELETE FROM t')).toThrow(
+      expect.objectContaining({ code: 'NOT_A_READ_QUERY' }),
+    );
     const rows = await db.read('SELECT * FROM t');
     expect(rows.length).toBe(1);
   });
@@ -113,5 +108,87 @@ describe('routing — strictness', () => {
     );
     expect(inTx.map((c) => c.name)).toEqual(['a', 'b']);
     await db.close();
+  });
+});
+
+describe('chunk() and stream() — arguments are validated at the call', () => {
+  // Falsifiable: move queryArgs, assertReadable or prepareParams back inside
+  // the generator in src/client.ts and the call returns instead of throwing.
+  // A read() on a one-worker pool resolving at once proves no lease is held.
+
+  it('chunk() throws at the call for a first argument that is not a query', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    expect(() => db.chunk(42 as never)).toThrow(SQLiteError);
+    expect(() => db.chunk(42 as never)).toThrow(
+      expect.objectContaining({ code: 'INVALID_VALUE' }),
+    );
+    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+  });
+
+  it('stream() throws at the call for a first argument that is not a query', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    expect(() => db.stream(42 as never)).toThrow(SQLiteError);
+    expect(() => db.stream(42 as never)).toThrow(
+      expect.objectContaining({ code: 'INVALID_VALUE' }),
+    );
+    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+  });
+
+  it('chunk() throws at the call for a query built by sql followed by a params array', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    expect(() => db.chunk(sql`SELECT ${1} AS one`, [1] as never)).toThrow(
+      SQLiteError,
+    );
+    expect(() => db.chunk(sql`SELECT ${1} AS one`, [1] as never)).toThrow(
+      expect.objectContaining({ code: 'INVALID_VALUE' }),
+    );
+    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+  });
+
+  it('stream() throws at the call for a query built by sql followed by a params array', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    expect(() => db.stream(sql`SELECT ${1} AS one`, [1] as never)).toThrow(
+      SQLiteError,
+    );
+    expect(() => db.stream(sql`SELECT ${1} AS one`, [1] as never)).toThrow(
+      expect.objectContaining({ code: 'INVALID_VALUE' }),
+    );
+    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+  });
+
+  it('chunk() throws at the call for a write statement', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    expect(() => db.chunk('CREATE TABLE t (a)')).toThrow(SQLiteError);
+    expect(() => db.chunk('CREATE TABLE t (a)')).toThrow(
+      expect.objectContaining({ code: 'NOT_A_READ_QUERY' }),
+    );
+    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+  });
+
+  it('stream() throws at the call for a write statement', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    expect(() => db.stream('CREATE TABLE t (a)')).toThrow(SQLiteError);
+    expect(() => db.stream('CREATE TABLE t (a)')).toThrow(
+      expect.objectContaining({ code: 'NOT_A_READ_QUERY' }),
+    );
+    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+  });
+
+  it('chunk() throws at the call for an unbindable param', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    expect(() => db.chunk('SELECT ?', [Symbol('s')])).toThrow(SQLiteError);
+    expect(() => db.chunk('SELECT ?', [Symbol('s')])).toThrow(
+      expect.objectContaining({ code: 'INVALID_VALUE' }),
+    );
+    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+  });
+
+  it('stream() throws at the call for an unbindable param', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    expect(() => db.stream('SELECT ?', [Symbol('s')])).toThrow(SQLiteError);
+    expect(() => db.stream('SELECT ?', [Symbol('s')])).toThrow(
+      expect.objectContaining({ code: 'INVALID_VALUE' }),
+    );
+    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
   });
 });
