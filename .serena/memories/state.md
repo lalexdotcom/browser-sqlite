@@ -110,9 +110,7 @@ here on purpose: a total alone cannot say which suite moved.
   all three tags at rc.8. The open question of rc.7 is answered.
 - **Done 2026-10-09:** the package's publishing access is "disallow bypass 2fa tokens" (user),
   and `release-and-publish.yaml` no longer has an `npm-token` input, even commented out.
-- **Left, the user's:** delete the `NPM_TOKEN` repository secret. Nothing reads it any more; it
-  **runs out around 2026-11-29** anyway (renewed for 90 days at rc.4's release, user 2026-09-05;
-  derived, not read off npm).
+- **Done 2026-10-19:** the `NPM_TOKEN` repository secret is deleted (user; `gh secret list` empty). Nothing is left to do on trusted publishing.
 
 ## Known live exposures
 
