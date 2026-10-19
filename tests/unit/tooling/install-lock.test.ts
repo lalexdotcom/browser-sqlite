@@ -104,6 +104,16 @@ describe('scripts/install-lock.ts', () => {
     expect(lockPath('/one/cache')).toBe(lockPath('/one/cache'));
   });
 
+  it('lockPath gives C:\\ and c:\\ one lock on Windows only', () => {
+    // Falsifiable: hash the path as given and the two spellings of one Windows directory get two locks.
+    expect(lockPath('C:\\Cache\\wdio', 'win32')).toBe(
+      lockPath('c:\\cache\\WDIO', 'win32'),
+    );
+    expect(lockPath('/One/cache', 'linux')).not.toBe(
+      lockPath('/one/cache', 'linux'),
+    );
+  });
+
   it('touches no socket when already done', async () => {
     // Falsifiable: listen before checking done() and this rejects (the directory does not exist).
     await expect(
@@ -155,7 +165,7 @@ describe('scripts/install-lock.ts', () => {
     'takes over from a leader killed mid-install',
     async () => {
       // Falsifiable: treat a close without a line as an error and the waiters exit 1.
-      // Falsifiable: treat it as "ready" and they exit 0 with no install done.
+      // Falsifiable: return on a close without a line and the waiters exit 0 with item a never installed.
       const leader = spawnChild(['hang']);
       await waitForFile(join(stateDir, 'started'));
       const waiting = [child(['ok']), child(['ok'])];

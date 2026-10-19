@@ -33,12 +33,15 @@ const CLOSE_GRACE_MS = 2000;
  * Unix socket path is limited to 104 bytes on macOS, and a function of the
  * directory alone so that two checkouts do not share a lock.
  */
-export function lockPath(key: string): string {
-  const id = createHash('sha256')
-    .update(resolve(key))
-    .digest('hex')
-    .slice(0, 12);
-  return process.platform === 'win32'
+export function lockPath(
+  key: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  // Windows paths are case-insensitive: `C:\cache` and `c:\cache` are one directory.
+  const resolved =
+    platform === 'win32' ? resolve(key).toLowerCase() : resolve(key);
+  const id = createHash('sha256').update(resolved).digest('hex').slice(0, 12);
+  return platform === 'win32'
     ? `\\\\.\\pipe\\bsq-browsers-${id}`
     : join(tmpdir(), `bsq-browsers-${id}.sock`);
 }
