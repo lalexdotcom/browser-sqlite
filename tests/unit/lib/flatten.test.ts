@@ -514,16 +514,6 @@ describe('flatten', () => {
     expect(calls).toEqual(['next', 'next']);
   });
 
-  it('closes the source once when disposed', async () => {
-    const { source, calls } = scripted([[1, 2]]);
-    const iterator = flatten(source);
-    await iterator.next();
-    // Falsifiability: make the method a no-op and the log is ['next'].
-    await iterator[Symbol.asyncDispose]();
-    expect(calls).toEqual(['next', 'return']);
-    expect(await iterator.next()).toEqual({ value: undefined, done: true });
-  });
-
   it('inherits from the same %AsyncIteratorPrototype% as an async generator', () => {
     const { source } = scripted([]);
     const reference = (async function* () {})();
@@ -566,10 +556,11 @@ describe('flatten', () => {
     );
     expect(own?.enumerable).toBe(builtin?.enumerable);
     expect(own?.writable).toBe(builtin?.writable);
+    expect(own?.configurable).toBe(builtin?.configurable);
   });
 
   it.skipIf(typeof Symbol.asyncDispose !== 'symbol')(
-    'is disposed through the inherited member as an async generator is',
+    'closes the source once when disposed, through the inherited member as an async generator does',
     async () => {
       // The reference: what an async generator does on an open iterator.
       const log: string[] = [];

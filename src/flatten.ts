@@ -11,7 +11,7 @@ const finished = (): IteratorReturnResult<void> => ({
   done: true,
 });
 
-class Flattened<T> {
+class Flattened<T> implements AsyncIterator<T, void, unknown> {
   readonly #source: AsyncGenerator<T[], void, unknown>;
   readonly #signal: AbortSignal | undefined;
   #rows: readonly T[] = [];
@@ -146,11 +146,12 @@ export function flatten<T>(
   source: AsyncGenerator<T[], void, unknown>,
   options?: { signal?: AbortSignal | undefined },
 ): AsyncGenerator<T, void, unknown> {
-  // The cast: [Symbol.asyncDispose], which the type may require, is inherited
-  // from %AsyncIteratorPrototype% at runtime.
-  return new Flattened(source, options?.signal) as unknown as AsyncGenerator<
-    T,
-    void,
-    unknown
-  >;
+  // The class is checked as an AsyncIterator; the cast adds what an
+  // AsyncGenerator type requires on top, [Symbol.asyncIterator] and
+  // [Symbol.asyncDispose], inherited from %AsyncIteratorPrototype% at runtime.
+  const iterator: AsyncIterator<T, void, unknown> = new Flattened(
+    source,
+    options?.signal,
+  );
+  return iterator as AsyncGenerator<T, void, unknown>;
 }

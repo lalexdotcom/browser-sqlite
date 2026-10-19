@@ -52,7 +52,7 @@ export type Interruptible<T = unknown> = T & {
   /**
    * Milliseconds within which it must finish, after which it is aborted and
    * rejected with `OPERATION_TIMEOUT`. The clock starts at the call; on the
-   * client's `chunk()` and `stream()`, which do nothing until iterated, it
+   * client's `chunk()` and `stream()`, which acquire nothing until iterated, it
    * starts at the first `next()`. (A transaction's `tx.chunk()` and
    * `tx.stream()` start it at the call.) It is wall clock: time your
    * own code spends — between two chunks of a `stream()`, inside a
