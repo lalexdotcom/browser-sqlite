@@ -1,0 +1,296 @@
+/**
+ * Elects one installer among the processes that need the same thing installed,
+ * through a local socket: the process that binds it leads, the others connect
+ * and wait for its one-line answer. The kernel releases the socket when its
+ * owner dies, so a killed leader never leaves a lock behind that blocks anyone.
+ *
+ * Wire protocol: the leader writes `ready\n` or `error <message>\n` to every
+ * connection, held or later, and closes it.
+ */
+import { createHash } from 'node:crypto';
+import { unlinkSync } from 'node:fs';
+import {
+  createConnection,
+  createServer,
+  type Server,
+  type Socket,
+} from 'node:net';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { timeScale } from './processes.ts';
+
+/** Longest an install may run before its leader gives up. Unscaled: callers multiply by `timeScale()`. */
+export const INSTALL_BOUND_MS = 600_000;
+/** What a waiter adds to the leader's bound before giving up on it. Unscaled. */
+export const WAIT_MARGIN_MS = 60_000;
+
+/** Pause before retrying a socket that is gone or refusing on Windows. */
+const RETRY_MS = 25;
+/** Pause between two connects to a socket that refuses. */
+const REFUSED_RETRY_MS = 10;
+/** How long a socket must keep refusing before it is taken as stale. Unscaled. */
+const STALE_CONFIRM_MS = 100;
+/** Grace for waiters to hang up before the leader destroys their sockets. */
+const CLOSE_GRACE_MS = 2000;
+/** Most event-loop turns the leader spends answering late arrivals before it closes. */
+const MAX_DRAIN_TURNS = 50;
+
+/**
+ * The socket one cache directory elects its installer on: short, because a
+ * Unix socket path is limited to 104 bytes on macOS, and a function of the
+ * directory alone so that two checkouts do not share a lock.
+ */
+export function lockPath(
+  key: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  // Windows paths are case-insensitive: `C:\cache` and `c:\cache` are one directory.
+  const resolved =
+    platform === 'win32' ? resolve(key).toLowerCase() : resolve(key);
+  const id = createHash('sha256').update(resolved).digest('hex').slice(0, 12);
+  return platform === 'win32'
+    ? `\\\\.\\pipe\\bsq-browsers-${id}`
+    : join(tmpdir(), `bsq-browsers-${id}.sock`);
+}
+
+export interface RunOnceOptions {
+  path: string;
+  /** True when what this process needs is installed. */
+  done: () => Promise<boolean>;
+  install: () => Promise<void>;
+  /** Milliseconds the leader's `install` may take, already scaled. */
+  installBound: number;
+  /** Milliseconds a waiter hears nothing from its leader before failing, already scaled. */
+  waitBound: number;
+  log?: (line: string) => void;
+  /** Test seam: how to open the connection to the leader. */
+  connect?: (path: string) => Socket;
+}
+
+/**
+ * Resolves once `done()` is true after the protocol: at once when it already is,
+ * else after this process installed or after the leader it waited for did.
+ * Rejects with the leader's error, or with a bound error.
+ */
+export async function runOnce(options: RunOnceOptions): Promise<void> {
+  const { path, done, install, installBound, waitBound, log } = options;
+  const connect = options.connect ?? createConnection;
+  if (await done()) return;
+  let refusedSince: number | undefined;
+  for (;;) {
+    const server = await tryListen(path);
+    if (server !== 'busy') {
+      await lead(server, installBound, async () => {
+        if (await done()) return;
+        log?.(`installing (lock ${path})`);
+        await install();
+      });
+      return;
+    }
+    const heard = await listenTo(path, waitBound, connect, () =>
+      log?.(`waiting (lock ${path})`),
+    );
+    if (heard.kind !== 'refused') refusedSince = undefined;
+    switch (heard.kind) {
+      case 'line':
+        if (heard.line === 'ready') {
+          if (await done()) return;
+        } else if (heard.line.startsWith('error ')) {
+          throw new Error(heard.line.slice('error '.length));
+        }
+        break;
+      case 'dead':
+        log?.(`leader gone without an answer (lock ${path})`);
+        break;
+      case 'missing':
+        await sleep(RETRY_MS);
+        break;
+      case 'refused':
+        if (process.platform === 'win32') {
+          await sleep(RETRY_MS);
+          break;
+        }
+        // A leader is refused between its bind() and its listen(): only a socket
+        // that keeps refusing for a while is a dead leader's.
+        refusedSince ??= Date.now();
+        if (Date.now() - refusedSince < STALE_CONFIRM_MS * timeScale()) {
+          await sleep(REFUSED_RETRY_MS);
+        } else {
+          log?.(`taking a stale socket (lock ${path})`);
+          unlinkStale(path);
+          refusedSince = undefined;
+        }
+        break;
+    }
+  }
+}
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((done) => setTimeout(done, ms));
+
+/** `work()`, rejected with `message` if it takes longer than `ms`. */
+function bounded<T>(
+  ms: number,
+  message: string,
+  work: () => Promise<T>,
+): Promise<T> {
+  return new Promise<T>((resolvePromise, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    work()
+      .then(resolvePromise, reject)
+      .finally(() => clearTimeout(timer));
+  });
+}
+
+/** Whether a `listen` error means another process holds the path: macOS says EEXIST where Linux says EADDRINUSE. */
+export function listenBusy(code: string | undefined): boolean {
+  return code === 'EADDRINUSE' || code === 'EEXIST';
+}
+
+/** The server bound to `path`, or `'busy'` when something already is. */
+function tryListen(path: string): Promise<Server | 'busy'> {
+  return new Promise((resolvePromise, reject) => {
+    const server = createServer();
+    server.once('error', (error: NodeJS.ErrnoException) => {
+      if (listenBusy(error.code)) resolvePromise('busy');
+      else reject(error);
+    });
+    server.listen(path, () => {
+      server.on('error', () => {});
+      resolvePromise(server);
+    });
+  });
+}
+
+/** Runs `work` as the leader, answers every waiter with its outcome, then rethrows its error. */
+async function lead(
+  server: Server,
+  installBound: number,
+  work: () => Promise<void>,
+): Promise<void> {
+  const sockets = new Set<Socket>();
+  let line: string | undefined;
+  let accepted = 0;
+  server.on('connection', (socket: Socket) => {
+    accepted++;
+    socket.on('error', () => {});
+    socket.on('close', () => sockets.delete(socket));
+    sockets.add(socket);
+    if (line !== undefined) socket.end(line);
+  });
+
+  let failure: unknown;
+  try {
+    await bounded(
+      installBound,
+      `browsers: install did not finish within ${installBound / 1000} s`,
+      work,
+    );
+  } catch (error) {
+    failure = error;
+  }
+  line =
+    failure === undefined
+      ? 'ready\n'
+      : `error ${(failure instanceof Error ? failure.message : String(failure)).replace(/\s*\n\s*/g, ' ')}\n`;
+  for (const socket of sockets) socket.end(line);
+
+  // A client whose connect completed but that the loop has not accepted yet would
+  // be dropped by close(): keep answering until a full turn brings no new one.
+  for (let turn = 0; turn < MAX_DRAIN_TURNS; turn++) {
+    const before = accepted;
+    await new Promise((turned) => setTimeout(turned, 0));
+    await new Promise((turned) => setImmediate(turned));
+    if (accepted === before) break;
+  }
+
+  await new Promise<void>((closed) => {
+    const grace = setTimeout(() => {
+      for (const socket of sockets) socket.destroy();
+    }, CLOSE_GRACE_MS);
+    server.close(() => {
+      clearTimeout(grace);
+      closed();
+    });
+  });
+  if (failure !== undefined) throw failure;
+}
+
+type Heard =
+  | { kind: 'line'; line: string }
+  | { kind: 'dead' }
+  | { kind: 'missing' }
+  | { kind: 'refused' };
+
+/** Connects to the leader's socket and reports what came back. */
+function listenTo(
+  path: string,
+  waitBound: number,
+  connect: (path: string) => Socket,
+  onWaiting: () => void,
+): Promise<Heard> {
+  return new Promise<Heard>((resolvePromise, reject) => {
+    const socket = connect(path);
+    let buffer = '';
+    let settled = false;
+    const settle = (finish: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      finish();
+    };
+    const timer = setTimeout(
+      () =>
+        settle(() =>
+          reject(
+            new Error(
+              `browsers: waited ${waitBound / 1000} s for the install led by another process (${path})`,
+            ),
+          ),
+        ),
+      waitBound,
+    );
+    socket.on('connect', onWaiting);
+    socket.setEncoding('utf8');
+    socket.on('data', (chunk: string) => {
+      buffer += chunk;
+      const end = buffer.indexOf('\n');
+      if (end >= 0) {
+        settle(() =>
+          resolvePromise({ kind: 'line', line: buffer.slice(0, end) }),
+        );
+      }
+    });
+    socket.on('close', () => settle(() => resolvePromise({ kind: 'dead' })));
+    socket.on('error', (error: NodeJS.ErrnoException) => {
+      switch (error.code) {
+        case 'ECONNREFUSED':
+          settle(() => resolvePromise({ kind: 'refused' }));
+          break;
+        case 'ENOENT':
+          settle(() => resolvePromise({ kind: 'missing' }));
+          break;
+        case 'ECONNRESET':
+        case 'EPIPE':
+          settle(() => resolvePromise({ kind: 'dead' }));
+          break;
+        default:
+          settle(() => reject(error));
+      }
+    });
+  });
+}
+
+/**
+ * Removes a socket file nobody listens on. Known gap, accepted: two processes
+ * that both saw the stale file can unlink in turn, the second removing the
+ * first's fresh socket, and both lead.
+ */
+function unlinkStale(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}

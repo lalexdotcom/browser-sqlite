@@ -66,6 +66,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - A runner that reports a file only when it ends makes a slow file look like a hang (2026-10-07, wa-sqlite on Windows Firefox)
 - A page the browser kills leaves no crash report; ask the browser's own log (2026-10-08, Safari 26)
 - Counting a component's activity names the stuck party; a hypothesis about load does not (2026-10-08, Safari 26)
+- A failure seen only on one platform is looped there, with every process's trace, before it is explained (2026-10-19, the browser-install lock on macOS)
 
 ## `mem:lessons/claims-and-docs` — claims, documentation, upstream
 

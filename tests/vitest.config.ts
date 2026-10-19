@@ -1,15 +1,11 @@
 import { fileURLToPath } from 'node:url';
-import { webdriverio } from '@vitest/browser-webdriverio';
 import {
   defineConfig,
   type TestProjectInlineConfiguration,
 } from 'vitest/config';
-import {
-  type BrowserName,
-  browserCapabilities,
-  WDIO_CACHE_DIR,
-} from '../scripts/browsers.ts';
+import { type BrowserName, WDIO_CACHE_DIR } from '../scripts/browsers.ts';
 import { timeScale } from '../scripts/processes.ts';
+import { resolvingWebdriverio } from './harness/browser-provider.ts';
 import { declaredTags } from './harness/planner/need.ts';
 import type { TestTarget } from './harness/target.ts';
 import { allTargets, targetLabel } from './harness/target-projects.ts';
@@ -38,7 +34,11 @@ const browserProject = (
   test: {
     name,
     include,
-    globalSetup: ['tests/harness/build-setup.ts'],
+    // The install comes after the build: a broken build stops the run before any download.
+    globalSetup: [
+      'tests/harness/build-setup.ts',
+      'tests/harness/browsers-setup.ts',
+    ],
     // The files of a run share one profile: after each file its OPFS and
     // IndexedDB leftovers are erased and the erasure verified; what cannot be
     // erased fails that file, by name.
@@ -78,10 +78,7 @@ const browserProject = (
       // The WebdriverIO provider cannot take it on BiDi (`switchFrame` was
       // removed in v10): every failure would print a stack trace for it.
       screenshotFailures: false,
-      provider: webdriverio({
-        cacheDir: WDIO_CACHE_DIR,
-        capabilities: browserCapabilities(browser),
-      }),
+      provider: resolvingWebdriverio(browser, { cacheDir: WDIO_CACHE_DIR }),
       instances: [{ browser, name }],
     },
   },
