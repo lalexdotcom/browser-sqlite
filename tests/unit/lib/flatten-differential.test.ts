@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { flatten } from '../../../src/flatten';
+import { raceAbort } from '../../../src/queries';
 
 /**
  * Today the consumer holds `layer(rowsOf(chunks))`; with `flatten` it holds
@@ -25,7 +26,8 @@ type Op =
   | { op: 'throwNA' }
   | { op: 'break' } // for await over the iterator, break at the first row
   | { op: 'bodyThrow' } // for await over the iterator, the body throws
-  | { op: 'tick'; turns: number };
+  | { op: 'tick'; turns: number }
+  | { op: 'abort' }; // the statement's own signal fires (savepointed scenarios)
 
 /**
  * What the real layers do besides the loop: `releasing` waits (`queueWait`),
@@ -52,6 +54,19 @@ interface Scenario {
   errorAt: number | null;
   ops: Op[];
   layer?: LayerOptions;
+  /**
+   * The layer is `releasing`'s savepointed branch, racing a signal the
+   * scenario's `abort` op fires; `layer` options and the variant do not apply.
+   */
+  savepointed?: boolean;
+  /**
+   * Microtask turns the `abort` op waits first. See the report: an abort that
+   * lands within a few microtasks of a next() issued just before it is
+   * settled differently by the two shapes (rows served from the buffer ahead
+   * of the abort, a layer that starts one turn later), so the random space
+   * only aborts once those have settled.
+   */
+  settleBeforeAbort?: number;
 }
 
 /** One ordered list per channel; nothing orders one list against another. */
@@ -66,6 +81,8 @@ interface Trace {
   sourceBody: string[];
   /** What reached `layer`, with a row or its chunk counted as one value. */
   layer: string[];
+  /** How the abandoned source was drained (savepointed scenarios only). */
+  drain?: string[];
 }
 
 const VARIANTS: Variant[] = ['rethrow', 'swallow', 'wrap'];
@@ -124,20 +141,40 @@ const makeSource = (scenario: Scenario) => {
       sourceBody.push('finally');
     }
   }
+  // Each call with whether it ended the generator (done, or an error). A
+  // generator answers calls in order, so every call after the first that ended
+  // it is a no-op: `live()` is the calls up to and including that one.
+  const entries: { call: string; ended: boolean }[] = [];
+  const live = () => {
+    const calls: string[] = [];
+    for (const entry of entries) {
+      calls.push(entry.call);
+      if (entry.ended) break;
+    }
+    return calls;
+  };
   const record = (generator: AsyncGenerator<number[], void, unknown>) => {
+    const log = (
+      call: string,
+      result: Promise<IteratorResult<number[], void>>,
+    ) => {
+      source.push(call);
+      const entry = { call, ended: false };
+      entries.push(entry);
+      result.then(
+        (step) => {
+          entry.ended = step.done === true;
+        },
+        () => {
+          entry.ended = true;
+        },
+      );
+      return result;
+    };
     const wrapped: AsyncGenerator<number[], void, unknown> = {
-      next: (...args) => {
-        source.push('next');
-        return generator.next(...args);
-      },
-      return: (value) => {
-        source.push('return');
-        return generator.return(value);
-      },
-      throw: (error) => {
-        source.push('throw');
-        return generator.throw(error);
-      },
+      next: (...args) => log('next', generator.next(...args)),
+      return: (value) => log('return', generator.return(value)),
+      throw: (error) => log('throw', generator.throw(error)),
       [Symbol.asyncIterator]: () => wrapped,
       [Symbol.asyncDispose]: () => generator[Symbol.asyncDispose](),
     };
@@ -146,7 +183,7 @@ const makeSource = (scenario: Scenario) => {
   let attempts = 0;
   const open = () =>
     record(scenario.layer?.retry && attempts++ === 0 ? busy() : chunks());
-  return { open, source, sourceBody };
+  return { open, source, live, sourceBody };
 };
 
 /** The row-flattening generator `flatten` replaces. */
@@ -206,6 +243,60 @@ async function* layer<V>(
   }
 }
 
+/**
+ * `releasing`'s savepointed branch (src/transaction.ts): the signal is checked
+ * at the start and raced against each `source.next()`; an abort that reaches
+ * the loop marks the statement left, drains the rest of the source in the
+ * background (`drainToEnd`) and rethrows; otherwise the `finally` closes the
+ * source. `drain` records how that background drain ended.
+ */
+async function* savepointedLayer<V>(
+  source: AsyncGenerator<V, void, unknown>,
+  events: string[],
+  mark: (value: V) => number | null,
+  signal: AbortSignal,
+  drain: string[],
+  drains: Promise<void>[],
+): AsyncGenerator<V, void, unknown> {
+  const drainToEnd = async () => {
+    try {
+      for (;;) {
+        if ((await source.next()).done) break;
+      }
+      drain.push('drained');
+    } catch (error) {
+      drain.push(`drain failed ${message(error)}`);
+    }
+  };
+  let left = false;
+  try {
+    signal.throwIfAborted();
+    try {
+      for (;;) {
+        const next = await raceAbort(signal, source.next());
+        if (next.done) return;
+        const chunk = mark(next.value);
+        if (chunk !== null) events.push(`value ${chunk}`);
+        yield next.value;
+      }
+    } catch (error) {
+      if (error === signal.reason) {
+        left = true;
+        events.push('abandon');
+        drains.push(drainToEnd());
+      }
+      throw error;
+    } finally {
+      if (!left) await source.return(undefined);
+    }
+  } catch (error) {
+    events.push(`catch ${message(error)}`);
+    throw error;
+  } finally {
+    events.push('finally');
+  }
+}
+
 /** Consecutive rows of one chunk are one value; a chunk is one value. */
 const collapse = (events: string[]) =>
   events.filter(
@@ -219,6 +310,8 @@ const chunkOfChunk = (chunk: number[]) =>
 const consume = async (
   iterator: AsyncGenerator<number, void, unknown>,
   ops: Op[],
+  abort: () => void,
+  settleBeforeAbort = 0,
 ) => {
   const results: string[] = [];
   const order: number[] = [];
@@ -332,6 +425,10 @@ const consume = async (
       case 'tick':
         for (let i = 0; i < step.turns; i++) await null;
         break;
+      case 'abort':
+        if (settleBeforeAbort > 0) await turns(settleBeforeAbort);
+        abort();
+        break;
     }
   }
   await Promise.all(outstanding);
@@ -341,26 +438,51 @@ const consume = async (
 };
 
 const run = async (scenario: Scenario, variant: Variant, shape: Shape) => {
-  const { open, source, sourceBody } = makeSource(scenario);
+  const { open, source, live, sourceBody } = makeSource(scenario);
   const events: string[] = [];
   const options = scenario.layer ?? {};
-  const iterator =
-    shape === 'today'
+  const controller = new AbortController();
+  const { signal } = controller;
+  const drain: string[] = [];
+  const drains: Promise<void>[] = [];
+  const iterator = scenario.savepointed
+    ? shape === 'today'
+      ? savepointedLayer(
+          rowsOf(open()),
+          events,
+          chunkOfRow,
+          signal,
+          drain,
+          drains,
+        )
+      : flatten(
+          savepointedLayer(open(), events, chunkOfChunk, signal, drain, drains),
+          { signal },
+        )
+    : shape === 'today'
       ? layer(() => rowsOf(open()), events, chunkOfRow, variant, options)
       : flatten(layer(open, events, chunkOfChunk, variant, options));
-  const { results, order, overlap } = await consume(iterator, scenario.ops);
+  const { results, order, overlap } = await consume(
+    iterator,
+    scenario.ops,
+    () => controller.abort(new Error('aborted')),
+    scenario.settleBeforeAbort,
+  );
+  await Promise.all(drains);
   const trace: Trace = {
     results,
     order,
-    // `releasing` closes its input once more in its `finally`. Today that
-    // input is `rowsOf`, already finished, so the chunk source is not called
-    // again; with `flatten` the input is the chunk source itself, and the extra
-    // return() lands on the recording wrapper (a no-op on a real generator).
-    // That one entry is the only difference, so this channel is left out when
-    // the layer does it.
-    source: options.extraReturn ? [] : source,
+    // `releasing` closes its input once more in its `finally`, and the
+    // savepointed branch drains its input after an abort. Today that input is
+    // `rowsOf`, already finished, so the chunk source is not called again; with
+    // `flatten` the input is the chunk source itself, and the extra call lands
+    // on the recording wrapper, a no-op on a real generator that has finished.
+    // When the layer does this, the channel keeps the calls up to the one that
+    // ended the generator (see `live`).
+    source: options.extraReturn || scenario.savepointed ? live() : source,
     sourceBody,
     layer: collapse(events),
+    ...(scenario.savepointed ? { drain } : {}),
   };
   return { trace, overlap };
 };
@@ -384,6 +506,24 @@ const sameInEveryVariant = async (scenario: Scenario) => {
     traces[variant] = today;
   }
   return traces;
+};
+
+/** mulberry32 */
+const prng = (seed: number) => () => {
+  seed = (seed + 0x6d2b79f5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+
+/** Runs a savepointed scenario and requires equal traces. */
+const sameSavepointed = async (scenario: Omit<Scenario, 'savepointed'>) => {
+  const { today, flattened } = await both(
+    { ...scenario, savepointed: true },
+    'rethrow',
+  );
+  expect(flattened).toEqual(today);
+  return today;
 };
 
 const sizes = (...list: number[]) =>
@@ -685,17 +825,248 @@ describe('flatten against the generator chain it replaces', () => {
     });
   });
 
+  it('rejects a savepointed stream with the abort before a buffered row', async () => {
+    const trace = await sameSavepointed({
+      chunks: sizes(3, 2),
+      errorAt: null,
+      ops: [{ op: 'next' }, { op: 'abort' }, { op: 'next' }, { op: 'next' }],
+    });
+    expect(trace).toEqual({
+      results: ['value 0', 'error aborted', 'done undefined'],
+      order: [0, 1, 2],
+      source: ['next', 'next', 'next'],
+      sourceBody: ['yield 0', 'yield 1', 'finally'],
+      layer: ['value 0', 'abandon', 'catch aborted', 'finally'],
+      drain: ['drained'],
+    });
+  });
+
+  it('rejects a savepointed stream with the abort at a chunk boundary', async () => {
+    const trace = await sameSavepointed({
+      chunks: sizes(2, 2),
+      errorAt: null,
+      ops: [
+        { op: 'next' },
+        { op: 'next' },
+        { op: 'abort' },
+        { op: 'next' },
+        { op: 'next' },
+      ],
+    });
+    expect(trace).toEqual({
+      results: ['value 0', 'value 1', 'error aborted', 'done undefined'],
+      order: [0, 1, 2, 3],
+      source: ['next', 'next', 'next'],
+      sourceBody: ['yield 0', 'yield 1', 'finally'],
+      layer: ['value 0', 'abandon', 'catch aborted', 'finally'],
+      drain: ['drained'],
+    });
+  });
+
+  it('rejects two pending next() with the abort and drains the source', async () => {
+    const trace = await sameSavepointed({
+      chunks: [
+        { size: 1, delay: 0 },
+        { size: 2, delay: 'timer' },
+        { size: 1, delay: 0 },
+      ],
+      errorAt: null,
+      ops: [
+        { op: 'next' },
+        { op: 'nextNA' },
+        { op: 'nextNA' },
+        { op: 'abort' },
+        { op: 'next' },
+      ],
+    });
+    expect(trace).toEqual({
+      results: ['value 0', 'error aborted', 'done undefined', 'done undefined'],
+      order: [0, 1, 2, 3],
+      source: ['next', 'next', 'next', 'next'],
+      sourceBody: ['yield 0', 'yield 1', 'yield 2', 'finally'],
+      layer: ['value 0', 'abandon', 'catch aborted', 'finally'],
+      drain: ['drained'],
+    });
+  });
+
+  it('closes the source when return() follows an abort nobody saw yet', async () => {
+    const closed = {
+      results: ['value 0', 'done undefined', 'done undefined'],
+      order: [0, 1, 2],
+      source: ['next', 'return'],
+      sourceBody: ['yield 0', 'finally'],
+      layer: ['value 0', 'finally'],
+      drain: [],
+    };
+    expect(
+      await sameSavepointed({
+        chunks: sizes(3, 2),
+        errorAt: null,
+        ops: [
+          { op: 'next' },
+          { op: 'abort' },
+          { op: 'return' },
+          { op: 'next' },
+        ],
+      }),
+    ).toEqual(closed);
+    // A return() queued before the abort lands is settled the same way.
+    expect(
+      await sameSavepointed({
+        chunks: sizes(3, 2),
+        errorAt: null,
+        ops: [
+          { op: 'next' },
+          { op: 'returnNA' },
+          { op: 'abort' },
+          { op: 'next' },
+        ],
+      }),
+    ).toEqual(closed);
+  });
+
+  it('closes the source on a throw(e) that is not the abort reason', async () => {
+    const trace = await sameSavepointed({
+      chunks: sizes(3, 2),
+      errorAt: null,
+      ops: [{ op: 'next' }, { op: 'throw' }, { op: 'next' }],
+    });
+    expect(trace).toEqual({
+      results: ['value 0', 'error thrown 1', 'done undefined'],
+      order: [0, 1, 2],
+      source: ['next', 'return'],
+      sourceBody: ['yield 0', 'finally'],
+      layer: ['value 0', 'catch thrown 1', 'finally'],
+      drain: [],
+    });
+  });
+
+  it('rejects with the abort before the first next() and never touches the source', async () => {
+    const trace = await sameSavepointed({
+      chunks: sizes(3, 2),
+      errorAt: null,
+      ops: [{ op: 'abort' }, { op: 'next' }, { op: 'next' }],
+    });
+    expect(trace).toEqual({
+      results: ['error aborted', 'done undefined'],
+      order: [0, 1],
+      source: [],
+      sourceBody: [],
+      layer: ['catch aborted', 'finally'],
+      drain: [],
+    });
+  });
+
+  it('reports a source error met while draining an abandoned stream', async () => {
+    const trace = await sameSavepointed({
+      chunks: sizes(2, 2),
+      errorAt: 1,
+      ops: [{ op: 'next' }, { op: 'abort' }, { op: 'next' }],
+    });
+    expect(trace).toEqual({
+      results: ['value 0', 'error aborted'],
+      order: [0, 1],
+      source: ['next', 'next'],
+      sourceBody: ['yield 0', 'error 1', 'finally'],
+      layer: ['value 0', 'abandon', 'catch aborted', 'finally'],
+      drain: ['drain failed source failed'],
+    });
+  });
+
+  it('matches over a seeded random comparison with a signal', async () => {
+    const CASES = 4000;
+    const BASE_SEED = 20271019;
+
+    const generate = (seed: number): Scenario => {
+      const random = prng(seed);
+      const int = (n: number) => Math.floor(random() * n);
+      const delay = (): Delay => {
+        const r = random();
+        if (r < 0.4) return 0;
+        if (r < 0.65) return 1;
+        if (r < 0.95) return 2;
+        return 'timer';
+      };
+      const chunks = Array.from({ length: 1 + int(8) }, () => ({
+        size: int(5),
+        delay: delay(),
+      }));
+      const errorAt = random() < 0.25 ? int(chunks.length + 1) : null;
+      const op = (): Op => {
+        const r = random() * 100;
+        if (r < 28) return { op: 'next' };
+        if (r < 40) return { op: 'nextNA' };
+        if (r < 48) return { op: 'two' };
+        if (r < 54) return { op: 'drain' };
+        if (r < 61) return { op: 'return' };
+        if (r < 66) return { op: 'returnNA' };
+        if (r < 72) return { op: 'throw' };
+        if (r < 76) return { op: 'throwNA' };
+        if (r < 79) return { op: 'break' };
+        if (r < 81) return { op: 'bodyThrow' };
+        if (r < 90) return { op: 'tick', turns: int(3) };
+        return { op: 'abort' };
+      };
+      const ops = Array.from({ length: 1 + int(8) }, op);
+      // Every case aborts once, at a random point between the consumer's ops.
+      ops.splice(int(ops.length + 1), 0, { op: 'abort' });
+      return { chunks, errorAt, ops, savepointed: true, settleBeforeAbort: 30 };
+    };
+
+    const seen = {
+      abandoned: 0,
+      drained: 0,
+      drainFailed: 0,
+      abortedBeforeStart: 0,
+      closedAfterAbort: 0,
+      errors: 0,
+      values: 0,
+      nextWhileNextPending: 0,
+      closeWhileNextPending: 0,
+    };
+    for (let i = 0; i < CASES; i++) {
+      const seed = BASE_SEED + i;
+      const scenario = generate(seed);
+      const { today, flattened, overlap } = await both(scenario, 'rethrow');
+      if (JSON.stringify(flattened) !== JSON.stringify(today)) {
+        expect(flattened, `seed ${seed}, ${JSON.stringify(scenario)}`).toEqual(
+          today,
+        );
+      }
+      if (today.layer.includes('abandon')) seen.abandoned++;
+      if (today.drain?.includes('drained')) seen.drained++;
+      if (today.drain?.some((e) => e.startsWith('drain failed'))) {
+        seen.drainFailed++;
+      }
+      if (today.layer[0] === 'catch aborted') seen.abortedBeforeStart++;
+      if (
+        today.layer.includes('catch aborted') === false &&
+        today.source.includes('return') &&
+        scenario.ops.some((o) => o.op === 'abort')
+      ) {
+        seen.closedAfterAbort++;
+      }
+      if (today.results.some((r) => r.startsWith('error'))) seen.errors++;
+      if (today.results.some((r) => r.startsWith('value'))) seen.values++;
+      if (overlap.nextNext > 0) seen.nextWhileNextPending++;
+      if (overlap.closeDuringNext > 0) seen.closeWhileNextPending++;
+    }
+    // The abort lands in every state: before the start, between rows, on a
+    // pending fetch; the abandoned source is drained, to its end or to an error.
+    expect(seen.abandoned).toBeGreaterThan(CASES / 20);
+    expect(seen.drained).toBeGreaterThan(CASES / 20);
+    expect(seen.drainFailed).toBeGreaterThan(CASES / 200);
+    expect(seen.abortedBeforeStart).toBeGreaterThan(CASES / 50);
+    expect(seen.closedAfterAbort).toBeGreaterThan(CASES / 10);
+    expect(seen.errors).toBeGreaterThan(CASES / 4);
+    expect(seen.values).toBeGreaterThan(CASES / 4);
+    expect(seen.nextWhileNextPending).toBeGreaterThan(CASES / 10);
+    expect(seen.closeWhileNextPending).toBeGreaterThan(CASES / 20);
+  });
+
   it('matches over a seeded random comparison', async () => {
     const CASES = 6000;
     const BASE_SEED = 20261019;
-
-    // mulberry32
-    const prng = (seed: number) => () => {
-      seed = (seed + 0x6d2b79f5) | 0;
-      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
 
     const generate = (
       seed: number,
