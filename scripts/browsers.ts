@@ -10,8 +10,15 @@
  *                                            and turn off Firefox's self-update
  */
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   Browser,
@@ -19,7 +26,22 @@ import {
   detectBrowserPlatform,
   install,
 } from '@puppeteer/browsers';
-import { FIREFOX_POLICIES, firefoxPoliciesPath } from './browser-cache.ts';
+import { download } from 'geckodriver';
+import {
+  type CacheItem,
+  FIREFOX_POLICIES,
+  firefoxPoliciesPath,
+  installItem,
+  isInstalled,
+  sweepStaging,
+} from './browser-cache.ts';
+import {
+  INSTALL_BOUND_MS,
+  lockPath,
+  runOnce,
+  WAIT_MARGIN_MS,
+} from './install-lock.ts';
+import { timeScale } from './processes.ts';
 
 export type BrowserName = 'chrome' | 'firefox';
 
@@ -96,6 +118,130 @@ export const browserCapabilities = (
     : {}),
 });
 
+/** The paths a harness launches: absolute, inside the cache. */
+export interface BrowserBinaries {
+  browser: string;
+  driver: string;
+}
+
+/** A @puppeteer/browsers download as a cache item: `dir` is the installation folder, `executable` what is under it. */
+function puppeteerItem(
+  browser: Browser,
+  buildId: string,
+  policies: boolean,
+): CacheItem {
+  const platform = detectBrowserPlatform();
+  if (!platform) throw new Error('browsers: unsupported platform');
+  const [kind, version, ...inside] = relative(
+    '.',
+    computeExecutablePath({ cacheDir: '.', browser, buildId, platform }),
+  ).split(sep);
+  const dir = join(kind as string, version as string);
+  return {
+    dir,
+    executable: join(...inside),
+    policies,
+    fetch: async (target) => {
+      // A private cache next to `target`, so the rename stays on one volume and a sweep reads its owner's pid.
+      const scratch = mkdtempSync(
+        join(dirname(target), `${process.pid}-puppeteer-`),
+      );
+      try {
+        await install({ browser, buildId, cacheDir: scratch });
+        rmSync(target, { recursive: true, force: true });
+        renameSync(join(scratch, dir), target);
+      } finally {
+        try {
+          rmSync(scratch, { recursive: true, force: true });
+        } catch {}
+      }
+    },
+  };
+}
+
+/** The driver and the browser of `name` at the versions in force. */
+export function cacheItems(
+  name: BrowserName,
+  env: NodeJS.ProcessEnv = process.env,
+): { browser: CacheItem; driver: CacheItem } {
+  const buildId = browserVersion(name, env);
+  if (name === 'chrome') {
+    return {
+      browser: puppeteerItem(Browser.CHROME, buildId, false),
+      driver: puppeteerItem(Browser.CHROMEDRIVER, buildId, false),
+    };
+  }
+  const platform = detectBrowserPlatform();
+  if (!platform) throw new Error('browsers: unsupported platform');
+  const executable = `geckodriver-${GECKODRIVER_VERSION}${process.platform === 'win32' ? '.exe' : ''}`;
+  return {
+    browser: puppeteerItem(Browser.FIREFOX, buildId, true),
+    driver: {
+      dir: join('geckodriver', `${platform}-${GECKODRIVER_VERSION}`),
+      executable,
+      policies: false,
+      fetch: async (target) => {
+        const path = await download(GECKODRIVER_VERSION, target);
+        if (path !== join(target, executable)) {
+          throw new Error(`browsers: geckodriver landed at ${path}`);
+        }
+      },
+    },
+  };
+}
+
+export interface ResolveOptions {
+  env?: NodeJS.ProcessEnv;
+  cacheDir?: string;
+  /** Test seam. */
+  items?: typeof cacheItems;
+  /** Progress lines, without newline; stderr by default so `deps` keeps stdout for its packages. */
+  log?: (line: string) => void;
+}
+
+/**
+ * Installs what `names` need and is missing, once across all processes asking
+ * (one leads, the others wait), and returns the paths of what is installed.
+ */
+export async function resolveBrowsers(
+  names: readonly BrowserName[],
+  options: ResolveOptions = {},
+): Promise<Record<BrowserName, BrowserBinaries>> {
+  const {
+    env = process.env,
+    items = cacheItems,
+    log = (line) => {
+      process.stderr.write(`${line}\n`);
+    },
+  } = options;
+  const cacheDir = resolve(options.cacheDir ?? WDIO_CACHE_DIR);
+  const wanted = names.map((name) => [name, items(name, env)] as const);
+  const all = wanted.flatMap(([, item]) => [item.browser, item.driver]);
+  const installBound = INSTALL_BOUND_MS * timeScale();
+  await runOnce({
+    path: lockPath(cacheDir),
+    done: async () => all.every((item) => isInstalled(cacheDir, item)),
+    install: async () => {
+      sweepStaging(cacheDir);
+      for (const item of all) {
+        if (isInstalled(cacheDir, item)) continue;
+        log(`browsers: installing ${item.dir}`);
+        await installItem(cacheDir, item);
+      }
+    },
+    installBound,
+    waitBound: installBound + WAIT_MARGIN_MS * timeScale(),
+    log: (line) => log(`browsers: ${line}`),
+  });
+  const binary = (item: CacheItem) => join(cacheDir, item.dir, item.executable);
+  return Object.fromEntries(
+    wanted.map(([name, item]) => [
+      name,
+      { browser: binary(item.browser), driver: binary(item.driver) },
+    ]),
+  ) as Record<BrowserName, BrowserBinaries>;
+}
+
 /** `libfoo (>= 1)` / `liba | libb` → `libfoo`, `liba`: the first alternative, no version. */
 const firstAlternative = (line: string) =>
   line
@@ -105,19 +251,7 @@ const firstAlternative = (line: string) =>
 
 /** Chrome for Testing ships its Debian dependencies as `deb.deps`; Firefox's are Debian's `firefox-esr`'s. */
 async function deps(): Promise<string[]> {
-  const platform = detectBrowserPlatform();
-  if (!platform) throw new Error('browsers: unsupported platform');
-  const buildId = browserVersion('chrome');
-  await install({ browser: Browser.CHROME, buildId, cacheDir: WDIO_CACHE_DIR });
-  const chromeDir = join(
-    computeExecutablePath({
-      browser: Browser.CHROME,
-      buildId,
-      cacheDir: WDIO_CACHE_DIR,
-      platform,
-    }),
-    '..',
-  );
+  const chromeDir = dirname((await resolveBrowsers(['chrome'])).chrome.browser);
   const chrome = readFileSync(join(chromeDir, 'deb.deps'), 'utf8')
     .split('\n')
     .map(firstAlternative)
