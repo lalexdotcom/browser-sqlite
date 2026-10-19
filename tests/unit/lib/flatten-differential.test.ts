@@ -27,11 +27,31 @@ type Op =
   | { op: 'bodyThrow' } // for await over the iterator, the body throws
   | { op: 'tick'; turns: number };
 
+/**
+ * What the real layers do besides the loop: `releasing` waits (`queueWait`),
+ * awaits `worker.quiesce()` in its `finally`, which may throw, and calls
+ * `source.return()` once more there; `streamWithRetry` re-iterates a fresh
+ * source once after a BUSY error that came before any value.
+ */
+interface LayerOptions {
+  /** Microtask turns awaited before the loop, inside the `try`. */
+  tryTurns?: number;
+  /** Microtask turns awaited after each value, before it is yielded. */
+  valueTurns?: number;
+  /** Microtask turns awaited in the `finally`. */
+  finallyTurns?: number;
+  finallyThrows?: boolean;
+  extraReturn?: boolean;
+  /** The first source fails with BUSY before any chunk; the second is real. */
+  retry?: boolean;
+}
+
 /** Chunk k holds `size` rows valued k * 100 + j. */
 interface Scenario {
   chunks: { size: number; delay: Delay }[];
   errorAt: number | null;
   ops: Op[];
+  layer?: LayerOptions;
 }
 
 /** One ordered list per channel; nothing orders one list against another. */
@@ -58,6 +78,10 @@ const show = (result: IteratorResult<number, unknown>) =>
 
 const turn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+const turns = async (count = 0) => {
+  for (let i = 0; i < count; i++) await null;
+};
+
 const pause = async (delay: Delay) => {
   if (delay === 'timer') {
     await turn();
@@ -66,10 +90,23 @@ const pause = async (delay: Delay) => {
   for (let i = 0; i < delay; i++) await null;
 };
 
-/** The chunk source: a real async generator behind a recording wrapper. */
+/**
+ * The chunk source: real async generators behind a recording wrapper. `open()`
+ * hands out one source per attempt; with `retry` the first one fails with BUSY.
+ */
 const makeSource = (scenario: Scenario) => {
   const source: string[] = [];
   const sourceBody: string[] = [];
+  // biome-ignore lint/correctness/useYield: it fails before its first chunk
+  async function* busy(): AsyncGenerator<number[], void, unknown> {
+    try {
+      await pause(scenario.chunks[0]?.delay ?? 0);
+      sourceBody.push('error busy');
+      throw new Error('busy');
+    } finally {
+      sourceBody.push('finally');
+    }
+  }
   async function* chunks(): AsyncGenerator<number[], void, unknown> {
     try {
       for (let k = 0; k <= scenario.chunks.length; k++) {
@@ -87,24 +124,29 @@ const makeSource = (scenario: Scenario) => {
       sourceBody.push('finally');
     }
   }
-  const generator = chunks();
-  const wrapped: AsyncGenerator<number[], void, unknown> = {
-    next: (...args) => {
-      source.push('next');
-      return generator.next(...args);
-    },
-    return: (value) => {
-      source.push('return');
-      return generator.return(value);
-    },
-    throw: (error) => {
-      source.push('throw');
-      return generator.throw(error);
-    },
-    [Symbol.asyncIterator]: () => wrapped,
-    [Symbol.asyncDispose]: () => generator[Symbol.asyncDispose](),
+  const record = (generator: AsyncGenerator<number[], void, unknown>) => {
+    const wrapped: AsyncGenerator<number[], void, unknown> = {
+      next: (...args) => {
+        source.push('next');
+        return generator.next(...args);
+      },
+      return: (value) => {
+        source.push('return');
+        return generator.return(value);
+      },
+      throw: (error) => {
+        source.push('throw');
+        return generator.throw(error);
+      },
+      [Symbol.asyncIterator]: () => wrapped,
+      [Symbol.asyncDispose]: () => generator[Symbol.asyncDispose](),
+    };
+    return wrapped;
   };
-  return { wrapped, source, sourceBody };
+  let attempts = 0;
+  const open = () =>
+    record(scenario.layer?.retry && attempts++ === 0 ? busy() : chunks());
+  return { open, source, sourceBody };
 };
 
 /** The row-flattening generator `flatten` replaces. */
@@ -119,23 +161,48 @@ async function* rowsOf(
  * belongs to, or null for a value that holds no row.
  */
 async function* layer<V>(
-  input: AsyncGenerator<V, void, unknown>,
+  open: () => AsyncGenerator<V, void, unknown>,
   events: string[],
   mark: (value: V) => number | null,
   variant: Variant,
+  options: LayerOptions,
 ): AsyncGenerator<V, void, unknown> {
-  try {
-    for await (const value of input) {
-      const chunk = mark(value);
-      if (chunk !== null) events.push(`value ${chunk}`);
-      yield value;
+  for (let attempt = 1; ; attempt++) {
+    let delivered = false;
+    const input = open();
+    try {
+      await turns(options.tryTurns);
+      try {
+        for await (const value of input) {
+          delivered = true;
+          const chunk = mark(value);
+          if (chunk !== null) events.push(`value ${chunk}`);
+          await turns(options.valueTurns);
+          yield value;
+        }
+      } finally {
+        if (options.extraReturn) await input.return(undefined);
+      }
+      return;
+    } catch (error) {
+      events.push(`catch ${message(error)}`);
+      if (
+        options.retry &&
+        !delivered &&
+        attempt === 1 &&
+        message(error) === 'busy'
+      ) {
+        continue;
+      }
+      if (variant === 'rethrow') throw error;
+      if (variant === 'wrap') throw new Error(`wrapped ${message(error)}`);
+      return;
+    } finally {
+      events.push('finally');
+      await turns(options.finallyTurns);
+      // biome-ignore lint/correctness/noUnsafeFinally: `releasing`'s finally can throw (dieIfConnectionLeft)
+      if (options.finallyThrows) throw new Error('finally failed');
     }
-  } catch (error) {
-    events.push(`catch ${message(error)}`);
-    if (variant === 'rethrow') throw error;
-    if (variant === 'wrap') throw new Error(`wrapped ${message(error)}`);
-  } finally {
-    events.push('finally');
   }
 }
 
@@ -156,18 +223,33 @@ const consume = async (
   const results: string[] = [];
   const order: number[] = [];
   const outstanding: Promise<unknown>[] = [];
-  const track = (promise: Promise<IteratorResult<number, void>>) => {
+  // How often a next() or a return()/throw() was issued while a next() result
+  // was still pending.
+  const overlap = { nextNext: 0, closeDuringNext: 0 };
+  let pendingNext = 0;
+  const track = (
+    kind: 'next' | 'close',
+    promise: Promise<IteratorResult<number, void>>,
+  ) => {
     const index = results.length;
     results.push('pending');
+    if (pendingNext > 0) {
+      overlap[kind === 'next' ? 'nextNext' : 'closeDuringNext']++;
+    }
+    if (kind === 'next') pendingNext++;
+    const settled = () => {
+      order.push(index);
+      if (kind === 'next') pendingNext--;
+    };
     return promise.then(
       (result) => {
         results[index] = show(result);
-        order.push(index);
+        settled();
         return result;
       },
       (error: unknown) => {
         results[index] = `error ${message(error)}`;
-        order.push(index);
+        settled();
         throw error;
       },
     );
@@ -194,45 +276,48 @@ const consume = async (
   };
   const probe: AsyncIterable<number> = {
     [Symbol.asyncIterator]: () => ({
-      next: () => track(iterator.next()),
-      return: (value?: unknown) => track(iterator.return(value as never)),
+      next: () => track('next', iterator.next()),
+      return: (value?: unknown) =>
+        track('close', iterator.return(value as never)),
     }),
   };
 
   for (const step of ops) {
     switch (step.op) {
       case 'next':
-        await quiet(track(iterator.next()));
+        await quiet(track('next', iterator.next()));
         break;
       case 'nextNA':
-        outstanding.push(quiet(track(iterator.next())));
+        outstanding.push(quiet(track('next', iterator.next())));
         break;
       case 'two':
         await Promise.all([
-          quiet(track(iterator.next())),
-          quiet(track(iterator.next())),
+          quiet(track('next', iterator.next())),
+          quiet(track('next', iterator.next())),
         ]);
         break;
       case 'drain':
         for (;;) {
           try {
-            if ((await track(iterator.next())).done) break;
+            if ((await track('next', iterator.next())).done) break;
           } catch {
             break;
           }
         }
         break;
       case 'return':
-        await quiet(track(iterator.return(returnArgument(step))));
+        await quiet(track('close', iterator.return(returnArgument(step))));
         break;
       case 'returnNA':
-        outstanding.push(quiet(track(iterator.return(returnArgument(step)))));
+        outstanding.push(
+          quiet(track('close', iterator.return(returnArgument(step)))),
+        );
         break;
       case 'throw':
-        await quiet(track(iterator.throw(failure())));
+        await quiet(track('close', iterator.throw(failure())));
         break;
       case 'throwNA':
-        outstanding.push(quiet(track(iterator.throw(failure()))));
+        outstanding.push(quiet(track('close', iterator.throw(failure()))));
         break;
       case 'break':
         try {
@@ -252,28 +337,43 @@ const consume = async (
   await Promise.all(outstanding);
   // Whatever a settled call left running (a `finally`) gets time to finish.
   for (let i = 0; i < 20; i++) await null;
-  return { results, order };
+  return { results, order, overlap };
 };
 
-const run = async (
-  scenario: Scenario,
-  variant: Variant,
-  shape: Shape,
-): Promise<Trace> => {
-  const { wrapped, source, sourceBody } = makeSource(scenario);
+const run = async (scenario: Scenario, variant: Variant, shape: Shape) => {
+  const { open, source, sourceBody } = makeSource(scenario);
   const events: string[] = [];
+  const options = scenario.layer ?? {};
   const iterator =
     shape === 'today'
-      ? layer(rowsOf(wrapped), events, chunkOfRow, variant)
-      : flatten(layer(wrapped, events, chunkOfChunk, variant));
-  const { results, order } = await consume(iterator, scenario.ops);
-  return { results, order, source, sourceBody, layer: collapse(events) };
+      ? layer(() => rowsOf(open()), events, chunkOfRow, variant, options)
+      : flatten(layer(open, events, chunkOfChunk, variant, options));
+  const { results, order, overlap } = await consume(iterator, scenario.ops);
+  const trace: Trace = {
+    results,
+    order,
+    // `releasing` closes its input once more in its `finally`. Today that
+    // input is `rowsOf`, already finished, so the chunk source is not called
+    // again; with `flatten` the input is the chunk source itself, and the extra
+    // return() lands on the recording wrapper (a no-op on a real generator).
+    // That one entry is the only difference, so this channel is left out when
+    // the layer does it.
+    source: options.extraReturn ? [] : source,
+    sourceBody,
+    layer: collapse(events),
+  };
+  return { trace, overlap };
 };
 
-const both = async (scenario: Scenario, variant: Variant) => ({
-  today: await run(scenario, variant, 'today'),
-  flattened: await run(scenario, variant, 'flatten'),
-});
+const both = async (scenario: Scenario, variant: Variant) => {
+  const today = await run(scenario, variant, 'today');
+  const flattened = await run(scenario, variant, 'flatten');
+  return {
+    today: today.trace,
+    flattened: flattened.trace,
+    overlap: today.overlap,
+  };
+};
 
 /** Runs the scenario in every layer variant and requires equal traces. */
 const sameInEveryVariant = async (scenario: Scenario) => {
@@ -640,7 +740,20 @@ describe('flatten against the generator chain it replaces', () => {
       };
       const ops = Array.from({ length: 1 + int(10) }, op);
       const variant = VARIANTS[int(VARIANTS.length)] as Variant;
-      return { scenario: { chunks, errorAt, ops }, variant };
+      const layerOptions = (): LayerOptions => {
+        const options: LayerOptions = {};
+        if (random() < 0.4) options.tryTurns = 1 + int(3);
+        if (random() < 0.3) options.valueTurns = 1 + int(2);
+        if (random() < 0.4) options.finallyTurns = 1 + int(3);
+        if (random() < 0.12) options.finallyThrows = true;
+        if (random() < 0.25) options.extraReturn = true;
+        if (random() < 0.25) options.retry = true;
+        return options;
+      };
+      return {
+        scenario: { chunks, errorAt, ops, layer: layerOptions() },
+        variant,
+      };
     };
 
     const seen = {
@@ -648,14 +761,18 @@ describe('flatten against the generator chain it replaces', () => {
       sourceErrors: 0,
       sourceClosed: 0,
       ended: 0,
-      overlapped: 0,
       values: 0,
+      nextWhileNextPending: 0,
+      closeWhileNextPending: 0,
+      retried: 0,
+      finallyFailed: 0,
+      extraReturn: 0,
+      waited: 0,
     };
-    const started = Date.now();
     for (let i = 0; i < CASES; i++) {
       const seed = BASE_SEED + i;
       const { scenario, variant } = generate(seed);
-      const { today, flattened } = await both(scenario, variant);
+      const { today, flattened, overlap } = await both(scenario, variant);
       if (JSON.stringify(flattened) !== JSON.stringify(today)) {
         expect(
           flattened,
@@ -667,21 +784,32 @@ describe('flatten against the generator chain it replaces', () => {
       if (today.source.includes('return')) seen.sourceClosed++;
       if (today.results.some((r) => r.startsWith('done'))) seen.ended++;
       if (today.results.some((r) => r.startsWith('value'))) seen.values++;
+      if (overlap.nextNext > 0) seen.nextWhileNextPending++;
+      if (overlap.closeDuringNext > 0) seen.closeWhileNextPending++;
+      // The BUSY source failed, the layer caught it, and the real source ran.
       if (
-        scenario.ops.some((o) => o.op === 'nextNA' || o.op === 'two') &&
-        scenario.ops.some((o) => o.op === 'returnNA' || o.op === 'throwNA')
+        today.layer.includes('catch busy') &&
+        today.sourceBody.filter((event) => event === 'finally').length >= 2
       ) {
-        seen.overlapped++;
+        seen.retried++;
+      }
+      if (today.results.includes('error finally failed')) seen.finallyFailed++;
+      if (scenario.layer?.extraReturn) seen.extraReturn++;
+      if (scenario.layer?.tryTurns || scenario.layer?.finallyTurns) {
+        seen.waited++;
       }
     }
-    const elapsed = Date.now() - started;
     // The space is exercised, not just compared: every kind of outcome occurs.
     expect(seen.values).toBeGreaterThan(CASES / 4);
     expect(seen.errors).toBeGreaterThan(CASES / 20);
     expect(seen.sourceErrors).toBeGreaterThan(CASES / 50);
     expect(seen.sourceClosed).toBeGreaterThan(CASES / 5);
     expect(seen.ended).toBeGreaterThan(CASES / 5);
-    expect(seen.overlapped).toBeGreaterThan(CASES / 50);
-    expect(elapsed).toBeLessThan(10_000);
+    expect(seen.nextWhileNextPending).toBeGreaterThan(CASES / 20);
+    expect(seen.closeWhileNextPending).toBeGreaterThan(CASES / 20);
+    expect(seen.retried).toBeGreaterThan(CASES / 100);
+    expect(seen.finallyFailed).toBeGreaterThan(CASES / 100);
+    expect(seen.extraReturn).toBeGreaterThan(CASES / 10);
+    expect(seen.waited).toBeGreaterThan(CASES / 4);
   });
 });

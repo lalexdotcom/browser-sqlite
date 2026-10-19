@@ -47,9 +47,8 @@ class Flattened<T> implements AsyncGenerator<T, void, unknown> {
   return(value?: void | PromiseLike<void>): Promise<IteratorResult<T, void>> {
     return this.#enqueue(async () => {
       if (this.#status !== 'open') {
-        // Idle or ended: nothing to close, so `value` is awaited here, as an
-        // async generator settles a return() it has nothing to unwind for.
-        // Typed `unknown`: a JavaScript caller's `return(42)` gets 42 back.
+        // Idle or ended: nothing to close, `value` is awaited here. Typed
+        // `unknown`: a JavaScript caller's `return(42)` still gets 42 back.
         let awaited: unknown;
         try {
           awaited = await value;
@@ -58,9 +57,8 @@ class Flattened<T> implements AsyncGenerator<T, void, unknown> {
         }
         return { value: awaited as undefined, done: true };
       }
-      // Open: the source gets `value` itself and settles the call, as it would
-      // if the consumer had called it, so a rejecting `value` is thrown where
-      // the layers between consumer and source catch it.
+      // Open: the source gets `value` itself and settles the call, so a
+      // rejecting `value` is thrown where the layers above the source catch it.
       this.#end();
       const step = await this.#source.return(value);
       // A source that yields again from its cleanup: close what is suspended.

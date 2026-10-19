@@ -422,6 +422,38 @@ describe('flatten', () => {
     expect(calls).toEqual(['next', 'return', 'return']);
   });
 
+  it('rejects return() when the second return() of a source that yields again rejects', async () => {
+    const cleanup = new Error('second return failed');
+    let answers = 0;
+    const { source, calls } = scripted([[1, 2]], undefined, () =>
+      answers++ === 0
+        ? Promise.resolve({ value: [9], done: false })
+        : Promise.reject(cleanup),
+    );
+    const iterator = flatten(source);
+    await iterator.next();
+    // Falsifiability: fire the second return() without awaiting it and this
+    // resolves.
+    await expect(iterator.return()).rejects.toBe(cleanup);
+    expect(calls).toEqual(['next', 'return', 'return']);
+    expect(await iterator.next()).toEqual({ value: undefined, done: true });
+  });
+
+  it('rejects throw() when the return() that closes a source that yields again rejects', async () => {
+    const cleanup = new Error('return failed');
+    const { source, calls } = scripted(
+      [[1, 2]],
+      () => Promise.resolve({ value: [9], done: false }),
+      () => Promise.reject(cleanup),
+    );
+    const iterator = flatten(source);
+    await iterator.next();
+    // Falsifiability: fire the return() without awaiting it and this resolves.
+    await expect(iterator.throw(new Error('stop'))).rejects.toBe(cleanup);
+    expect(calls).toEqual(['next', 'throw', 'return']);
+    expect(await iterator.next()).toEqual({ value: undefined, done: true });
+  });
+
   it('awaits return(v) itself when idle or ended, as an async generator does', async () => {
     const reference = async function* (
       source: AsyncGenerator<number[], void, unknown>,
