@@ -284,6 +284,57 @@ describe('flatten', () => {
     expect(await iterator.next()).toEqual({ value: undefined, done: true });
   });
 
+  it('settles a later call after the aborted next() it follows, at every offset', async () => {
+    const reason = new Error('aborted');
+    const other = new Error('abandoned');
+    for (const kind of ['next', 'return'] as const) {
+      for (let offset = 0; offset <= 8; offset++) {
+        const controller = new AbortController();
+        const { source } = scripted([[1, 2, 3]], () => Promise.reject(other));
+        const iterator = flatten(source, { signal: controller.signal });
+        await iterator.next();
+        const order: string[] = [];
+        const first = iterator.next().then(
+          () => order.push('first ok'),
+          () => order.push('first rejected'),
+        );
+        controller.abort(reason);
+        for (let i = 0; i < offset; i++) await null;
+        const later = (
+          kind === 'next' ? iterator.next() : iterator.return()
+        ).then(
+          () => order.push('later ok'),
+          () => order.push('later rejected'),
+        );
+        await Promise.all([first, later]);
+        // Falsifiability: release `#pending` before the rejection has settled
+        // and the later call, issued 3 or 4 turns after, settles first.
+        expect(order, `${kind} at ${offset}`).toEqual([
+          'first rejected',
+          'later ok',
+        ]);
+      }
+    }
+  });
+
+  it('settles a later next() after the queued call it follows, at every offset', async () => {
+    for (let offset = 0; offset <= 8; offset++) {
+      const { source } = scripted([[1, 2, 3, 4]]);
+      const iterator = flatten(source);
+      const order: string[] = [];
+      const first = iterator.next();
+      const queued = iterator.next().then(() => order.push('queued'));
+      await first;
+      for (let i = 0; i < offset; i++) await null;
+      const later = iterator.next().then(() => order.push('later'));
+      await Promise.all([queued, later]);
+      // Pins call-order settlement for a call made at each offset after a
+      // queued one; no mutation turns it red on its own, the random space
+      // (chained and delayed calls) is what searches this class.
+      expect(order, `offset ${offset}`).toEqual(['queued', 'later']);
+    }
+  });
+
   it('calls the source inside the first next(), not a turn later', () => {
     const { source, calls } = scripted([[1, 2]]);
     const iterator = flatten(source);

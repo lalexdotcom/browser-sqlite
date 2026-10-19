@@ -27,6 +27,9 @@ type Op =
   | { op: 'break' } // for await over the iterator, break at the first row
   | { op: 'bodyThrow' } // for await over the iterator, the body throws
   | { op: 'tick'; turns: number }
+  // Waits for the previous call to settle and issues this one (not awaited)
+  // from a `then` callback of that call.
+  | { op: 'chain'; call: 'next' | 'return' | 'throw' }
   // The statement's own signal fires (savepointed scenarios). With
   // `settleBeforeAbort` set the op waits that many microtasks first, unless
   // `sync`: then it runs in the same synchronous run as the op before it.
@@ -338,7 +341,7 @@ const consume = async (
       order.push(index);
       if (kind === 'next') pendingNext--;
     };
-    return promise.then(
+    const tracked = promise.then(
       (result) => {
         results[index] = show(result);
         settled();
@@ -350,8 +353,20 @@ const consume = async (
         throw error;
       },
     );
+    lastTracked = tracked;
+    return tracked;
   };
+  let lastTracked: Promise<unknown> | undefined;
   const quiet = (promise: Promise<unknown>) => promise.then(noop, noop);
+  const issue = (call: 'next' | 'return' | 'throw') =>
+    quiet(
+      call === 'next'
+        ? track('next', iterator.next())
+        : track(
+            'close',
+            call === 'return' ? iterator.return() : iterator.throw(failure()),
+          ),
+    );
   const noop = () => undefined;
   const failure = () => new Error(`thrown ${results.length}`);
   // What a JavaScript caller may hand to return(): nothing, a value, or a
@@ -429,6 +444,20 @@ const consume = async (
       case 'tick':
         for (let i = 0; i < step.turns; i++) await null;
         break;
+      case 'chain': {
+        // The script waits for the call to be issued, so the order of the
+        // calls does not depend on how long each shape takes to settle one.
+        const previous = lastTracked;
+        await new Promise<void>((resolve) => {
+          const go = () => {
+            outstanding.push(issue(step.call));
+            resolve();
+          };
+          if (previous) previous.then(go, go);
+          else go();
+        });
+        break;
+      }
       case 'abort':
         if (settleBeforeAbort > 0 && !step.sync) await turns(settleBeforeAbort);
         abort();
@@ -519,6 +548,10 @@ const prng = (seed: number) => () => {
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
+
+/** The consumer's calls settled in the order they were made. */
+const inCallOrder = (order: number[]) =>
+  order.every((index, i) => i === 0 || (order[i - 1] as number) < index);
 
 /** Runs a savepointed scenario and requires equal traces. */
 const sameSavepointed = async (scenario: Omit<Scenario, 'savepointed'>) => {
@@ -1054,6 +1087,8 @@ describe('flatten against the generator chain it replaces', () => {
         delay: delay(),
       }));
       const errorAt = random() < 0.25 ? int(chunks.length + 1) : null;
+      const call = () =>
+        (['next', 'return', 'throw'] as const)[int(3)] ?? 'next';
       // A fetch the abort abandons spans the empty chunks today (`rowsOf`
       // skips them) but only one chunk with `flatten`, so a source error right
       // after an empty chunk is swallowed by that fetch today and met by the
@@ -1074,7 +1109,8 @@ describe('flatten against the generator chain it replaces', () => {
         if (r < 76) return { op: 'throwNA' };
         if (r < 79) return { op: 'break' };
         if (r < 81) return { op: 'bodyThrow' };
-        if (r < 90) return { op: 'tick', turns: int(3) };
+        if (r < 88) return { op: 'tick', turns: int(8) };
+        if (r < 95) return { op: 'chain', call: call() };
         return { op: 'abort' };
       };
       const ops = Array.from({ length: 1 + int(8) }, op);
@@ -1108,6 +1144,8 @@ describe('flatten against the generator chain it replaces', () => {
       closeWhileNextPending: 0,
       syncAbort: 0,
       syncAbortAbandoned: 0,
+      chained: 0,
+      longTick: 0,
     };
     for (let i = 0; i < CASES; i++) {
       const seed = BASE_SEED + i;
@@ -1116,6 +1154,11 @@ describe('flatten against the generator chain it replaces', () => {
       if (JSON.stringify(flattened) !== JSON.stringify(today)) {
         expect(flattened, `seed ${seed}, ${JSON.stringify(scenario)}`).toEqual(
           today,
+        );
+      }
+      if (!inCallOrder(flattened.order) || !inCallOrder(today.order)) {
+        expect.fail(
+          `seed ${seed}: calls settled out of order ${flattened.order} (flatten), ${today.order} (reference), ${JSON.stringify(scenario)}`,
         );
       }
       if (today.layer.includes('abandon')) seen.abandoned++;
@@ -1135,6 +1178,10 @@ describe('flatten against the generator chain it replaces', () => {
       if (today.results.some((r) => r.startsWith('value'))) seen.values++;
       if (overlap.nextNext > 0) seen.nextWhileNextPending++;
       if (overlap.closeDuringNext > 0) seen.closeWhileNextPending++;
+      if (scenario.ops.some((o) => o.op === 'chain')) seen.chained++;
+      if (scenario.ops.some((o) => o.op === 'tick' && o.turns >= 5)) {
+        seen.longTick++;
+      }
       const syncAt = scenario.ops.findIndex(
         (o) => o.op === 'abort' && o.sync === true,
       );
@@ -1156,6 +1203,10 @@ describe('flatten against the generator chain it replaces', () => {
     expect(seen.closeWhileNextPending).toBeGreaterThan(CASES / 20);
     expect(seen.syncAbort).toBeGreaterThan(CASES / 5);
     expect(seen.syncAbortAbandoned).toBeGreaterThan(CASES / 10);
+    // Calls chained from a then callback, and delays of 5 to 7 turns between
+    // calls: the class of call-order settlement bugs lives there.
+    expect(seen.chained).toBeGreaterThan(CASES / 10);
+    expect(seen.longTick).toBeGreaterThan(CASES / 10);
   });
 
   it('matches over a seeded random comparison', async () => {
@@ -1179,6 +1230,8 @@ describe('flatten against the generator chain it replaces', () => {
         delay: delay(),
       }));
       const errorAt = random() < 0.4 ? int(chunks.length + 1) : null;
+      const call = () =>
+        (['next', 'return', 'throw'] as const)[int(3)] ?? 'next';
       const optionalValue = (): Pick<
         Op & { op: 'return' },
         'value' | 'promise'
@@ -1201,7 +1254,8 @@ describe('flatten against the generator chain it replaces', () => {
         if (r < 78) return { op: 'throwNA' };
         if (r < 82) return { op: 'break' };
         if (r < 85) return { op: 'bodyThrow' };
-        return { op: 'tick', turns: int(4) };
+        if (r < 94) return { op: 'tick', turns: int(8) };
+        return { op: 'chain', call: call() };
       };
       const ops = Array.from({ length: 1 + int(10) }, op);
       const variant = VARIANTS[int(VARIANTS.length)] as Variant;
@@ -1244,6 +1298,11 @@ describe('flatten against the generator chain it replaces', () => {
           flattened,
           `seed ${seed}, variant ${variant}, ${JSON.stringify(scenario)}`,
         ).toEqual(today);
+      }
+      if (!inCallOrder(flattened.order) || !inCallOrder(today.order)) {
+        expect.fail(
+          `seed ${seed}: calls settled out of order ${flattened.order} (flatten), ${today.order} (reference), ${JSON.stringify(scenario)}`,
+        );
       }
       if (today.results.some((r) => r.startsWith('error'))) seen.errors++;
       if (today.layer.includes('catch source failed')) seen.sourceErrors++;

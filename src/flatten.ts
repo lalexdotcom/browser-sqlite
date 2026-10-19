@@ -43,9 +43,10 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
       const result = resolved.then(
         (): IteratorResult<T, void> | Promise<IteratorResult<T, void>> => {
           if (this.#signal?.aborted) {
-            return this.#throwIntoSource(this.#signal.reason).finally(() => {
-              this.#pending--;
-            });
+            // Held until the rejection has settled, not until the source has
+            // answered: a call in between must queue behind it.
+            result.then(this.#release, this.#release);
+            return this.#throwIntoSource(this.#signal.reason);
           }
           this.#pending--;
           return { value: row, done: false };
@@ -95,17 +96,17 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
   #enqueue<R>(request: () => Promise<R>): Promise<R> {
     const idle = this.#pending === 0;
     this.#pending++;
-    const run = async () => {
-      try {
-        return await request();
-      } finally {
-        this.#pending--;
-      }
-    };
-    const result = idle ? run() : this.#last.then(run, run);
+    const result = idle ? request() : this.#last.then(request, request);
+    // Registered before the caller can attach its own handlers, so a call made
+    // from one finds the iterator idle only once `result` has settled.
+    result.then(this.#release, this.#release);
     this.#last = result;
     return result;
   }
+
+  readonly #release = (): void => {
+    this.#pending--;
+  };
 
   #end(): void {
     this.#status = 'done';
