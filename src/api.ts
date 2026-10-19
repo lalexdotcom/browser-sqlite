@@ -270,15 +270,16 @@ export type SQLiteQueryAPI = {
    * Memory-efficient for large result sets — rows are not buffered in full.
    *
    * @remarks
-   * **Worker held for full generator lifetime.** A pool worker is acquired when
-   * the generator is created and released only when the generator is fully
+   * **Worker held for full generator lifetime.** A pool worker is acquired on
+   * the first `next()` and released only when the generator is fully
    * exhausted or the caller uses `break`. Failing to exhaust the generator
    * starves the pool. Always use `for await...of` to completion or `break` to exit.
    *
-   * **`NOT_A_READ_QUERY` timing.** Because `chunk()` is an async generator, its
-   * body does not run until the first `next()` call. Passing a write statement
-   * does not throw at the call site — the `SQLiteError` arrives on the first
-   * `await gen.next()` (or the first iteration of `for await...of`).
+   * **Arguments are validated at the call.** An invalid query, a params array
+   * given with a query built by `sql`, a write statement (`NOT_A_READ_QUERY`)
+   * and an unbindable param throw a `SQLiteError` from `chunk()` itself, before
+   * any generator exists. The `timeout` timer and the worker acquisition start
+   * at the first `next()`.
    *
    * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
    *
@@ -306,10 +307,11 @@ export type SQLiteQueryAPI = {
    * Use `chunk()` when you need the rows grouped by chunk.
    *
    * @remarks
-   * **`NOT_A_READ_QUERY` timing.** Because `stream()` is an async generator, its
-   * body does not run until the first `next()` call. Passing a write statement
-   * does not throw at the call site — the `SQLiteError` arrives on the first
-   * `await gen.next()` (or the first iteration of `for await...of`).
+   * **Arguments are validated at the call.** An invalid query, a params array
+   * given with a query built by `sql`, a write statement (`NOT_A_READ_QUERY`)
+   * and an unbindable param throw a `SQLiteError` from `stream()` itself, before
+   * any generator exists. The `timeout` timer and the worker acquisition start
+   * at the first `next()`.
    *
    * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
    *

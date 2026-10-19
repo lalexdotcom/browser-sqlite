@@ -114,7 +114,7 @@ describe('routing — strictness', () => {
 describe('chunk() and stream() — arguments are validated at the call', () => {
   // Falsifiable: move queryArgs, assertReadable or prepareParams back inside
   // the generator in src/client.ts and the call returns instead of throwing.
-  // A read() on a one-worker pool resolving at once proves no lease is held.
+  // The read() on a one-worker pool shows the refused call left the pool usable.
 
   it('chunk() throws at the call for a first argument that is not a query', async () => {
     const db = await createTestClient({ poolSize: 1 });
