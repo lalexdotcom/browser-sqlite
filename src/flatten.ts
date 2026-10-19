@@ -11,7 +11,7 @@ const finished = (): IteratorReturnResult<void> => ({
   done: true,
 });
 
-class Flattened<T> implements AsyncGenerator<T, void, unknown> {
+class Flattened<T> {
   readonly #source: AsyncGenerator<T[], void, unknown>;
   readonly #signal: AbortSignal | undefined;
   #rows: readonly T[] = [];
@@ -77,15 +77,6 @@ class Flattened<T> implements AsyncGenerator<T, void, unknown> {
     });
   }
 
-  [Symbol.asyncIterator](): this {
-    return this;
-  }
-
-  // What `await using` calls; an async generator closes itself the same way.
-  async [Symbol.asyncDispose](): Promise<void> {
-    await this.return();
-  }
-
   #enqueue<R>(request: () => Promise<R>): Promise<R> {
     this.#pending++;
     const result = this.#tail.then(request);
@@ -140,9 +131,26 @@ class Flattened<T> implements AsyncGenerator<T, void, unknown> {
   }
 }
 
+// An async generator inherits [Symbol.asyncIterator] and, where the engine has
+// it, [Symbol.asyncDispose] from %AsyncIteratorPrototype%: so does this class.
+const AsyncIteratorPrototype = Object.getPrototypeOf(
+  Object.getPrototypeOf(async function* () {}).prototype,
+);
+Object.setPrototypeOf(Flattened.prototype, AsyncIteratorPrototype);
+Object.defineProperty(Flattened.prototype, Symbol.toStringTag, {
+  value: 'AsyncGenerator',
+  configurable: true,
+});
+
 export function flatten<T>(
   source: AsyncGenerator<T[], void, unknown>,
   options?: { signal?: AbortSignal | undefined },
 ): AsyncGenerator<T, void, unknown> {
-  return new Flattened(source, options?.signal);
+  // The cast: [Symbol.asyncDispose], which the type may require, is inherited
+  // from %AsyncIteratorPrototype% at runtime.
+  return new Flattened(source, options?.signal) as unknown as AsyncGenerator<
+    T,
+    void,
+    unknown
+  >;
 }

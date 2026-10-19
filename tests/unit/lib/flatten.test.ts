@@ -524,6 +524,84 @@ describe('flatten', () => {
     expect(await iterator.next()).toEqual({ value: undefined, done: true });
   });
 
+  it('inherits from the same %AsyncIteratorPrototype% as an async generator', () => {
+    const { source } = scripted([]);
+    const reference = (async function* () {})();
+    const chainOf = (object: object) => {
+      const chain: object[] = [];
+      for (
+        let proto = Object.getPrototypeOf(object);
+        proto !== null;
+        proto = Object.getPrototypeOf(proto)
+      ) {
+        chain.push(proto);
+      }
+      return chain;
+    };
+    const intrinsic = Object.getPrototypeOf(
+      Object.getPrototypeOf(Object.getPrototypeOf(reference)),
+    );
+    // Falsifiability: drop the setPrototypeOf in flatten.ts and the chain
+    // goes straight to Object.prototype.
+    expect(chainOf(flatten(source))).toContain(intrinsic);
+    expect(Object.hasOwn(flatten(source), 'next')).toBe(false);
+  });
+
+  it('reports itself as an AsyncGenerator', () => {
+    const { source } = scripted([]);
+    const iterator = flatten(source);
+    const reference = (async function* () {})();
+    // Falsifiability: remove the Symbol.toStringTag definition and this reads
+    // [object Object].
+    expect(Object.prototype.toString.call(iterator)).toBe(
+      '[object AsyncGenerator]',
+    );
+    const own = Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(iterator),
+      Symbol.toStringTag,
+    );
+    const builtin = Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(Object.getPrototypeOf(reference)),
+      Symbol.toStringTag,
+    );
+    expect(own?.enumerable).toBe(builtin?.enumerable);
+    expect(own?.writable).toBe(builtin?.writable);
+  });
+
+  it.skipIf(typeof Symbol.asyncDispose !== 'symbol')(
+    'is disposed through the inherited member as an async generator is',
+    async () => {
+      // The reference: what an async generator does on an open iterator.
+      const log: string[] = [];
+      const reference = (async function* () {
+        try {
+          yield 1;
+        } finally {
+          log.push('finally');
+        }
+      })();
+      await reference.next();
+      await reference[Symbol.asyncDispose]();
+      expect(log).toEqual(['finally']);
+      expect(await reference.next()).toEqual({ value: undefined, done: true });
+
+      const { source, calls } = scripted([[1, 2]]);
+      const iterator = flatten(source);
+      expect(Object.hasOwn(iterator, Symbol.asyncDispose)).toBe(false);
+      await iterator.next();
+      // Falsifiability: remove the setPrototypeOf and the member is gone, so
+      // this throws a TypeError.
+      await iterator[Symbol.asyncDispose]();
+      expect(calls).toEqual(['next', 'return']);
+      expect(await iterator.next()).toEqual({ value: undefined, done: true });
+
+      // Idle: nothing to close, on both.
+      const idle = scripted([[1]]);
+      await flatten(idle.source)[Symbol.asyncDispose]();
+      expect(idle.calls).toEqual([]);
+    },
+  );
+
   it('collects the rows of a for await', async () => {
     const { source, calls } = scripted([[1, 2], [3], []]);
     expect(await rowsOf(flatten(source))).toEqual([1, 2, 3]);
