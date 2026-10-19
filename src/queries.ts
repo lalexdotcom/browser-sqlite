@@ -216,19 +216,6 @@ const drain = async function* <T extends Record<string, unknown>>(
   }
 };
 
-export const streamRows = async function* <
-  T extends Record<string, unknown> = Record<string, unknown>,
->(
-  worker: PoolWorker,
-  sql: string,
-  params?: QueryParams,
-  options?: InternalChunkOptions,
-): AsyncGenerator<T> {
-  for await (const rows of chunk<T>(worker, sql, params, options)) {
-    for (const row of rows) yield row;
-  }
-};
-
 export const readWorker = async <
   T extends Record<string, unknown> = Record<string, unknown>,
 >(
