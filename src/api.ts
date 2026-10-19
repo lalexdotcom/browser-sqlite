@@ -50,8 +50,11 @@ export type Interruptible<T = unknown> = T & {
    */
   signal?: AbortSignal | undefined;
   /**
-   * Milliseconds from the call within which it must finish, after which it is
-   * aborted and rejected with `OPERATION_TIMEOUT`. It is wall clock: time your
+   * Milliseconds within which it must finish, after which it is aborted and
+   * rejected with `OPERATION_TIMEOUT`. The clock starts at the call; on the
+   * client's `chunk()` and `stream()`, which do nothing until iterated, it
+   * starts at the first `next()`. (A transaction's `tx.chunk()` and
+   * `tx.stream()` start it at the call.) It is wall clock: time your
    * own code spends — between two chunks of a `stream()`, inside a
    * `transaction()` callback, between two `enqueue()` calls — counts against
    * it, as does time spent waiting for a pool worker or for another tab's

@@ -12,6 +12,7 @@ import type { PlatformFeature } from './const/platform';
 import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { createClientDebug, type RequestDebugHandle } from './debug';
 import { advanceSeen, barrierSqlFor, epochsFor } from './epochs';
+import { flatten } from './flatten';
 import {
   type ClientInspection,
   type DatabaseInspection,
@@ -1334,14 +1335,6 @@ export const createSQLiteClient = (
     return chunkRows<T>(sql, bound, options, 'chunk');
   };
 
-  const flattenChunks = async function* <T>(
-    source: AsyncGenerator<T[], void, unknown>,
-  ): AsyncGenerator<T, void, unknown> {
-    for await (const rows of source) {
-      for (const row of rows) yield row;
-    }
-  };
-
   /**
    * Executes a query and streams individual rows (flattened from chunks).
    *
@@ -1357,7 +1350,7 @@ export const createSQLiteClient = (
     const { sql, params, options } = queryArgs(input, second, third);
     assertReadable(sql, 'stream');
     const bound = prepareParams(params);
-    return flattenChunks(chunkRows<T>(sql, bound, options, 'stream'));
+    return flatten(chunkRows<T>(sql, bound, options, 'stream'));
   };
 
   /**
