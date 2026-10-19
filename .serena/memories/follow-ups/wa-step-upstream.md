@@ -23,6 +23,12 @@ Part of `mem:follow-ups`, opened 2026-10-16 (user) when the library-side fast st
 
 **What it gave in the library** (FAST-STEP, `mem:measurements/statement-cache-and-perf`): `chunk()` of 4 000 000 rows, `MemoryVFS`, Chromium −49 / −38 / −20 %, Firefox −80 / −59 / −38 % (`sync` / `async` / `jspi`) — a figure for the proposal's motivation, not its evidence.
 
+## The Discussion (2026-10-19)
+
+**Drafted, not posted.** Three options, with pros and cons (user, 2026-10-19: the return-type change is listed as a third option, not dismissed): (1) `step()` kept `async` without the nested `retry()`, (2) a new method returning `number | Promise<number>`, (3) `step()` itself returning `number | Promise<number>` (breaking: `.then()` on a number, a synchronous throw, the declared type — a major). **No runnable snippet for this Discussion (user, 2026-10-19): the maintainer knows his library and will reproduce if the idea interests him.**
+
+**Re-measured 2026-10-19** on a clean export of upstream `master` `6238f53` (no patch), wa-sqlite alone in a module worker, `MemoryVFS`, 4 000 000 `(a, b)` rows, stock Chrome 153 and Firefox 155.0.1 launched by hand (update policy installed), 3 pages × 2 passes per build and engine, arm order alternating, row counts checked, median ms Firefox / Chrome: `sync` today 3 470 / 910, option 1 485 / 312, option 2 241 / 218, option 3 with callers unchanged (`await` on a number) 255 / 309, raw export 178 / 215; `asyncify` 3 867 / 999, 1 016 / 599, 769 / 485, 794 / 587; `jspi` 5 153 / 1 688, 3 846 / 1 401, 2 961 / 1 197, 2 903 / 1 178. **Option 3 with callers unchanged gets nearly option 2's gain** on Firefox and on `jspi` (on Chrome `sync`/`asyncify`, about option 1's): awaiting a number is cheap.
+
 ## A separate one-line report, not sent
 
 **wa-sqlite's `MemoryAsyncVFS.create()` returns a `MemoryVFS`** (`new MemoryVFS(name, module)`), so anything created through it never suspends.
