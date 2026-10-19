@@ -16,9 +16,9 @@ descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` clai
 shadow types that were never loaded, `W-types` a duplication already gone. Both would have
 been work on nothing.
 
-## `stream()`: a hand-written iterator, and `step()` proposals to wa-sqlite (user, 2026-10-16)
+## In sub-memories (user, 2026-10-16 and 19)
 
-`mem:follow-ups/stream-iterator` (its own branch) and `mem:follow-ups/wa-step-upstream` (optional, upstream's).
+`mem:follow-ups/stream-iterator` (its own branch), `mem:follow-ups/wa-step-upstream` (optional, upstream's), `mem:follow-ups/tx-validation` (`tx.first/read/write` throw instead of rejecting).
 
 ## `multi-client` bulkWrite interleave on chromium `IDBMirrorVFS/async` — seen, not reproducible (2026-10-07)
 

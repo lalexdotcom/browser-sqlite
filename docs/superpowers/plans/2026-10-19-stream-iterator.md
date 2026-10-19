@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `client.stream()` and `tx.stream()` hand out rows through a hand-written async iterator over a generator of chunks, with no change of behaviour.
+**Goal:** (after Task 0, which makes `client.stream()`/`client.chunk()` validate their arguments at the call) `client.stream()` and `tx.stream()` hand out rows through a hand-written async iterator over a generator of chunks, with no change of behaviour.
 
 **Architecture:** A small adapter `flatten(source, options?)` in `src/flatten.ts` turns an `AsyncGenerator<T[]>` into an `AsyncGenerator<T>`, serving buffered rows with resolved promises. Every generator that owns a resource today (deadline, retry, lease, transaction queue, abandon) keeps it and yields chunks; `stream()` is the flattening of what `chunk()` already builds. `streamRows` goes away.
 
@@ -17,7 +17,7 @@
 - Never `--no-verify`, never set `SKIP_SIMPLE_GIT_HOOKS`, never touch `.git/hooks`, never run `simple-git-hooks`, `pnpm install` or `pnpm store prune`. `pnpm exec tsc --noEmit` before each commit; a failing hook is reported verbatim. After committing, `git log -1` and `git show --stat HEAD`.
 - `pnpm check` after every modification. Conventional Commits, body says why, ending with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - No change of behaviour visible to a consumer of `stream()`/`tx.stream()`; `stream()`'s declared type stays `AsyncGenerator<T, void, unknown>`. No change to `chunk()`, `tx.chunk()`, `read()`, `first()`, the worker or the transport.
-- **An existing test that has to change means the behaviour changed: stop and report, do not edit it.**
+- **An existing test that has to change means the behaviour changed: stop and report, do not edit it.** The single exception is Task 0, the one deliberate change (argument validation of `client.stream()`/`client.chunk()` at the call), whose updated tests are listed in its report.
 - **Every new test is falsified once**: a deliberate mutation of the code under test makes it fail; the mutation and its failure are recorded in the task report, then reverted.
 - Browser commands: `node scripts/test-plan.ts <files>` (both engines, both modes, complement), `--mode all-pairs <files>` (every eligible pair), `--pair <vfs>/<build>`. Long runs log to a file under `.scratchpad/stream-iterator/` (never piped through `tail`).
 - Comments state the fact in one or two lines.
@@ -29,6 +29,31 @@
 - **`return()` while a chunk fetch is pending** must wait for it and then close the source once. Pinned by Tasks 1-2.
 - **A `tx.stream()` left open when the callback ends** must be closed by the transaction, with no buffered row served afterwards. Pinned by Task 4's browser test, written and green on `main` first.
 - **A savepointed `tx.stream()` aborted mid-chunk** must reject the next row and abandon the write as today. Pinned by Task 1 (the adapter calls `throw(reason)`) and Task 4's browser test, green on `main` first.
+
+---
+
+### Task 0: `client.stream()` and `client.chunk()` validate at the call (the one deliberate change, user 2026-10-19)
+
+**The only behaviour change of the branch, decided by the user; rule 1 applies to every later task, measured from the state this task leaves.** Today both are `async function*`, so `queryArgs` (`INVALID_VALUE`: neither a string nor an `` sql`…` `` query, or a params array with an `` sql`…` `` query), `assertReadable` (`NOT_A_READ_QUERY`) and `prepareParams` (`INVALID_VALUE` on an unbindable value) run at the first `next()`. After this task they run at the call and throw from it, as `tx.stream()`/`tx.chunk()` already do. **The `timeout` timer (`withDeadline`) stays started at the first `next()`**: only its doc comment changes, to say so for `chunk()`/`stream()` instead of "counted from the call".
+
+**Files:** Modify `src/client.ts` (`chunk`, `stream`), `src/utils.ts` (`withDeadline`'s comment); Test: the browser file(s) that pin `chunk()`/`stream()` argument errors (find them: `grep -rn "NOT_A_READ_QUERY\|INVALID_VALUE" tests/browser/pairs`), plus new literal `it`s where a case is missing.
+
+**Interfaces — Produces:** inside `createSQLiteClient`, one internal async generator taking the validated `sql`, bound params, options and the method name (`'chunk'` or `'stream'`), running `withDeadline`, `streamWithRetry` and `chunkWorker` exactly as `chunk`'s body does today. `chunk(...)` = validate, then return that generator with `'chunk'`; `stream(...)` = validate, then today's row-flattening over that generator with `'stream'` (Task 3 swaps it for `flatten`). Public signatures and declared return types unchanged (check `dist/*.d.ts` after `pnpm build` against `main`'s).
+
+- [ ] **Step 1: Tests first.** For `chunk()` and `stream()` each, one literal `it` per validation: a non-query first argument, an `` sql`…` `` query with a params array, a write statement, an unbindable param value — `expect(() => db.stream(...)).toThrow(SQLiteError)` with the code, and no worker leased (a following `read()` on a `poolSize: 1` client resolves at once). Existing tests that expect the rejection on `next()` are the ones this deliberate change updates: change only their expectation (throw at the call), list each in the report. Run them, see the new ones fail.
+- [ ] **Step 2: Implement** per Interfaces; validations before any generator is created, nothing else moved.
+- [ ] **Step 3: Run** — the changed/new browser files, then `node scripts/test-plan.ts` on `queries`, `results`, `routing`, `query-timeout`, `abandon`, `early-exit`, `stream-retention`, `params`, `sql-tag`; `pnpm test:unit`; `tsc`. Falsify one new test by moving one validation back inside the generator; record; revert.
+- [ ] **Step 4: Commit, marked breaking** (`mem:conventions`, Git and versioning):
+  ```
+  feat(client)!: stream() and chunk() validate their arguments at the call
+
+  <why: errors at the call, as tx.stream()/tx.chunk() and the promise-returning methods already report them>
+
+  BREAKING CHANGE: an invalid query, a write statement or an unbindable param passed to stream() or chunk() throws from the call instead of rejecting the first next().
+
+  Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+  ```
+  with `BREAKING CHANGE:` in a paragraph of its own above `Co-Authored-By`.
 
 ---
 
@@ -90,8 +115,8 @@ If a mismatch is found that is not a bug of `flatten` but a difference the spec 
 
 **Interfaces — Consumes:** `flatten` (Task 1).
 
-- [ ] **Step 1: Baseline** — on the branch before the change, run and keep the result lines: `node scripts/test-plan.ts tests/browser/pairs/{abandon,early-exit,stream-retention,query-timeout,interrupt,queries,results,routing,writer-spread,params,sql-tag}.test.ts`.
-- [ ] **Step 2: Change** — the body of `chunk` (deadline, `streamWithRetry`, `chunkWorker`, the `onAbandon`/`release` wiring) becomes an internal generator taking the method name used in `assertReadable` and `withDeadline`; `chunk` calls it with `'chunk'`; `stream` returns `flatten(<it>('stream'))`. **Trap: `stream` is an `async function*` today, so `queryArgs`, `assertReadable`, `prepareParams` and `withDeadline` run at the first `next()`, not at the call — a bad argument rejects the first `next()` and the deadline starts then.** Keep all of them inside the internal generator's body, so they still run at the first `next()` (which `flatten` forwards); a unit or browser test that calls `stream()` with an invalid argument and expects the rejection on `next()` must stay green. `stream`'s generics and parameters are unchanged; its declared return type stays `AsyncGenerator<T, void, unknown>` (check the emitted `dist/*.d.ts` after `pnpm build` against `main`'s for `stream`).
+- [ ] **Step 1: Baseline** — on the branch after Task 0, before this change, run and keep the result lines: `node scripts/test-plan.ts tests/browser/pairs/{abandon,early-exit,stream-retention,query-timeout,interrupt,queries,results,routing,writer-spread,params,sql-tag}.test.ts`.
+- [ ] **Step 2: Change** — `stream` returns `flatten(<Task 0's internal chunk generator>('stream'))` after its validations (which stay at the call, as Task 0 left them). **Trap: `withDeadline` must still start at the first `next()`** — it lives in the internal generator's body, which `flatten` starts at its first `next()`; keep it there. `stream`'s generics and parameters are unchanged; its declared return type stays `AsyncGenerator<T, void, unknown>` (check the emitted `dist/*.d.ts` after `pnpm build` against `main`'s for `stream`).
 - [ ] **Step 3: Run** — the same files → the same result lines as Step 1; then `--mode all-pairs` on `abandon`, `early-exit`, `stream-retention`, `query-timeout`; then `BSQ_EXPOSE_GC=1 node scripts/test-plan.ts --browser chrome tests/browser/pairs/abandon-gc.test.ts`; `pnpm test:unit`. A test that fails or has to change: stop and report.
 - [ ] **Step 4: Commit** — `perf(client): stream() flattens the chunk generator instead of a generator per row`.
 
@@ -128,7 +153,7 @@ If a mismatch is found that is not a bug of `flatten` but a difference the spec 
 
 ### Task 6: Delivery
 
-- [ ] **Step 1:** `CHANGELOG.md` through the `changelog-maintenance` skill: `[Unreleased]` › Changed — `stream()` is faster, most on Firefox. No figures.
+- [ ] **Step 1:** `CHANGELOG.md` through the `changelog-maintenance` skill, under `[Unreleased]` › Changed: `stream()` is faster, most on Firefox (no figures); and a **Breaking:** line — `stream()` and `chunk()` throw an invalid argument from the call instead of rejecting the first `next()` (Task 0's commit carries `!`).
 - [ ] **Step 2:** `node scripts/hook-gate.ts delivery --run`, logged; the `Test Files` line, the skipped-with-reason list and the not-applicable counts compared with `mem:state`'s baseline.
 - [ ] **Step 3:** The matrix on GitHub (the branch touches `src/transaction.ts`): the user pushes the branch, `gh workflow run matrix.yaml --ref perf/stream-iterator`, verdict read, remote branch deleted.
 - [ ] **Step 4:** Report to the user and wait; the merge only on their approval, then the follow-up closed into history and `mem:state` updated.
