@@ -28,6 +28,10 @@ const scripted = (
   onThrow: (error: unknown) => Promise<IteratorResult<number[], void>> = (
     error,
   ) => Promise.reject(error),
+  onReturn: () => Promise<IteratorResult<number[], void>> = async () => ({
+    value: undefined,
+    done: true,
+  }),
 ) => {
   const calls: string[] = [];
   const thrown: unknown[] = [];
@@ -47,9 +51,9 @@ const scripted = (
         inFlight--;
       }
     },
-    async return() {
+    return() {
       calls.push('return');
-      return { value: undefined, done: true };
+      return onReturn();
     },
     throw(error: unknown) {
       calls.push('throw');
@@ -294,6 +298,92 @@ describe('flatten', () => {
     const iterator = flatten(source);
     // Falsifiability: return a fresh object and this is false.
     expect(iterator[Symbol.asyncIterator]()).toBe(iterator);
+  });
+
+  it('ends when the source answers throw() with done', async () => {
+    const { source, calls } = scripted([[1, 2]], () =>
+      Promise.resolve({ value: undefined, done: true }),
+    );
+    const iterator = flatten(source);
+    await iterator.next();
+    // Falsifiability: rethrow the error after the source's throw() and this
+    // rejects.
+    expect(await iterator.throw(new Error('stop'))).toEqual({
+      value: undefined,
+      done: true,
+    });
+    expect(await iterator.next()).toEqual({ value: undefined, done: true });
+    expect(calls).toEqual(['next', 'throw']);
+  });
+
+  it('closes a source that catches throw() and yields again', async () => {
+    const { source, calls } = scripted([[1, 2]], () =>
+      Promise.resolve({ value: [9], done: false }),
+    );
+    const iterator = flatten(source);
+    await iterator.next();
+    // Falsifiability: drop the return() after a throw() answered not done and
+    // the log ends at 'throw': a source left suspended.
+    expect(await iterator.throw(new Error('stop'))).toEqual({
+      value: undefined,
+      done: true,
+    });
+    expect(calls).toEqual(['next', 'throw', 'return']);
+    expect(await iterator.next()).toEqual({ value: undefined, done: true });
+    expect(calls).toEqual(['next', 'throw', 'return']);
+  });
+
+  it('rejects return() with what the source rejects with', async () => {
+    const cleanup = new Error('cleanup failed');
+    const { source, calls } = scripted([[1, 2]], undefined, () =>
+      Promise.reject(cleanup),
+    );
+    const iterator = flatten(source);
+    await iterator.next();
+    // Falsifiability: swallow the source's error in return() and this resolves.
+    await expect(iterator.return()).rejects.toBe(cleanup);
+    expect(await iterator.next()).toEqual({ value: undefined, done: true });
+    expect(calls).toEqual(['next', 'return']);
+  });
+
+  it('settles return() as an async generator does when its value and the source both reject', async () => {
+    const failure = new Error('value');
+    const cleanup = new Error('cleanup failed');
+    const reference = async function* (
+      source: AsyncGenerator<number[], void, unknown>,
+    ) {
+      for await (const chunk of source) for (const row of chunk) yield row;
+    };
+    const outcome = async (
+      make: (
+        source: AsyncGenerator<number[], void, unknown>,
+      ) => AsyncGenerator<number, void, unknown>,
+    ) => {
+      const { source, calls } = scripted([[1, 2]], undefined, () =>
+        Promise.reject(cleanup),
+      );
+      const iterator = make(source);
+      await iterator.next();
+      const error = await iterator.return(Promise.reject(failure)).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      return { error, calls };
+    };
+    const expected = await outcome(reference);
+    // Falsifiability: await `value` after closing the source and `cleanup`
+    // surfaces instead of `failure`.
+    expect(expected.error).toBe(failure);
+    expect(await outcome(flatten)).toEqual(expected);
+  });
+
+  it('treats a signal of undefined as no signal', async () => {
+    const { source, calls } = scripted([[1, 2, 3]]);
+    const iterator = flatten(source, { signal: undefined });
+    expect(await rowsOf(iterator)).toEqual([1, 2, 3]);
+    // Falsifiability: type the option `signal?: AbortSignal` and `tsc` rejects
+    // this call under exactOptionalPropertyTypes.
+    expect(calls).toEqual(['next', 'next']);
   });
 
   it('closes the source once when disposed', async () => {

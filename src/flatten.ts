@@ -1,16 +1,7 @@
 /**
- * Rows out of a generator of chunks, without a generator per row.
- *
- * Behaves as `async function* () { for await (const c of source) for (const r
- * of c) yield r; }` does, with two differences that keep the lifecycle where
- * it is: `throw()` is forwarded to the source (which sits at a `yield` and runs
- * its own `catch`), where the `for await` would have called its `return()`; and
- * `signal`, when given, is checked before each buffered row.
- *
- * A row already received costs one resolved promise. Everything else goes
- * through a queue, in call order, as an async generator's requests do: a
- * `next()` called while a chunk is being fetched waits for it, and a `return()`
- * waits for it too, then closes the source once.
+ * Rows out of a generator of chunks, as `for await (c of source) yield* c`
+ * gives them, minus a generator per row; `throw()` goes to the source and
+ * `signal` is checked before each buffered row.
  */
 
 type Status = 'idle' | 'open' | 'done';
@@ -55,12 +46,25 @@ class Flattened<T> implements AsyncGenerator<T, void, unknown> {
 
   return(value?: void | PromiseLike<void>): Promise<IteratorResult<T, void>> {
     return this.#enqueue(async () => {
+      // `value` first, as an async generator awaits it: when both it and the
+      // source's return() reject, its error is the one that surfaces.
+      let failure: { error: unknown } | undefined;
+      try {
+        await value;
+      } catch (error) {
+        failure = { error };
+      }
       if (this.#status === 'open') {
         this.#end();
-        await this.#source.return(undefined);
+        try {
+          await this.#source.return(undefined);
+        } catch (error) {
+          failure ??= { error };
+        }
       }
       this.#end();
-      return { value: await value, done: true };
+      if (failure) throw failure.error;
+      return finished();
     });
   }
 
@@ -130,14 +134,16 @@ class Flattened<T> implements AsyncGenerator<T, void, unknown> {
 
   async #throwIntoSource(error: unknown): Promise<IteratorResult<T, void>> {
     this.#end();
-    await this.#source.throw(error);
+    const step = await this.#source.throw(error);
+    // The source caught the error and yielded again: close what is suspended.
+    if (!step.done) await this.#source.return(undefined);
     return finished();
   }
 }
 
 export function flatten<T>(
   source: AsyncGenerator<T[], void, unknown>,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal | undefined },
 ): AsyncGenerator<T, void, unknown> {
   return new Flattened(source, options?.signal);
 }
