@@ -5,7 +5,7 @@ saying what it was, because a table of increments cannot show an arc. `CHANGELOG
 the consumer-facing delta; `git log` holds the detail. This file exists only so a date or a
 merge commit can be found without archaeology.
 
-The rows live by week, Monday to Sunday, one memory each named `history/<monday>-to-<sunday>` (user, 2026-10-13; by month or half-month before): `mem:history/2026-03-23-to-29` (rc.3 alone), `mem:history/2026-08-17-to-23`, `mem:history/2026-08-24-to-30`, `mem:history/2026-08-31-to-09-06`, `mem:history/2026-09-07-to-13`, `mem:history/2026-09-14-to-20`, `mem:history/2026-09-21-to-27`, `mem:history/2026-09-28-to-10-04`, `mem:history/2026-10-05-to-11`, `mem:history/2026-10-12-to-18`. A new week starts its own memory, added here. What each merged wave left that the code will not tell you is in `mem:history/waves`, frozen since 2026-10-08 (its last wave merged on 2026-09-15). **A new row goes in the month it was merged.**
+The rows live by week, Monday to Sunday, one memory each named `history/<monday>-to-<sunday>` (user, 2026-10-13; by month or half-month before): `mem:history/2026-03-23-to-29` (rc.3 alone), `mem:history/2026-08-17-to-23`, `mem:history/2026-08-24-to-30`, `mem:history/2026-08-31-to-09-06`, `mem:history/2026-09-07-to-13`, `mem:history/2026-09-14-to-20`, `mem:history/2026-09-21-to-27`, `mem:history/2026-09-28-to-10-04`, `mem:history/2026-10-05-to-11`, `mem:history/2026-10-12-to-18`, `mem:history/2026-10-19-to-25`. A new week starts its own memory, added here. What each merged wave left that the code will not tell you is in `mem:history/waves`, frozen since 2026-10-08 (its last wave merged on 2026-09-15). **A new row goes in the month it was merged.**
 
 ## What rc.4 was — the one entry that is not one line
 
