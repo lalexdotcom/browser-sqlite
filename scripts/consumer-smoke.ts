@@ -32,6 +32,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { remote } from 'webdriverio';
 import {
+  type BrowserBinaries,
   browserCapabilities,
   resolveBrowsers,
   WDIO_CACHE_DIR,
@@ -169,8 +170,7 @@ function stopServer(child: ChildProcess) {
 }
 
 /** Loads the fixture and returns what `window.__SMOKE__` ended up holding. */
-async function driveBrowser(url: string) {
-  const { chrome } = await resolveBrowsers(['chrome']);
+async function driveBrowser(url: string, chrome: BrowserBinaries) {
   const browser = await remote({
     logLevel: 'warn',
     cacheDir: WDIO_CACHE_DIR,
@@ -232,7 +232,7 @@ async function checkMode(
   const { child, log } = startServer(serverArgs, appDir);
   try {
     await waitForServer(url);
-    const { smoke, noise } = await driveBrowser(url);
+    const { smoke, noise } = await driveBrowser(url, chrome);
     if (smoke?.ok) {
       s.pass(smoke.detail);
     } else {
@@ -308,6 +308,18 @@ const staticServe = (dir: string, port: number) => [
   dir,
   String(port),
 ];
+
+// Chrome is resolved once, before any stage: an install that fails stops the
+// run here instead of every stage leading a new one.
+const chrome = await resolveBrowsers(['chrome']).then(
+  ({ chrome }) => chrome,
+  (error: unknown) => {
+    process.stderr.write(
+      `FAIL — ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    process.exit(1);
+  },
+);
 
 const tmp = mkdtempSync(join(tmpdir(), 'browser-sqlite-smoke-'));
 const appDir = join(tmp, 'app');

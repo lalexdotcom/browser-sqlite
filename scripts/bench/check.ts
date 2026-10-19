@@ -353,4 +353,6 @@ try {
   await browser?.deleteSession().catch(() => {});
   rmSync(downloadDir, { recursive: true, force: true });
   server.kill();
+  // An install the leader's bound abandoned keeps its download open and the process alive.
+  process.exit(process.exitCode ?? 0);
 }
