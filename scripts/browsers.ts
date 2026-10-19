@@ -128,7 +128,6 @@ export const browserCapabilities = (
   };
 };
 
-/** The paths a harness launches: absolute, inside the cache. */
 type ChromeOptions = NonNullable<
   WebdriverIO.Capabilities['goog:chromeOptions']
 >;
@@ -142,6 +141,7 @@ export interface BrowserOptions {
   prefs?: Record<string, unknown>;
 }
 
+/** The paths a harness launches: absolute, inside the cache. */
 export interface BrowserBinaries {
   browser: string;
   driver: string;
