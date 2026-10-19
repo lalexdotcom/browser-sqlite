@@ -34,7 +34,11 @@ const browserProject = (
   test: {
     name,
     include,
-    globalSetup: ['tests/harness/build-setup.ts'],
+    // The install comes after the build: a broken build stops the run before any download.
+    globalSetup: [
+      'tests/harness/build-setup.ts',
+      'tests/harness/browsers-setup.ts',
+    ],
     // The files of a run share one profile: after each file its OPFS and
     // IndexedDB leftovers are erased and the erasure verified; what cannot be
     // erased fails that file, by name.
