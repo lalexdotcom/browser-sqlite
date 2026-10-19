@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   browserCapabilities,
@@ -10,23 +11,25 @@ import {
 } from '../../../scripts/browsers.ts';
 
 describe('firefoxPoliciesPath', () => {
+  // Built with join(): the function uses the platform's separator, and the
+  // suite runs on Windows too.
   it('is distribution/policies.json beside the binary on Linux and Windows', () => {
-    expect(
-      firefoxPoliciesPath(
-        '/cache/firefox/linux_arm-stable_155.0.1/firefox/firefox',
-      ),
-    ).toBe(
-      '/cache/firefox/linux_arm-stable_155.0.1/firefox/distribution/policies.json',
+    const dir = join('cache', 'firefox', 'linux_arm-stable_155.0.1', 'firefox');
+    expect(firefoxPoliciesPath(join(dir, 'firefox'))).toBe(
+      join(dir, 'distribution', 'policies.json'),
     );
   });
 
   it('is under Contents/Resources in a macOS bundle', () => {
-    expect(
-      firefoxPoliciesPath(
-        '/cache/firefox/mac_arm-stable_155.0.1/Firefox.app/Contents/MacOS/firefox',
-      ),
-    ).toBe(
-      '/cache/firefox/mac_arm-stable_155.0.1/Firefox.app/Contents/Resources/distribution/policies.json',
+    const contents = join(
+      'cache',
+      'firefox',
+      'mac_arm-stable_155.0.1',
+      'Firefox.app',
+      'Contents',
+    );
+    expect(firefoxPoliciesPath(join(contents, 'MacOS', 'firefox'))).toBe(
+      join(contents, 'Resources', 'distribution', 'policies.json'),
     );
   });
 

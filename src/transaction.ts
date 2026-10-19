@@ -8,15 +8,16 @@ import type {
 } from './api';
 import { prepareParams, type QueryParams } from './binary';
 import type { ReadFn, TransactionFn, WriteFn } from './bulk';
+import { flatten } from './flatten';
 import type { Logger } from './logger';
 import type { PoolWorker, PoolWorkerQueryOptions } from './pool';
 import {
   chunk as chunkWorker,
   firstWorker,
+  type InternalChunkOptions,
   makeAbortRace,
   raceAbort,
   readWorker,
-  streamRows,
   writeWorker,
 } from './queries';
 import { createSavepointStack, type SavepointEntry } from './savepoints';
@@ -69,12 +70,13 @@ const exec = async (
  * the query's current owner.
  *
  * Both fields are filled after the entry exists, which is why both are
- * optional. `gen` is set before the entry ever reaches `open`. `transport`
+ * optional. `gen` is set before the entry ever reaches `open`; for `stream()`
+ * it is then replaced by the row adapter wrapping that generator. `transport`
  * arrives with `onTransport`, which for `chunk()` fires synchronously inside
- * the factory and for `stream()` fires on the first `next()` — `streamRows` is
- * itself a generator, so it does not reach `chunk()` until then. An entry with
- * no transport yet has no query on the worker either, and there is nothing for
- * `interrupt()` to stop.
+ * the factory and for `stream()` fires on the first `next()` — `stream()` calls
+ * the factory from a generator, so it does not reach `chunk()` until then. An
+ * entry with no transport yet has no query on the worker either, and there is
+ * nothing for `interrupt()` to stop.
  */
 type OpenStatement = {
   gen?: AsyncGenerator<unknown>;
@@ -812,6 +814,35 @@ export const createTransaction =
       };
 
       /**
+       * The chunk source of `chunk()` and `stream()`. The worker and the options
+       * are settled when this is called, at the statement's call; the function
+       * it returns starts the query, so each method decides when: `chunk()` at
+       * the call, `stream()` at its first next().
+       */
+      const chunkSource = <T extends Record<string, unknown>>(
+        st: {
+          release: () => void;
+          options: SQLiteChunkOptions;
+          driving: SQLiteChunkOptions;
+          savepointed: boolean;
+          mark: { posted: boolean };
+        },
+        query: string,
+        bound: ReturnType<typeof prepareParams>,
+        entry: OpenStatement,
+      ): (() => AsyncGenerator<T[]>) => {
+        const target = via(st.savepointed, st.mark);
+        const options: InternalChunkOptions = {
+          ...(st.savepointed ? st.driving : st.options),
+          onAbandon: st.release,
+          onTransport: (iterator) => {
+            entry.transport = iterator;
+          },
+        };
+        return () => chunkWorker<T>(target, query, bound, options);
+      };
+
+      /**
        * Close what the callback abandoned. `return()` sends the worker the stop
        * request and starts the drain, but queries.ts's `drain()` fires that off
        * without awaiting it — deliberately, for the registry-driven abandonment
@@ -990,18 +1021,7 @@ export const createTransaction =
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
           // quiesce().then(release) already pending in its own finally.
-          const source = chunkWorker<T>(
-            via(st.savepointed, st.mark),
-            query,
-            bound,
-            {
-              ...(st.savepointed ? st.driving : st.options),
-              onAbandon: st.release,
-              onTransport: (iterator) => {
-                entry.transport = iterator;
-              },
-            },
-          );
+          const source = chunkSource<T>(st, query, bound, entry)();
           return releasing(source, entry, st, 'chunk');
         },
 
@@ -1018,26 +1038,26 @@ export const createTransaction =
           const query = checksql(sql);
           const bound = prepareParams(params);
           const st = withSignal(given, 'stream', query);
-          // streamRows forwards its options straight to chunk(), but it is a
-          // generator itself: the transport lands in `entry` on the first
-          // next(), not here.
           const entry: OpenStatement = {};
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
           // quiesce().then(release) already pending in its own finally.
-          const source = streamRows<T>(
-            via(st.savepointed, st.mark),
-            query,
-            bound,
-            {
-              ...(st.savepointed ? st.driving : st.options),
-              onAbandon: st.release,
-              onTransport: (iterator) => {
-                entry.transport = iterator;
-              },
-            },
+          const start = chunkSource<T>(st, query, bound, entry);
+          // The query is built on the first next(), not here: a stream never
+          // read holds no query, and its transport lands in `entry` only then.
+          const source = (async function* () {
+            yield* start();
+          })();
+          // `releasing` checks its own signal once per chunk; the adapter checks
+          // it before each buffered row and throws its reason into `releasing`.
+          const rows = flatten(
+            releasing(source, entry, st, 'stream'),
+            st.savepointed ? { signal: st.own } : undefined,
           );
-          return releasing(source, entry, st, 'stream');
+          // The transaction closes the adapter, which drops its buffered rows
+          // and closes `releasing` in turn.
+          entry.gen = rows;
+          return rows;
         },
 
         first: <T extends Record<string, unknown>>(

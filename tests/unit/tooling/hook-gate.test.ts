@@ -385,6 +385,17 @@ describe('hook-gate runChecks', () => {
   });
 });
 
+describe('COMMANDS.tsc', () => {
+  // The root config passed while the build's declaration step failed on
+  // `src/` (2026-10-19). Falsifiable: drop the second step.
+  it('typechecks the build config as well as the root one', () => {
+    expect(COMMANDS.tsc.map((step) => step.argv.join(' '))).toEqual([
+      'pnpm exec tsc --noEmit',
+      'pnpm exec tsc -p tsconfig.build.json --noEmit',
+    ]);
+  });
+});
+
 describe('COMMANDS on Windows', () => {
   // Under shell: true (win32, for the pnpm/npx .cmd shims) cmd.exe would
   // split such an entry. Falsifiable: add an argv entry with a space.

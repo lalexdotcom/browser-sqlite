@@ -260,7 +260,12 @@ export type Step = {
 };
 
 export const COMMANDS: Readonly<Record<Check, readonly Step[]>> = {
-  tsc: [{ argv: ['pnpm', 'exec', 'tsc', '--noEmit'] }],
+  // The build's declaration step typechecks `src/` alone under tsconfig.build.json: the
+  // root config, which includes tests and scripts, can pass where that step fails.
+  tsc: [
+    { argv: ['pnpm', 'exec', 'tsc', '--noEmit'] },
+    { argv: ['pnpm', 'exec', 'tsc', '-p', 'tsconfig.build.json', '--noEmit'] },
+  ],
   'lint-staged': [{ argv: ['npx', 'lint-staged'] }],
   biome: [{ argv: ['pnpm', 'exec', 'biome', 'ci', '.'] }],
   actionlint: [{ argv: ['node', 'scripts/actionlint.ts'] }],

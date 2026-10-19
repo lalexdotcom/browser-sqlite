@@ -75,11 +75,12 @@ describe('params', () => {
     await expect(db.first('SELECT ?', [2n ** 64n])).rejects.toMatchObject({
       code: 'INVALID_VALUE',
     });
-    const gen = db.stream('SELECT ?', [Symbol('s')]);
-    await expect(gen.next()).rejects.toMatchObject({ code: 'INVALID_VALUE' });
-    await expect(
-      db.chunk('SELECT ?', [Symbol('s')]).next(),
-    ).rejects.toMatchObject({ code: 'INVALID_VALUE' });
+    expect(() => db.stream('SELECT ?', [Symbol('s')])).toThrow(
+      expect.objectContaining({ code: 'INVALID_VALUE' }),
+    );
+    expect(() => db.chunk('SELECT ?', [Symbol('s')])).toThrow(
+      expect.objectContaining({ code: 'INVALID_VALUE' }),
+    );
     await db.transaction(async (tx) => {
       expect(() => tx.read('SELECT ?', [Symbol('s')])).toThrow(
         expect.objectContaining({ code: 'INVALID_VALUE' }),
