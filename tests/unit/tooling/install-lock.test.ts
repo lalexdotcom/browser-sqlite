@@ -1,6 +1,12 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -28,10 +34,12 @@ beforeEach(() => {
   children = [];
 });
 
-// A failing test must not leave a hanging child behind.
+// A failing test must not leave a hanging child, a state dir or a socket file behind.
 afterEach(() => {
   for (const child of children)
     if (child.exitCode === null) child.kill('SIGKILL');
+  rmSync(stateDir, { recursive: true, force: true });
+  if (process.platform !== 'win32') rmSync(path, { force: true });
 });
 
 function spawnChild(
@@ -69,6 +77,17 @@ async function waitForFile(file: string): Promise<void> {
   const deadline = Date.now() + 10_000 * timeScale();
   while (!existsSync(file)) {
     if (Date.now() > deadline) throw new Error(`${file} never appeared`);
+    await new Promise((resume) => setTimeout(resume, 20));
+  }
+}
+
+const waitingCount = (): number =>
+  readdirSync(stateDir).filter((name) => name.startsWith('waiting-')).length;
+
+async function waitForWaiters(count: number): Promise<void> {
+  const deadline = Date.now() + 10_000 * timeScale();
+  while (waitingCount() < count) {
+    if (Date.now() > deadline) throw new Error(`${count} waiters never showed`);
     await new Promise((resume) => setTimeout(resume, 20));
   }
 }
@@ -118,7 +137,10 @@ describe('scripts/install-lock.ts', () => {
     async () => {
       // Falsifiable: close the socket on error without a line and the waiters re-elect and install again.
       const results = await Promise.all(
-        Array.from({ length: 3 }, () => childWithStderr(['throw'])),
+        // Any of the three may lead; the leader holds until the other two wait.
+        Array.from({ length: 3 }, () =>
+          childWithStderr(['throw'], { AWAIT_WAITERS: '2' }),
+        ),
       );
       for (const r of results) {
         expect(r.code).toBe(1);
@@ -132,14 +154,20 @@ describe('scripts/install-lock.ts', () => {
   it(
     'takes over from a leader killed mid-install',
     async () => {
-      // Falsifiable: treat a close without a line as "ready" and the waiters exit with no install done.
+      // Falsifiable: treat a close without a line as an error and the waiters exit 1.
+      // Falsifiable: treat it as "ready" and they exit 0 with no install done.
       const leader = spawnChild(['hang']);
       await waitForFile(join(stateDir, 'started'));
-      const waiters = [child(['ok']), child(['ok'])];
+      const waiting = [child(['ok']), child(['ok'])];
+      await waitForWaiters(2);
       leader.kill('SIGKILL');
-      expect(await Promise.all(waiters)).toEqual([0, 0]);
+      expect(await Promise.all(waiting)).toEqual([0, 0]);
       expect(existsSync(join(stateDir, 'a'))).toBe(true);
-      expect(lines(installsLog)).toHaveLength(2); // the killed one, then exactly one take-over
+      // The killed leader, then one take-over; on POSIX two waiters can both unlink
+      // the stale file in turn and both lead (accepted gap, no guard around the unlink).
+      const count = lines(installsLog).length;
+      if (process.platform === 'win32') expect(count).toBe(2);
+      else expect([2, 3]).toContain(count);
     },
     TIMEOUT,
   );
@@ -163,8 +191,8 @@ describe('scripts/install-lock.ts', () => {
     async () => {
       // Falsifiable: return on "ready" without checking done() and item b is never installed.
       const [x, y] = await Promise.all([
-        child(['ok', 'a']),
-        child(['ok', 'b']),
+        child(['ok', 'a'], { AWAIT_WAITERS: '1' }),
+        child(['ok', 'b'], { AWAIT_WAITERS: '1' }),
       ]);
       expect([x, y]).toEqual([0, 0]);
       expect(

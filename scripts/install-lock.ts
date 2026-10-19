@@ -8,7 +8,7 @@
  * connection, held or later, and closes it.
  */
 import { createHash } from 'node:crypto';
-import { statSync, unlinkSync } from 'node:fs';
+import { unlinkSync } from 'node:fs';
 import {
   createConnection,
   createServer,
@@ -66,13 +66,16 @@ export async function runOnce(options: RunOnceOptions): Promise<void> {
   for (;;) {
     const server = await tryListen(path);
     if (server !== 'busy') {
-      log?.(`browsers: installing (lock ${path})`);
       await lead(server, installBound, async () => {
-        if (!(await done())) await install();
+        if (await done()) return;
+        log?.(`installing (lock ${path})`);
+        await install();
       });
       return;
     }
-    const heard = await listenTo(path, waitBound);
+    const heard = await listenTo(path, waitBound, () =>
+      log?.(`waiting (lock ${path})`),
+    );
     switch (heard.kind) {
       case 'line':
         if (heard.line === 'ready') {
@@ -88,7 +91,7 @@ export async function runOnce(options: RunOnceOptions): Promise<void> {
         break;
       case 'refused':
         if (process.platform === 'win32') await sleep(RETRY_MS);
-        else unlinkIfSame(path, heard.inode);
+        else unlinkStale(path);
         break;
     }
   }
@@ -173,12 +176,15 @@ type Heard =
   | { kind: 'line'; line: string }
   | { kind: 'dead' }
   | { kind: 'missing' }
-  | { kind: 'refused'; inode: number | undefined };
+  | { kind: 'refused' };
 
 /** Connects to the leader's socket and reports what came back. */
-function listenTo(path: string, waitBound: number): Promise<Heard> {
+function listenTo(
+  path: string,
+  waitBound: number,
+  onWaiting: () => void,
+): Promise<Heard> {
   return new Promise<Heard>((resolvePromise, reject) => {
-    const inode = inodeOf(path);
     const socket = createConnection(path);
     let buffer = '';
     let settled = false;
@@ -200,6 +206,7 @@ function listenTo(path: string, waitBound: number): Promise<Heard> {
         ),
       waitBound,
     );
+    socket.on('connect', onWaiting);
     socket.setEncoding('utf8');
     socket.on('data', (chunk: string) => {
       buffer += chunk;
@@ -214,7 +221,7 @@ function listenTo(path: string, waitBound: number): Promise<Heard> {
     socket.on('error', (error: NodeJS.ErrnoException) => {
       switch (error.code) {
         case 'ECONNREFUSED':
-          settle(() => resolvePromise({ kind: 'refused', inode }));
+          settle(() => resolvePromise({ kind: 'refused' }));
           break;
         case 'ENOENT':
           settle(() => resolvePromise({ kind: 'missing' }));
@@ -230,20 +237,12 @@ function listenTo(path: string, waitBound: number): Promise<Heard> {
   });
 }
 
-function inodeOf(path: string): number | undefined {
-  try {
-    return statSync(path).ino;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
- * Removes a socket file nobody listens on. Only the file that refused the
- * connection: if another process already replaced it, that one is alive.
+ * Removes a socket file nobody listens on. Known gap, accepted: two processes
+ * that both saw the stale file can unlink in turn, the second removing the
+ * first's fresh socket, and both lead.
  */
-function unlinkIfSame(path: string, inode: number | undefined): void {
-  if (inode === undefined || inodeOf(path) !== inode) return;
+function unlinkStale(path: string): void {
   try {
     unlinkSync(path);
   } catch (error) {

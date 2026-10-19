@@ -3,8 +3,16 @@
  * tests/unit/tooling/install-lock.test.ts.
  *
  *   node install-lock-child.ts <lockPath> <stateDir> <ok|throw|hang> [<item>]
+ *
+ * Env AWAIT_WAITERS (default 0): `install()` first waits until that many
+ * processes have written a `waiting-<pid>` marker, i.e. are connected to a leader.
  */
-import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  readdirSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { runOnce } from '../../../scripts/install-lock.ts';
 
@@ -14,6 +22,11 @@ if (path === undefined || stateDir === undefined || mode === undefined) {
     'usage: install-lock-child <lockPath> <stateDir> <mode> [item]',
   );
 }
+
+const sleep = (ms: number) => new Promise((resume) => setTimeout(resume, ms));
+const awaited = Number(process.env.AWAIT_WAITERS ?? 0);
+const waiting = () =>
+  readdirSync(stateDir).filter((name) => name.startsWith('waiting-')).length;
 
 try {
   await runOnce({
@@ -26,11 +39,14 @@ try {
       );
       writeFileSync(join(stateDir, 'started'), '');
       if (mode === 'hang') return new Promise<void>(() => {});
-      // Failing at once would let a slow-starting process find the lock free and
-      // lead again; the delay keeps the other processes waiting on this leader.
-      await new Promise((resume) => setTimeout(resume, 300));
+      while (waiting() < awaited) await sleep(20);
       if (mode === 'throw') throw new Error('fixture install failed');
+      await sleep(300);
       writeFileSync(join(stateDir, item), '');
+    },
+    log: (line) => {
+      if (line.startsWith('waiting'))
+        writeFileSync(join(stateDir, `waiting-${process.pid}`), '');
     },
     installBound: Number(process.env.INSTALL_BOUND_MS ?? 5000),
     waitBound: Number(process.env.WAIT_BOUND_MS ?? 8000),
