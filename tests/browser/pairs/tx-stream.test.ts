@@ -48,7 +48,7 @@ describe('tx.stream() between two rows of a chunk', () => {
 
   // Falsifiable: in tx.stream, hand flatten no signal — the buffered row 2 is
   // then served after the abort.
-  it('a savepointed tx.stream() aborted mid-chunk rejects the next row and the write is not lost', async () => {
+  it("a savepointed tx.stream() aborted mid-chunk rejects the next row, undoes its write and keeps the transaction's other writes", async () => {
     const db = await setUp();
     const ctl = new AbortController();
     const reason = new Error('abort the stream');
@@ -56,15 +56,15 @@ describe('tx.stream() between two rows of a chunk', () => {
     let second: unknown;
     const outcome = await db.transaction(async (tx) => {
       await tx.write('INSERT INTO t VALUES (1)');
-      const it = tx
+      const rows = tx
         .stream<{ x: number }>(`INSERT INTO big ${SERIES} RETURNING x`, [], {
           chunkSize: CHUNK_SIZE,
           signal: ctl.signal,
         })
         [Symbol.asyncIterator]();
-      first = await it.next();
+      first = await rows.next();
       ctl.abort(reason);
-      second = await it.next().then(
+      second = await rows.next().then(
         (r) => ({ resolved: r }),
         (e: unknown) => ({ rejected: e }),
       );
@@ -81,6 +81,8 @@ describe('tx.stream() between two rows of a chunk', () => {
     expect(await bigCount(db)).toBe(0);
   });
 
+  // Falsifiable: in flatten's return(), skip the source's return() on an open
+  // iterator — releasing stays parked at its yield and the read waits for ever.
   it('a tx.stream() broken out of mid-chunk lets the next statement run', async () => {
     const db = await setUp();
     let seen = 0;
@@ -96,5 +98,51 @@ describe('tx.stream() between two rows of a chunk', () => {
     });
     expect(seen).toBe(1);
     expect(after).toEqual([{ one: 1 }]);
+  });
+  // Falsifiable: in queries.ts's `drain`, end instead of throwing the reason
+  // of a signal already aborted (B9) — the first next() then resolves `done`.
+  it('a tx.stream() aborted before the first next rejects with the reason, and the transaction goes on', async () => {
+    const db = await setUp();
+    const ctl = new AbortController();
+    const reason = new Error('abort before the first next');
+    let first: unknown;
+    let after: unknown;
+    let read: unknown;
+    const outcome = await db.transaction(async (tx) => {
+      const rows = tx
+        .stream(SERIES, [], { chunkSize: CHUNK_SIZE, signal: ctl.signal })
+        [Symbol.asyncIterator]();
+      ctl.abort(reason);
+      first = await rows.next().then(
+        (r) => ({ resolved: r }),
+        (e: unknown) => ({ rejected: e }),
+      );
+      after = await rows.next();
+      read = await tx.read('SELECT 1 AS one');
+      return 'returned';
+    });
+    expect(first).toEqual({ rejected: reason });
+    expect((first as { rejected: unknown }).rejected).toBe(reason);
+    expect(after).toEqual({ value: undefined, done: true });
+    expect(read).toEqual([{ one: 1 }]);
+    expect(outcome).toBe('returned');
+  });
+
+  // Falsifiable: in tx.stream, pull the adapter once at the call — the stream
+  // then takes its turn on the connection and the write waits behind it.
+  it('a tx.stream() never pulled behind a statement holds up no later statement', async () => {
+    const db = await setUp();
+    let read: unknown;
+    const outcome = await db.transaction(async (tx) => {
+      const before = tx.read('SELECT 1 AS one');
+      tx.stream(SERIES, [], { chunkSize: CHUNK_SIZE });
+      read = await before;
+      await tx.write('INSERT INTO t VALUES (7)');
+      return 'returned';
+    });
+    expect(read).toEqual([{ one: 1 }]);
+    expect(outcome).toBe('returned');
+    expect(await rowsOf(db)).toEqual([7]);
+    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
   });
 });

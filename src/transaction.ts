@@ -71,9 +71,11 @@ const exec = async (
  * Both fields are filled after the entry exists, which is why both are
  * optional. `gen` is set before the entry ever reaches `open`; for `stream()`
  * it is then replaced by the row adapter wrapping that generator. `transport`
- * arrives with `onTransport`, which fires synchronously inside the `chunk()`
- * factory. A transport the consumer has not pulled yet has no query on the
- * worker, and `interrupt()` leaves it alone.
+ * arrives with `onTransport`, which for `chunk()` fires synchronously inside
+ * the factory and for `stream()` fires on the first `next()` — `stream()` calls
+ * the factory from a generator, so it does not reach `chunk()` until then. An
+ * entry with no transport yet has no query on the worker either, and there is
+ * nothing for `interrupt()` to stop.
  */
 type OpenStatement = {
   gen?: AsyncGenerator<unknown>;
@@ -1021,18 +1023,19 @@ export const createTransaction =
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
           // quiesce().then(release) already pending in its own finally.
-          const source = chunkWorker<T>(
-            via(st.savepointed, st.mark),
-            query,
-            bound,
-            {
-              ...(st.savepointed ? st.driving : st.options),
-              onAbandon: st.release,
-              onTransport: (iterator) => {
-                entry.transport = iterator;
-              },
+          const target = via(st.savepointed, st.mark);
+          const options = {
+            ...(st.savepointed ? st.driving : st.options),
+            onAbandon: st.release,
+            onTransport: (iterator: AsyncGenerator<unknown>) => {
+              entry.transport = iterator;
             },
-          );
+          };
+          // The query is built on the first next(), not here: a stream never
+          // read holds no query, and its transport lands in `entry` only then.
+          const source = (async function* () {
+            yield* chunkWorker<T>(target, query, bound, options);
+          })();
           // `releasing` checks its own signal once per chunk; the adapter checks
           // it before each buffered row and throws its reason into `releasing`.
           const rows = flatten(
