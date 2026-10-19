@@ -742,6 +742,33 @@ describe('transaction — when chunk() and stream() reach the worker', () => {
       await streamed.return(undefined);
     });
   });
+
+  // The savepointed path: a write with RETURNING and a signal of its own, as
+  // in the tx.chunk() test above. Falsifiable the same two ways.
+  it('asks the worker at the same moments for a savepointed write', async () => {
+    const worker = fakeWorker([]);
+    const query = vi.spyOn(worker, 'query');
+    const { transaction } = harness(worker);
+    const sql = 'INSERT INTO t VALUES (1) RETURNING a';
+    await transaction(async (tx) => {
+      const begun = query.mock.calls.length;
+      const chunked = tx.chunk(sql, [], {
+        signal: new AbortController().signal,
+      });
+      expect(query.mock.calls.length).toBe(begun + 1);
+      const streamed = tx.stream(sql, [], {
+        signal: new AbortController().signal,
+      });
+      expect(query.mock.calls.length).toBe(begun + 1);
+      await chunked.next();
+      await chunked.return(undefined);
+      const before = query.mock.calls.length;
+      await streamed.next();
+      expect(query.mock.calls.length).toBe(before + 1);
+      await streamed.return(undefined);
+      expect(worker.executed).toContain('SAVEPOINT __bsq_sp');
+    });
+  });
 });
 
 describe('tx.signal — aborts whenever transaction() rejects (spec 2026-09-10, R8 amended)', () => {
