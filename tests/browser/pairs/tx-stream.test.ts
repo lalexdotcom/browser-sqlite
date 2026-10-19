@@ -99,6 +99,7 @@ describe('tx.stream() between two rows of a chunk', () => {
     expect(seen).toBe(1);
     expect(after).toEqual([{ one: 1 }]);
   });
+
   // Falsifiable: in queries.ts's `drain`, end instead of throwing the reason
   // of a signal already aborted (B9) — the first next() then resolves `done`.
   it('a tx.stream() aborted before the first next rejects with the reason, and the transaction goes on', async () => {

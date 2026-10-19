@@ -10,6 +10,4 @@ Part of `mem:follow-ups`, opened 2026-10-16 (user). **Its own branch, after `per
 3. **The browser tests that already pin `stream()`'s semantics run unchanged**: `abandon`, `early-exit`, `stream-retention`, `query-timeout`, `interrupt`, `queries`, `results`, `routing`, `writer-spread`, and the transaction tests' `tx.stream()`. A test that has to change means the semantics changed.
 4. **The public type stays `AsyncGenerator`** (inferred from `async function*` today): the adapter implements `next`, `return`, `throw` and `[Symbol.asyncIterator]`.
 
-Measure it in the library as FAST-STEP was (direct harness, stock browsers with the update policy, `main` against the branch interleaved, row counts checked).
-
 **Measured 2026-10-19 (STREAM-ITER, `mem:measurements/footprint`), n=5, Chrome 153 / Firefox 155.0, 4 000 000 rows, `MemoryVFS`:** `stream()` on `sync` 1 519 → 704 ms (Chrome) and 5 460 → 1 402 ms (Firefox), `async` −31 % / −47 %, `jspi` −10 % / −22 % (Chrome `async`/`jspi` only indications, ranges overlap); `tx.stream()` on `sync` −43 % / −76 %; `chunk()` unchanged (0.99 / 1.01). The three repeated all-pairs runs of the stream-related browser files and `abandon-gc` were green. Still open until the merge into `main`.

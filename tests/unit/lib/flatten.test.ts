@@ -586,7 +586,7 @@ describe('flatten', () => {
       expect(calls).toEqual(['next', 'return']);
       expect(await iterator.next()).toEqual({ value: undefined, done: true });
 
-      // Idle: nothing to close, on both.
+      // Idle: nothing to close. Only flatten runs here.
       const idle = scripted([[1]]);
       await flatten(idle.source)[Symbol.asyncDispose]();
       expect(idle.calls).toEqual([]);

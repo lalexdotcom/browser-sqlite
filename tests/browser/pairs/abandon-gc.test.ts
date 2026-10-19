@@ -1,21 +1,24 @@
 // Run it with V8's `gc` exposed on globalThis, which only this file needs:
 //
-//   BSQ_EXPOSE_GC=1 pnpm exec vitest run --configLoader runner --project 'chrome ·*' tests/browser/abandon-gc.test.ts
+//   BSQ_EXPOSE_GC=1 pnpm exec vitest run --configLoader runner --project 'chrome ·*' tests/browser/pairs/abandon-gc.test.ts
 //
-// Without that variable `globalThis.gc` is undefined and this test skips
-// itself — expected, not a failure, under `pnpm test` or a git hook.
+// Without that variable `globalThis.gc` is undefined and these tests skip
+// themselves — expected, not a failure, under `pnpm test` or a git hook.
 //
 // This covers the collection path only. The repair itself — an abandoned
 // generator giving its worker back at a timeout's deadline and at a
 // signal's abort — is pinned deterministically, with no garbage collection
 // and no browser flag, by tests/browser/abandon.test.ts.
 //
-// Measured under rstest (before the move to Vitest): 13/13 real (non-skipped) green runs, and — as the
-// falsifier — commenting out the `registry.watch(gen, held, token)` registration
-// in src/queries.ts makes BOTH tests hard-time out at 60000 ms with all ten
-// retry rounds exhausted, rather than pass. Re-run under Vitest on 2026-10-10:
-// 2 passed with BSQ_EXPOSE_GC=1, 1 skipped without. The falsifier is
-// what tells a future reader this test is worth re-running at all.
+// Measured under rstest (before the move to Vitest), when the file held the
+// two chunk() tests: 13/13 real (non-skipped) green runs, and, as the
+// falsifier, commenting out the `registry.watch(gen, held, token)` registration
+// in src/queries.ts makes both of them hard-time out at 60000 ms with all ten
+// retry rounds exhausted, rather than pass. The file now holds four tests, the
+// two chunk() ones and their stream() twins. Re-run under Vitest on
+// 2026-10-19 with BSQ_EXPOSE_GC=1: the four pass on Chrome and are skipped on
+// Firefox, which has no --expose-gc. The falsifier is what tells a future
+// reader this test is worth re-running at all.
 import { describe, expect, it } from 'vitest';
 import { createTestClient, scaled, sleep } from '../helpers';
 
