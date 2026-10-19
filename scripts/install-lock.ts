@@ -17,6 +17,7 @@ import {
 } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { timeScale } from './processes.ts';
 
 /** Longest an install may run before its leader gives up. Unscaled: callers multiply by `timeScale()`. */
 export const INSTALL_BOUND_MS = 600_000;
@@ -25,6 +26,10 @@ export const WAIT_MARGIN_MS = 60_000;
 
 /** Pause before retrying a socket that is gone or refusing on Windows. */
 const RETRY_MS = 25;
+/** Pause between two connects to a socket that refuses. */
+const REFUSED_RETRY_MS = 10;
+/** How long a socket must keep refusing before it is taken as stale. Unscaled. */
+const STALE_CONFIRM_MS = 100;
 /** Grace for waiters to hang up before the leader destroys their sockets. */
 const CLOSE_GRACE_MS = 2000;
 
@@ -56,6 +61,8 @@ export interface RunOnceOptions {
   /** Milliseconds a waiter hears nothing from its leader before failing, already scaled. */
   waitBound: number;
   log?: (line: string) => void;
+  /** Test seam: how to open the connection to the leader. */
+  connect?: (path: string) => Socket;
 }
 
 /**
@@ -65,7 +72,9 @@ export interface RunOnceOptions {
  */
 export async function runOnce(options: RunOnceOptions): Promise<void> {
   const { path, done, install, installBound, waitBound, log } = options;
+  const connect = options.connect ?? createConnection;
   if (await done()) return;
+  let refusedSince: number | undefined;
   for (;;) {
     const server = await tryListen(path);
     if (server !== 'busy') {
@@ -76,9 +85,10 @@ export async function runOnce(options: RunOnceOptions): Promise<void> {
       });
       return;
     }
-    const heard = await listenTo(path, waitBound, () =>
+    const heard = await listenTo(path, waitBound, connect, () =>
       log?.(`waiting (lock ${path})`),
     );
+    if (heard.kind !== 'refused') refusedSince = undefined;
     switch (heard.kind) {
       case 'line':
         if (heard.line === 'ready') {
@@ -93,8 +103,19 @@ export async function runOnce(options: RunOnceOptions): Promise<void> {
         await sleep(RETRY_MS);
         break;
       case 'refused':
-        if (process.platform === 'win32') await sleep(RETRY_MS);
-        else unlinkStale(path);
+        if (process.platform === 'win32') {
+          await sleep(RETRY_MS);
+          break;
+        }
+        // A leader is refused between its bind() and its listen(): only a socket
+        // that keeps refusing for a while is a dead leader's.
+        refusedSince ??= Date.now();
+        if (Date.now() - refusedSince < STALE_CONFIRM_MS * timeScale()) {
+          await sleep(REFUSED_RETRY_MS);
+        } else {
+          unlinkStale(path);
+          refusedSince = undefined;
+        }
         break;
     }
   }
@@ -185,10 +206,11 @@ type Heard =
 function listenTo(
   path: string,
   waitBound: number,
+  connect: (path: string) => Socket,
   onWaiting: () => void,
 ): Promise<Heard> {
   return new Promise<Heard>((resolvePromise, reject) => {
-    const socket = createConnection(path);
+    const socket = connect(path);
     let buffer = '';
     let settled = false;
     const settle = (finish: () => void): void => {

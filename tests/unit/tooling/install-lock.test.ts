@@ -6,7 +6,9 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
+import { createConnection, createServer, Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -241,6 +243,76 @@ describe('scripts/install-lock.ts', () => {
       expect(w.stderr).toMatch(
         /waited .* for the install led by another process/,
       );
+    },
+    TIMEOUT,
+  );
+
+  // A leader is refused between its bind() and its listen(); a seam that refuses
+  // a number of connects stands in for that window.
+  const refusing = (times: number, then: (path: string) => Socket) => {
+    let left = times;
+    return (target: string): Socket => {
+      if (left-- <= 0) return then(target);
+      const socket = new Socket();
+      process.nextTick(() =>
+        socket.emit(
+          'error',
+          Object.assign(new Error('refused'), { code: 'ECONNREFUSED' }),
+        ),
+      );
+      return socket;
+    };
+  };
+
+  it.skipIf(process.platform === 'win32')(
+    'keeps the socket of a leader that refuses only for a moment',
+    async () => {
+      // Falsifiable: unlink at the first ECONNREFUSED and the live socket is removed, this process installs.
+      const server = createServer((socket) => socket.end('ready\n'));
+      await new Promise<void>((listening) => server.listen(path, listening));
+      let ready = false;
+      let installed = false;
+      try {
+        await runOnce({
+          path,
+          done: async () => {
+            const was = ready;
+            ready = true; // the leader's answer is what makes it done
+            return was;
+          },
+          install: async () => {
+            installed = true;
+          },
+          installBound: 1000,
+          waitBound: 5000,
+          connect: refusing(2, (target) => createConnection(target)),
+        });
+        expect(installed).toBe(false);
+        expect(existsSync(path)).toBe(true);
+      } finally {
+        server.close();
+      }
+    },
+    TIMEOUT,
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'takes a socket that refuses throughout as stale and leads',
+    async () => {
+      // Falsifiable: never unlink after a refusal and this process loops until the test times out.
+      writeFileSync(path, ''); // a socket file nobody listens on
+      let installed = false;
+      await runOnce({
+        path,
+        done: async () => installed,
+        install: async () => {
+          installed = true;
+        },
+        installBound: 1000,
+        waitBound: 5000,
+        connect: refusing(Number.POSITIVE_INFINITY, createConnection),
+      });
+      expect(installed).toBe(true);
     },
     TIMEOUT,
   );
