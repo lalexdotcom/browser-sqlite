@@ -169,6 +169,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - STREAM-FF
 - FF-PW-AWAIT
 - STREAM-GEN
+- STREAM-ITER — the hand-written iterator in the library, stock Chrome 153 / Firefox 155: `stream()` of 4 000 000 rows −54 % / −74 % on `sync`, `tx.stream()` −43 % / −76 %, `chunk()` unchanged
 - FF-JUGGLER
 
 ## `mem:measurements/binary-protocol` — the binary protocol between page and worker
