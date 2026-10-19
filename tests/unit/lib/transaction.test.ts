@@ -721,6 +721,29 @@ describe('transaction — closed handle: chunk()/stream() do not wait on the wor
   });
 });
 
+describe('transaction — when chunk() and stream() reach the worker', () => {
+  // Falsifiable: in tx.stream(), call start() directly instead of inside the
+  // generator — the worker is then asked for the query at the call. In
+  // tx.chunk(), defer the call to chunkSource's result — it is not asked until
+  // the first next().
+  it('asks the worker for a chunk() query at the call, and for a stream() query at its first next()', async () => {
+    const worker = fakeWorker([]);
+    const query = vi.spyOn(worker, 'query');
+    const { transaction } = harness(worker);
+    await transaction(async (tx) => {
+      const begun = query.mock.calls.length;
+      const chunked = tx.chunk('SELECT 1');
+      expect(query.mock.calls.length).toBe(begun + 1);
+      const streamed = tx.stream('SELECT 2');
+      expect(query.mock.calls.length).toBe(begun + 1);
+      await streamed.next();
+      expect(query.mock.calls.length).toBe(begun + 2);
+      await chunked.return(undefined);
+      await streamed.return(undefined);
+    });
+  });
+});
+
 describe('tx.signal — aborts whenever transaction() rejects (spec 2026-09-10, R8 amended)', () => {
   // Falsifiable: remove `die(e)` from the catch in src/transaction.ts — this
   // and the "throws" browser test in tests/browser/tx-handle.test.ts both go

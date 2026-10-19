@@ -14,6 +14,7 @@ import type { PoolWorker, PoolWorkerQueryOptions } from './pool';
 import {
   chunk as chunkWorker,
   firstWorker,
+  type InternalChunkOptions,
   makeAbortRace,
   raceAbort,
   readWorker,
@@ -813,6 +814,35 @@ export const createTransaction =
       };
 
       /**
+       * The chunk source of `chunk()` and `stream()`. The worker and the options
+       * are settled when this is called, at the statement's call; the function
+       * it returns starts the query, so each method decides when: `chunk()` at
+       * the call, `stream()` at its first next().
+       */
+      const chunkSource = <T extends Record<string, unknown>>(
+        st: {
+          release: () => void;
+          options: SQLiteChunkOptions;
+          driving: SQLiteChunkOptions;
+          savepointed: boolean;
+          mark: { posted: boolean };
+        },
+        query: string,
+        bound: ReturnType<typeof prepareParams>,
+        entry: OpenStatement,
+      ): (() => AsyncGenerator<T[]>) => {
+        const target = via(st.savepointed, st.mark);
+        const options: InternalChunkOptions = {
+          ...(st.savepointed ? st.driving : st.options),
+          onAbandon: st.release,
+          onTransport: (iterator) => {
+            entry.transport = iterator;
+          },
+        };
+        return () => chunkWorker<T>(target, query, bound, options);
+      };
+
+      /**
        * Close what the callback abandoned. `return()` sends the worker the stop
        * request and starts the drain, but queries.ts's `drain()` fires that off
        * without awaiting it — deliberately, for the registry-driven abandonment
@@ -991,18 +1021,7 @@ export const createTransaction =
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
           // quiesce().then(release) already pending in its own finally.
-          const source = chunkWorker<T>(
-            via(st.savepointed, st.mark),
-            query,
-            bound,
-            {
-              ...(st.savepointed ? st.driving : st.options),
-              onAbandon: st.release,
-              onTransport: (iterator) => {
-                entry.transport = iterator;
-              },
-            },
-          );
+          const source = chunkSource<T>(st, query, bound, entry)();
           return releasing(source, entry, st, 'chunk');
         },
 
@@ -1023,18 +1042,11 @@ export const createTransaction =
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
           // quiesce().then(release) already pending in its own finally.
-          const target = via(st.savepointed, st.mark);
-          const options = {
-            ...(st.savepointed ? st.driving : st.options),
-            onAbandon: st.release,
-            onTransport: (iterator: AsyncGenerator<unknown>) => {
-              entry.transport = iterator;
-            },
-          };
+          const start = chunkSource<T>(st, query, bound, entry);
           // The query is built on the first next(), not here: a stream never
           // read holds no query, and its transport lands in `entry` only then.
           const source = (async function* () {
-            yield* chunkWorker<T>(target, query, bound, options);
+            yield* start();
           })();
           // `releasing` checks its own signal once per chunk; the adapter checks
           // it before each buffered row and throws its reason into `releasing`.
