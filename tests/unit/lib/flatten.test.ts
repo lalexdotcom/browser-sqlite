@@ -114,7 +114,7 @@ describe('flatten', () => {
     expect(calls).toEqual(['next', 'next']);
   });
 
-  it('serves a buffered row in one promise turn', async () => {
+  it('serves a buffered row in two promise turns', async () => {
     const { source } = scripted([[1, 2]]);
     const iterator = flatten(source);
     await iterator.next();
@@ -122,9 +122,12 @@ describe('flatten', () => {
     void iterator.next().then(() => {
       served = true;
     });
+    // The row is delivered one turn after the call (the signal is checked
+    // then), so two turns here: a constant, with no generator per row.
     await Promise.resolve();
-    // Falsifiability: route every next() through the queue and the row needs
-    // several more turns: served is still false.
+    await Promise.resolve();
+    // Falsifiability: add one more promise hop to the delivery and the row
+    // needs a third turn: served is still false.
     expect(served).toBe(true);
   });
 
@@ -260,6 +263,42 @@ describe('flatten', () => {
     expect(calls).toEqual(['next', 'throw']);
     expect(await iterator.next()).toEqual({ value: undefined, done: true });
     expect(calls).toEqual(['next', 'throw']);
+  });
+
+  it('rejects a buffered row when the signal aborts in the same synchronous run as next()', async () => {
+    const controller = new AbortController();
+    const reason = new Error('aborted');
+    const other = new Error('abandoned');
+    const { source, calls, thrown } = scripted([[1, 2, 3]], () =>
+      Promise.reject(other),
+    );
+    const iterator = flatten(source, { signal: controller.signal });
+    await iterator.next();
+    const row = iterator.next();
+    controller.abort(reason);
+    // Falsifiability: check the signal at the call, not at delivery, and this
+    // resolves with row 2.
+    await expect(row).rejects.toBe(other);
+    expect(thrown).toEqual([reason]);
+    expect(calls).toEqual(['next', 'throw']);
+    expect(await iterator.next()).toEqual({ value: undefined, done: true });
+  });
+
+  it('calls the source inside the first next(), not a turn later', () => {
+    const { source, calls } = scripted([[1, 2]]);
+    const iterator = flatten(source);
+    void iterator.next();
+    // Falsifiability: queue the first request behind the tail and the call
+    // happens a microtask later: calls is still empty here.
+    expect(calls).toEqual(['next']);
+  });
+
+  it('calls the source inside a next() with an empty buffer when nothing is pending', async () => {
+    const { source, calls } = scripted([[1], [2]]);
+    const iterator = flatten(source);
+    await iterator.next();
+    void iterator.next();
+    expect(calls).toEqual(['next', 'next']);
   });
 
   it('serves the buffered rows when there is no signal', async () => {

@@ -6,6 +6,8 @@
 
 type Status = 'idle' | 'open' | 'done';
 
+const resolved = Promise.resolve();
+
 const finished = (): IteratorReturnResult<void> => ({
   value: undefined,
   done: true,
@@ -20,7 +22,8 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
   // Requests queued or running. Zero is the only state in which a buffered row
   // can be served ahead of the queue.
   #pending = 0;
-  #tail: Promise<unknown> = Promise.resolve();
+  // The newest request's promise: the next one waits for it to settle.
+  #last: Promise<unknown> = Promise.resolve();
 
   constructor(
     source: AsyncGenerator<T[], void, unknown>,
@@ -31,15 +34,25 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
   }
 
   next(): Promise<IteratorResult<T, void>> {
-    if (
-      this.#pending === 0 &&
-      this.#index < this.#rows.length &&
-      !this.#signal?.aborted
-    ) {
-      return Promise.resolve({
-        value: this.#rows[this.#index++] as T,
-        done: false,
-      });
+    if (this.#pending === 0 && this.#index < this.#rows.length) {
+      // The row is taken now and delivered one turn later: the signal is
+      // checked then, so an abort() right after next() still wins, as it does
+      // against an async generator's pending next().
+      const row = this.#rows[this.#index++] as T;
+      this.#pending++;
+      const result = resolved.then(
+        (): IteratorResult<T, void> | Promise<IteratorResult<T, void>> => {
+          if (this.#signal?.aborted) {
+            return this.#throwIntoSource(this.#signal.reason).finally(() => {
+              this.#pending--;
+            });
+          }
+          this.#pending--;
+          return { value: row, done: false };
+        },
+      );
+      this.#last = result;
+      return result;
     }
     return this.#enqueue(() => this.#serve());
   }
@@ -77,13 +90,20 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
     });
   }
 
+  // With nothing pending the request runs now, as an async generator resumes
+  // its body inside next(); otherwise it waits for the newest request.
   #enqueue<R>(request: () => Promise<R>): Promise<R> {
+    const idle = this.#pending === 0;
     this.#pending++;
-    const result = this.#tail.then(request);
-    const settled = () => {
-      this.#pending--;
+    const run = async () => {
+      try {
+        return await request();
+      } finally {
+        this.#pending--;
+      }
     };
-    this.#tail = result.then(settled, settled);
+    const result = idle ? run() : this.#last.then(run, run);
+    this.#last = result;
     return result;
   }
 
