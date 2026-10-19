@@ -51,19 +51,23 @@ const raceAbort = (signal, pending) => {
     );
   });
 };
-// The savepointed branch of releasing (src/transaction.ts): races the signal
-// per next(), drains what is left once it fires.
+// Mirrors the savepointed branch of releasing (src/transaction.ts): races the
+// signal per next(), drains what is left once it fires. mark.posted models the
+// query having reached the worker, which the first source.next() does.
 const layer = (source, signal) => (async function* () {
+  const mark = { posted: false };
   let left = false;
+  signal.throwIfAborted();
   try {
-    signal.throwIfAborted();
     for (;;) {
-      const next = await raceAbort(signal, source.next());
+      const pulled = source.next();
+      mark.posted = true;
+      const next = await raceAbort(signal, pulled);
       if (next.done) return;
       yield next.value;
     }
   } catch (error) {
-    if (error === signal.reason) {
+    if (mark.posted && signal.aborted && error === signal.reason) {
       left = true;
       void (async () => { for (;;) if ((await source.next()).done) return; })()
         .catch(() => {});

@@ -22,7 +22,9 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
   // Requests queued or running. Zero is the only state in which a buffered row
   // can be served ahead of the queue.
   #pending = 0;
-  // The newest queued request's promise: the next one waits for it to settle.
+  // The newest request that went through #enqueue: the next one waits for its
+  // promise to settle. A buffered row delivered ahead of the queue does not
+  // set it; the gate below stands in for it.
   #last: Promise<unknown> = Promise.resolve();
   // A buffered row is being delivered and is the newest request. The caller
   // holds its promise, which nobody else may observe, so a request that comes
