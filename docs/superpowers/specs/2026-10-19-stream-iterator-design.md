@@ -2,6 +2,11 @@
 
 Date: 2026-10-19. Branch: `perf/stream-iterator`. Background: `mem:follow-ups/stream-iterator`, STREAM-GEN in `mem:measurements/footprint`.
 
+## The two rules (user, 2026-10-19) — they override everything below
+
+1. **No change of behaviour.** Anything a consumer of `stream()` or `tx.stream()` can observe stays as it is today — rows, order, errors and when they arrive, abort, `break`/`return()`/`throw()`, retry, abandon, the lease and the transaction's queue, the declared type. Speed is the only difference. Where today's behaviour is unclear, it is measured on `main` and reproduced, never re-decided.
+2. **Maximum reliability.** Every behaviour of the adapter is pinned by a test that fails on a wrong implementation (falsified once by a deliberate mutation, recorded in the report); the comparison with today's shape is exhaustive over the scripted scenarios and randomised beyond them; the existing browser tests run unchanged on every pair, repeatedly. A doubt is resolved by keeping today's code path, not by an argument.
+
 ## Why
 
 Since the fast step (FAST-STEP), the worker no longer pays wa-sqlite's `async` `step()` per row, and `chunk()` of 4 000 000 rows on `MemoryVFS` takes 839 ms on Firefox `sync`. `stream()` over the same rows still takes about 5 s. The difference is page side: `stream()` hands out rows through nested async generators, and every `next()` on an async generator, and every `yield*` between them, costs promise turns per row.
@@ -62,7 +67,9 @@ Pure-JS probe, 4 000 000 rows in chunks of 1 000, ms, Chrome 153 / Firefox 155.0
 
 1. **The adapter alone, in the unit project**, against a scripted source (a generator whose chunks, delays, errors and `return()`/`throw()` calls are recorded). One literal `it` per behaviour above: laziness; rows of several chunks in order, empty chunks skipped; two `next()` without awaiting → one fetch; `return()` during a pending `next()`; `return()` twice → one source `return()`; `break` mid-chunk in a `for await` → exactly one source `return()`; `throw()`; a source error after N rows, then `done`; `next()` after `done`.
 2. **A differential test, in the unit project**: the same scripted consumer actions (read k rows then `break`; `return()` mid-chunk; `throw()` mid-chunk; a source error at chunk j; a consumer that throws in its loop body) run against today's shape — a row-flattening async generator under a `yield*` — and against the adapter over the same source; the traces must be identical: rows received, calls made on the source (`next`, `return`, `throw`) in order, errors. Today's behaviour is the reference.
+   **Randomised as well (rule 2):** a seeded generator of consumer scripts (sequences of `next()` awaited or not, `return()`, `throw()`, `break`, a throw in the loop body, at random points) over seeded sources (chunk sizes including 1, delays, an error at a random chunk, early end), thousands of cases per run against both shapes, traces compared; a failing case prints its seed so it can be replayed as a literal test. Plus the savepointed per-row abort: a signal aborted mid-chunk rejects the next row and reaches the source's `throw()` exactly as today's `raceAbort` path does.
 3. **The browser tests that already pin `stream()` run unchanged**: `abandon`, `early-exit`, `stream-retention`, `query-timeout`, `interrupt`, `queries`, `results`, `routing`, `writer-spread`, `params`, `sql-tag`, the transaction tests that use `tx.stream()`, and `abandon-gc` with `BSQ_EXPOSE_GC=1` on Chrome. A test that has to change means the semantics changed: stop and report.
+   Those files also run on every eligible pair (`node scripts/test-plan.ts --mode all-pairs <files>`), on both engines, several times in a row, so a race introduced by the change shows rather than hides behind one green run. A new browser test pins what the unit tests cannot see: `tx.stream()` left open when the callback ends (the transaction closes it, later rows are not served), and a savepointed `tx.stream()` aborted mid-chunk.
 4. The usual delivery gate (`node scripts/hook-gate.ts delivery --run`), and the matrix on GitHub before the merge: the branch touches `src/transaction.ts` (`mem:conventions`, § What runs where).
 
 ## Measurements
