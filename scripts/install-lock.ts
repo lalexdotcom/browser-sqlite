@@ -98,6 +98,7 @@ export async function runOnce(options: RunOnceOptions): Promise<void> {
         }
         break;
       case 'dead':
+        log?.(`leader gone without an answer (lock ${path})`);
         break;
       case 'missing':
         await sleep(RETRY_MS);
@@ -113,6 +114,7 @@ export async function runOnce(options: RunOnceOptions): Promise<void> {
         if (Date.now() - refusedSince < STALE_CONFIRM_MS * timeScale()) {
           await sleep(REFUSED_RETRY_MS);
         } else {
+          log?.(`taking a stale socket (lock ${path})`);
           unlinkStale(path);
           refusedSince = undefined;
         }

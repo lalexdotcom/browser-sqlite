@@ -28,12 +28,15 @@ let stateDir: string;
 let path: string;
 let installsLog: string;
 let children: ChildProcess[];
+// Each child's exit code and stderr trace, for the report of a failed test.
+let outputs: string[];
 
 beforeEach(() => {
   stateDir = mkdtempSync(join(tmpdir(), 'install-lock-'));
   path = lockPath(stateDir);
   installsLog = join(stateDir, 'installs.log');
   children = [];
+  outputs = [];
 });
 
 // A failing test must not leave a hanging child, a state dir or a socket file behind.
@@ -66,7 +69,10 @@ function childWithStderr(
     stderr += chunk.toString();
   });
   return new Promise((resolve) =>
-    child.on('exit', (code) => resolve({ code: code ?? -1, stderr })),
+    child.on('exit', (code) => {
+      outputs.push(`pid ${child.pid} exit ${code}\n${stderr}`);
+      resolve({ code: code ?? -1, stderr });
+    }),
   );
 }
 
@@ -96,6 +102,25 @@ async function waitForWaiters(count: number): Promise<void> {
 
 const lines = (file: string): string[] =>
   readFileSync(file, 'utf8').split('\n').filter(Boolean);
+
+/** What the children did, read before afterEach removes the state dir. */
+const report = (): string =>
+  [
+    `installs.log: ${existsSync(installsLog) ? JSON.stringify(lines(installsLog)) : 'absent'}`,
+    `state dir: ${JSON.stringify(readdirSync(stateDir).sort())}`,
+    ...outputs,
+  ].join('\n');
+
+/** A multi-process test whose failure carries the children's traces. */
+const diagnosed = (body: () => Promise<void>) => async (): Promise<void> => {
+  try {
+    await body();
+  } catch (error) {
+    if (error instanceof Error)
+      error.message += `\n--- children ---\n${report()}`;
+    throw error;
+  }
+};
 
 describe('scripts/install-lock.ts', () => {
   it('lockPath is short and distinct per cache dir', () => {
@@ -133,20 +158,20 @@ describe('scripts/install-lock.ts', () => {
 
   it(
     'installs once for five processes on a cold state',
-    async () => {
+    diagnosed(async () => {
       // Falsifiable: let every process install and installs.log has five lines.
       const codes = await Promise.all(
         Array.from({ length: 5 }, () => child(['ok'])),
       );
       expect(codes).toEqual([0, 0, 0, 0, 0]);
       expect(lines(installsLog)).toHaveLength(1);
-    },
+    }),
     TIMEOUT,
   );
 
   it(
     "hands the leader's error to every waiter",
-    async () => {
+    diagnosed(async () => {
       // Falsifiable: close the socket on error without a line and the waiters re-elect and install again.
       const results = await Promise.all(
         // Any of the three may lead; the leader holds until the other two wait.
@@ -159,13 +184,13 @@ describe('scripts/install-lock.ts', () => {
         expect(r.stderr).toContain('fixture install failed');
       }
       expect(lines(installsLog)).toHaveLength(1);
-    },
+    }),
     TIMEOUT,
   );
 
   it(
     'takes over from a leader killed mid-install',
-    async () => {
+    diagnosed(async () => {
       // Falsifiable: treat a close without a line as an error and the waiters exit 1.
       // Falsifiable: return on a close without a line and the waiters exit 0 with item a never installed.
       const leader = spawnChild(['hang']);
@@ -180,13 +205,13 @@ describe('scripts/install-lock.ts', () => {
       const count = lines(installsLog).length;
       if (process.platform === 'win32') expect(count).toBe(2);
       else expect([2, 3]).toContain(count);
-    },
+    }),
     TIMEOUT,
   );
 
   it.skipIf(process.platform === 'win32')(
     'recovers a stale socket file (no stale file exists on Windows named pipes)',
-    async () => {
+    diagnosed(async () => {
       // Falsifiable: treat ECONNREFUSED as an error and this child exits 1.
       const leader = spawnChild(['hang']);
       await waitForFile(join(stateDir, 'started'));
@@ -194,13 +219,13 @@ describe('scripts/install-lock.ts', () => {
       await once(leader, 'exit');
       expect(existsSync(path)).toBe(true);
       expect(await child(['ok'])).toBe(0);
-    },
+    }),
     TIMEOUT,
   );
 
   it(
     're-elects when ready does not cover this request',
-    async () => {
+    diagnosed(async () => {
       // Falsifiable: return on "ready" without checking done() and item b is never installed.
       const [x, y] = await Promise.all([
         child(['ok', 'a'], { AWAIT_WAITERS: '1' }),
@@ -210,13 +235,13 @@ describe('scripts/install-lock.ts', () => {
       expect(
         existsSync(join(stateDir, 'a')) && existsSync(join(stateDir, 'b')),
       ).toBe(true);
-    },
+    }),
     TIMEOUT,
   );
 
   it(
     'fails a leader whose install outlives its bound, and its waiters with it',
-    async () => {
+    diagnosed(async () => {
       // Falsifiable: no bound on install() and both children hang until the test times out.
       const env = { INSTALL_BOUND_MS: '500', WAIT_BOUND_MS: '5000' };
       const r = await Promise.all([
@@ -227,13 +252,13 @@ describe('scripts/install-lock.ts', () => {
         expect(x.code).toBe(1);
         expect(x.stderr).toMatch(/did not finish within/);
       }
-    },
+    }),
     TIMEOUT,
   );
 
   it(
     'fails a waiter after its own bound when the leader hangs without its bound firing',
-    async () => {
+    diagnosed(async () => {
       // Falsifiable: no waitBound and the waiter hangs.
       const leader = spawnChild(['hang'], { INSTALL_BOUND_MS: '60000' });
       await waitForFile(join(stateDir, 'started'));
@@ -243,7 +268,7 @@ describe('scripts/install-lock.ts', () => {
       expect(w.stderr).toMatch(
         /waited .* for the install led by another process/,
       );
-    },
+    }),
     TIMEOUT,
   );
 
@@ -266,7 +291,7 @@ describe('scripts/install-lock.ts', () => {
 
   it.skipIf(process.platform === 'win32')(
     'keeps the socket of a leader that refuses only for a moment',
-    async () => {
+    diagnosed(async () => {
       // Falsifiable: unlink at the first ECONNREFUSED and the live socket is removed, this process installs.
       const server = createServer((socket) => socket.end('ready\n'));
       await new Promise<void>((listening) => server.listen(path, listening));
@@ -292,13 +317,13 @@ describe('scripts/install-lock.ts', () => {
       } finally {
         server.close();
       }
-    },
+    }),
     TIMEOUT,
   );
 
   it.skipIf(process.platform === 'win32')(
     'takes a socket that refuses throughout as stale and leads',
-    async () => {
+    diagnosed(async () => {
       // Falsifiable: never unlink after a refusal and this process loops until the test times out.
       writeFileSync(path, ''); // a socket file nobody listens on
       let installed = false;
@@ -313,7 +338,7 @@ describe('scripts/install-lock.ts', () => {
         connect: refusing(Number.POSITIVE_INFINITY, createConnection),
       });
       expect(installed).toBe(true);
-    },
+    }),
     TIMEOUT,
   );
 });

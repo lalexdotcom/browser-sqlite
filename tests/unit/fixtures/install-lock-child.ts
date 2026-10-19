@@ -23,6 +23,11 @@ if (path === undefined || stateDir === undefined || mode === undefined) {
   );
 }
 
+// A trace on stderr, for the test's report when it fails: when, who, what.
+const trace = (what: string) =>
+  process.stderr.write(`${Date.now()} ${process.pid} ${what}\n`);
+trace(`start ${mode} ${item}`);
+
 const sleep = (ms: number) => new Promise((resume) => setTimeout(resume, ms));
 const awaited = Number(process.env.AWAIT_WAITERS ?? 0);
 const waiting = () =>
@@ -33,6 +38,7 @@ try {
     path,
     done: async () => existsSync(join(stateDir, item)),
     install: async () => {
+      trace('install');
       appendFileSync(
         join(stateDir, 'installs.log'),
         `${process.pid} ${item}\n`,
@@ -45,6 +51,7 @@ try {
       writeFileSync(join(stateDir, item), '');
     },
     log: (line) => {
+      trace(line);
       if (line.startsWith('waiting'))
         writeFileSync(join(stateDir, `waiting-${process.pid}`), '');
     },
