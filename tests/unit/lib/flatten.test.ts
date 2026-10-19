@@ -377,6 +377,49 @@ describe('flatten', () => {
     expect(await outcome(flatten)).toEqual(expected);
   });
 
+  it('resolves return() with the awaited value, as an async generator does', async () => {
+    const reference = async function* (
+      source: AsyncGenerator<number[], void, unknown>,
+    ) {
+      for await (const chunk of source) for (const row of chunk) yield row;
+    };
+    const outcome = async (
+      make: (
+        source: AsyncGenerator<number[], void, unknown>,
+      ) => AsyncGenerator<number, void, unknown>,
+    ) => {
+      const { source, calls } = scripted([[1, 2]]);
+      const iterator = make(source);
+      // A JavaScript caller is not held to the declared type.
+      const unstarted = await iterator.return(Promise.resolve(41) as never);
+      await iterator.next();
+      const again = await iterator.return(42 as never);
+      return { unstarted, again, calls };
+    };
+    const open = async (
+      make: (
+        source: AsyncGenerator<number[], void, unknown>,
+      ) => AsyncGenerator<number, void, unknown>,
+    ) => {
+      const { source, calls } = scripted([[1, 2]]);
+      const iterator = make(source);
+      await iterator.next();
+      return { closed: await iterator.return(43 as never), calls };
+    };
+    // Falsifiability: resolve `{ value: undefined, done: true }` and the
+    // values here are undefined, not 41, 42, 43.
+    expect(await outcome(flatten)).toEqual(await outcome(reference));
+    expect(await open(flatten)).toEqual(await open(reference));
+    expect(await open(flatten)).toEqual({
+      closed: { value: 43, done: true },
+      calls: ['next', 'return'],
+    });
+    expect(await outcome(flatten)).toMatchObject({
+      unstarted: { value: 41, done: true },
+      again: { value: 42, done: true },
+    });
+  });
+
   it('treats a signal of undefined as no signal', async () => {
     const { source, calls } = scripted([[1, 2, 3]]);
     const iterator = flatten(source, { signal: undefined });

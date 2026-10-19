@@ -49,8 +49,11 @@ class Flattened<T> implements AsyncGenerator<T, void, unknown> {
       // `value` first, as an async generator awaits it: when both it and the
       // source's return() reject, its error is the one that surfaces.
       let failure: { error: unknown } | undefined;
+      // Typed `unknown`: the declared type is void, a JavaScript caller's
+      // `return(42)` still gets 42 back, as from an async generator.
+      let awaited: unknown;
       try {
-        await value;
+        awaited = await value;
       } catch (error) {
         failure = { error };
       }
@@ -64,7 +67,7 @@ class Flattened<T> implements AsyncGenerator<T, void, unknown> {
       }
       this.#end();
       if (failure) throw failure.error;
-      return finished();
+      return { value: awaited as undefined, done: true };
     });
   }
 
