@@ -11,7 +11,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   Browser,
@@ -19,6 +19,7 @@ import {
   detectBrowserPlatform,
   install,
 } from '@puppeteer/browsers';
+import { FIREFOX_POLICIES, firefoxPoliciesPath } from './browser-cache.ts';
 
 export type BrowserName = 'chrome' | 'firefox';
 
@@ -56,19 +57,7 @@ export const WDIO_CACHE_DIR = fileURLToPath(
   new URL('../node_modules/.cache/wdio', import.meta.url),
 );
 
-/**
- * Firefox updates itself in place when launched outside WebDriver (geckodriver's
- * profiles disable it; a hand launch for a measurement does not): this policy stops it for every profile.
- */
-export const FIREFOX_POLICIES = { policies: { DisableAppUpdate: true } };
-
-/** Where Firefox reads its policies: `distribution/` beside the binary, under `Contents/Resources/` in a macOS bundle. */
-export const firefoxPoliciesPath = (executable: string): string => {
-  const dir = dirname(executable);
-  return basename(dir) === 'MacOS'
-    ? join(dir, '..', 'Resources', 'distribution', 'policies.json')
-    : join(dir, 'distribution', 'policies.json');
-};
+export { FIREFOX_POLICIES, firefoxPoliciesPath } from './browser-cache.ts';
 
 const ENV_VAR: Record<BrowserName, string> = {
   chrome: 'BSQ_CHROME_VERSION',
