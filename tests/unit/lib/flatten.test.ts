@@ -114,9 +114,23 @@ describe('flatten', () => {
     expect(calls).toEqual(['next', 'next']);
   });
 
-  it('serves a buffered row in two promise turns', async () => {
+  it('serves a buffered row in one promise turn without a signal', async () => {
     const { source } = scripted([[1, 2]]);
     const iterator = flatten(source);
+    await iterator.next();
+    let served = false;
+    void iterator.next().then(() => {
+      served = true;
+    });
+    await Promise.resolve();
+    // Falsifiability: deliver the row through the signal path's extra turn
+    // (or any promise hop) and served is still false.
+    expect(served).toBe(true);
+  });
+
+  it('serves a buffered row in two promise turns with a signal', async () => {
+    const { source } = scripted([[1, 2]]);
+    const iterator = flatten(source, { signal: new AbortController().signal });
     await iterator.next();
     let served = false;
     void iterator.next().then(() => {
@@ -313,6 +327,24 @@ describe('flatten', () => {
           'first rejected',
           'later ok',
         ]);
+      }
+    }
+  });
+
+  it('settles a later call after a buffered next() without a signal, at every offset', async () => {
+    for (const kind of ['next', 'return'] as const) {
+      for (let offset = 0; offset <= 8; offset++) {
+        const { source } = scripted([[1, 2, 3]]);
+        const iterator = flatten(source);
+        await iterator.next();
+        const order: string[] = [];
+        const first = iterator.next().then(() => order.push('first'));
+        for (let i = 0; i < offset; i++) await null;
+        const later = (
+          kind === 'next' ? iterator.next() : iterator.return()
+        ).then(() => order.push('later'));
+        await Promise.all([first, later]);
+        expect(order, `${kind} at ${offset}`).toEqual(['first', 'later']);
       }
     }
   });

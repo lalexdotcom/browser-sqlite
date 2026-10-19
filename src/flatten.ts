@@ -43,6 +43,14 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
 
   next(): Promise<IteratorResult<T, void>> {
     if (this.#pending === 0 && this.#index < this.#rows.length) {
+      // Nothing can abort a buffered row without a signal: it is handed out
+      // now, in a promise already resolved, which settles ahead of any later call.
+      if (this.#signal === undefined) {
+        return Promise.resolve({
+          value: this.#rows[this.#index++] as T,
+          done: false,
+        });
+      }
       // The row is taken now and delivered one turn later: the signal is
       // checked then, so an abort() right after next() still wins, as it does
       // against an async generator's pending next().
