@@ -385,6 +385,8 @@ it('resolves the binaries before the browser opens', async () => {
 
 - [ ] **Step 3: Warm path cost.** Time `resolveBrowsers(['chrome','firefox'])` on the full cache over 10 runs in one process and over 5 fresh processes (`node -e`); record median and range, date, machine, method in the measurements memory.
 
+- [ ] **Step 3b: Consumer smoke.** `pnpm test:consumer` — Expected: every stage green. The delivery gate adds it only on a tag push, and `driveBrowser` changed (final review, Ruling R8).
+
 - [ ] **Step 4: Delivery gate.** `node scripts/hook-gate.ts delivery --run` — Expected: green; read the report, the `Test Files` line included.
 
 - [ ] **Step 5: Windows and macOS.** Ask the user's go to push the branch; then `gh workflow run tests-windows.yaml --ref build/browsers-installer` and `gh workflow run tests-macos.yaml --ref build/browsers-installer`; Expected: both green (Windows ~30 min). Delete the remote branch after (`git push origin --delete build/browsers-installer`).
