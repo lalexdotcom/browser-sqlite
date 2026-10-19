@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import {
   existsSync,
   mkdirSync,
@@ -9,7 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -18,6 +20,7 @@ import {
   firefoxPoliciesPath,
   installItem,
   isInstalled,
+  MARKER,
   STAGING,
   sweepStaging,
 } from '../../../scripts/browser-cache.ts';
@@ -144,12 +147,65 @@ describe('installItem', () => {
   });
 });
 
+describe('installItem when removing the staging folder fails', () => {
+  const stuck = (): void => {
+    throw Object.assign(new Error('resource busy'), { code: 'EBUSY' });
+  };
+
+  it('still resolves to the published executable for a lost race', async () => {
+    // Falsifiable: let the removal error escape and the loser rejects although the installation is whole.
+    const lose = ((_from: string, to: string) => {
+      mkdirSync(join(to, 'bin'), { recursive: true });
+      writeFileSync(join(to, 'bin', 'tool'), 'x');
+      writeFileSync(join(to, MARKER), '');
+      throw Object.assign(new Error('not empty'), { code: 'ENOTEMPTY' });
+    }) as typeof renameSync;
+    const exe = await installItem(cache, fake(), lose, stuck);
+    expect(exe).toBe(join(cache, 'tool/v1', 'bin', 'tool'));
+  });
+
+  it('rethrows the fetch error, not the removal error', async () => {
+    // Falsifiable: let the removal error escape and "resource busy" replaces "download broke".
+    await expect(
+      installItem(cache, fake({ fail: true }), renameSync, stuck),
+    ).rejects.toThrow('download broke');
+  });
+
+  it('reports the rename cause, not the removal error', async () => {
+    // Falsifiable: let the removal error escape and the rename cause is hidden.
+    const broken = (() => {
+      throw Object.assign(new Error('disk gone'), { code: 'EIO' });
+    }) as typeof renameSync;
+    await expect(installItem(cache, fake(), broken, stuck)).rejects.toThrow(
+      'disk gone',
+    );
+  });
+});
+
 describe('sweepStaging', () => {
-  it('sweeps a staging folder left by a killed installer', () => {
-    mkdirSync(join(cache, STAGING, 'dead', 'bin'), { recursive: true });
+  it('sweeps the staging folder of a killed installer', async () => {
+    const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+    await once(child, 'exit');
+    const dead = join(cache, STAGING, `${child.pid}-abc`);
+    mkdirSync(join(dead, 'bin'), { recursive: true });
+    // Falsifiable: leave it and a later publish could pick up a half-written tree.
     sweepStaging(cache);
-    // Falsifiable: leave the folder and a later publish could pick up a half-written tree.
-    expect(existsSync(join(cache, STAGING))).toBe(false);
-    expect(existsSync(dirname(join(cache, STAGING)))).toBe(true);
+    expect(existsSync(dead)).toBe(false);
+  });
+
+  it('keeps the staging folder of a live installer', () => {
+    // Falsifiable: sweep everything and a second leader breaks the first one's download.
+    const live = join(cache, STAGING, `${process.pid}-abc`);
+    mkdirSync(join(live, 'bin'), { recursive: true });
+    sweepStaging(cache);
+    expect(existsSync(live)).toBe(true);
+  });
+
+  it('removes an entry whose name carries no pid, and tolerates a missing .staging', () => {
+    // Falsifiable: keep unparsable names and strays pile up for ever.
+    sweepStaging(cache);
+    mkdirSync(join(cache, STAGING, 'stray'), { recursive: true });
+    sweepStaging(cache);
+    expect(existsSync(join(cache, STAGING, 'stray'))).toBe(false);
   });
 });

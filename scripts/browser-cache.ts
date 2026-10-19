@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -61,9 +62,26 @@ export function isInstalled(cacheDir: string, item: CacheItem): boolean {
   return existsSync(join(cacheDir, item.dir, MARKER));
 }
 
-/** Removes every staging folder: only the elected installer calls it, so none is live. */
+/** Whether a process with this pid exists; EPERM means it does, under another user. */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return code(err) === 'EPERM';
+  }
+}
+
+/** Removes the staging folders of dead installers; the elected installer calls it before it starts. */
 export function sweepStaging(cacheDir: string): void {
-  rmSync(join(cacheDir, STAGING), { recursive: true, force: true });
+  const root = join(cacheDir, STAGING);
+  if (!existsSync(root)) return;
+  for (const entry of readdirSync(root)) {
+    // Only dead owners: after a crash two leaders may run, and a live one's copy is still being filled.
+    const pid = /^(\d+)-/.exec(entry)?.[1];
+    if (pid !== undefined && isAlive(Number(pid))) continue;
+    rmSync(join(root, entry), { recursive: true, force: true });
+  }
 }
 
 /**
@@ -75,6 +93,8 @@ export async function installItem(
   cacheDir: string,
   item: CacheItem,
   rename: typeof renameSync = renameSync,
+  remove: (path: string) => void = (path) =>
+    rmSync(path, { recursive: true, force: true }),
 ): Promise<string> {
   const final = join(cacheDir, item.dir);
   const executable = join(final, item.executable);
@@ -90,8 +110,13 @@ export async function installItem(
     }
   }
 
-  const staging = join(cacheDir, STAGING, randomUUID());
-  const discard = (): void => rmSync(staging, { recursive: true, force: true });
+  const staging = join(cacheDir, STAGING, `${process.pid}-${randomUUID()}`);
+  // Best effort: a leftover (Windows holding a file) is swept later and must not mask the real outcome.
+  const discard = (): void => {
+    try {
+      remove(staging);
+    } catch {}
+  };
   try {
     mkdirSync(staging, { recursive: true });
     await item.fetch(staging);
