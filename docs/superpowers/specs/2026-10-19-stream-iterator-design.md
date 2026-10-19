@@ -50,7 +50,7 @@ Pure-JS probe, 4 000 000 rows in chunks of 1 000, ms, Chrome 153 / Firefox 155.0
 - `next()`: if the current chunk has a row left, `Promise.resolve({ value, done: false })`; otherwise it asks the source for the next chunk and serves its first row; an empty chunk is skipped; the source's end is `done`.
 - **Lazy**: the source is not touched before the first `next()`.
 - **Serialised**: a `next()` called while a chunk fetch is pending waits for that fetch instead of starting another; results are delivered in call order.
-- `return(value)`: waits for a pending fetch, then calls the source's `return()` once (its `finally` blocks do the cleanup), then is `done`; a second `return()` does not call the source again.
+- `return(value)`: waits for a pending fetch, then hands `value` to the source's `return()` (its `finally` blocks do the cleanup) and settles with what that settles with, then is `done`; a second `return()` does not call the source again. (If the source yields again from its cleanup, which no real layer does, it is returned a second time.)
 - `throw(error)`: forwarded to the source's `throw()` (a generator suspended at a `yield` runs its `finally`), then `done`; the error is rethrown to the caller as an async generator's `throw()` would.
 - An error from the source rejects that `next()` and ends the iterator; later `next()` calls are `done` without calling the source.
 - `next()` after `done` is `done`, without calling the source.
