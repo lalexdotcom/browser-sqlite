@@ -18,6 +18,12 @@ export function withResolvedCapabilities<
     openBrowser(): Promise<unknown>;
   },
 >(provider: P, browser: BrowserName, resolve = resolveBrowsers): P {
+  // A provider that changed shape would otherwise run unwrapped and let WebdriverIO download.
+  if (!('options' in provider) || typeof provider.openBrowser !== 'function') {
+    throw new Error(
+      '@vitest/browser-webdriverio: the provider no longer has an `options` property and an `openBrowser()` method; tests/harness/browser-provider.ts must follow',
+    );
+  }
   const open = provider.openBrowser.bind(provider);
   provider.openBrowser = async () => {
     const resolved = await resolve([browser]);

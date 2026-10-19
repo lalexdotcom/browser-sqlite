@@ -26,4 +26,16 @@ describe('withResolvedCapabilities', () => {
     expect(opened.capabilities['goog:chromeOptions']?.binary).toBe('/b');
     expect(opened.logLevel).toBe('error');
   });
+
+  it('throws at wrap time when the provider lost its options or openBrowser', () => {
+    // Falsifiable: wrap whatever it is given and a provider change runs unwrapped, letting WebdriverIO download.
+    const resolve = async () => ({}) as never;
+    const noOptions = { async openBrowser() {} } as never;
+    const noOpen = { options: {} } as never;
+    for (const provider of [noOptions, noOpen]) {
+      expect(() =>
+        withResolvedCapabilities(provider, 'chrome', resolve),
+      ).toThrow('@vitest/browser-webdriverio');
+    }
+  });
 });
