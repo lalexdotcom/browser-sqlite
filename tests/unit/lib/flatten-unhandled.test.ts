@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 /**
  * A rejected next()/throw() whose promise the caller drops raises an
@@ -29,6 +29,57 @@ const rows = (source) => (async function* () {
   for await (const chunk of source) for (const row of chunk) yield row;
 })();
 const make = (source) => (shape === 'flatten' ? flatten(source) : rows(source));
+
+// raceAbort of src/queries.ts, verbatim.
+const raceAbort = (signal, pending) => {
+  if (signal.aborted) {
+    pending.catch(() => {});
+    return Promise.reject(signal.reason);
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    pending.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
+};
+// The savepointed branch of releasing (src/transaction.ts): races the signal
+// per next(), drains what is left once it fires.
+const layer = (source, signal) => (async function* () {
+  let left = false;
+  try {
+    signal.throwIfAborted();
+    for (;;) {
+      const next = await raceAbort(signal, source.next());
+      if (next.done) return;
+      yield next.value;
+    }
+  } catch (error) {
+    if (error === signal.reason) {
+      left = true;
+      void (async () => { for (;;) if ((await source.next()).done) return; })()
+        .catch(() => {});
+    }
+    throw error;
+  } finally {
+    if (!left) await source.return(undefined);
+  }
+})();
+// Today's chain races per row over the row generator; with flatten, per chunk
+// under the adapter, which checks the signal before each buffered row.
+const chain = (signal) =>
+  shape === 'flatten'
+    ? flatten(layer(chunks(), signal), { signal })
+    : layer(rows(chunks()), signal);
+
 if (scenario === 'fetch') {
   const it = make(failing());
   void it.next();
@@ -39,10 +90,18 @@ if (scenario === 'fetch') {
   const it = make(chunks());
   await it.next();
   void it.throw(failure);
-} else if (scenario === 'abort-buffered') {
+} else if (scenario === 'abort-then-call') {
   const controller = new AbortController();
-  const it = flatten(chunks(), { signal: controller.signal });
+  const it = chain(controller.signal);
   await it.next();
+  void it.next();
+  controller.abort(failure);
+  void it.next();
+} else if (scenario === 'call-then-abort') {
+  const controller = new AbortController();
+  const it = chain(controller.signal);
+  await it.next();
+  void it.next();
   void it.next();
   controller.abort(failure);
 }
@@ -50,13 +109,22 @@ await new Promise((resolve) => setTimeout(resolve, 50));
 console.log(count);
 `;
 
-const dir = mkdtempSync(join(tmpdir(), 'flatten-unhandled-'));
-const file = join(dir, 'drop.mjs');
-writeFileSync(file, script);
+let dir: string;
+let file: string;
+
+beforeAll(() => {
+  dir = mkdtempSync(join(tmpdir(), 'flatten-unhandled-'));
+  file = join(dir, 'drop.mjs');
+  writeFileSync(file, script);
+});
+
+afterAll(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
 const count = (shape: string, scenario: string): Promise<number> =>
   new Promise((resolve, reject) => {
-    const child = spawn('node', [file, shape, scenario], {
+    const child = spawn(process.execPath, [file, shape, scenario], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let out = '';
@@ -67,7 +135,8 @@ const count = (shape: string, scenario: string): Promise<number> =>
     child.stderr.on('data', (chunk: Buffer) => {
       err += chunk.toString();
     });
-    child.on('exit', (code) =>
+    child.on('error', reject);
+    child.on('close', (code) =>
       code === 0
         ? resolve(Number(out.trim()))
         : reject(new Error(`node exited ${code}: ${err}`)),
@@ -88,9 +157,18 @@ describe('flatten and a dropped rejection', () => {
     }
   }, 30_000);
 
-  it('raises the unhandled rejection of a buffered row rejected by an abort', async () => {
-    // There is no generator to compare with: the signal belongs to flatten. A
-    // `.then` on the delivery's own promise would hide the rejection.
-    expect(await count('flatten', 'abort-buffered')).toBeGreaterThanOrEqual(1);
+  it('raises it for a buffered row rejected by an abort, as the real chain does', async () => {
+    // Today's chain: the savepointed layer racing the signal per row over the
+    // row generator. The plain generator is not a reference for an abort.
+    for (const scenario of ['abort-then-call', 'call-then-abort']) {
+      const [chain, flattened] = await Promise.all([
+        count('generator', scenario),
+        count('flatten', scenario),
+      ]);
+      // Falsifiability: make the next request wait on the delivery's own
+      // promise (`#last = result`) and flatten's count is 0.
+      expect(chain, scenario).toBeGreaterThanOrEqual(1);
+      expect(flattened, scenario).toBe(chain);
+    }
   }, 30_000);
 });

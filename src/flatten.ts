@@ -22,8 +22,14 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
   // Requests queued or running. Zero is the only state in which a buffered row
   // can be served ahead of the queue.
   #pending = 0;
-  // The newest request's promise: the next one waits for it to settle.
+  // The newest queued request's promise: the next one waits for it to settle.
   #last: Promise<unknown> = Promise.resolve();
+  // A buffered row is being delivered and is the newest request. The caller
+  // holds its promise, which nobody else may observe, so a request that comes
+  // while it is in flight waits on a gate, created then and opened when the
+  // delivery ends.
+  #delivering = false;
+  #openGate: (() => void) | undefined;
 
   constructor(
     source: AsyncGenerator<T[], void, unknown>,
@@ -40,6 +46,7 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
       // against an async generator's pending next().
       const row = this.#rows[this.#index++] as T;
       this.#pending++;
+      this.#delivering = true;
       const result = resolved.then(
         (): IteratorResult<T, void> | PromiseLike<IteratorResult<T, void>> => {
           if (this.#signal?.aborted) {
@@ -56,10 +63,12 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
                 void this.#throwIntoSource(reason).then(
                   (step) => {
                     this.#release();
+                    this.#endDelivery();
                     resolve(step);
                   },
                   (error: unknown) => {
                     this.#release();
+                    this.#endDelivery();
                     reject(error);
                   },
                 );
@@ -67,10 +76,10 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
             } as PromiseLike<IteratorResult<T, void>>;
           }
           this.#pending--;
+          this.#endDelivery();
           return { value: row, done: false };
         },
       );
-      this.#last = result;
       return result;
     }
     return this.#enqueue(() => this.#serve());
@@ -114,7 +123,14 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
   #enqueue<R>(request: () => Promise<R>): Promise<R> {
     const idle = this.#pending === 0;
     this.#pending++;
-    const inner = idle ? request() : this.#last.then(request, request);
+    let before = this.#last;
+    if (this.#delivering) {
+      this.#delivering = false;
+      before = new Promise<void>((open) => {
+        this.#openGate = open;
+      });
+    }
+    const inner = idle ? request() : before.then(request, request);
     // `#pending` is released in the run that settles the promise handed back,
     // ahead of the caller's handlers; `inner` is the observed one, so a caller
     // that drops a rejection gets the unhandled rejection an async generator
@@ -130,6 +146,15 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
         throw error;
       },
     );
+  }
+
+  #endDelivery(): void {
+    this.#delivering = false;
+    const open = this.#openGate;
+    if (open) {
+      this.#openGate = undefined;
+      open();
+    }
   }
 
   readonly #release = (): void => {
