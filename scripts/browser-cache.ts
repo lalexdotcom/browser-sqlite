@@ -50,8 +50,15 @@ export const STAGING = '.staging';
 
 /** Rename errors Windows raises while an antivirus or indexer holds a fresh file. */
 const TRANSIENT = new Set(['EPERM', 'EACCES', 'EBUSY']);
-const RETRY_EVERY_MS = 100;
-const RETRY_FOR_MS = 2_000;
+/** First pause between two tries; it doubles up to `RETRY_MAX_MS`. */
+const RETRY_FIRST_MS = 100;
+const RETRY_MAX_MS = 1_000;
+/** Windows Defender can hold a freshly extracted tree for tens of seconds (graceful-fs retries up to 60 s). */
+const RETRY_FOR_MS = 30_000;
+
+/** The default removal of a folder tree. */
+const removeTree = (path: string): void =>
+  rmSync(path, { recursive: true, force: true });
 
 const reason = (err: unknown): string =>
   err instanceof Error ? err.message : String(err);
@@ -72,22 +79,32 @@ function isAlive(pid: number): boolean {
   }
 }
 
-/** Removes the staging folders of dead installers; the elected installer calls it before it starts. */
-export function sweepStaging(cacheDir: string): void {
+/**
+ * Removes the staging folders of dead installers; the elected installer calls
+ * it before it starts. Best effort per entry: one that cannot be removed now
+ * (Windows holding a file) is left for the next sweep. `remove` is a test seam.
+ */
+export function sweepStaging(
+  cacheDir: string,
+  remove: (path: string) => void = removeTree,
+): void {
   const root = join(cacheDir, STAGING);
   if (!existsSync(root)) return;
   for (const entry of readdirSync(root)) {
     // Only dead owners: after a crash two leaders may run, and a live one's copy is still being filled.
     const pid = /^(\d+)-/.exec(entry)?.[1];
     if (pid !== undefined && isAlive(Number(pid))) continue;
-    rmSync(join(root, entry), { recursive: true, force: true });
+    try {
+      remove(join(root, entry));
+    } catch {}
   }
 }
 
 /**
- * Renames `from` to `to`, retrying for a moment while Windows refuses it
- * (EPERM/EACCES/EBUSY: an antivirus or indexer holds a fresh file); any other
- * error, or the last one once the time is up, is thrown. `rename` is a test seam.
+ * Renames `from` to `to`, retrying for 30 s (pauses of 100 ms doubling to 1 s)
+ * while Windows refuses it (EPERM/EACCES/EBUSY: an antivirus or indexer holds a
+ * fresh file); any other error, or the last one once the time is up, is thrown.
+ * `rename` is a test seam.
  */
 export async function renameWithRetry(
   from: string,
@@ -95,6 +112,7 @@ export async function renameWithRetry(
   rename: typeof renameSync = renameSync,
 ): Promise<void> {
   const deadline = Date.now() + RETRY_FOR_MS * timeScale();
+  let pause = RETRY_FIRST_MS;
   for (;;) {
     try {
       rename(from, to);
@@ -103,7 +121,8 @@ export async function renameWithRetry(
       if (!TRANSIENT.has(code(err) as string) || Date.now() >= deadline) {
         throw err;
       }
-      await sleep(RETRY_EVERY_MS);
+      await sleep(pause);
+      pause = Math.min(pause * 2, RETRY_MAX_MS);
     }
   }
 }
@@ -117,8 +136,7 @@ export async function installItem(
   cacheDir: string,
   item: CacheItem,
   rename: typeof renameSync = renameSync,
-  remove: (path: string) => void = (path) =>
-    rmSync(path, { recursive: true, force: true }),
+  remove: (path: string) => void = removeTree,
 ): Promise<string> {
   const final = join(cacheDir, item.dir);
   const executable = join(final, item.executable);

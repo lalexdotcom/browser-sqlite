@@ -103,7 +103,7 @@ describe('installItem', () => {
     expect(readdirSync(join(cache, STAGING))).toEqual([]);
   });
 
-  it('writes the Firefox policy before the marker', async () => {
+  it('publishes the Firefox policy with the installation', async () => {
     // Falsifiable: write the policy after the rename and it is missing from what was published.
     await installItem(cache, fake({ policies: true }));
     const path = firefoxPoliciesPath(join(cache, 'tool/v1', 'bin', 'tool'));
@@ -200,6 +200,24 @@ describe('sweepStaging', () => {
     mkdirSync(join(live, 'bin'), { recursive: true });
     sweepStaging(cache);
     expect(existsSync(live)).toBe(true);
+  });
+
+  it('keeps going and does not throw when one dead entry cannot be removed', () => {
+    // Falsifiable: let the removal error escape the loop and the entries after the stuck one stay, or the call throws.
+    // Names without a pid prefix count as dead.
+    for (const name of ['a-stuck', 'b-free', 'c-free'])
+      mkdirSync(join(cache, STAGING, name), { recursive: true });
+    const removed: string[] = [];
+    const remove = (path: string): void => {
+      if (path.endsWith('a-stuck')) {
+        throw Object.assign(new Error('resource busy'), { code: 'EBUSY' });
+      }
+      removed.push(path);
+      rmSync(path, { recursive: true, force: true });
+    };
+    expect(() => sweepStaging(cache, remove)).not.toThrow();
+    expect(readdirSync(join(cache, STAGING)).sort()).toEqual(['a-stuck']);
+    expect(removed).toHaveLength(2);
   });
 
   it('removes an entry whose name carries no pid, and tolerates a missing .staging', () => {
