@@ -79,30 +79,52 @@ describe('browserVersion', () => {
 });
 
 describe('browserCapabilities', () => {
-  it('pins geckodriver for Firefox only', () => {
-    expect(
-      browserCapabilities('firefox', {})['wdio:geckodriverOptions'],
-    ).toEqual({ geckoDriverVersion: GECKODRIVER_VERSION });
+  const bins = { browser: '/c/browser', driver: '/c/driver' };
+
+  it('hands WebdriverIO both binaries of each browser', () => {
+    // Falsifiable: drop one binary and WebdriverIO downloads it (spec goal 2).
+    const c = browserCapabilities('chrome', bins, {}, {});
+    expect(c['goog:chromeOptions']?.binary).toBe('/c/browser');
+    expect(c['wdio:chromedriverOptions']?.binary).toBe('/c/driver');
+    const f = browserCapabilities('firefox', bins, {}, {});
+    expect(f['moz:firefoxOptions']?.binary).toBe('/c/browser');
+    expect(f['wdio:geckodriverOptions']).toEqual({
+      geckoDriverVersion: GECKODRIVER_VERSION,
+      binary: '/c/driver',
+    });
     expect(GECKODRIVER_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
-    expect(
-      browserCapabilities('chrome', {})['wdio:geckodriverOptions'],
-    ).toBeUndefined();
+    expect(c['wdio:geckodriverOptions']).toBeUndefined();
+  });
+
+  it('keeps the binary when the caller brings its own options', () => {
+    // Falsifiable: spread the caller's options over the key and the binary is lost (bench/check, consumer-smoke).
+    const c = browserCapabilities(
+      'chrome',
+      bins,
+      { args: ['--headless=new'], prefs: { p: 1 } },
+      { BSQ_EXPOSE_GC: '1' },
+    );
+    expect(c['goog:chromeOptions']).toEqual({
+      binary: '/c/browser',
+      args: ['--js-flags=--expose-gc', '--headless=new'],
+      prefs: { p: 1 },
+    });
   });
 
   it('adds --expose-gc to Chrome only under BSQ_EXPOSE_GC=1', () => {
     expect(
-      browserCapabilities('chrome', {})['goog:chromeOptions'],
-    ).toBeUndefined();
+      browserCapabilities('chrome', bins, {}, {})['goog:chromeOptions'],
+    ).toEqual({ binary: '/c/browser' });
     expect(
-      browserCapabilities('chrome', { BSQ_EXPOSE_GC: '1' })[
+      browserCapabilities('chrome', bins, {}, { BSQ_EXPOSE_GC: '1' })[
         'goog:chromeOptions'
       ]?.args,
     ).toEqual(['--js-flags=--expose-gc']);
     expect(
-      browserCapabilities('firefox', { BSQ_EXPOSE_GC: '1' })[
-        'goog:chromeOptions'
+      browserCapabilities('firefox', bins, {}, { BSQ_EXPOSE_GC: '1' })[
+        'moz:firefoxOptions'
       ],
-    ).toBeUndefined();
+    ).toEqual({ binary: '/c/browser' });
   });
 });
 

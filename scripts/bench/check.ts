@@ -24,8 +24,10 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { remote } from 'webdriverio';
 import {
+  type BrowserBinaries,
   type BrowserName,
   browserCapabilities,
+  resolveBrowsers,
   WDIO_CACHE_DIR,
 } from '../browsers.ts';
 
@@ -112,20 +114,19 @@ const downloaded = (dir: string): string | undefined => {
 };
 
 const downloadDir = mkdtempSync(join(tmpdir(), 'bench-dl-'));
-const capabilities: WebdriverIO.Capabilities = {
-  ...browserCapabilities(engine),
-  ...(engine === 'chrome'
-    ? {
-        'goog:chromeOptions': {
+const capabilities = (binaries: BrowserBinaries): WebdriverIO.Capabilities =>
+  browserCapabilities(
+    engine,
+    binaries,
+    engine === 'chrome'
+      ? {
           args: ['--headless=new'],
           prefs: {
             'download.default_directory': downloadDir,
             'download.prompt_for_download': false,
           },
-        },
-      }
-    : {
-        'moz:firefoxOptions': {
+        }
+      : {
           args: ['-headless'],
           prefs: {
             'browser.download.folderList': 2,
@@ -134,17 +135,17 @@ const capabilities: WebdriverIO.Capabilities = {
             'browser.helperApps.neverAsk.saveToDisk': 'application/json',
           },
         },
-      }),
-};
+  );
 
 let browser: WebdriverIO.Browser | undefined;
 
 async function main(): Promise<void> {
   await serverReady();
+  const binaries = (await resolveBrowsers([engine]))[engine];
   browser = await remote({
     logLevel: 'warn',
     cacheDir: WDIO_CACHE_DIR,
-    capabilities,
+    capabilities: capabilities(binaries),
   });
   const b = browser;
 

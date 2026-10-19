@@ -10,13 +10,7 @@
  *                                            and turn off Firefox's self-update
  */
 import { execFileSync } from 'node:child_process';
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
@@ -28,8 +22,6 @@ import {
 import { download } from 'geckodriver';
 import {
   type CacheItem,
-  FIREFOX_POLICIES,
-  firefoxPoliciesPath,
   installItem,
   isInstalled,
   renameWithRetry,
@@ -104,21 +96,52 @@ export const browserVersion = (
 
 export const browserCapabilities = (
   name: BrowserName,
+  binaries: BrowserBinaries,
+  extra: BrowserOptions = {},
   env: NodeJS.ProcessEnv = process.env,
-): WebdriverIO.Capabilities => ({
-  browserName: name,
-  browserVersion: browserVersion(name, env),
-  ...(name === 'firefox'
-    ? {
-        'wdio:geckodriverOptions': { geckoDriverVersion: GECKODRIVER_VERSION },
-      }
-    : {}),
-  ...(name === 'chrome' && env.BSQ_EXPOSE_GC === '1'
-    ? { 'goog:chromeOptions': { args: ['--js-flags=--expose-gc'] } }
-    : {}),
-});
+): WebdriverIO.Capabilities => {
+  // Both binaries are named, so WebdriverIO has nothing left to download.
+  const args =
+    name === 'chrome' && env.BSQ_EXPOSE_GC === '1'
+      ? ['--js-flags=--expose-gc', ...(extra.args ?? [])]
+      : extra.args;
+  const options = {
+    binary: binaries.browser,
+    ...(args?.length ? { args } : {}),
+    ...(extra.prefs ? { prefs: extra.prefs } : {}),
+  };
+  return {
+    browserName: name,
+    browserVersion: browserVersion(name, env),
+    ...(name === 'chrome'
+      ? {
+          'goog:chromeOptions': options as ChromeOptions,
+          'wdio:chromedriverOptions': { binary: binaries.driver },
+        }
+      : {
+          'moz:firefoxOptions': options as FirefoxOptions,
+          'wdio:geckodriverOptions': {
+            geckoDriverVersion: GECKODRIVER_VERSION,
+            binary: binaries.driver,
+          },
+        }),
+  };
+};
 
 /** The paths a harness launches: absolute, inside the cache. */
+type ChromeOptions = NonNullable<
+  WebdriverIO.Capabilities['goog:chromeOptions']
+>;
+type FirefoxOptions = NonNullable<
+  WebdriverIO.Capabilities['moz:firefoxOptions']
+>;
+
+/** What a harness adds to a browser's own options: launch arguments and profile preferences. */
+export interface BrowserOptions {
+  args?: string[];
+  prefs?: Record<string, unknown>;
+}
+
 export interface BrowserBinaries {
   browser: string;
   driver: string;
@@ -283,35 +306,19 @@ async function deps(): Promise<string[]> {
 
 async function installAll(names: readonly BrowserName[]) {
   const { remote } = await import('webdriverio');
+  const all = await resolveBrowsers(names);
   for (const name of names) {
     const browser = await remote({
       // geckodriver relays a fresh Firefox profile's own startup noise as WARN.
       logLevel: 'error',
       cacheDir: WDIO_CACHE_DIR,
-      capabilities: {
-        ...browserCapabilities(name),
-        ...(name === 'chrome'
-          ? { 'goog:chromeOptions': { args: ['--headless=new'] } }
-          : { 'moz:firefoxOptions': { args: ['-headless'] } }),
-      },
+      capabilities: browserCapabilities(name, all[name], {
+        args: [name === 'chrome' ? '--headless=new' : '-headless'],
+      }),
     });
     const version = (browser.capabilities as { browserVersion?: string })
       .browserVersion;
     await browser.deleteSession();
-    if (name === 'firefox') {
-      const platform = detectBrowserPlatform();
-      if (!platform) throw new Error('browsers: unsupported platform');
-      const policies = firefoxPoliciesPath(
-        computeExecutablePath({
-          browser: Browser.FIREFOX,
-          buildId: browserVersion('firefox'),
-          cacheDir: WDIO_CACHE_DIR,
-          platform,
-        }),
-      );
-      mkdirSync(dirname(policies), { recursive: true });
-      writeFileSync(policies, `${JSON.stringify(FIREFOX_POLICIES, null, 2)}\n`);
-    }
     console.log(`${name} ${version}: ok`);
   }
 }

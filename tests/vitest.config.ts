@@ -1,15 +1,11 @@
 import { fileURLToPath } from 'node:url';
-import { webdriverio } from '@vitest/browser-webdriverio';
 import {
   defineConfig,
   type TestProjectInlineConfiguration,
 } from 'vitest/config';
-import {
-  type BrowserName,
-  browserCapabilities,
-  WDIO_CACHE_DIR,
-} from '../scripts/browsers.ts';
+import { type BrowserName, WDIO_CACHE_DIR } from '../scripts/browsers.ts';
 import { timeScale } from '../scripts/processes.ts';
+import { resolvingWebdriverio } from './harness/browser-provider.ts';
 import { declaredTags } from './harness/planner/need.ts';
 import type { TestTarget } from './harness/target.ts';
 import { allTargets, targetLabel } from './harness/target-projects.ts';
@@ -78,10 +74,7 @@ const browserProject = (
       // The WebdriverIO provider cannot take it on BiDi (`switchFrame` was
       // removed in v10): every failure would print a stack trace for it.
       screenshotFailures: false,
-      provider: webdriverio({
-        cacheDir: WDIO_CACHE_DIR,
-        capabilities: browserCapabilities(browser),
-      }),
+      provider: resolvingWebdriverio(browser, { cacheDir: WDIO_CACHE_DIR }),
       instances: [{ browser, name }],
     },
   },

@@ -31,7 +31,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { remote } from 'webdriverio';
-import { browserCapabilities, WDIO_CACHE_DIR } from './browsers.ts';
+import {
+  browserCapabilities,
+  resolveBrowsers,
+  WDIO_CACHE_DIR,
+} from './browsers.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEV_PORT = 5199;
@@ -166,13 +170,13 @@ function stopServer(child: ChildProcess) {
 
 /** Loads the fixture and returns what `window.__SMOKE__` ended up holding. */
 async function driveBrowser(url: string) {
+  const { chrome } = await resolveBrowsers(['chrome']);
   const browser = await remote({
     logLevel: 'warn',
     cacheDir: WDIO_CACHE_DIR,
-    capabilities: {
-      ...browserCapabilities('chrome'),
-      'goog:chromeOptions': { args: ['--headless=new'] },
-    },
+    capabilities: browserCapabilities('chrome', chrome, {
+      args: ['--headless=new'],
+    }),
   });
   const noise: string[] = [];
   try {
