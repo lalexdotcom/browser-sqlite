@@ -141,3 +141,19 @@ Capabilities: `platformName: 'iOS'`, `browserName: 'safari'`, `'safari:useSimula
 **GitHub runners.** The setup step's `install` led on macOS through `/var/folders/…/T/bsq-browsers-<hash>.sock` and on Windows through `\\.\pipe\bsq-browsers-<hash>`, each item installed once. Final head `607b39d`: macOS run 39338378269 green (~18 min, 358 files, conformance 6/6, Not applicable 20/14/11/5), Windows run 39338380934 green (~33 min, 358 files, conformance 6/6; its CI cache was already marked, so nothing installed).
 
 **The macOS lock defects (LOCK-MACOS).** The lock's multi-process unit tests failed on macOS only: a throwaway workflow looping `tests/unit/tooling/install-lock.test.ts` failed 12 of 50 runs on `macos-latest` (3 cores; 7 of 25 alone, 5 of 25 under 6 busy loops) and 0 of 50 on `ubuntu-latest`; 32 busy loops on this container's 16 cores reproduced nothing. With each child's timestamped trace: 6 of 40 failed, two causes — `listen()` on a held socket returned `EEXIST` beside `EADDRINUSE` (the process died), and a client the kernel had queued but the leader had not accepted was dropped by `server.close()` without an answer. After `607b39d` (`EEXIST` counts as busy; the leader drains its accept queue until a loop turn passes with no new connection): 0 of 40.
+
+## SAFARI-LIB-SPIKE — the library's Vitest + WebdriverIO suite on Safari through safaridriver, 2026-10-20, GitHub `macos-latest` (macOS 26.6.2, Safari 26.6.2, 3 cores)
+
+**Method.** Throwaway branch `spike/safari` (commits `896c0c3`, `ce106e0`, `bd1df8f`; `mem:follow-ups/safari-idb-stranded` § How to pick it up): Safari projects under `BSQ_SPIKE_SAFARI=1` (headless off, plain `webdriverio` provider with `browserName: 'safari'`), one build, one Vitest process per session with its own Vite cache. Runs 39381370815, 39383576597 (stopped after two scenarios by `bash -e`), 39384117648. `sudo safaridriver --enable` succeeds on the image.
+
+| scenario | result |
+|---|---|
+| `conformance safari`, one session | 3 files passed, 34-57 s (7 of 8 runs alone; `conformance chrome` 46 s on the same runner) |
+| `probe safari`, `probe isolated safari` | pass, 12-17 s; COOP/COEP isolation works under safaridriver |
+| two, then four Safari sessions started at once | one session gets Safari; every other fails `Could not create a session: The Safari instance is already paired with another WebDriver session` (after a "Request to pair … timed out" retry) |
+| Safari beside `conformance chrome` and `conformance firefox` at once | Safari gets its session; Chrome and Firefox pass (103-111 s, against 46 alone — 3 cores); Safari failed its wipe (below) |
+| `probe safari` three times back to back, no quit | 3/3 pass — a clean shutdown frees Safari |
+| a Safari run `kill -9`ed after 25 s | `safaridriver` and Safari left running; the next session passes, as after `pkill safaridriver` and after quitting Safari |
+| once, right after the four-session failure | a lone Safari session refused (`already paired`); not reproduced since |
+
+**The stranded IndexedDB connection.** 3 runs of 10 failed every file on `IndexedDB "IDBBatchAtomicVFS" (still open after 5000 ms)` in the storage wipe, tests passing: 1 of 8 alone, 2 of 2 with another load on the machine. Analysis and what to do: `mem:follow-ups/safari-idb-stranded`.

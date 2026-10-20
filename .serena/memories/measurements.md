@@ -19,6 +19,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - LIB-VITEST-SPIKE — the library's own tests on Vitest + WebdriverIO, stock Chrome 153 / Firefox 155
 - LIB-WIN-MAC — the library's suites on GitHub's Windows and macOS runners: durations, counts, what Windows needed
 - BROWSERS-INSTALLER — the single installer: cold and warm cost, the runners, and LOCK-MACOS (the lock's two macOS defects)
+- SAFARI-LIB-SPIKE — the library's suite on Safari 26.6.2 through safaridriver: one session per machine, beside the others, after a kill, and the stranded IndexedDB connection
 
 ## `mem:measurements/wa-sqlite-prs` — the campaigns behind wa-sqlite PRs
 
