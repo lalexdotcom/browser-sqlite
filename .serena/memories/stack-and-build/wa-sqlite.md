@@ -20,6 +20,7 @@ brought what the patch had left out of #375, the `async` glue and a rebuilt `wa-
 (no `asyncify_imports.json` any more), so `async` executes new code since then. Vendored, so a commit serves
 as well as a release and nothing waits for one.
 
+- **A repin rewrites `[Unreleased]`**: a carried fix's entry gives way to the bump of wa-sqlite (`mem:conventions/upstream`).
 - **A repin can change executed code even when the PRs it brings were carried**: a PR merged at a
   later head than the patch held (#363 and #369 on 2026-10-03) or a part of a PR the patch left out
   (#375's glue) reaches `dist/` only through the repin. Compare `dist/` across it.

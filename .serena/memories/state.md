@@ -26,7 +26,7 @@ unmeasured ground.
 - **The vendored wa-sqlite sits on upstream `master` of 2026-10-13** (`6238f532`, #374 merged;
   `package.json` has the SHA; the built worker, the `.wasm` and `index.js` are byte-identical to the
   previous pin's). **Since 2026-10-16 the patch carries rhashimoto/wa-sqlite#381 and #382**
-  (the `OPFSCoopSyncVFS` and `OPFSAdaptiveVFS` retries on a held access handle), nothing else. Heads and merges in
+  (the `OPFSCoopSyncVFS` and `OPFSAdaptiveVFS` retries on a held access handle), **and on `fix/idb-vfs-close` (2026-10-21, not merged) #384 and #385** (the IndexedDB VFS's `close()` waits for its transactions). Heads and merges in
   `mem:stack-and-build/wa-sqlite`, reports in `mem:upstream`. A patch is added, regenerated or
   removed through `pnpm patch` / `pnpm patch-commit` / `pnpm patch-remove`, never by hand.
 - **`main` may sit ahead of `origin/main` indefinitely** — the convention, not an oversight. It
