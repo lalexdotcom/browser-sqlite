@@ -2,6 +2,19 @@
 
 Part of `mem:measurements`, which indexes every entry; its rules apply here. The `IDBMirrorVFS` campaigns (#371, #372) moved to `mem:measurements/idbmirror` on 2026-10-08.
 
+## IDB-CLOSE-384 — what `close()` leaves live on the two IndexedDB VFS, 2026-10-21, Chrome 153 and Firefox 155 (stock, WebDriver), this container
+
+**Method.** wa-sqlite's runner, the fork's WebDriver harness of `probe/stock-browsers` in the worktree `.work/wa-sqlite-idbclose` (branch `probe/idb-close`, not pushed) with `src/` and `dist/` of upstream `6238f532`, asyncify build, on the page. (1) `test/probe_idb_close.test.js`: `IDBDatabase.prototype.transaction` wrapped to count transactions until `complete`/`abort`; per round a fresh database set up and settled, then a new VFS does one scenario, `sqlite3.close`, `await vfs.close()`, the live count read, then `indexedDB.deleteDatabase` from the page (`blocked` recorded); 20 rounds per cell. (2) `test/probe_idb_close_loss.test.js`: a setup worker creates the table and is terminated; a worker inserts a row under `synchronous` = `normal` or `full`, `sqlite3.close`, `await vfs.close()`, replies and is terminated on the reply; a third worker counts; 40 rounds per cell.
+
+| `master` | `IDBBatchAtomicVFS` live at close (Chrome / Firefox) | `blocked` | `IDBMirrorVFS` live at close | `blocked` |
+|---|---|---|---|---|
+| write, `synchronous=normal` | 20/20 · 20/20 | 20/20 · 0 | 0 · 0 | 0 · 0 |
+| write, `full` | 0 · 0 | 0 · 0 | 0 · 0 | 0 · 0 |
+| `jAccess` alone | 20/20 · 20/20 | 10/20 · 0 | — | — |
+| open alone; read | 0 · 0 | 0 · 0 | 17/20, 16/20 · 20/20, 20/20 | 0 · 0 |
+
+Lost commit, `master`: `IDBBatchAtomicVFS` `normal` **20/40 Chrome, 36/40 Firefox**, `full` 0/40; `IDBMirrorVFS` 0/40 under both. With #384's `97d0f192`: `IDBBatchAtomicVFS` live at close 0/20 in all five cells on both engines. #384's test (10 rounds in one case): `master` failed 10 of 10 runs per engine (5 runs × asyncify and jspi, 1-7 rows of 10), the change 5 of 5 green per engine; upstream suite on Chrome with upstream's config 15/15 files, 6336 passed. Report: `docs/upstream/2026-10-21-wa-sqlite-384-idb-batch-close-settle.md`.
+
 ## 363-ERROR-PATH — a write error leaves `OPFSAnyContextVFS`'s writable open at unlock, 2026-10-02, Playwright's Chromium and Firefox (1.62.1), this container
 
 **Why.** rhashimoto's review of #363 (2026-10-02) asks to close the writable on `SQLITE_FCNTL_SYNC` (skipped after `SQLITE_FCNTL_OVERWRITE`), `SQLITE_FCNTL_COMMIT_PHASETWO` and `jSync`, not in `jUnlock`. Read in SQLite 3.53.0: every normal path ends in one of those, but an I/O error does not. A failed cache spill puts the pager in `ERROR` (`pagerStress` → `pager_error`, pager.c L4656), `sqlite3PagerRollback` then returns at once without playback (L6768), and `pager_unlock` releases the lock; a failed commit write whose rollback playback fails too skips the playback's `sqlite3PagerSync` (L2977) and ends the same way (L6811).

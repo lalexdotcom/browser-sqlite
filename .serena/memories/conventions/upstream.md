@@ -25,7 +25,8 @@ Part of `mem:conventions`, moved out of it as written on 2026-10-13 when that me
   rerun is not evidence for them".
 
   **The report in `docs/upstream/` is written AFTER the PR is opened, named with its number from
-  the start (user, 2026-09-21).** Not before, and not under a numberless name to be renamed later:
+  the start (user, 2026-09-21) — and AT ONCE, as soon as the number is known, before any other work
+  (user, 2026-10-21, after #384's report waited while the next PR was started).** Not before, and not under a numberless name to be renamed later:
   the number belongs in the file name, the title, the table row and the "Posted upstream" section,
   so writing the file first means touching all four twice. Said after #357's report was written
   while the branch was still local, then `git mv`-ed — the history carries that once. What DOES
