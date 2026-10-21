@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createTestClient,
   interceptWorkers,
+  sharedDatabase,
   sleep,
   waitUntil,
 } from '../helpers';
@@ -193,5 +194,34 @@ describe('close()', () => {
     // Spec R3: the statement reports the closed handle; the transaction itself
     // still rejects with CLIENT_CLOSED (the test above).
     await expect(outcome).resolves.toBe('TRANSACTION_CLOSED');
+  });
+
+  // Falsifiable: reply `closed` without closing the VFS. Under
+  // synchronous=NORMAL, IDBBatchAtomicVFS's last commit is still in flight when
+  // the worker is terminated, and is lost about half the time on Chrome and
+  // Firefox (wa-sqlite #384). The same close is what keeps Safari from
+  // stranding the IndexedDB connection, which no other engine shows.
+  it('keeps the last write of a client closed under synchronous=NORMAL', {
+    tags: ['requires:idb-storage'],
+  }, async () => {
+    const database = sharedDatabase();
+    const setup = database.open({ poolSize: 1 });
+    await setup.write('CREATE TABLE t (a)');
+    await setup.close();
+
+    const ROUNDS = 10;
+    for (let i = 0; i < ROUNDS; i++) {
+      const db = database.open({
+        poolSize: 1,
+        pragmas: { synchronous: 'NORMAL' },
+      });
+      await db.write('INSERT INTO t (a) VALUES (?)', [i]);
+      await db.close();
+    }
+
+    const reader = database.open({ poolSize: 1 });
+    expect(
+      await reader.read<{ n: number }>('SELECT count(*) AS n FROM t'),
+    ).toEqual([{ n: ROUNDS }]);
   });
 });

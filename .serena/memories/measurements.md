@@ -25,6 +25,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 
 ## `mem:measurements/wa-sqlite-prs` — the campaigns behind wa-sqlite PRs
 
+- IDB-CLOSE-384
 - 363-ERROR-PATH
 - 369-XCLOSE
 - IDB-JOURNAL

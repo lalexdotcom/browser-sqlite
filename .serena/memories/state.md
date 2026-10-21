@@ -26,7 +26,7 @@ unmeasured ground.
 - **The vendored wa-sqlite sits on upstream `master` of 2026-10-13** (`6238f532`, #374 merged;
   `package.json` has the SHA; the built worker, the `.wasm` and `index.js` are byte-identical to the
   previous pin's). **Since 2026-10-16 the patch carries rhashimoto/wa-sqlite#381 and #382**
-  (the `OPFSCoopSyncVFS` and `OPFSAdaptiveVFS` retries on a held access handle), nothing else. Heads and merges in
+  (the `OPFSCoopSyncVFS` and `OPFSAdaptiveVFS` retries on a held access handle), **and since 2026-10-21 #384 and #385** (the IndexedDB VFS's `close()` waits for its transactions). Heads and merges in
   `mem:stack-and-build/wa-sqlite`, reports in `mem:upstream`. A patch is added, regenerated or
   removed through `pnpm patch` / `pnpm patch-commit` / `pnpm patch-remove`, never by hand.
 - **`main` may sit ahead of `origin/main` indefinitely** — the convention, not an oversight. It
@@ -85,6 +85,7 @@ here on purpose: a total alone cannot say which suite moved.
 - **Merged into `main` on 2026-10-19 (not pushed): the stream iterator** (`perf/stream-iterator`, CHANGELOG Changed incl. a **Breaking** line; `mem:history/2026-10-19-to-25`). Matrix 23/23, macOS and Windows green on GitHub before the merge (the branch was pushed for them and deleted after).
 - **Merged into `main` on 2026-10-19 (not pushed): `browsers.ts` as the only installer, under an inter-process lock** (`mem:history/2026-10-19-to-25`). Spec `docs/superpowers/specs/2026-10-19-browsers-installer-design.md`, plan `docs/superpowers/plans/2026-10-19-browsers-installer.md`; local delivery gate, cold-cache `pnpm test`, `test:consumer` and the macOS and Windows workflows green on the final head (BROWSERS-INSTALLER, `mem:measurements/test-browsers`); how it works in `mem:stack-and-build`.
 - **Merged into `main` on 2026-10-21 (not pushed): the stranded IndexedDB connection on Safari** (`mem:history/2026-10-19-to-25`) — the worker settles its IndexedDB transactions before its last reply, the pool quiesces an IndexedDB worker before a forced kill, `requires:jspi-available` for the default-build fallback test (CHANGELOG Fixed ×2; local gate and Safari validation green; `mem:follow-ups/safari-idb-stranded`).
+- **Merged into `main` on 2026-10-21 (not pushed): the IndexedDB close through wa-sqlite #384/#385** (`fix/idb-vfs-close`): the PRs opened and carried, the worker closes its IndexedDB VFS instead of tracking transactions, `idb-transactions.ts` gone, CHANGELOG Fixed `synchronous=NORMAL` (`mem:history/2026-10-19-to-25`, `mem:follow-ups/safari-idb-stranded`). Safari run green.
 - **Next, in this order (user, 2026-10-20):** (1) the stranded IndexedDB connection on Safari — merged; (2) Safari in the library's suite on macOS, brainstorming to resume (`mem:follow-ups/safari-suite`); later, the Windows/macOS workflows in the release (user, 2026-10-15).
 
 - **The Vite dep-optimizer race between parallel Vitest processes is fixed and merged (2026-10-13)**: one cache per job (`mem:follow-ups/notes`). CI's `verify` was the exposed run (conformance in 2 shards per project on a cold cache); the push that carries the fix is its proof.

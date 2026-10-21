@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **On `OPFSAdaptiveVFS` in Firefox, a client no longer hangs, or leaves the database locked for every other client, when another client's worker was terminated while it held the database,** such as a worker that missed its open timeout or a tab that was closed.
 - **On Safari, `IDBBatchAtomicVFS` and `IDBMirrorVFS` no longer leave their IndexedDB database held open after `close()` or `deleteDatabase()`,** which made `indexedDB.deleteDatabase()` and upgrades of that database wait indefinitely, even across page reloads.
 - **On `IDBBatchAtomicVFS` and `IDBMirrorVFS`, a worker terminated after a crash, a timeout or a client failure no longer leaves its IndexedDB database held open on Safari:** the worker is first given up to 300 ms to let its IndexedDB transactions finish.
+- **On `IDBBatchAtomicVFS` with `synchronous=NORMAL`, the last write before `close()` is no longer lost,** which happened about half the time: the worker was terminated before that write's commit reached IndexedDB.
 
 ## [1.0.0-rc.10] - 2026-10-09
 

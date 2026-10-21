@@ -937,11 +937,12 @@ export const createPoolWorker = (deps: {
 
   /**
    * Safari before WebKit 321564@main keeps the connection of a worker
-   * terminated with an IndexedDB transaction live (worker/idb-transactions.ts),
+   * terminated with an IndexedDB transaction live (closeIdbVfs, worker.ts),
    * and a kill mid-write stranded the database in 3-22 % of kills on Safari
    * 26.6.2. The transport is already cut when this runs: the worker is asked to
-   * let its transactions settle and the engine's terminate() waits for its
-   * answer — or QUIESCE_GRACE_MS, for a worker that cannot read a message.
+   * close its VFS, which lets its transactions settle, and the engine's
+   * terminate() waits for its answer — or QUIESCE_GRACE_MS, for a worker that
+   * cannot read a message.
    */
   const quiesceThenTerminate = () => {
     // Nothing the worker says matters any more, and a reply to the query it

@@ -45,7 +45,6 @@ import type {
 import { DATABASE_FILE_SUFFIXES, renderPragmas } from '../utils';
 import { anonymousParams, bindBlock, RowWriter } from './binary';
 import { cloneable } from './cloneable';
-import { trackIdbTransactions } from './idb-transactions';
 import { firstMissing } from './probes';
 import { sqliteCodeOf } from './sqlite-code';
 import { createStatementCache } from './statement-cache';
@@ -304,20 +303,33 @@ let openedDB:
     }>
   | undefined;
 /**
- * Every IndexedDB transaction this worker starts (idb-transactions.ts): the
- * client terminates the worker on its last reply, and Safari 26 keeps the
- * connection of a worker terminated with one still live. Installed before any
- * VFS loads; undefined where the context has no IndexedDB.
+ * The client terminates this worker on its next reply, and Safari before
+ * WebKit 321564@main (26.x, 27.0.x; WebKit bug 324094) keeps the connection of
+ * a worker terminated before its last IndexedDB transaction completed — a
+ * readonly one included — for the life of the browser process:
+ * `indexedDB.deleteDatabase` and upgrades of that database then block, through
+ * reloads. An IndexedDB VFS's `close()` closes its connection, which refuses
+ * any new transaction, then waits for the live ones (wa-sqlite #384 and #385,
+ * carried in patches/). Other VFS are left to the terminate. Bounded, as the
+ * client waits for the reply.
  */
-const idbTransactions =
-  typeof IDBDatabase === 'undefined'
-    ? undefined
-    : trackIdbTransactions(IDBDatabase.prototype);
-
-/** The wait before a reply the client answers with `terminate()`. */
-const IDB_SETTLE_MS = 2_000;
-const idbSettled = (): Promise<void> =>
-  idbTransactions?.settled(IDB_SETTLE_MS) ?? Promise.resolve();
+const IDB_CLOSE_MS = 2_000;
+const closeIdbVfs = async (
+  vfs: SQLiteVFS,
+  instance: { close?: () => unknown } | undefined,
+): Promise<void> => {
+  if (VFS_CAPABILITIES[vfs].storage !== 'indexeddb' || !instance?.close) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    Promise.resolve()
+      .then(() => instance.close?.())
+      .catch(() => {}),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, IDB_CLOSE_MS);
+    }),
+  ]);
+  clearTimeout(timer);
+};
 
 const gate = createCreditGate(createMessageChannelTick());
 const locks = createLocks();
@@ -437,7 +449,9 @@ const open = (file: string, options: OpenOptions) => {
   // `unable to open database file`. Either way the real cause is the VFS's,
   // kept in `lastError` (spec 2026-09-13, §3.4). A fresh instance per open()
   // means the value cannot be stale.
-  let vfsInstanceSeen: { lastError?: unknown } | undefined;
+  let vfsInstanceSeen:
+    | { lastError?: unknown; close?: () => unknown }
+    | undefined;
 
   // Each step announced as it begins, so an open that never finishes names
   // the step it stopped in (tests/browser/open-retry.test.ts).
@@ -1053,7 +1067,7 @@ const open = (file: string, options: OpenOptions) => {
           // shutting down either way and must still get its reply.
         }
         // sqlite.close returns before its VFS's last transaction completes.
-        await idbSettled();
+        await closeIdbVfs(vfs, vfsInstanceSeen);
         reply({ type: 'closed', callId: 0 });
         break;
       }
@@ -1080,9 +1094,8 @@ const open = (file: string, options: OpenOptions) => {
       // grace if this worker cannot answer (pool.ts). Nothing new may start:
       // the running statement fails, the client discards its result anyway.
       case 'quiesce': {
-        idbTransactions?.refuseNew();
         gate.stop();
-        await idbSettled();
+        await closeIdbVfs(vfs, vfsInstanceSeen);
         self.postMessage({ type: 'quiesced', callId: 0 });
         break;
       }
@@ -1234,8 +1247,10 @@ const deleteDatabaseFiles = async (data: {
       // below, so no re-acquisition of OPFS access handles is needed.
       await sqlite.close(db);
     } catch (error: unknown) {
+      // Closed on every outcome: the client terminates this worker on the
+      // reply, and an IndexedDB VFS's close() waits for its transactions.
+      await vfsInstance.close?.();
       if ((error as { code?: unknown })?.code === SQLITE_CANTOPEN) {
-        await vfsInstance.close?.();
         return false;
       }
       throw error;
@@ -1368,10 +1383,10 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
       break;
     }
     case 'delete': {
-      // Every outcome is answered with terminate(): the jAccess barrier's
-      // readonly transaction, among others, must complete first.
+      // Every outcome is answered with terminate(): deleteDatabaseFiles closes
+      // its VFS first, which waits for the jAccess barrier's readonly
+      // transaction, among others, on an IndexedDB VFS.
       deleteDatabaseFiles(data)
-        .finally(idbSettled)
         .then((found) => {
           if (found) {
             self.postMessage({ type: 'deleted', callId: 0 });
@@ -1411,8 +1426,6 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
     // Unreachable as close is: open() replaces this handler first. Answered
     // all the same, as the open handler answers it.
     case 'quiesce': {
-      idbTransactions?.refuseNew();
-      await idbSettled();
       self.postMessage({ type: 'quiesced', callId: 0 });
       break;
     }

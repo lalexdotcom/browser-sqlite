@@ -1,3 +1,138 @@
+diff --git a/src/examples/IDBBatchAtomicVFS.js b/src/examples/IDBBatchAtomicVFS.js
+index 4b9193705ba5e5525f3e77af64c47b4507200503..0d03347d8ac61bcf0cfa90419e8597360719c09a 100644
+--- a/src/examples/IDBBatchAtomicVFS.js
++++ b/src/examples/IDBBatchAtomicVFS.js
+@@ -62,7 +62,7 @@ export class IDBBatchAtomicVFS extends WebLocksMixin(FacadeVFS) {
+   }
+ 
+   close() {
+-    this.#idb.close();
++    return this.#idb.close();
+   }
+   
+   async isReady() {
+@@ -632,6 +632,7 @@ export class IDBContext {
+   /** @type {Promise<any>} */ #txComplete = Promise.resolve();
+   /** @type {IDBRequest?} */ #request = null;
+   /** @type {WeakSet<IDBTransaction>} */ #txPending = new WeakSet();
++  /** @type {Set<Promise<void>>} */ #txSettled = new Set();
+   
+   log = null;
+ 
+@@ -699,8 +700,13 @@ export class IDBContext {
+     this.#database = database;
+   }
+ 
+-  close() {
++  async close() {
++    // Let queued calls make their requests, then wait for every
++    // transaction to finish. sync() does not wait for the last commit
++    // unless durable, and reset() forgets it.
++    await this.#chain?.catch(() => {});
+     this.#database.close();
++    await Promise.all(this.#txSettled);
+   }
+ 
+   /**
+@@ -761,6 +767,11 @@ export class IDBContext {
+         tx = this.#database.transaction(this.#database.objectStoreNames, mode, options);
+         this.log?.('IDBTransaction open', mode);
+         this.#txPending.add(tx);
++        const settled = new Promise(resolve => {
++          tx.addEventListener('complete', resolve);
++          tx.addEventListener('abort', resolve);
++        }).then(() => { this.#txSettled.delete(settled); });
++        this.#txSettled.add(settled);
+         this.#txComplete = new Promise((resolve, reject) => {
+           tx.addEventListener('complete', () => {
+             this.log?.('IDBTransaction complete');
+diff --git a/src/examples/IDBMirrorVFS.js b/src/examples/IDBMirrorVFS.js
+index 20b788aa75579ae871edd5190855b9d9ebc65cbd..eb4691325ec355c9148c3cfc43689ccef4de003b 100644
+--- a/src/examples/IDBMirrorVFS.js
++++ b/src/examples/IDBMirrorVFS.js
+@@ -75,6 +75,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+   #lastError = null;
+ 
+   /** @type {IDBDatabase} */ #idb;
++  /** @type {Set<Promise<void>>} */ #txSettled = new Set();
+ 
+   log = null; // console.log;
+ 
+@@ -109,8 +110,27 @@ export class IDBMirrorVFS extends FacadeVFS {
+     });
+   }
+ 
+-  close() {
+-    return this.#idb.close();
++  async close() {
++    // Transactions already started still run to completion. Wait for
++    // them, so a context ended right after leaves none behind.
++    this.#idb.close();
++    await Promise.all(this.#txSettled);
++  }
++
++  /**
++   * Start an IndexedDB transaction that close() waits for.
++   * @param {string[]} storeNames 
++   * @param {IDBTransactionMode} [mode] 
++   * @returns {IDBTransaction}
++   */
++  #transaction(storeNames, mode = 'readonly') {
++    const idbTx = this.#idb.transaction(storeNames, mode);
++    const settled = new Promise(resolve => {
++      idbTx.addEventListener('complete', resolve);
++      idbTx.addEventListener('abort', resolve);
++    }).then(() => { this.#txSettled.delete(settled); });
++    this.#txSettled.add(settled);
++    return idbTx;
+   }
+ 
+   async isReady() {
+@@ -135,7 +155,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+         // TODO
+         file = new File(path, flags);
+ 
+-        const idbTx = this.#idb.transaction(['blocks', 'tx'], 'readwrite');
++        const idbTx = this.#transaction(['blocks', 'tx'], 'readwrite');
+         const blocks = idbTx.objectStore('blocks');
+         if (await idbX(blocks.count([path, 0])) === 0) {
+           // File does not yet exist.
+@@ -428,7 +448,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+         // In order to write, our view of the database must be up to date.
+         // To check this, first fetch all transactions in IndexedDB equal to
+         // or greater than our view.
+-        const idbTx = this.#idb.transaction(['blocks', 'tx']);
++        const idbTx = this.#transaction(['blocks', 'tx']);
+         const range = IDBKeyRange.bound(
+           [file.path, file.viewTx.txId],
+           [file.path, Infinity]);
+@@ -681,7 +701,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+     const oldestTxId = await this.#getOldestTxInUse(file);
+ 
+     const tx = file.txActive;
+-    const idbTx = this.#idb.transaction(['blocks', 'tx'], 'readwrite');
++    const idbTx = this.#transaction(['blocks', 'tx'], 'readwrite');
+     const complete = new Promise(async (resolve, reject) => {
+       idbTx.oncomplete = () => {
+         file.commitsPending--;
+@@ -801,7 +821,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+    * @param {File} file 
+    */
+   async #reloadFile(file) {
+-    await this.#loadFile(file, this.#idb.transaction(['blocks', 'tx']));
++    await this.#loadFile(file, this.#transaction(['blocks', 'tx']));
+     file.txActive = null;
+     file.abortController = new AbortController();
+     await this.#setView(file, file.viewTx);
+@@ -842,7 +862,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+     // Only main databases are stored in IndexedDB and SQLite never
+     // deletes main databases, but delete blocks here anyway for
+     // standalone use.
+-    const request = this.#idb.transaction(['blocks'], 'readwrite')
++    const request = this.#transaction(['blocks'], 'readwrite')
+       .objectStore('blocks')
+       .delete(IDBKeyRange.bound([path, 0], [path, Infinity]));
+     await new Promise((resolve, reject) => {
 diff --git a/src/examples/OPFSAdaptiveVFS.js b/src/examples/OPFSAdaptiveVFS.js
 index 38ff140c9642759971aed46b359f8de413e42daa..824fee33c0cbd5b2b94d98f0ac51890860024843 100644
 --- a/src/examples/OPFSAdaptiveVFS.js
