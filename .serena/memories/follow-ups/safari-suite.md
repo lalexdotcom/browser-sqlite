@@ -2,6 +2,8 @@
 
 Part of `mem:follow-ups`. **Comes after `mem:follow-ups/safari-idb-stranded`** (user, 2026-10-20). Resume the brainstorming from here (superpowers:brainstorming, then a spec on a feature branch).
 
+**Order (user, 2026-10-21):** after `mem:follow-ups/ci-workflows`, which gives `tests.yaml` a `browsers` input that only the macOS workflows set. This piece adds Safari to that list, to `scripts/browsers.ts` (its install: `safaridriver --enable`) and to `scripts/test-plan.ts`, and makes a browser the platform lacks (Safari on Linux or Windows) fail with a clear error rather than be skipped silently.
+
 ## Decided by the user (2026-10-20)
 
 - **The goal: everything passes on Safari.** Every test that applies to Safari runs there and passes; what cannot is skipped explicitly, with its reason, and shows in the report, as on Chrome and Firefox.

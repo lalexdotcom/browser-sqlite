@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, interceptWorkers, scaled, sleep } from '../helpers';
+import { createTestClient, interceptWorkers, scaled } from '../helpers';
 
 /**
  * Every test here drives two statements against two workers: the describes'
@@ -89,6 +89,7 @@ describe('a statement following a short-circuited statement in the same callback
   it('follows a tx.read() aborted by its own signal', {
     timeout: scaled(30_000),
   }, async () => {
+    const records = interceptWorkers();
     const db = await createTestClient({ ...TWO_WORKERS });
     try {
       await db.write('CREATE TABLE t (n INTEGER)');
@@ -96,15 +97,22 @@ describe('a statement following a short-circuited statement in the same callback
 
       const counted = await db.transaction(async (tx) => {
         const controller = new AbortController();
-        // chunkSize 1 over 2000 rows keeps the query in flight for many tasks,
-        // so the abort lands mid-read rather than after `done`; every step is
-        // tiny, so the worker answers the stop at once.
+        // The abort fires on the read's first chunk: the client's own listener
+        // was added first, so it has taken that chunk, and with chunkSize 1
+        // over 2000 rows `done` is still ~1999 credits away — the abort lands
+        // mid-read on any machine. A timer cannot promise that: in a full
+        // shard Firefox ran a sleep(0) 26-105 ms late, past the whole read.
+        for (const { worker } of records) {
+          worker.addEventListener('message', (event: MessageEvent) => {
+            if ((event.data as { type?: string })?.type === 'chunk') {
+              controller.abort();
+            }
+          });
+        }
         const pending = tx.read('SELECT n FROM t', [], {
           signal: controller.signal,
           chunkSize: 1,
         });
-        await sleep(0);
-        controller.abort();
         let rejected = false;
         try {
           await pending;
