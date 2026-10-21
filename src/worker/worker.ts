@@ -45,6 +45,7 @@ import type {
 import { DATABASE_FILE_SUFFIXES, renderPragmas } from '../utils';
 import { anonymousParams, bindBlock, RowWriter } from './binary';
 import { cloneable } from './cloneable';
+import { trackIdbTransactions } from './idb-transactions';
 import { firstMissing } from './probes';
 import { sqliteCodeOf } from './sqlite-code';
 import { createStatementCache } from './statement-cache';
@@ -302,6 +303,22 @@ let openedDB:
       step: Step;
     }>
   | undefined;
+/**
+ * Every IndexedDB transaction this worker starts (idb-transactions.ts): the
+ * client terminates the worker on its last reply, and Safari 26 keeps the
+ * connection of a worker terminated with one still live. Installed before any
+ * VFS loads; undefined where the context has no IndexedDB.
+ */
+const idbTransactions =
+  typeof IDBDatabase === 'undefined'
+    ? undefined
+    : trackIdbTransactions(IDBDatabase.prototype);
+
+/** The wait before a reply the client answers with `terminate()`. */
+const IDB_SETTLE_MS = 2_000;
+const idbSettled = (): Promise<void> =>
+  idbTransactions?.settled(IDB_SETTLE_MS) ?? Promise.resolve();
+
 const gate = createCreditGate(createMessageChannelTick());
 const locks = createLocks();
 
@@ -1035,6 +1052,8 @@ const open = (file: string, options: OpenOptions) => {
           // A database that never opened has nothing to close; the client is
           // shutting down either way and must still get its reply.
         }
+        // sqlite.close returns before its VFS's last transaction completes.
+        await idbSettled();
         reply({ type: 'closed', callId: 0 });
         break;
       }
@@ -1339,7 +1358,10 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
       break;
     }
     case 'delete': {
+      // Every outcome is answered with terminate(): the jAccess barrier's
+      // readonly transaction, among others, must complete first.
       deleteDatabaseFiles(data)
+        .finally(idbSettled)
         .then((found) => {
           if (found) {
             self.postMessage({ type: 'deleted', callId: 0 });
