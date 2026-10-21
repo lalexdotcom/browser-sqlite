@@ -1,23 +1,35 @@
-# A stranded IndexedDB connection on Safari 26.6.2, through the library's own suite — to investigate first (user, 2026-10-20)
+# A stranded IndexedDB connection on Safari 26 — diagnosed and measured through the library 2026-10-20; two fixes measured, the user decides
 
-Part of `mem:follow-ups`. **The user's order (2026-10-20): investigate this cold, in a new session, before the Safari suite's spec** (`mem:follow-ups/safari-suite`): while it is there a Safari run is red at random, so "everything passes on Safari" cannot be reached, and it may be a defect consumers meet.
+Part of `mem:follow-ups`. Comes before `mem:follow-ups/safari-suite` (user, 2026-10-20). Numbers: SAFARI-IDB-STRAND (raw IndexedDB, conformance, cost) and SAFARI-IDB-LIB (the pair suite, forced kills, the quiesce) in `mem:measurements/test-browsers`.
 
-## What was seen (SAFARI-LIB-SPIKE, `mem:measurements/test-browsers`)
+## Diagnosis
 
-`conformance safari` (the three conformance files, one Vitest process, one safaridriver session) on GitHub's `macos-latest` (macOS 26.6.2, Safari 26.6.2, 3 cores): **3 runs of 10 failed, every file of the run at once**, with the per-file storage wipe's `This file left storage behind that could not be wiped: IndexedDB "IDBBatchAtomicVFS" (still open after 5000 ms)` (`tests/browser/setup/storage-wipe.ts`); the tests themselves passed (70 passed / 27 skipped in the failed run read). Alone: 1 of 8 runs (the second of two back-to-back runs; five later back-to-back or after-quit runs all passed). With another load on the machine: 2 of 2 — once beside a second Safari session that was refused, once beside `conformance chrome` and `conformance firefox` running at the same time.
+- **Safari's defect, WebKit 324094** (fixed by 321564@main, in Safari Technology Preview 254 of 2026-10-08, with follow-ups 323066@main and WebKit 327323; absent from 26.6.2 and from 27.0.1 as measured; Safari 27 is stable, and a later 27.x — 27.1, or 27.2 in beta — may carry the fix: not verified, the `xcode-27` run would settle it). A worker ended (`terminate()` or `self.close()`) before its last IndexedDB transaction fired `complete` — a readonly one included — leaves its connection open on the server. The database stays usable, but `deleteDatabase` and upgrades block, through reloads. With a readwrite and a readonly transaction in flight at once (raw harness only) it is **wedged**: no transaction completes. STP 27.0 on the same image: clean in every case.
+- **Through the library, three triggers.** (1) The delete worker — the `jAccess` barrier's readonly transaction still live at its `deleted` reply, the client terminating at once (`src/delete.ts`); every test cleanup on an IndexedDB VFS goes through it, hence 45 of 75 pair files stranding on `IDBBatchAtomicVFS`. (2) The pool's `close` — a `closed` reply carrying a live transaction, rare on `IDBBatchAtomicVFS`, at open already on `IDBMirrorVFS`. (3) Forced kills (`handleDeath`, `failClient`, drain timeout) of a worker with IndexedDB work in flight: ~3 % of kills mid-write on `IDBBatchAtomicVFS`, ~22 % on `IDBMirrorVFS`; in the suite, `lifecycle`'s kill right after `ready`. Every stranding through the library was a held connection with the database still usable — no wedge seen (15/15).
+- **Consumer impact:** the library keeps working on a stranded store (its `deleteDatabase` deletes records); what breaks is `indexedDB.deleteDatabase` and any IndexedDB upgrade of that database, for the life of the Safari process. On `IDBBatchAtomicVFS` the one IndexedDB database holds every SQLite database of the origin.
 
-## The probable cause — not yet shown
+## Two fixes, prototyped on `spike/safari` (not on `main`)
 
-WEBKIT-IDB-TERMINATE (`mem:measurements/test-browsers`): a worker terminated while an IndexedDB transaction is committing keeps its connection for ever, so `deleteDatabase` stays blocked; [WebKit 324094](https://bugs.webkit.org/show_bug.cgi?id=324094), fixed by 321564@main on 2026-09-22, **not in Safari 26.6.2 nor in 27.0.1**. In wa-sqlite's harness, closing the VFS before `terminate()` took the hangs from 8 in 20 to 0 in 20. The library terminates workers without closing the VFS on several paths (read on 2026-10-05): `close()` (sends `close`, the worker finalizes and runs `sqlite3.close`, never the VFS's `close()`), `failClient`, `handleDeath` (open timeout, poisoned worker after a failed rollback), `retireSlot`, and the `deleteDatabase` worker. On 2026-10-05 those paths did not reproduce it on Playwright's WebKit (10/10 per VFS); this is the first time the library's own code is seen to strand a database on a real Safari.
+1. **Settle before the last reply** — `src/worker/idb-settle.ts` tracks each transaction until `complete`/`abort` (not `error`); the worker awaits them, bounded at 2 s, before `closed` and `deleted`. Removes (1) and (2): pair suite 0/75 on both VFS, conformance 0/41. No cost detectable per transaction; ≤ 2 ms per reply.
+2. **Quiesce before a forced kill** — the pool's `terminate()` (except after a `closed`) posts `quiesce`, kills on `quiesced` or after a 300 ms grace; the worker refuses new transactions and waits for the live ones (bounded 1 s). Removes (3): 0 in 800 kills against 7/230 and 10/45 with (1) alone; pair suite with both 0/75 on both VFS, Chrome 150/150. Cost: none on ordinary paths; a forced kill reaches the engine up to the grace later. A worker that never answers is killed as today.
+3. Rejected: an empty readwrite barrier (`close()` ×150 on `IDBBatchAtomicVFS`).
 
-## Not known
+## For the user to decide
 
-- Which test and which termination path leave the connection: the wipe only names the database, the run's last writer is not traced.
-- Whether a consumer meets it: a database that can neither be deleted nor, maybe, reopened while the tab lives (a new client on the same name was not tried).
-- Whether Safari 27 (JSPI, the other build order) shows it too; a Safari 27 runner image existed as `xcode-27` (STOCK-BROWSERS).
+- Ship (1), and (2) or not: (2) changes when a dead worker's thread actually stops, on the failure paths only. Covering every reply before a `terminate()` (`not-found` and the delete path's `error` too). Gate by storage (IndexedDB VFS only) or for all — measured only on the IndexedDB VFS.
+- Tests: unit tests for the tracker and the quiesce protocol; a browser test shows the defect only on Safari 26/27.0.x.
+- Upstream: `IDBBatchAtomicVFS.close()` closes without awaiting `#txComplete` — optional, the library-side wait covers it.
 
-## How to pick it up
+## Not IndexedDB, found on the way (for `mem:follow-ups/safari-suite`)
 
-- **The reproducer is on origin, branch `spike/safari`** (commits `896c0c3`, `ce106e0`, `bd1df8f`, off `main` `d12f8f6`): `tests/vitest.config.ts` gets Safari projects under `BSQ_SPIKE_SAFARI=1` (headless off, a plain `webdriverio({ capabilities: { browserName: 'safari' } })` provider, no `browsers-setup`), and `.github/workflows/spike-safari.yaml` runs on every push to that branch (`sudo safaridriver --enable`, one build, then scenarios of `node node_modules/vitest/vitest.mjs run … --project 'conformance safari'`, one Vite cache per process, `set +e`). One Safari session at a time per machine: never run two Safari processes at once. ~10 min a round. Delete the branch (local and origin) when the investigation is over.
-- First measurements to take: loop `conformance safari` alone and beside a CPU load until the wipe fails, with a trace of each worker's termination (path, whether an IndexedDB transaction was in flight) and of which test last wrote `IDBBatchAtomicVFS`; then the same with the VFS closed before `terminate()` on the path found; then whether a new client on the stranded name can open, write and read.
-- Then the user decides: a library change (close the VFS before terminating, where it can), or a skip keyed on the Safari version with its reason (`mem:conventions` § Testing in browsers), or both.
+- `default-build.test.ts` "falls back to the first declared build that requires nothing": its premise asserts JSPI on every engine; Safari 26 has none.
+- `lifecycle.test.ts` "fails the client permanently once the restart budget is spent": the replacement is not ready within the test's 5 s on Safari (8 of 20, 3 of 9 runs).
+
+## Later (user, 2026-10-20)
+
+- A run on Safari 27 (the `xcode-27` image, macOS 27): "à voir après".
+- Rename the macOS tests/workflows to "macOS 26".
+
+## The spike branch
+
+`spike/safari` on origin: `spike/idb/` (raw harness; plans `variants`, `stranded`, `check:*`, `wedge`, `barrier`, `core`, `bench`), `tests/browser/setup/spike-idb-trace.ts` (registered after the wipe and before the guard), `tests/browser/conformance/spike-perf.test.ts`, `tests/browser/pairs/spike-kill.test.ts`, `src/worker/idb-settle.ts`, the quiesce in `src/pool.ts` and `src/worker/worker.ts`, and `.github/workflows/spike-safari.yaml`, whose jobs run when the commit message carries their tag (`[micro]`, `[suite]`, `[locate]`, `[ab]`, `[perf]`, `[stp]`, `[pairs]`, `[forced]`, `[lifeloc]`, `[kill]`). Worker modes by name suffix: `[trace]`, `[fix]`, `[barrier]`, none (`VITE_SPIKE_BARE=1`); `VITE_SPIKE_QUIESCE=<ms>`, `VITE_SPIKE_PROBE=1`. Its commit d505ede also carries, by mistake, the memory edits of 2026-10-20 (copied back to `main`'s working tree). A push runs the pre-push `pnpm test` (src changed). Delete the branch (local and origin) when the work is over.

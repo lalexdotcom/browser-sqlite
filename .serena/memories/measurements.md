@@ -20,6 +20,8 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - LIB-WIN-MAC — the library's suites on GitHub's Windows and macOS runners: durations, counts, what Windows needed
 - BROWSERS-INSTALLER — the single installer: cold and warm cost, the runners, and LOCK-MACOS (the lock's two macOS defects)
 - SAFARI-LIB-SPIKE — the library's suite on Safari 26.6.2 through safaridriver: one session per machine, beside the others, after a kill, and the stranded IndexedDB connection
+- SAFARI-IDB-STRAND — what strands an IndexedDB connection on Safari 26 (a worker ended before its last transaction's `complete`), the library path that does it (the delete worker), the wait that removes it (0/71), its cost (none detectable), STP 27.0 clean
+- SAFARI-IDB-LIB — the library's pair suite on Safari 26's IndexedDB VFS, one session per file: stock 45/75 files strand on IDBBatchAtomicVFS, fix 0/75; forced kills strand 3-22 % per kill with the fix, 0/800 with the quiesce; the two non-IndexedDB failures
 
 ## `mem:measurements/wa-sqlite-prs` — the campaigns behind wa-sqlite PRs
 
