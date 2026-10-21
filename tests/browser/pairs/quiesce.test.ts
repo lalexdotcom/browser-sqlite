@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  createTestClient,
-  interceptWorkers,
-  killSilently,
-  waitUntil,
-} from '../helpers';
+import { createTestClient, interceptWorkers, waitUntil } from '../helpers';
 
 /**
  * A worker the client kills without a `closed` reply — a crash, a timeout, a
@@ -41,8 +36,8 @@ describe('a worker killed without closing', () => {
     );
   });
 
-  // Falsifiable: wait for `quiesced` with no bound — a worker already gone
-  // answers nothing, and the client would hold it for ever.
+  // Falsifiable: wait for `quiesced` with no bound — a worker that never
+  // reads the request is never terminated.
   it('is terminated after a grace when it cannot answer', {
     tags: ['requires:idb-storage'],
   }, async () => {
@@ -50,15 +45,24 @@ describe('a worker killed without closing', () => {
     const db = await createTestClient({ poolSize: 1, maxWorkerRestarts: 0 });
     await db.write('CREATE TABLE t (a)');
 
-    // Gone without the library knowing: no message will ever come back.
-    killSilently(records[0].worker);
-    const killedAt = performance.now();
-    crash(records[0].worker);
+    // The request is lost on its way, as it is for a worker inside one long
+    // step: it never reaches the worker, so no answer can come back.
+    const { worker, log } = records[0];
+    const post = worker.postMessage.bind(worker);
+    worker.postMessage = ((message: { type?: string }, ...rest: never[]) => {
+      if (message?.type === 'quiesce') {
+        log.push('post:quiesce');
+        return;
+      }
+      post(message, ...rest);
+    }) as Worker['postMessage'];
+    const crashedAt = performance.now();
+    crash(worker);
     await waitUntil(() => records[0].terminated, 'the kill');
-    const waited = performance.now() - killedAt;
+    const waited = performance.now() - crashedAt;
 
-    expect(records[0].log).toContain('post:quiesce');
-    expect(records[0].log).not.toContain('recv:quiesced');
+    expect(log).toContain('post:quiesce');
+    expect(log).not.toContain('recv:quiesced');
     expect(waited).toBeGreaterThanOrEqual(200);
     expect(waited).toBeLessThan(5_000);
   });
