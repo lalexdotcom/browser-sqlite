@@ -114,6 +114,11 @@ export type ClientMessageData =
        * VFS that declares `exclusiveConnectionWithout`.
        */
       probeFirst?: readonly PlatformFeature[];
+      /**
+       * This slot's previous worker died and was terminated: a held database
+       * file can only be its, so the open waits for it on any VFS.
+       */
+      afterDeath?: boolean;
     }
   | {
       type: 'query';
