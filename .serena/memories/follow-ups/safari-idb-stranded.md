@@ -20,12 +20,13 @@ Part of `mem:follow-ups`. Comes before `mem:follow-ups/safari-suite` (user, 2026
 
 - Merge into `main` (user), then delete `spike/safari` local and origin.
 - Not covered: a worker that never answers stays alive up to 300 ms after a forced kill; a forced kill of a worker inside one long computing step still strands if it had a transaction live (not measured).
-- Upstream: `IDBBatchAtomicVFS.close()` closes without awaiting `#txComplete` — optional.
+- **Propose a PR upstream (user, 2026-10-21):** wa-sqlite's IndexedDB VFS close without awaiting their live transactions (`IDBBatchAtomicVFS.close()` skips `#txComplete`; `IDBMirrorVFS` keeps commits in flight). A `close()` that settles them would let the library drop its patch of `IDBDatabase.prototype.transaction` in the worker (`src/worker/idb-transactions.ts`) for the close path; the forced-kill quiesce still needs the refusal of new transactions. Follow `mem:conventions/upstream`.
 - For `mem:follow-ups/safari-suite`: `lifecycle.test.ts` "fails the client permanently once the restart budget is spent" times out its 5 s wait for the replacement on Safari (8/20, 3/9, 2/6 runs).
 
 ## Later (user, 2026-10-20)
 
-- A run on Safari 27 (the `xcode-27` image, macOS 27): "à voir après".
+- A run on Safari 27 (the `xcode-27` image, macOS 27): "à voir après". The CHANGELOG entries say "On Safari" with no version (user, 2026-10-21: earlier versions have it too — WebKit 324094's reporter wedged iOS 18.3.2); 27.0.1 still has it, wedge included (re-measured on the user's Mac 2026-10-21, SAFARI-IDB-STRAND).
+- Keep or remove the fix (user's question, 2026-10-21): cost measured negligible, so it can stay indefinitely; removing it needs a minimum Safari that carries 321564@main (a 27.x after 27.0.1, to measure), not "Safari ≥ 27".
 - Rename the macOS tests/workflows to "macOS 26".
 
 ## The spike branch

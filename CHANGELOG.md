@@ -20,8 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **The published types resolve under TypeScript's `node16` and `nodenext` module resolution,** the default of `tsc --init`, where only `bundler` resolved them.
 - **On `OPFSCoopSyncVFS`, a statement no longer fails with an error carrying no code (`No modification allowed`) when another client's worker was terminated while it held the database,** such as a worker that missed its open timeout.
 - **On `OPFSAdaptiveVFS` in Firefox, a client no longer hangs, or leaves the database locked for every other client, when another client's worker was terminated while it held the database,** such as a worker that missed its open timeout or a tab that was closed.
-- **On Safari 26 and 27.0, `IDBBatchAtomicVFS` and `IDBMirrorVFS` no longer leave their IndexedDB database held open after `close()` or `deleteDatabase()`,** which made `indexedDB.deleteDatabase()` and upgrades of that database wait indefinitely, even across page reloads.
-- **On `IDBBatchAtomicVFS` and `IDBMirrorVFS`, a worker terminated after a crash, a timeout or a client failure no longer leaves its IndexedDB database held open on Safari 26 and 27.0:** the worker is first given up to 300 ms to let its IndexedDB transactions finish.
+- **On Safari, `IDBBatchAtomicVFS` and `IDBMirrorVFS` no longer leave their IndexedDB database held open after `close()` or `deleteDatabase()`,** which made `indexedDB.deleteDatabase()` and upgrades of that database wait indefinitely, even across page reloads.
+- **On `IDBBatchAtomicVFS` and `IDBMirrorVFS`, a worker terminated after a crash, a timeout or a client failure no longer leaves its IndexedDB database held open on Safari:** the worker is first given up to 300 ms to let its IndexedDB transactions finish.
 
 ## [1.0.0-rc.10] - 2026-10-09
 
