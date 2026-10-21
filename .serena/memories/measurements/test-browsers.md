@@ -15,7 +15,7 @@ Part of `mem:measurements`, which indexes every entry; its rules apply here. The
 | `ubuntu-latest` | WebKit 26.6, Playwright, persistent | 3 | 2 green (6142, 212 s); the third stuck in `apt` during `playwright install --with-deps` before any test (actions/runner-images#14594, #14823) |
 | `windows-latest` | WebKit 26.6, Playwright | 1 | `getDirectory()` and `createWritable` work, `createSyncAccessHandle()` fails `NotSupportedError: Backend does not support this operation`: 679 failures in 10 files, then a stall. WebKit source: `SharedFileHandle::create` exists only for `USE(UNIX_DOMAIN_SOCKETS)` and Cocoa, `nullopt` elsewhere |
 | `xcode-27` (macOS 27.0) | Safari 27.0, safaridriver | 4 (2 whole suites) | all green, 6142, 188 and 219 s |
-| `macos-26` | Safari 26.6.2 | | SAFARI26-DATAVIEW-RACE, SAFARI26-IDBMIRROR-KILL |
+| `macos-26` | Safari 26.6.2 | | SAFARI26-DATAVIEW-RACE, SAFARI26-IDBMIRROR-KILL, SAFARI-IDB-STRAND |
 | `macos-26` | Safari iOS 26.5, simulator | | IOS-SIMULATOR |
 
 **Capabilities read by the probe test.** JSPI present on Chrome 154 with no flag, Firefox 156/157, Safari 27.0 and Playwright's WebKit 26.6; absent on Safari 26.6.2 and iOS 26.5. `mode` (`readwrite-unsafe`) on Chrome only. Sync access handles everywhere but WebKit on Windows.
@@ -156,4 +156,53 @@ Capabilities: `platformName: 'iOS'`, `browserName: 'safari'`, `'safari:useSimula
 | a Safari run `kill -9`ed after 25 s | `safaridriver` and Safari left running; the next session passes, as after `pkill safaridriver` and after quitting Safari |
 | once, right after the four-session failure | a lone Safari session refused (`already paired`); not reproduced since |
 
-**The stranded IndexedDB connection.** 3 runs of 10 failed every file on `IndexedDB "IDBBatchAtomicVFS" (still open after 5000 ms)` in the storage wipe, tests passing: 1 of 8 alone, 2 of 2 with another load on the machine. Analysis and what to do: `mem:follow-ups/safari-idb-stranded`.
+**The stranded IndexedDB connection.** 3 runs of 10 failed every file on `IndexedDB "IDBBatchAtomicVFS" (still open after 5000 ms)` in the storage wipe, tests passing: 1 of 8 alone, 2 of 2 with another load on the machine. Diagnosed in SAFARI-IDB-STRAND; what to do: `mem:follow-ups/safari-idb-stranded`.
+## SAFARI-IDB-STRAND — what strands an IndexedDB connection on Safari 26, and the library path that does it, 2026-10-20, GitHub `macos-latest` (macOS 26.6.2, Safari 26.6.2, 3 cores), branch `spike/safari`
+
+**Method.** Two instruments on `spike/safari` (runs 39388907167 → 39405514177). (1) `spike/idb/` — a page and a worker in raw IndexedDB driven through safaridriver (`node spike/idb/run.mjs <plan>`): per round the worker opens a fresh database and ends in one way, then the page calls `deleteDatabase` (stalled past 5 s, watched to 30 s); `probe` opens a new connection first and writes and reads. (2) `tests/browser/setup/spike-idb-trace.ts` in `conformance safari`: every `Worker` recorded (name, messages, who called `terminate()`), the worker reporting the IndexedDB transactions still live at its `closed`/`deleted` reply (`src/worker/idb-settle.ts`, a wrapper of `IDBDatabase.prototype.transaction`), and under `VITE_SPIKE_PROBE=1` a probe before each test (an upgrade request to version+1, aborted; `blocked` means a connection is held).
+
+**Raw IndexedDB, Safari 26.6.2** (stalled past 30 s / rounds, cells stop at 3-5 stalls; two or three runs each):
+
+| how the worker ends | stranded |
+|---|---|
+| `terminate()` in a readwrite loop (any delay 5-500 ms, any durability) | 3/19, 3/16, 2/40; strict 1/20, 0/20; relaxed 0/20, 2/20 |
+| `db.close()` without waiting, then reply and `terminate()` | 3/22, 3/31 (most others `blocked` then ok) |
+| `self.close()` at once | 3/9, 3/17 |
+| **the library's delete worker**: readwrite delete, readonly get awaited on its request only, `close()`, reply, `terminate()` | 3/16, 3/21, 4/37, 2/60, 3/14 |
+| **the library's pool `close`**: last write committed, readonly get awaited on its request, no `close()`, reply, `terminate()` | 3/56, 3/42, 3/31 |
+| reply on a write's request, not its commit (default, relaxed) | 1/60 each; strict 0/120 |
+| readwrite and readonly loops at once, `terminate()` (WebKit 324094 as filed) | 5/34, 3/16, 3/19, 3/18 — **wedged**: open ok, write and read never complete |
+| **last transaction's `complete` awaited before `terminate()`** — with or without `close()` (`busy-wait-complete`, `busy-close-after-complete`, `read-await-close`, `delete-pattern-complete`, rw+ro both awaited) | **0** in every cell: 0/80, 0/80, 0/120, 0/120, 0/60 |
+| an empty readwrite transaction awaited first (barrier) | 0/240 delete pattern, 0/160 busy, 0/160 rw+ro |
+| idle worker; worker killed during `indexedDB.open` | 0/80, 0/80 |
+
+Rule: ending a worker before its last transaction fired `complete`, **readonly included**, can strand the connection. A stranded database stays usable from a new connection (open, write, read ok, 5/5 and 4/4) — only `deleteDatabase` and upgrades stay blocked, through a page reload; a **wedged** one (rw+ro at once) accepts no transaction at all. A new safaridriver session starts with empty storage (a marker database is gone), so whether a stranding survives a tab close or a Safari restart cannot be seen through WebDriver.
+
+**Safari Technology Preview 27.0 (build 21627.1.2.1, `brew install --cask safari-technology-preview` on the same image), same cells:** busy terminate 0/40, delete pattern 0/60 (`blocked` then ok within 32 ms), pool close 0/80, rw+ro 0/40 not wedged — while Safari 26.6.2 beside it: 2/40, 3/14, 3/31, 3/18 wedged. WebKit 324094's fix (321564@main, in STP 254 of 2026-10-08; follow-ups 323066@main and WebKit 327323) removes it; no stable Safari carries it on 2026-10-20.
+
+**In the library's suite.** `conformance safari`, stock: 8 stranded runs of 60 over five rounds (every file of the run then fails the wipe — the stranding outlives the file, not the session). Located (`VITE_SPIKE_PROBE=1`, 1 hit in 14): held after **invariant 7 (`deleteDatabase`) on `IDBBatchAtomicVFS`**; the only worker of that test ended with a live transaction is the delete worker, `recv=deleted idbPending=[readonly]`, terminated 0 ms after its reply — the `jAccess` barrier's readonly transaction (`deleteDatabaseFiles`). Every run's delete reply carries that readonly transaction; once in ~800 replies a pool worker's `closed` carried a readwrite one. No forced path (drain timeout, `handleDeath`, `failClient`) runs in conformance.
+
+**The fix, A/B in the suite** (arms alternated on the same runner, CPU load on half): waiting for every tracked transaction before the `closed`/`deleted` reply (bounded 2 s) **0 stranded in 41 runs** (one run lost to `Browser connection was closed`, no storage error); the barrier variant 0/30; stock beside them 11/70. Fisher: any fix 0/71 vs 11/70, p = 0.0003.
+
+**Cost.** The wait: p50 0 ms, max 2 ms per reply, ≤ 16 ms per file. The tracker per transaction, interleaved blocks of 50 in one worker (3 × 20 pairs): Safari 0.34-1.22 ms per transaction either way, paired ratio 0.93-1.06, tracked slower in 8-12 of 20 — not detectable; Chrome 0.19-0.22 ms, 0.97-1.04. Library level (`spike-perf.test.ts`: 200 writes, 200 point reads, a 20 000-row insert, `close`, `deleteDatabase` on `IDBBatchAtomicVFS` and `IDBMirrorVFS`), rotated arms, paired per round: n=30, tracker and fix vs no wrapper, every median ratio 0.88-1.06, slower/faster 10/15 to 18/12; a second round, n=24, put three arms 10-30 % above `bare` including the barrier arm, which does no per-transaction work there — the runner's noise (one arm's 200 reads ranged 0.7-3.8 s), not a cost. **The barrier is rejected:** `close()` ×150 on `IDBBatchAtomicVFS` (~5 → ~780 ms) and ×2.4 on `IDBMirrorVFS`, 24/24 and 22/22 slower — its readwrite transaction queues behind the other connections' transactions too. An unpaired first look (10 pairs) had shown +42 % on reads: noise.
+
+## SAFARI-IDB-LIB — the library's pair suite and its forced kills on Safari 26's IndexedDB VFS, 2026-10-20, GitHub `macos-latest` (macOS 26.6.2, Safari 26.6.2), branch `spike/safari`
+
+**Method.** `pairs` job: every `tests/browser/pairs/*.test.ts` on `safari · IDBBatchAtomicVFS/async` and `safari · IDBMirrorVFS/async`, **one Vitest process and one Safari session per file** (safaridriver sessions start with empty storage, so a file's own wipe names it), `spike-idb-trace.ts` registered right after the wipe and **before `need-guard.ts`** — `helpers/index.ts` keeps the `Worker` it finds as `NativeWorker`, and the cleanup's `withNativeWorker(deleteDatabase)` bypassed a wrapper installed later (the first `pairs` run, 39408720969, is invalid on that path for that reason). `forced` job: 16 files that kill workers (`abandon-transaction abandon close abort-slot chunk-delivery failed-client interrupt lifecycle long-query open-retry pool-death tx-quiesce query-timeout tx-timeout idb-long-read write-lock-reclaim`), 9 runs each per VFS. `kill` job: `tests/browser/pairs/spike-kill.test.ts` (`VITE_SPIKE_KILL=1`), per round a pool-of-one client writing 4 KiB blobs in a loop, an `ErrorEvent` dispatched on its worker after 20-80 ms (`handleDeath` terminates it), close, then per IndexedDB database a readonly transaction (usable?) and an upgrade probe (held?); the first stranding ends the session; 10 sessions of up to 40 rounds per arm.
+
+| run | IDBBatchAtomicVFS | IDBMirrorVFS |
+|---|---|---|
+| pairs, stock (39414794510) | **45 of 75 files** strand (cleanup's delete workers) | 0 of 75 (an earlier run: 1, `query-timeout`, a `closed` reply carrying a readwrite — IDBMirrorVFS writes at open) |
+| pairs, fix (settle before `closed`/`deleted`) | 0 of 75 | 0 of 75 |
+| forced files ×9, fix | 1 of 144 (`lifecycle`) | 0 of 144 |
+| kill stress, fix | 7 and 7 sessions of 10 strand; ~7/230 kills (~3 %) | 10 and 8 of 10; ~10/45 kills (~22 %) |
+| kill stress, fix + quiesce 300 ms | **0 in 400 kills** | **0 in 400 kills** |
+| pairs, fix + quiesce (39433555622) | 0 of 75 | 0 of 75 |
+
+Located (`VITE_SPIKE_PROBE=1`, `lifecycle` ×20, 2 hits): **"reports a slot that opened and then dies during the retry round as lost"** — a worker killed in the microtask after its `ready`. Every stranding by a forced kill read `blocked:ok`: the connection held, the database still usable (no wedge seen, 15/15). Failures that are not IndexedDB, in every arm: `default-build` "falls back to the first declared build" (its premise `typeof WebAssembly.Suspending === 'function'` — Safari 26 has no JSPI); `lifecycle` "fails the client permanently once the restart budget is spent" (replacement not ready within the test's 5 s, 8 of 20 and 3 of 9 runs, both VFS, both arms — Safari's startup time on 3 cores).
+
+**The quiesce** (prototype, `src/pool.ts` + `src/worker/worker.ts` + `src/worker/idb-settle.ts`): the pool's `terminate()` poisons the transport as before, then, unless the worker had answered `closed` (status read before `poison()`), drops `onmessage`, posts `quiesce` and calls the engine's `terminate()` on `quiesced` or after the grace; the worker stops its gate, makes `IDBDatabase.prototype.transaction` throw `InvalidStateError` for any new transaction and waits until none is live (bounded 1 s). The close path keeps its synchronous `terminate()` — the first version deferred it there too and broke close.test.ts "waits for the worker to close the database before terminating it". Chrome: the IndexedDB pairs 150/150 with fix + quiesce. Cost: nothing on the ordinary paths; a forced kill's engine `terminate()` comes up to the grace later (not timed).
+
+**Validation of `fix/safari-idb-stranded` (2026-10-21, runs 39569148800 and 39574613092, the real code, no prototype):** pairs 77 files per VFS, 0 stranded, `default-build` now skipped by `requires:jspi-available`; conformance 24/24; kill stress 0 in 400 kills per VFS; `quiesce.test.ts` 6/6 once its grace test dropped the request instead of `killSilently` + crash (Safari does not deliver an `ErrorEvent` dispatched on a Worker already terminated: the first version timed out there, 2/2).
+
+**Safari 27.0.1 re-measured (2026-10-21, the user's Mac, raw harness `spike/idb` served from this container on `localhost:8765`, a manual page, 15 s per stall, cells stop at 3):** busy terminate 3 stalled in 9 rounds, delete pattern 3/52, pool-close pattern 3/45, rw+ro at once 3/3 all **wedged** (open ok, write and read timeout); controls `busy-wait-complete` 0/40 and idle 0/40. WebKit 324094 RESOLVED FIXED (321564@main, 2026-09-21), never reopened; follow-ups 325521 (323066@main) and 327323 (323686@main, 2026-10-13); no stable Safari release note found naming it.

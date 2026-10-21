@@ -63,7 +63,7 @@ const satisfying = (property: Property, browser: 'chrome' | 'firefox') =>
 
 describe('the properties, against the spec table (2026-10-12)', () => {
   const table: Record<
-    Exclude<Property, 'interruptible'>,
+    Exclude<Property, 'interruptible' | 'jspi-available'>,
     Record<'chrome' | 'firefox', SQLiteVFS[]>
   > = {
     'two-workers': {
@@ -247,6 +247,23 @@ describe('the properties, against the spec table (2026-10-12)', () => {
     expect(
       holds('interruptible', ctx('MemoryVFS', 'sync', 'firefox', true)),
     ).toBe(true);
+  });
+
+  // Safari 26 has no JSPI (WebAssembly.Suspending): a property of the engine,
+  // not of the pair, so it holds or not for every VFS and build alike.
+  it('makes jspi-available a property of the engine, whatever the pair', () => {
+    const without = new Set(FIREFOX);
+    without.delete('jspi');
+    for (const vfs of Object.keys(VFS_CAPABILITIES) as SQLiteVFS[]) {
+      const build = VFS_CAPABILITIES[vfs].builds[0];
+      expect(holds('jspi-available', ctx(vfs, build, 'firefox'))).toBe(true);
+      expect(
+        holds('jspi-available', {
+          ...ctx(vfs, build, 'firefox'),
+          features: without,
+        }),
+      ).toBe(false);
+    }
   });
 
   it('puts a second client in exactly one of shared, refused or its own database', () => {
