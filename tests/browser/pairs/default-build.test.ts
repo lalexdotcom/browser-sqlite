@@ -12,9 +12,11 @@ type WithSuspending = typeof WebAssembly & { Suspending?: unknown };
 describe('the default build without JSPI', () => {
   // Falsifiable: make defaultBuildFor return `builds[0]` whatever `available`
   // says — on a jspi-first VFS the client then refuses the pair, JSPI missing.
-  it('falls back to the first declared build that requires nothing', async () => {
+  it('falls back to the first declared build that requires nothing', {
+    // The premise: an engine with JSPI to take away — not Safari 26.
+    tags: ['requires:jspi-available'],
+  }, async () => {
     const wasm = WebAssembly as WithSuspending;
-    // The premise: both engines under test have JSPI to take away.
     expect(typeof wasm.Suspending).toBe('function');
 
     const { vfs } = TEST_TARGET;

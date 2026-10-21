@@ -35,6 +35,7 @@ export const PROPERTIES = [
   'env-cappable',
   'sync-handle',
   'immediate-connection-lock',
+  'jspi-available',
 ] as const;
 export type Property = (typeof PROPERTIES)[number];
 
@@ -133,6 +134,9 @@ export const holds = (property: Property, context: TestContext): boolean => {
         (c.exclusiveConnectionWithout as readonly PlatformFeature[]).length ===
           0
       );
+    // The engine's, not the pair's: Safari 26 has no WebAssembly.Suspending.
+    case 'jspi-available':
+      return context.features.has('jspi');
   }
 };
 
