@@ -1,4 +1,4 @@
-# A stranded IndexedDB connection on Safari — fixed in the library (merged 2026-10-21), now through wa-sqlite #384/#385 on `fix/idb-vfs-close`
+# A stranded IndexedDB connection on Safari — fixed, through wa-sqlite #384/#385 carried (merged 2026-10-21)
 
 Part of `mem:follow-ups`. Comes before `mem:follow-ups/safari-suite` (user, 2026-10-20). Numbers: SAFARI-IDB-STRAND (raw IndexedDB, conformance, cost) and SAFARI-IDB-LIB (the pair suite, forced kills, the quiesce, the validation) in `mem:measurements/test-browsers`; IDB-CLOSE-384 (the upstream side) in `mem:measurements/wa-sqlite-prs`.
 
@@ -17,11 +17,11 @@ Part of `mem:follow-ups`. Comes before `mem:follow-ups/safari-suite` (user, 2026
 - `tests/browser/pairs/close.test.ts` "keeps the last write of a client closed under synchronous=NORMAL" (red without `closeIdbVfs` on the 4 `IDBBatchAtomicVFS` pairs, Chrome and Firefox).
 - Kept from `fix/safari-idb-stranded`: planner property `jspi-available`, `default-build`'s fallback test tagged `requires:jspi-available`.
 - CHANGELOG `[Unreleased]` › Fixed: the two Safari entries (still true) and the `synchronous=NORMAL` one — which leaves at the repin that brings #384 (`mem:conventions/upstream`).
-- Local, 2026-10-21: `pnpm test` 366/366 files, 2719 passed, not-applicable 20/14/11/5, reasoned skips only `abandon-gc`; `tsc`, lint, `biome ci` clean. Safari: spike run 39590341646 (`[pairs] [kill] [one]`) — result to record here.
+- Local, 2026-10-21: `pnpm test` 366/366 files, 2719 passed, not-applicable 20/14/11/5, reasoned skips only `abandon-gc`; `tsc`, lint, `biome ci` clean. Safari 26.6.2, spike run 39590341646 (`[pairs] [kill] [one]`): 0 stranded in 77 pair files and 0 in 400 kills per VFS (IDB-CLOSE-384, `mem:measurements/wa-sqlite-prs`). Merged into `main` 2026-10-21 (user: "si tout est validé par les runs on clôture").
 
 ## Left
 
-- The Safari run's result, then merge into `main` (user), then delete `spike/safari` local and origin and the worktree `.work/spike-safari-wt`.
+- Delete `spike/safari` (local, origin, worktree `.work/spike-safari-wt`) when the user says so — kept for now, its reproducers may serve `mem:follow-ups/safari-suite`.
 - Follow #384 and #385; at their merge, repin and drop their hunks from the patch.
 - Not covered: a worker that never answers stays alive up to 300 ms after a forced kill; a forced kill of a worker inside one long computing step still strands if it had a transaction live (not measured).
 - For `mem:follow-ups/safari-suite`: `lifecycle.test.ts` "fails the client permanently once the restart budget is spent" times out its 5 s wait for the replacement on Safari (8/20, 3/9, 2/6 runs).
