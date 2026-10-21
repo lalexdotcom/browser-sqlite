@@ -18,7 +18,7 @@ been work on nothing.
 
 ## In sub-memories (user, 2026-10-16 and 19)
 
-`mem:follow-ups/wa-step-upstream` (optional, upstream's), `mem:follow-ups/tx-validation` (tx methods throw, not reject), `mem:follow-ups/timeout-start` (when `timeout` starts), `mem:follow-ups/safari-idb-stranded` (a stranded IndexedDB connection on Safari 26 — diagnosed and measured through the library 2026-10-20: WebKit 324094 hit by the delete worker, the close path and forced kills; two fixes measured, the user decides), `mem:follow-ups/safari-suite` (Safari in the library's suite on macOS — after it).
+`mem:follow-ups/wa-step-upstream` (optional, upstream's), `mem:follow-ups/tx-validation` (tx methods throw, not reject), `mem:follow-ups/timeout-start` (when `timeout` starts), `mem:follow-ups/safari-idb-stranded` (a stranded IndexedDB connection on Safari 26 — fixed on `fix/safari-idb-stranded` 2026-10-21, validated on Safari, awaiting the merge), `mem:follow-ups/safari-suite` (Safari in the library's suite on macOS — after it).
 
 ## `multi-client` bulkWrite interleave on chromium `IDBMirrorVFS/async` — seen, not reproducible (2026-10-07)
 

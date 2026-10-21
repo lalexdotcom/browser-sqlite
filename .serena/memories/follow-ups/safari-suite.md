@@ -23,6 +23,11 @@ One safaridriver session per machine (a second is refused, `already paired`): Sa
 - **Nothing to declare for Safari in the planner or the capability tables:** they read probed features (`readwrite-unsafe`, JSPI, sync handles), so Safari falls on Firefox's side by itself (no `readwrite-unsafe`; JSPI only from Safari 27).
 - **CI:** `tests.yaml` and the setup action know only `chrome,firefox`; a `safaridriver --enable` step; the pre-push hook runs `pnpm test`, so Safari on a Mac.
 
+## Found on the IndexedDB pair runs (2026-10-20/21, SAFARI-IDB-LIB)
+
+- `default-build.test.ts`'s fallback test asserted JSPI on every engine: tagged `requires:jspi-available` on `fix/safari-idb-stranded`.
+- `lifecycle.test.ts` "fails the client permanently once the restart budget is spent" times out its 5 s wait for the replacement on Safari (8/20, 3/9, 2/6 runs): open.
+
 ## The runner
 
 `macos-latest` on 2026-10-20: macOS 26.6.2, Safari 26.6.2, 3 cores — no JSPI there. Safari 26.6.2's known defects: SAFARI26-DATAVIEW-RACE, SAFARI26-IDBMIRROR-KILL (wa-sqlite's harness), and the stranded IndexedDB connection above.
