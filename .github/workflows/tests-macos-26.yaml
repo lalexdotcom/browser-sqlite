@@ -1,14 +1,14 @@
-name: Tests (macOS)
+name: Tests (macOS 26)
 
 on:
   workflow_dispatch:
 
 concurrency:
-  group: tests-macos-${{ github.ref }}
+  group: tests-macos-26-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  macos:
+  macos-26:
     uses: ./.github/workflows/tests.yaml
     with:
-      runs-on: macos-latest
+      runs-on: macos-26
