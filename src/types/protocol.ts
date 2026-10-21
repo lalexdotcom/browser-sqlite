@@ -128,6 +128,11 @@ export type ClientMessageData =
   | { type: 'close'; callId: number }
   | { type: 'credit'; callId: number; n: number }
   | { type: 'stop'; callId: number }
+  /**
+   * The client is about to terminate this worker without a `close`: refuse new
+   * IndexedDB transactions, let the live ones settle, answer `quiesced`.
+   */
+  | { type: 'quiesce'; callId: number }
   /** The client decided the connection lock; worker 0 may open (spec 2026-09-15). */
   | { type: 'proceed'; callId: number }
   | {
@@ -225,6 +230,8 @@ export type WorkerMessageData =
       inTransaction?: boolean | undefined;
     }
   | { type: 'closed'; callId: number }
+  /** Nothing of this worker's IndexedDB is live any more; terminate it. */
+  | { type: 'quiesced'; callId: number }
   | { type: 'deleted'; callId: number }
   /** The delete worker found nothing at that name; deleteDatabase turns it into DATABASE_NOT_FOUND. */
   | { type: 'not-found' }

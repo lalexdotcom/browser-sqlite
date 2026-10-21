@@ -7,7 +7,7 @@ import {
 import type { SQLiteBuild } from './const/builds';
 import type { PlatformFeature } from './const/platform';
 import type { SQLiteResultCode } from './const/sqlite';
-import type { SQLiteVFS } from './const/vfs';
+import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { DEFAULT_CREDIT_WINDOW } from './credits';
 import type { QueryDebugHandle, WorkerDebugHandle } from './debug';
 import type { Logger } from './logger';
@@ -138,6 +138,14 @@ const STOP = Symbol('stop');
 
 /** SQLITE_BUSY and SQLITE_LOCKED — the two ways a lock conflict reports. */
 const BUSY_CODES = new Set([5, 6]);
+
+/**
+ * How long a killed IndexedDB worker has to answer its quiesce. An idle or
+ * IO-bound worker answers in milliseconds; this bounds one stuck inside a
+ * computing step. 300 ms is the value measured on Safari 26.6.2 (0 strandings
+ * in 800 kills), not a ceiling.
+ */
+const QUIESCE_GRACE_MS = 300;
 
 /**
  * The extended code when it names a subtype, else undefined (spec D9). SQLite
@@ -577,6 +585,11 @@ export const createPoolWorker = (deps: {
         }
         break;
       }
+      // Answered to a quiesce, which detaches this handler and listens for it
+      // itself (quiesceThenTerminate): unreachable here.
+      case 'quiesced': {
+        break;
+      }
       case 'chunk': {
         const { callId } = data;
         if (deferredChunk && callId === currentCallId) {
@@ -922,10 +935,45 @@ export const createPoolWorker = (deps: {
   // to the engine's own terminate left in the module.
   const nativeTerminate = worker.terminate.bind(worker);
 
+  /**
+   * Safari before WebKit 321564@main keeps the connection of a worker
+   * terminated with an IndexedDB transaction live (worker/idb-transactions.ts),
+   * and a kill mid-write stranded the database in 3-22 % of kills on Safari
+   * 26.6.2. The transport is already cut when this runs: the worker is asked to
+   * let its transactions settle and the engine's terminate() waits for its
+   * answer — or QUIESCE_GRACE_MS, for a worker that cannot read a message.
+   */
+  const quiesceThenTerminate = () => {
+    // Nothing the worker says matters any more, and a reply to the query it
+    // was running must not reach a transport already failed.
+    worker.onmessage = null;
+    let killed = false;
+    const kill = () => {
+      if (killed) return;
+      killed = true;
+      clearTimeout(grace);
+      worker.removeEventListener('message', onQuiesced);
+      nativeTerminate();
+    };
+    const onQuiesced = ({ data }: MessageEvent<WorkerMessageData>) => {
+      if (data.type === 'quiesced') kill();
+    };
+    const grace = setTimeout(kill, QUIESCE_GRACE_MS);
+    worker.addEventListener('message', onQuiesced);
+    try {
+      worker.postMessage({ type: 'quiesce', callId: 0 });
+    } catch {
+      kill();
+    }
+  };
+
   // Attach query method to worker
   Object.assign(worker, {
     query,
     terminate: (reason?: SQLiteError) => {
+      // Read before poison(), which marks every worker DEAD. A worker that
+      // answered `closed` has let its transactions settle already.
+      const closed = worker.status === 'CLOSED';
       poison(
         reason ??
           new SQLiteError(
@@ -933,7 +981,13 @@ export const createPoolWorker = (deps: {
             `Worker ${index + 1} was terminated.`,
           ),
       );
-      nativeTerminate();
+      // Not on the other VFS: an OPFS handle would outlive the kill by the
+      // grace while a replacement opens the same file.
+      if (closed || VFS_CAPABILITIES[vfs].storage !== 'indexeddb') {
+        nativeTerminate();
+        return;
+      }
+      quiesceThenTerminate();
     },
     /**
      * Ask the worker to stop. Also settles a `next()` already in flight, which

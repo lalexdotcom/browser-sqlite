@@ -1076,6 +1076,16 @@ const open = (file: string, options: OpenOptions) => {
         gate.stop();
         break;
       }
+      // The client cut the transport and terminates on the answer, or after a
+      // grace if this worker cannot answer (pool.ts). Nothing new may start:
+      // the running statement fails, the client discards its result anyway.
+      case 'quiesce': {
+        idbTransactions?.refuseNew();
+        gate.stop();
+        await idbSettled();
+        self.postMessage({ type: 'quiesced', callId: 0 });
+        break;
+      }
       default: {
         const _unexpected: never = data;
         throw new Error(
@@ -1396,6 +1406,14 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
     case 'close': {
       // close arrived before open completed — no database to close; reply immediately.
       self.postMessage({ type: 'closed', callId: 0 });
+      break;
+    }
+    // Unreachable as close is: open() replaces this handler first. Answered
+    // all the same, as the open handler answers it.
+    case 'quiesce': {
+      idbTransactions?.refuseNew();
+      await idbSettled();
+      self.postMessage({ type: 'quiesced', callId: 0 });
       break;
     }
     // No query can be running before open.
