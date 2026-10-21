@@ -1,0 +1,7 @@
+# Follow-up — a restarted worker meets the file its crashed predecessor still holds (`lifecycle`, Firefox `OPFSAdaptiveVFS/jspi`)
+
+Part of `mem:follow-ups`, opened 2026-10-21. Seen once: run 39620037006 (`xcode-27`, macOS 27.0.1, Firefox 155.0.1, `main` `7108558`, MACOS-26-27 in `mem:measurements/ci-runners`); not in the two other `xcode-27` runs nor on `macos-26`. **Not analysed yet** — the user's order: after `fix/tx-quiesce-abort`, its own investigation, with a reproduction loop on the runner first.
+
+**What failed:** `tests/browser/pairs/lifecycle.test.ts` › "worker lifecycle — crash detection › restarts the slot once and keeps serving" (`poolSize: 1`, a long query, an `ErrorEvent` dispatched on the worker). The replacement's open failed: `WORKER_CRASHED: unable to open database file: NoModificationAllowedError: No modification allowed`, the error built in `die` → `spawn` → `startupError` (`src/pool.ts`).
+
+**The lead, unverified:** the crashed worker is terminated while its sync access handle is open; Firefox frees the file after the Web Lock (wa-sqlite #381's mechanism; the longest wait measured on macOS Firefox 40 ms, `mem:measurements/held-handles`). The library's open retry covers `NoModificationAllowedError` but `OPFSAdaptiveVFS` is declared out of it on an engine without `readwrite-unsafe` (Firefox), so a held file fails at once (`mem:vfs` § the open retry). To check: whether the restart path opens through that retry at all, and how long Firefox on `xcode-27` keeps the file.

@@ -23,6 +23,11 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - SAFARI-IDB-STRAND — what strands an IndexedDB connection on Safari 26 (a worker ended before its last transaction's `complete`), the library path that does it (the delete worker), the wait that removes it (0/71), its cost (none detectable), STP 27.0 clean
 - SAFARI-IDB-LIB — the library's pair suite on Safari 26's IndexedDB VFS, one session per file: stock 45/75 files strand on IDBBatchAtomicVFS, fix 0/75; forced kills strand 3-22 % per kill with the fix, 0/800 with the quiesce; the two non-IndexedDB failures
 
+## `mem:measurements/ci-runners` — the library's suites on CI runners, from macOS 26/27 on
+
+- MACOS-26-27 — the first runs of `tests-macos-26.yaml` / `tests-macos-27.yaml`: 26 green, 27 red twice then green with the fix
+- TXQ-ABORT-TIMER — `tx-quiesce`'s abort test raced a `sleep(0)` that Firefox ran 26-105 ms late after its shard's other files; reproduced on macOS 26, fixed by aborting on the first chunk
+
 ## `mem:measurements/wa-sqlite-prs` — the campaigns behind wa-sqlite PRs
 
 - IDB-CLOSE-384
