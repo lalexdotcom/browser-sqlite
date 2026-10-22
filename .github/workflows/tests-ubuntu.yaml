@@ -1,0 +1,16 @@
+name: Tests (Ubuntu)
+
+# The Linux suites by hand, as tests-windows.yaml and tests-macos-*.yaml run
+# theirs; ci.yaml runs the same on every pull request and push of main.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-ubuntu-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ubuntu:
+    uses: ./.github/workflows/tests.yaml
+    with:
+      runs-on: ubuntu-latest

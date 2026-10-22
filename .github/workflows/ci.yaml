@@ -15,12 +15,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify:
+  # What does not depend on the OS, once: the suites are tests.yaml's, below.
+  checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
       - uses: ./.github/actions/setup
+        with:
+          browsers: ''
 
       # The only check a workflow gets before GitHub runs it: actionlint, and
       # shellcheck on every run: block (actionlint skips them silently without it).
@@ -44,28 +47,9 @@ jobs:
       - name: Type check
         run: pnpm exec tsc --noEmit
 
-      - name: Build
-        run: pnpm build
-
-      # `pnpm test` is the test planner (scripts/test-plan.ts) in complement
-      # mode: the unit project, then both browsers in both modes (not isolated
-      # and cross-origin isolated), on the start pairs plus the cells that
-      # complete them. Firefox needs no step and no environment variable of its
-      # own. It was a separate step until 2026-09-03, which meant a developer's
-      # local run covered Chromium alone while this file covered both: the
-      # exact path by which a Firefox-only failure arrived late. Under
-      # CI=true a test that no selected browser can run fails the step. Firefox
-      # has been a gate since 2026-08-28 and still is — it is the only engine
-      # here that runs the pool against a rotating exclusive OPFS handle, so a
-      # reduced-mode regression lands there first and a single failure is
-      # signal, not noise.
-      - name: Test
-        run: pnpm test
-
-      # Conformance is deliberately out of `pnpm test`: eight VFS through the
-      # invariants start workers and open real storage, which is too slow for
-      # the suite a developer runs on every change. Like `pnpm test`, this one
-      # command covers both engines — a VFS can be sound on one and broken on
-      # the other, which is how HANDLE-1 was found.
-      - name: Conformance (both engines)
-        run: pnpm test:conformance
+  # The same suites as every other platform, so the steps cannot drift apart,
+  # and a red run keeps its .work/ logs as test-logs-Linux.
+  linux:
+    uses: ./.github/workflows/tests.yaml
+    with:
+      runs-on: ubuntu-latest
