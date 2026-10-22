@@ -43,6 +43,9 @@ importers:
       publint:
         specifier: 0.3.24
         version: 0.3.24
+      safaridriver:
+        specifier: 2.0.0
+        version: 2.0.0
       simple-git-hooks:
         specifier: ^2.13.1
         version: 2.13.1

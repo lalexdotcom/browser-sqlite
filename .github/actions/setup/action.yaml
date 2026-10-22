@@ -5,7 +5,7 @@ description: >-
 
 inputs:
   browsers:
-    description: Browsers to install, comma-separated (chrome,firefox); empty for none.
+    description: Browsers to install, comma-separated (chrome,firefox; safari on macOS only); empty for none.
     default: chrome,firefox
   node-setup:
     description: Set up pnpm and Node, and install the dependencies.
@@ -57,6 +57,14 @@ runs:
       run: |
         sysctl kernel.apparmor_restrict_unprivileged_userns
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+    # Safari is never downloaded: it comes with macOS. Its WebDriver needs
+    # remote automation turned on, once per machine, which this does. Off
+    # macOS the install below then fails with Safari's macOS-only error.
+    - if: contains(format(',{0},', inputs.browsers), ',safari,') && runner.os == 'macOS'
+      name: Enable safaridriver
+      shell: bash
+      run: sudo safaridriver --enable
 
     # One download per browser and driver, before anything runs in parallel:
     # on a cold cache, parallel Vitest jobs fetched the same chromedriver at

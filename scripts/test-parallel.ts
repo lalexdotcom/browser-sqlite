@@ -13,7 +13,8 @@
  * The globs are Vitest's `--project` globs, resolved against `vitest list`. Each
  * browser project is cut into shards in proportion to its files, so that about
  * `BSQ_TEST_JOBS` processes (default: every CPU but one, at most 6) run at
- * once; `unit` is one process. Each process writes a Vitest blob under
+ * once; `unit` is one process. A Safari project is one process, and never runs
+ * beside another (one safaridriver session per machine). Each process writes a Vitest blob under
  * `<run>/blobs/` and its console under `<run>/logs/`; `vitest --merge-reports`
  * then reads the blobs as one run. The blobs have a directory of their own: the
  * merge reads every file in it. A job that ends without its blob (crash, kill,
@@ -33,10 +34,13 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { assertBrowserAvailable, safariVersion } from './browsers.ts';
 import {
   type BlobState,
+  browserOfProject,
   buildOnce,
   findFailedJobs,
+  isSafariProject,
   jobEnv,
   killLiveOnSignal,
   matchProjects,
@@ -126,6 +130,17 @@ async function main() {
   // `vitest list` needs no build: a typo in a glob fails before the build.
   const projects = listProjects({ ...process.env, BSQ_TEST_BUILT: '1' });
   const names = matchProjects(globs, [...projects.keys()]);
+  // Before the build: Safari asked for off macOS stops here.
+  const browsers = new Set(names.map(browserOfProject));
+  try {
+    for (const browser of browsers)
+      if (browser) assertBrowserAvailable(browser);
+  } catch (error) {
+    console.error((error as Error).message);
+    process.exitCode = 2;
+    return;
+  }
+  if (browsers.has('safari')) console.log(`Safari ${safariVersion()}`);
   const jobs = planJobs(projects, names, concurrency);
   const env = buildOnce(process.env);
   killLiveOnSignal();
@@ -148,42 +163,47 @@ async function main() {
 
   const start = Date.now();
   let done = 0;
-  const settled = await runPool(jobs, concurrency, async (job) => {
-    const blob = join(blobs, `${job.id}.json`);
-    const log = join(logs, `${job.id}.log`);
-    const began = Date.now();
-    const { output, timedOut, exitCode, error } = await runBounded(
-      NODE,
-      [
-        VITEST,
-        'run',
-        '--config',
-        'tests/vitest.config.ts',
-        '--configLoader',
-        'runner',
-        '--project',
-        job.project,
-        ...(job.shard ? [`--shard=${job.shard[0]}/${job.shard[1]}`] : []),
-        '--reporter=blob',
-        `--outputFile=${blob}`,
-      ],
-      { cwd: ROOT, env: jobEnv(env, job.id), timeoutMs: JOB_TIMEOUT_MS },
-    );
-    writeFileSync(log, error ? `${output}\n${error.message}\n` : output);
-    const state = blobState(blob);
-    // A blob the merge cannot read would kill it without naming the job.
-    if (state === 'unparsable')
-      renameSync(blob, join(rejected, `${job.id}.json`));
-    const ended = timedOut
-      ? 'timed out'
-      : error
-        ? `error ${error.message}`
-        : `exit ${exitCode}`;
-    console.log(
-      `[${++done}/${jobs.length}] ${job.id}: ${ended} in ${Math.round((Date.now() - began) / 1000)}s${state === 'ok' ? '' : ` (${state === 'missing' ? 'NO BLOB' : 'BLOB DOES NOT PARSE'})`}`,
-    );
-    return { job, timedOut, error, blob: state };
-  });
+  const settled = await runPool(
+    jobs,
+    concurrency,
+    async (job) => {
+      const blob = join(blobs, `${job.id}.json`);
+      const log = join(logs, `${job.id}.log`);
+      const began = Date.now();
+      const { output, timedOut, exitCode, error } = await runBounded(
+        NODE,
+        [
+          VITEST,
+          'run',
+          '--config',
+          'tests/vitest.config.ts',
+          '--configLoader',
+          'runner',
+          '--project',
+          job.project,
+          ...(job.shard ? [`--shard=${job.shard[0]}/${job.shard[1]}`] : []),
+          '--reporter=blob',
+          `--outputFile=${blob}`,
+        ],
+        { cwd: ROOT, env: jobEnv(env, job.id), timeoutMs: JOB_TIMEOUT_MS },
+      );
+      writeFileSync(log, error ? `${output}\n${error.message}\n` : output);
+      const state = blobState(blob);
+      // A blob the merge cannot read would kill it without naming the job.
+      if (state === 'unparsable')
+        renameSync(blob, join(rejected, `${job.id}.json`));
+      const ended = timedOut
+        ? 'timed out'
+        : error
+          ? `error ${error.message}`
+          : `exit ${exitCode}`;
+      console.log(
+        `[${++done}/${jobs.length}] ${job.id}: ${ended} in ${Math.round((Date.now() - began) / 1000)}s${state === 'ok' ? '' : ` (${state === 'missing' ? 'NO BLOB' : 'BLOB DOES NOT PARSE'})`}`,
+      );
+      return { job, timedOut, error, blob: state };
+    },
+    (job) => (isSafariProject(job.project) ? 'safari' : undefined),
+  );
   const failed = findFailedJobs(
     settled.flatMap((outcome, i) => {
       if (outcome.status === 'fulfilled') return [outcome.value];

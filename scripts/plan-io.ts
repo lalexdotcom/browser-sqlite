@@ -11,6 +11,7 @@ import type {
   CollectedTest,
   Family,
 } from '../tests/harness/planner/plan.ts';
+import { endSafariSession } from './browsers.ts';
 import { ROOT } from './parallel.ts';
 
 /**
@@ -93,20 +94,38 @@ export async function probeFeatures(
 ): Promise<PlatformFeature[]> {
   const name = `probe ${family.isolated ? 'isolated ' : ''}${family.browser}`;
   const project = projectNamed(vitest, name);
-  const result = await vitest.runTestSpecifications([
-    project.createSpecification(
-      resolve(ROOT, 'tests/browser/probe/features.test.ts'),
-    ),
-  ]);
+  const result = await vitest
+    .runTestSpecifications([
+      project.createSpecification(
+        resolve(ROOT, 'tests/browser/probe/features.test.ts'),
+      ),
+    ])
+    .finally(async () => {
+      // One safaridriver session per machine: the next probe opens its own.
+      // The provider's close() is idempotent, so vitest.close() can repeat it.
+      if (family.browser === 'safari') {
+        await endSafariSession(() => project.browser?.provider.close());
+      }
+    });
   // `testModules` accumulates over every run of this Vitest: only this
   // probe project's module is this run's (measured 2026-10-12).
-  const [test] = result.testModules
-    .filter((m) => m.project.name === name)
-    .flatMap((m) => [...m.children.allTests()]);
+  const modules = result.testModules.filter((m) => m.project.name === name);
+  const [test] = modules.flatMap((m) => [...m.children.allTests()]);
   const features = test?.meta().features;
   if (!Array.isArray(features)) {
+    // What kept the probe from running (a refused session, a page that never
+    // loaded): without it, "no test" says nothing.
+    const errors = [
+      ...modules.flatMap((m) => m.errors()),
+      ...result.unhandledErrors,
+    ].map((e) =>
+      e instanceof Error ||
+      (typeof e === 'object' && e !== null && 'message' in e)
+        ? String((e as { message: unknown }).message)
+        : String(e),
+    );
     throw new Error(
-      `PLAN_PROBE: ${name} reported no features (${test?.result().state ?? 'no test'})`,
+      `PLAN_PROBE: ${name} reported no features (${test?.result().state ?? 'no test'})${errors.map((e) => `\n  ${e}`).join('')}`,
     );
   }
   return features;

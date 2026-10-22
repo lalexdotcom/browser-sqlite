@@ -6,7 +6,9 @@ one. A number nobody can reproduce is a story, not a measurement — say so in t
 
 The entries live in the sub-memories below, by theme, each in the order it was written. **A new entry goes in the sub-memory of its theme**; this index gets its line.
 
-## `mem:measurements/test-browsers` — test harnesses across browsers and CI runners: wa-sqlite's suite (Discussion #373), then the library's own
+## `mem:measurements/test-browsers` — test harnesses across browsers and CI runners, an index of two sub-memories (split 2026-10-22)
+
+### `mem:measurements/test-browsers/wa-sqlite` — wa-sqlite's own suite (Discussion #373)
 
 - STOCK-BROWSERS
 - SAFARI26-DATAVIEW-RACE
@@ -16,12 +18,16 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - WA-WEBKIT-SUITE
 - WA-FIREFOX-SQL-HANG
 - PW-OPFS-QUOTA — Chromium's ephemeral context masks its quota and stops writes near 2 GB; a persistent one does not
+
+### `mem:measurements/test-browsers/library` — the library's own suite (Vitest + WebdriverIO)
+
 - LIB-VITEST-SPIKE — the library's own tests on Vitest + WebdriverIO, stock Chrome 153 / Firefox 155
 - LIB-WIN-MAC — the library's suites on GitHub's Windows and macOS runners: durations, counts, what Windows needed
 - BROWSERS-INSTALLER — the single installer: cold and warm cost, the runners, and LOCK-MACOS (the lock's two macOS defects)
 - SAFARI-LIB-SPIKE — the library's suite on Safari 26.6.2 through safaridriver: one session per machine, beside the others, after a kill, and the stranded IndexedDB connection
 - SAFARI-IDB-STRAND — what strands an IndexedDB connection on Safari 26 (a worker ended before its last transaction's `complete`), the library path that does it (the delete worker), the wait that removes it (0/71), its cost (none detectable), STP 27.0 clean
 - SAFARI-IDB-LIB — the library's pair suite on Safari 26's IndexedDB VFS, one session per file: stock 45/75 files strand on IDBBatchAtomicVFS, fix 0/75; forced kills strand 3-22 % per kill with the fix, 0/800 with the quiesce; the two non-IndexedDB failures
+- SAFARI-LIB-SUITE — the whole suite on Safari 26.6.2 / 27.0.1 through the planner: 7 failures per OS, all a killed worker and its file (`InvalidStateError`), conformance green; the two wiring defects found on the way
 
 ## `mem:measurements/ci-runners` — the library's suites on CI runners, from macOS 26/27 on
 

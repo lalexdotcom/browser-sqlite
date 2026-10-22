@@ -5,7 +5,8 @@
  * (spec 2026-09-15, A5 §12).
  *
  * A column is a browser in a mode (`vitest.config.ts`): `chrome`, `firefox`,
- * `isolated-chrome` (cross-origin isolated) and `isolated-firefox`.
+ * `isolated-chrome` (cross-origin isolated) and `isolated-firefox` by default;
+ * `safari` and `isolated-safari` only when `--engine` names them (macOS).
  *
  * Since the test planner (spec 2026-10-12), a run is `scripts/test-plan.ts --mode all-pairs --table`: only the cells with tests to run start, each with exactly its tests, and the table shows a cell that did not start as —. Each cell leaves `<column>__<vfs>__<build>.json` (Vitest's JSON report) under `.matrix/<run>/`, which `scripts/matrix-triage.ts` reads, and its console (Vitest's default reporter) under `.matrix/<run>/logs/`; the tail of a red cell's log is printed.
  */
@@ -39,7 +40,14 @@ export const COLUMNS: Column[] = [
   { name: 'firefox', args: ['--project', 'firefox ·*'] },
   { name: 'isolated-chrome', args: ['--project', 'isolated chrome ·*'] },
   { name: 'isolated-firefox', args: ['--project', 'isolated firefox ·*'] },
+  { name: 'safari', args: ['--project', 'safari ·*'] },
+  { name: 'isolated-safari', args: ['--project', 'isolated safari ·*'] },
 ];
+
+/** The columns run when no `--engine` names any: Safari's are opt-in. */
+export const DEFAULT_COLUMNS: Column[] = COLUMNS.filter(
+  (c) => !c.name.endsWith('safari'),
+);
 
 /** Every declared (vfs, build) pair, in `VFS_CAPABILITIES` key order. */
 export const allPairs = (): Pair[] =>
@@ -139,7 +147,7 @@ function parseArgs(argv: string[]) {
   return {
     columns: names.length
       ? COLUMNS.filter((c) => names.includes(c.name))
-      : COLUMNS,
+      : DEFAULT_COLUMNS,
     pairs: pairs.length ? pairs : allPairs(),
   };
 }

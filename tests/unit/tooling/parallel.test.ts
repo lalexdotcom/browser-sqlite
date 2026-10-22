@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   allocateShards,
   type BlobState,
+  browserOfProject,
   findFailedJobs,
   jobEnv,
   matchProjects,
@@ -121,6 +122,21 @@ describe('allocateShards', () => {
     projects: { name: string; files: number }[],
     concurrency: number,
   ) => allocateShards(projects, concurrency).map((p) => p.shards);
+
+  // Falsifiable: cut Safari like the others and its shards queue on one lane,
+  // each paying a session start for nothing.
+  it('never cuts an unsharded project', () => {
+    expect(
+      allocateShards(
+        [
+          { name: 'safari · A/b', files: 40 },
+          { name: 'chrome · A/b', files: 40 },
+        ],
+        6,
+        (name) => name.startsWith('safari'),
+      ).map((p) => p.shards),
+    ).toEqual([1, 6]);
+  });
 
   it('splits the concurrency in proportion to the file counts', () => {
     expect(
@@ -262,6 +278,81 @@ describe('runPool', () => {
   it('rejects a concurrency below 1', async () => {
     await expect(runPool([1], 0, async () => 1)).rejects.toThrow(RangeError);
   });
+
+  // Falsifiable: ignore the key and two Safari jobs open two sessions, the
+  // second refused `already paired` (one safaridriver session per machine).
+  it('never runs two items of one serial key at once, and keeps the others parallel', async () => {
+    const keys = ['s', 's', 's', undefined, undefined, undefined];
+    let live = 0;
+    let liveS = 0;
+    let peak = 0;
+    let peakS = 0;
+    const results = await runPool(
+      keys,
+      4,
+      async (key, index) => {
+        live++;
+        if (key === 's') liveS++;
+        peak = Math.max(peak, live);
+        peakS = Math.max(peakS, liveS);
+        await tick(10);
+        live--;
+        if (key === 's') liveS--;
+        return index;
+      },
+      (key) => key,
+    );
+    expect(peakS).toBe(1);
+    expect(peak).toBe(4);
+    expect(results).toEqual(
+      keys.map((_, index) => ({ status: 'fulfilled', value: index })),
+    );
+  });
+
+  // Falsifiable: take the items in order and Safari's chain starts after every
+  // other job, then runs alone while the other lanes idle (macOS 26: 1629 s of
+  // jobs against ≈ 1330 s with Safari first, 2026-10-22).
+  it('starts the serial chain first, whatever its place in the list', async () => {
+    const started: string[] = [];
+    await runPool(
+      ['x1', 'x2', 's1', 's2'],
+      2,
+      async (item) => {
+        started.push(item);
+        await tick(item.startsWith('s') ? 5 : 30);
+      },
+      (item) => (item.startsWith('s') ? 's' : undefined),
+    );
+    expect(started[0]).toBe('s1');
+    expect(started.indexOf('s2')).toBeLessThan(started.indexOf('x2'));
+  });
+
+  it('skips a blocked item for a free one rather than idling', async () => {
+    const started: string[] = [];
+    await runPool(
+      ['s1', 's2', 'x'],
+      2,
+      async (item) => {
+        started.push(item);
+        await tick(item === 's1' ? 50 : 5);
+      },
+      (item) => (item.startsWith('s') ? 's' : undefined),
+    );
+    expect(started.indexOf('x')).toBeLessThan(started.indexOf('s2'));
+  });
+});
+
+describe('browserOfProject', () => {
+  it('reads the browser from every kind of project name', () => {
+    expect(browserOfProject('safari · OPFSWriteAheadVFS/sync')).toBe('safari');
+    expect(browserOfProject('isolated safari · OPFSWriteAheadVFS/sync')).toBe(
+      'safari',
+    );
+    expect(browserOfProject('conformance safari')).toBe('safari');
+    expect(browserOfProject('probe isolated safari')).toBe('safari');
+    expect(browserOfProject('chrome · A/sync')).toBe('chrome');
+    expect(browserOfProject('unit')).toBeUndefined();
+  });
 });
 
 describe('runBounded', () => {
@@ -360,6 +451,17 @@ describe('planJobs', () => {
     expect(jobs.filter((j) => j.project === 'chrome · A/sync')).toEqual([
       { id: 'chrome-A-sync.1of2', project: 'chrome · A/sync', shard: [1, 2] },
       { id: 'chrome-A-sync.2of2', project: 'chrome · A/sync', shard: [2, 2] },
+    ]);
+  });
+
+  it('gives a Safari project one job', () => {
+    const jobs = planJobs(
+      new Map([['conformance safari', 6]]),
+      ['conformance safari'],
+      6,
+    );
+    expect(jobs).toEqual([
+      { id: 'conformance-safari', project: 'conformance safari', shard: null },
     ]);
   });
 

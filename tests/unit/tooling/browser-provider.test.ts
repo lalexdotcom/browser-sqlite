@@ -27,6 +27,37 @@ describe('withResolvedCapabilities', () => {
     expect(opened.logLevel).toBe('error');
   });
 
+  // Falsifiable: rethrow Safari's refusal as is and a Mac with remote
+  // automation off fails with no word of how to turn it on (spec goal 3).
+  it('appends the remote-automation hint when Safari refuses the session', async () => {
+    const fake = {
+      options: {},
+      async openBrowser(): Promise<unknown> {
+        throw new Error('boom');
+      },
+    };
+    const resolve = async () =>
+      ({ safari: { browser: '/b', driver: '/d' } }) as never;
+    const p = withResolvedCapabilities(fake, 'safari', resolve);
+    await expect(p.openBrowser()).rejects.toThrow(
+      /boom[\s\S]*Allow remote automation/,
+    );
+  });
+
+  it('passes a Chrome session error through untouched', async () => {
+    const error = new Error('boom');
+    const fake = {
+      options: {},
+      async openBrowser(): Promise<unknown> {
+        throw error;
+      },
+    };
+    const resolve = async () =>
+      ({ chrome: { browser: '/b', driver: '/d' } }) as never;
+    const p = withResolvedCapabilities(fake, 'chrome', resolve);
+    await expect(p.openBrowser()).rejects.toBe(error);
+  });
+
   it('throws at wrap time when the provider lost its options or openBrowser', () => {
     // Falsifiable: wrap whatever it is given and a provider change runs unwrapped, letting WebdriverIO download.
     const resolve = async () => ({}) as never;

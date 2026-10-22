@@ -9,6 +9,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { availableParallelism } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { type BrowserName, isBrowserName } from './browser-names.ts';
 import { DETACHED, killTree, packageBin } from './processes.ts';
 
 export const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -167,49 +168,93 @@ export function matchProjects(
 
 /**
  * Shards per project: the concurrency shared out in proportion to the files, at
- * least one, at most one per file (a shard without a file runs nothing).
+ * least one, at most one per file (a shard without a file runs nothing). An
+ * `unsharded` project gets one and no share: its shards could only queue.
  */
+/** The browser a project targets: the first word of its name that is one (`isolated safari · X/y` → `safari`). */
+export const browserOfProject = (name: string): BrowserName | undefined =>
+  name.split(' ').find(isBrowserName);
+
+/** Safari's projects run one at a time and whole: one safaridriver session per machine. */
+export const isSafariProject = (name: string): boolean =>
+  browserOfProject(name) === 'safari';
+
 export function allocateShards(
   projects: readonly { readonly name: string; readonly files: number }[],
   concurrency: number,
+  unsharded: (name: string) => boolean = () => false,
 ): { name: string; files: number; shards: number }[] {
-  const total = projects.reduce((sum, p) => sum + p.files, 0);
+  const total = projects
+    .filter((p) => !unsharded(p.name))
+    .reduce((sum, p) => sum + p.files, 0);
   return projects.map(({ name, files }) => ({
     name,
     files,
-    shards: Math.max(
-      1,
-      Math.min(files, Math.round((concurrency * files) / total)),
-    ),
+    shards: unsharded(name)
+      ? 1
+      : Math.max(1, Math.min(files, Math.round((concurrency * files) / total))),
   }));
 }
 
 /**
  * Runs `worker` over `items`, at most `concurrency` at once. Never rejects for
  * a job: a throwing worker is a `rejected` entry and the others carry on. The
- * results come in the order of `items`.
+ * results come in the order of `items`. Items with the same `serialKey` never
+ * run at once (Safari: one safaridriver session per machine); a lane takes a
+ * free serial item before any other, and skips a blocked one for the next free.
  */
 export async function runPool<T, R>(
   items: readonly T[],
   concurrency: number,
   worker: (item: T, index: number) => Promise<R>,
+  serialKey: (item: T) => string | undefined = () => undefined,
 ): Promise<PromiseSettledResult<R>[]> {
   if (!(concurrency >= 1)) {
     throw new RangeError(`runPool: concurrency ${concurrency} is below 1`);
   }
   const results = new Array<PromiseSettledResult<R>>(items.length);
-  let next = 0;
+  const pending = items.map((_, index) => index);
+  const busy = new Set<string>();
+  // Resolved on every completion, so a lane whose remaining items are all
+  // blocked by a busy key wakes when one frees.
+  let released = () => {};
+  let release = new Promise<void>((r) => {
+    released = r;
+  });
   const lane = async () => {
-    while (next < items.length) {
-      const index = next++;
+    while (pending.length > 0) {
+      // A free serial item first: its chain can only run one at a time, so
+      // starting it late leaves it running alone at the end.
+      const free = (keyed: boolean) =>
+        pending.findIndex((index) => {
+          const key = serialKey(items[index] as T);
+          return keyed
+            ? key !== undefined && !busy.has(key)
+            : key === undefined;
+        });
+      const keyedAt = free(true);
+      const at = keyedAt === -1 ? free(false) : keyedAt;
+      if (at === -1) {
+        await release;
+        continue;
+      }
+      const [index] = pending.splice(at, 1) as [number];
+      const key = serialKey(items[index] as T);
+      if (key !== undefined) busy.add(key);
       try {
         results[index] = {
           status: 'fulfilled',
-          value: await worker(items[index], index),
+          value: await worker(items[index] as T, index),
         };
       } catch (reason) {
         results[index] = { status: 'rejected', reason };
       }
+      if (key !== undefined) busy.delete(key);
+      const wake = released;
+      release = new Promise<void>((r) => {
+        released = r;
+      });
+      wake();
     }
   };
   await Promise.all(
@@ -282,7 +327,11 @@ export function planJobs(
   if (names.includes('unit')) {
     jobs.push({ id: 'unit', project: 'unit', shard: null });
   }
-  for (const { name, shards } of allocateShards(browser, concurrency)) {
+  for (const { name, shards } of allocateShards(
+    browser,
+    concurrency,
+    isSafariProject,
+  )) {
     for (let shard = 1; shard <= shards; shard++) {
       jobs.push({
         id: shards > 1 ? `${slug(name)}.${shard}of${shards}` : slug(name),
