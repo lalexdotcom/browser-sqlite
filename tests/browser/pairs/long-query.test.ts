@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createTestClient,
   interceptWorkers,
+  killedStatementRuns,
   killSilently,
   longQuery,
   sleep,
@@ -74,7 +75,11 @@ describe('a worker killed silently', () => {
   // the caller never reaches the drain at all.
   // Falsifiable: remove the timer from the drain race in pool.ts — the slot is
   // then never reclaimed and the last two assertions fail.
-  it('is presumed dead when it never answers the stop request', async () => {
+  it('is presumed dead when it never answers the stop request', async ({
+    skip,
+  }) => {
+    const webkit = killedStatementRuns();
+    if (webkit) return skip(webkit);
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1, drainTimeout: 500 });
     await db.write('CREATE TABLE t (a)');

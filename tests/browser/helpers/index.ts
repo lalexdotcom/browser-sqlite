@@ -16,6 +16,7 @@ import {
   runsIn,
 } from '../../harness/planner/need';
 import type { TestTarget } from '../../harness/target';
+import { TERMINATE_RUNS_WASM, terminateRunsWasm } from '../../harness/webkit';
 import { AVAILABLE_FEATURES, removeOpfsPath } from './environment';
 
 let targetReads = 0;
@@ -46,6 +47,21 @@ export const TEST_TARGET: TestTarget = (() => {
     },
   });
 })();
+
+/**
+ * Why a test that kills a worker inside a long statement, then needs its file
+ * back, cannot pass here — undefined where it can. On Safari ≤ 27.0.1 the
+ * killed worker runs its statement to its end, holding its OPFS handles
+ * (SAFARI-TERMINATE-WASM). Only on the `sync` build of an OPFS VFS: the
+ * `async` and `jspi` builds return to JS while a statement runs, where
+ * `terminate()` takes effect.
+ */
+export const killedStatementRuns = (): string | undefined =>
+  terminateRunsWasm(navigator.userAgent) &&
+  TEST_TARGET.build === 'sync' &&
+  VFS_CAPABILITIES[TEST_TARGET.vfs].storage === 'opfs'
+    ? TERMINATE_RUNS_WASM
+    : undefined;
 
 /** The reads of `TEST_TARGET` since the last call (the trace's counter). */
 export const takeTargetReads = (): number => {

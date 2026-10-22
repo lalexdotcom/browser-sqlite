@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createTestClient,
   interceptWorkers,
+  killedStatementRuns,
   longQuery,
   sharedDatabase,
   sleep,
@@ -133,7 +134,11 @@ describe('the pool-level request history', () => {
 
   // Falsifiable: have createWorkerDebugState also drop the slot's entries from
   // `requests` — the crashed read disappears.
-  it('keeps the requests of a killed worker, with its generation', async () => {
+  it('keeps the requests of a killed worker, with its generation', async ({
+    skip,
+  }) => {
+    const webkit = killedStatementRuns();
+    if (webkit) return skip(webkit);
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1, debug: true });
     await db.write('CREATE TABLE t (a)');

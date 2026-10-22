@@ -3,6 +3,7 @@ import { describe, expect, it, onTestFinished } from 'vitest';
 import {
   createTestClient,
   interceptWorkers,
+  killedStatementRuns,
   longQuery,
   sharedDatabase,
   sleep,
@@ -28,7 +29,9 @@ describe('worker lifecycle — crash detection', () => {
 
   // Falsifiable: return 'lost' instead of 'restart' from the supervisor, or
   // drop the `if (decision === 'restart') void spawn(index)` branch in client.ts.
-  it('restarts the slot once and keeps serving', async () => {
+  it('restarts the slot once and keeps serving', async ({ skip }) => {
+    const webkit = killedStatementRuns();
+    if (webkit) return skip(webkit);
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1 });
     await db.write('CREATE TABLE t (a)');
@@ -46,7 +49,11 @@ describe('worker lifecycle — crash detection', () => {
 
   // Falsifiable: delete the `failClient(error)` call on the 'fail-client'
   // decision in handleDeath (src/client.ts).
-  it('fails the client permanently once the restart budget is spent', async () => {
+  it('fails the client permanently once the restart budget is spent', async ({
+    skip,
+  }) => {
+    const webkit = killedStatementRuns();
+    if (webkit) return skip(webkit);
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1, maxWorkerRestarts: 1 });
     await db.write('CREATE TABLE t (a)');
