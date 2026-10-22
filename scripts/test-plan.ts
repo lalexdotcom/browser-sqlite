@@ -2,7 +2,7 @@
 /**
  * The browser suite through the planner (spec 2026-10-12, § 4-5):
  *
- *   node scripts/test-plan.ts [--unit] [--browser chrome|firefox]…
+ *   node scripts/test-plan.ts [--unit] [--browser chrome|firefox|safari]…
  *     [--modes not-isolated,isolated] [--full] [--mode complement|all-pairs]
  *     [--pair vfs/build]… [--table] [--plan-only] [--pairs-out file] [file…]
  *
@@ -16,7 +16,9 @@
  * `scripts/matrix-triage.ts`. `BSQ_TEST_TARGETS` and `--pair` give the
  * pairs, never substituted. `--plan-only` stops after the plan and its checks;
  * `--pairs-out` writes the pairs that have tests. A dead test fails a run that
- * saw every pair (`scripts/plan-report.ts`).
+ * saw every pair (`scripts/plan-report.ts`). Chrome and Firefox run unless
+ * `--browser` names others; Safari runs only when named, on macOS, one job at
+ * a time (one safaridriver session per machine), and the run prints its version.
  */
 import { spawnSync } from 'node:child_process';
 import {
@@ -36,12 +38,20 @@ import type {
   Pair,
   Plan,
 } from '../tests/harness/planner/plan.ts';
-import type { BrowserName } from './browsers.ts';
+import {
+  ALL_BROWSERS,
+  assertBrowserAvailable,
+  type BrowserName,
+  DEFAULT_BROWSERS,
+  isBrowserName,
+  safariVersion,
+} from './browsers.ts';
 import {
   allocateShards,
   type BlobState,
   buildOnce,
   findFailedJobs,
+  isSafariProject,
   jobEnv,
   killLiveOnSignal,
   ROOT,
@@ -124,10 +134,10 @@ function parseArgs(argv: readonly string[]): Options {
     else if (arg === '--pairs-out') options.pairsOut = String(argv[++i]);
     else if (arg === '--json') options.json = String(argv[++i]);
     else if (arg === '--browser') {
-      const browser = argv[++i];
-      if (browser !== 'chrome' && browser !== 'firefox') {
+      const browser = String(argv[++i]);
+      if (!isBrowserName(browser)) {
         throw new Error(
-          `test-plan: --browser "${browser}" is not chrome or firefox`,
+          `test-plan: --browser "${browser}" is not chrome, firefox or safari`,
         );
       }
       options.browsers.push(browser);
@@ -157,7 +167,7 @@ function parseArgs(argv: readonly string[]): Options {
   }
   options.browsers = options.browsers.length
     ? [...new Set(options.browsers)]
-    : ['chrome', 'firefox'];
+    : [...DEFAULT_BROWSERS];
   const env = process.env.BSQ_TEST_TARGETS;
   options.pairs = pairs.length
     ? pairs
@@ -201,6 +211,17 @@ function printPlan(plan: Plan, families: readonly FamilyInput[]) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  // Before the build and any probe: Safari asked for off macOS stops here.
+  try {
+    for (const browser of options.browsers) assertBrowserAvailable(browser);
+  } catch (error) {
+    console.error((error as Error).message);
+    process.exitCode = 2;
+    return;
+  }
+  if (options.browsers.includes('safari')) {
+    console.log(`Safari ${safariVersion()}`);
+  }
   const concurrency = resolveConcurrency(process.env.BSQ_TEST_JOBS);
   const env = buildOnce(process.env);
 
@@ -306,7 +327,7 @@ async function main() {
       {
         mode: options.mode,
         explicitPairs: Array.isArray(options.pairs),
-        browsers: options.browsers.length,
+        browsers: options.browsers,
         modes: options.isolatedModes.length,
       },
       process.env.CI === 'true',
@@ -356,6 +377,7 @@ async function main() {
     : allocateShards(
         cells.map((c) => ({ name: c.project, files: c.specs.length })),
         concurrency,
+        isSafariProject,
       ).map((s) => s.shards);
   // `isolated chrome · OPFSWriteAheadVFS/sync` → `isolated-chrome__OPFSWriteAheadVFS__sync`,
   // the name scripts/matrix-triage.ts parses.
@@ -383,77 +405,94 @@ async function main() {
   const start = Date.now();
   let done = 0;
   const results = new Map<string, MatrixResult>();
-  const settled = await runPool(jobs, concurrency, async (job) => {
-    const blob = join(blobs, `${job.id}.json`);
-    const json = join(reports, `${job.id}.json`);
-    const began = Date.now();
-    const { output, timedOut, exitCode, error } =
-      job.cell === null
-        ? await runBounded(
-            NODE,
-            [
-              VITEST,
-              'run',
-              '--config',
-              'tests/vitest.config.ts',
-              '--configLoader',
-              'runner',
-              '--project',
-              'unit',
-              '--reporter=blob',
-              `--outputFile=${blob}`,
-            ],
-            { cwd: ROOT, env: jobEnv(env, job.id), timeoutMs: JOB_TIMEOUT_MS },
-          )
-        : await runBounded(
-            'node',
-            [
-              'scripts/run-cell.ts',
-              planFile,
-              String(job.cell),
-              String(job.shard),
-              String(job.shards),
-              blob,
-              json,
-            ],
-            { cwd: ROOT, env: jobEnv(env, job.id), timeoutMs: JOB_TIMEOUT_MS },
-          );
-    writeFileSync(
-      join(logs, `${job.id}.log`),
-      error ? `${output}\n${error.message}\n` : output,
-    );
-    let state: BlobState = existsSync(blob) ? 'ok' : 'missing';
-    if (state === 'ok') {
-      try {
-        JSON.parse(readFileSync(blob, 'utf8'));
-      } catch {
-        state = 'unparsable';
-        rmSync(blob);
-      }
-    }
-    if (job.cell !== null && options.table) {
-      const cell = cells[job.cell] as PlannedCell;
-      results.set(
-        cell.project,
-        timedOut
-          ? { status: 'timed-out' }
-          : error
-            ? { status: 'error', message: error.message }
-            : parseMatrixReport(
-                existsSync(json) ? readFileSync(json, 'utf8') : '',
-              ),
+  const settled = await runPool(
+    jobs,
+    concurrency,
+    async (job) => {
+      const blob = join(blobs, `${job.id}.json`);
+      const json = join(reports, `${job.id}.json`);
+      const began = Date.now();
+      const { output, timedOut, exitCode, error } =
+        job.cell === null
+          ? await runBounded(
+              NODE,
+              [
+                VITEST,
+                'run',
+                '--config',
+                'tests/vitest.config.ts',
+                '--configLoader',
+                'runner',
+                '--project',
+                'unit',
+                '--reporter=blob',
+                `--outputFile=${blob}`,
+              ],
+              {
+                cwd: ROOT,
+                env: jobEnv(env, job.id),
+                timeoutMs: JOB_TIMEOUT_MS,
+              },
+            )
+          : await runBounded(
+              'node',
+              [
+                'scripts/run-cell.ts',
+                planFile,
+                String(job.cell),
+                String(job.shard),
+                String(job.shards),
+                blob,
+                json,
+              ],
+              {
+                cwd: ROOT,
+                env: jobEnv(env, job.id),
+                timeoutMs: JOB_TIMEOUT_MS,
+              },
+            );
+      writeFileSync(
+        join(logs, `${job.id}.log`),
+        error ? `${output}\n${error.message}\n` : output,
       );
-    }
-    const ended = timedOut
-      ? 'timed out'
-      : error
-        ? `error ${error.message}`
-        : `exit ${exitCode}`;
-    console.log(
-      `[${++done}/${jobs.length}] ${job.id}: ${ended} in ${Math.round((Date.now() - began) / 1000)}s${state === 'ok' ? '' : ' (NO BLOB)'}`,
-    );
-    return { job, timedOut, error, blob: state, exitCode };
-  });
+      let state: BlobState = existsSync(blob) ? 'ok' : 'missing';
+      if (state === 'ok') {
+        try {
+          JSON.parse(readFileSync(blob, 'utf8'));
+        } catch {
+          state = 'unparsable';
+          rmSync(blob);
+        }
+      }
+      if (job.cell !== null && options.table) {
+        const cell = cells[job.cell] as PlannedCell;
+        results.set(
+          cell.project,
+          timedOut
+            ? { status: 'timed-out' }
+            : error
+              ? { status: 'error', message: error.message }
+              : parseMatrixReport(
+                  existsSync(json) ? readFileSync(json, 'utf8') : '',
+                ),
+        );
+      }
+      const ended = timedOut
+        ? 'timed out'
+        : error
+          ? `error ${error.message}`
+          : `exit ${exitCode}`;
+      console.log(
+        `[${++done}/${jobs.length}] ${job.id}: ${ended} in ${Math.round((Date.now() - began) / 1000)}s${state === 'ok' ? '' : ' (NO BLOB)'}`,
+      );
+      return { job, timedOut, error, blob: state, exitCode };
+    },
+    (job) =>
+      job.cell !== null &&
+      isSafariProject((cells[job.cell] as PlannedCell).project)
+        ? 'safari'
+        : undefined,
+  );
   const outcomes = settled.map((o, i) =>
     o.status === 'fulfilled'
       ? o.value
@@ -488,7 +527,10 @@ async function main() {
       { cwd: ROOT, env, stdio: 'inherit' },
     );
   if (options.table) {
-    const columns = ['chrome', 'firefox', 'isolated-chrome', 'isolated-firefox']
+    const columns = [
+      ...ALL_BROWSERS,
+      ...ALL_BROWSERS.map((browser) => `isolated-${browser}`),
+    ]
       .filter((name) =>
         families.some(
           (f) => (f.isolated ? `isolated-${f.browser}` : f.browser) === name,

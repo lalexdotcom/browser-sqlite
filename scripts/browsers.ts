@@ -29,6 +29,13 @@ import {
   sweepStaging,
 } from './browser-cache.ts';
 import {
+  ALL_BROWSERS,
+  type BrowserName,
+  DEFAULT_BROWSERS,
+  type DownloadedBrowser,
+  isBrowserName,
+} from './browser-names.ts';
+import {
   INSTALL_BOUND_MS,
   lockPath,
   runOnce,
@@ -36,28 +43,18 @@ import {
 } from './install-lock.ts';
 import { timeScale } from './processes.ts';
 
-export type BrowserName = 'chrome' | 'firefox' | 'safari';
-
-/** The browsers this script downloads and pins; Safari comes with macOS. */
-export type DownloadedBrowser = Exclude<BrowserName, 'safari'>;
+export {
+  ALL_BROWSERS,
+  type BrowserName,
+  DEFAULT_BROWSERS,
+  type DownloadedBrowser,
+  isBrowserName,
+} from './browser-names.ts';
 
 export const PINNED: Readonly<Record<DownloadedBrowser, string>> = {
   chrome: '153.0.8010.52',
   firefox: 'stable_155.0.1',
 };
-
-/** Every browser a harness can drive. */
-export const ALL_BROWSERS: readonly BrowserName[] = [
-  'chrome',
-  'firefox',
-  'safari',
-];
-
-/** What runs unless a browser is named: Safari is opt-in everywhere, macOS included. */
-export const DEFAULT_BROWSERS: readonly BrowserName[] = ['chrome', 'firefox'];
-
-export const isBrowserName = (name: string): name is BrowserName =>
-  (ALL_BROWSERS as readonly string[]).includes(name);
 
 /** Throws when `name` cannot run on `platform`: Safari exists on macOS only. */
 export function assertBrowserAvailable(

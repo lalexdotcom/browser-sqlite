@@ -1,3 +1,5 @@
+import type { BrowserName } from './browser-names.ts';
+
 /**
  * Whether a dead test (eligible on no pair of any selected browser) fails the
  * run (spec 2026-10-12 § 4). Only a run that saw every pair of both browsers
@@ -9,12 +11,14 @@ export const deadIsFatal = (
   run: {
     mode: 'complement' | 'all-pairs';
     explicitPairs: boolean;
-    browsers: number;
+    browsers: readonly BrowserName[];
     modes: number;
   },
   ci: boolean,
 ): boolean =>
   !run.explicitPairs &&
-  run.browsers === 2 &&
+  // Chrome and Firefox are the default browsers; Safari, opt-in, adds to them.
+  run.browsers.includes('chrome') &&
+  run.browsers.includes('firefox') &&
   run.modes === 2 &&
   (run.mode === 'all-pairs' || ci);

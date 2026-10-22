@@ -93,11 +93,17 @@ export async function probeFeatures(
 ): Promise<PlatformFeature[]> {
   const name = `probe ${family.isolated ? 'isolated ' : ''}${family.browser}`;
   const project = projectNamed(vitest, name);
-  const result = await vitest.runTestSpecifications([
-    project.createSpecification(
-      resolve(ROOT, 'tests/browser/probe/features.test.ts'),
-    ),
-  ]);
+  const result = await vitest
+    .runTestSpecifications([
+      project.createSpecification(
+        resolve(ROOT, 'tests/browser/probe/features.test.ts'),
+      ),
+    ])
+    .finally(async () => {
+      // One safaridriver session per machine: the next probe opens its own.
+      // The provider's close() is idempotent, so vitest.close() can repeat it.
+      if (family.browser === 'safari') await project.browser?.provider.close();
+    });
   // `testModules` accumulates over every run of this Vitest: only this
   // probe project's module is this run's (measured 2026-10-12).
   const [test] = result.testModules

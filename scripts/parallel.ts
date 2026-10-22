@@ -9,7 +9,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { availableParallelism } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type BrowserName, isBrowserName } from './browsers.ts';
+import { type BrowserName, isBrowserName } from './browser-names.ts';
 import { DETACHED, killTree, packageBin } from './processes.ts';
 
 export const ROOT = fileURLToPath(new URL('..', import.meta.url));

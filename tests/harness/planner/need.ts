@@ -1,4 +1,8 @@
-import { ALL_BROWSERS, type BrowserName } from '../../../scripts/browsers.ts';
+// browser-names.ts, not browsers.ts: this module runs in the browser too.
+import {
+  ALL_BROWSERS,
+  type BrowserName,
+} from '../../../scripts/browser-names.ts';
 import {
   BUILD_CAPABILITIES,
   type SQLiteBuild,
