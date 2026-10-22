@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-10-16.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-10-22.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one, and move what closes to `mem:history` rather than
 keeping it here struck through (rewritten on 2026-10-08 from 38 000 characters, two thirds of
 them closed subjects).
@@ -77,19 +77,12 @@ here on purpose: a total alone cannot say which suite moved.
 
 ## In progress
 
-- **Merged into `main` on 2026-10-15 (`c82d103`, not pushed; PR #9 of this repo stays open until `main` is pushed): the library's tests on Windows and macOS in CI, dispatched on demand.** The final review's critical finding (the open-timeout shim imported the untracked `tests/build/`, which broke `tsc` on a fresh clone) was fixed before the merge; its deferred minors are in `mem:follow-ups` (§ The Windows/macOS CI: deferred minors). Spec `docs/superpowers/specs/2026-10-14-ci-windows-macos-design.md`, plan `docs/superpowers/plans/2026-10-14-ci-windows-macos.md`. Three green runs per platform (LIB-WIN-MAC, `mem:measurements/test-browsers`); what it built is in `mem:stack-and-build/ci` and `mem:conventions` (§ What runs where, `BSQ_TIME_SCALE`). Pushed for the runs (the user's go covered that); `main` not pushed.
-- **Merged into `main` on 2026-10-16 (not pushed): wa-sqlite #381 carried as a `pnpm patch`** (CHANGELOG Fixed; matrix 23/23 on GitHub), `coopsync-handover` re-enabled on Firefox on Windows with 3 attempts (Windows run green, COOPSYNC-381-WINDOWS), and the unit project dropping git's `GIT_*` variables (`tests/unit/setup/git-env.ts`).
-- **wa-sqlite #382 opened on 2026-10-16** (`OPFSAdaptiveVFS` kept its Web Lock without a handle after a terminated connection; `mem:follow-ups`, report in `docs/upstream/`).
-- **Merged into `main` on 2026-10-16: #382 carried as a `pnpm patch` beside #381** (CHANGELOG Fixed; matrix 23/23 and Windows green on GitHub).
-- **Merged into `main` on 2026-10-16 (not pushed): the library-side fast step** (`perf/fast-step`, CHANGELOG Changed; `mem:history/2026-10-12-to-18`). **The GitHub matrix did not run before the merge** (the user closed the branch): it runs at the next push of `main`, and the Windows workflow should be dispatched once for the fingerprint test's path normalisation. Follow-ups opened: the stream iterator (merged 2026-10-19), `mem:follow-ups/wa-step-upstream`.
-- **Merged into `main` on 2026-10-19 (not pushed): the stream iterator** (`perf/stream-iterator`, CHANGELOG Changed incl. a **Breaking** line; `mem:history/2026-10-19-to-25`). Matrix 23/23, macOS and Windows green on GitHub before the merge (the branch was pushed for them and deleted after).
-- **Merged into `main` on 2026-10-19 (not pushed): `browsers.ts` as the only installer, under an inter-process lock** (`mem:history/2026-10-19-to-25`). Spec `docs/superpowers/specs/2026-10-19-browsers-installer-design.md`, plan `docs/superpowers/plans/2026-10-19-browsers-installer.md`; local delivery gate, cold-cache `pnpm test`, `test:consumer` and the macOS and Windows workflows green on the final head (BROWSERS-INSTALLER, `mem:measurements/test-browsers`); how it works in `mem:stack-and-build`.
-- **Merged into `main` on 2026-10-21 (not pushed): the stranded IndexedDB connection on Safari** (`mem:history/2026-10-19-to-25`) — the worker settles its IndexedDB transactions before its last reply, the pool quiesces an IndexedDB worker before a forced kill, `requires:jspi-available` for the default-build fallback test (CHANGELOG Fixed ×2; local gate and Safari validation green; `mem:follow-ups/safari-idb-stranded`).
-- **Merged into `main` on 2026-10-21 (not pushed): the IndexedDB close through wa-sqlite #384/#385** (`fix/idb-vfs-close`): the PRs opened and carried, the worker closes its IndexedDB VFS instead of tracking transactions, `idb-transactions.ts` gone, CHANGELOG Fixed `synchronous=NORMAL` (`mem:history/2026-10-19-to-25`, `mem:follow-ups/safari-idb-stranded`). Safari run green.
-- **Next, in this order (user, 2026-10-20):** (1) the stranded IndexedDB connection on Safari — merged; (2) Safari in the library's suite on macOS, brainstorming to resume (`mem:follow-ups/safari-suite`); later, the Windows/macOS workflows in the release (user, 2026-10-15).
-
-- **The Vite dep-optimizer race between parallel Vitest processes is fixed and merged (2026-10-13)**: one cache per job (`mem:follow-ups/notes`). CI's `verify` was the exposed run (conformance in 2 shards per project on a cold cache); the push that carries the fix is its proof.
-- **Done and pushed (2026-10-13):** the test planner (plans A, B, C; the matrix plans first and runs on every push of `main`), and the test-triggers review (`docs/superpowers/specs/2026-10-13-test-triggers-design.md`: hooks per change, actionlint, the release reusing the push-of-`main` runs, publint/attw, the Pages bench check; `mem:conventions` § What runs where). CI 38441033562 and matrix 38441033564 green on the push. **Left for GitHub to prove:** the release's `prior` job and its `release`/`pages` conditions and `consumer-smoke` at the next release. The Pages bench check is proven (run 38448872714, `preview` moved to `e5855bb` on 2026-10-13).
+- **Nothing is in progress, and everything is pushed (2026-10-22):** the working tree is clean and `main` is `origin/main`; CI and the matrix are green on that push. What landed from 2026-10-14 to 10-22 — Windows/macOS workflows, #381/#382/#384/#385 carried, the fast step, the stream iterator, the single browsers installer, the Safari IndexedDB strand, the macOS 26/27 workflows, the `tx-quiesce` race, the restart's held file, Linux through `tests.yaml` — is in `mem:history/2026-10-12-to-18` and `mem:history/2026-10-19-to-25`. One throwaway remains, the Safari spike branch of 2026-10-20 (local and on GitHub), whose findings are in `mem:measurements/test-browsers`.
+- **Next, in this order (user, 2026-10-20, confirmed 2026-10-21):** **Safari in the library's suite on macOS** — brainstorming to resume from `mem:follow-ups/safari-suite`: `tests.yaml`'s `browsers` input exists and only the macOS callers set it (still `chrome,firefox`); the piece adds Safari to `scripts/browsers.ts` and `scripts/test-plan.ts`, a clear error for a browser the platform lacks, and must cover WebKit's `InvalidStateError` for a held file, which neither open retry matches (`mem:follow-ups`, § the name differs by engine; `mem:follow-ups/lifecycle-restart-held`). Later: the Windows/macOS workflows in the release (user, 2026-10-15).
+- **The next release is the user's call.** `[Unreleased]` holds 13 entries over `1.0.0-rc.10`, one of them **Breaking** (`stream()`/`chunk()` throw an invalid argument from the call); `package.json` stays at `1.0.0-rc.10` until the bump. Procedure: `mem:conventions/releasing`.
+- **Left for GitHub to prove, at the next release:** the release's `prior` job and its `release`/`pages` conditions, `consumer-smoke`, and the release calling `ci.yaml`, which now calls `tests.yaml` (one more level of reusable workflow).
+- **macOS 27 runs on the `xcode-27` preview image:** move `tests-macos-27.yaml` to `macos-27` once GitHub has that label (`mem:stack-and-build/ci`).
+- **Seen, not looked into:** `pnpm test` took 491-498 s in this container on 2026-10-21/22 (367 files, 2720 passed, 538 skipped), against the 143 s at 6 processes of the baseline below. The tree grew since, but not fourfold; the table has not been re-measured.
 - **The container rebuild waits for the user:** `post-create.sh` on a fresh container (`node scripts/browsers.ts install` prints two `ok`, actionlint installs, `pnpm test` green). The Vitest + WebdriverIO design: `docs/superpowers/specs/2026-10-10-vitest-webdriverio-design.md`.
 
 ## In flight, and not ours to move
@@ -102,7 +95,7 @@ here on purpose: a total alone cannot say which suite moved.
   plan and what his go calls for are in `mem:follow-ups`, the
   measurements in `mem:measurements/test-browsers`, and the user's principles in
   `mem:conventions` (§ Testing in browsers).
-- **No PR of ours is open on wa-sqlite since 2026-10-13**: #371 (2026-10-10), #372 (2026-10-11) and #374 (2026-10-13) merged and left the patch at the repins (§ Standing facts). #362 (an upstream issue) awaits the user's decision on a PR; `mem:follow-ups`.
+- **Four PRs of ours are open on wa-sqlite (checked 2026-10-22), all carried in the patch:** #381 (`OPFSCoopSyncVFS`, 2026-10-15), #382 (`OPFSAdaptiveVFS`, 2026-10-16), #384 (`IDBBatchAtomicVFS` `close()`, 2026-10-21) and #385 (`IDBMirrorVFS` `close()`, 2026-10-21). When one merges, repin and drop its hunk (`mem:stack-and-build/wa-sqlite`, `mem:upstream`). #362 (an upstream issue) awaits the user's decision on a PR; `mem:follow-ups`.
 - **Another agent's work was paused by the user until our upstream PRs were done; the user
   relaunches it.**
 
@@ -118,8 +111,7 @@ here on purpose: a total alone cannot say which suite moved.
 
 ## Known live exposures
 
-None known since rc.8: the breaking change and the Firefox memory fixes that sat in
-`[Unreleased]` shipped with it.
+**`1.0.0-rc.10`, the published version, carries every defect that `[Unreleased]` lists as Fixed** until the next release, among them: the last write before `close()` lost about half the time on `IDBBatchAtomicVFS` with `synchronous=NORMAL`; an IndexedDB database left held open on Safari after `close()`, `deleteDatabase()` or a terminated worker; `OPFSCoopSyncVFS` and `OPFSAdaptiveVFS` (Firefox) failing or hanging after another client's worker was terminated; a crash restart failing the client on `OPFSAdaptiveVFS` in Firefox; `wasmUrl` ignored for the `.wasm`. The list is the CHANGELOG's, not repeated here.
 
 ## Settled — do not reopen without new information
 
