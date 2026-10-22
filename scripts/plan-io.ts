@@ -11,6 +11,7 @@ import type {
   CollectedTest,
   Family,
 } from '../tests/harness/planner/plan.ts';
+import { releaseSafaridriver } from './browsers.ts';
 import { ROOT } from './parallel.ts';
 
 /**
@@ -102,7 +103,10 @@ export async function probeFeatures(
     .finally(async () => {
       // One safaridriver session per machine: the next probe opens its own.
       // The provider's close() is idempotent, so vitest.close() can repeat it.
-      if (family.browser === 'safari') await project.browser?.provider.close();
+      if (family.browser === 'safari') {
+        await project.browser?.provider.close();
+        releaseSafaridriver();
+      }
     });
   // `testModules` accumulates over every run of this Vitest: only this
   // probe project's module is this run's (measured 2026-10-12).

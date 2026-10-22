@@ -21,6 +21,7 @@ import {
   install,
 } from '@puppeteer/browsers';
 import { download } from 'geckodriver';
+import { stop as stopSafaridriver } from 'safaridriver';
 import {
   type CacheItem,
   installItem,
@@ -76,9 +77,25 @@ export const SAFARI_AUTOMATION_HINT =
  */
 export function withSafariHint(error: unknown): unknown {
   const message = error instanceof Error ? error.message : String(error);
-  if (message.includes('already paired')) return error;
+  // A second session refused by Safari, or by the safaridriver package in
+  // this very process (releaseSafaridriver): remote automation is on.
+  if (
+    message.includes('already paired') ||
+    message.includes('already a Safaridriver instance')
+  ) {
+    return error;
+  }
   return new Error(`${message}\n${SAFARI_AUTOMATION_HINT}`, { cause: error });
 }
+
+/**
+ * Lets the next Safari session of this process start its own safaridriver.
+ * WebdriverIO kills safaridriver when a session ends, but the `safaridriver`
+ * package keeps it as its running instance and refuses a second start ("There
+ * is already a Safaridriver instance running"). The dev dependency is pinned
+ * to the version WebdriverIO uses, so this is the module it started.
+ */
+export const releaseSafaridriver = (): void => stopSafaridriver();
 
 const SAFARI_APP = '/Applications/Safari.app';
 

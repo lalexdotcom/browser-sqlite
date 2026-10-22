@@ -1,6 +1,15 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { start as startSafaridriver } from 'safaridriver';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CacheItem } from '../../../scripts/browser-cache.ts';
 import {
@@ -14,6 +23,7 @@ import {
   GECKODRIVER_VERSION,
   PINNED,
   parseBrowserList,
+  releaseSafaridriver,
   resolveBrowsers,
   SAFARI_AUTOMATION_HINT,
   withSafariHint,
@@ -191,6 +201,44 @@ describe('assertBrowserAvailable', () => {
   });
 });
 
+describe('releaseSafaridriver', () => {
+  // A path that cannot start: execFile still returns a process, and the
+  // package records it as its running instance, as it does on macOS.
+  const nowhere = { path: join(tmpdir(), 'no-such-safaridriver') };
+  const startQuietly = () => startSafaridriver(nowhere).on('error', () => {});
+
+  // Falsifiable: drop the release and the planner's second Safari probe throws
+  // "There is already a Safaridriver instance running" (macOS 26/27, 2026-10-22).
+  it('lets a second safaridriver start in the same process', () => {
+    startQuietly();
+    expect(startQuietly).toThrow('already a Safaridriver instance');
+    releaseSafaridriver();
+    expect(startQuietly).not.toThrow();
+    releaseSafaridriver();
+  });
+
+  // Falsifiable: let the two copies diverge (a WebdriverIO upgrade) and the
+  // release resets a module WebdriverIO does not use.
+  it('is the safaridriver module WebdriverIO starts', () => {
+    const resolveFrom = (from: string, name: string) =>
+      createRequire(from).resolve(name);
+    const ours = realpathSync(
+      resolveFrom(import.meta.filename, 'safaridriver'),
+    );
+    const webdriverio = resolveFrom(import.meta.filename, 'webdriverio');
+    // @wdio/utils exports no `require` entry: find its folder the way Node
+    // would, from webdriverio's own lookup paths.
+    const utils = (
+      createRequire(webdriverio).resolve.paths('@wdio/utils') ?? []
+    )
+      .map((dir) => join(dir, '@wdio', 'utils', 'package.json'))
+      .find(existsSync);
+    expect(utils).toBeDefined();
+    const theirs = realpathSync(resolveFrom(utils as string, 'safaridriver'));
+    expect(ours).toBe(theirs);
+  });
+});
+
 describe('withSafariHint', () => {
   // Falsifiable: replace the error instead of extending it and the real
   // cause of a refused session is lost.
@@ -209,6 +257,15 @@ describe('withSafariHint', () => {
   it('leaves already paired untouched', () => {
     const paired = new Error('Session not created: already paired');
     expect(withSafariHint(paired)).toBe(paired);
+  });
+
+  // Falsifiable: hint on it and a second session in one process, refused by
+  // the safaridriver package itself, sends the reader to Safari's settings.
+  it('leaves a driver already running in this process untouched', () => {
+    const running = new Error(
+      'There is already a Safaridriver instance running on port 49201!',
+    );
+    expect(withSafariHint(running)).toBe(running);
   });
 
   it('wraps a non-Error', () => {

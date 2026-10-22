@@ -86,6 +86,7 @@
 		"geckodriver": "7.0.0",
 		"lint-staged": "^16.4.0",
 		"publint": "0.3.24",
+		"safaridriver": "2.0.0",
 		"simple-git-hooks": "^2.13.1",
 		"typescript": "^7.0.2",
 		"vite": "8.3.4",
