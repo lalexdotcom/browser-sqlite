@@ -567,7 +567,7 @@ export const createSQLiteClient = (
         // make the option permanent to remove.
         for (const index of result.failedIndices) {
           scheduler.rearmSlot(index);
-          spawn(index);
+          spawn(index, true);
         }
         // If failedIndices is empty the gate opens immediately (no re-arming).
         // If not, it stays closed until retry slots settle.
@@ -1572,7 +1572,8 @@ export const createSQLiteClient = (
     connRelease = undefined;
   };
 
-  const spawn = (index: number) => {
+  /** `afterDeath`: the slot's previous worker died, see `afterDeath` in protocol.ts. */
+  const spawn = (index: number, afterDeath = false) => {
     // The slot holds a worker again from here — not from `ready`. Without this,
     // a restarted slot stays marked dead and the replacement's own death is
     // taken for a duplicate signal about the worker it replaced: no decision
@@ -1632,6 +1633,7 @@ export const createSQLiteClient = (
       createWorkerDebugState: clientDebug?.createWorkerDebugState,
       logger,
       abortSlots,
+      afterDeath,
       // Slot 0 never declines; only surplus workers may. Where a probe is owed,
       // slot 0 probes instead (`probeFirst` below) and opens once told to.
       declineWithout:
@@ -1761,7 +1763,7 @@ export const createSQLiteClient = (
     const decision = supervisor.report(index, 'died');
     if (decision === 'restart') {
       logger.warn(`restarting worker ${index + 1}`);
-      void spawn(index);
+      void spawn(index, true);
     } else if (decision === 'lost') {
       // Slot permanently lost, but the pool still has workers — none of which
       // can stand in for worker 0 before it has answered (`probeSettled`).

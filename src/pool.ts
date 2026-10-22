@@ -293,6 +293,8 @@ export const createPoolWorker = (deps: {
   declineWithout?: readonly PlatformFeature[] | undefined;
   /** Sent to slot 0 where exclusivity depends on a feature (spec 2026-09-15). */
   probeFirst?: readonly PlatformFeature[] | undefined;
+  /** This worker replaces one that died: its open waits out a held file. */
+  afterDeath?: boolean | undefined;
   /** Worker 0's probe answer, with the function that lets it open. */
   onProbed?:
     | ((missing: PlatformFeature | null, proceed: () => void) => void)
@@ -312,7 +314,7 @@ export const createPoolWorker = (deps: {
   } = deps;
   const { createWorkerDebugState, logger } = deps;
   const { abortSlots } = deps;
-  const { declineWithout, probeFirst } = deps;
+  const { declineWithout, probeFirst, afterDeath } = deps;
 
   const deferredInit = Promise.withResolvers<PoolWorker | DeclinedWorker>();
 
@@ -1044,6 +1046,7 @@ export const createPoolWorker = (deps: {
     abortIndex: abortSlots ? index : undefined,
     declineWithout,
     probeFirst,
+    afterDeath,
   });
 
   return deferredInit.promise;

@@ -27,3 +27,14 @@ The test ("follows a tx.read() aborted by its own signal") started a 2000-row `t
 | the shard with the fix, 15 × 2 runners | — | 0 of 30 |
 
 **Cause:** after the shard's other files, Firefox runs a `sleep(0)` tens of milliseconds late (the page busy: `fullRead` 120-155 ms in those runs, ~40 otherwise); when the delay outlasts the read, the read finishes before the abort. Not macOS 27's: reproduced on 26; 27's faster read loses the race more often. Why Firefox's page is busy after those files was not looked for. **Fix** (`fix/tx-quiesce-abort`): abort from the read's first `chunk` message (a listener on the intercepted worker, added after the client's own). Falsified: without the statement's `await worker.quiesce()` (`src/transaction.ts`) the test fails with `WORKER_BUSY` on Chrome and Firefox.
+
+## LIFECYCLE-HELD-PROBE — does a restarted worker meet its predecessor's held file, 2026-10-21, `macos-26` / `xcode-27`, Firefox 155.0.1
+
+The failure under study: `lifecycle`'s restart on Firefox `OPFSAdaptiveVFS/jspi`, seen once (run 39620037006, `mem:follow-ups/lifecycle-restart-held`). **Method:** throwaway `spike/lifecycle-restart`. (1) A loop: the test alone 40× and the 27 files that preceded it in that cell 10×, per runner (run 39635092391), and the test alone 30× locally (Linux container, Firefox). (2) A probe in `openWithRetry`: every VFS retries a held file, every held open is reported through a `probe` message with its VFS, attempts and wait; `silent: false`; three full `pnpm test` (run 39640817968, two on `xcode-27`, one on `macos-26`).
+
+| | result |
+|---|---|
+| loop, `macos-26` / `xcode-27` / local | 50/50, 50/50, 30/30 green |
+| probed full suites | 3/3 green; **no restart met a held file**; the only held opens were `pool-cap` "fails to open at all" on `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` (a live holder: held 1-3 ms in, gave up after 2518-2653 ms, 14-16 attempts) |
+
+So the window is rare and narrow; the fix (`fix/restart-held-file`) was made deterministic by a test that holds the file itself, not by reproducing the engine's window.

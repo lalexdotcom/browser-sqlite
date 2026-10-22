@@ -1,7 +1,12 @@
 import { createSQLiteClient } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { databasePath } from '../../../src/utils';
-import { scaled, TEST_TARGET } from '../helpers';
+import {
+  interceptWorkers,
+  killSilently,
+  scaled,
+  TEST_TARGET,
+} from '../helpers';
 import { removeOpfsPath } from '../helpers/environment';
 
 /**
@@ -84,7 +89,8 @@ const exclusiveHolder = () => {
     };
     step('booted');
     self.onmessage = async (event) => {
-      const { type, file, graceMs, timeoutMs, takeBudgetMs } = event.data;
+      const { type, file, channelName, graceMs, timeoutMs, takeBudgetMs } =
+        event.data;
       if (type !== 'take') return;
       // Retried, because the client the test just closed can still hold this
       // file: its worker is gone, but the engine reclaims OPFS handles a
@@ -119,7 +125,7 @@ const exclusiveHolder = () => {
       }
       // The VFS announces that it wants this file on its own channel; let the
       // announcement land, let its attempt fail, then let go.
-      const channel = new BroadcastChannel('ahp:/' + file);
+      const channel = new BroadcastChannel(channelName);
       let armed = false;
       const arm = () => {
         if (armed) return;
@@ -161,12 +167,24 @@ const exclusiveHolder = () => {
     });
   return {
     steps,
-    take: async (file: string) => {
+    /**
+     * `channel`: where the VFS announces that it wants the file —
+     * `OPFSCoopSyncVFS`'s by default. `graceMs`: the pause between that
+     * announcement and the release.
+     */
+    take: async (
+      file: string,
+      {
+        channel = `ahp:/${file}`,
+        graceMs = GRACE_MS,
+      }: { channel?: string; graceMs?: number } = {},
+    ) => {
       const answer = once();
       worker.postMessage({
         type: 'take',
         file,
-        graceMs: GRACE_MS,
+        channelName: channel,
+        graceMs,
         timeoutMs: ANNOUNCE_TIMEOUT_MS,
         takeBudgetMs: TAKE_BUDGET_MS,
       });
@@ -349,5 +367,74 @@ describe('opening a database whose file is refused for another reason', () => {
       ended - (opening?.t ?? started),
       `open to rejection, ms (boot: ${timeline}, rejected @${Math.round(ended - started)})`,
     ).toBeLessThan(2_000);
+  });
+});
+
+/**
+ * A worker that replaces one the pool terminated meets its predecessor's file
+ * still held. The terminated worker gives its Web Lock back before its file
+ * (wa-sqlite #381), and where `readwrite-unsafe` is missing (Firefox)
+ * `OPFSAdaptiveVFS` takes an exclusive handle in `xOpen` right after that
+ * lock. Seen once, on macOS 27 (run 39620037006): `lifecycle`'s restart failed
+ * the client with `NoModificationAllowedError`, because the VFS is declared out
+ * of the open retry. The window is the engine's, and a probe saw it in none of
+ * three full runs, so the test makes it its own, as above: it kills the
+ * worker behind the pool's back, holds the file as the corpse would — the
+ * handle, no lock — and only then reports the crash. The holder lets go
+ * `RESTART_GRACE_MS` after the VFS announces it wants the file, on
+ * `OPFSAdaptiveVFS`'s channel.
+ *
+ * Falsifiable: drop `afterDeath` from `openWithRetry`'s condition — the
+ * restarted worker's open fails at once with WORKER_CRASHED, and the client
+ * with it.
+ */
+describe('reopening a database after its worker died', () => {
+  /** Far over the first attempt, far under OPEN_RETRY_BUDGET_MS. */
+  const RESTART_GRACE_MS = 200;
+
+  it('waits out the file its predecessor still holds', {
+    tags: ['vfs:OPFSAdaptiveVFS', 'browser:firefox'],
+  }, async () => {
+    // Before the interception: the holder is a worker, not one of the pool's.
+    const holder = exclusiveHolder();
+    const records = interceptWorkers();
+    const dbName = `bsq-test-${crypto.randomUUID()}`;
+    const path = databasePath(TEST_TARGET.vfs, dbName);
+    const db: Client = createSQLiteClient(dbName, {
+      ...TEST_PAIR(),
+      poolSize: 1,
+      debug: 'db',
+    });
+    onTestFinished(async () => {
+      holder.dispose();
+      await db.close().catch(() => {
+        // The client may already have failed; the assertions report it.
+      });
+    });
+    const step = stepsUnder(
+      () =>
+        `holder: ${holder.steps.join(' > ') || 'no step'}; db: ${poolState(db)}`,
+    );
+
+    await step('db.write', db.write('CREATE TABLE t (a)'));
+    expect(records.length).toBe(1);
+    const [first] = records;
+    // The pool learns of this death only from the ErrorEvent below, once the
+    // holder has the file.
+    if (first) killSilently(first.worker);
+    expect(
+      await step(
+        'holder.take',
+        holder.take(path, {
+          channel: `OPFS:/${path}`,
+          graceMs: RESTART_GRACE_MS,
+        }),
+      ),
+    ).toBe('taken');
+    first?.worker.dispatchEvent(new ErrorEvent('error'));
+
+    const rows = await step('db.read', db.read<{ n: number }>('SELECT 1 AS n'));
+    expect(rows[0]?.n).toBe(1);
+    expect(records.length).toBe(2);
   });
 });

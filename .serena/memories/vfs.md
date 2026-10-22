@@ -205,7 +205,12 @@ by protocol, so a held file is transient there. Measured, not inferred (HELD-LIV
 `mem:measurements`): both raise `NoModificationAllowedError` against a live exclusive holder, on
 Firefox AND Chromium, and fail in 39-71 ms because the declaration keeps them out. For `AccessHandlePoolVFS` the `true` is inert in `openWithRetry` (its
 handles are taken at instance creation, never in `xOpen`) but stays accurate. Where the error comes back from the call itself (instance creation)
-the retry tests it directly and needs no declaration.
+the retry tests it directly and needs no declaration. **After a death the declaration is overridden
+(2026-10-21, `fix/restart-held-file`):** a worker spawned to replace one the pool terminated (the
+restart, the startup retry round) carries `afterDeath` and retries a held file on any VFS — the
+corpse frees its Web Lock before its file, and `OPFSAdaptiveVFS`'s `jOpen` takes an exclusive handle
+right after that lock without `readwrite-unsafe` (`mem:follow-ups/lifecycle-restart-held`). A live
+holder then costs the 2.5 s before the same failure, on a slot being replaced anyway.
 
 **`SQLITE_CANTOPEN` does not mean "not there", and `deleteDatabase` used to read it that way.**
 `OPFSCoopSyncVFS` returns it for a file that exists and is **empty** — its `jOpen` only reaches a

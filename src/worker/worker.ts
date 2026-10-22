@@ -162,14 +162,27 @@ const OPEN_RETRY_BUDGET_MS = 2_500;
  * #357; any other refusal is reported at once, with that error as its cause.
  * The declaration narrows it further: only a VFS holding an EXCLUSIVE handle
  * can be blocked by a context that answers nothing, and only those retry.
+ *
+ * **Except after a death.** A worker that replaces one the pool terminated
+ * retries on every VFS. Where `readwrite-unsafe` is missing,
+ * `OPFSAdaptiveVFS` takes an exclusive handle in `xOpen` too, right after its
+ * Web Lock — which a terminated worker gives back before its file (wa-sqlite
+ * #381) — so the replacement can meet its predecessor's file still held: seen
+ * once on Firefox, macOS 27 (`lifecycle`'s restart failed the client with
+ * `NoModificationAllowedError`, run 39620037006). That holder is a corpse and
+ * lets go within milliseconds. A live holder never does (HELD-LIVE), but then
+ * the open only fails `OPEN_RETRY_BUDGET_MS` later than it would have, on a
+ * slot that is being restarted anyway. A first open keeps the declaration:
+ * nothing of ours has died there, so a held file is most likely live.
  */
 const openWithRetry = async (
   sqlite: { open_v2: (file: string) => Promise<number> },
   file: string,
   vfs: SQLiteVFS,
   lastError: () => unknown,
+  afterDeath: boolean,
 ): Promise<number> => {
-  if (!VFS_CAPABILITIES[vfs].exclusiveFileHandle) {
+  if (!VFS_CAPABILITIES[vfs].exclusiveFileHandle && !afterDeath) {
     return sqlite.open_v2(file);
   }
   const deadline = Date.now() + OPEN_RETRY_BUDGET_MS;
@@ -361,6 +374,7 @@ type OpenOptions = {
   abortIndex?: number | undefined;
   declineWithout?: readonly PlatformFeature[] | undefined;
   probeFirst?: readonly PlatformFeature[] | undefined;
+  afterDeath?: boolean | undefined;
 };
 
 /**
@@ -550,6 +564,7 @@ const open = (file: string, options: OpenOptions) => {
               file,
               vfs,
               () => vfsInstanceSeen?.lastError,
+              options.afterDeath === true,
             );
             const step = createStep(module, build, db);
             boot('applying pragmas');
@@ -1367,6 +1382,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         abortIndex,
         declineWithout,
         probeFirst,
+        afterDeath,
       } = data;
       open(file, {
         vfs,
@@ -1379,6 +1395,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         abortIndex,
         declineWithout,
         probeFirst,
+        afterDeath,
       });
       break;
     }
