@@ -134,6 +134,10 @@ may be left live in this one. Three steps, in order:
 - **Pushing is not part of committing (user, 2026-08-24).** `main` may sit ahead of
   `origin/main` for as long as the user wants; do not recommend pushing as housekeeping.
   Push only when asked, or when the point is to trigger CI and the user has said so.
+  **Asked means an instruction that names the push (user, 2026-10-22):** a "do it" answering a
+  proposal that only mentioned a push is not one — `state.md` was pushed that way and should not
+  have been. A process that needs a push (a branch for a GitHub run, a deleted remote branch)
+  asks first, every time.
 - **Unplanned working-tree changes are committed, not discarded — but only after the user
   confirms.** Never resolve a dirty tree by reverting or stashing on your own initiative.
 - **The hooks are documented in `mem:git-hooks`**: what each one runs, why they are braces on
