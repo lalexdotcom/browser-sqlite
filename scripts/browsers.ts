@@ -6,8 +6,9 @@
  *
  *   node scripts/browsers.ts deps            apt packages both need, on one line (Linux)
  *   node scripts/browsers.ts install [list]  download the browsers in list (chrome,firefox
- *                                            by default), open and close a session with each,
- *                                            and turn off Firefox's self-update
+ *                                            by default; safari only when named, macOS only,
+ *                                            nothing to download), open and close a session
+ *                                            with each, and turn off Firefox's self-update
  */
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -35,27 +36,82 @@ import {
 } from './install-lock.ts';
 import { timeScale } from './processes.ts';
 
-export type BrowserName = 'chrome' | 'firefox';
+export type BrowserName = 'chrome' | 'firefox' | 'safari';
 
-export const PINNED: Readonly<Record<BrowserName, string>> = {
+/** The browsers this script downloads and pins; Safari comes with macOS. */
+export type DownloadedBrowser = Exclude<BrowserName, 'safari'>;
+
+export const PINNED: Readonly<Record<DownloadedBrowser, string>> = {
   chrome: '153.0.8010.52',
   firefox: 'stable_155.0.1',
 };
 
-const NAMES = Object.keys(PINNED) as BrowserName[];
+/** Every browser a harness can drive. */
+export const ALL_BROWSERS: readonly BrowserName[] = [
+  'chrome',
+  'firefox',
+  'safari',
+];
 
-/** `chrome,firefox` → the browsers to install, in that order; both when omitted. */
+/** What runs unless a browser is named: Safari is opt-in everywhere, macOS included. */
+export const DEFAULT_BROWSERS: readonly BrowserName[] = ['chrome', 'firefox'];
+
+export const isBrowserName = (name: string): name is BrowserName =>
+  (ALL_BROWSERS as readonly string[]).includes(name);
+
+/** Throws when `name` cannot run on `platform`: Safari exists on macOS only. */
+export function assertBrowserAvailable(
+  name: BrowserName,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (name === 'safari' && platform !== 'darwin') {
+    throw new Error(`browsers: Safari runs on macOS only, not on ${platform}`);
+  }
+}
+
+export const SAFARI_AUTOMATION_HINT =
+  'Safari refused the WebDriver session. Turn on remote automation, once per machine: in Safari, Settings > Advanced > "Show features for web developers", then Settings > Developer > "Allow remote automation"; or run `sudo safaridriver --enable`.';
+
+/**
+ * A refused Safari session, with the way to turn remote automation on. The
+ * text safaridriver gives when it is off is not recorded, so every refusal
+ * gets the hint but `already paired`: a second session while one is open.
+ */
+export function withSafariHint(error: unknown): unknown {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes('already paired')) return error;
+  return new Error(`${message}\n${SAFARI_AUTOMATION_HINT}`, { cause: error });
+}
+
+const SAFARI_APP = '/Applications/Safari.app';
+
+/** The Safari the OS ships, the only one there is: it can be neither pinned nor installed. */
+export const safariVersion = (): string =>
+  execFileSync(
+    'plutil',
+    [
+      '-extract',
+      'CFBundleShortVersionString',
+      'raw',
+      '-o',
+      '-',
+      join(SAFARI_APP, 'Contents', 'Info.plist'),
+    ],
+    { encoding: 'utf8' },
+  ).trim();
+
+/** `chrome,firefox` → the browsers to install, in that order; Chrome and Firefox when omitted. */
 export function parseBrowserList(arg: string | undefined): BrowserName[] {
-  if (arg === undefined) return [...NAMES];
+  if (arg === undefined) return [...DEFAULT_BROWSERS];
   const names: BrowserName[] = [];
   for (const entry of arg.split(',').map((s) => s.trim())) {
     if (entry === '') continue;
-    if (!NAMES.includes(entry as BrowserName)) {
+    if (!isBrowserName(entry)) {
       throw new Error(
-        `browsers: unknown browser "${entry}" — expected ${NAMES.join(', ')}`,
+        `browsers: unknown browser "${entry}" — expected ${ALL_BROWSERS.join(', ')}`,
       );
     }
-    if (!names.includes(entry as BrowserName)) names.push(entry as BrowserName);
+    if (!names.includes(entry)) names.push(entry);
   }
   if (names.length === 0) {
     throw new Error(`browsers: "${arg}" names no browser`);
@@ -73,7 +129,7 @@ export const WDIO_CACHE_DIR = fileURLToPath(
 
 export { FIREFOX_POLICIES, firefoxPoliciesPath } from './browser-cache.ts';
 
-const ENV_VAR: Record<BrowserName, string> = {
+const ENV_VAR: Record<DownloadedBrowser, string> = {
   chrome: 'BSQ_CHROME_VERSION',
   firefox: 'BSQ_FIREFOX_VERSION',
 };
@@ -81,7 +137,7 @@ const ENV_VAR: Record<BrowserName, string> = {
 const FIREFOX_CHANNELS = /^(stable|beta|devedition|esr|nightly)_/;
 
 export const browserVersion = (
-  name: BrowserName,
+  name: DownloadedBrowser,
   env: NodeJS.ProcessEnv = process.env,
 ): string => {
   const version = env[ENV_VAR[name]] || PINNED[name];
@@ -100,6 +156,9 @@ export const browserCapabilities = (
   extra: BrowserOptions = {},
   env: NodeJS.ProcessEnv = process.env,
 ): WebdriverIO.Capabilities => {
+  // WebdriverIO starts /usr/bin/safaridriver itself; Safari takes no binary,
+  // no version and no headless mode.
+  if (name === 'safari') return { browserName: 'safari' };
   // Both binaries are named, so WebdriverIO has nothing left to download.
   const args =
     name === 'chrome' && env.BSQ_EXPOSE_GC === '1'
@@ -184,7 +243,7 @@ function puppeteerItem(
 
 /** The driver and the browser of `name` at the versions in force. */
 export function cacheItems(
-  name: BrowserName,
+  name: DownloadedBrowser,
   env: NodeJS.ProcessEnv = process.env,
 ): { browser: CacheItem; driver: CacheItem } {
   const buildId = browserVersion(name, env);
@@ -220,6 +279,8 @@ export interface ResolveOptions {
   items?: typeof cacheItems;
   /** Progress lines, without newline; stderr by default so `deps` keeps stdout for its packages. */
   log?: (line: string) => void;
+  /** Test seam. */
+  platform?: NodeJS.Platform;
 }
 
 /**
@@ -236,9 +297,14 @@ export async function resolveBrowsers(
     log = (line) => {
       process.stderr.write(`${line}\n`);
     },
+    platform = process.platform,
   } = options;
+  for (const name of names) assertBrowserAvailable(name, platform);
   const cacheDir = resolve(options.cacheDir ?? WDIO_CACHE_DIR);
-  const wanted = names.map((name) => [name, items(name, env)] as const);
+  const downloaded = names.filter(
+    (name): name is DownloadedBrowser => name !== 'safari',
+  );
+  const wanted = downloaded.map((name) => [name, items(name, env)] as const);
   const all = wanted.flatMap(([, item]) => [item.browser, item.driver]);
   const installBound = INSTALL_BOUND_MS * timeScale();
   await runOnce({
@@ -257,11 +323,18 @@ export async function resolveBrowsers(
     log: (line) => log(`browsers: ${line}`),
   });
   const binary = (item: CacheItem) => join(cacheDir, item.dir, item.executable);
+  const itemOf = new Map(wanted);
   return Object.fromEntries(
-    wanted.map(([name, item]) => [
-      name,
-      { browser: binary(item.browser), driver: binary(item.driver) },
-    ]),
+    names.map((name) => {
+      if (name === 'safari') {
+        return [name, { browser: SAFARI_APP, driver: '/usr/bin/safaridriver' }];
+      }
+      const item = itemOf.get(name) as ReturnType<typeof cacheItems>;
+      return [
+        name,
+        { browser: binary(item.browser), driver: binary(item.driver) },
+      ];
+    }),
   ) as Record<BrowserName, BrowserBinaries>;
 }
 
@@ -315,6 +388,8 @@ async function installAll(names: readonly BrowserName[]) {
       capabilities: browserCapabilities(name, all[name], {
         args: [name === 'chrome' ? '--headless=new' : '-headless'],
       }),
+    }).catch((error: unknown) => {
+      throw name === 'safari' ? withSafariHint(error) : error;
     });
     const version = (browser.capabilities as { browserVersion?: string })
       .browserVersion;
@@ -332,10 +407,17 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     }
     console.log((await deps()).join(' '));
   } else if (command === 'install') {
-    await installAll(parseBrowserList(process.argv[3]));
+    const names = parseBrowserList(process.argv[3]);
+    try {
+      for (const name of names) assertBrowserAvailable(name);
+    } catch (error) {
+      console.error((error as Error).message);
+      process.exit(2);
+    }
+    await installAll(names);
   } else {
     console.error(
-      'usage: node scripts/browsers.ts deps | install [chrome,firefox]',
+      'usage: node scripts/browsers.ts deps | install [chrome,firefox,safari]',
     );
     process.exit(2);
   }

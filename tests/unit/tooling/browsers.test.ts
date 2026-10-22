@@ -4,16 +4,19 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CacheItem } from '../../../scripts/browser-cache.ts';
 import {
-  type BrowserName,
+  assertBrowserAvailable,
   browserCapabilities,
   browserVersion,
   cacheItems,
+  type DownloadedBrowser,
   FIREFOX_POLICIES,
   firefoxPoliciesPath,
   GECKODRIVER_VERSION,
   PINNED,
   parseBrowserList,
   resolveBrowsers,
+  SAFARI_AUTOMATION_HINT,
+  withSafariHint,
 } from '../../../scripts/browsers.ts';
 
 describe('firefoxPoliciesPath', () => {
@@ -96,6 +99,14 @@ describe('browserCapabilities', () => {
     expect(c['wdio:geckodriverOptions']).toBeUndefined();
   });
 
+  // Falsifiable: let Safari fall through to Firefox's model and WebdriverIO
+  // gets a binary, a version and a headless flag Safari has no use for.
+  it('gives Safari its name and nothing else', () => {
+    expect(
+      browserCapabilities('safari', bins, { args: ['-headless'] }, {}),
+    ).toEqual({ browserName: 'safari' });
+  });
+
   it('keeps the binary when the caller brings its own options', () => {
     // Falsifiable: spread the caller's options over the key and the binary is lost (bench/check, consumer-smoke).
     const c = browserCapabilities(
@@ -129,13 +140,19 @@ describe('browserCapabilities', () => {
 });
 
 describe('parseBrowserList', () => {
-  it('is both browsers when no list is given', () => {
+  // Falsifiable: default to every known browser and `install` with no list
+  // tries Safari on Linux (spec goal 1: Safari is opt-in everywhere).
+  it('is Chrome and Firefox when no list is given, never Safari', () => {
     expect(parseBrowserList(undefined)).toEqual(['chrome', 'firefox']);
   });
 
   it('takes one name or a comma-separated list, in the given order', () => {
     expect(parseBrowserList('chrome')).toEqual(['chrome']);
     expect(parseBrowserList('firefox,chrome')).toEqual(['firefox', 'chrome']);
+  });
+
+  it('takes safari when named', () => {
+    expect(parseBrowserList('safari,chrome')).toEqual(['safari', 'chrome']);
   });
 
   it('ignores empty entries and repeats', () => {
@@ -145,13 +162,59 @@ describe('parseBrowserList', () => {
   // Falsifiable: filter unknown names out instead of throwing — a typo then
   // installs nothing for it, and the job fails much later at launch.
   it('refuses an unknown name, naming the valid ones', () => {
-    expect(() => parseBrowserList('chrome,safari')).toThrow(
-      'browsers: unknown browser "safari" — expected chrome, firefox',
+    expect(() => parseBrowserList('chrome,edge')).toThrow(
+      'browsers: unknown browser "edge" — expected chrome, firefox, safari',
     );
   });
 
   it('refuses a list that names nothing', () => {
     expect(() => parseBrowserList(',')).toThrow(/names no browser/);
+  });
+});
+
+describe('assertBrowserAvailable', () => {
+  // Falsifiable: skip Safari silently off macOS and a run asked for Safari
+  // passes having tested nothing on it (spec goal 3).
+  it('refuses Safari off macOS, naming the platform', () => {
+    expect(() => assertBrowserAvailable('safari', 'linux')).toThrow(
+      'browsers: Safari runs on macOS only, not on linux',
+    );
+    expect(() => assertBrowserAvailable('safari', 'win32')).toThrow(
+      'browsers: Safari runs on macOS only, not on win32',
+    );
+  });
+
+  it('lets Safari through on macOS and every browser elsewhere', () => {
+    expect(() => assertBrowserAvailable('safari', 'darwin')).not.toThrow();
+    expect(() => assertBrowserAvailable('chrome', 'linux')).not.toThrow();
+    expect(() => assertBrowserAvailable('firefox', 'win32')).not.toThrow();
+  });
+});
+
+describe('withSafariHint', () => {
+  // Falsifiable: replace the error instead of extending it and the real
+  // cause of a refused session is lost.
+  it('appends the remote-automation hint and keeps the original message', () => {
+    const original = new Error('Could not create a session: boom');
+    const hinted = withSafariHint(original);
+    expect(hinted).toBeInstanceOf(Error);
+    const { message, cause } = hinted as Error;
+    expect(message.startsWith('Could not create a session: boom')).toBe(true);
+    expect(message).toContain(SAFARI_AUTOMATION_HINT);
+    expect(cause).toBe(original);
+  });
+
+  // Falsifiable: hint on every error and a second session, refused because
+  // one is already open, sends the reader to a setting that is already on.
+  it('leaves already paired untouched', () => {
+    const paired = new Error('Session not created: already paired');
+    expect(withSafariHint(paired)).toBe(paired);
+  });
+
+  it('wraps a non-Error', () => {
+    const hinted = withSafariHint('x');
+    expect(hinted).toBeInstanceOf(Error);
+    expect((hinted as Error).message).toContain(SAFARI_AUTOMATION_HINT);
   });
 });
 
@@ -169,7 +232,7 @@ describe('resolveBrowsers', () => {
       writeFileSync(join(target, 'bin', 'tool'), 'x');
     },
   });
-  const fakeItems = (name: BrowserName) => ({
+  const fakeItems = (name: DownloadedBrowser) => ({
     browser: fakeItem(`${name}/browser-1`),
     driver: fakeItem(`${name}/driver-1`),
   });
@@ -182,6 +245,41 @@ describe('resolveBrowsers', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     rmSync(cacheDir, { recursive: true, force: true });
+  });
+
+  // Falsifiable: give Safari a cache item and the install tries to download it.
+  it('installs nothing for Safari, on macOS', async () => {
+    const r = await resolveBrowsers(['safari'], {
+      cacheDir,
+      items: () => {
+        throw new Error('must not install');
+      },
+      log: () => {},
+      platform: 'darwin',
+    });
+    expect(r).toEqual({
+      safari: {
+        browser: '/Applications/Safari.app',
+        driver: '/usr/bin/safaridriver',
+      },
+    });
+  });
+
+  it('refuses Safari off macOS before installing anything', async () => {
+    let asked = false;
+    await expect(
+      resolveBrowsers(['chrome', 'safari'], {
+        cacheDir,
+        items: (name) => {
+          asked = true;
+          return fakeItems(name);
+        },
+        log: () => {},
+        platform: 'linux',
+      }),
+    ).rejects.toThrow('browsers: Safari runs on macOS only, not on linux');
+    expect(asked).toBe(false);
+    expect(fetchCount).toBe(0);
   });
 
   it('resolves the requested browsers to absolute paths in the cache', async () => {
