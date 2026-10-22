@@ -19,7 +19,7 @@ on:
         default: 90
         type: number
       browsers:
-        description: The browsers to install and test, comma-separated.
+        description: The browsers to install and test, comma-separated; safari only when named, on macOS.
         default: chrome,firefox
         type: string
 
@@ -65,6 +65,8 @@ jobs:
       # is how HANDLE-1 was found. `pnpm test:conformance` selects every
       # browser's project, so the list is given here, under its same bound.
       - name: Conformance
+        # TEMPORARY (feat/safari-suite): back to success() before the merge.
+        if: ${{ !cancelled() }}
         run: |
           IFS=, read -ra list <<< "$BROWSERS"
           args=()
