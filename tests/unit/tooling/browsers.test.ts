@@ -202,10 +202,12 @@ describe('assertBrowserAvailable', () => {
 });
 
 describe('releaseSafaridriver', () => {
-  // A path that cannot start: execFile still returns a process, and the
-  // package records it as its running instance, as it does on macOS.
-  const nowhere = { path: join(tmpdir(), 'no-such-safaridriver') };
-  const startQuietly = () => startSafaridriver(nowhere).on('error', () => {});
+  // Node itself, which exits at once on safaridriver's `--port`: a real
+  // process with a pid. A path that cannot start has none on macOS, where
+  // posix_spawn fails before any fork, and the package's kill() then
+  // signalled this job's whole process group (exit 143, 2026-10-22).
+  const node = { path: process.execPath };
+  const startQuietly = () => startSafaridriver(node).on('error', () => {});
 
   // Falsifiable: drop the release and the planner's second Safari probe throws
   // "There is already a Safaridriver instance running" (macOS 26/27, 2026-10-22).
