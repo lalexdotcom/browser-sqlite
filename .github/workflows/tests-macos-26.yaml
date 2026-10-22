@@ -12,5 +12,4 @@ jobs:
     uses: ./.github/workflows/tests.yaml
     with:
       runs-on: macos-26
-      # TEMPORARY (feat/safari-suite): chrome,firefox,safari before the merge.
-      browsers: safari
+      browsers: chrome,firefox,safari

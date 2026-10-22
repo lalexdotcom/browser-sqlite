@@ -62,11 +62,9 @@ jobs:
       # invariants start workers and open real storage, which is too slow for
       # the suite a developer runs on every change. One run covers every
       # browser — a VFS can be sound on one engine and broken on another, which
-      # is how HANDLE-1 was found. `pnpm test:conformance` selects every
-      # browser's project, so the list is given here, under its same bound.
+      # is how HANDLE-1 was found. `pnpm test:conformance` selects Chrome's and
+      # Firefox's projects, so the list is given here, under its same bound.
       - name: Conformance
-        # TEMPORARY (feat/safari-suite): back to success() before the merge.
-        if: ${{ !cancelled() }}
         run: |
           IFS=, read -ra list <<< "$BROWSERS"
           args=()
