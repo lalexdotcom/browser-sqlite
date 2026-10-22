@@ -200,8 +200,8 @@ export function allocateShards(
  * Runs `worker` over `items`, at most `concurrency` at once. Never rejects for
  * a job: a throwing worker is a `rejected` entry and the others carry on. The
  * results come in the order of `items`. Items with the same `serialKey` never
- * run at once (Safari: one safaridriver session per machine); a lane skips a
- * blocked item for the next free one.
+ * run at once (Safari: one safaridriver session per machine); a lane takes a
+ * free serial item before any other, and skips a blocked one for the next free.
  */
 export async function runPool<T, R>(
   items: readonly T[],
@@ -223,10 +223,17 @@ export async function runPool<T, R>(
   });
   const lane = async () => {
     while (pending.length > 0) {
-      const at = pending.findIndex((index) => {
-        const key = serialKey(items[index] as T);
-        return key === undefined || !busy.has(key);
-      });
+      // A free serial item first: its chain can only run one at a time, so
+      // starting it late leaves it running alone at the end.
+      const free = (keyed: boolean) =>
+        pending.findIndex((index) => {
+          const key = serialKey(items[index] as T);
+          return keyed
+            ? key !== undefined && !busy.has(key)
+            : key === undefined;
+        });
+      const keyedAt = free(true);
+      const at = keyedAt === -1 ? free(false) : keyedAt;
       if (at === -1) {
         await release;
         continue;

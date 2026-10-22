@@ -309,6 +309,24 @@ describe('runPool', () => {
     );
   });
 
+  // Falsifiable: take the items in order and Safari's chain starts after every
+  // other job, then runs alone while the other lanes idle (macOS 26: 1629 s of
+  // jobs against ≈ 1330 s with Safari first, 2026-10-22).
+  it('starts the serial chain first, whatever its place in the list', async () => {
+    const started: string[] = [];
+    await runPool(
+      ['x1', 'x2', 's1', 's2'],
+      2,
+      async (item) => {
+        started.push(item);
+        await tick(item.startsWith('s') ? 5 : 30);
+      },
+      (item) => (item.startsWith('s') ? 's' : undefined),
+    );
+    expect(started[0]).toBe('s1');
+    expect(started.indexOf('s2')).toBeLessThan(started.indexOf('x2'));
+  });
+
   it('skips a blocked item for a free one rather than idling', async () => {
     const started: string[] = [];
     await runPool(
