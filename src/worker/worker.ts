@@ -45,6 +45,7 @@ import type {
 import { DATABASE_FILE_SUFFIXES, renderPragmas } from '../utils';
 import { anonymousParams, bindBlock, RowWriter } from './binary';
 import { cloneable } from './cloneable';
+import { isHeldElsewhere } from './held';
 import { firstMissing } from './probes';
 import { sqliteCodeOf } from './sqlite-code';
 import { createStatementCache } from './statement-cache';
@@ -80,14 +81,6 @@ const controlRefusedMessage = (
  * side of the trade. See the design's §4.3.
  */
 const PROGRESS_OPS = 100_000;
-
-/**
- * The DOMException name a second `createSyncAccessHandle` on a held file
- * throws. Specified by the File System API, and the same on both engines —
- * unlike the message, which is engine prose ("Access Handles cannot be
- * created…" on Chromium). Never match on that.
- */
-const HELD_ELSEWHERE = 'NoModificationAllowedError';
 
 /** How long to keep waiting for a dying worker to let go, and how often. */
 const ACQUIRE_RETRY_BUDGET_MS = 10_000;
@@ -128,10 +121,7 @@ const createVfsInstance = async (
     try {
       return await vfsClass.create(vfs, module, { lockPolicy: 'shared' });
     } catch (error) {
-      if (
-        (error as { name?: string })?.name !== HELD_ELSEWHERE ||
-        Date.now() >= deadline
-      ) {
+      if (!isHeldElsewhere(error) || Date.now() >= deadline) {
         throw error;
       }
       await new Promise((resolve) =>
@@ -157,7 +147,7 @@ const OPEN_RETRY_BUDGET_MS = 2_500;
  * handle inside `xOpen` — where `createVfsInstance`'s retry cannot reach,
  * because the handle is taken per file, long after the VFS instance exists.
  *
- * Retried only when the VFS's `lastError` names a held file (`HELD_ELSEWHERE`),
+ * Retried only when the VFS's `lastError` names a held file (`isHeldElsewhere`),
  * which `OPFSCoopSyncVFS` records on a failed acquisition since wa-sqlite
  * #357; any other refusal is reported at once, with that error as its cause.
  * The declaration narrows it further: only a VFS holding an EXCLUSIVE handle
@@ -190,11 +180,7 @@ const openWithRetry = async (
     try {
       return await sqlite.open_v2(file);
     } catch (error) {
-      if (
-        (lastError() as { name?: string } | undefined)?.name !==
-          HELD_ELSEWHERE ||
-        Date.now() >= deadline
-      ) {
+      if (!isHeldElsewhere(lastError()) || Date.now() >= deadline) {
         throw error;
       }
       await new Promise((resolve) =>
