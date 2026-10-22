@@ -126,7 +126,7 @@ pnpm check          # biome, with --write
 
 The browsers are the versions `scripts/browsers.ts` pins, downloaded on first use. On a fresh machine, run `node scripts/browsers.ts install` once before the first `pnpm test`: its parallel jobs would otherwise download the same browsers at once.
 
-CI runs the suites on Linux for every pull request and push of `main`. The Windows and macOS runs are started by hand, from the Actions tab or with `gh workflow run tests-windows.yaml --ref <branch>` (`tests-macos-26.yaml` and `tests-macos-27.yaml` likewise); a workflow can be started this way once it exists on `main`.
+CI runs the suites on Linux for every pull request and push of `main`. The Windows and macOS runs are started by hand, from the Actions tab or with `gh workflow run tests-windows.yaml --ref <branch>` (`tests-macos-26.yaml` and `tests-macos-27.yaml` likewise, and `tests-ubuntu.yaml` for Linux outside CI); a workflow can be started this way once it exists on `main`.
 
 These suites run on demand rather than on every change:
 

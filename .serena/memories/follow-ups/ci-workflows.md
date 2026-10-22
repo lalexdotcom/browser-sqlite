@@ -1,6 +1,6 @@
 # Follow-up — the CI workflows: Linux through `tests.yaml`, `tests-ubuntu.yaml`, a `browsers` input (user, 2026-10-21)
 
-Part of `mem:follow-ups`. **Next piece of work after `fix/tx-quiesce-abort`** (user: "on enchaînera là-dessus une fois qu'on a fini ce qui est en cours"), on its own branch. Decided by the user:
+Part of `mem:follow-ups`. **Done on `ci/linux-via-tests` (2026-10-22)**, as below; what it is now is in `mem:stack-and-build/ci`. Next: `mem:follow-ups/safari-suite`. Decided by the user:
 
 - **`ci.yaml` calls `tests.yaml`** (`runs-on: ubuntu-latest`) instead of repeating build/test/conformance in `verify`, beside a `checks` job (actionlint + shellcheck, `biome ci`, the VFS table, `tsc`) that needs no browsers. One definition of the test steps for every OS, the `test-logs-Linux` artifact on failure, the checks in parallel. Nothing depends on the job name `verify`: the `main` ruleset requires no status check, and `release-and-publish.yaml` finds CI's run by workflow file.
 - **A `tests-ubuntu.yaml` too**, `workflow_dispatch` only like `tests-windows`/`tests-macos-26`/`tests-macos-27`, calling `tests.yaml` directly — to run Linux by hand, and for symmetry. Not called by `ci.yaml` (one nesting level, no shared concurrency group); the cost is `ubuntu-latest` written twice.
