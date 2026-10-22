@@ -27,6 +27,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 
 - MACOS-26-27 — the first runs of `tests-macos-26.yaml` / `tests-macos-27.yaml`: 26 green, 27 red twice then green with the fix
 - TXQ-ABORT-TIMER — `tx-quiesce`'s abort test raced a `sleep(0)` that Firefox ran 26-105 ms late after its shard's other files; reproduced on macOS 26, fixed by aborting on the first chunk
+- LIFECYCLE-HELD-PROBE — whether a restarted worker meets its predecessor's held file: 0 in 130 looped runs and 3 probed full suites; only `pool-cap`'s live holder held an open
 
 ## `mem:measurements/wa-sqlite-prs` — the campaigns behind wa-sqlite PRs
 
