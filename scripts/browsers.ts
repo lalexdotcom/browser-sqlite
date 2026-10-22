@@ -97,6 +97,21 @@ export function withSafariHint(error: unknown): unknown {
  */
 export const releaseSafaridriver = (): void => stopSafaridriver();
 
+/**
+ * Ends a Safari session and releases safaridriver whatever `close` does: a
+ * session that died with Safari rejects its close, and the next session of
+ * this process must still be able to start. The close's error is dropped —
+ * the caller's own result says what went wrong.
+ */
+export async function endSafariSession(close: () => unknown): Promise<void> {
+  try {
+    await close();
+  } catch {
+  } finally {
+    releaseSafaridriver();
+  }
+}
+
 const SAFARI_APP = '/Applications/Safari.app';
 
 /** The Safari the OS ships, the only one there is: it can be neither pinned nor installed. */

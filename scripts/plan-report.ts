@@ -2,10 +2,10 @@ import type { BrowserName } from './browser-names.ts';
 
 /**
  * Whether a dead test (eligible on no pair of any selected browser) fails the
- * run (spec 2026-10-12 § 4). Only a run that saw every pair of both browsers
- * in both modes can call a test dead; locally a browser may simply be absent,
- * so a complement run fails on it only in CI, where both browsers are
- * installed and `verify` runs it.
+ * run (spec 2026-10-12 § 4). Only a run that saw every pair of Chrome and
+ * Firefox (the default browsers; Safari, opt-in, may come in addition) in both
+ * modes can call a test dead; locally a browser may simply be absent, so a
+ * complement run fails on it only in CI, where both are installed.
  */
 export const deadIsFatal = (
   run: {

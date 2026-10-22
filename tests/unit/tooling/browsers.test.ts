@@ -18,6 +18,7 @@ import {
   browserVersion,
   cacheItems,
   type DownloadedBrowser,
+  endSafariSession,
   FIREFOX_POLICIES,
   firefoxPoliciesPath,
   GECKODRIVER_VERSION,
@@ -215,6 +216,19 @@ describe('releaseSafaridriver', () => {
     startQuietly();
     expect(startQuietly).toThrow('already a Safaridriver instance');
     releaseSafaridriver();
+    expect(startQuietly).not.toThrow();
+    releaseSafaridriver();
+  });
+
+  // Falsifiable: release only after a clean close and a Safari that crashed
+  // during a probe leaves the next probe refused, its own error masked.
+  it('releases safaridriver even when the session will not close', async () => {
+    startQuietly();
+    await expect(
+      endSafariSession(async () => {
+        throw new Error('invalid session id');
+      }),
+    ).resolves.toBeUndefined();
     expect(startQuietly).not.toThrow();
     releaseSafaridriver();
   });
