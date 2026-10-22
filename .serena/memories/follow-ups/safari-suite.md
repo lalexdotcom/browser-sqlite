@@ -1,35 +1,18 @@
-# Safari in the library's test suite, on macOS — brainstorming started, spec not written (user, 2026-10-20)
+# Safari in the library's suite — what its first runs left to fix (2026-10-22)
 
-Part of `mem:follow-ups`. **Comes after `mem:follow-ups/safari-idb-stranded`** (user, 2026-10-20). Resume the brainstorming from here (superpowers:brainstorming, then a spec on a feature branch).
+Part of `mem:follow-ups`. **The wiring is done on `feat/safari-suite`** (spec `docs/superpowers/specs/2026-10-22-safari-suite-design.md`): Safari is a third, opt-in browser (`--browser safari`, `test:safari*`, `test:conformance:safari`, `test:matrix --engine safari`), macOS only, its jobs one at a time, both macOS workflows test `chrome,firefox,safari`. How it works: `mem:stack-and-build`, `mem:stack-and-build/ci`. The numbers: SAFARI-LIB-SUITE, `mem:measurements/test-browsers/library`.
 
-**Order (user, 2026-10-21):** after `mem:follow-ups/ci-workflows`, which gives `tests.yaml` a `browsers` input that only the macOS workflows set. This piece adds Safari to that list, to `scripts/browsers.ts` (its install: `safaridriver --enable`) and to `scripts/test-plan.ts`, and makes a browser the platform lacks (Safari on Linux or Windows) fail with a clear error rather than be skipped silently.
+**What comes next (user, 2026-10-22): the Safari fixes, one branch each.** The goal stays the user's of 2026-10-20: every test that applies to Safari passes there; a skip keyed on Safari's version only for a WebKit defect, never for ours.
 
-## Decided by the user (2026-10-20)
+## The open failures — one family: a worker killed while it holds an OPFS file
 
-- **The goal: everything passes on Safari.** Every test that applies to Safari runs there and passes; what cannot is skipped explicitly, with its reason, and shows in the report, as on Chrome and Firefox.
-- **macOS only.** Safari in the iOS simulator comes later.
-- **On a Mac, `pnpm test` includes Safari by default**, as it includes Firefox; Linux and Windows unchanged.
-- **Symmetry with the other browsers**: every command family gets its Safari variant — `test:safari`, `test:safari:isolated`, `test:safari:not-isolated`, `test:conformance:safari`, Safari in the matrix on macOS.
-- **Safari windows are visible** (Safari has no headless; `@vitest/browser-webdriverio` throws on `headless` for Safari). **Minimizing them: deferred until the tests are stable** (user). Not measured: Safari throttles a hidden page's timers, which might change what the tests see.
-- **The OS fixes Safari's version** (the user's correction: it is a constraint, not a choice) — Safari can be neither installed nor updated on its own. So every run prints the Safari version it tested, and skips keyed on the Safari version are the rule for a version's defect. Nothing is downloaded; `safaridriver` must be enabled once per machine (`sudo safaridriver --enable`, a CI step).
+Seven tests per OS on `OPFSWriteAheadVFS/sync` and `AccessHandlePoolVFS/sync` (list and errors in SAFARI-LIB-SUITE), plus two files whose wipe meets `.wa-sqlite`/`.wa` still held. The replacement's open, or a later open, gets WebKit's `InvalidStateError`, which `HELD_ELSEWHERE` (`src/worker/worker.ts`) does not match: it matches only `NoModificationAllowedError`, Chrome's and Firefox's name (`mem:follow-ups` § the name differs by engine; `mem:follow-ups/lifecycle-restart-held`, whose `afterDeath` retry therefore never runs on Safari).
 
-## Measured (SAFARI-LIB-SPIKE, `mem:measurements/test-browsers`)
+**Before matching `InvalidStateError` (my reading, 2026-10-22, to check first):**
+- **Measure whether Safari releases a terminated worker's sync access handle, and how fast.** The wipe still meeting `.wa-sqlite` held at the end of a file, and `lifecycle`'s budget test timing out its 5 s wait for the replacement (8/20 runs before this piece, SAFARI-IDB-LIB), suggest it may release late or never — then no retry passes, and the answer is elsewhere (the library, or a skip keyed on the version if it is WebKit's defect). Safari kept a terminated worker's IndexedDB connection (WebKit 324094): OPFS may behave alike.
+- **`InvalidStateError` is generic in WebKit** (a closed handle raises it too): match it only on the open path, where a held file is the plausible cause.
+- **`second-client` "fails the client with that worker's error rather than hanging"** stays `'still waiting'`: a longer retry may make it wait longer still. Look at it on its own.
 
-One safaridriver session per machine (a second is refused, `already paired`): Safari jobs need a lane of their own. That lane can run beside Chrome and Firefox. Sessions chain cleanly, and a session killed with `kill -9` does not block the next. The isolated (COOP/COEP) probe passes. `conformance safari` takes 34-57 s alone, like Chrome.
+## Not seen on Safari in these runs
 
-## What the code needs (survey of 2026-10-20, not re-verified since)
-
-- **Engine lists written as `chrome`/`firefox`:** `BrowserName` and the `PINNED`/`ENV_VAR` records (`scripts/browsers.ts`; `parseBrowserList`'s default comes from `PINNED`, so `install` would try Safari everywhere), `ENGINES` (`tests/vitest.config.ts`), `BROWSERS` (`tests/harness/planner/need.ts`, the closed tag vocabulary), the guard in `tests/harness/browsers-setup.ts`, `--browser` and its default in `scripts/test-plan.ts`, `COLUMNS` in `scripts/test-matrix.ts`, `deadIsFatal` in `scripts/plan-report.ts` (`browsers === 2`), the engine of `scripts/bench/check.ts`, the `"conformance *"` glob (it would select Safari off macOS). The default browser list must depend on the platform without changing Linux (`ci.yaml`, `matrix.yaml`).
-- **`scripts/browsers.ts` assumes a downloaded browser:** `cacheItems` and `browserCapabilities` fall through to Firefox's model for any non-Chrome name, `resolveBrowsers` expects a browser and a driver per name. Safari: no cache item, `browserName: 'safari'` only, no `browserVersion`, no headless args.
-- **Parallelism:** `runPool` (`scripts/parallel.ts`) has no per-browser limit, nor does `test-parallel.ts`; Safari cells need one lane and one shard; the planning probes run one after another, check that the first leaves no session behind.
-- **Nothing to declare for Safari in the planner or the capability tables:** they read probed features (`readwrite-unsafe`, JSPI, sync handles), so Safari falls on Firefox's side by itself (no `readwrite-unsafe`; JSPI only from Safari 27).
-- **CI:** `tests.yaml` and the setup action know only `chrome,firefox`; a `safaridriver --enable` step; the pre-push hook runs `pnpm test`, so Safari on a Mac.
-
-## Found on the IndexedDB pair runs (2026-10-20/21, SAFARI-IDB-LIB)
-
-- `default-build.test.ts`'s fallback test asserted JSPI on every engine: tagged `requires:jspi-available` on `fix/safari-idb-stranded`.
-- `lifecycle.test.ts` "fails the client permanently once the restart budget is spent" times out its 5 s wait for the replacement on Safari (8/20, 3/9, 2/6 runs): open.
-
-## The runner
-
-`macos-latest` on 2026-10-20: macOS 26.6.2, Safari 26.6.2, 3 cores — no JSPI there. Safari 26.6.2's known defects: SAFARI26-DATAVIEW-RACE, SAFARI26-IDBMIRROR-KILL (wa-sqlite's harness), and the stranded IndexedDB connection above.
+The IndexedDB strand (`mem:follow-ups/safari-idb-stranded`, fixed) did not show: `IDBBatchAtomicVFS` cells green on both OS.
