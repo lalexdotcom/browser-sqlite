@@ -473,6 +473,7 @@ describe('the tags', () => {
       expect.arrayContaining([
         'browser:chrome',
         'browser:firefox',
+        'browser:safari',
         'isolated',
         'not-isolated',
         'standalone',

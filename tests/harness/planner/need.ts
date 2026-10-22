@@ -1,4 +1,4 @@
-import type { BrowserName } from '../../../scripts/browsers.ts';
+import { ALL_BROWSERS, type BrowserName } from '../../../scripts/browsers.ts';
 import {
   BUILD_CAPABILITIES,
   type SQLiteBuild,
@@ -57,7 +57,7 @@ export type TestNeed = {
   readonly excludes?: readonly Property[];
 };
 
-const BROWSERS: readonly BrowserName[] = ['chrome', 'firefox'];
+const BROWSERS: readonly BrowserName[] = ALL_BROWSERS;
 
 // The widening casts mirror client.ts's build guard: `as const` on the tables
 // narrows an empty list to `readonly []`, where `.every` takes never.

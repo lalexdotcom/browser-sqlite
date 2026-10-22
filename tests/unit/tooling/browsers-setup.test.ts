@@ -18,13 +18,24 @@ describe('browsers-setup globalSetup', () => {
     expect(asked).toEqual([['firefox'], ['chrome']]);
   });
 
+  it('resolves Safari like the others', async () => {
+    // Falsifiable: skip Safari here and off macOS its projects reach a test before the macOS-only error.
+    const asked: string[][] = [];
+    const resolve = (async (names: string[]) => {
+      asked.push(names);
+      return {};
+    }) as never;
+    await setup(project('safari'), resolve);
+    expect(asked).toEqual([['safari']]);
+  });
+
   it('refuses a browser it cannot install', async () => {
-    // Falsifiable: pass the name through and a safari project asks the installer for nothing it knows.
+    // Falsifiable: pass the name through and an edge project asks the installer for nothing it knows.
     const resolve = (async () => {
       throw new Error('must not resolve');
     }) as never;
-    await expect(setup(project('safari'), resolve)).rejects.toThrow(
-      'not chrome or firefox',
+    await expect(setup(project('edge'), resolve)).rejects.toThrow(
+      'not chrome, firefox or safari',
     );
   });
 });

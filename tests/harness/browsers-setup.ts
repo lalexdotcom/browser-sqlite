@@ -1,5 +1,5 @@
 import type { TestProject } from 'vitest/node';
-import { type BrowserName, resolveBrowsers } from '../../scripts/browsers.ts';
+import { isBrowserName, resolveBrowsers } from '../../scripts/browsers.ts';
 
 /**
  * Every browser project declares this globalSetup. Resolving here, in the run's
@@ -13,10 +13,11 @@ export default async function setup(
   resolve: typeof resolveBrowsers = resolveBrowsers,
 ): Promise<void> {
   const name = project.config.browser.name;
-  if (name !== 'chrome' && name !== 'firefox') {
+  if (!isBrowserName(name)) {
     throw new Error(
-      `tests/harness/browsers-setup.ts: project "${project.name}" targets "${name}", not chrome or firefox`,
+      `tests/harness/browsers-setup.ts: project "${project.name}" targets "${name}", not chrome, firefox or safari`,
     );
   }
-  await resolve([name satisfies BrowserName]);
+  // Off macOS, Safari's projects stop here with the macOS-only error.
+  await resolve([name]);
 }

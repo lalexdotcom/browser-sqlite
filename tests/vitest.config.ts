@@ -3,14 +3,20 @@ import {
   defineConfig,
   type TestProjectInlineConfiguration,
 } from 'vitest/config';
-import { type BrowserName, WDIO_CACHE_DIR } from '../scripts/browsers.ts';
+import {
+  ALL_BROWSERS,
+  type BrowserName,
+  WDIO_CACHE_DIR,
+} from '../scripts/browsers.ts';
 import { timeScale } from '../scripts/processes.ts';
 import { resolvingWebdriverio } from './harness/browser-provider.ts';
 import { declaredTags } from './harness/planner/need.ts';
 import type { TestTarget } from './harness/target.ts';
 import { allTargets, targetLabel } from './harness/target-projects.ts';
 
-const ENGINES: readonly BrowserName[] = ['chrome', 'firefox'];
+// Safari's projects exist on every platform, so naming one off macOS reaches
+// the macOS-only error (browsers-setup) rather than "no project matches".
+const ENGINES: readonly BrowserName[] = ALL_BROWSERS;
 const TIME_SCALE = timeScale();
 const ISOLATION = {
   'Cross-Origin-Opener-Policy': 'same-origin',
@@ -71,7 +77,8 @@ const browserProject = (
     },
     browser: {
       enabled: true,
-      headless: true,
+      // Safari has no headless mode: the WebdriverIO provider throws on it.
+      headless: browser !== 'safari',
       // Vitest's 60 s for the page to reach its server, scaled like the other
       // bounds: Firefox on Windows missed it under the suite's parallel load.
       connectTimeout: 60_000 * TIME_SCALE,

@@ -4,6 +4,7 @@ import {
   type BrowserName,
   browserCapabilities,
   resolveBrowsers,
+  withSafariHint,
 } from '../../scripts/browsers.ts';
 
 /**
@@ -31,7 +32,12 @@ export function withResolvedCapabilities<
       ...provider.options,
       capabilities: browserCapabilities(browser, resolved[browser]),
     } as NonNullable<P['options']>;
-    return open();
+    if (browser !== 'safari') return open();
+    try {
+      return await open();
+    } catch (error) {
+      throw withSafariHint(error);
+    }
   };
   return provider;
 }
