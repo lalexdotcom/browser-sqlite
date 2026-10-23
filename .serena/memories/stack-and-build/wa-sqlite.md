@@ -6,7 +6,11 @@ Part of `mem:stack-and-build`. Moved here from it on 2026-10-08; the chain of ea
 
 `wa-sqlite` is a devDependency only, vendored into `dist/worker/worker.js` at build time so it
 never reaches a consumer lockfile. **Pinned by commit SHA, not by tag, since 2026-09-15 (user)**:
-`github:rhashimoto/wa-sqlite#6238f532b399de77fd5f141f6e3776aeb24b2f04` since 2026-10-13, upstream
+`github:rhashimoto/wa-sqlite#6b59b23105c60a87e4eab19c0b3fa59d5a0b7dab` since 2026-10-23, upstream
+`master` with #380 merged (darshanp40: `getRoot`/`prefix` on `AccessHandlePoolVFS`, `OPFSCoopSyncVFS`,
+`OPFSWriteAheadVFS`, unused here; the library's `{ lockPolicy: 'shared' }` is now copied into those
+VFS's `this.options`, harmlessly). Only those three files changed in `src/` across it, `sqlite-api.js`
+and `dist/` not at all, so the fast step and its fingerprints held. Before it, `6238f532` (2026-10-13), upstream
 `master` with our #374 merged (squashed, its fix and test hunks byte for byte the PR's), two
 dependabot bumps of `yarn.lock` before it (outside the package); no patch from then until #381 was carried on 2026-10-16 (§ The patch), and the built
 `worker.js`, the three `.wasm` and `index.js` byte-identical across that repin, the source map
@@ -35,6 +39,8 @@ as well as a release and nothing waits for one.
   fail otherwise.
 
 ## The patch
+
+**Since the repin of 2026-10-23 it carries six PRs, rebuilt from their heads on `6b59b231`:** #381 `42bfb903` (its review head), #382 `d6dd6ba0`, #384 `97d0f192`, #385 `086200d7`, #386 `a21e9d45`, #387 `7805bb2f`. Files: `WebLocksMixin.js` (#387) and `OPFSAdaptiveVFS.js` (#382), byte for byte their heads; `IDBBatchAtomicVFS.js` (#384 + #387), `IDBMirrorVFS.js` (#385 + #387) and `OPFSCoopSyncVFS.js` (#381 + #386, over #380), every line of each PR's diff present. Made in a detached worktree of the pin by `git apply --3way` of each head's `git diff $(merge-base) <head> -- src/`, all clean; upstream's suite green on that tree (Chrome, 15/15 files, 6 443); the patch written as `git diff --full-index`, round-tripped through `pnpm patch --edit-dir` / `patch -p1` / `patch-commit` (same content, hash `0f0313c2…`); installed `src/` identical to the tree (`diff -r`, build sources aside), `dist/` identical; after clearing the rspack caches the bundle shows #386's check, `getIDBFactory`, the prefixed `mirror:` channel and #381's retry. Library: `pnpm test` 371/371 files. The paragraphs below describe the patch before that repin.
 
 **Since 2026-10-21 it also carries #384 (`IDBBatchAtomicVFS.js`, head `97d0f192`) and #385 (`IDBMirrorVFS.js`, head `086200d7`)**, the four installed files byte for byte their PR heads (`cmp`), on branch `fix/idb-vfs-close`.
 

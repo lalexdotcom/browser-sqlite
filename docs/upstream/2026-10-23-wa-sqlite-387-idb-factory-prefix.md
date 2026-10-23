@@ -38,4 +38,4 @@ PR [#387][pr387], opened 2026-10-23 from `lalexdotcom:idb-factory-prefix`, on `m
 
 ## What stays ours
 
-- **Not carried.** Nothing in this library uses the options yet; whether it exposes Storage Buckets is not decided.
+- **Carried since 2026-10-23** (user), in the patch rebuilt at the repin to `6b59b231` (head `7805bb2f`, beside #384 and #385 in the IndexedDB files). Nothing in this library uses the options yet, and with them at their defaults nothing changes, so no CHANGELOG entry; whether it exposes Storage Buckets is not decided.

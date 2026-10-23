@@ -27,5 +27,5 @@ PR [#386][pr386], opened 2026-10-23 from `lalexdotcom:opfscoopsync-sweep-held-di
 
 ## What stays ours
 
-- **Not carried yet.** The fix is not in [`patches/`](../../patches); carrying it beside #381's hunks regenerates the patch (`mem:stack-and-build/wa-sqlite`). Until then, and after, `createVfsInstance`'s retry keeps masking the failure; it stays for `AccessHandlePoolVFS` regardless.
+- **Carried since 2026-10-23**, in the patch rebuilt at the repin to `6b59b231` (head `a21e9d45`, beside #381 in `OPFSCoopSyncVFS.js`; `mem:stack-and-build/wa-sqlite`). `OPFSCoopSyncVFS`'s `create()` then no longer fails on this, so `createVfsInstance`'s retry no longer serves that VFS; it stays for `AccessHandlePoolVFS`. CHANGELOG: one Fixed entry, the ~85 ms retry on the first open after a cached page (measured without the fix).
 - **The library-side test of the real navigation** (user, 2026-10-16) is still owed: a top-level page, since a Vitest test runs in an iframe that is never cached (`mem:follow-ups`).
