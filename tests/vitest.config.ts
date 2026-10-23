@@ -1,8 +1,10 @@
+import { appendFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   defineConfig,
   type TestProjectInlineConfiguration,
 } from 'vitest/config';
+import type { BrowserCommand } from 'vitest/node';
 import {
   ALL_BROWSERS,
   type BrowserName,
@@ -21,6 +23,18 @@ const TIME_SCALE = timeScale();
 const ISOLATION = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Embedder-Policy': 'require-corp',
+};
+// SPIKE fix/safari-restart-budget, reverted before the merge: a line a test
+// writes, appended at once to .work/spike-live.log so a run can be followed
+// live (`tail -F`), on CI as here.
+const SPIKE_LOG = fileURLToPath(
+  new URL('../.work/spike-live.log', import.meta.url),
+);
+const spikeLog: BrowserCommand<[line: string]> = (_context, line) => {
+  mkdirSync(fileURLToPath(new URL('../.work', import.meta.url)), {
+    recursive: true,
+  });
+  appendFileSync(SPIKE_LOG, `${line}\n`);
 };
 const built = (file: string) =>
   fileURLToPath(new URL(`./build/${file}`, import.meta.url));
@@ -87,6 +101,7 @@ const browserProject = (
       screenshotFailures: false,
       provider: resolvingWebdriverio(browser, { cacheDir: WDIO_CACHE_DIR }),
       instances: [{ browser, name }],
+      commands: { spikeLog },
     },
   },
 });
