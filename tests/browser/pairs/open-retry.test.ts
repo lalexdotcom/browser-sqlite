@@ -445,7 +445,11 @@ describe('reopening a database after its worker died', () => {
    * the ErrorEvent that tells the pool. `holder.take` resolves once the holder
    * has the file; `graceMs` is how long it keeps it from then on.
    */
-  const killMidStatement = async (graceMs: number, openTimeout?: number) => {
+  const killMidStatement = async (
+    graceMs: number,
+    openTimeout?: number,
+    maxWorkerRestarts = 1,
+  ) => {
     const holder = exclusiveHolder();
     const records = interceptWorkers();
     const dbName = `bsq-test-${crypto.randomUUID()}`;
@@ -453,7 +457,7 @@ describe('reopening a database after its worker died', () => {
     const db: Client = createSQLiteClient(dbName, {
       ...TEST_PAIR(),
       poolSize: 1,
-      maxWorkerRestarts: 1,
+      maxWorkerRestarts,
       ...(openTimeout !== undefined ? { openTimeout } : {}),
       debug: 'db',
     });
@@ -515,6 +519,24 @@ describe('reopening a database after its worker died', () => {
     expect((failure as Error).message).toContain(
       'Use the async or jspi build, or cross-origin isolation',
     );
+    expect(failure).not.toMatchObject({ code: 'TIMEOUT' });
+  });
+
+  it('keeps the reason when the replacement is itself restarted', {
+    tags: ['vfs:OPFSAdaptiveVFS', 'browser:firefox'],
+  }, async () => {
+    // The first replacement fails on the held file; its own restart must wait
+    // as long, not fall back to the idle budget and a bare engine error.
+    const { db, running, step } = await killMidStatement(60_000, 6_000, 2);
+
+    await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+    const failure = await step('db.read', db.read('SELECT 1')).catch(
+      (error: unknown) => error,
+    );
+    expect(failure).toMatchObject({
+      code: 'WORKER_CRASHED',
+      message: expect.stringContaining('WebKit #328618'),
+    });
     expect(failure).not.toMatchObject({ code: 'TIMEOUT' });
   });
 });
