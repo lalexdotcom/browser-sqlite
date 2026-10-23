@@ -5,6 +5,7 @@ import {
   interceptWorkers,
   killedStatementRuns,
   longQuery,
+  scaled,
   sharedDatabase,
   sleep,
   waitUntil,
@@ -18,7 +19,11 @@ describe('worker lifecycle — crash detection', () => {
     const db = await createTestClient({ poolSize: 1 });
     await db.write('CREATE TABLE t (a)');
 
-    const running = db.read(longQuery(20_000_000));
+    // Long enough to be in flight at the kill, short enough to end soon
+    // after: on Safari ≤ 27.0.1 a killed sync worker runs its statement out
+    // holding its OPFS files (WebKit 328618), and 20M kept them past the
+    // file's storage wipe on Safari 27 (2026-10-23).
+    const running = db.read(longQuery(2_000_000));
     await sleep(100);
     records[0].worker.dispatchEvent(
       new ErrorEvent('error', { message: 'simulated worker failure' }),
@@ -49,9 +54,10 @@ describe('worker lifecycle — crash detection', () => {
 
   // Falsifiable: delete the `failClient(error)` call on the 'fail-client'
   // decision in handleDeath (src/client.ts).
-  it('fails the client permanently once the restart budget is spent', async ({
-    skip,
-  }) => {
+  // Room for the replacement's 30 s bound below.
+  it('fails the client permanently once the restart budget is spent', {
+    timeout: scaled(60_000),
+  }, async ({ skip }) => {
     const webkit = killedStatementRuns();
     if (webkit) return skip(webkit);
     const records = interceptWorkers();
@@ -64,11 +70,15 @@ describe('worker lifecycle — crash detection', () => {
       records[attempt].worker.dispatchEvent(new ErrorEvent('error'));
       await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
       // Killing the replacement before its ready leaves the open lock to its
-      // termination, and the cleanup's deleteDatabase answers BUSY.
+      // termination, and the cleanup's deleteDatabase answers BUSY. Bounded
+      // as the library's open is (30 s), not at waitUntil's 5 s: on Safari 26
+      // and 27 a worker that instantiates its wasm after another has run hot
+      // wasm stalls 1-11 s in `instantiating wasm` (2026-10-23).
       if (attempt === 0)
         await waitUntil(
           () => records[1]?.received.includes('ready') ?? false,
           'the replacement to be ready',
+          30_000,
         );
     }
 
@@ -112,7 +122,8 @@ describe('worker lifecycle — crash detection', () => {
     await db.write('CREATE TABLE t (a)');
     expect(created.length).toBe(1);
 
-    const running = db.read(longQuery(20_000_000));
+    // 2M, not 20M: in flight at the kill, over soon after — see the first test.
+    const running = db.read(longQuery(2_000_000));
     await sleep(100);
     created[0].dispatchEvent(new ErrorEvent('error'));
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
@@ -244,7 +255,8 @@ describe('worker lifecycle — onWorkerLost callback', () => {
     });
     await db.write('CREATE TABLE t (a)');
 
-    const running = db.read(longQuery(20_000_000));
+    // 2M, not 20M: in flight at the kill, over soon after — see the first test.
+    const running = db.read(longQuery(2_000_000));
     await sleep(100);
     records[0].worker.dispatchEvent(new ErrorEvent('error'));
 

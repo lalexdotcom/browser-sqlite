@@ -137,6 +137,13 @@ measured numbers are the whole case, and they do not justify adding a handshake 
 path — the path GATE-1 and three abort defects were paid for. Reviving it needs no new
 measurement, only that table.
 
+**A new argument, Safari (2026-10-23, the user's "voie 2", kept as an idea):** on Safari 26/27 a
+worker's wasm instantiation stalls 1-11 s after another worker ran hot wasm (SAFARI-WASM-INSTANTIATE,
+`mem:measurements/test-browsers/library`): every restart, and a client opened after heavy queries,
+can pay it. If the stall is compilation (unverified), a module compiled once by the page and handed to
+the workers would remove it. To measure first: the same variants with a precompiled module (the worker
+would need Emscripten's `instantiateWasm` hook; the `wasm` option only locates the file today).
+
 ### Recycling the params buffer through `done` — an idea, kept out of the binary protocol (user, 2026-10-07)
 
 The worker hands the transferred params buffer back in `done`, the page reuses it for the next send. Measured (BINARY-PROTOCOL, `mem:measurements/binary-protocol`): on 200 writes of a 1 MiB text it halves the peak again over the plain binary path (Chromium 29-40 → 16 MB, Firefox 50-77 → 25 MB), and gains nothing on small queries. Cost: each worker keeps its largest buffer for life (~3 MiB for a 1 MiB text, worst-case sizing), and `done` grows an optional field — so it can be added later without breaking the protocol. If taken up: cap the size kept per worker; the cap is unmeasured.

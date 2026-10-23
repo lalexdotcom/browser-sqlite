@@ -30,6 +30,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - SAFARI-LIB-SUITE — the whole suite on Safari 26.6.2 / 27.0.1 through the planner: 7 failures per OS, all a killed worker and its file (`InvalidStateError`), conformance green; the two wiring defects found on the way
 - SAFARI-TERMINATE-WASM — Safari's `terminate()` lets a worker's WASM loop run to its end, its OPFS handles held meanwhile (7-9 s for an 8 s spin, 26 and 27); a JS loop or an idle worker frees them in ~10 ms; Chrome stops both after ~2 s
 - SAFARI-DISPATCH-TERMINATED — on Safari 26/27 an event dispatched on a `Worker` after `terminate()` reaches no listener (Firefox, Chrome: delivered); `second-client`'s lost worker 0 went unseen until the 30 s open timeout
+- SAFARI-WASM-INSTANTIATE — on Safari 26/27 a worker's wasm instantiation stalls 1-11 s after another worker ran hot wasm (killed or closed); fast without (≤ 230 ms); Chrome/Firefox ≤ 41 ms
 
 ## `mem:measurements/ci-runners` — the library's suites on CI runners, from macOS 26/27 on
 
