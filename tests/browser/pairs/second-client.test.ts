@@ -69,12 +69,34 @@ describe('a client whose worker 0 is lost before it answers the probe', () => {
   // triggers; the build follows the cell's pair.
   it("fails the client with that worker's error rather than hanging", {
     tags: ['vfs:OPFSWriteAheadVFS'],
+    // SPIKE (fix/safari-second-client): room to see what comes after 10 s.
+    timeout: 90_000,
   }, async () => {
     const { vfs, build } = TEST_TARGET;
     const file = `second-client-${crypto.randomUUID()}`;
     const LOST = 'worker 0 lost before it answered the probe';
     // A bound on a hang, not a timing claim.
     const LOST_WITHIN = 10_000;
+    // SPIKE: a timeline of every message between the client and its workers.
+    const t0 = performance.now();
+    const timeline: string[] = [];
+    const note = (line: string) =>
+      timeline.push(`${Math.round(performance.now() - t0)} ms ${line}`);
+    const show = (data: unknown) => {
+      const d = data as Record<string, unknown> | null;
+      if (!d || typeof d !== 'object') return String(d);
+      const extra = [
+        'stage',
+        'missing',
+        'callId',
+        'probeFirst',
+        'declineWithout',
+      ]
+        .filter((k) => k in d)
+        .map((k) => `${k}=${JSON.stringify(d[k])}`)
+        .join(' ');
+      return `${String(d.type)} ${extra}`;
+    };
     const records = interceptWorkers();
     const record = records.push.bind(records);
     // Every worker told to probe is slot 0. interceptWorkers pushes a record
@@ -82,36 +104,70 @@ describe('a client whose worker 0 is lost before it answers the probe', () => {
     // the wrapper below sees that first message.
     records.push = (...added: WorkerRecord[]) => {
       for (const { worker } of added) {
+        const n = records.length;
+        note(`worker #${n} created`);
+        worker.addEventListener('message', (event: MessageEvent) => {
+          note(`worker #${n} -> ${show(event.data)}`);
+        });
+        worker.addEventListener('error', (event) => {
+          note(`worker #${n} error event: ${(event as ErrorEvent).message}`);
+        });
         const post = worker.postMessage.bind(worker) as (
           m: unknown,
           ...r: unknown[]
         ) => void;
         worker.postMessage = (message: unknown, ...rest: unknown[]) => {
+          note(`worker #${n} <- ${show(message)}`);
           if ((message as { probeFirst?: unknown }).probeFirst === undefined) {
             post(message, ...rest);
             return;
           }
+          note(`worker #${n} killed silently`);
           killSilently(worker);
           setTimeout(() => {
+            note(`worker #${n} dispatching the lost error`);
             worker.dispatchEvent(new ErrorEvent('error', { message: LOST }));
           }, 0);
         };
       }
       return record(...added);
     };
-    const db = createSQLiteClient(file, { vfs, build, poolSize: 2 });
+    const db = createSQLiteClient(file, {
+      vfs,
+      build,
+      poolSize: 2,
+      debug: 'spike',
+      onWorkerLost: ({ index, live, size, cause }: WorkerLostEvent) => {
+        note(
+          `onWorkerLost slot ${index} live ${live}/${size}: ${cause.message}`,
+        );
+      },
+    });
     onTestFinished(async () => {
       await db.close().catch(() => {});
       await deleteDatabase(file, { vfs, build }).catch(() => {});
     });
+    const settled = db.read('SELECT 1').then(
+      () => 'resolved',
+      (e: unknown) => e,
+    );
     const outcome = await Promise.race([
-      db.read('SELECT 1').then(
-        () => 'resolved',
-        (e: unknown) => e,
-      ),
+      settled,
       sleep(LOST_WITHIN).then(() => 'still waiting'),
     ]);
-    expect(outcome).toBeInstanceOf(SQLiteError);
+    note(`outcome at the bound: ${String(outcome)}`);
+    if (outcome === 'still waiting') {
+      const later = await Promise.race([
+        settled,
+        sleep(70_000).then(() => 'still waiting at 80 s'),
+      ]);
+      note(`later outcome: ${String(later)}`);
+    }
+    for (const [i, r] of records.entries()) {
+      note(`record #${i}: terminated=${r.terminated} log=${r.log.join(',')}`);
+    }
+    console.log(`SPIKE second-client timeline\n${timeline.join('\n')}`);
+    expect(outcome, timeline.join('\n')).toBeInstanceOf(SQLiteError);
     expect(outcome).toMatchObject({
       code: 'WORKER_CRASHED',
       message: expect.stringContaining(LOST),

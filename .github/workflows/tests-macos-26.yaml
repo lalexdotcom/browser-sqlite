@@ -12,4 +12,4 @@ jobs:
     uses: ./.github/workflows/tests.yaml
     with:
       runs-on: macos-26
-      browsers: chrome,firefox,safari
+      browsers: safari  # SPIKE fix/safari-second-client: revert before merge
