@@ -1,6 +1,4 @@
-import { appendFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { Plugin } from 'vite';
 import {
   defineConfig,
   type TestProjectInlineConfiguration,
@@ -23,32 +21,6 @@ const TIME_SCALE = timeScale();
 const ISOLATION = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Embedder-Policy': 'require-corp',
-};
-// SPIKE fix/safari-restart-budget, reverted before the merge: a line a test
-// writes, appended at once to .work/spike-live.log so a run can be followed
-// live (`tail -F`), on CI as here.
-const SPIKE_LOG = fileURLToPath(
-  new URL('../.work/spike-live.log', import.meta.url),
-);
-// A POST to the dev server, not a browser command: a command switches frames
-// through the driver, which WebDriver BiDi (Firefox) refuses.
-const spikeLog: Plugin = {
-  name: 'spike-log',
-  configureServer(server) {
-    server.middlewares.use('/__spike-log', (req, res) => {
-      let body = '';
-      req.on('data', (chunk) => {
-        body += chunk;
-      });
-      req.on('end', () => {
-        mkdirSync(fileURLToPath(new URL('../.work', import.meta.url)), {
-          recursive: true,
-        });
-        appendFileSync(SPIKE_LOG, `${body}\n`);
-        res.end();
-      });
-    });
-  },
 };
 const built = (file: string) =>
   fileURLToPath(new URL(`./build/${file}`, import.meta.url));
@@ -122,7 +94,6 @@ const browserProject = (
 export default defineConfig({
   // Every path below is from the repository root, not from this folder.
   root: fileURLToPath(new URL('..', import.meta.url)),
-  plugins: [spikeLog],
   // One Vite cache per parallel job (scripts/parallel.ts, jobEnv): processes
   // sharing a dep-optimizer cache race when they commit it.
   ...(process.env.BSQ_VITE_CACHE_DIR

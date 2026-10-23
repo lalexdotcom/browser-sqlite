@@ -14,4 +14,4 @@ jobs:
       # GitHub has no macos-27 label yet: macOS 27 comes only with the Xcode 27
       # image, in public preview. Move to macos-27 once it exists.
       runs-on: xcode-27
-      browsers: safari  # SPIKE fix/safari-restart-budget: revert before merge
+      browsers: chrome,firefox,safari

@@ -5,6 +5,7 @@ import {
   interceptWorkers,
   killedStatementRuns,
   longQuery,
+  scaled,
   sharedDatabase,
   sleep,
   waitUntil,
@@ -49,9 +50,10 @@ describe('worker lifecycle — crash detection', () => {
 
   // Falsifiable: delete the `failClient(error)` call on the 'fail-client'
   // decision in handleDeath (src/client.ts).
-  it('fails the client permanently once the restart budget is spent', async ({
-    skip,
-  }) => {
+  // Room for the replacement's 30 s bound below.
+  it('fails the client permanently once the restart budget is spent', {
+    timeout: scaled(60_000),
+  }, async ({ skip }) => {
     const webkit = killedStatementRuns();
     if (webkit) return skip(webkit);
     const records = interceptWorkers();
@@ -64,11 +66,15 @@ describe('worker lifecycle — crash detection', () => {
       records[attempt].worker.dispatchEvent(new ErrorEvent('error'));
       await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
       // Killing the replacement before its ready leaves the open lock to its
-      // termination, and the cleanup's deleteDatabase answers BUSY.
+      // termination, and the cleanup's deleteDatabase answers BUSY. Bounded
+      // as the library's open is (30 s), not at waitUntil's 5 s: on Safari 26
+      // and 27 a worker that instantiates its wasm after another has run hot
+      // wasm stalls 1-11 s in `instantiating wasm` (2026-10-23).
       if (attempt === 0)
         await waitUntil(
           () => records[1]?.received.includes('ready') ?? false,
           'the replacement to be ready',
+          30_000,
         );
     }
 
