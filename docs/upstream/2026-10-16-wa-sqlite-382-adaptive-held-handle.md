@@ -44,6 +44,8 @@ Once `jLock()` holds the lock, a `NoModificationAllowedError` or `InvalidStateEr
 
 PR [#382][pr382], opened 2026-10-16 from `lalexdotcom:opfsadaptive-retry-held-handle`, one commit `d6dd6ba0` on `master` at `6238f532`. The body, validated by the user, carries no measurement: it says the race reproduces in Firefox, most reliably on Windows, explains why Chrome and CI cannot show it and why Safari did not, and has a section on its relation to #381 (same race, same retry; what the race leaves behind and where it shows differ). It does not mention this library.
 
+**Approved by rhashimoto on 2026-10-23** ("LGTM"), who holds the merge until #381's review is addressed, in case a change there applies here too. Neither of #381's two points does — one handle in a `try`/`catch`, nothing else to undo and no `Promise.allSettled` search to type — which we said the same day ([issuecomment-6370214957](https://github.com/rhashimoto/wa-sqlite/pull/382#issuecomment-6370214957)). No change to the branch.
+
 ## What stays ours
 
 - **Carried since 2026-10-16.** [`patches/`](../../patches) holds #381's and #382's `src/` hunks, the installed files byte for byte the two PR heads; the library's matrix and Windows run green with them.
