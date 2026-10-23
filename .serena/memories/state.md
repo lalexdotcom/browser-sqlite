@@ -97,6 +97,7 @@ here on purpose: a total alone cannot say which suite moved.
   plan and what his go calls for are in `mem:follow-ups`, the
   measurements in `mem:measurements/test-browsers`, and the user's principles in
   `mem:conventions` (§ Testing in browsers).
+- **Update of the evening of 2026-10-23, read before the paragraph below:** upstream `master` is now `ced5652e`, with **#382 (`010eeb50`) and #384 (`ced5652e`) merged** — the repin onto it, dropping their hunks from the patch, is owed and not started. **#388 (`step_asap()`, #383's options 1 and 2) was opened the same evening** and is not carried (`mem:follow-ups/wa-step-upstream`). Open: #385, #386, #387, #388.
 - **Five PRs of ours are open on wa-sqlite (checked 2026-10-23); #381 merged that day (`8a8bc2ee`) and is pinned:** #382 (`OPFSAdaptiveVFS`, 2026-10-16; approved 2026-10-23, its merge was held until #381 was done), #384 (`IDBBatchAtomicVFS` `close()`, 2026-10-21) and #385 (`IDBMirrorVFS` `close()`, 2026-10-21), #386 (`OPFSCoopSyncVFS` startup sweep, issue #362, 2026-10-23) and #387 (`getIDBFactory`/`prefix` for the IndexedDB VFS, offered on #380, 2026-10-23; nothing here uses it) — all five carried in the patch (repin to `8a8bc2ee`, 2026-10-23); #386 rebased onto it (`c4f832ea`). #387 and #385 conflict on one import in `test/IDBMirrorVFS.test.js`. When one merges, repin and drop its hunk (`mem:stack-and-build/wa-sqlite`, `mem:upstream`).
 - **Another agent's work was paused by the user until our upstream PRs were done; the user
   relaunches it.**

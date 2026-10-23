@@ -36,6 +36,8 @@ Discussion [#383][d383], category Ideas, opened 2026-10-19. The body, validated 
 
 **Answered 2026-10-23.** rhashimoto likes options 1 and 2; option 3 too, but he is not ready for a new major version yet. He would review a PR and suggests `step_asap()` as the new method's name. He also recalled that Chrome's JSPI once returned a non-Promise when nothing suspended, before the proposal settled on always returning a Promise ([js-promise-integration#13](https://github.com/WebAssembly/js-promise-integration/issues/13)); the method looks at what each call returned, so it holds either way. Our reply ([discussioncomment-19151643](https://github.com/rhashimoto/wa-sqlite/discussions/383#discussioncomment-19151643), validated by the user) takes the name, read as *As Synchronous As Possible*, and announces a PR with options 1 and 2. He answered "Let's document it as that" ([discussioncomment-19152340](https://github.com/rhashimoto/wa-sqlite/discussions/383#discussioncomment-19152340)): the method's JSDoc spells ASAP as *As Synchronous As Possible*.
 
+**Sent 2026-10-23 as [#388](https://github.com/rhashimoto/wa-sqlite/pull/388)**, options 1 and 2 in one PR; its report is `2026-10-23-wa-sqlite-388-step-asap.md`.
+
 ## What stays ours
 
 - `src/worker/step.ts` and its fingerprint test, until wa-sqlite offers one of the options; the repin procedure re-reads what it reproduces (`mem:stack-and-build/wa-sqlite`).
