@@ -10,8 +10,11 @@ import { databasePath } from '../../../src/utils';
 import {
   createTestClient,
   interceptWorkers,
+  scaled,
   sharedDatabase,
+  sleep,
   TEST_TARGET,
+  waitUntil,
 } from '../helpers';
 
 const locks = createLocks();
@@ -31,6 +34,23 @@ const markersFor = async (file: string, vfs: SQLiteVFS) => {
       (m): m is NonNullable<ReturnType<typeof parseClientMarker>> =>
         m !== undefined,
     );
+};
+
+/**
+ * The markers left after a raced grant has LANDED (the caller waits for that
+ * first): polled until none is left or the bound runs out, then returned as
+ * they stand. A grant released at once leaves none within a few polls; a
+ * leaked one stays to the bound. A fixed 50 ms wait went red once on a loaded
+ * macOS runner (2026-10-23), and polling before the grant has landed sees no
+ * marker at all, leak or not.
+ */
+const markersAfterRelease = async (file: string, vfs: SQLiteVFS) => {
+  const deadline = Date.now() + scaled(5_000);
+  for (;;) {
+    const markers = await markersFor(file, vfs);
+    if (markers.length === 0 || Date.now() >= deadline) return markers;
+    await sleep(10);
+  }
 };
 
 describe('the client liveness marker', () => {
@@ -99,6 +119,7 @@ describe('the client liveness marker', () => {
       navigator.locks.request as (...args: unknown[]) => unknown
     ).bind(navigator.locks);
     let triggerGrant: () => void = () => {};
+    let granted = false;
     const grantDeferred = new Promise<void>((resolve) => {
       triggerGrant = resolve;
     });
@@ -107,7 +128,15 @@ describe('the client liveness marker', () => {
       ...args: unknown[]
     ) => {
       if (name.startsWith('bsq:client:')) {
-        return grantDeferred.then(() => originalRequest(name, ...args));
+        // The callback flags the grant: the marker is only there to be
+        // released once it has landed.
+        const callback = args.at(-1) as (lock: unknown) => unknown;
+        return grantDeferred.then(() =>
+          originalRequest(name, ...args.slice(0, -1), (lock: unknown) => {
+            granted = true;
+            return callback(lock);
+          }),
+        );
       }
       return originalRequest(name, ...args);
     };
@@ -126,11 +155,10 @@ describe('the client liveness marker', () => {
     // Release the deferred grant now. Without markerClosed, the .then() fires
     // and sets markerRelease = release, but nobody ever calls release().
     triggerGrant();
-    // Yield a turn for the grant to process and (with the fix) self-release.
-    await new Promise<void>((r) => setTimeout(r, 50));
+    await waitUntil(() => granted, 'the marker grant to land');
 
     // Without the fix: marker is leaked. With the fix: self-released.
-    expect(await markersFor(file, pair.vfs)).toHaveLength(0);
+    expect(await markersAfterRelease(file, pair.vfs)).toHaveLength(0);
   });
 
   // Falsifiable: drop the marker release from failClient (src/client.ts) — a
@@ -171,6 +199,7 @@ describe('the client liveness marker', () => {
       navigator.locks.request as (...args: unknown[]) => unknown
     ).bind(navigator.locks);
     let triggerGrant: () => void = () => {};
+    let granted = false;
     const grantDeferred = new Promise<void>((resolve) => {
       triggerGrant = resolve;
     });
@@ -179,7 +208,15 @@ describe('the client liveness marker', () => {
       ...args: unknown[]
     ) => {
       if (name.startsWith('bsq:client:')) {
-        return grantDeferred.then(() => originalRequest(name, ...args));
+        // The callback flags the grant: the marker is only there to be
+        // released once it has landed.
+        const callback = args.at(-1) as (lock: unknown) => unknown;
+        return grantDeferred.then(() =>
+          originalRequest(name, ...args.slice(0, -1), (lock: unknown) => {
+            granted = true;
+            return callback(lock);
+          }),
+        );
       }
       return originalRequest(name, ...args);
     };
@@ -199,9 +236,9 @@ describe('the client liveness marker', () => {
     await expect(db.ready).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
 
     triggerGrant();
-    await new Promise<void>((r) => setTimeout(r, 50));
+    await waitUntil(() => granted, 'the marker grant to land');
 
-    expect(await markersFor(file, pair.vfs)).toHaveLength(0);
+    expect(await markersAfterRelease(file, pair.vfs)).toHaveLength(0);
   });
 
   it('does not change what deleteDatabase reports', {
