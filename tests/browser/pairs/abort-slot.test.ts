@@ -109,7 +109,8 @@ describe('the sync build, isolated', {
 
   it("does not carry a dead worker's abort into its replacement", async () => {
     // The slot holds a callId, and a restarted worker's callIds start at 0
-    // again — so the slot must be zeroed when a worker is created into it.
+    // again — so the slot must be zeroed when the replacement reports `ready`,
+    // which clears both the predecessor's callId and KILLED_SLOT.
     // Without that zeroing this test fails on the query whose callId matches
     // the one the abort wrote, and on no other: the defect is a single wrong
     // interrupt, several queries after the restart.
