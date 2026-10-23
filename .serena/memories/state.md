@@ -95,7 +95,7 @@ here on purpose: a total alone cannot say which suite moved.
   plan and what his go calls for are in `mem:follow-ups`, the
   measurements in `mem:measurements/test-browsers`, and the user's principles in
   `mem:conventions` (§ Testing in browsers).
-- **Four PRs of ours are open on wa-sqlite (checked 2026-10-22), all carried in the patch:** #381 (`OPFSCoopSyncVFS`, 2026-10-15), #382 (`OPFSAdaptiveVFS`, 2026-10-16), #384 (`IDBBatchAtomicVFS` `close()`, 2026-10-21) and #385 (`IDBMirrorVFS` `close()`, 2026-10-21). When one merges, repin and drop its hunk (`mem:stack-and-build/wa-sqlite`, `mem:upstream`). #362 (an upstream issue) awaits the user's decision on a PR; `mem:follow-ups`.
+- **Five PRs of ours are open on wa-sqlite (checked 2026-10-23):** #381 (`OPFSCoopSyncVFS`, 2026-10-15), #382 (`OPFSAdaptiveVFS`, 2026-10-16), #384 (`IDBBatchAtomicVFS` `close()`, 2026-10-21) and #385 (`IDBMirrorVFS` `close()`, 2026-10-21), all carried in the patch; and #386 (`OPFSCoopSyncVFS` startup sweep, issue #362, 2026-10-23), not carried yet. When one merges, repin and drop its hunk (`mem:stack-and-build/wa-sqlite`, `mem:upstream`). #386 and #381 conflict in `test/vfs_handover.js`: rebase whichever merges second (`mem:follow-ups`).
 - **Another agent's work was paused by the user until our upstream PRs were done; the user
   relaunches it.**
 
