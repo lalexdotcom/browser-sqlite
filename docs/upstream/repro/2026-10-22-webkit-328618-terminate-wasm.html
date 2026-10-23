@@ -1,0 +1,105 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Worker.terminate() does not stop a running WebAssembly loop</title>
+<h1>Worker.terminate() does not stop a running WebAssembly loop</h1>
+<p>A worker takes a Web Lock and an OPFS sync access handle, then runs a
+WebAssembly loop for about 5 s without yielding. The page waits 100 ms, calls
+<code>terminate()</code>, then measures how long the lock and the file stay
+held. A worker spinning in a JavaScript loop is the control.</p>
+<p>Expected: both come free within milliseconds, as for the JavaScript loop.</p>
+<pre id="out">running…</pre>
+<script>
+// (func (export "spin") (param i64) (result i64)): counts to its argument.
+const SPIN = [
+  0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x06, 0x01, 0x60,
+  0x01, 0x7e, 0x01, 0x7e, 0x03, 0x02, 0x01, 0x00, 0x07, 0x08, 0x01, 0x04,
+  0x73, 0x70, 0x69, 0x6e, 0x00, 0x00, 0x0a, 0x17, 0x01, 0x15, 0x01, 0x01,
+  0x7e, 0x03, 0x40, 0x20, 0x01, 0x42, 0x01, 0x7c, 0x22, 0x01, 0x20, 0x00,
+  0x54, 0x0d, 0x00, 0x0b, 0x20, 0x01, 0x0b,
+];
+
+const WORKER = `
+const SPIN = new Uint8Array(${JSON.stringify(SPIN)});
+// Iterations of run(n) that take about ms, calibrated before anything is held.
+const calibrate = (run, ms) => {
+  for (let n = 1e6; ; n *= 4) {
+    const t = performance.now();
+    run(n);
+    const took = performance.now() - t;
+    if (took > 50) return Math.round((n * ms) / took);
+  }
+};
+onmessage = async ({ data: { kind, name, ms } }) => {
+  const { instance } = await WebAssembly.instantiate(SPIN);
+  const run = kind === 'wasm'
+    ? (n) => instance.exports.spin(BigInt(n))
+    : (n) => { let x = 0; for (let i = 0; i < n; i++) x = (x + i) | 0; return x; };
+  const n = calibrate(run, ms);
+  const root = await navigator.storage.getDirectory();
+  const file = await root.getFileHandle(name, { create: true });
+  const handle = await file.createSyncAccessHandle();
+  navigator.locks.request(name, () => {
+    postMessage('held');
+    run(n); // never yields
+    handle.close();
+  });
+};`;
+
+const url = URL.createObjectURL(new Blob([WORKER], { type: 'text/javascript' }));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Resolves with the ms from t0 until `probe` succeeds, polled every 10 ms.
+const until = async (t0, probe) => {
+  for (;;) {
+    if (await probe()) return Math.round(performance.now() - t0);
+    await sleep(10);
+  }
+};
+
+const round = async (kind, i) => {
+  const name = `terminate-${kind}-${i}-${Date.now()}`;
+  const worker = new Worker(url);
+  await new Promise((resolve) => {
+    worker.onmessage = resolve;
+    worker.postMessage({ kind, name, ms: 5000 });
+  });
+  await sleep(100);
+  const t0 = performance.now();
+  worker.terminate();
+  const lockFree = until(t0, () =>
+    navigator.locks.request(name, { ifAvailable: true }, (lock) => lock !== null));
+  // The file is probed from a second worker: sync access handles exist only there.
+  const prober = new Worker(URL.createObjectURL(new Blob([`
+    onmessage = async ({ data }) => {
+      const root = await navigator.storage.getDirectory();
+      const file = await root.getFileHandle(data);
+      for (;;) {
+        try { (await file.createSyncAccessHandle()).close(); break; }
+        catch { await new Promise((r) => setTimeout(r, 10)); }
+      }
+      postMessage('free');
+    };`], { type: 'text/javascript' })));
+  const fileFree = new Promise((resolve) => {
+    prober.onmessage = () => resolve(Math.round(performance.now() - t0));
+    prober.postMessage(name);
+  });
+  const result = { kind, lockFreeMs: await lockFree, fileFreeMs: await fileFree };
+  prober.terminate();
+  await (await navigator.storage.getDirectory()).removeEntry(name).catch(() => {});
+  return result;
+};
+
+(async () => {
+  const out = document.getElementById('out');
+  const results = [];
+  out.textContent = navigator.userAgent + '\n';
+  for (const kind of ['js', 'wasm']) {
+    for (let i = 0; i < 3; i++) {
+      const r = await round(kind, i);
+      results.push(r);
+      out.textContent += `${r.kind.padEnd(4)} loop: lock free after ${r.lockFreeMs} ms, file free after ${r.fileFreeMs} ms\n`;
+    }
+  }
+  window.__result = results;
+})();
+</script>
