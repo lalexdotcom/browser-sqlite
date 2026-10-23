@@ -19,7 +19,11 @@ describe('worker lifecycle — crash detection', () => {
     const db = await createTestClient({ poolSize: 1 });
     await db.write('CREATE TABLE t (a)');
 
-    const running = db.read(longQuery(20_000_000));
+    // Long enough to be in flight at the kill, short enough to end soon
+    // after: on Safari ≤ 27.0.1 a killed sync worker runs its statement out
+    // holding its OPFS files (WebKit 328618), and 20M kept them past the
+    // file's storage wipe on Safari 27 (2026-10-23).
+    const running = db.read(longQuery(2_000_000));
     await sleep(100);
     records[0].worker.dispatchEvent(
       new ErrorEvent('error', { message: 'simulated worker failure' }),

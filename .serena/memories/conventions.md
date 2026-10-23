@@ -201,7 +201,7 @@ one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.
 
 ## Working with the user
 
-- **EVERY chat message is in French — reports, questions, AND the one-line progress notes between tool calls (user, 2026-10-23, after the third slip in one session: "une bonne fois pour toutes").** `AGENTS.md` already says it; it was broken three times anyway, always the same way: after a long run of tool calls (CI polling, log parsing, memory edits written in English), the next message to the user came out in English — once a report that said "in French as agreed" in English. Code, commits, memories and files stay English; anything addressed to the user does not. Before sending any text to the user, check its first sentence is French.
+- **The trap behind `AGENTS.md`'s French rule (user, 2026-10-23).** The rule is loaded every session; it was broken three times in one session anyway, always after a long run of tool calls in English (CI polling, logs, memories, commits): the next message to the user, report or progress note, came out in English. Check the first sentence of every message to the user before sending it.
 - **Batch diagnostic probes.** When the user has to run probes by hand, send a whole
   battery in one paste, each written for the case where the previous came back clean. Four
   round trips were burned on one-hypothesis-at-a-time before they called it.
