@@ -156,6 +156,36 @@ describe('the sync build, isolated', {
       await db.close();
     }
   });
+
+  // An exclusive handle the killed worker keeps until its statement stops.
+  it("stops a killed worker's statement, so its replacement opens at once", {
+    tags: ['vfs:AccessHandlePoolVFS'],
+  }, async () => {
+    const records = interceptWorkers();
+    const db = await createTestClient({
+      poolSize: 1,
+      maxWorkerRestarts: 1,
+      debug: true,
+    });
+    await db.write('CREATE TABLE t (a)');
+    const running = db.read(longQuery(20_000_000));
+    await waitUntil(
+      theQueryIsRunning(db, longQuery(20_000_000)),
+      'the query to be running',
+    );
+    const killedAt = performance.now();
+    records[0]?.worker.dispatchEvent(new ErrorEvent('error'));
+    await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+    await waitUntil(
+      () => records[1]?.received.includes('ready') ?? false,
+      'the replacement to be ready',
+      10_000,
+    );
+    // Chromium stops a terminated worker's WASM after ~2 s (HANDLE-CORPSE); the
+    // slot stops it at the next progress check.
+    expect(performance.now() - killedAt).toBeLessThan(1_000);
+    await db.close();
+  });
 });
 
 describe('statement cache, sync build isolated', {

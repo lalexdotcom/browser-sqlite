@@ -4,6 +4,13 @@ import type { SQLiteResultCode } from '../const/sqlite';
 import type { SQLiteVFS } from '../const/vfs';
 import type { SQLiteErrorCode } from './errors';
 
+/**
+ * What the pool writes into a worker's abort slot when it is about to kill it.
+ * A callId is never negative, so it cannot be mistaken for one; the worker's
+ * progress handler stops on it like on its own callId.
+ */
+export const KILLED_SLOT = -1;
+
 export type SQLiteWorkerMessageData<_T = unknown> = {
   callId: number;
   terminate?: boolean;

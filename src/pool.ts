@@ -12,11 +12,12 @@ import { DEFAULT_CREDIT_WINDOW } from './credits';
 import type { QueryDebugHandle, WorkerDebugHandle } from './debug';
 import type { Logger } from './logger';
 import { SQLiteError, type SQLiteErrorCode } from './types/errors';
-import type {
-  RowsBlock,
-  SavepointOp,
-  WasmLocation,
-  WorkerMessageData,
+import {
+  KILLED_SLOT,
+  type RowsBlock,
+  type SavepointOp,
+  type WasmLocation,
+  type WorkerMessageData,
 } from './types/protocol';
 
 /**
@@ -326,10 +327,6 @@ export const createPoolWorker = (deps: {
     epochTarget: 0,
   });
   pool[index] = worker;
-  // A restarted worker inherits this slot, and its callIds restart at 0 — so
-  // the predecessor's last abort would fire on the replacement's seventh call.
-  // Zeroing here is the whole guard, and it belongs where the worker is born.
-  if (abortSlots) new Int32Array(abortSlots)[index] = 0;
   logger.info(`worker ${index + 1} created`);
 
   const debugWorker = createWorkerDebugState?.(index, workerName);
@@ -535,6 +532,12 @@ export const createPoolWorker = (deps: {
       case 'ready': {
         const { callId } = data;
         if (callId === 0) {
+          // A restarted worker inherits the slot, and its callIds restart at
+          // 0: the predecessor's last abort would fire on the replacement's
+          // seventh call. The replacement runs no polled statement before
+          // `ready`, so zeroing here keeps both guards — the predecessor's
+          // last callId, and the KILLED_SLOT it must still read.
+          if (abortSlots) new Int32Array(abortSlots)[index] = 0;
           ready = true;
           worker.status = 'READY';
           debugWorker?.initialized();
@@ -984,6 +987,10 @@ export const createPoolWorker = (deps: {
             `Worker ${index + 1} was terminated.`,
           ),
       );
+      // Safari does not stop a terminated worker inside a statement (WebKit
+      // 328618), so the slot stops it first, at its next progress check.
+      if (servingQuery !== undefined && abortSlots)
+        Atomics.store(new Int32Array(abortSlots), index, KILLED_SLOT);
       // Not on the other VFS: an OPFS handle would outlive the kill by the
       // grace while a replacement opens the same file.
       if (closed || VFS_CAPABILITIES[vfs].storage !== 'indexeddb') {

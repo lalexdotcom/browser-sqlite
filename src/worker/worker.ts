@@ -35,12 +35,13 @@ import {
 } from '../credits';
 import { createLocks, initLockName } from '../locks';
 import type { SQLiteErrorCode } from '../types/errors';
-import type {
-  BootStage,
-  ClientMessageData,
-  ParamsBlock,
-  WasmLocation,
-  WorkerMessageData,
+import {
+  type BootStage,
+  type ClientMessageData,
+  KILLED_SLOT,
+  type ParamsBlock,
+  type WasmLocation,
+  type WorkerMessageData,
 } from '../types/protocol';
 import { DATABASE_FILE_SUFFIXES, renderPragmas } from '../utils';
 import { anonymousParams, bindBlock, RowWriter } from './binary';
@@ -766,8 +767,13 @@ const open = (file: string, options: OpenOptions) => {
     // without a slot.
     const yields = currentBuild !== 'sync';
     const polls = !yields && slot !== undefined;
-    const abortedHere = () =>
-      slot !== undefined && Atomics.load(slot, abortIndex as number) === callId;
+    // The pool's own abort writes this statement's callId; its kill writes
+    // KILLED_SLOT, because a terminated worker does not stop on Safari.
+    const abortedHere = () => {
+      if (slot === undefined) return false;
+      const value = Atomics.load(slot, abortIndex as number);
+      return value === callId || value === KILLED_SLOT;
+    };
     if (yields || polls) {
       sqlite.progress_handler(
         db,
