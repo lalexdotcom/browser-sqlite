@@ -19,7 +19,7 @@ In the sweep, `removeEntry()`'s `.catch` also tolerates `NoModificationAllowedEr
 
 In `test/vfs_handover.js`, beside #347's case: `createHolder()` (`test/vfs_handle_recovery.js`, which now takes an optional subdirectory) holds an access handle on `0.tmp` inside an `.ahp-held-*` directory whose lock nobody holds — the state the evicted page leaves. A new instance must start (`startInstance()`, which rejects on a failed start where `TestContext.create()` hangs); then, once the handle is closed, the next instance must have deleted the directory. No navigation is needed, and the condition does arise on Firefox this way.
 
-On `master` (`6b59b231`): fails on default, asyncify and jspi with `NoModificationAllowedError`, Chrome 153 (upstream's runner and config) and Firefox 155 (the fork's WebDriver harness of `probe/stock-browsers`, in a throwaway detached worktree `.work/wa-sqlite-sweep-ff`). With the change: `OPFSCoopSyncVFS.test.js` 170/170 on Chrome and 126/126 on Firefox; the whole suite on Chrome 15/15 files, 6 449 assertions. Safari not run.
+On `master` (`6b59b231`): fails on default, asyncify and jspi with `NoModificationAllowedError`, Chrome 153 (upstream's runner and config) and Firefox 155 (the fork's WebDriver harness of `probe/stock-browsers`, with the PR's test files and either VFS copied over it, not committed). With the change: `OPFSCoopSyncVFS.test.js` 170/170 on Chrome and 126/126 on Firefox; the whole suite on Chrome 15/15 files, 6 449 assertions. Safari not run.
 
 ## Posted upstream
 
