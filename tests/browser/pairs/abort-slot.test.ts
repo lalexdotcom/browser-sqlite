@@ -185,6 +185,11 @@ describe('the sync build, isolated', {
     // Chromium stops a terminated worker's WASM after ~2 s (HANDLE-CORPSE); the
     // slot stops it at the next progress check.
     expect(performance.now() - killedAt).toBeLessThan(1_000);
+    // The replacement does not inherit KILLED_SLOT: a statement past the
+    // progress handler's 100 000-op threshold still completes, twice.
+    for (let run = 0; run < 2; run++) {
+      expect(await db.read(longQuery(200_000))).toEqual([{ n: 200_000 }]);
+    }
     await db.close();
   });
 });

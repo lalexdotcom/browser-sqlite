@@ -544,7 +544,7 @@ export const createPoolWorker = (deps: {
           // seventh call. The replacement runs no polled statement before
           // `ready`, so zeroing here keeps both guards — the predecessor's
           // last callId, and the KILLED_SLOT it must still read.
-          if (abortSlots) new Int32Array(abortSlots)[index] = 0;
+          if (abortSlots) Atomics.store(new Int32Array(abortSlots), index, 0);
           ready = true;
           worker.status = 'READY';
           debugWorker?.initialized();
@@ -984,9 +984,11 @@ export const createPoolWorker = (deps: {
   Object.assign(worker, {
     query,
     terminate: (reason?: SQLiteError) => {
-      // Read before poison(), which marks every worker DEAD. A worker that
-      // answered `closed` has let its transactions settle already.
+      // Read before poison(), which marks every worker DEAD and ends the query
+      // in flight. A worker that answered `closed` has let its transactions
+      // settle already.
       const closed = worker.status === 'CLOSED';
+      const busy = servingQuery !== undefined;
       poison(
         reason ??
           new SQLiteError(
@@ -996,7 +998,7 @@ export const createPoolWorker = (deps: {
       );
       // Safari does not stop a terminated worker inside a statement (WebKit
       // 328618), so the slot stops it first, at its next progress check.
-      if (servingQuery !== undefined && abortSlots)
+      if (busy && abortSlots)
         Atomics.store(new Int32Array(abortSlots), index, KILLED_SLOT);
       // Not on the other VFS: an OPFS handle would outlive the kill by the
       // grace while a replacement opens the same file.
