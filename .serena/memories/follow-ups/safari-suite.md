@@ -11,7 +11,6 @@ Part of `mem:follow-ups`. **The wiring is done on `feat/safari-suite`** (spec `d
 
 ## Still open
 
-- **`second-client` "fails the client with that worker's error rather than hanging"** (`OPFSWriteAheadVFS/sync`, Safari 26 and 27): `'still waiting'` at its 10 s bound. Not 328618 — worker 0 is terminated before its first message, no WASM runs. Red before and after the `InvalidStateError` match. Ours until shown otherwise: look at it on its own (what the second worker does once the first is gone, without `readwrite-unsafe`).
 - **`lifecycle` "fails the client permanently once the restart budget is spent" on `OPFSAdaptiveVFS/async`** (Safari 26): replacement not ready within the test's 5 s — the intermittent one of SAFARI-IDB-LIB (8/20, on the IndexedDB VFS too), attributed then to Safari's startup time on 3 cores; not analysed.
 
 ## Not relying on `terminate()` to stop a busy worker on Safari — not designed (user, 2026-10-22)
