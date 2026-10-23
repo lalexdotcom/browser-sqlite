@@ -4,7 +4,7 @@ One short entry each, and every entry OPEN. **An entry marked DORMANT waits for 
 `CHANGELOG.md` and `git log` record what was fixed, `mem:measurements` holds the numbers,
 `mem:vfs` the VFS behaviour, `mem:lessons` what a closure taught.
 
-**The test-planner design (no identical repetitions in the browser suite) lives in `mem:follow-ups/test-planner-design` (2026-10-12)**: decisions taken with the user point by point, before any spec. **Proposals to wa-sqlite for a cheaper `step()` live in `mem:follow-ups/wa-step-upstream` (2026-10-16).** **Entries waiting on an event live in `mem:follow-ups/dormant`** — `open-retry` on Firefox and wa-sqlite #297 `trace_v2`, moved there on 2026-10-05 to keep this file under 40 000 characters.
+**The test-planner design (no identical repetitions in the browser suite) lives in `mem:follow-ups/test-planner-design` (2026-10-12)**: decisions taken with the user point by point, before any spec. **Proposals to wa-sqlite for a cheaper `step()` live in `mem:follow-ups/wa-step-upstream` (2026-10-16); options 1 and 2 accepted on #383 (2026-10-23), PR to send.** **Entries waiting on an event live in `mem:follow-ups/dormant`** — `open-retry` on Firefox and wa-sqlite #297 `trace_v2`, moved there on 2026-10-05 to keep this file under 40 000 characters.
 
 **Delete, never annotate.** No struck-through lines, no "shipped and merged", no headstone
 saying an entry is gone, no verdict on an entry: what is written here is the backlog, not a
