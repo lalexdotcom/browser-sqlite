@@ -25,8 +25,9 @@ const atMost = (v: Version, last: Version): boolean => {
 
 /**
  * WebKit's `terminate()` lets a worker's WASM loop run to its end, its OPFS
- * handles held meanwhile (SAFARI-TERMINATE-WASM, 2026-10-22: 26.6.2 and
- * 27.0.1). 27.0.1 is the last version measured.
+ * handles held meanwhile (WebKit 328618; SAFARI-TERMINATE-WASM, 2026-10-22:
+ * 26.6.2 and 27.0.1, and Technology Preview 255). 27.0.1 is the last stable
+ * version measured.
  */
 export const terminateRunsWasm = (userAgent: string): boolean => {
   const v = safariVersionOf(userAgent);
@@ -34,4 +35,4 @@ export const terminateRunsWasm = (userAgent: string): boolean => {
 };
 
 export const TERMINATE_RUNS_WASM =
-  "Safari ≤ 27.0.1: terminate() lets a worker's WASM loop run to its end, holding its OPFS handles (a WebKit defect, SAFARI-TERMINATE-WASM)";
+  "Safari ≤ 27.0.1: terminate() lets a worker's WASM loop run to its end, holding its OPFS handles (WebKit 328618)";
