@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **An invalid or refused pragma is reported with `INVALID_PRAGMA` before a missing browser feature,** where a browser without OPFS reported the missing OPFS instead.
 - **A `wasmUrl` callback is no longer called when the client's options are invalid or the browser lacks what the VFS needs,** nor when `deleteDatabase()` is refused before starting its worker.
 - **Reading rows is faster.**
+- **The bundled wa-sqlite is updated,** with upstream's retry of an `OPFSCoopSyncVFS` access handle that a terminated worker still holds.
 
 ### Fixed
 
@@ -19,7 +20,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **A client loads its `.wasm` from `wasmUrl`,** where it always loaded them from beside `worker.js` whatever `wasmUrl` said; only `deleteDatabase()` honoured it.
 - **`IDBBatchAtomicVFS` and `IDBMirrorVFS` are refused at construction where IndexedDB is missing,** naming the VFS that do without it, instead of failing in their worker. `detectFeatures()` and `PlatformFeature` gain `indexeddb`.
 - **The published types resolve under TypeScript's `node16` and `nodenext` module resolution,** the default of `tsc --init`, where only `bundler` resolved them.
-- **On `OPFSCoopSyncVFS`, a statement no longer fails with an error carrying no code (`No modification allowed`) when another client's worker was terminated while it held the database,** such as a worker that missed its open timeout.
 - **On `OPFSCoopSyncVFS` in Chromium, the first open of a database after leaving a page that kept it open no longer fails and has to be retried,** which added about 85 ms when the browser had put that page in its back/forward cache.
 - **On `OPFSAdaptiveVFS` in Firefox, a client no longer hangs, or leaves the database locked for every other client, when another client's worker was terminated while it held the database,** such as a worker that missed its open timeout or a tab that was closed.
 - **On `OPFSAdaptiveVFS` in Firefox, a client no longer fails for good when one of its workers crashes,** which happened when the restarted worker found the database still held by the worker it replaced (`WORKER_CRASHED`, `No modification allowed`). A worker restarted after a crash now waits for that file, whatever the VFS.

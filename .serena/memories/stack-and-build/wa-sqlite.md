@@ -6,8 +6,10 @@ Part of `mem:stack-and-build`. Moved here from it on 2026-10-08; the chain of ea
 
 `wa-sqlite` is a devDependency only, vendored into `dist/worker/worker.js` at build time so it
 never reaches a consumer lockfile. **Pinned by commit SHA, not by tag, since 2026-09-15 (user)**:
-`github:rhashimoto/wa-sqlite#6b59b23105c60a87e4eab19c0b3fa59d5a0b7dab` since 2026-10-23, upstream
-`master` with #380 merged (darshanp40: `getRoot`/`prefix` on `AccessHandlePoolVFS`, `OPFSCoopSyncVFS`,
+`github:rhashimoto/wa-sqlite#8a8bc2eecdb8c553f9e1b1631b97f62d52153194` since the evening of 2026-10-23,
+upstream `master` with our #381 merged (squashed, `OPFSCoopSyncVFS.js` byte for byte the review head
+`42bfb903` the patch carried): the installed `src/` and the built `worker.js` are byte-identical across
+that repin. Before it, `6b59b231` (2026-10-23), upstream `master` with #380 merged (darshanp40: `getRoot`/`prefix` on `AccessHandlePoolVFS`, `OPFSCoopSyncVFS`,
 `OPFSWriteAheadVFS`, unused here; the library's `{ lockPolicy: 'shared' }` is now copied into those
 VFS's `this.options`, harmlessly). Only those three files changed in `src/` across it, `sqlite-api.js`
 and `dist/` not at all, so the fast step and its fingerprints held. Before it, `6238f532` (2026-10-13), upstream
@@ -40,7 +42,7 @@ as well as a release and nothing waits for one.
 
 ## The patch
 
-**Since the repin of 2026-10-23 it carries six PRs, rebuilt from their heads on `6b59b231`:** #381 `42bfb903` (its review head), #382 `d6dd6ba0`, #384 `97d0f192`, #385 `086200d7`, #386 `a21e9d45`, #387 `7805bb2f`. Files: `WebLocksMixin.js` (#387) and `OPFSAdaptiveVFS.js` (#382), byte for byte their heads; `IDBBatchAtomicVFS.js` (#384 + #387), `IDBMirrorVFS.js` (#385 + #387) and `OPFSCoopSyncVFS.js` (#381 + #386, over #380), every line of each PR's diff present. Made in a detached worktree of the pin by `git apply --3way` of each head's `git diff $(merge-base) <head> -- src/`, all clean; upstream's suite green on that tree (Chrome, 15/15 files, 6 443); the patch written as `git diff --full-index`, round-tripped through `pnpm patch --edit-dir` / `patch -p1` / `patch-commit` (same content, hash `0f0313c2…`); installed `src/` identical to the tree (`diff -r`, build sources aside), `dist/` identical; after clearing the rspack caches the bundle shows #386's check, `getIDBFactory`, the prefixed `mirror:` channel and #381's retry. Library: `pnpm test` 371/371 files. The paragraphs below describe the patch before that repin.
+**Since the repin to `8a8bc2ee` (2026-10-23, #381 merged) it carries five PRs:** #382 `d6dd6ba0`, #384 `97d0f192`, #385 `086200d7`, #386 `c4f832ea` (rebased onto `8a8bc2ee`), #387 `7805bb2f`; same procedure as below, every diff applied clean, the combined `src/` identical to the previous pin's combined tree (`diff -r`), new patch hash `5e460f16…`, `pnpm test` 371/371 files. **Before it, from the repin of 2026-10-23 to `6b59b231`, six PRs, rebuilt from their heads:** #381 `42bfb903` (its review head), #382 `d6dd6ba0`, #384 `97d0f192`, #385 `086200d7`, #386 `a21e9d45`, #387 `7805bb2f`. Files: `WebLocksMixin.js` (#387) and `OPFSAdaptiveVFS.js` (#382), byte for byte their heads; `IDBBatchAtomicVFS.js` (#384 + #387), `IDBMirrorVFS.js` (#385 + #387) and `OPFSCoopSyncVFS.js` (#381 + #386, over #380), every line of each PR's diff present. Made in a detached worktree of the pin by `git apply --3way` of each head's `git diff $(merge-base) <head> -- src/`, all clean; upstream's suite green on that tree (Chrome, 15/15 files, 6 443); the patch written as `git diff --full-index`, round-tripped through `pnpm patch --edit-dir` / `patch -p1` / `patch-commit` (same content, hash `0f0313c2…`); installed `src/` identical to the tree (`diff -r`, build sources aside), `dist/` identical; after clearing the rspack caches the bundle shows #386's check, `getIDBFactory`, the prefixed `mirror:` channel and #381's retry. Library: `pnpm test` 371/371 files. The paragraphs below describe the patch before that repin.
 
 **Since 2026-10-21 it also carries #384 (`IDBBatchAtomicVFS.js`, head `97d0f192`) and #385 (`IDBMirrorVFS.js`, head `086200d7`)**, the four installed files byte for byte their PR heads (`cmp`), on branch `fix/idb-vfs-close`.
 
