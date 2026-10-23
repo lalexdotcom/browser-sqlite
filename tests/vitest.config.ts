@@ -1,10 +1,10 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import type { Plugin } from 'vite';
 import {
   defineConfig,
   type TestProjectInlineConfiguration,
 } from 'vitest/config';
-import type { BrowserCommand } from 'vitest/node';
 import {
   ALL_BROWSERS,
   type BrowserName,
@@ -30,11 +30,25 @@ const ISOLATION = {
 const SPIKE_LOG = fileURLToPath(
   new URL('../.work/spike-live.log', import.meta.url),
 );
-const spikeLog: BrowserCommand<[line: string]> = (_context, line) => {
-  mkdirSync(fileURLToPath(new URL('../.work', import.meta.url)), {
-    recursive: true,
-  });
-  appendFileSync(SPIKE_LOG, `${line}\n`);
+// A POST to the dev server, not a browser command: a command switches frames
+// through the driver, which WebDriver BiDi (Firefox) refuses.
+const spikeLog: Plugin = {
+  name: 'spike-log',
+  configureServer(server) {
+    server.middlewares.use('/__spike-log', (req, res) => {
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
+      req.on('end', () => {
+        mkdirSync(fileURLToPath(new URL('../.work', import.meta.url)), {
+          recursive: true,
+        });
+        appendFileSync(SPIKE_LOG, `${body}\n`);
+        res.end();
+      });
+    });
+  },
 };
 const built = (file: string) =>
   fileURLToPath(new URL(`./build/${file}`, import.meta.url));
@@ -101,7 +115,6 @@ const browserProject = (
       screenshotFailures: false,
       provider: resolvingWebdriverio(browser, { cacheDir: WDIO_CACHE_DIR }),
       instances: [{ browser, name }],
-      commands: { spikeLog },
     },
   },
 });
@@ -109,6 +122,7 @@ const browserProject = (
 export default defineConfig({
   // Every path below is from the repository root, not from this folder.
   root: fileURLToPath(new URL('..', import.meta.url)),
+  plugins: [spikeLog],
   // One Vite cache per parallel job (scripts/parallel.ts, jobEnv): processes
   // sharing a dep-optimizer cache race when they commit it.
   ...(process.env.BSQ_VITE_CACHE_DIR

@@ -4,13 +4,12 @@
  * `lifecycle` › "fails the client permanently once the restart budget is
  * spent" fails on Safari 26 with its replacement not ready within 5 s. This
  * replays its steps round by round with no bound of 5 s, and writes every
- * event as it happens (`commands.spikeLog`, `.work/spike-live.log`): the kill,
+ * event as it happens (a POST to the dev server, appended to `.work/spike-live.log`): the kill,
  * the rejection, each message of the replacement with its boot stage, its
  * `ready`, and the second kill. A baseline first: a fresh client's startup and
  * an uncut `longQuery(20_000_000)`.
  */
 import { describe, it } from 'vitest';
-import { commands } from 'vitest/browser';
 import {
   createTestClient,
   ENVIRONMENT,
@@ -21,12 +20,6 @@ import {
   type WorkerRecord,
 } from '../helpers';
 
-declare module 'vitest/browser' {
-  interface BrowserCommands {
-    spikeLog: (line: string) => Promise<void>;
-  }
-}
-
 const ROUNDS = 10;
 const PATIENCE = 60_000;
 /** The per-statement traffic: the round's own lines say when a read settles. */
@@ -34,6 +27,7 @@ const QUIET = new Set(['query', 'done', 'credit', 'chunk']);
 
 describe('SPIKE: a restart after a kill mid-statement', () => {
   it('times the replacement, round by round', {
+    tags: ['browser:safari'],
     timeout: 1_500_000,
   }, async () => {
     const { vfs, build } = TEST_TARGET;
@@ -41,10 +35,17 @@ describe('SPIKE: a restart after a kill mid-statement', () => {
     const label = `${ENVIRONMENT.browser} ${version} ${vfs}/${build}`;
     let t0 = performance.now();
     let round = 'base';
+    // In order: each line waits for the previous one to be written.
+    let sent = Promise.resolve();
     const log = (line: string) => {
       const text = `SPIKE ${label} [${round}] ${Math.round(performance.now() - t0)} ms ${line}`;
       console.log(text);
-      void commands.spikeLog(text);
+      sent = sent.then(() =>
+        fetch('/__spike-log', { method: 'POST', body: text }).then(
+          () => {},
+          () => {},
+        ),
+      );
     };
 
     const records = interceptWorkers();
@@ -153,5 +154,6 @@ describe('SPIKE: a restart after a kill mid-statement', () => {
     }
     round = 'summary';
     for (const line of summary) log(line);
+    await sent;
   });
 });
