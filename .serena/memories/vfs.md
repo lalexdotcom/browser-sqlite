@@ -175,6 +175,8 @@ the `WORKER_CRASHED` the guard replaces. Fixed by not spawning at all once `clos
 
 ## HANDLE-CORPSE reaches `xOpen`, and `exclusiveFileHandle` is what declares it (2026-09-18)
 
+**Since 2026-10-23 a first open is retried on no VFS** (`refactor/post-381-open-retry`; POST-381, `mem:measurements/held-handles`). wa-sqlite #381 (merged, pinned at `8a8bc2ee`) makes `OPFSCoopSyncVFS` retry its held file inside `jOpen()` for 5 s with the Web Lock kept, past `openWithRetry`'s 2.5 s budget, so the library's first-open retry never got a second attempt and is removed; `exclusiveFileHandle` drives no retry any more and stays for the test planner (`requires:exclusive-file-handle`). The after-death retry at the end of this section stands. What follows is how the declaration came to be.
+
 A terminated worker releases its Web Locks **at once** and its OPFS access handles **some time
 later** — up to ~2 s on Chromium when it was killed inside a `step()`, 1-6 ms on Firefox
 (HANDLE-ORPHAN). So a VFS acquiring a handle meets a file held by a context that answers nothing:
