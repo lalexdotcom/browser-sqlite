@@ -50,7 +50,6 @@ import { isHeldElsewhere } from './held';
 import { firstMissing } from './probes';
 import { sqliteCodeOf } from './sqlite-code';
 import { createStatementCache } from './statement-cache';
-import { createStep, type Step } from './step';
 
 type SQLOptions = {
   chunkSize?: number;
@@ -321,7 +320,6 @@ let openedDB:
       sqlite: SQLiteAPI;
       module: WASQLiteModule;
       db: number;
-      step: Step;
     }>
   | undefined;
 /**
@@ -576,17 +574,16 @@ const open = (file: string, options: OpenOptions) => {
               options.afterDeath,
               options.openDeadline,
             );
-            const step = createStep(module, build, db);
             boot('applying pragmas');
             for (const statement of renderPragmas(pragmas)) {
               for await (const stmt of sqlite.statements(db, statement)) {
-                while ((await step(stmt)) === SQLITE_ROW) {}
+                while ((await sqlite.step_asap(stmt)) === SQLITE_ROW) {}
               }
             }
             // After the pragmas, which are not control. A plain function: an
             // async one would take wa-sqlite's `_async` relay.
             sqlite.set_authorizer(db, authorize, null);
-            return { sqlite, module, db, step };
+            return { sqlite, module, db };
           });
         },
       );
@@ -660,7 +657,7 @@ const open = (file: string, options: OpenOptions) => {
     // The next value a statement of anonymous `?` takes (`run`).
     let cursor = 0;
 
-    const { sqlite, db, module, step } = await openedDB;
+    const { sqlite, db, module } = await openedDB;
     const { chunkSize = 1 } = options ?? {};
     // sqlite3_changes() keeps the last write's count across a statement that
     // changes nothing; the total does not move then.
@@ -717,7 +714,7 @@ const open = (file: string, options: OpenOptions) => {
           stepping = true;
           // A number when nothing suspended; a synchronous throw lands in this
           // same `try`, like a rejection.
-          const stepped = step(stmt);
+          const stepped = sqlite.step_asap(stmt);
           result = typeof stepped === 'number' ? stepped : await stepped;
         } catch (e) {
           if ((e as { code?: number })?.code === SQLITE_INTERRUPT) {

@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **An invalid or refused pragma is reported with `INVALID_PRAGMA` before a missing browser feature,** where a browser without OPFS reported the missing OPFS instead.
 - **A `wasmUrl` callback is no longer called when the client's options are invalid or the browser lacks what the VFS needs,** nor when `deleteDatabase()` is refused before starting its worker.
 - **Reading rows is faster.**
-- **The bundled wa-sqlite is updated,** with upstream's retry of an `OPFSCoopSyncVFS` access handle that a terminated worker still holds.
+- **The bundled wa-sqlite is updated,** with upstream's retry of an access handle that a terminated worker still holds, in `OPFSCoopSyncVFS` and `OPFSAdaptiveVFS`, and an IndexedDB VFS whose `close()` waits for its transactions.
 
 ### Fixed
 
@@ -21,12 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`IDBBatchAtomicVFS` and `IDBMirrorVFS` are refused at construction where IndexedDB is missing,** naming the VFS that do without it, instead of failing in their worker. `detectFeatures()` and `PlatformFeature` gain `indexeddb`.
 - **The published types resolve under TypeScript's `node16` and `nodenext` module resolution,** the default of `tsc --init`, where only `bundler` resolved them.
 - **On `OPFSCoopSyncVFS` in Chromium, the first open of a database after leaving a page that kept it open no longer fails and has to be retried,** which added about 85 ms when the browser had put that page in its back/forward cache.
-- **On `OPFSAdaptiveVFS` in Firefox, a client no longer hangs, or leaves the database locked for every other client, when another client's worker was terminated while it held the database,** such as a worker that missed its open timeout or a tab that was closed.
 - **On `OPFSAdaptiveVFS` in Firefox, a client no longer fails for good when one of its workers crashes,** which happened when the restarted worker found the database still held by the worker it replaced (`WORKER_CRASHED`, `No modification allowed`). A worker restarted after a crash now waits for that file, whatever the VFS.
 - **On `AccessHandlePoolVFS` in Safari, `deleteDatabase()` and a worker opening the database no longer fail when a worker that died moments before still holds its files** (`WORKER_CRASHED`, `InvalidStateError`): they wait for those files, as on Chrome and Firefox.
 - **On Safari, `IDBBatchAtomicVFS` and `IDBMirrorVFS` no longer leave their IndexedDB database held open after `close()` or `deleteDatabase()`,** which made `indexedDB.deleteDatabase()` and upgrades of that database wait indefinitely, even across page reloads.
 - **On `IDBBatchAtomicVFS` and `IDBMirrorVFS`, a worker terminated after a crash, a timeout or a client failure no longer leaves its IndexedDB database held open on Safari:** the worker is first given up to 300 ms to let its IndexedDB transactions finish.
-- **On `IDBBatchAtomicVFS` with `synchronous=NORMAL`, the last write before `close()` is no longer lost,** which happened about half the time: the worker was terminated before that write's commit reached IndexedDB.
 
 ## [1.0.0-rc.10] - 2026-10-09
 
