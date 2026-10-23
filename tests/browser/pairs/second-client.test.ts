@@ -91,9 +91,13 @@ describe('a client whose worker 0 is lost before it answers the probe', () => {
             post(message, ...rest);
             return;
           }
-          killSilently(worker);
+          // The error before the kill: Safari 26 and 27 deliver no event
+          // dispatched on a terminated Worker, so the client never heard of
+          // the death and waited out its 30 s open timeout (traced
+          // 2026-10-23). The `open` is never posted, so nothing can answer.
           setTimeout(() => {
             worker.dispatchEvent(new ErrorEvent('error', { message: LOST }));
+            killSilently(worker);
           }, 0);
         };
       }
