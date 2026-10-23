@@ -92,6 +92,10 @@ Delivered on 2026-10-10; the decisions (D1-D11), the order and the risks are in 
 - **WPE WebKit in the Linux tests (user, 2026-10-11):** add WPE WebKit 2.54 with its MiniBrowser and WPEWebDriver to the Linux runs (dev container and CI), beside Chrome and Firefox. Not designed. To check first: whether a WebDriver session gets a persistent website-data session — WebKitGTK's MiniBrowser under `--automation` takes `webkit_web_context_get_network_session_for_automation()`, an ephemeral session (read in WebKit's source, not run; STOCK-BROWSERS, `mem:measurements/test-browsers`), and Playwright's ephemeral WebKit contexts have no OPFS (WA-WEBKIT-SUITE) — so OPFS under WPEWebDriver is unknown; and how 2.54 is installed on Debian 13 and on `ubuntu-latest`.
 - **Unmeasured, needs Safari:** the library's `IDBMirrorVFS` with several connections on Safari 26 may stall the way wa-sqlite's `sql_0005` does (SAFARI26-IDBMIRROR-KILL).
 
+## wa-sqlite #387: `getIDBFactory` and `prefix` for the IndexedDB VFS — PR open
+
+Opened 2026-10-23, branch `idb-factory-prefix` of the fork on `master` `6b59b231`; report `docs/upstream/2026-10-23-wa-sqlite-387-idb-factory-prefix.md`. **Owed:** when #385 or #387 merges, rebase the other — one import line in `test/IDBMirrorVFS.test.js`, keep both. If rhashimoto wants `prefix` kept out of `WebLocksMixin`'s other users, he says so on the PR (user). Open, not decided: a Mirror-only test of `#getOldestTxInUse()` with a prefix (no test covers that line).
+
 ## wa-sqlite #362: `OPFSCoopSyncVFS.create()` fails after a back/forward-cache navigation — PR #386 open
 
 **PR #386 opened 2026-10-23** (rhashimoto accepted the offer on 2026-10-17, issuecomment-6236936019), branch `opfscoopsync-sweep-held-directory` of the fork on `master` `6b59b231`; report `docs/upstream/2026-10-23-wa-sqlite-386-coopsync-sweep-held-directory.md`. **Owed:** carry it in `patches/` (regenerates the patch beside #381); when #381 or #386 merges, rebase the other — conflict in `test/vfs_handover.js` only, keep both cases, `startInstance()` returns `{ worker, port }` after #381, so the #386 case uses `.worker`. The text below is the issue's history.
