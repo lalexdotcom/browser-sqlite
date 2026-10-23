@@ -47,19 +47,18 @@ export type VFSCapability = {
    * `createSyncAccessHandle()` with no `mode`, rather than
    * `mode: 'readwrite-unsafe'`.
    *
-   * It decides whether an acquisition has to be retried. A terminated context
-   * releases its Web Locks at once but keeps its OPFS access handles for up to
-   * ~2 s on Chromium (HANDLE-CORPSE, `mem:measurements`), so a VFS taking an
-   * exclusive handle can meet a file held by something that answers nothing:
-   * no lock to wait on, no owner to ask, only time to wait out. Where
-   * `readwrite-unsafe` is used a second handle is granted regardless, and a
-   * dead holder blocks nobody.
+   * A terminated context releases its Web Locks at once but keeps its OPFS
+   * access handles for up to ~2 s on Chromium (HANDLE-CORPSE,
+   * `mem:measurements`), so a VFS taking an exclusive handle can meet a file
+   * held by something that answers nothing: no lock to wait on, no owner to
+   * ask, only time to wait out. Where `readwrite-unsafe` is used a second
+   * handle is granted regardless, and a dead holder blocks nobody.
    *
-   * Declared, and the cause checked as well: on a declared VFS the retry reads
-   * the `lastError` the VFS keeps — set by `OPFSCoopSyncVFS` on a failed
-   * acquisition since wa-sqlite #357 — and retries only a held file. Where the
-   * error comes back from the call itself — VFS instantiation —
-   * `createVfsInstance` tests it directly and needs no declaration.
+   * The library does not read it: `OPFSCoopSyncVFS` retries a held file
+   * itself since wa-sqlite #381, and `AccessHandlePoolVFS` takes its handles
+   * when it is created, which `createVfsInstance` retries
+   * (POST-381, `mem:measurements/held-handles`). The test planner does
+   * (`requires:exclusive-file-handle`).
    *
    * NOT declared for `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS`, which ask for
    * `readwrite-unsafe` and fall back to an exclusive handle only on an engine
