@@ -37,6 +37,8 @@ A third case in `test/vfs_commit_survives.js`, `IDBBatchAtomicVFS` only (both bu
 
 PR [#384][pr384], opened 2026-10-21 from `lalexdotcom:idbbatchatomic-close-settle` on `master` at `6238f532`: the test (`be749445`), then the change (`97d0f192`). The body, validated by the user, carries no measurement: the lost commit reproduces in Chrome and Firefox, most reliably in Firefox; the live readonly transaction and WebKit 324094 are named for Safari; `IDBMirrorVFS` "may have a similar problem and is being looked into separately". It does not mention this library.
 
+**Merged 2026-10-23** (`ced5652e`, squashed, the file byte for byte our head) and pinned the same night with the repin to `66336807`.
+
 ## What stays ours
 
 - **`IDBMirrorVFS`**, next: no lost commit (`jClose` already waits for its commits since #372), but `jOpen`'s readwrite transaction or a read's is live at `close()` (16-17/20 on Chrome, 20/20 on Firefox).

@@ -23,12 +23,7 @@ unmeasured ground.
   ~17 min against 3-9 for the others, under the 25-minute job limit — not looked into, and not
   seen at rc.9.
   Procedure: `mem:conventions/releasing`.
-- **The vendored wa-sqlite sits on upstream `master` of 2026-10-23** (`8a8bc2ee`, our #381 merged
-  after #380; `package.json` has the SHA). **The patch carries five PRs of ours**: #382 (the
-  `OPFSAdaptiveVFS` retry on a held access handle, since 2026-10-16), #384
-  and #385 (the IndexedDB VFS's `close()` waits for its transactions, since 2026-10-21), #386 (the
-  `OPFSCoopSyncVFS` startup sweep) and #387 (`getIDBFactory`/`prefix`, unused here), since the repin
-  of 2026-10-23. Heads and merges in
+- **On branch `build/repin-wa-sqlite-6633680` (not merged yet), the vendored wa-sqlite sits on upstream `master` `66336807`** (2026-10-23 night: our #382, #384, #385 merged; `package.json` has the SHA), and **the patch carries three PRs of ours**: #386 (the `OPFSCoopSyncVFS` startup sweep), #387 (`getIDBFactory`/`prefix`, unused here) and #388 (`step_asap()`, which the worker now steps through; `src/worker/step.ts` is deleted there). On `main` until it merges: `8a8bc2ee` with #382 and #384-#387 carried. Heads and merges in
   `mem:stack-and-build/wa-sqlite`, reports in `mem:upstream`. A patch is added, regenerated or
   removed through `pnpm patch` / `pnpm patch-commit` / `pnpm patch-remove`, never by hand.
 - **`main` may sit ahead of `origin/main` indefinitely** — the convention, not an oversight. It
@@ -97,7 +92,7 @@ here on purpose: a total alone cannot say which suite moved.
   plan and what his go calls for are in `mem:follow-ups`, the
   measurements in `mem:measurements/test-browsers`, and the user's principles in
   `mem:conventions` (§ Testing in browsers).
-- **Update of the evening of 2026-10-23, read before the paragraph below:** upstream `master` is now `ced5652e`, with **#382 (`010eeb50`) and #384 (`ced5652e`) merged** — the repin onto it, dropping their hunks from the patch, is owed and not started. **#388 (`step_asap()`, #383's options 1 and 2) was opened the same evening** and is not carried (`mem:follow-ups/wa-step-upstream`). Open: #385, #386, #387, #388.
+- **Update of the night of 2026-10-23, read before the paragraph below:** upstream `master` is now `66336807`, with **#382 (`010eeb50`), #384 (`ced5652e`) and #385 (`66336807`) merged**; the repin onto it is on `build/repin-wa-sqlite-6633680`, with **#388 (`step_asap()`, #383's options 1 and 2, opened the same evening) carried** and the library's fast step replaced by it (`mem:follow-ups/wa-step-upstream`). Open: #386, #387, #388.
 - **Five PRs of ours are open on wa-sqlite (checked 2026-10-23); #381 merged that day (`8a8bc2ee`) and is pinned:** #382 (`OPFSAdaptiveVFS`, 2026-10-16; approved 2026-10-23, its merge was held until #381 was done), #384 (`IDBBatchAtomicVFS` `close()`, 2026-10-21) and #385 (`IDBMirrorVFS` `close()`, 2026-10-21), #386 (`OPFSCoopSyncVFS` startup sweep, issue #362, 2026-10-23) and #387 (`getIDBFactory`/`prefix` for the IndexedDB VFS, offered on #380, 2026-10-23; nothing here uses it) — all five carried in the patch (repin to `8a8bc2ee`, 2026-10-23); #386 rebased onto it (`c4f832ea`). #387 and #385 conflict on one import in `test/IDBMirrorVFS.test.js`. When one merges, repin and drop its hunk (`mem:stack-and-build/wa-sqlite`, `mem:upstream`).
 - **Another agent's work was paused by the user until our upstream PRs were done; the user
   relaunches it.**
