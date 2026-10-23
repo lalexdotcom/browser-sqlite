@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **An invalid or refused pragma is reported with `INVALID_PRAGMA` before a missing browser feature,** where a browser without OPFS reported the missing OPFS instead.
 - **A `wasmUrl` callback is no longer called when the client's options are invalid or the browser lacks what the VFS needs,** nor when `deleteDatabase()` is refused before starting its worker.
 - **Reading rows is faster.**
+- **A worker the library terminates in the middle of a statement is interrupted first under cross-origin isolation.** Without it on the `sync` build, Safari up to 27.0.1 cannot stop that statement (WebKit 328618) and the worker keeps the database: its replacement now waits for the file up to `openTimeout`, then fails with a `WORKER_CRASHED` that names the cause, where it gave up after 2.5 seconds with a bare `InvalidStateError`.
 
 ### Fixed
 

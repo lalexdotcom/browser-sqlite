@@ -283,7 +283,7 @@ export const createPoolWorker = (deps: {
   pragmas?: Record<string, string> | undefined;
   statementCacheSize?: number | undefined;
   statementCacheBytes?: number | undefined;
-  onDeath?: (index: number, error: SQLiteError) => void;
+  onDeath?: (index: number, error: SQLiteError, busy: boolean) => void;
   onServed?: (index: number) => void;
   drainTimeout: number;
   createWorkerDebugState?:
@@ -294,8 +294,13 @@ export const createPoolWorker = (deps: {
   declineWithout?: readonly PlatformFeature[] | undefined;
   /** Sent to slot 0 where exclusivity depends on a feature (spec 2026-09-15). */
   probeFirst?: readonly PlatformFeature[] | undefined;
-  /** This worker replaces one that died: its open waits out a held file. */
-  afterDeath?: boolean | undefined;
+  /**
+   * This worker replaces one that died: its open waits out a held file.
+   * `busy`: the dead worker had a statement running.
+   */
+  afterDeath?: 'idle' | 'busy' | undefined;
+  /** Epoch ms a `busy` open waits until; see `openDeadline` in protocol.ts. */
+  openDeadline?: number | undefined;
   /** Worker 0's probe answer, with the function that lets it open. */
   onProbed?:
     | ((missing: PlatformFeature | null, proceed: () => void) => void)
@@ -315,7 +320,7 @@ export const createPoolWorker = (deps: {
   } = deps;
   const { createWorkerDebugState, logger } = deps;
   const { abortSlots } = deps;
-  const { declineWithout, probeFirst, afterDeath } = deps;
+  const { declineWithout, probeFirst, afterDeath, openDeadline } = deps;
 
   const deferredInit = Promise.withResolvers<PoolWorker | DeclinedWorker>();
 
@@ -472,8 +477,10 @@ export const createPoolWorker = (deps: {
   };
 
   const die = (error: SQLiteError) => {
+    // Read before `poison()`, which ends the query in flight.
+    const busy = servingQuery !== undefined;
     if (!poison(error)) return;
-    deps.onDeath?.(index, error);
+    deps.onDeath?.(index, error, busy);
   };
 
   worker.onerror = (event) => {
@@ -1054,6 +1061,7 @@ export const createPoolWorker = (deps: {
     declineWithout,
     probeFirst,
     afterDeath,
+    openDeadline,
   });
 
   return deferredInit.promise;

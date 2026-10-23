@@ -111,6 +111,8 @@ An abort does not always stop the work, and your hosting decides. On the `sync` 
 
 Serving the page cross-origin isolated gets you out, and so does any build other than `sync`; what each one costs is under [Interrupting a call](API.md#interrupting-a-call).
 
+The same holds when the library terminates a worker in the middle of a statement, after a timeout or a crash: where nothing can stop the statement (Safari up to 27.0.1, WebKit 328618), the worker keeps the database and its replacement waits for it up to `openTimeout`, then fails with a `WORKER_CRASHED` that says so. Cross-origin isolation or a build other than `sync` lets the library interrupt the statement first.
+
 ### Deleting a database
 
 A database that any client still holds cannot be deleted, in this tab or another, on every VFS. More on the dedicated [`deleteDatabase`](API.md#deletedatabase) API entry.

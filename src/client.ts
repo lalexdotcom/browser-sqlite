@@ -567,7 +567,7 @@ export const createSQLiteClient = (
         // make the option permanent to remove.
         for (const index of result.failedIndices) {
           scheduler.rearmSlot(index);
-          spawn(index, true);
+          spawn(index, 'idle');
         }
         // If failedIndices is empty the gate opens immediately (no re-arming).
         // If not, it stays closed until retry slots settle.
@@ -1539,6 +1539,13 @@ export const createSQLiteClient = (
   };
 
   const openTimeout = clientOptions.openTimeout ?? 30_000;
+  /**
+   * How long before `openTimeout` a replacement that cannot get its
+   * predecessor's file gives up and says so: the worker's error must reach
+   * this client before the `TIMEOUT` timer in `spawn` does, which would hide
+   * the reason.
+   */
+  const HELD_REPORT_MARGIN_MS = 1_000;
   const drainTimeout = clientOptions.drainTimeout ?? 60_000;
 
   const supervisor = createSupervisor({
@@ -1573,7 +1580,7 @@ export const createSQLiteClient = (
   };
 
   /** `afterDeath`: the slot's previous worker died, see `afterDeath` in protocol.ts. */
-  const spawn = (index: number, afterDeath = false) => {
+  const spawn = (index: number, afterDeath?: 'idle' | 'busy') => {
     // The slot holds a worker again from here — not from `ready`. Without this,
     // a restarted slot stays marked dead and the replacement's own death is
     // taken for a duplicate signal about the worker it replaced: no decision
@@ -1634,6 +1641,12 @@ export const createSQLiteClient = (
       logger,
       abortSlots,
       afterDeath,
+      // Measured here, at spawn: the worker's own clock starts after its boot,
+      // and the client's `TIMEOUT` timer above starts now.
+      openDeadline:
+        afterDeath === 'busy'
+          ? Date.now() + openTimeout - HELD_REPORT_MARGIN_MS
+          : undefined,
       // Slot 0 never declines; only surplus workers may. Where a probe is owed,
       // slot 0 probes instead (`probeFirst` below) and opens once told to.
       declineWithout:
@@ -1729,7 +1742,7 @@ export const createSQLiteClient = (
     else logger.info(message);
   };
 
-  const handleDeath = (index: number, error: SQLiteError) => {
+  const handleDeath = (index: number, error: SQLiteError, busy = false) => {
     // Snapshot inStartup BEFORE scheduler.remove() may trigger onFirstSettle or
     // onGateOpen (both of which can change inStartup synchronously).
     const wasInStartup = inStartup;
@@ -1763,7 +1776,7 @@ export const createSQLiteClient = (
     const decision = supervisor.report(index, 'died');
     if (decision === 'restart') {
       logger.warn(`restarting worker ${index + 1}`);
-      void spawn(index, true);
+      void spawn(index, busy ? 'busy' : 'idle');
     } else if (decision === 'lost') {
       // Slot permanently lost, but the pool still has workers — none of which
       // can stand in for worker 0 before it has answered (`probeSettled`).
