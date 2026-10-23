@@ -30,7 +30,7 @@
 | the change, `prefix` emptied in `customFactory.js` | lock test fails on both; the separation test fails on `IDBMirrorVFS` | — |
 | the change, `#getOldestTxInUse()` without the prefix | **all green: the line is untested** | — |
 
-Chrome ran upstream's runner and config; Firefox the fork's WebDriver harness of `probe/stock-browsers` with the branch's `src/`, `test/` and `dist/` copied over it, not committed. The untested line: with it wrong, a committer would compute the oldest view in use as its own and delete `tx` records a lagging connection with the same prefix still needs, visible only after a missed broadcast. Upstream has no test of that retention even without a prefix. A Mirror-only test reading the bucket's `tx` store while a connection holds an old view was offered to the user and not written; the PR names the line for review.
+Chrome ran upstream's runner and config; Firefox the fork's WebDriver harness of `probe/stock-browsers` with the branch's `src/`, `test/` and `dist/` copied over it, not committed. The untested line: with it wrong, a committer would compute the oldest view in use as its own and delete `tx` records a lagging connection with the same prefix still needs, visible only after a missed broadcast. Upstream has no test of that retention even without a prefix. A Mirror-only test reading the bucket's `tx` store while a connection holds an old view was offered to the user and not written; the PR names the line for review, and a follow-up comment the same day ([issuecomment-6370990190](https://github.com/rhashimoto/wa-sqlite/pull/387#issuecomment-6370990190), user) says no test covers it, prefixed or not, and offers that test.
 
 ## Posted upstream
 
