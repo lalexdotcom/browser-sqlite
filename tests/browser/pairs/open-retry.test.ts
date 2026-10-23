@@ -34,6 +34,12 @@ import { removeOpfsPath } from '../helpers/environment';
  * the test's, not the engine's, so what is pinned here is that the open
  * RETRIES, never how long it is willing to wait.
  *
+ * **The retry is the VFS's own since wa-sqlite #381** (5 s, the Web Lock
+ * kept); the library's retry of a first open never got a second attempt after
+ * it and is gone (POST-381, `mem:measurements/held-handles`). Falsifiable: install
+ * `OPFSCoopSyncVFS.js` without #381 — red on its four cells, Chrome and
+ * Firefox, isolated or not (measured 2026-10-23).
+ *
  * **One VFS, named on purpose.** The defect needs an exclusive handle taken at
  * `xOpen`. `OPFSAdaptiveVFS` and `OPFSWriteAheadVFS` open theirs with
  * `mode: 'readwrite-unsafe'`, so a dead holder blocks nothing;
@@ -305,8 +311,8 @@ describe('opening a database whose file is momentarily held', () => {
 });
 
 describe('opening a database whose file is refused for another reason', () => {
-  // Falsifiable: retry whatever the refusal — the open then waits out
-  // OPEN_RETRY_BUDGET_MS (2.5 s) before reporting what was never transient.
+  // Falsifiable: make a first open retry whatever the refusal — it then waits
+  // out OPEN_RETRY_BUDGET_MS (2.5 s) before reporting what was never transient.
   //
   // Timed from the worker's `opening the database` to the rejection: the
   // worker's boot before it is the engine's, not the subject, and on a CI
@@ -378,15 +384,15 @@ describe('opening a database whose file is refused for another reason', () => {
  * (wa-sqlite #381), and where `readwrite-unsafe` is missing (Firefox)
  * `OPFSAdaptiveVFS` takes an exclusive handle in `xOpen` right after that
  * lock. Seen once, on macOS 27 (run 39620037006): `lifecycle`'s restart failed
- * the client with `NoModificationAllowedError`, because the VFS is declared out
- * of the open retry. The window is the engine's, and a probe saw it in none of
+ * the client with `NoModificationAllowedError`, because an open was retried only
+ * on the VFS that declared an exclusive handle. The window is the engine's, and a probe saw it in none of
  * three full runs, so the test makes it its own, as above: it kills the
  * worker behind the pool's back, holds the file as the corpse would — the
  * handle, no lock — and only then reports the crash. The holder lets go
  * `RESTART_GRACE_MS` after the VFS announces it wants the file, on
  * `OPFSAdaptiveVFS`'s channel.
  *
- * Falsifiable: drop `afterDeath` from `openWithRetry`'s condition — the
+ * Falsifiable: make `openWithRetry` return at once whatever `afterDeath` — the
  * restarted worker's open fails at once with WORKER_CRASHED, and the client
  * with it.
  */

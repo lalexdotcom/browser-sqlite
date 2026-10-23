@@ -154,27 +154,26 @@ class HeldByKilledStatement extends Error {
 }
 
 /**
- * `sqlite3_open_v2`, retried for a VFS that takes an exclusive OPFS access
- * handle inside `xOpen` — where `createVfsInstance`'s retry cannot reach,
- * because the handle is taken per file, long after the VFS instance exists.
- *
- * Retried only when the VFS's `lastError` names a held file (`isHeldElsewhere`),
- * which `OPFSCoopSyncVFS` records on a failed acquisition since wa-sqlite
- * #357; any other refusal is reported at once, with that error as its cause.
- * The declaration narrows it further: only a VFS holding an EXCLUSIVE handle
- * can be blocked by a context that answers nothing, and only those retry.
- *
- * **Except after a death.** A worker that replaces one the pool terminated
- * retries on every VFS. Where `readwrite-unsafe` is missing,
- * `OPFSAdaptiveVFS` takes an exclusive handle in `xOpen` too, right after its
- * Web Lock — which a terminated worker gives back before its file (wa-sqlite
- * #381) — so the replacement can meet its predecessor's file still held: seen
- * once on Firefox, macOS 27 (`lifecycle`'s restart failed the client with
+ * `sqlite3_open_v2`, retried in a worker that replaces one the pool
+ * terminated, on every VFS. Where `readwrite-unsafe` is missing,
+ * `OPFSAdaptiveVFS` takes an exclusive handle in `xOpen` right after its Web
+ * Lock — which a terminated worker gives back before its file — so the
+ * replacement can meet its predecessor's file still held: seen once on
+ * Firefox, macOS 27 (`lifecycle`'s restart failed the client with
  * `NoModificationAllowedError`, run 39620037006). That holder is a corpse and
  * lets go within milliseconds. A live holder never does (HELD-LIVE), but then
  * the open only fails `OPEN_RETRY_BUDGET_MS` later than it would have, on a
- * slot that is being restarted anyway. A first open keeps the declaration:
- * nothing of ours has died there, so a held file is most likely live.
+ * slot that is being restarted anyway.
+ *
+ * Retried only when the VFS's `lastError` names a held file (`isHeldElsewhere`);
+ * any other refusal is reported at once, with that error as its cause.
+ *
+ * **A first open is not retried.** The one VFS that takes an exclusive handle
+ * in `xOpen` with nothing of ours dead, `OPFSCoopSyncVFS`, retries a held file
+ * itself for 5 s since wa-sqlite #381, past `OPEN_RETRY_BUDGET_MS`, so a retry
+ * here never got a second attempt; `AccessHandlePoolVFS` takes its handles when
+ * it is created, which `createVfsInstance` retries. Measured 2026-10-23
+ * (POST-381, `mem:measurements/held-handles`).
  *
  * **Two budgets.** The predecessor of an `idle` death was doing nothing: a
  * corpse that lets go within `OPEN_RETRY_BUDGET_MS`. A `busy` one was
@@ -187,12 +186,11 @@ class HeldByKilledStatement extends Error {
 const openWithRetry = async (
   sqlite: { open_v2: (file: string) => Promise<number> },
   file: string,
-  vfs: SQLiteVFS,
   lastError: () => unknown,
   afterDeath: 'idle' | 'busy' | undefined,
   openDeadline: number | undefined,
 ): Promise<number> => {
-  if (!VFS_CAPABILITIES[vfs].exclusiveFileHandle && afterDeath === undefined) {
+  if (afterDeath === undefined) {
     return sqlite.open_v2(file);
   }
   const idleDeadline = Date.now() + OPEN_RETRY_BUDGET_MS;
@@ -574,7 +572,6 @@ const open = (file: string, options: OpenOptions) => {
             const db = await openWithRetry(
               sqlite,
               file,
-              vfs,
               () => vfsInstanceSeen?.lastError,
               options.afterDeath,
               options.openDeadline,
