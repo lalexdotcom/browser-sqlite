@@ -122,7 +122,8 @@ describe('worker lifecycle — crash detection', () => {
     await db.write('CREATE TABLE t (a)');
     expect(created.length).toBe(1);
 
-    const running = db.read(longQuery(20_000_000));
+    // 2M, not 20M: in flight at the kill, over soon after — see the first test.
+    const running = db.read(longQuery(2_000_000));
     await sleep(100);
     created[0].dispatchEvent(new ErrorEvent('error'));
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
@@ -254,7 +255,8 @@ describe('worker lifecycle — onWorkerLost callback', () => {
     });
     await db.write('CREATE TABLE t (a)');
 
-    const running = db.read(longQuery(20_000_000));
+    // 2M, not 20M: in flight at the kill, over soon after — see the first test.
+    const running = db.read(longQuery(2_000_000));
     await sleep(100);
     records[0].worker.dispatchEvent(new ErrorEvent('error'));
 
