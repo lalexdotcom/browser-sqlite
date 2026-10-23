@@ -8,6 +8,7 @@ Part of `mem:follow-ups`. **The wiring is done on `feat/safari-suite`** (spec `d
 
 - **WebKit's name for a held file is matched:** `isHeldElsewhere` (`src/worker/held.ts`) takes `NoModificationAllowedError` and `InvalidStateError`, as wa-sqlite #381/#382 do, in both open-path retries. Fixed `delete` and `vfs-create-retry` on `AccessHandlePoolVFS` (and `long-query` on 27). Runs 39773104130 / 39773107818.
 - **A worker killed inside a long statement keeps running on Safari** (WebKit 328618, SAFARI-TERMINATE-WASM): `lifecycle` ×2, `debug`, `long-query` skip with that reason on Safari ≤ 27.0.1, `sync` build, OPFS VFS. The wipe failures on `.wa-sqlite`/`.wa` were that same still-running worker.
+- **`fix/safari-restart-budget` (2026-10-23):** `lifecycle`'s restart-budget test gave its replacement 5 s, and Safari stalls a worker's wasm instantiation 1-11 s after hot wasm (SAFARI-WASM-INSTANTIATE): the bound is now the library's 30 s. And three `lifecycle` tests not skipped on `OPFSWriteAheadVFS/sync` killed their worker 100 ms into `longQuery(20M)`; on Safari 27 the still-running worker held `.wa-sqlite`/`.wa` past the file's wipe. They kill on `longQuery(2M)` now. Full macOS 27 run green, 523/523 (run 39944455281).
 
 ## Not relying on `terminate()` to stop a busy worker on Safari — not designed (user, 2026-10-22)
 
