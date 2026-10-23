@@ -23,10 +23,12 @@ unmeasured ground.
   ~17 min against 3-9 for the others, under the 25-minute job limit — not looked into, and not
   seen at rc.9.
   Procedure: `mem:conventions/releasing`.
-- **The vendored wa-sqlite sits on upstream `master` of 2026-10-13** (`6238f532`, #374 merged;
-  `package.json` has the SHA; the built worker, the `.wasm` and `index.js` are byte-identical to the
-  previous pin's). **Since 2026-10-16 the patch carries rhashimoto/wa-sqlite#381 and #382**
-  (the `OPFSCoopSyncVFS` and `OPFSAdaptiveVFS` retries on a held access handle), **and since 2026-10-21 #384 and #385** (the IndexedDB VFS's `close()` waits for its transactions). Heads and merges in
+- **The vendored wa-sqlite sits on upstream `master` of 2026-10-23** (`6b59b231`, #380 merged;
+  `package.json` has the SHA). **The patch carries six PRs of ours**: #381 and #382 (the
+  `OPFSCoopSyncVFS` and `OPFSAdaptiveVFS` retries on a held access handle, since 2026-10-16), #384
+  and #385 (the IndexedDB VFS's `close()` waits for its transactions, since 2026-10-21), #386 (the
+  `OPFSCoopSyncVFS` startup sweep) and #387 (`getIDBFactory`/`prefix`, unused here), since the repin
+  of 2026-10-23. Heads and merges in
   `mem:stack-and-build/wa-sqlite`, reports in `mem:upstream`. A patch is added, regenerated or
   removed through `pnpm patch` / `pnpm patch-commit` / `pnpm patch-remove`, never by hand.
 - **`main` may sit ahead of `origin/main` indefinitely** — the convention, not an oversight. It
